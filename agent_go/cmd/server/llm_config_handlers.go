@@ -1199,10 +1199,16 @@ func validateCursorCLI(apiKey, modelID string) llm.APIKeyValidationResponse {
 	if modelID == "" {
 		modelID = "cursor-cli"
 	}
-	if strings.TrimSpace(apiKey) == "" && strings.TrimSpace(os.Getenv("CURSOR_API_KEY")) == "" && !cursorCLILocalAuthConfigured() {
-		return llm.APIKeyValidationResponse{
-			Valid:   false,
-			Message: cursorCLILoginRequiredMessage(),
+	if strings.TrimSpace(apiKey) == "" && strings.TrimSpace(os.Getenv("CURSOR_API_KEY")) == "" {
+		authenticated, conclusive := cursorCLILocalAuthState()
+		if conclusive && !authenticated {
+			return llm.APIKeyValidationResponse{
+				Valid:   false,
+				Message: cursorCLILoginRequiredMessage(),
+			}
+		}
+		if !conclusive {
+			log.Printf("[CURSOR-CLI VALIDATION] Auth status probe was inconclusive; continuing with real adapter validation")
 		}
 	}
 

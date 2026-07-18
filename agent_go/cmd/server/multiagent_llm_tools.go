@@ -16,8 +16,9 @@ import (
 
 var cursorCLIAuthProbeCache = struct {
 	sync.Mutex
-	checkedAt time.Time
-	ok        bool
+	checkedAt     time.Time
+	authenticated bool
+	conclusive    bool
 }{}
 
 var cursorCLIStatusJSON = func(ctx context.Context) ([]byte, error) {
@@ -435,7 +436,8 @@ func providerAuthConfigured(provider string, keys *llm.ProviderAPIKeys) (bool, s
 		if keys.CursorCLI != nil && strings.TrimSpace(*keys.CursorCLI) != "" {
 			return true, "CURSOR_API_KEY or workspace provider auth"
 		}
-		return cursorCLILocalAuthConfigured(), "Cursor CLI login or CURSOR_API_KEY/workspace provider auth"
+		configured, _ := cursorCLILocalAuthState()
+		return configured, "Cursor CLI login or CURSOR_API_KEY/workspace provider auth"
 	case string(llm.ProviderAgyCLI):
 		return true, "Antigravity CLI local sign-in"
 	case string(llm.ProviderPiCLI):
@@ -470,46 +472,71 @@ func piProviderAuthConfigured(keys *llm.ProviderAPIKeys) bool {
 	return false
 }
 
-func cursorCLILocalAuthConfigured() bool {
+func cursorCLILocalAuthState() (authenticated, conclusive bool) {
 	if _, err := exec.LookPath("cursor-agent"); err != nil {
-		return false
+		return false, false
 	}
 
 	cursorCLIAuthProbeCache.Lock()
 	defer cursorCLIAuthProbeCache.Unlock()
 
 	if !cursorCLIAuthProbeCache.checkedAt.IsZero() && time.Since(cursorCLIAuthProbeCache.checkedAt) < 30*time.Second {
-		return cursorCLIAuthProbeCache.ok
+		return cursorCLIAuthProbeCache.authenticated, cursorCLIAuthProbeCache.conclusive
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
 	out, err := cursorCLIStatusJSON(ctx)
-	ok := err == nil && cursorCLIAuthStatusOK(out)
+	authenticated, conclusive = cursorCLIAuthStatus(out)
+	if err != nil && !conclusive {
+		// A timeout or transient status-command failure is not evidence that the
+		// user logged out. Preserve a previously confirmed login and otherwise
+		// report an inconclusive probe so execution can try the real adapter.
+		if cursorCLIAuthProbeCache.conclusive && cursorCLIAuthProbeCache.authenticated {
+			authenticated = true
+			conclusive = true
+		}
+	}
 
 	cursorCLIAuthProbeCache.checkedAt = time.Now()
-	cursorCLIAuthProbeCache.ok = ok
-	return ok
+	cursorCLIAuthProbeCache.authenticated = authenticated
+	cursorCLIAuthProbeCache.conclusive = conclusive
+	return authenticated, conclusive
 }
 
-func cursorCLIAuthStatusOK(out []byte) bool {
+func cursorCLIAuthStatus(out []byte) (authenticated, conclusive bool) {
 	text := strings.TrimSpace(string(out))
 	if text == "" {
-		return false
+		return false, false
 	}
 
 	var status struct {
-		IsAuthenticated bool   `json:"isAuthenticated"`
+		IsAuthenticated *bool  `json:"isAuthenticated"`
 		Status          string `json:"status"`
 	}
 	if json.Unmarshal(out, &status) == nil {
-		return status.IsAuthenticated || strings.EqualFold(status.Status, "authenticated")
+		if status.IsAuthenticated != nil {
+			return *status.IsAuthenticated, true
+		}
+		switch strings.ToLower(strings.TrimSpace(status.Status)) {
+		case "authenticated", "logged_in", "logged-in":
+			return true, true
+		case "unauthenticated", "not_authenticated", "not-authenticated", "logged_out", "logged-out":
+			return false, true
+		default:
+			return false, false
+		}
 	}
 
 	lower := strings.ToLower(text)
-	return strings.Contains(lower, "logged in as") ||
-		strings.Contains(lower, "status: authenticated")
+	if strings.Contains(lower, "logged in as") || strings.Contains(lower, "status: authenticated") {
+		return true, true
+	}
+	if strings.Contains(lower, "not logged in") || strings.Contains(lower, "status: unauthenticated") || strings.Contains(lower, "logged out") {
+		return false, true
+	}
+	return false, false
 }
 
 func providerUsable(provider string, authConfigured bool) (bool, string, *bool) {

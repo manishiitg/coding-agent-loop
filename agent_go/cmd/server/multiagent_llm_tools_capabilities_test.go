@@ -113,6 +113,42 @@ func TestProviderAuthConfiguredAcceptsCursorPlainLoggedInStatus(t *testing.T) {
 	}
 }
 
+func TestCursorCLIAuthProbeKeepsLastConfirmedLoginOnTransientFailure(t *testing.T) {
+	t.Setenv("WORKSPACE_DOCS_PATH", t.TempDir())
+	withFakeExecutable(t, "cursor-agent")
+
+	previous := cursorCLIStatusJSON
+	resetCursorCLIAuthProbeCache()
+	probeCalls := 0
+	cursorCLIStatusJSON = func(context.Context) ([]byte, error) {
+		probeCalls++
+		if probeCalls == 1 {
+			return []byte(`{"status":"authenticated","isAuthenticated":true}`), nil
+		}
+		return nil, context.DeadlineExceeded
+	}
+	t.Cleanup(func() {
+		cursorCLIStatusJSON = previous
+		resetCursorCLIAuthProbeCache()
+	})
+
+	authenticated, conclusive := cursorCLILocalAuthState()
+	if !authenticated || !conclusive {
+		t.Fatalf("first probe = authenticated:%v conclusive:%v, want true/true", authenticated, conclusive)
+	}
+
+	cursorCLIAuthProbeCache.Lock()
+	cursorCLIAuthProbeCache.checkedAt = time.Now().Add(-31 * time.Second)
+	cursorCLIAuthProbeCache.Unlock()
+	authenticated, conclusive = cursorCLILocalAuthState()
+	if !authenticated || !conclusive {
+		t.Fatalf("transient retry = authenticated:%v conclusive:%v, want preserved true/true", authenticated, conclusive)
+	}
+	if probeCalls != 2 {
+		t.Fatalf("status probe calls = %d, want 2", probeCalls)
+	}
+}
+
 func TestValidateCursorCLIReportsLoginRequiredBeforeTmuxRun(t *testing.T) {
 	t.Setenv("WORKSPACE_DOCS_PATH", t.TempDir())
 	t.Setenv("CURSOR_API_KEY", "")
@@ -182,7 +218,8 @@ func resetCursorCLIAuthProbeCache() {
 	cursorCLIAuthProbeCache.Lock()
 	defer cursorCLIAuthProbeCache.Unlock()
 	cursorCLIAuthProbeCache.checkedAt = time.Time{}
-	cursorCLIAuthProbeCache.ok = false
+	cursorCLIAuthProbeCache.authenticated = false
+	cursorCLIAuthProbeCache.conclusive = false
 }
 
 func containsLLMCapabilityString(values []string, want string) bool {

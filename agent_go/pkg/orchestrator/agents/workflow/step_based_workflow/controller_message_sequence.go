@@ -855,6 +855,14 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeMessageSequenceUserMessage(ctx
 // left it current this run. Learnings distinguishes updated vs reviewed-unchanged
 // from the turn result; KB records a review. Never fails the run.
 func (hcpo *StepBasedWorkflowOrchestrator) recordMessageSequenceStoreFreshness(item MessageSequenceItem, stepID, result string) {
+	// Do not record a confirmation for a turn that self-reported failure. The
+	// sequence driver treats STATUS: FAILED as a terminal item failure (see
+	// messageSequenceItemReportedFailure in the driver loop), and this hook runs
+	// on the raw item result BEFORE that check — so a failed contribution must not
+	// mark the store reviewed or updated.
+	if _, failed := messageSequenceItemReportedFailure(result); failed {
+		return
+	}
 	switch strings.TrimSpace(item.Kind) {
 	case "learning":
 		updated, _, _ := inferHasNewLearningFromResult(result)

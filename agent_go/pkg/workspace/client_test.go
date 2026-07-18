@@ -210,3 +210,45 @@ func TestValidatePathAgainstGuard_ExactFileWritePathIsNotPrefix(t *testing.T) {
 		})
 	}
 }
+
+// Enforcement regression for message_sequence per-item permissions: the reused
+// execution agent carries a BROAD frozen snapshot (step's full write scope: db +
+// learnings), but the current item's per-item session guard must take priority and
+// narrow it. Proves a db-only item is denied a learnings write and allowed a db write.
+func TestSessionGuardNarrowsFrozenSnapshotForMessageSequenceItem(t *testing.T) {
+	sessionID := "msgseq-narrow-enforcement"
+	client := NewClient("http://unused")
+
+	// Frozen per-agent snapshot (ctx System 2): agent created with the step's FULL
+	// write scope — db AND learnings/_global.
+	broad := []string{"Workflow/wf/db", "Workflow/wf/learnings/_global"}
+	ctx := context.WithValue(context.Background(), common.ChatSessionIDKey, sessionID)
+	ctx = context.WithValue(ctx, common.FolderGuardWritePathsKey, broad)
+	ctx = context.WithValue(ctx, common.FolderGuardReadPathsKey, broad)
+
+	// Snapshot-only (no session guard): the broad snapshot decides — learnings writable.
+	if err := client.ValidatePathWithContext(ctx, "Workflow/wf/learnings/_global/SKILL.md", true); err != nil {
+		t.Fatalf("broad snapshot should allow a learnings write on its own: %v", err)
+	}
+
+	// Now a DB-ONLY per-item session guard for this turn must OUTRANK the snapshot.
+	SetSessionFolderGuard(sessionID, []string{"Workflow/wf/db"}, []string{"Workflow/wf/db"})
+	defer ClearSessionShellConfig(sessionID)
+
+	if err := client.ValidatePathWithContext(ctx, "Workflow/wf/db/state.sqlite", true); err != nil {
+		t.Fatalf("db write must be accepted under the db-only session guard: %v", err)
+	}
+	if err := client.ValidatePathWithContext(ctx, "Workflow/wf/learnings/_global/SKILL.md", true); err == nil {
+		t.Fatal("learnings write must be DENIED: the db-only per-item session guard outranks the broad frozen snapshot")
+	}
+
+	// The deciding guard must be the session guard, not the snapshot.
+	if g := client.resolveEffectiveFolderGuard(ctx); g == nil || g.Source != "session" {
+		t.Fatalf("expected session guard to decide, got source=%q", func() string {
+			if g == nil {
+				return "<nil>"
+			}
+			return g.Source
+		}())
+	}
+}

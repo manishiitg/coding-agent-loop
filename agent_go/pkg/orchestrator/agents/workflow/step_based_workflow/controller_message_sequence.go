@@ -70,6 +70,35 @@ type messageSequenceCallOptions struct {
 	Restart        bool
 }
 
+const normalizedRegularSequenceItemID = "execute-and-verify"
+
+// normalizeRegularStepToMessageSequence routes persisted non-scripted regular
+// steps through the canonical conversational runtime. New plans author these as
+// message_sequence directly; this normalization keeps existing workflows
+// executable without reviving the removed direct regular-agent path.
+func normalizeRegularStepToMessageSequence(step *RegularPlanStep) *MessageSequencePlanStep {
+	if step == nil {
+		return nil
+	}
+	return &MessageSequencePlanStep{
+		Type:             StepTypeMessageSeq,
+		CommonStepFields: step.CommonStepFields,
+		Items: []MessageSequenceItem{{
+			ID:   normalizedRegularSequenceItemID,
+			Type: "user_message",
+			Kind: "execution",
+			Message: "Complete the step described above. Re-open the produced evidence, verify the result against every stated requirement, " +
+				"repair any gap you find, and finish only when the step is complete.",
+		}},
+		AgentConfigs: step.AgentConfigs,
+	}
+}
+
+func shouldNormalizeRegularStepToMessageSequence(step PlanStepInterface) bool {
+	regular, ok := step.(*RegularPlanStep)
+	return ok && !isScriptedExecutionModeConfig(regular.AgentConfigs)
+}
+
 // messageSequenceClosingItems builds synthetic trailing items so a standalone
 // message_sequence honors its step-level learning_objective and
 // knowledgebase_contribution — the same post-step learnings/KB a regular step

@@ -94,10 +94,11 @@ For exhaustive command docs call `browser("skills", ["get", "core", "--full"])`.
 - For every page action after `open` (snapshot/click/fill/eval/wait/screenshot),
   include `["tab", "<tab-id-or-label>", ...]` inline so the action runs against
   a known tab and respects the shared CDP lock.
-- Call `browser("tab", [])` to list real tabs; if no tab is selected yet:
+- Call `browser("tab", [])` to list real tab ids and query-free URLs. Reuse the workflow's existing owned tab or an exact target-URL match; if neither exists:
   `browser("tab", ["new", "--label", "<workflow-label>", "https://target"])`.
+- `tab new` performs the exact-URL reuse check again atomically and returns the real `tN` id plus actual URL. If listing is unavailable, it refuses creation instead of risking a duplicate.
 - Never call the top-level `close` command in CDP mode; it can disrupt the user's real Chrome session.
-- At normal workflow completion, leave workflow-created labeled tabs open for review. The backend automatically closes only those owned tabs one hour after the final run releases its browser lease; it never includes pre-existing user tabs.
+- At normal workflow completion, leave workflow-created labeled tabs open for review. The backend automatically closes only their registered real `tN` ids one hour after the final run releases its browser lease; it never includes pre-existing or exact-URL-reused user tabs.
 - Use `browser("tab", ["close", "<owned-label>"])` only when the user explicitly requests immediate cleanup or the workflow must replace one of its own labeled tabs. Never close a pre-existing user tab.
 - Avoid actions that bring Chrome to the foreground while the user is typing
   (navigation, tab switching, large screenshots). For unattended schedules,
@@ -155,9 +156,16 @@ After it is reachable, configure the workflow with that port, for example
   tab inline: `["tab", "t1", "@ref", "Downloads/report.pdf"]`).
 
 Always use **workspace-relative paths** (e.g. `Downloads/report.pdf`,
-`Chats/output.csv`). Do not construct absolute paths yourself. To upload a
-file you generated, write it to `Chats/` via `execute_shell_command`, then
-upload that path.
+`Chats/output.csv`). Do not construct absolute paths yourself. The backend
+checks the current read grants and stages uploads for the persistent daemon.
+To upload a file you generated, write it to `Chats/` via
+`execute_shell_command`, then upload that path.
+
+For an explicit managed download, pass a workspace-relative authorized output
+path: `browser("download", ["@ref", "Downloads/report.pdf"])` (plus the CDP
+tab inline when applicable). The backend stages and publishes the completed
+file. A normal click in visible Chrome may instead download into the host
+Downloads folder, which is read-only to the agent.
 
 ## Session limits
 

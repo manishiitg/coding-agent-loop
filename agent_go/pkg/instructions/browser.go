@@ -147,7 +147,7 @@ status = agent_browser(command="status", args=[], session="default")
 
 // GetBrowserUploadInstructions returns system prompt instructions for browser file upload.
 // Appended to the agent's system prompt when browser access is active.
-// agent_browser resolves workspace-relative paths from the configured working directory.
+// agent_browser resolves workspace-relative paths through guarded backend staging.
 func GetBrowserUploadInstructions() string {
 	return `
 
@@ -161,7 +161,7 @@ When a website has a file upload input (e.g. file picker, drag-and-drop zone), u
 
 ### Path Rules
 - Always use **workspace-relative paths** (e.g. "Downloads/report.pdf", "Chats/output.csv")
-- Paths are automatically resolved to absolute paths — do NOT construct absolute paths yourself
+- Paths are securely staged from the workspace root for the persistent browser daemon — do NOT construct absolute paths yourself
 - Files in "Downloads/" are user-uploaded files; files in "Chats/" are created during the conversation
 - If you need to create a file first, save it to "Chats/" using execute_shell_command, then upload it
 `
@@ -259,7 +259,7 @@ Call agent_browser via HTTP API. Always include `+"`--cdp %[1]s`"+` in args.
 
 %[2]s
 
-In shared CDP mode, choose an explicit tab before browsing, then keep using that tab. `+"`browser(\"tab\", [])`"+` tries to refresh the real tab list for up to 15 seconds; if Chrome/CDP is stuck, it falls back to the currently selected tab hint for this workflow. If no tab is selected yet, create one stable labeled workflow tab. Important: `+"`open`"+` is URL-only; do not pass `+"`[\"tab\", \"t1\", url]`"+` to `+"`open`"+`. Use the `+"`tab`"+` command to choose/create the tab first, then call `+"`open`"+` with only the URL:
+In shared CDP mode, choose an explicit real `+"`tN`"+` tab before browsing, then keep using that tab. `+"`browser(\"tab\", [])`"+` refreshes real tab ids and query-free URLs for up to 15 seconds. Reuse the workflow's existing owned tab or an exact target-URL match. If neither exists, request one stable labeled tab; the backend atomically rechecks reuse and returns its real `+"`tN`"+` plus actual URL. If listing is unavailable, creation is refused instead of risking a duplicate. Important: `+"`open`"+` is URL-only; do not pass `+"`[\"tab\", \"t1\", url]`"+` to `+"`open`"+`. Use the `+"`tab`"+` command to choose/create the tab first, then call `+"`open`"+` with only the URL:
 
 `+"```python\nimport requests, os\nBROWSER = os.environ[\"MCP_API_URL\"] + \"/tools/mcp/workspace_browser/agent_browser\"\nHEADERS = {\"Authorization\": f\"Bearer {os.environ['MCP_API_TOKEN']}\", \"Content-Type\": \"application/json\"}\n\ndef browser(command, args=None, session=\"default\"):\n    resp = requests.post(BROWSER, json={\"command\": command, \"args\": [\"--cdp\", \"%[1]s\"] + (args or []), \"session\": session}, headers=HEADERS, timeout=120)\n    resp.raise_for_status()\n    return resp.json().get(\"result\", \"\")\n\n# Try the real tab list. If it times out, use the selected-tab fallback.\nselected = browser(\"tab\", [])\nprint(selected)\n# browser(\"tab\", [\"existing-tab-or-label\"])  # only if you already know it\n# browser(\"tab\", [\"new\", \"--label\", \"my-workflow-tab\", \"https://example.com\"])\nbrowser(\"open\", [\"https://example.com\"])\n\n# Use the chosen tab inline on page actions after open. The tab token is removed before the action runs.\nsnap = browser(\"snapshot\", [\"tab\", \"t1\", \"-i\"])\nbrowser(\"click\", [\"tab\", \"t1\", \"@e1\"])\nbrowser(\"fill\", [\"tab\", \"t1\", \"@e2\", \"text\"])\nbrowser(\"wait\", [\"tab\", \"t1\", \"6000\"])\nbrowser(\"wait\", [\"tab\", \"t1\", \"--load\", \"networkidle\"])\nsnap = browser(\"snapshot\", [\"tab\", \"my-workflow-tab\", \"-i\"])  # re-snapshot after each interaction\n```"+`
 
@@ -274,12 +274,12 @@ Before the first browser action, load the core skill with `+"`browser(\"skills\"
 - `+"`open`"+` must use URL-only args: `+"`browser(\"open\", [\"https://target.example\"])`"+`. Do not call `+"`open`"+` with `+"`[\"tab\", \"t1\", url]`"+`.
 - For snapshot, click, fill, eval, wait, screenshot, and other page-action commands after open, include `+"`[\"tab\", \"<tab-id-or-label>\", ...]`"+` or `+"`[\"--tab\", \"<tab-id-or-label>\", ...]`"+`.
 - Do not include the command name inside args. Wrong: `+"`browser(\"wait\", [\"tab\", \"t1\", \"wait\", \"6s\"])`"+`. Right: `+"`browser(\"wait\", [\"tab\", \"t1\", \"6000\"])`"+`.
-- Call `+"`browser(\"tab\", [])`"+` to get the compact real tab list when CDP responds; if it times out, use the selected-tab fallback.
-- If no tab is selected, create one new tab with a stable label: `+"`browser(\"tab\", [\"new\", \"--label\", \"<workflow-label>\", \"https://target.example\"])`"+`
+- Call `+"`browser(\"tab\", [])`"+` to get real `+"`tN`"+` ids plus query-free URLs. Reuse the workflow's owned label first or an exact target-URL match.
+- If no tab matches, request one stable labeled tab: `+"`browser(\"tab\", [\"new\", \"--label\", \"<workflow-label>\", \"https://target.example\"])`"+`. The backend atomically rechecks exact-URL reuse and returns the real `+"`tN`"+` plus actual URL; creation is refused if listing is unavailable.
 - If a command fails with `+"`CDP shared-browser mode requires selecting or creating a tab`"+`, do not treat that as CDP unavailable and do not call reset. Select a known tab or create a labeled tab, then retry the URL-only open.
 - Do not create throwaway tabs for routine navigation. Keep a workflow's labeled tab open and navigate within it across steps/runs.
 - Never call the top-level `+"`close`"+` command in CDP mode; it can disrupt the user's real Chrome session
-- At normal completion, leave workflow-created labeled tabs open for review. The backend automatically closes only those owned tabs one hour after the final run releases its browser lease; pre-existing user tabs are preserved
+- At normal completion, leave workflow-created labeled tabs open for review. The backend automatically closes only their registered real `+"`tN`"+` ids one hour after the final run releases its browser lease; pre-existing or exact-URL-reused user tabs are preserved
 - Use `+"`browser(\"tab\", [\"close\", \"<owned-label>\"])`"+` only when the user explicitly requests immediate cleanup or the workflow must replace one of its own labeled tabs. Never close a pre-existing user tab
 - Sessions **persist across tool calls** — you don't need to re-open pages between interactions
 - If a site requires login and the user is already logged in, navigate directly to the target page

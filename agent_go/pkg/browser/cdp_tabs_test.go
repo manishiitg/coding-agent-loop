@@ -22,7 +22,9 @@ func TestParseTabSelection(t *testing.T) {
 		{name: "select existing tab", args: []string{"t1"}, wantTab: "t1"},
 		{name: "select labeled tab", args: []string{"daily-post"}, wantTab: "daily-post"},
 		{name: "new labeled tab", args: []string{"new", "--label", "daily-post", "https://example.com"}, wantTab: "daily-post"},
+		{name: "new labeled tab canonicalizes url before label", args: []string{"new", "https://example.com", "--label", "daily-post"}, wantTab: "daily-post"},
 		{name: "new tab requires label", args: []string{"new", "https://example.com"}, wantErr: true},
+		{name: "new tab requires absolute url", args: []string{"new", "--label", "daily-post", "example.com"}, wantErr: true},
 		{name: "close selected tab", args: []string{"close", "daily-post"}, wantTab: "daily-post", wantClear: true},
 	}
 
@@ -42,6 +44,18 @@ func TestParseTabSelection(t *testing.T) {
 				t.Fatalf("parseTabSelection() = (%q, %v), want (%q, %v)", gotTab, gotClear, tt.wantTab, tt.wantClear)
 			}
 		})
+	}
+}
+
+func TestCanonicalNewCDPTabArgsControlsArgumentOrder(t *testing.T) {
+	request, err := parseNewCDPTabRequest([]string{"new", "https://example.com/path", "--label", "daily-post"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := canonicalNewCDPTabArgs(request)
+	want := []string{"new", "--label", "daily-post", "https://example.com/path"}
+	if strings.Join(got, "|") != strings.Join(want, "|") {
+		t.Fatalf("canonical args = %#v, want %#v", got, want)
 	}
 }
 
@@ -177,6 +191,10 @@ func TestCDPTabAliasCache(t *testing.T) {
 	if got := findCDPTabID(output, "t12"); got != "t12" {
 		t.Fatalf("findCDPTabID(tab id) = %q, want t12", got)
 	}
+	direct := `{"success":true,"data":{"active":true,"label":"daily-post","tabId":"t14","url":"https://example.com/"}}`
+	if got := findCDPTabID(direct, "daily-post"); got != "t14" {
+		t.Fatalf("findCDPTabID(direct tab-new output) = %q, want t14", got)
+	}
 
 	setCDPTabAlias(port, owner, "upwork_proposal", "t12")
 	setCDPTabSelection(port, owner, "upwork_proposal")
@@ -210,6 +228,8 @@ func TestFormatCDPTabListForPromptCompactsRawJSON(t *testing.T) {
 		`label="upwork_proposal"`,
 		`title="Submit a Proposal`,
 		"- t13",
+		`url="https://www.upwork.com/nx/proposals/job/~02/apply/"`,
+		`url="https://mail.example.com/inbox"`,
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("summary missing %q:\n%s", want, got)
@@ -223,10 +243,7 @@ func TestFormatCDPTabListForPromptCompactsRawJSON(t *testing.T) {
 	if strings.Contains(got, "filter=abcdefghij") {
 		t.Fatalf("summary should strip noisy URL query strings:\n%s", got)
 	}
-	if strings.Contains(got, "url=") || strings.Contains(got, "https://") {
-		t.Fatalf("summary should not include URLs:\n%s", got)
-	}
-	if len(got) > 300 {
+	if len(got) > 500 {
 		t.Fatalf("summary too large (%d bytes):\n%s", len(got), got)
 	}
 }

@@ -129,12 +129,14 @@ specialized multi-login testing, not ordinary workflow concurrency.
 Tab handling is mandatory in shared CDP mode:
 
 1. Call ` + "`browser(\"tab\", [])`" + ` first to inspect the current tab list.
-2. Reuse an existing relevant tab when possible.
+2. Reuse the workflow's existing labeled tab first, or a pre-existing tab whose displayed URL exactly matches the target. Tab-list output includes the real ` + "`tN`" + ` id and a query-free URL for this decision.
 3. If no suitable tab exists, create one stable labeled tab:
 
 ` + "```python" + `
 browser("tab", ["new", "--label", "workflow-step-name", "https://example.com"])
 ` + "```" + `
+
+The backend performs the same exact-URL reuse check atomically before ` + "`tab new`" + `. It returns either ` + "`Reused existing CDP tab`" + ` or ` + "`Created CDP tab`" + ` with the real ` + "`tN`" + ` id and actual URL. Keep that ` + "`tN`" + ` for subsequent calls. If the tab list cannot be refreshed, creation fails instead of risking a duplicate.
 
 4. ` + "`open`" + ` is URL-only. Correct:
 
@@ -160,7 +162,7 @@ browser("screenshot", ["tab", "t1", "proof.png"])
 
 If a command says shared-browser mode requires selecting or creating a tab, do not treat CDP as unavailable. Select or create a tab, then retry.
 
-Never call the top-level ` + "`close`" + ` command in CDP mode; it can disrupt the user's real Chrome session. At normal workflow completion, leave workflow-created labeled tabs open for review. Builder automatically closes only those registered workflow-owned tabs one hour after the final run releases its browser lease; pre-existing user tabs are never part of that cleanup. Use ` + "`browser(\"tab\", [\"close\", \"<owned-label>\"])`" + ` only when the user explicitly requests immediate cleanup or the workflow must replace one of its own labeled tabs. Never close a pre-existing user tab.
+Never call the top-level ` + "`close`" + ` command in CDP mode; it can disrupt the user's real Chrome session. At normal workflow completion, leave workflow-created labeled tabs open for review. Builder automatically closes only those registered workflow-owned ` + "`tN`" + ` tabs one hour after the final run releases its browser lease; pre-existing or exact-URL-reused user tabs are never part of that cleanup. Use ` + "`browser(\"tab\", [\"close\", \"<owned-label-or-tN>\"])`" + ` only when the user explicitly requests immediate cleanup or the workflow must replace one of its own labeled tabs. Never close a pre-existing user tab.
 
 ## QA Evidence and Network Debugging
 
@@ -189,7 +191,11 @@ In workflow steps, use the run-scoped ` + "`Downloads/`" + ` folder given in the
 
 CDP caveat: native Chrome downloads can land in the host ` + "`~/Downloads`" + ` folder. If the step prompt grants a read-only host Downloads path, copy the needed file into the run-scoped ` + "`Downloads/`" + ` folder before reading or parsing it. Never write, move, or delete files in host Downloads.
 
-Use workspace-relative paths for downloads/uploads whenever possible.
+Use workspace-relative paths for downloads/uploads. Builder securely stages
+upload inputs for the persistent daemon and stages explicit ` + "`download`" + `
+outputs before publishing them into the authorized run folder. A normal click
+in visible Chrome can still download into host ` + "`~/Downloads`" + `, which
+remains read-only to the agent.
 
 ## Selector Discipline
 

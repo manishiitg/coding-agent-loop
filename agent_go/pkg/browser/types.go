@@ -16,6 +16,24 @@ type ShellExecuteRequest struct {
 	Args             []string           `json:"args,omitempty"`
 	Timeout          int                `json:"timeout,omitempty"`
 	FolderGuard      *FolderGuardConfig `json:"folder_guard,omitempty"`
+	ArtifactTransfer *ArtifactTransfer  `json:"artifact_transfer,omitempty"`
+	UploadTransfers  []UploadTransfer   `json:"upload_transfers,omitempty"`
+}
+
+// ArtifactTransfer asks workspace-api to prepare a backend staging path and,
+// when Finalize is true, publish it into the current session's authorized output.
+type ArtifactTransfer struct {
+	SourcePath      string `json:"source_path"`
+	DestinationPath string `json:"destination_path"`
+	Kind            string `json:"kind"`
+	Finalize        bool   `json:"finalize"`
+}
+
+// UploadTransfer asks workspace-api to copy one currently authorized input
+// file into backend-managed staging before a persistent browser daemon reads it.
+type UploadTransfer struct {
+	SourcePath string `json:"source_path"`
+	StagedPath string `json:"staged_path"`
 }
 
 // ShellExecuteResponse represents the response data from workspace-api /api/execute

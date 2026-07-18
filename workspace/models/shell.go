@@ -13,6 +13,32 @@ type ExecuteShellRequest struct {
 	// Extra environment variables to inject. The handler applies a narrow allowlist
 	// for runtime prefixes plus DB_PATH and PYTHONDONTWRITEBYTECODE.
 	ExtraEnv map[string]string `json:"extra_env,omitempty"`
+
+	// ArtifactTransfer asks the trusted workspace server to move a browser artifact
+	// from its managed staging directory into a path authorized by FolderGuard.
+	// The command itself stays sandboxed; only this narrowly validated transfer is
+	// performed outside the child process sandbox.
+	ArtifactTransfer *BrowserArtifactTransfer `json:"artifact_transfer,omitempty"`
+
+	// UploadTransfers are copied from currently authorized workspace/host read
+	// paths into managed temporary staging before agent-browser runs.
+	UploadTransfers []BrowserUploadTransfer `json:"upload_transfers,omitempty"`
+}
+
+// BrowserArtifactTransfer describes one backend-brokered browser output.
+// SourcePath must be under the workspace server's managed temporary artifact
+// directory. When Finalize is true, DestinationPath must be covered by
+// FolderGuard.WritePaths.
+type BrowserArtifactTransfer struct {
+	SourcePath      string `json:"source_path"`
+	DestinationPath string `json:"destination_path"`
+	Kind            string `json:"kind"` // screenshot | video | download
+	Finalize        bool   `json:"finalize"`
+}
+
+type BrowserUploadTransfer struct {
+	SourcePath string `json:"source_path"`
+	StagedPath string `json:"staged_path"`
 }
 
 type FolderGuardConfig struct {

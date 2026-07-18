@@ -209,6 +209,61 @@ func ExecuteShellCommand(c *gin.Context) {
 	cmd.Stdout = &stdoutBuf
 	cmd.Stderr = &stderrBuf
 
+	if req.ArtifactTransfer != nil {
+		if req.FolderGuard == nil || !req.FolderGuard.Enabled {
+			c.JSON(http.StatusBadRequest, models.APIResponse[models.ExecuteShellResponse]{
+				Success: false,
+				Message: "Browser artifact transfer requires folder guard",
+				Error:   "artifact destination cannot be authorized without an enabled folder guard",
+			})
+			return
+		}
+		if prepareErr := security.PrepareBrowserArtifactStaging(req.ArtifactTransfer.SourcePath); prepareErr != nil {
+			c.JSON(http.StatusBadRequest, models.APIResponse[models.ExecuteShellResponse]{
+				Success: false,
+				Message: "Browser artifact staging failed",
+				Error:   prepareErr.Error(),
+			})
+			return
+		}
+	}
+	if len(req.UploadTransfers) > 0 {
+		if req.FolderGuard == nil || !req.FolderGuard.Enabled {
+			c.JSON(http.StatusBadRequest, models.APIResponse[models.ExecuteShellResponse]{
+				Success: false,
+				Message: "Browser upload staging requires folder guard",
+				Error:   "upload sources cannot be authorized without an enabled folder guard",
+			})
+			return
+		}
+		for _, transfer := range req.UploadTransfers {
+			if stageErr := security.StageBrowserUpload(
+				transfer.SourcePath,
+				transfer.StagedPath,
+				docsDir,
+				workingDir,
+				req.FolderGuard.ReadPaths,
+				req.FolderGuard.WritePaths,
+				req.FolderGuard.BlockedPaths,
+			); stageErr != nil {
+				for _, cleanup := range req.UploadTransfers {
+					security.CleanupBrowserUploadStaging(cleanup.StagedPath)
+				}
+				c.JSON(http.StatusBadRequest, models.APIResponse[models.ExecuteShellResponse]{
+					Success: false,
+					Message: "Browser upload staging failed",
+					Error:   stageErr.Error(),
+				})
+				return
+			}
+		}
+		defer func() {
+			for _, transfer := range req.UploadTransfers {
+				security.CleanupBrowserUploadStaging(transfer.StagedPath)
+			}
+		}()
+	}
+
 	// Record start time
 	startTime := time.Now()
 
@@ -296,6 +351,37 @@ func ExecuteShellCommand(c *gin.Context) {
 		}
 	}
 	finishShellProcess(processRecord.PID, status, &exitCode)
+
+	// Browser daemons are intentionally persistent and may have inherited a
+	// different workflow step's sandbox. Finalize their staged artifacts in this
+	// trusted process only after the command succeeds and the current request's
+	// write guard authorizes the destination.
+	if exitCode == 0 && req.ArtifactTransfer != nil && req.ArtifactTransfer.Finalize {
+		transfer := req.ArtifactTransfer
+		if transferErr := security.FinalizeBrowserArtifact(
+			transfer.SourcePath,
+			transfer.DestinationPath,
+			transfer.Kind,
+			docsDir,
+			req.FolderGuard.WritePaths,
+			req.FolderGuard.BlockedPaths,
+			req.FolderGuard.BlockedWritePaths,
+		); transferErr != nil {
+			c.JSON(http.StatusBadRequest, models.APIResponse[models.ExecuteShellResponse]{
+				Success: false,
+				Message: "Browser artifact transfer failed",
+				Error:   transferErr.Error(),
+				Data: models.ExecuteShellResponse{
+					Stdout:          stdoutBuf.String(),
+					Stderr:          stderrBuf.String(),
+					ExitCode:        exitCode,
+					ExecutionTimeMs: int(executionTime.Milliseconds()),
+					Command:         fullCommand,
+				},
+			})
+			return
+		}
+	}
 
 	// Success response
 	c.JSON(http.StatusOK, models.APIResponse[models.ExecuteShellResponse]{

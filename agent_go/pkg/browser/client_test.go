@@ -50,6 +50,63 @@ func TestExecuteCommandHostDockerFallbackDefaultsToLocalhost(t *testing.T) {
 	}
 }
 
+func TestQuoteShellArgProtectsCSSIDSelectorAndFollowingUploadPaths(t *testing.T) {
+	if got := quoteShellArg("#upload"); got != "'#upload'" {
+		t.Fatalf("quoted CSS selector = %q, want shell-safe quoted selector", got)
+	}
+	if got := quoteShellArg(`folder\report.pdf`); got != `'folder\report.pdf'` {
+		t.Fatalf("quoted backslash path = %q", got)
+	}
+}
+
+func TestExecuteCommandKeepsStructuredStdoutWhenMacOSGetcwdWarningIsPresent(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(APIResponse{
+			Success: true,
+			Data: ShellExecuteResponse{
+				Stdout:   `{"success":false,"error":"real browser failure"}`,
+				Stderr:   "shell-init: error retrieving current directory: getcwd: cannot access parent directories: Operation not permitted\n",
+				ExitCode: 1,
+			},
+		})
+	}))
+	defer server.Close()
+
+	_, err := NewClient(server.URL).ExecuteCommand(context.Background(), []string{"screenshot", "out.png"}, &ExecuteOptions{Timeout: time.Second})
+	if err == nil || !strings.Contains(err.Error(), "real browser failure") {
+		t.Fatalf("expected structured browser error, got %v", err)
+	}
+	if strings.Contains(err.Error(), "getcwd") {
+		t.Fatalf("misleading getcwd warning leaked into error: %v", err)
+	}
+}
+
+func TestFinalizeArtifactUsesPlainNoopCommand(t *testing.T) {
+	var got ShellExecuteRequest
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		_ = json.NewEncoder(w).Encode(APIResponse{Success: true, Data: ShellExecuteResponse{ExitCode: 0}})
+	}))
+	defer server.Close()
+
+	transfer := &ArtifactTransfer{SourcePath: "/tmp/agentworks-browser-artifacts/a.webm", DestinationPath: "evidence/a.webm", Kind: "video"}
+	err := NewClient(server.URL).FinalizeArtifact(context.Background(), transfer, &ExecuteOptions{Timeout: time.Second})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Command != "true" {
+		t.Fatalf("transfer-only command = %q, want true", got.Command)
+	}
+	if got.ArtifactTransfer == nil || got.ArtifactTransfer.SourcePath != transfer.SourcePath {
+		t.Fatalf("artifact transfer missing from request: %#v", got.ArtifactTransfer)
+	}
+	if !got.ArtifactTransfer.Finalize {
+		t.Fatalf("transfer-only request did not request finalization: %#v", got.ArtifactTransfer)
+	}
+}
+
 func TestCDPRuntimeStartupErrorRecognized(t *testing.T) {
 	tests := []struct {
 		name string

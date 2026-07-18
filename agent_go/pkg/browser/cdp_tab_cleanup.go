@@ -211,7 +211,7 @@ func isMissingCDPTabError(err error) bool {
 		return false
 	}
 	message := strings.ToLower(err.Error())
-	for _, fragment := range []string{"tab not found", "no such tab", "unknown tab", "does not exist", "not selectable"} {
+	for _, fragment := range []string{"tab not found", "no such tab", "no tab with label", "unknown tab", "does not exist", "not selectable"} {
 		if strings.Contains(message, fragment) {
 			return true
 		}

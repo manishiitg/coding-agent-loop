@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -29,6 +31,11 @@ var (
 type cdpOwnedTab struct {
 	Alias string
 	TabID string
+}
+
+type newCDPTabRequest struct {
+	Label string
+	URL   string
 }
 
 func sharedCDPSessionName(port int) string {
@@ -235,6 +242,17 @@ func ownedCDPTabsForOwner(port int, ownerID string) []cdpOwnedTab {
 	return tabs
 }
 
+func isCDPTabOwnedByOwner(port int, ownerID, alias, tabID string) bool {
+	alias = strings.TrimSpace(alias)
+	tabID = strings.TrimSpace(tabID)
+	for _, owned := range ownedCDPTabsForOwner(port, ownerID) {
+		if (alias != "" && owned.Alias == alias) || (tabID != "" && owned.TabID == tabID) {
+			return true
+		}
+	}
+	return false
+}
+
 // clearCDPTabStateForOwner removes selection, alias, active-tab, and ownership
 // state for one tab. The caller may identify the tab by either its workflow
 // label or the agent-browser tab ID returned when it was created.
@@ -346,16 +364,11 @@ func parseTabSelection(args []string) (tab string, clear bool, err error) {
 	case "list", "ls":
 		return "", false, nil
 	case "new":
-		for i := 1; i < len(args)-1; i++ {
-			if args[i] == "--label" {
-				label := strings.TrimSpace(args[i+1])
-				if label == "" {
-					return "", false, fmt.Errorf("CDP shared-browser tab creation requires a non-empty --label")
-				}
-				return label, false, nil
-			}
+		request, parseErr := parseNewCDPTabRequest(args)
+		if parseErr != nil {
+			return "", false, parseErr
 		}
-		return "", false, fmt.Errorf("CDP shared-browser tab creation requires --label <label> so later commands can target it")
+		return request.Label, false, nil
 	case "close":
 		if len(args) > 1 {
 			return strings.TrimSpace(args[1]), true, nil
@@ -367,6 +380,52 @@ func parseTabSelection(args []string) (tab string, clear bool, err error) {
 		}
 		return strings.TrimSpace(args[0]), false, nil
 	}
+}
+
+func parseNewCDPTabRequest(args []string) (newCDPTabRequest, error) {
+	if len(args) == 0 || args[0] != "new" {
+		return newCDPTabRequest{}, fmt.Errorf("tab creation must begin with new")
+	}
+	var request newCDPTabRequest
+	for i := 1; i < len(args); i++ {
+		arg := strings.TrimSpace(args[i])
+		switch {
+		case arg == "--label":
+			if i+1 >= len(args) {
+				return newCDPTabRequest{}, fmt.Errorf("CDP shared-browser tab creation requires a value after --label")
+			}
+			i++
+			request.Label = strings.TrimSpace(args[i])
+		case strings.HasPrefix(arg, "-"):
+			return newCDPTabRequest{}, fmt.Errorf("unsupported tab new option %q", arg)
+		case arg != "":
+			if request.URL != "" {
+				return newCDPTabRequest{}, fmt.Errorf("tab new accepts at most one URL")
+			}
+			request.URL = arg
+		}
+	}
+	if request.Label == "" {
+		return newCDPTabRequest{}, fmt.Errorf("CDP shared-browser tab creation requires --label <label> so later commands can target it")
+	}
+	if request.URL != "" {
+		parsed, err := url.Parse(request.URL)
+		if err != nil || strings.TrimSpace(parsed.Scheme) == "" {
+			return newCDPTabRequest{}, fmt.Errorf("tab new target %q must be an absolute URL with an explicit scheme such as https://", request.URL)
+		}
+		if (parsed.Scheme == "http" || parsed.Scheme == "https") && strings.TrimSpace(parsed.Host) == "" {
+			return newCDPTabRequest{}, fmt.Errorf("tab new target %q must include a host", request.URL)
+		}
+	}
+	return request, nil
+}
+
+func canonicalNewCDPTabArgs(request newCDPTabRequest) []string {
+	args := []string{"new", "--label", request.Label}
+	if request.URL != "" {
+		args = append(args, request.URL)
+	}
+	return args
 }
 
 func isTabListRequest(args []string) bool {
@@ -381,7 +440,7 @@ func selectedCDPTabMessage(port int, ownerID string) string {
 	if tab := getCDPTabSelectionForPrompt(port, ownerID); tab != "" {
 		return fmt.Sprintf("Selected CDP tab: %s\nUse the configured CDP endpoint and tab inline on page actions, for example: args=[\"--cdp\", %q, \"tab\", %q, \"-i\"] for snapshot.", tab, cdpURL, tab)
 	}
-	return fmt.Sprintf("No selected CDP tab for this workflow yet. Create a stable labeled tab instead of listing every browser tab, for example: agent_browser(command=\"tab\", args=[\"--cdp\", %q, \"new\", \"--label\", \"<workflow-label>\", \"https://target.example\"], session=\"<session>\"). Then use that label or returned tab id inline on page actions.", cdpURL)
+	return fmt.Sprintf("No selected CDP tab for this workflow yet. List tabs and reuse a relevant real tN id first. If none matches, request one stable labeled tab with agent_browser(command=\"tab\", args=[\"--cdp\", %q, \"new\", \"--label\", \"<workflow-label>\", \"https://target.example\"], session=\"<session>\"). The backend performs an exact-URL reuse check before creating and returns the real tN id; use that id inline on later page actions.", cdpURL)
 }
 
 func fallbackCDPTabListMessage(port int, ownerID string, err error) string {
@@ -394,7 +453,12 @@ func fallbackCDPTabListMessage(port int, ownerID string, err error) string {
 
 type cdpTabListOutput struct {
 	Data struct {
-		Tabs []cdpTabInfo `json:"tabs"`
+		Tabs   []cdpTabInfo `json:"tabs"`
+		Active bool         `json:"active"`
+		Label  string       `json:"label"`
+		TabID  string       `json:"tabId"`
+		Title  string       `json:"title"`
+		URL    string       `json:"url"`
 	} `json:"data"`
 }
 
@@ -427,6 +491,9 @@ func findCDPTabID(output, tab string) string {
 	if err := json.Unmarshal([]byte(output), &parsed); err != nil {
 		return ""
 	}
+	if strings.TrimSpace(parsed.Data.Label) == tab || strings.TrimSpace(parsed.Data.TabID) == tab {
+		return strings.TrimSpace(parsed.Data.TabID)
+	}
 	for _, candidate := range parsed.Data.Tabs {
 		if strings.TrimSpace(candidate.Label) == tab || strings.TrimSpace(candidate.TabID) == tab {
 			return strings.TrimSpace(candidate.TabID)
@@ -435,25 +502,182 @@ func findCDPTabID(output, tab string) string {
 	return ""
 }
 
+func parseCDPTabs(output string) ([]cdpTabInfo, error) {
+	var parsed cdpTabListOutput
+	if err := json.Unmarshal([]byte(strings.TrimSpace(output)), &parsed); err != nil {
+		return nil, err
+	}
+	tabs := append([]cdpTabInfo(nil), parsed.Data.Tabs...)
+	if directID := strings.TrimSpace(parsed.Data.TabID); directID != "" {
+		tabs = append(tabs, cdpTabInfo{
+			Active: parsed.Data.Active,
+			Label:  strings.TrimSpace(parsed.Data.Label),
+			TabID:  directID,
+			Title:  strings.TrimSpace(parsed.Data.Title),
+			URL:    strings.TrimSpace(parsed.Data.URL),
+		})
+	}
+	return tabs, nil
+}
+
+func normalizedCDPTabURL(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return ""
+	}
+	parsed, err := url.Parse(raw)
+	if err != nil {
+		return raw
+	}
+	parsed.Scheme = strings.ToLower(parsed.Scheme)
+	parsed.Host = strings.ToLower(parsed.Host)
+	parsed.Fragment = ""
+	if (parsed.Scheme == "http" || parsed.Scheme == "https") && parsed.Path == "" {
+		parsed.Path = "/"
+	}
+	return parsed.String()
+}
+
+func displayCDPTabURL(raw string) string {
+	normalized := normalizedCDPTabURL(raw)
+	parsed, err := url.Parse(normalized)
+	if err != nil {
+		return normalized
+	}
+	parsed.RawQuery = ""
+	parsed.ForceQuery = false
+	return parsed.String()
+}
+
+func urlsReferToSameCDPTab(left, right string) bool {
+	left = normalizedCDPTabURL(left)
+	right = normalizedCDPTabURL(right)
+	return left != "" && left == right
+}
+
+func findReusableCDPTab(tabs []cdpTabInfo, port int, ownerID string, request newCDPTabRequest) (tab cdpTabInfo, navigate bool, collision *cdpTabInfo, ok bool) {
+	for _, candidate := range tabs {
+		if strings.TrimSpace(candidate.Label) != request.Label {
+			continue
+		}
+		if urlsReferToSameCDPTab(candidate.URL, request.URL) || isCDPTabOwnedByOwner(port, ownerID, candidate.Label, candidate.TabID) {
+			return candidate, request.URL != "" && !urlsReferToSameCDPTab(candidate.URL, request.URL), nil, true
+		}
+		copy := candidate
+		collision = &copy
+	}
+	if request.URL != "" {
+		for _, candidate := range tabs {
+			if urlsReferToSameCDPTab(candidate.URL, request.URL) {
+				return candidate, false, collision, true
+			}
+		}
+	}
+	return cdpTabInfo{}, false, collision, false
+}
+
+func findCreatedCDPTab(output, label string) (cdpTabInfo, bool) {
+	tabs, err := parseCDPTabs(output)
+	if err != nil {
+		return cdpTabInfo{}, false
+	}
+	for _, tab := range tabs {
+		if strings.TrimSpace(tab.Label) == strings.TrimSpace(label) {
+			return tab, strings.TrimSpace(tab.TabID) != ""
+		}
+	}
+	if len(tabs) == 1 && strings.TrimSpace(tabs[0].TabID) != "" {
+		return tabs[0], true
+	}
+	return cdpTabInfo{}, false
+}
+
+func formatCDPTabIdentity(prefix string, tab cdpTabInfo) string {
+	parts := []string{strings.TrimSpace(prefix)}
+	if label := strings.TrimSpace(tab.Label); label != "" {
+		parts = append(parts, fmt.Sprintf("label=%q", label))
+	}
+	if tabID := strings.TrimSpace(tab.TabID); tabID != "" {
+		parts = append(parts, fmt.Sprintf("id=%s", tabID))
+	}
+	if tabURL := normalizedCDPTabURL(tab.URL); tabURL != "" {
+		parts = append(parts, fmt.Sprintf("url=%q", tabURL))
+	}
+	return strings.Join(parts, " ")
+}
+
+func (e *Executor) reuseCDPTabForNew(ctx context.Context, session, cdpURL string, opts *ExecuteOptions, port int, ownerID string, request newCDPTabRequest) (string, bool, error) {
+	output, err := e.listCDPTabs(ctx, session, cdpURL, executeOptionsWithTimeout(opts, cdpTabListTimeout))
+	if err != nil {
+		return "", false, fmt.Errorf("CDP_TAB_REUSE_CHECK_UNAVAILABLE: cannot safely create label %q for %q because the real tab list could not be refreshed: %w", request.Label, request.URL, err)
+	}
+	tabs, err := parseCDPTabs(output)
+	if err != nil {
+		return "", false, fmt.Errorf("CDP_TAB_REUSE_CHECK_INVALID: cannot safely create label %q because the real tab list response was invalid: %w", request.Label, err)
+	}
+	candidate, navigate, collision, ok := findReusableCDPTab(tabs, port, ownerID, request)
+	if !ok {
+		if collision != nil {
+			return "", false, fmt.Errorf("CDP_TAB_LABEL_CONFLICT: label %q already belongs to tab %s at %q. Select that tab explicitly, or choose a different workflow label; the backend will not create a duplicate label or silently navigate a pre-existing user tab", request.Label, collision.TabID, normalizedCDPTabURL(collision.URL))
+		}
+		return "", false, nil
+	}
+
+	tabID := strings.TrimSpace(candidate.TabID)
+	if tabID == "" {
+		return "", false, nil
+	}
+	selectedOutput, err := e.selectCDPTab(ctx, session, tabID, cdpURL, opts)
+	if err != nil {
+		return "", false, fmt.Errorf("reuse existing CDP tab %s: %w", tabID, err)
+	}
+	if resolved := findCDPTabID(selectedOutput, tabID); resolved != "" {
+		tabID = resolved
+	}
+	candidate.TabID = tabID
+
+	if navigate {
+		openOutput, openErr := e.Client.ExecuteCommand(ctx, []string{
+			"--session", session,
+			"open", request.URL,
+			"--cdp", cdpURL,
+			"--json",
+		}, opts)
+		if openErr != nil {
+			return "", false, fmt.Errorf("navigate reused workflow-owned CDP tab %s to %q: %w", tabID, request.URL, openErr)
+		}
+		candidate.URL = request.URL
+		if opened, found := findCreatedCDPTab(openOutput, ""); found && opened.URL != "" {
+			candidate.URL = opened.URL
+		}
+	}
+
+	setCDPTabAlias(port, ownerID, request.Label, tabID)
+	setCDPTabSelection(port, ownerID, tabID)
+	setCDPActiveTab(port, tabID)
+	log.Printf("[BROWSER] CDP: reused tab label=%q id=%q url=%q owner=%q port=%d", request.Label, tabID, candidate.URL, ownerID, port)
+	return formatCDPTabIdentity("Reused existing CDP tab", candidate) + "\n" + selectedCDPTabMessage(port, ownerID), true, nil
+}
+
 func formatCDPTabListForPrompt(output string) string {
 	raw := strings.TrimSpace(output)
 	if raw == "" {
 		return "(no tabs returned)"
 	}
 
-	var parsed cdpTabListOutput
-	if err := json.Unmarshal([]byte(raw), &parsed); err != nil {
+	tabs, err := parseCDPTabs(raw)
+	if err != nil {
 		return truncatePromptField(raw, 2000)
 	}
-	if len(parsed.Data.Tabs) == 0 {
+	if len(tabs) == 0 {
 		return "(no tabs found)"
 	}
 
 	const maxTabs = 20
-	lines := make([]string, 0, min(len(parsed.Data.Tabs), maxTabs)+1)
-	for i, tab := range parsed.Data.Tabs {
+	lines := make([]string, 0, min(len(tabs), maxTabs)+1)
+	for i, tab := range tabs {
 		if i >= maxTabs {
-			lines = append(lines, fmt.Sprintf("... %d more tab(s) omitted", len(parsed.Data.Tabs)-maxTabs))
+			lines = append(lines, fmt.Sprintf("... %d more tab(s) omitted", len(tabs)-maxTabs))
 			break
 		}
 
@@ -473,6 +697,9 @@ func formatCDPTabListForPrompt(output string) string {
 		}
 		if title := truncatePromptField(oneLine(tab.Title), 90); title != "" {
 			line += fmt.Sprintf(" title=%q", title)
+		}
+		if tabURL := truncatePromptField(oneLine(displayCDPTabURL(tab.URL)), 180); tabURL != "" {
+			line += fmt.Sprintf(" url=%q", tabURL)
 		}
 		lines = append(lines, line)
 	}

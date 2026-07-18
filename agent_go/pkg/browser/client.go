@@ -67,6 +67,8 @@ type ExecuteOptions struct {
 	Timeout          time.Duration
 	FolderGuard      *FolderGuardConfig
 	WorkingDirectory string // Working directory for command execution (relative to workspace root)
+	ArtifactTransfer *ArtifactTransfer
+	UploadTransfers  []UploadTransfer
 }
 
 // ExecuteCommand executes an agent-browser command via the workspace API
@@ -75,9 +77,6 @@ func (c *Client) ExecuteCommand(ctx context.Context, args []string, opts *Execut
 	if opts != nil && opts.Timeout > 0 {
 		timeout = opts.Timeout
 	}
-
-	ctx, cancel := context.WithTimeout(ctx, timeout)
-	defer cancel()
 
 	// Build the shell command: agent-browser [args...] with proper quoting
 	quotedArgs := make([]string, len(args))
@@ -93,6 +92,16 @@ func (c *Client) ExecuteCommand(ctx context.Context, args []string, opts *Execut
 		fullCommand = `HOST_IP=$(getent hosts host.docker.internal 2>/dev/null | awk '{print $1; exit}'); if [ -z "$HOST_IP" ]; then HOST_IP=localhost; fi; ` +
 			strings.ReplaceAll(fullCommand, "host.docker.internal", "${HOST_IP}")
 	}
+	return c.executeWorkspaceCommand(ctx, fullCommand, timeout, opts)
+}
+
+// executeWorkspaceCommand invokes the workspace shell endpoint. Browser
+// commands normally arrive through ExecuteCommand; transfer-only requests use
+// a plain no-op command so a completed recording can be finalized without
+// accidentally invoking a fictitious `agent-browser true` subcommand.
+func (c *Client) executeWorkspaceCommand(ctx context.Context, fullCommand string, timeout time.Duration, opts *ExecuteOptions) (string, error) {
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
 
 	// Prepare request body
 	workingDir := "."
@@ -107,6 +116,12 @@ func (c *Client) ExecuteCommand(ctx context.Context, args []string, opts *Execut
 
 	if opts != nil && opts.FolderGuard != nil {
 		reqBody.FolderGuard = opts.FolderGuard
+	}
+	if opts != nil && opts.ArtifactTransfer != nil {
+		reqBody.ArtifactTransfer = opts.ArtifactTransfer
+	}
+	if opts != nil && len(opts.UploadTransfers) > 0 {
+		reqBody.UploadTransfers = append([]UploadTransfer(nil), opts.UploadTransfers...)
 	}
 
 	jsonBody, err := json.Marshal(reqBody)
@@ -149,18 +164,26 @@ func (c *Client) ExecuteCommand(ctx context.Context, args []string, opts *Execut
 		if apiResp.Error != "" {
 			errMsg = apiResp.Error
 		}
-		// Include stderr if available
-		if apiResp.Data.Stderr != "" {
-			return "", fmt.Errorf("command failed: %s\nStderr: %s", errMsg, apiResp.Data.Stderr)
+		stderr := strings.TrimSpace(cleanBrowserShellStderr(apiResp.Data.Stderr))
+		stdout := strings.TrimSpace(apiResp.Data.Stdout)
+		if stdout != "" {
+			errMsg += "\nOutput: " + stdout
+		}
+		if stderr != "" {
+			errMsg += "\nStderr: " + stderr
 		}
 		return "", fmt.Errorf("command failed: %s", errMsg)
 	}
 
 	// Check exit code
 	if apiResp.Data.ExitCode != 0 {
-		output := apiResp.Data.Stdout
-		if apiResp.Data.Stderr != "" {
-			output = apiResp.Data.Stderr
+		stdout := strings.TrimSpace(apiResp.Data.Stdout)
+		stderr := strings.TrimSpace(cleanBrowserShellStderr(apiResp.Data.Stderr))
+		output := stdout
+		if output == "" {
+			output = stderr
+		} else if stderr != "" {
+			output += "\nStderr: " + stderr
 		}
 		return "", fmt.Errorf("command exited with code %d: %s", apiResp.Data.ExitCode, strings.TrimSpace(output))
 	}
@@ -169,10 +192,46 @@ func (c *Client) ExecuteCommand(ctx context.Context, args []string, opts *Execut
 	return apiResp.Data.Stdout, nil
 }
 
+// FinalizeArtifact performs only the trusted workspace-side transfer. It is
+// used when an artifact spans commands, such as record start -> record stop.
+func (c *Client) FinalizeArtifact(ctx context.Context, transfer *ArtifactTransfer, opts *ExecuteOptions) error {
+	if transfer == nil {
+		return fmt.Errorf("artifact transfer is required")
+	}
+	cloned := &ExecuteOptions{}
+	if opts != nil {
+		*cloned = *opts
+	}
+	finalized := *transfer
+	finalized.Finalize = true
+	cloned.ArtifactTransfer = &finalized
+	timeout := 60 * time.Second
+	if cloned.Timeout > 0 {
+		timeout = cloned.Timeout
+	}
+	_, err := c.executeWorkspaceCommand(ctx, "true", timeout, cloned)
+	return err
+}
+
+func cleanBrowserShellStderr(stderr string) string {
+	lines := strings.Split(stderr, "\n")
+	kept := lines[:0]
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if strings.Contains(trimmed, "getcwd: cannot access parent directories: Operation not permitted") {
+			continue
+		}
+		if trimmed != "" {
+			kept = append(kept, line)
+		}
+	}
+	return strings.Join(kept, "\n")
+}
+
 // quoteShellArg quotes a shell argument if it contains special characters
 func quoteShellArg(arg string) string {
 	// If arg contains spaces, parentheses, or other special shell chars, quote it
-	if strings.ContainsAny(arg, " \t\n()[]{}|&;'\"<>*?!`$") {
+	if strings.ContainsAny(arg, " \t\n()[]{}|&;'\"<>*?!`$#\\~") {
 		// Use single quotes and escape any single quotes within
 		// Replace ' with '"'"' (which is ' then " then ' then " then ')
 		escaped := strings.ReplaceAll(arg, "\x27", "\x27\x22\x27\x22\x27")

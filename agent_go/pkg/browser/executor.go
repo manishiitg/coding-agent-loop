@@ -536,17 +536,14 @@ func (e *Executor) HandleAgentBrowser(ctx context.Context, args map[string]inter
 		}
 	}
 	commandArgs = normalizeAgentBrowserCommandArgs(command, commandArgs)
-
-	for _, argStr := range commandArgs {
-		cmdArgs = append(cmdArgs, argStr)
+	if command == "tab" && len(commandArgs) > 0 && commandArgs[0] == "new" {
+		newTabRequest, newTabErr := parseNewCDPTabRequest(commandArgs)
+		if newTabErr != nil {
+			return "", newTabErr
+		}
+		commandArgs = canonicalNewCDPTabArgs(newTabRequest)
+		tabArgs = commandArgs
 	}
-	if isCdpMode {
-		cmdArgs = append(cmdArgs, "--cdp", cdpURL)
-		log.Printf("[BROWSER] CDP: using %s", cdpURL)
-	}
-
-	// Always add --json for machine-readable output
-	cmdArgs = append(cmdArgs, "--json")
 
 	// Determine timeout
 	timeout := getTimeoutForCommand(command)
@@ -627,6 +624,55 @@ func (e *Executor) HandleAgentBrowser(ctx context.Context, args map[string]inter
 		WorkingDirectory: workingDir,
 	}
 
+	// A persistent agent-browser daemon can outlive the sandbox that launched
+	// it. Broker named outputs through managed staging, and broker upload inputs
+	// into a temporary path the persistent daemon can read. workspace-api checks
+	// both directions against this request's current FolderGuard.
+	// Unguarded local calls keep their existing direct-path behavior.
+	var artifactPlan *browserArtifactPlan
+	var uploadPlan *browserUploadPlan
+	commandOpts := opts
+	if folderGuard != nil && folderGuard.Enabled {
+		artifactOwner := cdpOwnerID(workflowSessionID, agentSessionID, session)
+		cloned := *opts
+		optionsChanged := false
+		var artifactErr error
+		artifactPlan, artifactErr = prepareBrowserArtifact(command, commandArgs, artifactOwner, session)
+		if artifactErr != nil {
+			return "", artifactErr
+		}
+		if artifactPlan != nil {
+			commandArgs = artifactPlan.RewrittenArgs
+			cloned.ArtifactTransfer = artifactPlan.Transfer
+			optionsChanged = true
+		}
+		var uploadErr error
+		uploadPlan, uploadErr = prepareBrowserUploads(command, commandArgs)
+		if uploadErr != nil {
+			return "", uploadErr
+		}
+		if uploadPlan != nil {
+			commandArgs = uploadPlan.RewrittenArgs
+			cloned.UploadTransfers = append([]UploadTransfer(nil), uploadPlan.Transfers...)
+			optionsChanged = true
+			defer cleanupBrowserUploadPlan(uploadPlan)
+		}
+		if optionsChanged {
+			commandOpts = &cloned
+		}
+	}
+
+	for _, argStr := range commandArgs {
+		cmdArgs = append(cmdArgs, argStr)
+	}
+	if isCdpMode {
+		cmdArgs = append(cmdArgs, "--cdp", cdpURL)
+		log.Printf("[BROWSER] CDP: using %s", cdpURL)
+	}
+
+	// Always add --json for machine-readable output
+	cmdArgs = append(cmdArgs, "--json")
+
 	cdpOwner := ""
 	if isCdpMode && !isBrowserDocumentationCommand(command) {
 		cdpOwner = cdpOwnerID(workflowSessionID, agentSessionID, session)
@@ -655,6 +701,15 @@ func (e *Executor) HandleAgentBrowser(ctx context.Context, args map[string]inter
 				return "", err
 			}
 			if len(tabArgs) > 0 && tabArgs[0] == "new" {
+				newTabRequest, parseErr := parseNewCDPTabRequest(tabArgs)
+				if parseErr != nil {
+					return "", parseErr
+				}
+				if reusedOutput, reused, reuseErr := e.reuseCDPTabForNew(ctx, session, cdpURL, opts, cdpPort, cdpOwner, newTabRequest); reuseErr != nil {
+					return "", reuseErr
+				} else if reused {
+					return reusedOutput, nil
+				}
 				if err := guardCDPTabCreation(cdpPort, cdpOwner); err != nil {
 					return "", err
 				}
@@ -673,16 +728,12 @@ func (e *Executor) HandleAgentBrowser(ctx context.Context, args map[string]inter
 				}
 				return "", missingCDPPageActionTabError(cdpPort, command, commandArgs, selectedCDPTabMessage(cdpPort, cdpOwner))
 			}
-			if isCDPTabActive(cdpPort, cdpOwner, tabForCommand) {
-				log.Printf("[BROWSER] CDP: tab %q already active before %q; skipping select", tabForCommand, command)
-			} else {
-				selectedTab, err := e.selectCDPTabForCommand(ctx, session, cdpURL, opts, cdpPort, cdpOwner, tabForCommand, command)
-				if err != nil {
-					return "", err
-				}
-				setCDPActiveTab(cdpPort, selectedTab)
-				log.Printf("[BROWSER] CDP: selected tab %q before %q", selectedTab, command)
+			selectedTab, err := e.selectCDPTabForCommand(ctx, session, cdpURL, opts, cdpPort, cdpOwner, tabForCommand, command)
+			if err != nil {
+				return "", err
 			}
+			setCDPActiveTab(cdpPort, selectedTab)
+			log.Printf("[BROWSER] CDP: explicitly selected tab %q before %q", selectedTab, command)
 		}
 	}
 
@@ -722,7 +773,7 @@ func (e *Executor) HandleAgentBrowser(ctx context.Context, args map[string]inter
 		return `{"success":true,"message":"session reset — ready for fresh open"}`, nil
 	}
 
-	output, err := e.Client.ExecuteCommand(ctx, cmdArgs, opts)
+	output, err := e.Client.ExecuteCommand(ctx, cmdArgs, commandOpts)
 
 	// After a successful open/navigate, record Chrome's PID so killSessionRuntime can
 	// kill it reliably even if Chrome has been reparented (daemon auto-relaunch race).
@@ -779,22 +830,18 @@ func (e *Executor) HandleAgentBrowser(ctx context.Context, args map[string]inter
 					tabForRetry = getCDPTabSelection(cdpPort, cdpOwner)
 				}
 				if tabForRetry != "" {
-					if getCDPActiveTab(cdpPort) == tabForRetry {
-						log.Printf("[BROWSER] CDP: tab %q already active before retrying %q; skipping select", tabForRetry, command)
-					} else {
-						selectedTab, selectErr := e.selectCDPTabForCommand(ctx, session, cdpURL, opts, cdpPort, cdpOwner, tabForRetry, command)
-						if selectErr != nil {
-							if exclusiveFeatureClaimed {
-								releaseCDPExclusiveFeature(cdpPort, cdpOwner, exclusiveFeature)
-							}
-							return "", selectErr
+					selectedTab, selectErr := e.selectCDPTabForCommand(ctx, session, cdpURL, opts, cdpPort, cdpOwner, tabForRetry, command)
+					if selectErr != nil {
+						if exclusiveFeatureClaimed {
+							releaseCDPExclusiveFeature(cdpPort, cdpOwner, exclusiveFeature)
 						}
-						setCDPActiveTab(cdpPort, selectedTab)
-						log.Printf("[BROWSER] CDP: re-selected tab %q before retrying %q", selectedTab, command)
+						return "", selectErr
 					}
+					setCDPActiveTab(cdpPort, selectedTab)
+					log.Printf("[BROWSER] CDP: re-selected tab %q before retrying %q", selectedTab, command)
 				}
 			}
-			output, err = e.Client.ExecuteCommand(ctx, cmdArgs, opts)
+			output, err = e.Client.ExecuteCommand(ctx, cmdArgs, commandOpts)
 			// On successful retry, record Chrome PID for the fresh session.
 			if err == nil && isOpenCommand {
 				captureChromePID(session)
@@ -814,7 +861,7 @@ func (e *Executor) HandleAgentBrowser(ctx context.Context, args map[string]inter
 			}
 		}
 		time.Sleep(500 * time.Millisecond)
-		output, err = e.Client.ExecuteCommand(ctx, cmdArgs, opts)
+		output, err = e.Client.ExecuteCommand(ctx, cmdArgs, commandOpts)
 	} else if err != nil && isCdpMode && isCommandTimeoutError(err) {
 		log.Printf("[BROWSER] CDP command %q timed out for session %q (%v); not retrying a potentially side-effecting or non-idempotent operation", command, session, err)
 		err = fmt.Errorf("CDP_COMMAND_OUTCOME_UNKNOWN: %q timed out and was not automatically retried because it may have changed browser or application state. Inspect the current tab with snapshot/get before deciding whether to retry: %w", command, err)
@@ -830,7 +877,7 @@ func (e *Executor) HandleAgentBrowser(ctx context.Context, args map[string]inter
 			log.Printf("[BROWSER] Retrying startup without resetting shared CDP runtime: %v", recoveryErr)
 		}
 		time.Sleep(500 * time.Millisecond)
-		output, err = e.Client.ExecuteCommand(ctx, cmdArgs, opts)
+		output, err = e.Client.ExecuteCommand(ctx, cmdArgs, commandOpts)
 	}
 
 	// If the final error is a dead session on an open command, remove it from the
@@ -842,6 +889,9 @@ func (e *Executor) HandleAgentBrowser(ctx context.Context, args map[string]inter
 	}
 
 	if err != nil {
+		if artifactPlan != nil && artifactPlan.CleanupOnError && artifactPlan.StagedPath != "" {
+			_ = os.Remove(artifactPlan.StagedPath)
+		}
 		if exclusiveFeatureClaimed && !isCommandTimeoutError(err) {
 			releaseCDPExclusiveFeature(cdpPort, cdpOwner, exclusiveFeature)
 		}
@@ -851,27 +901,65 @@ func (e *Executor) HandleAgentBrowser(ctx context.Context, args map[string]inter
 		return "", err
 	}
 
+	if artifactPlan != nil {
+		if artifactPlan.StoreLeaseOnSuccess {
+			if previous, ok := getBrowserArtifactLease(artifactPlan.LeaseKey); ok && previous.Transfer != nil && previous.Transfer.SourcePath != artifactPlan.StagedPath {
+				_ = os.Remove(previous.Transfer.SourcePath)
+			}
+			setBrowserArtifactLease(artifactPlan.LeaseKey, browserArtifactLease{
+				Transfer:      artifactPlan.Transfer,
+				RequestedPath: artifactPlan.RequestedPath,
+			})
+		}
+		if artifactPlan.DeleteLeaseOnSuccess {
+			deleteBrowserArtifactLease(artifactPlan.LeaseKey)
+		}
+		output = rewriteBrowserArtifactOutput(output, artifactPlan)
+	}
+
 	if isCdpMode && command == "tab" {
 		if tab, clear, parseErr := parseTabSelection(tabArgs); parseErr == nil {
 			if clear {
 				clearCDPTabStateForOwner(cdpPort, cdpOwner, tab)
 				log.Printf("[BROWSER] CDP: cleared tab %q for owner=%q port=%d", tab, cdpOwner, cdpPort)
 			} else if tab != "" {
-				setCDPTabSelection(cdpPort, cdpOwner, tab)
 				activeTab := tab
 				if tabID := findCDPTabID(output, tab); tabID != "" {
 					setCDPTabAlias(cdpPort, cdpOwner, tab, tabID)
 					activeTab = tabID
 				}
+				if len(tabArgs) > 0 && tabArgs[0] == "new" && !isCDPTabID(activeTab) {
+					if refreshed, refreshErr := e.listCDPTabs(ctx, session, cdpURL, executeOptionsWithTimeout(opts, cdpTabListTimeout)); refreshErr == nil {
+						if tabID := findCDPTabID(refreshed, tab); tabID != "" {
+							setCDPTabAlias(cdpPort, cdpOwner, tab, tabID)
+							activeTab = tabID
+						}
+					}
+				}
+				setCDPTabSelection(cdpPort, cdpOwner, activeTab)
 				if len(tabArgs) > 0 && tabArgs[0] == "new" {
-					markCDPTabOwned(cdpPort, cdpOwner, tab, activeTab)
-					log.Printf("[BROWSER] CDP: registered workflow-created tab %q (%s) for delayed cleanup owner=%q port=%d", tab, activeTab, cdpOwner, cdpPort)
+					if isCDPTabID(activeTab) {
+						markCDPTabOwned(cdpPort, cdpOwner, tab, activeTab)
+						log.Printf("[BROWSER] CDP: registered workflow-created tab %q (%s) for delayed cleanup owner=%q port=%d", tab, activeTab, cdpOwner, cdpPort)
+					} else {
+						log.Printf("[BROWSER] CDP: tab %q was created but its real tN id could not be resolved; skipping ownership registration", tab)
+					}
 				}
 				setCDPActiveTab(cdpPort, activeTab)
 				log.Printf("[BROWSER] CDP: selected tab %q for owner=%q port=%d", activeTab, cdpOwner, cdpPort)
 			}
 		}
-		return selectedCDPTabMessage(cdpPort, cdpOwner), nil
+		message := selectedCDPTabMessage(cdpPort, cdpOwner)
+		if len(tabArgs) > 0 && tabArgs[0] == "new" {
+			if request, requestErr := parseNewCDPTabRequest(tabArgs); requestErr == nil {
+				if created, found := findCreatedCDPTab(output, request.Label); found {
+					message = formatCDPTabIdentity("Created CDP tab", created) + "\n" + message
+				} else {
+					message = fmt.Sprintf("Created CDP tab label=%q, but agent-browser did not return its real tab id; refusing to treat the label as a durable tab identity.\n%s", request.Label, message)
+				}
+			}
+		}
+		return message, nil
 	}
 	if isCdpMode && exclusiveFeature != "" && exclusiveAction == "stop" {
 		releaseCDPExclusiveFeature(cdpPort, cdpOwner, exclusiveFeature)
@@ -966,28 +1054,19 @@ func (e *Executor) selectCDPTab(ctx context.Context, session, tab, cdpURL string
 }
 
 func (e *Executor) selectCDPTabForCommand(ctx context.Context, session, cdpURL string, opts *ExecuteOptions, port int, ownerID, tab, command string) (string, error) {
+	requestedTab := tab
+	if aliasTabID := getCDPTabAlias(port, ownerID, tab); aliasTabID != "" {
+		tab = aliasTabID
+	}
 	output, err := e.selectCDPTab(ctx, session, tab, cdpURL, opts)
 	if err == nil {
 		if tabID := findCDPTabID(output, tab); tabID != "" {
-			setCDPTabAlias(port, ownerID, tab, tabID)
+			setCDPTabAlias(port, ownerID, requestedTab, tabID)
 			return tabID, nil
 		}
 		return tab, nil
 	}
-
-	if aliasTabID := getCDPTabAlias(port, ownerID, tab); aliasTabID != "" {
-		aliasOutput, aliasErr := e.selectCDPTab(ctx, session, aliasTabID, cdpURL, opts)
-		if aliasErr == nil {
-			if tabID := findCDPTabID(aliasOutput, aliasTabID); tabID != "" {
-				aliasTabID = tabID
-			}
-			log.Printf("[BROWSER] CDP: selected remembered tab id %q for missing label %q before %q", aliasTabID, tab, command)
-			return aliasTabID, nil
-		}
-		err = fmt.Errorf("%w; remembered tab id %q for label %q also failed: %w", err, aliasTabID, tab, aliasErr)
-	}
-
-	return "", e.cdpTabSelectionError(ctx, session, cdpURL, opts, port, tab, command, err)
+	return "", e.cdpTabSelectionError(ctx, session, cdpURL, opts, port, requestedTab, command, err)
 }
 
 func (e *Executor) cdpTabSelectionError(ctx context.Context, session, cdpURL string, opts *ExecuteOptions, port int, tab, command string, selectErr error) error {

@@ -160,7 +160,7 @@ browser("screenshot", ["tab", "t1", "proof.png"])
 
 If a command says shared-browser mode requires selecting or creating a tab, do not treat CDP as unavailable. Select or create a tab, then retry.
 
-Do not call ` + "`close`" + ` in CDP mode unless the user explicitly asks. It can close the user's real tab.
+Never call the top-level ` + "`close`" + ` command in CDP mode; it can disrupt the user's real Chrome session. At normal workflow completion, leave workflow-created labeled tabs open for review. Builder automatically closes only those registered workflow-owned tabs one hour after the final run releases its browser lease; pre-existing user tabs are never part of that cleanup. Use ` + "`browser(\"tab\", [\"close\", \"<owned-label>\"])`" + ` only when the user explicitly requests immediate cleanup or the workflow must replace one of its own labeled tabs. Never close a pre-existing user tab.
 
 ## QA Evidence and Network Debugging
 

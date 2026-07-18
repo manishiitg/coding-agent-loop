@@ -115,7 +115,10 @@ func TestLoadAttachableLoadsAgentBrowserSkill(t *testing.T) {
 	}
 	if got[0].Name != "agent-browser" ||
 		!strings.Contains(got[0].Content, "CDP Shared Chrome Rules") ||
-		!strings.Contains(got[0].Content, "bash -s -- --port 9333") {
+		!strings.Contains(got[0].Content, "bash -s -- --port 9333") ||
+		!strings.Contains(got[0].Content, "one hour after the final run") ||
+		!strings.Contains(got[0].Content, `browser("tab", ["close", "<owned-label>"])`) ||
+		!strings.Contains(got[0].Content, "Never close a pre-existing user tab") {
 		t.Errorf("unexpected loaded skill: %+v", got[0])
 	}
 }

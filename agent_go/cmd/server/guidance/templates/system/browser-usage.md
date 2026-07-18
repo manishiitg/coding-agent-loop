@@ -96,7 +96,9 @@ For exhaustive command docs call `browser("skills", ["get", "core", "--full"])`.
   a known tab and respects the shared CDP lock.
 - Call `browser("tab", [])` to list real tabs; if no tab is selected yet:
   `browser("tab", ["new", "--label", "<workflow-label>", "https://target"])`.
-- **Do NOT call `close`** unless the user asks — it kills the user's tab.
+- Never call the top-level `close` command in CDP mode; it can disrupt the user's real Chrome session.
+- At normal workflow completion, leave workflow-created labeled tabs open for review. The backend automatically closes only those owned tabs one hour after the final run releases its browser lease; it never includes pre-existing user tabs.
+- Use `browser("tab", ["close", "<owned-label>"])` only when the user explicitly requests immediate cleanup or the workflow must replace one of its own labeled tabs. Never close a pre-existing user tab.
 - Avoid actions that bring Chrome to the foreground while the user is typing
   (navigation, tab switching, large screenshots). For unattended schedules,
   prefer headless mode.
@@ -169,7 +171,7 @@ upload that path.
 ## Common mistakes
 
 - Calling `open` with `["tab", "t1", url]` in CDP — `open` is URL-only.
-- Closing the CDP browser at the end of a task — kills the user's tab.
+- Calling top-level `close` in CDP mode, or manually closing a pre-existing user tab. Workflow-created labeled tabs are cleaned up automatically after the one-hour review window.
 - Forgetting to re-snapshot after every interaction in headless/CDP — refs
   go stale.
 - Connecting directly to CDP WebSocket for click/fill/navigate — bypasses

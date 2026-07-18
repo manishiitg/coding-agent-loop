@@ -13,7 +13,14 @@ func TestBuildBrowserInstructionsListsAuthorizedCDPProfiles(t *testing.T) {
 		CdpPort:         9222,
 		CdpPorts:        []int{9222, 9333},
 	})
-	for _, want := range []string{"http://localhost:9222", "http://localhost:9333", "multi-login testing"} {
+	for _, want := range []string{
+		"http://localhost:9222",
+		"http://localhost:9333",
+		"multi-login testing",
+		"one hour after the final run",
+		`browser("tab", ["close", "<owned-label>"])`,
+		"Never close a pre-existing user tab",
+	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("browser instructions missing %q", want)
 		}

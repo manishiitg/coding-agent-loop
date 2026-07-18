@@ -52,10 +52,11 @@ func BuildBrowserInstructions(cfg BrowserConfig) string {
 	// Add session limits — applies to all browser types
 	closeRule := "- Always **close the browser** when done (agent_browser command=\"close\") to free the session slot."
 	if isCdp {
-		// CDP connects to user's real browser — closing would kill their tab
-		closeRule = "- **Do NOT close the browser** when done — it is the user's real browser. Only close if the user explicitly asks."
+		// CDP connects to the user's real browser. Workflow-owned labeled tabs
+		// are retained for review and closed by the backend after one hour.
+		closeRule = "- Never call top-level **close** in CDP mode. Leave workflow-created labeled tabs open at normal completion; the backend closes only those owned tabs after one hour and preserves pre-existing user tabs."
 	} else if cfg.Mode == "auto" {
-		closeRule = "- Follow live status: in CDP mode do NOT close the user's browser; in headless mode close the session when done."
+		closeRule = "- Follow live status: in CDP mode never call top-level close and let the backend clean up workflow-owned tabs after one hour; in headless mode close the session when done."
 	}
 	result += fmt.Sprintf("\n\n## Browser Session Limits\n"+
 		"- **Per agent:** max %d concurrent browser session(s). Do NOT open multiple browsers — use one at a time.\n"+
@@ -137,7 +138,9 @@ You are controlling the **user's real Chrome browser** via Chrome DevTools Proto
 **Key behaviors:**
 - The user can **see everything you do** in their browser ��� actions are visible in real-time
 - The browser may have **existing cookies, login sessions, and tabs** — you can leverage authenticated sessions without re-logging in
-- **Do NOT call close** unless the user asks — it will close their browser tab
+- Never call the top-level `+"`close`"+` command in CDP mode; it can disrupt the user's real Chrome session
+- Leave workflow-created labeled tabs open at normal completion. The backend closes only those owned tabs after one hour and preserves pre-existing user tabs
+- Use `+"`tab close <owned-label>`"+` only for explicit immediate cleanup or to replace one of the workflow's own labeled tabs; never close a pre-existing user tab
 - **Take screenshots** to show the user what you see, since they can also verify visually
 - Sessions **persist across tool calls** — you don't need to re-open pages between interactions
 - If a site requires login and the user is already logged in, just navigate directly to the target page
@@ -235,7 +238,9 @@ Before the first browser action, load the core skill with `+"`browser(\"skills\"
 - If no tab is selected, create one new tab with a stable label: `+"`browser(\"tab\", [\"new\", \"--label\", \"<workflow-label>\", \"https://target.example\"])`"+`
 - If a command fails with `+"`CDP shared-browser mode requires selecting or creating a tab`"+`, do not treat that as CDP unavailable and do not call reset. Select a known tab or create a labeled tab, then retry the URL-only open.
 - Do not create throwaway tabs for routine navigation. Keep a workflow's labeled tab open and navigate within it across steps/runs.
-- **Do NOT call close** unless the user asks — it will close their browser tab
+- Never call the top-level `+"`close`"+` command in CDP mode; it can disrupt the user's real Chrome session
+- At normal completion, leave workflow-created labeled tabs open for review. The backend automatically closes only those owned tabs one hour after the final run releases its browser lease; pre-existing user tabs are preserved
+- Use `+"`browser(\"tab\", [\"close\", \"<owned-label>\"])`"+` only when the user explicitly requests immediate cleanup or the workflow must replace one of its own labeled tabs. Never close a pre-existing user tab
 - Sessions **persist across tool calls** — you don't need to re-open pages between interactions
 - If a site requires login and the user is already logged in, navigate directly to the target page
 - Native Chrome downloads may land in the host Downloads folder. If the prompt grants a read-only host Downloads path, copy the needed file into the workspace/run Downloads folder before reading or parsing it. Never write, move, or delete files in host Downloads.

@@ -1662,23 +1662,10 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 			// This ensures learning is only discovered once, even if validation fails and we retry
 			// Always reads fresh learnings (no caching)
 			var formattedLearningHistory string
-			var learningFilePaths string // File paths for user message when KeepLearningFull is false
-
-			// Determine KeepLearningFull flag
-			// Dynamic logic only: switch based on successful runs in metadata
 			agentConfigs := getAgentConfigs(step)
-			var keepLearningFull bool
-			var keepLearningFullSource string
 
 			learningPathIdentifier := step.GetID()
 			currentDescriptionHash := hashStepDescription(step.GetDescription())
-
-			// Always use paths-only mode — full learning content is too expensive for context.
-			// The agent can read learning files if needed.
-			keepLearningFull = false
-			keepLearningFullSource = "always-false (paths only)"
-
-			hcpo.GetLogger().Info(fmt.Sprintf("🧠 KeepLearningFull decision: %v (Source: %s)", keepLearningFull, keepLearningFullSource))
 
 			// Learnings READ gate — controlled by learnings_access.
 			// Default is "read": every step sees _global/SKILL.md in its prompt.
@@ -1686,36 +1673,12 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 			// Contribution (write) is a separate gate further below.
 			if !canReadLearnings(agentConfigs, step, hcpo.isEvaluationMode) {
 				formattedLearningHistory = ""
-				learningFilePaths = ""
 				hcpo.GetLogger().Info(fmt.Sprintf("⏭️ Learnings read disabled for step %d (learnings_access=%s) - skipping _global/ injection", stepIndex+1, resolveLearningsAccess(agentConfigs)))
 			} else {
 				// Learning is enabled - read from global learning skill
 				formattedLearningHistory, err = hcpo.readGlobalLearningHistory(ctx)
 				if err != nil {
 					return "", updatedContextFiles, fmt.Errorf("failed to read learning history for step %d: %w", stepIndex+1, err)
-				}
-
-				// Get learning file paths for user message (when KeepLearningFull is false)
-				if !keepLearningFull {
-					// Generate file paths list for user message
-					// getLearningFolderPathByStepID now returns RELATIVE path - workspace functions auto-prepend workspacePath
-					stepLearningsPath := getLearningFolderPathByStepID("", step.GetID(), stepPath, execCtx.IsEvaluationMode)
-					learningFiles, readErr := hcpo.readStepLearningFiles(ctx, stepLearningsPath)
-					if readErr == nil && len(learningFiles) > 0 {
-						// Build list of file paths
-						var paths []string
-						for filename := range learningFiles {
-							// Construct full path relative to workspace
-							filePath := fmt.Sprintf("%s/%s", stepLearningsPath, filename)
-							paths = append(paths, filePath)
-						}
-						// Format as bullet list
-						if len(paths) > 0 {
-							learningFilePaths = strings.Join(paths, "\n- ")
-							learningFilePaths = "- " + learningFilePaths
-							hcpo.GetLogger().Info(fmt.Sprintf("📁 Generated %d learning file path(s) for user message", len(paths)))
-						}
-					}
 				}
 			}
 
@@ -1794,9 +1757,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 				templateVars["LearningHistory"] = stepLearningHistory
 				// Set HasLearnings flag to explicitly indicate whether learnings exist (prevents agent from searching)
 				templateVars["HasLearnings"] = fmt.Sprintf("%t", stepLearningHistory != "")
-
-				templateVars["KeepLearningFull"] = fmt.Sprintf("%t", keepLearningFull)
-				templateVars["LearningFilePaths"] = learningFilePaths // Set file paths for user message when KeepLearningFull is false
 
 				// Check for context cancellation before creating execution agent
 				select {
@@ -3607,36 +3567,20 @@ func (hcpo *StepBasedWorkflowOrchestrator) readGlobalLearningHistory(
 	hcpo.GetLogger().Info("🔀 Reading global learning history")
 
 	globalLearningsPath := hcpo.getLearningsBasePath() + "/" + GlobalLearningID
-
-	learningFiles, err := hcpo.listLearningManifestFiles(ctx, globalLearningsPath)
-	if err != nil {
-		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to read global learning files from %s: %v - will proceed without learning history", globalLearningsPath, err))
+	globalSkillPath := globalLearningsPath + "/SKILL.md"
+	globalSkillBody, err := hcpo.ReadWorkspaceFile(ctx, globalSkillPath)
+	if err != nil || strings.TrimSpace(globalSkillBody) == "" {
+		hcpo.GetLogger().Info(fmt.Sprintf("⏭️ No global learning skill found: %s", globalSkillPath))
 		return "", nil
 	}
-	if len(learningFiles) > 0 {
-		docsRoot := GetPromptDocsRoot()
-		absLearningsPath := filepath.Join(docsRoot, hcpo.GetWorkspacePath(), globalLearningsPath)
 
-		var listedFiles strings.Builder
-		for _, filename := range learningFiles {
-			listedFiles.WriteString("- `")
-			listedFiles.WriteString(filename)
-			listedFiles.WriteString("`\n")
-		}
-
-		formattedLearningHistory = fmt.Sprintf(
-			"📚 **Workflow skill available** at `%s/`.\n"+
-				"These files capture best practices and reusable patterns from previous successful runs.\n"+
-				"Before executing this step, read the relevant workflow skill file(s) you need.\n"+
-				"`SKILL.md` is the index and will point you to the right detailed files.\n\n"+
-				"Available files:\n%s"+
-				"\nThen read the relevant files from `references/`, `scripts/`, `code/`, or other listed paths needed to execute this step.",
-			absLearningsPath, listedFiles.String())
-		hcpo.GetLogger().Info(fmt.Sprintf("✅ Found %d global learning file(s) (path reference only)", len(learningFiles)))
-	} else {
-		hcpo.GetLogger().Info(fmt.Sprintf("⏭️ No global learning files found: %s", globalLearningsPath))
-		formattedLearningHistory = ""
-	}
+	absLearningsPath := filepath.Join(GetPromptDocsRoot(), hcpo.GetWorkspacePath(), globalLearningsPath)
+	formattedLearningHistory = fmt.Sprintf(
+		"📚 **Workflow skill available** at `%s/`.\n"+
+			"Read `SKILL.md` first, then only the relevant linked file under `references/`, `scripts/`, `code/`, or `assets/`. "+
+			"Treat this prior-run know-how as advisory when it conflicts with the current step.",
+		absLearningsPath)
+	hcpo.GetLogger().Info("✅ Found global workflow skill (compact path reference only)")
 
 	return formattedLearningHistory, nil
 }

@@ -14,7 +14,6 @@ func TestExecutionOnlyPromptIncludesCodeExecutionInstructions(t *testing.T) {
 		"StepExecutionPath":     "/app/workspace-docs/Workflow/test/runs/iteration-0/default/execution/step-sample",
 		"StepContextOutput":     "output.json",
 		"LearningHistory":       "",
-		"KeepLearningFull":      "false",
 		"StepNumber":            "step-sample",
 		"PreviousStepsSummary":  "",
 		"KnowledgebasePath":     "/app/workspace-docs/Workflow/test/knowledgebase",
@@ -192,5 +191,71 @@ func TestExecutionOnlyPromptsTreatSkillAsAdvisory(t *testing.T) {
 	if !strings.Contains(userPrompt, "Read **Skill files** as guidance only") ||
 		!strings.Contains(userPrompt, "The current step description is the main source of truth") {
 		t.Fatalf("expected user prompt to treat skill as advisory\n\nPrompt:\n%s", userPrompt)
+	}
+}
+
+func TestExecutionOnlyCLIPromptUsesProjectedReferencesAndStaysUnderBudget(t *testing.T) {
+	agent := &WorkflowExecutionOnlyAgent{}
+	vars := map[string]string{
+		"UseProjectedReferenceSkills": "true",
+		"WorkspacePath":               "/app/workspace-docs/Workflow/test/runs/iteration-0/default/execution",
+		"WorkflowRoot":                "/app/workspace-docs/Workflow/test",
+		"StepExecutionPath":           "/app/workspace-docs/Workflow/test/runs/iteration-0/default/execution/step-browser",
+		"StepContextOutput":           "result.json",
+		"LearningHistory":             "legacy recursive inventory that must not be rendered",
+		"StepNumber":                  "step-browser",
+		"KnowledgebasePath":           "/app/workspace-docs/Workflow/test/knowledgebase",
+		"DBPath":                      "/app/workspace-docs/Workflow/test/db/db.sqlite",
+		"KbAccess":                    "read-write",
+		"KbAccessLabel":               "READ/WRITE",
+		"KbWriteMethod":               "direct",
+		"FolderGuardReadPaths":        "/app/workspace-docs/Workflow/test, /app/workspace-docs/Workflow/test/learnings/_global",
+		"FolderGuardWritePaths":       "/app/workspace-docs/Workflow/test/runs/iteration-0/default/execution/step-browser, /app/workspace-docs/Workflow/test/db",
+		"IsEvaluationMode":            "false",
+		"IsCodeExecutionMode":         "true",
+		"IsScriptedMode":              "true",
+		"HasBrowserAccess":            "true",
+		"ScriptedInputArgs":           "/app/workspace-docs/Workflow/test/runs/iteration-0/default/execution/input.json",
+		"ScriptedEnvVarNames":         "STEP_OUTPUT_DIR\nDB_PATH\nMCP_API_URL\nMCP_API_TOKEN\nSECRET_PASSWORD",
+		"ScriptedVarMapping":          "{{ACCOUNT}} → os.environ['VAR_ACCOUNT']",
+		"ValidationSchema":            `{"required_files":[{"path":"result.json"}]}`,
+	}
+
+	prompt := agent.executionOnlySystemPromptProcessor(vars)
+	t.Logf("compact CLI execution prompt: %d bytes", len(prompt))
+	for _, forbidden := range []string{
+		"legacy recursive inventory",
+		"## Python Best Practices",
+		"## Browser automation rules",
+		strings.TrimSpace(BuildMainPyAuthoringRules()),
+	} {
+		if strings.Contains(prompt, forbidden) {
+			t.Fatalf("CLI prompt still embeds projected reference material %q", forbidden)
+		}
+	}
+	const maxCLISystemPromptBytes = 30_000
+	if len(prompt) > maxCLISystemPromptBytes {
+		t.Fatalf("CLI execution system prompt is %d bytes; budget is %d", len(prompt), maxCLISystemPromptBytes)
+	}
+}
+
+func TestExecutionOnlyAPIPromptKeepsOneInlineAuthoringFallback(t *testing.T) {
+	agent := &WorkflowExecutionOnlyAgent{}
+	prompt := agent.executionOnlySystemPromptProcessor(map[string]string{
+		"UseProjectedReferenceSkills": "false",
+		"StepExecutionPath":           "/app/workspace-docs/Workflow/test/execution/step-scripted",
+		"IsCodeExecutionMode":         "true",
+		"IsScriptedMode":              "true",
+		"HasBrowserAccess":            "true",
+	})
+
+	if !strings.Contains(prompt, strings.TrimSpace(BuildMainPyAuthoringRules())) {
+		t.Fatal("API prompt lost its inline main.py authoring fallback")
+	}
+	if got := strings.Count(prompt, "## Python Best Practices"); got != 1 {
+		t.Fatalf("API prompt must contain exactly one Python fallback section, got %d", got)
+	}
+	if !strings.Contains(prompt, "## Browser automation rules") {
+		t.Fatal("API prompt lost its inline browser authoring fallback")
 	}
 }

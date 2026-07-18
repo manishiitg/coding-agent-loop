@@ -44,3 +44,26 @@ func TestBuildBrowserInstructionsKeepsAutoModeDynamic(t *testing.T) {
 		t.Fatalf("auto browser instructions must not persist a resolved mode: %s", got)
 	}
 }
+
+func TestBuildBrowserRuntimeInstructionsIsCompactAndDynamic(t *testing.T) {
+	t.Setenv("CDP_HOST", "localhost")
+	got := BuildBrowserRuntimeInstructions(BrowserConfig{
+		HasAgentBrowser: true,
+		Mode:            "auto",
+		CdpPort:         9222,
+		CdpPorts:        []int{9222, 9333},
+	})
+	for _, want := range []string{"Configured mode: `auto`", "http://localhost:9222", "http://localhost:9333", "live `effective_mode`", "projected `agent-browser` skill", "workflow-reference/references/browser-usage.md"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("compact browser runtime instructions missing %q: %s", want, got)
+		}
+	}
+	for _, forbidden := range []string{"def browser(", "### QA, Network Debugging", "Deterministic-selector priority"} {
+		if strings.Contains(got, forbidden) {
+			t.Fatalf("compact runtime instructions repeated static skill content %q", forbidden)
+		}
+	}
+	if len(got) > 1_500 {
+		t.Fatalf("compact browser runtime instructions grew to %d bytes", len(got))
+	}
+}

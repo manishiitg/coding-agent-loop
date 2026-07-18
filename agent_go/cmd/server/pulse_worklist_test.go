@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	mcpexecutor "github.com/manishiitg/mcpagent/executor"
 )
 
 func TestPulseWorklistUsesWorkflowLocalDB(t *testing.T) {
@@ -134,6 +136,92 @@ func TestPulseWorklistValidatesCadenceHints(t *testing.T) {
 	dateOnly[0].NextCheckAt = "2026-07-12"
 	if _, err := recordPulseWorklist(ctx, workspacePath, "pulse-run-date-only", dateOnly); err != nil {
 		t.Fatalf("date-only cadence rejected: %v", err)
+	}
+}
+
+func TestPulseWorklistToolArgumentsFailClosed(t *testing.T) {
+	tests := []struct {
+		name string
+		item map[string]interface{}
+		want string
+	}{
+		{
+			name: "missing due",
+			item: map[string]interface{}{"module": pulseModuleBugReview, "reason": "test"},
+			want: ".due is required and must be boolean",
+		},
+		{
+			name: "decision alias",
+			item: map[string]interface{}{"module": pulseModuleBugReview, "decision": "due", "reason": "test"},
+			want: `unknown field "decision"`,
+		},
+		{
+			name: "status alias",
+			item: map[string]interface{}{"module": pulseModuleBugReview, "status": "due", "reason": "test"},
+			want: `unknown field "status"`,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := pulseWorklistDecisionsFromArgs([]interface{}{tt.item})
+			if err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("parse error = %v, want %q", err, tt.want)
+			}
+		})
+	}
+}
+
+func TestRecordPulseWorklistToolRequiresActiveScheduledRunID(t *testing.T) {
+	_, executors, _ := createPulseWorklistTools()
+	execute := executors["record_pulse_worklist"].(func(context.Context, map[string]interface{}) (string, error))
+
+	if _, err := execute(context.Background(), map[string]interface{}{"pulse_run_id": "probe"}); err == nil || !strings.Contains(err.Error(), "scheduler-issued") {
+		t.Fatalf("probe run id error = %v", err)
+	}
+
+	ctx := mcpexecutor.WithSessionID(context.Background(), "schedule-manual--trusted")
+	if _, err := execute(ctx, map[string]interface{}{"pulse_run_id": "schedule-manual--different"}); err == nil || !strings.Contains(err.Error(), "does not match") {
+		t.Fatalf("mismatched run id error = %v", err)
+	}
+}
+
+func TestValidatePulseGateCompletionRequiresWorklistAndCurrentHandoff(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	t.Setenv("WORKSPACE_DOCS_PATH", root)
+	workspacePath := "Workflow/gate-contract"
+	pulseRunID := "schedule-manual--gate-contract"
+	htmlPath := workspacePath + "/builder/improve.html"
+	workspaceState := &mockWorkspaceAPI{files: map[string]string{
+		htmlPath: `<html><details id="pulse-agent-handoff">old run</details></html>`,
+	}}
+	workspace := httptest.NewServer(workspaceState)
+	defer workspace.Close()
+	t.Setenv("WORKSPACE_API_URL", workspace.URL)
+
+	previousHTML := workspaceState.files[htmlPath]
+	if err := validatePulseGateCompletion(ctx, workspacePath, pulseRunID, previousHTML, true); err == nil || !strings.Contains(err.Error(), "complete worklist") {
+		t.Fatalf("missing worklist error = %v", err)
+	}
+	if _, err := recordPulseWorklist(ctx, workspacePath, pulseRunID, completePulseWorklistDecisions(nil)); err != nil {
+		t.Fatalf("record complete worklist: %v", err)
+	}
+	if err := validatePulseGateCompletion(ctx, workspacePath, pulseRunID, previousHTML, true); err == nil || !strings.Contains(err.Error(), "unchanged") {
+		t.Fatalf("unchanged handoff error = %v", err)
+	}
+
+	workspaceState.mu.Lock()
+	workspaceState.files[htmlPath] = `<html><div>new entry ` + pulseRunID + `</div><details id="pulse-agent-handoff">old run</details></html>`
+	workspaceState.mu.Unlock()
+	if err := validatePulseGateCompletion(ctx, workspacePath, pulseRunID, previousHTML, true); err == nil || !strings.Contains(err.Error(), "handoff") {
+		t.Fatalf("stale handoff error = %v", err)
+	}
+
+	workspaceState.mu.Lock()
+	workspaceState.files[htmlPath] = `<html><div>new entry</div><details id="pulse-agent-handoff">` + pulseRunID + `</details></html>`
+	workspaceState.mu.Unlock()
+	if err := validatePulseGateCompletion(ctx, workspacePath, pulseRunID, previousHTML, true); err != nil {
+		t.Fatalf("valid Gate completion rejected: %v", err)
 	}
 }
 

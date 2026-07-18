@@ -1865,12 +1865,18 @@ func (iwm *InteractiveWorkshopManager) InteractiveWorkshopOnly(ctx context.Conte
 		availableGroups = strings.Join(groupNames, ", ")
 	}
 
+	workspaceToolsInstructions := instructions.GetSpecialWorkspaceToolsInstructions()
+	if isCodingCLIConfig(agent.GetConfig()) {
+		workspaceToolsInstructions = instructions.GetSpecialWorkspaceToolsPointer()
+	}
+
 	templateVars := map[string]string{
 		"WorkspacePath":                     workspacePath,
 		"RunFolder":                         iwm.controller.selectedRunFolder,
 		"PlanJSON":                          planContent,
 		"StepConfigSummary":                 stepConfigSummary,
 		"IsCodeExecutionMode":               fmt.Sprintf("%v", agent.GetConfig().UseCodeExecutionMode),
+		"UseProjectedReferenceSkills":       fmt.Sprintf("%v", isCodingCLIConfig(agent.GetConfig())),
 		"WorkshopMode":                      workshopMode,
 		"ProgressSummary":                   progressSummary,
 		"UserRequest":                       userGoal,
@@ -1883,8 +1889,7 @@ func (iwm *InteractiveWorkshopManager) InteractiveWorkshopOnly(ctx context.Conte
 		"AvailableGroups":                   availableGroups,
 		"AbsWorkspacePath":                  absPromptWorkspacePath(workspacePath),
 		"AbsDocsRoot":                       GetPromptDocsRoot(),
-		"SpecialWorkspaceToolsInstructions": instructions.GetSpecialWorkspaceToolsInstructions(),
-		"MainPyAuthoringRules":              BuildMainPyAuthoringRules() + browserAuthoringRulesIfBrowserEnabled(iwm.controller),
+		"SpecialWorkspaceToolsInstructions": workspaceToolsInstructions,
 	}
 
 	// Execute workshop agent via OrchestratorAgent interface
@@ -2293,6 +2298,11 @@ Priority order when reviewing a step: (1) Correctness — description precision,
 For the full playbook (validation design, learning config, three-locks decision tree, scripted debugging, mode promotion gates, evidence-based locking, orchestrator design + fast path, KB curation modes): `+"`get_reference_doc(kind=\"optimize-playbook\")`"+`. For the per-step config knobs themselves — all store-access modes (`+"`learnings_access`"+` / `+"`knowledgebase_access`"+` / `+"`db_access`"+`), the three locks, execution mode/tier/model, and `+"`update_step_config`"+`/clear usage — load `+"`get_reference_doc(kind=\"step-config\")`"+`. When patching `+"`learnings/{step-id}/main.py`"+`: also load `+"`code-authoring`"+`.
 {{end}}
 
+{{if eq .UseProjectedReferenceSkills "true"}}
+## Tools
+
+The MCP bridge's **AVAILABLE SERVERS AND TOOLS** index is the authoritative list for this session. Use `+"`get_api_spec(server_name=\"...\", tool_name=\"...\")`"+` before calling an unfamiliar tool; do not guess schemas or hardcode raw bridge URLs. The normal workflow loop uses `+"`execute_step`"+` / `+"`run_full_workflow`"+`, waits for the automatic completion notification rather than polling, and inspects a live step with `+"`query_step`"+` only when the user asks. Workshop decisions can use `+"`create_human_input_request`"+` and `+"`run_goal_advisor_review`"+`. Read the attached `+"`workflow-reference`"+` skill's `+"`references/workflow-tools.md`"+` (or call `+"`get_reference_doc(kind=\"workflow-tools\")`"+`) for the complete catalog, signatures, mode rules, schedules, secrets, notifications, and gotchas.
+{{else}}
 ## TOOLS REFERENCE (cheat sheet)
 
 {{if eq .IsCodeExecutionMode "true"}}**Code execution mode:** You do NOT have direct tool-call access. Bridge-native tools: `+"`execute_shell_command`"+`, `+"`diff_patch_workspace_file`"+`, `+"`agent_browser`"+`, `+"`get_api_spec`"+`. All other workflow tools are available via the workflow API path — use `+"`get_api_spec(server_name=\"workflow\", tool_name=\"...\")`"+` for their schemas. Do **not** hardcode raw HTTP requests.
@@ -2316,6 +2326,7 @@ This is the one-line-per-category map. For full signatures, parameters, when-to-
 - **Notify the user**: `+"`notify_user`"+` sends a non-blocking message to the user's connected channels (Slack / WhatsApp / email) — use it for FYIs, progress, alerts, or completion notices when you do not need a reply. If you need an answer in builder chat, ask in your normal response; workflow runtime steps can use configured human-input tools during execution. For email it accepts `+"`email_subject`"+`, an HTML body (`+"`email_html`"+` or `+"`email_html_file`"+`), and `+"`email_attachments`"+`. It returns per-channel delivery status — report failures honestly. Workflow STEPS can also message the user this way: keep `+"`human_tools`"+` in the step's `+"`enabled_custom_tools`"+` (it's in the default set) and have the step call `+"`notify_user`"+`.
 - **Skills**: `+"`list_skills`"+`, `+"`search_skills`"+`, `+"`install_skill`"+`, `+"`import_skill`"+`, `+"`uninstall_skill`"+`. Skills live at `+"`{{.AbsDocsRoot}}/skills/{folder}/SKILL.md`"+` (workspace root, shared across workflows). `+"`update_workflow_config(add_skills=[...])`"+` selects skills for workshop/builder discovery; step execution requires explicit `+"`update_step_config(step_id, enabled_skills=[...])`"+`. Shared workflow-specific HOW belongs in `+"`learnings/_global/SKILL.md`"+`.
 - **Secrets**: `+"`set_workflow_secret`"+`, `+"`set_user_secret`"+`, `+"`list_secrets`"+`, `+"`delete_workflow_secret`"+`, `+"`delete_user_secret`"+`. Setting a secret **auto-attaches** it to the active workflow and injects `+"`$SECRET_<NAME>`"+` into the live shell — usable immediately, no separate `+"`update_workflow_config(add_secrets=[...])`"+` call needed (that's only for attaching an already-stored secret, e.g. a global or a reusable user secret you didn't just set). Three buckets (workflow / user / global). Values never appear in prompts or logs; step agents read them via `+"`$SECRET_<NAME>`"+` env vars only.
+{{end}}
 
 ## File layout
 

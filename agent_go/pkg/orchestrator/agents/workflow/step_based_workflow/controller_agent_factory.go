@@ -1321,7 +1321,8 @@ func (hcpo *StepBasedWorkflowOrchestrator) createExecutionOnlyAgent(ctx context.
 
 	// Inject supplementary prompts (skills, browser isolation, secrets, browser instructions)
 	isolatedSessionID, _ := ctx.Value(virtualtools.SubAgentIsolatedSessionIDKey).(string)
-	hcpo.appendSupplementaryPrompts(ctx, mcpAgent, config, effectiveSkills, isolatedSessionID)
+	attachGlobalLearnings := !hcpo.isEvaluationMode && learningsAccess != LearningsAccessNone
+	hcpo.appendSupplementaryPrompts(ctx, mcpAgent, config, effectiveSkills, isolatedSessionID, attachGlobalLearnings)
 
 	// Apply post-setup configuration (folder guard paths and optional registry update)
 	if err := hcpo.applyPostSetupToAgent(agent, agentName, isCodeExecutionMode); err != nil {
@@ -1699,7 +1700,8 @@ func (hcpo *StepBasedWorkflowOrchestrator) createTodoTaskOrchestratorAgent(ctx c
 	effectiveSkills := GetEffectiveSkills(stepConfig, hcpo.BaseOrchestrator)
 	if baseAgent := agent.GetBaseAgent(); baseAgent != nil {
 		if mcpAgent := baseAgent.Agent(); mcpAgent != nil {
-			hcpo.appendSupplementaryPrompts(ctx, mcpAgent, config, effectiveSkills, "")
+			attachGlobalLearnings := !hcpo.isEvaluationMode && resolveLearningsAccess(stepConfig) != LearningsAccessNone
+			hcpo.appendSupplementaryPrompts(ctx, mcpAgent, config, effectiveSkills, "", attachGlobalLearnings)
 		}
 	}
 

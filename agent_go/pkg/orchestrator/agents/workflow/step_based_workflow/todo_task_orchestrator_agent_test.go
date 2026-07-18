@@ -96,6 +96,42 @@ func TestTodoTaskOrchestratorPromptRequiresDurableConcernHandoff(t *testing.T) {
 	}
 }
 
+func TestTodoTaskCLIPromptUsesProjectedWorkflowLearnings(t *testing.T) {
+	agent := &WorkflowTodoTaskOrchestratorAgent{}
+	prompt := agent.todoTaskOrchestratorSystemPromptProcessor(map[string]string{
+		"UseProjectedReferenceSkills": "true",
+		"LearningHistory":             "legacy recursive inventory that must not be rendered",
+		"CurrentTodos":                "- [ ] inspect the application\n- [ ] verify the result",
+		"ProgressSummary":             "No tasks completed yet.",
+		"VariableNames":               "ACCOUNT_ID",
+		"VariableValues":              "ACCOUNT_ID=<configured>",
+		"StepExecutionPath":           "/app/workspace-docs/Workflow/example/runs/iteration-0/default/execution/todo",
+		"DownloadsPath":               "/app/workspace-docs/Workflow/example/runs/iteration-0/default/execution/Downloads",
+		"ExecutionFolderPath":         "/app/workspace-docs/Workflow/example/runs/iteration-0/default/execution",
+		"WorkspacePath":               "/app/workspace-docs/Workflow/example",
+		"WorkflowRoot":                "/app/workspace-docs/Workflow/example",
+		"KnowledgebasePath":           "/app/workspace-docs/Workflow/example/knowledgebase",
+		"FolderGuardReadPaths":        "/app/workspace-docs/Workflow/example",
+		"FolderGuardWritePaths":       "/app/workspace-docs/Workflow/example/runs/iteration-0/default/execution/todo",
+		"ShowToolsSection":            "true",
+		"UseKnowledgebase":            "true",
+		"IsCodeExecutionMode":         "true",
+		"PreviousStepsSummary":        "Acquisition completed successfully.",
+		"StepTitle":                   "Investigate and verify",
+		"StepDescription":             "Inspect the evidence, perform the requested work, and verify it.",
+		"StepSuccessCriteria":         "The requested outcome is complete and evidence-backed.",
+		"HasBrowserAccess":            "true",
+		"PredefinedRoutes":            "- route-browser\n- route-review",
+	})
+	if strings.Contains(prompt, "legacy recursive inventory") || strings.Contains(prompt, "## Workflow Skill") {
+		t.Fatalf("todo-task CLI prompt still embeds workflow learnings instead of using the projected skill:\n%s", prompt)
+	}
+	const maxCLISystemPromptBytes = 30_000
+	if len(prompt) > maxCLISystemPromptBytes {
+		t.Fatalf("todo-task CLI system prompt is %d bytes; budget is %d", len(prompt), maxCLISystemPromptBytes)
+	}
+}
+
 func TestFormatMessageSequenceRoutePromptBlock(t *testing.T) {
 	block := formatMessageSequenceRoutePromptBlock(&MessageSequencePlanStep{})
 

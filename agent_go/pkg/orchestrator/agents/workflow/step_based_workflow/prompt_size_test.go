@@ -5,21 +5,23 @@ import (
 	"testing"
 
 	"github.com/manishiitg/coding-agent-loop/agent_go/cmd/server/guidance"
+	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/instructions"
+	agentprompt "github.com/manishiitg/mcpagent/agent/prompt"
 )
 
 // executeRealisticWorkshopPromptForMode renders the workshop system prompt
-// with var injections populated by their real builders, not empty strings.
-// The pre-existing executeInteractiveWorkshopPromptForMode passes "" for
-// MainPyAuthoringRules / BrowserPrompt / SpecialWorkspaceToolsInstructions /
-// SkillPrompt — useful for snippet-presence tests but misleading for size
-// measurement, since those vars carry ~10–15k tokens in production.
+// as a coding CLI sees its static portion in production: code-execution mode
+// enabled, compact projected-reference pointers selected, and the shared MCP
+// bridge contract appended. The live tool-name index, capability snapshot,
+// browser state, secrets, and attached-skill listing are dynamic additions;
+// the ceiling below deliberately reserves room for them.
 //
 // Use this helper for size tests so the ceiling reflects what the agent
 // actually sees at runtime. Use the minimal helper when asserting content
 // of the inline template only.
 func executeRealisticWorkshopPromptForMode(t *testing.T, mode string) string {
 	t.Helper()
-	prompt, err := ExecuteTemplate("interactiveWorkshopSystem", map[string]string{
+	rendered, err := ExecuteTemplate("interactiveWorkshopSystem", map[string]string{
 		"AbsDocsRoot":                       "/app/workspace-docs",
 		"AbsWorkspacePath":                  "/app/workspace-docs/Workflow/example",
 		"AvailableGroups":                   "group-1",
@@ -27,15 +29,16 @@ func executeRealisticWorkshopPromptForMode(t *testing.T, mode string) string {
 		"Focus":                             "",
 		"GroupName":                         "",
 		"Instruction":                       "",
-		"IsCodeExecutionMode":               "false",
-		"MainPyAuthoringRules":              BuildMainPyAuthoringRules(), // real content
+		"IsCodeExecutionMode":               "true",
+		"UseProjectedReferenceSkills":       "true",
+		"MainPyAuthoringRules":              "",
 		"Mode":                              "",
 		"PlanJSON":                          "{}",
 		"ProgressSummary":                   "",
 		"RunFolder":                         "",
 		"SecretPrompt":                      "",
 		"SkillPrompt":                       "",
-		"SpecialWorkspaceToolsInstructions": "",
+		"SpecialWorkspaceToolsInstructions": instructions.GetSpecialWorkspaceToolsPointer(),
 		"StepConfigSummary":                 "",
 		"StepID":                            "",
 		"StepSummary":                       "",
@@ -51,7 +54,12 @@ func executeRealisticWorkshopPromptForMode(t *testing.T, mode string) string {
 	if err != nil {
 		t.Fatalf("ExecuteTemplate returned error: %v", err)
 	}
-	return prompt
+
+	// The workshop execution path appends this after rendering the template
+	// for every coding CLI. It must be included in the budget: omitting it
+	// previously let the test pass while the actual CLAUDE.md could cross the
+	// provider's 40k-character limit.
+	return rendered + "\n\n" + agentprompt.GetCodeExecutionInstructions("Workflow/example")
 }
 
 // These tests lock in the system-prompt size target for the workshop
@@ -70,24 +78,11 @@ func executeRealisticWorkshopPromptForMode(t *testing.T, mode string) string {
 // message naming the target. That failure is intentional — it is the gate
 // that proves the migration achieved its size goal.
 
-// MaxWorkshopPromptBytes is the hard ceiling for the rendered workshop
-// system prompt (test helper with realistic var injections). Set ~10%
-// above the post-migration size so regressions and accidental re-inlines
-// trip the gate, but normal small additions don't.
-//
-// Migration baseline (test helper):
-//   - Original size (pre-migration): builder ~76KB / optimizer ~110KB
-//   - Post-migration (code-authoring, message-sequence, stores, file-layout,
-//     optimize-playbook moved to templates/system/): builder ~52KB / optimizer ~47KB
-//
-// We intentionally do NOT migrate tool-reference, media-tools, or browser:
-// the LLM sees tools only through the MCP bridge, so the prose catalog is
-// the agent's primary discovery surface. Those stay inline.
-//
-// Production prompt size is higher because the test helper passes empty
-// values for some var injections (BrowserPrompt, SpecialWorkspaceTools,
-// SkillPrompt). The ratio of shrinkage is what matters.
-const MaxWorkshopPromptBytes = 70_000 // ~17.5k tokens at 4 chars/token
+// MaxWorkshopPromptBytes is the hard ceiling for the coding-CLI workshop
+// prompt before the small attached-skill listing and dynamic tool index are
+// added. Keep meaningful headroom below Claude Code's 40k CLAUDE.md warning
+// threshold for those runtime additions.
+const MaxWorkshopPromptBytes = 27_000
 
 // MinWorkshopPromptBytes catches accidental gutting (e.g. a template-var
 // rename that silently drops a section). Lowered 2026-05-28 after two
@@ -126,6 +121,50 @@ func TestWorkshopPromptSize(t *testing.T) {
 					mode, size, MinWorkshopPromptBytes)
 			}
 		})
+	}
+}
+
+func TestWorkshopCLIPromptUsesProjectedWorkspaceToolReference(t *testing.T) {
+	prompt := executeRealisticWorkshopPromptForMode(t, "workshop")
+	for _, reference := range []string{
+		"references/workspace-media-tools.md",
+		"references/workflow-tools.md",
+	} {
+		if !strings.Contains(prompt, reference) {
+			t.Fatalf("coding-CLI workshop prompt must point to projected reference %q", reference)
+		}
+	}
+	for _, duplicatedCatalogMarker := range []string{
+		"generate_video(prompt, output_path",
+		"- **Schedule management**:",
+	} {
+		if strings.Contains(prompt, duplicatedCatalogMarker) {
+			t.Fatalf("coding-CLI workshop prompt still embeds projected catalog marker %q", duplicatedCatalogMarker)
+		}
+	}
+}
+
+func TestPhaseChatWorkshopSelectsWorkspaceToolGuidanceByTransport(t *testing.T) {
+	base := map[string]string{
+		"WorkspacePath":       "Workflow/example",
+		"WorkshopMode":        "workshop",
+		"IsCodeExecutionMode": "true",
+	}
+
+	base["UseProjectedReferenceSkills"] = "true"
+	cliPrompt := PhaseChatSystemPrompt("workflow-builder", base)
+	if !strings.Contains(cliPrompt, "references/workspace-media-tools.md") ||
+		!strings.Contains(cliPrompt, "references/workflow-tools.md") ||
+		strings.Contains(cliPrompt, "generate_video(prompt, output_path") ||
+		strings.Contains(cliPrompt, "- **Schedule management**:") {
+		t.Fatal("CLI phase-chat builder did not use compact projected-reference guidance")
+	}
+
+	base["UseProjectedReferenceSkills"] = "false"
+	apiPrompt := PhaseChatSystemPrompt("workflow-builder", base)
+	if !strings.Contains(apiPrompt, "generate_video(prompt, output_path") ||
+		!strings.Contains(apiPrompt, "- **Schedule management**:") {
+		t.Fatal("API phase-chat builder lost its inline workspace-tool fallback")
 	}
 }
 
@@ -282,9 +321,17 @@ func TestReferenceKindsAllRenderable(t *testing.T) {
 				t.Errorf("%s rendered to %d bytes — suspiciously short. Ensure the placeholder content has at least an intro paragraph.",
 					kind, len(body))
 			}
-			if len(body) > 50_000 {
-				t.Errorf("%s rendered to %d bytes — split into multiple kinds before it gets unwieldy.",
-					kind, len(body))
+			maxBytes := 50_000
+			// Pulse uses one consolidated, on-demand operating protocol so Gate and
+			// maintenance modules share the same evidence and mutation contract. It
+			// is intentionally larger than ordinary task-specific references, but is
+			// no longer part of every coding-agent system prompt.
+			if kind == "post-run-monitor" {
+				maxBytes = 65_000
+			}
+			if len(body) > maxBytes {
+				t.Errorf("%s rendered to %d bytes (limit %d) — split it before it gets unwieldy.",
+					kind, len(body), maxBytes)
 			}
 		})
 	}

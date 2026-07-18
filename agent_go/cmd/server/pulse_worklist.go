@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	mcpexecutor "github.com/manishiitg/mcpagent/executor"
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 )
 
@@ -254,6 +255,11 @@ func recordPulseWorklist(ctx context.Context, workspacePath, pulseRunID string, 
 		return nil, err
 	}
 	defer db.Close()
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
 
 	now := time.Now().UTC().Format(time.RFC3339)
 	states := make([]PulseModuleState, 0, len(decisions))
@@ -286,7 +292,7 @@ func recordPulseWorklist(ctx context.Context, workspacePath, pulseRunID string, 
 			Evidence:            evidence,
 			UpdatedAt:           now,
 		}
-		_, err := db.ExecContext(ctx, `INSERT INTO pulse_module_state (
+		_, err := tx.ExecContext(ctx, `INSERT INTO pulse_module_state (
 				module, workspace_path, last_pulse_run_id, last_checked_at, last_decision,
 				last_reason, last_gate_decision, last_result, last_result_reason,
 				next_check_at, next_check_after_run_id, cooldown_runs,
@@ -314,6 +320,9 @@ func recordPulseWorklist(ctx context.Context, workspacePath, pulseRunID string, 
 			return nil, err
 		}
 		states = append(states, state)
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, err
 	}
 	return states, nil
 }
@@ -371,6 +380,48 @@ func pulseWorklistIsComplete(worklist map[string]PulseModuleState) bool {
 		}
 	}
 	return true
+}
+
+func validatePulseGateCompletion(ctx context.Context, workspacePath, pulseRunID, previousHTML string, previousExists bool) error {
+	worklist, exists, err := getPulseWorklistForRun(ctx, workspacePath, pulseRunID)
+	if err != nil {
+		return fmt.Errorf("read Pulse Gate worklist: %w", err)
+	}
+	if !exists || !pulseWorklistIsComplete(worklist) {
+		return fmt.Errorf("Pulse Gate did not record a complete worklist for pulse_run_id %q", pulseRunID)
+	}
+
+	htmlPath := strings.TrimSuffix(workspacePath, "/") + "/builder/improve.html"
+	html, htmlExists, err := readFileFromWorkspace(ctx, htmlPath)
+	if err != nil {
+		return fmt.Errorf("read Pulse Gate handoff: %w", err)
+	}
+	if !htmlExists || strings.TrimSpace(html) == "" {
+		return fmt.Errorf("Pulse Gate did not write %s", htmlPath)
+	}
+	if previousExists && html == previousHTML {
+		return fmt.Errorf("Pulse Gate left %s unchanged", htmlPath)
+	}
+	if !pulseGateHandoffContainsRunID(html, pulseRunID) {
+		return fmt.Errorf("Pulse Gate handoff does not contain current pulse_run_id %q", pulseRunID)
+	}
+	return nil
+}
+
+func pulseGateHandoffContainsRunID(html, pulseRunID string) bool {
+	lowerHTML := strings.ToLower(html)
+	markerIndex := strings.Index(lowerHTML, `id="pulse-agent-handoff"`)
+	if markerIndex < 0 {
+		markerIndex = strings.Index(lowerHTML, `id='pulse-agent-handoff'`)
+	}
+	if markerIndex < 0 {
+		return false
+	}
+	handoff := html[markerIndex:]
+	if end := strings.Index(strings.ToLower(handoff), "</details>"); end >= 0 {
+		handoff = handoff[:end]
+	}
+	return strings.Contains(handoff, pulseRunID)
 }
 
 func markPulseModuleResult(ctx context.Context, workspacePath, module, pulseRunID, result, reason string, evidence []string) (*PulseModuleState, error) {
@@ -557,14 +608,16 @@ func createPulseWorklistTools() ([]llmtypes.Tool, map[string]interface{}, map[st
 			Name:        "record_pulse_worklist",
 			Description: "Record the dynamic Pulse worklist for this run in the workflow's db/db.sqlite. Pulse Gate must call this exactly once after deciding which modules are due or skipped. The decisions array must contain exactly one entry for each Pulse module: bug_review, artifact_review, learning_health, knowledgebase_health, db_health, eval_health, report_health, cost_llm_time, llm_ops_review, and goal_advisor. Every skipped module must include next_check_at, next_check_after_run_id, or a positive cooldown_runs value. The scheduler reads this table and only sends prompts for due modules.",
 			Parameters: llmtypes.NewParameters(map[string]interface{}{
-				"type": "object",
+				"type":                 "object",
+				"additionalProperties": false,
 				"properties": map[string]interface{}{
 					"workspace_path": map[string]interface{}{"type": "string", "description": "Workflow-relative path, e.g. Workflow/social-media."},
 					"pulse_run_id":   map[string]interface{}{"type": "string", "description": "Scheduler-provided Pulse run id. Use exactly the id in the prompt."},
 					"decisions": map[string]interface{}{
 						"type": "array",
 						"items": map[string]interface{}{
-							"type": "object",
+							"type":                 "object",
+							"additionalProperties": false,
 							"properties": map[string]interface{}{
 								"module":                  map[string]interface{}{"type": "string", "enum": moduleEnum},
 								"due":                     map[string]interface{}{"type": "boolean"},
@@ -638,7 +691,17 @@ func createPulseWorklistTools() ([]llmtypes.Tool, map[string]interface{}, map[st
 		"record_pulse_worklist": func(ctx context.Context, args map[string]interface{}) (string, error) {
 			workspacePath, _ := args["workspace_path"].(string)
 			pulseRunID, _ := args["pulse_run_id"].(string)
-			decisions := pulseWorklistDecisionsFromArgs(args["decisions"])
+			pulseRunID = strings.TrimSpace(pulseRunID)
+			if !isScheduledSession(pulseRunID) {
+				return "", fmt.Errorf("pulse_run_id %q is not a scheduler-issued session id", pulseRunID)
+			}
+			if trustedSessionID := mcpexecutor.SessionIDFromContext(ctx); trustedSessionID != "" && pulseRunID != trustedSessionID {
+				return "", fmt.Errorf("pulse_run_id %q does not match the active scheduler session %q", pulseRunID, trustedSessionID)
+			}
+			decisions, err := pulseWorklistDecisionsFromArgs(args["decisions"])
+			if err != nil {
+				return "", err
+			}
 			states, err := recordPulseWorklist(ctx, workspacePath, pulseRunID, decisions)
 			if err != nil {
 				return "", err
@@ -691,28 +754,111 @@ func createPulseWorklistTools() ([]llmtypes.Tool, map[string]interface{}, map[st
 	return []llmtypes.Tool{recordTool, stateTool, resultTool, finalCommandTool}, executors, categories
 }
 
-func pulseWorklistDecisionsFromArgs(raw interface{}) []PulseWorklistDecision {
+func pulseWorklistDecisionsFromArgs(raw interface{}) ([]PulseWorklistDecision, error) {
 	arr, ok := raw.([]interface{})
 	if !ok {
-		return nil
+		return nil, fmt.Errorf("decisions must be an array")
 	}
 	out := make([]PulseWorklistDecision, 0, len(arr))
-	for _, item := range arr {
+	allowed := map[string]bool{
+		"module": true, "due": true, "reason": true, "evidence": true,
+		"next_check_at": true, "next_check_after_run_id": true, "cooldown_runs": true,
+	}
+	for index, item := range arr {
 		m, ok := item.(map[string]interface{})
 		if !ok {
-			continue
+			return nil, fmt.Errorf("decisions[%d] must be an object", index)
+		}
+		for key := range m {
+			if !allowed[key] {
+				return nil, fmt.Errorf("decisions[%d] contains unknown field %q; use the required boolean field due", index, key)
+			}
 		}
 		decision := PulseWorklistDecision{}
-		decision.Module, _ = m["module"].(string)
-		decision.Due, _ = m["due"].(bool)
-		decision.Reason, _ = m["reason"].(string)
-		decision.Evidence = stringSliceFromToolArg(m["evidence"])
-		decision.NextCheckAt, _ = m["next_check_at"].(string)
-		decision.NextCheckAfterRunID, _ = m["next_check_after_run_id"].(string)
-		decision.CooldownRuns = intFromToolArg(m["cooldown_runs"])
+		var err error
+		if decision.Module, err = requiredStringToolArg(m, "module", index); err != nil {
+			return nil, err
+		}
+		if decision.Due, ok = m["due"].(bool); !ok {
+			return nil, fmt.Errorf("decisions[%d].due is required and must be boolean", index)
+		}
+		if decision.Reason, err = requiredStringToolArg(m, "reason", index); err != nil {
+			return nil, err
+		}
+		if rawEvidence, exists := m["evidence"]; exists {
+			if decision.Evidence, err = strictStringSliceToolArg(rawEvidence); err != nil {
+				return nil, fmt.Errorf("decisions[%d].evidence: %w", index, err)
+			}
+		}
+		if decision.NextCheckAt, err = optionalStringToolArg(m, "next_check_at", index); err != nil {
+			return nil, err
+		}
+		if decision.NextCheckAfterRunID, err = optionalStringToolArg(m, "next_check_after_run_id", index); err != nil {
+			return nil, err
+		}
+		if rawCooldown, exists := m["cooldown_runs"]; exists {
+			if decision.CooldownRuns, err = strictIntToolArg(rawCooldown); err != nil {
+				return nil, fmt.Errorf("decisions[%d].cooldown_runs: %w", index, err)
+			}
+		}
 		out = append(out, decision)
 	}
-	return out
+	return out, nil
+}
+
+func requiredStringToolArg(m map[string]interface{}, key string, index int) (string, error) {
+	value, ok := m[key].(string)
+	if !ok || strings.TrimSpace(value) == "" {
+		return "", fmt.Errorf("decisions[%d].%s is required and must be a non-empty string", index, key)
+	}
+	return value, nil
+}
+
+func optionalStringToolArg(m map[string]interface{}, key string, index int) (string, error) {
+	raw, exists := m[key]
+	if !exists {
+		return "", nil
+	}
+	value, ok := raw.(string)
+	if !ok {
+		return "", fmt.Errorf("decisions[%d].%s must be a string", index, key)
+	}
+	return value, nil
+}
+
+func strictStringSliceToolArg(raw interface{}) ([]string, error) {
+	arr, ok := raw.([]interface{})
+	if !ok {
+		return nil, fmt.Errorf("must be an array of strings")
+	}
+	out := make([]string, 0, len(arr))
+	for index, item := range arr {
+		value, ok := item.(string)
+		if !ok {
+			return nil, fmt.Errorf("item %d must be a string", index)
+		}
+		if value = strings.TrimSpace(value); value != "" {
+			out = append(out, value)
+		}
+	}
+	return out, nil
+}
+
+func strictIntToolArg(raw interface{}) (int, error) {
+	switch value := raw.(type) {
+	case int:
+		return value, nil
+	case int64:
+		return int(value), nil
+	case float64:
+		integer := int(value)
+		if float64(integer) != value {
+			return 0, fmt.Errorf("must be an integer")
+		}
+		return integer, nil
+	default:
+		return 0, fmt.Errorf("must be an integer")
+	}
 }
 
 func stringSliceFromToolArg(raw interface{}) []string {
@@ -727,19 +873,6 @@ func stringSliceFromToolArg(raw interface{}) []string {
 		}
 	}
 	return out
-}
-
-func intFromToolArg(raw interface{}) int {
-	switch v := raw.(type) {
-	case int:
-		return v
-	case int64:
-		return int(v)
-	case float64:
-		return int(v)
-	default:
-		return 0
-	}
 }
 
 func normalizePulseModule(module string) string {

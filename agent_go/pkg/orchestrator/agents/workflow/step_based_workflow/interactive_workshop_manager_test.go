@@ -32,6 +32,7 @@ func executeInteractiveWorkshopPromptForMode(t *testing.T, mode string) string {
 		"StepsToReview":                     "",
 		"TargetRunFolder":                   "",
 		"UseKnowledgebase":                  "false",
+		"UseProjectedReferenceSkills":       "true",
 		"UserRequest":                       "",
 		"WorkflowObjective":                 "Build a reliable workflow.",
 		"WorkflowSuccessCriteria":           "It runs end to end.",

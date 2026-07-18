@@ -1431,7 +1431,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) saveScriptedFastPathLog(
 // stepOutputAbsPath is the step output folder (execution/step-x/) — STEP_OUTPUT_DIR env var points here.
 // inputArgPaths are the absolute paths passed as sys.argv[1], sys.argv[2], ...
 // envVarNames are the env var names available to the script (SECRET_*, MCP_API_URL, STEP_OUTPUT_DIR).
-func GetScriptedModeInstructions(codeDirAbsPath, stepOutputAbsPath string, isRelearn bool, priorScript, priorError string, inputArgPaths []string, envVarNames []string, varMappingLines []string, validationSchemaJSON string, hasBrowser, isCodeLocked bool) string {
+func GetScriptedModeInstructions(codeDirAbsPath, stepOutputAbsPath string, isRelearn bool, priorScript, priorError string, inputArgPaths []string, envVarNames []string, varMappingLines []string, validationSchemaJSON string, hasBrowser, isCodeLocked, useProjectedReferenceSkills bool) string {
 	var sb strings.Builder
 	sb.WriteString("\n\n## Code Execution Mode\n\n")
 	if isCodeLocked {
@@ -1460,7 +1460,7 @@ func GetScriptedModeInstructions(codeDirAbsPath, stepOutputAbsPath string, isRel
 	// review main.py agree on what "compliant" means. Skipped when the script is locked:
 	// the LLM isn't authoring or patching main.py this turn, so authoring rules would
 	// only re-anchor it on writing code.
-	if !isCodeLocked {
+	if !isCodeLocked && !useProjectedReferenceSkills {
 		sb.WriteString(BuildMainPyAuthoringRules())
 	}
 
@@ -1471,7 +1471,7 @@ func GetScriptedModeInstructions(codeDirAbsPath, stepOutputAbsPath string, isRel
 	// would duplicate ~60 lines. Keep the execution-mode call-examples here since
 	// they're learn-code-specific (they demonstrate the call_mcp Python wrapper
 	// the learn-code prompt teaches).
-	if hasBrowser {
+	if hasBrowser && !useProjectedReferenceSkills {
 		sb.WriteString("**Browser automation — execution-mode tool call examples (Python):**\n")
 		sb.WriteString("- CDP mode: select/create a tab first with `command='tab'`. `command='open'` is URL-only, e.g. `args=['https://example.com']`; do not pass `['tab', 't1', url]` to open. After open, every page action must include an inline tab, e.g. `args=['tab', 't1', '-i']` for snapshot or `args=['tab', 't1', ref_parsed_from_snapshot]` for click.\n")
 		sb.WriteString("- Snapshot: `call_mcp('workspace_browser', 'agent_browser', {'command': 'snapshot', 'args': ['tab', 't1', '-i'], 'session': 'main'})`\n")
@@ -1529,9 +1529,6 @@ func GetScriptedModeInstructions(codeDirAbsPath, stepOutputAbsPath string, isRel
 		}
 		sb.WriteString("\n")
 	}
-
-	// Python best practices section
-	sb.WriteString(BuildPythonBestPractices(varMappingLines, len(inputArgPaths) > 0))
 
 	// Show validation schema — tells the LLM exactly what output files to produce
 	if validationSchemaJSON != "" {

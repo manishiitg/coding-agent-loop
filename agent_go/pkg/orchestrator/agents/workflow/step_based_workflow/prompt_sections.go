@@ -147,9 +147,10 @@ func contextOutputMatchesDependency(output string, dep string) bool {
 // cheat sheet and loads the full rules on demand via
 // get_reference_doc(kind="code-authoring") when it actually needs to patch.
 //
-// Source of truth lives in cmd/server/guidance/templates/system/code-authoring.md;
-// this function is a thin wrapper so non-chat agents (which can't call tools to
-// load reference docs) still get the rules baked into their prompt.
+// Source of truth lives in cmd/server/guidance/templates/system/code-authoring.md.
+// This wrapper is the inline fallback for API agents and non-execution review
+// surfaces; coding CLI execution agents read the same document from the
+// projected workflow-reference skill instead.
 func BuildMainPyAuthoringRules() string {
 	return guidance.RenderSystemDoc("code-authoring") + "\n"
 }
@@ -244,24 +245,6 @@ func BuildBrowserLearningRules() string {
 	sb.WriteString("6. **Keep confidence honest.** Save only locators actually used or verified in this run. Mark unverified fallbacks as candidates. If a saved locator failed, replace or qualify it and retain the failure signature in the known-bad section.\n")
 	sb.WriteString("7. **Do not save sensitive values.** Selector recipes may describe field identity, but never persist entered credentials, account identifiers, tokens, cookies, or user data.\n")
 	return sb.String()
-}
-
-// browserCapabilityProvider is the minimal interface BuildBrowserAuthoringRules helpers
-// need from the orchestrator/controller to decide whether to emit browser rules.
-// We check HasBrowserCapability (not GetBrowserMode) because empty browserMode means
-// "auto-detect", not "no browser".
-type browserCapabilityProvider interface {
-	HasBrowserCapability() bool
-}
-
-// browserAuthoringRulesIfBrowserEnabled returns BuildBrowserAuthoringRules() when the
-// workflow has the agent-browser skill or a CDP port, else "". Use at call sites that have access to
-// the orchestrator (e.g. workshop manager, planning exports).
-func browserAuthoringRulesIfBrowserEnabled(p browserCapabilityProvider) string {
-	if p == nil || !p.HasBrowserCapability() {
-		return ""
-	}
-	return BuildBrowserAuthoringRules()
 }
 
 // BrowserAuthoringRulesFromTemplateVars returns BuildBrowserAuthoringRules() when

@@ -4990,9 +4990,10 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				phaseIsCodeExec := true
 				log.Printf("[WORKFLOW_PHASE] Mode detection: finalProvider=%q, isCodeExec=%v (always true)", finalProvider, phaseIsCodeExec)
 				phaseTemplateVars := map[string]string{
-					"Objective":           phaseObjective,
-					"WorkspacePath":       phaseWorkspacePath,
-					"IsCodeExecutionMode": fmt.Sprintf("%v", phaseIsCodeExec),
+					"Objective":                   phaseObjective,
+					"WorkspacePath":               phaseWorkspacePath,
+					"IsCodeExecutionMode":         fmt.Sprintf("%v", phaseIsCodeExec),
+					"UseProjectedReferenceSkills": fmt.Sprintf("%v", common.IsCLIProvider(finalProvider)),
 				}
 
 				// Pass workshop mode from frontend override (auto-detection happens after plan is loaded below).

@@ -73,12 +73,13 @@ You are a **read-only** execution analysis assistant. Help the user understand w
 func PhaseChatSystemPrompt(phaseId string, templateVars map[string]string) string {
 	now := time.Now()
 	templateData := map[string]interface{}{
-		"WorkspacePath":       templateVars["WorkspacePath"],
-		"ExistingPlanJSON":    templateVars["ExistingPlanJSON"],
-		"VariableNames":       templateVars["VariableNames"],
-		"IsCodeExecutionMode": templateVars["IsCodeExecutionMode"],
-		"CurrentDate":         now.Format("2006-01-02"),
-		"CurrentTime":         now.Format("15:04:05"),
+		"WorkspacePath":               templateVars["WorkspacePath"],
+		"ExistingPlanJSON":            templateVars["ExistingPlanJSON"],
+		"VariableNames":               templateVars["VariableNames"],
+		"IsCodeExecutionMode":         templateVars["IsCodeExecutionMode"],
+		"UseProjectedReferenceSkills": templateVars["UseProjectedReferenceSkills"],
+		"CurrentDate":                 now.Format("2006-01-02"),
+		"CurrentTime":                 now.Format("15:04:05"),
 	}
 
 	var tmpl = interactiveWorkshopSystemTemplate // default: workflow-builder template
@@ -107,8 +108,11 @@ func PhaseChatSystemPrompt(phaseId string, templateVars map[string]string) strin
 		templateData["WorkflowSuccessCriteria"] = templateVars["WorkflowSuccessCriteria"]
 		templateData["ExecutionMode"] = templateVars["ExecutionMode"]
 		templateData["AvailableGroups"] = templateVars["AvailableGroups"]
-		templateData["SpecialWorkspaceToolsInstructions"] = instructions.GetSpecialWorkspaceToolsInstructions()
-		templateData["MainPyAuthoringRules"] = BuildMainPyAuthoringRules() + BrowserAuthoringRulesFromTemplateVars(templateVars)
+		if templateVars["UseProjectedReferenceSkills"] == "true" {
+			templateData["SpecialWorkspaceToolsInstructions"] = instructions.GetSpecialWorkspaceToolsPointer()
+		} else {
+			templateData["SpecialWorkspaceToolsInstructions"] = instructions.GetSpecialWorkspaceToolsInstructions()
+		}
 		wsPath := templateVars["WorkspacePath"]
 		templateData["AbsWorkspacePath"] = GetPromptDocsRoot() + "/" + wsPath
 		templateData["AbsDocsRoot"] = GetPromptDocsRoot()

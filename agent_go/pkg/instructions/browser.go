@@ -27,6 +27,46 @@ type BrowserConfig struct {
 	IsIsolated      bool // true when running in a share_browser=false sub-agent
 }
 
+// BuildBrowserRuntimeInstructions returns only run-specific browser state for
+// coding CLI agents. Static command syntax, safety rules, tab ownership, and
+// selector guidance are projected through the agent-browser and
+// workflow-reference skills; repeating those docs in CLAUDE.md/AGENTS.md can
+// push the CLI over its system-prompt limit.
+func BuildBrowserRuntimeInstructions(cfg BrowserConfig) string {
+	if !cfg.HasAgentBrowser {
+		return ""
+	}
+	ports := append([]int{cfg.CdpPort}, cfg.CdpPorts...)
+	endpoints := browser.ConfiguredCDPEndpoints(ports)
+	if len(endpoints) == 0 && (cfg.Mode == "auto" || cfg.Mode == "cdp") {
+		endpoints = browser.ConfiguredCDPEndpoints([]int{9222})
+	}
+
+	mode := strings.TrimSpace(cfg.Mode)
+	if mode == "" {
+		if len(endpoints) > 0 {
+			mode = "cdp"
+		} else {
+			mode = "headless"
+		}
+	}
+
+	var sb strings.Builder
+	sb.WriteString("## Browser Runtime Configuration\n")
+	fmt.Fprintf(&sb, "- Configured mode: `%s`. This is configuration, not cached reachability.\n", mode)
+	if len(endpoints) > 0 {
+		fmt.Fprintf(&sb, "- Authorized CDP endpoint(s): `%s`.\n", strings.Join(endpoints, "`, `"))
+	}
+	if mode == "auto" {
+		sb.WriteString("- Before the first action and after an availability error, call `agent_browser` status. Follow its live `effective_mode`; never infer CDP reachability from this prompt or probe Chrome through shell.\n")
+	}
+	if cfg.IsIsolated {
+		sb.WriteString("- This agent has an isolated browser session; use the session name in the Browser Isolation section.\n")
+	}
+	sb.WriteString("- Before browser work, read the projected `agent-browser` skill when attached; otherwise read `workflow-reference/references/browser-usage.md`. Those references contain the managed HTTP bridge, current skill-loading, tab ownership, cleanup, and safety contracts.\n")
+	return sb.String()
+}
+
 // BuildBrowserInstructions returns the complete browser system prompt
 // (upload + mode-specific) for the given config, or "" if no browser tool is active.
 func BuildBrowserInstructions(cfg BrowserConfig) string {

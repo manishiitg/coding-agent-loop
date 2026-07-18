@@ -204,7 +204,6 @@ type WorkflowExecutionOnlyTemplate struct {
 	VariableNames            string // Variable names with descriptions ({{VAR_NAME}} - description)
 	VariableValues           string // Variable names with actual values ({{VAR_NAME}} = value)
 	LearningHistory          string // Formatted learning conversation history (REQUIRED for execution-only mode)
-	LearningFilePaths        string // Learning file paths (when KeepLearningFull is false)
 	StepNumber               string // Step identifier (e.g., "step-8" or "step-3-sub-fetch")
 	StepExecutionPath        string // Full execution folder path (e.g., "execution/step-8")
 	PreviousStepsSummary     string // Summary of previous completed steps (titles, descriptions, outputs)
@@ -258,8 +257,8 @@ func (hctpeoa *WorkflowExecutionOnlyAgent) Execute(ctx context.Context, template
 // helper is worth embedding. Pure code-exec mode is shell-first (curl/jq/etc.);
 // it doesn't need the 35-line Python helper and should avoid pinning agents to
 // any one language.
-func buildCodeExecBestPractices(isCodeExec bool, templateVars map[string]string) string {
-	if !isCodeExec || templateVars["IsScriptedMode"] != "true" {
+func buildCodeExecBestPractices(isCodeExec bool, templateVars map[string]string, useProjectedReferenceSkills bool) string {
+	if !isCodeExec || templateVars["IsScriptedMode"] != "true" || useProjectedReferenceSkills {
 		return ""
 	}
 	var varMappingLines []string
@@ -303,14 +302,19 @@ func (hctpeoa *WorkflowExecutionOnlyAgent) executionOnlySystemPromptProcessor(te
 	stepContextOutput := templateVars["StepContextOutput"]
 	isCodeExecutionMode := templateVars["IsCodeExecutionMode"] == "true"
 	learningHistory := templateVars["LearningHistory"]
-	// Feature flag: KeepLearningFull (set by controller with priority: step config > env var > default false)
-	keepLearningFullStr := templateVars["KeepLearningFull"]
-	keepLearningFull := keepLearningFullStr == "true"
 	stepNumber := templateVars["StepNumber"]               // e.g., "step-8" or "step-3-sub-fetch"
 	stepExecutionPath := templateVars["StepExecutionPath"] // e.g., "execution/step-8"
 	previousStepsSummary := templateVars["PreviousStepsSummary"]
 	knowledgebasePath := templateVars["KnowledgebasePath"] // Knowledgebase folder path (persistent files across runs)
 	dbPath := templateVars["DBPath"]                       // DB folder path (structured JSON, always enabled)
+	useProjectedReferenceSkills := hctpeoa.useProjectedReferenceSkills(templateVars)
+	if useProjectedReferenceSkills {
+		// Coding CLI adapters project the workflow-reference and
+		// workflow-learnings skills to disk. Keep the system prompt focused on
+		// this run's dynamic contract instead of repeating static reference text
+		// (and a recursive legacy file inventory) in CLAUDE.md/AGENTS.md.
+		learningHistory = ""
+	}
 
 	// Get current date and time
 	now := time.Now()
@@ -350,7 +354,7 @@ func (hctpeoa *WorkflowExecutionOnlyAgent) executionOnlySystemPromptProcessor(te
 		validationSchemaJSON := templateVars["ValidationSchema"]
 		hasBrowser := templateVars["HasBrowserAccess"] == "true"
 		isCodeLocked := templateVars["IsScriptedLocked"] == "true"
-		codeExecutionSection += GetScriptedModeInstructions(codeDirAbsPath, stepExecutionPath, isRelearnMode, priorScript, priorError, inputArgPaths, envVarNames, varMappingLines, validationSchemaJSON, hasBrowser, isCodeLocked)
+		codeExecutionSection += GetScriptedModeInstructions(codeDirAbsPath, stepExecutionPath, isRelearnMode, priorScript, priorError, inputArgPaths, envVarNames, varMappingLines, validationSchemaJSON, hasBrowser, isCodeLocked, useProjectedReferenceSkills)
 	}
 
 	// Get variable names and values for system prompt
@@ -371,12 +375,11 @@ func (hctpeoa *WorkflowExecutionOnlyAgent) executionOnlySystemPromptProcessor(te
 		"CurrentTime":               currentTime,
 		"LearningHistory":           learningHistory,
 		"HasLearnings":              fmt.Sprintf("%t", learningHistory != ""),
-		"KeepLearningFull":          fmt.Sprintf("%t", keepLearningFull),
 		"VariableNames":             variableNames,
 		"VariableValues":            variableValues,
 		"VarMapping":                templateVars["ScriptedVarMapping"], // {{VAR}} → SECRET_VAR mapping (for code exec guidance)
 		"UseCodeStyleRules":         useCodeStyleRules,
-		"PythonBestPractices":       buildCodeExecBestPractices(isCodeExecutionMode, templateVars),
+		"PythonBestPractices":       buildCodeExecBestPractices(isCodeExecutionMode, templateVars, useProjectedReferenceSkills),
 		"StepNumber":                stepNumber,
 		"StepExecutionPath":         stepExecutionPath,
 		"PreviousStepsSummary":      previousStepsSummary,
@@ -399,13 +402,33 @@ func (hctpeoa *WorkflowExecutionOnlyAgent) executionOnlySystemPromptProcessor(te
 		// + canonical DOM probe) apply to every browser step — code-exec throwaway
 		// scripts AND learn-code saved main.py. Only the final-artifact permanence
 		// differs between modes; the discovery/selector discipline is identical.
-		"BrowserAuthoringRules": BrowserAuthoringRulesFromTemplateVars(templateVars),
+		"BrowserAuthoringRules": browserAuthoringRulesForExecution(templateVars, useProjectedReferenceSkills),
 	})
 	if err != nil {
 		panic(fmt.Sprintf("execution-only system prompt template execution failed (missing variable?): %v", err))
 	}
 
 	return result.String()
+}
+
+// useProjectedReferenceSkills reports whether this execution is backed by a
+// coding CLI adapter. Those adapters receive the full static reference corpus
+// as native on-disk skills, so embedding the same docs in the system prompt is
+// both redundant and harmful (Claude Code rejects oversized CLAUDE.md files).
+// The explicit template value is a narrow test hook and also keeps prompt
+// rendering deterministic for archived/replayed executions.
+func (hctpeoa *WorkflowExecutionOnlyAgent) useProjectedReferenceSkills(templateVars map[string]string) bool {
+	if hctpeoa == nil || hctpeoa.BaseOrchestratorAgent == nil {
+		return usesProjectedReferenceSkills(nil, templateVars)
+	}
+	return usesProjectedReferenceSkills(hctpeoa.BaseOrchestratorAgent.GetConfig(), templateVars)
+}
+
+func browserAuthoringRulesForExecution(templateVars map[string]string, useProjectedReferenceSkills bool) string {
+	if useProjectedReferenceSkills {
+		return ""
+	}
+	return BrowserAuthoringRulesFromTemplateVars(templateVars)
 }
 
 // executionOnlyUserMessageProcessor generates the user message for execution-only agent
@@ -438,7 +461,6 @@ func (hctpeoa *WorkflowExecutionOnlyAgent) executionOnlyUserMessageProcessor(tem
 		VariableNames:            templateVars["VariableNames"],
 		VariableValues:           templateVars["VariableValues"],
 		LearningHistory:          templateVars["LearningHistory"],
-		LearningFilePaths:        templateVars["LearningFilePaths"],
 		StepNumber:               templateVars["StepNumber"],
 		StepExecutionPath:        templateVars["StepExecutionPath"],
 		PreviousStepsSummary:     templateVars["PreviousStepsSummary"],

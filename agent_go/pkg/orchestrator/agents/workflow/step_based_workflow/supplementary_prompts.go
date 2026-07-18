@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/manishiitg/coding-agent-loop/agent_go/cmd/server/guidance"
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/common"
 	browserinstructions "github.com/manishiitg/coding-agent-loop/agent_go/pkg/instructions"
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/skills"
@@ -11,6 +12,7 @@ import (
 	mcpagent "github.com/manishiitg/mcpagent/agent"
 
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/orchestrator/agents"
+	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 )
 
 // appendSupplementaryPrompts injects skills, secrets, browser isolation,
@@ -22,7 +24,17 @@ func (hcpo *StepBasedWorkflowOrchestrator) appendSupplementaryPrompts(
 	config *agents.OrchestratorAgentConfig,
 	effectiveSkills []string,
 	isolatedSessionID string,
+	attachGlobalLearnings bool,
 ) {
+	// Coding CLI agents get static AgentWorks contracts as native projected
+	// skills. The execution role deliberately receives only the reference
+	// corpus, not workflow-commands: slash-command procedures belong to the
+	// builder chat and add irrelevant matching noise inside a workflow step.
+	if workflowReference := projectedWorkflowReferenceSkill(config); workflowReference != nil {
+		mcpAgent.AttachSkill(workflowReference)
+		hcpo.GetLogger().Info(fmt.Sprintf("📚 Attached projected workflow reference skill (%d supporting docs)", len(workflowReference.SupportingFiles)))
+	}
+
 	// 1. Skills — Phase 3 rewire. Load the step's selected skills as
 	// first-class llmtypes.Skill values and attach to the agent.
 	// mcpagent.ensureSystemPrompt injects the listing into the system
@@ -48,9 +60,11 @@ func (hcpo *StepBasedWorkflowOrchestrator) appendSupplementaryPrompts(
 	//
 	// Same helper the workshop chat uses (server.go workshop-phase
 	// setup) — both paths land the identical pointer skill.
-	if globalSkill := skills.LoadGlobalSkill(getWorkspaceAPIURL(), hcpo.GetWorkspacePath()); globalSkill != nil {
-		mcpAgent.AttachSkill(globalSkill)
-		hcpo.GetLogger().Info("🌐 Attached workflow global skill pointer (_global → learnings/_global/)")
+	if attachGlobalLearnings {
+		if globalSkill := skills.LoadGlobalSkill(getWorkspaceAPIURL(), hcpo.GetWorkspacePath()); globalSkill != nil {
+			mcpAgent.AttachSkill(globalSkill)
+			hcpo.GetLogger().Info("🌐 Attached workflow global skill pointer (_global → learnings/_global/)")
+		}
 	}
 
 	// 2. Browser isolation (agent-browser session override)
@@ -80,7 +94,11 @@ func (hcpo *StepBasedWorkflowOrchestrator) appendSupplementaryPrompts(
 	// 4. Browser instructions (mode-specific)
 	browserCfg := hcpo.resolveBrowserConfig(config.ServerNames, effectiveSkills)
 	browserCfg.IsIsolated = isolatedSessionID != ""
-	if browserPrompt := browserinstructions.BuildBrowserInstructions(browserCfg); browserPrompt != "" {
+	browserPrompt := browserinstructions.BuildBrowserInstructions(browserCfg)
+	if isCodingCLIConfig(config) {
+		browserPrompt = browserinstructions.BuildBrowserRuntimeInstructions(browserCfg)
+	}
+	if browserPrompt != "" {
 		mcpAgent.AppendSystemPrompt(browserPrompt)
 		hcpo.GetLogger().Info(fmt.Sprintf("🌐 Added browser instructions to agent (agent-browser=%v, cdp=%v)",
 			browserCfg.HasAgentBrowser, browserCfg.CdpPort > 0))
@@ -101,6 +119,24 @@ func (hcpo *StepBasedWorkflowOrchestrator) appendSupplementaryPrompts(
 		hcpo.GetLogger().Info(fmt.Sprintf("🌐 Added workflow browser downloads guidance to agent: %s", browserDownloadsPath))
 	}
 
+}
+
+func isCodingCLIConfig(config *agents.OrchestratorAgentConfig) bool {
+	return config != nil && common.IsCLIProvider(config.LLMConfig.Primary.Provider)
+}
+
+func usesProjectedReferenceSkills(config *agents.OrchestratorAgentConfig, templateVars map[string]string) bool {
+	if raw, ok := templateVars["UseProjectedReferenceSkills"]; ok {
+		return raw == "true"
+	}
+	return isCodingCLIConfig(config)
+}
+
+func projectedWorkflowReferenceSkill(config *agents.OrchestratorAgentConfig) *llmtypes.Skill {
+	if !isCodingCLIConfig(config) {
+		return nil
+	}
+	return guidance.MaterializeReferenceSkill("workshop")
 }
 
 // resolveBrowserConfig resolves the browser configuration for prompt instructions.

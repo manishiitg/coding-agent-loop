@@ -353,6 +353,14 @@ func (agent *WorkflowTodoTaskOrchestratorAgent) Execute(
 // todoTaskOrchestratorSystemPromptProcessor generates the system prompt for todo task orchestrator agent
 func (agent *WorkflowTodoTaskOrchestratorAgent) todoTaskOrchestratorSystemPromptProcessor(templateVars map[string]string) string {
 	now := time.Now()
+	learningHistory := templateVars["LearningHistory"]
+	var config *agents.OrchestratorAgentConfig
+	if agent != nil && agent.BaseOrchestratorAgent != nil {
+		config = agent.BaseOrchestratorAgent.GetConfig()
+	}
+	if usesProjectedReferenceSkills(config, templateVars) {
+		learningHistory = ""
+	}
 
 	templateData := map[string]interface{}{
 		"CurrentDate":                   now.Format("2006-01-02"),
@@ -360,7 +368,7 @@ func (agent *WorkflowTodoTaskOrchestratorAgent) todoTaskOrchestratorSystemPrompt
 		"PredefinedRoutes":              templateVars["PredefinedRoutes"],
 		"VariableNames":                 templateVars["VariableNames"],
 		"VariableValues":                templateVars["VariableValues"],
-		"LearningHistory":               templateVars["LearningHistory"],
+		"LearningHistory":               learningHistory,
 		"StepExecutionPath":             templateVars["StepExecutionPath"],
 		"DownloadsPath":                 templateVars["DownloadsPath"],
 		"ExecutionFolderPath":           templateVars["ExecutionFolderPath"],

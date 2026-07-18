@@ -27,3 +27,14 @@ These tools cover each provider's **basic** parameters only. For a capability a 
 
 **For the full reference — every tool's parameters, defaults, provider routing rules, model-ID lists, and common-mistake gotchas — call:** ` + "`get_reference_doc(kind=\"workspace-media-tools\")`" + `.`
 }
+
+// GetSpecialWorkspaceToolsPointer returns the compact coding-CLI form of the
+// workspace media/search guidance. Coding CLIs receive the complete
+// workspace-media-tools reference through the projected workflow-reference
+// skill, so repeating the full catalog in CLAUDE.md/AGENTS.md wastes the
+// provider's fixed instruction budget.
+func GetSpecialWorkspaceToolsPointer() string {
+	return `## Special Workspace Tools
+
+Provider-backed text, web search, image, video, audio, music, and media-reading tools are available through the MCP bridge. Before selecting a provider/model, handling provider auth, or using one of these tools, read the attached ` + "`workflow-reference`" + ` skill's ` + "`references/workspace-media-tools.md`" + ` (or call ` + "`get_reference_doc(kind=\"workspace-media-tools\")`" + `). Use ` + "`list_llm_capabilities`" + ` as the authoritative availability source and ` + "`set_provider_auth`" + ` for credentials; never place credentials in shell commands or files.`
+}

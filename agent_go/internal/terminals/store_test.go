@@ -2162,6 +2162,54 @@ func TestStoreMarkCompletedOperatorOverride(t *testing.T) {
 	}
 }
 
+func TestStoreSyntheticTurnLifecycleReactivatesRetainedMainTerminal(t *testing.T) {
+	store := NewStore()
+	terminalID := "session-1:main:session-1"
+	store.HandleEvent("session-1", terminalEventWithMetadata(
+		"main:session-1",
+		"previous turn",
+		7,
+		map[string]interface{}{
+			"tmux_session":   "mlp-claude-code-retained",
+			"execution_kind": "main_agent",
+		},
+		time.Now(),
+	))
+
+	if _, ok := store.MarkCompleted(terminalID); !ok {
+		t.Fatalf("expected retained main terminal %q", terminalID)
+	}
+	before, _ := store.Get(terminalID)
+
+	running, ok := store.MarkTurnRunning(terminalID)
+	if !ok {
+		t.Fatalf("expected synthetic turn to reactivate retained main terminal")
+	}
+	if !running.Active || running.State != "running" {
+		t.Fatalf("running turn lifecycle = active %v state %q", running.Active, running.State)
+	}
+	if running.ProcessState != "live" || running.SnapshotKind != "live" {
+		t.Fatalf("retained tmux lifecycle = process %q snapshot %q", running.ProcessState, running.SnapshotKind)
+	}
+	if running.ChunkIndex <= before.ChunkIndex {
+		t.Fatalf("running transition did not advance revision: before=%d after=%d", before.ChunkIndex, running.ChunkIndex)
+	}
+
+	completed, ok := store.MarkTurnCompleted(terminalID)
+	if !ok {
+		t.Fatalf("expected synthetic turn to settle retained main terminal")
+	}
+	if completed.Active || completed.State != "completed" {
+		t.Fatalf("completed turn lifecycle = active %v state %q", completed.Active, completed.State)
+	}
+	if completed.ProcessState != "live" || completed.SnapshotKind != "live" {
+		t.Fatalf("settled retained tmux must remain live, process=%q snapshot=%q", completed.ProcessState, completed.SnapshotKind)
+	}
+	if completed.ChunkIndex <= running.ChunkIndex {
+		t.Fatalf("completed transition did not advance revision: running=%d completed=%d", running.ChunkIndex, completed.ChunkIndex)
+	}
+}
+
 func TestStoreMarkCompletedSuppressesSameTurnChunks(t *testing.T) {
 	store := NewStore()
 	now := time.Now()

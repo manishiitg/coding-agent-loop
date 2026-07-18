@@ -18,6 +18,7 @@ import type { Theme } from '../contexts/ThemeContext'
 import { normalizeAnsiForEmbeddedXterm } from '../utils/ansiSanitize'
 import { preserveTerminalContinuity } from '../utils/terminalContinuity'
 import { isMainAgentTerminal } from '../utils/terminalIdentity'
+import { hasFreshTerminalDetailBody } from '../utils/terminalDetailFreshness'
 import {
   hiddenSelectedTerminalRailGroup,
   organizeTerminalRail,
@@ -3611,7 +3612,10 @@ const TerminalCenterInner: React.FC<TerminalCenterProps> = ({ currentSessionId, 
     if (!selectedTerminalView || useLiveAttachForSelected) return
     const detailKey = terminalDetailCacheKey(selectedTerminalView)
     const cached = terminalDetailCacheRef.current[detailKey]
-    if ((cached?.content || selectedTerminalView.content || '').trim()) return
+    // selectedTerminalView may contain a deliberately stale cached body to
+    // avoid flicker. Only the raw latest list snapshot or the cache entry for
+    // its exact revision can prove that the latest turn has been fetched.
+    if (!selectedTerminal || hasFreshTerminalDetailBody(selectedTerminal, cached)) return
     if (selectedDetailFetchKeysRef.current.has(detailKey)) return
     selectedDetailFetchKeysRef.current.add(detailKey)
 
@@ -3632,6 +3636,7 @@ const TerminalCenterInner: React.FC<TerminalCenterProps> = ({ currentSessionId, 
     }
   }, [
     selectedTerminalView,
+    selectedTerminal,
     useLiveAttachForSelected,
     cacheTerminalDetail,
     applyTerminalSnapshotUpdate,

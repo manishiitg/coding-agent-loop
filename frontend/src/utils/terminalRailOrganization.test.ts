@@ -83,6 +83,32 @@ describe('terminal rail organization', () => {
     expect(groups[0].section).toBe('active')
   })
 
+  it('promotes a restarted attempt of a stopped step into Active', () => {
+    const stopped = terminal('stopped-attempt', {
+      active: false,
+      state: 'failed',
+      execution_kind: 'workflow_step',
+      step_id: 'survey-app-and-refresh-knowledge',
+      step_name: 'Survey App and Refresh Knowledge',
+      step_attempt: 1,
+    })
+    const restarted = terminal('restarted-attempt', {
+      active: true,
+      state: 'running',
+      execution_kind: 'workflow_step',
+      step_id: 'survey-app-and-refresh-knowledge',
+      step_name: 'Survey App and Refresh Knowledge',
+      step_attempt: 2,
+      updated_at: '2026-07-14T00:02:00Z',
+    })
+
+    const groups = organize([stopped, restarted])
+
+    expect(groups).toHaveLength(1)
+    expect(groups[0].section).toBe('active')
+    expect(groups[0].representative.terminal_id).toBe('restarted-attempt')
+  })
+
   it('groups message-sequence turns under their owning step', () => {
     const first = terminal('turn-1', {
       step_type: 'message_sequence',

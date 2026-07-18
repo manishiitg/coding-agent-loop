@@ -446,6 +446,52 @@ func (s *Store) MarkFailed(terminalID string) (Snapshot, bool) {
 	return s.markTerminalState(terminalID, "failed")
 }
 
+// MarkTurnRunning reactivates a retained terminal for a new logical agent turn.
+// Synthetic auto-notification turns reuse the existing coding-CLI tmux instead
+// of passing through the normal query setup path, so no fresh terminal-start
+// event is guaranteed. Advancing the revision also tells list/detail clients
+// that any previously cached completed snapshot is stale.
+func (s *Store) MarkTurnRunning(terminalID string) (Snapshot, bool) {
+	terminalID = strings.TrimSpace(terminalID)
+	if s == nil || terminalID == "" {
+		return Snapshot{}, false
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	snapshot, ok := s.byID[terminalID]
+	if !ok {
+		return Snapshot{}, false
+	}
+	now := time.Now()
+	snapshot.Active = true
+	snapshot.State = "running"
+	if strings.TrimSpace(snapshot.TmuxSession) != "" {
+		snapshot.ProcessState = "live"
+		snapshot.SnapshotKind = "live"
+	}
+	snapshot.CloseReason = ""
+	snapshot.ClosesAt = nil
+	snapshot.RetentionSeconds = 0
+	snapshot.ChunkIndex++
+	snapshot.UpdatedAt = now
+	s.byID[terminalID] = snapshot
+	delete(s.forcedInactive, terminalID)
+	return snapshot, true
+}
+
+// MarkTurnCompleted settles a logical turn while retaining its live coding-CLI
+// tmux for a later continuation. This differs from the operator override above:
+// the process is idle/live, not closing, and may be reactivated by the next turn.
+func (s *Store) MarkTurnCompleted(terminalID string) (Snapshot, bool) {
+	return s.markTurnSettled(terminalID, "completed")
+}
+
+// MarkTurnFailed is the failed-turn counterpart to MarkTurnCompleted.
+func (s *Store) MarkTurnFailed(terminalID string) (Snapshot, bool) {
+	return s.markTurnSettled(terminalID, "failed")
+}
+
 // MarkStale flags a terminal whose backing tmux session has disappeared without
 // a lifecycle completion event. Unlike MarkCompleted/MarkFailed it does not set
 // a forcedInactive override, so a later successful capture can still reclassify
@@ -633,6 +679,34 @@ func (s *Store) markTerminalState(terminalID, state string) (Snapshot, bool) {
 	}
 	snapshot.ClosesAt = nil
 	snapshot.RetentionSeconds = 0
+	snapshot.UpdatedAt = now
+	s.byID[terminalID] = snapshot
+	s.forcedInactive[terminalID] = now
+	return snapshot, true
+}
+
+func (s *Store) markTurnSettled(terminalID, state string) (Snapshot, bool) {
+	terminalID = strings.TrimSpace(terminalID)
+	if s == nil || terminalID == "" {
+		return Snapshot{}, false
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	snapshot, ok := s.byID[terminalID]
+	if !ok {
+		return Snapshot{}, false
+	}
+	now := time.Now()
+	snapshot.Active = false
+	snapshot.State = state
+	if strings.TrimSpace(snapshot.TmuxSession) != "" {
+		snapshot.ProcessState = "live"
+		snapshot.SnapshotKind = "live"
+	}
+	snapshot.ClosesAt = nil
+	snapshot.RetentionSeconds = 0
+	snapshot.ChunkIndex++
 	snapshot.UpdatedAt = now
 	s.byID[terminalID] = snapshot
 	s.forcedInactive[terminalID] = now

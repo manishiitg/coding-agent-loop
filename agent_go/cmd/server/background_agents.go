@@ -2073,6 +2073,14 @@ func (api *StreamingAPI) executeSyntheticTurn(sessionID, syntheticMsg string) bo
 
 	// Update session status to running
 	api.updateSessionStatus(sessionID, "running")
+	mainTerminalID := sessionID + ":main:" + sessionID
+	if api.terminalStore != nil {
+		// Synthetic turns reuse the retained coding-CLI process and bypass the
+		// normal query bootstrap that would otherwise reactivate this snapshot.
+		// Without this transition the UI keeps treating the pane as completed
+		// and does not attach while the auto-notification turn is running.
+		api.terminalStore.MarkTurnRunning(mainTerminalID)
+	}
 
 	// Create cancellable context for this synthetic turn
 	agentCtx, agentCancel := context.WithCancel(context.Background())
@@ -2118,6 +2126,9 @@ func (api *StreamingAPI) executeSyntheticTurn(sessionID, syntheticMsg string) bo
 		api.setSyntheticTurn(sessionID, false)
 		api.setSessionBusy(sessionID, false)
 		api.updateSessionStatus(sessionID, "error")
+		if api.terminalStore != nil {
+			api.terminalStore.MarkTurnFailed(mainTerminalID)
+		}
 		releaseInputLane()
 		return false
 	}
@@ -2293,6 +2304,12 @@ func (api *StreamingAPI) executeSyntheticTurn(sessionID, syntheticMsg string) bo
 
 		// Update session status to completed
 		api.updateSessionStatus(sessionID, "completed")
+		if api.terminalStore != nil {
+			// Keep the tmux process live for future continuations, but expose this
+			// logical turn as settled and advance its snapshot revision so the UI
+			// fetches the final pane contents.
+			api.terminalStore.MarkTurnCompleted(mainTerminalID)
+		}
 	}()
 	return true
 }

@@ -7,6 +7,9 @@ Use this as the read-only audit checklist for artifact drift after plan or confi
 - If you are already that generic reviewer, perform the audit directly. Never launch another reviewer, background tool, or nested maintenance agent.
 - `call_generic_agent` is synchronous. Its direct result is authoritative; do not poll, sleep, call `query_step`, or wait for an auto-notification.
 - The reviewer is strictly read-only. It must not edit files, mutate the plan/config, write `builder/improve.html`, mark changelog entries, or mark Pulse module state.
+- Read only the matching Artifact Review cursor, open findings, and relevant
+  recent decision/outcome regions in `builder/improve.html`. Do not load HTML
+  style/skeleton guidance, inspect CSS, migrate markup, or format cards.
 
 Load `get_reference_doc(kind="assumption-audit")`. While tracing changed surfaces, identify dependent artifacts that preserved an old architecture, tactic, schema, metric, or execution assumption after the plan evolved. Keep consequential unresolved restrictions under Pulse's Assumptions challenged.
 
@@ -47,10 +50,13 @@ Load `get_reference_doc(kind="assumption-audit")`. While tracing changed surface
 
 Return one compact review package containing:
 
+- `module=artifact_review`, `verdict`, and `next_check`
 - cursor before and proposed cursor after
 - changelog files and zero-based entry indexes fully inspected
 - affected steps inspected
-- findings ordered by severity, with exact evidence and recommended owner
+- findings ordered by severity; each includes stable `finding_id`, `target_key`,
+  plain-language summary, exact evidence, bounded `recommended_fix`,
+  verification, recommended owner, and `user_judgment_required` with reason
 - clean checks
 - exact proposed marks grouped as `clean`, `findings`, or `cursor-backfill`
 - any blocked entry that prevented further cursor advancement

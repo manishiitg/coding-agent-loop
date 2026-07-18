@@ -118,8 +118,12 @@ func IsOrgPulseSchedule(sched WorkflowSchedule) bool {
 	if sched.ID == builtinOrgPulseID {
 		return true
 	}
-	hay := strings.ToLower(sched.Name + "\n" + sched.Description + "\n" + sched.Query)
-	return strings.Contains(hay, "org pulse") || strings.Contains(hay, "org-pulse")
+	if mode := strings.TrimSpace(strings.ToLower(sched.Mode)); mode != "" && mode != "multi-agent" {
+		return false
+	}
+	name := strings.ToLower(strings.ReplaceAll(strings.TrimSpace(sched.Name), "-", " "))
+	name = strings.Join(strings.Fields(name), " ")
+	return name == "org pulse" || name == "daily org pulse" || name == "daily org pulse scan"
 }
 
 // NormalizeOrgPulseSchedule keeps Org Pulse runtime behavior on the current

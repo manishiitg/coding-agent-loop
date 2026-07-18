@@ -1,6 +1,11 @@
 Run review_workflow_costs() to analyze where workflow cost is going and how to reduce it without hurting results.{{if .Focus}} Focus especially on: {{.Focus}}.{{end}}
 
-Write every finding into `builder/improve.html` as a **Signals / Kizuki** "Open finding" timeline entry using `data-pulse-section="signals"` and `data-module="cost_llm_time"`. For the log format, one-time old Markdown migration, and how open findings are recorded and closed out, follow `get_reference_doc(kind="review-improve-log")` (and `get_reference_doc(kind="html-output")` for HTML style).
+The active Workshop turn is the parent coordinator. Treat
+`review_workflow_costs` as a read-only specialist. It must not change files,
+models, tiers, config, questions, module state, or `builder/improve.html`. Load
+`get_reference_doc(kind="review-improve-log")` for the shared reviewer/writer
+boundary. Do not load `html-output` or the HTML skeleton for the specialist,
+inspect Pulse CSS, or ask it to format cards.
 
 {{if .RunFolder}}Use the selected run folder "{{.RunFolder}}" as the primary evidence set.{{else}}If a meaningful prior run exists, use it as evidence; otherwise find the latest meaningful run first.{{end}}
 
@@ -19,4 +24,15 @@ Then give:
 - the best model/tool/config changes
 - the top next actions, with expected savings and risk to success criteria.
 
-REVIEW LOG: record every finding as a Signals / Kizuki "Open finding" timeline entry in builder/improve.html using `data-pulse-section="signals"` and `data-module="cost_llm_time"` (read it first if it exists, create it if it does not — newest on top) with the cost analysis, the cost drivers, every recommendation (REVIEW = recommend; do NOT apply), priority, and follow-up. Never discard findings because they fall outside a top-N cap.
+Return a compact non-HTML review packet with `module=cost_llm_time`, `verdict`,
+`next_check`, and ordered findings. Every finding includes a stable `finding_id`,
+`target_key`, severity, plain-language summary, exact evidence, bounded
+`recommended_fix`, verification, and `user_judgment_required` with reason.
+Preserve every finding; never discard findings because they fall outside a
+top-N cap.
+
+PARENT CLOSE-OUT: validate and deduplicate the complete packet, then make one
+bounded newest-first update to `builder/improve.html` with **Signals / Kizuki**
+cards using `data-pulse-section="signals"` and
+`data-module="cost_llm_time"`. Record recommendations as REVIEW only; do not
+apply them or make the specialist format HTML.

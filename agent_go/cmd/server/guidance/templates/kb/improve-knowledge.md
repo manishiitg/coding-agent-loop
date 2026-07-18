@@ -16,12 +16,16 @@ waits for its synchronous result. The parent then validates and applies any
 bounded safe edit. Do not create a dedicated KB-maintenance agent or use
 `run_in_background` for this review.
 
-Return only: `verdict`, ordered `findings`, precise `evidence`, a bounded
-`recommended_fix`, and `user_judgment_required` with reason. Use the remaining
+Return only: `module=knowledgebase_health`, `verdict`, `next_check`, and ordered
+`findings`. Every finding includes stable `finding_id`, `target_key`, severity,
+plain-language summary, precise `evidence`, a bounded `recommended_fix`, exact
+`verification`, and `user_judgment_required` with reason. Use the remaining
 document only as the KB-health audit checklist.
 
 Read `builder/improve.html` for prior context and matching open findings, but do
-not write it. The Pulse Fixer owns the consolidated log update.
+not write it. Use targeted semantic reads only; do not inspect CSS, load HTML
+style/skeleton guidance, migrate markup, or format cards. The Pulse Fixer owns
+the consolidated log update.
 
 Apply the parent-provided `assumption-audit` KB-notes lens within this command's boundaries. A note that merely repeats the current plan's tactic, architecture, fixed source/channel, or unverified belief is not durable domain knowledge. Keep user-owned `knowledgebase/context/` untouched; surface a consequential unresolved restriction for Pulse's Assumptions challenged instead of copying it into more notes.
 

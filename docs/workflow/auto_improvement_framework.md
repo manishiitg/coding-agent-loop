@@ -70,6 +70,6 @@ Each module may return multiple findings. Pulse keeps all material findings, but
 
 ## Pulse Log Retention
 
-`builder/improve.html` must stay readable for users and cheap for scheduled agents to load. When it passes roughly **800 lines, 60 KB, or 20 timeline entries**, move older **resolved** findings, superseded decisions, and routine run rows into a monthly archive `builder/improve-archive/YYYY-MM.html`, leaving a one-row entry in the archive index (date range, count, any still-unresolved ids).
+`builder/improve.html` must stay readable for users and cheap for scheduled agents to load. When it has **more than 20 timeline entries** and at least one older resolved entry is safe to move, move older **resolved** findings, superseded decisions, and routine run rows into a monthly archive `builder/improve-archive/YYYY-MM.html`, leaving a one-row entry in the archive index (date range, count, any still-unresolved ids). Byte size and line count do not trigger archiving.
 
 **Never archive** open findings, user rules, active advisor experiments, current notes, or the latest few entries — the active Pulse should always answer "what's the state of this workflow right now, and what still needs attention." Archiving is append-preserving: move old detail, leave an index row, and never rewrite the meaning of an old decision.

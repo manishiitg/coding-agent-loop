@@ -10,7 +10,9 @@ Use `{{.RunFolder}}` as the primary run folder.{{end}}
 
 1. Load `get_reference_doc(kind="post-run-monitor")`,
    `get_reference_doc(kind="llm-selection")`, and
-   `get_reference_doc(kind="review-improve-log")`.
+   `get_reference_doc(kind="review-improve-log")`. These references belong to
+   the parent. Do not pass HTML style, skeleton, CSS, migration, or card-format
+   work to the reviewer.
 2. Inspect resolved workflow/step/eval LLM configuration, actual model/tier use,
    fallbacks, matching cost and timing evidence, missing/unpriced buckets,
    retained `efficiency_or_coaching` findings, workflow version, and current
@@ -20,7 +22,8 @@ Use `{{.RunFolder}}` as the primary run folder.{{end}}
 3. Launch exactly one generic reviewer with a prompt beginning
    `READ-ONLY REVIEW`. It must not edit files or config, create questions,
    publish, notify, run the workflow, call Pulse module-state tools, or launch
-   another agent.
+   another agent. It may read only matching LLM/Ops/open-finding regions of
+   `builder/improve.html`; it must not format or write the page.
 4. Require a compact result grouped by `cost saving`, `quality`, `reliability`,
    and `setup`. Every recommendation needs current state, exact suggestion,
    expected benefit, risk, and evidence. Separate missing telemetry from true
@@ -30,8 +33,13 @@ Use `{{.RunFolder}}` as the primary run folder.{{end}}
    deterministic non-bottleneck step with representative evidence proving
    quality-equivalent output and no downstream outcome loss; label it as an
    approval-required reversible trial. Missing evidence means keep the tier.
+   Return a non-HTML packet with `module=llm_ops_review`, `verdict`, `next_check`,
+   and ordered findings. Every finding includes a stable `finding_id`,
+   `target_key`, severity, plain-language summary, exact evidence, bounded
+   `recommended_fix`, verification, and `user_judgment_required` with reason.
 5. Validate and deduplicate the result against `builder/improve.html`. As the
-   parent, refresh one compact LLM & operations review area with
+   parent, make one bounded update that refreshes one compact LLM & operations
+   review area with
    `data-pulse-section="signals" data-module="llm_ops_review"` in that HTML. Do not
    apply recommendations or create approval cards in this read-only command.
 

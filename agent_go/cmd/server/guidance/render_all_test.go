@@ -372,6 +372,24 @@ func TestTierGuidanceProtectsQualityWhileGoalsAreBelowTarget(t *testing.T) {
 	}
 }
 
+func TestGoalAdvisorPrioritizesStrategyOverHTMLFormatting(t *testing.T) {
+	advisor, err := renderFromRegistry("goal-advisor", tmplData{}, allKinds)
+	if err != nil {
+		t.Fatalf("render goal-advisor: %v", err)
+	}
+	for _, want := range []string{
+		"Spend the run on goal evidence, strategy, alternatives, and experiment judgment",
+		"Do not audit its CSS, visual design, unrelated historical cards, or overall format",
+		"one targeted in-place update",
+		"do not perform an HTML design or migration pass",
+		"skip the HTML write",
+	} {
+		if !strings.Contains(advisor, want) {
+			t.Fatalf("goal advisor missing analysis-first reporting contract %q", want)
+		}
+	}
+}
+
 func TestPulseRunsEveryDueReviewerAndWritesAttributedResults(t *testing.T) {
 	monitor, err := renderFromRegistry("post-run-monitor", tmplData{}, referenceKinds)
 	if err != nil {
@@ -396,6 +414,11 @@ func TestPulseRunsEveryDueReviewerAndWritesAttributedResults(t *testing.T) {
 	for _, want := range []string{`Never select only a`, `one explicitly attributed result card per due module`} {
 		if !strings.Contains(pulse, want) {
 			t.Fatalf("manual pulse missing complete reviewer contract %q", want)
+		}
+	}
+	for _, forbidden := range []string{"record_pulse_worklist", "mark_pulse_module_result", "mark_pulse_final_command_result"} {
+		if !strings.Contains(pulse, "do not call\n   `"+forbidden+"`") && !strings.Contains(pulse, "`"+forbidden+"`") {
+			t.Fatalf("manual pulse does not explicitly fence scheduler-only tool %q", forbidden)
 		}
 	}
 
@@ -509,6 +532,58 @@ func TestMaintenanceImproveGuidanceIsReadOnlyForPulseFixerHandoff(t *testing.T) 
 			if !strings.Contains(rendered, want) {
 				t.Fatalf("%s missing read-only reviewer contract %q", kind, want)
 			}
+		}
+	}
+}
+
+func TestPulseSpecialistsReturnStructuredPacketsAndParentOwnsHTML(t *testing.T) {
+	kinds := []string{
+		"design-plan",
+		"bug-review",
+		"llm-ops-review",
+		"review-code",
+		"review-cost",
+		"review-speed",
+		"review-artifact-drift",
+		"improve-learnings",
+		"improve-knowledge",
+		"improve-database",
+		"improve-evaluation",
+		"improve-report",
+		"goal-advisor",
+	}
+	for _, kind := range kinds {
+		rendered, err := renderFromRegistry(kind, tmplData{}, allKinds)
+		if err != nil {
+			t.Fatalf("render %s: %v", kind, err)
+		}
+		for _, want := range []string{
+			"finding_id",
+			"target_key",
+			"recommended_fix",
+			"verification",
+			"user_judgment_required",
+			"builder/improve.html",
+		} {
+			if !strings.Contains(rendered, want) {
+				t.Fatalf("%s missing structured specialist handoff %q", kind, want)
+			}
+		}
+	}
+
+	logGuidance, err := renderFromRegistry("review-improve-log", tmplData{}, referenceKinds)
+	if err != nil {
+		t.Fatalf("render review-improve-log: %v", err)
+	}
+	for _, want := range []string{
+		"Reviewer/writer boundary",
+		"A specialist is strictly read-only",
+		"the parent validates evidence",
+		"updates `builder/improve.html` once",
+		"specialists never load either presentation reference",
+	} {
+		if !strings.Contains(logGuidance, want) {
+			t.Fatalf("review-improve-log missing parent-only writer contract %q", want)
 		}
 	}
 }

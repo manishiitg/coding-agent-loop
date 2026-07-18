@@ -8,14 +8,17 @@ remove, update, resolve, or run means **recommend the exact change to the Pulse
 Fixer**. The Pulse Fixer may automatically apply correctness-preserving repairs;
 semantic changes still require an exact approved human-input request.
 
-Return only: `verdict`, ordered findings tagged `CORRECTNESS_REPAIR`,
-`OPERATIONAL`, or `GOAL_SEMANTIC`, precise `evidence`, bounded
-`recommended_fix` items, score-continuity impact, verification steps, and
-`user_judgment_required` with reason. Use the remaining document only as the
-evaluation-health audit checklist.
+Return only: `module=eval_health`, `verdict`, `next_check`, and ordered findings
+tagged `CORRECTNESS_REPAIR`, `OPERATIONAL`, or `GOAL_SEMANTIC`. Every finding
+includes stable `finding_id`, `target_key`, severity, plain-language summary,
+precise `evidence`, bounded `recommended_fix`, score-continuity impact, exact
+`verification`, and `user_judgment_required` with reason. Use the remaining
+document only as the evaluation-health audit checklist.
 
 Read `builder/improve.html` as the durable prior-decision log, but do not write
-it. The Pulse Fixer owns the one consolidated log update and close-out.
+it. Use targeted semantic reads only; do not inspect CSS, load HTML
+style/skeleton guidance, migrate markup, or format cards. The Pulse Fixer owns
+the one consolidated log update and close-out.
 
 The parent Workshop/Pulse agent must load `assumption-audit` and include the parent-provided eval lens with this checklist. The generic reviewer must not call Workshop-only guidance, validation, eval-run, or mutation tools. An eval must measure `soul.md` success, not reward compliance with the current architecture, channel, step sequence, provider, artifact shape, or proxy unless the user explicitly made that part of success. Recommend bounded measurement corrections when semantics stay unchanged; surface material goal/rubric choices for Pulse's Assumptions challenged and require user approval when business meaning changes.
 
@@ -34,7 +37,7 @@ Eval changes are special-cased because they change what is measured, not the wor
 Focus on: {{.Focus}}.{{end}}
 
 PASS 0 - FRAMEWORK PRECHECK
-1. Read `builder/improve.html`: recent timeline entries, open findings, answered decisions, and archive rows. If it is short, read it in full. If an archive row references an older eval semantic change that affects a step you may edit, read that archive file.
+1. Read only matching eval-health entries, open findings, answered decisions, and referenced archive rows from `builder/improve.html`. If an archive row references an older eval semantic change that affects the current recommendation, read that archive file. Do not read unrelated cards or page formatting.
 2. Read `soul/soul.md` and extract the objective and success criteria. If those are missing or not checkable, return `blocked` and recommend `define-success`; Goal Advisor is not the setup path.
 3. Treat `soul/soul.md` as the Goal / Ikigai source of truth. `builder/improve.html` holds time-based Signal, Reflection, and Improvement history, not a duplicate Goal/Profile block.
 

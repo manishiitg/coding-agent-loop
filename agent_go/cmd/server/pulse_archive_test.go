@@ -33,23 +33,41 @@ func TestAssessPulseImproveArchiveUsesStructuredTimelineCards(t *testing.T) {
 	}
 }
 
-func TestAssessPulseImproveArchiveUsesByteAndLineThresholds(t *testing.T) {
-	large := assessPulseImproveArchive("<html><body>" + strings.Repeat("x", pulseImproveArchiveMaxBytes) + "</body></html>")
-	if !large.Due || large.Bytes <= pulseImproveArchiveMaxBytes {
-		t.Fatalf("large document should require archive: %+v", large)
+func TestAssessPulseImproveArchiveIgnoresByteAndLineCounts(t *testing.T) {
+	large := assessPulseImproveArchive(`<html><body><article class="entry resolved"></article>` + strings.Repeat("x", 128*1024) + "</body></html>")
+	if large.Due {
+		t.Fatalf("byte count alone must not require archive: %+v", large)
 	}
 
-	manyLines := assessPulseImproveArchive(strings.Repeat("line\n", pulseImproveArchiveMaxLines))
-	if !manyLines.Due || manyLines.Lines <= pulseImproveArchiveMaxLines {
-		t.Fatalf("long document should require archive: %+v", manyLines)
+	manyLines := assessPulseImproveArchive(`<article class="entry resolved"></article>` + "\n" + strings.Repeat("line\n", 1600))
+	if manyLines.Due {
+		t.Fatalf("line count alone must not require archive: %+v", manyLines)
+	}
+}
+
+func TestAssessPulseImproveArchiveIgnoresAgentHandoffAndNeedsCandidates(t *testing.T) {
+	content := `<html><body><section id = 'pulse-agent-handoff'>` +
+		strings.Repeat(`<article class="entry decision"></article>`, pulseImproveArchiveMaxTimelineEntries+5) +
+		`</section>` + strings.Repeat("x", 128*1024) + `</body></html>`
+	assessment := assessPulseImproveArchive(content)
+	if assessment.TimelineEntries != 0 || assessment.ArchivableEntries != 0 {
+		t.Fatalf("handoff entries leaked into archive counts: %+v", assessment)
+	}
+	if assessment.Due {
+		t.Fatalf("large document with no safe archive candidate should not loop forever: %+v", assessment)
+	}
+}
+
+func TestAssessPulseImproveArchiveCountsTrailingNewlineCorrectly(t *testing.T) {
+	assessment := assessPulseImproveArchive("first\nsecond\n")
+	if assessment.Lines != 2 {
+		t.Fatalf("lines = %d, want 2", assessment.Lines)
 	}
 }
 
 func TestPostRunMonitorArchiveStepPreservesCurrentTruthAndStagesWrites(t *testing.T) {
 	step := postRunMonitorArchiveStep(pulseImproveArchiveAssessment{
 		Due:             true,
-		Bytes:           pulseImproveArchiveMaxBytes + 1,
-		Lines:           pulseImproveArchiveMaxLines + 1,
 		TimelineEntries: pulseImproveArchiveMaxTimelineEntries + 1,
 		RecentRunRows:   12,
 	})

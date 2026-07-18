@@ -95,6 +95,12 @@ workflow's `builder/improve.html` as a **Chief of Staff recommendation** card un
 newest-first log anchor. This card is the handoff from org management to the workflow builder,
 so it must be goal-aligned and actionable:
 
+Immediately before that write, re-read the current `builder/improve.html`. Apply one targeted
+patch at its stable newest-first recommendation anchor and preserve every unrelated byte. If the
+anchor or the recommendation card changed since the evidence sweep, re-evaluate the patch against
+the new file; never replace the whole document from an earlier copy. This is the only allowed
+workflow-level write in Org Pulse and prevents overlap with a workflow Pulse from losing updates.
+
 - **Stable recommendation id:** `data-cos-rec-id`, reused across days for the same goal/gap.
 - **Org goal / KPI target:** name the goal and target from `pulse/goals.html`, or say
   `supporting/no explicit goal` when the workflow is operational support.

@@ -3,9 +3,11 @@ package workspace
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/common"
@@ -304,6 +306,81 @@ func TestExecuteShellCommand_InjectsSessionEnv(t *testing.T) {
 	}
 	if got.ExtraEnv["DB_PATH"] != "/abs/workflow/db/db.sqlite" {
 		t.Fatalf("session DB_PATH not injected: %q", got.ExtraEnv["DB_PATH"])
+	}
+}
+
+func TestExecuteShellCommand_ConcurrentRequestsUseIsolatedEnv(t *testing.T) {
+	const requestCount = 64
+
+	received := make(chan ExecuteShellCommandParams, requestCount)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var params ExecuteShellCommandParams
+		if err := json.NewDecoder(r.Body).Decode(&params); err == nil {
+			received <- params
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": true,
+			"data":    map[string]interface{}{"stdout": "ok", "exit_code": 0},
+		})
+	}))
+	defer server.Close()
+
+	sourceEnv := map[string]string{
+		"MCP_API_URL":   "http://127.0.0.1:45678/s/shared-session",
+		"MCP_API_TOKEN": "test-token",
+	}
+	client := NewClient(server.URL, WithExtraEnv(sourceEnv))
+	// WithExtraEnv must own a copy rather than retain the caller's mutable map.
+	sourceEnv["MCP_API_URL"] = "http://invalid.example"
+
+	var wg sync.WaitGroup
+	errors := make(chan error, requestCount)
+	for i := 0; i < requestCount; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			callEnv := map[string]string{"REQUEST_LOCAL": "present"}
+			_, err := client.ExecuteShellCommand(context.Background(), ExecuteShellCommandParams{
+				Command:  "printf ok",
+				ExtraEnv: callEnv,
+			})
+			if err != nil {
+				errors <- err
+			}
+			if len(callEnv) != 1 || callEnv["REQUEST_LOCAL"] != "present" {
+				errors <- fmt.Errorf("caller env was mutated: %#v", callEnv)
+			}
+		}()
+	}
+	wg.Wait()
+	close(errors)
+	close(received)
+	for err := range errors {
+		t.Error(err)
+	}
+
+	receivedCount := 0
+	for params := range received {
+		receivedCount++
+		if got := params.ExtraEnv["MCP_API_URL"]; got != "http://127.0.0.1:45678/s/shared-session" {
+			t.Fatalf("client env was not isolated from its source map: %q", got)
+		}
+		if params.ExtraEnv["MCP_MCP"] == "" || params.ExtraEnv["MCP_CUSTOM"] == "" || params.ExtraEnv["MCP_AUTH"] == "" {
+			t.Fatalf("derived MCP environment is incomplete: %#v", params.ExtraEnv)
+		}
+		if params.ExtraEnv["REQUEST_LOCAL"] != "present" {
+			t.Fatalf("per-call environment missing: %#v", params.ExtraEnv)
+		}
+	}
+	if receivedCount != requestCount {
+		t.Fatalf("received %d requests, want %d", receivedCount, requestCount)
+	}
+
+	for _, derivedKey := range []string{"MCP_MCP", "MCP_CUSTOM", "MCP_VIRTUAL", "MCP_AUTH", "RUNLOOP_SESSION_ID"} {
+		if _, exists := client.ExtraEnv[derivedKey]; exists {
+			t.Fatalf("shared client env was mutated with %s: %#v", derivedKey, client.ExtraEnv)
+		}
 	}
 }
 

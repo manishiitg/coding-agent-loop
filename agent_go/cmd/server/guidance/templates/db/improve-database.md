@@ -17,13 +17,17 @@ waits for its synchronous result. The parent then validates and applies any
 bounded safe edit. Do not create a dedicated DB-maintenance agent or use
 `run_in_background` for this review.
 
-Return only: `verdict`, ordered `findings`, precise `evidence`, a bounded
-`recommended_fix`, migration risk, verification commands, and
-`user_judgment_required` with reason. Use the remaining document only as the
-database-health audit checklist.
+Return only: `module=db_health`, `verdict`, `next_check`, and ordered `findings`.
+Every finding includes stable `finding_id`, `target_key`, severity,
+plain-language summary, precise `evidence`, a bounded `recommended_fix`,
+migration risk, exact verification commands under `verification`, and
+`user_judgment_required` with reason.
+Use the remaining document only as the database-health audit checklist.
 
 Read `builder/improve.html` for prior context and matching open findings, but do
-not write it. The Pulse Fixer owns the consolidated log update.
+not write it. Use targeted semantic reads only; do not inspect CSS, load HTML
+style/skeleton guidance, migrate markup, or format cards. The Pulse Fixer owns
+the consolidated log update.
 
 Apply the parent-provided `assumption-audit` DB lens within this command's boundaries. Check whether schemas, enums, keys, or cardinality unnecessarily hardcode one source, channel, entity type, group, or current tactic. Recommend safe contract changes, but do not perform speculative row migrations; surface a consequential strategy/schema choice for Pulse's Assumptions challenged when business judgment is required.
 

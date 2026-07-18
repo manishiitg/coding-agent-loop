@@ -9,8 +9,8 @@ import (
 	"strings"
 	"time"
 
-	mcpexecutor "github.com/manishiitg/mcpagent/executor"
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
+	htmlpkg "golang.org/x/net/html"
 )
 
 const (
@@ -29,11 +29,11 @@ const (
 var pulseModuleOrder = []string{
 	pulseModuleBugReview,
 	pulseModuleArtifactReview,
+	pulseModuleReportHealth,
+	pulseModuleEvalHealth,
 	pulseModuleLearningHealth,
 	pulseModuleKnowledgebaseHealth,
 	pulseModuleDBHealth,
-	pulseModuleEvalHealth,
-	pulseModuleReportHealth,
 	pulseModuleCostLLMTime,
 	pulseModuleLLMOpsReview,
 	pulseModuleGoalAdvisor,
@@ -327,6 +327,33 @@ func recordPulseWorklist(ctx context.Context, workspacePath, pulseRunID string, 
 	return states, nil
 }
 
+func recordTrustedPulseWorklistOnce(ctx context.Context, workspacePath, pulseRunID string, decisions []PulseWorklistDecision) ([]PulseModuleState, error) {
+	if err := validatePulseWorklistDecisions(decisions); err != nil {
+		return nil, err
+	}
+
+	pulseWorklistRecordMu.Lock()
+	defer pulseWorklistRecordMu.Unlock()
+	// Revalidate at the serialized write boundary. A session may have been
+	// revoked after the tool call began but before argument parsing finished.
+	if err := validateTrustedPulseToolRunID(ctx, pulseRunID); err != nil {
+		return nil, err
+	}
+
+	existing, exists, err := getPulseWorklistForRun(ctx, workspacePath, pulseRunID)
+	if err != nil {
+		return nil, err
+	}
+	if exists && pulseWorklistIsComplete(existing) {
+		states := make([]PulseModuleState, 0, len(pulseModuleOrder))
+		for _, module := range pulseModuleOrder {
+			states = append(states, existing[module])
+		}
+		return states, nil
+	}
+	return recordPulseWorklist(ctx, workspacePath, pulseRunID, decisions)
+}
+
 func validatePulseWorklistDecisions(decisions []PulseWorklistDecision) error {
 	if len(decisions) == 0 {
 		return fmt.Errorf("decisions are required")
@@ -409,19 +436,45 @@ func validatePulseGateCompletion(ctx context.Context, workspacePath, pulseRunID,
 }
 
 func pulseGateHandoffContainsRunID(html, pulseRunID string) bool {
-	lowerHTML := strings.ToLower(html)
-	markerIndex := strings.Index(lowerHTML, `id="pulse-agent-handoff"`)
-	if markerIndex < 0 {
-		markerIndex = strings.Index(lowerHTML, `id='pulse-agent-handoff'`)
-	}
-	if markerIndex < 0 {
+	pulseRunID = strings.TrimSpace(pulseRunID)
+	if pulseRunID == "" {
 		return false
 	}
-	handoff := html[markerIndex:]
-	if end := strings.Index(strings.ToLower(handoff), "</details>"); end >= 0 {
-		handoff = handoff[:end]
+	tokenizer := htmlpkg.NewTokenizer(strings.NewReader(html))
+	depth := 0
+	for {
+		switch tokenizer.Next() {
+		case htmlpkg.ErrorToken:
+			return false
+		case htmlpkg.StartTagToken, htmlpkg.SelfClosingTagToken:
+			token := tokenizer.Token()
+			if depth == 0 {
+				if !htmlTokenHasID(token, "pulse-agent-handoff") {
+					continue
+				}
+				for _, attr := range token.Attr {
+					if attr.Key == "data-pulse-run-id" && strings.TrimSpace(attr.Val) == pulseRunID {
+						return true
+					}
+				}
+				if token.Type == htmlpkg.StartTagToken {
+					depth = 1
+				}
+				continue
+			}
+			if token.Type == htmlpkg.StartTagToken {
+				depth++
+			}
+		case htmlpkg.TextToken:
+			if depth > 0 && strings.Contains(tokenizer.Token().Data, pulseRunID) {
+				return true
+			}
+		case htmlpkg.EndTagToken:
+			if depth > 0 {
+				depth--
+			}
+		}
 	}
-	return strings.Contains(handoff, pulseRunID)
 }
 
 func markPulseModuleResult(ctx context.Context, workspacePath, module, pulseRunID, result, reason string, evidence []string) (*PulseModuleState, error) {
@@ -435,7 +488,7 @@ func markPulseModuleResult(ctx context.Context, workspacePath, module, pulseRunI
 	}
 	result = strings.TrimSpace(strings.ToLower(result))
 	if result == "" {
-		result = "done"
+		return nil, fmt.Errorf("result is required")
 	}
 	switch result {
 	case "done", "changed", "blocked", "failed", "skipped", "timed_out":
@@ -477,6 +530,54 @@ func markPulseModuleResult(ctx context.Context, workspacePath, module, pulseRunI
 		return nil, err
 	}
 	return state, nil
+}
+
+func markPulseModuleResultFromAgent(ctx context.Context, workspacePath, module, pulseRunID, result, reason string, evidence []string) (*PulseModuleState, error) {
+	module = normalizePulseModule(module)
+	if !validPulseModules[module] {
+		return nil, fmt.Errorf("module %q is not valid", module)
+	}
+	pulseRunID = strings.TrimSpace(pulseRunID)
+	result = strings.TrimSpace(strings.ToLower(result))
+	switch result {
+	case "done", "changed", "blocked", "failed", "skipped":
+	default:
+		return nil, fmt.Errorf("result must be one of done, changed, blocked, failed, skipped")
+	}
+	reason = strings.TrimSpace(reason)
+	if reason == "" {
+		return nil, fmt.Errorf("reason is required")
+	}
+
+	normalized, db, err := openPulseModuleStateDB(ctx, workspacePath, true)
+	if err != nil {
+		return nil, err
+	}
+	defer db.Close()
+
+	now := time.Now().UTC().Format(time.RFC3339)
+	evidenceJSON, _ := json.Marshal(normalizePulseEvidence(evidence))
+	resultExec, err := db.ExecContext(ctx, `UPDATE pulse_module_state SET
+			last_ran_at = ?, last_result = ?, last_result_reason = ?, evidence_json = ?, updated_at = ?
+		WHERE workspace_path = ? AND module = ? AND last_pulse_run_id = ?
+			AND last_decision = 'due' AND last_result = ''`,
+		now, result, reason, string(evidenceJSON), now, normalized, module, pulseRunID)
+	if err != nil {
+		return nil, err
+	}
+	if changed, err := resultExec.RowsAffected(); err != nil {
+		return nil, err
+	} else if changed == 0 {
+		existing, readErr := getPulseModuleStateByModule(ctx, db, normalized, module)
+		if readErr != nil {
+			return nil, fmt.Errorf("Pulse module %q is not an unresolved due module for run %q", module, pulseRunID)
+		}
+		if existing.LastPulseRunID == pulseRunID && existing.LastResult == result {
+			return existing, nil
+		}
+		return nil, fmt.Errorf("Pulse module %q for run %q is already terminal or belongs to another run", module, pulseRunID)
+	}
+	return getPulseModuleStateByModule(ctx, db, normalized, module)
 }
 
 func getPulseModuleStates(ctx context.Context, workspacePath string) ([]PulseModuleState, error) {
@@ -653,14 +754,14 @@ func createPulseWorklistTools() ([]llmtypes.Tool, map[string]interface{}, map[st
 		Type: "function",
 		Function: &llmtypes.FunctionDefinition{
 			Name:        "mark_pulse_module_result",
-			Description: "Mark a selected Pulse module as done, changed, blocked, failed, skipped, or timed_out after the module prompt has completed or the scheduler's maximum wait has elapsed.",
+			Description: "Mark a selected Pulse module as done, changed, blocked, failed, or skipped after its module review and Pulse Fixer work complete. Scheduler timeouts are recorded by the scheduler and cannot be overwritten by an agent.",
 			Parameters: llmtypes.NewParameters(map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
 					"workspace_path": map[string]interface{}{"type": "string", "description": "Workflow-relative path, e.g. Workflow/social-media."},
 					"pulse_run_id":   map[string]interface{}{"type": "string", "description": "Scheduler-provided Pulse run id."},
 					"module":         map[string]interface{}{"type": "string", "enum": moduleEnum},
-					"result":         map[string]interface{}{"type": "string", "enum": []string{"done", "changed", "blocked", "failed", "skipped", "timed_out"}},
+					"result":         map[string]interface{}{"type": "string", "enum": []string{"done", "changed", "blocked", "failed", "skipped"}},
 					"reason":         map[string]interface{}{"type": "string", "description": "One-sentence result summary."},
 					"evidence":       map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "string"}},
 				},
@@ -691,18 +792,14 @@ func createPulseWorklistTools() ([]llmtypes.Tool, map[string]interface{}, map[st
 		"record_pulse_worklist": func(ctx context.Context, args map[string]interface{}) (string, error) {
 			workspacePath, _ := args["workspace_path"].(string)
 			pulseRunID, _ := args["pulse_run_id"].(string)
-			pulseRunID = strings.TrimSpace(pulseRunID)
-			if !isScheduledSession(pulseRunID) {
-				return "", fmt.Errorf("pulse_run_id %q is not a scheduler-issued session id", pulseRunID)
-			}
-			if trustedSessionID := mcpexecutor.SessionIDFromContext(ctx); trustedSessionID != "" && pulseRunID != trustedSessionID {
-				return "", fmt.Errorf("pulse_run_id %q does not match the active scheduler session %q", pulseRunID, trustedSessionID)
+			if err := validateTrustedPulseToolRunID(ctx, pulseRunID); err != nil {
+				return "", err
 			}
 			decisions, err := pulseWorklistDecisionsFromArgs(args["decisions"])
 			if err != nil {
 				return "", err
 			}
-			states, err := recordPulseWorklist(ctx, workspacePath, pulseRunID, decisions)
+			states, err := recordTrustedPulseWorklistOnce(ctx, workspacePath, pulseRunID, decisions)
 			if err != nil {
 				return "", err
 			}
@@ -724,7 +821,10 @@ func createPulseWorklistTools() ([]llmtypes.Tool, map[string]interface{}, map[st
 			module, _ := args["module"].(string)
 			result, _ := args["result"].(string)
 			reason, _ := args["reason"].(string)
-			state, err := markPulseModuleResult(ctx, workspacePath, module, pulseRunID, result, reason, stringSliceFromToolArg(args["evidence"]))
+			if err := validateTrustedPulseToolRunID(ctx, pulseRunID); err != nil {
+				return "", err
+			}
+			state, err := markPulseModuleResultFromAgent(ctx, workspacePath, module, pulseRunID, result, reason, stringSliceFromToolArg(args["evidence"]))
 			if err != nil {
 				return "", err
 			}
@@ -737,7 +837,10 @@ func createPulseWorklistTools() ([]llmtypes.Tool, map[string]interface{}, map[st
 			command, _ := args["command"].(string)
 			status, _ := args["status"].(string)
 			reason, _ := args["reason"].(string)
-			state, err := markPulseFinalCommandState(ctx, workspacePath, command, pulseRunID, status, reason)
+			if err := validateTrustedPulseToolRunID(ctx, pulseRunID); err != nil {
+				return "", err
+			}
+			state, err := markPulseFinalCommandStateFromAgent(ctx, workspacePath, command, pulseRunID, status, reason)
 			if err != nil {
 				return "", err
 			}

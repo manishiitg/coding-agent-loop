@@ -116,7 +116,7 @@ const PULSE_SECTION_ICON_CLASSES: Record<PulseSectionId, string> = {
 }
 
 function pulseStatusToneClass(status: string): string {
-  const normalized = status.toLowerCase()
+  const normalized = status.toLowerCase().replace(/^last\s+/, '')
   if (normalized === 'failed' || normalized === 'blocked' || normalized === 'timed_out' || normalized === 'timed out') {
     return 'border-red-500/30 bg-red-500/10 text-red-600 dark:text-red-300'
   }
@@ -204,15 +204,18 @@ function getPulseFinalCommandStatus(state?: PulseFinalCommandState): { label: st
     return { label: 'NO DATA', detail: 'No Pulse finalizer recorded yet', time: '' }
   }
   const status = (state.status || '').trim()
+  const displayStatus = status === 'timed_out' ? 'TIMED OUT' : (status || 'WAITING').toUpperCase()
+  const isHistorical = ['done', 'skipped', 'blocked', 'failed', 'timed_out'].includes(status.toLowerCase())
   return {
-    label: status === 'timed_out' ? 'TIMED OUT' : (status || 'WAITING').toUpperCase(),
-    detail: state.reason || 'No command outcome recorded',
+    label: isHistorical ? `LAST ${displayStatus}` : displayStatus,
+    detail: state.reason || (isHistorical ? 'Latest recorded Pulse outcome' : 'No command outcome recorded'),
     time: formatPulseTimestamp(state.finished_at || state.started_at || state.updated_at),
   }
 }
 
 function pulseStatusNeedsAttention(status: string): boolean {
-  return ['failed', 'blocked', 'timed out', 'timed_out', 'changed', 'due'].includes(status.trim().toLowerCase())
+  const normalized = status.trim().toLowerCase().replace(/^last\s+/, '')
+  return ['failed', 'blocked', 'timed out', 'timed_out', 'changed', 'due'].includes(normalized)
 }
 
 type PulseStatusRowProps = {

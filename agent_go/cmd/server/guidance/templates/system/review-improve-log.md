@@ -2,6 +2,39 @@
 
 Canonical conventions shared by every `/review-*` and `/improve-*` skill, the post-run monitor, and any chat-driven fix that touches the log. Load this once; the individual skills point here instead of restating it.
 
+### Reviewer/writer boundary
+
+Pulse specialists investigate; the active Workshop parent or Pulse Fixer writes.
+This boundary applies to Bug Review, Artifact Review, Learning Health,
+Knowledgebase Health, DB Health, Eval Health, Report Health, Cost/LLM/Time,
+LLM/Ops Review, plan review, and both Goal Advisor reviewers.
+
+- A specialist is strictly read-only. It must not edit workflow files, update
+  `builder/improve.html`, create or consume human-input requests, mark module
+  state, or launch another maintenance reviewer.
+- A specialist may read only the relevant semantic regions of
+  `builder/improve.html`: matching open findings, recent entries for its module,
+  current verdicts, answered outcomes, and an active Advisor experiment when
+  relevant. It must not inspect CSS, restyle the page, migrate markup, load
+  `review-improve-log-skeleton` or `html-output`, or spend review time formatting
+  cards.
+- Every specialist returns a compact, non-HTML review packet to the parent:
+  `module`, `verdict` (`clean|findings|blocked|insufficient_evidence`), and
+  ordered `findings`. Each finding carries a stable `finding_id`, `target_key`,
+  `severity`, plain-language `summary`, exact `evidence`, bounded
+  `recommended_fix`, `verification`, and `user_judgment_required` with a reason.
+  Include `next_check` for the module. When Pulse invokes the specialist, keep
+  the packet within 3000 characters without dropping evidence-backed findings.
+- After all selected specialists return, the parent validates evidence,
+  deduplicates by `finding_id` and `target_key`, resolves conflicts, applies only
+  permitted bounded fixes, and updates `builder/improve.html` once. Preserve one
+  attributed card per due module even though the physical HTML patch is
+  consolidated.
+- A standalone `/review-*` command uses the current Workshop turn as that parent
+  coordinator. Its underlying tool or generic reviewer remains read-only; the
+  current turn performs the single bounded log update after the review result is
+  complete.
+
 ### One log: `builder/improve.html`
 
 The workflow keeps a **single durable log** — `builder/improve.html` — the workflow's journal and the user's primary window into it. Everything the user should be able to see later goes here, in one place:
@@ -19,7 +52,7 @@ The workflow keeps a **single durable log** — `builder/improve.html` — the w
 
 Do not create a separate review document. All review findings, monitor notes, completed decisions, user rules, Artifact Review entries, and run notes belong in `builder/improve.html`. Pending questions are the one exception: store them with `create_human_input_request` in `db/db.sqlite`; Runloop renders them above the HTML.
 
-It is a **self-contained, human-readable HTML document — not Markdown, not a data dump.** This is the page the user opens to understand the workflow, so make it genuinely good to read. Call `get_reference_doc(kind="html-output")` for the style baseline. When creating or upgrading the file, also load `get_reference_doc(kind="review-improve-log-skeleton")` and copy that **Starter HTML skeleton** for the exact structure and polish. The Runloop Pulse view renders pending `report_human_inputs` first as **Needs your decision**. The HTML then reads: **two verdicts → status headline → active assumptions challenged (only when any exist) → Today's outcome → collapsed technical details → activity filters → recent runs → newest-first card timeline → collapsed Agent log → archive**. The first screen should read like a daily operator dashboard, not a raw ledger.
+It is a **self-contained, human-readable HTML document — not Markdown, not a data dump.** This is the page the user opens to understand the workflow, so make it genuinely good to read. Only the parent writer calls `get_reference_doc(kind="html-output")` for the style baseline. When creating or upgrading the file, the parent also loads `get_reference_doc(kind="review-improve-log-skeleton")` and copies that **Starter HTML skeleton** for the exact structure and polish; specialists never load either presentation reference. The Runloop Pulse view renders pending `report_human_inputs` first as **Needs your decision**. The HTML then reads: **two verdicts → status headline → active assumptions challenged (only when any exist) → Today's outcome → collapsed technical details → activity filters → recent runs → newest-first card timeline → collapsed Agent log → archive**. The first screen should read like a daily operator dashboard, not a raw ledger.
 
 The Pulse log is opened in a narrow right panel by default. Design it **mobile-first**:
 the base CSS must work at 360-480px with stacked rows, no overlapping metadata, no
@@ -297,7 +330,7 @@ So a Decision is checkable, **state the expected effect when you write it** ("ex
 
 ### Keep the active file small
 
-The log must not grow without bound. Before Gate, the scheduler conditionally sends a dedicated archive turn when `builder/improve.html` passes **800 lines, 60 KB, or 20 timeline entries**. That turn decides semantically what can move; normal Gate/module turns should not improvise a second archive pass.
+The log must not grow without bound. Before Gate, the scheduler conditionally sends a dedicated archive turn when `builder/improve.html` has **more than 20 timeline entries** and at least one older resolved entry is safe to move. Byte size and line count do not trigger archiving. That turn decides semantically what can move; normal Gate/module turns should not improvise a second archive pass.
 
 `builder/improve.html` remains the authoritative **current** Pulse view. Keep its complete top dashboard, current metrics/freshness, all open findings, user rules, current notes, unresolved or unconfirmed decisions, unanswered or not-yet-consumed human questions, the newest **20** timeline cards, and at least the newest **5** recent-run rows. Move only older **resolved** findings, superseded confirmed decisions, and routine old run rows into self-contained monthly archives at `builder/improve-archive/YYYY-MM.html`.
 

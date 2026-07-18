@@ -10,17 +10,16 @@ import (
 )
 
 const (
-	pulseImproveArchiveMaxBytes           = 60 * 1024
-	pulseImproveArchiveMaxLines           = 800
 	pulseImproveArchiveMaxTimelineEntries = 20
 )
 
 type pulseImproveArchiveAssessment struct {
-	Due             bool
-	Bytes           int
-	Lines           int
-	TimelineEntries int
-	RecentRunRows   int
+	Due               bool
+	Bytes             int
+	Lines             int
+	TimelineEntries   int
+	ArchivableEntries int
+	RecentRunRows     int
 }
 
 func assessPulseImproveArchive(content string) pulseImproveArchiveAssessment {
@@ -28,29 +27,75 @@ func assessPulseImproveArchive(content string) pulseImproveArchiveAssessment {
 	if content == "" {
 		return assessment
 	}
-	assessment.Lines = strings.Count(content, "\n") + 1
+	assessment.Lines = strings.Count(content, "\n")
+	if !strings.HasSuffix(content, "\n") {
+		assessment.Lines++
+	}
 
 	tokenizer := html.NewTokenizer(strings.NewReader(content))
+	handoffDepth := 0
 	for {
 		switch tokenizer.Next() {
 		case html.ErrorToken:
-			assessment.Due = assessment.Bytes > pulseImproveArchiveMaxBytes ||
-				assessment.Lines > pulseImproveArchiveMaxLines ||
-				assessment.TimelineEntries > pulseImproveArchiveMaxTimelineEntries
+			assessment.Due = assessment.TimelineEntries > pulseImproveArchiveMaxTimelineEntries &&
+				assessment.ArchivableEntries > 0
 			return assessment
+		case html.EndTagToken:
+			if handoffDepth > 0 {
+				handoffDepth--
+			}
 		case html.StartTagToken, html.SelfClosingTagToken:
 			token := tokenizer.Token()
-			if token.Data != "div" {
+			if handoffDepth > 0 {
+				if token.Type == html.StartTagToken {
+					handoffDepth++
+				}
+				continue
+			}
+			if htmlTokenHasID(token, "pulse-agent-handoff") {
+				if token.Type == html.StartTagToken {
+					handoffDepth = 1
+				}
 				continue
 			}
 			if htmlTokenHasClass(token, "entry") {
 				assessment.TimelineEntries++
+				if pulseArchiveEntryIsResolved(token) {
+					assessment.ArchivableEntries++
+				}
 			}
 			if htmlTokenHasClass(token, "run") {
 				assessment.RecentRunRows++
 			}
 		}
 	}
+}
+
+func htmlTokenHasID(token html.Token, want string) bool {
+	for _, attr := range token.Attr {
+		if strings.EqualFold(attr.Key, "id") && strings.EqualFold(strings.TrimSpace(attr.Val), want) {
+			return true
+		}
+	}
+	return false
+}
+
+func pulseArchiveEntryIsResolved(token html.Token) bool {
+	for _, className := range []string{"decision", "resolved", "closed", "superseded", "artifact", "monitor", "note", "agent"} {
+		if htmlTokenHasClass(token, className) {
+			return true
+		}
+	}
+	for _, attr := range token.Attr {
+		if attr.Key != "data-status" {
+			continue
+		}
+		switch strings.ToLower(strings.TrimSpace(attr.Val)) {
+		case "done", "changed", "resolved", "closed", "superseded", "dismissed", "consumed":
+			return true
+		}
+	}
+	return false
 }
 
 func htmlTokenHasClass(token html.Token, want string) bool {
@@ -83,17 +128,7 @@ func pulseImproveArchiveAssessmentForWorkspace(ctx context.Context, workspacePat
 }
 
 func (assessment pulseImproveArchiveAssessment) triggerSummary() string {
-	reasons := make([]string, 0, 3)
-	if assessment.Bytes > pulseImproveArchiveMaxBytes {
-		reasons = append(reasons, fmt.Sprintf("%d bytes > %d bytes", assessment.Bytes, pulseImproveArchiveMaxBytes))
-	}
-	if assessment.Lines > pulseImproveArchiveMaxLines {
-		reasons = append(reasons, fmt.Sprintf("%d lines > %d lines", assessment.Lines, pulseImproveArchiveMaxLines))
-	}
-	if assessment.TimelineEntries > pulseImproveArchiveMaxTimelineEntries {
-		reasons = append(reasons, fmt.Sprintf("%d timeline entries > %d entries", assessment.TimelineEntries, pulseImproveArchiveMaxTimelineEntries))
-	}
-	return strings.Join(reasons, "; ")
+	return fmt.Sprintf("%d timeline entries > %d entries", assessment.TimelineEntries, pulseImproveArchiveMaxTimelineEntries)
 }
 
 func postRunMonitorArchiveStep(assessment pulseImproveArchiveAssessment) postRunMonitorStep {

@@ -236,6 +236,14 @@ func (s *SchedulerService) Start(ctx context.Context) error {
 	// Discover all workflows by scanning workspace-docs/Workflow/*/workflow.json
 	workflows := s.discoverWorkflows(ctx)
 	scheduleLogf("[SCHEDULER] Discovered %d workflows with manifests", len(workflows))
+	for _, wf := range workflows {
+		finalized, err := finalizeAllUnresolvedPulseFinalCommands(ctx, wf.WorkspacePath, "failed", "Pulse interrupted because the server restarted")
+		if err != nil {
+			scheduleLogf("[SCHEDULER] Failed to reconcile stale Pulse final commands in %s: %v", wf.WorkspacePath, err)
+		} else if finalized > 0 {
+			scheduleLogf("[SCHEDULER] Marked %d stale Pulse final command(s) failed in %s", finalized, wf.WorkspacePath)
+		}
+	}
 
 	// Mark any stale "running" runs as "error" — they were interrupted by a server restart
 	for _, wf := range workflows {
@@ -1888,11 +1896,6 @@ const (
 
 func (s *SchedulerService) runPostRunMonitor(ctx context.Context, sctx *ScheduleContext, manifest *WorkflowManifest, runStatus, runFolder, runSessionID, scheduleRunID string) (pulseResult postRunMonitorResult) {
 	pulseResult = postRunMonitorPartial
-	defer func() {
-		if r := recover(); r != nil {
-			s.logf(sctx, "[PULSE] post-run pulse panic (recovered): %v", r)
-		}
-	}()
 
 	// Resume the SAME session the workflow run just used, so Pulse continues in the
 	// run's chat thread — the user sees the run and its post-run steward as one
@@ -1903,9 +1906,35 @@ func (s *SchedulerService) runPostRunMonitor(ctx context.Context, sctx *Schedule
 		sessionID = s.newScheduleSessionID(sctx)
 	}
 	pulseRunID := sessionID
+	trustedSessionReleases := map[string]func(){}
+	registerRecoverySession := func(recoverySessionID string) {
+		if previous, ok := trustedSessionReleases[recoverySessionID]; ok {
+			previous()
+		}
+		trustedSessionReleases[recoverySessionID] = registerTrustedPulseSession(recoverySessionID, pulseRunID)
+	}
+	releaseTrustedSession := func(releasedSessionID string) {
+		if release, ok := trustedSessionReleases[releasedSessionID]; ok {
+			release()
+			delete(trustedSessionReleases, releasedSessionID)
+		}
+	}
+	registerRecoverySession(sessionID)
+	defer func() {
+		if r := recover(); r != nil {
+			s.logf(sctx, "[PULSE] post-run pulse panic (recovered): %v", r)
+			if err := finalizeUnresolvedPulseFinalCommands(ctx, sctx.WorkspacePath, pulseRunID, "failed", "Pulse stopped because the server recovered a panic"); err != nil {
+				s.logf(sctx, "[PULSE] failed to reconcile final commands after panic: %v", err)
+			}
+		}
+		for registeredSessionID := range trustedSessionReleases {
+			releaseTrustedSession(registeredSessionID)
+		}
+	}()
 	baseReqMap := s.buildWorkshopRequest(ctx, sctx)
 	if err := initializePulseFinalCommandStates(ctx, sctx.WorkspacePath, pulseRunID); err != nil {
 		s.sessionLogf(sctx, sessionID, "[PULSE] failed to initialize final command state: %v", err)
+		return
 	}
 
 	// Run Pulse as a sequence: lightweight Gate first, then only the modules Gate
@@ -2000,12 +2029,14 @@ func (s *SchedulerService) runPostRunMonitor(ctx context.Context, sctx *Schedule
 				s.sessionLogf(sctx, oldSessionID, "[PULSE] failed to record %s result for module %s: %v", resultName, module, err)
 			}
 		}
+		releaseTrustedSession(oldSessionID)
 		if result.outcome != postRunMonitorStepStartFailed {
 			s.cancelScheduledSessionWork(oldSessionID, reason, runtimePhaseFailed)
 		}
 		recoveryNotes = append(recoveryNotes, reason)
 		if needsFollowup {
 			sessionID = s.newScheduleSessionID(sctx)
+			registerRecoverySession(sessionID)
 			introSent = false
 			s.sessionLogf(sctx, sessionID, "[PULSE] continuing finalization in recovery session after %s", reason)
 		}
@@ -2050,6 +2081,10 @@ func (s *SchedulerService) runPostRunMonitor(ctx context.Context, sctx *Schedule
 				return
 			} else if result.outcome != postRunMonitorStepCompleted {
 				handleStepFailure(archiveStep, result, true)
+			} else if reassessment, reassessErr := pulseImproveArchiveAssessmentForWorkspace(ctx, sctx.WorkspacePath); reassessErr != nil {
+				s.sessionLogf(sctx, sessionID, "[PULSE] could not reassess improve.html after archive: %v", reassessErr)
+			} else if reassessment.Due {
+				s.sessionLogf(sctx, sessionID, "[PULSE] improve.html remains over its archivable limit after one archive pass: %s", reassessment.triggerSummary())
 			}
 		}
 	}

@@ -750,7 +750,7 @@ func TestPostRunMonitorUsesDynamicModulesAndSingleFinalizer(t *testing.T) {
 	if got := len(steps); got != 12 {
 		t.Fatalf("postRunMonitorSteps() length = %d, want 12", got)
 	}
-	for i, want := range []string{"gate", "bug-review", "artifact", "learning-health", "knowledgebase-health", "db-health", "eval-health", "report-health", "cost-llm-time", "llm-ops-review", "goal-advisor", "finalize"} {
+	for i, want := range []string{"gate", "bug-review", "artifact", "report-health", "eval-health", "learning-health", "knowledgebase-health", "db-health", "cost-llm-time", "llm-ops-review", "goal-advisor", "finalize"} {
 		if got := steps[i].label; got != want {
 			t.Fatalf("postRunMonitorSteps()[%d].label = %q, want %q", i, got, want)
 		}

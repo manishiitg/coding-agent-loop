@@ -209,3 +209,16 @@ func TestMergeBuiltinSchedulesRefreshesDuplicateOrgPulseMessages(t *testing.T) {
 		t.Fatalf("duplicate org pulse did not receive current builtin sequence: %#v", got.Messages)
 	}
 }
+
+func TestIsOrgPulseScheduleDoesNotMatchIncidentalText(t *testing.T) {
+	schedule := WorkflowSchedule{
+		ID:          "publish-org-report",
+		Name:        "Publish reporting dashboard",
+		Description: "Post the org-pulse.html summary after publishing.",
+		Query:       "Read the Org Pulse output and publish it.",
+		Mode:        "multi-agent",
+	}
+	if IsOrgPulseSchedule(schedule) {
+		t.Fatal("schedule with incidental Org Pulse text was classified as the managed Org Pulse")
+	}
+}

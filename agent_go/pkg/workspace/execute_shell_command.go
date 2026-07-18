@@ -367,38 +367,14 @@ func (c *Client) ExecuteShellCommand(ctx context.Context, params ExecuteShellCom
 		return ShellCommandResult{}, err
 	}
 
-	// Inject per-session env vars (e.g. DB_PATH, STEP_OUTPUT_DIR set by the
-	// workflow orchestrator). The server-side bridge shell has no other channel
-	// for these — unlike the in-process built-in executor, which is wrapped to
-	// inject them. Explicit per-call extra_env wins; session env wins over the
-	// client-level vars merged below.
-	if sessionEnv := common.GetSessionShellEnv(sessionID); len(sessionEnv) > 0 {
-		if params.ExtraEnv == nil {
-			params.ExtraEnv = make(map[string]string)
-		}
-		for k, v := range sessionEnv {
-			if _, exists := params.ExtraEnv[k]; !exists {
-				params.ExtraEnv[k] = v
-			}
-		}
-	}
-
-	// Inject extra env vars from client (e.g., MCP_API_URL, MCP_API_TOKEN, SECRET_*)
-	if len(c.ExtraEnv) > 0 {
-		if params.ExtraEnv == nil {
-			params.ExtraEnv = c.ExtraEnv
-		} else {
-			// Merge client env into params (client vars don't override explicit params)
-			for k, v := range c.ExtraEnv {
-				if _, exists := params.ExtraEnv[k]; !exists {
-					params.ExtraEnv[k] = v
-				}
-			}
-		}
-	}
-	if params.ExtraEnv == nil {
-		params.ExtraEnv = make(map[string]string)
-	}
+	// Build an isolated environment for this request. Parallel Pulse reviewers
+	// share a Client, so aliasing c.ExtraEnv here would let concurrent requests
+	// write RUNLOOP_* and MCP shortcut variables into the same map.
+	params.ExtraEnv = mergeShellCommandEnv(
+		c.ExtraEnv,
+		common.GetSessionShellEnv(sessionID),
+		params.ExtraEnv,
+	)
 	populateRunloopProcessEnv(params.ExtraEnv, sessionID, params.WorkingDirectory, params.Command)
 	common.PopulateMCPBridgeShortEnv(params.ExtraEnv)
 
@@ -421,6 +397,23 @@ func (c *Client) ExecuteShellCommand(ctx context.Context, params ExecuteShellCom
 		log.Printf("[SHELL_RESULT_DEBUG] call_sub_agent via shell: stdout_len=%d raw_resp_len=%d", len(result.Stdout), len(respBody))
 	}
 	return result, nil
+}
+
+// mergeShellCommandEnv returns a new map for each request. Values are applied
+// from lowest to highest priority: client defaults, session values, then
+// explicit per-call values.
+func mergeShellCommandEnv(clientEnv, sessionEnv, callEnv map[string]string) map[string]string {
+	merged := make(map[string]string, len(clientEnv)+len(sessionEnv)+len(callEnv))
+	for key, value := range clientEnv {
+		merged[key] = value
+	}
+	for key, value := range sessionEnv {
+		merged[key] = value
+	}
+	for key, value := range callEnv {
+		merged[key] = value
+	}
+	return merged
 }
 
 func populateRunloopProcessEnv(env map[string]string, sessionID, workingDir, command string) {

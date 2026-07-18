@@ -1,6 +1,11 @@
 {{if .Focus}}Run review_step_code(step_id="{{.Focus}}") to audit the saved main.py for step "{{.Focus}}".{{else}}Run review_step_code() to audit every saved main.py script across workflow steps and evaluation steps against its current description and best practices.{{end}} This is not a spell-check — it's a behavior audit.
 
-Write every finding into `builder/improve.html` as a **Signals / Kizuki** "Open finding" timeline entry using `data-pulse-section="signals"` and `data-module="bug_review"`. For the log format, one-time old Markdown migration, and how open findings are recorded and closed out, follow `get_reference_doc(kind="review-improve-log")` (and `get_reference_doc(kind="html-output")` for HTML style).
+The active Workshop turn is the parent coordinator. Treat `review_step_code` as
+a read-only specialist: it audits and returns findings, but it must not edit
+files, update `builder/improve.html`, create questions, or mark module state.
+Load `get_reference_doc(kind="review-improve-log")` for the shared
+reviewer/writer boundary. Do not load `html-output` or the HTML skeleton for the
+specialist, inspect Pulse CSS, or ask it to format cards.
 
 Load `get_reference_doc(kind="assumption-audit")` and apply its code lens. Flag unjustified literals, fixed providers/channels/sources, and temporary workarounds that make a revisable design choice behave like a permanent constraint. Preserve verified platform constraints with evidence/freshness; parameterize or surface consequential assumptions rather than copying them into more code.
 
@@ -53,7 +58,13 @@ LENS 4 — OPERATIONAL HEALTH
 - Resource cleanup: file handles, browser contexts, network connections released on both success and failure paths.
 
 OUTPUT FORMAT
-For each step audited:
+Return a compact non-HTML review packet with `module=bug_review`, `verdict`, and
+ordered findings. Every finding must include a stable `finding_id`, `target_key`,
+severity, plain-language summary, exact evidence, bounded `recommended_fix`,
+verification, and `user_judgment_required` with reason. Include `next_check`.
+Preserve every finding; do not truncate to a Top 3.
+
+Within that packet, use this detail for each step audited:
 
 ```
 ### step-id: <name>
@@ -68,4 +79,10 @@ For each step audited:
 
 End with a cross-step summary: which steps are clean, which need work, which are CRITICAL.
 
-REVIEW LOG: record every finding as a Signals / Kizuki "Open finding" timeline entry in builder/improve.html using `data-pulse-section="signals"` and `data-module="bug_review"` (read it first if it exists, create it if it does not — newest on top). Include: which step(s) reviewed, the drift findings, the shortcut/dynamism findings, the browser best-practice findings, the operational findings, severity verdicts, and items flagged for follow-up. Mark these as REVIEW (recommend; do NOT apply — fixes go through the Workshop owner or Pulse Fixer).
+PARENT CLOSE-OUT: after the complete packet returns, validate and deduplicate it
+against matching Bug Review findings in `builder/improve.html`. Then make one
+bounded newest-first log update containing one or more **Signals / Kizuki**
+"Open finding" cards with `data-pulse-section="signals"` and
+`data-module="bug_review"`. Include all evidence-backed findings and mark them as
+REVIEW (recommend; do NOT apply). Do not make the specialist format HTML and do
+not rewrite unrelated page structure or styling.

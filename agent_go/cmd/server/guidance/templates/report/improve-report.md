@@ -7,14 +7,23 @@ update `builder/improve.html`, create questions, or mark module state. Any later
 wording such as improve, apply, edit, fix, update, reorder, add, remove, or
 resolve means **recommend the exact change to the Pulse Fixer**.
 
-Return only: `verdict`, ordered `findings`, precise `evidence`, bounded
-`recommended_fix` items with before/after intent, verification steps, and
-`user_judgment_required` with reason.
+Return only: `module=report_health`, `verdict`, `next_check`, and ordered
+`findings`. Every finding includes stable `finding_id`, `target_key`, severity,
+plain-language summary, precise `evidence`, bounded `recommended_fix` with
+before/after intent, exact `verification`, and `user_judgment_required` with
+reason.
 
-The parent Workshop/Pulse agent must load `report-plan`, `html-output` (for
-HTML), and `assumption-audit` before delegation, then include their relevant
-rules with this checklist in the generic reviewer's instruction. The reviewer
-must not call Workshop-only guidance, validation, preview, or mutation tools.
+The parent Workshop/Pulse agent supplies the relevant report contract and
+assumption-audit lens with this checklist. Do not burden the reviewer with
+`html-output`, Pulse HTML skeletons, CSS migration, or card formatting. The
+parent may load `report-plan` and `html-output` later when applying an accepted
+report fix. The reviewer must not call Workshop-only guidance, validation,
+preview, or mutation tools.
+
+Read only matching Report Health findings, goal verdicts, active measurement
+handoffs, and recent report decisions from `builder/improve.html`. Do not inspect
+or update the Pulse page's CSS/markup; the Pulse Fixer owns its one consolidated
+log update.
 
 Apply the parent-provided assumption-audit report lens. The dashboard must show goal/outcome truth, not present the current architecture, tactic, channel, source list, or inferred proxy as the user's permanent target. Recommend bounded fixes for stale presentation assumptions and surface consequential unresolved ones for Pulse's Assumptions challenged.
 {{if .Focus}}

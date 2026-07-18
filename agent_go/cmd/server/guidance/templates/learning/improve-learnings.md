@@ -18,16 +18,22 @@ bounded safe edit. Do not create a dedicated learning-maintenance agent or use
 
 Return only this compact contract:
 
+- `module`: learning_health
 - `verdict`: clean | needs_fix | blocked
-- `findings`: severity, exact problem, and why it matters
+- `findings`: stable `finding_id`, `target_key`, severity, plain-language
+  summary, exact problem, and why it matters
 - `evidence`: precise paths and relevant step ids
 - `recommended_fix`: bounded edits for the Pulse Fixer
+- `verification`: exact checks for the Pulse Fixer
 - `user_judgment_required`: yes/no with reason
+- `next_check`: evidence or cadence condition for another review
 
 Use the remaining document only as the learning-health audit checklist.
 
 Read `builder/improve.html` for prior context and matching open findings, but do
-not write it. The Pulse Fixer owns the consolidated log update.
+not write it. Use targeted semantic reads only; do not inspect CSS, load HTML
+style/skeleton guidance, migrate markup, or format cards. The Pulse Fixer owns
+the consolidated log update.
 
 Apply the parent-provided `assumption-audit` learnings/skills lens within this command's boundaries. Reusable HOW belongs here; business policy, fixed strategy, architecture preferences, and unverified limitations do not become true because they were written into a skill. Recommend removing or qualifying stale assumptions and surface consequential unresolved ones for Pulse's Assumptions challenged.
 

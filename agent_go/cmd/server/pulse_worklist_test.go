@@ -107,6 +107,37 @@ func TestPulseWorklistRequiresCompleteModuleSet(t *testing.T) {
 	}
 }
 
+func TestTrustedPulseWorklistKeepsFirstCompleteGateDecision(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("WORKSPACE_DOCS_PATH", root)
+	workspacePath := "Workflow/example"
+	pulseRunID := "schedule-cron--gate"
+	sessionID := "schedule-cron--gate-recovery"
+	release := registerTrustedPulseSession(sessionID, pulseRunID)
+	defer release()
+	ctx := mcpexecutor.WithSessionID(context.Background(), sessionID)
+
+	first := completePulseWorklistDecisions(map[string]PulseWorklistDecision{
+		pulseModuleBugReview: {Module: pulseModuleBugReview, Due: true, Reason: "The run failed a required check."},
+	})
+	if _, err := recordTrustedPulseWorklistOnce(ctx, workspacePath, pulseRunID, first); err != nil {
+		t.Fatalf("record first worklist: %v", err)
+	}
+
+	late := completePulseWorklistDecisions(map[string]PulseWorklistDecision{
+		pulseModuleBugReview: {Module: pulseModuleBugReview, Due: false, Reason: "Late stale decision.", CooldownRuns: 3},
+	})
+	states, err := recordTrustedPulseWorklistOnce(ctx, workspacePath, pulseRunID, late)
+	if err != nil {
+		t.Fatalf("record late worklist: %v", err)
+	}
+	for _, state := range states {
+		if state.Module == pulseModuleBugReview && state.LastDecision != "due" {
+			t.Fatalf("late worklist replaced first Gate decision: %+v", state)
+		}
+	}
+}
+
 func TestPulseWorklistValidatesCadenceHints(t *testing.T) {
 	ctx := context.Background()
 	root := t.TempDir()
@@ -175,13 +206,63 @@ func TestRecordPulseWorklistToolRequiresActiveScheduledRunID(t *testing.T) {
 	_, executors, _ := createPulseWorklistTools()
 	execute := executors["record_pulse_worklist"].(func(context.Context, map[string]interface{}) (string, error))
 
-	if _, err := execute(context.Background(), map[string]interface{}{"pulse_run_id": "probe"}); err == nil || !strings.Contains(err.Error(), "scheduler-issued") {
+	if _, err := execute(context.Background(), map[string]interface{}{"pulse_run_id": "probe"}); err == nil || !strings.Contains(err.Error(), "active scheduler session") {
 		t.Fatalf("probe run id error = %v", err)
 	}
 
 	ctx := mcpexecutor.WithSessionID(context.Background(), "schedule-manual--trusted")
-	if _, err := execute(ctx, map[string]interface{}{"pulse_run_id": "schedule-manual--different"}); err == nil || !strings.Contains(err.Error(), "does not match") {
+	if _, err := execute(ctx, map[string]interface{}{"pulse_run_id": "schedule-manual--trusted"}); err == nil || !strings.Contains(err.Error(), "not authorized") {
+		t.Fatalf("unregistered session error = %v", err)
+	}
+
+	release := registerTrustedPulseSession("schedule-manual--trusted", "schedule-manual--logical")
+	defer release()
+	if _, err := execute(ctx, map[string]interface{}{"pulse_run_id": "schedule-manual--different"}); err == nil || !strings.Contains(err.Error(), "logical Pulse run") {
 		t.Fatalf("mismatched run id error = %v", err)
+	}
+}
+
+func TestTrustedPulseRecoverySessionUsesOriginalLogicalRunID(t *testing.T) {
+	logicalRunID := "schedule-cron--original"
+	releaseInitial := registerTrustedPulseSession("schedule-cron--initial", logicalRunID)
+	defer releaseInitial()
+	releaseRecovery := registerTrustedPulseSession("schedule-cron--recovery", logicalRunID)
+	defer releaseRecovery()
+
+	ctx := mcpexecutor.WithSessionID(context.Background(), "schedule-cron--recovery")
+	if err := validateTrustedPulseToolRunID(ctx, logicalRunID); err != nil {
+		t.Fatalf("recovery session rejected original logical run id: %v", err)
+	}
+	if err := validateTrustedPulseToolRunID(ctx, "schedule-cron--recovery"); err == nil {
+		t.Fatal("recovery physical session id was accepted as the logical run id")
+	}
+}
+
+func TestPulseAgentCannotOverwriteSchedulerTimeout(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	t.Setenv("WORKSPACE_DOCS_PATH", root)
+	workspacePath := "Workflow/example"
+	pulseRunID := "schedule-cron--timeout"
+	if _, err := recordPulseWorklist(ctx, workspacePath, pulseRunID, completePulseWorklistDecisions(map[string]PulseWorklistDecision{
+		pulseModuleBugReview: {Module: pulseModuleBugReview, Due: true, Reason: "Run requires review."},
+	})); err != nil {
+		t.Fatalf("record worklist: %v", err)
+	}
+	if _, err := markPulseModuleResult(ctx, workspacePath, pulseModuleBugReview, pulseRunID, "timed_out", "Scheduler timeout", nil); err != nil {
+		t.Fatalf("mark timeout: %v", err)
+	}
+	if _, err := markPulseModuleResultFromAgent(ctx, workspacePath, pulseModuleBugReview, pulseRunID, "changed", "Late reviewer result", nil); err == nil {
+		t.Fatal("late agent result overwrote scheduler timeout")
+	}
+	state, err := getPulseModuleStates(ctx, workspacePath)
+	if err != nil {
+		t.Fatalf("get states: %v", err)
+	}
+	for _, module := range state {
+		if module.Module == pulseModuleBugReview && module.LastResult != "timed_out" {
+			t.Fatalf("bug review result = %q, want timed_out", module.LastResult)
+		}
 	}
 }
 
@@ -218,7 +299,7 @@ func TestValidatePulseGateCompletionRequiresWorklistAndCurrentHandoff(t *testing
 	}
 
 	workspaceState.mu.Lock()
-	workspaceState.files[htmlPath] = `<html><div>new entry</div><details id="pulse-agent-handoff">` + pulseRunID + `</details></html>`
+	workspaceState.files[htmlPath] = `<html><div>new entry</div><section id = 'pulse-agent-handoff' data-pulse-run-id="` + pulseRunID + `"><div>handoff</div></section></html>`
 	workspaceState.mu.Unlock()
 	if err := validatePulseGateCompletion(ctx, workspacePath, pulseRunID, previousHTML, true); err != nil {
 		t.Fatalf("valid Gate completion rejected: %v", err)
@@ -329,6 +410,64 @@ func TestPulseFinalCommandStatesTrackAndReconcileOutcomes(t *testing.T) {
 		}
 		if state.Status != "timed_out" {
 			t.Fatalf("unresolved command not timed out: %+v", state)
+		}
+	}
+}
+
+func TestPulseFinalCommandAgentWritesAreOrderedAndMonotonic(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	t.Setenv("WORKSPACE_DOCS_PATH", root)
+	workspacePath := "Workflow/example"
+	pulseRunID := "schedule-cron--final"
+	if err := initializePulseFinalCommandStates(ctx, workspacePath, pulseRunID); err != nil {
+		t.Fatalf("initialize final commands: %v", err)
+	}
+	if _, err := markPulseFinalCommandStateFromAgent(ctx, workspacePath, pulseFinalCommandBackup, pulseRunID, "running", "Backing up"); err == nil || !strings.Contains(err.Error(), "dashboard") {
+		t.Fatalf("out-of-order backup error = %v", err)
+	}
+	if _, err := markPulseFinalCommandStateFromAgent(ctx, workspacePath, pulseFinalCommandDashboard, "schedule-cron--wrong", "running", "Rendering"); err == nil || !strings.Contains(err.Error(), "belongs to") {
+		t.Fatalf("wrong-run error = %v", err)
+	}
+	if _, err := markPulseFinalCommandStateFromAgent(ctx, workspacePath, pulseFinalCommandDashboard, pulseRunID, "done", "Rendered"); err == nil || !strings.Contains(err.Error(), "marked running") {
+		t.Fatalf("direct-done error = %v", err)
+	}
+	if _, err := markPulseFinalCommandStateFromAgent(ctx, workspacePath, pulseFinalCommandDashboard, pulseRunID, "running", "Rendering"); err != nil {
+		t.Fatalf("mark dashboard running: %v", err)
+	}
+	if _, err := markPulseFinalCommandStateFromAgent(ctx, workspacePath, pulseFinalCommandDashboard, pulseRunID, "done", "Rendered"); err != nil {
+		t.Fatalf("mark dashboard done: %v", err)
+	}
+	if _, err := markPulseFinalCommandStateFromAgent(ctx, workspacePath, pulseFinalCommandDashboard, pulseRunID, "failed", "Late failure"); err == nil || !strings.Contains(err.Error(), "already terminal") {
+		t.Fatalf("terminal rewrite error = %v", err)
+	}
+}
+
+func TestFinalizeAllUnresolvedPulseCommandsAfterRestart(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	t.Setenv("WORKSPACE_DOCS_PATH", root)
+	workspacePath := "Workflow/example"
+	if err := initializePulseFinalCommandStates(ctx, workspacePath, "schedule-cron--old"); err != nil {
+		t.Fatalf("initialize final commands: %v", err)
+	}
+	if _, err := markPulseFinalCommandState(ctx, workspacePath, pulseFinalCommandDashboard, "schedule-cron--old", "running", "Rendering"); err != nil {
+		t.Fatalf("mark dashboard running: %v", err)
+	}
+	changed, err := finalizeAllUnresolvedPulseFinalCommands(ctx, workspacePath, "failed", "Server restarted")
+	if err != nil {
+		t.Fatalf("finalize all: %v", err)
+	}
+	if changed != int64(len(pulseFinalCommandOrder)) {
+		t.Fatalf("changed = %d, want %d", changed, len(pulseFinalCommandOrder))
+	}
+	states, err := getPulseFinalCommandStates(ctx, workspacePath)
+	if err != nil {
+		t.Fatalf("get states: %v", err)
+	}
+	for _, state := range states {
+		if state.Status != "failed" || state.FinishedAt == "" {
+			t.Fatalf("state was not reconciled: %+v", state)
 		}
 	}
 }

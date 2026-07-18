@@ -3431,7 +3431,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 	// Tool: run_goal_advisor_review — dedicated strategic review background pipeline.
 	if err := mcpAgent.RegisterCustomTool(
 		"run_goal_advisor_review",
-		"Start the dedicated background Goal Advisor pipeline. Use this for Pulse-selected strategic review: goal recovery, healthy 10x/headroom exploration, advancing or measuring the one active advisor experiment, approved proposal application, and Chief of Staff strategic recommendations. The pipeline runs advisor -> critic -> finalizer in separate background agents. The durable experiment lifecycle lives in builder/improve.html; the parent Pulse turn should capture the returned execution_id and end its turn. Automatic completion notification will resume the session so it can record mark_pulse_module_result; do not poll query_step/list_executions while waiting.",
+		"Start the dedicated background Goal Advisor pipeline. Use this for Pulse-selected strategic review: goal recovery, healthy 10x/headroom exploration, advancing or measuring the one active advisor experiment, approved proposal application, and Chief of Staff strategic recommendations. The pipeline runs advisor -> critic -> finalizer in separate background agents. It is analysis-first: advisor and critic never format HTML, and the finalizer may make only one bounded in-place Advisor log update when state materially changes. The durable experiment lifecycle lives in builder/improve.html; the parent Pulse turn should capture the returned execution_id and end its turn. Automatic completion notification will resume the session so it can record mark_pulse_module_result; do not poll query_step/list_executions while waiting.",
 		map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
@@ -8914,6 +8914,12 @@ Use ` + "`get_workflow_command_guidance(kind=\"goal-advisor\", focus=\"Pulse-sel
 
 Read the workflow evidence yourself: builder/improve.html including the Pulse Gate/worklist, soul/soul.md, latest run/eval evidence, planning/changelog, report/dashboard evidence, answered human inputs in db/db.sqlite/report_human_inputs, and queued Chief of Staff recommendations (.cos-rec, especially data-status="queued_goal_advisor").
 
+Analysis budget:
+- Spend this stage on goal reality, strategy ceiling, credible alternatives, and experiment evidence.
+- From builder/improve.html read only verdicts, the active .advisor-experiment, recent Goal Advisor entries, answered outcomes, and queued Chief of Staff recommendations. Use targeted search/extraction when it is large.
+- Do not inspect CSS, visual design, unrelated timeline history, or page formatting. Do not load HTML style/skeleton guidance.
+- Return the strategic verdict even if the report markup is imperfect; formatting belongs to Report Health.
+
 Strict boundaries for this Advisor stage:
 - Do NOT launch nested maintenance reviewers or call mark_human_input_consumed, create_human_input_request, notify_user, backup, publish, or mark_pulse_module_result.
 - Do NOT modify plan/config/eval/report/HTML files.
@@ -9044,6 +9050,14 @@ func buildGoalAdvisorFinalizerInstruction(pulseRunID, focus, advisorOutput, crit
 
 You are the only stage allowed to make durable changes, and only within the critic-approved bounds.
 
+Analysis-first close-out budget:
+- The Advisor and Critic results are already complete. Do not repeat their research or turn this stage into an HTML design task.
+- Re-read only the current Advisor experiment/card and the stable insertion anchor immediately before writing.
+- Make at most one targeted builder/improve.html patch: update the existing Advisor card in place, or insert one new semantic Advisor card when a material proposal/state change exists.
+- Do not load review-improve-log-skeleton or html-output, migrate the page, rewrite CSS, restyle unrelated cards, reorder history, or regenerate the full file. Route format problems to Report Health.
+- If the verdict is no_action and no experiment, assumption, question outcome, or recommendation status changed, do not edit builder/improve.html merely to log activity.
+- Update builder/card.progress.html only when goal status, active experiment, or the Advisor decision materially changed.
+
 Follow this decision policy:
 - If the Critic verdict is reject or no_action: do not change the workflow. Add at most a short skipped/rejected note to builder/improve.html if useful.
 - If the Critic verdict is revise and the safe revision is obvious: log/propose only the narrowed version. Do not start a new advisor loop.
@@ -9053,7 +9067,7 @@ Follow this decision policy:
 - If the idea is useful but not ready for a user decision: log it as a proposal-only Advisor idea in builder/improve.html with evidence and risk.
 
 Experiment lifecycle contract:
-- Read builder/improve.html before writing. It is the durable experiment source of truth.
+- Read the current Advisor card in builder/improve.html before writing. It is the durable experiment source of truth.
 - Never leave more than one active .advisor-experiment. Active statuses: proposed, deferred, approved, running, measuring, blocked. Terminal statuses: adopted, rejected, retired.
 - Use one stable card for its full lifecycle:
   <div class="entry decision major advisor-experiment" data-advisor-experiment-id="advisor-exp-<stable-slug>" data-input-id="plan-proposal-<stable-slug>" data-status="<status>" data-review-after="<ISO date/time, run id, or outcome milestone>">.

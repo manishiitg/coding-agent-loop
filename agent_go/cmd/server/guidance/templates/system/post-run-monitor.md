@@ -151,8 +151,9 @@ evidence guidance only; do not execute their nested-agent calls.
    finalizer early.
 3. Every reviewer prompt must start with **READ-ONLY REVIEW** and include the
    workflow path, Pulse run id, module name, Gate evidence pointers, relevant
-   reference guidance, and a compact response contract: verdict, findings,
-   evidence, bounded recommended fix, and whether user judgment is required.
+   reference guidance, and a compact non-HTML response contract: module,
+   verdict, next-check condition, findings, evidence, bounded recommended fix,
+   verification, and whether user judgment is required with a reason.
    For Bug Review, also include the suspect step ids/attempts and the observable
    execution-trace contract below whenever Gate evidence points to a specific
    step.
@@ -161,9 +162,10 @@ evidence guidance only; do not execute their nested-agent calls.
    and `mark_pulse_module_result`.
    Keep each response under 3000 characters and avoid narrative recaps and wide
    tables. Require this compact response shape: one-line verdict; at most five
-   severity-ordered finding rows containing finding id, target key (file, step,
-   table, metric, contract, or configuration area), claim, evidence pointer,
-   bounded fix, and verification; one user-judgment line; and an overflow count
+   severity-ordered finding rows containing stable finding id, target key (file,
+   step, table, metric, contract, or configuration area), plain-language claim,
+   evidence pointer, bounded fix, verification, and user-judgment flag/reason;
+   and an overflow count
    with compact finding ids and evidence pointers when more findings exist.
    A clean review must explicitly return an empty finding-id manifest. Never omit a
    correctness finding merely to satisfy the cap. Do not add a reviewer-specific
@@ -176,6 +178,10 @@ evidence guidance only; do not execute their nested-agent calls.
    `improve-database`, report health uses `improve-report`, and eval health uses
    `improve-evaluation`. These improve prompts are read-only reviewers in Pulse;
    they return fixer instructions rather than applying them.
+   Do not give a reviewer `html-output`, the Pulse skeleton, CSS migration, or
+   card-formatting work. Reviewers may read only the matching semantic regions
+   of `builder/improve.html`; the parent owns presentation and the consolidated
+   write.
 4. Reviewer agents only inspect and advise. The parent waits naturally for the
    synchronous tool results; it must not use sleep, `list_executions`,
    `query_step`, or a polling loop. These synchronous calls return their result

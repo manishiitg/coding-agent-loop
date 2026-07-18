@@ -140,6 +140,9 @@ func TestGoalAdvisorAdvisorInstructionIsReadOnlyDraft(t *testing.T) {
 		"Current baseline and current strategy ceiling",
 		"primary success metric, guardrails, review checkpoint, and rollback condition",
 		"Routine-maintenance deferrals",
+		"Spend this stage on goal reality, strategy ceiling",
+		"Do not inspect CSS, visual design, unrelated timeline history, or page formatting",
+		"formatting belongs to Report Health",
 	)
 }
 
@@ -182,6 +185,10 @@ func TestGoalAdvisorFinalizerInstructionOwnsDurableActions(t *testing.T) {
 		`data-advisor-experiment-id="advisor-exp-<stable-slug>"`,
 		"Current baseline, Current strategy ceiling, 10x thesis",
 		"Update the existing card in place",
+		"Do not repeat their research or turn this stage into an HTML design task",
+		"Make at most one targeted builder/improve.html patch",
+		"Do not load review-improve-log-skeleton or html-output",
+		"do not edit builder/improve.html merely to log activity",
 	)
 }
 

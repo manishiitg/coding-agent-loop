@@ -1,9 +1,12 @@
 # MANUAL ONE-OFF PULSE
 
-Run one complete Pulse now against retained workflow evidence. This is the
-manual equivalent of the post-run Pulse pass. It must not create, edit, enable,
-or disable a schedule, change `post_run_monitor`, or run the workflow itself.
-Use `/pulse-setup` when recurring Pulse needs configuration.{{if .Focus}}
+Run one standalone Pulse review now against retained workflow evidence. This is
+for testing and investigation; it does not participate in the scheduler's
+durable worklist, cadence, timeout, or final-command state machine. Use the
+Pulse toolbar Run action for the full scheduler-equivalent workflow + Pulse
+pipeline. This command must not create, edit, enable, or disable a schedule,
+change `post_run_monitor`, or run the workflow itself. Use `/pulse-setup` when
+recurring Pulse needs configuration.{{if .Focus}}
 
 User focus: {{.Focus}}.{{end}}{{if .RunFolder}}
 
@@ -12,21 +15,21 @@ Use `{{.RunFolder}}` as the primary run folder.{{end}}
 ## Canonical contract
 
 1. Call `get_reference_doc(kind="post-run-monitor")` and
-   `get_reference_doc(kind="review-improve-log")`. Follow the same Gate,
-   reviewed-baseline cadence, parallel read-only reviewer, single Pulse Fixer,
-   module-result, dashboard, backup, publish, and notify contracts.
+   `get_reference_doc(kind="review-improve-log")`. Follow the same evidence
+   review, parallel read-only reviewer, single Pulse Fixer, and HTML contracts.
 2. Select the latest meaningful retained run when no run folder was supplied.
    State the selected run before reviewing it. Do not generate fresh workflow
    evidence merely to make Pulse run.
-3. Create a unique `pulse_run_id` beginning with `manual-` and the current UTC
-   timestamp. Read `get_pulse_module_state`, then perform the progressive Gate
-   scan and call `record_pulse_worklist` exactly once with one decision for all
-   ten canonical modules.
-4. Run every module Gate marks due. Issue one independent `call_generic_agent`
-   reviewer call per due module in the same parallel batch. Never select only a
-   "top 3" subset. If a provider limit requires multiple batches, cover all due
-   modules in the fewest consecutive batches. Every reviewer is read-only. Goal
-   Advisor uses a separate read-only critic after its strategy draft.
+3. Read `get_pulse_module_state` only as historical context. Decide which
+   modules are useful for this standalone review, but do not call
+   `record_pulse_worklist`, `mark_pulse_module_result`, or
+   `mark_pulse_final_command_result`; those tools are reserved for an active
+   scheduler-issued Pulse run.
+4. Run every module this standalone review selects. Issue one independent
+   `call_generic_agent` reviewer call per due module in parallel batches of at
+   most four. Never select only a "top 3" subset. Cover all selected modules in
+   the fewest consecutive batches. Every reviewer is read-only. Goal Advisor
+   uses a separate read-only critic after its strategy draft.
 5. The current parent remains the only Pulse Fixer. Consolidate reviewer
    results, apply bounded safe fixes sequentially, verify them, process exact
    approved decisions where applicable, and update `builder/improve.html` once
@@ -36,13 +39,12 @@ Use `{{.RunFolder}}` as the primary run folder.{{end}}
    Improvements / Kaizen for verified Pulse Fixer work or Goal Advisor
    proposals/decisions. Never
    let a reviewer mutate the workflow.
-6. Call `mark_pulse_module_result` exactly once for every due module, including
-   clean, changed, blocked, and failed reviews. A failed reviewer fails only its
-   own module; continue independent safe work.
-7. Confirm all due modules have terminal results, then run the normal ordered
-   finalizer. Track dashboard, backup, publish, and notify with
-   `mark_pulse_final_command_result`. Respect configured disabled/unverified
-   states and record them as skipped rather than silently omitting them.
+6. Record every selected module's clean, changed, blocked, or failed outcome in
+   `builder/improve.html`. A failed reviewer fails only its own module; continue
+   independent safe work.
+7. Do not run the scheduler finalizer from this standalone command. Do not
+   publish or notify. Back up before any local mutation, and report backup
+   status in the final summary.
 
 ## Manual-run boundary
 
@@ -53,6 +55,6 @@ Use `{{.RunFolder}}` as the primary run folder.{{end}}
 - Do not apply a new strategy, business-semantic, or LLM/provider change without
   the existing exact approval flow.
 
-Finish with one concise summary: evidence/run reviewed, modules due and skipped,
-fixes made, unresolved decisions, finalizer statuses, and the next evidence
+Finish with one concise summary: evidence/run reviewed, modules selected and
+omitted, fixes made, unresolved decisions, backup status, and the next evidence
 checkpoint.

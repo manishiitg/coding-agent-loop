@@ -107,8 +107,19 @@ func WithUserID(userID string) ClientOption {
 // Only MCP_* and SECRET_* prefixed vars are forwarded to the shell (enforced server-side).
 func WithExtraEnv(env map[string]string) ClientOption {
 	return func(c *Client) {
-		c.ExtraEnv = env
+		c.ExtraEnv = cloneEnvMap(env)
 	}
+}
+
+func cloneEnvMap(env map[string]string) map[string]string {
+	if env == nil {
+		return nil
+	}
+	cloned := make(map[string]string, len(env))
+	for key, value := range env {
+		cloned[key] = value
+	}
+	return cloned
 }
 
 // WithDefaultWorkingDir sets the default working directory for shell commands

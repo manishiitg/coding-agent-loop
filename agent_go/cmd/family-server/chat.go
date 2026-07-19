@@ -74,7 +74,15 @@ func childSystemPrompt(child *Child) string {
 }
 
 type parentMessageRequest struct {
-	Messages []enginedetect.ChatMessage `json:"messages"`
+	Messages       []enginedetect.ChatMessage `json:"messages"`
+	ConversationID string                     `json:"conversation_id,omitempty"`
+}
+
+// withReply appends the assistant reply to a copy of the sent messages, for
+// persisting the full transcript.
+func withReply(messages []enginedetect.ChatMessage, reply string) []enginedetect.ChatMessage {
+	full := append([]enginedetect.ChatMessage(nil), messages...)
+	return append(full, enginedetect.ChatMessage{Role: "assistant", Text: reply})
 }
 
 // toolEvent is a record of one custom-tool invocation during a parent turn,
@@ -224,6 +232,7 @@ func handleParentMessage(w http.ResponseWriter, r *http.Request) {
 	evMu.Lock()
 	out := append([]toolEvent(nil), events...)
 	evMu.Unlock()
+	persistConversation("parent", req.ConversationID, withReply(req.Messages, reply))
 	writeJSON(w, http.StatusOK, parentMessageResponse{Reply: reply, ToolEvents: out})
 }
 

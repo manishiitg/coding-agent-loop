@@ -82,5 +82,6 @@ func handleChildMessage(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, parentMessageResponse{Error: err.Error()})
 		return
 	}
+	persistConversation("child", req.ConversationID, withReply(req.Messages, reply))
 	writeJSON(w, http.StatusOK, parentMessageResponse{Reply: reply})
 }

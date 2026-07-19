@@ -82,6 +82,7 @@ func scaffoldFamilyFolders() error {
 		"shared/study",         // generated study material (child-visible once approved)
 		"shared/tests",         // generated practice tests
 		"child/attempts",       // child's submitted work
+		"child/conversations",  // child chat history
 	}
 	for _, d := range dirs {
 		if err := os.MkdirAll(filepath.Join(base, filepath.FromSlash(d)), 0o700); err != nil {

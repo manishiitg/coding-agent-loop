@@ -64,16 +64,22 @@ function pres(id: string, fallbackName: string) {
 const GRADES = ['4', '5', '6', '7', '8', '9', '10', '11', '12']
 const BOARDS = ['CBSE', 'ICSE / ISC (CISCE)', 'State Board', 'NIOS', 'IB', 'Cambridge / IGCSE', 'Other', 'Not sure']
 
-const parentConversations = [
-  { id: 'c1', title: 'What should Maya work on next?', when: 'Just now', active: true },
-  { id: 'c2', title: 'Quadratics revision worksheet', when: 'Yesterday' },
-  { id: 'c3', title: 'Test preparation', when: 'Jul 15' },
-]
+type ConvMeta = { id: string; title: string; when: string; scope: 'parent' | 'child'; updated: string }
 
-const childSessions = [
-  { id: 's1', title: 'Quadratics — guided practice', when: '2h ago' },
-  { id: 's2', title: 'Factorising review', when: 'Mon' },
-]
+// Convert an ISO timestamp into a short relative label for the rail.
+function relTime(iso: string): string {
+  const t = Date.parse(iso)
+  if (Number.isNaN(t)) return ''
+  const s = Math.max(0, (Date.now() - t) / 1000)
+  if (s < 60) return 'Just now'
+  if (s < 3600) return `${Math.floor(s / 60)}m ago`
+  if (s < 86400) return `${Math.floor(s / 3600)}h ago`
+  return new Date(t).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
+}
+
+function newConversationId(): string {
+  return `conv-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`
+}
 
 const schoolSources = [
   { id: 'src1', name: 'Notebook pages.pdf', meta: '25 pages · Added Jul 15', kind: 'pdf', tag: 'Ready for Maya', tone: 'ready' },
@@ -161,6 +167,9 @@ export default function LearningApp() {
   const [parentMessages, setParentMessages] = useState<ParentMsg[]>([])
   const [sending, setSending] = useState(false)
   const [wsFiles, setWsFiles] = useState<WsFile[]>([])
+  const [conversationId, setConversationId] = useState(newConversationId)
+  const [conversations, setConversations] = useState<ConvMeta[]>([])
+  const [childSessionsList, setChildSessionsList] = useState<ConvMeta[]>([])
 
   // Reflect the workspace file system in the drawer (materials the agent can
   // read). Refetches when entering the chat and after each upload/tool event.
@@ -169,7 +178,7 @@ export default function LearningApp() {
     let cancelled = false
     fetch(`${FAMILY_API}/api/workspace/tree`)
       .then((res) => res.json())
-      .then((nodes: TreeNode[]) => {
+      .then(async (nodes: TreeNode[]) => {
         if (cancelled) return
         const files: { path: string; name: string }[] = []
         const walk = (ns: TreeNode[]) => ns?.forEach((n) => {
@@ -184,7 +193,23 @@ export default function LearningApp() {
             const mi = parts.indexOf('materials')
             return { path: f.path, name: f.name, scope: parts[0] || '', subject: parts[mi + 1] || '', topic: parts[mi + 2] || '' }
           })
-        setWsFiles(mats)
+        if (!cancelled) setWsFiles(mats)
+        // Derive past conversations from <scope>/conversations/*.json — the left
+        // rail reflects the file system, no bespoke conversations API.
+        const convPaths = files.filter((f) => f.path.includes('/conversations/') && f.path.endsWith('.json')).map((f) => f.path)
+        const metas = await Promise.all(convPaths.map(async (p) => {
+          try {
+            const d = await fetch(`${FAMILY_API}/api/workspace/file?path=${encodeURIComponent(p)}`).then((r) => r.json())
+            const c = JSON.parse(d.content) as { id: string; title?: string; updated_at?: string }
+            const scope: 'parent' | 'child' = p.startsWith('child/') ? 'child' : 'parent'
+            return { id: c.id, title: c.title || 'Conversation', when: relTime(c.updated_at || ''), scope, updated: c.updated_at || '' } as ConvMeta
+          } catch { return null }
+        }))
+        if (cancelled) return
+        const valid = metas.filter((m): m is ConvMeta => m !== null)
+        valid.sort((a, b) => b.updated.localeCompare(a.updated))
+        setConversations(valid.filter((c) => c.scope === 'parent'))
+        setChildSessionsList(valid.filter((c) => c.scope === 'child'))
       })
       .catch(() => {})
     return () => { cancelled = true }
@@ -312,7 +337,7 @@ export default function LearningApp() {
     fetch(`${FAMILY_API}/api/parent/message`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ messages: history }),
+      body: JSON.stringify({ messages: history, conversation_id: conversationId }),
     })
       .then((res) => res.json())
       .then((data: { reply?: string; error?: string; tool_events?: { tool: string; subject?: string; topic?: string }[] }) => {
@@ -323,6 +348,23 @@ export default function LearningApp() {
       })
       .catch(() => setParentMessages((cur) => [...cur, { role: 'assistant', text: 'Sorry — I couldn’t reach the learning engine.' }]))
       .finally(() => setSending(false))
+  }
+
+  // Load a past conversation into the chat view (reads the transcript file).
+  const loadConversation = (item: ConvMeta) => {
+    fetch(`${FAMILY_API}/api/workspace/file?path=${encodeURIComponent(`${item.scope}/conversations/${item.id}.json`)}`)
+      .then((r) => r.json())
+      .then((d) => {
+        const c = JSON.parse(d.content) as { id: string; messages?: { role: string; text: string }[] }
+        setConversationId(c.id)
+        setParentMessages((c.messages || []).map((m) => ({ role: m.role as ParentMsg['role'], text: m.text })))
+      })
+      .catch(() => {})
+  }
+
+  const startNewConversation = () => {
+    setConversationId(newConversationId())
+    setParentMessages([])
   }
 
   const fileInputRef = useRef<HTMLInputElement>(null)
@@ -385,12 +427,13 @@ export default function LearningApp() {
               <span className="learning-sun" aria-hidden="true">☀</span>
               <span className="brand-word">Spark<strong>Quill</strong></span>
             </div>
-            <button className="fl-new" type="button"><Plus size={17} /> New conversation</button>
+            <button className="fl-new" type="button" onClick={startNewConversation}><Plus size={17} /> New conversation</button>
             <div className="fl-rail-scroll">
               <div className="fl-rail-group">
                 <p className="fl-rail-label">Parent conversations</p>
-                {parentConversations.map((item) => (
-                  <button key={item.id} type="button" className={`fl-rail-item ${item.active ? 'is-active' : ''}`}>
+                {conversations.length === 0 && <p className="fl-rail-empty">No conversations yet</p>}
+                {conversations.map((item) => (
+                  <button key={item.id} type="button" className={`fl-rail-item ${item.id === conversationId ? 'is-active' : ''}`} onClick={() => loadConversation(item)}>
                     <span className="fl-rail-item-title">{item.title}</span>
                     <span className="fl-rail-item-when">{item.when}</span>
                   </button>
@@ -398,8 +441,9 @@ export default function LearningApp() {
               </div>
               <div className="fl-rail-group">
                 <p className="fl-rail-label">Child sessions</p>
-                {childSessions.map((item) => (
-                  <button key={item.id} type="button" className="fl-rail-item">
+                {childSessionsList.length === 0 && <p className="fl-rail-empty">No sessions yet</p>}
+                {childSessionsList.map((item) => (
+                  <button key={item.id} type="button" className="fl-rail-item" onClick={() => loadConversation(item)}>
                     <span className="fl-rail-item-title">{item.title}</span>
                     <span className="fl-rail-item-when">{item.when}</span>
                   </button>

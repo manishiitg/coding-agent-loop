@@ -158,6 +158,7 @@ html, body, #root { margin: 0; height: 100%; }
 .fl-rail-scroll { flex: 1; min-height: 0; overflow-y: auto; padding: 6px 10px 10px; }
 .fl-rail-group { margin-bottom: 16px; }
 .fl-rail-label { margin: 8px 8px 6px; color: #8ea3c6; font-size: var(--text-caption); font-weight: 700; letter-spacing: .05em; text-transform: uppercase; white-space: nowrap; }
+.fl-rail-empty { margin: 2px 10px 8px; color: #9fb0cc; font-size: var(--text-caption); font-style: italic; }
 .fl-rail-item { display: flex; flex-direction: column; gap: 2px; width: 100%; padding: 9px 10px; border: 0; border-radius: 10px; background: transparent; color: #cddaf0; text-align: left; cursor: pointer; }
 .fl-rail-item:hover { background: rgba(255, 255, 255, .07); }
 .fl-rail-item.is-active { background: rgba(255, 201, 27, .16); color: #fff; }

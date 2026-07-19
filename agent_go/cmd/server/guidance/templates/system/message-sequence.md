@@ -64,6 +64,15 @@ Use a non-empty `write_access` object, or `kind`, only when one turn should be n
 
 An item override can narrow but never exceed the step-level permissions. Write access is folder-level and per-file path lists are rejected. Use direct learning writes sparingly; normal step-level learning runs after the complete step.
 
+**Where a step can durably write (the hard allow-list).** The sandbox opens only these durable locations for a step, and denies everything else ("operation not permitted"):
+
+- `db/db.sqlite` and `db/assets/` — structured rows and durable **files** of any format (PDF, image, CSV, JSON, txt, zip). A downloaded or generated file that later steps or the builder must reach goes in `db/assets/` with a reference row in `db.sqlite`. This is the ONLY step-writable home for an arbitrary file.
+- `knowledgebase/notes/` — workflow-discovered narrative facts (KB direct-write only).
+- `learnings/_global/` — reusable HOW-to-run knowledge.
+- the step's own execution folder + `Downloads/` — volatile per-run scratch (wiped on re-run).
+
+`docs/`, `knowledgebase/context/`, other `knowledgebase/` subfolders, and any custom top-level folder are **builder-only or denied** — do not route a step's durable file there.
+
 ## PREVALIDATION
 
 The step-level `validation_schema` is always the final gate. The runtime runs it automatically after the configured work turns and before synthetic learning/knowledge closing turns. On a normal validation failure, it sends concrete failures back to the same conversation for correction and retries the gate. Infrastructure failures stop the step.

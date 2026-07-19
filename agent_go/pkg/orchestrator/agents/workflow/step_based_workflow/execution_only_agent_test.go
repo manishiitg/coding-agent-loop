@@ -259,3 +259,38 @@ func TestExecutionOnlyAPIPromptKeepsOneInlineAuthoringFallback(t *testing.T) {
 		t.Fatal("API prompt lost its inline browser authoring fallback")
 	}
 }
+
+// A synthetic learnings/KB closing turn (IsContributionTurn) must render as JUST the
+// contribution instruction — the execute-the-task / Inputs / Output / "create the
+// output file" scaffolding is contradictory and wasteful on a write-only turn. A
+// normal turn keeps that scaffolding. Regression for the learnings/KB turn carrying
+// execution scaffolding.
+func TestContributionTurnUserMessageDropsExecutionScaffolding(t *testing.T) {
+	agent := &WorkflowExecutionOnlyAgent{}
+	contribMsg := "## Learnings Contribution (dedicated turn)\nCapture HOW to run this; write it to SKILL.md, then stop."
+
+	contribution := agent.executionOnlyUserMessageProcessor(map[string]string{
+		"StepDescription":    contribMsg,
+		"IsContributionTurn": "true",
+		"StepContextOutput":  "",
+	})
+	for _, forbidden := range []string{"Execution Checklist", "Create the output file", "MODE NOTE", "### Inputs", "### Output", "Verify the required outputs"} {
+		if strings.Contains(contribution, forbidden) {
+			t.Fatalf("contribution turn must not carry execution scaffolding %q:\n%s", forbidden, contribution)
+		}
+	}
+	if !strings.Contains(contribution, "write it to SKILL.md, then stop.") {
+		t.Fatalf("contribution message body was lost:\n%s", contribution)
+	}
+
+	normal := agent.executionOnlyUserMessageProcessor(map[string]string{
+		"StepDescription":   "Fetch and persist the report.",
+		"StepContextOutput": "report.json",
+		"StepExecutionPath": "execution/step-1",
+	})
+	for _, want := range []string{"Execution Checklist", "Create the output file", "### Inputs", "### Output"} {
+		if !strings.Contains(normal, want) {
+			t.Fatalf("a normal execution turn must keep its scaffolding %q:\n%s", want, normal)
+		}
+	}
+}

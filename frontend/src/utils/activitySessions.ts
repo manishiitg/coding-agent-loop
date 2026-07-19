@@ -1,5 +1,6 @@
 import type { ActiveSessionInfo } from '../services/api-types'
 import { runtimeHasBackgroundAgents, sessionRuntimeStatus } from './runtimeActivity'
+import { isScheduledSession } from './workflowSessionKinds'
 
 export function normalizedActivityStatus(status?: string): string {
   return (status || '').toLowerCase().trim()
@@ -40,6 +41,23 @@ export function hasActiveSessionWork(
   return ACTIVE_SESSION_WORK_STATUSES.has(normalizedActivityStatus(session.status)) ||
     session.needs_user_input === true ||
     hasLiveBackgroundAgents(session)
+}
+
+/**
+ * Title for a non-workflow activity item. Scheduled Chief of Staff sessions
+ * must never expose their scheduler envelope or task prompt as a UI label.
+ * New backend sessions provide `title`; the generic fallback covers sessions
+ * created by an older backend and restored history that predates that field.
+ */
+export function nonWorkflowActivityTitle(
+  session: Pick<ActiveSessionInfo, 'session_id' | 'triggered_by' | 'current_execution_name' | 'title' | 'query'>,
+): string {
+  const explicitTitle = session.current_execution_name?.trim() || session.title?.trim()
+  if (explicitTitle) return explicitTitle
+  if (isScheduledSession({ sessionId: session.session_id, triggeredBy: session.triggered_by })) {
+    return 'Chief of Staff task'
+  }
+  return session.query?.trim() || 'Agent chat'
 }
 
 // A main-agent coding CLI keeps its tmux pane alive after a turn finishes so the

@@ -440,6 +440,12 @@ func TestSessionHasLiveCodingTmuxTracksReap(t *testing.T) {
 	if !api.sessionHasLiveMainCodingTmux(sessionID) {
 		t.Fatal("expected a live main coding tmux for the main-agent pane")
 	}
+	if _, ok := store.MarkTurnCompleted(sessionID + ":main:" + sessionID); !ok {
+		t.Fatal("expected to settle the main-agent turn")
+	}
+	if !api.sessionHasLiveCodingTmux(sessionID) || !api.sessionHasLiveMainCodingTmux(sessionID) {
+		t.Fatal("a settled turn must retain its live main-agent tmux")
+	}
 
 	// Reap the pane (the 3h idle path): MarkStale clears Active + TmuxSession.
 	if _, ok := store.MarkStale(sessionID + ":main:" + sessionID); !ok {

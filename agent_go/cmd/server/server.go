@@ -525,7 +525,8 @@ func spaStaticFileHandler(root string) http.Handler {
 // QueryRequest represents an agent query request
 type QueryRequest struct {
 	Query           string                  `json:"query"`
-	Message         string                  `json:"message,omitempty"` // Alias for Query (used by frontend)
+	Message         string                  `json:"message,omitempty"`       // Alias for Query (used by frontend)
+	SessionTitle    string                  `json:"session_title,omitempty"` // Short UI label for backend-started sessions; never use the full prompt here.
 	Servers         []string                `json:"servers,omitempty"`
 	EnabledServers  []string                `json:"enabled_servers,omitempty"`
 	SelectedTools   []string                `json:"selected_tools,omitempty"` // Array of "server:tool" strings
@@ -2815,7 +2816,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 
 	// Track active session for page refresh recovery (no observer needed)
 	if !claimedChiefOfStaffChat {
-		api.trackActiveSession(sessionID, req.AgentMode, req.Query, currentUserID, req.BotPlatform, req.TriggeredBy)
+		api.trackActiveSession(sessionID, req.AgentMode, req.Query, currentUserID, req.BotPlatform, req.TriggeredBy, req.SessionTitle)
 	}
 	api.activeSessionsMux.Lock()
 	if sess, ok := api.activeSessions[sessionID]; ok {
@@ -5987,7 +5988,7 @@ func (api *StreamingAPI) claimChiefOfStaffChatSession(sessionID, userID, query, 
 }
 
 // trackActiveSession tracks a new active session
-func (api *StreamingAPI) trackActiveSession(sessionID, agentMode, query, userID, botPlatform, triggeredBy string) {
+func (api *StreamingAPI) trackActiveSession(sessionID, agentMode, query, userID, botPlatform, triggeredBy, sessionTitle string) {
 	if api.eventStore != nil {
 		api.eventStore.SetSessionOwner(sessionID, userID)
 	}
@@ -6002,6 +6003,9 @@ func (api *StreamingAPI) trackActiveSession(sessionID, agentMode, query, userID,
 		if triggeredBy == "" {
 			triggeredBy = existing.TriggeredBy
 		}
+		if strings.TrimSpace(sessionTitle) == "" {
+			sessionTitle = existing.Title
+		}
 	}
 
 	api.activeSessions[sessionID] = &ActiveSessionInfo{
@@ -6011,6 +6015,7 @@ func (api *StreamingAPI) trackActiveSession(sessionID, agentMode, query, userID,
 		LastActivity: time.Now(),
 		CreatedAt:    time.Now(),
 		Query:        query,
+		Title:        strings.TrimSpace(sessionTitle),
 		UserID:       userID,
 		BotPlatform:  botPlatform,
 		TriggeredBy:  triggeredBy,
@@ -6147,16 +6152,16 @@ func (api *StreamingAPI) seedCodingAgentRuntimeFromCurrentConversation(sessionID
 }
 
 // sessionHasLiveCodingTmux reports whether the session currently has a live
-// coding-agent terminal — an Active snapshot backed by a real tmux_session. The
-// idle reaper MarkStale's a closed pane (Active=false, TmuxSession=""), so this
-// returns false once the tmux is gone, which is how the auto-resume path tells a
-// genuinely live session (leave it alone) apart from an idled-out one (re-launch).
+// coding-agent terminal. Active is turn state, while ProcessState is process
+// state: a retained main CLI is Active=false/ProcessState=live between turns.
+// The idle reaper MarkStale's a closed pane and clears TmuxSession, so this still
+// returns false once the tmux is genuinely gone.
 func (api *StreamingAPI) sessionHasLiveCodingTmux(sessionID string) bool {
 	if api == nil || api.terminalStore == nil {
 		return false
 	}
 	for _, snapshot := range api.terminalStore.ListRaw(sessionID) {
-		if snapshot.Active && strings.TrimSpace(snapshot.TmuxSession) != "" {
+		if terminalSnapshotHasLiveTmux(snapshot) {
 			return true
 		}
 	}
@@ -6171,7 +6176,7 @@ func (api *StreamingAPI) sessionHasLiveMainCodingTmux(sessionID string) bool {
 		return false
 	}
 	for _, snapshot := range api.terminalStore.ListRaw(sessionID) {
-		if snapshot.Active && strings.TrimSpace(snapshot.TmuxSession) != "" && codingAgentSnapshotIsMainAgent(snapshot) {
+		if terminalSnapshotHasLiveTmux(snapshot) && codingAgentSnapshotIsMainAgent(snapshot) {
 			return true
 		}
 	}
@@ -6183,6 +6188,29 @@ func (api *StreamingAPI) sessionHasRetainedCodingTmux(sessionID string) bool {
 		return false
 	}
 	return api.terminalStore.SessionHasRetainedCodingTmux(sessionID)
+}
+
+func terminalSnapshotHasLiveTmux(snapshot terminals.Snapshot) bool {
+	return strings.TrimSpace(snapshot.TmuxSession) != "" &&
+		(snapshot.Active || strings.EqualFold(strings.TrimSpace(snapshot.ProcessState), "live"))
+}
+
+// markRetainedMainCodingTurnRunning bridges the process/turn lifecycle when a
+// follow-up is submitted directly to an idle retained CLI. This path does not
+// bootstrap a fresh /api/query stream, so it must explicitly reactivate the
+// existing terminal snapshot and session status after confirmed delivery.
+func (api *StreamingAPI) markRetainedMainCodingTurnRunning(sessionID string) {
+	if api == nil || api.terminalStore == nil {
+		return
+	}
+	for _, snapshot := range api.terminalStore.ListRaw(sessionID) {
+		if !codingAgentSnapshotIsMainAgent(snapshot) || !terminalSnapshotHasLiveTmux(snapshot) {
+			continue
+		}
+		api.terminalStore.MarkTurnRunning(snapshot.TerminalID)
+		api.updateSessionStatus(sessionID, "running")
+		return
+	}
 }
 
 func codingAgentHasNativeResume(provider string, underlyingAgent *mcpagent.Agent) bool {
@@ -6982,6 +7010,7 @@ func (api *StreamingAPI) tryDeliverQueryAsLiveInput(w http.ResponseWriter, r *ht
 	// there is no double message.
 	if !hasActiveForegroundTurn {
 		api.setSessionBusy(sessionID, false)
+		api.markRetainedMainCodingTurnRunning(sessionID)
 	}
 	api.recordLiveCodingAgentUserMessage(sessionID, message, provider, messageID, deliveryStatus)
 	log.Printf("[QUERY→LIVE] Delivered /api/query message to retained CLI for session %s status=%s: %.80s", sessionID, deliveryStatus, message)
@@ -7123,6 +7152,9 @@ func (api *StreamingAPI) handleLiveInputMessage(w http.ResponseWriter, r *http.R
 		deliveryStatus = "queued_for_injection"
 	}
 	api.recordLiveCodingAgentUserMessage(sessionID, req.Message, provider, messageID, deliveryStatus)
+	if !hasActiveForegroundTurn {
+		api.markRetainedMainCodingTurnRunning(sessionID)
+	}
 	log.Printf("[LIVE INPUT] Delivered user message to provider %s session %s status=%s: %.80s", provider, sessionID, deliveryStatus, req.Message)
 
 	w.Header().Set("Content-Type", "application/json")

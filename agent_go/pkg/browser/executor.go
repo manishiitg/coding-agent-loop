@@ -236,6 +236,17 @@ func cdpExclusiveFeatureAction(command string, args []string) (feature, action s
 	return "", ""
 }
 
+func isCDPRecordingTransition(command, action string) bool {
+	return command == "record" && (action == "start" || action == "restart")
+}
+
+func canRunBeforeRecordingSnapshot(command, action string) bool {
+	if command == "snapshot" {
+		return true
+	}
+	return command == "record" && (action == "stop" || action == "restart")
+}
+
 type cdpArgInfo struct {
 	found bool
 	url   string
@@ -674,6 +685,10 @@ func (e *Executor) HandleAgentBrowser(ctx context.Context, args map[string]inter
 	cmdArgs = append(cmdArgs, "--json")
 
 	cdpOwner := ""
+	cdpSelectedTabForCommand := ""
+	var recordingTabsBefore []cdpTabInfo
+	recordingOriginalTab := ""
+	recordingPreviousTab := ""
 	if isCdpMode && !isBrowserDocumentationCommand(command) {
 		cdpOwner = cdpOwnerID(workflowSessionID, agentSessionID, session)
 		// Keep delayed ownership cleanup aware of direct Builder/browser calls as
@@ -700,6 +715,9 @@ func (e *Executor) HandleAgentBrowser(ctx context.Context, args map[string]inter
 			if _, _, err := parseTabSelection(tabArgs); err != nil {
 				return "", err
 			}
+			if _, recording := getCDPRecordingHandoff(cdpPort, cdpOwner); recording && !isTabListRequest(tabArgs) {
+				return "", fmt.Errorf("RECORDING_CONTEXT_ACTIVE: tab selection/creation is blocked while this workflow is recording. Stop the recording first; normal page actions are automatically routed to the recording tab")
+			}
 			if len(tabArgs) > 0 && tabArgs[0] == "new" {
 				newTabRequest, parseErr := parseNewCDPTabRequest(tabArgs)
 				if parseErr != nil {
@@ -722,6 +740,16 @@ func (e *Executor) HandleAgentBrowser(ctx context.Context, args map[string]inter
 			if tabForCommand == "" && isBrowserOpenCommand(command) {
 				tabForCommand = getCDPTabSelection(cdpPort, cdpOwner)
 			}
+			if handoff, recording := getCDPRecordingHandoff(cdpPort, cdpOwner); recording {
+				_, action := cdpExclusiveFeatureAction(command, commandArgs)
+				if handoff.NeedsSnapshot && !canRunBeforeRecordingSnapshot(command, action) {
+					return "", fmt.Errorf("RECORDING_CONTEXT_CHANGED: video recording is active in fresh tab %q, but it has not been snapshotted yet. Discard refs from the original tab %q and call snapshot now; subsequent actions will be routed to the recording tab automatically", handoff.RecordingTab, handoff.OriginalTab)
+				}
+				if tabForCommand != "" && tabForCommand != handoff.RecordingTab {
+					log.Printf("[BROWSER] CDP recording handoff: routing %q from requested tab %q to recording tab %q", command, tabForCommand, handoff.RecordingTab)
+				}
+				tabForCommand = handoff.RecordingTab
+			}
 			if tabForCommand == "" {
 				if isBrowserOpenCommand(command) {
 					return "", fmt.Errorf("CDP shared-browser mode requires selecting or creating a tab before %q.\n\n%s\n\nUse agent_browser(command=\"tab\", args=[\"--cdp\", %q, \"<tab-id-or-label>\"]) if you already know the tab id/label, or agent_browser(command=\"tab\", args=[\"--cdp\", %q, \"new\", \"--label\", \"<label>\", \"<url>\"]) to create one. Then call agent_browser(command=\"open\", args=[\"--cdp\", %q, \"https://example.com\"]).", command, selectedCDPTabMessage(cdpPort, cdpOwner), cdpURL, cdpURL, cdpURL)
@@ -733,11 +761,17 @@ func (e *Executor) HandleAgentBrowser(ctx context.Context, args map[string]inter
 				return "", err
 			}
 			setCDPActiveTab(cdpPort, selectedTab)
+			cdpSelectedTabForCommand = selectedTab
 			log.Printf("[BROWSER] CDP: verified target tab %q before %q", selectedTab, command)
 		}
 	}
 
 	exclusiveFeature, exclusiveAction := cdpExclusiveFeatureAction(command, commandArgs)
+	if isCdpMode && exclusiveFeature == "video recording" && exclusiveAction == "start" {
+		if handoff, recording := getCDPRecordingHandoff(cdpPort, cdpOwner); recording {
+			return "", fmt.Errorf("RECORDING_ALREADY_ACTIVE: this workflow is already recording in tab %q. Call record stop, or record restart to begin a new capture", handoff.RecordingTab)
+		}
+	}
 	exclusiveFeatureClaimed := false
 	if isCdpMode && exclusiveFeature != "" {
 		switch exclusiveAction {
@@ -751,6 +785,29 @@ func (e *Executor) HandleAgentBrowser(ctx context.Context, args map[string]inter
 			if err := guardCDPExclusiveFeatureStop(cdpPort, cdpOwner, exclusiveFeature); err != nil {
 				return "", err
 			}
+		}
+	}
+	if isCdpMode && isCDPRecordingTransition(command, exclusiveAction) {
+		if current, recording := getCDPRecordingHandoff(cdpPort, cdpOwner); recording {
+			recordingOriginalTab = current.OriginalTab
+			recordingPreviousTab = current.RecordingTab
+		} else {
+			recordingOriginalTab = cdpSelectedTabForCommand
+		}
+		listed, listErr := e.listCDPTabs(ctx, session, cdpURL, executeOptionsWithTimeout(opts, cdpTabListTimeout))
+		if listErr != nil {
+			if exclusiveFeatureClaimed {
+				releaseCDPExclusiveFeature(cdpPort, cdpOwner, exclusiveFeature)
+			}
+			return "", fmt.Errorf("cannot safely start CDP recording because the current tab set could not be captured: %w", listErr)
+		}
+		var parseErr error
+		recordingTabsBefore, parseErr = parseCDPTabs(listed)
+		if parseErr != nil {
+			if exclusiveFeatureClaimed {
+				releaseCDPExclusiveFeature(cdpPort, cdpOwner, exclusiveFeature)
+			}
+			return "", fmt.Errorf("cannot safely start CDP recording because the current tab set was invalid: %w", parseErr)
 		}
 	}
 
@@ -901,6 +958,75 @@ func (e *Executor) HandleAgentBrowser(ctx context.Context, args map[string]inter
 		return "", err
 	}
 
+	recordingContextNote := ""
+	if isCdpMode && isCDPRecordingTransition(command, exclusiveAction) {
+		listed, listErr := e.listCDPTabs(ctx, session, cdpURL, executeOptionsWithTimeout(opts, cdpTabListTimeout))
+		var recordingTab string
+		if listErr == nil {
+			if afterTabs, parseErr := parseCDPTabs(listed); parseErr == nil {
+				recordingTab, listErr = findCDPRecordingTab(recordingTabsBefore, afterTabs, recordingOriginalTab)
+			} else {
+				listErr = parseErr
+			}
+		}
+		if listErr != nil || recordingTab == "" {
+			// Do not leave a capture running when the adapter cannot guarantee that
+			// subsequent actions will reach it. This stop is best-effort; the
+			// caller receives a hard error instead of false video evidence.
+			_, _ = e.Client.ExecuteCommand(ctx, []string{"--session", session, "record", "stop", "--cdp", cdpURL, "--json"}, opts)
+			if previous, ok := clearCDPRecordingHandoff(cdpPort, cdpOwner); ok {
+				clearCDPTabStateForOwner(cdpPort, cdpOwner, previous.RecordingTab)
+			}
+			releaseCDPExclusiveFeature(cdpPort, cdpOwner, exclusiveFeature)
+			if artifactPlan != nil && artifactPlan.StagedPath != "" {
+				_ = os.Remove(artifactPlan.StagedPath)
+			}
+			return "", fmt.Errorf("CDP_RECORDING_HANDOFF_FAILED: recording was stopped because its fresh tab could not be identified safely: %w", listErr)
+		}
+		handoff := cdpRecordingHandoff{
+			OriginalTab:   recordingOriginalTab,
+			RecordingTab:  recordingTab,
+			NeedsSnapshot: true,
+		}
+		setCDPRecordingHandoff(cdpPort, cdpOwner, handoff)
+		markCDPTabOwned(cdpPort, cdpOwner, "__recording__"+recordingTab, recordingTab)
+		if recordingPreviousTab != "" && recordingPreviousTab != recordingTab {
+			if closeOutput, closeErr := e.Client.ExecuteCommand(ctx, []string{"--session", session, "tab", "close", recordingPreviousTab, "--cdp", cdpURL, "--json"}, opts); closeErr != nil {
+				log.Printf("[BROWSER] CDP recording restart: could not close replaced temporary tab %q: %v (%s)", recordingPreviousTab, closeErr, strings.TrimSpace(closeOutput))
+			} else {
+				clearCDPTabStateForOwner(cdpPort, cdpOwner, recordingPreviousTab)
+			}
+		}
+		recordingContextNote = fmt.Sprintf("AGENTWORKS_RECORDING_CONTEXT: recording is active in fresh tab %q (original tab %q). Discard every old element ref and call snapshot now. Until record stop, AgentWorks automatically routes this workflow's page actions to %q; do not select or create another tab.", recordingTab, recordingOriginalTab, recordingTab)
+		log.Printf("[BROWSER] CDP recording handoff: owner=%q original=%q recording=%q", cdpOwner, recordingOriginalTab, recordingTab)
+	}
+	if isCdpMode && command == "snapshot" {
+		if handoff, recording := getCDPRecordingHandoff(cdpPort, cdpOwner); recording && handoff.NeedsSnapshot {
+			markCDPRecordingSnapshotReady(cdpPort, cdpOwner)
+			recordingContextNote = fmt.Sprintf("AGENTWORKS_RECORDING_CONTEXT: fresh snapshot accepted for recording tab %q. Subsequent page actions are now automatically routed to this recorded context.", handoff.RecordingTab)
+		}
+	}
+	if isCdpMode && command == "record" && exclusiveAction == "stop" {
+		if handoff, recording := clearCDPRecordingHandoff(cdpPort, cdpOwner); recording {
+			closeOutput, closeErr := e.Client.ExecuteCommand(ctx, []string{"--session", session, "tab", "close", handoff.RecordingTab, "--cdp", cdpURL, "--json"}, opts)
+			if closeErr == nil {
+				clearCDPTabStateForOwner(cdpPort, cdpOwner, handoff.RecordingTab)
+			} else {
+				log.Printf("[BROWSER] CDP recording handoff: could not close temporary tab %q after stop: %v (%s)", handoff.RecordingTab, closeErr, strings.TrimSpace(closeOutput))
+			}
+			if handoff.OriginalTab != "" {
+				if restored, restoreErr := e.selectCDPTabForCommand(ctx, session, cdpURL, opts, cdpPort, cdpOwner, handoff.OriginalTab, "record stop restore"); restoreErr == nil {
+					setCDPTabSelection(cdpPort, cdpOwner, restored)
+					setCDPActiveTab(cdpPort, restored)
+					recordingContextNote = fmt.Sprintf("AGENTWORKS_RECORDING_CONTEXT: recording stopped, temporary tab %q was closed, and original tab %q was restored. The recording context is gone; take a fresh snapshot before continuing.", handoff.RecordingTab, restored)
+				} else {
+					clearCDPTabSelection(cdpPort, cdpOwner)
+					recordingContextNote = fmt.Sprintf("AGENTWORKS_RECORDING_CONTEXT: recording stopped and temporary tab %q was closed, but original tab %q is no longer available. Select or create a tab before continuing.", handoff.RecordingTab, handoff.OriginalTab)
+				}
+			}
+		}
+	}
+
 	if artifactPlan != nil {
 		if artifactPlan.StoreLeaseOnSuccess {
 			if previous, ok := getBrowserArtifactLease(artifactPlan.LeaseKey); ok && previous.Transfer != nil && previous.Transfer.SourcePath != artifactPlan.StagedPath {
@@ -966,6 +1092,9 @@ func (e *Executor) HandleAgentBrowser(ctx context.Context, args map[string]inter
 	}
 	if isBrowserDocumentationCommand(command) {
 		return formatAgentBrowserSkillsOutput(output), nil
+	}
+	if recordingContextNote != "" {
+		output = strings.TrimSpace(output) + "\n\n" + recordingContextNote
 	}
 
 	return output, nil

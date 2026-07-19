@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"os"
 	"sort"
 	"strings"
 	"sync"
@@ -140,6 +141,27 @@ func runScheduledCDPTabCleanup(key, ownerID string, port int, client *Client, ge
 	}
 	lease.timer = nil
 	cdpTabCleanupMu.Unlock()
+
+	// A workflow may disappear without issuing record stop. Finalize the daemon
+	// capture before closing its temporary page so the shared agent-browser
+	// session cannot remain stuck in "already recording" for the next owner.
+	if handoff, recording := getCDPRecordingHandoff(port, ownerID); recording {
+		session := sharedCDPSessionName(port)
+		cdpURL := resolveCdpURL(port)
+		if output, stopErr := client.ExecuteCommand(ctx, []string{"--session", session, "record", "stop", "--cdp", cdpURL, "--json"}, &ExecuteOptions{Timeout: 20 * time.Second}); stopErr != nil {
+			log.Printf("[CDP_CLEANUP] Failed to stop abandoned recording tab=%q owner=%q port=%d: %v (%s)", handoff.RecordingTab, ownerID, port, stopErr, strings.TrimSpace(output))
+		} else {
+			log.Printf("[CDP_CLEANUP] Stopped abandoned recording tab=%q owner=%q port=%d", handoff.RecordingTab, ownerID, port)
+		}
+		if artifact, ok := getBrowserArtifactLease(browserArtifactLeaseKey(ownerID, session, "record")); ok {
+			if artifact.Transfer != nil {
+				_ = os.Remove(artifact.Transfer.SourcePath)
+			}
+			deleteBrowserArtifactLease(browserArtifactLeaseKey(ownerID, session, "record"))
+		}
+		_, _ = clearCDPRecordingHandoff(port, ownerID)
+		releaseCDPExclusiveFeature(port, ownerID, "video recording")
+	}
 
 	remaining := closeOwnedCDPTabs(ctx, client, port, ownerID)
 

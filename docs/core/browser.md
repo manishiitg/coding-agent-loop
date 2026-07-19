@@ -185,6 +185,14 @@ owner-and-session-scoped lease: `record start` stores the staged source and
 `record stop` finalizes that exact source into the requested workspace path.
 This handoff applies to both headless and CDP modes.
 
+In CDP mode, agent-browser recording creates a fresh temporary browser context
+and tab. The managed adapter diffs the real tab set, pins the workflow to the
+new recording `tN`, rejects interactions until a fresh snapshot succeeds, and
+routes stale original-tab arguments to the recorded context. `record stop`
+closes the temporary tab and restores the original selection. Abandoned runs
+are stopped and cleaned by delayed ownership cleanup so the shared CDP session
+cannot remain stuck in an active recording.
+
 ## Recent failure findings and fixes
 
 | Finding | User-visible symptom | Current fix |
@@ -199,6 +207,7 @@ This handoff applies to both headless and CDP modes.
 | Upload paths were forwarded unchanged while the command working directory pointed at the run Downloads folder. | Workspace-relative paths could resolve as `Downloads/Workflow/...`, and a daemon launched by an older step could not see a newly granted input folder. | Resolve and authorize upload sources in workspace-api, copy them into short-lived managed staging with the original basename, and remove staging after the command. |
 | CSS ID selectors were not shell-quoted. | `upload #file path` was parsed by the shell as a comment and agent-browser reported missing arguments. | Treat `#`, backslashes, and home-prefix characters as shell-sensitive arguments and quote them. |
 | Brokered output destinations were joined to the browser working directory. | A requested `Downloads/report.csv` could be published as `Downloads/Downloads/report.csv`. | Resolve brokered screenshot/video/download destinations once from the workspace root. |
+| `record start` created a fresh context while selected-tab enforcement returned actions to the original tab. | A valid WebM recorded an idle page while the real reproduction happened outside the video. | Detect the new active `tN`, require a fresh snapshot, pin actions to it until stop, close it afterward, and fail closed if the handoff cannot be identified. |
 
 ## Live E2E contract
 
@@ -227,8 +236,10 @@ overlapping requests. It verifies:
 - parallel screenshots and explicit downloads are published only into each
   workflow's authorized evidence/Downloads folders and have valid content;
 - video recording produces real WebM files, remains exclusive to one workflow
-  at a time, rejects another workflow's start/stop calls, and transfers cleanly
-  to the next workflow after the first recording stops;
+  at a time, rejects another workflow's start/stop calls, requires a fresh
+  recording-context snapshot, routes stale original-tab actions to the new
+  context, restores the original tab, and decodes the final frame to prove the
+  visible test interaction was actually captured;
 - shared reset is rejected while another workflow owns the CDP port;
 - delayed cleanup closes each workflow's created tab independently and preserves
   both the other live workflow tab and the reused pre-existing user tab.

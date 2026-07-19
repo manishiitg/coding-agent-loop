@@ -57,6 +57,10 @@ Use ` + "`agent_browser(\"skills\", [\"get\", \"core\", \"--full\"])`" + ` only 
 
 Treat upstream shell examples as logical agent-browser commands. Translate ` + "`agent-browser <command> <args...>`" + ` into ` + "`agent_browser(\"<command>\", [\"<args>\", ...])`" + `; never copy those examples into ` + "`execute_shell_command`" + `.
 
+## Recording Context Handoff
+
+In CDP mode, upstream ` + "`record start`" + ` creates a fresh temporary browser context/page because video cannot be enabled retroactively on the existing context. Builder detects that page and returns an ` + "`AGENTWORKS_RECORDING_CONTEXT`" + ` notice with its real tab id. Discard all refs from the original tab and call ` + "`snapshot`" + ` immediately. Builder blocks interactions until that snapshot succeeds and automatically routes subsequent page actions to the recorded context even if a stale original tab id was supplied. Do not select or create another tab while recording. On ` + "`record stop`" + `, Builder closes the temporary page, restores the original tab, and requires normal snapshot-before-interaction discipline again.
+
 ## HTTP Tool Call Pattern
 
 In code execution mode, call the MCP bridge:

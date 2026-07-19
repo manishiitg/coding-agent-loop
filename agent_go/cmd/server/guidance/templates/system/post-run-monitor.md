@@ -559,6 +559,8 @@ This is report-only, but it is not automatically due every Pulse. High-frequency
 
 Read workflow execution cost, evaluation cost, builder/Pulse overhead, token usage, model/tier evidence, missing cost buckets, and timing summaries. If any bucket is missing or unpriced, say that plainly instead of estimating.
 
+For raw ledgers under `costs/execution/` and `costs/evaluation/`, preserve the full bucket identity: `date + scope + group_folder + run_folder`. The same step ID in two groups is two separate cost rows, not one combined step. Within each bucket and model, `by_model` is the authoritative LLM total and `by_step_and_model` is attribution detail already included in that total; never add the detail rows on top of `by_model`. Reconcile `unattributed = max(0, by_model - sum(by_step_and_model))` per model and label a positive remainder as unattributed/orchestrator cost. An explicit `workflow_orchestrator` step is normal attributed detail and must not be counted again as a remainder. If attributed detail exceeds its model total, report telemetry inconsistency instead of silently producing a larger total. A step present in execution logs with no LLM attribution can legitimately be a scripted/zero-LLM step; show it as zero when presenting complete step coverage, and do not call it missing unless its contract required an LLM call. Historical files with no step map remain unattributed; never present the run-folder name as if it were a plan step.
+
 Do not change model tiers, prompts, schedules, or agent allocation from this module. If model selection looks wrong, record it as evidence for `llm_ops_review`.
 
 ### llm_ops_review

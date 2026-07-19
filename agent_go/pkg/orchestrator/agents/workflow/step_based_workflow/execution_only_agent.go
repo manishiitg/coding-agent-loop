@@ -145,7 +145,7 @@ End your response with exactly one of:
 {{if .StepContextOutput}}- STATUS: COMPLETED — if '{{.StepContextOutput}}' was created successfully.{{else}}- STATUS: COMPLETED — if the step's work is complete and persisted (e.g. written to the db).{{end}}
 - STATUS: FAILED — if the step cannot be completed. Explain the reason.`)
 
-var executionOnlyUserTemplate = MustRegisterTemplate("executionOnlyUser", `{{if .OrchestratorInstructions}}## Orchestrator Instructions (HIGHEST PRIORITY)
+var executionOnlyUserTemplate = MustRegisterTemplate("executionOnlyUser", `{{if eq .IsContributionTurn "true"}}{{.BaseDescription}}{{else}}{{if .OrchestratorInstructions}}## Orchestrator Instructions (HIGHEST PRIORITY)
 {{.OrchestratorInstructions}}
 {{else}}**DESCRIPTION**: {{.BaseDescription}}
 {{end}}{{if eq .IsScriptedMode "true"}}**MODE NOTE (scripted)**: Implement the task below as reusable Python code saved to `+"`"+`learnings/{step-id}/main.py`+"`"+`. Treat the resolved **Inputs** list and declared tools as the source of truth. If the description contains hardcoded `+"`"+`step-N`+"`"+` paths or interactive browser steps, adapt them into Python logic instead of copying them literally.
@@ -189,7 +189,7 @@ You MUST incorporate it into this run. It takes priority over the default step d
 {{end}}3. Execute the task using tool calls. Do NOT stop mid-task with a text message.
 4. **NO FABRICATED DATA**: Every value in the output must come from a real data source (MCP tools, APIs, or input files). Do NOT hardcode or invent output data.
 5. Verify the required outputs are fully produced before finishing.
-6. Create the output file.`)
+6. Create the output file.{{end}}`)
 
 // WorkflowExecutionOnlyTemplate holds template variables for execution-only agent prompts
 type WorkflowExecutionOnlyTemplate struct {
@@ -214,6 +214,7 @@ type WorkflowExecutionOnlyTemplate struct {
 	HasSkill                 string // "true" if skill files are available
 	IsScriptedMode           string // "true" when scripted mode is enabled
 	ScriptedPriorContext     string // Prior script context (failed script + error, or existing script for update)
+	IsContributionTurn       string // "true" for a synthetic learnings/KB closing turn — renders JUST the contribution message, no execute-the-task/output-file scaffolding
 }
 
 // WorkflowExecutionOnlyAgent executes steps using pre-discovered learning context
@@ -469,6 +470,7 @@ func (hctpeoa *WorkflowExecutionOnlyAgent) executionOnlyUserMessageProcessor(tem
 		HasSkill:                 fmt.Sprintf("%t", templateVars["LearningHistory"] != ""),
 		IsScriptedMode:           fmt.Sprintf("%t", isScriptedMode),
 		ScriptedPriorContext:     BuildScriptedPriorContext(templateVars["ScriptedPriorScript"], templateVars["ScriptedPriorError"], templateVars["ScriptedMetadataPath"], templateVars["IsScriptedLocked"] == "true"),
+		IsContributionTurn:       templateVars["IsContributionTurn"],
 	}
 
 	// Execute the pre-parsed template

@@ -478,3 +478,54 @@ func TestAcquireSharedCDPLockHonorsContext(t *testing.T) {
 		t.Fatalf("second acquireSharedCDPLock() error = %v, want context deadline", err)
 	}
 }
+
+func TestFindCDPRecordingTabPrefersFreshActiveTab(t *testing.T) {
+	before := []cdpTabInfo{{TabID: "t1", Active: true, URL: "https://example.test"}}
+	after := []cdpTabInfo{
+		{TabID: "t1", Active: false, URL: "https://example.test"},
+		{TabID: "t2", Active: true, URL: "https://example.test"},
+	}
+
+	got, err := findCDPRecordingTab(before, after, "t1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != "t2" {
+		t.Fatalf("recording tab = %q, want t2", got)
+	}
+}
+
+func TestCDPRecordingHandoffRequiresSnapshotAndRestoresOriginal(t *testing.T) {
+	resetCDPRegistryForTest(t)
+	const (
+		port  = 19222
+		owner = "recording-owner"
+	)
+
+	setCDPRecordingHandoff(port, owner, cdpRecordingHandoff{
+		OriginalTab:   "t1",
+		RecordingTab:  "t2",
+		NeedsSnapshot: true,
+	})
+	if got := getCDPTabSelection(port, owner); got != "t2" {
+		t.Fatalf("selection during recording = %q, want t2", got)
+	}
+	handoff, ok := getCDPRecordingHandoff(port, owner)
+	if !ok || !handoff.NeedsSnapshot {
+		t.Fatalf("handoff before snapshot = %#v, %v", handoff, ok)
+	}
+
+	markCDPRecordingSnapshotReady(port, owner)
+	handoff, ok = getCDPRecordingHandoff(port, owner)
+	if !ok || handoff.NeedsSnapshot {
+		t.Fatalf("handoff after snapshot = %#v, %v", handoff, ok)
+	}
+
+	cleared, ok := clearCDPRecordingHandoff(port, owner)
+	if !ok || cleared.OriginalTab != "t1" || cleared.RecordingTab != "t2" {
+		t.Fatalf("cleared handoff = %#v, %v", cleared, ok)
+	}
+	if got := getCDPTabSelection(port, owner); got != "t1" {
+		t.Fatalf("selection after stop = %q, want t1", got)
+	}
+}

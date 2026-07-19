@@ -1188,11 +1188,22 @@ func (hcpo *StepBasedWorkflowOrchestrator) buildMessageSequenceTemplateVars(step
 	if contextOutput == "" {
 		contextOutput = "message_sequence_result.json"
 	}
+	// Synthetic learnings/KB closing turns are contribution turns: the user message
+	// should be JUST the contribution instruction (IsContributionTurn), not the
+	// execute-the-task / Inputs / Output / "create the output file" scaffolding — the
+	// step's work and output are already done. Blank the output so neither the prompt
+	// nor the completion line claims a step output must be produced this turn.
+	isContributionTurn := ""
+	if kind := strings.TrimSpace(item.Kind); kind == "learning" || kind == "knowledgebase" {
+		isContributionTurn = "true"
+		contextOutput = ""
+	}
 	return map[string]string{
 		"StepTitle":                 step.GetTitle(),
 		"StepDescription":           message,
 		"BaseDescription":           message,
 		"OrchestratorInstructions":  message,
+		"IsContributionTurn":        isContributionTurn,
 		"StepContextDependencies":   strings.Join(step.GetContextDependencies(), "\n"),
 		"StepContextOutput":         contextOutput,
 		"WorkspacePath":             hcpo.messageSequenceAbsPath(filepath.Join("runs", hcpo.selectedRunFolder, "execution")),

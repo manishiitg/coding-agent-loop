@@ -2205,6 +2205,9 @@ func TestStoreSyntheticTurnLifecycleReactivatesRetainedMainTerminal(t *testing.T
 	if completed.ProcessState != "live" || completed.SnapshotKind != "live" {
 		t.Fatalf("settled retained tmux must remain live, process=%q snapshot=%q", completed.ProcessState, completed.SnapshotKind)
 	}
+	if !store.SessionHasRetainedCodingTmux("session-1") {
+		t.Fatal("settled turn with a live tmux must remain available for follow-up")
+	}
 	if completed.ChunkIndex <= running.ChunkIndex {
 		t.Fatalf("completed transition did not advance revision: running=%d completed=%d", running.ChunkIndex, completed.ChunkIndex)
 	}

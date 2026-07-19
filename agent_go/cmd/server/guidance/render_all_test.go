@@ -101,6 +101,38 @@ func TestEvaluationPlanGuidanceAcceptsSourceGroundedValidEmptyResults(t *testing
 	}
 }
 
+func TestPulseCostGuidanceReconcilesRawLedgersWithoutDoubleCounting(t *testing.T) {
+	postRun, err := renderFromRegistry("post-run-monitor", tmplData{}, referenceKinds)
+	if err != nil {
+		t.Fatalf("render post-run-monitor: %v", err)
+	}
+	reviewCost, err := renderFromRegistry("review-cost", tmplData{}, allKinds)
+	if err != nil {
+		t.Fatalf("render review-cost: %v", err)
+	}
+
+	for kind, rendered := range map[string]string{
+		"post-run-monitor": postRun,
+		"review-cost":      reviewCost,
+	} {
+		for _, want := range []string{
+			"group_folder",
+			"by_model",
+			"authoritative LLM total",
+			"by_step_and_model",
+			"never add",
+			"unattributed/orchestrator",
+			"workflow_orchestrator",
+			"scripted/zero-LLM step",
+			"run-folder",
+		} {
+			if !strings.Contains(rendered, want) {
+				t.Fatalf("%s cost reconciliation guidance missing %q", kind, want)
+			}
+		}
+	}
+}
+
 func TestPulseGuidanceTracesStateChangesToRuntimeConsumers(t *testing.T) {
 	postRun, err := renderFromRegistry("post-run-monitor", tmplData{}, referenceKinds)
 	if err != nil {

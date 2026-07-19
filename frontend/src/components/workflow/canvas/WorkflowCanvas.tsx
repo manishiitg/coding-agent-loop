@@ -40,6 +40,10 @@ import { useChatStore } from '../../../stores/useChatStore'
 import { useAppStore } from '../../../stores/useAppStore'
 import { agentApi } from '../../../services/api'
 import type { PlanStep, MessageSequenceItem } from '../../../utils/stepConfigMatching'
+import {
+  WORKFLOW_PLAN_STEP_FOCUS_EVENT,
+  type WorkflowPlanStepFocusDetail,
+} from '../../../utils/workflowPlanFocus'
 import type { VariablesManifest } from '../../../services/api-types'
 import { buildGroupFolderPath } from '../../../utils/workflowUtils'
 import { MarkdownRenderer } from '../../ui/MarkdownRenderer'
@@ -1510,6 +1514,7 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
   const [isLoadingVariables, setIsLoadingVariables] = React.useState(false)
   const [showVariablesSidebar, setShowVariablesSidebar] = React.useState(false)
   const [selectedFlowNode, setSelectedFlowNode] = React.useState<WorkflowNode | null>(null)
+  const pendingPlanStepFocusRef = React.useRef<string | null>(null)
   
   // Workflow store actions
   const setVariablesManifestInStore = useWorkflowStore.getState().setVariablesManifest
@@ -2213,6 +2218,57 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
       console.log('[WorkflowCanvas] highlightStepNode - no node found for stepId:', stepId)
     }
   }, [focusNode])
+
+  const showStepNode = useCallback((stepId: string): boolean => {
+    const nodeToShow = nodesRef.current.find(node => {
+      const nodeData = node.data as { id?: string; step?: { id?: string } }
+      return nodeData?.step?.id === stepId || nodeData?.id === stepId || node.id === stepId
+    })
+
+    if (!nodeToShow) {
+      console.log('[WorkflowCanvas] showStepNode - no node found for stepId:', stepId)
+      return false
+    }
+
+    setShowVariablesSidebar(false)
+    setSelectedFlowNode(nodeToShow)
+    // The pane may be transitioning from hidden/report to flow. Focus after
+    // that layout change so the node lands inside the final-sized viewport.
+    focusNode(nodeToShow.id, { topPadding: 100, delay: 350 })
+    return true
+  }, [focusNode])
+
+  useEffect(() => {
+    const handlePlanStepFocus = (event: Event) => {
+      const detail = (event as CustomEvent<WorkflowPlanStepFocusDetail>).detail
+      if (!detail?.stepId) return
+      if (detail.workspacePath && workspacePath && detail.workspacePath !== workspacePath) return
+      pendingPlanStepFocusRef.current = detail.stepId
+      if (!toolbarOnly && effectiveCanvasViewMode === 'flow' && showStepNode(detail.stepId)) {
+        pendingPlanStepFocusRef.current = null
+      }
+    }
+
+    window.addEventListener(WORKFLOW_PLAN_STEP_FOCUS_EVENT, handlePlanStepFocus)
+    return () => window.removeEventListener(WORKFLOW_PLAN_STEP_FOCUS_EVENT, handlePlanStepFocus)
+  }, [effectiveCanvasViewMode, showStepNode, toolbarOnly, workspacePath])
+
+  useEffect(() => {
+    const pendingStepID = pendingPlanStepFocusRef.current
+    if (!pendingStepID || toolbarOnly || effectiveCanvasViewMode !== 'flow' || nodes.length === 0) return
+
+    // Re-attempt after React Flow has received the newly enabled plan nodes.
+    const timer = window.setTimeout(() => {
+      if (showStepNode(pendingStepID) && pendingPlanStepFocusRef.current === pendingStepID) {
+        pendingPlanStepFocusRef.current = null
+      }
+    }, 0)
+    return () => window.clearTimeout(timer)
+  }, [effectiveCanvasViewMode, nodes, showStepNode, toolbarOnly])
+
+  useEffect(() => {
+    pendingPlanStepFocusRef.current = null
+  }, [workspacePath])
 
   // Auto-focus disabled - this prevents the canvas from jumping around during workflow execution
 

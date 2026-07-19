@@ -13,7 +13,7 @@ Apply these when writing or patching a step's `main.py`. Scripts must run identi
 **Input/output**
 - Input data arrives via `sys.argv[1]`, `sys.argv[2]`, ... — these are the resolved `context_dependencies`. Read them.
 - NEVER construct paths to sibling step folders (e.g. `execution/login-step/output.json`). The controller resolves correct per-group paths and passes them as sys.argv. If you need data not in sys.argv, add it as a `context_dependency` in `plan.json` — do not hardcode.
-- Write output files to `os.environ['STEP_OUTPUT_DIR']` with the exact filenames and structure the validation_schema requires.
+- Write output files to `os.environ['STEP_OUTPUT_DIR']` with the exact filenames and structure the validation_schema requires. `STEP_OUTPUT_DIR` is **volatile** (per-run, wiped on re-run). A durable **file** that later steps, runs, or the builder must reach — a download, generated PDF/CSV/image/zip, any format — goes under `db/assets/` (write it via the workspace root, e.g. `os.path.join(os.path.dirname(os.environ['DB_PATH']), 'assets', name)`), with a reference row in `db.sqlite`. `db/assets/` is the only durable location a step can write an arbitrary file; a custom folder is denied by the sandbox.
 
 **Data authenticity — no fabrication**
 - Every value written to output files MUST trace to a real MCP tool call, API response, or input file. No hardcoded rows, no invented records.

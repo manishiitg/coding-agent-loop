@@ -363,10 +363,13 @@ func (s *Store) SessionHasRetainedCodingTmux(sessionID string) bool {
 		return false
 	}
 	for _, snapshot := range s.ListRaw(sessionID) {
-		if !snapshot.Active {
-			continue
-		}
-		if strings.TrimSpace(snapshot.TmuxSession) != "" {
+		// Active describes the logical agent turn, not the lifetime of the
+		// retained CLI process. A normal streaming_end settles the turn with
+		// Active=false while deliberately leaving ProcessState="live" so the
+		// same tmux can accept a follow-up. Requiring Active here made every
+		// successfully completed Claude/Codex turn look as if its tmux vanished.
+		if strings.TrimSpace(snapshot.TmuxSession) != "" &&
+			(snapshot.Active || strings.EqualFold(strings.TrimSpace(snapshot.ProcessState), "live")) {
 			return true
 		}
 	}

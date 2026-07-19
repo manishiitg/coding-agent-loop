@@ -689,6 +689,63 @@ func TestTryDeliverQueryAsLiveInputRetainedCodingAgentWithStaleTmuxFallsThrough(
 	}
 }
 
+func TestTryDeliverQueryAsLiveInputReactivatesSettledRetainedTmux(t *testing.T) {
+	store := internalevents.NewEventStore(10)
+	defer store.Stop()
+
+	const sessionID = "settled-retained-coding-session"
+	const terminalID = sessionID + ":main:" + sessionID
+	runningAgent := &mcpagent.Agent{ModelID: "claude-sonnet-4-6"}
+	runningAgent.SetProvider(llm.ProviderClaudeCode)
+	terminalStore := terminals.NewStore()
+	terminalStore.HandleEvent(sessionID, codingAgentTmuxReaperChunkEvent(
+		time.Now(),
+		sessionID,
+		"main:"+sessionID,
+		"mlp-claude-retained",
+	))
+	if _, ok := terminalStore.MarkTurnCompleted(terminalID); !ok {
+		t.Fatal("expected to settle retained terminal before follow-up")
+	}
+
+	api := &StreamingAPI{
+		eventStore:       store,
+		terminalStore:    terminalStore,
+		activeSessions:   map[string]*ActiveSessionInfo{sessionID: {SessionID: sessionID, Status: "completed"}},
+		runningAgents:    map[string]*mcpagent.Agent{sessionID: runningAgent},
+		runningAgentsMux: sync.RWMutex{},
+		agentCancelFuncs: map[string]context.CancelFunc{},
+		agentCancelMux:   sync.RWMutex{},
+		internalUserMessageDeliveryHandler: func(_ context.Context, _ *mcpagent.Agent, _ mcpagent.UserMessageDeliveryRequest) (mcpagent.UserMessageDeliveryResult, error) {
+			return mcpagent.UserMessageDeliveryResult{
+				Provider:       llm.ProviderClaudeCode,
+				DeliveryStatus: mcpagent.UserMessageDeliveryStatusSentToCLI,
+				Transport:      llm.CodingAgentTransportTmux,
+			}, nil
+		},
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/query", nil)
+	rr := httptest.NewRecorder()
+	if !api.tryDeliverQueryAsLiveInput(rr, req, sessionID, "continue the retained turn", "query_retained_follow_up") {
+		t.Fatalf("settled retained tmux did not accept follow-up: status=%d body=%s", rr.Code, rr.Body.String())
+	}
+
+	snapshot, ok := terminalStore.GetRaw(terminalID)
+	if !ok {
+		t.Fatal("reactivated terminal snapshot is missing")
+	}
+	if !snapshot.Active || snapshot.State != "running" || snapshot.ProcessState != "live" {
+		t.Fatalf("terminal lifecycle = active %v state %q process %q, want running/live", snapshot.Active, snapshot.State, snapshot.ProcessState)
+	}
+	if !api.sessionHasRetainedCodingTmux(sessionID) || !api.sessionHasLiveMainCodingTmux(sessionID) {
+		t.Fatal("reactivated retained main tmux must remain visible to routing and activity monitor")
+	}
+	if got := api.activeSessions[sessionID].Status; got != "running" {
+		t.Fatalf("session status = %q, want running after confirmed follow-up delivery", got)
+	}
+}
+
 func TestTryDeliverQueryAsLiveInputRetainedCodingAgentWithoutLiveTmuxFallsThrough(t *testing.T) {
 	store := internalevents.NewEventStore(10)
 	defer store.Stop()

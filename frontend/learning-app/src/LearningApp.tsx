@@ -170,6 +170,10 @@ export default function LearningApp() {
   const [conversationId, setConversationId] = useState(newConversationId)
   const [conversations, setConversations] = useState<ConvMeta[]>([])
   const [childSessionsList, setChildSessionsList] = useState<ConvMeta[]>([])
+  const [childMessages, setChildMessages] = useState<ParentMsg[]>([])
+  const [childSending, setChildSending] = useState(false)
+  const [childInput, setChildInput] = useState('')
+  const [childConversationId, setChildConversationId] = useState(newConversationId)
 
   // Reflect the workspace file system in the drawer (materials the agent can
   // read). Refetches when entering the chat and after each upload/tool event.
@@ -365,6 +369,33 @@ export default function LearningApp() {
   const startNewConversation = () => {
     setConversationId(newConversationId())
     setParentMessages([])
+  }
+
+  // Child Mode tutor — talks to /api/child/message (sandboxed child agent).
+  const sendChildText = (raw: string) => {
+    const text = raw.trim()
+    if (!text || childSending) return
+    const next: ParentMsg[] = [...childMessages, { role: 'user', text }]
+    setChildMessages(next)
+    setChildInput('')
+    setChildSending(true)
+    const history = next.filter((m) => m.role === 'user' || m.role === 'assistant').map((m) => ({ role: m.role, text: m.text ?? '' }))
+    fetch(`${FAMILY_API}/api/child/message`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ messages: history, conversation_id: childConversationId }),
+    })
+      .then((res) => res.json())
+      .then((data: { reply?: string; error?: string }) => {
+        setChildMessages((cur) => [...cur, { role: 'assistant', text: data.error ? `Hmm, something went wrong — ${data.error}` : (data.reply || '(no response)') }])
+      })
+      .catch(() => setChildMessages((cur) => [...cur, { role: 'assistant', text: 'I couldn’t reach the tutor just now — try again in a moment.' }]))
+      .finally(() => setChildSending(false))
+  }
+
+  const sendChildMessage = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    sendChildText(childInput)
   }
 
   const fileInputRef = useRef<HTMLInputElement>(null)
@@ -714,32 +745,36 @@ export default function LearningApp() {
               <div className="fl-child-thread" aria-label="Tutor conversation">
                 <div className="fl-tmsg is-tutor">
                   <span className="fl-tmsg-avatar"><Sun size={20} /></span>
-                  <div className="fl-tbubble">Hi {childName || 'Maya'}! Ready to keep going with {topic.toLowerCase()}? Let’s try one together.</div>
+                  <div className="fl-tbubble">Hi {childName || 'Maya'}! Ready to keep going with {topic ? topic.toLowerCase() : 'your learning'}? Tell me what you’re working on, or ask me anything — I’ll help you figure it out step by step.</div>
                 </div>
-                <div className="fl-tmsg is-tutor">
-                  <span className="fl-tmsg-avatar"><Sun size={20} /></span>
-                  <div className="fl-tbubble">Solve this one: <strong>x² − 5x + 6 = 0</strong>. What two values of x make it true? Show me your steps.</div>
-                </div>
-                <div className="fl-tmsg is-child">
-                  <div className="fl-tbubble">I’m not sure how to start 😅</div>
-                  <span className="fl-tmsg-avatar is-child">{initial}</span>
-                </div>
-                <div className="fl-tmsg is-tutor">
-                  <span className="fl-tmsg-avatar"><Sun size={20} /></span>
-                  <div className="fl-tbubble">
-                    <span className="fl-hint-label"><Lightbulb size={14} /> Hint</span>
-                    No problem! Look for two numbers that <em>multiply to 6</em> and <em>add up to 5</em>. What pair could that be? Try it and tell me — I won’t just give you the answer.
+                {childMessages.map((m, i) => (
+                  m.role === 'assistant' ? (
+                    <div key={i} className="fl-tmsg is-tutor">
+                      <span className="fl-tmsg-avatar"><Sun size={20} /></span>
+                      <div className="fl-tbubble">{m.text}</div>
+                    </div>
+                  ) : (
+                    <div key={i} className="fl-tmsg is-child">
+                      <div className="fl-tbubble">{m.text}</div>
+                      <span className="fl-tmsg-avatar is-child">{initial}</span>
+                    </div>
+                  )
+                ))}
+                {childSending && (
+                  <div className="fl-tmsg is-tutor">
+                    <span className="fl-tmsg-avatar"><Sun size={20} /></span>
+                    <div className="fl-tbubble">Thinking…</div>
                   </div>
-                </div>
+                )}
               </div>
               <div className="fl-child-actions">
-                <button type="button">Ask for a hint</button>
-                <button type="button">Check my answer</button>
-                <button type="button">Explain it differently</button>
+                <button type="button" onClick={() => sendChildText('Can I have a hint?')} disabled={childSending}>Ask for a hint</button>
+                <button type="button" onClick={() => sendChildText('Can you check my answer?')} disabled={childSending}>Check my answer</button>
+                <button type="button" onClick={() => sendChildText('Can you explain it a different way?')} disabled={childSending}>Explain it differently</button>
               </div>
-              <form className="fl-child-composer" onSubmit={(event) => event.preventDefault()}>
-                <input aria-label="Message your tutor" placeholder="Type your answer or ask for help…" />
-                <button className="composer-send" type="submit" aria-label="Send message"><Send size={18} /></button>
+              <form className="fl-child-composer" onSubmit={sendChildMessage}>
+                <input aria-label="Message your tutor" placeholder="Type your answer or ask for help…" value={childInput} onChange={(e) => setChildInput(e.target.value)} disabled={childSending} />
+                <button className="composer-send" type="submit" aria-label="Send message" disabled={childSending}><Send size={18} /></button>
               </form>
             </section>
             <aside className="fl-child-side">

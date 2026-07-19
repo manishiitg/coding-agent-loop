@@ -356,6 +356,10 @@ func TestPulseGuidanceRequiresAuthoritativeHTMLAndVisibleFreshness(t *testing.T)
 		"`efficiency_or_coaching`",
 		"`insufficient_evidence`",
 		"Route `efficiency_or_coaching` findings",
+		// Weak-validation-gate check: flag a gate that passes on a self-asserted
+		// marker without proving the real effect; not every step has a db.
+		"self-asserted marker",
+		"not every step has a db",
 	} {
 		if !strings.Contains(bugReview, want) {
 			t.Fatalf("pulse-bug-review missing %q", want)

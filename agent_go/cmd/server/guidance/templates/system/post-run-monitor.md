@@ -384,6 +384,11 @@ Mark due for real Bug findings:
   the next applicable decision or run, or whose real runtime consumer and
   canonical store cannot be named. A successful write to a plausible table is
   not proof that the allocator/router/executor read it.
+- a step whose validation gate can pass on a **self-asserted marker** — a
+  `context_output`/"done" file the step wrote itself — without proving the real
+  effect (persisted db rows, the authoritative external system, or a genuine
+  deliverable carrying run-specific proof). The gate must fit the step's real
+  output; recommend the check that proves the effect, not db by default.
 - duplicate or shadow control stores for the same logical entity (for example,
   two strategy/arm tables) where writers, readers, or mirroring rules can drift
 - Chief of Staff recommendations that are operational bugs

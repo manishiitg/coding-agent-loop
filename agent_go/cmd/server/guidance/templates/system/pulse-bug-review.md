@@ -53,7 +53,20 @@ Act like a careful human QA engineer, but remain read-only and side-effect safe:
    revalidated the original failure. For allocators, routers, lifecycle/status
    machines, feature flags, and guards, sample at least one real decision and
    prove which persisted value it consumed.
-7. Return `QA coverage`, `expected versus observed`, exact evidence, confidence,
+7. Inspect each step's **validation gate** against what the step actually
+   produces. Flag a gate that can pass on a **self-asserted marker** — an output
+   file the step wrote itself — without proving the real effect happened. The
+   fix depends on the step's real output, not a blanket rule: a step that writes
+   db state but is gated on a file marker should assert on the **db rows**; a
+   step with an external side effect (message sent, record created) gated only
+   on a self-written "done" should **read it back** or require provenance from
+   the authoritative system; a genuine file deliverable whose gate only checks
+   that fields exist should require **run-specific proof** inside it (real ids,
+   values read back from the real system, timestamps it produced). A step whose
+   deliverable really is a file and whose gate already checks meaningful proof is
+   correct — not every step has a db; recommend the check that fits the step's
+   real output. Record `no_issue` when the gate already proves the effect.
+8. Return `QA coverage`, `expected versus observed`, exact evidence, confidence,
    and `untested risk` alongside the normal ordered findings. Coverage is not a
    percentage unless a real denominator exists.
 

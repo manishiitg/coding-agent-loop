@@ -37,6 +37,7 @@ func main() {
 	mux.HandleFunc("/api/child", handleCreateChild)
 	mux.HandleFunc("/api/parent/pin", handleSetPin)
 	mux.HandleFunc("/api/parent/message", handleParentMessage)
+	mux.HandleFunc("/api/child/message", handleChildMessage)
 	mux.HandleFunc("/api/workspace/tree", handleWorkspaceTree)
 	mux.HandleFunc("/api/upload", handleUpload)
 	mux.HandleFunc("/api/reset", handleReset)

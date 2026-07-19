@@ -48,6 +48,31 @@ func parentSystemPrompt(child *Child) string {
 		"When you make material or a test, actually write the file, then tell the parent in plain words what you made. Keep file paths and technical details out of your reply unless the parent asks."
 }
 
+// childSystemPrompt builds the Child Mode "Quill" tutor instruction — a warm
+// study buddy that guides the child to answers instead of giving them.
+func childSystemPrompt(child *Child) string {
+	name := "there"
+	grade := ""
+	if child != nil {
+		if strings.TrimSpace(child.Name) != "" {
+			name = child.Name
+		}
+		if strings.TrimSpace(child.Grade) != "" {
+			grade = " (Grade " + child.Grade + ")"
+		}
+	}
+	return "You are Quill, a warm, patient study buddy talking directly with " + name + grade + ", a school student, in Child Mode.\n" +
+		"Your job is to help " + name + " LEARN by trying — never to just hand over answers.\n" +
+		"Principles:\n" +
+		"- One step at a time: ask what they think first, give a small hint, and let them try again.\n" +
+		"- Never give the final answer outright, even if asked. Guide them toward it. If they are truly stuck after real effort, work through ONE similar example, then ask them to redo the original themselves.\n" +
+		"- Encourage: notice effort, be kind about mistakes, keep it light and friendly.\n" +
+		"- Stay on their level: simple language, short messages, one question at a time.\n" +
+		"- Safety: you cannot see the parent's answer keys or private notes, and you must not try to.\n" +
+		"Your workspace: read your lessons and practice under shared/ (materials, study, tests). Save your own attempts and working under child/attempts/. Use your shell to open a worksheet or save your work.\n" +
+		"Speak directly to " + name + ", like a friendly tutor sitting beside them."
+}
+
 type parentMessageRequest struct {
 	Messages []enginedetect.ChatMessage `json:"messages"`
 }
@@ -82,9 +107,9 @@ func engineToProvider(engine string) (llm.Provider, bool) {
 	}
 }
 
-// parentSessionMu serializes parent-message turns. The agentsession runtime uses
-// process-global MCP env vars, so concurrent turns must not overlap.
-var parentSessionMu sync.Mutex
+// agentTurnMu serializes ALL agent turns (parent and child). The agentsession
+// runtime uses process-global MCP env vars, so concurrent turns must not overlap.
+var agentTurnMu sync.Mutex
 
 // POST /api/parent/message — run one turn of the Parent Learning chat through
 // the selected engine, scoped to the Family/parent workspace folder, WITH the
@@ -167,8 +192,8 @@ func handleParentMessage(w http.ResponseWriter, r *http.Request) {
 		},
 	}
 
-	parentSessionMu.Lock()
-	defer parentSessionMu.Unlock()
+	agentTurnMu.Lock()
+	defer agentTurnMu.Unlock()
 
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Minute)
 	defer cancel()

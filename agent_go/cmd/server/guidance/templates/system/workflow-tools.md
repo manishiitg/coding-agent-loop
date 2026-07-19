@@ -78,8 +78,9 @@ HTTP URL.
 - **Slack Incoming Webhook notifications** (one-way, per workflow):
   1. Store the full URL with `set_workflow_secret(name="SLACK_NOTIFICATION_WEBHOOK_URL", value="https://hooks.slack.com/services/...")`. This encrypts and auto-attaches it; never write the URL into `workflow.json`.
   2. Configure the safe reference with `update_workflow_config(slack_webhook_secret_name="SLACK_NOTIFICATION_WEBHOOK_URL")`.
-  3. Future `notify_user` calls from this workflow automatically send to the webhook in addition to enabled account-level channels. `human_feedback` never uses it because Incoming Webhooks cannot return an answer. Pass `slack_webhook_secret_name=""` to disable it without deleting the stored secret.
-  4. This is independent of the interactive Slack bot (Socket Mode, @mentions, threads, and replies).
+  3. `update_workflow_config` converts that secret into a backend-only notification credential and removes it from agent-visible `selected_secrets` / `SECRET_*` injection. Current and future `notify_user` calls automatically send a rich Block Kit card to the webhook in addition to enabled account-level channels. Use `slack_title`, `slack_color`, `slack_fields`, `slack_sections`, and `slack_footer` for structured summaries; even a plain call gets the safe rich default. `human_feedback` never uses it because Incoming Webhooks cannot return an answer. Pass `slack_webhook_secret_name=""` to disable it without deleting the stored secret.
+  4. Never read a webhook through `$SECRET_*`, post with `curl`, put a webhook recipe into a plan step, or disable automatic Slack delivery to avoid a duplicate. The backend owns the URL, Block Kit validation, fan-out, and delivery status; the agent calls `notify_user` exactly once.
+  5. This is independent of the interactive Slack bot (Socket Mode, @mentions, threads, and replies).
 - **`update_workflow_config(add_servers?, remove_servers?, add_tools?, remove_tools?, add_skills?, remove_skills?, add_secrets?, remove_secrets?, slack_webhook_secret_name?, browser_mode?, cdp_ports?, run_retention_count?)`** — Update workflow MCP servers, workflow-level MCP tool allowlist, skills, secrets, one-way Slack webhook reference, browser mode/profile ports, or run/eval backup retention.
 
 ## Schedule Management (Workshop mode)

@@ -584,6 +584,9 @@ type QueryRequest struct {
 	// Internal workflow wire field: name of the selected encrypted secret that
 	// contains a Slack Incoming Webhook URL. The URL itself is never serialized.
 	NotificationSlackWebhookSecretName string `json:"notification_slack_webhook_secret_name,omitempty"`
+	// Internal-only resolved notification credential. Unlike DecryptedSecrets,
+	// this value is never serialized, prompted, or injected as SECRET_*.
+	notificationSlackWebhookURL string `json:"-"`
 	// Delegation tier configuration: Maps reasoning levels (high/medium/low) to specific provider/model pairs
 	DelegationTierConfig *virtualtools.DelegationTierConfig `json:"delegation_tier_config,omitempty"`
 	// Decrypted secrets to inject into agent system prompt
@@ -642,22 +645,82 @@ func notificationDestinationFromQuery(req QueryRequest, userID string) *services
 		}
 	}
 	if secretName := strings.TrimSpace(req.NotificationSlackWebhookSecretName); secretName != "" {
-		var secretValue string
-		for _, secret := range mergeGlobalSecrets(req.DecryptedSecrets, req.SelectedGlobalSecrets) {
-			if secret.Name == secretName {
-				secretValue = secret.Value
-				break
-			}
-		}
 		dest.SlackWebhook = &services.SlackWebhookDest{
 			SecretName: secretName,
-			URL:        secretValue,
+			URL:        req.notificationSlackWebhookURL,
 		}
 	}
 	if dest.UserID == "" && dest.Slack == nil && dest.SlackWebhook == nil && dest.WhatsApp == nil {
 		return nil
 	}
 	return dest
+}
+
+// resolveNotificationSecretForRequest resolves a configured webhook into an
+// internal delivery-only field and removes the same name from DecryptedSecrets.
+// This is the boundary that prevents notification credentials from becoming
+// agent-visible SECRET_* environment variables.
+func (api *StreamingAPI) resolveNotificationSecretForRequest(ctx context.Context, userID, workflowPath string, req *QueryRequest) {
+	if api == nil || req == nil {
+		return
+	}
+	secretName := strings.TrimSpace(req.NotificationSlackWebhookSecretName)
+	if secretName == "" {
+		req.notificationSlackWebhookURL = ""
+		return
+	}
+
+	filtered := req.DecryptedSecrets[:0]
+	for _, secret := range req.DecryptedSecrets {
+		if strings.TrimSpace(secret.Name) == secretName {
+			if req.notificationSlackWebhookURL == "" {
+				req.notificationSlackWebhookURL = secret.Value
+			}
+			continue
+		}
+		filtered = append(filtered, secret)
+	}
+	req.DecryptedSecrets = filtered
+
+	// nil means "inject every global secret", so convert it to an explicit
+	// allow-list before removing the notification credential. Otherwise a
+	// GLOBAL_SECRET_<NAME> webhook would still leak through mergeGlobalSecrets.
+	if req.SelectedGlobalSecrets == nil {
+		allowed := make([]string, 0, len(getGlobalSecrets()))
+		for _, secret := range getGlobalSecrets() {
+			if strings.TrimSpace(secret.Name) != secretName {
+				allowed = append(allowed, secret.Name)
+			}
+		}
+		req.SelectedGlobalSecrets = &allowed
+	} else {
+		filteredGlobals := removeString(*req.SelectedGlobalSecrets, secretName)
+		req.SelectedGlobalSecrets = &filteredGlobals
+	}
+
+	if strings.TrimSpace(req.notificationSlackWebhookURL) == "" {
+		req.notificationSlackWebhookURL, _ = api.resolveBackendNotificationSecret(ctx, userID, workflowPath, secretName)
+	}
+}
+
+// resolveBackendNotificationSecret deliberately ignores agent secret-selection
+// lists. Notification configuration is its own backend-only capability.
+func (api *StreamingAPI) resolveBackendNotificationSecret(ctx context.Context, userID, workflowPath, secretName string) (string, bool) {
+	secretName = strings.TrimSpace(secretName)
+	if api == nil || secretName == "" {
+		return "", false
+	}
+	for _, secret := range api.loadSelectedSecrets(ctx, userID, workflowPath, []string{secretName}) {
+		if secret.Name == secretName && strings.TrimSpace(secret.Value) != "" {
+			return secret.Value, true
+		}
+	}
+	for _, secret := range getGlobalSecrets() {
+		if secret.Name == secretName && strings.TrimSpace(secret.Value) != "" {
+			return secret.Value, true
+		}
+	}
+	return "", false
 }
 
 // ImageGenConfig holds image generation provider configuration
@@ -2646,6 +2709,9 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 	logfWithContext(queryLogCtx, "[USER_ID_DEBUGGING] HTTP handler: currentUserID=%q (from auth context)", currentUserID)
 
 	api.applySavedMultiAgentChatConfig(r.Context(), &req, currentUserID)
+	// Scheduled/Chief requests may already carry the configured secret name at
+	// this point. Resolve it for backend delivery and strip it from agent env.
+	api.resolveNotificationSecretForRequest(r.Context(), currentUserID, req.SelectedFolder, &req)
 	common.SetSessionBrowserMode(sessionID, getBrowserMode(req))
 	// Keep configured browser intent on the request. In auto mode,
 	// agent_browser queries current CDP reachability at tool-call time.
@@ -3020,6 +3086,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				if manifest.Capabilities.Notifications != nil {
 					req.NotificationSlackWebhookSecretName = strings.TrimSpace(manifest.Capabilities.Notifications.SlackWebhookSecretName)
 				}
+				api.resolveNotificationSecretForRequest(context.Background(), currentUserID, resolvedWPath, &req)
 
 				// Manifest is the source of truth for servers and browser mode.
 				if len(manifest.Capabilities.SelectedServers) > 0 {
@@ -3128,6 +3195,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				if caps.Notifications != nil {
 					req.NotificationSlackWebhookSecretName = strings.TrimSpace(caps.Notifications.SlackWebhookSecretName)
 				}
+				api.resolveNotificationSecretForRequest(context.Background(), currentUserID, manifestWorkspacePath, &req)
 				req.CdpPorts = append([]int(nil), caps.CDPPorts...)
 
 				// Browser mode from manifest

@@ -2325,7 +2325,7 @@ This is the one-line-per-category map. For full signatures, parameters, when-to-
 - **Schedule management**: `+"`list_schedules`"+`, `+"`create_schedule`"+`, `+"`create_calendar_schedule`"+`, `+"`update_schedule`"+`, `+"`delete_schedule`"+`, `+"`trigger_schedule`"+`, `+"`get_schedule_runs`"+`. Cron / message-authoring rules, normal Run schedules plus Pulse, the `+"`/pulse-setup`"+` setup path, and unattended-message discipline — all live in the `+"`workflow-tools`"+` ref doc. Workflow schedules always use the workshop path; do not create direct `+"`mode=\"workflow\"`"+` schedules. **Whenever you create a recurring schedule, also pair it with a backup** so unattended runs persist their state off-box — see `+"`get_reference_doc(kind=\"backup-strategy\")`"+`.
 {{end}}
 - **Shell & discovery**: `+"`execute_shell_command`"+`, `+"`diff_patch_workspace_file`"+`, `+"`read_image`"+`, `+"`generate_text_llm`"+`, `+"`search_web_llm`"+`.
-- **Human attention**: `+"`human_feedback`"+` opens a blocking AgentWorks response card. It never sends through Gmail, workflow webhooks, `+"`notify_user`"+`, or account-level notification connectors. Use it only for an explicit in-app channel test or urgent, short-lived human-only input such as CAPTCHA/OTP/immediate approval; for an ordinary Builder question, ask in your normal response. In a bridge-only coding CLI, call `+"`$MCP_CUSTOM/human_feedback`"+` with a foreground curl and wait for that same call to return the answer. Never use `+"`nohup`"+`, append `+"`&`"+`, delegate/background it, write its result to a temporary file, poll it, or ask the user to message again after responding; the foreground response resumes the agent automatically. Do not make the shell timeout shorter than `+"`human_feedback.timeout_seconds`"+`. Cursor CLI has an approximately 60-second silent MCP-call ceiling, so Cursor agents must use `+"`timeout_seconds <= 45`"+`; after a real expiry, retry only if the input is still required. `+"`notify_user`"+` sends a non-blocking message to connected channels (Slack / WhatsApp / email) for FYIs, progress, alerts, or completion notices when no reply is required. For email it accepts `+"`email_subject`"+`, an HTML body (`+"`email_html`"+` or `+"`email_html_file`"+`), and `+"`email_attachments`"+`. Report delivery failures honestly. Workflow steps use the same tools through the `+"`human_tools`"+` step capability.
+- **Human attention**: `+"`human_feedback`"+` opens a blocking AgentWorks response card. It never sends through Gmail, workflow webhooks, `+"`notify_user`"+`, or account-level notification connectors. Use it only for an explicit in-app channel test or urgent, short-lived human-only input such as CAPTCHA/OTP/immediate approval; for an ordinary Builder question, ask in your normal response. In a bridge-only coding CLI, call `+"`$MCP_CUSTOM/human_feedback`"+` with a foreground curl and wait for that same call to return the answer. Never use `+"`nohup`"+`, append `+"`&`"+`, delegate/background it, write its result to a temporary file, poll it, or ask the user to message again after responding; the foreground response resumes the agent automatically. Do not make the shell timeout shorter than `+"`human_feedback.timeout_seconds`"+`. Cursor CLI has an approximately 60-second silent MCP-call ceiling, so Cursor agents must use `+"`timeout_seconds <= 45`"+`; after a real expiry, retry only if the input is still required. `+"`notify_user`"+` sends a non-blocking message to connected channels (Slack / WhatsApp / email) for FYIs, progress, alerts, or completion notices when no reply is required. Slack webhook delivery is backend-owned rich Block Kit by default; for structured summaries use `+"`slack_title`"+`, `+"`slack_color`"+`, `+"`slack_fields`"+`, `+"`slack_sections`"+`, and `+"`slack_footer`"+`. Never access or post to a webhook URL directly. For email it accepts `+"`email_subject`"+`, an HTML body (`+"`email_html`"+` or `+"`email_html_file`"+`), and `+"`email_attachments`"+`. Report delivery failures honestly. Workflow steps use the same tools through the `+"`human_tools`"+` step capability.
 - **Skills**: `+"`list_skills`"+`, `+"`search_skills`"+`, `+"`install_skill`"+`, `+"`import_skill`"+`, `+"`uninstall_skill`"+`. Skills live at `+"`{{.AbsDocsRoot}}/skills/{folder}/SKILL.md`"+` (workspace root, shared across workflows). `+"`update_workflow_config(add_skills=[...])`"+` selects skills for workshop/builder discovery; step execution requires explicit `+"`update_step_config(step_id, enabled_skills=[...])`"+`. Shared workflow-specific HOW belongs in `+"`learnings/_global/SKILL.md`"+`.
 - **Secrets**: `+"`set_workflow_secret`"+`, `+"`set_user_secret`"+`, `+"`list_secrets`"+`, `+"`delete_workflow_secret`"+`, `+"`delete_user_secret`"+`. Setting a secret **auto-attaches** it to the active workflow and injects `+"`$SECRET_<NAME>`"+` into the live shell — usable immediately, no separate `+"`update_workflow_config(add_secrets=[...])`"+` call needed (that's only for attaching an already-stored secret, e.g. a global or a reusable user secret you didn't just set). Three buckets (workflow / user / global). Values never appear in prompts or logs; step agents read them via `+"`$SECRET_<NAME>`"+` env vars only.
 {{end}}
@@ -6106,7 +6106,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				},
 				"slack_webhook_secret_name": map[string]interface{}{
 					"type":        "string",
-					"description": "Encrypted secret name containing a complete Slack Incoming Webhook URL. The secret must already be selected for this workflow (set_workflow_secret auto-attaches it, or use add_secrets in this same call). notify_user sends to it automatically; human_feedback never does because webhooks are one-way. Pass an empty string to disable workflow webhook delivery. Never put the URL itself in workflow.json.",
+					"description": "Name of an existing encrypted secret containing a complete Slack Incoming Webhook URL. This converts the credential into backend-only notification configuration and removes it from selected_secrets, selected_global_secret_names, and SECRET_* injection. notify_user sends a rich Block Kit card to it automatically and applies the change in the current builder turn; human_feedback never does because webhooks are one-way. Pass an empty string to disable workflow webhook delivery. Never put the URL itself in workflow.json or post to it directly.",
 				},
 				"update_tier_fallbacks": map[string]interface{}{
 					"type":        "object",
@@ -6525,19 +6525,8 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 					return "Error: slack_webhook_secret_name must be a string.", nil
 				}
 				secretName = strings.TrimSpace(secretName)
+				var secretValue string
 				if secretName != "" {
-					selected := false
-					for _, secret := range iwm.controller.GetSecrets() {
-						if secret.Name == secretName {
-							selected = true
-							break
-						}
-					}
-					if !selected {
-						return fmt.Sprintf("Error: Slack webhook secret %q is not selected for this workflow. Store it with set_workflow_secret (which auto-attaches it), or include add_secrets=[%q] in this update.", secretName, secretName), nil
-					}
-
-					var secretValue string
 					if iwm.resolveSecretValues != nil {
 						secretValue = iwm.resolveSecretValues(ctx, []string{secretName})[secretName]
 					}
@@ -6586,6 +6575,22 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 					notifications["slack_webhook_secret_name"] = secretName
 					caps["notifications"] = notifications
 				}
+				// A webhook referenced by Notifications is backend-only. Remove any
+				// legacy/auto-attached copies from both secret selection lists so
+				// future builders and workflow steps never receive SECRET_<NAME>.
+				if secretName != "" {
+					for _, key := range []string{"selected_secrets", "selected_global_secret_names"} {
+						if rawSelected, ok := caps[key].([]interface{}); ok {
+							filtered := make([]interface{}, 0, len(rawSelected))
+							for _, entry := range rawSelected {
+								if name, _ := entry.(string); strings.TrimSpace(name) != secretName {
+									filtered = append(filtered, entry)
+								}
+							}
+							caps[key] = filtered
+						}
+					}
+				}
 				manifest["capabilities"] = caps
 				manifest["updated_at"] = time.Now().UTC().Format(time.RFC3339)
 				updated, marshalErr := json.MarshalIndent(manifest, "", "  ")
@@ -6596,11 +6601,39 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 					return fmt.Sprintf("Failed to write workflow.json: %v", writeErr), nil
 				}
 
+				if secretName != "" {
+					currentSecrets := iwm.controller.GetSecrets()
+					filtered := make([]orchestrator.SecretEntry, 0, len(currentSecrets))
+					for _, secret := range currentSecrets {
+						if strings.TrimSpace(secret.Name) != secretName {
+							filtered = append(filtered, secret)
+						}
+					}
+					iwm.controller.SetSecrets(filtered)
+					if iwm.workshopConfig != nil {
+						iwm.workshopConfig.Secrets = append([]orchestrator.SecretEntry(nil), filtered...)
+					}
+					if envRef := iwm.controller.GetWorkspaceEnvRef(); envRef != nil {
+						iwm.controller.LockWorkspaceEnv()
+						delete(envRef, "SECRET_"+secretName)
+						iwm.controller.UnlockWorkspaceEnv()
+					}
+				}
+				// Refresh the current builder turn immediately. The agent still never
+				// sees the URL; only notify_user's destination context receives it.
+				if destination, ok := ctx.Value(virtualtools.BotNotificationDestinationKey).(*services.NotificationDestination); ok && destination != nil {
+					if secretName == "" {
+						destination.SlackWebhook = nil
+					} else {
+						destination.SlackWebhook = &services.SlackWebhookDest{SecretName: secretName, URL: secretValue}
+					}
+				}
+
 				anyChanged = true
 				if secretName == "" {
 					sb.WriteString("\n### Slack Incoming Webhook (disabled)\nWorkflow notify_user calls no longer send to a dedicated Slack webhook. Interactive Slack bot behavior is unchanged.\n")
 				} else {
-					sb.WriteString(fmt.Sprintf("\n### Slack Incoming Webhook (configured)\n- Encrypted secret: %s\n- Applies automatically to notify_user on the next workflow run. It is one-way and is not used for human_feedback.\n", secretName))
+					sb.WriteString(fmt.Sprintf("\n### Slack Incoming Webhook (configured)\n- Encrypted backend-only secret: %s\n- Applies immediately to notify_user in this builder turn and to future workflow runs. notify_user renders rich Block Kit by default; the agent never receives the URL. It is one-way and is not used for human_feedback.\n", secretName))
 				}
 				logger.Info(fmt.Sprintf("Updated workflow Slack webhook secret reference: configured=%v", secretName != ""))
 			}

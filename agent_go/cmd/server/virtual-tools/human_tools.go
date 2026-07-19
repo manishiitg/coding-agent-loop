@@ -62,7 +62,50 @@ func CreateHumanTools() []llmtypes.Tool {
 	notifyProps := map[string]interface{}{
 		"message_for_user": map[string]interface{}{
 			"type":        "string",
-			"description": "Message to send to the user",
+			"description": "Concise plain-text summary sent to every channel and used as the Slack/email fallback. When supplying rich Slack fields, make this the lead verdict rather than duplicating every detail.",
+		},
+		"slack_title": map[string]interface{}{
+			"type":        "string",
+			"maxLength":   150,
+			"description": "Optional Block Kit header. Use by default for workflow, Pulse, Chief of Staff, Goal Advisor, and other structured summaries. The backend owns the webhook URL and renders this safely; never post to a webhook directly.",
+		},
+		"slack_color": map[string]interface{}{
+			"type":        "string",
+			"enum":        []string{"neutral", "success", "warning", "danger"},
+			"description": "Block Kit accent color chosen from the factual outcome: success only when healthy, warning for incomplete/blocked, danger for confirmed failure, otherwise neutral.",
+		},
+		"slack_fields": map[string]interface{}{
+			"type":     "array",
+			"maxItems": 10,
+			"items": map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"label": map[string]interface{}{"type": "string"},
+					"value": map[string]interface{}{"type": "string"},
+				},
+				"required":             []string{"label", "value"},
+				"additionalProperties": false,
+			},
+			"description": "Optional compact Block Kit metric fields. Use for counts/statuses. Other channels ignore these fields.",
+		},
+		"slack_sections": map[string]interface{}{
+			"type":     "array",
+			"maxItems": 12,
+			"items": map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"heading": map[string]interface{}{"type": "string"},
+					"body":    map[string]interface{}{"type": "string"},
+				},
+				"required":             []string{"heading", "body"},
+				"additionalProperties": false,
+			},
+			"description": "Optional ordered Block Kit sections for changed areas, findings, issues, blockers, or next actions. Slack mrkdwn and <url|label> links are supported. Other channels ignore these fields.",
+		},
+		"slack_footer": map[string]interface{}{
+			"type":        "string",
+			"maxLength":   2000,
+			"description": "Optional short Block Kit context/footer such as scope and date. Other channels ignore this field.",
 		},
 	}
 	if gmailEnabled() {
@@ -123,14 +166,14 @@ var channelLabels = map[string]string{
 	"gmail":    "Gmail (email)",
 }
 
-var sendSlackIncomingWebhook = services.SendSlackIncomingWebhook
+var sendRichSlackIncomingWebhook = services.SendRichSlackIncomingWebhook
 
 // buildNotifyDescription renders the notify_user description with the set of
 // channels enabled when the tool list is built (per session/run), so the agent
 // knows where its message will actually land. The always-on web UI connector is
 // not framed as an external channel.
 func buildNotifyDescription() string {
-	base := "Send a non-blocking notification to the human. Use this for FYIs, progress updates, alerts, and completion notices when you do not need to wait for a reply. If the workflow has a Slack Incoming Webhook configured, this tool automatically sends there in addition to enabled account-level channels; the webhook cannot receive replies. If you need the human to answer before continuing, use human_feedback instead. Returns a JSON delivery result — status (delivered|partial|failed|no_recipient|no_channels_configured) plus delivered/skipped/failed channel lists. Report it honestly to the user: do NOT claim the message was sent if status is failed or no_channels_configured."
+	base := "Send a non-blocking notification to the human. Use this for FYIs, progress updates, alerts, and completion notices when you do not need to wait for a reply. If the workflow has a Slack Incoming Webhook configured, this tool automatically sends a backend-owned rich Block Kit card there in addition to enabled account-level channels; even a plain message_for_user call receives the safe rich default. For workflow, Pulse, Chief of Staff, Goal Advisor, and other structured summaries, set slack_title, factual slack_color, compact slack_fields, relevant slack_sections, and slack_footer by default. Never access a SECRET_* webhook variable, construct a webhook payload in shell, post with curl, disable notify_user to avoid duplication, or ask for the URL after an encrypted webhook reference is configured—the backend exclusively owns delivery. If you need the human to answer before continuing, use human_feedback instead. Returns a JSON delivery result — status (delivered|partial|failed|no_recipient|no_channels_configured) plus delivered/skipped/failed channel lists. Report it honestly to the user: do NOT claim the message was sent if status is failed or no_channels_configured."
 
 	var labels []string
 	gmailOn := false
@@ -337,12 +380,16 @@ func handleNotifyUser(ctx context.Context, args map[string]interface{}) (string,
 		}
 		dest.Content = &services.NotificationContent{Gmail: gc}
 	}
+	slackContent, err := slackContentFromArgs(args)
+	if err != nil {
+		return "", err
+	}
 
 	// Synchronous send so we can report real per-channel delivery to the agent
 	// (and so the send isn't killed when this turn's context is canceled).
 	results := notificationManager.SendUserNotificationSync(ctx, messageForUser, "", dest)
 	if dest != nil && dest.SlackWebhook != nil {
-		msgID, sendErr := sendSlackIncomingWebhook(ctx, dest.SlackWebhook.URL, messageForUser)
+		msgID, sendErr := sendRichSlackIncomingWebhook(ctx, dest.SlackWebhook.URL, messageForUser, slackContent)
 		result := services.ConnectorResult{
 			Channel: "slack_webhook",
 			OK:      sendErr == nil,
@@ -390,6 +437,37 @@ func handleNotifyUser(ctx context.Context, args map[string]interface{}) (string,
 	}
 	b, _ := json.Marshal(result)
 	return string(b), nil
+}
+
+func slackContentFromArgs(args map[string]interface{}) (services.SlackWebhookContent, error) {
+	content := services.SlackWebhookContent{}
+	content.Title, _ = args["slack_title"].(string)
+	content.Color, _ = args["slack_color"].(string)
+	content.Footer, _ = args["slack_footer"].(string)
+
+	if rawFields, ok := args["slack_fields"].([]interface{}); ok {
+		for i, raw := range rawFields {
+			entry, ok := raw.(map[string]interface{})
+			if !ok {
+				return content, fmt.Errorf("slack_fields[%d] must be an object", i)
+			}
+			label, _ := entry["label"].(string)
+			value, _ := entry["value"].(string)
+			content.Fields = append(content.Fields, services.SlackWebhookField{Label: label, Value: value})
+		}
+	}
+	if rawSections, ok := args["slack_sections"].([]interface{}); ok {
+		for i, raw := range rawSections {
+			entry, ok := raw.(map[string]interface{})
+			if !ok {
+				return content, fmt.Errorf("slack_sections[%d] must be an object", i)
+			}
+			heading, _ := entry["heading"].(string)
+			body, _ := entry["body"].(string)
+			content.Sections = append(content.Sections, services.SlackWebhookSection{Heading: heading, Body: body})
+		}
+	}
+	return content, nil
 }
 
 // handleHumanFeedback handles the human_feedback tool execution

@@ -176,7 +176,7 @@ export default function WorkflowNotificationPopup({
                 <section className="rounded-md border border-border">
                   <div className="border-b border-border px-4 py-3">
                     <h3 className="text-sm font-semibold text-foreground">Effective destinations</h3>
-                    <p className="mt-0.5 text-xs text-muted-foreground">The agent never reads a webhook URL. It calls notify_user; the server applies these destinations.</p>
+                    <p className="mt-0.5 text-xs text-muted-foreground">The agent never reads a webhook URL. It calls notify_user; the server applies these destinations and renders Slack as rich Block Kit by default.</p>
                   </div>
                   <div className="divide-y divide-border">
                     <div className="flex flex-col gap-2 px-4 py-3 sm:flex-row sm:items-start sm:justify-between">

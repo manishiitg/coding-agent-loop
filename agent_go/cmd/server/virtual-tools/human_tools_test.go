@@ -101,6 +101,27 @@ func TestHumanFeedbackDescriptionRequiresForegroundBridgeWait(t *testing.T) {
 	}
 }
 
+func TestNotifyUserDefaultsToBackendOwnedRichSlack(t *testing.T) {
+	var description string
+	var parameters string
+	for _, tool := range CreateHumanTools() {
+		if tool.Function != nil && tool.Function.Name == "notify_user" {
+			description = tool.Function.Description
+			raw, err := json.Marshal(tool.Function.Parameters)
+			if err != nil {
+				t.Fatalf("marshal notify_user parameters: %v", err)
+			}
+			parameters = string(raw)
+			break
+		}
+	}
+	for _, want := range []string{"backend-owned rich Block Kit", "slack_title", "slack_fields", "slack_sections", "Never access a SECRET_* webhook"} {
+		if !strings.Contains(description+parameters, want) {
+			t.Fatalf("notify_user contract missing %q:\ndescription=%s\nparameters=%s", want, description, parameters)
+		}
+	}
+}
+
 func TestHumanFeedbackStoreListsPendingRequestsIndependentlyOfSessionEvents(t *testing.T) {
 	resetHumanToolTestState()
 	t.Cleanup(resetHumanToolTestState)
@@ -313,17 +334,20 @@ func TestHandleNotifyUserUsesBotDestination(t *testing.T) {
 }
 
 func TestHandleNotifyUserSendsWorkflowSlackWebhook(t *testing.T) {
-	original := sendSlackIncomingWebhook
-	t.Cleanup(func() { sendSlackIncomingWebhook = original })
+	original := sendRichSlackIncomingWebhook
+	t.Cleanup(func() { sendRichSlackIncomingWebhook = original })
 
 	called := false
-	sendSlackIncomingWebhook = func(_ context.Context, webhookURL, message string) (string, error) {
+	sendRichSlackIncomingWebhook = func(_ context.Context, webhookURL, message string, content services.SlackWebhookContent) (string, error) {
 		called = true
 		if webhookURL != "https://hooks.slack.com/services/T123/B456/secret" {
 			t.Fatalf("unexpected webhook URL")
 		}
 		if message != "Workflow finished" {
 			t.Fatalf("message = %q", message)
+		}
+		if content.Title != "QA complete" || content.Color != "success" || len(content.Fields) != 1 || content.Fields[0].Label != "Passed" {
+			t.Fatalf("rich Slack content = %#v", content)
 		}
 		return "webhook_ok", nil
 	}
@@ -334,7 +358,14 @@ func TestHandleNotifyUserSendsWorkflowSlackWebhook(t *testing.T) {
 			URL:        "https://hooks.slack.com/services/T123/B456/secret",
 		},
 	})
-	raw, err := handleNotifyUser(ctx, map[string]interface{}{"message_for_user": "Workflow finished"})
+	raw, err := handleNotifyUser(ctx, map[string]interface{}{
+		"message_for_user": "Workflow finished",
+		"slack_title":      "QA complete",
+		"slack_color":      "success",
+		"slack_fields": []interface{}{
+			map[string]interface{}{"label": "Passed", "value": "12"},
+		},
+	})
 	if err != nil {
 		t.Fatalf("handleNotifyUser: %v", err)
 	}

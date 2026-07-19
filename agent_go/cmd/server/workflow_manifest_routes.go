@@ -171,6 +171,13 @@ func mergeWorkflowCapabilitiesUpdate(existing WorkflowCapabilities, incoming *Wo
 		// An explicitly supplied empty object disables the workflow webhook.
 		updated.Notifications = nil
 	}
+	if updated.Notifications != nil {
+		updated.SelectedSecrets = removeString(updated.SelectedSecrets, updated.Notifications.SlackWebhookSecretName)
+		if updated.SelectedGlobalSecretNames != nil {
+			filtered := removeString(*updated.SelectedGlobalSecretNames, updated.Notifications.SlackWebhookSecretName)
+			updated.SelectedGlobalSecretNames = &filtered
+		}
+	}
 	return updated
 }
 

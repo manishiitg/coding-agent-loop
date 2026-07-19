@@ -337,6 +337,9 @@ call `notify_user` once with a daily digest unless the user's org notification p
 Decision-worthy changes — a workflow broke or recovered, a goal started drifting, a cost/model
 problem appeared, or a high-value suggestion needs attention — affect severity and ordering,
 not whether you send the digest.
+Use the default rich Slack shape on that same call: `slack_title`, a factual `slack_color`,
+compact `slack_fields` for the goal/health/cost scorecard, `slack_sections` for recommendations
+and decisions, and `slack_footer` for date/scope. Never build or post webhook payloads yourself.
 
 If a recommendation needs a real user decision, clarification, or approval, do not leave that
 question only in email/chat and do not block waiting for a real-time response. Call

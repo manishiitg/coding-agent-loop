@@ -125,6 +125,8 @@ function AssetRow({ name, meta, kind, tag, tone }: { name: string; meta: string;
 }
 
 type ParentMsg = { role: 'user' | 'assistant' | 'tool'; text?: string; tool?: string; subject?: string; topic?: string; name?: string }
+type TreeNode = { name: string; path: string; type: 'dir' | 'file'; children?: TreeNode[] }
+type WsFile = { path: string; name: string; scope: string; subject: string; topic: string }
 
 export default function LearningApp() {
   const [screen, setScreen] = useState<Screen>('engine')
@@ -158,6 +160,35 @@ export default function LearningApp() {
   const [focusInput, setFocusInput] = useState('')
   const [parentMessages, setParentMessages] = useState<ParentMsg[]>([])
   const [sending, setSending] = useState(false)
+  const [wsFiles, setWsFiles] = useState<WsFile[]>([])
+
+  // Reflect the workspace file system in the drawer (materials the agent can
+  // read). Refetches when entering the chat and after each upload/tool event.
+  useEffect(() => {
+    if (screen !== 'parent') return
+    let cancelled = false
+    fetch(`${FAMILY_API}/api/workspace/tree`)
+      .then((res) => res.json())
+      .then((nodes: TreeNode[]) => {
+        if (cancelled) return
+        const files: { path: string; name: string }[] = []
+        const walk = (ns: TreeNode[]) => ns?.forEach((n) => {
+          if (n.type === 'file') files.push({ path: n.path, name: n.name })
+          if (n.children) walk(n.children)
+        })
+        walk(nodes)
+        const mats: WsFile[] = files
+          .filter((f) => f.path.includes('/materials/'))
+          .map((f) => {
+            const parts = f.path.split('/')
+            const mi = parts.indexOf('materials')
+            return { path: f.path, name: f.name, scope: parts[0] || '', subject: parts[mi + 1] || '', topic: parts[mi + 2] || '' }
+          })
+        setWsFiles(mats)
+      })
+      .catch(() => {})
+    return () => { cancelled = true }
+  }, [screen, parentMessages.length])
   const [signoff, setSignoff] = useState(false)
   const [railOpen, setRailOpen] = useState(true)
   const [drawerOpen, setDrawerOpen] = useState(true)
@@ -514,19 +545,25 @@ export default function LearningApp() {
                       <div><dt>Current topic</dt><dd>{topic || 'Not set yet'}</dd></div>
                     </dl>
                   </section>
-                  <section className="fl-asset-group">
-                    <p className="fl-drawer-label">School sources</p>
-                    {schoolSources.map((item) => <AssetRow key={item.id} {...item} />)}
-                  </section>
-                  <section className="fl-asset-group">
-                    <p className="fl-drawer-label">Created work</p>
-                    {createdWork.map((item) => <AssetRow key={item.id} {...item} />)}
-                  </section>
-                  <section className="fl-asset-group">
-                    <p className="fl-drawer-label">Needs review</p>
-                    {needsReview.map((item) => <AssetRow key={item.id} {...item} />)}
-                  </section>
-                  <p className="fl-callout"><span className="fl-dot is-ready" /> Assets marked “Ready for {childName || 'Maya'}” are visible to them in Child Mode. Answer keys and drafts stay parent-only.</p>
+                  {(() => {
+                    if (wsFiles.length === 0) {
+                      return <p className="fl-note">No materials yet. Use the attach button to add photos or PDFs — they’ll appear here, organized by subject and topic, for Quill to read.</p>
+                    }
+                    const groups: Record<string, WsFile[]> = {}
+                    wsFiles.forEach((f) => { const k = f.subject || 'General'; (groups[k] = groups[k] || []).push(f) })
+                    return Object.entries(groups).map(([subj, files]) => (
+                      <section key={subj} className="fl-asset-group">
+                        <p className="fl-drawer-label">{subj}</p>
+                        {files.map((f) => (
+                          <div key={f.path} className="fl-asset">
+                            <span className="fl-asset-icon"><FileText size={17} /></span>
+                            <span className="fl-asset-body"><strong>{f.name}</strong><small>{f.topic || 'material'}</small></span>
+                          </div>
+                        ))}
+                      </section>
+                    ))
+                  })()}
+                  <p className="fl-callout"><span className="fl-dot is-ready" /> Materials live in the family workspace on this computer. Quill reads them to explain progress and create study material.</p>
                 </>
               )}
 

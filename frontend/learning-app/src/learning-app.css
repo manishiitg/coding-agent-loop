@@ -99,6 +99,10 @@ html, body, #root { margin: 0; height: 100%; }
 .fl-toolcard { display: inline-flex; align-items: center; gap: 8px; width: fit-content; padding: 9px 13px; border: 1px solid #ccebd8; border-radius: 12px; background: #eefaf1; color: #1f7a4d; font-size: var(--text-secondary); font-weight: 600; }
 .fl-toolcard svg { flex: 0 0 auto; color: #2aa96a; }
 .fl-toolcard strong { font-weight: 800; }
+.fl-toolcard.is-upload { border-color: #cfe0f2; background: #eef6ff; color: #2f6db0; }
+.fl-toolcard.is-upload svg { color: #3f6fb0; }
+.fl-toolcard.is-error { border-color: #f3c9c3; background: #fdecea; color: #c0463b; }
+.fl-toolcard.is-error svg { color: #c0463b; }
 .pin-hint { margin: 16px 0 0; color: #5b6c87; font-size: var(--text-secondary); line-height: 1.5; }
 .pin-error { display: inline-flex; align-items: center; gap: 8px; color: #c0463b; }
 .setup-footer .pin-error svg { color: #c0463b; }

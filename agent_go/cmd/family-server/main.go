@@ -38,6 +38,7 @@ func main() {
 	mux.HandleFunc("/api/parent/pin", handleSetPin)
 	mux.HandleFunc("/api/parent/message", handleParentMessage)
 	mux.HandleFunc("/api/workspace/tree", handleWorkspaceTree)
+	mux.HandleFunc("/api/upload", handleUpload)
 	mux.HandleFunc("/api/reset", handleReset)
 
 	// In the packaged (Electron) app, serve the built SparkQuill frontend from the

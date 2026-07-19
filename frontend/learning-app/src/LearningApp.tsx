@@ -1,4 +1,4 @@
-import { useState, useEffect, type FormEvent } from 'react'
+import { useState, useEffect, useRef, type FormEvent, type ChangeEvent } from 'react'
 import {
   ArrowLeft,
   ArrowRight,
@@ -124,7 +124,7 @@ function AssetRow({ name, meta, kind, tag, tone }: { name: string; meta: string;
   )
 }
 
-type ParentMsg = { role: 'user' | 'assistant' | 'tool'; text?: string; tool?: string; subject?: string; topic?: string }
+type ParentMsg = { role: 'user' | 'assistant' | 'tool'; text?: string; tool?: string; subject?: string; topic?: string; name?: string }
 
 export default function LearningApp() {
   const [screen, setScreen] = useState<Screen>('engine')
@@ -294,6 +294,37 @@ export default function LearningApp() {
       .finally(() => setSending(false))
   }
 
+  const fileInputRef = useRef<HTMLInputElement>(null)
+  const [uploading, setUploading] = useState(false)
+
+  const onPickFiles = () => fileInputRef.current?.click()
+
+  const onFilesSelected = (event: ChangeEvent<HTMLInputElement>) => {
+    const files = event.target.files
+    if (!files || files.length === 0) return
+    setUploading(true)
+    const jobs = Array.from(files).map((f) => {
+      const fd = new FormData()
+      fd.append('file', f)
+      fd.append('scope', 'shared')
+      if (subject) fd.append('subject', subject)
+      if (topic) fd.append('topic', topic)
+      return fetch(`${FAMILY_API}/api/upload`, { method: 'POST', body: fd })
+        .then((res) => res.json())
+        .then((data: { name?: string; error?: string }) => ({ name: data.name || f.name, error: data.error }))
+        .catch(() => ({ name: f.name, error: 'upload failed' }))
+    })
+    Promise.all(jobs)
+      .then((results) => {
+        const cards: ParentMsg[] = results.map((r) => ({ role: 'tool', tool: r.error ? 'upload_error' : 'upload', name: r.name }))
+        setParentMessages((cur) => [...cur, ...cards])
+      })
+      .finally(() => {
+        setUploading(false)
+        if (fileInputRef.current) fileInputRef.current.value = ''
+      })
+  }
+
   if (booting) {
     return (
       <main className="learning-app">
@@ -391,6 +422,17 @@ export default function LearningApp() {
 
               {parentMessages.map((m, i) => {
                 if (m.role === 'tool') {
+                  if (m.tool === 'upload' || m.tool === 'upload_error') {
+                    const bad = m.tool === 'upload_error'
+                    return (
+                      <div key={i} className="fl-msg is-agent">
+                        <span className="fl-msg-avatar is-sun"><Paperclip size={16} /></span>
+                        <div className="fl-msg-col">
+                          <div className={`fl-toolcard ${bad ? 'is-error' : 'is-upload'}`}><Paperclip size={15} /> <span>{bad ? <>Couldn’t add <strong>{m.name}</strong></> : <>Added material — <strong>{m.name}</strong></>}</span></div>
+                        </div>
+                      </div>
+                    )
+                  }
                   return (
                     <div key={i} className="fl-msg is-agent">
                       <span className="fl-msg-avatar is-sun"><Check size={18} strokeWidth={3} /></span>
@@ -436,8 +478,9 @@ export default function LearningApp() {
             </div>
 
             <form className="fl-composer" onSubmit={sendParentMessage}>
-              <button className="composer-icon" type="button" aria-label="Attach school material"><Paperclip size={19} /></button>
-              <button className="composer-icon" type="button" aria-label="Capture a photo"><Camera size={19} /></button>
+              <input ref={fileInputRef} type="file" multiple accept="image/*,application/pdf" onChange={onFilesSelected} style={{ display: 'none' }} />
+              <button className="composer-icon" type="button" aria-label="Attach school material" onClick={onPickFiles} disabled={uploading}><Paperclip size={19} /></button>
+              <button className="composer-icon" type="button" aria-label="Add a photo" onClick={onPickFiles} disabled={uploading}><Camera size={19} /></button>
               <input
                 aria-label="Message the learning guide"
                 placeholder={`Ask anything about ${childName || 'your child'}’s learning…`}

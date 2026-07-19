@@ -9,8 +9,6 @@ import {
   CircleUserRound,
   ExternalLink,
   FileText,
-  Image as ImageIcon,
-  Lightbulb,
   LockKeyhole,
   PanelLeftClose,
   PanelLeftOpen,
@@ -81,55 +79,6 @@ function newConversationId(): string {
   return `conv-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`
 }
 
-const schoolSources = [
-  { id: 'src1', name: 'Notebook pages.pdf', meta: '25 pages · Added Jul 15', kind: 'pdf', tag: 'Ready for Maya', tone: 'ready' },
-]
-
-const createdWork = [
-  { id: 'cw1', name: 'Quadratic revision sheet', meta: '6 questions · Draft', kind: 'doc', tag: 'Draft', tone: 'draft' },
-  { id: 'cw2', name: 'Practice test', meta: '10 questions · Draft', kind: 'test', tag: 'Ready for Maya', tone: 'ready' },
-]
-
-const needsReview = [
-  { id: 'nr1', name: 'IMG_4521.jpg', meta: 'Handwritten solution', kind: 'image', tag: 'Parent only', tone: 'parent' },
-]
-
-const mapSubjects = [
-  { id: 'm1', name: 'Mathematics', topic: 'Quadratic Equations', sources: 3, current: true },
-  { id: 'm2', name: 'Science', topic: 'Chemical Reactions', sources: 1 },
-]
-
-const progressModel = {
-  focus: 'Quadratic Equations',
-  strengths: ['Isolating x² and using inverse operations', 'Setting up equations from word problems'],
-  focusAreas: ['Negative leading coefficients and simplifying both sides'],
-  recent: [
-    { id: 'r1', label: 'Guided practice — quadratics', when: '2h ago', signal: 'strong' },
-    { id: 'r2', label: 'Factorising review', when: 'Mon', signal: 'mixed' },
-  ],
-}
-
-const revisionQuestions = ['−2x² + 5x − 3 = 0', '3x² + 2x − 8 = 0', '−x² − 6x + 9 = 0', '2x² − x − 6 = 0']
-
-function assetIcon(kind: string) {
-  if (kind === 'image') return <ImageIcon size={17} />
-  return <FileText size={17} />
-}
-
-function AssetRow({ name, meta, kind, tag, tone }: { name: string; meta: string; kind: string; tag: string; tone: string }) {
-  return (
-    <div className="fl-asset">
-      <span className={`fl-asset-icon is-${kind}`}>{assetIcon(kind)}</span>
-      <span className="fl-asset-body">
-        <strong>{name}</strong>
-        <small>{meta}</small>
-        <span className={`fl-tag is-${tone}`}>{tag}</span>
-      </span>
-      <button className="fl-asset-more" type="button" aria-label={`More actions for ${name}`}>⋯</button>
-    </div>
-  )
-}
-
 type ParentMsg = { role: 'user' | 'assistant' | 'tool'; text?: string; tool?: string; subject?: string; topic?: string; name?: string }
 type TreeNode = { name: string; path: string; type: 'dir' | 'file'; children?: TreeNode[] }
 type WsFile = { path: string; name: string; scope: string; subject: string; topic: string }
@@ -167,6 +116,7 @@ export default function LearningApp() {
   const [parentMessages, setParentMessages] = useState<ParentMsg[]>([])
   const [sending, setSending] = useState(false)
   const [wsFiles, setWsFiles] = useState<WsFile[]>([])
+  const [allFiles, setAllFiles] = useState<string[]>([])
   const [conversationId, setConversationId] = useState(newConversationId)
   const [conversations, setConversations] = useState<ConvMeta[]>([])
   const [childSessionsList, setChildSessionsList] = useState<ConvMeta[]>([])
@@ -197,7 +147,7 @@ export default function LearningApp() {
             const mi = parts.indexOf('materials')
             return { path: f.path, name: f.name, scope: parts[0] || '', subject: parts[mi + 1] || '', topic: parts[mi + 2] || '' }
           })
-        if (!cancelled) setWsFiles(mats)
+        if (!cancelled) { setWsFiles(mats); setAllFiles(files.map((f) => f.path)) }
         // Derive past conversations from <scope>/conversations/*.json — the left
         // rail reflects the file system, no bespoke conversations API.
         const convPaths = files.filter((f) => f.path.includes('/conversations/') && f.path.endsWith('.json')).map((f) => f.path)
@@ -652,51 +602,66 @@ export default function LearningApp() {
                     </dl>
                   </section>
                   <p className="fl-drawer-label">Academic map · living view</p>
-                  {mapSubjects.map((item) => (
-                    <div key={item.id} className={`fl-map-subject ${item.current ? 'is-current' : ''}`}>
-                      <div className="fl-map-subject-head">
-                        <strong>{item.name}</strong>
-                        {item.current && <span className="fl-badge is-current">Current</span>}
+                  {(() => {
+                    const bySubject: Record<string, { topics: Set<string>; count: number }> = {}
+                    wsFiles.forEach((f) => {
+                      const s = f.subject || 'General'
+                      const e = bySubject[s] || { topics: new Set<string>(), count: 0 }
+                      if (f.topic) e.topics.add(f.topic)
+                      e.count += 1
+                      bySubject[s] = e
+                    })
+                    const entries = Object.entries(bySubject)
+                    if (entries.length === 0) {
+                      return <p className="fl-note">The map grows as you add materials — it starts from the confirmed subject and topic, nothing invented from grade or board alone.</p>
+                    }
+                    return entries.map(([name, v]) => (
+                      <div key={name} className={`fl-map-subject ${name === subject ? 'is-current' : ''}`}>
+                        <div className="fl-map-subject-head">
+                          <strong>{name}</strong>
+                          {name === subject && <span className="fl-badge is-current">Current</span>}
+                        </div>
+                        <div className="fl-map-topic">{v.topics.size ? `Topics: ${Array.from(v.topics).join(', ')}` : 'No topic yet'}</div>
+                        <div className="fl-map-meta">{v.count} source{v.count === 1 ? '' : 's'}</div>
                       </div>
-                      <div className="fl-map-topic">Topic: {item.topic}</div>
-                      <div className="fl-map-meta">{item.sources} source{item.sources === 1 ? '' : 's'}</div>
-                    </div>
-                  ))}
-                  <p className="fl-note">This map grows from real learning. It starts with the confirmed subject and topic — nothing is invented from grade or board alone.</p>
+                    ))
+                  })()}
+                  <p className="fl-note">This map grows from real materials on this computer. It starts with the confirmed subject and topic — nothing is invented from grade or board alone.</p>
                 </>
               )}
 
-              {drawerTab === 'progress' && (
-                <>
-                  <div className="fl-prog-focus">
-                    <span className="fl-drawer-label">Current focus</span>
-                    <strong>{progressModel.focus}</strong>
-                  </div>
-                  <section className="fl-prog-group">
-                    <p className="fl-drawer-label">Strengths</p>
-                    {progressModel.strengths.map((text) => (
-                      <div key={text} className="fl-prog-item is-strong"><CheckCircle2 size={16} /> {text}</div>
-                    ))}
-                  </section>
-                  <section className="fl-prog-group">
-                    <p className="fl-drawer-label">Focus area</p>
-                    {progressModel.focusAreas.map((text) => (
-                      <div key={text} className="fl-prog-item is-focus"><span className="fl-dot is-focus" /> {text}</div>
-                    ))}
-                  </section>
-                  <section className="fl-prog-group">
-                    <p className="fl-drawer-label">Recent activity</p>
-                    {progressModel.recent.map((item) => (
-                      <div key={item.id} className="fl-prog-recent">
-                        <span className="fl-signal" data-signal={item.signal} aria-hidden="true" />
-                        <span className="fl-prog-recent-label">{item.label}</span>
-                        <small>{item.when}</small>
-                      </div>
-                    ))}
-                  </section>
-                  <p className="fl-note">Evidence-based and still limited — no numeric scores yet. Every claim links back to a session or attempt.</p>
-                </>
-              )}
+              {drawerTab === 'progress' && (() => {
+                const materials = allFiles.filter((p) => p.includes('/materials/')).length
+                const study = allFiles.filter((p) => p.includes('/study/')).length
+                const tests = allFiles.filter((p) => p.includes('/tests/')).length
+                const recent = [...conversations, ...childSessionsList].sort((a, b) => b.updated.localeCompare(a.updated)).slice(0, 6)
+                return (
+                  <>
+                    <div className="fl-prog-focus">
+                      <span className="fl-drawer-label">Current focus</span>
+                      <strong>{subject ? `${subject}${topic ? ' · ' + topic : ''}` : 'Not set yet'}</strong>
+                    </div>
+                    <section className="fl-prog-group">
+                      <p className="fl-drawer-label">Workspace snapshot</p>
+                      <div className="fl-prog-item is-strong"><FileText size={16} /> {materials} material{materials === 1 ? '' : 's'} uploaded</div>
+                      <div className="fl-prog-item is-strong"><FileText size={16} /> {study} study sheet{study === 1 ? '' : 's'} created</div>
+                      <div className="fl-prog-item is-strong"><FileText size={16} /> {tests} practice test{tests === 1 ? '' : 's'} created</div>
+                    </section>
+                    <section className="fl-prog-group">
+                      <p className="fl-drawer-label">Recent activity</p>
+                      {recent.length === 0 && <p className="fl-note">No sessions yet.</p>}
+                      {recent.map((item) => (
+                        <div key={item.scope + item.id} className="fl-prog-recent">
+                          <span className="fl-signal" data-signal={item.scope === 'child' ? 'mixed' : 'strong'} aria-hidden="true" />
+                          <span className="fl-prog-recent-label">{item.scope === 'child' ? childName || 'Maya' : 'Parent'}: {item.title}</span>
+                          <small>{item.when}</small>
+                        </div>
+                      ))}
+                    </section>
+                    <p className="fl-note">Built from real files and sessions on this computer — no numeric scores are invented. Ask Quill to review {childName || 'Maya'}’s work for a deeper read.</p>
+                  </>
+                )
+              })()}
             </div>
 
             <div className="fl-drawer-foot">

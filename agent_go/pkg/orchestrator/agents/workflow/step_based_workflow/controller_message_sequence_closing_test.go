@@ -299,3 +299,23 @@ func newMessageSequenceClosingTestOrchestrator(t *testing.T) *StepBasedWorkflowO
 	base.SetWorkspacePath("Workflow/test-flow")
 	return &StepBasedWorkflowOrchestrator{BaseOrchestrator: base}
 }
+
+// A step's work turns are prompted to create a JSON output ONLY when the step is
+// actually validated on a file. No file-validation (db-only or no schema) → no
+// throwaway output file; validate on the db / real effect instead.
+func TestFirstValidationFileNameGatesTheOutputFile(t *testing.T) {
+	// No schema → no output file prompted.
+	if got := firstValidationFileName(nil); got != "" {
+		t.Fatalf("nil schema should yield no output file, got %q", got)
+	}
+	// DB-only validation → no output file (validate on the db, not a marker).
+	dbOnly := &ValidationSchema{DB: []DBValidationRule{{Name: "row", SQL: "SELECT 1 FROM t"}}}
+	if got := firstValidationFileName(dbOnly); got != "" {
+		t.Fatalf("db-only schema should yield no output file, got %q", got)
+	}
+	// File validation → prompt exactly the file the gate checks (not a default name).
+	files := &ValidationSchema{Files: []FileValidationRule{{FileName: "portfolio.json", MustExist: true}}}
+	if got := firstValidationFileName(files); got != "portfolio.json" {
+		t.Fatalf("file schema should name its validated file, got %q", got)
+	}
+}

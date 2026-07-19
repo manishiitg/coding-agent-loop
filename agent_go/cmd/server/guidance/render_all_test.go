@@ -924,6 +924,12 @@ func TestDeterministicFetchersFeedLargeAgenticProcessors(t *testing.T) {
 				"fetch-and-normalize-authoritative-data",
 				"Do not use one step per endpoint",
 				"execute-request-spec",
+				// Store-writable allow-list (db/assets is the only step-writable file home).
+				"the hard allow-list",
+				// Validate-on-what-it-produces, db-first, no forced throwaway JSON.
+				"Validate on what the step actually produces",
+				"will not force a throwaway output file",
+				"has no gate at all",
 			},
 		},
 		"step-config": {

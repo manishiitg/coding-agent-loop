@@ -1174,6 +1174,22 @@ func (hcpo *StepBasedWorkflowOrchestrator) setupMessageSequenceFolderGuard(stepP
 	return common.DeduplicateStrings(readPaths), common.DeduplicateStrings(writePaths)
 }
 
+// firstValidationFileName returns the file name of the first file-validation rule
+// in a schema, or "" when the schema is nil or validates only on the db. A step
+// with no declared context_output is prompted to create a file ONLY when the gate
+// actually checks one — otherwise it produces no throwaway output file.
+func firstValidationFileName(schema *ValidationSchema) string {
+	if schema == nil {
+		return ""
+	}
+	for _, f := range schema.Files {
+		if name := strings.TrimSpace(f.FileName); name != "" {
+			return name
+		}
+	}
+	return ""
+}
+
 func (hcpo *StepBasedWorkflowOrchestrator) buildMessageSequenceTemplateVars(step *MessageSequencePlanStep, item MessageSequenceItem, stepIndex int, stepPath string, message string, readPaths []string, writePaths []string, writeAccess MessageSequenceWriteAccess) map[string]string {
 	stepExecRel := hcpo.messageSequenceExecutionRelPath(stepPath, step.GetID())
 	docsRoot := GetPromptDocsRoot()
@@ -1186,7 +1202,13 @@ func (hcpo *StepBasedWorkflowOrchestrator) buildMessageSequenceTemplateVars(step
 	// Fall back to the generic name only when the step declares no output.
 	contextOutput := strings.TrimSpace(step.GetContextOutput().String())
 	if contextOutput == "" {
-		contextOutput = "message_sequence_result.json"
+		// No declared output. Only tell the agent to create a file when the step is
+		// actually validated on one — and name the exact file the final gate checks so
+		// prompt and gate agree. Otherwise do NOT invent a throwaway JSON: leave it
+		// empty so the "no output file — persist to db" prompt branch renders and the
+		// step is validated on the db / real effect (validation_schema.db), not on a
+		// self-written marker nothing reads.
+		contextOutput = firstValidationFileName(step.GetValidationSchema())
 	}
 	// Synthetic learnings/KB closing turns are contribution turns: the user message
 	// should be JUST the contribution instruction (IsContributionTurn), not the

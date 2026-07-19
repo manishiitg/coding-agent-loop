@@ -73,8 +73,18 @@ func saveState(s familyState) error {
 // These are the scope roots the FolderGuard will later confine sessions to.
 func scaffoldFamilyFolders() error {
 	base := filepath.Join(familyDataDir(), "workspace")
-	for _, sub := range []string{"parent", "child", "shared"} {
-		if err := os.MkdirAll(filepath.Join(base, sub), 0o700); err != nil {
+	// A clean, role-scoped, content-typed layout (workflow-style: files in folders).
+	dirs := []string{
+		"parent/notes",         // parent-private notes
+		"parent/answer-keys",   // answer keys / marking — parent only
+		"parent/conversations", // parent chat history
+		"shared/materials",     // uploaded school material (by subject/topic)
+		"shared/study",         // generated study material (child-visible once approved)
+		"shared/tests",         // generated practice tests
+		"child/attempts",       // child's submitted work
+	}
+	for _, d := range dirs {
+		if err := os.MkdirAll(filepath.Join(base, filepath.FromSlash(d)), 0o700); err != nil {
 			return err
 		}
 	}

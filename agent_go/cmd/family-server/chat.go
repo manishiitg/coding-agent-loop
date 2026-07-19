@@ -40,7 +40,12 @@ func parentSystemPrompt(child *Child) string {
 		"- Child safety: answer keys, marking schemes, and private notes are for the parent only — never child-facing.\n" +
 		"- Honesty: if material or handwriting is unclear, say so and ask for a clearer photo or parent review.\n" +
 		"- Keep it small and warm: offer one useful next step, in plain language, spoken to a parent (not to a child).\n" +
-		"Keep technical details (files, tools, logs) out of your replies unless the parent asks."
+		"Your workspace on this computer — read and write these files directly as you work:\n" +
+		"- shared/materials/<subject>/<topic>/ — school material the family uploaded; read these to see what " + name + " is studying.\n" +
+		"- shared/study/<subject>/<topic>/ — save study material you create for " + name + " here.\n" +
+		"- shared/tests/<subject>/<topic>/ — save practice tests here.\n" +
+		"- parent/answer-keys/ and parent/notes/ — parent-only; keep answer keys, marking, and private notes here, never child-facing.\n" +
+		"When you make material or a test, actually write the file, then tell the parent in plain words what you made. Keep file paths and technical details out of your reply unless the parent asks."
 }
 
 type parentMessageRequest struct {
@@ -111,7 +116,7 @@ func handleParentMessage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	workDir := filepath.Join(familyDataDir(), "workspace", "parent")
+	workDir := filepath.Join(familyDataDir(), "workspace")
 	_ = os.MkdirAll(workDir, 0o700)
 
 	// Recorder captures set_subject_topic invocations for the response.
@@ -172,7 +177,7 @@ func handleParentMessage(w http.ResponseWriter, r *http.Request) {
 		Provider:     provider,
 		WorkingDir:   workDir,
 		SystemPrompt: parentSystemPrompt(s.Child),
-		Tools:        []agentsession.Tool{setSubjectTopic},
+		Tools:        []agentsession.Tool{setSubjectTopic, shellTool()},
 	})
 	if err != nil {
 		writeJSON(w, http.StatusOK, parentMessageResponse{Error: err.Error()})
@@ -200,7 +205,7 @@ func handleParentMessage(w http.ResponseWriter, r *http.Request) {
 // fallbackParentMessage runs the legacy plain-completion path (no bridge tools)
 // for engines not yet mapped into the agentsession runtime.
 func fallbackParentMessage(w http.ResponseWriter, r *http.Request, s familyState, req parentMessageRequest) {
-	workDir := filepath.Join(familyDataDir(), "workspace", "parent")
+	workDir := filepath.Join(familyDataDir(), "workspace")
 	_ = os.MkdirAll(workDir, 0o700)
 	reply, err := enginedetect.Chat(r.Context(), s.Engine, "", workDir, parentSystemPrompt(s.Child), req.Messages)
 	if err != nil {

@@ -195,6 +195,8 @@ In workflow steps, use the run-scoped ` + "`Downloads/`" + ` folder given in the
 
 CDP caveat: native Chrome downloads can land in the host ` + "`~/Downloads`" + ` folder. If the step prompt grants a read-only host Downloads path, copy the needed file into the run-scoped ` + "`Downloads/`" + ` folder before reading or parsing it. Never write, move, or delete files in host Downloads.
 
+The live step prompt and folder guard are authoritative. If they grant a host Downloads path, that path is readable for the current run even when an older workflow learning says it is inaccessible. After a native download, inspect the granted host folder for newly created completed files before declaring the download unavailable; do not infer current access from historical learnings.
+
 Use workspace-relative paths for downloads/uploads. Builder securely stages
 upload inputs for the persistent daemon and stages explicit ` + "`download`" + `
 outputs before publishing them into the authorized run folder. A normal click

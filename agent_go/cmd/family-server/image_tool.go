@@ -4,8 +4,10 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/manishiitg/coding-agent-loop/agent_go/internal/agentsession"
 	"github.com/manishiitg/coding-agent-loop/agent_go/internal/enginedetect"
@@ -57,8 +59,29 @@ func readImageTool(engine string) agentsession.Tool {
 			if rerr != nil {
 				relPath = abs
 			}
-			prompt := "Look at this image file in your working directory and " + query + "\n\nImage: " + relPath +
+			prompt := "You are transcribing an image for a family learning app. Look at this image file in your working directory and " + query +
+				"\n\nImage: " + relPath +
 				"\n\nOnly report what is genuinely visible in the image — never invent content. If it is illegible, say so."
+
+			// For claude-code, exec the CLI directly with the image path — its native
+			// vision reads the local file. Going through enginedetect.Chat runs the CLI
+			// in a restricted mode that can't open the file. Other engines fall back.
+			if strings.EqualFold(strings.TrimSpace(engine), "claude-code") {
+				cctx, cancel := context.WithTimeout(ctx, 150*time.Second)
+				defer cancel()
+				cmd := exec.CommandContext(cctx, "claude", "-p", prompt)
+				cmd.Dir = workspaceRoot()
+				out, err := cmd.CombinedOutput()
+				text := strings.TrimSpace(string(out))
+				if err != nil && text == "" {
+					return "", fmt.Errorf("image read failed: %w", err)
+				}
+				if text == "" {
+					return "(the image reader returned nothing)", nil
+				}
+				return text, nil
+			}
+
 			reply, err := enginedetect.Chat(ctx, engine, "", workspaceRoot(),
 				"You are a careful transcriber of images for a family learning app. Report only what is truly visible.",
 				[]enginedetect.ChatMessage{{Role: "user", Text: prompt}})

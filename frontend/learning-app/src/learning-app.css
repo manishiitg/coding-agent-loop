@@ -144,7 +144,9 @@ html, body, #root { margin: 0; height: 100%; }
 
 /* ===== Parent operating shell: three-rail workspace ===== */
 .fl-shell { display: grid; grid-template-columns: 244px minmax(0, 1fr) 348px; height: 100vh; height: 100dvh; background: var(--cream); transition: grid-template-columns .2s ease; }
-.fl-shell[data-rail="closed"] { grid-template-columns: 0 minmax(0, 1fr) 348px; }
+/* When the rail is closed, hand its freed width to the drawer so the chat area
+   keeps the same width and the right side has room for the HTML viewer. */
+.fl-shell[data-rail="closed"] { grid-template-columns: 0 minmax(0, 1fr) calc(348px + 244px); }
 .fl-shell[data-drawer="closed"] { grid-template-columns: 244px minmax(0, 1fr) 0; }
 .fl-shell[data-rail="closed"][data-drawer="closed"] { grid-template-columns: 0 minmax(0, 1fr) 0; }
 
@@ -317,6 +319,31 @@ html, body, #root { margin: 0; height: 100%; }
 .fl-tbubble { padding: 14px 16px; border-radius: 18px 18px 18px 6px; background: #fff; color: #2c456b; font-size: var(--text-body); line-height: 1.6; box-shadow: 0 6px 16px rgba(13, 35, 76, .06); }
 .fl-tbubble strong { color: var(--navy); }
 .fl-tmsg.is-child .fl-tbubble { border-radius: 18px 18px 6px 18px; background: var(--navy); color: #fff; box-shadow: none; }
+
+/* ---- Readability polish: notebook-style chat + markdown rendering + fonts ---- */
+body, .learning-app { -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; text-rendering: optimizeLegibility; }
+.fl-rail-logo { flex: 0 0 auto; display: block; border-radius: 8px; background: #fff; padding: 4px; box-shadow: 0 1px 4px rgba(0, 0, 0, .25); }
+
+/* Quill's replies read like a warm notebook note */
+.fl-bubble { background: #fffdf5; color: #26364f; border: 1px solid #efe6cf; box-shadow: 0 2px 10px rgba(22, 34, 58, .05); font-size: 1.02rem; line-height: 1.62; padding: 14px 17px; }
+.fl-msg.is-parent .fl-bubble { background: var(--navy); color: #fff; border-color: transparent; box-shadow: 0 4px 12px rgba(13, 35, 76, .14); }
+
+/* markdown blocks inside chat bubbles (both parent + child tutor) */
+.fl-bubble p, .fl-tbubble p { margin: 0 0 9px; }
+.fl-bubble p:last-child, .fl-tbubble p:last-child { margin-bottom: 0; }
+.fl-bubble ul, .fl-bubble ol, .fl-tbubble ul, .fl-tbubble ol { margin: 7px 0; padding-left: 22px; }
+.fl-bubble li, .fl-tbubble li { margin: 4px 0; }
+.fl-bubble li::marker, .fl-tbubble li::marker { color: #d99a1a; }
+.fl-bubble .md-h, .fl-tbubble .md-h { font-weight: 700; font-size: 1.04em; margin: 12px 0 5px; }
+.fl-bubble strong, .fl-tbubble strong { font-weight: 700; color: #16223a; }
+.fl-msg.is-parent .fl-bubble strong, .fl-msg.is-parent .fl-bubble li::marker { color: #fff; }
+.fl-bubble code, .fl-tbubble code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: .88em; background: rgba(22, 34, 58, .06); padding: 1px 6px; border-radius: 6px; }
+.fl-msg.is-parent .fl-bubble code { background: rgba(255, 255, 255, .16); color: #fff; }
+
+/* Child tutor bubbles a touch larger + friendlier */
+.fl-tbubble { font-size: 1.04rem; line-height: 1.62; }
+.fl-tmsg.is-child .fl-tbubble strong { color: #fff; }
+.fl-tmsg.is-child .fl-tbubble li::marker { color: #ffd873; }
 .fl-hint-label { display: inline-flex; align-items: center; gap: 5px; margin-right: 6px; padding: 2px 8px; border-radius: 999px; background: #fff3d6; color: #a9781a; font-size: var(--text-caption); font-weight: 800; vertical-align: 1px; }
 .fl-child-actions { display: flex; flex-wrap: wrap; gap: 8px; margin: 14px 0 12px; }
 .fl-child-actions button { min-height: 38px; padding: 0 14px; border: 1px solid #cfe0f2; border-radius: 999px; background: #fff; color: #2f6db0; font: inherit; font-size: var(--text-secondary); font-weight: 650; cursor: pointer; }

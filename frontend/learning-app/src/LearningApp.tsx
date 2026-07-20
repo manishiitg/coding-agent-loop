@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, type FormEvent, type ChangeEvent } from 'react'
+import { useState, useEffect, useRef, type FormEvent, type ChangeEvent, type ReactNode } from 'react'
 import {
   ArrowLeft,
   ArrowRight,
@@ -79,6 +79,54 @@ function newConversationId(): string {
   return `conv-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`
 }
 
+// mdInline renders **bold** and `code` spans within a line.
+function mdInline(text: string): ReactNode[] {
+  const out: ReactNode[] = []
+  const re = /(\*\*([^*]+)\*\*|`([^`]+)`)/g
+  let last = 0
+  let k = 0
+  let m: RegExpExecArray | null
+  while ((m = re.exec(text)) !== null) {
+    if (m.index > last) out.push(text.slice(last, m.index))
+    if (m[2] !== undefined) out.push(<strong key={k++}>{m[2]}</strong>)
+    else out.push(<code key={k++}>{m[3]}</code>)
+    last = m.index + m[0].length
+  }
+  if (last < text.length) out.push(text.slice(last))
+  return out
+}
+
+// Markdown is a small, dependency-free renderer for the subset the agent emits:
+// paragraphs, bullet + numbered lists, headings, bold and inline code. Keeps chat
+// replies readable instead of a wall of raw markdown text.
+function Markdown({ text }: { text: string }) {
+  const lines = (text || '').replace(/\r/g, '').split('\n')
+  const blocks: ReactNode[] = []
+  let i = 0
+  let key = 0
+  while (i < lines.length) {
+    if (lines[i].trim() === '') { i++; continue }
+    const h = lines[i].match(/^(#{1,6})\s+(.*)/)
+    if (h) { blocks.push(<p key={key++} className="md-h">{mdInline(h[2])}</p>); i++; continue }
+    if (/^\s*[-*]\s+/.test(lines[i])) {
+      const items: ReactNode[] = []
+      let j = 0
+      while (i < lines.length && /^\s*[-*]\s+/.test(lines[i])) { items.push(<li key={j++}>{mdInline(lines[i].replace(/^\s*[-*]\s+/, ''))}</li>); i++ }
+      blocks.push(<ul key={key++}>{items}</ul>); continue
+    }
+    if (/^\s*\d+\.\s+/.test(lines[i])) {
+      const items: ReactNode[] = []
+      let j = 0
+      while (i < lines.length && /^\s*\d+\.\s+/.test(lines[i])) { items.push(<li key={j++}>{mdInline(lines[i].replace(/^\s*\d+\.\s+/, ''))}</li>); i++ }
+      blocks.push(<ol key={key++}>{items}</ol>); continue
+    }
+    const para: string[] = []
+    while (i < lines.length && lines[i].trim() !== '' && !/^\s*[-*]\s+/.test(lines[i]) && !/^\s*\d+\.\s+/.test(lines[i]) && !/^#{1,6}\s/.test(lines[i])) { para.push(lines[i]); i++ }
+    blocks.push(<p key={key++}>{mdInline(para.join(' '))}</p>)
+  }
+  return <>{blocks}</>
+}
+
 type ParentMsg = { role: 'user' | 'assistant' | 'tool'; text?: string; tool?: string; subject?: string; topic?: string; name?: string }
 type TreeNode = { name: string; path: string; type: 'dir' | 'file'; children?: TreeNode[] }
 type WsFile = { path: string; name: string; scope: string; subject: string; topic: string }
@@ -120,6 +168,7 @@ export default function LearningApp() {
   const [conversationId, setConversationId] = useState(newConversationId)
   const [conversations, setConversations] = useState<ConvMeta[]>([])
   const [childSessionsList, setChildSessionsList] = useState<ConvMeta[]>([])
+  const resumedRef = useRef(false)
   const [childMessages, setChildMessages] = useState<ParentMsg[]>([])
   const [childSending, setChildSending] = useState(false)
   const [childInput, setChildInput] = useState('')
@@ -141,7 +190,7 @@ export default function LearningApp() {
         })
         walk(nodes)
         const mats: WsFile[] = files
-          .filter((f) => f.path.includes('/materials/'))
+          .filter((f) => f.path.includes('/materials/') && !f.name.endsWith('.meta.json'))
           .map((f) => {
             const parts = f.path.split('/')
             const mi = parts.indexOf('materials')
@@ -162,14 +211,29 @@ export default function LearningApp() {
         if (cancelled) return
         const valid = metas.filter((m): m is ConvMeta => m !== null)
         valid.sort((a, b) => b.updated.localeCompare(a.updated))
-        setConversations(valid.filter((c) => c.scope === 'parent'))
+        const parentConvs = valid.filter((c) => c.scope === 'parent')
+        setConversations(parentConvs)
         setChildSessionsList(valid.filter((c) => c.scope === 'child'))
+        // Resume the most recent conversation by default (once) so the parent
+        // continues where they left off instead of starting a fresh chat each load.
+        if (!resumedRef.current && parentMessages.length === 0 && parentConvs.length > 0) {
+          resumedRef.current = true
+          const top = parentConvs[0]
+          fetch(`${FAMILY_API}/api/workspace/file?path=${encodeURIComponent(`${top.scope}/conversations/${top.id}.json`)}`)
+            .then((r) => r.json())
+            .then((dd) => {
+              const c = JSON.parse(dd.content) as { id: string; messages?: { role: string; text: string }[] }
+              setConversationId(c.id)
+              setParentMessages((c.messages || []).map((mm) => ({ role: mm.role as ParentMsg['role'], text: mm.text })))
+            })
+            .catch(() => {})
+        }
       })
       .catch(() => {})
     return () => { cancelled = true }
   }, [screen, parentMessages.length])
   const [signoff, setSignoff] = useState(false)
-  const [railOpen, setRailOpen] = useState(true)
+  const [railOpen, setRailOpen] = useState(false)
   const [drawerOpen, setDrawerOpen] = useState(true)
   const [drawerTab, setDrawerTab] = useState<DrawerTab>('assets')
   const [booting, setBooting] = useState(true)
@@ -317,6 +381,7 @@ export default function LearningApp() {
   }
 
   const startNewConversation = () => {
+    resumedRef.current = true
     setConversationId(newConversationId())
     setParentMessages([])
   }
@@ -405,7 +470,7 @@ export default function LearningApp() {
         <div className="fl-shell" data-rail={railOpen ? 'open' : 'closed'} data-drawer={drawerOpen ? 'open' : 'closed'}>
           <aside className="fl-rail" aria-label="Conversations and sessions">
             <div className="fl-rail-brand">
-              <span className="learning-sun" aria-hidden="true">☀</span>
+              <img className="fl-rail-logo" src="/sparkquill-mark.svg" alt="" width={26} height={26} />
               <span className="brand-word">Spark<strong>Quill</strong></span>
             </div>
             <button className="fl-new" type="button" onClick={startNewConversation}><Plus size={17} /> New conversation</button>
@@ -508,7 +573,7 @@ export default function LearningApp() {
                     ) : (
                       <>
                         <span className="fl-msg-avatar is-sun"><Sun size={18} /></span>
-                        <div className="fl-msg-col"><div className="fl-bubble">{m.text}</div></div>
+                        <div className="fl-msg-col"><div className="fl-bubble"><Markdown text={m.text ?? ''} /></div></div>
                       </>
                     )}
                   </div>
@@ -535,6 +600,7 @@ export default function LearningApp() {
 
             <form className="fl-composer" onSubmit={sendParentMessage}>
               <input ref={fileInputRef} type="file" multiple accept="image/*,application/pdf" onChange={onFilesSelected} style={{ display: 'none' }} />
+              <button className="composer-icon" type="button" aria-label="New conversation" title="Start a new conversation" onClick={startNewConversation} disabled={sending}><Plus size={19} /></button>
               <button className="composer-icon" type="button" aria-label="Attach school material" onClick={onPickFiles} disabled={uploading}><Paperclip size={19} /></button>
               <button className="composer-icon" type="button" aria-label="Add a photo" onClick={onPickFiles} disabled={uploading}><Camera size={19} /></button>
               <input
@@ -552,7 +618,6 @@ export default function LearningApp() {
           <aside className="fl-drawer" aria-label="Learning workspace">
             <div className="fl-drawer-head">
               <strong>{childName || 'Your child'}’s workspace</strong>
-              <button className="fl-icon-btn" type="button" aria-label="Hide workspace drawer" onClick={() => setDrawerOpen(false)}><PanelRightClose size={18} /></button>
             </div>
             <div className="fl-drawer-tabs" role="tablist" aria-label="Workspace views">
               <button role="tab" aria-selected={drawerTab === 'assets'} className={drawerTab === 'assets' ? 'is-active' : ''} type="button" onClick={() => setDrawerTab('assets')}>Assets</button>
@@ -716,11 +781,11 @@ export default function LearningApp() {
                   m.role === 'assistant' ? (
                     <div key={i} className="fl-tmsg is-tutor">
                       <span className="fl-tmsg-avatar"><Sun size={20} /></span>
-                      <div className="fl-tbubble">{m.text}</div>
+                      <div className="fl-tbubble"><Markdown text={m.text ?? ''} /></div>
                     </div>
                   ) : (
                     <div key={i} className="fl-tmsg is-child">
-                      <div className="fl-tbubble">{m.text}</div>
+                      <div className="fl-tbubble"><Markdown text={m.text ?? ''} /></div>
                       <span className="fl-tmsg-avatar is-child">{initial}</span>
                     </div>
                   )

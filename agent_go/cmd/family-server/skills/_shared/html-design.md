@@ -7,9 +7,9 @@ external assets, fonts, images, or network calls.
 
 ## Rules
 - Inline the CSS below in a `<style>` tag (adjust only where a skill asks).
-- A small **inline** `<script>` for interactivity (reveal a worked solution,
-  check a typed answer, toggle a hint) is allowed and encouraged where it helps
-  learning — self-contained only, never an external `src`.
+- **View-only, static HTML.** Do not add `<script>` for typed-answer capture,
+  auto-save, or any input the file itself remembers — no forms, no JS state.
+  It is a clean, well-designed document to read, not an app.
 - Warm, calm, encouraging — readable by a child. Never harsh.
 - Rounded cards, generous spacing, one clear title with the child's name + date.
 - Use only real data. Never invent scores.
@@ -66,34 +66,8 @@ external assets, fonts, images, or network calls.
 Use `.card` for each section, `.badge` for "Current", `.good`/`.focus` for going-well / to-practise,
 `.grid` of `.card`s for the academic map's subjects, and `.note` for honest caveats.
 
-## Persisting what the child does (tests, quizzes)
-
-For interactive HTML that should REMEMBER the child's input (typed answers, quiz
-progress, self-check results), include this helper verbatim and use it:
-
-```html
-<script>
-window.SQ=(function(){
-  function send(m){parent.postMessage(Object.assign({__sq:1},m),'*');}
-  return{
-    save:function(key,data){send({op:'save',key:key,data:data});},
-    load:function(key){return new Promise(function(res){
-      var id=String(Math.random()).slice(2);
-      function h(e){if(e.data&&e.data.__sq===1&&e.data.op==='loaded'&&e.data.id===id){window.removeEventListener('message',h);res(e.data.data);}}
-      window.addEventListener('message',h);send({op:'load',key:key,id:id});
-    });}
-  };
-})();
-</script>
-```
-
-- `SQ.save(key, data)` — persist any JSON value under `key`. Call it whenever the
-  child changes something (types an answer, submits a question, finishes a quiz).
-- `SQ.load(key).then(function(data){ ... })` — on page load, restore saved state
-  (`data` is `null` if nothing was saved yet); re-fill the inputs from it.
-- Choose ONE stable `key` that identifies this file — use the file's own name,
-  e.g. `"2026-07-20-quadratics-practice"`. Keep it identical for save and load.
-
-The app writes this to the child's workspace (`child/attempts/<key>.json`), so it
-survives reloads AND Quill can read the child's actual answers later to mark them
-and give feedback. Every test you create MUST record the child's answers this way.
+A test is still a clean, well-formatted question sheet — numbered questions,
+marks as a `.badge`, blank space (or a printed line) under each question for
+working — it is just static: no answer box the page itself remembers. The
+child answers on paper or tells Quill in chat; that's how their work reaches
+`child/attempts/`.

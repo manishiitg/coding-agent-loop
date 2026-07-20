@@ -47,6 +47,7 @@ func main() {
 	mux.HandleFunc("/api/child/message", handleChildMessage)
 	mux.HandleFunc("/api/whatsapp/message", handleWhatsAppMessage)
 	mux.HandleFunc("/api/workspace/tree", handleWorkspaceTree)
+	mux.HandleFunc("/api/child/workspace/tree", handleChildWorkspaceTree)
 	mux.HandleFunc("/api/workspace/file", handleWorkspaceFile)
 	mux.HandleFunc("/api/workspace/raw", handleWorkspaceRaw)
 	mux.HandleFunc("/api/workspace/state", handleWorkspaceState)

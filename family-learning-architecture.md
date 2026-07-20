@@ -180,12 +180,12 @@ This resolves the earlier worry: that concern assumed the agent could use *nativ
 
 | AgentWorks capability | Priority | SparkQuill today | Plan |
 | --- | --- | --- | --- |
-| **Streaming responses + event listeners** (tool-call / progress events over SSE) | **HIGH** | blocking `Ask` (spinner only) | **Reuse** AgentWorks' `StreamingAPI` transport + agent event listeners; realizes §2A's curated whitelisted event stream and the PRD honest-loader/status copy. Biggest UX gap (parent waits ~2 min blind during an image read). |
+| **Streaming responses** (progress over SSE) | **DEFERRED** | blocking `Ask` (spinner only) | ⚠️ **Investigated 2026-07-20 — not a clean reuse in our mode.** The `mcpagent.AddEventListener` seam works, but in **warm-resume (tmux) mode** the provider emits **no clean token deltas and no `ToolCall*` events** — only raw **terminal pane snapshots** (`StreamingChunkEvent kind="terminal"`, which §2A forbids showing) plus token/cost telemetry (`StreamingStatusLineEvent`). AgentWorks can token-stream because it *also* renders a terminal panel; SparkQuill deliberately doesn't. The only honest option is **descriptive phase status emitted from our own bridge tool handlers** (e.g. read_image → "Reading the image…"), a SparkQuill-specific adaptation, not an AgentWorks reuse. Deprioritized — a spinner is acceptable for MVP. |
 | **Periodic tmux orphan reaper** (2-min ticker) | MED | rely on provider idle-TTL (~3h) only | Port `coding_agent_tmux_reaper.go` cleanup tick; cheap robustness net beyond idle timeout. |
 | **Rate-limit watchdog** (30s; frees CLIs parked on a provider rate-limit wall) | MED | none | Reuse `coding_tmux_watchdog.go`; avoids silent hangs. |
 | **FolderGuard on the coding agent's own file access** | MED | `security.Isolator` for Child mode (§5) | Extend to parent answer-key isolation via the same FolderGuard lever. |
 
-The single highest-value item is **streaming**; adopt it by **reusing** the AgentWorks StreamingAPI + event-listener path rather than writing a new transport.
+Streaming was investigated and **deferred** (see the table note): clean token-streaming isn't available in warm-resume/tmux mode without exposing the terminal, so it's not a straight AgentWorks reuse. The remaining items (reaper, watchdog, parent FolderGuard) stay reuse-first.
 
 ## 10. Change log
 

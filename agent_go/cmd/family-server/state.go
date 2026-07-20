@@ -78,9 +78,11 @@ func scaffoldFamilyFolders() error {
 		"parent/notes",         // parent-private notes
 		"parent/answer-keys",   // answer keys / marking — parent only
 		"parent/conversations", // parent chat history
+		"shared/inbox",         // uploads land here; the agent files them (process-file skill)
 		"shared/materials",     // uploaded school material (by subject/topic)
 		"shared/study",         // generated study material (child-visible once approved)
 		"shared/tests",         // generated practice tests
+		"shared/reports",       // generated HTML progress reports (parent + child)
 		"child/attempts",       // child's submitted work
 		"child/conversations",  // child chat history
 	}

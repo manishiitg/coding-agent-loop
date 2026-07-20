@@ -32,6 +32,21 @@ func parentSystemPrompt(child *Child) string {
 			who += " (" + child.Board + ")"
 		}
 	}
+	var missing []string
+	if child == nil || strings.TrimSpace(child.Name) == "" {
+		missing = append(missing, "name")
+	}
+	if child == nil || strings.TrimSpace(child.Grade) == "" {
+		missing = append(missing, "grade")
+	}
+	if child == nil || strings.TrimSpace(child.Board) == "" {
+		missing = append(missing, "board (e.g. CBSE, ICSE, State Board)")
+	}
+	childInfoNudge := ""
+	if len(missing) > 0 {
+		childInfoNudge = "IMPORTANT — you do not yet know the child's " + strings.Join(missing, ", ") +
+			". Early in the conversation, warmly ask the parent for these, then save them with the set_child_profile tool. You need them to tailor material to the right grade and board.\n"
+	}
 	return "You are Quill, the SparkQuill learning guide, talking with a PARENT in Parent Mode about their child: " + who + ".\n" +
 		"Help the parent understand and support " + name + "’s learning: explain progress from evidence, suggest one small next step, create child-ready study material, and create practice tests.\n" +
 		"Principles:\n" +
@@ -45,7 +60,15 @@ func parentSystemPrompt(child *Child) string {
 		"- shared/study/<subject>/<topic>/ — save study material you create for " + name + " here.\n" +
 		"- shared/tests/<subject>/<topic>/ — save practice tests here.\n" +
 		"- parent/answer-keys/ and parent/notes/ — parent-only; keep answer keys, marking, and private notes here, never child-facing.\n" +
-		"When you make material or a test, actually write the file, then tell the parent in plain words what you made. Keep file paths and technical details out of your reply unless the parent asks."
+		"When you make material or a test, actually write the file, then tell the parent in plain words what you made. Keep file paths and technical details out of your reply unless the parent asks.\n" +
+		"You have skills — short how-to guides — in the skills/ folder. Read the relevant one and follow it exactly:\n" +
+		"- skills/process-file/SKILL.md — process files the parent uploaded.\n" +
+		"- skills/create-study-material/SKILL.md — make study notes and worked examples for " + name + ".\n" +
+		"- skills/create-test/SKILL.md — make a practice test plus a separate parent-only answer key.\n" +
+		"- skills/create-progress-report/SKILL.md — build an HTML progress report in shared/reports/ that appears in the left menu for both parent and child.\n" +
+		"- skills/create-academic-map/SKILL.md — (re)build the HTML academic map at shared/academic-map.html from the real materials.\n" +
+		"At the START of every conversation, run `ls shared/inbox/`; if it contains any files, process them with the process-file skill before doing anything else.\n" +
+		childInfoNudge
 }
 
 // childSystemPrompt builds the Child Mode "Quill" tutor instruction — a warm
@@ -95,6 +118,9 @@ type toolEvent struct {
 	Tool    string `json:"tool"`
 	Subject string `json:"subject,omitempty"`
 	Topic   string `json:"topic,omitempty"`
+	Name    string `json:"name,omitempty"`
+	Grade   string `json:"grade,omitempty"`
+	Board   string `json:"board,omitempty"`
 }
 
 type parentMessageResponse struct {
@@ -204,6 +230,55 @@ func handleParentMessage(w http.ResponseWriter, r *http.Request) {
 		},
 	}
 
+	setChildProfile := agentsession.Tool{
+		Name: "set_child_profile",
+		Description: "Save or update the child's profile — name, grade, and school board — once the parent tells you. " +
+			"Call this whenever you learn any of these so future sessions and material are tailored to the right level.",
+		Category: "family_tools",
+		Params: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"name":  map[string]interface{}{"type": "string", "description": "the child's name"},
+				"grade": map[string]interface{}{"type": "string", "description": "the child's grade/class, e.g. 10"},
+				"board": map[string]interface{}{"type": "string", "description": "the school board, e.g. CBSE, ICSE, State Board"},
+			},
+		},
+		Handler: func(_ context.Context, args map[string]interface{}) (string, error) {
+			nm, _ := args["name"].(string)
+			gr, _ := args["grade"].(string)
+			bd, _ := args["board"].(string)
+			nm, gr, bd = strings.TrimSpace(nm), strings.TrimSpace(gr), strings.TrimSpace(bd)
+			if nm == "" && gr == "" && bd == "" {
+				return "", fmt.Errorf("provide at least one of name, grade, board")
+			}
+			stateMu.Lock()
+			cur := loadState()
+			if cur.Child == nil {
+				cur.Child = &Child{Language: "en", CreatedAt: time.Now().UTC().Format(time.RFC3339)}
+			}
+			if nm != "" {
+				cur.Child.Name = nm
+			}
+			if gr != "" {
+				cur.Child.Grade = gr
+			}
+			if bd != "" {
+				cur.Child.Board = bd
+			}
+			err := saveState(cur)
+			saved := cur.Child
+			stateMu.Unlock()
+			if err != nil {
+				return "", fmt.Errorf("failed to save child profile: %w", err)
+			}
+			seedWorkspace(saved) // keep parent/child-profile.json (read by skills) in sync
+			evMu.Lock()
+			events = append(events, toolEvent{Tool: "set_child_profile", Name: saved.Name, Grade: saved.Grade, Board: saved.Board})
+			evMu.Unlock()
+			return fmt.Sprintf(`{"status":"ok","name":%q,"grade":%q,"board":%q}`, saved.Name, saved.Grade, saved.Board), nil
+		},
+	}
+
 	agentTurnMu.Lock()
 	defer agentTurnMu.Unlock()
 
@@ -214,7 +289,7 @@ func handleParentMessage(w http.ResponseWriter, r *http.Request) {
 		Provider:     provider,
 		WorkingDir:   workDir,
 		SystemPrompt: parentSystemPrompt(s.Child),
-		Tools:        []agentsession.Tool{setSubjectTopic, shellTool()},
+		Tools:        []agentsession.Tool{setSubjectTopic, setChildProfile, shellTool()},
 	})
 	if err != nil {
 		writeJSON(w, http.StatusOK, parentMessageResponse{Error: err.Error()})
@@ -225,6 +300,15 @@ func handleParentMessage(w http.ResponseWriter, r *http.Request) {
 	history := make([]agentsession.Message, 0, len(req.Messages))
 	for _, m := range req.Messages {
 		history = append(history, agentsession.Message{Role: m.Role, Text: m.Text})
+	}
+	// Deterministically trigger inbox processing by embedding the directive in the
+	// turn the agent directly acts on — coding agents reliably follow the user
+	// message, not a proactive system-prompt line. The persisted transcript keeps
+	// the parent's original message (this only affects what we send the agent).
+	if inbox := inboxFiles(); len(inbox) > 0 && len(history) > 0 {
+		history[len(history)-1].Text += "\n\n[Before replying: there are unprocessed uploads in shared/inbox/ (" +
+			strings.Join(inbox, ", ") + "). Process each one now by following skills/process-file/SKILL.md — read it, classify, " +
+			"move it into shared/materials/<subject>/<topic>/, and write a .meta.json — then continue with your reply.]"
 	}
 
 	reply, err := sess.Ask(ctx, history)

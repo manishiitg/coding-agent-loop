@@ -28,6 +28,12 @@ func main() {
 	port := flag.String("port", defaultPort, "port to listen on (or set FAMILY_PORT)")
 	flag.Parse()
 
+	// Ensure the workspace folder layout + app-provided skills exist on startup,
+	// so existing families pick up newly-added folders (inbox, reports) and skill
+	// updates that ship with the binary. Both are idempotent.
+	_ = scaffoldFamilyFolders()
+	seedSkills()
+
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/health", handleHealth)
 	mux.HandleFunc("/api/engines", handleEngines)

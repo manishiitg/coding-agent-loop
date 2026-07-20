@@ -18,6 +18,24 @@ type uploadResponse struct {
 	Error   string `json:"error,omitempty"`
 }
 
+// inboxFiles lists the filenames currently staged in shared/inbox for the agent
+// to process. Used to deterministically nudge the agent to run the process-file
+// skill when uploads are waiting, rather than relying on the prompt alone.
+func inboxFiles() []string {
+	dir := filepath.Join(familyDataDir(), "workspace", "shared", "inbox")
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil
+	}
+	out := []string{}
+	for _, e := range entries {
+		if !e.IsDir() && !strings.HasPrefix(e.Name(), ".") {
+			out = append(out, e.Name())
+		}
+	}
+	return out
+}
+
 // safeSeg sanitizes a string for use as a single path segment (no traversal,
 // no separators). Empty result becomes "misc".
 func safeSeg(s string) string {
@@ -70,33 +88,11 @@ func handleUpload(w http.ResponseWriter, r *http.Request) {
 	}
 	defer file.Close()
 
-	scope := strings.ToLower(strings.TrimSpace(r.FormValue("scope")))
-	switch scope {
-	case "parent", "child", "shared":
-	default:
-		scope = "shared"
-	}
-
-	stateMu.Lock()
-	s := loadState()
-	stateMu.Unlock()
-	subject := strings.TrimSpace(r.FormValue("subject"))
-	if subject == "" {
-		subject = s.Subject
-	}
-	topic := strings.TrimSpace(r.FormValue("topic"))
-	if topic == "" {
-		topic = s.Topic
-	}
-
-	relParts := []string{scope, "materials"}
-	if subject != "" {
-		relParts = append(relParts, safeSeg(subject))
-	}
-	if topic != "" {
-		relParts = append(relParts, safeSeg(topic))
-	}
-	relDir := filepath.Join(relParts...)
+	// Uploads land in a staging inbox. The agent then reads each file, classifies
+	// it, and files it into shared/materials/<subject>/<topic>/ with a metadata
+	// JSON — see skills/process-file/SKILL.md. Subject/topic are decided from the
+	// file's content by the agent, not guessed from stale header state.
+	relDir := filepath.Join("shared", "inbox")
 	absDir := filepath.Join(familyDataDir(), "workspace", relDir)
 	if err := os.MkdirAll(absDir, 0o700); err != nil {
 		writeJSON(w, http.StatusInternalServerError, uploadResponse{Error: err.Error()})
@@ -118,11 +114,9 @@ func handleUpload(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, uploadResponse{
-		Name:    name,
-		Path:    filepath.ToSlash(filepath.Join(relDir, name)),
-		Size:    size,
-		Scope:   scope,
-		Subject: subject,
-		Topic:   topic,
+		Name:  name,
+		Path:  filepath.ToSlash(filepath.Join(relDir, name)),
+		Size:  size,
+		Scope: "shared",
 	})
 }

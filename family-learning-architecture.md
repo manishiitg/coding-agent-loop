@@ -164,6 +164,29 @@ This resolves the earlier worry: that concern assumed the agent could use *nativ
 
 ---
 
+## 11. Agent-runtime lifecycle & AgentWorks reuse ✅ / ⚠️
+
+**Gold standard (locked):** the AgentWorks **chief-of-staff chat** and **automations / workflows** in `mcp-agent-builder-go` are the reference SparkQuill replicates and reuses (see the PRD "Runtime source of truth" callout). Chief-of-staff chat → the Parent Learning chat (same runtime for Child tutor + WhatsApp); automations/workflows → agentic, file-system-based **skills**. **Where SparkQuill diverges from how AgentWorks does it, that is a bug to fix, not a new design** — reuse before inventing.
+
+**Session & bridge lifecycle ✅ (LOCKED — verified against AgentWorks):**
+- **One process-global executor / MCP bridge**, started once and shared by every conversation and skill run — mirrors AgentWorks, whose bridge is the main server's own route set wired once at startup (`mcp-agent-builder-go/.../server.go:1556`, env `:1490`, single listener `:2010`). In family-server this is `agentsession.ensureSharedBridge` (sync.Once); it is **never torn down per turn**.
+- **Per-turn `Session`** (`New` + `defer Close` in every handler). `Close()` disposes **only** the per-turn agent — `mcpagent.Agent.Close()` explicitly leaves the interactive (tmux) session alive (*"connections persist in session registry"*, `mcpagent/agent/agent.go:3148`). So warm resume is owned by the **provider's owner registry** keyed by `SessionID`, reaped on an **idle timeout (~3h default)** — **no LRU, no size cap**, matching AgentWorks (`multi-llm-provider-go/.../owner_registry.go`, `codingtimeout/policy.go`).
+- ⚠️ **Anti-pattern (fixed):** an earlier family-server build stood up a **fresh bridge on a random port per HTTP request** and closed it each turn — the resumed CLI then called the previous turn's dead port (`connection refused` / clipped reply). This is exactly the deviation the gold-standard rule forbids; the shared-bridge refactor removed it.
+- `/api/reset` closes warm tmux via the provider's owner-scoped close (`agentsession.CloseAllInteractiveSessions`); absent that the provider reaps on idle anyway.
+
+**What we reuse from AgentWorks (inventory):** the entire agent stack is imported, not reimplemented — `mcpagent` (agent, executor/MCP bridge, session registry, custom tools, code-execution mode), `multi-llm-provider-go` (all coding CLIs + persistent interactive tmux sessions + owner registry + idle reaper + tmux-control), `coding-agent-loop/workspace` (sandbox/isolator), plus the patterns in §2–§8 (bridge-only isolation, skills, file-first, tree view). The refactor above was *"stop deviating and adopt AgentWorks' shape."*
+
+**Adoption backlog — proven in AgentWorks, not yet in SparkQuill (reuse, do not rebuild):**
+
+| AgentWorks capability | Priority | SparkQuill today | Plan |
+| --- | --- | --- | --- |
+| **Streaming responses + event listeners** (tool-call / progress events over SSE) | **HIGH** | blocking `Ask` (spinner only) | **Reuse** AgentWorks' `StreamingAPI` transport + agent event listeners; realizes §2A's curated whitelisted event stream and the PRD honest-loader/status copy. Biggest UX gap (parent waits ~2 min blind during an image read). |
+| **Periodic tmux orphan reaper** (2-min ticker) | MED | rely on provider idle-TTL (~3h) only | Port `coding_agent_tmux_reaper.go` cleanup tick; cheap robustness net beyond idle timeout. |
+| **Rate-limit watchdog** (30s; frees CLIs parked on a provider rate-limit wall) | MED | none | Reuse `coding_tmux_watchdog.go`; avoids silent hangs. |
+| **FolderGuard on the coding agent's own file access** | MED | `security.Isolator` for Child mode (§5) | Extend to parent answer-key isolation via the same FolderGuard lever. |
+
+The single highest-value item is **streaming**; adopt it by **reusing** the AgentWorks StreamingAPI + event-listener path rather than writing a new transport.
+
 ## 10. Change log
 
 - 2026-07-19 — Draft. Locked topology (§2), `enginedetect` for Screen 1 (§3), data ownership (§7).
@@ -171,3 +194,4 @@ This resolves the earlier worry: that concern assumed the agent could use *nativ
 - 2026-07-19 — **Correction (bridge-only model):** Family Learning runs as an AgentWorks *workflow* — agent uses MCP **bridge-only** tools, so all I/O flows through the sandboxed workspace-api + FolderGuard. The earlier "unsandboxed interactive agent" gap does **not** apply; isolation is inherited. New single guardrail: child sessions must use a `supports_bridge_only_tools` engine (§5, §9.1).
 - 2026-07-19 — Added §2A frontend rules: reuse the AgentWorks tree view; **no terminal**; transcript = user + assistant only; **whitelisted** tool-results as cards; backend streams a curated event stream.
 - 2026-07-19 — Verified in code: all 4 engines declare `SupportsBridgeOnlyTools: true` with a real certification suite. §5 guardrail resolved → §9.1 closed; the rule is simply "set `WithBridgeOnlyTools(true)` on every session."
+- 2026-07-20 — Added §11 (agent-runtime lifecycle & AgentWorks reuse). Locked the AgentWorks chief-of-staff / automations gold standard and the session/bridge lifecycle: **one process-global bridge, per-turn Session, warm resume via the provider owner registry + idle reaper, no LRU/cap** — verified against `mcp-agent-builder-go` and shipped as the `ensureSharedBridge` refactor (removed the per-request-bridge anti-pattern). Recorded the adoption backlog; **streaming** is HIGH and to be **reused** (AgentWorks `StreamingAPI` + event listeners), realizing §2A.

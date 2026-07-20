@@ -342,7 +342,12 @@ body, .learning-app { -webkit-font-smoothing: antialiased; -moz-osx-font-smoothi
 .fl-bubble ul, .fl-bubble ol, .fl-tbubble ul, .fl-tbubble ol { margin: 7px 0; padding-left: 22px; }
 .fl-bubble li, .fl-tbubble li { margin: 4px 0; }
 .fl-bubble li::marker, .fl-tbubble li::marker { color: #d99a1a; }
-.fl-bubble .md-h, .fl-tbubble .md-h { font-weight: 700; font-size: 1.04em; margin: 12px 0 5px; }
+.fl-bubble h1, .fl-bubble h2, .fl-bubble h3, .fl-bubble h4, .fl-tbubble h1, .fl-tbubble h2, .fl-tbubble h3, .fl-tbubble h4 { font-weight: 700; font-size: 1.05em; margin: 12px 0 5px; color: #16223a; }
+.fl-bubble a, .fl-tbubble a { color: #176fd4; }
+.fl-bubble table, .fl-tbubble table { border-collapse: collapse; margin: 8px 0; font-size: .92em; display: block; overflow-x: auto; }
+.fl-bubble th, .fl-bubble td, .fl-tbubble th, .fl-tbubble td { border: 1px solid #e6dcc6; padding: 5px 9px; text-align: left; }
+.fl-bubble th, .fl-tbubble th { background: #fbf3e0; font-weight: 700; }
+.fl-bubble blockquote, .fl-tbubble blockquote { margin: 8px 0; padding: 4px 12px; border-left: 3px solid #e6c877; color: #5b6b86; }
 .fl-bubble strong, .fl-tbubble strong { font-weight: 700; color: #16223a; }
 .fl-msg.is-parent .fl-bubble strong, .fl-msg.is-parent .fl-bubble li::marker { color: #fff; }
 .fl-bubble code, .fl-tbubble code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: .88em; background: rgba(22, 34, 58, .06); padding: 1px 6px; border-radius: 6px; }

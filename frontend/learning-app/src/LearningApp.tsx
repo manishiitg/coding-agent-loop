@@ -1,4 +1,6 @@
-import { useState, useEffect, useRef, type FormEvent, type ChangeEvent, type ReactNode } from 'react'
+import { useState, useEffect, useRef, type FormEvent, type ChangeEvent } from 'react'
+import ReactMarkdown from 'react-markdown'
+import remarkGfm from 'remark-gfm'
 import {
   ArrowLeft,
   ArrowRight,
@@ -75,81 +77,11 @@ function newConversationId(): string {
   return `conv-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`
 }
 
-// mdInline renders **bold** and `code` spans within a line.
-function mdInline(text: string): ReactNode[] {
-  const out: ReactNode[] = []
-  const re = /(\*\*([^*]+)\*\*|`([^`]+)`)/g
-  let last = 0
-  let k = 0
-  let m: RegExpExecArray | null
-  while ((m = re.exec(text)) !== null) {
-    if (m.index > last) out.push(text.slice(last, m.index))
-    if (m[2] !== undefined) out.push(<strong key={k++}>{m[2]}</strong>)
-    else out.push(<code key={k++}>{m[3]}</code>)
-    last = m.index + m[0].length
-  }
-  if (last < text.length) out.push(text.slice(last))
-  return out
-}
-
-// Markdown is a small, dependency-free renderer for the subset the agent emits:
-// paragraphs, bullet + numbered lists, headings, bold and inline code. Keeps chat
-// replies readable instead of a wall of raw markdown text.
+// Markdown renders the agent's reply with react-markdown + GFM — the same
+// battle-tested renderer the main AgentWorks frontend uses (handles tables,
+// nested lists, lazy-continuation of terminal-wrapped list items, code, etc.).
 function Markdown({ text }: { text: string }) {
-  const lines = (text || '').replace(/\r/g, '').split('\n')
-  const blocks: ReactNode[] = []
-  let i = 0
-  let key = 0
-  while (i < lines.length) {
-    if (lines[i].trim() === '') { i++; continue }
-    const h = lines[i].match(/^(#{1,6})\s+(.*)/)
-    if (h) { blocks.push(<p key={key++} className="md-h">{mdInline(h[2])}</p>); i++; continue }
-    // Unordered list — absorbs hard-wrapped continuation lines into the item, and
-    // keeps items in one <ul> across blank lines (agent replies are terminal-wrapped).
-    if (/^\s*[-*]\s+/.test(lines[i])) {
-      const items: string[] = []
-      while (i < lines.length) {
-        const ln = lines[i]
-        const mk = ln.match(/^\s*[-*]\s+(.*)/)
-        if (mk) { items.push(mk[1]); i++; continue }
-        if (ln.trim() === '') {
-          let n = i + 1
-          while (n < lines.length && lines[n].trim() === '') n++
-          if (n < lines.length && /^\s*[-*]\s+/.test(lines[n])) { i = n; continue }
-          break
-        }
-        if (items.length) items[items.length - 1] += ' ' + ln.trim(); else items.push(ln.trim())
-        i++
-      }
-      blocks.push(<ul key={key++}>{items.map((it, j) => <li key={j}>{mdInline(it)}</li>)}</ul>)
-      continue
-    }
-    // Ordered list — same reflow, and preserve the starting number via `start`.
-    if (/^\s*\d+[.)]\s+/.test(lines[i])) {
-      const startM = lines[i].match(/^\s*(\d+)[.)]\s+/)
-      const start = startM ? parseInt(startM[1], 10) : 1
-      const items: string[] = []
-      while (i < lines.length) {
-        const ln = lines[i]
-        const mk = ln.match(/^\s*\d+[.)]\s+(.*)/)
-        if (mk) { items.push(mk[1]); i++; continue }
-        if (ln.trim() === '') {
-          let n = i + 1
-          while (n < lines.length && lines[n].trim() === '') n++
-          if (n < lines.length && /^\s*\d+[.)]\s+/.test(lines[n])) { i = n; continue }
-          break
-        }
-        if (items.length) items[items.length - 1] += ' ' + ln.trim(); else items.push(ln.trim())
-        i++
-      }
-      blocks.push(<ol key={key++} start={start}>{items.map((it, j) => <li key={j}>{mdInline(it)}</li>)}</ol>)
-      continue
-    }
-    const para: string[] = []
-    while (i < lines.length && lines[i].trim() !== '' && !/^\s*[-*]\s+/.test(lines[i]) && !/^\s*\d+\.\s+/.test(lines[i]) && !/^#{1,6}\s/.test(lines[i])) { para.push(lines[i]); i++ }
-    blocks.push(<p key={key++}>{mdInline(para.join(' '))}</p>)
-  }
-  return <>{blocks}</>
+  return <ReactMarkdown remarkPlugins={[remarkGfm]}>{text}</ReactMarkdown>
 }
 
 // QUICK_SKILLS are one-click shortcuts in the composer menu; each sends a message
@@ -303,7 +235,7 @@ export default function LearningApp() {
   const drawerOpen = true // right side always open
   const threadEndRef = useRef<HTMLDivElement>(null)
   const iframeRef = useRef<HTMLIFrameElement>(null)
-  const [drawerTab, setDrawerTab] = useState<DrawerTab>('files')
+  const [drawerTab, setDrawerTab] = useState<DrawerTab>('map')
   const [filesView, setFilesView] = useState<'basic' | 'advanced'>('basic')
   const [treeNodes, setTreeNodes] = useState<TreeNode[]>([])
   const [viewerPath, setViewerPath] = useState<string | null>(null)
@@ -772,9 +704,9 @@ export default function LearningApp() {
           <aside className="fl-drawer" aria-label="Learning workspace">
             {!(drawerTab === 'files' && viewerPath) && (
               <div className="fl-drawer-tabs" role="tablist" aria-label="Workspace views">
-                <button role="tab" aria-selected={drawerTab === 'files'} className={drawerTab === 'files' ? 'is-active' : ''} type="button" onClick={() => setDrawerTab('files')}>Workspace</button>
                 <button role="tab" aria-selected={drawerTab === 'map'} className={drawerTab === 'map' ? 'is-active' : ''} type="button" onClick={() => setDrawerTab('map')}>Subjects</button>
                 <button role="tab" aria-selected={drawerTab === 'progress'} className={drawerTab === 'progress' ? 'is-active' : ''} type="button" onClick={() => setDrawerTab('progress')}>Progress</button>
+                <button role="tab" aria-selected={drawerTab === 'files'} className={drawerTab === 'files' ? 'is-active' : ''} type="button" onClick={() => setDrawerTab('files')}>Workspace</button>
               </div>
             )}
 

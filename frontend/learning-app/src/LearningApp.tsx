@@ -122,6 +122,30 @@ function FileTree({ nodes, onOpen, depth = 0 }: { nodes: TreeNode[]; onOpen: (pa
 }
 type WsFile = { path: string; name: string; scope: string; subject: string; topic: string }
 
+const IMAGE_PATH_RE = /\.(png|jpe?g|gif|webp|svg|bmp)$/i
+
+// parseAssetPath reads whatever structure a generated/uploaded file's path
+// carries — shared/<type>/<subject>/<topic>/<yyyy-mm-dd>-<name>.ext, or a
+// shallower legacy path — into subject/topic/date + a human label. Filenames
+// are auto-generated noise (WhatsApp Image ..., s02.png) so the label prefers
+// the date-stripped name, falling back to "Photo"/"File" for image uploads
+// whose name carries no information at all.
+function parseAssetPath(p: string): { subject?: string; topic?: string; date?: string; label: string } {
+  const parts = p.split('/')
+  const rest = parts.slice(2) // drop "shared/<type>"
+  const filename = rest[rest.length - 1] || parts[parts.length - 1] || p
+  const subject = rest.length >= 3 ? rest[0] : rest.length === 2 ? rest[0] : undefined
+  const topic = rest.length >= 3 ? rest[1] : undefined
+  const nameNoExt = filename.replace(/\.[a-z0-9]+$/i, '')
+  const dateMatch = nameNoExt.match(/^(\d{4}-\d{2}-\d{2})[-_](.+)$/)
+  const date = dateMatch ? dateMatch[1] : undefined
+  let rawLabel = (dateMatch ? dateMatch[2] : nameNoExt).replace(/[-_]+/g, ' ').trim()
+  if (!rawLabel || /^(whatsapp image|img\d*|s\d+|image\d*|photo\d*)\b/i.test(rawLabel)) {
+    rawLabel = IMAGE_PATH_RE.test(p) ? 'Photo' : 'File'
+  }
+  return { subject, topic, date, label: rawLabel }
+}
+
 export default function LearningApp() {
   const [screen, setScreen] = useState<Screen>('engine')
   const [engines, setEngines] = useState<ApiEngine[]>([])
@@ -237,16 +261,33 @@ export default function LearningApp() {
   const threadEndRef = useRef<HTMLDivElement>(null)
   const iframeRef = useRef<HTMLIFrameElement>(null)
   const [drawerTab, setDrawerTab] = useState<DrawerTab>('map')
-  const [filesView, setFilesView] = useState<'basic' | 'advanced'>('basic')
+  const [filesView, setFilesView] = useState<'subjects' | 'uploaded' | 'advanced'>('subjects')
+  const [filesSubjectFilter, setFilesSubjectFilter] = useState('')
   const [treeNodes, setTreeNodes] = useState<TreeNode[]>([])
   const [viewerPath, setViewerPath] = useState<string | null>(null)
+  const [viewerImageList, setViewerImageList] = useState<string[]>([])
   const [viewerContent, setViewerContent] = useState<{ isText: boolean; content: string } | null>(null)
+  const [mapHtml, setMapHtml] = useState<string | null>(null)
+  const [mapRefreshKey, setMapRefreshKey] = useState(0)
   const [booting, setBooting] = useState(true)
   const [bootError, setBootError] = useState(false)
   const [pin, setPin] = useState('')
   const [pinConfirm, setPinConfirm] = useState('')
   const [pinError, setPinError] = useState('')
   const [saving, setSaving] = useState(false)
+
+  // Load the real, agent-generated shared/academic-map.html for the Subjects
+  // tab — refetches whenever the tab is opened or a turn just completed (the
+  // agent may have rebuilt the map during that turn).
+  useEffect(() => {
+    if (drawerTab !== 'map') return
+    let cancelled = false
+    fetch(`${FAMILY_API}/api/workspace/file?path=${encodeURIComponent('shared/academic-map.html')}`)
+      .then((r) => r.json())
+      .then((d) => { if (!cancelled) setMapHtml(d.content ?? '') })
+      .catch(() => { if (!cancelled) setMapHtml('') })
+    return () => { cancelled = true }
+  }, [drawerTab, mapRefreshKey])
 
   // Load the selected file for the drawer's Files viewer.
   useEffect(() => {
@@ -259,6 +300,22 @@ export default function LearningApp() {
       .catch(() => { if (!cancelled) setViewerContent({ isText: false, content: '' }) })
     return () => { cancelled = true }
   }, [viewerPath])
+
+  // Left/Right arrow keys step through the image list the viewer was opened
+  // from (e.g. the Uploaded Material thumbnail grid for the current subject).
+  useEffect(() => {
+    if (!viewerPath || !IMAGE_PATH_RE.test(viewerPath) || viewerImageList.length < 2) return
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return
+      const idx = viewerImageList.indexOf(viewerPath)
+      if (idx === -1) return
+      const dir = e.key === 'ArrowLeft' ? -1 : 1
+      const next = (idx + dir + viewerImageList.length) % viewerImageList.length
+      setViewerPath(viewerImageList[next])
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [viewerPath, viewerImageList])
 
   // Keep the conversation scrolled to the latest message / thinking indicator.
   useEffect(() => {
@@ -423,7 +480,7 @@ export default function LearningApp() {
         setParentMessages((cur) => [...cur, ...toolMsgs, { role: 'assistant', text: data.error ? `Sorry — ${data.error}` : (data.reply || '(no response)') }])
       })
       .catch(() => setParentMessages((cur) => [...cur, { role: 'assistant', text: 'Sorry — I couldn’t reach the learning engine.' }]))
-      .finally(() => { setSending(false); setLiveStatus(''); statusSource.close() })
+      .finally(() => { setSending(false); setLiveStatus(''); statusSource.close(); setMapRefreshKey((k) => k + 1) })
   }
 
   const sendParentMessage = (event: FormEvent<HTMLFormElement>) => {
@@ -743,34 +800,16 @@ export default function LearningApp() {
               )}
 
               {drawerTab === 'map' && (
-                <>
-                  <p className="fl-drawer-label">Academic map · living view</p>
-                  {(() => {
-                    const bySubject: Record<string, { topics: Set<string>; count: number }> = {}
-                    wsFiles.forEach((f) => {
-                      const s = f.subject || 'General'
-                      const e = bySubject[s] || { topics: new Set<string>(), count: 0 }
-                      if (f.topic) e.topics.add(f.topic)
-                      e.count += 1
-                      bySubject[s] = e
-                    })
-                    const entries = Object.entries(bySubject)
-                    if (entries.length === 0) {
-                      return <p className="fl-note">The map grows as you add materials — it starts from the confirmed subject and topic, nothing invented from grade or board alone.</p>
-                    }
-                    return entries.map(([name, v]) => (
-                      <div key={name} className={`fl-map-subject ${name === subject ? 'is-current' : ''}`}>
-                        <div className="fl-map-subject-head">
-                          <strong>{name}</strong>
-                          {name === subject && <span className="fl-badge is-current">Current</span>}
-                        </div>
-                        <div className="fl-map-topic">{v.topics.size ? `Topics: ${Array.from(v.topics).join(', ')}` : 'No topic yet'}</div>
-                        <div className="fl-map-meta">{v.count} source{v.count === 1 ? '' : 's'}</div>
-                      </div>
-                    ))
-                  })()}
-                  <p className="fl-note">This map grows from real materials on this computer. It starts with the confirmed subject and topic — nothing is invented from grade or board alone.</p>
-                </>
+                mapHtml === null ? (
+                  <p className="fl-note">Loading the academic map…</p>
+                ) : mapHtml.includes('living view grows as') ? (
+                  // Still the startup placeholder seedWorkspace() writes before the
+                  // agent has ever run create-academic-map — an honest empty state
+                  // rather than a blank iframe.
+                  <p className="fl-note">The academic map hasn't been built yet — ask Quill to "update the academic map" once there's some material to show.</p>
+                ) : (
+                  <iframe className="fl-map-frame" title="Academic map" sandbox="allow-scripts" srcDoc={mapHtml} />
+                )
               )}
 
               {drawerTab === 'progress' && (() => {
@@ -830,35 +869,123 @@ export default function LearningApp() {
                 ) : (
                   <>
                     <div className="fl-files-toggle">
-                      <button type="button" className={filesView === 'basic' ? 'is-active' : ''} onClick={() => setFilesView('basic')}>Basic</button>
+                      <button type="button" className={filesView === 'subjects' ? 'is-active' : ''} onClick={() => setFilesView('subjects')}>Subjects</button>
+                      <button type="button" className={filesView === 'uploaded' ? 'is-active' : ''} onClick={() => setFilesView('uploaded')}>Uploaded Material</button>
                       <button type="button" className={filesView === 'advanced' ? 'is-active' : ''} onClick={() => setFilesView('advanced')}>All files</button>
                     </div>
                     {filesView === 'advanced' ? (
                       treeNodes.length === 0 ? <p className="fl-note">No files yet.</p> : <FileTree nodes={treeNodes} onOpen={(p) => setViewerPath(p)} />
                     ) : (() => {
-                      const groups: { title: string; test: (p: string) => boolean }[] = [
-                        { title: 'Practice tests', test: (p) => p.startsWith('shared/tests/') },
-                        { title: 'Study guides', test: (p) => p.startsWith('shared/study/') },
-                        { title: 'Reports', test: (p) => p.startsWith('shared/reports/') },
-                        { title: 'Academic map', test: (p) => p === 'shared/academic-map.html' },
-                        { title: 'Uploaded material', test: (p) => p.includes('/materials/') },
-                      ]
-                      const usable = allFiles.filter((p) => !p.endsWith('.meta.json') && !p.startsWith('skills/') && !p.includes('/conversations/') && !p.endsWith('child-profile.json'))
-                      const sections = groups.map((g) => ({ title: g.title, files: usable.filter(g.test) })).filter((s) => s.files.length > 0)
-                      if (sections.length === 0) {
-                        return <p className="fl-note">Nothing here yet. Ask Quill to make study material or a test, or attach a photo/PDF.</p>
+                      // Hierarchy: subject -> topic -> type (test/notes/...) -> date -> file.
+                      // "Subjects" and "Uploaded Material" are the same tree, filtered to
+                      // generated content vs. raw uploads; the academic map already has its
+                      // own real (agent-generated) view via the outer Subjects drawer tab,
+                      // so it's not duplicated here.
+                      type Entry = { path: string; date?: string; label: string }
+                      const typeOf = (p: string): string | null => {
+                        if (p === 'shared/academic-map.html') return null
+                        if (p.startsWith('shared/tests/')) return 'Practice tests'
+                        if (p.startsWith('shared/study/')) return 'Study guides'
+                        if (p.startsWith('shared/reports/')) return 'Reports'
+                        if (p.includes('/materials/')) return 'Uploaded material'
+                        return null
                       }
-                      return sections.map((s) => (
-                        <section key={s.title} className="fl-asset-group">
-                          <p className="fl-drawer-label">{s.title}</p>
-                          {s.files.map((p) => (
-                            <button key={p} type="button" className="fl-file-item" onClick={() => setViewerPath(p)}>
-                              <FileText size={16} />
-                              <span>{(p.split('/').pop() || p).replace(/\.(md|html?|txt)$/i, '')}</span>
-                            </button>
-                          ))}
-                        </section>
-                      ))
+                      const usable = allFiles.filter((p) => !p.endsWith('.meta.json') && !p.startsWith('skills/') && !p.includes('/conversations/') && !p.endsWith('child-profile.json'))
+                      const classified = usable.map((p) => ({ p, type: typeOf(p), ...parseAssetPath(p) })).filter((f) => f.type)
+                      const subjectsList = Array.from(new Set(classified.filter((f) => f.subject).map((f) => f.subject!))).sort()
+                      const wantedTypes = filesView === 'uploaded' ? ['Uploaded material'] : ['Practice tests', 'Study guides', 'Reports']
+                      const relevant = classified.filter((f) => wantedTypes.includes(f.type!) && (!filesSubjectFilter || f.subject === filesSubjectFilter))
+
+                      const bySubject = new Map<string, Map<string, Map<string, Entry[]>>>()
+                      const general = new Map<string, Entry[]>()
+                      relevant.forEach((f) => {
+                        const entry: Entry = { path: f.p, date: f.date, label: f.label }
+                        if (!f.subject) {
+                          if (!general.has(f.type!)) general.set(f.type!, [])
+                          general.get(f.type!)!.push(entry)
+                          return
+                        }
+                        if (!bySubject.has(f.subject)) bySubject.set(f.subject, new Map())
+                        const topics = bySubject.get(f.subject)!
+                        const topicKey = f.topic || '—'
+                        if (!topics.has(topicKey)) topics.set(topicKey, new Map())
+                        const types = topics.get(topicKey)!
+                        if (!types.has(f.type!)) types.set(f.type!, [])
+                        types.get(f.type!)!.push(entry)
+                      })
+                      const byDateDesc = (a: Entry, b: Entry) => (b.date || '').localeCompare(a.date || '')
+                      const renderEntries = (entries: Entry[]) => {
+                        const isUploaded = filesView === 'uploaded'
+                        return (
+                          <div className={isUploaded ? 'fl-thumb-grid' : undefined}>
+                            {entries.sort(byDateDesc).map((e) => (
+                              isUploaded && IMAGE_PATH_RE.test(e.path) ? (
+                                <button key={e.path} type="button" className="fl-thumb-item" onClick={() => setViewerPath(e.path)}>
+                                  <img className="fl-thumb-img" src={`${FAMILY_API}/api/workspace/raw?path=${encodeURIComponent(e.path)}`} alt="" loading="lazy" />
+                                  <span className="fl-thumb-caption">{e.label}{e.date ? ` · ${e.date}` : ''}</span>
+                                </button>
+                              ) : (
+                                <button key={e.path} type="button" className="fl-file-item" onClick={() => setViewerPath(e.path)}>
+                                  <FileText size={16} />
+                                  <span>{e.label}{e.date ? ` · ${e.date}` : ''}</span>
+                                </button>
+                              )
+                            ))}
+                          </div>
+                        )
+                      }
+                      return (
+                        <>
+                          {subjectsList.length > 0 && (
+                            <select
+                              className="fl-subject-select"
+                              aria-label="Filter by subject"
+                              value={filesSubjectFilter}
+                              onChange={(e) => setFilesSubjectFilter(e.target.value)}
+                            >
+                              <option value="">All subjects</option>
+                              {subjectsList.map((s) => <option key={s} value={s}>{s}</option>)}
+                            </select>
+                          )}
+                          {bySubject.size === 0 && general.size === 0 ? (
+                            <p className="fl-note">
+                              {filesView === 'uploaded'
+                                ? 'No uploaded material yet.'
+                                : 'Nothing here yet. Ask Quill to make study material or a test.'}
+                            </p>
+                          ) : (
+                            <>
+                              {Array.from(bySubject.entries()).map(([subj, topics]) => (
+                                <section key={subj} className="fl-asset-group">
+                                  <p className="fl-drawer-label">{subj}</p>
+                                  {Array.from(topics.entries()).map(([top, types]) => (
+                                    <div key={top} className="fl-asset-topic">
+                                      <p className="fl-asset-topic-label">{top === '—' ? 'Other' : top}</p>
+                                      {Array.from(types.entries()).map(([type, entries]) => (
+                                        <div key={type} className="fl-asset-type">
+                                          {filesView !== 'uploaded' && <p className="fl-asset-type-label">{type}</p>}
+                                          {renderEntries(entries)}
+                                        </div>
+                                      ))}
+                                    </div>
+                                  ))}
+                                </section>
+                              ))}
+                              {general.size > 0 && (
+                                <section className="fl-asset-group">
+                                  <p className="fl-drawer-label">General</p>
+                                  {Array.from(general.entries()).map(([type, entries]) => (
+                                    <div key={type} className="fl-asset-type">
+                                      {filesView !== 'uploaded' && <p className="fl-asset-type-label">{type}</p>}
+                                      {renderEntries(entries)}
+                                    </div>
+                                  ))}
+                                </section>
+                              )}
+                            </>
+                          )}
+                        </>
+                      )
                     })()}
                   </>
                 )

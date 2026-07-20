@@ -254,6 +254,16 @@ html, body, #root { margin: 0; height: 100%; }
 .fl-drawer-tabs button.is-active { background: var(--navy); color: #fff; }
 .fl-drawer-label { margin: 2px 2px 4px; color: #5c6d88; font-size: var(--text-caption); font-weight: 700; letter-spacing: .04em; text-transform: uppercase; }
 .fl-asset-group { display: flex; flex-direction: column; gap: 8px; }
+.fl-asset-topic { margin: 0 0 8px 8px; }
+.fl-asset-topic-label { margin: 0 0 4px 2px; font-size: var(--text-secondary); font-weight: 700; color: var(--navy); }
+.fl-asset-type { margin: 0 0 6px 10px; }
+.fl-asset-type-label { margin: 0 0 4px 2px; font-size: var(--text-caption); font-weight: 600; color: #5c6d88; text-transform: uppercase; letter-spacing: .03em; }
+.fl-thumb-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); gap: 8px; margin-bottom: 6px; }
+.fl-thumb-item { display: flex; flex-direction: column; gap: 4px; padding: 0; border: 1px solid #ece3d2; border-radius: 12px; background: #fff; cursor: pointer; overflow: hidden; text-align: left; }
+.fl-thumb-item:hover { border-color: #e6d9bd; }
+.fl-thumb-img { width: 100%; aspect-ratio: 1 / 1; object-fit: cover; display: block; background: #f4efe3; }
+.fl-thumb-caption { padding: 4px 8px 7px; font-size: var(--text-caption); font-weight: 600; color: var(--navy); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+@media (max-width: 480px) { .fl-thumb-grid { grid-template-columns: repeat(auto-fill, minmax(78px, 1fr)); } }
 .fl-asset { display: flex; align-items: flex-start; gap: 11px; padding: 12px; border: 1px solid var(--line); border-radius: 14px; background: #fff; }
 .fl-asset-icon { display: grid; place-items: center; flex: 0 0 38px; width: 38px; height: 38px; border-radius: 11px; background: #eef4ff; color: #3f6fb0; }
 .fl-asset-icon.is-pdf { background: #fdecea; color: #c8493e; }
@@ -363,9 +373,11 @@ body, .learning-app { -webkit-font-smoothing: antialiased; -moz-osx-font-smoothi
 .fl-msg-avatar, .fl-tmsg-avatar { display: none; }
 
 /* Basic/Advanced toggle + curated file rows in the Workspace tab */
-.fl-files-toggle { display: inline-flex; gap: 2px; padding: 3px; margin-bottom: 12px; border-radius: 10px; background: #f1ece0; align-self: flex-start; }
-.fl-files-toggle button { padding: 5px 14px; border: 0; border-radius: 8px; background: transparent; color: #6b5d3f; font: inherit; font-size: var(--text-secondary); font-weight: 650; cursor: pointer; }
+.fl-files-toggle { display: inline-flex; flex-wrap: wrap; gap: 2px; padding: 3px; margin-bottom: 12px; border-radius: 10px; background: #f1ece0; align-self: flex-start; max-width: 100%; }
+.fl-files-toggle button { padding: 5px 14px; border: 0; border-radius: 8px; background: transparent; color: #6b5d3f; font: inherit; font-size: var(--text-secondary); font-weight: 650; cursor: pointer; white-space: nowrap; }
 .fl-files-toggle button.is-active { background: #fff; color: var(--navy); box-shadow: 0 1px 3px rgba(22, 34, 58, .12); }
+.fl-subject-select { width: 100%; margin-bottom: 12px; padding: 9px 12px; border: 1px solid var(--line); border-radius: 10px; background: #fff url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8'%3E%3Cpath d='M1 1l5 5 5-5' stroke='%235c6d88' stroke-width='1.6' fill='none' stroke-linecap='round'/%3E%3C/svg%3E") no-repeat right 12px center; appearance: none; -webkit-appearance: none; font: inherit; font-size: var(--text-secondary); font-weight: 650; color: var(--navy); cursor: pointer; }
+@media (max-width: 480px) { .fl-files-toggle button { padding: 5px 10px; font-size: var(--text-caption); } }
 .fl-file-item { display: flex; align-items: center; gap: 9px; width: 100%; text-align: left; padding: 10px 12px; border: 1px solid #ece3d2; border-radius: 12px; background: #fff; color: var(--navy); font: inherit; font-size: var(--text-secondary); font-weight: 600; cursor: pointer; margin-bottom: 6px; }
 .fl-file-item:hover { background: #fdf7ea; border-color: #e6d9bd; }
 .fl-file-item svg { color: #b79a5e; flex: 0 0 auto; }
@@ -389,6 +401,7 @@ details[open] > .fl-tree-dir::before { content: "▾"; }
 .fl-viewer-back { display: inline-flex; align-items: center; gap: 4px; padding: 5px 10px; border: 1px solid #e0d7c5; border-radius: 9px; background: #fff; color: #3d567a; font: inherit; font-size: var(--text-secondary); font-weight: 650; cursor: pointer; }
 .fl-viewer-name { color: var(--navy); font-weight: 700; font-size: var(--text-secondary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .fl-viewer-frame { width: 100%; flex: 1; min-height: 260px; border: 1px solid #ece3d2; border-radius: 10px; background: #fff; }
+.fl-map-frame { width: 100%; height: 100%; min-height: 320px; border: 0; background: #fff; }
 .fl-viewer-md { background: #fff; border: 1px solid #ece3d2; border-radius: 12px; padding: 16px 18px; color: #26364f; line-height: 1.62; }
 .fl-viewer-pre { background: #fff; border: 1px solid #ece3d2; border-radius: 12px; padding: 14px 16px; overflow: auto; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .82rem; color: #33415c; white-space: pre-wrap; }
 .fl-viewer-img { max-width: 100%; height: auto; border: 1px solid #ece3d2; border-radius: 12px; background: #fff; }

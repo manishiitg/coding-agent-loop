@@ -46,6 +46,7 @@ func main() {
 	mux.HandleFunc("/api/child/message", handleChildMessage)
 	mux.HandleFunc("/api/workspace/tree", handleWorkspaceTree)
 	mux.HandleFunc("/api/workspace/file", handleWorkspaceFile)
+	mux.HandleFunc("/api/workspace/raw", handleWorkspaceRaw)
 	mux.HandleFunc("/api/upload", handleUpload)
 	mux.HandleFunc("/api/reset", handleReset)
 

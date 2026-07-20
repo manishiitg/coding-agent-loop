@@ -400,10 +400,15 @@ export default function LearningApp() {
       body: JSON.stringify({ messages: history, conversation_id: conversationId }),
     })
       .then((res) => res.json())
-      .then((data: { reply?: string; error?: string; tool_events?: { tool: string; subject?: string; topic?: string }[] }) => {
-        const toolMsgs: ParentMsg[] = (data.tool_events ?? []).map((e) => ({ role: 'tool', tool: e.tool, subject: e.subject, topic: e.topic }))
-        const st = (data.tool_events ?? []).find((e) => e.tool === 'set_subject_topic')
+      .then((data: { reply?: string; error?: string; tool_events?: { tool: string; subject?: string; topic?: string; name?: string; grade?: string; board?: string; path?: string }[] }) => {
+        const events = data.tool_events ?? []
+        const toolMsgs: ParentMsg[] = events.filter((e) => e.tool === 'set_subject_topic' || e.tool === 'set_child_profile').map((e) => ({ role: 'tool', tool: e.tool, subject: e.subject, topic: e.topic }))
+        const st = events.find((e) => e.tool === 'set_subject_topic')
         if (st) { if (st.subject) setSubject(st.subject); if (st.topic) setTopic(st.topic) }
+        const cp = events.find((e) => e.tool === 'set_child_profile')
+        if (cp) { if (cp.name) setChildName(cp.name); if (cp.grade) setGrade(cp.grade); if (cp.board) setBoard(cp.board) }
+        const of = events.find((e) => e.tool === 'open_file' && e.path)
+        if (of?.path) { setDrawerTab('files'); setViewerPath(of.path) }
         setParentMessages((cur) => [...cur, ...toolMsgs, { role: 'assistant', text: data.error ? `Sorry — ${data.error}` : (data.reply || '(no response)') }])
       })
       .catch(() => setParentMessages((cur) => [...cur, { role: 'assistant', text: 'Sorry — I couldn’t reach the learning engine.' }]))
@@ -754,7 +759,9 @@ export default function LearningApp() {
                       <button className="fl-viewer-back" type="button" onClick={() => setViewerPath(null)}><ArrowLeft size={15} /> Files</button>
                       <span className="fl-viewer-name">{viewerPath.split('/').pop()}</span>
                     </div>
-                    {!viewerContent ? (
+                    {/\.(png|jpe?g|gif|webp|svg|bmp)$/i.test(viewerPath) ? (
+                      <img className="fl-viewer-img" src={`${FAMILY_API}/api/workspace/raw?path=${encodeURIComponent(viewerPath)}`} alt={viewerPath.split('/').pop() || ''} />
+                    ) : !viewerContent ? (
                       <p className="fl-note">Loading…</p>
                     ) : !viewerContent.isText ? (
                       <p className="fl-note">This file type can’t be previewed here.</p>

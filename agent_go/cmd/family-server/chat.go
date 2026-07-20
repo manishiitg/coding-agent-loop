@@ -60,7 +60,7 @@ func parentSystemPrompt(child *Child) string {
 		"- shared/study/<subject>/<topic>/ — save study material you create for " + name + " here.\n" +
 		"- shared/tests/<subject>/<topic>/ — save practice tests here.\n" +
 		"- parent/answer-keys/ and parent/notes/ — parent-only; keep answer keys, marking, and private notes here, never child-facing.\n" +
-		"When you make material or a test, actually write the file, then tell the parent in plain words what you made. Keep file paths and technical details out of your reply unless the parent asks.\n" +
+		"When you make material or a test, actually write the file, then call the open_file tool with its path so it opens on the right side for the parent, and tell them in plain words what you made. Keep file paths and technical details out of your reply unless the parent asks.\n" +
 		"You have skills — short how-to guides — in the skills/ folder. Read the relevant one and follow it exactly:\n" +
 		"- skills/process-file/SKILL.md — process files the parent uploaded.\n" +
 		"- skills/create-study-material/SKILL.md — make study notes and worked examples for " + name + ".\n" +
@@ -121,6 +121,7 @@ type toolEvent struct {
 	Name    string `json:"name,omitempty"`
 	Grade   string `json:"grade,omitempty"`
 	Board   string `json:"board,omitempty"`
+	Path    string `json:"path,omitempty"`
 }
 
 type parentMessageResponse struct {
@@ -279,6 +280,32 @@ func handleParentMessage(w http.ResponseWriter, r *http.Request) {
 		},
 	}
 
+	openFile := agentsession.Tool{
+		Name: "open_file",
+		Description: "Show a workspace file to the parent on the right side of the screen. Call this right after you " +
+			"create or update a file the parent should see (study material, a test, a progress report, the academic map) " +
+			"so it opens for them immediately. Pass the workspace-relative path.",
+		Category: "family_tools",
+		Params: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"path": map[string]interface{}{"type": "string", "description": "workspace-relative path to the file to display"},
+			},
+			"required": []string{"path"},
+		},
+		Handler: func(_ context.Context, args map[string]interface{}) (string, error) {
+			p, _ := args["path"].(string)
+			p = strings.TrimSpace(p)
+			if _, ok := resolveWorkspacePath(p); !ok {
+				return "", fmt.Errorf("invalid path")
+			}
+			evMu.Lock()
+			events = append(events, toolEvent{Tool: "open_file", Path: p})
+			evMu.Unlock()
+			return fmt.Sprintf(`{"status":"ok","opened":%q}`, p), nil
+		},
+	}
+
 	agentTurnMu.Lock()
 	defer agentTurnMu.Unlock()
 
@@ -289,7 +316,7 @@ func handleParentMessage(w http.ResponseWriter, r *http.Request) {
 		Provider:     provider,
 		WorkingDir:   workDir,
 		SystemPrompt: parentSystemPrompt(s.Child),
-		Tools:        []agentsession.Tool{setSubjectTopic, setChildProfile, shellTool()},
+		Tools:        []agentsession.Tool{setSubjectTopic, setChildProfile, openFile, shellTool()},
 	})
 	if err != nil {
 		writeJSON(w, http.StatusOK, parentMessageResponse{Error: err.Error()})

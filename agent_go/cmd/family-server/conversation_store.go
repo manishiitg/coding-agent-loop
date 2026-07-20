@@ -88,3 +88,23 @@ func handleWorkspaceFile(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{"path": rel, "is_text": true, "content": string(b)})
 }
+
+// handleWorkspaceRaw serves GET /api/workspace/raw?path=... — the raw bytes of a
+// workspace file (for images the viewer renders with <img>). http.ServeFile sets
+// the content type and handles range requests.
+func handleWorkspaceRaw(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	abs, ok := resolveWorkspacePath(r.URL.Query().Get("path"))
+	if !ok {
+		http.Error(w, "invalid path", http.StatusBadRequest)
+		return
+	}
+	if info, err := os.Stat(abs); err != nil || info.IsDir() {
+		http.Error(w, "not found", http.StatusNotFound)
+		return
+	}
+	http.ServeFile(w, r, abs)
+}

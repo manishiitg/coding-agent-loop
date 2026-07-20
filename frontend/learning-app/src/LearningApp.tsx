@@ -744,7 +744,6 @@ export default function LearningApp() {
             {!(drawerTab === 'files' && viewerPath) && (
               <div className="fl-drawer-tabs" role="tablist" aria-label="Workspace views">
                 <button role="tab" aria-selected={drawerTab === 'files'} className={drawerTab === 'files' ? 'is-active' : ''} type="button" onClick={() => setDrawerTab('files')}>Workspace</button>
-                <button role="tab" aria-selected={drawerTab === 'assets'} className={drawerTab === 'assets' ? 'is-active' : ''} type="button" onClick={() => setDrawerTab('assets')}>Materials</button>
                 <button role="tab" aria-selected={drawerTab === 'map'} className={drawerTab === 'map' ? 'is-active' : ''} type="button" onClick={() => setDrawerTab('map')}>Subjects</button>
                 <button role="tab" aria-selected={drawerTab === 'progress'} className={drawerTab === 'progress' ? 'is-active' : ''} type="button" onClick={() => setDrawerTab('progress')}>Progress</button>
               </div>

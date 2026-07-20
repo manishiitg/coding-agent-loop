@@ -14,8 +14,14 @@ attention:
 - A backup completed, or a remote backup still needs setting up.
 - Something needs the parent's decision or sign-off.
 
-Keep it short and warm: a title plus one or two sentences. Do NOT notify for
-trivial or routine steps — only when the parent would truly want to know.
+Two ways to notify:
+- **Quick alert** → the `notify_user` tool (a desktop notification). Keep it a
+  title plus one or two sentences.
+- **Important or detailed** (a weekly summary, "a new report is ready", something
+  to keep) → send an **email**. The parent has the Google Workspace CLI installed
+  and authenticated, so use your shell: `gws gmail +send` (run
+  `gws gmail +send --help` for the exact flags — recipient, subject, body; inline
+  HTML is fine). Prefer email for substantive updates the parent should read later.
 
-`notify_user` shows a desktop notification today; when email or WhatsApp channels
-are configured it will use those, without you changing anything.
+Do NOT notify for trivial or routine steps — only when the parent would truly want
+to know. Keep every message plain, warm, and non-technical.

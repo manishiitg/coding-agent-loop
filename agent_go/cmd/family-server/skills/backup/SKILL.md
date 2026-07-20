@@ -12,11 +12,14 @@ map, and conversations.
 homework). Do NOT recommend GitHub as the main backup: git keeps every version of
 every binary, so an image-heavy repo bloats fast, and GitHub rejects large files.
 Prefer, in order:
-1. An **object store** — Cloudflare R2, Amazon S3, or Backblaze B2 — synced with
-   `rclone sync` / `aws s3 sync`. Cheap, built for binaries, no history bloat (R2
-   has a free tier). Best default here.
-2. A **synced folder** the parent already uses — Google Drive, Dropbox, iCloud —
-   simplest for a non-technical parent (just copy the workspace into it).
+1. **Google Drive via the `gws` CLI (recommended — already set up).** The parent
+   has the Google Workspace CLI installed and authenticated, so upload the
+   workspace straight to their Drive with `gws drive +upload` (run
+   `gws drive +upload --help` for the exact flags). Ideal for image-heavy content,
+   and it's the parent's own storage.
+2. An **object store** — Cloudflare R2 / S3 / Backblaze B2 — via `rclone sync`, if
+   the parent set one up.
+3. A **synced folder** — Dropbox / iCloud — copy the workspace into it.
 A git repo is only a good fit for the small TEXT/config (family profile, generated
 .md/.html) — not the images — and local git is a temporary checkpoint at best.
 

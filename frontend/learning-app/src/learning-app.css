@@ -184,7 +184,12 @@ html, body, #root { margin: 0; height: 100%; }
 .fl-icon-btn { display: grid; place-items: center; flex: 0 0 auto; width: 38px; height: 38px; border: 1px solid #d7e0ec; border-radius: 11px; background: #fff; color: #3d567a; cursor: pointer; }
 .fl-icon-btn:hover { border-color: #9db2ca; background: #f7faff; color: var(--navy); }
 .fl-thread { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 16px; padding: 26px clamp(16px, 2.5vw, 36px); }
-.fl-composer { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 8px; align-items: center; margin: 0 clamp(16px, 2.5vw, 36px) 10px; padding: 8px; border: 1px solid #cbd7e8; border-radius: 15px; background: #fbfcfe; }
+.fl-composer { display: grid; grid-template-columns: auto minmax(0, 1fr) auto auto; gap: 8px; align-items: center; margin: 0 clamp(16px, 2.5vw, 36px) 10px; padding: 8px; border: 1px solid #cbd7e8; border-radius: 15px; background: #fbfcfe; }
+.fl-composer-menu { position: relative; display: flex; align-items: center; }
+.fl-menu-backdrop { position: fixed; inset: 0; z-index: 20; }
+.fl-menu { position: absolute; bottom: calc(100% + 10px); right: 0; z-index: 21; min-width: 232px; padding: 6px; border: 1px solid #e0d7c5; border-radius: 14px; background: #fff; box-shadow: 0 14px 34px rgba(13, 35, 76, .18); display: flex; flex-direction: column; gap: 2px; }
+.fl-menu button { display: flex; align-items: center; gap: 8px; width: 100%; text-align: left; padding: 10px 12px; border: 0; border-radius: 9px; background: transparent; color: var(--navy); font: inherit; font-size: var(--text-secondary); font-weight: 600; cursor: pointer; white-space: nowrap; }
+.fl-menu button:hover { background: #fdf4e0; }
 .fl-composer input { min-width: 0; height: 40px; border: 0; outline: 0; background: transparent; color: var(--navy); font: inherit; font-size: var(--text-body); }
 .fl-composer input::placeholder { color: #5f708c; }
 .fl-disclaimer { margin: 0 clamp(16px, 2.5vw, 36px) 16px; color: #8090a6; font-size: var(--text-caption); text-align: center; }

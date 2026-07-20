@@ -124,6 +124,16 @@ function Markdown({ text }: { text: string }) {
   return <>{blocks}</>
 }
 
+// QUICK_SKILLS are one-click shortcuts in the composer menu; each sends a message
+// that triggers the matching agent skill.
+const QUICK_SKILLS = [
+  { label: 'Understand progress', message: 'How is my child doing so far? Give me a coach-style read of the evidence.' },
+  { label: 'Create study material', message: 'Create interactive study material for the current subject and topic.' },
+  { label: 'Create a practice test', message: 'Create a practice test for the current subject and topic, with a separate answer key for me.' },
+  { label: 'Update progress report', message: 'Build an updated progress report for my child.' },
+  { label: 'Update academic map', message: 'Update the academic map from the current materials.' },
+]
+
 type ParentMsg = { role: 'user' | 'assistant' | 'tool'; text?: string; tool?: string; subject?: string; topic?: string; name?: string }
 type TreeNode = { name: string; path: string; type: 'dir' | 'file'; children?: TreeNode[] }
 
@@ -184,6 +194,7 @@ export default function LearningApp() {
   const [parentMessages, setParentMessages] = useState<ParentMsg[]>([])
   const [sending, setSending] = useState(false)
   const [suggestions, setSuggestions] = useState<{ label: string; message: string }[]>([])
+  const [menuOpen, setMenuOpen] = useState(false)
   const [wsFiles, setWsFiles] = useState<WsFile[]>([])
   const [allFiles, setAllFiles] = useState<string[]>([])
   const [conversationId, setConversationId] = useState(newConversationId)
@@ -662,6 +673,17 @@ export default function LearningApp() {
                 onChange={(event) => setFocusInput(event.target.value)}
                 disabled={sending}
               />
+              <div className="fl-composer-menu">
+                {menuOpen && <div className="fl-menu-backdrop" onClick={() => setMenuOpen(false)} />}
+                <button type="button" className="composer-icon" aria-label="Quick actions" aria-expanded={menuOpen} onClick={() => setMenuOpen((v) => !v)} disabled={sending}><Sparkles size={19} /></button>
+                {menuOpen && (
+                  <div className="fl-menu" role="menu">
+                    {QUICK_SKILLS.map((s) => (
+                      <button key={s.label} type="button" role="menuitem" onClick={() => { setMenuOpen(false); sendParentText(s.message) }}>{s.label}</button>
+                    ))}
+                  </div>
+                )}
+              </div>
               <button className="composer-send" type="submit" aria-label="Send message" disabled={!focusInput.trim() || sending}><Send size={18} /></button>
             </form>
             <p className="fl-disclaimer">SparkQuill can make mistakes. Please review important content before sharing it with {childName || 'your child'}.</p>

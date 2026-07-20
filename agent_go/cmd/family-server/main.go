@@ -43,6 +43,7 @@ func main() {
 	mux.HandleFunc("/api/child", handleCreateChild)
 	mux.HandleFunc("/api/parent/pin", handleSetPin)
 	mux.HandleFunc("/api/parent/message", handleParentMessage)
+	mux.HandleFunc("/api/parent/status", handleParentStatusStream)
 	mux.HandleFunc("/api/child/message", handleChildMessage)
 	mux.HandleFunc("/api/whatsapp/message", handleWhatsAppMessage)
 	mux.HandleFunc("/api/workspace/tree", handleWorkspaceTree)

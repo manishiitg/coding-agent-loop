@@ -6,7 +6,6 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"time"
 
 	"github.com/manishiitg/coding-agent-loop/agent_go/internal/agentsession"
 	"github.com/manishiitg/coding-agent-loop/agent_go/internal/enginedetect"
@@ -51,7 +50,7 @@ func handleWhatsAppMessage(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		reply, err := enginedetect.Chat(r.Context(), s.Engine, "", workDir, whatsappSystemPrompt(s.Child), req.Messages)
 		if err != nil {
-			writeJSON(w, http.StatusOK, parentMessageResponse{Error: err.Error()})
+			writeJSON(w, http.StatusOK, parentMessageResponse{Error: friendlyTurnError(err)})
 			return
 		}
 		writeJSON(w, http.StatusOK, parentMessageResponse{Reply: reply})
@@ -61,18 +60,25 @@ func handleWhatsAppMessage(w http.ResponseWriter, r *http.Request) {
 	agentTurnMu.Lock()
 	defer agentTurnMu.Unlock()
 
-	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Minute)
+	ctx, cancel := context.WithTimeout(r.Context(), turnTimeout)
 	defer cancel()
+
+	cid := req.ConversationID
+	if cid == "" {
+		cid = "whatsapp"
+	}
 
 	sess, err := agentsession.New(ctx, agentsession.Config{
 		Provider:     provider,
 		WorkingDir:   workDir,
 		SystemPrompt: whatsappSystemPrompt(s.Child),
 		SessionID:    req.ConversationID, // warm-resume the WhatsApp thread
-		Tools:        []agentsession.Tool{webSearchTool(), readImageTool(s.Engine), notifyTool(), shellTool()},
+		Tools:        withLiveStatus("whatsapp:"+req.ConversationID, []agentsession.Tool{webSearchTool(), readImageTool(s.Engine), notifyTool(), shellTool()}),
 	})
 	if err != nil {
-		writeJSON(w, http.StatusOK, parentMessageResponse{Error: err.Error()})
+		msg := friendlyTurnError(err)
+		persistConversation("parent", cid, withReply(req.Messages, msg))
+		writeJSON(w, http.StatusOK, parentMessageResponse{Error: msg})
 		return
 	}
 	defer sess.Close()
@@ -83,12 +89,11 @@ func handleWhatsAppMessage(w http.ResponseWriter, r *http.Request) {
 	}
 	reply, err := sess.Ask(ctx, history)
 	if err != nil {
-		writeJSON(w, http.StatusOK, parentMessageResponse{Error: err.Error()})
+		// Persist the turn even on failure — see chat.go's parent handler for why.
+		msg := friendlyTurnError(err)
+		persistConversation("parent", cid, withReply(req.Messages, msg))
+		writeJSON(w, http.StatusOK, parentMessageResponse{Error: msg})
 		return
-	}
-	cid := req.ConversationID
-	if cid == "" {
-		cid = "whatsapp"
 	}
 	persistConversation("parent", cid, withReply(req.Messages, reply))
 	writeJSON(w, http.StatusOK, parentMessageResponse{Reply: reply})

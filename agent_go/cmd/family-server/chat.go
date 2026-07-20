@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -15,6 +16,28 @@ import (
 	"github.com/manishiitg/coding-agent-loop/agent_go/internal/enginedetect"
 	"github.com/manishiitg/mcpagent/llm"
 )
+
+// turnTimeout bounds a single agent turn. Generous on purpose: a turn can do
+// real batch work — e.g. processing every file in shared/inbox/, each needing
+// its own read_image call (roughly 1-2 min apiece) — so a short timeout would
+// routinely cut off legitimate work, not just runaway turns.
+const turnTimeout = 20 * time.Minute
+
+// friendlyTurnError converts a backend/agent error into a warm, non-technical
+// message safe to show the parent directly (mirrors the system prompt's "the
+// parent is NOT technical — hide the machinery" rule). The raw error is logged
+// server-side for debugging but never sent to the client.
+func friendlyTurnError(err error) string {
+	if err == nil {
+		return ""
+	}
+	log.Printf("[turn-error] %v", err)
+	msg := err.Error()
+	if strings.Contains(msg, "deadline exceeded") || strings.Contains(msg, "context canceled") {
+		return "That took longer than expected — there was a lot to get through. Try asking again, or ask me to do it in smaller batches (a few files at a time)."
+	}
+	return "Something went wrong on my end and I couldn't finish that. Please try again in a moment."
+}
 
 // parentSystemPrompt builds the Parent Mode "Quill" instruction for the agent.
 func parentSystemPrompt(child *Child) string {
@@ -75,7 +98,7 @@ func parentSystemPrompt(child *Child) string {
 		"- skills/backup/SKILL.md — back up the workspace (local git checkpoint, a private GitHub repo, or an object store like Cloudflare R2 / S3).\n" +
 		"- skills/publish/SKILL.md — publish a report or the academic map to a shareable destination (first publish is attended).\n" +
 		"- skills/notify/SKILL.md — notify the parent (via notify_user) at moments worth their attention.\n" +
-		"At the START of every conversation, run `ls shared/inbox/`; if it contains any files, process them with the process-file skill before doing anything else.\n" +
+		"Before EVERY reply — not just the first message of a conversation — quickly run `ls shared/inbox/`; if it contains any files, process them with the process-file skill before doing anything else, every single turn, for as long as this conversation continues.\n" +
 		childInfoNudge
 }
 
@@ -376,7 +399,7 @@ func handleParentMessage(w http.ResponseWriter, r *http.Request) {
 	agentTurnMu.Lock()
 	defer agentTurnMu.Unlock()
 
-	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Minute)
+	ctx, cancel := context.WithTimeout(r.Context(), turnTimeout)
 	defer cancel()
 
 	sess, err := agentsession.New(ctx, agentsession.Config{
@@ -384,10 +407,14 @@ func handleParentMessage(w http.ResponseWriter, r *http.Request) {
 		WorkingDir:   workDir,
 		SystemPrompt: parentSystemPrompt(s.Child),
 		SessionID:    req.ConversationID, // warm-resume the same conversation
-		Tools:        []agentsession.Tool{setSubjectTopic, setChildProfile, openFile, suggestActions, webSearchTool(), readImageTool(s.Engine), notifyTool(), shellTool()},
+		Tools: withLiveStatus("parent:"+req.ConversationID, []agentsession.Tool{
+			setSubjectTopic, setChildProfile, openFile, suggestActions, webSearchTool(), readImageTool(s.Engine), notifyTool(), shellTool(),
+		}),
 	})
 	if err != nil {
-		writeJSON(w, http.StatusOK, parentMessageResponse{Error: err.Error()})
+		msg := friendlyTurnError(err)
+		persistConversation("parent", req.ConversationID, withReply(req.Messages, msg))
+		writeJSON(w, http.StatusOK, parentMessageResponse{Error: msg})
 		return
 	}
 	defer sess.Close() // per-turn agent only; shared bridge + warm tmux persist
@@ -396,19 +423,16 @@ func handleParentMessage(w http.ResponseWriter, r *http.Request) {
 	for _, m := range req.Messages {
 		history = append(history, agentsession.Message{Role: m.Role, Text: m.Text})
 	}
-	// Deterministically trigger inbox processing by embedding the directive in the
-	// turn the agent directly acts on — coding agents reliably follow the user
-	// message, not a proactive system-prompt line. The persisted transcript keeps
-	// the parent's original message (this only affects what we send the agent).
-	if inbox := inboxFiles(); len(inbox) > 0 && len(history) > 0 {
-		history[len(history)-1].Text += "\n\n[Before replying: there are unprocessed uploads in shared/inbox/ (" +
-			strings.Join(inbox, ", ") + "). Process each one now by following skills/process-file/SKILL.md — read it, classify, " +
-			"move it into shared/materials/<subject>/<topic>/, and write a .meta.json — then continue with your reply.]"
-	}
 
 	reply, err := sess.Ask(ctx, history)
 	if err != nil {
-		writeJSON(w, http.StatusOK, parentMessageResponse{Error: err.Error()})
+		// Persist the turn even on failure: the parent's own message must never
+		// silently vanish from the transcript, and any background work the agent
+		// already completed before the deadline (e.g. inbox files it already
+		// filed) must not look like it never happened.
+		msg := friendlyTurnError(err)
+		persistConversation("parent", req.ConversationID, withReply(req.Messages, msg))
+		writeJSON(w, http.StatusOK, parentMessageResponse{Error: msg})
 		return
 	}
 
@@ -429,7 +453,7 @@ func fallbackParentMessage(w http.ResponseWriter, r *http.Request, s familyState
 	_ = os.MkdirAll(workDir, 0o700)
 	reply, err := enginedetect.Chat(r.Context(), s.Engine, "", workDir, parentSystemPrompt(s.Child), req.Messages)
 	if err != nil {
-		writeJSON(w, http.StatusOK, parentMessageResponse{Error: err.Error()})
+		writeJSON(w, http.StatusOK, parentMessageResponse{Error: friendlyTurnError(err)})
 		return
 	}
 	writeJSON(w, http.StatusOK, parentMessageResponse{Reply: reply})

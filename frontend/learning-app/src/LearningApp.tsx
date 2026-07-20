@@ -154,6 +154,7 @@ export default function LearningApp() {
   const [focusInput, setFocusInput] = useState('')
   const [parentMessages, setParentMessages] = useState<ParentMsg[]>([])
   const [sending, setSending] = useState(false)
+  const [liveStatus, setLiveStatus] = useState('')
   const [suggestions, setSuggestions] = useState<{ label: string; message: string }[]>([])
   const [menuOpen, setMenuOpen] = useState(false)
   const [waOpen, setWaOpen] = useState(false)
@@ -396,6 +397,12 @@ export default function LearningApp() {
     setFocusInput('')
     setSuggestions([])
     setSending(true)
+    setLiveStatus('')
+    // Live "what Quill is doing right now" line, sourced from the same turn's
+    // tool handlers — purely cosmetic, so a stream error is silently ignored.
+    const statusSource = new EventSource(`${FAMILY_API}/api/parent/status?conversation_id=${encodeURIComponent(conversationId)}`)
+    statusSource.onmessage = (ev) => setLiveStatus(ev.data)
+    statusSource.onerror = () => statusSource.close()
     const history = next.filter((m) => m.role === 'user' || m.role === 'assistant').map((m) => ({ role: m.role, text: m.text ?? '' }))
     fetch(`${FAMILY_API}/api/parent/message`, {
       method: 'POST',
@@ -416,7 +423,7 @@ export default function LearningApp() {
         setParentMessages((cur) => [...cur, ...toolMsgs, { role: 'assistant', text: data.error ? `Sorry — ${data.error}` : (data.reply || '(no response)') }])
       })
       .catch(() => setParentMessages((cur) => [...cur, { role: 'assistant', text: 'Sorry — I couldn’t reach the learning engine.' }]))
-      .finally(() => setSending(false))
+      .finally(() => { setSending(false); setLiveStatus(''); statusSource.close() })
   }
 
   const sendParentMessage = (event: FormEvent<HTMLFormElement>) => {
@@ -653,7 +660,7 @@ export default function LearningApp() {
                 <div className="fl-msg is-agent">
                   <span className="fl-msg-avatar is-sun"><Sun size={18} /></span>
                   <div className="fl-msg-col">
-                    <div className="fl-thinking"><img src="/sparkquill-loader.svg" alt="" width={38} height={38} /> <span>Quill is thinking…</span></div>
+                    <div className="fl-thinking"><img src="/sparkquill-loader.svg" alt="" width={38} height={38} /> <span>{liveStatus ? `Quill is: ${liveStatus}…` : 'Quill is thinking…'}</span></div>
                   </div>
                 </div>
               )}

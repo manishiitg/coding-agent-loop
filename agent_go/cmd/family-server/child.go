@@ -6,7 +6,6 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"time"
 
 	"github.com/manishiitg/coding-agent-loop/agent_go/internal/agentsession"
 	"github.com/manishiitg/coding-agent-loop/agent_go/internal/enginedetect"
@@ -46,7 +45,7 @@ func handleChildMessage(w http.ResponseWriter, r *http.Request) {
 		// Plain-completion fallback (no tools) for engines not yet mapped.
 		reply, err := enginedetect.Chat(r.Context(), s.Engine, "", workDir, childSystemPrompt(s.Child), req.Messages)
 		if err != nil {
-			writeJSON(w, http.StatusOK, parentMessageResponse{Error: err.Error()})
+			writeJSON(w, http.StatusOK, parentMessageResponse{Error: friendlyTurnError(err)})
 			return
 		}
 		writeJSON(w, http.StatusOK, parentMessageResponse{Reply: reply})
@@ -57,7 +56,7 @@ func handleChildMessage(w http.ResponseWriter, r *http.Request) {
 	agentTurnMu.Lock()
 	defer agentTurnMu.Unlock()
 
-	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Minute)
+	ctx, cancel := context.WithTimeout(r.Context(), turnTimeout)
 	defer cancel()
 
 	sess, err := agentsession.New(ctx, agentsession.Config{
@@ -65,10 +64,12 @@ func handleChildMessage(w http.ResponseWriter, r *http.Request) {
 		WorkingDir:   workDir,
 		SystemPrompt: childSystemPrompt(s.Child),
 		SessionID:    req.ConversationID, // warm-resume the same child session
-		Tools:        []agentsession.Tool{childShellTool(), notifyTool()},
+		Tools:        withLiveStatus("child:"+req.ConversationID, []agentsession.Tool{childShellTool(), notifyTool()}),
 	})
 	if err != nil {
-		writeJSON(w, http.StatusOK, parentMessageResponse{Error: err.Error()})
+		msg := friendlyTurnError(err)
+		persistConversation("child", req.ConversationID, withReply(req.Messages, msg))
+		writeJSON(w, http.StatusOK, parentMessageResponse{Error: msg})
 		return
 	}
 	defer sess.Close()
@@ -80,7 +81,10 @@ func handleChildMessage(w http.ResponseWriter, r *http.Request) {
 
 	reply, err := sess.Ask(ctx, history)
 	if err != nil {
-		writeJSON(w, http.StatusOK, parentMessageResponse{Error: err.Error()})
+		// Persist the turn even on failure — see chat.go's parent handler for why.
+		msg := friendlyTurnError(err)
+		persistConversation("child", req.ConversationID, withReply(req.Messages, msg))
+		writeJSON(w, http.StatusOK, parentMessageResponse{Error: msg})
 		return
 	}
 	persistConversation("child", req.ConversationID, withReply(req.Messages, reply))

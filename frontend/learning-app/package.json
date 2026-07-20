@@ -11,8 +11,8 @@
   },
   "dependencies": {
     "lucide-react": "*",
-    "react": "*",
-    "react-dom": "*",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0",
     "react-markdown": "^10.1.0",
     "remark-gfm": "^4.0.1"
   },

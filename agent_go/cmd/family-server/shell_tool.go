@@ -57,15 +57,20 @@ func runShellOutput(cmd *exec.Cmd) (string, error) {
 
 // childShellTool wires the EXISTING execute_shell_command for CHILD MODE, hardened
 // with the reused workspace/security.Isolator (macOS sandbox-exec / Linux
-// namespaces). The child may read its lessons and practice (shared/) and read and
-// write its own work (child/), but the sandbox denies parent/ entirely — so the
-// child agent can never reach the parent's answer keys or private notes. Also
-// gets read-only access to the real machine Downloads folder (see
-// hostDownloadsPath), same grant AgentWorks gives a workflow session.
+// namespaces). The child may read/write its own work (child/), but shared/ is
+// readable ONLY for paths the parent has explicitly approved
+// (parent/approved-for-child.json, via the approve_for_child tool) — this is a
+// REAL access boundary, not just a UI filter: "give to child" changes what the
+// sandbox actually permits, so the parent's agent can't reason "it's already
+// under shared/, so it's already accessible" — until approved, it genuinely
+// isn't. The sandbox denies parent/ entirely — the child can never reach the
+// parent's answer keys or private notes. Also gets read-only access to the
+// real machine Downloads folder (see hostDownloadsPath), same grant AgentWorks
+// gives a workflow session.
 func childShellTool() agentsession.Tool {
 	t := shellTool()
-	t.Description = "Run a shell command in your learning workspace. You can read your lessons and practice under " +
-		"shared/ and read or write your own work under child/attempts/. You cannot see the parent's answer keys."
+	t.Description = "Run a shell command in your learning workspace. You can read the lessons and practice your parent " +
+		"has shared with you, and read or write your own work under child/attempts/. You cannot see the parent's answer keys."
 	t.Handler = func(ctx context.Context, args map[string]interface{}) (string, error) {
 		command, _ := args["command"].(string)
 		if strings.TrimSpace(command) == "" {
@@ -73,7 +78,7 @@ func childShellTool() agentsession.Tool {
 		}
 		cctx, cancel := context.WithTimeout(ctx, 90*time.Second)
 		defer cancel()
-		readPaths := []string{"shared", "child"}
+		readPaths := append([]string{"child"}, loadApprovedForChild()...)
 		blockedWrites := []string{}
 		if dl := hostDownloadsPath(); dl != "" {
 			readPaths = append(readPaths, dl)

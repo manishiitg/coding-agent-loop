@@ -263,6 +263,10 @@ export default function LearningApp() {
   const [drawerTab, setDrawerTab] = useState<DrawerTab>('map')
   const [filesView, setFilesView] = useState<'subjects' | 'uploaded' | 'reference' | 'advanced'>('subjects')
   const [prefsContent, setPrefsContent] = useState<string | null>(null)
+  const [childFiles, setChildFiles] = useState<string[]>([])
+  const [childViewerPath, setChildViewerPath] = useState<string | null>(null)
+  const [childViewerContent, setChildViewerContent] = useState<{ isText: boolean; content: string } | null>(null)
+  const [childTreeRefreshKey, setChildTreeRefreshKey] = useState(0)
   const [filesSubjectFilter, setFilesSubjectFilter] = useState('')
   const [treeNodes, setTreeNodes] = useState<TreeNode[]>([])
   const [viewerPath, setViewerPath] = useState<string | null>(null)
@@ -301,6 +305,40 @@ export default function LearningApp() {
       .catch(() => { if (!cancelled) setPrefsContent('') })
     return () => { cancelled = true }
   }, [filesView, mapRefreshKey])
+
+  // Load the child's own scoped file list (only what the parent has approved,
+  // plus the child's own saved attempts) — refetches whenever the tutor screen
+  // is entered or a child turn just completed.
+  useEffect(() => {
+    if (screen !== 'tutor') return
+    let cancelled = false
+    fetch(`${FAMILY_API}/api/child/workspace/tree`)
+      .then((r) => r.json())
+      .then((nodes: TreeNode[]) => {
+        if (cancelled) return
+        const files: string[] = []
+        const walk = (ns: TreeNode[]) => ns?.forEach((n) => {
+          if (n.type === 'file' && !n.name.endsWith('.meta.json')) files.push(n.path)
+          if (n.children) walk(n.children)
+        })
+        walk(nodes)
+        setChildFiles(files)
+      })
+      .catch(() => { if (!cancelled) setChildFiles([]) })
+    return () => { cancelled = true }
+  }, [screen, childTreeRefreshKey])
+
+  // Load the selected file for the child's own inline viewer.
+  useEffect(() => {
+    if (!childViewerPath) { setChildViewerContent(null); return }
+    let cancelled = false
+    setChildViewerContent(null)
+    fetch(`${FAMILY_API}/api/workspace/file?path=${encodeURIComponent(childViewerPath)}`)
+      .then((r) => r.json())
+      .then((d) => { if (!cancelled) setChildViewerContent({ isText: !!d.is_text, content: d.content ?? '' }) })
+      .catch(() => { if (!cancelled) setChildViewerContent({ isText: false, content: '' }) })
+    return () => { cancelled = true }
+  }, [childViewerPath])
 
   // Load the selected file for the drawer's Files viewer.
   useEffect(() => {
@@ -556,7 +594,7 @@ export default function LearningApp() {
         setChildMessages((cur) => [...cur, { role: 'assistant', text: data.error ? `Hmm, something went wrong — ${data.error}` : (data.reply || '(no response)') }])
       })
       .catch(() => setChildMessages((cur) => [...cur, { role: 'assistant', text: 'I couldn’t reach the tutor just now — try again in a moment.' }]))
-      .finally(() => setChildSending(false))
+      .finally(() => { setChildSending(false); setChildTreeRefreshKey((k) => k + 1) })
   }
 
   const sendChildMessage = (event: FormEvent<HTMLFormElement>) => {
@@ -885,6 +923,16 @@ export default function LearningApp() {
                     <div className="fl-viewer-bar">
                       <button className="fl-viewer-back" type="button" onClick={() => setViewerPath(null)}><ArrowLeft size={15} /> Files</button>
                       <span className="fl-viewer-name">{viewerPath.split('/').pop()}</span>
+                      {/^shared\/(tests|study|reports)\//.test(viewerPath) && (
+                        <button
+                          className="fl-give-to-child"
+                          type="button"
+                          disabled={sending}
+                          onClick={() => sendParentText(`Please give "${viewerPath.split('/').pop()}" to ${childName || 'my child'}.`)}
+                        >
+                          Give to {childName || 'child'}
+                        </button>
+                      )}
                     </div>
                     {/\.(png|jpe?g|gif|webp|svg|bmp)$/i.test(viewerPath) ? (
                       <img className="fl-viewer-img" src={`${FAMILY_API}/api/workspace/raw?path=${encodeURIComponent(viewerPath)}`} alt={viewerPath.split('/').pop() || ''} />
@@ -1128,15 +1176,67 @@ export default function LearningApp() {
               </form>
             </section>
             <aside className="fl-child-side">
-              <div className="fl-goal-card">
-                <span className="fl-goal-label">Today’s goal</span>
-                <strong>{topic}</strong>
-                <div className="fl-goal-progress">
-                  <div className="fl-goal-bar"><span style={{ width: '33%' }} /></div>
-                  <small>2 of 6 practice questions done</small>
+              {childViewerPath ? (
+                <div className="fl-viewer">
+                  <div className="fl-viewer-bar">
+                    <button className="fl-viewer-back" type="button" onClick={() => setChildViewerPath(null)}><ArrowLeft size={15} /> Back</button>
+                  </div>
+                  {IMAGE_PATH_RE.test(childViewerPath) ? (
+                    <img className="fl-viewer-img" src={`${FAMILY_API}/api/workspace/raw?path=${encodeURIComponent(childViewerPath)}`} alt="" />
+                  ) : !childViewerContent ? (
+                    <p className="fl-note">Loading…</p>
+                  ) : !childViewerContent.isText ? (
+                    <p className="fl-note">Can’t show this one here.</p>
+                  ) : (childViewerPath.endsWith('.html') || childViewerPath.endsWith('.htm')) ? (
+                    <iframe className="fl-viewer-frame" title="Preview" sandbox="allow-scripts" srcDoc={childViewerContent.content} />
+                  ) : childViewerPath.endsWith('.md') ? (
+                    <div className="fl-viewer-md"><Markdown text={childViewerContent.content} /></div>
+                  ) : (
+                    <pre className="fl-viewer-pre">{childViewerContent.content}</pre>
+                  )}
                 </div>
-                <button className="primary-button" type="button">Continue practice <ArrowRight size={18} /></button>
-              </div>
+              ) : (
+                <>
+                  <div className="fl-goal-card">
+                    <span className="fl-goal-label">Today’s goal</span>
+                    <strong>{topic || 'Keep learning!'}</strong>
+                  </div>
+                  {(() => {
+                    const materials = childFiles.filter((p) => p.startsWith('shared/'))
+                    const attempts = childFiles.filter((p) => p.startsWith('child/attempts/'))
+                    if (materials.length === 0 && attempts.length === 0) {
+                      return <p className="fl-child-note"><Sparkles size={15} /> Ask Quill what to work on next!</p>
+                    }
+                    return (
+                      <>
+                        {materials.length > 0 && (
+                          <section className="fl-asset-group">
+                            <p className="fl-drawer-label">Your materials</p>
+                            {materials.map((p) => {
+                              const { label, date } = parseAssetPath(p)
+                              return (
+                                <button key={p} type="button" className="fl-file-item" onClick={() => setChildViewerPath(p)}>
+                                  <FileText size={16} /><span>{label}{date ? ` · ${date}` : ''}</span>
+                                </button>
+                              )
+                            })}
+                          </section>
+                        )}
+                        {attempts.length > 0 && (
+                          <section className="fl-asset-group">
+                            <p className="fl-drawer-label">Your work</p>
+                            {attempts.map((p) => (
+                              <button key={p} type="button" className="fl-file-item" onClick={() => setChildViewerPath(p)}>
+                                <FileText size={16} /><span>{(p.split('/').pop() || p).replace(/\.[a-z0-9]+$/i, '')}</span>
+                              </button>
+                            ))}
+                          </section>
+                        )}
+                      </>
+                    )
+                  })()}
+                </>
+              )}
               <p className="fl-child-note"><Sparkles size={15} /> Take your time. It’s okay to ask for hints — that’s how you learn.</p>
             </aside>
           </div>

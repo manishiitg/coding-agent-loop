@@ -3414,6 +3414,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		// Without this, execution agents always get workspace root as their shell cwd.
 		workflowCtx = context.WithValue(workflowCtx, common.ChatSessionIDKey, sessionID)
 		if dest := notificationDestinationFromQuery(req, currentUserID); dest != nil {
+			virtualtools.RegisterSessionNotificationDestination(sessionID, dest)
 			workflowCtx = context.WithValue(workflowCtx, virtualtools.BotNotificationDestinationKey, dest)
 		}
 
@@ -5469,6 +5470,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		agentCtx = context.WithValue(agentCtx, common.UserIDKey, currentUserID)
 		agentCtx = context.WithValue(agentCtx, common.ChatSessionIDKey, sessionID)
 		if dest := notificationDestinationFromQuery(req, currentUserID); dest != nil {
+			virtualtools.RegisterSessionNotificationDestination(sessionID, dest)
 			agentCtx = context.WithValue(agentCtx, virtualtools.BotNotificationDestinationKey, dest)
 		}
 		logfWithContext(queryLogCtx, "[USER_ID_DEBUGGING] Main agent: injected UserIDKey=%q, ChatSessionIDKey=%q into agentCtx", currentUserID, sessionID)
@@ -6864,6 +6866,7 @@ func (api *StreamingAPI) cleanupInactiveSessionsAt(now time.Time) {
 
 	for _, sessionID := range sessionsToEvictRuntime {
 		workspace.ClearSessionShellConfig(sessionID)
+		virtualtools.DeleteSessionNotificationDestination(sessionID)
 		if api.runtimeCoordinator != nil {
 			api.runtimeCoordinator.Evict(sessionID)
 		}

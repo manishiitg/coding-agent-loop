@@ -6628,6 +6628,11 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 						destination.SlackWebhook = &services.SlackWebhookDest{SecretName: secretName, URL: secretValue}
 					}
 				}
+				var currentWebhook *services.SlackWebhookDest
+				if secretName != "" {
+					currentWebhook = &services.SlackWebhookDest{SecretName: secretName, URL: secretValue}
+				}
+				virtualtools.UpdateSessionSlackWebhook(iwm.sessionID, currentWebhook)
 
 				anyChanged = true
 				if secretName == "" {

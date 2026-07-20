@@ -9,6 +9,7 @@ import (
 
 	"github.com/manishiitg/coding-agent-loop/agent_go/cmd/server/services"
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/common"
+	mcpexecutor "github.com/manishiitg/mcpagent/executor"
 )
 
 type testUserNotificationConnector struct {
@@ -390,6 +391,48 @@ func TestHandleNotifyUserSendsWorkflowSlackWebhook(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("slack_webhook missing from delivered: %v", result.Delivered)
+	}
+}
+
+func TestHandleNotifyUserUsesSameSessionWebhookAcrossBridgeContext(t *testing.T) {
+	const sessionID = "builder-slack-refresh-bridge-test"
+	DeleteSessionNotificationDestination(sessionID)
+	t.Cleanup(func() { DeleteSessionNotificationDestination(sessionID) })
+
+	RegisterSessionNotificationDestination(sessionID, &services.NotificationDestination{UserID: "user-1"})
+	UpdateSessionSlackWebhook(sessionID, &services.SlackWebhookDest{
+		SecretName: "SLACK_NOTIFICATION_WEBHOOK_URL",
+		URL:        "https://hooks.slack.com/services/T123/B456/session-secret",
+	})
+
+	original := sendRichSlackIncomingWebhook
+	t.Cleanup(func() { sendRichSlackIncomingWebhook = original })
+	called := false
+	sendRichSlackIncomingWebhook = func(_ context.Context, webhookURL, message string, _ services.SlackWebhookContent) (string, error) {
+		called = true
+		if webhookURL != "https://hooks.slack.com/services/T123/B456/session-secret" {
+			t.Fatalf("webhook URL = %q, want refreshed session webhook", webhookURL)
+		}
+		if message != "Same-turn notification" {
+			t.Fatalf("message = %q", message)
+		}
+		return "webhook_ok", nil
+	}
+
+	// This is the context shape created by mcpagent's per-tool HTTP bridge: it
+	// contains the trusted session identity, not the original agentCtx values.
+	ctx := mcpexecutor.WithSessionID(context.Background(), sessionID)
+	raw, err := handleNotifyUser(ctx, map[string]interface{}{
+		"message_for_user": "Same-turn notification",
+	})
+	if err != nil {
+		t.Fatalf("handleNotifyUser: %v", err)
+	}
+	if !called {
+		t.Fatalf("Slack webhook was not called; result=%s", raw)
+	}
+	if !strings.Contains(raw, `"slack_webhook"`) {
+		t.Fatalf("result does not report Slack delivery: %s", raw)
 	}
 }
 

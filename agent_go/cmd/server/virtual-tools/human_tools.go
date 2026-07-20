@@ -11,6 +11,7 @@ import (
 
 	"github.com/manishiitg/coding-agent-loop/agent_go/cmd/server/services"
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/common"
+	mcpexecutor "github.com/manishiitg/mcpagent/executor"
 
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 )
@@ -581,6 +582,16 @@ func NotificationDestinationFromContext(ctx context.Context) *services.Notificat
 	var dest *services.NotificationDestination
 	if explicit, ok := ctx.Value(BotNotificationDestinationKey).(*services.NotificationDestination); ok && explicit != nil {
 		dest = cloneNotificationDestination(explicit)
+	}
+	// Coding-agent tools execute through a separate HTTP request context. The
+	// bridge preserves the trusted session ID, but not arbitrary values from the
+	// original agent context, so resolve the latest session destination here.
+	sessionID, _ := ctx.Value(common.ChatSessionIDKey).(string)
+	if strings.TrimSpace(sessionID) == "" {
+		sessionID = mcpexecutor.SessionIDFromContext(ctx)
+	}
+	if current := sessionNotificationDestination(sessionID); current != nil {
+		dest = current
 	}
 	if uid, ok := ctx.Value(common.UserIDKey).(string); ok && uid != "" {
 		if dest == nil {

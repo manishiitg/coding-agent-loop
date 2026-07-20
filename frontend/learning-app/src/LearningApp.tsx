@@ -638,7 +638,6 @@ export default function LearningApp() {
 
             <form className="fl-composer" onSubmit={sendParentMessage}>
               <input ref={fileInputRef} type="file" multiple accept="image/*,application/pdf" onChange={onFilesSelected} style={{ display: 'none' }} />
-              <button className="composer-icon" type="button" aria-label="New conversation" title="Start a new conversation" onClick={startNewConversation} disabled={sending}><Plus size={19} /></button>
               <button className="composer-icon" type="button" aria-label="Attach a photo or PDF" onClick={onPickFiles} disabled={uploading}><Paperclip size={19} /></button>
               <input
                 aria-label="Message the learning guide"
@@ -666,13 +665,6 @@ export default function LearningApp() {
             <div className="fl-drawer-scroll">
               {drawerTab === 'assets' && (
                 <>
-                  <section className="fl-context-card">
-                    <span className="tool-label"><Check size={15} strokeWidth={3} /> Subject &amp; Topic tool</span>
-                    <dl>
-                      <div><dt>Subject</dt><dd>{subject || 'Not set yet'}</dd></div>
-                      <div><dt>Current topic</dt><dd>{topic || 'Not set yet'}</dd></div>
-                    </dl>
-                  </section>
                   {(() => {
                     if (wsFiles.length === 0) {
                       return <p className="fl-note">No materials yet. Use the attach button to add photos or PDFs — they’ll appear here, organized by subject and topic, for Quill to read.</p>
@@ -697,13 +689,6 @@ export default function LearningApp() {
 
               {drawerTab === 'map' && (
                 <>
-                  <section className="fl-context-card">
-                    <span className="tool-label"><Check size={15} strokeWidth={3} /> Subject &amp; Topic tool</span>
-                    <dl>
-                      <div><dt>Subject</dt><dd>{subject || 'Not set yet'}</dd></div>
-                      <div><dt>Current topic</dt><dd>{topic || 'Not set yet'}</dd></div>
-                    </dl>
-                  </section>
                   <p className="fl-drawer-label">Academic map · living view</p>
                   {(() => {
                     const bySubject: Record<string, { topics: Set<string>; count: number }> = {}

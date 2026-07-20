@@ -64,7 +64,7 @@ func handleChildMessage(w http.ResponseWriter, r *http.Request) {
 		Provider:     provider,
 		WorkingDir:   workDir,
 		SystemPrompt: childSystemPrompt(s.Child),
-		Tools:        []agentsession.Tool{childShellTool()},
+		Tools:        []agentsession.Tool{childShellTool(), notifyTool()},
 	})
 	if err != nil {
 		writeJSON(w, http.StatusOK, parentMessageResponse{Error: err.Error()})

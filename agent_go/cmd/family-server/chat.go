@@ -71,6 +71,8 @@ func parentSystemPrompt(child *Child) string {
 		"- skills/create-progress-report/SKILL.md — build an HTML progress report in shared/reports/ that appears in the left menu for both parent and child.\n" +
 		"- skills/create-academic-map/SKILL.md — (re)build the HTML academic map at shared/academic-map.html from the real materials.\n" +
 		"- skills/backup/SKILL.md — back up the workspace (local git checkpoint, a private GitHub repo, or an object store like Cloudflare R2 / S3).\n" +
+		"- skills/publish/SKILL.md — publish a report or the academic map to a shareable destination (first publish is attended).\n" +
+		"- skills/notify/SKILL.md — notify the parent (via notify_user) at moments worth their attention.\n" +
 		"At the START of every conversation, run `ls shared/inbox/`; if it contains any files, process them with the process-file skill before doing anything else.\n" +
 		childInfoNudge
 }
@@ -379,7 +381,7 @@ func handleParentMessage(w http.ResponseWriter, r *http.Request) {
 		Provider:     provider,
 		WorkingDir:   workDir,
 		SystemPrompt: parentSystemPrompt(s.Child),
-		Tools:        []agentsession.Tool{setSubjectTopic, setChildProfile, openFile, suggestActions, webSearchTool(), readImageTool(s.Engine), shellTool()},
+		Tools:        []agentsession.Tool{setSubjectTopic, setChildProfile, openFile, suggestActions, webSearchTool(), readImageTool(s.Engine), notifyTool(), shellTool()},
 	})
 	if err != nil {
 		writeJSON(w, http.StatusOK, parentMessageResponse{Error: err.Error()})

@@ -379,7 +379,7 @@ func handleParentMessage(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Minute)
 	defer cancel()
 
-	sess, cached, err := agentsession.Acquire(ctx, agentsession.Config{
+	sess, err := agentsession.New(ctx, agentsession.Config{
 		Provider:     provider,
 		WorkingDir:   workDir,
 		SystemPrompt: parentSystemPrompt(s.Child),
@@ -390,9 +390,7 @@ func handleParentMessage(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, parentMessageResponse{Error: err.Error()})
 		return
 	}
-	if !cached {
-		defer sess.Close() // uncached one-off session — cache owns cached ones
-	}
+	defer sess.Close() // per-turn agent only; shared bridge + warm tmux persist
 
 	history := make([]agentsession.Message, 0, len(req.Messages))
 	for _, m := range req.Messages {

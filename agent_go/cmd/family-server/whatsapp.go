@@ -64,7 +64,7 @@ func handleWhatsAppMessage(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Minute)
 	defer cancel()
 
-	sess, cached, err := agentsession.Acquire(ctx, agentsession.Config{
+	sess, err := agentsession.New(ctx, agentsession.Config{
 		Provider:     provider,
 		WorkingDir:   workDir,
 		SystemPrompt: whatsappSystemPrompt(s.Child),
@@ -75,9 +75,7 @@ func handleWhatsAppMessage(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, parentMessageResponse{Error: err.Error()})
 		return
 	}
-	if !cached {
-		defer sess.Close()
-	}
+	defer sess.Close()
 
 	history := make([]agentsession.Message, 0, len(req.Messages))
 	for _, m := range req.Messages {

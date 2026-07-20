@@ -33,6 +33,7 @@ import (
 	"github.com/manishiitg/mcpagent/executor"
 	"github.com/manishiitg/mcpagent/llm"
 	loggerv2 "github.com/manishiitg/mcpagent/logger/v2"
+	llmproviders "github.com/manishiitg/multi-llm-provider-go"
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 )
 
@@ -76,67 +77,35 @@ type Session struct {
 	logger   loggerv2.Logger
 	shutdown func()
 	closed   bool
-	resume   bool      // warm-resume mode: the coding agent keeps context across turns
-	id       string    // cache key (conversation id); "" for uncached one-off sessions
-	lastUsed time.Time // for LRU eviction of the session cache
+	resume   bool // warm-resume mode: the coding agent keeps context across turns
 }
 
-// New builds a ready-to-use Session: bridge binary + MCP config + executor
-// server + agent + registered tools. The caller must Close() it.
+// New builds a per-turn Session. Following the AgentWorks model, it reuses the
+// process-global executor / MCP bridge (started once, on first use) and creates
+// only the lightweight coding-agent for this turn. The bridge is long-lived and
+// shared; the Session is cheap and disposable. The caller must Close() it, which
+// closes ONLY the per-turn agent — never the shared bridge, and never the
+// provider-owned interactive (tmux) session, so a warm-resume conversation stays
+// warm across turns. Create one Session per turn (as AgentWorks rebuilds its
+// per-turn agent wrapper); a stable SessionID makes the provider resume the same
+// coding-agent CLI from its own owner registry.
 func New(ctx context.Context, cfg Config) (*Session, error) {
 	logger := cfg.Logger
 	if logger == nil {
 		logger = loggerv2.NewNoop()
 	}
 
-	// 1. Ensure the mcpbridge binary is available and advertise it via env so
-	//    BuildBridgeMCPConfig (called by the provider appender) can find it.
-	bridgePath, err := ensureBridgeBinary(logger)
-	if err != nil {
-		return nil, err
-	}
-	os.Setenv("MCP_BRIDGE_BINARY", bridgePath)
-
-	// 2. Generate a minimal MCP servers config. This session has no upstream MCP
-	//    servers — all tools are custom and resolved in-process — so an empty
-	//    server map is correct and makes the package cwd-independent.
-	mcpConfigPath, cleanupConfig, err := writeMinimalMCPConfig()
+	// Reuse the one shared executor/bridge (binary + MCP config + executor HTTP
+	// server + env), started once for the whole process.
+	b, err := ensureSharedBridge(logger)
 	if err != nil {
 		return nil, err
 	}
 
-	// 3. Pre-allocate the executor listener so we know the port before we build
-	//    the bridge env.
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		cleanupConfig()
-		return nil, fmt.Errorf("allocate executor listener: %w", err)
-	}
-	_, port, _ := net.SplitHostPort(listener.Addr().String())
-	hostURL := "http://127.0.0.1:" + port
-
-	// 4. Token + env. Our custom tools run on the host (not in Docker), so both
-	//    the in-Docker URL and the bridge (host) URL point at the same local
-	//    executor server.
-	apiToken := executor.GenerateAPIToken()
-	os.Setenv("MCP_API_URL", hostURL)
-	os.Setenv("MCP_API_TOKEN", apiToken)
-	os.Setenv("MCP_BRIDGE_API_URL", hostURL)
-
-	// 5. Start the executor HTTP server on the pre-allocated listener.
-	execShutdown, err := startExecutorServer(logger, mcpConfigPath, listener, apiToken)
-	if err != nil {
-		listener.Close()
-		cleanupConfig()
-		return nil, fmt.Errorf("start executor server: %w", err)
-	}
-	// Give the server a moment to begin serving before the agent runs.
-	time.Sleep(300 * time.Millisecond)
-
-	// 6. Create the agent. The provider integration appenders apply bridge-only
-	//    access automatically at generation time; WithCodeExecutionMode(true)
-	//    also builds the tool index. WithSessionID scopes the custom-tool
-	//    registry the bridge resolves against.
+	// Create the agent. The provider integration appenders apply bridge-only
+	// access automatically at generation time; WithCodeExecutionMode(true) also
+	// builds the tool index. WithSessionID scopes the custom-tool registry the
+	// bridge resolves against.
 	modelID := cfg.ModelID
 	if strings.TrimSpace(modelID) == "" {
 		modelID = llm.GetDefaultModel(cfg.Provider)
@@ -148,8 +117,6 @@ func New(ctx context.Context, cfg Config) (*Session, error) {
 		Context:  ctx,
 	})
 	if err != nil {
-		execShutdown()
-		cleanupConfig()
 		return nil, fmt.Errorf("initialize LLM: %w", err)
 	}
 
@@ -168,7 +135,8 @@ func New(ctx context.Context, cfg Config) (*Session, error) {
 	}
 	if resume {
 		// Keep the coding agent's interactive (tmux) session alive so the next
-		// turn resumes it with full context instead of cold-starting.
+		// turn resumes it with full context instead of cold-starting. The
+		// provider owns that session in its registry and reaps it on idle.
 		switch cfg.Provider {
 		case llm.ProviderClaudeCode:
 			opts = append(opts, mcpagent.WithClaudeCodePersistentInteractiveSession(true))
@@ -190,18 +158,16 @@ func New(ctx context.Context, cfg Config) (*Session, error) {
 		opts = append(opts, mcpagent.WithMaxTurns(cfg.MaxTurns))
 	}
 
-	agent, err := mcpagent.NewAgent(ctx, model, mcpConfigPath, opts...)
+	agent, err := mcpagent.NewAgent(ctx, model, b.mcpConfigPath, opts...)
 	if err != nil {
-		execShutdown()
-		cleanupConfig()
 		return nil, fmt.Errorf("create agent: %w", err)
 	}
 
-	// 7. Register the app-specific custom tools. This publishes them into the
-	//    session-scoped codeexec registry (agent.go: InitRegistryForSession) so
-	//    the executor server resolves /tools/custom/{name} calls to these
-	//    handlers, and adds them to the native bridge tool set (they must also
-	//    be listed in mcpagent bridgeTools to be exposed natively).
+	// Register the app-specific custom tools. This publishes them into the
+	// session-scoped codeexec registry (agent.go: InitRegistryForSession) so the
+	// shared executor server resolves /tools/custom/{name} calls to these
+	// handlers, and adds them to the native bridge tool set (they must also be
+	// listed in mcpagent bridgeTools to be exposed natively).
 	for _, t := range cfg.Tools {
 		category := t.Category
 		if strings.TrimSpace(category) == "" {
@@ -209,109 +175,141 @@ func New(ctx context.Context, cfg Config) (*Session, error) {
 		}
 		if err := agent.RegisterCustomTool(t.Name, t.Description, t.Params, t.Handler, category); err != nil {
 			agent.Close()
-			execShutdown()
-			cleanupConfig()
 			return nil, fmt.Errorf("register tool %q: %w", t.Name, err)
 		}
 	}
 
+	// Track the warm-resume owner so /api/reset can proactively close its tmux
+	// session (the provider otherwise reaps it on idle).
+	if resume {
+		rememberInteractiveOwner(sessionID, cfg.Provider)
+	}
+
 	s := &Session{
-		agent:  agent,
-		logger: logger,
-		resume: resume,
-		shutdown: func() {
-			agent.Close()
-			execShutdown()
-			cleanupConfig()
-		},
+		agent:    agent,
+		logger:   logger,
+		resume:   resume,
+		shutdown: agent.Close, // per-turn agent only; shared bridge + tmux persist
 	}
 	return s, nil
 }
 
-// ---------- warm-resume session cache ----------
+// ---------- process-global executor / MCP bridge + warm-owner tracking ----------
 //
-// A warm-resume session keeps a live coding-agent CLI (tmux) AND its in-process
-// executor/bridge server alive together across turns. Because New() allocates a
-// fresh executor port every call and Close() tears it down, creating a new
-// Session per HTTP request would leave the resumed CLI pointing at the previous
-// turn's dead bridge ("connection refused" the moment a resumed turn needs a
-// tool). Acquire fixes that: for a given conversation id it builds the Session
-// once and returns the SAME live Session (executor + tmux intact) on later turns.
-//
-// Turns are serialized by the caller (a global agent-turn mutex), so a cached
-// Session is only ever touched single-threaded.
+// AgentWorks runs ONE executor / MCP bridge for the whole process (its bridge is
+// the main server's own route set, wired once at startup) and keeps warm
+// coding-agent (tmux) sessions in the provider's owner registry, reaped by an
+// idle timeout — there is no LRU or size cap. SparkQuill mirrors that: a single
+// shared bridge (below), per-turn Sessions, and warm resume owned by the
+// provider. We keep only a set of owner ids so reset can close their tmux.
 
-const maxCachedSessions = 8
+// sharedBridge is the process-global executor/MCP bridge, created once.
+type sharedBridge struct {
+	mcpConfigPath string
+	shutdown      func() // executor + config cleanup; only run at process exit
+}
 
 var (
-	sessCacheMu sync.Mutex
-	sessCache   = map[string]*Session{}
+	bridgeOnce sync.Once
+	bridge     *sharedBridge
+	bridgeErr  error
+
+	ownerMu    sync.Mutex
+	warmOwners = map[string]llm.Provider{}
 )
 
-// Acquire returns a warm, reusable Session for cfg.SessionID: it is created on
-// the first turn and reused (with its executor + tmux session alive) on later
-// turns, so warm resume works even when a resumed turn needs a bridge tool. The
-// returned bool is true when the Session is cache-owned — the caller must NOT
-// Close it (the cache owns its lifecycle). When cfg.SessionID is empty there is
-// no warm resume to preserve, so Acquire returns a fresh uncached Session and
-// false; that caller must Close it as before.
-func Acquire(ctx context.Context, cfg Config) (*Session, bool, error) {
-	id := strings.TrimSpace(cfg.SessionID)
-	if id == "" {
-		s, err := New(ctx, cfg)
-		return s, false, err
-	}
+// ensureSharedBridge starts the process-global executor / MCP bridge exactly
+// once and returns it on every later call. Following AgentWorks — whose bridge
+// is the main server's own route set, wired once at startup — the bridge binary,
+// MCP config, executor HTTP server, and the MCP_* env the CLIs read are set up a
+// single time and shared by every conversation and skill run. The persistent
+// coding-agent CLIs call back into this always-alive endpoint, so a resumed turn
+// never hits a dead bridge. It is deliberately never torn down per turn.
+func ensureSharedBridge(logger loggerv2.Logger) (*sharedBridge, error) {
+	bridgeOnce.Do(func() {
+		bridgePath, err := ensureBridgeBinary(logger)
+		if err != nil {
+			bridgeErr = err
+			return
+		}
+		os.Setenv("MCP_BRIDGE_BINARY", bridgePath)
 
-	sessCacheMu.Lock()
-	defer sessCacheMu.Unlock()
+		// No upstream MCP servers — all tools are custom and resolved in-process.
+		mcpConfigPath, cleanupConfig, err := writeMinimalMCPConfig()
+		if err != nil {
+			bridgeErr = err
+			return
+		}
 
-	if s, ok := sessCache[id]; ok && !s.closed {
-		s.lastUsed = time.Now()
-		return s, true, nil
-	}
+		listener, err := net.Listen("tcp", "127.0.0.1:0")
+		if err != nil {
+			cleanupConfig()
+			bridgeErr = fmt.Errorf("allocate executor listener: %w", err)
+			return
+		}
+		_, port, _ := net.SplitHostPort(listener.Addr().String())
+		hostURL := "http://127.0.0.1:" + port
 
-	s, err := New(ctx, cfg)
-	if err != nil {
-		return nil, false, err
-	}
-	s.id = id
-	s.lastUsed = time.Now()
-	sessCache[id] = s
-	evictLocked()
-	return s, true, nil
+		// Custom tools run on the host, so the in-Docker URL and the bridge (host)
+		// URL both point at this one executor server.
+		apiToken := executor.GenerateAPIToken()
+		os.Setenv("MCP_API_URL", hostURL)
+		os.Setenv("MCP_API_TOKEN", apiToken)
+		os.Setenv("MCP_BRIDGE_API_URL", hostURL)
+
+		execShutdown, err := startExecutorServer(logger, mcpConfigPath, listener, apiToken)
+		if err != nil {
+			listener.Close()
+			cleanupConfig()
+			bridgeErr = fmt.Errorf("start executor server: %w", err)
+			return
+		}
+		time.Sleep(300 * time.Millisecond) // let it begin serving before first turn
+
+		bridge = &sharedBridge{
+			mcpConfigPath: mcpConfigPath,
+			shutdown: func() {
+				execShutdown()
+				cleanupConfig()
+			},
+		}
+	})
+	return bridge, bridgeErr
 }
 
-// evictLocked closes the least-recently-used sessions beyond the cap. Caller
-// holds sessCacheMu. The just-inserted session is the most-recently-used, so it
-// is never the eviction target.
-func evictLocked() {
-	for len(sessCache) > maxCachedSessions {
-		var oldestID string
-		var oldest time.Time
-		for id, s := range sessCache {
-			if oldestID == "" || s.lastUsed.Before(oldest) {
-				oldestID, oldest = id, s.lastUsed
-			}
-		}
-		victim := sessCache[oldestID]
-		delete(sessCache, oldestID)
-		if victim != nil {
-			victim.teardown()
-		}
-	}
+// rememberInteractiveOwner records a warm-resume owner (conversation id + its
+// provider) so CloseAllInteractiveSessions can proactively close its tmux
+// session on reset. This is just a set of ids, not a session cache.
+func rememberInteractiveOwner(sessionID string, provider llm.Provider) {
+	ownerMu.Lock()
+	warmOwners[sessionID] = provider
+	ownerMu.Unlock()
 }
 
-// CloseAllSessions tears down every cached session. Call on reset/shutdown.
-func CloseAllSessions() {
-	sessCacheMu.Lock()
-	victims := make([]*Session, 0, len(sessCache))
-	for id, s := range sessCache {
-		victims = append(victims, s)
-		delete(sessCache, id)
+// CloseAllInteractiveSessions closes every warm coding-agent (tmux) session we
+// have started, via the provider's owner-scoped close. Use on reset/shutdown for
+// a clean slate; absent this call the provider reaps them on idle anyway. There
+// is no LRU or size cap here — matching AgentWorks.
+func CloseAllInteractiveSessions() {
+	ownerMu.Lock()
+	owners := make(map[string]llm.Provider, len(warmOwners))
+	for id, p := range warmOwners {
+		owners[id] = p
 	}
-	sessCacheMu.Unlock()
-	for _, s := range victims {
-		s.teardown()
+	warmOwners = map[string]llm.Provider{}
+	ownerMu.Unlock()
+
+	for id, p := range owners {
+		switch p {
+		case llm.ProviderClaudeCode:
+			llmproviders.CloseClaudeCodeInteractiveSessionForOwner(id, "reset")
+		case llm.ProviderCodexCLI:
+			llmproviders.CloseCodexCLIInteractiveSessionForOwner(id, "reset")
+		case llm.ProviderCursorCLI:
+			llmproviders.CloseCursorCLIInteractiveSessionForOwner(id, "reset")
+		case llm.ProviderPiCLI:
+			llmproviders.ClosePiCLIInteractiveSessionForOwner(id, "reset")
+		}
 	}
 }
 
@@ -363,28 +361,11 @@ func sanitizeReply(reply string) string {
 // usage stats). May be nil after Close.
 func (s *Session) Agent() *mcpagent.Agent { return s.agent }
 
-// Close tears down the agent and the executor server. Safe to call more than
-// once. A cached (warm-resume) session is normally closed only by the cache
-// (eviction / CloseAllSessions); if closed directly it also drops its cache
-// entry so a later Acquire rebuilds it instead of handing back a dead session.
+// Close disposes the per-turn agent. Safe to call more than once. It closes ONLY
+// this turn's agent — never the process-global bridge and never the provider's
+// interactive (tmux) session, which is owned by the provider registry and
+// persists so a warm-resume conversation stays warm across turns.
 func (s *Session) Close() {
-	if s == nil {
-		return
-	}
-	if s.id != "" {
-		sessCacheMu.Lock()
-		if sessCache[s.id] == s {
-			delete(sessCache, s.id)
-		}
-		sessCacheMu.Unlock()
-	}
-	s.teardown()
-}
-
-// teardown shuts down the agent + executor without touching the cache. Callers
-// that already hold sessCacheMu (evictLocked, CloseAllSessions) use this to
-// avoid re-locking the non-reentrant mutex.
-func (s *Session) teardown() {
 	if s == nil || s.closed {
 		return
 	}

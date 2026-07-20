@@ -240,8 +240,8 @@ func handleReset(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	// Tear down any live warm-resume sessions so a fresh setup starts clean.
-	agentsession.CloseAllSessions()
+	// Close any warm coding-agent (tmux) sessions so a fresh setup starts clean.
+	agentsession.CloseAllInteractiveSessions()
 	stateMu.Lock()
 	err := os.Remove(statePath())
 	stateMu.Unlock()

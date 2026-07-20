@@ -104,17 +104,46 @@ function Markdown({ text }: { text: string }) {
     if (lines[i].trim() === '') { i++; continue }
     const h = lines[i].match(/^(#{1,6})\s+(.*)/)
     if (h) { blocks.push(<p key={key++} className="md-h">{mdInline(h[2])}</p>); i++; continue }
+    // Unordered list — absorbs hard-wrapped continuation lines into the item, and
+    // keeps items in one <ul> across blank lines (agent replies are terminal-wrapped).
     if (/^\s*[-*]\s+/.test(lines[i])) {
-      const items: ReactNode[] = []
-      let j = 0
-      while (i < lines.length && /^\s*[-*]\s+/.test(lines[i])) { items.push(<li key={j++}>{mdInline(lines[i].replace(/^\s*[-*]\s+/, ''))}</li>); i++ }
-      blocks.push(<ul key={key++}>{items}</ul>); continue
+      const items: string[] = []
+      while (i < lines.length) {
+        const ln = lines[i]
+        const mk = ln.match(/^\s*[-*]\s+(.*)/)
+        if (mk) { items.push(mk[1]); i++; continue }
+        if (ln.trim() === '') {
+          let n = i + 1
+          while (n < lines.length && lines[n].trim() === '') n++
+          if (n < lines.length && /^\s*[-*]\s+/.test(lines[n])) { i = n; continue }
+          break
+        }
+        if (items.length) items[items.length - 1] += ' ' + ln.trim(); else items.push(ln.trim())
+        i++
+      }
+      blocks.push(<ul key={key++}>{items.map((it, j) => <li key={j}>{mdInline(it)}</li>)}</ul>)
+      continue
     }
-    if (/^\s*\d+\.\s+/.test(lines[i])) {
-      const items: ReactNode[] = []
-      let j = 0
-      while (i < lines.length && /^\s*\d+\.\s+/.test(lines[i])) { items.push(<li key={j++}>{mdInline(lines[i].replace(/^\s*\d+\.\s+/, ''))}</li>); i++ }
-      blocks.push(<ol key={key++}>{items}</ol>); continue
+    // Ordered list — same reflow, and preserve the starting number via `start`.
+    if (/^\s*\d+[.)]\s+/.test(lines[i])) {
+      const startM = lines[i].match(/^\s*(\d+)[.)]\s+/)
+      const start = startM ? parseInt(startM[1], 10) : 1
+      const items: string[] = []
+      while (i < lines.length) {
+        const ln = lines[i]
+        const mk = ln.match(/^\s*\d+[.)]\s+(.*)/)
+        if (mk) { items.push(mk[1]); i++; continue }
+        if (ln.trim() === '') {
+          let n = i + 1
+          while (n < lines.length && lines[n].trim() === '') n++
+          if (n < lines.length && /^\s*\d+[.)]\s+/.test(lines[n])) { i = n; continue }
+          break
+        }
+        if (items.length) items[items.length - 1] += ' ' + ln.trim(); else items.push(ln.trim())
+        i++
+      }
+      blocks.push(<ol key={key++} start={start}>{items.map((it, j) => <li key={j}>{mdInline(it)}</li>)}</ol>)
+      continue
     }
     const para: string[] = []
     while (i < lines.length && lines[i].trim() !== '' && !/^\s*[-*]\s+/.test(lines[i]) && !/^\s*\d+\.\s+/.test(lines[i]) && !/^#{1,6}\s/.test(lines[i])) { para.push(lines[i]); i++ }

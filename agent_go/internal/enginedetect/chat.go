@@ -21,7 +21,7 @@ type ChatMessage struct {
 // conversation, in workingDir. This is the first "dynamic" slice: a plain
 // completion (no bridge tools yet). Bridge-only tools + FolderGuard + streaming
 // are layered on in later slices.
-func Chat(ctx context.Context, provider, modelID, workingDir, systemPrompt string, history []ChatMessage) (string, error) {
+func Chat(ctx context.Context, provider, modelID, workingDir, systemPrompt string, history []ChatMessage, extraOpts ...llmtypes.CallOption) (string, error) {
 	provider = strings.ToLower(strings.TrimSpace(provider))
 
 	var llmProvider llm.Provider
@@ -99,6 +99,8 @@ func Chat(ctx context.Context, provider, modelID, workingDir, systemPrompt strin
 			Parts: []llmtypes.ContentPart{llmtypes.TextContent{Text: m.Text}},
 		})
 	}
+
+	callOpts = append(callOpts, extraOpts...)
 
 	callCtx, cancel := context.WithTimeout(ctx, 120*time.Second)
 	defer cancel()

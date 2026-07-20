@@ -3,19 +3,44 @@ package main
 import (
 	"context"
 	"fmt"
+	"log"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
-	"time"
 
 	"github.com/manishiitg/coding-agent-loop/agent_go/internal/agentsession"
 	"github.com/manishiitg/coding-agent-loop/agent_go/internal/enginedetect"
+	"github.com/manishiitg/mcpagent/llm"
 )
 
 var imageExts = map[string]bool{
 	".png": true, ".jpg": true, ".jpeg": true, ".webp": true,
 	".gif": true, ".bmp": true, ".heic": true, ".tiff": true,
+}
+
+// bridgeEnvKeys are the process-global vars agentsession sets to put the coding
+// agent in bridge-only mode (native Bash/Read/Write replaced by the sandboxed
+// bridge). A nested image-reading CLI must NOT inherit them, or its native
+// file-read/vision is disabled and it cannot open the image.
+var bridgeEnvKeys = []string{"MCP_BRIDGE_BINARY", "MCP_API_URL", "MCP_API_TOKEN", "MCP_BRIDGE_API_URL"}
+
+// withoutBridgeEnv runs fn with the bridge env vars cleared, then restores them.
+// Safe because agent turns are serialized (agentTurnMu) and the parent session
+// captured its env/config at startup.
+func withoutBridgeEnv(fn func() (string, error)) (string, error) {
+	saved := map[string]string{}
+	for _, k := range bridgeEnvKeys {
+		if v, ok := os.LookupEnv(k); ok {
+			saved[k] = v
+			_ = os.Unsetenv(k)
+		}
+	}
+	defer func() {
+		for k, v := range saved {
+			_ = os.Setenv(k, v)
+		}
+	}()
+	return fn()
 }
 
 // readImageTool lets the agent actually SEE an image. In the bridge-only chat
@@ -53,38 +78,25 @@ func readImageTool(engine string) agentsession.Tool {
 			if strings.TrimSpace(query) == "" {
 				query = "Transcribe ALL the text you can see (printed and handwritten) exactly, and briefly describe any diagrams, tables, or figures."
 			}
-			// Pass a path relative to the engine's working directory (the workspace)
-			// so the CLI is allowed to open it.
-			relPath, rerr := filepath.Rel(workspaceRoot(), abs)
-			if rerr != nil {
-				relPath = abs
-			}
-			prompt := "You are transcribing an image for a family learning app. Look at this image file in your working directory and " + query +
-				"\n\nImage: " + relPath +
+			// Pass the ABSOLUTE path as text — the coding CLI opens it with its native
+			// file-read/vision ability (the designed path for CLI providers). The
+			// image read runs through enginedetect.Chat with the shell/native tools
+			// ENABLED (not the bridge-only chat runtime, which disables them and would
+			// stop the CLI reading the file).
+			prompt := "You are transcribing an image for a family learning app. Open and look at the image file at this path using your file-read/vision ability, then " + query +
+				"\n\nImage path: " + abs +
 				"\n\nOnly report what is genuinely visible in the image — never invent content. If it is illegible, say so."
 
-			// For claude-code, exec the CLI directly with the image path — its native
-			// vision reads the local file. Going through enginedetect.Chat runs the CLI
-			// in a restricted mode that can't open the file. Other engines fall back.
-			if strings.EqualFold(strings.TrimSpace(engine), "claude-code") {
-				cctx, cancel := context.WithTimeout(ctx, 150*time.Second)
-				defer cancel()
-				cmd := exec.CommandContext(cctx, "claude", "-p", prompt)
-				cmd.Dir = workspaceRoot()
-				out, err := cmd.CombinedOutput()
-				text := strings.TrimSpace(string(out))
-				if err != nil && text == "" {
-					return "", fmt.Errorf("image read failed: %w", err)
-				}
-				if text == "" {
-					return "(the image reader returned nothing)", nil
-				}
-				return text, nil
-			}
-
-			reply, err := enginedetect.Chat(ctx, engine, "", workspaceRoot(),
-				"You are a careful transcriber of images for a family learning app. Report only what is truly visible.",
-				[]enginedetect.ChatMessage{{Role: "user", Text: prompt}})
+			reply, err := withoutBridgeEnv(func() (string, error) {
+				// Allow the CLI's native Read tool so it can actually open/view the
+				// image file (the tmux CLI runs --permission-mode dontAsk and only
+				// enables tools passed via --allowed-tools).
+				return enginedetect.Chat(ctx, engine, "", workspaceRoot(),
+					"You are a careful transcriber of images for a family learning app. Report only what is truly visible.",
+					[]enginedetect.ChatMessage{{Role: "user", Text: prompt}},
+					llm.WithAllowedTools("Read Glob"))
+			})
+			log.Printf("[read_image] %s err=%v chars=%d", filepath.Base(abs), err, len(reply))
 			if err != nil {
 				return "", fmt.Errorf("image read failed: %w", err)
 			}

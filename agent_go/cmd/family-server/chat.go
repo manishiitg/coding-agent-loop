@@ -61,7 +61,7 @@ func parentSystemPrompt(child *Child) string {
 		"- shared/study/<subject>/<topic>/ — save study material you create for " + name + " here.\n" +
 		"- shared/tests/<subject>/<topic>/ — save practice tests here.\n" +
 		"- parent/answer-keys/ and parent/notes/ — parent-only; keep answer keys, marking, and private notes here, never child-facing.\n" +
-		"Always create study material, tests, progress reports and the academic map as designed, self-contained, INTERACTIVE HTML (follow skills/_shared/html-design.md) — never plain text/markdown — because " + name + " uses it on screen.\n" +
+		"Before you create study material, a test, a progress report, or the academic map, you MUST read the matching skill file in skills/ (e.g. `cat skills/create-test/SKILL.md`) and follow it exactly. Always output designed, self-contained, INTERACTIVE HTML (per skills/_shared/html-design.md) — never plain text/markdown — because " + name + " uses it on screen; tests must record the child’s answers with the SQ helper.\n" +
 		"When you make material or a test, actually write the file, then call the open_file tool with its path so it opens on the right side for the parent, and tell them in plain words what you made. Keep file paths and technical details out of your reply unless the parent asks.\n" +
 		"At the END of every turn, call the suggest_actions tool with 2–4 recommended next steps for the parent (short button label + the message to send if clicked) based on the conversation — e.g. update the progress report, create a practice test on this topic, make study material, or open a specific file.\n" +
 		"You have skills — short how-to guides — in the skills/ folder. Read the relevant one and follow it exactly:\n" +

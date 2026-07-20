@@ -127,10 +127,10 @@ function Markdown({ text }: { text: string }) {
 // that triggers the matching agent skill.
 const QUICK_SKILLS = [
   { label: 'Understand progress', message: 'How is my child doing so far? Give me a coach-style read of the evidence.' },
-  { label: 'Create study material', message: 'Create interactive study material for the current subject and topic.' },
-  { label: 'Create a practice test', message: 'Create a practice test for the current subject and topic, with a separate answer key for me.' },
-  { label: 'Update progress report', message: 'Build an updated progress report for my child.' },
-  { label: 'Update academic map', message: 'Update the academic map from the current materials.' },
+  { label: 'Create study material', message: 'Create study material for the current subject and topic — follow your create-study-material skill and make it an interactive HTML page.' },
+  { label: 'Create a practice test', message: 'Create a practice test for the current subject and topic — follow your create-test skill: an interactive HTML page that records my child’s typed answers, plus a separate answer key for me.' },
+  { label: 'Update progress report', message: 'Build an updated progress report — follow your create-progress-report skill and make it a designed HTML page.' },
+  { label: 'Update academic map', message: 'Update the academic map — follow your create-academic-map skill (designed HTML at shared/academic-map.html).' },
 ]
 
 type ParentMsg = { role: 'user' | 'assistant' | 'tool'; text?: string; tool?: string; subject?: string; topic?: string; name?: string }
@@ -603,9 +603,10 @@ export default function LearningApp() {
                 >
                   {railOpen ? <PanelLeftClose size={18} /> : <PanelLeftOpen size={18} />}
                 </button>
+                <img className="fl-header-logo" src="/sparkquill-mark.svg" alt="" width={30} height={30} />
                 <div className="fl-toolbar-title">
-                  <strong>Parent Learning Guide</strong>
-                  <span>{childName || 'Your child'}{subject ? ` · ${subject}` : ''}{topic ? ` · ${topic}` : ''}</span>
+                  <strong className="fl-brand-word">Spark<span>Quill</span></strong>
+                  <span>{childName || 'Your child'}{grade ? ` · Grade ${grade}` : ''}{board ? ` · ${board}` : ''}</span>
                 </div>
               </div>
               <div className="fl-toolbar-right">

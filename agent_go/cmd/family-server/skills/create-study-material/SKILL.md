@@ -13,6 +13,7 @@ description: Create clear, child-ready study material (notes, worked examples, a
    `shared/study/<subject>/<topic>/<yyyy-mm-dd>-<name>.html`
    (date-stamp with `date -u +%Y-%m-%d`; never overwrite older material):
    - Style it with the SHARED design system — read `skills/_shared/html-design.md` and inline its CSS + base template.
+   - LAYOUT (make it look like a study guide): a short intro `.card`; "Key ideas" as a small `.grid` of compact `.card`s; each worked example in its own `.card` with a "Show me how" reveal button; a closing "Try it yourself" `.card` with input boxes for practice.
    - A short, warm intro to the topic in plain language for the child's grade.
    - The key ideas and definitions, stated simply, in cards.
    - 2–3 fully worked examples, step by step — this is teaching material, so showing the steps *is* the point.

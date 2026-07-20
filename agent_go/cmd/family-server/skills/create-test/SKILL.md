@@ -15,6 +15,7 @@ description: Create a practice test for the child from their materials and progr
    `shared/tests/<subject>/<topic>/<yyyy-mm-dd>-<name>.html`
    (date-stamp with `date -u +%Y-%m-%d`; never overwrite an older test):
    - Style it with the SHARED design system — read `skills/_shared/html-design.md` and inline its CSS + base template.
+   - LAYOUT (make it look like a test paper): a compact top strip with name · grade/board · subject · total marks · time; questions grouped into sections; each question in a numbered `.card` with the marks as a `.badge` and a labelled `<textarea>`/`<input>` for the answer; a small sticky "answered X/N" counter.
    - A clear header: child name, grade/board, subject, topic.
    - 5–10 questions at the child's level, easy → harder, covering the methods in their materials; include at least one targeting a known weak spot.
    - Usable on screen: each question in a card with a text box for the child to type their answer.

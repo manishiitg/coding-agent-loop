@@ -183,6 +183,7 @@ export default function LearningApp() {
   const [focusInput, setFocusInput] = useState('')
   const [parentMessages, setParentMessages] = useState<ParentMsg[]>([])
   const [sending, setSending] = useState(false)
+  const [suggestions, setSuggestions] = useState<{ label: string; message: string }[]>([])
   const [wsFiles, setWsFiles] = useState<WsFile[]>([])
   const [allFiles, setAllFiles] = useState<string[]>([])
   const [conversationId, setConversationId] = useState(newConversationId)
@@ -385,13 +386,13 @@ export default function LearningApp() {
       .finally(() => setSaving(false))
   }
 
-  const sendParentMessage = (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault()
-    const text = focusInput.trim()
+  const sendParentText = (raw: string) => {
+    const text = raw.trim()
     if (!text || sending) return
     const next: ParentMsg[] = [...parentMessages, { role: 'user', text }]
     setParentMessages(next)
     setFocusInput('')
+    setSuggestions([])
     setSending(true)
     const history = next.filter((m) => m.role === 'user' || m.role === 'assistant').map((m) => ({ role: m.role, text: m.text ?? '' }))
     fetch(`${FAMILY_API}/api/parent/message`, {
@@ -400,7 +401,7 @@ export default function LearningApp() {
       body: JSON.stringify({ messages: history, conversation_id: conversationId }),
     })
       .then((res) => res.json())
-      .then((data: { reply?: string; error?: string; tool_events?: { tool: string; subject?: string; topic?: string; name?: string; grade?: string; board?: string; path?: string }[] }) => {
+      .then((data: { reply?: string; error?: string; suggestions?: { label: string; message: string }[]; tool_events?: { tool: string; subject?: string; topic?: string; name?: string; grade?: string; board?: string; path?: string }[] }) => {
         const events = data.tool_events ?? []
         const toolMsgs: ParentMsg[] = events.filter((e) => e.tool === 'set_subject_topic' || e.tool === 'set_child_profile').map((e) => ({ role: 'tool', tool: e.tool, subject: e.subject, topic: e.topic }))
         const st = events.find((e) => e.tool === 'set_subject_topic')
@@ -409,10 +410,16 @@ export default function LearningApp() {
         if (cp) { if (cp.name) setChildName(cp.name); if (cp.grade) setGrade(cp.grade); if (cp.board) setBoard(cp.board) }
         const of = events.find((e) => e.tool === 'open_file' && e.path)
         if (of?.path) { setDrawerTab('files'); setViewerPath(of.path) }
+        setSuggestions(data.suggestions ?? [])
         setParentMessages((cur) => [...cur, ...toolMsgs, { role: 'assistant', text: data.error ? `Sorry — ${data.error}` : (data.reply || '(no response)') }])
       })
       .catch(() => setParentMessages((cur) => [...cur, { role: 'assistant', text: 'Sorry — I couldn’t reach the learning engine.' }]))
       .finally(() => setSending(false))
+  }
+
+  const sendParentMessage = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    sendParentText(focusInput)
   }
 
   // Load a past conversation into the chat view (reads the transcript file).
@@ -634,6 +641,13 @@ export default function LearningApp() {
                   <button type="button" onClick={() => setFocusInput('Create a short practice test on the current topic')}>Create a test</button>
                 </div>
               )}
+              {suggestions.length > 0 && !sending && (
+                <div className="fl-suggestions" aria-label="Recommended next steps">
+                  {suggestions.map((s, i) => (
+                    <button key={i} type="button" className="fl-suggestion" onClick={() => sendParentText(s.message)}>{s.label}</button>
+                  ))}
+                </div>
+              )}
               <div ref={threadEndRef} />
             </div>
 
@@ -766,7 +780,7 @@ export default function LearningApp() {
                     ) : !viewerContent.isText ? (
                       <p className="fl-note">This file type can’t be previewed here.</p>
                     ) : (viewerPath.endsWith('.html') || viewerPath.endsWith('.htm')) ? (
-                      <iframe className="fl-viewer-frame" title="File preview" sandbox="" srcDoc={viewerContent.content} />
+                      <iframe className="fl-viewer-frame" title="File preview" sandbox="allow-scripts" srcDoc={viewerContent.content} />
                     ) : (viewerPath.endsWith('.md') || viewerPath.endsWith('.markdown')) ? (
                       <div className="fl-viewer-md"><Markdown text={viewerContent.content} /></div>
                     ) : (

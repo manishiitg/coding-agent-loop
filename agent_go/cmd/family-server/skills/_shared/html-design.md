@@ -1,11 +1,15 @@
 # SparkQuill HTML design system
 
-Every HTML file the app generates (progress reports, academic map, and any other)
-MUST share this look so they feel like one product. Build a **complete standalone
-document** — inline everything, NO external assets, scripts, fonts, or images.
+Every HTML file the app generates (progress reports, academic map, study
+material, tests, and any other) MUST share this look so they feel like one
+product. Build a **complete standalone document** — inline everything, NO
+external assets, fonts, images, or network calls.
 
 ## Rules
 - Inline the CSS below in a `<style>` tag (adjust only where a skill asks).
+- A small **inline** `<script>` for interactivity (reveal a worked solution,
+  check a typed answer, toggle a hint) is allowed and encouraged where it helps
+  learning — self-contained only, never an external `src`.
 - Warm, calm, encouraging — readable by a child. Never harsh.
 - Rounded cards, generous spacing, one clear title with the child's name + date.
 - Use only real data. Never invent scores.

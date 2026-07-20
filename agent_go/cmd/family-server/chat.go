@@ -60,7 +60,9 @@ func parentSystemPrompt(child *Child) string {
 		"- shared/study/<subject>/<topic>/ — save study material you create for " + name + " here.\n" +
 		"- shared/tests/<subject>/<topic>/ — save practice tests here.\n" +
 		"- parent/answer-keys/ and parent/notes/ — parent-only; keep answer keys, marking, and private notes here, never child-facing.\n" +
+		"Always create study material, tests, progress reports and the academic map as designed, self-contained, INTERACTIVE HTML (follow skills/_shared/html-design.md) — never plain text/markdown — because " + name + " uses it on screen.\n" +
 		"When you make material or a test, actually write the file, then call the open_file tool with its path so it opens on the right side for the parent, and tell them in plain words what you made. Keep file paths and technical details out of your reply unless the parent asks.\n" +
+		"At the END of every turn, call the suggest_actions tool with 2–4 recommended next steps for the parent (short button label + the message to send if clicked) based on the conversation — e.g. update the progress report, create a practice test on this topic, make study material, or open a specific file.\n" +
 		"You have skills — short how-to guides — in the skills/ folder. Read the relevant one and follow it exactly:\n" +
 		"- skills/process-file/SKILL.md — process files the parent uploaded.\n" +
 		"- skills/create-study-material/SKILL.md — make study notes and worked examples for " + name + ".\n" +
@@ -124,10 +126,17 @@ type toolEvent struct {
 	Path    string `json:"path,omitempty"`
 }
 
+// suggestion is one recommended next-step pill the UI shows after a turn.
+type suggestion struct {
+	Label   string `json:"label"`
+	Message string `json:"message"`
+}
+
 type parentMessageResponse struct {
-	Reply      string      `json:"reply,omitempty"`
-	Error      string      `json:"error,omitempty"`
-	ToolEvents []toolEvent `json:"tool_events,omitempty"`
+	Reply       string       `json:"reply,omitempty"`
+	Error       string       `json:"error,omitempty"`
+	ToolEvents  []toolEvent  `json:"tool_events,omitempty"`
+	Suggestions []suggestion `json:"suggestions,omitempty"`
 }
 
 // engineToProvider maps a persisted engine string to an mcpagent LLM provider.
@@ -280,6 +289,58 @@ func handleParentMessage(w http.ResponseWriter, r *http.Request) {
 		},
 	}
 
+	var sugMu sync.Mutex
+	var suggestions []suggestion
+	suggestActions := agentsession.Tool{
+		Name: "suggest_actions",
+		Description: "Offer the parent 2–4 recommended next steps as clickable buttons, based on the conversation so far. " +
+			"Call this at the END of your turn. Each action has a short button label and the exact message that will be " +
+			"sent as if the parent typed it when they click (e.g. update the progress report, create a practice test on " +
+			"this topic, make study material, open a file).",
+		Category: "family_tools",
+		Params: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"actions": map[string]interface{}{
+					"type": "array",
+					"items": map[string]interface{}{
+						"type": "object",
+						"properties": map[string]interface{}{
+							"label":   map[string]interface{}{"type": "string", "description": "short button text, 2–4 words"},
+							"message": map[string]interface{}{"type": "string", "description": "the message sent as the parent when clicked"},
+						},
+						"required": []string{"label", "message"},
+					},
+				},
+			},
+			"required": []string{"actions"},
+		},
+		Handler: func(_ context.Context, args map[string]interface{}) (string, error) {
+			raw, _ := args["actions"].([]interface{})
+			out := []suggestion{}
+			for _, it := range raw {
+				m, ok := it.(map[string]interface{})
+				if !ok {
+					continue
+				}
+				label, _ := m["label"].(string)
+				msg, _ := m["message"].(string)
+				label, msg = strings.TrimSpace(label), strings.TrimSpace(msg)
+				if label == "" || msg == "" {
+					continue
+				}
+				out = append(out, suggestion{Label: label, Message: msg})
+				if len(out) >= 4 {
+					break
+				}
+			}
+			sugMu.Lock()
+			suggestions = out
+			sugMu.Unlock()
+			return fmt.Sprintf(`{"status":"ok","count":%d}`, len(out)), nil
+		},
+	}
+
 	openFile := agentsession.Tool{
 		Name: "open_file",
 		Description: "Show a workspace file to the parent on the right side of the screen. Call this right after you " +
@@ -316,7 +377,7 @@ func handleParentMessage(w http.ResponseWriter, r *http.Request) {
 		Provider:     provider,
 		WorkingDir:   workDir,
 		SystemPrompt: parentSystemPrompt(s.Child),
-		Tools:        []agentsession.Tool{setSubjectTopic, setChildProfile, openFile, shellTool()},
+		Tools:        []agentsession.Tool{setSubjectTopic, setChildProfile, openFile, suggestActions, shellTool()},
 	})
 	if err != nil {
 		writeJSON(w, http.StatusOK, parentMessageResponse{Error: err.Error()})
@@ -347,8 +408,11 @@ func handleParentMessage(w http.ResponseWriter, r *http.Request) {
 	evMu.Lock()
 	out := append([]toolEvent(nil), events...)
 	evMu.Unlock()
+	sugMu.Lock()
+	sug := append([]suggestion(nil), suggestions...)
+	sugMu.Unlock()
 	persistConversation("parent", req.ConversationID, withReply(req.Messages, reply))
-	writeJSON(w, http.StatusOK, parentMessageResponse{Reply: reply, ToolEvents: out})
+	writeJSON(w, http.StatusOK, parentMessageResponse{Reply: reply, ToolEvents: out, Suggestions: sug})
 }
 
 // fallbackParentMessage runs the legacy plain-completion path (no bridge tools)

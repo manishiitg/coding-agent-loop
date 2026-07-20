@@ -23,7 +23,7 @@ import {
 import './learning-app.css'
 
 type Screen = 'engine' | 'child' | 'pin' | 'parent' | 'tutor'
-type DrawerTab = 'assets' | 'map' | 'progress'
+type DrawerTab = 'assets' | 'map' | 'progress' | 'files'
 
 const FAMILY_API = (import.meta as { env?: { VITE_FAMILY_API?: string } }).env?.VITE_FAMILY_API ?? 'http://127.0.0.1:8010'
 
@@ -129,6 +129,29 @@ function Markdown({ text }: { text: string }) {
 
 type ParentMsg = { role: 'user' | 'assistant' | 'tool'; text?: string; tool?: string; subject?: string; topic?: string; name?: string }
 type TreeNode = { name: string; path: string; type: 'dir' | 'file'; children?: TreeNode[] }
+
+// FileTree renders the workspace as an expandable tree (AgentWorks-style). Files
+// are clickable to open in the viewer; .meta.json is hidden as noise.
+function FileTree({ nodes, onOpen, depth = 0 }: { nodes: TreeNode[]; onOpen: (path: string) => void; depth?: number }) {
+  const visible = nodes.filter((n) => !n.name.startsWith('.') && !n.name.endsWith('.meta.json'))
+  if (visible.length === 0) return null
+  return (
+    <ul className="fl-tree">
+      {visible.map((n) => (
+        <li key={n.path}>
+          {n.type === 'dir' ? (
+            <details open={depth < 1}>
+              <summary className="fl-tree-dir">{n.name}</summary>
+              {n.children && <FileTree nodes={n.children} onOpen={onOpen} depth={depth + 1} />}
+            </details>
+          ) : (
+            <button className="fl-tree-file" type="button" onClick={() => onOpen(n.path)}>{n.name}</button>
+          )}
+        </li>
+      ))}
+    </ul>
+  )
+}
 type WsFile = { path: string; name: string; scope: string; subject: string; topic: string }
 
 export default function LearningApp() {
@@ -189,6 +212,7 @@ export default function LearningApp() {
           if (n.children) walk(n.children)
         })
         walk(nodes)
+        if (!cancelled) setTreeNodes(nodes)
         const mats: WsFile[] = files
           .filter((f) => f.path.includes('/materials/') && !f.name.endsWith('.meta.json'))
           .map((f) => {
@@ -236,12 +260,27 @@ export default function LearningApp() {
   const [railOpen, setRailOpen] = useState(false)
   const [drawerOpen, setDrawerOpen] = useState(true)
   const [drawerTab, setDrawerTab] = useState<DrawerTab>('assets')
+  const [treeNodes, setTreeNodes] = useState<TreeNode[]>([])
+  const [viewerPath, setViewerPath] = useState<string | null>(null)
+  const [viewerContent, setViewerContent] = useState<{ isText: boolean; content: string } | null>(null)
   const [booting, setBooting] = useState(true)
   const [bootError, setBootError] = useState(false)
   const [pin, setPin] = useState('')
   const [pinConfirm, setPinConfirm] = useState('')
   const [pinError, setPinError] = useState('')
   const [saving, setSaving] = useState(false)
+
+  // Load the selected file for the drawer's Files viewer.
+  useEffect(() => {
+    if (!viewerPath) { setViewerContent(null); return }
+    let cancelled = false
+    setViewerContent(null)
+    fetch(`${FAMILY_API}/api/workspace/file?path=${encodeURIComponent(viewerPath)}`)
+      .then((r) => r.json())
+      .then((d) => { if (!cancelled) setViewerContent({ isText: !!d.is_text, content: d.content ?? '' }) })
+      .catch(() => { if (!cancelled) setViewerContent({ isText: false, content: '' }) })
+    return () => { cancelled = true }
+  }, [viewerPath])
 
   // On launch, ask family-server where onboarding stands. If setup is complete
   // we land straight in the chat; otherwise resume at the right step.
@@ -623,6 +662,7 @@ export default function LearningApp() {
               <button role="tab" aria-selected={drawerTab === 'assets'} className={drawerTab === 'assets' ? 'is-active' : ''} type="button" onClick={() => setDrawerTab('assets')}>Assets</button>
               <button role="tab" aria-selected={drawerTab === 'map'} className={drawerTab === 'map' ? 'is-active' : ''} type="button" onClick={() => setDrawerTab('map')}>Map</button>
               <button role="tab" aria-selected={drawerTab === 'progress'} className={drawerTab === 'progress' ? 'is-active' : ''} type="button" onClick={() => setDrawerTab('progress')}>Progress</button>
+              <button role="tab" aria-selected={drawerTab === 'files'} className={drawerTab === 'files' ? 'is-active' : ''} type="button" onClick={() => setDrawerTab('files')}>Files</button>
             </div>
 
             <div className="fl-drawer-scroll">
@@ -727,6 +767,32 @@ export default function LearningApp() {
                   </>
                 )
               })()}
+
+              {drawerTab === 'files' && (
+                viewerPath ? (
+                  <div className="fl-viewer">
+                    <div className="fl-viewer-bar">
+                      <button className="fl-viewer-back" type="button" onClick={() => setViewerPath(null)}><ArrowLeft size={15} /> Files</button>
+                      <span className="fl-viewer-name">{viewerPath.split('/').pop()}</span>
+                    </div>
+                    {!viewerContent ? (
+                      <p className="fl-note">Loading…</p>
+                    ) : !viewerContent.isText ? (
+                      <p className="fl-note">This file type can’t be previewed here.</p>
+                    ) : (viewerPath.endsWith('.html') || viewerPath.endsWith('.htm')) ? (
+                      <iframe className="fl-viewer-frame" title="File preview" sandbox="" srcDoc={viewerContent.content} />
+                    ) : (viewerPath.endsWith('.md') || viewerPath.endsWith('.markdown')) ? (
+                      <div className="fl-viewer-md"><Markdown text={viewerContent.content} /></div>
+                    ) : (
+                      <pre className="fl-viewer-pre">{viewerContent.content}</pre>
+                    )}
+                  </div>
+                ) : (
+                  treeNodes.length === 0
+                    ? <p className="fl-note">No files yet.</p>
+                    : <FileTree nodes={treeNodes} onOpen={(p) => setViewerPath(p)} />
+                )
+              )}
             </div>
 
             <div className="fl-drawer-foot">

@@ -12,7 +12,7 @@ Whenever there are files in `shared/inbox/`, process each one before doing anyth
    - PDF: try `pdftotext "<file>" -` (or `pdftotext -layout`). If the tool is missing, say so and ask the parent for a text version.
    - Word / PowerPoint / Excel (docx, pptx, xlsx): these are zip archives — `unzip -p "<file>" '*.xml' 2>/dev/null` and read the text out of the XML, or use a converter if one is installed (e.g. `libreoffice --headless --convert-to txt`, `pandoc`).
    - Zip / archives: `unzip -l` to list, then extract and process each file inside.
-   - Images (photos of notes, worksheets, handwritten homework): open and read the image directly — you can see and understand images natively, so read the printed/handwritten text and any diagrams straight from it. Only if it is genuinely illegible, say so and ask the parent for a clearer photo.
+   - Images (photos of notes, worksheets, handwritten homework): you reach files only through the shell, which hands you bytes, not pixels — so you CANNOT see a PNG/JPG by cat-ing it, and you must NOT use OCR. Instead call the `read_image` tool with the file path; it returns the transcribed text and a description. Work from that. Only if `read_image` says it is illegible, ask the parent for a clearer photo.
    - Video / audio: you cannot watch/listen; record the filename and duration (`ffprobe` if available) and ask the parent what it covers.
    - Whatever the format, only record content you have actually extracted — never invent what you could not read.
 

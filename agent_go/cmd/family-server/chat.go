@@ -378,7 +378,7 @@ func handleParentMessage(w http.ResponseWriter, r *http.Request) {
 		Provider:     provider,
 		WorkingDir:   workDir,
 		SystemPrompt: parentSystemPrompt(s.Child),
-		Tools:        []agentsession.Tool{setSubjectTopic, setChildProfile, openFile, suggestActions, webSearchTool(), shellTool()},
+		Tools:        []agentsession.Tool{setSubjectTopic, setChildProfile, openFile, suggestActions, webSearchTool(), readImageTool(s.Engine), shellTool()},
 	})
 	if err != nil {
 		writeJSON(w, http.StatusOK, parentMessageResponse{Error: err.Error()})

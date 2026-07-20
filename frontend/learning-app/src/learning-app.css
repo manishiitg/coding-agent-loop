@@ -241,7 +241,7 @@ html, body, #root { margin: 0; height: 100%; }
 .fl-context-card dt { margin-bottom: 3px; color: #6d5e2d; font-size: var(--text-caption); font-weight: 700; letter-spacing: .03em; }
 .fl-context-card dd { margin: 0; color: var(--navy); font-size: var(--text-body); font-weight: 700; }
 .fl-context-card p { margin: 13px 0 0; color: #554e39; font-size: var(--text-secondary); line-height: 1.5; }
-.fl-drawer-tabs { display: flex; gap: 4px; padding: 10px 12px; border-bottom: 1px solid #eef1f6; }
+.fl-drawer-tabs { display: flex; gap: 4px; padding: 16px 12px 10px; border-bottom: 1px solid #eef1f6; }
 .fl-drawer-tabs button { flex: 1; min-height: 34px; border: 0; border-radius: 9px; background: transparent; color: #5f708d; font: inherit; font-size: var(--text-secondary); font-weight: 650; cursor: pointer; }
 .fl-drawer-tabs button:hover { background: #f1f5fa; color: var(--navy); }
 .fl-drawer-tabs button.is-active { background: var(--navy); color: #fff; }
@@ -376,6 +376,11 @@ details[open] > .fl-tree-dir::before { content: "▾"; }
 .fl-suggestions { display: flex; flex-wrap: wrap; gap: 8px; margin: 4px 0 2px; }
 .fl-suggestion { display: inline-flex; align-items: center; gap: 6px; padding: 8px 15px; border: 1px solid #ecdcb4; border-radius: 999px; background: #fffaf0; color: #7a5c1a; font: inherit; font-size: var(--text-secondary); font-weight: 650; cursor: pointer; transition: background .12s ease, border-color .12s ease; }
 .fl-suggestion:hover { background: #fdeecb; border-color: #e6c877; }
+
+/* Handoff button in the top header (moved from the drawer footer) */
+.fl-header-handoff { display: inline-flex; align-items: center; gap: 6px; min-height: 36px; padding: 0 14px; border: 0; border-radius: 10px; background: var(--yellow); color: var(--navy); font: inherit; font-size: var(--text-secondary); font-weight: 700; cursor: pointer; box-shadow: 0 3px 0 #d5a307; transition: transform .14s ease, box-shadow .14s ease; white-space: nowrap; }
+.fl-header-handoff:hover { transform: translateY(-1px); }
+.fl-header-handoff:active { transform: translateY(2px); box-shadow: 0 1px 0 #d5a307; }
 .fl-hint-label { display: inline-flex; align-items: center; gap: 5px; margin-right: 6px; padding: 2px 8px; border-radius: 999px; background: #fff3d6; color: #a9781a; font-size: var(--text-caption); font-weight: 800; vertical-align: 1px; }
 .fl-child-actions { display: flex; flex-wrap: wrap; gap: 8px; margin: 14px 0 12px; }
 .fl-child-actions button { min-height: 38px; padding: 0 14px; border: 1px solid #cfe0f2; border-radius: 999px; background: #fff; color: #2f6db0; font: inherit; font-size: var(--text-secondary); font-weight: 650; cursor: pointer; }

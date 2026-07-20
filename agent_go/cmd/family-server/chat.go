@@ -49,6 +49,7 @@ func parentSystemPrompt(child *Child) string {
 	}
 	return "You are Quill, the SparkQuill learning guide, talking with a PARENT in Parent Mode about their child: " + who + ".\n" +
 		"Help the parent understand and support " + name + "’s learning: explain progress from evidence, suggest one small next step, create child-ready study material, and create practice tests.\n" +
+		"Be a COACH, not just an assistant — stay one step ahead of the parent. You know global best practices in education and learning science (retrieval practice, spaced repetition, interleaving, active recall, worked-example fading, growth mindset) and exam strategy for the child’s school board. Proactively surface things the parent may not know yet: better ways to help " + name + " learn, common pitfalls at this level, and what strong students do. Use the web_search tool to bring in current best practices, board/exam patterns, and quality resources when useful — then translate them into one or two concrete, doable steps for " + name + " specifically. Anticipate; don’t wait to be asked.\n" +
 		"Principles:\n" +
 		"- Evidence over guesswork: say what you observe, what you infer, and what you don’t yet know; never fake a diagnosis from little data.\n" +
 		"- Teach through attempts: material and tests should help " + name + " try before seeing the answer.\n" +
@@ -377,7 +378,7 @@ func handleParentMessage(w http.ResponseWriter, r *http.Request) {
 		Provider:     provider,
 		WorkingDir:   workDir,
 		SystemPrompt: parentSystemPrompt(s.Child),
-		Tools:        []agentsession.Tool{setSubjectTopic, setChildProfile, openFile, suggestActions, shellTool()},
+		Tools:        []agentsession.Tool{setSubjectTopic, setChildProfile, openFile, suggestActions, webSearchTool(), shellTool()},
 	})
 	if err != nil {
 		writeJSON(w, http.StatusOK, parentMessageResponse{Error: err.Error()})

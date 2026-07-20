@@ -575,6 +575,7 @@ export default function LearningApp() {
               </div>
               <div className="fl-toolbar-right">
                 <span className="learning-mode-pill"><CircleUserRound size={16} /> Parent Mode</span>
+                <button className="fl-header-handoff" type="button" onClick={() => setSignoff(true)}>Open child learning space <ArrowRight size={16} /></button>
               </div>
             </div>
 
@@ -667,15 +668,14 @@ export default function LearningApp() {
           </section>
 
           <aside className="fl-drawer" aria-label="Learning workspace">
-            <div className="fl-drawer-head">
-              <strong>{childName || 'Your child'}’s workspace</strong>
-            </div>
-            <div className="fl-drawer-tabs" role="tablist" aria-label="Workspace views">
-              <button role="tab" aria-selected={drawerTab === 'assets'} className={drawerTab === 'assets' ? 'is-active' : ''} type="button" onClick={() => setDrawerTab('assets')}>Assets</button>
-              <button role="tab" aria-selected={drawerTab === 'map'} className={drawerTab === 'map' ? 'is-active' : ''} type="button" onClick={() => setDrawerTab('map')}>Map</button>
-              <button role="tab" aria-selected={drawerTab === 'progress'} className={drawerTab === 'progress' ? 'is-active' : ''} type="button" onClick={() => setDrawerTab('progress')}>Progress</button>
-              <button role="tab" aria-selected={drawerTab === 'files'} className={drawerTab === 'files' ? 'is-active' : ''} type="button" onClick={() => setDrawerTab('files')}>Files</button>
-            </div>
+            {!(drawerTab === 'files' && viewerPath) && (
+              <div className="fl-drawer-tabs" role="tablist" aria-label="Workspace views">
+                <button role="tab" aria-selected={drawerTab === 'assets'} className={drawerTab === 'assets' ? 'is-active' : ''} type="button" onClick={() => setDrawerTab('assets')}>Assets</button>
+                <button role="tab" aria-selected={drawerTab === 'map'} className={drawerTab === 'map' ? 'is-active' : ''} type="button" onClick={() => setDrawerTab('map')}>Map</button>
+                <button role="tab" aria-selected={drawerTab === 'progress'} className={drawerTab === 'progress' ? 'is-active' : ''} type="button" onClick={() => setDrawerTab('progress')}>Progress</button>
+                <button role="tab" aria-selected={drawerTab === 'files'} className={drawerTab === 'files' ? 'is-active' : ''} type="button" onClick={() => setDrawerTab('files')}>Files</button>
+              </div>
+            )}
 
             <div className="fl-drawer-scroll">
               {drawerTab === 'assets' && (
@@ -793,10 +793,6 @@ export default function LearningApp() {
                     : <FileTree nodes={treeNodes} onOpen={(p) => setViewerPath(p)} />
                 )
               )}
-            </div>
-
-            <div className="fl-drawer-foot">
-              <button className="primary-button handoff-button" onClick={() => setSignoff(true)} type="button">Open child learning space <ArrowRight size={18} /></button>
             </div>
           </aside>
 

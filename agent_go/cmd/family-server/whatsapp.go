@@ -68,6 +68,7 @@ func handleWhatsAppMessage(w http.ResponseWriter, r *http.Request) {
 		Provider:     provider,
 		WorkingDir:   workDir,
 		SystemPrompt: whatsappSystemPrompt(s.Child),
+		SessionID:    req.ConversationID, // warm-resume the WhatsApp thread
 		Tools:        []agentsession.Tool{webSearchTool(), readImageTool(s.Engine), notifyTool(), shellTool()},
 	})
 	if err != nil {

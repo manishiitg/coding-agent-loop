@@ -64,6 +64,7 @@ func handleChildMessage(w http.ResponseWriter, r *http.Request) {
 		Provider:     provider,
 		WorkingDir:   workDir,
 		SystemPrompt: childSystemPrompt(s.Child),
+		SessionID:    req.ConversationID, // warm-resume the same child session
 		Tools:        []agentsession.Tool{childShellTool(), notifyTool()},
 	})
 	if err != nil {

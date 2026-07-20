@@ -61,6 +61,11 @@ type Config struct {
 	Tools        []Tool         // app-specific custom tools
 	Logger       loggerv2.Logger
 	MaxTurns     int // 0 -> provider default
+	// SessionID, when set, makes turns RESUME the coding agent's own session
+	// (warm tmux/session resume) instead of cold-starting a fresh one. Use a
+	// stable id per conversation (e.g. the conversation id). Empty -> fresh
+	// throwaway session each turn (full-history replay).
+	SessionID string
 }
 
 // Session bundles a live agent with its in-process executor server. Not safe
@@ -71,6 +76,7 @@ type Session struct {
 	logger   loggerv2.Logger
 	shutdown func()
 	closed   bool
+	resume   bool // warm-resume mode: the coding agent keeps context across turns
 }
 
 // New builds a ready-to-use Session: bridge binary + MCP config + executor
@@ -145,12 +151,32 @@ func New(ctx context.Context, cfg Config) (*Session, error) {
 		return nil, fmt.Errorf("initialize LLM: %w", err)
 	}
 
-	sessionID := "agentsession-" + fmt.Sprintf("%d", time.Now().UnixNano())
+	// A stable SessionID resumes the coding agent's own session across turns;
+	// otherwise use a throwaway id (fresh session each turn).
+	resume := strings.TrimSpace(cfg.SessionID) != ""
+	sessionID := strings.TrimSpace(cfg.SessionID)
+	if sessionID == "" {
+		sessionID = "agentsession-" + fmt.Sprintf("%d", time.Now().UnixNano())
+	}
 	opts := []mcpagent.AgentOption{
 		mcpagent.WithLogger(logger),
 		mcpagent.WithProvider(cfg.Provider),
 		mcpagent.WithCodeExecutionMode(true),
 		mcpagent.WithSessionID(sessionID),
+	}
+	if resume {
+		// Keep the coding agent's interactive (tmux) session alive so the next
+		// turn resumes it with full context instead of cold-starting.
+		switch cfg.Provider {
+		case llm.ProviderClaudeCode:
+			opts = append(opts, mcpagent.WithClaudeCodePersistentInteractiveSession(true))
+		case llm.ProviderCodexCLI:
+			opts = append(opts, mcpagent.WithCodexPersistentInteractiveSession(true))
+		case llm.ProviderCursorCLI:
+			opts = append(opts, mcpagent.WithCursorPersistentInteractiveSession(true))
+		case llm.ProviderPiCLI:
+			opts = append(opts, mcpagent.WithPiPersistentInteractiveSession(true))
+		}
 	}
 	if strings.TrimSpace(cfg.SystemPrompt) != "" {
 		opts = append(opts, mcpagent.WithSystemPrompt(cfg.SystemPrompt))
@@ -190,6 +216,7 @@ func New(ctx context.Context, cfg Config) (*Session, error) {
 	s := &Session{
 		agent:  agent,
 		logger: logger,
+		resume: resume,
 		shutdown: func() {
 			agent.Close()
 			execShutdown()
@@ -200,7 +227,12 @@ func New(ctx context.Context, cfg Config) (*Session, error) {
 }
 
 // Ask runs one turn over the supplied history and returns the assistant reply.
+// In warm-resume mode the coding agent already holds the prior context, so only
+// the newest message is sent; otherwise the full history is replayed.
 func (s *Session) Ask(ctx context.Context, history []Message) (string, error) {
+	if s.resume && len(history) > 0 {
+		history = history[len(history)-1:]
+	}
 	msgs := make([]llmtypes.MessageContent, 0, len(history))
 	for _, m := range history {
 		role := llmtypes.ChatMessageTypeHuman

@@ -195,6 +195,10 @@ export default function LearningApp() {
   const [sending, setSending] = useState(false)
   const [suggestions, setSuggestions] = useState<{ label: string; message: string }[]>([])
   const [menuOpen, setMenuOpen] = useState(false)
+  const [waOpen, setWaOpen] = useState(false)
+  const [waMessages, setWaMessages] = useState<{ role: 'user' | 'assistant'; text: string }[]>([])
+  const [waInput, setWaInput] = useState('')
+  const [waSending, setWaSending] = useState(false)
   const [wsFiles, setWsFiles] = useState<WsFile[]>([])
   const [allFiles, setAllFiles] = useState<string[]>([])
   const [conversationId, setConversationId] = useState(newConversationId)
@@ -459,6 +463,24 @@ export default function LearningApp() {
     sendParentText(focusInput)
   }
 
+  // WhatsApp simulator — previews how Quill replies over WhatsApp (plain text).
+  const sendWhatsApp = (raw: string) => {
+    const text = raw.trim()
+    if (!text || waSending) return
+    const next = [...waMessages, { role: 'user' as const, text }]
+    setWaMessages(next)
+    setWaInput('')
+    setWaSending(true)
+    fetch(`${FAMILY_API}/api/whatsapp/message`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ messages: next.map((m) => ({ role: m.role, text: m.text })), conversation_id: 'whatsapp-sim' }),
+    })
+      .then((r) => r.json())
+      .then((d: { reply?: string; error?: string }) => setWaMessages((cur) => [...cur, { role: 'assistant', text: d.error ? `⚠️ ${d.error}` : (d.reply || '…') }]))
+      .catch(() => setWaMessages((cur) => [...cur, { role: 'assistant', text: '⚠️ Could not reach SparkQuill.' }]))
+      .finally(() => setWaSending(false))
+  }
+
   // Load a past conversation into the chat view (reads the transcript file).
   const loadConversation = (item: ConvMeta) => {
     fetch(`${FAMILY_API}/api/workspace/file?path=${encodeURIComponent(`${item.scope}/conversations/${item.id}.json`)}`)
@@ -612,7 +634,7 @@ export default function LearningApp() {
                 </div>
               </div>
               <div className="fl-toolbar-right">
-                <button className="fl-whatsapp-btn" type="button" aria-label="Connect WhatsApp" title="Connect WhatsApp">
+                <button className="fl-whatsapp-btn" type="button" aria-label="WhatsApp" title="SparkQuill on WhatsApp" onClick={() => setWaOpen(true)}>
                   <svg viewBox="0 0 24 24" width="19" height="19" fill="currentColor" aria-hidden="true"><path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51l-.57-.01c-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.71.306 1.263.489 1.694.626.712.226 1.36.194 1.872.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413z"/></svg>
                 </button>
                 <button className="fl-header-handoff" type="button" onClick={() => setSignoff(true)}>Open child learning space <ArrowRight size={16} /></button>
@@ -891,6 +913,28 @@ export default function LearningApp() {
                   <button className="fl-ghost-btn" type="button" onClick={() => setSignoff(false)}>Cancel</button>
                   <button className="primary-button" type="button" onClick={() => { setSignoff(false); setScreen('tutor') }}>Hand over to {childName || 'your child'} <ArrowRight size={18} /></button>
                 </div>
+              </div>
+            </div>
+          )}
+
+          {waOpen && (
+            <div className="fl-wa-backdrop" role="dialog" aria-modal="true" onClick={() => setWaOpen(false)}>
+              <div className="fl-wa" onClick={(e) => e.stopPropagation()}>
+                <div className="fl-wa-head">
+                  <span className="fl-wa-title">SparkQuill on WhatsApp <em>· preview</em></span>
+                  <button className="fl-wa-close" type="button" onClick={() => setWaOpen(false)} aria-label="Close">×</button>
+                </div>
+                <div className="fl-wa-body">
+                  {waMessages.length === 0 && <p className="fl-wa-hint">This previews how Quill would reply over WhatsApp. Type a message as {childName || 'your child'}’s parent.</p>}
+                  {waMessages.map((m, i) => (
+                    <div key={i} className={`fl-wa-msg ${m.role === 'user' ? 'is-me' : 'is-quill'}`}>{m.text}</div>
+                  ))}
+                  {waSending && <div className="fl-wa-msg is-quill">…</div>}
+                </div>
+                <form className="fl-wa-composer" onSubmit={(e) => { e.preventDefault(); sendWhatsApp(waInput) }}>
+                  <input value={waInput} onChange={(e) => setWaInput(e.target.value)} placeholder="Message SparkQuill…" disabled={waSending} />
+                  <button type="submit" disabled={waSending || !waInput.trim()} aria-label="Send"><Send size={16} /></button>
+                </form>
               </div>
             </div>
           )}

@@ -6,8 +6,21 @@ description: Back up the family's learning workspace to a durable destination (l
 # Back up the workspace
 
 Protect the family's data — materials, generated study/tests/reports, the academic
-map, and conversations. Config and status are SEPARATE files (same contract as
-AgentWorks):
+map, and conversations.
+
+**Choosing the destination — this workspace is IMAGE-HEAVY** (photos/scans of
+homework). Do NOT recommend GitHub as the main backup: git keeps every version of
+every binary, so an image-heavy repo bloats fast, and GitHub rejects large files.
+Prefer, in order:
+1. An **object store** — Cloudflare R2, Amazon S3, or Backblaze B2 — synced with
+   `rclone sync` / `aws s3 sync`. Cheap, built for binaries, no history bloat (R2
+   has a free tier). Best default here.
+2. A **synced folder** the parent already uses — Google Drive, Dropbox, iCloud —
+   simplest for a non-technical parent (just copy the workspace into it).
+A git repo is only a good fit for the small TEXT/config (family profile, generated
+.md/.html) — not the images — and local git is a temporary checkpoint at best.
+
+Config and status are SEPARATE files (same contract as AgentWorks):
 
 - `backup.json` (at the workspace root) — the declarative config: `enabled`, `mode`,
   and `destinations`.

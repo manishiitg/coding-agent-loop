@@ -269,7 +269,8 @@ export default function LearningApp() {
   const drawerOpen = true // right side always open
   const threadEndRef = useRef<HTMLDivElement>(null)
   const iframeRef = useRef<HTMLIFrameElement>(null)
-  const [drawerTab, setDrawerTab] = useState<DrawerTab>('assets')
+  const [drawerTab, setDrawerTab] = useState<DrawerTab>('files')
+  const [filesView, setFilesView] = useState<'basic' | 'advanced'>('basic')
   const [treeNodes, setTreeNodes] = useState<TreeNode[]>([])
   const [viewerPath, setViewerPath] = useState<string | null>(null)
   const [viewerContent, setViewerContent] = useState<{ isText: boolean; content: string } | null>(null)
@@ -716,10 +717,10 @@ export default function LearningApp() {
           <aside className="fl-drawer" aria-label="Learning workspace">
             {!(drawerTab === 'files' && viewerPath) && (
               <div className="fl-drawer-tabs" role="tablist" aria-label="Workspace views">
-                <button role="tab" aria-selected={drawerTab === 'assets'} className={drawerTab === 'assets' ? 'is-active' : ''} type="button" onClick={() => setDrawerTab('assets')}>Assets</button>
-                <button role="tab" aria-selected={drawerTab === 'map'} className={drawerTab === 'map' ? 'is-active' : ''} type="button" onClick={() => setDrawerTab('map')}>Map</button>
+                <button role="tab" aria-selected={drawerTab === 'files'} className={drawerTab === 'files' ? 'is-active' : ''} type="button" onClick={() => setDrawerTab('files')}>Workspace</button>
+                <button role="tab" aria-selected={drawerTab === 'assets'} className={drawerTab === 'assets' ? 'is-active' : ''} type="button" onClick={() => setDrawerTab('assets')}>Materials</button>
+                <button role="tab" aria-selected={drawerTab === 'map'} className={drawerTab === 'map' ? 'is-active' : ''} type="button" onClick={() => setDrawerTab('map')}>Subjects</button>
                 <button role="tab" aria-selected={drawerTab === 'progress'} className={drawerTab === 'progress' ? 'is-active' : ''} type="button" onClick={() => setDrawerTab('progress')}>Progress</button>
-                <button role="tab" aria-selected={drawerTab === 'files'} className={drawerTab === 'files' ? 'is-active' : ''} type="button" onClick={() => setDrawerTab('files')}>Files</button>
               </div>
             )}
 
@@ -834,9 +835,39 @@ export default function LearningApp() {
                     )}
                   </div>
                 ) : (
-                  treeNodes.length === 0
-                    ? <p className="fl-note">No files yet.</p>
-                    : <FileTree nodes={treeNodes} onOpen={(p) => setViewerPath(p)} />
+                  <>
+                    <div className="fl-files-toggle">
+                      <button type="button" className={filesView === 'basic' ? 'is-active' : ''} onClick={() => setFilesView('basic')}>Basic</button>
+                      <button type="button" className={filesView === 'advanced' ? 'is-active' : ''} onClick={() => setFilesView('advanced')}>All files</button>
+                    </div>
+                    {filesView === 'advanced' ? (
+                      treeNodes.length === 0 ? <p className="fl-note">No files yet.</p> : <FileTree nodes={treeNodes} onOpen={(p) => setViewerPath(p)} />
+                    ) : (() => {
+                      const groups: { title: string; test: (p: string) => boolean }[] = [
+                        { title: 'Practice tests', test: (p) => p.startsWith('shared/tests/') },
+                        { title: 'Study guides', test: (p) => p.startsWith('shared/study/') },
+                        { title: 'Reports', test: (p) => p.startsWith('shared/reports/') },
+                        { title: 'Academic map', test: (p) => p === 'shared/academic-map.html' },
+                        { title: 'Uploaded material', test: (p) => p.includes('/materials/') },
+                      ]
+                      const usable = allFiles.filter((p) => !p.endsWith('.meta.json') && !p.startsWith('skills/') && !p.includes('/conversations/') && !p.endsWith('child-profile.json'))
+                      const sections = groups.map((g) => ({ title: g.title, files: usable.filter(g.test) })).filter((s) => s.files.length > 0)
+                      if (sections.length === 0) {
+                        return <p className="fl-note">Nothing here yet. Ask Quill to make study material or a test, or attach a photo/PDF.</p>
+                      }
+                      return sections.map((s) => (
+                        <section key={s.title} className="fl-asset-group">
+                          <p className="fl-drawer-label">{s.title}</p>
+                          {s.files.map((p) => (
+                            <button key={p} type="button" className="fl-file-item" onClick={() => setViewerPath(p)}>
+                              <FileText size={16} />
+                              <span>{(p.split('/').pop() || p).replace(/\.(md|html?|txt)$/i, '')}</span>
+                            </button>
+                          ))}
+                        </section>
+                      ))
+                    })()}
+                  </>
                 )
               )}
             </div>

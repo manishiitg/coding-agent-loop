@@ -357,6 +357,15 @@ body, .learning-app { -webkit-font-smoothing: antialiased; -moz-osx-font-smoothi
    who is speaking, so the icons are redundant clutter. */
 .fl-msg-avatar, .fl-tmsg-avatar { display: none; }
 
+/* Basic/Advanced toggle + curated file rows in the Workspace tab */
+.fl-files-toggle { display: inline-flex; gap: 2px; padding: 3px; margin-bottom: 12px; border-radius: 10px; background: #f1ece0; align-self: flex-start; }
+.fl-files-toggle button { padding: 5px 14px; border: 0; border-radius: 8px; background: transparent; color: #6b5d3f; font: inherit; font-size: var(--text-secondary); font-weight: 650; cursor: pointer; }
+.fl-files-toggle button.is-active { background: #fff; color: var(--navy); box-shadow: 0 1px 3px rgba(22, 34, 58, .12); }
+.fl-file-item { display: flex; align-items: center; gap: 9px; width: 100%; text-align: left; padding: 10px 12px; border: 1px solid #ece3d2; border-radius: 12px; background: #fff; color: var(--navy); font: inherit; font-size: var(--text-secondary); font-weight: 600; cursor: pointer; margin-bottom: 6px; }
+.fl-file-item:hover { background: #fdf7ea; border-color: #e6d9bd; }
+.fl-file-item svg { color: #b79a5e; flex: 0 0 auto; }
+.fl-file-item span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
 /* ---- Files tab: workspace tree + file/HTML viewer ---- */
 .fl-tree { list-style: none; margin: 0; padding: 0 0 0 2px; font-size: var(--text-secondary); }
 .fl-tree .fl-tree { padding-left: 12px; margin-left: 7px; border-left: 1px solid #ece3d2; }

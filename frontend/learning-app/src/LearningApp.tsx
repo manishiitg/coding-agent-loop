@@ -3,7 +3,6 @@ import {
   ArrowLeft,
   ArrowRight,
   BookOpen,
-  Camera,
   Check,
   CheckCircle2,
   CircleUserRound,
@@ -640,8 +639,7 @@ export default function LearningApp() {
             <form className="fl-composer" onSubmit={sendParentMessage}>
               <input ref={fileInputRef} type="file" multiple accept="image/*,application/pdf" onChange={onFilesSelected} style={{ display: 'none' }} />
               <button className="composer-icon" type="button" aria-label="New conversation" title="Start a new conversation" onClick={startNewConversation} disabled={sending}><Plus size={19} /></button>
-              <button className="composer-icon" type="button" aria-label="Attach school material" onClick={onPickFiles} disabled={uploading}><Paperclip size={19} /></button>
-              <button className="composer-icon" type="button" aria-label="Add a photo" onClick={onPickFiles} disabled={uploading}><Camera size={19} /></button>
+              <button className="composer-icon" type="button" aria-label="Attach a photo or PDF" onClick={onPickFiles} disabled={uploading}><Paperclip size={19} /></button>
               <input
                 aria-label="Message the learning guide"
                 placeholder={`Ask anything about ${childName || 'your child'}’s learning…`}

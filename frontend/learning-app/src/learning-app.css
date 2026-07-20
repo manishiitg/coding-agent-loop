@@ -346,6 +346,10 @@ body, .learning-app { -webkit-font-smoothing: antialiased; -moz-osx-font-smoothi
 .fl-tmsg.is-child .fl-tbubble strong { color: #fff; }
 .fl-tmsg.is-child .fl-tbubble li::marker { color: #ffd873; }
 
+/* Drop the per-message avatars (M / sun) — the bubble colour + side already say
+   who is speaking, so the icons are redundant clutter. */
+.fl-msg-avatar, .fl-tmsg-avatar { display: none; }
+
 /* ---- Files tab: workspace tree + file/HTML viewer ---- */
 .fl-tree { list-style: none; margin: 0; padding: 0 0 0 2px; font-size: var(--text-secondary); }
 .fl-tree .fl-tree { padding-left: 12px; margin-left: 7px; border-left: 1px solid #ece3d2; }

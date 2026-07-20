@@ -11,8 +11,6 @@ import {
   LockKeyhole,
   PanelLeftClose,
   PanelLeftOpen,
-  PanelRightClose,
-  PanelRightOpen,
   Paperclip,
   Plus,
   Send,
@@ -257,7 +255,8 @@ export default function LearningApp() {
   }, [screen, parentMessages.length])
   const [signoff, setSignoff] = useState(false)
   const [railOpen, setRailOpen] = useState(false)
-  const [drawerOpen, setDrawerOpen] = useState(true)
+  const drawerOpen = true // right side always open
+  const threadEndRef = useRef<HTMLDivElement>(null)
   const [drawerTab, setDrawerTab] = useState<DrawerTab>('assets')
   const [treeNodes, setTreeNodes] = useState<TreeNode[]>([])
   const [viewerPath, setViewerPath] = useState<string | null>(null)
@@ -280,6 +279,11 @@ export default function LearningApp() {
       .catch(() => { if (!cancelled) setViewerContent({ isText: false, content: '' }) })
     return () => { cancelled = true }
   }, [viewerPath])
+
+  // Keep the conversation scrolled to the latest message / thinking indicator.
+  useEffect(() => {
+    threadEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' })
+  }, [parentMessages, sending])
 
   // On launch, ask family-server where onboarding stands. If setup is complete
   // we land straight in the chat; otherwise resume at the right step.
@@ -559,15 +563,6 @@ export default function LearningApp() {
               </div>
               <div className="fl-toolbar-right">
                 <span className="learning-mode-pill"><CircleUserRound size={16} /> Parent Mode</span>
-                <button
-                  className="fl-icon-btn"
-                  type="button"
-                  aria-label={drawerOpen ? 'Hide workspace drawer' : 'Show workspace drawer'}
-                  aria-pressed={drawerOpen}
-                  onClick={() => setDrawerOpen((value) => !value)}
-                >
-                  {drawerOpen ? <PanelRightClose size={18} /> : <PanelRightOpen size={18} />}
-                </button>
               </div>
             </div>
 
@@ -634,6 +629,7 @@ export default function LearningApp() {
                   <button type="button" onClick={() => setFocusInput('Create a short practice test on the current topic')}>Create a test</button>
                 </div>
               )}
+              <div ref={threadEndRef} />
             </div>
 
             <form className="fl-composer" onSubmit={sendParentMessage}>

@@ -10,6 +10,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/manishiitg/coding-agent-loop/agent_go/internal/agentsession"
 )
 
 // familyDataDir is the isolated data root for Family Learning. It never touches
@@ -238,6 +240,8 @@ func handleReset(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
+	// Tear down any live warm-resume sessions so a fresh setup starts clean.
+	agentsession.CloseAllSessions()
 	stateMu.Lock()
 	err := os.Remove(statePath())
 	stateMu.Unlock()

@@ -24,9 +24,13 @@ var imageExts = map[string]bool{
 // file-read/vision is disabled and it cannot open the image.
 var bridgeEnvKeys = []string{"MCP_BRIDGE_BINARY", "MCP_API_URL", "MCP_API_TOKEN", "MCP_BRIDGE_API_URL"}
 
-// withoutBridgeEnv runs fn with the bridge env vars cleared, then restores them.
-// Safe because agent turns are serialized (agentTurnMu) and the parent session
-// captured its env/config at startup.
+// withoutBridgeEnv runs fn with the bridge env vars cleared, then restores them,
+// and additionally restores the process working directory afterwards. The nested
+// image-reading CLI can leave the process cwd changed; if it does, the parent's
+// warm-resumed session later notices the drift and prints a "Shell cwd was reset"
+// notice that both leaks into and truncates the captured reply. Snapshotting and
+// restoring cwd here keeps the parent session's working directory stable so no
+// drift is ever detected. Safe because agent turns are serialized (agentTurnMu).
 func withoutBridgeEnv(fn func() (string, error)) (string, error) {
 	saved := map[string]string{}
 	for _, k := range bridgeEnvKeys {
@@ -35,9 +39,13 @@ func withoutBridgeEnv(fn func() (string, error)) (string, error) {
 			_ = os.Unsetenv(k)
 		}
 	}
+	cwd, cwdErr := os.Getwd()
 	defer func() {
 		for k, v := range saved {
 			_ = os.Setenv(k, v)
+		}
+		if cwdErr == nil {
+			_ = os.Chdir(cwd)
 		}
 	}()
 	return fn()

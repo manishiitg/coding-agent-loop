@@ -76,7 +76,9 @@ type Session struct {
 	logger   loggerv2.Logger
 	shutdown func()
 	closed   bool
-	resume   bool // warm-resume mode: the coding agent keeps context across turns
+	resume   bool      // warm-resume mode: the coding agent keeps context across turns
+	id       string    // cache key (conversation id); "" for uncached one-off sessions
+	lastUsed time.Time // for LRU eviction of the session cache
 }
 
 // New builds a ready-to-use Session: bridge binary + MCP config + executor
@@ -226,6 +228,93 @@ func New(ctx context.Context, cfg Config) (*Session, error) {
 	return s, nil
 }
 
+// ---------- warm-resume session cache ----------
+//
+// A warm-resume session keeps a live coding-agent CLI (tmux) AND its in-process
+// executor/bridge server alive together across turns. Because New() allocates a
+// fresh executor port every call and Close() tears it down, creating a new
+// Session per HTTP request would leave the resumed CLI pointing at the previous
+// turn's dead bridge ("connection refused" the moment a resumed turn needs a
+// tool). Acquire fixes that: for a given conversation id it builds the Session
+// once and returns the SAME live Session (executor + tmux intact) on later turns.
+//
+// Turns are serialized by the caller (a global agent-turn mutex), so a cached
+// Session is only ever touched single-threaded.
+
+const maxCachedSessions = 8
+
+var (
+	sessCacheMu sync.Mutex
+	sessCache   = map[string]*Session{}
+)
+
+// Acquire returns a warm, reusable Session for cfg.SessionID: it is created on
+// the first turn and reused (with its executor + tmux session alive) on later
+// turns, so warm resume works even when a resumed turn needs a bridge tool. The
+// returned bool is true when the Session is cache-owned — the caller must NOT
+// Close it (the cache owns its lifecycle). When cfg.SessionID is empty there is
+// no warm resume to preserve, so Acquire returns a fresh uncached Session and
+// false; that caller must Close it as before.
+func Acquire(ctx context.Context, cfg Config) (*Session, bool, error) {
+	id := strings.TrimSpace(cfg.SessionID)
+	if id == "" {
+		s, err := New(ctx, cfg)
+		return s, false, err
+	}
+
+	sessCacheMu.Lock()
+	defer sessCacheMu.Unlock()
+
+	if s, ok := sessCache[id]; ok && !s.closed {
+		s.lastUsed = time.Now()
+		return s, true, nil
+	}
+
+	s, err := New(ctx, cfg)
+	if err != nil {
+		return nil, false, err
+	}
+	s.id = id
+	s.lastUsed = time.Now()
+	sessCache[id] = s
+	evictLocked()
+	return s, true, nil
+}
+
+// evictLocked closes the least-recently-used sessions beyond the cap. Caller
+// holds sessCacheMu. The just-inserted session is the most-recently-used, so it
+// is never the eviction target.
+func evictLocked() {
+	for len(sessCache) > maxCachedSessions {
+		var oldestID string
+		var oldest time.Time
+		for id, s := range sessCache {
+			if oldestID == "" || s.lastUsed.Before(oldest) {
+				oldestID, oldest = id, s.lastUsed
+			}
+		}
+		victim := sessCache[oldestID]
+		delete(sessCache, oldestID)
+		if victim != nil {
+			victim.teardown()
+		}
+	}
+}
+
+// CloseAllSessions tears down every cached session. Call on reset/shutdown.
+func CloseAllSessions() {
+	sessCacheMu.Lock()
+	victims := make([]*Session, 0, len(sessCache))
+	for id, s := range sessCache {
+		victims = append(victims, s)
+		delete(sessCache, id)
+	}
+	sessCacheMu.Unlock()
+	for _, s := range victims {
+		s.teardown()
+	}
+}
+
 // Ask runs one turn over the supplied history and returns the assistant reply.
 // In warm-resume mode the coding agent already holds the prior context, so only
 // the newest message is sent; otherwise the full history is replayed.
@@ -248,15 +337,54 @@ func (s *Session) Ask(ctx context.Context, history []Message) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return strings.TrimSpace(reply), nil
+	return strings.TrimSpace(sanitizeReply(reply)), nil
+}
+
+// sanitizeReply strips internal CLI/transport notices that occasionally bleed
+// into the captured assistant text. The coding CLI prints a line like
+// "Shell cwd was reset to <dir>" when a command leaves the working directory
+// changed; it is machine chatter, never meant for the parent, so drop it.
+func sanitizeReply(reply string) string {
+	if !strings.Contains(reply, "cwd was reset") {
+		return reply
+	}
+	lines := strings.Split(reply, "\n")
+	kept := lines[:0]
+	for _, ln := range lines {
+		if strings.Contains(ln, "cwd was reset") {
+			continue
+		}
+		kept = append(kept, ln)
+	}
+	return strings.Join(kept, "\n")
 }
 
 // Agent exposes the underlying agent for advanced callers (event listeners,
 // usage stats). May be nil after Close.
 func (s *Session) Agent() *mcpagent.Agent { return s.agent }
 
-// Close tears down the agent and the executor server.
+// Close tears down the agent and the executor server. Safe to call more than
+// once. A cached (warm-resume) session is normally closed only by the cache
+// (eviction / CloseAllSessions); if closed directly it also drops its cache
+// entry so a later Acquire rebuilds it instead of handing back a dead session.
 func (s *Session) Close() {
+	if s == nil {
+		return
+	}
+	if s.id != "" {
+		sessCacheMu.Lock()
+		if sessCache[s.id] == s {
+			delete(sessCache, s.id)
+		}
+		sessCacheMu.Unlock()
+	}
+	s.teardown()
+}
+
+// teardown shuts down the agent + executor without touching the cache. Callers
+// that already hold sessCacheMu (evictLocked, CloseAllSessions) use this to
+// avoid re-locking the non-reentrant mutex.
+func (s *Session) teardown() {
 	if s == nil || s.closed {
 		return
 	}

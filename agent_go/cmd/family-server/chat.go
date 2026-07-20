@@ -70,6 +70,7 @@ func parentSystemPrompt(child *Child) string {
 		"- skills/create-test/SKILL.md — make a practice test plus a separate parent-only answer key.\n" +
 		"- skills/create-progress-report/SKILL.md — build an HTML progress report in shared/reports/ that appears in the left menu for both parent and child.\n" +
 		"- skills/create-academic-map/SKILL.md — (re)build the HTML academic map at shared/academic-map.html from the real materials.\n" +
+		"- skills/backup/SKILL.md — back up the workspace (local git checkpoint, a private GitHub repo, or an object store like Cloudflare R2 / S3).\n" +
 		"At the START of every conversation, run `ls shared/inbox/`; if it contains any files, process them with the process-file skill before doing anything else.\n" +
 		childInfoNudge
 }

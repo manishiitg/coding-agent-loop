@@ -393,6 +393,9 @@ details[open] > .fl-tree-dir::before { content: "▾"; }
 .fl-suggestion { display: inline-flex; align-items: center; gap: 6px; padding: 8px 15px; border: 1px solid #ecdcb4; border-radius: 999px; background: #fffaf0; color: #7a5c1a; font: inherit; font-size: var(--text-secondary); font-weight: 650; cursor: pointer; transition: background .12s ease, border-color .12s ease; }
 .fl-suggestion:hover { background: #fdeecb; border-color: #e6c877; }
 
+.fl-whatsapp-btn { display: grid; place-items: center; width: 38px; height: 38px; border: 1px solid #cfe9d6; border-radius: 10px; background: #eafaf0; color: #1f9d55; cursor: pointer; }
+.fl-whatsapp-btn:hover { background: #d8f5e3; }
+
 /* Handoff button in the top header (moved from the drawer footer) */
 .fl-header-handoff { display: inline-flex; align-items: center; gap: 6px; min-height: 36px; padding: 0 14px; border: 0; border-radius: 10px; background: var(--yellow); color: var(--navy); font: inherit; font-size: var(--text-secondary); font-weight: 700; cursor: pointer; box-shadow: 0 3px 0 #d5a307; transition: transform .14s ease, box-shadow .14s ease; white-space: nowrap; }
 .fl-header-handoff:hover { transform: translateY(-1px); }

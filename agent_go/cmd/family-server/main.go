@@ -33,6 +33,7 @@ func main() {
 	// updates that ship with the binary. Both are idempotent.
 	_ = scaffoldFamilyFolders()
 	seedSkills()
+	seedWorkspace(loadState().Child) // idempotent: only fills in files that don't exist yet
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/health", handleHealth)

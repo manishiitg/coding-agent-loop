@@ -82,4 +82,12 @@ func seedWorkspace(child *Child) {
 		html := "<!doctype html>\n<meta charset=\"utf-8\">\n<title>Academic map</title>\n<h1>" + name + "’s academic map</h1>\n<p>This living view grows as " + name + " learns.</p>\n"
 		_ = os.WriteFile(mapPath, []byte(html), 0o600)
 	}
+	prefsPath := filepath.Join(base, "parent", "preferences.md")
+	if _, err := os.Stat(prefsPath); os.IsNotExist(err) {
+		md := "# What Quill has learned about teaching " + name + "\n\n" +
+			"Notes Quill adds here — things you've said directly (`[stated]`) and patterns Quill has noticed " +
+			"over time (`[inferred]`) — teaching style, question style, pacing, what to avoid. Each line ends " +
+			"with a date; newer notes take priority over older ones on the same topic.\n"
+		_ = os.WriteFile(prefsPath, []byte(md), 0o600)
+	}
 }

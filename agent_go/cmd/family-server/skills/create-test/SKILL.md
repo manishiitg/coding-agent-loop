@@ -5,7 +5,7 @@ description: Create a practice test for the child from their materials and progr
 
 # Create a practice test
 
-1. **Know the child.** Read `parent/child-profile.json` for name, grade, and board so the test matches their level. If any of these are missing, ask the parent first.
+1. **Know the child.** Read `parent/child-profile.json` for name, grade, and board so the test matches their level. If any of these are missing, ask the parent first. Also read `parent/preferences.md` and apply anything relevant (question style, pacing, what to avoid).
 
 2. **Gather context and progress.**
    - Read the relevant material in `shared/materials/<subject>/<topic>/` and its `.meta.json` files.

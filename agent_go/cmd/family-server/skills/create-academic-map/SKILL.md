@@ -13,6 +13,7 @@ Produce ONE self-contained HTML file giving a living overview of what the child 
    - Note generated work: `shared/study/` and `shared/tests/` (which topics have study material / tests).
    - Check for real attempt evidence per topic: read `child/attempts/*.json` (the child's saved answers) and skim `parent/conversations/` + `child/conversations/` for anything you observed about that topic (e.g. "solved the a=1 case, stuck on a≠1"). Use this for a short, honest status per topic — never a numeric score, never invented.
    - The current focus is in `parent/child-profile.json` and the active subject/topic.
+   - Check `parent/preferences.md` for anything worth reflecting (e.g. a pacing or style note relevant to a subject).
 
 2. **Write** the map to `shared/academic-map.html` (overwrite the existing placeholder). It MUST be:
    - Styled with the SHARED design system: read `skills/_shared/html-design.md` and inline its CSS + base template, so it matches every other generated HTML file.

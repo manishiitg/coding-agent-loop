@@ -8,7 +8,7 @@ description: Build a designed, self-contained HTML progress report for the child
 Produce ONE self-contained HTML file that both parent and child can read.
 
 1. **Gather evidence — only real data, never invent scores or diagnoses:**
-   - Child profile: `parent/child-profile.json`.
+   - Child profile: `parent/child-profile.json`. Also `parent/preferences.md`, if relevant to what you note.
    - Materials covered: list `shared/materials/` and read the `.meta.json` files for subjects and topics.
    - Work created: `shared/study/` and `shared/tests/`.
    - Activity: `parent/conversations/` and `child/conversations/` (titles + dates).

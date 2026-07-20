@@ -261,7 +261,8 @@ export default function LearningApp() {
   const threadEndRef = useRef<HTMLDivElement>(null)
   const iframeRef = useRef<HTMLIFrameElement>(null)
   const [drawerTab, setDrawerTab] = useState<DrawerTab>('map')
-  const [filesView, setFilesView] = useState<'subjects' | 'uploaded' | 'advanced'>('subjects')
+  const [filesView, setFilesView] = useState<'subjects' | 'uploaded' | 'reference' | 'advanced'>('subjects')
+  const [prefsContent, setPrefsContent] = useState<string | null>(null)
   const [filesSubjectFilter, setFilesSubjectFilter] = useState('')
   const [treeNodes, setTreeNodes] = useState<TreeNode[]>([])
   const [viewerPath, setViewerPath] = useState<string | null>(null)
@@ -288,6 +289,18 @@ export default function LearningApp() {
       .catch(() => { if (!cancelled) setMapHtml('') })
     return () => { cancelled = true }
   }, [drawerTab, mapRefreshKey])
+
+  // Load parent/preferences.md for the Reference tab, refetched whenever it's
+  // opened or a turn just completed (the agent may have updated it).
+  useEffect(() => {
+    if (filesView !== 'reference') return
+    let cancelled = false
+    fetch(`${FAMILY_API}/api/workspace/file?path=${encodeURIComponent('parent/preferences.md')}`)
+      .then((r) => r.json())
+      .then((d) => { if (!cancelled) setPrefsContent(d.content ?? '') })
+      .catch(() => { if (!cancelled) setPrefsContent('') })
+    return () => { cancelled = true }
+  }, [filesView, mapRefreshKey])
 
   // Load the selected file for the drawer's Files viewer.
   useEffect(() => {
@@ -815,7 +828,18 @@ export default function LearningApp() {
               {drawerTab === 'progress' && (() => {
                 const materials = allFiles.filter((p) => p.includes('/materials/')).length
                 const study = allFiles.filter((p) => p.includes('/study/')).length
-                const tests = allFiles.filter((p) => p.includes('/tests/')).length
+                const testFiles = allFiles.filter((p) => p.includes('/tests/') && !p.endsWith('.meta.json'))
+                const attemptFiles = allFiles.filter((p) => p.includes('/attempts/') && p.endsWith('.json'))
+                // Best-effort match between a test file and a saved attempt: strip the
+                // date prefix + extension and compare normalized basenames. Real,
+                // file-based evidence — never an invented score.
+                const normKey = (p: string) => (p.split('/').pop() || '')
+                  .replace(/\.[a-z0-9]+$/i, '')
+                  .replace(/^\d{4}-\d{2}-\d{2}[-_]/, '')
+                  .toLowerCase()
+                  .replace(/[^a-z0-9]/g, '')
+                const attemptedKeys = new Set(attemptFiles.map(normKey))
+                const testStatus = testFiles.map((p) => ({ path: p, attempted: attemptedKeys.has(normKey(p)), ...parseAssetPath(p) }))
                 const recent = [...conversations, ...childSessionsList].sort((a, b) => b.updated.localeCompare(a.updated)).slice(0, 6)
                 return (
                   <>
@@ -827,7 +851,17 @@ export default function LearningApp() {
                       <p className="fl-drawer-label">Workspace snapshot</p>
                       <div className="fl-prog-item is-strong"><FileText size={16} /> {materials} material{materials === 1 ? '' : 's'} uploaded</div>
                       <div className="fl-prog-item is-strong"><FileText size={16} /> {study} study sheet{study === 1 ? '' : 's'} created</div>
-                      <div className="fl-prog-item is-strong"><FileText size={16} /> {tests} practice test{tests === 1 ? '' : 's'} created</div>
+                    </section>
+                    <section className="fl-prog-group">
+                      <p className="fl-drawer-label">Tests — has {childName || 'she'} attempted them?</p>
+                      {testStatus.length === 0 && <p className="fl-note">No tests yet.</p>}
+                      {testStatus.map((t) => (
+                        <div key={t.path} className="fl-prog-recent">
+                          <span className="fl-signal" data-signal={t.attempted ? 'strong' : undefined} aria-hidden="true" />
+                          <span className="fl-prog-recent-label">{t.subject ? `${t.subject} · ` : ''}{t.label}</span>
+                          <small>{t.attempted ? 'Attempted' : 'Not yet'}</small>
+                        </div>
+                      ))}
                     </section>
                     <section className="fl-prog-group">
                       <p className="fl-drawer-label">Recent activity</p>
@@ -840,7 +874,7 @@ export default function LearningApp() {
                         </div>
                       ))}
                     </section>
-                    <p className="fl-note">Built from real files and sessions on this computer — no numeric scores are invented. Ask Quill to review {childName || 'Maya'}’s work for a deeper read.</p>
+                    <p className="fl-note">Built from real files and sessions on this computer — no numeric scores are invented. See the Subjects tab for Quill's evidence-based notes per topic, or ask Quill to review {childName || 'Maya'}’s work for a deeper read.</p>
                   </>
                 )
               })()}
@@ -871,9 +905,12 @@ export default function LearningApp() {
                     <div className="fl-files-toggle">
                       <button type="button" className={filesView === 'subjects' ? 'is-active' : ''} onClick={() => setFilesView('subjects')}>Subjects</button>
                       <button type="button" className={filesView === 'uploaded' ? 'is-active' : ''} onClick={() => setFilesView('uploaded')}>Uploaded Material</button>
+                      <button type="button" className={filesView === 'reference' ? 'is-active' : ''} onClick={() => setFilesView('reference')}>Reference</button>
                       <button type="button" className={filesView === 'advanced' ? 'is-active' : ''} onClick={() => setFilesView('advanced')}>All files</button>
                     </div>
-                    {filesView === 'advanced' ? (
+                    {filesView === 'reference' ? (
+                      prefsContent === null ? <p className="fl-note">Loading…</p> : <Markdown text={prefsContent} />
+                    ) : filesView === 'advanced' ? (
                       treeNodes.length === 0 ? <p className="fl-note">No files yet.</p> : <FileTree nodes={treeNodes} onOpen={(p) => { setViewerImageList([]); setViewerPath(p) }} />
                     ) : (() => {
                       // Hierarchy: subject -> topic -> type (test/notes/...) -> date -> file.

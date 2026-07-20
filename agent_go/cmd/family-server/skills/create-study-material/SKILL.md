@@ -5,7 +5,7 @@ description: Create clear, child-ready study material (notes, worked examples, a
 
 # Create study material
 
-1. **Know the child.** Read `parent/child-profile.json` for name, grade, and board so the material matches their level and syllabus. If any of these are missing, ask the parent first.
+1. **Know the child.** Read `parent/child-profile.json` for name, grade, and board so the material matches their level and syllabus. If any of these are missing, ask the parent first. Also read `parent/preferences.md` and apply anything relevant (teaching style, what to avoid).
 
 2. **Gather context.** Read the relevant files in `shared/materials/<subject>/<topic>/` and their `.meta.json` so the material matches what the child is actually studying — same syllabus, same notation, same method names.
 

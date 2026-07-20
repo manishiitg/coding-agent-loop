@@ -46,6 +46,8 @@ const workshopFixedIteration = "iteration-0"
 
 const pulseReviewerCompletionPrefix = "PULSE_REVIEW_COMPLETE"
 
+const pulseReviewerMaxConcurrency = 2
+
 const statusPollWindow = 60 * time.Second
 
 const statusPollNextAction = `**NEXT ACTION: End the current agent turn now.**
@@ -137,6 +139,54 @@ func completedPulseReviewerResult(result, marker string) (string, error) {
 		return "", fmt.Errorf("reviewer output was empty before %q", marker)
 	}
 	return result, nil
+}
+
+func validatePulseReviewIdentity(reviewRunID, module string) error {
+	reviewRunID = strings.TrimSpace(reviewRunID)
+	module = strings.TrimSpace(module)
+	separator := strings.IndexByte(reviewRunID, '_')
+	if separator <= 0 {
+		return fmt.Errorf("review_run_id must start with a UTC date-time and underscore")
+	}
+	if _, err := time.Parse("2006-01-02T15-04-05.000Z", reviewRunID[:separator]); err != nil {
+		return fmt.Errorf("review_run_id must start with YYYY-MM-DDTHH-MM-SS.mmmZ: %w", err)
+	}
+	for _, r := range reviewRunID {
+		if !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '-' || r == '_' || r == '.') {
+			return fmt.Errorf("review_run_id contains unsupported path characters")
+		}
+	}
+	validModules := map[string]bool{
+		"bug_review": true, "artifact_review": true, "report_health": true,
+		"eval_health": true, "learning_health": true, "knowledgebase_health": true,
+		"db_health": true, "cost_llm_time": true, "llm_ops_review": true,
+		"goal_advisor": true,
+	}
+	if !validModules[module] {
+		return fmt.Errorf("module %q is not a valid Pulse review module", module)
+	}
+	return nil
+}
+
+func pulseReviewResultPath(reviewRunID, module string) (string, error) {
+	if err := validatePulseReviewIdentity(reviewRunID, module); err != nil {
+		return "", err
+	}
+	return filepath.ToSlash(filepath.Join("pulse", "reviews", reviewRunID, module+".md")), nil
+}
+
+func pulseReviewResultMarkdown(pulseRunID, reviewRunID, module, status, result string, completedAt time.Time) string {
+	return fmt.Sprintf("# Pulse reviewer result\n\n- Pulse run: `%s`\n- Review run: `%s`\n- Module: `%s`\n- Status: `%s`\n- Completed at: `%s`\n\n## Findings\n\n%s\n",
+		strings.TrimSpace(pulseRunID), reviewRunID, module, status, completedAt.UTC().Format(time.RFC3339Nano), strings.TrimSpace(result))
+}
+
+func acquirePulseReviewerSlot(ctx context.Context, slots chan struct{}) error {
+	select {
+	case slots <- struct{}{}:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 }
 
 func normalizeWorkshopBuilderRunFolder(runFolder string) string {
@@ -993,6 +1043,7 @@ type InteractiveWorkshopManager struct {
 	listServerAgents       func() []ServerAgentInfo  // optional: list all agents from server's bgAgentRegistry
 	workshopModeOverride   string                    // frontend-selected workshop mode (takes priority over auto-detection)
 	toolAgentSetupMu       sync.Mutex                // protects temporary controller/bridge state while tool agents are created
+	pulseReviewerSlots     chan struct{}             // hard limit for synchronous Pulse reviewer fan-out
 }
 
 func uniqueStringsPreserveOrder(values []string) []string {
@@ -1156,11 +1207,12 @@ func NewInteractiveWorkshopManager(
 	// and are queryable via query_step
 	controller.SetSubAgentNotifier(&workshopSubAgentNotifier{registry: registry})
 	return &InteractiveWorkshopManager{
-		controller:   controller,
-		presetLLM:    presetLLM,
-		sessionID:    sessionID,
-		workflowID:   workflowID,
-		stepRegistry: registry,
+		controller:         controller,
+		presetLLM:          presetLLM,
+		sessionID:          sessionID,
+		workflowID:         workflowID,
+		stepRegistry:       registry,
+		pulseReviewerSlots: make(chan struct{}, pulseReviewerMaxConcurrency),
 	}
 }
 
@@ -3315,7 +3367,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 	// executor from being selected through the global code-exec registry.
 	if err := mcpAgent.RegisterCustomTool(
 		"call_generic_agent",
-		"Run one synchronous read-only reviewer in an isolated context for this workflow and return its complete findings. Intended for Pulse's parallel review batch. Each call has a distinct runtime identity. The reviewer cannot mutate files, configuration, plans, reports, evaluations, human inputs, or module state. Incomplete provider snapshots are rejected and retried once. Do not put a custom completion marker in instructions; this tool appends and validates its own marker.",
+		"Run one synchronous read-only reviewer in an isolated context for this workflow. Call this tool directly; never invoke it through shell, curl, a background process, or polling. Pulse permits at most two concurrent calls. For Pulse, pass pulse_run_id, review_run_id, and module: the backend persists the complete result to pulse/reviews/<dated-review-run-id>/<module>.md and returns only its compact path reference. The reviewer cannot mutate files, configuration, plans, reports, evaluations, human inputs, or module state. Incomplete provider snapshots are rejected and retried once. Do not put a custom completion marker in instructions; this tool appends and validates its own marker.",
 		map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
@@ -3331,6 +3383,18 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 					"type":        "integer",
 					"enum":        []int{1, 2, 3},
 					"description": "Required intended reasoning tier. Pulse reviewers execute with the workflow maintenance model.",
+				},
+				"pulse_run_id": map[string]interface{}{
+					"type":        "string",
+					"description": "Pulse worklist run ID. Required together with review_run_id and module for a persisted Pulse review.",
+				},
+				"review_run_id": map[string]interface{}{
+					"type":        "string",
+					"description": "Exact scheduler-provided dated review ID (YYYY-MM-DDTHH-MM-SS.mmmZ_<pulse-id>). Required for Pulse.",
+				},
+				"module": map[string]interface{}{
+					"type":        "string",
+					"description": "Exact Pulse module name. Required for Pulse and used as the separate result filename.",
 				},
 			},
 			"required": []string{"todo_id", "instructions", "preferred_tier"},
@@ -3349,6 +3413,43 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 			preferredTier, ok := args["preferred_tier"].(float64)
 			if !ok || preferredTier < 1 || preferredTier > 3 {
 				return "", fmt.Errorf("preferred_tier is required and must be 1, 2, or 3")
+			}
+			pulseRunID, _ := args["pulse_run_id"].(string)
+			pulseRunID = strings.TrimSpace(pulseRunID)
+			reviewRunID, _ := args["review_run_id"].(string)
+			reviewRunID = strings.TrimSpace(reviewRunID)
+			module, _ := args["module"].(string)
+			module = strings.TrimSpace(module)
+			pulseMetadataCount := 0
+			for _, value := range []string{pulseRunID, reviewRunID, module} {
+				if value != "" {
+					pulseMetadataCount++
+				}
+			}
+			looksLikePulseReview := strings.Contains(strings.ToLower(instructions), "pulse_run_id") ||
+				strings.Contains(strings.ToLower(instructions), "pulse run id")
+			if (pulseMetadataCount != 0 || looksLikePulseReview) && pulseMetadataCount != 3 {
+				return "", fmt.Errorf("pulse_run_id, review_run_id, and module must be provided together")
+			}
+			isPulseReview := pulseMetadataCount == 3
+			var resultPath string
+			if isPulseReview {
+				var pathErr error
+				resultPath, pathErr = pulseReviewResultPath(reviewRunID, module)
+				if pathErr != nil {
+					return "", pathErr
+				}
+				if iwm.pulseReviewerSlots == nil {
+					iwm.toolAgentSetupMu.Lock()
+					if iwm.pulseReviewerSlots == nil {
+						iwm.pulseReviewerSlots = make(chan struct{}, pulseReviewerMaxConcurrency)
+					}
+					iwm.toolAgentSetupMu.Unlock()
+				}
+				if err := acquirePulseReviewerSlot(ctx, iwm.pulseReviewerSlots); err != nil {
+					return "", fmt.Errorf("wait for Pulse reviewer slot: %w", err)
+				}
+				defer func() { <-iwm.pulseReviewerSlots }()
 			}
 
 			execCtx, cancel, ctxErr := iwm.newExecContext()
@@ -3403,6 +3504,13 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 			workspacePath := iwm.controller.GetWorkspacePath()
 			marker := pulseReviewerCompletionMarker(todoID)
 			reviewerInstruction := buildPulseReviewerInstruction(workspacePath, instructions, marker)
+			persistFailure := func(message string) error {
+				if !isPulseReview {
+					return nil
+				}
+				body := pulseReviewResultMarkdown(pulseRunID, reviewRunID, module, "failed", message, time.Now())
+				return iwm.controller.WriteWorkspaceFile(ctx, resultPath, body)
+			}
 
 			var incompleteErr error
 			for attempt := 1; attempt <= 2; attempt++ {
@@ -3412,16 +3520,36 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				}
 				result, runErr := iwm.runGoalAdvisorStageAgent(execCtx, stageName, reviewerInstruction, goalAdvisorStageReadOnly)
 				if runErr != nil {
+					if writeErr := persistFailure(runErr.Error()); writeErr != nil {
+						return "", fmt.Errorf("%w; additionally failed to persist Pulse reviewer failure at %s: %w", runErr, resultPath, writeErr)
+					}
+					if isPulseReview {
+						return "", fmt.Errorf("%w; failure recorded at %s", runErr, resultPath)
+					}
 					return "", runErr
 				}
 				completed, completionErr := completedPulseReviewerResult(result, marker)
 				if completionErr == nil {
-					return completed, nil
+					if !isPulseReview {
+						return completed, nil
+					}
+					body := pulseReviewResultMarkdown(pulseRunID, reviewRunID, module, "completed", completed, time.Now())
+					if writeErr := iwm.controller.WriteWorkspaceFile(ctx, resultPath, body); writeErr != nil {
+						return "", fmt.Errorf("persist Pulse reviewer result %s: %w", resultPath, writeErr)
+					}
+					return fmt.Sprintf("Pulse reviewer completed and was persisted.\nmodule: %s\nreview_result_path: %s\nRead that file before applying or recording fixes.", module, resultPath), nil
 				}
 				incompleteErr = completionErr
 				logger.Warn(fmt.Sprintf("⚠️ Pulse reviewer %q attempt %d returned incomplete output: %v", todoID, attempt, completionErr))
 			}
-			return "", fmt.Errorf("Pulse reviewer %q returned incomplete output twice; partial findings were rejected: %w", todoID, incompleteErr)
+			finalErr := fmt.Errorf("Pulse reviewer %q returned incomplete output twice; partial findings were rejected: %w", todoID, incompleteErr)
+			if writeErr := persistFailure(finalErr.Error()); writeErr != nil {
+				return "", fmt.Errorf("%w; additionally failed to persist Pulse reviewer failure at %s: %w", finalErr, resultPath, writeErr)
+			}
+			if isPulseReview {
+				return "", fmt.Errorf("%w; failure recorded at %s", finalErr, resultPath)
+			}
+			return "", finalErr
 		},
 		"workflow",
 	); err != nil {

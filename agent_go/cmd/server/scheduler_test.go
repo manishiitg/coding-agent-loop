@@ -842,17 +842,30 @@ func TestPostRunMonitorUsesDynamicModulesAndSingleFinalizer(t *testing.T) {
 	if finalizer == "" {
 		t.Fatal("finalizer step not found")
 	}
-	modulePrompts := map[string]string{
-		"bug_review":           bugReview,
-		"artifact_review":      artifact,
-		"report_health":        reportHealth,
-		"eval_health":          evalHealth,
-		"learning_health":      learningHealth,
-		"knowledgebase_health": kbHealth,
-		"db_health":            dbHealth,
-		"cost_llm_time":        cost,
-		"llm_ops_review":       llmOps,
-		"goal_advisor":         goalAdvisor,
+	// Detailed contracts live in focused/reference guidance. Scheduler messages
+	// intentionally carry only identifiers and the exact reference to load.
+	repoRoot := findRepoRoot(t)
+	readContract := func(rel string) string {
+		t.Helper()
+		raw, err := os.ReadFile(filepath.Join(repoRoot, rel))
+		if err != nil {
+			t.Fatalf("read %s: %v", rel, err)
+		}
+		return string(raw)
+	}
+	gatePrompt := gate
+	gate = gate + "\n" + readContract("agent_go/cmd/server/guidance/templates/system/pulse-gate.md") +
+		"\n" + readContract("agent_go/cmd/server/guidance/templates/system/post-run-monitor.md")
+	finalizerPrompt := finalizer
+	finalizer = finalizer + "\n" + readContract("agent_go/cmd/server/guidance/templates/system/pulse-finalizer.md") +
+		"\n" + readContract("agent_go/cmd/server/guidance/templates/system/post-run-monitor.md")
+	for _, pair := range []struct{ prompt, ref string }{
+		{gatePrompt, `get_reference_doc(kind="pulse-gate")`},
+		{finalizerPrompt, `get_reference_doc(kind="pulse-finalizer")`},
+	} {
+		if !strings.Contains(pair.prompt, pair.ref) {
+			t.Fatalf("compact stage prompt missing focused reference %q: %s", pair.ref, pair.prompt)
+		}
 	}
 	for _, want := range []string{
 		"exploratory QA review",
@@ -884,17 +897,12 @@ func TestPostRunMonitorUsesDynamicModulesAndSingleFinalizer(t *testing.T) {
 		}
 	}
 	for _, want := range []string{
-		"bounded exploratory QA checkpoint",
-		"QA has never completed",
-		"previously recorded risk checkpoint",
-		"tighten Bug Review cadence even if all steps completed",
-		"no exploratory QA checkpoint completed after the latest observed miss",
-		"cannot justify a long calendar cooldown",
-		"finding-free reviews over unchanged runtime paths may widen",
-		"Do not run exploratory QA on every high-frequency Pulse",
-		"targeted observable trace review",
-		"ignored or misinterpreted returned evidence",
-		"do not audit every conversation",
+		"progressive evidence scan",
+		"never a substitute for a baseline review",
+		"Missing baseline means",
+		"wrong tool/source/route/decision evidence",
+		"off-track material goal",
+		"bounded adaptive cadence",
 	} {
 		if !strings.Contains(gate, want) {
 			t.Fatalf("gate step missing semantic trace trigger %q:\n%s", want, gate)
@@ -923,46 +931,6 @@ func TestPostRunMonitorUsesDynamicModulesAndSingleFinalizer(t *testing.T) {
 			t.Fatalf("llm-ops step missing trace coaching handoff %q:\n%s", want, llmOps)
 		}
 	}
-	for module, prompt := range modulePrompts {
-		for _, want := range []string{
-			"PULSE CONSOLIDATED REVIEW PROTOCOL",
-			`get_reference_doc(kind="post-run-monitor")`,
-			"READ-ONLY REVIEW",
-			"parallel batches of at most four",
-			"under 3000 characters",
-			"bounded in-turn review ledger",
-			".pulse-fixer-recovery",
-			"without blindly reapplying",
-			"fixed_verified/no_change/blocked/failed",
-			"write user-facing cards once",
-			"conflict map grouped by target key",
-			"explicit user approval, correctness/data integrity, preserved goal meaning",
-			"block only affected modules",
-			"finding-id-manifest",
-			"reconciles every reviewer finding id",
-			"global finding-ID reconciliation",
-			"Never claim Pulse completed",
-			"recorded approval basis",
-			"Unrelated drift is acceptable",
-			"stale_not_applied",
-			"Never silently broaden or rebase",
-			"POST-CHANGE EVIDENCE BOUNDARY",
-			"Old artifacts are baseline only, never proof",
-			"mtime alone",
-			"changed_unverified",
-			"awaiting_next_valid_run",
-			"Pulse Fixer",
-			"only writer",
-			"Use review-artifact-drift",
-			"improve-learnings, improve-knowledge, improve-database, improve-report, and improve-evaluation",
-			"Do not use run_in_background",
-			"it must not launch another agent",
-		} {
-			if !strings.Contains(prompt, want) {
-				t.Fatalf("%s module missing consolidated review protocol %q:\n%s", module, want, prompt)
-			}
-		}
-	}
 	if strings.Contains(gate, "call harden_workflow(") || strings.Contains(gate, "call improve_learnings(") {
 		t.Fatalf("gate step should not run selected modules directly:\n%s", gate)
 	}
@@ -970,41 +938,14 @@ func TestPostRunMonitorUsesDynamicModulesAndSingleFinalizer(t *testing.T) {
 		"PULSE GATE / WORKLIST",
 		"get_pulse_module_state",
 		"record_pulse_worklist exactly once",
-		"High-frequency workflows should normally roll up cost/time checks",
-		"Treat llm_ops_review as a low-frequency coaching pass",
-		"due immediately when a defined measurable success criterion is below target",
-		"An unmet measured goal is a direct trigger",
-		"do not skip it because execution is clean, eval passed, or Goal Advisor ran recently",
-		"use Goal Advisor's measurement-design path instead of claiming a miss",
-		"A correct abstention or green eval is execution evidence, not goal progress",
-		"mark both bug_review and goal_advisor due when appropriate",
-		"tighten Bug Review cadence even if all steps completed",
-		"no exploratory QA checkpoint completed after the latest observed miss",
-		"cannot justify a long calendar cooldown",
-		"finding-free reviews over unchanged runtime paths may widen",
-		"Do not use 'wait for a clean run' as an indefinite strategy cooldown",
-		"retained cross-run goal evidence",
-		"Meeting a target is not a permanent skip",
-		"optimization-headroom review",
-		"conditional plan-design review",
-		"planned plan-design checkpoint",
-		"active experiment does not block plan-design monitoring",
-		"do not create a competing experiment",
-		"meaningful outcome-bearing runs",
-		"Once that headroom or plan-design checkpoint arrives",
-		"Never allow more than one active advisor experiment",
-		"data-review-after",
-		"Every Gate must re-judge current goal evidence",
-		"checkpoint is a planned evidence boundary, not a lock",
-		"Zero valid outcome-bearing runs means the experiment has not received a fair test",
-		"implementation/control-path evidence",
-		"repair or advance that same experiment",
-		"explicitly inspect every executed step/item's compact final result",
+		"cannot suppress a measured miss",
+		"Mark both Bug Review and Goal Advisor",
+		"For the supplied run folder, inspect every executed step/item's compact final",
 		"CONCERNS:",
-		"execution/execution-final-summary.json execution_result",
-		"execution/execution-attempt-*.json execution_result",
-		"session.json entries[].summary",
-		"not an automatic run failure or automatic Bug verdict",
+		"execution-final-summary.json",
+		"execution-attempt-*.json",
+		"session.json",
+		"not automatic run failure",
 	} {
 		if !strings.Contains(gate, want) {
 			t.Fatalf("gate step missing %q:\n%s", want, gate)
@@ -1021,8 +962,8 @@ func TestPostRunMonitorUsesDynamicModulesAndSingleFinalizer(t *testing.T) {
 		"cost_llm_time",
 		"llm_ops_review",
 		"goal_advisor",
-		"lock/unlock decisions",
-		"Goal Advisor does not do routine Bug Review/KB/learnings/DB cleanup",
+		"Gate must not launch reviewers",
+		"Operational correctness stays Bug/Eval work",
 	} {
 		if !strings.Contains(gate, want) {
 			t.Fatalf("gate step missing module/gating text %q:\n%s", want, gate)
@@ -1189,26 +1130,19 @@ func TestPostRunMonitorUsesDynamicModulesAndSingleFinalizer(t *testing.T) {
 	}
 	for _, want := range []string{
 		"PULSE FINALIZER",
-		"confirm every module marked due",
-		"consolidated READ-ONLY REVIEW plus single-fixer protocol",
-		"Never treat a missing result as skipped or successful",
-		"ONE turn",
+		"confirm every due module",
+		"never treat missing as success",
+		"in that order in this one turn",
 		"mark_pulse_final_command_result",
-		"DASHBOARD + QUESTIONS",
+		"Dashboard + questions",
 		"builder/card.health.html",
 		"create_human_input_request",
-		"BACKUP",
-		"PUBLISH",
-		"source hash matches last_source_hash",
-		"NOTIFY",
-		"once every run",
-		"Bug/Goal state",
-		"backup/publish status",
+		"Backup",
+		"Publish",
+		"Notify",
 		"Backup risk: local only",
-		"no verified destination is off-device",
-		"never call it healthy or fully backed up",
-		"every notification until off-device protection is verified",
-		"dashboard URL when live",
+		"off-device destination",
+		"live URL",
 		"notify_user",
 	} {
 		if !strings.Contains(finalizer, want) {
@@ -2069,14 +2003,16 @@ func TestSelectedPostRunMonitorModuleStepsUsesGateWorklist(t *testing.T) {
 	s := NewSchedulerService(nil)
 	steps := s.selectedPostRunMonitorModuleSteps(ctx, &ScheduleContext{WorkspacePath: workspacePath}, pulseRunID)
 	got := postRunStepLabels(steps)
-	want := []string{"pre-backup", "bug-review", "cost-llm-time", "llm-ops-review", "goal-advisor", "finalize"}
+	want := []string{"pre-backup", "consolidated-review", "finalize"}
 	if strings.Join(got, ",") != strings.Join(want, ",") {
 		t.Fatalf("selected labels = %#v, want %#v", got, want)
 	}
 	for _, required := range []string{
-		"direct tool result is authoritative",
-		"rejects partial provider snapshots",
-		"do not perform that deep review in the parent",
+		`due_modules=["bug_review","cost_llm_time","llm_ops_review","goal_advisor"]`,
+		`get_reference_doc(kind="pulse-review-fixer")`,
+		"batches of at most two",
+		"pulse/reviews/",
+		"Read each backend-persisted",
 	} {
 		if !strings.Contains(steps[1].query, required) {
 			t.Fatalf("consolidated reviewer protocol missing %q", required)
@@ -2084,14 +2020,131 @@ func TestSelectedPostRunMonitorModuleStepsUsesGateWorklist(t *testing.T) {
 	}
 }
 
+func TestPulseReviewRunIDAndConsolidatedPromptAreCompact(t *testing.T) {
+	reviewRunID := pulseReviewRunID("schedule-manual--manual-p_1784571312755290000", time.Date(2026, 7, 21, 0, 8, 44, 123000000, time.UTC))
+	if want := "2026-07-21T00-08-44.123Z_schedule-manual--manual-p_1784571312755290000"; reviewRunID != want {
+		t.Fatalf("review run id = %q, want %q", reviewRunID, want)
+	}
+	step := postRunMonitorConsolidatedReviewStep("pulse-run-1", reviewRunID, []string{
+		pulseModuleBugReview,
+		pulseModuleArtifactReview,
+		pulseModuleEvalHealth,
+		pulseModuleCostLLMTime,
+		pulseModuleGoalAdvisor,
+	})
+	if step.label != "consolidated-review" {
+		t.Fatalf("label = %q", step.label)
+	}
+	if len(step.query) > 2500 {
+		t.Fatalf("consolidated prompt is not compact: %d bytes", len(step.query))
+	}
+	for _, module := range []string{pulseModuleBugReview, pulseModuleArtifactReview, pulseModuleEvalHealth, pulseModuleCostLLMTime, pulseModuleGoalAdvisor} {
+		if strings.Count(step.query, module) != 1 {
+			t.Fatalf("module %q should appear exactly once in compact prompt:\n%s", module, step.query)
+		}
+	}
+	for _, forbidden := range []string{"PULSE MODULE — BUG REVIEW", "PULSE MODULE — ARTIFACT REVIEW", "PULSE MODULE — EVAL HEALTH"} {
+		if strings.Contains(step.query, forbidden) {
+			t.Fatalf("compact prompt repeated module brief %q", forbidden)
+		}
+	}
+}
+
+func TestScheduledPulseStagePromptsStayCompact(t *testing.T) {
+	intro := postRunMonitorIntro("trigger=manual", "Workflow/demo", "pulse-run-1", "completed", "runs/iteration-0")
+	archive := postRunMonitorArchiveStep(pulseImproveArchiveAssessment{Due: true, TimelineEntries: 24, RecentRunRows: 7}).query
+	gate := postRunMonitorGateStep("pulse-run-1", "runs/iteration-0", "completed").query
+	preBackup := postRunMonitorPreBackupStep("pulse-run-1").query
+	consolidated := postRunMonitorConsolidatedReviewStep("pulse-run-1", "2026-07-21T00-08-44.123Z_pulse-run-1", pulseModuleOrder).query
+	finalizer := postRunMonitorFinalSteps("pulse-run-1")[0].query
+
+	for name, tc := range map[string]struct {
+		prompt string
+		max    int
+	}{
+		"intro":               {intro, 500},
+		"archive":             {archive, 500},
+		"gate":                {gate, 600},
+		"pre-backup":          {preBackup, 500},
+		"consolidated-review": {consolidated, 1400},
+		"finalizer":           {finalizer, 650},
+	} {
+		if got := len(tc.prompt); got > tc.max {
+			t.Fatalf("%s scheduler prompt grew to %d bytes (budget %d):\n%s", name, got, tc.max, tc.prompt)
+		}
+	}
+	if got := len(intro) + len(consolidated); got > 1800 {
+		t.Fatalf("largest scheduled Pulse turn context is %d bytes before shared system prompt, want <= 1800", got)
+	}
+	for _, tc := range []struct{ prompt, ref string }{
+		{archive, `get_reference_doc(kind="pulse-archive")`},
+		{gate, `get_reference_doc(kind="pulse-gate")`},
+		{consolidated, `get_reference_doc(kind="pulse-review-fixer")`},
+		{finalizer, `get_reference_doc(kind="pulse-finalizer")`},
+	} {
+		if !strings.Contains(tc.prompt, tc.ref) {
+			t.Fatalf("compact prompt missing focused reference %q: %s", tc.ref, tc.prompt)
+		}
+	}
+}
+
+func TestValidatePulseDueModuleResultsAndFailureReconciliation(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	t.Setenv("WORKSPACE_DOCS_PATH", root)
+	workspacePath := "Workflow/demo"
+	pulseRunID := "pulse-run-results"
+	if _, err := recordPulseWorklist(ctx, workspacePath, pulseRunID, completePulseWorklistDecisions(map[string]PulseWorklistDecision{
+		pulseModuleBugReview:   {Module: pulseModuleBugReview, Due: true, Reason: "Bug evidence."},
+		pulseModuleEvalHealth:  {Module: pulseModuleEvalHealth, Due: true, Reason: "Eval evidence."},
+		pulseModuleGoalAdvisor: {Module: pulseModuleGoalAdvisor, Due: true, Reason: "Goal evidence."},
+	})); err != nil {
+		t.Fatalf("record worklist: %v", err)
+	}
+	if err := validatePulseDueModuleResults(ctx, workspacePath, pulseRunID); err == nil || !strings.Contains(err.Error(), "bug_review, eval_health, goal_advisor") {
+		t.Fatalf("missing-result validation error = %v", err)
+	}
+	if _, err := markPulseModuleResultFromAgent(ctx, workspacePath, pulseModuleBugReview, pulseRunID, "done", "Clean review.", []string{"pulse/reviews/run/bug_review.md"}); err != nil {
+		t.Fatalf("mark bug review: %v", err)
+	}
+	if err := markUnresolvedPulseDueModules(ctx, workspacePath, pulseRunID, "failed", "Consolidated review did not finish"); err != nil {
+		t.Fatalf("mark unresolved: %v", err)
+	}
+	if err := validatePulseDueModuleResults(ctx, workspacePath, pulseRunID); err != nil {
+		t.Fatalf("terminal validation: %v", err)
+	}
+	worklist, _, err := getPulseWorklistForRun(ctx, workspacePath, pulseRunID)
+	if err != nil {
+		t.Fatalf("read worklist: %v", err)
+	}
+	if got := worklist[pulseModuleBugReview].LastResult; got != "done" {
+		t.Fatalf("existing completed module was overwritten: %q", got)
+	}
+	for _, module := range []string{pulseModuleEvalHealth, pulseModuleGoalAdvisor} {
+		if got := worklist[module].LastResult; got != "failed" {
+			t.Fatalf("%s result = %q, want failed", module, got)
+		}
+	}
+}
+
 func TestPulseBackupRunsOnlyInParentTurn(t *testing.T) {
 	preBackup := postRunMonitorPreBackupStep("pulse-run-1").query
 	finalizer := postRunMonitorFinalSteps("pulse-run-1")[0].query
-	for name, message := range map[string]string{"pre-backup": preBackup, "finalizer": finalizer} {
-		for _, required := range []string{"THIS parent", "Never delegate", "run_in_background", "call_generic_agent", ".git directory"} {
-			if !strings.Contains(message, required) {
-				t.Fatalf("%s message missing parent-only backup guard %q", name, required)
-			}
+	for _, required := range []string{"directly in this parent turn", "never delegate Git/backup work", `get_reference_doc(kind="backup-strategy")`} {
+		if !strings.Contains(preBackup, required) {
+			t.Fatalf("pre-backup message missing parent-only backup guard %q", required)
+		}
+	}
+	if !strings.Contains(finalizer, `get_reference_doc(kind="pulse-finalizer")`) {
+		t.Fatalf("finalizer does not load its focused contract: %s", finalizer)
+	}
+	raw, err := os.ReadFile(filepath.Join(findRepoRoot(t), "agent_go/cmd/server/guidance/templates/system/pulse-finalizer.md"))
+	if err != nil {
+		t.Fatalf("read finalizer contract: %v", err)
+	}
+	for _, required := range []string{"directly in this parent", "never through a reviewer/sub-agent", "zero-config local-git default"} {
+		if !strings.Contains(string(raw), required) {
+			t.Fatalf("finalizer contract missing parent-only backup guard %q", required)
 		}
 	}
 }
@@ -2141,7 +2194,7 @@ func TestSelectedPostRunMonitorModuleStepsFallsBackForPartialWorklist(t *testing
 	s := NewSchedulerService(nil)
 	steps := s.selectedPostRunMonitorModuleSteps(ctx, &ScheduleContext{WorkspacePath: workspacePath}, pulseRunID)
 	got := postRunStepLabels(steps)
-	want := []string{"pre-backup", "bug-review", "finalize"}
+	want := []string{"pre-backup", "consolidated-review", "finalize"}
 	if strings.Join(got, ",") != strings.Join(want, ",") {
 		t.Fatalf("partial-worklist fallback labels = %#v, want %#v", got, want)
 	}
@@ -2173,7 +2226,7 @@ func TestSelectedPostRunMonitorModuleStepsPartialWorklistKeepsDueGoalAdvisor(t *
 	s := NewSchedulerService(nil)
 	steps := s.selectedPostRunMonitorModuleSteps(ctx, &ScheduleContext{WorkspacePath: workspacePath}, pulseRunID)
 	got := postRunStepLabels(steps)
-	want := []string{"pre-backup", "goal-advisor", "finalize"}
+	want := []string{"pre-backup", "consolidated-review", "finalize"}
 	if strings.Join(got, ",") != strings.Join(want, ",") {
 		t.Fatalf("partial-worklist fallback labels = %#v, want %#v", got, want)
 	}

@@ -27,7 +27,7 @@ Use `{{.RunFolder}}` as the primary run folder.{{end}}
    scheduler-issued Pulse run.
 4. Run every module this standalone review selects. Issue one independent
    `call_generic_agent` reviewer call per due module in parallel batches of at
-   most four. Never select only a "top 3" subset. Cover all selected modules in
+   most two. Never select only a "top 3" subset. Cover all selected modules in
    the fewest consecutive batches. Every reviewer is read-only. Goal Advisor
    uses a separate read-only critic after its strategy draft.
 5. The current parent remains the only Pulse Fixer. Consolidate reviewer

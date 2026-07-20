@@ -1,5 +1,10 @@
 ## Pulse — Dynamic Post-Run Steward
 
+This is the comprehensive/manual Pulse playbook. Scheduled Pulse runs load the
+focused stage references instead so no individual scheduler message or tool
+result carries the entire contract: `pulse-archive`, `pulse-gate`,
+`pulse-review-fixer`, and `pulse-finalizer`.
+
 Pulse runs after a scheduled workflow run. It is not a fixed checklist. It is a small sequence with one mandatory intelligence turn:
 
 1. **Gate / Worklist** — read the evidence, update `builder/improve.html`, and call `record_pulse_worklist`.
@@ -122,19 +127,16 @@ Gate must record exactly one decision for each module. A partial worklist is inv
 
 ## Parallel Review Team And Single Fixer
 
-The fixed module messages are entry points, not independent maintenance passes.
-The first selected module whose current `pulse_run_id` still has unresolved due
-modules owns the whole review batch:
-
-This consolidated protocol overrides older module-brief wording that says to
-launch a dedicated maintenance agent. Treat those module briefs as domain and
-evidence guidance only; do not execute their nested-agent calls.
+The scheduler sends one compact consolidated review turn containing the exact
+due-module list and a dated `review_run_id`. It never sends one parent turn per
+module. That single parent owns the whole review batch and uses the module
+sections below as domain and evidence guidance.
 
 1. Read `get_pulse_module_state`, the Gate/worklist, and any current
    `.pulse-fixer-recovery[data-pulse-run="<pulse_run_id>"]` ledger inside
    `#pulse-agent-handoff` in `builder/improve.html`. If every due module already
    has a current-run result and its durable result card exists, stop. This is
-   how later fixed module messages become harmless no-ops. If a recovery ledger
+   avoids repeating already completed review work. If a recovery ledger
    exists, resume from it: trust `fixed_verified` only after its evidence still
    verifies; repair a stale SQLite mirror from the HTML truth; and for a module
    left as `fixing`, inspect its named files, runtime state, and verification
@@ -143,7 +145,7 @@ evidence guidance only; do not execute their nested-agent calls.
    resumed only when its named next valid evidence boundary has arrived; until
    then preserve it without reapplying the change or claiming it is fixed.
 2. Create one reviewer task for **every** due module. Partition unresolved due
-   modules into consecutive parallel batches of at most four reviewers, and
+   modules into consecutive parallel batches of at most two reviewers, and
    issue each current batch's independent `call_generic_agent` calls in the
    same tool-call batch. Never rank the due worklist and run only a "top 3" or
    other subset: `due` means the review must receive a terminal result in this
@@ -172,7 +174,11 @@ evidence guidance only; do not execute their nested-agent calls.
    and an overflow count
    with compact finding ids and evidence pointers when more findings exist.
    A clean review must explicitly return an empty finding-id manifest. Never omit a
-   correctness finding merely to satisfy the cap. Do not add a reviewer-specific
+   correctness finding merely to satisfy the cap. Call `call_generic_agent`
+   directly as a tool. Never wrap it in `execute_shell_command`, curl, a
+   temporary script, a background process, or a polling loop. Pass the exact
+   scheduler-provided `pulse_run_id`, dated `review_run_id`, and module name on
+   every call. Do not add a reviewer-specific
    completion marker to the instructions:
    `call_generic_agent` appends and enforces its own authoritative final marker.
    The tool rejects a provider pane snapshot that does not contain that marker
@@ -189,8 +195,11 @@ evidence guidance only; do not execute their nested-agent calls.
    write.
 4. Reviewer agents only inspect and advise. The parent waits naturally for the
    synchronous tool results; it must not use sleep, `list_executions`,
-   `query_step`, or a polling loop. These synchronous calls return their result
-   directly and do not send an auto-notification.
+   `query_step`, or a polling loop. The backend saves each complete result to
+   `pulse/reviews/<YYYY-MM-DDTHH-MM-SS.mmmZ_pulse-id>/<module>.md` and returns a
+   compact path reference. Read each saved result before fixing. Separate files
+   prevent concurrent reviewers from writing a shared artifact. These calls do
+   not send an auto-notification.
 5. For Goal Advisor, first obtain the read-only strategy review, then send that
    draft and its evidence to a separate read-only critic. The parent accepts,
    narrows, or rejects the proposal using both results.
@@ -286,13 +295,14 @@ evidence guidance only; do not execute their nested-agent calls.
     replace a failed reviewer by improvising its deep audit in the parent; mark
     the module failed or blocked with the exact reviewer error and continue the
     independent safe modules.
-11. Return one concise combined result. Later module messages stop at step 1,
-    and the normal Pulse finalizer performs backup, publish, and the single user
-    notification after all due module results exist.
+11. Return one concise combined result. The normal Pulse finalizer performs
+    backup, publish, and the single user notification only after all due module
+    results exist.
 
 Read-only behavior is enforced by reviewer prompts, a read-only tool allowlist,
-and empty reviewer write paths. The single-fixer rule prevents concurrent writes
-and duplicate `improve.html` updates without adding backend coordination.
+and empty reviewer write paths. The single-fixer rule prevents concurrent
+writes and duplicate `improve.html` updates. The backend independently enforces
+the two-reviewer concurrency cap and persists one result file per module.
 
 ## Module Decisions
 

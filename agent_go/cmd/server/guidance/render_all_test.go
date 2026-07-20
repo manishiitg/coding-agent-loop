@@ -23,6 +23,54 @@ func TestAllGuidanceTemplatesRender(t *testing.T) {
 	}
 }
 
+func TestFocusedScheduledPulseReferencesStayBoundedAndComplete(t *testing.T) {
+	tests := map[string]struct {
+		max   int
+		wants []string
+	}{
+		"pulse-archive": {
+			max:   3000,
+			wants: []string{"latest 15 calendar days", "strictly older than 15 calendar days", "undated history is never", "temporary files", "appears exactly once", "Never truncate"},
+		},
+		"pulse-gate": {
+			max: 5000,
+			wants: []string{
+				"progressive evidence scan", "CONCERNS:", "record_pulse_worklist", "one decision for every",
+				"cannot suppress a measured miss", "Gate must not launch reviewers",
+			},
+		},
+		"pulse-review-fixer": {
+			max: 5000,
+			wants: []string{
+				"batches of at most two", "direct synchronous `call_generic_agent`", "pulse/reviews/<dated-review-run-id>/<module>.md",
+				"only Pulse Fixer", "global finding-ID reconciliation", "terminal current-run result",
+			},
+		},
+		"pulse-finalizer": {
+			max: 3000,
+			wants: []string{
+				"Never treat missing as skipped/successful", "Dashboard + questions", "directly in this parent",
+				"Publish", "Notify", "mark_pulse_final_command_result",
+			},
+		},
+	}
+
+	for kind, tc := range tests {
+		rendered, err := renderFromRegistry(kind, tmplData{}, referenceKinds)
+		if err != nil {
+			t.Fatalf("render %s: %v", kind, err)
+		}
+		if got := len(rendered); got > tc.max {
+			t.Fatalf("%s reference grew to %d bytes (budget %d)", kind, got, tc.max)
+		}
+		for _, want := range tc.wants {
+			if !strings.Contains(rendered, want) {
+				t.Fatalf("%s reference missing %q", kind, want)
+			}
+		}
+	}
+}
+
 func TestManualPulseCommandsKeepRunSetupReviewAndFixBoundariesSeparate(t *testing.T) {
 	tests := map[string][]string{
 		"pulse": {
@@ -234,7 +282,7 @@ func TestPulseGuidanceRequiresAuthoritativeHTMLAndVisibleFreshness(t *testing.T)
 		"mark_pulse_final_command_result",
 		"not automatically due every Pulse",
 		"Parallel Review Team And Single Fixer",
-		"parallel batches of at most four reviewers",
+		"parallel batches of at most two reviewers",
 		"under 3000 characters",
 		"in-turn review ledger",
 		".pulse-fixer-recovery",
@@ -260,7 +308,7 @@ func TestPulseGuidanceRequiresAuthoritativeHTMLAndVisibleFreshness(t *testing.T)
 		"same parent Pulse turn",
 		"does not launch",
 		"`run_goal_advisor_review`",
-		"without adding backend coordination",
+		"backend independently enforces",
 		"confirm every module marked",
 		"Never silently treat a",
 		"missing result as skipped or successful",

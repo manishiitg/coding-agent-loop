@@ -475,7 +475,7 @@ export default function LearningApp() {
         const cp = events.find((e) => e.tool === 'set_child_profile')
         if (cp) { if (cp.name) setChildName(cp.name); if (cp.grade) setGrade(cp.grade); if (cp.board) setBoard(cp.board) }
         const of = events.find((e) => e.tool === 'open_file' && e.path)
-        if (of?.path) { setDrawerTab('files'); setViewerPath(of.path) }
+        if (of?.path) { setDrawerTab('files'); setViewerImageList([]); setViewerPath(of.path) }
         setSuggestions(data.suggestions ?? [])
         setParentMessages((cur) => [...cur, ...toolMsgs, { role: 'assistant', text: data.error ? `Sorry — ${data.error}` : (data.reply || '(no response)') }])
       })
@@ -874,7 +874,7 @@ export default function LearningApp() {
                       <button type="button" className={filesView === 'advanced' ? 'is-active' : ''} onClick={() => setFilesView('advanced')}>All files</button>
                     </div>
                     {filesView === 'advanced' ? (
-                      treeNodes.length === 0 ? <p className="fl-note">No files yet.</p> : <FileTree nodes={treeNodes} onOpen={(p) => setViewerPath(p)} />
+                      treeNodes.length === 0 ? <p className="fl-note">No files yet.</p> : <FileTree nodes={treeNodes} onOpen={(p) => { setViewerImageList([]); setViewerPath(p) }} />
                     ) : (() => {
                       // Hierarchy: subject -> topic -> type (test/notes/...) -> date -> file.
                       // "Subjects" and "Uploaded Material" are the same tree, filtered to
@@ -916,16 +916,18 @@ export default function LearningApp() {
                       const byDateDesc = (a: Entry, b: Entry) => (b.date || '').localeCompare(a.date || '')
                       const renderEntries = (entries: Entry[]) => {
                         const isUploaded = filesView === 'uploaded'
+                        const sorted = [...entries].sort(byDateDesc)
+                        const imagePaths = sorted.filter((e) => IMAGE_PATH_RE.test(e.path)).map((e) => e.path)
                         return (
                           <div className={isUploaded ? 'fl-thumb-grid' : undefined}>
-                            {entries.sort(byDateDesc).map((e) => (
+                            {sorted.map((e) => (
                               isUploaded && IMAGE_PATH_RE.test(e.path) ? (
-                                <button key={e.path} type="button" className="fl-thumb-item" onClick={() => setViewerPath(e.path)}>
+                                <button key={e.path} type="button" className="fl-thumb-item" onClick={() => { setViewerImageList(imagePaths); setViewerPath(e.path) }}>
                                   <img className="fl-thumb-img" src={`${FAMILY_API}/api/workspace/raw?path=${encodeURIComponent(e.path)}`} alt="" loading="lazy" />
                                   <span className="fl-thumb-caption">{e.label}{e.date ? ` · ${e.date}` : ''}</span>
                                 </button>
                               ) : (
-                                <button key={e.path} type="button" className="fl-file-item" onClick={() => setViewerPath(e.path)}>
+                                <button key={e.path} type="button" className="fl-file-item" onClick={() => { setViewerImageList([]); setViewerPath(e.path) }}>
                                   <FileText size={16} />
                                   <span>{e.label}{e.date ? ` · ${e.date}` : ''}</span>
                                 </button>

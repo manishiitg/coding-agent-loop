@@ -5,7 +5,6 @@ import {
   BookOpen,
   Check,
   CheckCircle2,
-  CircleUserRound,
   ExternalLink,
   FileText,
   LockKeyhole,
@@ -269,6 +268,7 @@ export default function LearningApp() {
   const [railOpen, setRailOpen] = useState(false)
   const drawerOpen = true // right side always open
   const threadEndRef = useRef<HTMLDivElement>(null)
+  const iframeRef = useRef<HTMLIFrameElement>(null)
   const [drawerTab, setDrawerTab] = useState<DrawerTab>('assets')
   const [treeNodes, setTreeNodes] = useState<TreeNode[]>([])
   const [viewerPath, setViewerPath] = useState<string | null>(null)
@@ -296,6 +296,30 @@ export default function LearningApp() {
   useEffect(() => {
     threadEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' })
   }, [parentMessages, sending])
+
+  // Bridge for interactive HTML: the sandboxed viewer iframe posts SQ.save/load
+  // messages; the app persists them to a workspace file (child/attempts) so the
+  // child's answers survive reloads and Quill can read them later.
+  useEffect(() => {
+    const onMsg = (e: MessageEvent) => {
+      const m = e.data
+      if (!m || typeof m !== 'object' || (m as { __sq?: unknown }).__sq !== 1) return
+      const msg = m as { op?: string; key?: string; id?: string; data?: unknown }
+      if (msg.op === 'save' && typeof msg.key === 'string') {
+        fetch(`${FAMILY_API}/api/workspace/state`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ key: msg.key, data: msg.data }),
+        }).catch(() => {})
+      } else if (msg.op === 'load' && typeof msg.key === 'string') {
+        fetch(`${FAMILY_API}/api/workspace/state?key=${encodeURIComponent(msg.key)}`)
+          .then((r) => r.json())
+          .then((d) => iframeRef.current?.contentWindow?.postMessage({ __sq: 1, op: 'loaded', id: msg.id, data: d?.data ?? null }, '*'))
+          .catch(() => iframeRef.current?.contentWindow?.postMessage({ __sq: 1, op: 'loaded', id: msg.id, data: null }, '*'))
+      }
+    }
+    window.addEventListener('message', onMsg)
+    return () => window.removeEventListener('message', onMsg)
+  }, [])
 
   // On launch, ask family-server where onboarding stands. If setup is complete
   // we land straight in the chat; otherwise resume at the right step.
@@ -585,7 +609,6 @@ export default function LearningApp() {
                 </div>
               </div>
               <div className="fl-toolbar-right">
-                <span className="learning-mode-pill"><CircleUserRound size={16} /> Parent Mode</span>
                 <button className="fl-header-handoff" type="button" onClick={() => setSignoff(true)}>Open child learning space <ArrowRight size={16} /></button>
               </div>
             </div>
@@ -802,7 +825,7 @@ export default function LearningApp() {
                     ) : !viewerContent.isText ? (
                       <p className="fl-note">This file type can’t be previewed here.</p>
                     ) : (viewerPath.endsWith('.html') || viewerPath.endsWith('.htm')) ? (
-                      <iframe className="fl-viewer-frame" title="File preview" sandbox="allow-scripts" srcDoc={viewerContent.content} />
+                      <iframe ref={iframeRef} className="fl-viewer-frame" title="File preview" sandbox="allow-scripts" srcDoc={viewerContent.content} />
                     ) : (viewerPath.endsWith('.md') || viewerPath.endsWith('.markdown')) ? (
                       <div className="fl-viewer-md"><Markdown text={viewerContent.content} /></div>
                     ) : (

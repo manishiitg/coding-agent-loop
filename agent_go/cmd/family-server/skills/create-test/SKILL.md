@@ -17,8 +17,9 @@ description: Create a practice test for the child from their materials and progr
    - Style it with the SHARED design system — read `skills/_shared/html-design.md` and inline its CSS + base template.
    - A clear header: child name, grade/board, subject, topic.
    - 5–10 questions at the child's level, easy → harder, covering the methods in their materials; include at least one targeting a known weak spot.
-   - Usable on screen: each question in a card with a text box or lined space for the child to write their answer.
-   - No answers and no hints that give them away. (A small inline `<script>` for niceties like a timer is fine, but never embed the answers.)
+   - Usable on screen: each question in a card with a text box for the child to type their answer.
+   - RECORD the child's answers: include the SQ helper from `skills/_shared/html-design.md` and call `SQ.save(key, answers)` whenever the child types, and `SQ.load(key)` on page load to restore — use the test's filename as the stable key. This saves the child's answers so you can mark them and give feedback later.
+   - No answers and no hints that give them away — never embed the answer key in this file.
 
 4. **Write the answer key (parent-only)** as **HTML** to `parent/answer-keys/<yyyy-mm-dd>-<name>-KEY.html` (same date stamp, same shared design):
    - Full worked solutions.

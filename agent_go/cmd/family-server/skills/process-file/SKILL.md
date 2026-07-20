@@ -20,7 +20,8 @@ Whenever there are files in `shared/inbox/`, process each one before doing anyth
    - `subject` — e.g. Mathematics, Science, English.
    - `topic` — the specific topic, e.g. "quadratic equations".
    - `type` — one of: notes, worksheet, textbook-page, homework, test, image, other.
-   If you are unsure of the subject or topic, ask the parent before moving the file.
+
+   **Be interactive — ask when in doubt.** If the file's content does not clearly match the current subject/topic, looks like it belongs to a *different* subject than expected, is ambiguous, or you cannot confidently classify it, do NOT guess: leave the file in `shared/inbox/`, tell the parent what you see, and ask them which subject/topic it belongs to. Move and record it only once you are confident (or the parent has told you). It is always better to ask than to mis-file.
 
 3. **Move it** into the proper folder, keeping the original filename:
    ```

@@ -15,10 +15,8 @@ Produce ONE self-contained HTML file that both parent and child can read.
 
 2. **Write** the report to `shared/reports/<yyyy-mm-dd>-<subject-or-overall>.html`
    (get the date with `date -u +%Y-%m-%d`). It MUST be:
-   - A complete standalone HTML document — inline `<style>`, NO external assets, scripts, or fonts.
+   - Styled with the SHARED design system: read `skills/_shared/html-design.md` and inline its CSS + base template. Every generated HTML file must share this look.
    - Warm and encouraging, readable by the child too — no harsh judgements, no numeric scores unless they truly exist.
-   - Styled in the SparkQuill look:
-     - Warm off-white background `#fbf7ef`, deep-navy text `#16223a`, sunlit-yellow accents `#f6b93b`, soft rounded cards with gentle shadows, a clear title showing the child's name and the date.
    - Sections:
      1. **Focus right now** — the current subject/topic.
      2. **What's going well** — grounded in real evidence.

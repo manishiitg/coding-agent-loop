@@ -14,8 +14,7 @@ Produce ONE self-contained HTML file giving a living overview of what the child 
    - The current focus is in `parent/child-profile.json` and the active subject/topic.
 
 2. **Write** the map to `shared/academic-map.html` (overwrite the existing placeholder). It MUST be:
-   - A complete standalone HTML document — inline `<style>`, NO external assets or scripts.
-   - Styled in the SparkQuill look: warm off-white `#fbf7ef`, deep-navy text `#16223a`, sunlit-yellow `#f6b93b` accents, soft rounded cards, a clear title with the child's name.
+   - Styled with the SHARED design system: read `skills/_shared/html-design.md` and inline its CSS + base template, so it matches every other generated HTML file.
    - Organised as: one card per **subject**, each listing its **topics**; for every topic show how many source materials, whether study material exists, and whether a test exists. Badge the **current** subject/topic.
    - Honest: if a subject has only uploads and no generated work yet, show that plainly. If the map is nearly empty, say it is just starting.
 

@@ -5,6 +5,8 @@ description: Create clear, child-ready study material (notes, worked examples, a
 
 # Create study material
 
+0. **Don't silently guess what to make it about.** If the parent's request already names a subject/topic/focus, skip ahead. If it's generic ("create study material for Myra") — before writing anything, quickly skim recent `parent/conversations/`, `child/conversations/`, and the academic map for what she's currently on or struggling with, then say what you found and ask ONE short question — e.g. "She's currently on fractions and decimals, and seemed to struggle with word problems last time — want me to focus there, or a different topic?" Wait for their answer before generating.
+
 1. **Know the child.** Read `parent/child-profile.json` for name, grade, and board so the material matches their level and syllabus. If any of these are missing, ask the parent first. Also read `parent/preferences.md` and apply anything relevant (teaching style, what to avoid).
 
 2. **Gather context.** Read the relevant files in `shared/materials/<subject>/<topic>/` and their `.meta.json` so the material matches what the child is actually studying — same syllabus, same notation, same method names.

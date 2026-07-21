@@ -82,6 +82,12 @@ func seedWorkspace(child *Child) {
 		html := "<!doctype html>\n<meta charset=\"utf-8\">\n<title>Academic map</title>\n<h1>" + name + "’s academic map</h1>\n<p>This living view grows as " + name + " learns.</p>\n"
 		_ = os.WriteFile(mapPath, []byte(html), 0o600)
 	}
+	progressPath := filepath.Join(base, "shared", "reports", "progress.html")
+	if _, err := os.Stat(progressPath); os.IsNotExist(err) {
+		_ = os.MkdirAll(filepath.Dir(progressPath), 0o700)
+		html := "<!doctype html>\n<meta charset=\"utf-8\">\n<title>Progress</title>\n<h1>" + name + "’s progress</h1>\n<p>This living report grows as " + name + " learns.</p>\n"
+		_ = os.WriteFile(progressPath, []byte(html), 0o600)
+	}
 	prefsPath := filepath.Join(base, "parent", "preferences.md")
 	if _, err := os.Stat(prefsPath); os.IsNotExist(err) {
 		md := "# What Quill has learned about teaching " + name + "\n\n" +

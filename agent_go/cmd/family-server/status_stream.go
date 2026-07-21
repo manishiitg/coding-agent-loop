@@ -69,15 +69,17 @@ func normalizeConversationID(id string) string {
 // raw commands, file paths, or tool/terminal output (§2A: no terminal, ever).
 // A tool not listed here (e.g. suggest_actions, bridge chatter) stays silent.
 var toolStatusLabels = map[string]string{
-	"read_image":            "Reading the image",
-	"generate_image":        "Drawing an illustration",
-	"web_search":            "Looking up best practices",
-	"set_subject_topic":     "Saving the subject and topic",
-	"set_child_profile":     "Saving the profile",
-	"open_file":             "Opening the file",
-	"approve_for_child":     "Sending it to your child",
-	"notify_user":           "Sending a notification",
-	"execute_shell_command": "Working through it",
+	"read_image":              "Reading the image",
+	"generate_image":          "Drawing an illustration",
+	"web_search":              "Looking up best practices",
+	"set_child_profile":       "Saving the profile",
+	"open_file":               "Opening the file",
+	"approve_for_child":       "Sending it to your child",
+	"create_learning_package": "Putting the package together",
+	"set_teaching_style":      "Saving your teaching preference",
+	"notify_user":             "Sending a notification",
+	"execute_shell_command":   "Working through it",
+	"agent_browser":           "Checking that link",
 }
 
 // withLiveStatus wraps each tool whose name has a friendly label so its
@@ -101,31 +103,37 @@ func withLiveStatus(conversationID string, tools []agentsession.Tool) []agentses
 	return out
 }
 
-// GET /api/parent/status?conversation_id=... — SSE stream of live "Quill is: …"
-// status lines for one conversation, while a turn is in flight. Purely additive
-// UX: if nothing subscribes, publish() is a no-op fan-out to zero listeners.
-func handleParentStatusStream(w http.ResponseWriter, r *http.Request) {
-	conversationID := r.URL.Query().Get("conversation_id")
-	flusher, ok := w.(http.Flusher)
-	if !ok {
-		http.Error(w, "streaming unsupported", http.StatusInternalServerError)
-		return
-	}
-	setSSEHeaders(w)
-
-	ch, unsubscribe := statusHubs.subscribe("parent:" + conversationID)
-	defer unsubscribe()
-
-	for {
-		select {
-		case <-r.Context().Done():
+// GET /api/parent/status?conversation_id=... and /api/child/status?conversation_id=...
+// — SSE stream of live "Quill is: …" status lines for one conversation, while a
+// turn is in flight. Purely additive UX: if nothing subscribes, publish() is a
+// no-op fan-out to zero listeners.
+func statusStreamHandler(scope string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		conversationID := r.URL.Query().Get("conversation_id")
+		flusher, ok := w.(http.Flusher)
+		if !ok {
+			http.Error(w, "streaming unsupported", http.StatusInternalServerError)
 			return
-		case label := <-ch:
-			fmt.Fprintf(w, "data: %s\n\n", label)
-			flusher.Flush()
+		}
+		setSSEHeaders(w)
+
+		ch, unsubscribe := statusHubs.subscribe(scope + ":" + conversationID)
+		defer unsubscribe()
+
+		for {
+			select {
+			case <-r.Context().Done():
+				return
+			case label := <-ch:
+				fmt.Fprintf(w, "data: %s\n\n", label)
+				flusher.Flush()
+			}
 		}
 	}
 }
+
+var handleParentStatusStream = statusStreamHandler("parent")
+var handleChildStatusStream = statusStreamHandler("child")
 
 // setSSEHeaders prepares the response for a long-lived event stream.
 func setSSEHeaders(w http.ResponseWriter) {

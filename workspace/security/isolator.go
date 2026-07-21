@@ -22,6 +22,17 @@ type Isolator struct {
 	BlockedWritePaths []string
 	WorkDir           string
 	BaseDir           string // Workspace base directory (default: /app/workspace-docs)
+	// StrictAllowlist flips the sandbox profile from "allow everything except
+	// one denied directory" (the default below — a reasonable model for
+	// AgentWorks' own workflows, which trust the rest of the host since it's
+	// the same developer's machine) to a genuine deny-by-default allow-list:
+	// only ReadPaths/WritePaths and the minimal system paths needed to exec a
+	// shell are visible. Use this for untrusted callers (e.g. a child's own
+	// chat) where the real home directory, credentials, and everything else
+	// on the machine must be invisible, not just the app's own project root.
+	// Opt-in and additive: every existing caller that leaves this false gets
+	// byte-for-byte the same profile as before.
+	StrictAllowlist bool
 }
 
 const defaultBaseDir = "/app/workspace-docs"
@@ -194,6 +205,10 @@ func (iso *Isolator) executeIsolatedMacOS(ctx context.Context, command string, a
 
 // generateSandboxProfile creates a macOS sandbox profile for filesystem isolation
 func (iso *Isolator) generateSandboxProfile() string {
+	if iso.StrictAllowlist {
+		return iso.generateStrictSandboxProfile()
+	}
+
 	var sb strings.Builder
 
 	sb.WriteString("(version 1)\n")
@@ -231,16 +246,22 @@ func (iso *Isolator) generateSandboxProfile() string {
 	sb.WriteString("; Allow project root metadata for canonical path resolution\n")
 	sb.WriteString(fmt.Sprintf("(allow file-read-metadata (literal \"%s\"))\n\n", sandboxQuoted(projectRoot)))
 
-	// getcwd() only needs directory metadata. Granting file-read* on WorkDir
-	// would expose its entire subtree and bypass the allow-list.
+	// getcwd() needs real read access (not just metadata/stat) on the working
+	// directory and each ancestor up to baseDir — verified empirically: with a
+	// stripped-down environment (no inherited $PWD, e.g. BuildSafeEnvironment),
+	// the shell's own startup getcwd() call fails under metadata-only grants
+	// with "cannot access parent directories: Operation not permitted", even
+	// though the directory is otherwise fully accessible. (literal ...), not
+	// (subpath ...), so this still only grants each named directory's own
+	// listing/stat — never its subtree — and does not bypass the allow-list.
 	workDir := canonicalPath(iso.WorkDir)
 	if workDir != "" {
-		sb.WriteString("; Allow working directory metadata for getcwd\n")
-		sb.WriteString(fmt.Sprintf("(allow file-read-metadata (literal \"%s\"))\n", sandboxQuoted(workDir)))
+		sb.WriteString("; Allow working directory read access for getcwd\n")
+		sb.WriteString(fmt.Sprintf("(allow file-read* (literal \"%s\"))\n", sandboxQuoted(workDir)))
 		for dir := filepath.Dir(workDir); strings.HasPrefix(dir, baseDir+string(filepath.Separator)); dir = filepath.Dir(dir) {
-			sb.WriteString(fmt.Sprintf("(allow file-read-metadata (literal \"%s\"))\n", sandboxQuoted(dir)))
+			sb.WriteString(fmt.Sprintf("(allow file-read* (literal \"%s\"))\n", sandboxQuoted(dir)))
 		}
-		sb.WriteString(fmt.Sprintf("(allow file-read-metadata (literal \"%s\"))\n", sandboxQuoted(baseDir)))
+		sb.WriteString(fmt.Sprintf("(allow file-read* (literal \"%s\"))\n", sandboxQuoted(baseDir)))
 		sb.WriteString("\n")
 	}
 
@@ -285,6 +306,149 @@ func (iso *Isolator) generateSandboxProfile() string {
 
 	// Explicit deny for write-only blocked paths — reads pass through, writes denied.
 	// Used for paths agents must be able to inspect but not modify (planning/, etc.).
+	if len(iso.BlockedWritePaths) > 0 {
+		sb.WriteString("; Explicit deny for write-only blocked paths (reads allowed)\n")
+		sb.WriteString("(deny file-write*\n")
+		for _, path := range iso.BlockedWritePaths {
+			fullPath := iso.sandboxPath(path)
+			sb.WriteString(fmt.Sprintf("  (subpath \"%s\")\n", sandboxQuoted(fullPath)))
+		}
+		sb.WriteString(")\n")
+	}
+
+	return sb.String()
+}
+
+// strictSystemReadPaths are read-only, non-personal system paths a shell needs
+// to exec ordinary POSIX tools (the shell binary itself, dyld, ls/cat/mkdir,
+// locale data). None of these hold user/family data — everything that does
+// (the real home directory, credentials, browser profiles, and so on) is
+// simply absent from this list, which is the point of deny-by-default: unlike
+// generateSandboxProfile's default mode, there is no implicit "allow" for
+// anything not named here.
+var strictSystemReadPaths = []string{
+	"/usr", "/bin", "/sbin", "/System", "/Library", "/opt",
+	"/private/etc", "/private/var/db", "/private/var/select",
+}
+
+// strictSystemDevices are device nodes ordinary shell commands rely on.
+var strictSystemDevices = []string{
+	"/dev/null", "/dev/zero", "/dev/urandom", "/dev/random", "/dev/tty",
+}
+
+// generateStrictSandboxProfile builds a genuine deny-by-default macOS sandbox
+// profile (StrictAllowlist mode): only ReadPaths/WritePaths and the minimal
+// system paths above are visible. Everything else on the machine — the real
+// home directory, SSH/cloud credentials, browser data, anything outside the
+// allow-list — is invisible, unlike generateSandboxProfile's default mode,
+// which only denies the app's own project root and allows everything else.
+func (iso *Isolator) generateStrictSandboxProfile() string {
+	var sb strings.Builder
+	sb.WriteString("(version 1)\n")
+	sb.WriteString("(deny default)\n\n")
+
+	sb.WriteString("; Minimal process/IPC permissions so the shell can run at all\n")
+	sb.WriteString("(allow process-exec*)\n")
+	sb.WriteString("(allow process-fork)\n")
+	sb.WriteString("(allow signal (target self))\n")
+	sb.WriteString("(allow sysctl-read)\n")
+	sb.WriteString("(allow mach-lookup)\n")
+	sb.WriteString("(allow iokit-open)\n\n")
+
+	// The shell itself (and ordinary tools resolving relative/absolute paths)
+	// needs to list "/"'s own top-level entries — standard macOS directory
+	// names (Users, System, bin, etc.), not their contents. Without this,
+	// sandbox-exec's kernel-level denial of "file-read-data /" aborts the
+	// process outright rather than failing the specific command cleanly.
+	sb.WriteString("; Root directory's own listing (top-level names only, not descendants)\n")
+	sb.WriteString("(allow file-read-data (literal \"/\"))\n\n")
+
+	sb.WriteString("; Read-only system paths needed for ordinary shell tools to run — no user data here\n")
+	sb.WriteString("(allow file-read*\n")
+	for _, p := range strictSystemReadPaths {
+		if _, err := os.Stat(p); err != nil {
+			continue
+		}
+		sb.WriteString(fmt.Sprintf("  (subpath \"%s\")\n", sandboxQuoted(canonicalPath(p))))
+	}
+	sb.WriteString(")\n\n")
+
+	sb.WriteString("; Device nodes ordinary shell commands rely on\n")
+	sb.WriteString("(allow file-read* file-write-data\n")
+	for _, p := range strictSystemDevices {
+		sb.WriteString(fmt.Sprintf("  (literal \"%s\")\n", sandboxQuoted(p)))
+	}
+	sb.WriteString(")\n\n")
+
+	sb.WriteString("; Scratch space for ordinary temp files (compiler/interpreter caches, etc.)\n")
+	sb.WriteString("(allow file-read* file-write*\n")
+	sb.WriteString("  (subpath \"/private/tmp\")\n")
+	sb.WriteString("  (subpath \"/private/var/folders\")\n")
+	sb.WriteString(")\n\n")
+
+	workDir := canonicalPath(iso.WorkDir)
+	if workDir != "" {
+		// Deliberately still metadata-only here, unlike the default profile's
+		// equivalent grant: (literal dir) + file-read* turns out to also permit
+		// *listing* that directory's entries (verified empirically), and this
+		// chain runs all the way to "/" — upgrading it would expose the real
+		// filenames in the real home directory and above, which is exactly what
+		// StrictAllowlist exists to prevent. So getcwd() stays cosmetically
+		// broken here (a stat-only warning, not a functional block — real
+		// commands against allowed paths still work) in exchange for genuinely
+		// not leaking anything outside the allow-list.
+		sb.WriteString("; Directory metadata along the path to WorkDir, needed for getcwd()\n")
+		for dir := workDir; ; dir = filepath.Dir(dir) {
+			sb.WriteString(fmt.Sprintf("(allow file-read-metadata (literal \"%s\"))\n", sandboxQuoted(dir)))
+			parent := filepath.Dir(dir)
+			if parent == dir {
+				break
+			}
+			dir = parent
+			sb.WriteString(fmt.Sprintf("(allow file-read-metadata (literal \"%s\"))\n", sandboxQuoted(dir)))
+			if dir == string(filepath.Separator) {
+				break
+			}
+		}
+		sb.WriteString("\n")
+	}
+
+	if len(iso.ReadPaths) > 0 {
+		sb.WriteString("; Allowed read paths\n")
+		sb.WriteString("(allow file-read*\n")
+		for _, path := range iso.ReadPaths {
+			fullPath, ok := iso.sandboxAllowedPath(path)
+			if !ok {
+				continue
+			}
+			sb.WriteString(fmt.Sprintf("  (subpath \"%s\")\n", sandboxQuoted(fullPath)))
+		}
+		sb.WriteString(")\n\n")
+	}
+
+	if len(iso.WritePaths) > 0 {
+		sb.WriteString("; Allowed write paths\n")
+		sb.WriteString("(allow file-read* file-write*\n")
+		for _, path := range iso.WritePaths {
+			fullPath, ok := iso.sandboxAllowedPath(path)
+			if !ok {
+				continue
+			}
+			sb.WriteString(fmt.Sprintf("  (subpath \"%s\")\n", sandboxQuoted(fullPath)))
+		}
+		sb.WriteString(")\n\n")
+	}
+
+	if len(iso.BlockedPaths) > 0 {
+		sb.WriteString("; Explicit deny for blocked paths (overrides allows)\n")
+		sb.WriteString("(deny file-read* file-write*\n")
+		for _, path := range iso.BlockedPaths {
+			fullPath := iso.sandboxPath(path)
+			sb.WriteString(fmt.Sprintf("  (subpath \"%s\")\n", sandboxQuoted(fullPath)))
+		}
+		sb.WriteString(")\n")
+	}
+
 	if len(iso.BlockedWritePaths) > 0 {
 		sb.WriteString("; Explicit deny for write-only blocked paths (reads allowed)\n")
 		sb.WriteString("(deny file-write*\n")

@@ -63,3 +63,66 @@ To connect an external agent, simply point it to the `mcpbridge` binary:
 # Example: Launching a custom MCP-compatible agent
 my-agent-cli --mcp-command "mcpbridge" --mcp-env "MCP_API_URL=http://localhost:8080/api"
 ```
+
+---
+
+## 🪶 Lean variant: the `agentsession` pattern (small, fixed tool sets)
+
+Everything above describes the *full orchestrator* case: a Gin-backed API server with
+potentially 100+ tools across arbitrary user-built workflows, where the model
+discovers a tool's schema via `get_api_spec` and then calls it through
+`execute_shell_command + curl` using `$MCP_CUSTOM`/`$MCP_AUTH`. That discovery
+route exists **because** the full tool catalog is too large/dynamic to hand the
+model natively every session.
+
+Small, standalone apps with a fixed, known-in-advance tool set (e.g.
+`agent_go/internal/agentsession` — used by `family-server`) use a **leaner
+variant of the same bridge**, not the curl-discovery route:
+
+1. **No Gin server, no HTTP handlers in the app itself.** Tools are plain Go
+   functions: `agentsession.Tool{Name, Description, Params, Handler}`, passed
+   directly into `agentsession.New(ctx, agentsession.Config{Tools: [...]})`.
+2. `agentsession.New` calls `agent.RegisterCustomTool(...)`, which publishes each
+   handler into a **session-scoped in-process registry**, and starts (once per
+   process, via `ensureSharedBridge`) a small in-process HTTP "executor" server
+   (`agentsession.startExecutorServer`) exposing `/tools/custom/{name}`.
+3. `mcpagent`'s own `bridgeTools` var (`mcpagent/agent/coding_agents_bridge.go`)
+   is a **small, fixed, package-level list — exactly 4 entries**
+   (`execute_shell_command`, `diff_patch_workspace_file`, `agent_browser`,
+   `get_api_spec`) — pinned by `TestBridgeToolsList`. **It is shared across
+   every consumer of the mcpagent module (including AgentWorks itself) — never
+   add your own app's tool names to it.** An earlier version of family-server
+   did exactly that (added `set_child_profile`, `celebrate`, `suggest_handoff`,
+   etc. directly to `bridgeTools`), which broke the guardrail test and leaked
+   family-server-specific tool names into every other consumer's sessions.
+   Reverted.
+   The correct, scoped mechanism is `mcpagent.WithAdditionalBridgeTools(names
+   ...string)` — an `AgentOption` that exposes the named tools natively for
+   *that one agent instance only* (stored in `Agent.additionalBridgeTools`,
+   unioned with `bridgeTools` inside `BuildBridgeMCPConfig`, never touching the
+   shared var). `agentsession.New` calls this automatically for every tool
+   in `Config.Tools` — callers never need to touch mcpagent's own files at all.
+4. `mcpagent.BuildBridgeMCPConfig()` combines `bridgeTools` +
+   `Agent.additionalBridgeTools`, resolves each name to its real schema,
+   serializes the result into the `MCP_TOOLS` env var, and launches `mcpbridge`
+   with that set for the session.
+5. `mcpbridge` itself has **zero hardcoded tool names** — it reads its entire tool
+   list from `MCP_TOOLS` at startup (see `cmd/mcpbridge/main.go`). For a `"custom"`
+   type entry, a tool call becomes `POST {MCP_API_URL}/tools/custom/{name}` with an
+   `X-Session-ID` header — landing back on the *same app process* that registered
+   the handler in step 2, not a separate orchestrator.
+
+**Net effect:** two hops (Claude Code → `mcpbridge` stdio → app's own executor
+HTTP → Go handler), both fast/local, and the model calls the tool **directly by
+name** — no schema discovery, no curl construction. This is more reliable for a
+small tool set and is the intended pattern for apps like family-server, not a
+workaround.
+
+**The one thing to remember:** a new custom tool registered via
+`agentsession.Config.Tools` is exposed automatically — no manual step needed,
+and nothing to edit in the shared `mcpagent` module. If you're calling
+`mcpagent.NewAgent` directly (not through `agentsession`), you must pass
+`mcpagent.WithAdditionalBridgeTools(yourToolNames...)` yourself, or the tool
+is registered (handler exists) but genuinely invisible to the model — a real,
+easy-to-hit gap, not a permissions issue. Either way, never add app-specific
+names to the shared `bridgeTools` var itself.

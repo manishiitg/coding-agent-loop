@@ -131,7 +131,7 @@ html, body, #root { margin: 0; height: 100%; }
 .chat-avatar.parent-avatar { border-radius: 50%; background: var(--coral); color: white; }
 .chat-bubble { padding: 12px 14px; border-radius: 16px 16px 16px 5px; background: var(--blue-soft); color: #2c456b; font-size: var(--text-body); line-height: 1.55; }
 .chat-message.is-parent .chat-bubble { border-radius: 16px 16px 5px 16px; background: var(--navy); color: white; }
-.parent-quick-actions { display: flex; flex-wrap: wrap; gap: 8px; padding-left: 43px; }
+.parent-quick-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 .parent-quick-actions button { min-height: 36px; padding: 0 12px; border: 1px solid #c7d7e8; border-radius: 999px; background: white; color: #355477; font: inherit; font-size: var(--text-secondary); font-weight: 600; cursor: pointer; }
 .parent-quick-actions button:hover { border-color: #6fa6d6; background: #f3f9ff; color: var(--navy); }
 .composer-icon, .composer-send { display: grid; place-items: center; width: 38px; height: 38px; border: 0; border-radius: 11px; background: transparent; color: #5f708d; cursor: pointer; }
@@ -143,19 +143,18 @@ html, body, #root { margin: 0; height: 100%; }
 .handoff-button { width: 100%; }
 
 /* ===== Parent operating shell: three-rail workspace ===== */
-.fl-shell { display: grid; grid-template-columns: 244px minmax(0, 1fr) 348px; height: 100vh; height: 100dvh; background: var(--cream); transition: grid-template-columns .2s ease; }
-/* When the rail is closed, hand its freed width to the drawer so the chat area
-   keeps the same width and the right side has room for the HTML viewer. */
-.fl-shell[data-rail="closed"] { grid-template-columns: 0 minmax(0, 1fr) calc(348px + 244px); }
+.fl-shell { display: grid; grid-template-columns: 244px minmax(0, 1fr) 592px; height: 100vh; height: 100dvh; background: var(--cream); transition: grid-template-columns .2s ease; }
+/* Toggling the rail only ever changes the chat column's width — the drawer
+   stays a constant 592px (the width it used to reach only when the rail was
+   closed) whether the rail is open or closed. */
+.fl-shell[data-rail="closed"] { grid-template-columns: 0 minmax(0, 1fr) 592px; }
 .fl-shell[data-drawer="closed"] { grid-template-columns: 244px minmax(0, 1fr) 0; }
 .fl-shell[data-rail="closed"][data-drawer="closed"] { grid-template-columns: 0 minmax(0, 1fr) 0; }
 
 /* Left conversation/history rail */
 .fl-rail { display: flex; flex-direction: column; min-width: 0; overflow: hidden; background: var(--navy); color: #cddaf0; font-family: var(--font-ui); }
 .fl-shell[data-rail="closed"] .fl-rail { border: 0; }
-.fl-rail-brand { display: flex; align-items: center; gap: 10px; padding: 20px 18px 14px; font-size: var(--text-body); font-weight: 600; line-height: 1.15; white-space: nowrap; }
-.fl-rail-brand strong { color: var(--yellow); font-weight: 800; }
-.fl-new { display: inline-flex; align-items: center; justify-content: center; gap: 8px; margin: 0 14px 12px; min-height: 42px; border: 0; border-radius: 12px; background: var(--yellow); color: var(--navy); font: inherit; font-weight: 700; white-space: nowrap; cursor: pointer; }
+.fl-new { display: inline-flex; align-items: center; justify-content: center; gap: 8px; margin: 18px 14px 12px; min-height: 42px; border: 0; border-radius: 12px; background: var(--yellow); color: var(--navy); font: inherit; font-weight: 700; white-space: nowrap; cursor: pointer; }
 .fl-new:hover { filter: brightness(1.04); }
 .fl-rail-scroll { flex: 1; min-height: 0; overflow-y: auto; padding: 6px 10px 10px; }
 .fl-rail-group { margin-bottom: 16px; }
@@ -252,6 +251,7 @@ html, body, #root { margin: 0; height: 100%; }
 .fl-drawer-tabs button { flex: 1; min-height: 34px; border: 0; border-radius: 9px; background: transparent; color: #5f708d; font: inherit; font-size: var(--text-secondary); font-weight: 650; cursor: pointer; }
 .fl-drawer-tabs button:hover { background: #f1f5fa; color: var(--navy); }
 .fl-drawer-tabs button.is-active { background: var(--navy); color: #fff; }
+.fl-drawer-tabs .fl-refresh-btn { flex: 0 0 auto; width: 34px; height: 34px; min-height: 0; padding: 0; }
 .fl-drawer-label { margin: 2px 2px 4px; color: #5c6d88; font-size: var(--text-caption); font-weight: 700; letter-spacing: .04em; text-transform: uppercase; }
 .fl-asset-group { display: flex; flex-direction: column; gap: 8px; }
 .fl-asset-topic { margin: 0 0 8px 8px; }
@@ -314,23 +314,39 @@ html, body, #root { margin: 0; height: 100%; }
 .fl-signoff-list { display: grid; gap: 8px; margin: 0 0 22px; padding: 0; list-style: none; }
 .fl-signoff-list li { display: flex; align-items: flex-start; gap: 8px; color: #2c6b49; font-size: var(--text-secondary); }
 .fl-signoff-list li svg { flex: 0 0 auto; margin-top: 3px; color: #2aa96a; }
+.fl-signoff-package { display: grid; gap: 6px; margin: 0 0 20px; }
+.fl-signoff-package select { padding: 10px 12px; border: 1px solid #e2ddd0; border-radius: 10px; font: inherit; font-size: var(--text-secondary); color: var(--navy); background: #fff; }
 .fl-signoff-actions { display: flex; justify-content: flex-end; gap: 10px; }
+.fl-gate-input { width: 100%; margin: 0 0 12px; padding: 12px 14px; border: 1px solid #cbd7e8; border-radius: 12px; background: #fbfcfe; font: inherit; font-size: var(--text-body); letter-spacing: .3em; text-align: center; }
+.fl-gate-input:focus { outline: none; border-color: #9db2ca; }
 
-/* ===== Child Mode tutor ===== */
+/* ===== Child Mode tutor =====
+   Structurally mirrors parent mode: a full-height 2-column layout (chat |
+   348px side panel), each column with its OWN top row (60px, same padding as
+   .fl-toolbar / .fl-drawer-head) rather than one header spanning both — so
+   the side panel starts flush at the top and is the same width as the
+   parent's drawer, not inset below a shared banner. */
 .fl-child { display: flex; flex-direction: column; height: 100vh; height: 100dvh; background: linear-gradient(180deg, #fffef9, #f4f9ff); }
-.fl-child-top { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 16px clamp(16px, 2.5vw, 36px); border-bottom: 1px solid #e7eef7; background: rgba(255, 255, 255, .8); }
+/* Child mode has no left rail, so its side panel matches parent mode's usual
+   (rail-closed) width — chat gets 1fr, side panel gets 348px + the 244px the
+   rail would otherwise take, exactly like .fl-shell[data-rail="closed"]. */
+.fl-child-body { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(0, 1fr) calc(348px + 244px); }
+.fl-child-chat { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+.fl-child-top { display: flex; align-items: center; justify-content: space-between; gap: 16px; min-height: 60px; padding: 10px clamp(16px, 2.5vw, 36px); border-bottom: 1px solid #e7eef7; background: rgba(255, 255, 255, .8); }
 .fl-child-id { display: flex; align-items: center; gap: 12px; }
 .fl-child-avatar.is-big { width: 46px; height: 46px; font-size: var(--text-subheading); }
 .fl-child-hi strong { display: block; color: var(--navy); font-size: var(--text-subheading); font-weight: 800; }
 .fl-child-hi small { color: #5f708d; font-size: var(--text-secondary); }
-.fl-child-top-right { display: flex; align-items: center; gap: 12px; }
 .fl-today-pill { display: inline-flex; align-items: center; gap: 7px; padding: 8px 13px; border-radius: 999px; background: #eaf5ff; color: #2f6db0; font-size: var(--text-secondary); font-weight: 700; }
 .fl-parent-return { display: inline-flex; align-items: center; gap: 7px; min-height: 40px; padding: 0 13px; border: 1px solid #d7e0ec; border-radius: 12px; background: #fff; color: #3d567a; font: inherit; font-size: var(--text-secondary); font-weight: 650; cursor: pointer; }
 .fl-parent-return:hover { border-color: #9db2ca; color: var(--navy); }
-.fl-child-body { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(0, 1fr) 320px; gap: 24px; padding: 22px clamp(16px, 2.5vw, 36px); }
-.fl-child-chat { display: flex; flex-direction: column; min-height: 0; }
-.fl-child-thread { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 16px; padding-right: 6px; }
-.fl-tmsg { display: flex; align-items: flex-end; gap: 10px; max-width: min(88%, 620px); }
+.fl-child-thread { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 16px; padding: 26px clamp(16px, 2.5vw, 36px) 20px; }
+.fl-child-actions, .fl-child-composer, .fl-child-disclaimer { margin-left: clamp(16px, 2.5vw, 36px); margin-right: clamp(16px, 2.5vw, 36px); }
+.fl-child-composer { margin-bottom: 22px; }
+.fl-child-side { display: flex; flex-direction: column; min-width: 0; overflow: hidden; border-left: 1px solid #e7ebf1; background: #fbfcfe; }
+.fl-child-side-scroll { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 16px; padding: 16px; }
+.fl-tmsg { display: flex; align-items: flex-start; gap: 10px; max-width: min(94%, 760px); }
+.fl-tmsg.is-tutor { max-width: min(96%, 940px); }
 .fl-tmsg.is-child { align-self: flex-end; justify-content: flex-end; }
 .fl-tmsg-avatar { display: grid; place-items: center; flex: 0 0 38px; width: 38px; height: 38px; border-radius: 13px; background: #fff2b3; color: #bc8500; }
 .fl-tmsg-avatar.is-child { border-radius: 50%; background: var(--coral); color: #fff; font-weight: 800; }
@@ -340,7 +356,6 @@ html, body, #root { margin: 0; height: 100%; }
 
 /* ---- Readability polish: notebook-style chat + markdown rendering + fonts ---- */
 body, .learning-app { -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; text-rendering: optimizeLegibility; }
-.fl-rail-logo { flex: 0 0 auto; display: block; border-radius: 8px; background: #fff; padding: 4px; box-shadow: 0 1px 4px rgba(0, 0, 0, .25); }
 
 /* Quill's replies read like a warm notebook note */
 .fl-bubble { background: #fffdf5; color: #26364f; border: 1px solid #efe6cf; box-shadow: 0 2px 10px rgba(22, 34, 58, .05); font-size: 1.02rem; line-height: 1.62; padding: 14px 17px; }
@@ -381,7 +396,12 @@ body, .learning-app { -webkit-font-smoothing: antialiased; -moz-osx-font-smoothi
 .fl-file-item { display: flex; align-items: center; gap: 9px; width: 100%; text-align: left; padding: 10px 12px; border: 1px solid #ece3d2; border-radius: 12px; background: #fff; color: var(--navy); font: inherit; font-size: var(--text-secondary); font-weight: 600; cursor: pointer; margin-bottom: 6px; }
 .fl-file-item:hover { background: #fdf7ea; border-color: #e6d9bd; }
 .fl-file-item svg { color: #b79a5e; flex: 0 0 auto; }
-.fl-file-item span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fl-file-item span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.fl-file-item.is-package { border-color: #cfe0f2; background: #f6faff; }
+.fl-file-item.is-package:hover { background: #eef6ff; border-color: #9db2ca; }
+.fl-file-item.is-package svg { color: #2f6db0; }
+.fl-file-item.is-package span { display: flex; flex-direction: column; white-space: normal; overflow: visible; text-overflow: clip; gap: 2px; }
+.fl-file-item.is-package small { color: #5f708d; font-size: var(--text-caption); font-weight: 600; }
 
 /* ---- Files tab: workspace tree + file/HTML viewer ---- */
 .fl-tree { list-style: none; margin: 0; padding: 0 0 0 2px; font-size: var(--text-secondary); }
@@ -413,6 +433,8 @@ details[open] > .fl-tree-dir::before { content: "▾"; }
 .fl-suggestions { display: flex; flex-wrap: wrap; gap: 8px; margin: 4px 0 2px; }
 .fl-suggestion { display: inline-flex; align-items: center; gap: 6px; padding: 8px 15px; border: 1px solid #ecdcb4; border-radius: 999px; background: #fffaf0; color: #7a5c1a; font: inherit; font-size: var(--text-secondary); font-weight: 650; cursor: pointer; transition: background .12s ease, border-color .12s ease; }
 .fl-suggestion:hover { background: #fdeecb; border-color: #e6c877; }
+.fl-suggestion-handoff { border: 0; background: var(--yellow); color: var(--navy); font-weight: 700; }
+.fl-suggestion-handoff:hover { background: var(--yellow); filter: brightness(0.95); }
 
 .fl-whatsapp-btn { display: grid; place-items: center; width: 38px; height: 38px; border: 1px solid #cfe9d6; border-radius: 10px; background: #eafaf0; color: #1f9d55; cursor: pointer; }
 .fl-whatsapp-btn:hover { background: #d8f5e3; }
@@ -438,10 +460,32 @@ details[open] > .fl-tree-dir::before { content: "▾"; }
 .fl-header-handoff { display: inline-flex; align-items: center; gap: 6px; min-height: 36px; padding: 0 14px; border: 0; border-radius: 10px; background: var(--yellow); color: var(--navy); font: inherit; font-size: var(--text-secondary); font-weight: 700; cursor: pointer; box-shadow: 0 3px 0 #d5a307; transition: transform .14s ease, box-shadow .14s ease; white-space: nowrap; }
 .fl-header-handoff:hover { transform: translateY(-1px); }
 .fl-header-handoff:active { transform: translateY(2px); box-shadow: 0 1px 0 #d5a307; }
+.fl-header-handoff:disabled { background: var(--border, #e2ddd0); color: var(--muted, #8a8478); box-shadow: none; cursor: not-allowed; transform: none; }
 .fl-hint-label { display: inline-flex; align-items: center; gap: 5px; margin-right: 6px; padding: 2px 8px; border-radius: 999px; background: #fff3d6; color: #a9781a; font-size: var(--text-caption); font-weight: 800; vertical-align: 1px; }
-.fl-child-actions { display: flex; flex-wrap: wrap; gap: 8px; margin: 14px 0 12px; }
-.fl-child-actions button { min-height: 38px; padding: 0 14px; border: 1px solid #cfe0f2; border-radius: 999px; background: #fff; color: #2f6db0; font: inherit; font-size: var(--text-secondary); font-weight: 650; cursor: pointer; }
+.fl-child-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; margin-bottom: 12px; }
+.fl-child-actions button { display: inline-flex; align-items: center; gap: 6px; min-height: 38px; padding: 0 14px; border: 1px solid #cfe0f2; border-radius: 999px; background: #fff; color: #2f6db0; font: inherit; font-size: var(--text-secondary); font-weight: 650; cursor: pointer; }
 .fl-child-actions button:hover { background: #eef6ff; }
+.fl-pill-emoji { font-size: 1.05em; line-height: 1; }
+/* Tone colors — always a fixed, known set; the LLM only ever picks among these. */
+.fl-child-actions button.tone-hint { border-color: #f0dba0; background: #fffaf0; color: #a9781a; }
+.fl-child-actions button.tone-hint:hover { background: #fdf1d6; }
+.fl-child-actions button.tone-success { border-color: #b7e2c4; background: #f1fbf5; color: #1f8a4c; }
+.fl-child-actions button.tone-success:hover { background: #e4f7ea; }
+.fl-child-actions button.tone-fun { border-color: #e3c9f0; background: #faf3ff; color: #8a3fb0; }
+.fl-child-actions button.tone-fun:hover { background: #f3e4ff; }
+.fl-child-actions button.tone-celebrate { border-color: #f3d385; background: #fff8e6; color: #b6790b; }
+.fl-child-actions button.tone-celebrate:hover { background: #ffefc7; }
+.fl-child-actions button.tone-stuck { border-color: #cfd8e6; background: #f6f8fb; color: #4a5b78; }
+.fl-child-actions button.tone-stuck:hover { background: #eaeef4; }
+.fl-star-badge { display: inline-flex; align-items: center; gap: 5px; padding: 6px 13px; border-radius: 999px; background: linear-gradient(135deg, #fff3d6, #ffe6a8); color: #a9781a; font-size: var(--text-secondary); font-weight: 800; box-shadow: 0 1px 3px rgba(169, 120, 26, .18); }
+.fl-star-badge svg { color: #e0a51c; }
+.fl-child-top-right { display: flex; align-items: center; gap: 10px; }
+.fl-celebration { display: flex; align-items: center; gap: 12px; max-width: min(94%, 760px); padding: 13px 18px; border-radius: 16px; background: linear-gradient(90deg, #fff3d6, #fff8e6); border: 1px solid #f3d385; box-shadow: 0 6px 18px rgba(214, 158, 46, .18); animation: fl-celebration-in .35s ease; }
+.fl-celebration-stars { display: flex; gap: 2px; flex: 0 0 auto; }
+.fl-celebration-star { color: #e0a51c; filter: drop-shadow(0 1px 2px rgba(224, 165, 28, .35)); animation: fl-star-pop .5s cubic-bezier(.34, 1.56, .64, 1) backwards; }
+.fl-celebration-text { color: #8a5c0a; font-weight: 650; font-size: var(--text-secondary); }
+@keyframes fl-celebration-in { from { opacity: 0; transform: translateY(-6px); } to { opacity: 1; transform: translateY(0); } }
+@keyframes fl-star-pop { 0% { opacity: 0; transform: scale(0) rotate(-25deg); } 60% { opacity: 1; transform: scale(1.25) rotate(8deg); } 100% { opacity: 1; transform: scale(1) rotate(0); } }
 .fl-child-composer { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; align-items: center; padding: 9px; border: 1px solid #cfdcec; border-radius: 16px; background: #fff; box-shadow: 0 8px 20px rgba(13, 35, 76, .06); }
 .fl-child-composer input { min-width: 0; height: 42px; border: 0; outline: 0; background: transparent; color: var(--navy); font: inherit; font-size: var(--text-body); padding-left: 8px; }
 .fl-child-composer input::placeholder { color: #6a7c95; }
@@ -482,5 +526,4 @@ details[open] > .fl-tree-dir::before { content: "▾"; }
   .setup-footer { align-items: stretch; flex-direction: column; }
   .setup-footer .primary-button { width: 100%; }
   .chat-message { max-width: 94%; }
-  .parent-quick-actions { padding-left: 0; }
 }

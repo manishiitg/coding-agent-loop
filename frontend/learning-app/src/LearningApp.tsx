@@ -14,27 +14,34 @@ import {
   PanelLeftOpen,
   Paperclip,
   Plus,
+  RefreshCw,
   Send,
   Sparkles,
+  Star,
   Sun,
 } from 'lucide-react'
 import './learning-app.css'
-
-type Screen = 'engine' | 'child' | 'pin' | 'parent' | 'tutor'
-type DrawerTab = 'assets' | 'map' | 'progress' | 'files'
+import {
+  useSetupStore,
+  useFamilyStore,
+  useParentChatStore,
+  useWorkspaceStore,
+  useChildChatStore,
+  useWhatsAppStore,
+  usePinGateStore,
+  toParentMsg,
+  type Screen,
+  type DrawerTab,
+  type ApiEngine,
+  type ConvMeta,
+  type ParentMsg,
+  type StoredMsg,
+  type TreeNode,
+  type WsFile,
+  type ChildSuggestion,
+} from './stores'
 
 const FAMILY_API = (import.meta as { env?: { VITE_FAMILY_API?: string } }).env?.VITE_FAMILY_API ?? 'http://127.0.0.1:8010'
-
-type ApiEngine = {
-  id: string
-  name: string
-  runtime_command?: string
-  runtime_available: boolean
-  auth_configured: boolean
-  usable: boolean
-  setup_hint?: string
-  deprecated?: boolean
-}
 
 function engineStatus(e: ApiEngine): { label: string; ready: boolean } {
   if (e.usable) return { label: 'Ready', ready: true }
@@ -60,8 +67,6 @@ function pres(id: string, fallbackName: string) {
 const GRADES = ['4', '5', '6', '7', '8', '9', '10', '11', '12']
 const BOARDS = ['CBSE', 'ICSE / ISC (CISCE)', 'State Board', 'NIOS', 'IB', 'Cambridge / IGCSE', 'Other', 'Not sure']
 
-type ConvMeta = { id: string; title: string; when: string; scope: 'parent' | 'child'; updated: string }
-
 // Convert an ISO timestamp into a short relative label for the rail.
 function relTime(iso: string): string {
   const t = Date.parse(iso)
@@ -77,6 +82,19 @@ function newConversationId(): string {
   return `conv-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`
 }
 
+// Which side of the handoff the browser should land on after a refresh.
+// Without this, a refresh always falls back to Parent Mode — letting a child
+// bypass the PIN gate entirely just by reloading the page. Persisted in
+// localStorage (this is a single local-machine app, same as the rest of its
+// state) and flipped explicitly at every real hand-off/PIN-unlock point.
+const HANDOFF_SIDE_KEY = 'sparkquill.handoff-side'
+function persistHandoffSide(side: 'tutor' | 'parent') {
+  try { localStorage.setItem(HANDOFF_SIDE_KEY, side) } catch { /* best-effort */ }
+}
+function readHandoffSide(): 'tutor' | 'parent' {
+  try { return localStorage.getItem(HANDOFF_SIDE_KEY) === 'tutor' ? 'tutor' : 'parent' } catch { return 'parent' }
+}
+
 // Markdown renders the agent's reply with react-markdown + GFM — the same
 // battle-tested renderer the main AgentWorks frontend uses (handles tables,
 // nested lists, lazy-continuation of terminal-wrapped list items, code, etc.).
@@ -87,16 +105,33 @@ function Markdown({ text }: { text: string }) {
 // QUICK_SKILLS are one-click shortcuts in the composer menu; each sends a message
 // that triggers the matching agent skill.
 const QUICK_SKILLS = [
-  { label: 'Understand progress', message: 'How is my child doing so far? Give me a coach-style read of the evidence.' },
-  { label: 'Create study material', message: 'Create study material for the current subject and topic — follow your create-study-material skill and make it an interactive HTML page.' },
-  { label: 'Create a practice test', message: 'Create a practice test for the current subject and topic — follow your create-test skill: an interactive HTML page that records my child’s typed answers, plus a separate answer key for me.' },
-  { label: 'Update progress report', message: 'Build an updated progress report — follow your create-progress-report skill and make it a designed HTML page.' },
+  { label: 'Create study material', message: 'Create study material for my child — follow your create-study-material skill and make it a designed, static (view-only) HTML page.' },
+  { label: 'Create a practice test', message: 'Create a practice test for my child — follow your create-test skill: an interactive HTML page that records my child’s typed answers, plus a separate answer key for me.' },
+  { label: 'Update progress report', message: 'Build an updated progress report — follow your create-progress-report skill, make it a designed HTML page, and give me a short coach-style read of the evidence here in chat too.' },
   { label: 'Update academic map', message: 'Update the academic map — follow your create-academic-map skill (designed HTML at shared/academic-map.html).' },
   { label: 'Back up workspace', message: 'Back up my workspace now — follow your backup skill.' },
 ]
 
-type ParentMsg = { role: 'user' | 'assistant' | 'tool'; text?: string; tool?: string; subject?: string; topic?: string; name?: string }
-type TreeNode = { name: string; path: string; type: 'dir' | 'file'; children?: TreeNode[] }
+// PARENT_WAIT_HINTS / CHILD_WAIT_HINTS cycle in the "thinking" indicator while
+// waiting for a reply with no live tool-status yet — real, usable tips on how
+// to use the chat, shown instead of a bare "thinking…" so the wait is at
+// least a little useful. Live tool status (e.g. "Opening the file…") always
+// takes priority over these when it's available.
+const PARENT_WAIT_HINTS = [
+  'Tip: ask "How is my child doing so far?" anytime for an evidence-based read of their progress.',
+  'Tip: once a test or guide is ready, use the "Give to child" button to hand it over.',
+  'Tip: tell Quill how you want tutoring handled — e.g. "give one hint before the answer" — and it remembers.',
+  'Tip: ask for several things at once — "make a guide, a quick test, and an advanced one" — bundled as one package.',
+  'Tip: Quill can look up board-specific tips and exam strategies — just ask.',
+  'Tip: you can ask Quill to explain a topic to you, not just make material for your child.',
+]
+const CHILD_WAIT_HINTS = [
+  'Tip: stuck? Just say "give me a hint!"',
+  'Tip: you can ask Quill to explain it a different way.',
+  'Tip: tell Quill your answer — it will tell you if you got it right.',
+  'Tip: ask for an example if a question feels tricky.',
+  'Tip: you can ask Quill anything about what you\'re learning, not just the current question.',
+]
 
 // FileTree renders the workspace as an expandable tree (AgentWorks-style). Files
 // are clickable to open in the viewer; .meta.json is hidden as noise.
@@ -120,9 +155,28 @@ function FileTree({ nodes, onOpen, depth = 0 }: { nodes: TreeNode[]; onOpen: (pa
     </ul>
   )
 }
-type WsFile = { path: string; name: string; scope: string; subject: string; topic: string }
-
 const IMAGE_PATH_RE = /\.(png|jpe?g|gif|webp|svg|bmp)$/i
+
+// sanitizeDecorativeHtml allows a tiny, LLM-authored decorative fragment (a
+// dash of inline color/styling around the label) inside a suggestion pill,
+// without letting it execute anything: script/style blocks and their content
+// are stripped entirely, event-handler attributes and javascript: URLs are
+// stripped, and only a small inline-formatting tag whitelist survives — any
+// other tag is dropped (its text content is kept, just not the markup).
+// Click-to-send behavior always lives in the wrapping React <button>, never
+// in this content, so even a maximally hostile fragment can't do more than
+// render inert, differently-colored text.
+function sanitizeDecorativeHtml(html: string): string {
+  if (!html || html.length > 400) return ''
+  let safe = html
+  safe = safe.replace(/<(script|style)[^>]*>[\s\S]*?<\/\1>/gi, '')
+  safe = safe.replace(/<\/?(script|style)[^>]*>/gi, '')
+  safe = safe.replace(/\son\w+\s*=\s*"(?:[^"\\]|\\.)*"/gi, '')
+  safe = safe.replace(/\son\w+\s*=\s*'(?:[^'\\]|\\.)*'/gi, '')
+  safe = safe.replace(/(href|src)\s*=\s*["']\s*javascript:[^"']*["']/gi, '')
+  safe = safe.replace(/<(?!\/?(span|strong|em|b|i|br|small)\b)[^>]*>/gi, '')
+  return safe
+}
 
 // parseAssetPath reads whatever structure a generated/uploaded file's path
 // carries — shared/<type>/<subject>/<topic>/<yyyy-mm-dd>-<name>.ext, or a
@@ -147,12 +201,18 @@ function parseAssetPath(p: string): { subject?: string; topic?: string; date?: s
 }
 
 export default function LearningApp() {
-  const [screen, setScreen] = useState<Screen>('engine')
-  const [engines, setEngines] = useState<ApiEngine[]>([])
-  const [enginesState, setEnginesState] = useState<'loading' | 'ready' | 'error'>('loading')
-  const [engine, setEngine] = useState('')
-  const [testState, setTestState] = useState<'idle' | 'testing' | 'valid' | 'invalid'>('idle')
-  const [testMessage, setTestMessage] = useState('')
+  const screen = useSetupStore((s) => s.screen)
+  const setScreen = useSetupStore((s) => s.setScreen)
+  const engines = useSetupStore((s) => s.engines)
+  const setEngines = useSetupStore((s) => s.setEngines)
+  const enginesState = useSetupStore((s) => s.enginesState)
+  const setEnginesState = useSetupStore((s) => s.setEnginesState)
+  const engine = useSetupStore((s) => s.engine)
+  const setEngine = useSetupStore((s) => s.setEngine)
+  const testState = useSetupStore((s) => s.testState)
+  const setTestState = useSetupStore((s) => s.setTestState)
+  const testMessage = useSetupStore((s) => s.testMessage)
+  const setTestMessage = useSetupStore((s) => s.setTestMessage)
 
   useEffect(() => {
     let cancelled = false
@@ -170,36 +230,75 @@ export default function LearningApp() {
       .catch(() => { if (!cancelled) setEnginesState('error') })
     return () => { cancelled = true }
   }, [])
-  const [childName, setChildName] = useState('Maya')
-  const [grade, setGrade] = useState('10')
-  const [board, setBoard] = useState('CBSE')
-  const [subject, setSubject] = useState('')
-  const [topic, setTopic] = useState('')
-  const [focusInput, setFocusInput] = useState('')
-  const [parentMessages, setParentMessages] = useState<ParentMsg[]>([])
-  const [sending, setSending] = useState(false)
-  const [liveStatus, setLiveStatus] = useState('')
-  const [suggestions, setSuggestions] = useState<{ label: string; message: string }[]>([])
-  const [menuOpen, setMenuOpen] = useState(false)
-  const [waOpen, setWaOpen] = useState(false)
-  const [waMessages, setWaMessages] = useState<{ role: 'user' | 'assistant'; text: string }[]>([])
-  const [waInput, setWaInput] = useState('')
-  const [waSending, setWaSending] = useState(false)
-  const [wsFiles, setWsFiles] = useState<WsFile[]>([])
-  const [allFiles, setAllFiles] = useState<string[]>([])
+  const childName = useFamilyStore((s) => s.childName)
+  const setChildName = useFamilyStore((s) => s.setChildName)
+  const grade = useFamilyStore((s) => s.grade)
+  const setGrade = useFamilyStore((s) => s.setGrade)
+  const board = useFamilyStore((s) => s.board)
+  const setBoard = useFamilyStore((s) => s.setBoard)
+  const focusInput = useParentChatStore((s) => s.focusInput)
+  const setFocusInput = useParentChatStore((s) => s.setFocusInput)
+  const parentMessages = useParentChatStore((s) => s.parentMessages)
+  const setParentMessages = useParentChatStore((s) => s.setParentMessages)
+  const sending = useParentChatStore((s) => s.sending)
+  const setSending = useParentChatStore((s) => s.setSending)
+  const liveStatus = useParentChatStore((s) => s.liveStatus)
+  const setLiveStatus = useParentChatStore((s) => s.setLiveStatus)
+  const suggestions = useParentChatStore((s) => s.suggestions)
+  const setSuggestions = useParentChatStore((s) => s.setSuggestions)
+  const pendingHandoff = useParentChatStore((s) => s.pendingHandoff)
+  const setPendingHandoff = useParentChatStore((s) => s.setPendingHandoff)
+  const menuOpen = useParentChatStore((s) => s.menuOpen)
+  const setMenuOpen = useParentChatStore((s) => s.setMenuOpen)
+  const waOpen = useWhatsAppStore((s) => s.waOpen)
+  const setWaOpen = useWhatsAppStore((s) => s.setWaOpen)
+  const waMessages = useWhatsAppStore((s) => s.waMessages)
+  const setWaMessages = useWhatsAppStore((s) => s.setWaMessages)
+  const waInput = useWhatsAppStore((s) => s.waInput)
+  const setWaInput = useWhatsAppStore((s) => s.setWaInput)
+  const waSending = useWhatsAppStore((s) => s.waSending)
+  const setWaSending = useWhatsAppStore((s) => s.setWaSending)
+  const wsFiles = useWorkspaceStore((s) => s.wsFiles)
+  const setWsFiles = useWorkspaceStore((s) => s.setWsFiles)
+  const allFiles = useWorkspaceStore((s) => s.allFiles)
+  const setAllFiles = useWorkspaceStore((s) => s.setAllFiles)
+  // conversationId/childConversationId are lazily seeded with a fresh generated
+  // id on first render (same as before Zustand) — the stores default to '',
+  // which would send an empty conversation_id on the very first message before
+  // any resume/new-conversation action has run.
   const [conversationId, setConversationId] = useState(newConversationId)
-  const [conversations, setConversations] = useState<ConvMeta[]>([])
-  const [childSessionsList, setChildSessionsList] = useState<ConvMeta[]>([])
+  const conversations = useParentChatStore((s) => s.conversations)
+  const setConversations = useParentChatStore((s) => s.setConversations)
+  const childSessionsList = useParentChatStore((s) => s.childSessionsList)
+  const setChildSessionsList = useParentChatStore((s) => s.setChildSessionsList)
   const resumedRef = useRef(false)
-  const [childMessages, setChildMessages] = useState<ParentMsg[]>([])
-  const [childSending, setChildSending] = useState(false)
-  const [childInput, setChildInput] = useState('')
+  const childResumedRef = useRef(false)
+  const childMessages = useChildChatStore((s) => s.childMessages)
+  const setChildMessages = useChildChatStore((s) => s.setChildMessages)
+  const childSending = useChildChatStore((s) => s.childSending)
+  const setChildSending = useChildChatStore((s) => s.setChildSending)
+  const childInput = useChildChatStore((s) => s.childInput)
+  const setChildInput = useChildChatStore((s) => s.setChildInput)
+  const childSuggestions = useChildChatStore((s) => s.childSuggestions)
+  const setChildSuggestions = useChildChatStore((s) => s.setChildSuggestions)
+  const childLiveStatus = useChildChatStore((s) => s.childLiveStatus)
+  const setChildLiveStatus = useChildChatStore((s) => s.setChildLiveStatus)
+  const childStars = useFamilyStore((s) => s.childStars)
+  const setChildStars = useFamilyStore((s) => s.setChildStars)
+  const parentLabel = useFamilyStore((s) => s.parentLabel)
+  const setParentLabel = useFamilyStore((s) => s.setParentLabel)
   const [childConversationId, setChildConversationId] = useState(newConversationId)
 
+  const wsRefreshKey = useWorkspaceStore((s) => s.wsRefreshKey)
+  const setWsRefreshKey = useWorkspaceStore((s) => s.setWsRefreshKey)
   // Reflect the workspace file system in the drawer (materials the agent can
   // read). Refetches when entering the chat and after each upload/tool event.
   useEffect(() => {
-    if (screen !== 'parent') return
+    // Also runs on 'tutor' (not just 'parent') — this is where the child's own
+    // conversation gets resumed from its persisted transcript on load; skipping
+    // it for tutor meant a refreshed child always silently got a brand-new,
+    // empty, cold-start session instead of continuing where they left off.
+    if (screen !== 'parent' && screen !== 'tutor') return
     let cancelled = false
     fetch(`${FAMILY_API}/api/workspace/tree`)
       .then((res) => res.json())
@@ -236,7 +335,8 @@ export default function LearningApp() {
         valid.sort((a, b) => b.updated.localeCompare(a.updated))
         const parentConvs = valid.filter((c) => c.scope === 'parent')
         setConversations(parentConvs)
-        setChildSessionsList(valid.filter((c) => c.scope === 'child'))
+        const childConvs = valid.filter((c) => c.scope === 'child')
+        setChildSessionsList(childConvs)
         // Resume the most recent conversation by default (once) so the parent
         // continues where they left off instead of starting a fresh chat each load.
         if (!resumedRef.current && parentMessages.length === 0 && parentConvs.length > 0) {
@@ -245,41 +345,95 @@ export default function LearningApp() {
           fetch(`${FAMILY_API}/api/workspace/file?path=${encodeURIComponent(`${top.scope}/conversations/${top.id}.json`)}`)
             .then((r) => r.json())
             .then((dd) => {
-              const c = JSON.parse(dd.content) as { id: string; messages?: { role: string; text: string }[] }
+              const c = JSON.parse(dd.content) as { id: string; messages?: StoredMsg[] }
               setConversationId(c.id)
-              setParentMessages((c.messages || []).map((mm) => ({ role: mm.role as ParentMsg['role'], text: mm.text })))
+              setParentMessages((c.messages || []).map(toParentMsg))
+            })
+            .catch(() => {})
+        }
+        // Same for the child's own conversation — without this, every page
+        // refresh silently started a brand-new child session (fresh cold-start
+        // agent turn, empty visible thread, lost stars/celebration history)
+        // even though the screen itself now correctly stays on "tutor".
+        if (!childResumedRef.current && childMessages.length === 0 && childConvs.length > 0) {
+          childResumedRef.current = true
+          const top = childConvs[0]
+          fetch(`${FAMILY_API}/api/workspace/file?path=${encodeURIComponent(`${top.scope}/conversations/${top.id}.json`)}`)
+            .then((r) => r.json())
+            .then((dd) => {
+              const c = JSON.parse(dd.content) as { id: string; messages?: StoredMsg[] }
+              setChildConversationId(c.id)
+              setChildMessages((c.messages || []).map(toParentMsg))
             })
             .catch(() => {})
         }
       })
       .catch(() => {})
     return () => { cancelled = true }
-  }, [screen, parentMessages.length])
-  const [signoff, setSignoff] = useState(false)
-  const [railOpen, setRailOpen] = useState(false)
+  }, [screen, parentMessages.length, wsRefreshKey])
+  const railOpen = useParentChatStore((s) => s.railOpen)
+  const setRailOpen = useParentChatStore((s) => s.setRailOpen)
   const drawerOpen = true // right side always open
   const threadEndRef = useRef<HTMLDivElement>(null)
+  const childThreadEndRef = useRef<HTMLDivElement>(null)
   const iframeRef = useRef<HTMLIFrameElement>(null)
-  const [drawerTab, setDrawerTab] = useState<DrawerTab>('map')
-  const [filesView, setFilesView] = useState<'subjects' | 'uploaded' | 'reference' | 'advanced'>('subjects')
-  const [prefsContent, setPrefsContent] = useState<string | null>(null)
-  const [childFiles, setChildFiles] = useState<string[]>([])
-  const [childViewerPath, setChildViewerPath] = useState<string | null>(null)
-  const [childViewerContent, setChildViewerContent] = useState<{ isText: boolean; content: string } | null>(null)
-  const [childTreeRefreshKey, setChildTreeRefreshKey] = useState(0)
-  const [filesSubjectFilter, setFilesSubjectFilter] = useState('')
-  const [treeNodes, setTreeNodes] = useState<TreeNode[]>([])
-  const [viewerPath, setViewerPath] = useState<string | null>(null)
-  const [viewerImageList, setViewerImageList] = useState<string[]>([])
-  const [viewerContent, setViewerContent] = useState<{ isText: boolean; content: string } | null>(null)
-  const [mapHtml, setMapHtml] = useState<string | null>(null)
-  const [mapRefreshKey, setMapRefreshKey] = useState(0)
-  const [booting, setBooting] = useState(true)
-  const [bootError, setBootError] = useState(false)
-  const [pin, setPin] = useState('')
-  const [pinConfirm, setPinConfirm] = useState('')
-  const [pinError, setPinError] = useState('')
-  const [saving, setSaving] = useState(false)
+  const drawerTab = useWorkspaceStore((s) => s.drawerTab)
+  const setDrawerTab = useWorkspaceStore((s) => s.setDrawerTab)
+  const filesView = useWorkspaceStore((s) => s.filesView)
+  const setFilesView = useWorkspaceStore((s) => s.setFilesView)
+  const prefsContent = useWorkspaceStore((s) => s.prefsContent)
+  const setPrefsContent = useWorkspaceStore((s) => s.setPrefsContent)
+  const childFiles = useChildChatStore((s) => s.childFiles)
+  const setChildFiles = useChildChatStore((s) => s.setChildFiles)
+  const childPackages = useChildChatStore((s) => s.childPackages)
+  const setChildPackages = useChildChatStore((s) => s.setChildPackages)
+  const childViewerPath = useChildChatStore((s) => s.childViewerPath)
+  const setChildViewerPath = useChildChatStore((s) => s.setChildViewerPath)
+  // Bumped whenever open_file fires, even for the SAME path — Quill re-opens
+  // the child's own active/ copy after editing it to add a progress note, and
+  // a same-string setChildViewerPath wouldn't otherwise trigger a refetch.
+  const [childViewerRefreshKey, setChildViewerRefreshKey] = useState(0)
+  const childViewerContent = useChildChatStore((s) => s.childViewerContent)
+  const setChildViewerContent = useChildChatStore((s) => s.setChildViewerContent)
+  const childTreeRefreshKey = useChildChatStore((s) => s.childTreeRefreshKey)
+  const setChildTreeRefreshKey = useChildChatStore((s) => s.setChildTreeRefreshKey)
+  const filesSubjectFilter = useWorkspaceStore((s) => s.filesSubjectFilter)
+  const setFilesSubjectFilter = useWorkspaceStore((s) => s.setFilesSubjectFilter)
+  const treeNodes = useWorkspaceStore((s) => s.treeNodes)
+  const setTreeNodes = useWorkspaceStore((s) => s.setTreeNodes)
+  const viewerPath = useWorkspaceStore((s) => s.viewerPath)
+  const setViewerPath = useWorkspaceStore((s) => s.setViewerPath)
+  const viewerRefreshKey = useWorkspaceStore((s) => s.viewerRefreshKey)
+  const setViewerRefreshKey = useWorkspaceStore((s) => s.setViewerRefreshKey)
+  const viewerImageList = useWorkspaceStore((s) => s.viewerImageList)
+  const setViewerImageList = useWorkspaceStore((s) => s.setViewerImageList)
+  const viewerContent = useWorkspaceStore((s) => s.viewerContent)
+  const setViewerContent = useWorkspaceStore((s) => s.setViewerContent)
+  const mapHtml = useWorkspaceStore((s) => s.mapHtml)
+  const setMapHtml = useWorkspaceStore((s) => s.setMapHtml)
+  const mapRefreshKey = useWorkspaceStore((s) => s.mapRefreshKey)
+  const setMapRefreshKey = useWorkspaceStore((s) => s.setMapRefreshKey)
+  const progressHtml = useWorkspaceStore((s) => s.progressHtml)
+  const setProgressHtml = useWorkspaceStore((s) => s.setProgressHtml)
+  const booting = useSetupStore((s) => s.booting)
+  const setBooting = useSetupStore((s) => s.setBooting)
+  const bootError = useSetupStore((s) => s.bootError)
+  const setBootError = useSetupStore((s) => s.setBootError)
+  const pin = useSetupStore((s) => s.pin)
+  const setPin = useSetupStore((s) => s.setPin)
+  const pinConfirm = useSetupStore((s) => s.pinConfirm)
+  const setPinConfirm = useSetupStore((s) => s.setPinConfirm)
+  const pinError = useSetupStore((s) => s.pinError)
+  const setPinError = useSetupStore((s) => s.setPinError)
+  const saving = useSetupStore((s) => s.saving)
+  const setSaving = useSetupStore((s) => s.setSaving)
+  // Child→Parent is gated by the parent PIN so a child can't reach answer keys.
+  const pinGate = usePinGateStore((s) => s.pinGate)
+  const setPinGate = usePinGateStore((s) => s.setPinGate)
+  const gateValue = usePinGateStore((s) => s.gateValue)
+  const setGateValue = usePinGateStore((s) => s.setGateValue)
+  const gateError = usePinGateStore((s) => s.gateError)
+  const setGateError = usePinGateStore((s) => s.setGateError)
 
   // Load the real, agent-generated shared/academic-map.html for the Subjects
   // tab — refetches whenever the tab is opened or a turn just completed (the
@@ -291,6 +445,19 @@ export default function LearningApp() {
       .then((r) => r.json())
       .then((d) => { if (!cancelled) setMapHtml(d.content ?? '') })
       .catch(() => { if (!cancelled) setMapHtml('') })
+    return () => { cancelled = true }
+  }, [drawerTab, mapRefreshKey])
+
+  // Load the real, agent-generated shared/reports/progress.html for the
+  // Progress tab — a single living document, rendered directly (not a link
+  // the parent has to click through to).
+  useEffect(() => {
+    if (drawerTab !== 'progress') return
+    let cancelled = false
+    fetch(`${FAMILY_API}/api/workspace/file?path=${encodeURIComponent('shared/reports/progress.html')}`)
+      .then((r) => r.json())
+      .then((d) => { if (!cancelled) setProgressHtml(d.content ?? '') })
+      .catch(() => { if (!cancelled) setProgressHtml('') })
     return () => { cancelled = true }
   }, [drawerTab, mapRefreshKey])
 
@@ -328,6 +495,33 @@ export default function LearningApp() {
     return () => { cancelled = true }
   }, [screen, childTreeRefreshKey])
 
+  // A learning package (shared/packages/*.json) bundles several approved files
+  // under one title/order — read each manifest so the materials list can show
+  // "the package" the parent handed off, instead of its raw manifest file plus
+  // every item repeated as its own separate entry.
+  useEffect(() => {
+    const manifestPaths = childFiles.filter((p) => p.startsWith('shared/packages/') && p.endsWith('.json'))
+    if (manifestPaths.length === 0) { setChildPackages([]); return }
+    let cancelled = false
+    Promise.all(manifestPaths.map((p) =>
+      fetch(`${FAMILY_API}/api/workspace/file?path=${encodeURIComponent(p)}`)
+        .then((r) => r.json())
+        .then((d: { content?: string }) => {
+          try {
+            const pkg = JSON.parse(d.content ?? '{}')
+            return {
+              path: p,
+              title: String(pkg.title ?? 'Learning package'),
+              items: Array.isArray(pkg.items) ? pkg.items : [],
+              guideNote: typeof pkg.guide_note === 'string' ? pkg.guide_note : undefined,
+            }
+          } catch { return null }
+        })
+        .catch(() => null)
+    )).then((results) => { if (!cancelled) setChildPackages(results.filter((r): r is { path: string; title: string; items: string[]; guideNote?: string } => r !== null)) })
+    return () => { cancelled = true }
+  }, [childFiles])
+
   // Load the selected file for the child's own inline viewer.
   useEffect(() => {
     if (!childViewerPath) { setChildViewerContent(null); return }
@@ -338,7 +532,7 @@ export default function LearningApp() {
       .then((d) => { if (!cancelled) setChildViewerContent({ isText: !!d.is_text, content: d.content ?? '' }) })
       .catch(() => { if (!cancelled) setChildViewerContent({ isText: false, content: '' }) })
     return () => { cancelled = true }
-  }, [childViewerPath])
+  }, [childViewerPath, childViewerRefreshKey])
 
   // Load the selected file for the drawer's Files viewer.
   useEffect(() => {
@@ -350,7 +544,7 @@ export default function LearningApp() {
       .then((d) => { if (!cancelled) setViewerContent({ isText: !!d.is_text, content: d.content ?? '' }) })
       .catch(() => { if (!cancelled) setViewerContent({ isText: false, content: '' }) })
     return () => { cancelled = true }
-  }, [viewerPath])
+  }, [viewerPath, viewerRefreshKey])
 
   // Left/Right arrow keys step through the image list the viewer was opened
   // from (e.g. the Uploaded Material thumbnail grid for the current subject).
@@ -372,6 +566,29 @@ export default function LearningApp() {
   useEffect(() => {
     threadEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' })
   }, [parentMessages, sending])
+
+  // Same, for the child's own thread — this had no auto-scroll at all before,
+  // so new replies (and the "thinking" indicator) could land below the fold
+  // with no automatic scroll to reveal them.
+  useEffect(() => {
+    childThreadEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' })
+  }, [childMessages, childSending])
+
+  // Cycle a usable "how to use the chat" tip in the thinking indicator instead
+  // of a bare "thinking…" — resets and restarts each time a new turn begins,
+  // and only matters while there's no real live tool status to show instead.
+  const [parentHintIndex, setParentHintIndex] = useState(0)
+  useEffect(() => {
+    if (!sending) { setParentHintIndex(0); return }
+    const id = window.setInterval(() => setParentHintIndex((i) => (i + 1) % PARENT_WAIT_HINTS.length), 3500)
+    return () => window.clearInterval(id)
+  }, [sending])
+  const [childHintIndex, setChildHintIndex] = useState(0)
+  useEffect(() => {
+    if (!childSending) { setChildHintIndex(0); return }
+    const id = window.setInterval(() => setChildHintIndex((i) => (i + 1) % CHILD_WAIT_HINTS.length), 3500)
+    return () => window.clearInterval(id)
+  }, [childSending])
 
   // Bridge for interactive HTML: the sandboxed viewer iframe posts SQ.save/load
   // messages; the app persists them to a workspace file (child/attempts) so the
@@ -404,18 +621,18 @@ export default function LearningApp() {
     const load = (attempt: number) => {
       fetch(`${FAMILY_API}/api/setup`)
         .then((res) => { if (!res.ok) throw new Error(String(res.status)); return res.json() })
-        .then((data: { next_step?: string; engine?: string; subject?: string; topic?: string; child?: { name?: string; grade?: string; board?: string } | null }) => {
+        .then((data: { next_step?: string; engine?: string; child?: { name?: string; grade?: string; board?: string; stars?: number } | null; parent_label?: string }) => {
           if (cancelled) return
           if (data.engine) setEngine(data.engine)
-          if (data.subject) setSubject(data.subject)
-          if (data.topic) setTopic(data.topic)
           if (data.child) {
             if (data.child.name) setChildName(data.child.name)
             if (data.child.grade) setGrade(data.child.grade)
             if (data.child.board) setBoard(data.child.board)
+            if (data.child.stars) setChildStars(data.child.stars)
           }
+          if (data.parent_label) setParentLabel(data.parent_label)
           const step = data.next_step
-          if (step === 'done') setScreen('parent')
+          if (step === 'done') setScreen(readHandoffSide() === 'tutor' ? 'tutor' : 'parent')
           else if (step === 'pin') setScreen('pin')
           else if (step === 'child') setScreen('child')
           else setScreen('engine')
@@ -461,6 +678,22 @@ export default function LearningApp() {
     setScreen(next)
   }
 
+  // Verify the parent PIN before returning to Parent Mode from the child screen.
+  const submitPinGate = () => {
+    setGateError('')
+    fetch(`${FAMILY_API}/api/parent/pin/verify`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ pin: gateValue }),
+    })
+      .then((res) => res.json())
+      .then((data: { ok?: boolean }) => {
+        if (data.ok) { setPinGate(false); setGateValue(''); persistHandoffSide('parent'); move('parent') }
+        else setGateError('That PIN isn’t right.')
+      })
+      .catch(() => setGateError('Could not check the PIN.'))
+  }
+
   const persistEngineAndContinue = () => {
     if (!selectedEngine) return
     setSaving(true)
@@ -492,7 +725,7 @@ export default function LearningApp() {
       body: JSON.stringify({ pin }),
     })
       .then((res) => res.json())
-      .then((data: { error?: string }) => { if (data.error) { setPinError(data.error); return } move('parent') })
+      .then((data: { error?: string }) => { if (data.error) { setPinError(data.error); return } persistHandoffSide('parent'); move('parent') })
       .catch(() => setPinError('Could not save the PIN.'))
       .finally(() => setSaving(false))
   }
@@ -504,6 +737,7 @@ export default function LearningApp() {
     setParentMessages(next)
     setFocusInput('')
     setSuggestions([])
+    setPendingHandoff(null)
     setSending(true)
     setLiveStatus('')
     // Live "what Quill is doing right now" line, sourced from the same turn's
@@ -518,16 +752,17 @@ export default function LearningApp() {
       body: JSON.stringify({ messages: history, conversation_id: conversationId }),
     })
       .then((res) => res.json())
-      .then((data: { reply?: string; error?: string; suggestions?: { label: string; message: string }[]; tool_events?: { tool: string; subject?: string; topic?: string; name?: string; grade?: string; board?: string; path?: string }[] }) => {
+      .then((data: { reply?: string; error?: string; suggestions?: { label: string; message: string }[]; tool_events?: { tool: string; name?: string; grade?: string; board?: string; path?: string; parent_label?: string }[]; handoff?: { label: string; path: string } }) => {
         const events = data.tool_events ?? []
-        const toolMsgs: ParentMsg[] = events.filter((e) => e.tool === 'set_subject_topic' || e.tool === 'set_child_profile').map((e) => ({ role: 'tool', tool: e.tool, subject: e.subject, topic: e.topic }))
-        const st = events.find((e) => e.tool === 'set_subject_topic')
-        if (st) { if (st.subject) setSubject(st.subject); if (st.topic) setTopic(st.topic) }
+        const toolMsgs: ParentMsg[] = events.filter((e) => e.tool === 'set_child_profile').map((e) => ({ role: 'tool', tool: e.tool, name: e.name, grade: e.grade, board: e.board }))
         const cp = events.find((e) => e.tool === 'set_child_profile')
         if (cp) { if (cp.name) setChildName(cp.name); if (cp.grade) setGrade(cp.grade); if (cp.board) setBoard(cp.board) }
+        const pl = events.find((e) => e.tool === 'set_parent_label' && e.parent_label)
+        if (pl?.parent_label) setParentLabel(pl.parent_label)
         const of = events.find((e) => e.tool === 'open_file' && e.path)
-        if (of?.path) { setDrawerTab('files'); setViewerImageList([]); setViewerPath(of.path) }
+        if (of?.path) { setDrawerTab('files'); setViewerImageList([]); setViewerPath(of.path); setViewerRefreshKey((k) => k + 1) }
         setSuggestions(data.suggestions ?? [])
+        setPendingHandoff(data.handoff ?? null)
         setParentMessages((cur) => [...cur, ...toolMsgs, { role: 'assistant', text: data.error ? `Sorry — ${data.error}` : (data.reply || '(no response)') }])
       })
       .catch(() => setParentMessages((cur) => [...cur, { role: 'assistant', text: 'Sorry — I couldn’t reach the learning engine.' }]))
@@ -562,9 +797,9 @@ export default function LearningApp() {
     fetch(`${FAMILY_API}/api/workspace/file?path=${encodeURIComponent(`${item.scope}/conversations/${item.id}.json`)}`)
       .then((r) => r.json())
       .then((d) => {
-        const c = JSON.parse(d.content) as { id: string; messages?: { role: string; text: string }[] }
+        const c = JSON.parse(d.content) as { id: string; messages?: StoredMsg[] }
         setConversationId(c.id)
-        setParentMessages((c.messages || []).map((m) => ({ role: m.role as ParentMsg['role'], text: m.text })))
+        setParentMessages((c.messages || []).map(toParentMsg))
       })
       .catch(() => {})
   }
@@ -573,28 +808,103 @@ export default function LearningApp() {
     resumedRef.current = true
     setConversationId(newConversationId())
     setParentMessages([])
+    setSuggestions([])
+    setPendingHandoff(null)
   }
 
   // Child Mode tutor — talks to /api/child/message (sandboxed child agent).
-  const sendChildText = (raw: string) => {
+  // convIdOverride lets a caller that JUST generated a fresh id (e.g. starting
+  // a new session right before this call) pass it explicitly — childConversationId
+  // itself won't reflect a setChildConversationId() call made earlier in the
+  // same synchronous handler until the next render, so reading it from the
+  // closure here would silently target the OLD conversation.
+  const sendChildText = (raw: string, base?: ParentMsg[], convIdOverride?: string) => {
     const text = raw.trim()
     if (!text || childSending) return
-    const next: ParentMsg[] = [...childMessages, { role: 'user', text }]
+    const convId = convIdOverride ?? childConversationId
+    const next: ParentMsg[] = [...(base ?? childMessages), { role: 'user', text }]
     setChildMessages(next)
     setChildInput('')
+    setChildSuggestions([])
     setChildSending(true)
+    setChildLiveStatus('')
+    const statusSource = new EventSource(`${FAMILY_API}/api/child/status?conversation_id=${encodeURIComponent(convId)}`)
+    statusSource.onmessage = (ev) => setChildLiveStatus(ev.data)
+    statusSource.onerror = () => statusSource.close()
     const history = next.filter((m) => m.role === 'user' || m.role === 'assistant').map((m) => ({ role: m.role, text: m.text ?? '' }))
     fetch(`${FAMILY_API}/api/child/message`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ messages: history, conversation_id: childConversationId }),
+      body: JSON.stringify({ messages: history, conversation_id: convId }),
     })
       .then((res) => res.json())
-      .then((data: { reply?: string; error?: string }) => {
-        setChildMessages((cur) => [...cur, { role: 'assistant', text: data.error ? `Hmm, something went wrong — ${data.error}` : (data.reply || '(no response)') }])
+      .then((data: { reply?: string; error?: string; tool_events?: { tool: string; path?: string; stars?: number; total?: number; reason?: string }[]; suggestions?: ChildSuggestion[] }) => {
+        const events = data.tool_events ?? []
+        const of = events.find((e) => e.tool === 'open_file' && e.path)
+        if (of?.path) { setChildViewerPath(of.path); setChildViewerRefreshKey((k) => k + 1) }
+        const cel = events.find((e) => e.tool === 'celebrate')
+        if (cel) setChildStars(cel.total ?? 0)
+        setChildSuggestions(data.suggestions ?? [])
+        setChildMessages((cur) => {
+          const next: ParentMsg[] = [...cur, { role: 'assistant', text: data.error ? `Hmm, something went wrong — ${data.error}` : (data.reply || '(no response)') }]
+          if (cel) next.push({ role: 'tool', tool: 'celebrate', stars: cel.stars ?? 1, reason: cel.reason ?? '' })
+          return next
+        })
       })
       .catch(() => setChildMessages((cur) => [...cur, { role: 'assistant', text: 'I couldn’t reach the tutor just now — try again in a moment.' }]))
-      .finally(() => { setChildSending(false); setChildTreeRefreshKey((k) => k + 1) })
+      .finally(() => { setChildSending(false); setChildLiveStatus(''); statusSource.close(); setChildTreeRefreshKey((k) => k + 1) })
+  }
+
+  // Enter Child Mode after a handoff response. new_session decides whether the
+  // child continues their existing conversation (still the same package) or
+  // starts a clean one (a different package, or a standalone file — per-
+  // handoff resume only makes sense while it's genuinely the same package).
+  // filePath is shown in the viewer directly, unconditionally — we already
+  // know exactly which file the handoff points to (the backend just told us),
+  // so we don't wait on Quill to call open_file itself. On a resumed
+  // conversation Quill often reasons "I already opened this earlier" and
+  // skips the call, which used to leave the child staring at a bare file
+  // list instead of the actual document.
+  const enterChildModeAfterHandoff = (newSession: boolean, greeting: string, filePath: string) => {
+    // A dynamic/instruction-only package hands back its own manifest path (no
+    // real file exists) — never show that raw JSON; let the conversation itself
+    // be the content instead of trying to open anything.
+    const isManifest = filePath.startsWith('shared/packages/') && filePath.endsWith('.json')
+    setChildViewerPath(isManifest ? null : filePath)
+    persistHandoffSide('tutor')
+    setScreen('tutor')
+    setChildTreeRefreshKey((k) => k + 1)
+    if (newSession) {
+      const freshId = newConversationId()
+      setChildConversationId(freshId)
+      setChildSuggestions([])
+      setChildMessages([])
+      sendChildText(greeting, [], freshId)
+    } else {
+      sendChildText(greeting)
+    }
+  }
+
+  // handoffGreeting is what the child's chat "says" to kick off a handoff — it
+  // reads like the child speaking to Quill, so it uses parentLabel ("mom",
+  // "dad", a name) when known, falling back to "parent" until Quill has asked.
+  const handoffGreeting = (what: string) => `My ${parentLabel || 'parent'} just ${what}. Can you help me get started?`
+
+  // The real parent→child handoff behind "Give to <child>": approve the file,
+  // switch into child mode, and kick off Quill — it finds the just-shared
+  // material, opens it, and guides the child. No filename/path is shown; Quill
+  // composes everything the child reads.
+  const startHandoff = (path: string) => {
+    fetch(`${FAMILY_API}/api/parent/handoff`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ path }),
+    })
+      .then((res) => res.json())
+      .then((data: { new_session?: boolean; path?: string }) => {
+        enterChildModeAfterHandoff(!!data.new_session, handoffGreeting('shared something new for me to work on'), data.path || path)
+      })
+      .catch(() => {})
   }
 
   const sendChildMessage = (event: FormEvent<HTMLFormElement>) => {
@@ -615,8 +925,6 @@ export default function LearningApp() {
       const fd = new FormData()
       fd.append('file', f)
       fd.append('scope', 'shared')
-      if (subject) fd.append('subject', subject)
-      if (topic) fd.append('topic', topic)
       return fetch(`${FAMILY_API}/api/upload`, { method: 'POST', body: fd })
         .then((res) => res.json())
         .then((data: { name?: string; error?: string }) => ({ name: data.name || f.name, error: data.error }))
@@ -658,10 +966,6 @@ export default function LearningApp() {
       <main className="learning-app">
         <div className="fl-shell" data-rail={railOpen ? 'open' : 'closed'} data-drawer={drawerOpen ? 'open' : 'closed'}>
           <aside className="fl-rail" aria-label="Conversations and sessions">
-            <div className="fl-rail-brand">
-              <img className="fl-rail-logo" src="/sparkquill-mark.svg" alt="" width={26} height={26} />
-              <span className="brand-word">Spark<strong>Quill</strong></span>
-            </div>
             <button className="fl-new" type="button" onClick={startNewConversation}><Plus size={17} /> New conversation</button>
             <div className="fl-rail-scroll">
               <div className="fl-rail-group">
@@ -713,7 +1017,6 @@ export default function LearningApp() {
                 <button className="fl-whatsapp-btn" type="button" aria-label="WhatsApp" title="SparkQuill on WhatsApp" onClick={() => setWaOpen(true)}>
                   <svg viewBox="0 0 24 24" width="19" height="19" fill="currentColor" aria-hidden="true"><path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51l-.57-.01c-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.71.306 1.263.489 1.694.626.712.226 1.36.194 1.872.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413z"/></svg>
                 </button>
-                <button className="fl-header-handoff" type="button" onClick={() => setSignoff(true)}>Open child learning space <ArrowRight size={16} /></button>
               </div>
             </div>
 
@@ -742,7 +1045,7 @@ export default function LearningApp() {
                     <div key={i} className="fl-msg is-agent">
                       <span className="fl-msg-avatar is-sun"><Check size={18} strokeWidth={3} /></span>
                       <div className="fl-msg-col">
-                        <div className="fl-toolcard"><Check size={15} strokeWidth={3} /> <span>Saved <strong>Subject &amp; Topic</strong> — {m.subject} · {m.topic}</span></div>
+                        <div className="fl-toolcard"><Check size={15} strokeWidth={3} /> <span>Saved <strong>{m.name || 'child profile'}</strong>{m.grade ? ` · Grade ${m.grade}` : ''}{m.board ? ` · ${m.board}` : ''}</span></div>
                       </div>
                     </div>
                   )
@@ -768,7 +1071,7 @@ export default function LearningApp() {
                 <div className="fl-msg is-agent">
                   <span className="fl-msg-avatar is-sun"><Sun size={18} /></span>
                   <div className="fl-msg-col">
-                    <div className="fl-thinking"><img src="/sparkquill-loader.svg" alt="" width={38} height={38} /> <span>{liveStatus ? `Quill is: ${liveStatus}…` : 'Quill is thinking…'}</span></div>
+                    <div className="fl-thinking"><img src="/sparkquill-loader.svg" alt="" width={38} height={38} /> <span>{PARENT_WAIT_HINTS[parentHintIndex]}</span></div>
                   </div>
                 </div>
               )}
@@ -776,8 +1079,19 @@ export default function LearningApp() {
               {parentMessages.length === 0 && !sending && (
                 <div className="parent-quick-actions" aria-label="Suggested parent requests">
                   <button type="button" onClick={() => setFocusInput(`How is ${childName || 'my child'} doing so far?`)}>Understand progress</button>
-                  <button type="button" onClick={() => setFocusInput('Make a short revision worksheet on the current topic')}>Create study material</button>
-                  <button type="button" onClick={() => setFocusInput('Create a short practice test on the current topic')}>Create a test</button>
+                  <button type="button" onClick={() => setFocusInput('Make a short revision worksheet for my child')}>Create study material</button>
+                  <button type="button" onClick={() => setFocusInput('Create a short practice test for my child')}>Create a test</button>
+                </div>
+              )}
+              {pendingHandoff && !sending && (
+                <div className="fl-suggestions" aria-label="Handoff to child">
+                  <button
+                    type="button"
+                    className="fl-suggestion fl-suggestion-handoff"
+                    onClick={() => { const h = pendingHandoff; setPendingHandoff(null); startHandoff(h.path) }}
+                  >
+                    {pendingHandoff.label}
+                  </button>
                 </div>
               )}
               {suggestions.length > 0 && !sending && (
@@ -819,9 +1133,18 @@ export default function LearningApp() {
           <aside className="fl-drawer" aria-label="Learning workspace">
             {!(drawerTab === 'files' && viewerPath) && (
               <div className="fl-drawer-tabs" role="tablist" aria-label="Workspace views">
-                <button role="tab" aria-selected={drawerTab === 'map'} className={drawerTab === 'map' ? 'is-active' : ''} type="button" onClick={() => setDrawerTab('map')}>Subjects</button>
+                <button role="tab" aria-selected={drawerTab === 'map'} className={drawerTab === 'map' ? 'is-active' : ''} type="button" onClick={() => setDrawerTab('map')}>Academics</button>
                 <button role="tab" aria-selected={drawerTab === 'progress'} className={drawerTab === 'progress' ? 'is-active' : ''} type="button" onClick={() => setDrawerTab('progress')}>Progress</button>
                 <button role="tab" aria-selected={drawerTab === 'files'} className={drawerTab === 'files' ? 'is-active' : ''} type="button" onClick={() => setDrawerTab('files')}>Workspace</button>
+                <button
+                  type="button"
+                  className="fl-icon-btn fl-refresh-btn"
+                  aria-label="Refresh workspace"
+                  title="Refresh"
+                  onClick={() => { setWsRefreshKey((k) => k + 1); setMapRefreshKey((k) => k + 1) }}
+                >
+                  <RefreshCw size={15} />
+                </button>
               </div>
             )}
 
@@ -863,59 +1186,17 @@ export default function LearningApp() {
                 )
               )}
 
-              {drawerTab === 'progress' && (() => {
-                const materials = allFiles.filter((p) => p.includes('/materials/')).length
-                const study = allFiles.filter((p) => p.includes('/study/')).length
-                const testFiles = allFiles.filter((p) => p.includes('/tests/') && !p.endsWith('.meta.json'))
-                const attemptFiles = allFiles.filter((p) => p.includes('/attempts/') && p.endsWith('.json'))
-                // Best-effort match between a test file and a saved attempt: strip the
-                // date prefix + extension and compare normalized basenames. Real,
-                // file-based evidence — never an invented score.
-                const normKey = (p: string) => (p.split('/').pop() || '')
-                  .replace(/\.[a-z0-9]+$/i, '')
-                  .replace(/^\d{4}-\d{2}-\d{2}[-_]/, '')
-                  .toLowerCase()
-                  .replace(/[^a-z0-9]/g, '')
-                const attemptedKeys = new Set(attemptFiles.map(normKey))
-                const testStatus = testFiles.map((p) => ({ path: p, attempted: attemptedKeys.has(normKey(p)), ...parseAssetPath(p) }))
-                const recent = [...conversations, ...childSessionsList].sort((a, b) => b.updated.localeCompare(a.updated)).slice(0, 6)
-                return (
-                  <>
-                    <div className="fl-prog-focus">
-                      <span className="fl-drawer-label">Current focus</span>
-                      <strong>{subject ? `${subject}${topic ? ' · ' + topic : ''}` : 'Not set yet'}</strong>
-                    </div>
-                    <section className="fl-prog-group">
-                      <p className="fl-drawer-label">Workspace snapshot</p>
-                      <div className="fl-prog-item is-strong"><FileText size={16} /> {materials} material{materials === 1 ? '' : 's'} uploaded</div>
-                      <div className="fl-prog-item is-strong"><FileText size={16} /> {study} study sheet{study === 1 ? '' : 's'} created</div>
-                    </section>
-                    <section className="fl-prog-group">
-                      <p className="fl-drawer-label">Tests — has {childName || 'she'} attempted them?</p>
-                      {testStatus.length === 0 && <p className="fl-note">No tests yet.</p>}
-                      {testStatus.map((t) => (
-                        <div key={t.path} className="fl-prog-recent">
-                          <span className="fl-signal" data-signal={t.attempted ? 'strong' : undefined} aria-hidden="true" />
-                          <span className="fl-prog-recent-label">{t.subject ? `${t.subject} · ` : ''}{t.label}</span>
-                          <small>{t.attempted ? 'Attempted' : 'Not yet'}</small>
-                        </div>
-                      ))}
-                    </section>
-                    <section className="fl-prog-group">
-                      <p className="fl-drawer-label">Recent activity</p>
-                      {recent.length === 0 && <p className="fl-note">No sessions yet.</p>}
-                      {recent.map((item) => (
-                        <div key={item.scope + item.id} className="fl-prog-recent">
-                          <span className="fl-signal" data-signal={item.scope === 'child' ? 'mixed' : 'strong'} aria-hidden="true" />
-                          <span className="fl-prog-recent-label">{item.scope === 'child' ? childName || 'Maya' : 'Parent'}: {item.title}</span>
-                          <small>{item.when}</small>
-                        </div>
-                      ))}
-                    </section>
-                    <p className="fl-note">Built from real files and sessions on this computer — no numeric scores are invented. See the Subjects tab for Quill's evidence-based notes per topic, or ask Quill to review {childName || 'Maya'}’s work for a deeper read.</p>
-                  </>
-                )
-              })()}
+              {drawerTab === 'progress' && (
+                <>
+                  {progressHtml === null ? (
+                    <p className="fl-note">Loading the progress report…</p>
+                  ) : progressHtml.includes('living report grows as') ? (
+                    <p className="fl-note">The progress report hasn't been built yet — ask Quill to "update the progress report" once there's some real activity to show.</p>
+                  ) : (
+                    <iframe className="fl-map-frame" title="Progress report" sandbox="allow-scripts" srcDoc={progressHtml} />
+                  )}
+                </>
+              )}
 
               {drawerTab === 'files' && (
                 viewerPath ? (
@@ -923,12 +1204,21 @@ export default function LearningApp() {
                     <div className="fl-viewer-bar">
                       <button className="fl-viewer-back" type="button" onClick={() => setViewerPath(null)}><ArrowLeft size={15} /> Files</button>
                       <span className="fl-viewer-name">{viewerPath.split('/').pop()}</span>
+                      <button
+                        className="fl-icon-btn"
+                        type="button"
+                        aria-label="Refresh"
+                        title="Reload this file"
+                        onClick={() => setViewerRefreshKey((k) => k + 1)}
+                      >
+                        <RefreshCw size={14} />
+                      </button>
                       {/^shared\/(tests|study|reports)\//.test(viewerPath) && (
                         <button
                           className="fl-give-to-child"
                           type="button"
                           disabled={sending}
-                          onClick={() => sendParentText(`Please give "${viewerPath.split('/').pop()}" to ${childName || 'my child'}.`)}
+                          onClick={() => startHandoff(viewerPath)}
                         >
                           Give to {childName || 'child'}
                         </button>
@@ -1080,24 +1370,6 @@ export default function LearningApp() {
             </div>
           </aside>
 
-          {signoff && (
-            <div className="fl-signoff-backdrop" role="dialog" aria-modal="true" aria-labelledby="fl-signoff-title">
-              <div className="fl-signoff-card">
-                <span className="fl-signoff-icon"><ArrowRight size={22} /></span>
-                <h2 id="fl-signoff-title">Hand this device to {childName || 'your child'}?</h2>
-                <p>Parent Mode will lock and {childName || 'your child'} will start in their learning space. You’ll need your PIN to return to Parent Mode.</p>
-                <ul className="fl-signoff-list">
-                  <li><Check size={15} strokeWidth={3} /> Parent notes, answer keys and drafts stay hidden</li>
-                  <li><Check size={15} strokeWidth={3} /> {childName || 'Your child'} sees only material you approved</li>
-                </ul>
-                <div className="fl-signoff-actions">
-                  <button className="fl-ghost-btn" type="button" onClick={() => setSignoff(false)}>Cancel</button>
-                  <button className="primary-button" type="button" onClick={() => { setSignoff(false); setScreen('tutor') }}>Hand over to {childName || 'your child'} <ArrowRight size={18} /></button>
-                </div>
-              </div>
-            </div>
-          )}
-
           {waOpen && (
             <div className="fl-wa-backdrop" role="dialog" aria-modal="true" onClick={() => setWaOpen(false)}>
               <div className="fl-wa" onClick={(e) => e.stopPropagation()}>
@@ -1128,25 +1400,34 @@ export default function LearningApp() {
     return (
       <main className="learning-app">
         <div className="fl-child">
-          <header className="fl-child-top">
-            <div className="fl-child-id">
-              <span className="fl-child-avatar is-big">{initial}</span>
-              <div className="fl-child-hi"><strong>Hi {childName || 'Maya'}!</strong><small>Let’s keep learning together</small></div>
-            </div>
-            <div className="fl-child-top-right">
-              <span className="fl-today-pill"><Sparkles size={15} /> Today · {topic}</span>
-              <button className="fl-parent-return" type="button" onClick={() => move('parent')}><LockKeyhole size={16} /> Parent Mode</button>
-            </div>
-          </header>
           <div className="fl-child-body">
             <section className="fl-child-chat">
+              <header className="fl-child-top">
+                <div className="fl-child-id">
+                  <img className="fl-header-logo" src="/sparkquill-mark.svg" alt="" width={30} height={30} />
+                  <div className="fl-child-hi"><strong>Hi {childName || 'Maya'}!</strong><small>Let’s keep learning together</small></div>
+                </div>
+                <div className="fl-child-top-right">
+                  {childStars > 0 && <span className="fl-star-badge"><Star size={15} fill="currentColor" strokeWidth={1.5} /> {childStars}</span>}
+                  <button className="fl-parent-return" type="button" onClick={() => { setGateValue(''); setGateError(''); setPinGate(true) }}><LockKeyhole size={16} /> Parent Mode</button>
+                </div>
+              </header>
               <div className="fl-child-thread" aria-label="Tutor conversation">
                 <div className="fl-tmsg is-tutor">
                   <span className="fl-tmsg-avatar"><Sun size={20} /></span>
-                  <div className="fl-tbubble">Hi {childName || 'Maya'}! Ready to keep going with {topic ? topic.toLowerCase() : 'your learning'}? Tell me what you’re working on, or ask me anything — I’ll help you figure it out step by step.</div>
+                  <div className="fl-tbubble">Hi {childName || 'Maya'}! Ready to keep learning? Tell me what you’re working on, or ask me anything — I’ll help you figure it out step by step.</div>
                 </div>
                 {childMessages.map((m, i) => (
-                  m.role === 'assistant' ? (
+                  m.role === 'tool' && m.tool === 'celebrate' ? (
+                    <div key={i} className="fl-celebration" role="status">
+                      <span className="fl-celebration-stars">
+                        {Array.from({ length: m.stars ?? 1 }, (_, si) => (
+                          <Star key={si} className="fl-celebration-star" size={20} fill="currentColor" strokeWidth={1} style={{ animationDelay: `${si * 0.12}s` }} />
+                        ))}
+                      </span>
+                      <span className="fl-celebration-text">{m.reason}</span>
+                    </div>
+                  ) : m.role === 'assistant' ? (
                     <div key={i} className="fl-tmsg is-tutor">
                       <span className="fl-tmsg-avatar"><Sun size={20} /></span>
                       <div className="fl-tbubble"><Markdown text={m.text ?? ''} /></div>
@@ -1159,27 +1440,44 @@ export default function LearningApp() {
                   )
                 ))}
                 {childSending && (
-                  <div className="fl-tmsg is-tutor">
-                    <span className="fl-tmsg-avatar"><Sun size={20} /></span>
-                    <div className="fl-tbubble">Thinking…</div>
-                  </div>
+                  <div className="fl-thinking"><img src="/sparkquill-loader.svg" alt="" width={38} height={38} /> <span>{childLiveStatus ? `Quill is: ${childLiveStatus}…` : CHILD_WAIT_HINTS[childHintIndex]}</span></div>
                 )}
+                <div ref={childThreadEndRef} />
               </div>
-              <div className="fl-child-actions">
-                <button type="button" onClick={() => sendChildText('Can I have a hint?')} disabled={childSending}>Ask for a hint</button>
-                <button type="button" onClick={() => sendChildText('Can you check my answer?')} disabled={childSending}>Check my answer</button>
-                <button type="button" onClick={() => sendChildText('Can you explain it a different way?')} disabled={childSending}>Explain it differently</button>
-              </div>
+              {childSuggestions.length > 0 && !childSending && (
+                <div className="fl-child-actions" aria-label="Quick replies">
+                  {childSuggestions.map((s, i) => {
+                    const safeHtml = s.html ? sanitizeDecorativeHtml(s.html) : ''
+                    return (
+                      <button key={i} type="button" className={`tone-${s.tone || 'neutral'}`} onClick={() => sendChildText(s.message)}>
+                        {s.emoji && <span className="fl-pill-emoji">{s.emoji}</span>}
+                        {safeHtml ? <span dangerouslySetInnerHTML={{ __html: safeHtml }} /> : <span>{s.label}</span>}
+                      </button>
+                    )
+                  })}
+                </div>
+              )}
               <form className="fl-child-composer" onSubmit={sendChildMessage}>
                 <input aria-label="Message your tutor" placeholder="Type your answer or ask for help…" value={childInput} onChange={(e) => setChildInput(e.target.value)} disabled={childSending} />
                 <button className="composer-send" type="submit" aria-label="Send message" disabled={childSending}><Send size={18} /></button>
               </form>
             </section>
             <aside className="fl-child-side">
+              <div className="fl-child-side-scroll">
               {childViewerPath ? (
                 <div className="fl-viewer">
                   <div className="fl-viewer-bar">
                     <button className="fl-viewer-back" type="button" onClick={() => setChildViewerPath(null)}><ArrowLeft size={15} /> Back</button>
+                    <span className="fl-viewer-name">{parseAssetPath(childViewerPath).label}</span>
+                    <button
+                      className="fl-icon-btn"
+                      type="button"
+                      aria-label="Refresh"
+                      title="Reload this page"
+                      onClick={() => setChildViewerRefreshKey((k) => k + 1)}
+                    >
+                      <RefreshCw size={14} />
+                    </button>
                   </div>
                   {IMAGE_PATH_RE.test(childViewerPath) ? (
                     <img className="fl-viewer-img" src={`${FAMILY_API}/api/workspace/raw?path=${encodeURIComponent(childViewerPath)}`} alt="" />
@@ -1197,18 +1495,44 @@ export default function LearningApp() {
                 </div>
               ) : (
                 <>
-                  <div className="fl-goal-card">
-                    <span className="fl-goal-label">Today’s goal</span>
-                    <strong>{topic || 'Keep learning!'}</strong>
-                  </div>
                   {(() => {
-                    const materials = childFiles.filter((p) => p.startsWith('shared/'))
+                    // A package's manifest and its listed items are shown as ONE
+                    // package card, not as the raw manifest file plus every item
+                    // repeated again as its own separate entry.
+                    const packagedPaths = new Set(childPackages.flatMap((pkg) => pkg.items))
+                    const manifestPaths = new Set(childPackages.map((pkg) => pkg.path))
+                    const materials = childFiles.filter((p) => p.startsWith('shared/') && !manifestPaths.has(p) && !packagedPaths.has(p))
                     const attempts = childFiles.filter((p) => p.startsWith('child/attempts/'))
-                    if (materials.length === 0 && attempts.length === 0) {
+                    if (childPackages.length === 0 && materials.length === 0 && attempts.length === 0) {
                       return <p className="fl-child-note"><Sparkles size={15} /> Ask Quill what to work on next!</p>
                     }
                     return (
                       <>
+                        {childPackages.length > 0 && (
+                          <section className="fl-asset-group">
+                            <p className="fl-drawer-label">From your parent</p>
+                            {childPackages.map((pkg) => (
+                              <button
+                                key={pkg.path}
+                                type="button"
+                                className="fl-file-item is-package"
+                                onClick={() => {
+                                  if (pkg.items.length > 0) {
+                                    // A real file to show — open it directly, never the raw manifest.
+                                    setChildViewerPath(pkg.items[0])
+                                  } else {
+                                    // Instruction-only package: there's no file at all, just a live
+                                    // activity — kick it off in chat instead of trying to "open" anything.
+                                    setChildViewerPath(null)
+                                    sendChildText(`Let's start ${pkg.title}!`)
+                                  }
+                                }}
+                              >
+                                <BookOpen size={16} /><span>{pkg.title}<small>{pkg.items.length > 0 ? `${pkg.items.length} part${pkg.items.length === 1 ? '' : 's'}` : 'Adaptive practice'}</small></span>
+                              </button>
+                            ))}
+                          </section>
+                        )}
                         {materials.length > 0 && (
                           <section className="fl-asset-group">
                             <p className="fl-drawer-label">Your materials</p>
@@ -1225,11 +1549,14 @@ export default function LearningApp() {
                         {attempts.length > 0 && (
                           <section className="fl-asset-group">
                             <p className="fl-drawer-label">Your work</p>
-                            {attempts.map((p) => (
-                              <button key={p} type="button" className="fl-file-item" onClick={() => setChildViewerPath(p)}>
-                                <FileText size={16} /><span>{(p.split('/').pop() || p).replace(/\.[a-z0-9]+$/i, '')}</span>
-                              </button>
-                            ))}
+                            {attempts.map((p) => {
+                              const { label, date } = parseAssetPath(p)
+                              return (
+                                <button key={p} type="button" className="fl-file-item" onClick={() => setChildViewerPath(p)}>
+                                  <FileText size={16} /><span>{label}{date ? ` · ${date}` : ''}</span>
+                                </button>
+                              )
+                            })}
                           </section>
                         )}
                       </>
@@ -1237,9 +1564,33 @@ export default function LearningApp() {
                   })()}
                 </>
               )}
-              <p className="fl-child-note"><Sparkles size={15} /> Take your time. It’s okay to ask for hints — that’s how you learn.</p>
+              </div>
             </aside>
           </div>
+          {pinGate && (
+            <div className="fl-signoff-backdrop" role="dialog" aria-modal="true" aria-labelledby="fl-gate-title">
+              <div className="fl-signoff-card">
+                <span className="fl-signoff-icon"><LockKeyhole size={22} /></span>
+                <h2 id="fl-gate-title">Enter parent PIN</h2>
+                <p>Parent Mode is protected. Enter your PIN to return.</p>
+                <input
+                  className="fl-gate-input"
+                  type="password"
+                  inputMode="numeric"
+                  autoFocus
+                  value={gateValue}
+                  onChange={(e) => setGateValue(e.target.value.replace(/\D/g, '').slice(0, 8))}
+                  onKeyDown={(e) => { if (e.key === 'Enter') submitPinGate() }}
+                  placeholder="PIN"
+                />
+                {gateError && <p className="pin-error"><LockKeyhole size={16} /> {gateError}</p>}
+                <div className="fl-signoff-actions">
+                  <button className="fl-ghost-btn" type="button" onClick={() => { setPinGate(false); setGateValue('') }}>Cancel</button>
+                  <button className="primary-button" type="button" onClick={submitPinGate} disabled={!gateValue}>Unlock <ArrowRight size={18} /></button>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
       </main>
     )

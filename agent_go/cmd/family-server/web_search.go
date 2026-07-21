@@ -18,9 +18,9 @@ import (
 // returns rich, LLM-ready results (title, highlights, URL, date).
 func webSearchTool() agentsession.Tool {
 	return agentsession.Tool{
-		Name: "web_search",
+		Name:        "web_search",
 		Description: "Search the web for current information — education best practices, learning-science techniques, exam/board patterns, quality resources. Returns the top results (title, highlights, URL). Use it to bring in global best practices the parent may not know, then translate them into concrete steps for this child.",
-		Category: "family_tools",
+		Category:    "family_tools",
 		Params: map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{

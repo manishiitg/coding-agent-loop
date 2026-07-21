@@ -1,25 +1,28 @@
 ---
 name: create-academic-map
-description: Build a designed, self-contained HTML academic map of the child's subjects, topics, and materials that both parent and child can open.
+description: Build a designed, self-contained HTML academic map of the child's subjects, topics, and materials, plus real coaching notes for the parent on how to teach them better.
 ---
 
 # Create the academic map
 
-Produce ONE self-contained HTML file giving a living overview of what the child is learning.
+Produce ONE self-contained HTML file giving a living overview of what the child is
+learning, AND how the parent can help them learn it better.
 
 1. **Gather evidence — only what is really in the workspace, never invent subjects:**
    - List `shared/materials/` — every subject and its topics.
    - Read the `.meta.json` files for each material (subject, topic, type, summary).
    - Note generated work: `shared/study/` and `shared/tests/` (which topics have study material / tests).
    - Check for real attempt evidence per topic: read `child/attempts/*.json` (the child's saved answers) and skim `parent/conversations/` + `child/conversations/` for anything you observed about that topic (e.g. "solved the a=1 case, stuck on a≠1"). Use this for a short, honest status per topic — never a numeric score, never invented.
-   - The current focus is in `parent/child-profile.json` and the active subject/topic.
+   - There is no stored "current subject/topic" anywhere — infer it yourself from evidence: whichever topic has the most recent generated work (`shared/study/`, `shared/tests/`) or the most recent real activity in `child/conversations/`/`child/attempts/` is the current one.
    - Check `parent/preferences.md` for anything worth reflecting (e.g. a pacing or style note relevant to a subject).
+   - **For the coaching section**: read `child/conversations/*.json` for real patterns — what she responds well to (e.g. word problems, worked examples), what trips her up (e.g. abstract notation, a specific step), how many attempts something took, celebrate moments. This is the evidence for "how to teach her better" — never generic advice untethered to what actually happened.
 
 2. **Write** the map to `shared/academic-map.html` (overwrite the existing placeholder). It MUST be:
    - Styled with the SHARED design system: read `skills/_shared/html-design.md` and inline its CSS + base template, so it matches every other generated HTML file.
-   - Organised as: one card per **subject**, each listing its **topics**; for every topic show how many source materials, whether study material exists, whether a test exists, and a one-line evidence-based status (e.g. "Attempted 2026-07-20 — comfortable with a=1, stalls when a≠1", or "Not attempted yet" if there is no real evidence). Badge the **current** subject/topic.
-   - Honest: if a subject has only uploads and no generated work yet, show that plainly. If the map is nearly empty, say it is just starting. Never show a percentage, grade, or score that wasn't actually computed from real graded work.
+   - Organised as: one card per **subject**, each listing its **topics**; for every topic show how many source materials, whether study material exists, whether a test exists, and a one-line evidence-based status (e.g. "Attempted 2026-07-20 — comfortable with a=1, stalls when a≠1", or "Not attempted yet" if there is no real evidence). Badge whichever topic you inferred as current (step 1) so the parent can see the active focus at a glance.
+   - **Then, a "Helping [child] learn better" section for the parent** — 2-4 short, concrete points, each grounded in something real you observed (not generic filler): a pattern in how she learns (e.g. "she gets through word problems fast but slows down on abstract notation — lead with a concrete example before the abstract form"), plus a specific technique to try next (retrieval practice, spaced review, worked-example fading, etc.) matched to that pattern. If genuinely useful, use web_search for a board-specific exam technique or a well-known teaching strategy that fits what you observed — but only when it adds something real, not as padding.
+   - Honest: if a subject has only uploads and no generated work yet, show that plainly. If the map is nearly empty, say it is just starting. Never show a percentage, grade, or score that wasn't actually computed from real graded work. Never invent a learning pattern that isn't backed by something you actually read.
 
-3. **Tell the parent** the map is updated and where it appears (the workspace / left menu).
+3. **Tell the parent** the map is updated and where it appears (the **Academics** tab).
 
-Rebuild this whenever materials change so the map stays a living view — never hand-write topics that have no real materials behind them.
+Rebuild this whenever materials change so the map stays a living view — never hand-write topics that have no real materials behind them, and never hand-write a coaching point that isn't backed by something you actually observed.

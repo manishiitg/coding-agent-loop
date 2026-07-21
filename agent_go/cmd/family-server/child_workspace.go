@@ -91,6 +91,39 @@ func buildFilteredTree(root string, paths []string, alwaysInclude []string) []tr
 	return walk(root, "")
 }
 
+// childCanSee reports whether a workspace-relative path is something the child
+// is allowed to have opened on their screen: their own work under child/, or a
+// file the parent has explicitly approved (approved-for-child.json). This is
+// the same allow-list the child's file panel is built from, so the agent's
+// open_file can never surface something the parent hasn't handed off.
+func childCanSee(rel string) bool {
+	rel = strings.TrimPrefix(strings.TrimSpace(rel), "/")
+	if rel == "" {
+		return false
+	}
+	if _, ok := resolveWorkspacePath(rel); !ok {
+		return false
+	}
+	if strings.HasPrefix(rel, "child/") {
+		return true
+	}
+	for _, p := range loadApprovedForChild() {
+		if p == rel {
+			return true
+		}
+	}
+	return false
+}
+
+// childDisplayName is the child's first name for prompt wording, or a neutral
+// fallback when no profile exists yet.
+func childDisplayName(child *Child) string {
+	if child != nil && strings.TrimSpace(child.Name) != "" {
+		return child.Name
+	}
+	return "your student"
+}
+
 // GET /api/child/workspace/tree — the child's own view of the workspace: only
 // files the parent has approved (parent/approved-for-child.json) plus the
 // child's own attempts. This is a pacing/UX gate, not the security boundary —

@@ -67,6 +67,16 @@ type Config struct {
 	// stable id per conversation (e.g. the conversation id). Empty -> fresh
 	// throwaway session each turn (full-history replay).
 	SessionID string
+	// BridgeRoutingInstructions, when non-nil, overrides mcpagent's default
+	// per-provider bridge-tool-routing system-prompt text (see
+	// mcpagent.WithBridgeRoutingInstructions and
+	// docs/core/mcp_bridge_layer.md) — nil keeps mcpagent's default
+	// (unconditionally applied for every provider); a pointer to "" suppresses
+	// the block entirely; a non-empty string replaces it with this app's own
+	// wording. Left unset (nil) for now — the default is left unchanged
+	// everywhere this Config is built; this field only exists so a caller can
+	// opt into custom wording later without further agentsession changes.
+	BridgeRoutingInstructions *string
 }
 
 // Session bundles a live agent with its in-process executor server. Not safe
@@ -157,6 +167,20 @@ func New(ctx context.Context, cfg Config) (*Session, error) {
 	if cfg.MaxTurns > 0 {
 		opts = append(opts, mcpagent.WithMaxTurns(cfg.MaxTurns))
 	}
+	if cfg.BridgeRoutingInstructions != nil {
+		opts = append(opts, mcpagent.WithBridgeRoutingInstructions(*cfg.BridgeRoutingInstructions))
+	}
+	if len(cfg.Tools) > 0 {
+		// Expose every app-registered custom tool as a NATIVE bridge tool for
+		// THIS agent — scoped to this session only, never touching mcpagent's
+		// shared package-level bridgeTools list (which stays fixed across
+		// every consumer of that module; see docs/core/mcp_bridge_layer.md).
+		names := make([]string, 0, len(cfg.Tools))
+		for _, t := range cfg.Tools {
+			names = append(names, t.Name)
+		}
+		opts = append(opts, mcpagent.WithAdditionalBridgeTools(names...))
+	}
 
 	agent, err := mcpagent.NewAgent(ctx, model, b.mcpConfigPath, opts...)
 	if err != nil {
@@ -166,8 +190,9 @@ func New(ctx context.Context, cfg Config) (*Session, error) {
 	// Register the app-specific custom tools. This publishes them into the
 	// session-scoped codeexec registry (agent.go: InitRegistryForSession) so the
 	// shared executor server resolves /tools/custom/{name} calls to these
-	// handlers, and adds them to the native bridge tool set (they must also be
-	// listed in mcpagent bridgeTools to be exposed natively).
+	// handlers. Native bridge exposure is handled above via
+	// WithAdditionalBridgeTools — scoped to this agent, not the shared
+	// mcpagent bridgeTools list.
 	for _, t := range cfg.Tools {
 		category := t.Category
 		if strings.TrimSpace(category) == "" {

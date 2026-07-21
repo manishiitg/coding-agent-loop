@@ -7,8 +7,16 @@ external assets, fonts, images, or network calls.
 
 ## Rules
 - Inline the CSS below in a `<style>` tag (adjust only where a skill asks).
-- **View-only, static HTML.** Do not add `<script>` for typed-answer capture,
-  auto-save, or any input the file itself remembers — no forms, no JS state.
+- **View-only, static HTML.** No `<input>`, `<textarea>`, `<select>`, or `<form>`
+  elements AT ALL — not even a plain, unscripted one. This is not just "no
+  auto-save JS": an empty text box with no script behind it is STILL wrong,
+  because the child will type into it expecting something to happen and
+  nothing will. If a page needs a "try it yourself" section, write the
+  question as plain text with blank space below it to work on paper — never
+  an on-screen box that looks fillable.
+  - BAD (never do this): `<input type="text" placeholder="Type your answer...">`
+  - GOOD: `<p><strong>1. What is 2/5 + 1/5?</strong></p><div class="answer-space"></div>`
+    (an empty `<div>` styled with height/border, not a form control)
   It is a clean, well-designed document to read, not an app.
 - Warm, calm, encouraging — readable by a child. Never harsh.
 - Rounded cards, generous spacing, one clear title with the child's name + date.
@@ -47,6 +55,7 @@ external assets, fonts, images, or network calls.
   ul{margin:8px 0;padding-left:20px} li{margin:5px 0}
   .grid{display:grid;gap:14px;grid-template-columns:repeat(auto-fill,minmax(220px,1fr))}
   .note{background:var(--sun-soft);border-radius:12px;padding:12px 16px;color:#6f5a2a;font-size:14px;margin-top:14px}
+  .answered-note{color:var(--good);font-size:13px;font-weight:600;margin:8px 0 0}
   .foot{color:var(--muted);font-size:13px;margin-top:26px;text-align:center}
 </style>
 </head>
@@ -70,4 +79,6 @@ A test is still a clean, well-formatted question sheet — numbered questions,
 marks as a `.badge`, blank space (or a printed line) under each question for
 working — it is just static: no answer box the page itself remembers. The
 child answers on paper or tells Quill in chat; that's how their work reaches
-`child/attempts/`.
+`child/attempts/`, and (on the child's own live copy under `child/active/`,
+edited via their shell — see childSystemPrompt) how a small `.answered-note`
+line ends up on the page itself, right under the question it belongs to.

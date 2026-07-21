@@ -16,9 +16,9 @@ import (
 // agent calls.
 func notifyTool() agentsession.Tool {
 	return agentsession.Tool{
-		Name: "notify_user",
+		Name:        "notify_user",
 		Description: "Send a short notification to the parent (e.g. the child finished a session, a test or report is ready, a backup completed, or a decision is needed). Shows as a desktop notification. Provide a title and a message.",
-		Category: "family_tools",
+		Category:    "family_tools",
 		Params: map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{

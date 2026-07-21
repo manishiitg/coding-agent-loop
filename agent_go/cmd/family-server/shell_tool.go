@@ -90,6 +90,10 @@ func childShellTool() agentsession.Tool {
 			ReadPaths:         readPaths,
 			WritePaths:        []string{"child"},
 			BlockedWritePaths: blockedWrites,
+			// StrictAllowlist: the child is an untrusted party — deny-by-default
+			// so only child/, approved shared/ paths, and Downloads are visible,
+			// not the rest of the real machine (see security.Isolator doc comment).
+			StrictAllowlist: true,
 		}
 		// Pass the whole command as a single string (args nil) so it is executed
 		// verbatim by the sandbox shell, not word-split.

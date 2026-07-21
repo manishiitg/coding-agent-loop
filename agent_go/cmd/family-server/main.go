@@ -20,6 +20,16 @@ var allowedOrigins = map[string]bool{
 }
 
 func main() {
+	// execute_shell_command runs through security.BuildSafeEnvironment(), which
+	// only preserves the real login-shell PATH/HOME (so host CLIs like node,
+	// homebrew, gws, aws resolve normally) when NATIVE_WORKSPACE=true — otherwise
+	// it silently falls back to a Docker-style minimal PATH that can't find
+	// anything outside /usr/bin. family-server, like AgentWorks' own desktop
+	// launcher (desktop/main.js), always runs natively on the user's machine,
+	// never in Docker, so this is unconditional rather than an env the operator
+	// has to remember to set.
+	os.Setenv("NATIVE_WORKSPACE", "true")
+
 	defaultPort := "8010"
 	if envPort := strings.TrimSpace(os.Getenv("FAMILY_PORT")); envPort != "" {
 		defaultPort = envPort
@@ -43,9 +53,13 @@ func main() {
 	mux.HandleFunc("/api/engine/selection", handleSelectEngine)
 	mux.HandleFunc("/api/child", handleCreateChild)
 	mux.HandleFunc("/api/parent/pin", handleSetPin)
+	mux.HandleFunc("/api/parent/pin/verify", handleVerifyPin)
+	mux.HandleFunc("/api/parent/handoff", handleHandoff)
+	mux.HandleFunc("/api/parent/packages", handlePackages)
 	mux.HandleFunc("/api/parent/message", handleParentMessage)
 	mux.HandleFunc("/api/parent/status", handleParentStatusStream)
 	mux.HandleFunc("/api/child/message", handleChildMessage)
+	mux.HandleFunc("/api/child/status", handleChildStatusStream)
 	mux.HandleFunc("/api/whatsapp/message", handleWhatsAppMessage)
 	mux.HandleFunc("/api/workspace/tree", handleWorkspaceTree)
 	mux.HandleFunc("/api/child/workspace/tree", handleChildWorkspaceTree)

@@ -1,0 +1,52 @@
+import { create } from 'zustand'
+import type { ConvMeta, ParentMsg } from './types'
+import { resolveSetState, type SetStateAction } from './storeUtils'
+
+interface ParentChatState {
+  focusInput: string
+  setFocusInput: (v: SetStateAction<string>) => void
+  parentMessages: ParentMsg[]
+  setParentMessages: (v: SetStateAction<ParentMsg[]>) => void
+  sending: boolean
+  setSending: (v: SetStateAction<boolean>) => void
+  liveStatus: string
+  setLiveStatus: (v: SetStateAction<string>) => void
+  suggestions: { label: string; message: string }[]
+  setSuggestions: (v: SetStateAction<{ label: string; message: string }[]>) => void
+  menuOpen: boolean
+  setMenuOpen: (v: SetStateAction<boolean>) => void
+  conversations: ConvMeta[]
+  setConversations: (v: SetStateAction<ConvMeta[]>) => void
+  childSessionsList: ConvMeta[]
+  setChildSessionsList: (v: SetStateAction<ConvMeta[]>) => void
+  railOpen: boolean
+  setRailOpen: (v: SetStateAction<boolean>) => void
+  // A REAL handoff Quill proposed via suggest_handoff — distinct from an
+  // ordinary suggestion pill: clicking it performs the actual handoff
+  // (approve + switch to Child Mode + greet), not a chat message.
+  pendingHandoff: { label: string; path: string } | null
+  setPendingHandoff: (v: SetStateAction<{ label: string; path: string } | null>) => void
+}
+
+export const useParentChatStore = create<ParentChatState>()((set) => ({
+  focusInput: '',
+  setFocusInput: (v) => set((s) => ({ focusInput: resolveSetState(v, s.focusInput) })),
+  parentMessages: [],
+  setParentMessages: (v) => set((s) => ({ parentMessages: resolveSetState(v, s.parentMessages) })),
+  sending: false,
+  setSending: (v) => set((s) => ({ sending: resolveSetState(v, s.sending) })),
+  liveStatus: '',
+  setLiveStatus: (v) => set((s) => ({ liveStatus: resolveSetState(v, s.liveStatus) })),
+  suggestions: [],
+  setSuggestions: (v) => set((s) => ({ suggestions: resolveSetState(v, s.suggestions) })),
+  menuOpen: false,
+  setMenuOpen: (v) => set((s) => ({ menuOpen: resolveSetState(v, s.menuOpen) })),
+  conversations: [],
+  setConversations: (v) => set((s) => ({ conversations: resolveSetState(v, s.conversations) })),
+  childSessionsList: [],
+  setChildSessionsList: (v) => set((s) => ({ childSessionsList: resolveSetState(v, s.childSessionsList) })),
+  railOpen: false,
+  setRailOpen: (v) => set((s) => ({ railOpen: resolveSetState(v, s.railOpen) })),
+  pendingHandoff: null,
+  setPendingHandoff: (v) => set((s) => ({ pendingHandoff: resolveSetState(v, s.pendingHandoff) })),
+}))

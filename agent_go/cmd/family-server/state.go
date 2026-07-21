@@ -2,6 +2,7 @@ package main
 
 import (
 	"crypto/sha256"
+	"crypto/subtle"
 	"encoding/hex"
 	"encoding/json"
 	"net/http"
@@ -37,6 +38,16 @@ type Child struct {
 	Board     string `json:"board"`
 	Language  string `json:"language"`
 	CreatedAt string `json:"created_at"`
+	// TeachingStyle controls how the tutor handles a stuck child: "hints-first"
+	// (default — never reveal the answer until a genuine attempt), "guided"
+	// (a hint, then the answer sooner if still stuck), or "direct" (answer
+	// plainly, then explain). Empty means "hints-first" (unchanged behavior for
+	// existing families that predate this setting).
+	TeachingStyle string `json:"teaching_style,omitempty"`
+	// Stars is a simple running encouragement count Quill awards for genuine
+	// effort/progress (celebrate tool). Purely positive reinforcement — never
+	// decremented, no numeric "score" implication.
+	Stars int `json:"stars,omitempty"`
 }
 
 // familyState is the persisted onboarding/config state.
@@ -44,10 +55,11 @@ type familyState struct {
 	Engine  string `json:"engine"`
 	Child   *Child `json:"child"`
 	PinHash string `json:"pin_hash,omitempty"`
-	// Subject/Topic are written by the parent agent's set_subject_topic tool —
-	// the first real MCP bridge tool wired into Family Learning.
-	Subject string `json:"subject,omitempty"`
-	Topic   string `json:"topic,omitempty"`
+	// ParentLabel is how the parent wants to be referred to when Quill talks
+	// ABOUT them to the child — "mom", "dad", "grandma", a first name, etc.
+	// Empty means not yet asked/known; Quill asks for it conversationally
+	// (parentSystemPrompt's parentLabelNudge) rather than via a setup form.
+	ParentLabel string `json:"parent_label,omitempty"`
 }
 
 var stateMu sync.Mutex
@@ -99,15 +111,14 @@ func scaffoldFamilyFolders() error {
 type setupResponse struct {
 	Engine        string `json:"engine"`
 	Child         *Child `json:"child"`
-	Subject       string `json:"subject,omitempty"`
-	Topic         string `json:"topic,omitempty"`
 	PinSet        bool   `json:"pin_set"`
 	SetupComplete bool   `json:"setup_complete"`
 	NextStep      string `json:"next_step"` // "engine" | "child" | "pin" | "done"
+	ParentLabel   string `json:"parent_label,omitempty"`
 }
 
 func computeSetup(s familyState) setupResponse {
-	resp := setupResponse{Engine: s.Engine, Child: s.Child, Subject: s.Subject, Topic: s.Topic, PinSet: s.PinHash != ""}
+	resp := setupResponse{Engine: s.Engine, Child: s.Child, PinSet: s.PinHash != "", ParentLabel: s.ParentLabel}
 	switch {
 	case s.Engine == "":
 		resp.NextStep = "engine"
@@ -232,6 +243,36 @@ func handleSetPin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, computeSetup(s))
+}
+
+// POST /api/parent/pin/verify — check a PIN against the stored hash. Gates the
+// child→parent transition so a child can't return to Parent Mode (answer keys,
+// private notes) just by tapping the button. Returns {"ok":true} on match.
+func handleVerifyPin(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var req setPinRequest
+	pin := ""
+	if err := json.NewDecoder(r.Body).Decode(&req); err == nil {
+		pin = strings.TrimSpace(req.Pin)
+	}
+	stateMu.Lock()
+	s := loadState()
+	stateMu.Unlock()
+	if s.PinHash == "" {
+		// No PIN set yet — nothing to protect; allow through.
+		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+		return
+	}
+	sum := sha256.Sum256([]byte(pin))
+	ok := subtle.ConstantTimeCompare([]byte(hex.EncodeToString(sum[:])), []byte(s.PinHash)) == 1
+	if !ok {
+		writeJSON(w, http.StatusOK, map[string]bool{"ok": false})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
 // POST /api/reset — clear setup (dev convenience to re-run onboarding).

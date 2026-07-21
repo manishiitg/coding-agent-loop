@@ -14,8 +14,8 @@ import (
 // whatsappSystemPrompt is the parent persona adapted for the WhatsApp channel:
 // short, plain-text replies suitable for a phone — no markdown, no HTML, no
 // opening files on a screen.
-func whatsappSystemPrompt(child *Child) string {
-	return parentSystemPrompt(child) +
+func whatsappSystemPrompt(child *Child, parentLabel string) string {
+	return parentSystemPrompt(child, parentLabel) +
 		"\n\nCHANNEL — WHATSAPP: You are replying to the parent over WhatsApp on their phone. Keep replies SHORT and in plain text: no markdown, no headings, no HTML, and do not talk about opening files on a screen. If they send a photo of homework, use read_image. Answer in a few lines, warmly and to the point."
 }
 
@@ -48,7 +48,7 @@ func handleWhatsAppMessage(w http.ResponseWriter, r *http.Request) {
 
 	provider, ok := engineToProvider(s.Engine)
 	if !ok {
-		reply, err := enginedetect.Chat(r.Context(), s.Engine, "", workDir, whatsappSystemPrompt(s.Child), req.Messages)
+		reply, err := enginedetect.Chat(r.Context(), s.Engine, "", workDir, whatsappSystemPrompt(s.Child, s.ParentLabel), req.Messages)
 		if err != nil {
 			writeJSON(w, http.StatusOK, parentMessageResponse{Error: friendlyTurnError(err)})
 			return
@@ -71,9 +71,12 @@ func handleWhatsAppMessage(w http.ResponseWriter, r *http.Request) {
 	sess, err := agentsession.New(ctx, agentsession.Config{
 		Provider:     provider,
 		WorkingDir:   workDir,
-		SystemPrompt: whatsappSystemPrompt(s.Child),
-		SessionID:    req.ConversationID, // warm-resume the WhatsApp thread
-		Tools:        withLiveStatus("whatsapp:"+req.ConversationID, []agentsession.Tool{webSearchTool(), readImageTool(s.Engine), notifyTool(), shellTool()}),
+		SystemPrompt: whatsappSystemPrompt(s.Child, s.ParentLabel),
+		// Only actually warm-resume once THIS process has completed a turn for
+		// this id — see warm_tracker.go.
+		SessionID:                 resumableSessionID(req.ConversationID),
+		BridgeRoutingInstructions: bridgeRoutingInstructions(),
+		Tools:                     withLiveStatus("whatsapp:"+req.ConversationID, []agentsession.Tool{webSearchTool(), readImageTool(s.Engine), notifyTool(), shellTool()}),
 	})
 	if err != nil {
 		msg := friendlyTurnError(err)
@@ -95,6 +98,7 @@ func handleWhatsAppMessage(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, parentMessageResponse{Error: msg})
 		return
 	}
+	markConversationWarm(req.ConversationID)
 	persistConversation("parent", cid, withReply(req.Messages, reply))
 	writeJSON(w, http.StatusOK, parentMessageResponse{Reply: reply})
 }

@@ -59,9 +59,9 @@ func withoutBridgeEnv(fn func() (string, error)) (string, error) {
 // API key — it reuses the family's chosen engine.
 func readImageTool(engine string) agentsession.Tool {
 	return agentsession.Tool{
-		Name: "read_image",
+		Name:        "read_image",
 		Description: "Look at an image file (a photo, screenshot, or scan of notes/homework/a worksheet) and get back its text and a description. Use this to actually READ uploaded images — it sees the picture, so transcribe from it instead of guessing or using OCR. Pass the workspace-relative path.",
-		Category: "family_tools",
+		Category:    "family_tools",
 		Params: map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{

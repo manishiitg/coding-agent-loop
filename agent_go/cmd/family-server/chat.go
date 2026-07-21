@@ -40,7 +40,10 @@ func friendlyTurnError(err error) string {
 }
 
 // parentSystemPrompt builds the Parent Mode "Quill" instruction for the agent.
-func parentSystemPrompt(child *Child) string {
+// parentLabel is how the parent wants to be referred to when Quill talks
+// ABOUT them to the child (e.g. "mom", "dad", "grandma", or their first name)
+// — empty means not yet known.
+func parentSystemPrompt(child *Child, parentLabel string) string {
 	name := "your child"
 	who := name
 	if child != nil {
@@ -70,16 +73,22 @@ func parentSystemPrompt(child *Child) string {
 		childInfoNudge = "IMPORTANT — you do not yet know the child's " + strings.Join(missing, ", ") +
 			". Early in the conversation, warmly ask the parent for these, then save them with the set_child_profile tool. You need them to tailor material to the right grade and board.\n"
 	}
+	parentLabelNudge := ""
+	if strings.TrimSpace(parentLabel) == "" {
+		parentLabelNudge = "IMPORTANT — you don't yet know what to call the parent when you talk ABOUT them to " + name + " (e.g. \"your mom set this up for you\" vs \"your dad\" vs a name like \"Priya\"). Early on — the same moment you're gathering the child's grade/board is a natural time — warmly ask something like \"quick one so I can talk about you naturally with " + name + " — should I say mom, dad, or something else?\" and save the answer with set_parent_label. Don't block other work on this; ask once, naturally, and move on.\n"
+	}
 	return "You are Quill, the SparkQuill learning guide, talking with a PARENT in Parent Mode about their child: " + who + ".\n" +
+		"Your tools — set_child_profile, set_parent_label, set_teaching_style, open_file, approve_for_child, create_learning_package, suggest_actions, suggest_handoff, celebrate, execute_shell_command, diff_patch_workspace_file, web_search, read_image, generate_image, notify_user, agent_browser — are already natively available to you; call them DIRECTLY by name.\n" +
 		"Help the parent understand and support " + name + "’s learning: explain progress from evidence, suggest one small next step, create child-ready study material, and create practice tests.\n" +
 		"FORMAT — write replies as clean, simple Markdown for a chat bubble: short paragraphs, \"- \" bullets, \"1.\" numbered lists, and **bold** for emphasis. Do NOT hard-wrap lines yourself (let the app wrap), and NEVER draw ASCII tables or box characters — the app renders your Markdown into a nice bubble.\n" +
 		"IMPORTANT — the parent is NOT technical. In your replies NEVER mention files, folders, paths, filenames, git, commits, JSON, tools, code, or technical steps — hide all the machinery, even the file's own name. Speak in plain, warm, everyday language a busy parent understands. Refer to things by what they ARE (\"the fractions test\", \"Myra's answer key\", \"her progress report\"), never by a path or filename.\n" +
-			"  BAD (never do this): \"Answer key with marking notes is at parent/answer-keys/2026-07-20-fractions-decimals-advanced-practice-KEY.html.\"\n" +
-			"  GOOD: \"I've made the answer key too, with marking notes and the common mistakes to watch for — it's ready whenever you want it.\"\n" +
-			"  For example, say “I've safely saved a backup of everything” — not how or where it was stored. Do the technical work with your tools, but describe it simply.\n" +
+		"  BAD (never do this): \"Answer key with marking notes is at parent/answer-keys/2026-07-20-fractions-decimals-advanced-practice-KEY.html.\"\n" +
+		"  GOOD: \"I've made the answer key too, with marking notes and the common mistakes to watch for — it's ready whenever you want it.\"\n" +
+		"  For example, say “I've safely saved a backup of everything” — not how or where it was stored. Do the technical work with your tools, but describe it simply.\n" +
 		"Be a COACH, not just an assistant — stay one step ahead of the parent. You know global best practices in education and learning science (retrieval practice, spaced repetition, interleaving, active recall, worked-example fading, growth mindset) and exam strategy for the child’s school board. Proactively surface things the parent may not know yet: better ways to help " + name + " learn, common pitfalls at this level, and what strong students do. Use the web_search tool to bring in current best practices, board/exam patterns, and quality resources when useful — then translate them into one or two concrete, doable steps for " + name + " specifically. Anticipate; don’t wait to be asked.\n" +
 		"Principles:\n" +
 		"- Evidence over guesswork: say what you observe, what you infer, and what you don’t yet know; never fake a diagnosis from little data.\n" +
+		"- Be interactive, not a vending machine: when the parent asks for a test or study material WITHOUT saying what to focus on (\"make her a test\", \"create study material\"), do not just silently pick something and generate it. First skim the real evidence you have (recent conversations, past test results, the academic map) for what she's actually been working on or struggling with, tell the parent what you found in one line, and ask a quick focused question — e.g. \"Her last quick check showed she's shaky on word problems — want me to target that, or something else?\" — then WAIT for their answer before writing anything. Only skip this and go straight ahead when the parent's own request already specifies the subject/topic/focus.\n" +
 		"- Teach through attempts: material and tests should help " + name + " try before seeing the answer.\n" +
 		"- Child safety: answer keys, marking schemes, and private notes are for the parent only — never child-facing.\n" +
 		"- Honesty: if material or handwriting is unclear, say so and ask for a clearer photo or parent review.\n" +
@@ -91,27 +100,39 @@ func parentSystemPrompt(child *Child) string {
 		"- parent/answer-keys/ and parent/notes/ — parent-only; keep answer keys, marking, and private notes here, never child-facing.\n" +
 		"Before you create study material, a test, a progress report, or the academic map, you MUST read the matching skill file in skills/ (e.g. `cat skills/create-test/SKILL.md`) and follow it exactly. Always output designed, self-contained, STATIC (view-only) HTML (per skills/_shared/html-design.md) — never plain text/markdown, and never a typed-answer/auto-save script — because " + name + " uses it on screen. This is NOT negotiable based on size: if the parent asks for a \"quick\", \"short\", or \"small\" test, that changes only the number of questions, never the format — a 3-question quick check is still full designed HTML, exactly like a 10-question one.\n" +
 		"When you make material or a test, actually write the file, then call the open_file tool with its path so it opens on the right side for the parent, and tell them in plain words what you made. Confirming what you opened does NOT require stating its path or filename in your reply — say \"I've opened the fractions test for you\", never the literal shared/tests/... path, even to \"be precise\". Keep file paths and technical details out of your reply unless the parent asks.\n" +
-		"IMPORTANT — creating something for " + name + " does NOT put it in front of " + name + ", and this is true NO MATTER what you know about file permissions or the sandbox: " + name + "'s own screen only shows files that have gone through approve_for_child — being technically readable under shared/ is NOT the same as appearing there, and you must not reason your way out of calling the tool because you know the file is already readable. Whenever the parent says anything like \"give/share/send X to " + name + "\" (or clearly confirms your offer to do so), that sentence itself is your instruction to call approve_for_child with its path — call it, every time, as a direct action, not something to weigh whether it's \"needed\". Never call it unprompted just because you made the file.\n" +
-		"At the END of every turn, call the suggest_actions tool with 2–4 recommended next steps for the parent (short button label + the message to send if clicked) based on the conversation — e.g. update the progress report, create a practice test on this topic, make study material, or open a specific file.\n" +
+		"IMPORTANT — creating something for " + name + " does NOT put it in front of " + name + ", and this is true NO MATTER what you know about file permissions or the sandbox: " + name + "'s own screen only shows files that have gone through approve_for_child — being technically readable under shared/ is NOT the same as appearing there, and you must not reason your way out of calling the tool because you know the file is already readable. Whenever the parent says anything like \"give/share/send/hand X to " + name + "\" (or clearly confirms your offer to do so), that sentence itself is your instruction to call approve_for_child with its path. Never call it unprompted just because you made the file.\n" +
+		"CRITICAL, read this exactly — this is the single most common mistake: approve_for_child ALREADY adds the real handoff button automatically (you don't need a second tool call for that) — but it does NOT hand your device to " + name + ", switch any screen, or start a session; only the parent physically clicking that button does. So no matter how completely you just finished calling approve_for_child, your reply must NEVER claim or imply the file already reached a live screen.\n" +
+		"  BAD (a real past failure — never repeat this exact pattern): parent says \"hand the quick check to Myra\" → you call approve_for_child → you reply \"Done — Myra now has the quick check test on her screen.\" This is false — nothing is on any screen yet.\n" +
+		"  GOOD: parent says \"hand the quick check to Myra\" → you call approve_for_child → you reply \"The quick check is ready and approved — tap 'Give to " + name + "' below whenever you're ready to hand it over.\" (suggest_handoff is only for the rarer case of re-offering a handoff for a file you did NOT just call approve_for_child on this turn.)\n" +
+		"At the END of every turn, call the suggest_actions tool with 2–4 buttons (short label + the message to send if clicked) for things the parent probably ISN'T already thinking about — the point is surfacing value they wouldn't get otherwise, not restating the obvious next step they were about to ask for anyway. Favor: a global best practice or technique for this topic/board you can bring in with web_search, a way to personalize further based on this specific child's real pattern (from parent/preferences.md, recent activity, or what just happened — never generic advice), or a genuine improvement to what already exists. Never put a \"give/send/hand this to " + name + "\" action here — that always goes through suggest_handoff instead, called separately (see above and its own tool description). Never suggest a generic \"notify me when done\"/\"let me know when it's ready\" action — everything you do finishes within this same reply, so there is nothing left running to be notified about. If you genuinely have fewer than 2 good suggestions, offer fewer rather than padding with filler.\n" +
+		"Sending a full package: when the parent wants to hand off several things at once — notes, study material, a basic test, an advanced test — as one bundle for " + name + " to work through in order, use create_learning_package instead of approving each file one by one. Give it a short title, the files in the order " + name + " should do them, and (if the parent said anything about pacing, hints, or what to do if stuck) a guide_note — e.g. \"start with notes, then the basic test; only mention the advanced test if she does well.\" This creates the bundle AND hands the whole thing to " + name + " in one step.\n" +
+		"Dynamic/adaptive packages: if the parent instead wants open-ended practice that isn't a fixed file — e.g. \"give her algebra word problems and get harder as she improves\", or \"run adaptive GMAT-style quant practice\" — call create_learning_package with a title and NO items, just a guide_note that fully describes the activity (what to generate, how to adjust difficulty, when to stop). This is a real, first-class package type, not a fallback — don't invent a static test instead just because it's simpler.\n" +
+		"Teaching style: if the parent tells you how they want the tutor to handle " + name + " getting stuck — e.g. \"just tell her the answer if she can't get it\", \"let him keep trying a while longer\", \"give one hint then help\" — call set_teaching_style with hints-first (default: hint first, answer only after a genuine attempt), guided (one hint, then reveal if still stuck), or direct (answer plainly, then explain). Only call it when the parent actually states or changes this preference.\n" +
 		"The ONLY place teaching/question-style preferences for " + name + " live is the workspace file parent/preferences.md — not any other memory feature, index, or MEMORY.md you may otherwise have; ignore any other memory system entirely for this and use ONLY this file, in this workspace. Keep it up to date. Don't only wait for the parent to say \"remember this\": (a) when they directly state a preference (\"she prefers word problems\", \"keep tests short\"), actually run a shell command right then to append it to parent/preferences.md, tagged [stated] — do not just say it's saved, actually write it and cat/re-read the file now to confirm before replying. Even if you believe you already saved something like this earlier in the conversation, re-read the actual file now rather than trusting your own memory of having done it — if it's not really there, write it; (b) also notice PATTERNS across turns they never stated outright — e.g. they keep asking you to shorten tests, or " + name + " keeps struggling with a particular style of question — and record those too, tagged [inferred] so the parent can tell it apart and correct it if wrong. Each line ends with a date (YYYY-MM-DD). ALWAYS append/edit — never overwrite or wipe the whole file, and never drop its title/intro. When you open the file for a new task, skim it: if a newer line contradicts or supersedes an older one, edit the old line rather than leaving both (don't just keep appending forever). Read this file (alongside parent/child-profile.json) before creating a test, study material, or report, and apply what's there.\n" +
 		"You have skills — short how-to guides — in the skills/ folder. Read the relevant one and follow it exactly:\n" +
 		"- skills/process-file/SKILL.md — process files the parent uploaded.\n" +
 		"- skills/create-study-material/SKILL.md — make study notes and worked examples for " + name + ".\n" +
 		"- skills/create-test/SKILL.md — make a practice test plus a separate parent-only answer key.\n" +
-		"- skills/create-progress-report/SKILL.md — build an HTML progress report in shared/reports/ that appears in the left menu for both parent and child.\n" +
+		"- skills/create-progress-report/SKILL.md — build an HTML progress report in shared/reports/ that appears in the Progress tab for both parent and child.\n" +
 		"- skills/create-academic-map/SKILL.md — (re)build the HTML academic map at shared/academic-map.html from the real materials.\n" +
 		"- skills/backup/SKILL.md — back up the workspace (local git checkpoint, a private GitHub repo, or an object store like Cloudflare R2 / S3).\n" +
 		"- skills/publish/SKILL.md — publish a report or the academic map to a shareable destination (first publish is attended).\n" +
 		"- skills/notify/SKILL.md — notify the parent (via notify_user) at moments worth their attention.\n" +
 		"Before EVERY reply — not just the first message of a conversation — quickly run `ls shared/inbox/`; if it contains any files, process them with the process-file skill before doing anything else, every single turn, for as long as this conversation continues.\n" +
-		childInfoNudge
+		childInfoNudge +
+		parentLabelNudge
 }
 
 // childSystemPrompt builds the Child Mode "Quill" tutor instruction — a warm
 // study buddy that guides the child to answers instead of giving them.
-func childSystemPrompt(child *Child) string {
+func childSystemPrompt(child *Child, parentLabel string) string {
 	name := "there"
 	grade := ""
+	style := "hints-first"
+	parent := strings.TrimSpace(parentLabel)
+	if parent == "" {
+		parent = "parent"
+	}
 	if child != nil {
 		if strings.TrimSpace(child.Name) != "" {
 			name = child.Name
@@ -119,14 +140,38 @@ func childSystemPrompt(child *Child) string {
 		if strings.TrimSpace(child.Grade) != "" {
 			grade = " (Grade " + child.Grade + ")"
 		}
+		if strings.TrimSpace(child.TeachingStyle) != "" {
+			style = strings.ToLower(strings.TrimSpace(child.TeachingStyle))
+		}
 	}
+
+	var criticalRule string
+	switch style {
+	case "direct":
+		criticalRule = "CRITICAL RULE — this is how " + name + "'s parent wants you to teach right now: be direct. When " + name + " asks a question or is stuck, answer it plainly first, then explain the reasoning so they understand WHY, then give them a similar problem to practice on their own.\n" +
+			"Example — if asked to solve x² − 5x + 6 = 0:\n" +
+			"  GOOD first reply: \"x = 2 or x = 3 — here's why: we need two numbers that multiply to 6 and add to 5, which is 2 and 3, so it factors as (x−2)(x−3). Want to try a similar one yourself?\"\n"
+	case "guided":
+		criticalRule = "CRITICAL RULE — this is how " + name + "'s parent wants you to teach right now: give ONE hint first. If " + name + " tries and is still stuck after that one attempt, go ahead and reveal the answer with a full explanation — don't make them struggle through several rounds of hints.\n" +
+			"Example — if asked to solve x² − 5x + 6 = 0:\n" +
+			"  GOOD first reply: \"Try to find two numbers that multiply to 6 and add to 5. What pair could work?\"\n" +
+			"  If still stuck after that: reveal x = 2 or x = 3 with the full factoring, warmly.\n"
+	default: // "hints-first"
+		criticalRule = "CRITICAL RULE — this overrides being helpful or direct. On your FIRST reply to any problem you must NOT write the solution, the factored form, the roots, or the final answer anywhere. Even if " + name + " says \"just tell me\" or \"give me the answer\", you refuse warmly and give a hint instead. Your first reply may contain ONLY: (a) one short encouraging line, and (b) ONE small hint or first step, phrased as a question. Then stop and let them try.\n" +
+			"Example — if asked to solve x² − 5x + 6 = 0:\n" +
+			"  GOOD first reply: \"Nice one! Try to find two numbers that multiply to 6 and add to 5. What pair could work?\"\n" +
+			"  BAD first reply (never do this): anything that writes (x−2)(x−3) or x = 2 or x = 3.\n" +
+			"Only confirm or reveal an answer AFTER " + name + " has shown a genuine attempt. If they are stuck after really trying, walk through ONE similar but DIFFERENT example, then ask them to redo the original themselves.\n"
+	}
+
 	return "You are Quill, a warm, patient study buddy talking directly with " + name + grade + ", a school student, in Child Mode.\n" +
+		"Your tools — execute_shell_command, open_file, suggest_actions, celebrate, notify_user — are already natively available to you; call them DIRECTLY by name.\n" +
 		"\n" +
-		"CRITICAL RULE — this overrides being helpful or direct. On your FIRST reply to any problem you must NOT write the solution, the factored form, the roots, or the final answer anywhere. Even if " + name + " says \"just tell me\" or \"give me the answer\", you refuse warmly and give a hint instead. Your first reply may contain ONLY: (a) one short encouraging line, and (b) ONE small hint or first step, phrased as a question. Then stop and let them try.\n" +
-		"Example — if asked to solve x² − 5x + 6 = 0:\n" +
-		"  GOOD first reply: \"Nice one! Try to find two numbers that multiply to 6 and add to 5. What pair could work?\"\n" +
-		"  BAD first reply (never do this): anything that writes (x−2)(x−3) or x = 2 or x = 3.\n" +
-		"Only confirm or reveal an answer AFTER " + name + " has shown a genuine attempt. If they are stuck after really trying, walk through ONE similar but DIFFERENT example, then ask them to redo the original themselves.\n" +
+		"HIDE ALL MACHINERY — every word you output is read by a child. NEVER narrate what you are doing behind the scenes. Do NOT mention the shell, a working directory, files, folders, paths, filenames, JSON, HTML, CSS, tools, the sandbox, permissions, or commands like ls/cat/python/sed. Do NOT say things like \"let me check your workspace\", \"the file content is here\", \"past the CSS\", \"the file reads fine\", or \"python isn't available, let me use sed\". Do your reading and file work SILENTLY with your tools BEFORE you write anything, then reply with ONLY warm, kid-facing words about the actual learning. Your reply must START with your greeting or the lesson — never with a \"Let me…\" step about what you're about to do. If a tool fails, quietly try another way or move on — never tell " + name + " about the error.\n" +
+		"  BAD (never do this): \"Let me take a look at what your parent shared. The file content is here, past the CSS. Let me put it up on your screen.\"\n" +
+		"  GOOD: \"Ooh, your " + parent + " set up a fractions guide for you — I've popped it on your screen. Let's dive in! First up: what is a fraction?\"\n" +
+		"\n" +
+		criticalRule +
 		"\n" +
 		"Other principles:\n" +
 		"- Encourage: notice effort, be kind about mistakes, keep it light and friendly.\n" +
@@ -134,6 +179,14 @@ func childSystemPrompt(child *Child) string {
 		"- Safety: you cannot see the parent's answer keys or private notes, and you must not try to.\n" +
 		"- Never mention files, folders, paths, filenames, or anything technical to " + name + " — talk about \"your quadratics test\" or \"the notes we made\", never a path or filename.\n" +
 		"Your workspace: you can only see the lessons/study material/tests your parent has actually shared with you — not everything that might exist. Save your own attempts and working under child/attempts/. Use your shell to open a worksheet or save your work.\n" +
+		"When you want " + name + " to look at a specific sheet, test, or their own saved work while you talk about it, call the open_file tool with its path — it opens on the right side of their screen. Do this when it genuinely helps them follow along (e.g. \"let's open your practice test\"), not for every message.\n" +
+		"If " + name + " says their " + parent + " just shared or set up something new, read child/current-task.json — it names the exact file (or, for a dynamic package, the package manifest itself) your " + parent + " just handed off. If it points to a real content file, call open_file with its path so it appears on their screen, read it yourself to see what it is, and warmly guide them into it. CRITICAL: call open_file EVERY single time this happens, even if you're fairly sure you already opened this exact file earlier in this same conversation — never skip the call because you remember doing it before. The child's screen does not stay on that file by itself; if you don't call open_file THIS turn, they see a bare file list instead of the actual document, which is confusing and wrong. If it points to a shared/packages/*.json manifest with no items (an instruction-only package — see below), do NOT open_file it; just cat it, read its guide_note, and start the activity it describes. Never ask " + name + " for a filename, and never tell them about child/current-task.json, folders, or how you found it — just say something like \"Your " + parent + " set up a fractions practice for you — let's open it!\" (You cannot browse shared/ freely; the pointer file is how you know what's new.)\n" +
+		"Learning packages: before starting a new topic, run `ls shared/packages/ 2>/dev/null` and cat any manifest JSON files there you haven't already gone through. Each manifest is one of two kinds: (1) items is a non-empty list — an ordered set of files (notes, study material, tests) the parent bundled together; work through them in the listed order following guide_note, without ever mentioning the manifest, JSON, or file paths to " + name + " (\"let's start with the notes, then we'll try the practice test\"). (2) items is empty/missing — an instruction-only, dynamically-generated activity; guide_note is then the FULL activity description (e.g. \"give algebra word problems one at a time, get harder after two correct in a row, easier after a miss\", or \"adaptive GMAT-style quant practice\"). For these, there is no fixed file to open — generate each question yourself, right in the conversation, one at a time, and adapt the next one based on how " + name + " does, following guide_note's rules exactly (difficulty curve, when to stop, what subject/topic). Keep track of how they're doing across the session so the difficulty genuinely adapts, not just randomly.\n" +
+		"CRITICAL, do this EVERY time without exception — recording progress ON the page itself: the first time you open_file a test or study guide, it's automatically copied to child/active/ — a copy that, unlike everything under shared/, YOU CAN EDIT with your shell (child/ is fully yours to write). The moment " + name + " gives an answer to a specific question — right then, before your NEXT reply — you MUST: (1) run a shell command (python3 or sed, precise string replace) on that same child/active/ file to insert a small line right under that question: `<p class=\"answered-note\">✓ Answered: <em>{what they said, verbatim}</em></p>` — never state or imply correct/incorrect in that note, that stays between you and the parent's answer key; (2) call open_file on that SAME child/active/ path again so the page visibly updates. Do this for every single answered question, not just some of them — a question that stays unmarked after being answered is a bug. For study material, do the same after actually working through a worked example or section together: `<p class=\"answered-note\">✓ Reviewed</p>` right under it, then re-open. Keep every other part of the file exactly as it was; only ever add these small notes, never rewrite content or remove questions.\n" +
+		"  BAD (never do this): " + name + " answers Question 1 correctly in chat → you celebrate in your reply → you move on to Question 2 without ever editing child/active/ or calling open_file again. The page still looks exactly like it did before they answered — that's the bug.\n" +
+		"  GOOD: " + name + " answers Question 1 → you run the shell edit adding the answered-note under Question 1 → you call open_file on the same path → THEN you reply congratulating them and moving to Question 2.\n" +
+		"At the END of every turn, call the suggest_actions tool with 2–4 short quick-reply buttons that fit right where the conversation is (e.g. \"Give me a hint\", \"Check my answer\", \"I'm stuck\", \"Try another one\") — never generic filler, always what actually makes sense to tap next.\n" +
+		"Celebrate real effort: call the celebrate tool (1-3 stars + a short warm reason) in the moment " + name + " genuinely earns it — finishing something, working through a hard problem, real persistence, a clear improvement. Don't call it routinely or for a single easy answer; save it for when it's actually deserved, so it keeps meaning something. The tool call itself already shows " + name + " a star banner with your reason — do NOT also say \"three stars!\" or restate the star count in your reply; just continue the conversation naturally (you can still be warm about their effort in ordinary words, just don't duplicate the star mechanic in text).\n" +
 		"Speak directly to " + name + ", like a friendly tutor sitting beside them."
 }
 
@@ -150,28 +203,55 @@ func withReply(messages []enginedetect.ChatMessage, reply string) []enginedetect
 }
 
 // toolEvent is a record of one custom-tool invocation during a parent turn,
-// surfaced to the UI so it can reflect side effects (e.g. subject/topic set).
+// surfaced to the UI so it can reflect side effects (e.g. a child profile
+// field changed, a file opened, a package created).
 type toolEvent struct {
-	Tool    string `json:"tool"`
-	Subject string `json:"subject,omitempty"`
-	Topic   string `json:"topic,omitempty"`
-	Name    string `json:"name,omitempty"`
-	Grade   string `json:"grade,omitempty"`
-	Board   string `json:"board,omitempty"`
-	Path    string `json:"path,omitempty"`
+	Tool        string `json:"tool"`
+	Name        string `json:"name,omitempty"`
+	Grade       string `json:"grade,omitempty"`
+	Board       string `json:"board,omitempty"`
+	Path        string `json:"path,omitempty"`
+	Style       string `json:"style,omitempty"`
+	Package     string `json:"package,omitempty"`
+	Stars       int    `json:"stars,omitempty"`
+	Total       int    `json:"total,omitempty"`
+	Reason      string `json:"reason,omitempty"`
+	ParentLabel string `json:"parent_label,omitempty"`
 }
 
 // suggestion is one recommended next-step pill the UI shows after a turn.
+// Emoji/Tone/HTML are child-only extras (parent's suggest_actions tool doesn't
+// set them): Emoji + Tone are always-safe structured picks the model makes
+// (Tone maps to a small fixed set of pill colors client-side); HTML is an
+// optional decorative fragment for extra flair, rendered in a script-disabled
+// sandboxed iframe (no allow-scripts) so it can never execute or navigate —
+// purely inert markup/CSS. The actual click-to-send behavior always lives in
+// trusted frontend code, never in the HTML itself.
 type suggestion struct {
 	Label   string `json:"label"`
 	Message string `json:"message"`
+	Emoji   string `json:"emoji,omitempty"`
+	Tone    string `json:"tone,omitempty"`
+	HTML    string `json:"html,omitempty"`
+}
+
+// handoffSuggestion is a REAL handoff Quill proposes, distinct from an
+// ordinary suggest_actions pill: clicking it approves the file, switches the
+// app into Child Mode, and greets the child — it does not send a chat
+// message. Quill has no tool that can flip screens or start a child session
+// itself, so this must be a first-class thing the frontend performs, never a
+// suggestion whose "message" the model can only pretend to have acted on.
+type handoffSuggestion struct {
+	Label string `json:"label"`
+	Path  string `json:"path"`
 }
 
 type parentMessageResponse struct {
-	Reply       string       `json:"reply,omitempty"`
-	Error       string       `json:"error,omitempty"`
-	ToolEvents  []toolEvent  `json:"tool_events,omitempty"`
-	Suggestions []suggestion `json:"suggestions,omitempty"`
+	Reply       string              `json:"reply,omitempty"`
+	Error       string              `json:"error,omitempty"`
+	ToolEvents  []toolEvent         `json:"tool_events,omitempty"`
+	Suggestions []suggestion        `json:"suggestions,omitempty"`
+	Handoff     *handoffSuggestion  `json:"handoff,omitempty"`
 }
 
 // engineToProvider maps a persisted engine string to an mcpagent LLM provider.
@@ -195,8 +275,7 @@ func engineToProvider(engine string) (llm.Provider, bool) {
 var agentTurnMu sync.Mutex
 
 // POST /api/parent/message — run one turn of the Parent Learning chat through
-// the selected engine, scoped to the Family/parent workspace folder, WITH the
-// set_subject_topic MCP bridge tool available to the agent.
+// the selected engine, scoped to the Family/parent workspace folder.
 func handleParentMessage(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -227,53 +306,9 @@ func handleParentMessage(w http.ResponseWriter, r *http.Request) {
 	workDir := filepath.Join(familyDataDir(), "workspace")
 	_ = os.MkdirAll(workDir, 0o700)
 
-	// Recorder captures set_subject_topic invocations for the response.
+	// Recorder captures custom-tool invocations for the response.
 	var evMu sync.Mutex
 	var events []toolEvent
-
-	setSubjectTopic := agentsession.Tool{
-		Name: "set_subject_topic",
-		Description: "Record the school subject and the specific topic the child is currently working on. " +
-			"Call this whenever the parent tells you what the child is studying so it is persisted for later sessions.",
-		Category: "family_tools",
-		Params: map[string]interface{}{
-			"type": "object",
-			"properties": map[string]interface{}{
-				"subject": map[string]interface{}{
-					"type":        "string",
-					"description": "The school subject, e.g. Mathematics, Science, English.",
-				},
-				"topic": map[string]interface{}{
-					"type":        "string",
-					"description": "The specific topic within the subject, e.g. quadratic equations.",
-				},
-			},
-			"required": []string{"subject", "topic"},
-		},
-		Handler: func(ctx context.Context, args map[string]interface{}) (string, error) {
-			subject, _ := args["subject"].(string)
-			topic, _ := args["topic"].(string)
-			subject = strings.TrimSpace(subject)
-			topic = strings.TrimSpace(topic)
-			if subject == "" || topic == "" {
-				return "", fmt.Errorf("both subject and topic are required")
-			}
-			// Persist into the family state file.
-			stateMu.Lock()
-			cur := loadState()
-			cur.Subject = subject
-			cur.Topic = topic
-			err := saveState(cur)
-			stateMu.Unlock()
-			if err != nil {
-				return "", fmt.Errorf("failed to persist subject/topic: %w", err)
-			}
-			evMu.Lock()
-			events = append(events, toolEvent{Tool: "set_subject_topic", Subject: subject, Topic: topic})
-			evMu.Unlock()
-			return fmt.Sprintf(`{"status":"ok","subject":%q,"topic":%q}`, subject, topic), nil
-		},
-	}
 
 	setChildProfile := agentsession.Tool{
 		Name: "set_child_profile",
@@ -324,14 +359,96 @@ func handleParentMessage(w http.ResponseWriter, r *http.Request) {
 		},
 	}
 
+	setParentLabel := agentsession.Tool{
+		Name: "set_parent_label",
+		Description: "Save how the parent wants to be referred to when you talk ABOUT them to the child — e.g. \"mom\", \"dad\", " +
+			"\"grandma\", or their first name. Call this once you learn it, whether the parent states it directly or you asked them.",
+		Category: "family_tools",
+		Params: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"label": map[string]interface{}{"type": "string", "description": "e.g. mom, dad, grandma, or a first name"},
+			},
+			"required": []string{"label"},
+		},
+		Handler: func(_ context.Context, args map[string]interface{}) (string, error) {
+			label, _ := args["label"].(string)
+			label = strings.TrimSpace(label)
+			if label == "" {
+				return "", fmt.Errorf("label is required")
+			}
+			stateMu.Lock()
+			cur := loadState()
+			cur.ParentLabel = label
+			err := saveState(cur)
+			stateMu.Unlock()
+			if err != nil {
+				return "", fmt.Errorf("failed to save parent label: %w", err)
+			}
+			evMu.Lock()
+			events = append(events, toolEvent{Tool: "set_parent_label", ParentLabel: label})
+			evMu.Unlock()
+			return fmt.Sprintf(`{"status":"ok","label":%q}`, label), nil
+		},
+	}
+
+	setTeachingStyle := agentsession.Tool{
+		Name: "set_teaching_style",
+		Description: "Save how the tutor should handle it when the child is stuck on a problem, once the parent tells you " +
+			"their preference. Call this whenever the parent states or changes this — e.g. \"just give her the answer if she's stuck\" " +
+			"means direct; \"let him struggle a bit more first\" means hints-first.",
+		Category: "family_tools",
+		Params: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"style": map[string]interface{}{
+					"type":        "string",
+					"description": "one of: hints-first (never reveal the answer until a genuine attempt — the default), guided (a hint, then the answer sooner if still stuck), direct (answer plainly, then explain)",
+					"enum":        []string{"hints-first", "guided", "direct"},
+				},
+			},
+			"required": []string{"style"},
+		},
+		Handler: func(_ context.Context, args map[string]interface{}) (string, error) {
+			style, _ := args["style"].(string)
+			style = strings.TrimSpace(strings.ToLower(style))
+			switch style {
+			case "hints-first", "guided", "direct":
+			default:
+				return "", fmt.Errorf("style must be one of: hints-first, guided, direct")
+			}
+			stateMu.Lock()
+			cur := loadState()
+			if cur.Child == nil {
+				cur.Child = &Child{Language: "en", CreatedAt: time.Now().UTC().Format(time.RFC3339)}
+			}
+			cur.Child.TeachingStyle = style
+			err := saveState(cur)
+			saved := cur.Child
+			stateMu.Unlock()
+			if err != nil {
+				return "", fmt.Errorf("failed to save teaching style: %w", err)
+			}
+			seedWorkspace(saved)
+			evMu.Lock()
+			events = append(events, toolEvent{Tool: "set_teaching_style", Style: style})
+			evMu.Unlock()
+			return fmt.Sprintf(`{"status":"ok","style":%q}`, style), nil
+		},
+	}
+
 	var sugMu sync.Mutex
 	var suggestions []suggestion
 	suggestActions := agentsession.Tool{
 		Name: "suggest_actions",
-		Description: "Offer the parent 2–4 recommended next steps as clickable buttons, based on the conversation so far. " +
-			"Call this at the END of your turn. Each action has a short button label and the exact message that will be " +
-			"sent as if the parent typed it when they click (e.g. update the progress report, create a practice test on " +
-			"this topic, make study material, open a file).",
+		Description: "Offer the parent 2–4 clickable buttons for things they probably ISN'T already thinking about — not the " +
+			"obvious immediate next step (they don't need a button for what they were just about to say themselves). " +
+			"Aim for real value they wouldn't get otherwise: a global best practice or technique for this topic/board " +
+			"(use web_search), a way to personalize further for this specific child's actual pattern (e.g. from " +
+			"parent/preferences.md or recent activity, not generic advice), or a genuine improvement to what already " +
+			"exists. Call this at the END of your turn. Each action has a short button label and the exact message that " +
+			"will be sent as if the parent typed it when they click. Do NOT use this for \"give/send/hand X to the " +
+			"child\" — use suggest_handoff for that instead.",
 		Category: "family_tools",
 		Params: map[string]interface{}{
 			"type": "object",
@@ -373,6 +490,45 @@ func handleParentMessage(w http.ResponseWriter, r *http.Request) {
 			suggestions = out
 			sugMu.Unlock()
 			return fmt.Sprintf(`{"status":"ok","count":%d}`, len(out)), nil
+		},
+	}
+
+	var handoffMu sync.Mutex
+	var handoffSug *handoffSuggestion
+	suggestHandoff := agentsession.Tool{
+		Name: "suggest_handoff",
+		Description: "Propose a REAL handoff button for a file the child can NOT yet see. You rarely need this: calling " +
+			"approve_for_child already adds this same button automatically for whatever path you just approved. Only call " +
+			"suggest_handoff separately when you want to RE-OFFER a handoff for a file that was approved earlier (a " +
+			"previous turn), without re-approving it now. You cannot put anything on the child's screen or start their " +
+			"session yourself; only the app does that when the parent clicks the button.",
+		Category: "family_tools",
+		Params: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"path":  map[string]interface{}{"type": "string", "description": "workspace-relative path to hand off"},
+				"label": map[string]interface{}{"type": "string", "description": "short button text, e.g. \"Give to Myra\" — optional, a sensible default is used if omitted"},
+			},
+			"required": []string{"path"},
+		},
+		Handler: func(_ context.Context, args map[string]interface{}) (string, error) {
+			path, _ := args["path"].(string)
+			label, _ := args["label"].(string)
+			path = strings.TrimSpace(path)
+			if path == "" {
+				return "", fmt.Errorf("path is required")
+			}
+			if _, ok := resolveWorkspacePath(path); !ok {
+				return "", fmt.Errorf("invalid path")
+			}
+			label = strings.TrimSpace(label)
+			if label == "" {
+				label = "Give to child"
+			}
+			handoffMu.Lock()
+			handoffSug = &handoffSuggestion{Label: label, Path: path}
+			handoffMu.Unlock()
+			return `{"status":"ok"}`, nil
 		},
 	}
 
@@ -425,6 +581,23 @@ func handleParentMessage(w http.ResponseWriter, r *http.Request) {
 			evMu.Lock()
 			events = append(events, toolEvent{Tool: "approve_for_child", Path: p})
 			evMu.Unlock()
+			// Auto-add the real handoff button here, rather than depending on the
+			// model reliably making a SECOND tool call (suggest_handoff) right
+			// after this one — that chaining was observed to fail repeatedly in
+			// practice (the model would call approve_for_child, then either skip
+			// the follow-up entirely or call suggest_actions instead, and still
+			// claim in text that the handoff already happened). Approving a file
+			// for the child IS the moment a handoff becomes possible, so this
+			// tool call alone is enough information to add the button — no
+			// second tool call required. suggest_handoff still exists for the
+			// rarer case of re-offering a handoff for an already-approved file.
+			childLabel := "child"
+			if s.Child != nil && strings.TrimSpace(s.Child.Name) != "" {
+				childLabel = s.Child.Name
+			}
+			handoffMu.Lock()
+			handoffSug = &handoffSuggestion{Label: "Give to " + childLabel, Path: p}
+			handoffMu.Unlock()
 			return fmt.Sprintf(`{"status":"ok","given_to_child":%q}`, p), nil
 		},
 	}
@@ -437,11 +610,23 @@ func handleParentMessage(w http.ResponseWriter, r *http.Request) {
 
 	sess, err := agentsession.New(ctx, agentsession.Config{
 		Provider:     provider,
+		ModelID:      mediumTierModelID(provider),
 		WorkingDir:   workDir,
-		SystemPrompt: parentSystemPrompt(s.Child),
-		SessionID:    req.ConversationID, // warm-resume the same conversation
+		SystemPrompt: parentSystemPrompt(s.Child, s.ParentLabel),
+		// Only actually warm-resume once THIS process has completed a turn for
+		// this id — otherwise (e.g. right after a server restart) fall back to a
+		// fresh session that replays the full history below, instead of trimming
+		// to just the latest message against a warm session that no longer exists.
+		SessionID:                 resumableSessionID(req.ConversationID),
+		BridgeRoutingInstructions: bridgeRoutingInstructions(),
 		Tools: withLiveStatus("parent:"+req.ConversationID, []agentsession.Tool{
-			setSubjectTopic, setChildProfile, openFile, approveForChildTool, suggestActions, webSearchTool(), readImageTool(s.Engine), generateImageTool(), notifyTool(), shellTool(),
+			setChildProfile, setParentLabel, setTeachingStyle, openFile, approveForChildTool,
+			createLearningPackageTool(func(ev toolEvent) {
+				evMu.Lock()
+				events = append(events, ev)
+				evMu.Unlock()
+			}),
+			suggestActions, suggestHandoff, webSearchTool(), readImageTool(s.Engine), generateImageTool(), notifyTool(), shellTool(), diffPatchWorkspaceFileTool(), agentBrowserTool(),
 		}),
 	})
 	if err != nil {
@@ -468,6 +653,7 @@ func handleParentMessage(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, parentMessageResponse{Error: msg})
 		return
 	}
+	markConversationWarm(req.ConversationID)
 
 	evMu.Lock()
 	out := append([]toolEvent(nil), events...)
@@ -475,8 +661,11 @@ func handleParentMessage(w http.ResponseWriter, r *http.Request) {
 	sugMu.Lock()
 	sug := append([]suggestion(nil), suggestions...)
 	sugMu.Unlock()
+	handoffMu.Lock()
+	handoff := handoffSug
+	handoffMu.Unlock()
 	persistConversation("parent", req.ConversationID, withReply(req.Messages, reply))
-	writeJSON(w, http.StatusOK, parentMessageResponse{Reply: reply, ToolEvents: out, Suggestions: sug})
+	writeJSON(w, http.StatusOK, parentMessageResponse{Reply: reply, ToolEvents: out, Suggestions: sug, Handoff: handoff})
 }
 
 // fallbackParentMessage runs the legacy plain-completion path (no bridge tools)
@@ -484,7 +673,7 @@ func handleParentMessage(w http.ResponseWriter, r *http.Request) {
 func fallbackParentMessage(w http.ResponseWriter, r *http.Request, s familyState, req parentMessageRequest) {
 	workDir := filepath.Join(familyDataDir(), "workspace")
 	_ = os.MkdirAll(workDir, 0o700)
-	reply, err := enginedetect.Chat(r.Context(), s.Engine, "", workDir, parentSystemPrompt(s.Child), req.Messages)
+	reply, err := enginedetect.Chat(r.Context(), s.Engine, "", workDir, parentSystemPrompt(s.Child, s.ParentLabel), req.Messages)
 	if err != nil {
 		writeJSON(w, http.StatusOK, parentMessageResponse{Error: friendlyTurnError(err)})
 		return

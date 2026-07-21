@@ -167,8 +167,11 @@ func mergeWorkflowCapabilitiesUpdate(existing WorkflowCapabilities, incoming *Wo
 	// reference unless the caller explicitly sends that newer field.
 	if updated.Notifications == nil {
 		updated.Notifications = existing.Notifications
-	} else if strings.TrimSpace(updated.Notifications.SlackWebhookSecretName) == "" {
-		// An explicitly supplied empty object disables the workflow webhook.
+	} else if strings.TrimSpace(updated.Notifications.SlackWebhookSecretName) == "" &&
+		len(updated.Notifications.ExcludeChannels) == 0 &&
+		len(updated.Notifications.BlockRecipients) == 0 {
+		// An explicitly supplied empty object (no webhook, no exclude/block
+		// preferences) disables the workflow-specific notification config.
 		updated.Notifications = nil
 	}
 	if updated.Notifications != nil {

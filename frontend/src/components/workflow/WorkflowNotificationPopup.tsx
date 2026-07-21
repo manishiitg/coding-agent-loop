@@ -1,11 +1,13 @@
 import { useCallback, useEffect, useState } from 'react'
 import {
   AlertCircle,
+  Ban,
   BellRing,
   Bot,
   CheckCircle2,
   Loader2,
   Mail,
+  MailX,
   RefreshCw,
   ServerCog,
   Webhook,
@@ -214,8 +216,54 @@ export default function WorkflowNotificationPopup({
                   </div>
                 </section>
 
+                <section className="rounded-md border border-border">
+                  <div className="border-b border-border px-4 py-3">
+                    <h3 className="text-sm font-semibold text-foreground">Per-{scopeLabel} preferences</h3>
+                    <p className="mt-0.5 text-xs text-muted-foreground">Stored in <code>workflow.json</code> notifications and applied to every notify_user send. These narrow inherited account-level delivery for this {scopeLabel} only — edit through <code className="text-foreground">/notify</code>.</p>
+                  </div>
+                  <div className="divide-y divide-border">
+                    <div className="flex flex-col gap-2 px-4 py-3 sm:flex-row sm:items-start sm:justify-between">
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-2">
+                          <Ban className="h-3.5 w-3.5 text-muted-foreground" />
+                          <span className="text-sm font-medium text-foreground">Excluded channels</span>
+                        </div>
+                        <p className="mt-1 text-xs text-muted-foreground">Inherited account channels this {scopeLabel} opts out of.</p>
+                      </div>
+                      {info.excludeChannels.length > 0 ? (
+                        <div className="flex flex-wrap gap-1.5">
+                          {info.excludeChannels.map(channel => (
+                            <span key={channel} className="w-fit rounded-full border border-amber-500/30 bg-amber-500/10 px-2 py-0.5 text-xs capitalize text-amber-700 dark:text-amber-300">{channel}</span>
+                          ))}
+                        </div>
+                      ) : (
+                        <span className="w-fit rounded-full border border-border bg-background px-2 py-0.5 text-xs text-muted-foreground">None — all enabled channels</span>
+                      )}
+                    </div>
+
+                    <div className="flex flex-col gap-2 px-4 py-3 sm:flex-row sm:items-start sm:justify-between">
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-2">
+                          <MailX className="h-3.5 w-3.5 text-muted-foreground" />
+                          <span className="text-sm font-medium text-foreground">Blocked recipients</span>
+                        </div>
+                        <p className="mt-1 text-xs text-muted-foreground">Emails this {scopeLabel} never sends to, on top of the account-wide denylist.</p>
+                      </div>
+                      {info.blockRecipients.length > 0 ? (
+                        <div className="flex min-w-0 flex-wrap gap-1.5">
+                          {info.blockRecipients.map(email => (
+                            <span key={email} className="w-fit max-w-full truncate rounded-full border border-border bg-muted px-2 py-0.5 font-mono text-xs text-foreground" title={email}>{email}</span>
+                          ))}
+                        </div>
+                      ) : (
+                        <span className="w-fit rounded-full border border-border bg-background px-2 py-0.5 text-xs text-muted-foreground">None</span>
+                      )}
+                    </div>
+                  </div>
+                </section>
+
                 <div className="rounded-md border border-blue-500/20 bg-blue-500/5 px-4 py-3 text-xs text-muted-foreground">
-                  Configure notification intent and the Slack destination through <code className="text-foreground">/notify</code>. This does not add a routing step. Short-lived questions that require an answer still use <code className="text-foreground">human_feedback</code> instead.
+                  Configure notification intent, the Slack destination, channel opt-outs, and blocked recipients through <code className="text-foreground">/notify</code>. This does not add a routing step. Short-lived questions that require an answer still use <code className="text-foreground">human_feedback</code> instead.
                 </div>
               </div>
             ) : null}

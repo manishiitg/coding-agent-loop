@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useCallback } from 'react'
 import {
   X, CheckCircle, AlertCircle, Loader2, Eye, EyeOff, AlertTriangle,
   Bot, User, Send, RotateCcw, Plus, MessageSquare, Layers, Play, Trash2,
-  Phone,
+  Phone, Mail,
 } from 'lucide-react'
 import { Button } from '../ui/Button'
 import { Card } from '../ui/Card'
@@ -10,14 +10,36 @@ import { MarkdownRenderer } from '../ui/MarkdownRenderer'
 import ModalPortal from '../ui/ModalPortal'
 import { agentApi } from '../../services/api'
 import { useLLMStore } from '../../stores'
-import type { SlackConfig, SlackConfigRequest, SlackTestResponse, SimulatorThreadInfo, DiscoveredWorkflow, ChannelRoute } from '../../services/api-types'
+import type { SlackConfig, SlackConfigRequest, SlackTestResponse, SimulatorThreadInfo, DiscoveredWorkflow, ChannelRoute, GmailConfigRequest, GmailConfigResponse, GmailTestResponse } from '../../services/api-types'
+
+const normalizeGmailEmails = (values: string | string[] | undefined): string[] => {
+  const source = Array.isArray(values) ? values : [values || '']
+  const seen = new Set<string>()
+  const result: string[] = []
+  for (const raw of source) {
+    for (const part of String(raw).split(/[\s,;]+/)) {
+      const email = part.trim().toLowerCase()
+      if (!email || seen.has(email)) continue
+      seen.add(email)
+      result.push(email)
+    }
+  }
+  return result
+}
+
+const emptyGmailConfig: GmailConfigResponse = {
+  enabled: false,
+  default_to: '',
+  auth: { gws_installed: false, authenticated: false, has_gmail_scope: false },
+  ready: false,
+}
 
 interface BotConnectorModalProps {
   isOpen: boolean
   onClose: () => void
 }
 
-type Section = 'slack' | 'whatsapp' | 'simulate'
+type Section = 'slack' | 'whatsapp' | 'gmail' | 'simulate'
 // Bot connectors (Slack/WhatsApp) are user-facing runtime surfaces.
 // They always run in "run" mode — never workshop — so plan/config/eval
 // mutations can't leak through a bot channel. Persisted route configs
@@ -61,6 +83,19 @@ export default function BotConnectorModal({ isOpen, onClose }: BotConnectorModal
   const [emailsDirty, setEmailsDirty] = useState(false)
   const [emailsSaving, setEmailsSaving] = useState(false)
   const [emailsSaved, setEmailsSaved] = useState(false)
+
+  // ── Gmail config (account-wide global notification channel) ────────────────
+  const [gmailConfig, setGmailConfig] = useState<GmailConfigResponse>(emptyGmailConfig)
+  const [gmailOriginal, setGmailOriginal] = useState({ enabled: false, default_to: '', blocked_recipients: [] as string[] })
+  const [gmailBlockedText, setGmailBlockedText] = useState('')
+  const [gmailLoading, setGmailLoading] = useState(false)
+  const [gmailChecking, setGmailChecking] = useState(false)
+  const [gmailSaving, setGmailSaving] = useState(false)
+  const [gmailTesting, setGmailTesting] = useState(false)
+  const [gmailError, setGmailError] = useState<string | null>(null)
+  const [gmailSuccess, setGmailSuccess] = useState<string | null>(null)
+  const [gmailTestResult, setGmailTestResult] = useState<GmailTestResponse | null>(null)
+  const [gmailTestedTo, setGmailTestedTo] = useState<string | null>(null)
 
   // ── Slack config ──────────────────────────────────────────────────────────
   const [slackConfig, setSlackConfig] = useState<SlackConfig>({ enabled: false, bot_token: '', app_token: '', channel_id: '' })
@@ -145,12 +180,36 @@ export default function BotConnectorModal({ isOpen, onClose }: BotConnectorModal
     }
   }, [])
 
+  const loadGmail = useCallback(async (background = false) => {
+    try {
+      if (background) setGmailChecking(true)
+      else setGmailLoading(true)
+      setGmailError(null)
+      const data = await agentApi.getGmailFeedbackConfig()
+      if (background) {
+        setGmailConfig(current => ({ ...current, auth: data.auth, ready: data.ready }))
+      } else {
+        const blocked = normalizeGmailEmails(data.blocked_recipients)
+        setGmailConfig({ ...data, blocked_recipients: blocked })
+        setGmailBlockedText(blocked.join(', '))
+        setGmailOriginal({ enabled: data.enabled, default_to: data.default_to || '', blocked_recipients: blocked })
+      }
+    } catch (error) {
+      setGmailError(error instanceof Error ? error.message : 'Failed to load Gmail configuration')
+    } finally {
+      setGmailLoading(false)
+      setGmailChecking(false)
+    }
+  }, [])
+
   useEffect(() => {
     if (!isOpen) return
     setEmailsDirty(false)
     setEmailsSaved(false)
+    setGmailSuccess(null)
     loadEmails()
     loadSlack()
+    loadGmail()
     agentApi.listWorkflowManifests().then(data => setWorkflows(data.workflows || [])).catch(() => {})
 
     agentApi.getSimulatorMode().then(data => {
@@ -201,7 +260,62 @@ export default function BotConnectorModal({ isOpen, onClose }: BotConnectorModal
       } catch { setServerTierConfig(null) }
     }
     syncTiers()
-  }, [isOpen, delegationTierConfig, loadEmails, loadSlack])
+  }, [isOpen, delegationTierConfig, loadEmails, loadSlack, loadGmail])
+
+  // ── Gmail derived state + save/test ────────────────────────────────────────
+  const gmailCurrentBlocked = normalizeGmailEmails(gmailBlockedText)
+  const gmailDefaultRecipient = (gmailConfig.default_to || '').trim().toLowerCase()
+  const gmailDefaultIsBlocked = gmailDefaultRecipient !== '' && gmailCurrentBlocked.includes(gmailDefaultRecipient)
+  const gmailTestPassed = gmailTestResult?.success === true
+    && gmailTestedTo === (gmailConfig.default_to || '')
+    && !gmailDefaultIsBlocked
+  const gmailHasChanges = gmailConfig.enabled !== gmailOriginal.enabled
+    || (gmailConfig.default_to || '') !== gmailOriginal.default_to
+    || JSON.stringify(gmailCurrentBlocked) !== JSON.stringify(gmailOriginal.blocked_recipients)
+
+  const saveGmail = async () => {
+    try {
+      setGmailSaving(true)
+      setGmailError(null)
+      setGmailSuccess(null)
+      const request: GmailConfigRequest = {
+        enabled: gmailConfig.enabled,
+        default_to: gmailConfig.default_to || '',
+        blocked_recipients: gmailCurrentBlocked,
+      }
+      const data = await agentApi.updateGmailFeedbackConfig(request)
+      const blocked = normalizeGmailEmails(data.blocked_recipients)
+      setGmailConfig({ ...data, blocked_recipients: blocked })
+      setGmailBlockedText(blocked.join(', '))
+      setGmailOriginal({ enabled: data.enabled, default_to: data.default_to || '', blocked_recipients: blocked })
+      setGmailSuccess('Gmail notification settings saved.')
+    } catch (error) {
+      setGmailError(error instanceof Error ? error.message : 'Failed to save Gmail configuration')
+    } finally {
+      setGmailSaving(false)
+    }
+  }
+
+  const testGmail = async () => {
+    try {
+      setGmailTesting(true)
+      setGmailError(null)
+      setGmailTestResult(null)
+      const request: GmailConfigRequest = {
+        enabled: gmailConfig.enabled,
+        default_to: gmailConfig.default_to || '',
+        blocked_recipients: gmailCurrentBlocked,
+      }
+      const result = await agentApi.testGmailConnection(request)
+      setGmailTestResult(result)
+      setGmailTestedTo(result.success ? (gmailConfig.default_to || '') : null)
+    } catch (error) {
+      setGmailTestResult({ success: false, message: error instanceof Error ? error.message : 'Test failed' })
+      setGmailTestedTo(null)
+    } finally {
+      setGmailTesting(false)
+    }
+  }
 
   // ── WhatsApp: status polling ──────────────────────────────────────────────
   // When the WhatsApp tab is active and not yet paired, poll /status every 3s
@@ -616,6 +730,22 @@ export default function BotConnectorModal({ isOpen, onClose }: BotConnectorModal
                 <Phone className="w-4 h-4 flex-shrink-0" />
                 <span className="flex-1 text-left truncate">WhatsApp</span>
                 {waStatus?.connected && (
+                  <span className="w-1.5 h-1.5 rounded-full bg-green-500 flex-shrink-0" />
+                )}
+              </button>
+
+              {/* Gmail — account-wide outbound email notifications */}
+              <button
+                onClick={() => setActiveSection('gmail')}
+                className={`w-full flex items-center gap-2.5 px-3 py-2 text-sm transition-colors ${
+                  activeSection === 'gmail'
+                    ? 'bg-accent text-accent-foreground font-medium'
+                    : 'text-muted-foreground hover:bg-muted hover:text-foreground'
+                }`}
+              >
+                <Mail className="w-4 h-4 flex-shrink-0" />
+                <span className="flex-1 text-left truncate">Gmail</span>
+                {gmailConfig.enabled && (
                   <span className="w-1.5 h-1.5 rounded-full bg-green-500 flex-shrink-0" />
                 )}
               </button>
@@ -1287,6 +1417,83 @@ export default function BotConnectorModal({ isOpen, onClose }: BotConnectorModal
                   </div>
                 )}
               </div>
+            )}
+
+            {/* ── Gmail Section (account-wide global email channel) ── */}
+            {activeSection === 'gmail' && (
+              <>
+                <div className="flex-1 overflow-y-auto p-4 space-y-4">
+                  {gmailLoading ? (
+                    <div className="flex items-center justify-center py-12"><Loader2 className="w-8 h-8 animate-spin text-primary" /></div>
+                  ) : (
+                    <>
+                      <div>
+                        <h3 className="text-sm font-semibold">Gmail notifications</h3>
+                        <p className="mt-1 text-xs text-muted-foreground">Account-wide one-way email delivery, shared by <code>notify_user</code> across every workflow and Chief of Staff. Turn this off to stop all outbound email. Email replies do not resume an agent.</p>
+                      </div>
+                      {gmailError && (
+                        <div className="p-3 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg flex items-start gap-2">
+                          <AlertCircle className="w-4 h-4 text-red-600 dark:text-red-400 flex-shrink-0 mt-0.5" />
+                          <p className="text-sm text-red-700 dark:text-red-300">{gmailError}</p>
+                        </div>
+                      )}
+                      {gmailSuccess && (
+                        <div className="p-3 bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 rounded-lg flex items-start gap-2">
+                          <CheckCircle className="w-4 h-4 text-green-600 dark:text-green-400 flex-shrink-0 mt-0.5" />
+                          <p className="text-sm text-green-700 dark:text-green-300">{gmailSuccess}</p>
+                        </div>
+                      )}
+                      <Card className="p-4">
+                        <div className="flex items-center justify-between gap-3">
+                          <div>
+                            <h4 className="text-sm font-medium">Enable Gmail</h4>
+                            <p className="mt-0.5 text-xs text-muted-foreground">Available to notify_user across workflows and Chief of Staff.</p>
+                          </div>
+                          <label className={`relative inline-flex items-center ${!gmailConfig.enabled && !gmailTestPassed ? 'cursor-not-allowed' : 'cursor-pointer'}`}>
+                            <input type="checkbox" checked={gmailConfig.enabled} disabled={!gmailConfig.enabled && !gmailTestPassed} onChange={event => setGmailConfig({ ...gmailConfig, enabled: event.target.checked })} className="peer sr-only" />
+                            <div className="h-6 w-11 rounded-full bg-gray-200 after:absolute after:left-[2px] after:top-[2px] after:h-5 after:w-5 after:rounded-full after:border after:border-gray-300 after:bg-white after:transition-all after:content-[''] peer-checked:bg-blue-600 peer-checked:after:translate-x-full peer-checked:after:border-white peer-disabled:opacity-40 dark:bg-gray-700" />
+                          </label>
+                        </div>
+                        {!gmailConfig.enabled && !gmailTestPassed && <p className="mt-2 text-xs text-amber-600 dark:text-amber-400">Send a successful test email before enabling.</p>}
+                      </Card>
+                      <Card className="p-4">
+                        <div className="flex items-center justify-between gap-2">
+                          <div>
+                            <h4 className="text-sm font-medium">Connection</h4>
+                            <p className="mt-0.5 text-xs text-muted-foreground">Google Workspace CLI on the server host.</p>
+                          </div>
+                          <div className="flex items-center gap-2 text-xs">
+                            {gmailChecking ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <span className={`h-2 w-2 rounded-full ${gmailConfig.auth.authenticated && gmailConfig.auth.has_gmail_scope ? 'bg-green-500' : 'bg-amber-500'}`} />}
+                            <span>{!gmailConfig.auth.gws_installed ? 'gws not installed' : !gmailConfig.auth.authenticated ? 'Not connected' : !gmailConfig.auth.has_gmail_scope ? 'Missing Gmail scope' : 'Connected'}</span>
+                            <button onClick={() => loadGmail(true)} disabled={gmailChecking} className="rounded p-1 text-muted-foreground hover:text-foreground" aria-label="Refresh Gmail connection"><RotateCcw className="h-3.5 w-3.5" /></button>
+                          </div>
+                        </div>
+                      </Card>
+                      {!(gmailConfig.auth.authenticated && gmailConfig.auth.has_gmail_scope) && (
+                        <Card className="border-amber-300 bg-amber-50 p-4 text-xs text-amber-900 dark:border-amber-700 dark:bg-amber-900/20 dark:text-amber-100">
+                          <div className="flex gap-2"><AlertTriangle className="h-4 w-4 flex-shrink-0" /><div><strong>Setup on the server host:</strong> install <code>@googleworkspace/cli</code>, then run <code>gws auth login -s gmail</code> and refresh this status.</div></div>
+                        </Card>
+                      )}
+                      <Card className="space-y-3 p-4">
+                        <div>
+                          <label className="mb-2 block text-sm font-medium">Default recipient</label>
+                          <input type="email" value={gmailConfig.default_to || ''} onChange={event => setGmailConfig({ ...gmailConfig, default_to: event.target.value })} placeholder="you@example.com" className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary" />
+                        </div>
+                        <div>
+                          <label className="mb-2 block text-sm font-medium">Disallowed recipients</label>
+                          <textarea value={gmailBlockedText} onChange={event => setGmailBlockedText(event.target.value)} rows={3} placeholder="blocked@example.com, no-notify@example.com" className="w-full resize-y rounded-md border border-border bg-background px-3 py-2 font-mono text-sm focus:outline-none focus:ring-2 focus:ring-primary" />
+                          {gmailDefaultIsBlocked && <p className="mt-1 text-xs text-red-600 dark:text-red-400">The default recipient is in the disallowed list.</p>}
+                        </div>
+                      </Card>
+                      <Button variant="outline" onClick={testGmail} disabled={gmailTesting || !gmailConfig.default_to || gmailDefaultIsBlocked} className="w-full">{gmailTesting ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" />Sending…</> : 'Send test email'}</Button>
+                      {gmailTestResult && <Card className={`p-3 text-sm ${gmailTestResult.success ? 'border-green-300 bg-green-50 text-green-700 dark:border-green-700 dark:bg-green-900/20 dark:text-green-300' : 'border-red-300 bg-red-50 text-red-700 dark:border-red-700 dark:bg-red-900/20 dark:text-red-300'}`}>{gmailTestResult.message}</Card>}
+                    </>
+                  )}
+                </div>
+                <div className="flex flex-shrink-0 justify-end gap-2 border-t border-border px-4 py-3">
+                  <Button onClick={saveGmail} disabled={!gmailHasChanges || gmailSaving || gmailLoading || gmailDefaultIsBlocked || (gmailConfig.enabled && !gmailTestPassed)}>{gmailSaving ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" />Saving…</> : 'Save'}</Button>
+                </div>
+              </>
             )}
 
             {/* ── Simulate Section ── */}

@@ -108,6 +108,11 @@ func CreateHumanTools() []llmtypes.Tool {
 			"maxLength":   2000,
 			"description": "Optional short Block Kit context/footer such as scope and date. Other channels ignore this field.",
 		},
+		"exclude_channels": map[string]interface{}{
+			"type":  "array",
+			"items": map[string]interface{}{"type": "string", "enum": []string{"gmail", "slack", "whatsapp"}},
+			"description": "Optional one-off override to SKIP account-level delivery channels for THIS notification only, by name (\"gmail\", \"slack\", \"whatsapp\"). The DURABLE per-workflow preference belongs in workflow.json notifications.exclude_channels and is applied automatically on every send — use this arg only for a one-time skip beyond that. Suppresses the channel for this send only; never changes the account-wide configuration. Omit to deliver to every enabled channel not already excluded by workflow.json. The always-on web UI and any configured workflow Slack webhook are unaffected.",
+		},
 	}
 	if gmailEnabled() {
 		notifyProps["email_subject"] = map[string]interface{}{
@@ -132,6 +137,11 @@ func CreateHumanTools() []llmtypes.Tool {
 			"type":        "array",
 			"items":       map[string]interface{}{"type": "string"},
 			"description": "Optional. Absolute file paths on the server host to attach to the email (Gmail only).",
+		}
+		notifyProps["block_recipients"] = map[string]interface{}{
+			"type":        "array",
+			"items":       map[string]interface{}{"type": "string"},
+			"description": "Optional one-off email denylist for THIS notification (Gmail only). Addresses listed here are rejected as To or CC recipients, on top of BOTH the account-wide disallowed-recipients list AND the durable per-workflow denylist in workflow.json notifications.block_recipients — it can only block MORE, never unblock a globally-blocked address. Put addresses the workflow must never email in workflow.json notifications.block_recipients (applied automatically); use this arg only for a one-time block beyond that. If a blocked address is the resolved recipient, the email is skipped rather than sent elsewhere. Does not change any account-wide configuration; other channels ignore this.",
 		}
 		notifyProps["email_html"] = map[string]interface{}{
 			"type":        "string",
@@ -297,6 +307,39 @@ func emailListFromArg(raw interface{}) []string {
 	}
 }
 
+// stringListFromArg reads an array-or-string tool argument into a trimmed,
+// lowercased, de-duplicated slice. Used for simple token lists such as
+// exclude_channels ("gmail", "slack", "whatsapp") where email-style splitting
+// isn't needed.
+func stringListFromArg(raw interface{}) []string {
+	var values []string
+	switch v := raw.(type) {
+	case []interface{}:
+		for _, item := range v {
+			if s, ok := item.(string); ok {
+				values = append(values, s)
+			}
+		}
+	case []string:
+		values = v
+	case string:
+		values = []string{v}
+	default:
+		return nil
+	}
+	seen := map[string]bool{}
+	out := make([]string, 0, len(values))
+	for _, raw := range values {
+		token := strings.ToLower(strings.TrimSpace(raw))
+		if token == "" || seen[token] {
+			continue
+		}
+		seen[token] = true
+		out = append(out, token)
+	}
+	return out
+}
+
 func normalizeNotifyEmailList(values []string) []string {
 	seen := map[string]bool{}
 	out := make([]string, 0, len(values))
@@ -371,6 +414,18 @@ func handleNotifyUser(ctx context.Context, args map[string]interface{}) (string,
 		}
 		dest.Gmail = &services.GmailDest{Email: strings.Join(to, ", ")}
 	}
+	// Optional one-off email denylist for this send, unioned with both the
+	// account-wide blocked list and the per-workflow workflow.json
+	// notifications.block_recipients already carried on dest.Gmail.
+	if blocked := emailListFromArg(args["block_recipients"]); len(blocked) > 0 {
+		if dest == nil {
+			dest = &services.NotificationDestination{}
+		}
+		if dest.Gmail == nil {
+			dest.Gmail = &services.GmailDest{}
+		}
+		dest.Gmail.BlockedRecipients = append(dest.Gmail.BlockedRecipients, blocked...)
+	}
 	gc, err := gmailContentFromArgs(args)
 	if err != nil {
 		return "", err // e.g. email_html_file not found — feed the problem back to the agent
@@ -386,9 +441,17 @@ func handleNotifyUser(ctx context.Context, args map[string]interface{}) (string,
 		return "", err
 	}
 
+	// Per-workflow channel opt-out. The durable preference comes from workflow.json
+	// notifications.exclude_channels (carried on dest.ExcludeChannels); the optional
+	// exclude_channels arg adds a one-off skip for this send. Both are unioned.
+	excludeChannels := stringListFromArg(args["exclude_channels"])
+	if dest != nil && len(dest.ExcludeChannels) > 0 {
+		excludeChannels = append(excludeChannels, dest.ExcludeChannels...)
+	}
+
 	// Synchronous send so we can report real per-channel delivery to the agent
 	// (and so the send isn't killed when this turn's context is canceled).
-	results := notificationManager.SendUserNotificationSync(ctx, messageForUser, "", dest)
+	results := notificationManager.SendUserNotificationSync(ctx, messageForUser, "", dest, excludeChannels...)
 	if dest != nil && dest.SlackWebhook != nil {
 		msgID, sendErr := sendRichSlackIncomingWebhook(ctx, dest.SlackWebhook.URL, messageForUser, slackContent)
 		result := services.ConnectorResult{

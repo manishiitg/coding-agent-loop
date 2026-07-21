@@ -8,6 +8,9 @@ export interface WorkflowNotificationInfo {
   effectiveState: WorkflowNotificationState
   slackWebhook: WorkflowNotificationDestinationInfo
   gmail: WorkflowNotificationAccountChannelInfo | null
+  // Per-workflow preferences from workflow.json notifications (display-only).
+  excludeChannels: string[]
+  blockRecipients: string[]
 }
 
 export async function loadWorkflowNotificationInfo(workspacePath: string): Promise<WorkflowNotificationInfo> {
@@ -23,6 +26,8 @@ export async function loadWorkflowNotificationInfo(workspacePath: string): Promi
     effectiveState: response.effective_state,
     slackWebhook,
     gmail: response.account_channels.find(channel => channel.id === 'gmail') || null,
+    excludeChannels: response.exclude_channels || [],
+    blockRecipients: response.block_recipients || [],
   }
 }
 
@@ -39,5 +44,7 @@ export async function loadOrgNotificationInfo(): Promise<WorkflowNotificationInf
     effectiveState: response.effective_state,
     slackWebhook,
     gmail: response.account_channels.find(channel => channel.id === 'gmail') || null,
+    excludeChannels: response.exclude_channels || [],
+    blockRecipients: response.block_recipients || [],
   }
 }

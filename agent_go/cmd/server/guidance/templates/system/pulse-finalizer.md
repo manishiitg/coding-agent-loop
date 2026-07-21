@@ -22,11 +22,18 @@ earlier command fails.
 3. **Publish.** Read publish config/status. Skip when disabled, unverified, or
    already current. Never do the first/verifying publish unattended and never
    publish unbacked changes after backup failure. Keep status truthful.
-4. **Notify.** Notify once unless `soul.md ## Notifications` explicitly disables
-   it. Account-level channels are inherited; lack of workflow Slack is not a
-   reason to skip Gmail/email. Include modules run/skipped, Bug/Goal state,
-   requests, important outcomes, backup/publish, live URL, cost/time or next
-   checkpoint, and next action. When protection is only local, prominently say
+4. **Notify.** Notify once every run. Account-level channels are inherited; lack
+   of workflow Slack is not a reason to skip Gmail/email, and never write
+   redundant account-wide Gmail config into `workflow.json`. Per-workflow
+   preferences live in `workflow.json` `notifications` (`exclude_channels`
+   suppresses an inherited account channel for this workflow; `block_recipients`
+   is a per-workflow email denylist unioned with the account-wide one) and the
+   backend applies them automatically — enforce a "do not email this workflow" or
+   "never email address X" preference by setting `workflow.json` `notifications`,
+   NOT by omitting the notification. Do not put notification preferences in
+   soul.md. Include modules run/skipped, Bug/Goal state, requests, important
+   outcomes, backup/publish, live URL, cost/time or next checkpoint, and next
+   action. When protection is only local, prominently say
    `Backup risk: local only` until an off-device destination is verified.
 
 Use rich email/Slack fields through `notify_user`; never read webhook secrets or

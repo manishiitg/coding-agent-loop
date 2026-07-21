@@ -584,6 +584,12 @@ type QueryRequest struct {
 	// Internal workflow wire field: name of the selected encrypted secret that
 	// contains a Slack Incoming Webhook URL. The URL itself is never serialized.
 	NotificationSlackWebhookSecretName string `json:"notification_slack_webhook_secret_name,omitempty"`
+	// Per-workflow notification preferences resolved from workflow.json
+	// notifications.exclude_channels / .block_recipients. Applied to every
+	// notify_user send in this run so an inherited account-level channel or
+	// recipient is suppressed for this workflow only.
+	NotificationExcludeChannels []string `json:"notification_exclude_channels,omitempty"`
+	NotificationBlockRecipients []string `json:"notification_block_recipients,omitempty"`
 	// Internal-only resolved notification credential. Unlike DecryptedSecrets,
 	// this value is never serialized, prompted, or injected as SECRET_*.
 	notificationSlackWebhookURL string `json:"-"`
@@ -650,7 +656,17 @@ func notificationDestinationFromQuery(req QueryRequest, userID string) *services
 			URL:        req.notificationSlackWebhookURL,
 		}
 	}
-	if dest.UserID == "" && dest.Slack == nil && dest.SlackWebhook == nil && dest.WhatsApp == nil {
+	// Per-workflow notification preferences (workflow.json notifications.*).
+	if len(req.NotificationExcludeChannels) > 0 {
+		dest.ExcludeChannels = append([]string(nil), req.NotificationExcludeChannels...)
+	}
+	if len(req.NotificationBlockRecipients) > 0 {
+		if dest.Gmail == nil {
+			dest.Gmail = &services.GmailDest{}
+		}
+		dest.Gmail.BlockedRecipients = append(dest.Gmail.BlockedRecipients, req.NotificationBlockRecipients...)
+	}
+	if dest.UserID == "" && dest.Slack == nil && dest.SlackWebhook == nil && dest.WhatsApp == nil && dest.Gmail == nil && len(dest.ExcludeChannels) == 0 {
 		return nil
 	}
 	return dest
@@ -861,6 +877,8 @@ func applyMultiAgentCapabilitiesToRequest(req *QueryRequest, caps WorkflowCapabi
 	req.CdpPorts = append([]int(nil), caps.CDPPorts...)
 	if caps.Notifications != nil {
 		req.NotificationSlackWebhookSecretName = strings.TrimSpace(caps.Notifications.SlackWebhookSecretName)
+		req.NotificationExcludeChannels = append([]string(nil), caps.Notifications.ExcludeChannels...)
+		req.NotificationBlockRecipients = append([]string(nil), caps.Notifications.BlockRecipients...)
 	}
 	if req.BrowserMode == "" {
 		req.BrowserMode = "none"
@@ -3085,6 +3103,8 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				req.DecryptedSecrets = api.loadSelectedSecrets(context.Background(), currentUserID, resolvedWPath, manifest.Capabilities.SelectedSecrets)
 				if manifest.Capabilities.Notifications != nil {
 					req.NotificationSlackWebhookSecretName = strings.TrimSpace(manifest.Capabilities.Notifications.SlackWebhookSecretName)
+					req.NotificationExcludeChannels = append([]string(nil), manifest.Capabilities.Notifications.ExcludeChannels...)
+					req.NotificationBlockRecipients = append([]string(nil), manifest.Capabilities.Notifications.BlockRecipients...)
 				}
 				api.resolveNotificationSecretForRequest(context.Background(), currentUserID, resolvedWPath, &req)
 
@@ -3194,6 +3214,8 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				req.DecryptedSecrets = api.loadSelectedSecrets(context.Background(), currentUserID, manifestWorkspacePath, caps.SelectedSecrets)
 				if caps.Notifications != nil {
 					req.NotificationSlackWebhookSecretName = strings.TrimSpace(caps.Notifications.SlackWebhookSecretName)
+					req.NotificationExcludeChannels = append([]string(nil), caps.Notifications.ExcludeChannels...)
+					req.NotificationBlockRecipients = append([]string(nil), caps.Notifications.BlockRecipients...)
 				}
 				api.resolveNotificationSecretForRequest(context.Background(), currentUserID, manifestWorkspacePath, &req)
 				req.CdpPorts = append([]int(nil), caps.CDPPorts...)

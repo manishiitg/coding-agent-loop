@@ -2374,6 +2374,9 @@ export interface WorkflowNotificationInfoResponse {
   effective_state: WorkflowNotificationState
   destinations: WorkflowNotificationDestinationInfo[]
   account_channels: WorkflowNotificationAccountChannelInfo[]
+  // Per-workflow preferences from workflow.json notifications (display-only).
+  exclude_channels?: string[]
+  block_recipients?: string[]
 }
 
 // Scheduled Jobs

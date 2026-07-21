@@ -743,10 +743,11 @@ func (n *workshopExecutionBgNotifier) OnExecutionStart(start todo_creation_human
 	}
 	n.api.completionLoopStartedMu.Unlock()
 
-	// Emit background_agent_started event so BackgroundAgentsStatusBar shows a pill.
-	// Synchronous reviewers are already awaited by their parent tool call, so they
-	// remain visible in the execution tree without injecting a duplicate start
-	// message back into the same parent conversation.
+	// Emit background_agent_started so the execution remains visible and follows
+	// the same parent-notification lifecycle as workflow steps. Long coding-CLI
+	// tool calls may detach from the foreground even though their HTTP request is
+	// still active, so generic/reviewer children must notify the parent rather than
+	// relying only on the synchronous response path.
 	n.api.emitBackgroundAgentEvent(n.sessionID, start.ID, "background_agent_started", map[string]interface{}{
 		"agent_id": start.ID,
 		"name":     start.Name,

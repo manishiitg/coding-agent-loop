@@ -1410,6 +1410,10 @@ func backgroundAgentStartLabel(snap BackgroundAgentSnapshot) string {
 		}
 	}
 	switch {
+	case kind == "pulse_reviewer":
+		return "Pulse reviewer"
+	case kind == "generic_agent":
+		return "Generic agent"
 	case strings.Contains(kind, "sub_agent"):
 		return "Sub-agent"
 	case strings.Contains(kind, "delegation"):
@@ -1426,10 +1430,18 @@ func backgroundAgentStartLabel(snap BackgroundAgentSnapshot) string {
 }
 
 func backgroundAgentStartContext(snap BackgroundAgentSnapshot) string {
-	if snap.Metadata == nil {
-		return ""
-	}
 	var fields []string
+	if snap.Kind == "generic_agent" || snap.Kind == "pulse_reviewer" {
+		if executionID := strings.TrimSpace(snap.ID); executionID != "" {
+			fields = append(fields, "execution_id="+executionID)
+		}
+	}
+	if snap.Metadata == nil {
+		if len(fields) == 0 {
+			return ""
+		}
+		return " [" + strings.Join(fields, ", ") + "]"
+	}
 	if workflowPath := strings.TrimSpace(snap.Metadata["workflow_path"]); workflowPath != "" {
 		fields = append(fields, "space="+autoNotificationDisplayPath(workflowPath))
 	}

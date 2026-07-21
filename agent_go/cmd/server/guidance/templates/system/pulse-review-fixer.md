@@ -10,12 +10,19 @@ inspect a row left `fixing`, and do not blindly reapply changes. Preserve
 `changed_unverified` until its named evidence boundary arrives.
 
 Create one compact **READ-ONLY REVIEW** task for every due module. Run consecutive
-parallel batches of at most two direct synchronous `call_generic_agent` calls.
-Never use shell/curl, a temporary script, `run_in_background`, sleep,
-`list_executions`, `query_step`, or polling. Every call passes the exact
-`pulse_run_id`, dated `review_run_id`, and module. The backend persists the full
-result at `pulse/reviews/<dated-review-run-id>/<module>.md`; read that file before
-fixing. A reviewer failure fails only its module; continue independent modules.
+parallel batches of at most two `call_generic_agent` calls. In coding-agent
+code-execution mode, invoke the custom tool through its documented API bridge
+shell call; shell/curl is the supported transport. Do not use `run_in_background`,
+sleep, `list_executions`, `query_step`, or polling. If the outer MCP shell call
+moves to the background, end the current turn and wait for the compact automatic
+reviewer completion notification. Every call passes the exact `pulse_run_id`,
+dated `review_run_id`, and module. The backend persists the full result at
+`pulse/reviews/<dated-review-run-id>/<module>.md` and returns/notifies only that
+compact path reference. Treat that Markdown file—not the reviewer's completion
+message—as the sole findings artifact and read it before fixing. The reviewer is
+instructed to author artifact-form Markdown; the trusted backend performs the
+actual write because the reviewer remains read-only. A reviewer failure fails
+only its module; continue independent modules.
 
 Each reviewer receives workflow scope, Gate evidence pointers, relevant focused
 guidance, and a response cap. Use `pulse-bug-review` for Bug Review;

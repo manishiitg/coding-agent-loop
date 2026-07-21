@@ -42,7 +42,7 @@ func TestFocusedScheduledPulseReferencesStayBoundedAndComplete(t *testing.T) {
 		"pulse-review-fixer": {
 			max: 5000,
 			wants: []string{
-				"batches of at most two", "direct synchronous `call_generic_agent`", "pulse/reviews/<dated-review-run-id>/<module>.md",
+				"batches of at most two", "supported transport", "automatic", "pulse/reviews/<dated-review-run-id>/<module>.md",
 				"only Pulse Fixer", "global finding-ID reconciliation", "terminal current-run result",
 			},
 		},

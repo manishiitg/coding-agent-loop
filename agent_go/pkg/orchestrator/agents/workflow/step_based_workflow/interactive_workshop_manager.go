@@ -123,10 +123,14 @@ func pulseReviewerCompletionMarker(todoID string) string {
 	return fmt.Sprintf("%s todo_id=%s", pulseReviewerCompletionPrefix, sanitizeWorkshopAgentIdentityPart(todoID))
 }
 
-func buildPulseReviewerInstruction(workspacePath, instructions, marker string) string {
+func buildPulseReviewerInstruction(workspacePath, resultPath, instructions, marker string) string {
 	scopeHeader := fmt.Sprintf("READ-ONLY REVIEW SCOPE: inspect only %s. If any evidence path resolves outside this workflow, stop and return scope_error. Keep the complete response under 6000 characters and do not use wide tables. Do not emit progress text as the final answer.\n\n", workspacePath)
+	artifactContract := ""
+	if strings.TrimSpace(resultPath) != "" {
+		artifactContract = fmt.Sprintf("ARTIFACT-FIRST RESULT CONTRACT: Your complete final response is the exact findings body that the backend will persist at %s. Write it as a durable Markdown review artifact, not as a conversational message to the parent or user. Do not add greetings, progress narration, notification prose, or a second summary. Do not attempt to write the file yourself: this reviewer is read-only and the trusted backend persists the validated response atomically. The parent receives only the artifact path and must read that file.\n\n", resultPath)
+	}
 	completionFooter := fmt.Sprintf("\n\nIMPORTANT COMPLETION CONTRACT: This overrides any earlier response-ending instruction or marker in the review brief. Only after the complete review is written, emit this exact final line and nothing after it:\n%s", marker)
-	return scopeHeader + strings.TrimSpace(instructions) + completionFooter
+	return scopeHeader + artifactContract + strings.TrimSpace(instructions) + completionFooter
 }
 
 func completedPulseReviewerResult(result, marker string) (string, error) {
@@ -3367,7 +3371,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 	// executor from being selected through the global code-exec registry.
 	if err := mcpAgent.RegisterCustomTool(
 		"call_generic_agent",
-		"Run one synchronous read-only reviewer in an isolated context for this workflow. Call this tool directly; never invoke it through shell, curl, a background process, or polling. Pulse permits at most two concurrent calls. For Pulse, pass pulse_run_id, review_run_id, and module: the backend persists the complete result to pulse/reviews/<dated-review-run-id>/<module>.md and returns only its compact path reference. The reviewer cannot mutate files, configuration, plans, reports, evaluations, human inputs, or module state. Incomplete provider snapshots are rejected and retried once. Do not put a custom completion marker in instructions; this tool appends and validates its own marker.",
+		"Run one read-only reviewer in an isolated context for this workflow. In coding-agent code-execution mode, invoke this custom tool through the documented API bridge shell call; that transport is supported. Every reviewer is tracked as a child execution and sends a compact automatic start/completion notification to the parent. If the outer MCP shell call moves to the background, end the current turn and wait for that automatic notification instead of polling. Pulse permits at most two concurrent calls. For Pulse, pass pulse_run_id, review_run_id, and module: the reviewer is instructed to produce a durable Markdown artifact rather than a conversational completion message; the trusted backend persists that complete artifact to pulse/reviews/<dated-review-run-id>/<module>.md and returns/notifies only its compact path reference. The reviewer cannot mutate files, configuration, plans, reports, evaluations, human inputs, or module state. Incomplete provider snapshots are rejected and retried once. Do not put a custom completion marker in instructions; this tool appends and validates its own marker.",
 		map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
@@ -3457,26 +3461,46 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				return "", ctxErr
 			}
 			defer cancel()
-			reviewExecID := fmt.Sprintf("pulse-review-%s-%d", sanitizeWorkshopAgentIdentityPart(todoID), time.Now().UnixNano())
-			reviewName := "Pulse reviewer: " + strings.ReplaceAll(todoID, "-", " ")
+			executionPrefix := "generic-agent"
+			reviewName := "Generic agent: " + strings.ReplaceAll(todoID, "-", " ")
+			if isPulseReview {
+				executionPrefix = "pulse-review"
+				reviewName = "Pulse reviewer: " + strings.ReplaceAll(todoID, "-", " ")
+			}
+			reviewExecID := fmt.Sprintf("%s-%s-%d", executionPrefix, sanitizeWorkshopAgentIdentityPart(todoID), time.Now().UnixNano())
 			agentSessionID := fmt.Sprintf("workshop-review-%d", time.Now().UnixNano())
 			execCtx = context.WithValue(execCtx, orchestrator_events.AgentSessionIDKey, agentSessionID)
 			execCtx = context.WithValue(execCtx, orchestrator_events.ForceCorrelationIDKey, agentSessionID)
 			execCtx = context.WithValue(execCtx, orchestrator_events.IsSubAgentContextKey, true)
 
+			trackedStepID := "generic-agent:" + todoID
+			if isPulseReview {
+				trackedStepID = "pulse-review:" + todoID
+			}
 			reviewExec := &WorkshopStepExecution{
 				ID:             reviewExecID,
-				StepID:         "pulse-review:" + todoID,
+				StepID:         trackedStepID,
 				AgentSessionID: agentSessionID,
 				Status:         WorkshopStepRunning,
 				cancel:         cancel,
 			}
 			iwm.stepRegistry.Register(reviewExec)
+			executionType := "generic-agent"
+			executionKind := "generic_agent"
+			if isPulseReview {
+				executionType = "pulse-reviewer"
+				executionKind = "pulse_reviewer"
+			}
 			reviewMeta := map[string]string{
-				"execution_type":             "pulse-reviewer",
-				"pulse_reviewer":             "true",
-				"todo_id":                    todoID,
-				"suppress_auto_notification": "true",
+				"execution_type": executionType,
+				"todo_id":        todoID,
+			}
+			if isPulseReview {
+				reviewMeta["pulse_reviewer"] = "true"
+				reviewMeta["pulse_run_id"] = pulseRunID
+				reviewMeta["review_run_id"] = reviewRunID
+				reviewMeta["module"] = module
+				reviewMeta["review_result_path"] = resultPath
 			}
 			parentExecutionID := currentWorkshopParentExecutionID(ctx)
 			if parentExecutionID == "" && strings.TrimSpace(iwm.mainSessionID) != "" {
@@ -3487,7 +3511,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 					ID:                reviewExecID,
 					ParentExecutionID: parentExecutionID,
 					Name:              reviewName,
-					Kind:              "pulse_reviewer",
+					Kind:              executionKind,
 					Metadata:          reviewMeta,
 					Cancel:            cancel,
 				})
@@ -3503,7 +3527,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 
 			workspacePath := iwm.controller.GetWorkspacePath()
 			marker := pulseReviewerCompletionMarker(todoID)
-			reviewerInstruction := buildPulseReviewerInstruction(workspacePath, instructions, marker)
+			reviewerInstruction := buildPulseReviewerInstruction(workspacePath, resultPath, instructions, marker)
 			persistFailure := func(message string) error {
 				if !isPulseReview {
 					return nil
@@ -3514,7 +3538,10 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 
 			var incompleteErr error
 			for attempt := 1; attempt <= 2; attempt++ {
-				stageName := "Pulse reviewer - " + todoID
+				stageName := "Generic agent - " + todoID
+				if isPulseReview {
+					stageName = "Pulse reviewer - " + todoID
+				}
 				if attempt > 1 {
 					stageName += " - completion retry"
 				}
@@ -3688,38 +3715,32 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 	// When done/failed/cancelled: shows result
 	if err := mcpAgent.RegisterCustomTool(
 		"query_step",
-		"One-off live status check for a workflow step by step_id. The backend resolves the latest matching execution_id automatically, preferring a running execution. When running, shows registry status and structured MCP tool calls captured so far. Important: coding CLI providers can show terminal/TUI activity before structured tool_call events exist, so 'no tool calls observed yet' does NOT mean the step failed to start or is stuck. When the step is a coding-CLI provider running in tmux, query_step ALSO captures and inlines the latest lines of the live terminal pane, plus the tmux session name and a read-only `tmux capture-pane` command for deeper history (the same session shown in the UI terminal). After one running-status check, end the current agent turn; automatic completion notification will resume the session. Never alternate query_step and list_executions as a polling loop. Do not stop or re-run solely because query_step has no tool calls. Pass tool_call_id to get full input/output for a specific tool call. Use debug_step for file-based insights.",
+		"One-off live status check for a tracked execution. For a workflow step, pass step_id and the backend resolves its latest execution automatically. For call_generic_agent/Pulse reviewers, pass the execution_id from the start notification; step_id is not required. When running, shows registry status and structured MCP tool calls captured so far. Important: coding CLI providers can show terminal/TUI activity before structured tool_call events exist, so 'no tool calls observed yet' does NOT mean the execution failed to start or is stuck. When a coding-CLI provider runs in tmux, query_step also captures the latest terminal lines and the tmux session name. After one running-status check, end the current agent turn; automatic completion notification will resume the session. Never alternate query_step and list_executions as a polling loop. Do not stop or re-run solely because no tool calls are listed. Pass tool_call_id to get full input/output for a specific tool call. Use debug_step for workflow-step file insights.",
 		map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
 				"step_id": map[string]interface{}{
 					"type":        "string",
-					"description": "The workflow step ID to inspect. Preferred and normally required. The backend resolves the latest execution for this step automatically.",
+					"description": "Workflow step ID to inspect. Required unless execution_id is supplied. The backend resolves the latest execution for this step automatically.",
 				},
 				"execution_id": map[string]interface{}{
 					"type":        "string",
-					"description": "Optional legacy/disambiguation ID. Normally omit and pass step_id.",
+					"description": "Exact tracked execution ID. Use this without step_id for call_generic_agent and Pulse reviewer executions; it can also disambiguate workflow-step executions.",
 				},
 				"tool_call_id": map[string]interface{}{
 					"type":        "string",
 					"description": "Optional: a specific tool_call_id from a previous query_step summary to get full input/output details for that call",
 				},
 			},
-			"required": []string{"step_id"},
 		},
 		func(ctx context.Context, args map[string]interface{}) (string, error) {
-			stepIDRaw, ok := args["step_id"]
-			if !ok || stepIDRaw == nil {
-				return "step_id is required", nil
-			}
-			stepID, ok := stepIDRaw.(string)
-			if !ok || stepID == "" {
-				return "step_id must be a non-empty string", nil
-			}
-			if err := iwm.controller.LoadPlanForWorkshop(ctx); err == nil {
-				if resolvedID, resolveErr := resolveWorkshopStepID(iwm.controller, stepID); resolveErr == nil {
-					stepID = resolvedID
+			stepID := ""
+			if stepIDRaw, ok := args["step_id"]; ok && stepIDRaw != nil {
+				value, valueOK := stepIDRaw.(string)
+				if !valueOK {
+					return "step_id must be a string", nil
 				}
+				stepID = strings.TrimSpace(value)
 			}
 
 			// Optional: specific tool_call_id for detailed view
@@ -3736,15 +3757,27 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 					execID = strings.TrimSpace(s)
 				}
 			}
+			if stepID == "" && execID == "" {
+				return "step_id or execution_id is required", nil
+			}
+			if stepID != "" {
+				if err := iwm.controller.LoadPlanForWorkshop(ctx); err == nil {
+					if resolvedID, resolveErr := resolveWorkshopStepID(iwm.controller, stepID); resolveErr == nil {
+						stepID = resolvedID
+					}
+				}
+			}
 
 			var exec WorkshopStepSnapshot
 			var found bool
 			if execID != "" {
 				exec, found = iwm.stepRegistry.GetSnapshot(execID)
 				if !found {
-					return fmt.Sprintf("execution %q not found for step %q", execID, stepID), nil
+					return fmt.Sprintf("execution %q not found", execID), nil
 				}
-				if exec.StepID != stepID {
+				if stepID == "" {
+					stepID = exec.StepID
+				} else if exec.StepID != stepID {
 					return fmt.Sprintf("execution %q belongs to step %q, not step %q", execID, exec.StepID, stepID), nil
 				}
 			} else {
@@ -3775,6 +3808,14 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 			result := exec.Result
 			execErr := exec.Err
 			agentSessID := exec.AgentSessionID
+			isGenericAgent := strings.HasPrefix(execID, "generic-agent-")
+			isPulseReviewer := strings.HasPrefix(execID, "pulse-review-")
+			executionLabel := fmt.Sprintf("Step %q", stepID)
+			if isGenericAgent {
+				executionLabel = fmt.Sprintf("Generic agent %q", strings.TrimPrefix(stepID, "generic-agent:"))
+			} else if isPulseReviewer {
+				executionLabel = fmt.Sprintf("Pulse reviewer %q", strings.TrimPrefix(stepID, "pulse-review:"))
+			}
 
 			switch status {
 			case WorkshopStepRunning:
@@ -3800,7 +3841,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				if iwm.toolCallQueryFunc != nil {
 					summary := iwm.toolCallQueryFunc(mainSessID, agentSessID, stepID, toolCallID)
 					if toolCallID != "" && summary != "" {
-						return fmt.Sprintf("Step %q (execution_id: %s) — tool call detail:\n%s", stepID, execID, summary), nil
+						return fmt.Sprintf("%s (execution_id: %s) — tool call detail:\n%s", executionLabel, execID, summary), nil
 					}
 					if summary != "" {
 						toolCallInfo = fmt.Sprintf("\n\n**Structured MCP tool calls:**\n%s", summary)
@@ -3830,23 +3871,29 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				}
 
 				if toolCallInfo == "" {
-					return fmt.Sprintf("Step %q is registered and running.\nexecution_id: %s\n\nNo structured MCP tool calls have been captured for this execution yet. This is normal for coding CLI providers while they are booting, thinking, using terminal/TUI output, or before they make their first api-bridge call. It does not mean the step failed to start or is stuck.\n\nDo not stop or re-run this execution solely because no tool calls are listed; wait for the automatic completion notification unless the user explicitly asks you to stop/retry.%s%s%s\n\n%s", stepID, execID, messageHint, tmuxInfo, hint, pollGuidance), nil
+					return fmt.Sprintf("%s is registered and running.\nexecution_id: %s\n\nNo structured MCP tool calls have been captured for this execution yet. This is normal for coding CLI providers while they are booting, thinking, using terminal/TUI output, or before they make their first api-bridge call. It does not mean the execution failed to start or is stuck.\n\nDo not stop or re-run this execution solely because no tool calls are listed; wait for the automatic completion notification unless the user explicitly asks you to stop/retry.%s%s%s\n\n%s", executionLabel, execID, messageHint, tmuxInfo, hint, pollGuidance), nil
 				}
-				return fmt.Sprintf("Step %q is still running.\nexecution_id: %s%s%s%s%s\n\n%s", stepID, execID, messageHint, toolCallInfo, tmuxInfo, hint, pollGuidance), nil
+				return fmt.Sprintf("%s is still running.\nexecution_id: %s%s%s%s%s\n\n%s", executionLabel, execID, messageHint, toolCallInfo, tmuxInfo, hint, pollGuidance), nil
 
 			case WorkshopStepDone:
+				if isGenericAgent || isPulseReviewer {
+					return fmt.Sprintf("%s completed.\nexecution_id: %s\n\n%s", executionLabel, execID, result), nil
+				}
 				// Background tasks get a generic completion response (no step-specific hints)
 				if strings.HasPrefix(execID, "bg-") {
 					return fmt.Sprintf("Background task %q completed.\n\n%s", stepID, result), nil
 				}
 				return fmt.Sprintf("Step %q completed.\nexecution_id: %s\n\n%s\n\n**Next actions (do these now):**\n1. Review the result against the step's success criteria\n2. Read shared workflow guidance: 'cat learnings/_global/SKILL.md'. If this is a scripted step, also inspect 'cat learnings/%s/main.py'.\n3. Check learning metadata: 'cat learnings/%s/.learning_metadata.json'. If the Workshop user decides this step should stop writing SKILL.md, set lock_learnings=true intentionally with review_notes. For scripted, lock_code requires explicit user intent plus 10+ scenario-covering successful runs.\n4. Note the highest-priority optimization from Post-Execution Step Review.\n5. If output looks wrong, investigate with debug_step(%q) and fix the root cause before re-running.", stepID, execID, result, stepID, stepID, stepID), nil
 			case WorkshopStepFailed:
+				if isGenericAgent || isPulseReviewer {
+					return fmt.Sprintf("%s failed.\nexecution_id: %s\nerror: %v", executionLabel, execID, execErr), nil
+				}
 				if strings.HasPrefix(execID, "bg-") {
 					return fmt.Sprintf("Background task %q failed: %v", stepID, execErr), nil
 				}
 				return fmt.Sprintf("Step %q failed.\nexecution_id: %s\nerror: %v\n\n**Next**: Investigate the failure. Call debug_step(%q) for detailed execution insights, then fix the root cause (description, validation, context deps) before re-running.", stepID, execID, execErr, stepID), nil
 			case WorkshopStepCancelled:
-				return fmt.Sprintf("Step %q was cancelled.\nexecution_id: %s", stepID, execID), nil
+				return fmt.Sprintf("%s was cancelled.\nexecution_id: %s", executionLabel, execID), nil
 			default:
 				return fmt.Sprintf("Step %q has unknown status: %s\nexecution_id: %s", stepID, status, execID), nil
 			}
@@ -4164,13 +4211,13 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 	// Tool 3: stop_step — cancel a running step
 	if err := mcpAgent.RegisterCustomTool(
 		"stop_step",
-		"Cancel a background step only after query_step currently reports that exact execution_id as running. A wait timeout does not prove the step is still running because completion notifications can be delayed. Never use this as cleanup for completed, failed, or already-cancelled work; those states are rejected.",
+		"Cancel a tracked workflow step, call_generic_agent execution, or Pulse reviewer only after query_step currently reports that exact execution_id as running. A wait timeout does not prove the execution is still running because completion notifications can be delayed. Never use this as cleanup for completed, failed, or already-cancelled work; those states are rejected.",
 		map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
 				"execution_id": map[string]interface{}{
 					"type":        "string",
-					"description": "The execution_id returned by execute_step",
+					"description": "Exact execution_id returned by a start call or shown in a generic-agent/Pulse-reviewer start notification.",
 				},
 			},
 			"required": []string{"execution_id"},

@@ -2456,7 +2456,7 @@ func postRunMonitorConsolidatedReviewStep(pulseRunID, reviewRunID string, module
 	return postRunMonitorStep{
 		label: "consolidated-review",
 		query: fmt.Sprintf("PULSE CONSOLIDATED REVIEW + SINGLE FIXER. pulse_run_id=%q, review_run_id=%q, due_modules=%s. "+
-			"Load get_reference_doc(kind=\"pulse-review-fixer\") and follow it exactly. This one turn owns every listed module. Run direct synchronous read-only reviewers in batches of at most two, passing pulse_run_id=%q, review_run_id=%q, and module on every call. Read each backend-persisted %s/<module>.md result, then act as the only sequential fixer. Record exactly one honest terminal result per due module and stop only after none are unresolved.",
+			"Load get_reference_doc(kind=\"pulse-review-fixer\") and follow it exactly. This stage owns every listed module. Run read-only reviewers in batches of at most two through the supported custom-tool API bridge, passing pulse_run_id=%q, review_run_id=%q, and module on every call. Reviewer children auto-notify this parent on completion; if the outer MCP shell call moves to the background, stop the current turn and wait for those notifications without polling. Read each backend-persisted %s/<module>.md result, then act as the only sequential fixer. Record exactly one honest terminal result per due module and stop only after none are unresolved.",
 			pulseRunID, reviewRunID, string(modulesJSON), pulseRunID, reviewRunID, resultDir),
 	}
 }

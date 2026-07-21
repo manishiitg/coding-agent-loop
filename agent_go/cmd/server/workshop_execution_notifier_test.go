@@ -77,7 +77,7 @@ func TestWorkshopExecutionNotifierPreservesExplicitCancellation(t *testing.T) {
 	}
 }
 
-func TestWorkshopExecutionNotifierDoesNotQueueSynchronousReviewerCompletion(t *testing.T) {
+func TestWorkshopExecutionNotifierQueuesReviewerCompletionForParent(t *testing.T) {
 	registry := NewBackgroundAgentRegistry()
 	api := &StreamingAPI{bgAgentRegistry: registry}
 	const (
@@ -91,7 +91,10 @@ func TestWorkshopExecutionNotifierDoesNotQueueSynchronousReviewerCompletion(t *t
 		Status:    BGAgentRunning,
 		CreatedAt: time.Now(),
 		Metadata: map[string]string{
-			"suppress_auto_notification": "true",
+			"execution_type":     "pulse-reviewer",
+			"pulse_reviewer":     "true",
+			"module":             "learning_health",
+			"review_result_path": "pulse/reviews/run-1/learning_health.md",
 		},
 	}
 	registry.Register(sessionID, agent)
@@ -105,7 +108,10 @@ func TestWorkshopExecutionNotifierDoesNotQueueSynchronousReviewerCompletion(t *t
 	}
 	select {
 	case got := <-completionCh:
-		t.Fatalf("unexpected auto-notification for synchronous reviewer: %q", got)
+		if got != execID {
+			t.Fatalf("completion id = %q, want %q", got, execID)
+		}
 	default:
+		t.Fatal("expected reviewer completion to queue a parent auto-notification")
 	}
 }

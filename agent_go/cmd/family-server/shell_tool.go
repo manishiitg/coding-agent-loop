@@ -78,7 +78,21 @@ func childShellTool() agentsession.Tool {
 		}
 		cctx, cancel := context.WithTimeout(ctx, 90*time.Second)
 		defer cancel()
-		readPaths := append([]string{"child"}, loadApprovedForChild()...)
+		// Scope the child's readable files to JUST the current activity — the
+		// pointer, their own work, and the current package's items (all mirrored
+		// into child/active on handoff) — NOT every file ever approved. This keeps
+		// the tutor's context on the one assignment the parent just handed off,
+		// and stops the child browsing the whole shared workspace or old packages.
+		ct := loadCurrentTask()
+		readPaths := []string{"child/current-task.json", "child/attempts"}
+		switch {
+		case len(ct.Items) > 0:
+			readPaths = append(readPaths, ct.Items...) // child/active copies of the current package
+		case strings.TrimSpace(ct.Path) != "":
+			readPaths = append(readPaths, ct.Path)
+		default:
+			readPaths = append(readPaths, "child/active") // no current handoff: their own copies
+		}
 		blockedWrites := []string{}
 		if dl := hostDownloadsPath(); dl != "" {
 			readPaths = append(readPaths, dl)

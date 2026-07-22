@@ -142,5 +142,24 @@ func handleWorkspaceRaw(w http.ResponseWriter, r *http.Request) {
 		name := strings.ReplaceAll(filepath.Base(abs), `"`, "")
 		w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, name))
 	}
+	// ?print=1 on an HTML file serves it in a full page (opened in a new tab) that
+	// auto-opens the browser's print dialog. This is the robust way to print a
+	// test/report: it doesn't depend on the generated HTML embedding a print
+	// handler (a skill can forget to), and it isn't blocked by the in-app viewer's
+	// iframe sandbox. Relative assets still resolve since it's the real file URL.
+	if r.URL.Query().Get("print") != "" {
+		ext := strings.ToLower(filepath.Ext(abs))
+		if ext == ".html" || ext == ".htm" {
+			b, err := os.ReadFile(abs)
+			if err != nil {
+				http.Error(w, "not found", http.StatusNotFound)
+				return
+			}
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			_, _ = w.Write(b)
+			_, _ = w.Write([]byte("\n<script>window.addEventListener('load',function(){setTimeout(function(){window.print()},250)});</script>\n"))
+			return
+		}
+	}
 	http.ServeFile(w, r, abs)
 }

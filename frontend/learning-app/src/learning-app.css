@@ -306,6 +306,34 @@ html, body, #root { margin: 0; height: 100%; }
 .fl-nopreview-name { color: var(--navy); font-weight: 650; font-size: var(--text-secondary); word-break: break-word; }
 .fl-download-btn { align-self: flex-start; display: inline-flex; align-items: center; gap: 7px; padding: 9px 18px; border-radius: 11px; background: var(--navy, #2b3a55); color: #fff; font-weight: 650; font-size: var(--text-secondary); text-decoration: none; cursor: pointer; }
 .fl-download-btn:hover { filter: brightness(1.08); }
+/* Child-mode multi-part package: a titled group with each part listed and
+   numbered, so the child can open any part (not just the first). */
+.fl-child-package { display: flex; flex-direction: column; gap: 4px; margin-bottom: 8px; }
+.fl-package-title { display: flex; align-items: center; gap: 8px; padding: 6px 4px 2px; color: var(--navy); font-weight: 700; }
+.fl-package-title small { display: block; font-weight: 500; color: #7a869a; font-size: var(--text-caption); }
+.fl-package-item { margin-left: 14px; }
+.fl-package-step { flex: 0 0 auto; display: grid; place-items: center; width: 18px; height: 18px; border-radius: 999px; background: #eef2f9; color: #55617a; font-size: 11px; font-weight: 700; }
+/* Child chat assignment banner — the current package shown at the top of the
+   tutor chat, so the child always sees what they're working on and its parts. */
+.fl-child-assignment { margin: 0 0 4px; padding: 10px 14px; background: #fff7e6; border: 1px solid #f2e2bd; border-radius: 14px; display: flex; flex-direction: column; gap: 8px; }
+.fl-assignment-head { display: flex; align-items: center; gap: 7px; color: #8a6d1f; font-weight: 750; }
+.fl-assignment-title { font-size: var(--text-secondary); }
+.fl-assignment-head small { margin-left: auto; font-weight: 600; color: #a98a3d; font-size: var(--text-caption); }
+.fl-assignment-parts { display: flex; flex-wrap: wrap; gap: 6px; }
+.fl-assignment-part { display: inline-flex; align-items: center; gap: 6px; padding: 5px 10px 5px 6px; border: 1px solid #eadfc2; border-radius: 999px; background: #fff; color: var(--navy); font-size: var(--text-caption); font-weight: 600; cursor: pointer; }
+.fl-assignment-part:hover { border-color: #e0cf9f; background: #fffdf7; }
+/* Printing a Markdown/text file from the viewer: it's rendered in-page (not in a
+   printable iframe like HTML), so isolate just the viewer content when printing.
+   Triggered by printViewerContent() adding .fl-printing to <html>. */
+@media print {
+  html.fl-printing body * { visibility: hidden; }
+  html.fl-printing .fl-viewer-md,
+  html.fl-printing .fl-viewer-md *,
+  html.fl-printing .fl-viewer-pre,
+  html.fl-printing .fl-viewer-pre * { visibility: visible; }
+  html.fl-printing .fl-viewer-md,
+  html.fl-printing .fl-viewer-pre { position: absolute; left: 0; top: 0; width: 100%; padding: 0; margin: 0; overflow: visible; }
+}
 .fl-asset-body { display: flex; flex-direction: column; gap: 4px; min-width: 0; flex: 1; }
 .fl-asset-body strong { color: var(--navy); font-size: var(--text-secondary); font-weight: 650; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .fl-asset-body small { color: #697a95; font-size: var(--text-caption); }

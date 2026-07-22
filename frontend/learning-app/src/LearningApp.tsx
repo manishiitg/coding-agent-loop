@@ -93,6 +93,14 @@ function relTime(iso: string): string {
   return new Date(t).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
 }
 
+// Absolute date + time label for a package, e.g. "21 Jul 2026, 5:42 PM".
+function dateTimeLabel(iso?: string): string {
+  if (!iso) return ''
+  const t = Date.parse(iso)
+  if (Number.isNaN(t)) return ''
+  return new Date(t).toLocaleString(undefined, { day: 'numeric', month: 'short', year: 'numeric', hour: 'numeric', minute: '2-digit', hour12: true })
+}
+
 function newConversationId(): string {
   return `conv-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`
 }
@@ -186,6 +194,38 @@ function FileTree({ nodes, onOpen, depth = 0 }: { nodes: TreeNode[]; onOpen: (pa
   )
 }
 const IMAGE_PATH_RE = /\.(png|jpe?g|gif|webp|svg|bmp)$/i
+
+// isPrintable — the viewer shows a print button for documents worth printing:
+// HTML pages (tests, study material, reports) and Markdown (which some tests /
+// package items are). Images/PDFs use the browser's own controls; other files
+// aren't previewed.
+function isPrintable(path: string): boolean {
+  return /\.(html?|md|markdown)$/i.test(path)
+}
+
+// printFile prints a viewer file. HTML opens in a new tab that auto-prints
+// (?print=1 on the raw endpoint) — robust: it doesn't depend on the generated
+// HTML embedding a print handler (a skill can forget to) and isn't blocked by
+// the viewer iframe's sandbox. Markdown/text is rendered in-page as React, so it
+// falls back to printViewerContent (CSS-isolated window.print).
+function printFile(path: string) {
+  if (/\.(html?)$/i.test(path)) {
+    window.open(`${FAMILY_API}/api/workspace/raw?path=${encodeURIComponent(path)}&print=1`, '_blank', 'noopener,noreferrer')
+  } else {
+    printViewerContent()
+  }
+}
+
+// printViewerContent prints the open viewer's in-page rendered content (Markdown
+// / plain text) by flagging the document and letting an @media print rule
+// isolate .fl-viewer-md / .fl-viewer-pre before printing.
+function printViewerContent() {
+  const root = document.documentElement
+  root.classList.add('fl-printing')
+  const cleanup = () => { root.classList.remove('fl-printing'); window.removeEventListener('afterprint', cleanup) }
+  window.addEventListener('afterprint', cleanup)
+  window.print()
+}
 
 // FileGlyph renders a file-type icon coloured by extension, so the workspace
 // shows a PDF/Word/PowerPoint/Excel/image/archive at a glance rather than one
@@ -496,7 +536,6 @@ export default function LearningApp() {
   const threadEndRef = useRef<HTMLDivElement>(null)
   const childThreadEndRef = useRef<HTMLDivElement>(null)
   const iframeRef = useRef<HTMLIFrameElement>(null)
-  const childIframeRef = useRef<HTMLIFrameElement>(null)
   const drawerTab = useWorkspaceStore((s) => s.drawerTab)
   const setDrawerTab = useWorkspaceStore((s) => s.setDrawerTab)
   const filesView = useWorkspaceStore((s) => s.filesView)
@@ -505,6 +544,10 @@ export default function LearningApp() {
   const setChildFiles = useChildChatStore((s) => s.setChildFiles)
   const childPackages = useChildChatStore((s) => s.childPackages)
   const setChildPackages = useChildChatStore((s) => s.setChildPackages)
+  // The child's CURRENT assignment (child/current-task.json) — the one package
+  // the parent most recently handed off. The child workspace shows only this,
+  // not every package/material ever approved.
+  const [childTask, setChildTask] = useState<{ title?: string; package?: string; items?: string[] } | null>(null)
   const childViewerPath = useChildChatStore((s) => s.childViewerPath)
   const setChildViewerPath = useChildChatStore((s) => s.setChildViewerPath)
   // Bumped whenever open_file fires, even for the SAME path — Quill re-opens
@@ -799,13 +842,38 @@ export default function LearningApp() {
               title: String(pkg.title ?? 'Learning package'),
               items: Array.isArray(pkg.items) ? pkg.items : [],
               guideNote: typeof pkg.guide_note === 'string' ? pkg.guide_note : undefined,
+              createdAt: typeof pkg.created_at === 'string' ? pkg.created_at : undefined,
             }
           } catch { return null }
         })
         .catch(() => null)
-    )).then((results) => { if (!cancelled) setChildPackages(results.filter((r): r is { path: string; title: string; items: string[]; guideNote?: string } => r !== null)) })
+    )).then((results) => { if (!cancelled) setChildPackages(results.filter((r): r is { path: string; title: string; items: string[]; guideNote?: string; createdAt?: string } => r !== null)) })
     return () => { cancelled = true }
   }, [childFiles])
+
+  // The child's current assignment — read child/current-task.json so the child
+  // workspace can show ONLY the package the parent just handed off (its items,
+  // already mirrored into child/active), not every package/material.
+  useEffect(() => {
+    if (screen !== 'tutor') return
+    let cancelled = false
+    fetch(`${FAMILY_API}/api/workspace/file?path=${encodeURIComponent('child/current-task.json')}`)
+      .then((r) => r.json())
+      .then((d: { content?: string; is_text?: boolean }) => {
+        if (cancelled) return
+        if (!d?.is_text || !d.content) { setChildTask(null); return }
+        try {
+          const t = JSON.parse(d.content)
+          setChildTask({
+            title: typeof t.title === 'string' ? t.title : undefined,
+            package: typeof t.package === 'string' ? t.package : undefined,
+            items: Array.isArray(t.items) ? t.items.filter((x: unknown): x is string => typeof x === 'string') : [],
+          })
+        } catch { setChildTask(null) }
+      })
+      .catch(() => { if (!cancelled) setChildTask(null) })
+    return () => { cancelled = true }
+  }, [screen, childTreeRefreshKey])
 
   // Load the selected file for the child's own inline viewer.
   useEffect(() => {
@@ -1068,7 +1136,7 @@ export default function LearningApp() {
       body: JSON.stringify({ messages: history, conversation_id: conversationId }),
     })
       .then((res) => res.json())
-      .then((data: { reply?: string; error?: string; suggestions?: { label: string; message: string }[]; tool_events?: { tool: string; name?: string; grade?: string; board?: string; path?: string; parent_label?: string }[]; handoff?: { label: string; path: string } }) => {
+      .then((data: { reply?: string; error?: string; suggestions?: { label: string; message: string }[]; tool_events?: { tool: string; name?: string; grade?: string; board?: string; path?: string; parent_label?: string }[]; handoff?: { label: string; path: string; manifest?: string } }) => {
         const events = data.tool_events ?? []
         const toolMsgs: ParentMsg[] = events.filter((e) => e.tool === 'set_child_profile').map((e) => ({ role: 'tool', tool: e.tool, name: e.name, grade: e.grade, board: e.board }))
         const cp = events.find((e) => e.tool === 'set_child_profile')
@@ -1580,7 +1648,7 @@ export default function LearningApp() {
                   <button
                     type="button"
                     className="fl-suggestion fl-suggestion-handoff"
-                    onClick={() => { const h = pendingHandoff; setPendingHandoff(null); startHandoff(h.path) }}
+                    onClick={() => { const h = pendingHandoff; setPendingHandoff(null); if (h.manifest) { startPackageHandoff(h.manifest) } else { startHandoff(h.path) } }}
                   >
                     {pendingHandoff.label}
                   </button>
@@ -1716,13 +1784,13 @@ export default function LearningApp() {
                           <Info size={14} />
                         </button>
                       )}
-                      {(viewerPath.endsWith('.html') || viewerPath.endsWith('.htm')) && (
+                      {isPrintable(viewerPath) && (
                         <button
                           className="fl-icon-btn"
                           type="button"
                           aria-label="Print"
                           title="Print this page"
-                          onClick={() => iframeRef.current?.contentWindow?.postMessage({ __sq: 1, op: 'print' }, '*')}
+                          onClick={() => printFile(viewerPath)}
                         >
                           <Printer size={14} />
                         </button>
@@ -1812,7 +1880,10 @@ export default function LearningApp() {
                           <BookOpen size={16} />
                           <span>
                             {pkg.title}
-                            <small>{pkg.items.length > 0 ? `${pkg.items.length} part${pkg.items.length === 1 ? '' : 's'}` : 'Adaptive practice'}</small>
+                            <small>
+                              {pkg.items.length > 0 ? `${pkg.items.length} part${pkg.items.length === 1 ? '' : 's'}` : 'Adaptive practice'}
+                              {dateTimeLabel(pkg.created_at) ? ` · ${dateTimeLabel(pkg.created_at)}` : ''}
+                            </small>
                           </span>
                           <button
                             className="fl-give-to-child"
@@ -2084,6 +2155,29 @@ export default function LearningApp() {
                   <button className="fl-parent-return" type="button" onClick={() => { setGateValue(''); setGateError(''); setPinGate(true) }}><LockKeyhole size={16} /> Parent Mode</button>
                 </div>
               </header>
+              {childTask && (!!childTask.items?.length || !!childTask.package) && (
+                <div className="fl-child-assignment">
+                  <div className="fl-assignment-head">
+                    <BookOpen size={15} />
+                    <span className="fl-assignment-title">{childTask.title || 'Your assignment'}</span>
+                    {childTask.items && childTask.items.length > 0 && <small>{childTask.items.length} part{childTask.items.length === 1 ? '' : 's'}</small>}
+                  </div>
+                  {childTask.items && childTask.items.length > 0 && (
+                    <div className="fl-assignment-parts">
+                      {childTask.items.map((item, i) => {
+                        const { label } = parseAssetPath(item)
+                        return (
+                          <button key={item} type="button" className="fl-assignment-part" onClick={() => setChildViewerPath(item)}>
+                            <span className="fl-package-step">{i + 1}</span>
+                            <FileGlyph name={item} size={14} />
+                            <span>{label}</span>
+                          </button>
+                        )
+                      })}
+                    </div>
+                  )}
+                </div>
+              )}
               <div className="fl-child-thread" aria-label="Tutor conversation">
                 <div className="fl-tmsg is-tutor">
                   <span className="fl-tmsg-avatar"><Sun size={20} /></span>
@@ -2160,13 +2254,13 @@ export default function LearningApp() {
                     >
                       <RefreshCw size={14} />
                     </button>
-                    {(childViewerPath.endsWith('.html') || childViewerPath.endsWith('.htm')) && (
+                    {isPrintable(childViewerPath) && (
                       <button
                         className="fl-icon-btn"
                         type="button"
                         aria-label="Print"
                         title="Print this page"
-                        onClick={() => childIframeRef.current?.contentWindow?.postMessage({ __sq: 1, op: 'print' }, '*')}
+                        onClick={() => printFile(childViewerPath)}
                       >
                         <Printer size={14} />
                       </button>
@@ -2191,56 +2285,44 @@ export default function LearningApp() {
               ) : (
                 <>
                   {(() => {
-                    // A package's manifest and its listed items are shown as ONE
-                    // package card, not as the raw manifest file plus every item
-                    // repeated again as its own separate entry.
-                    const packagedPaths = new Set(childPackages.flatMap((pkg) => pkg.items))
-                    const manifestPaths = new Set(childPackages.map((pkg) => pkg.path))
-                    const materials = childFiles.filter((p) => p.startsWith('shared/') && !manifestPaths.has(p) && !packagedPaths.has(p))
+                    // Show ONLY the current assignment (child/current-task.json) — the
+                    // one package the parent most recently handed off — plus the
+                    // child's own saved work. Not every package/material ever approved.
+                    const curPkg = childTask?.package ? childPackages.find((pkg) => pkg.path === childTask.package) : undefined
+                    const currentItems = childTask?.items ?? []
                     const attempts = childFiles.filter((p) => p.startsWith('child/attempts/'))
-                    if (childPackages.length === 0 && materials.length === 0 && attempts.length === 0) {
+                    const hasCurrent = currentItems.length > 0 || !!childTask?.package
+                    if (!hasCurrent && attempts.length === 0) {
                       return <p className="fl-child-note"><Sparkles size={15} /> Ask Quill what to work on next!</p>
                     }
                     return (
                       <>
-                        {childPackages.length > 0 && (
+                        {currentItems.length > 0 ? (
                           <section className="fl-asset-group">
                             <p className="fl-drawer-label">From your parent</p>
-                            {childPackages.map((pkg) => (
-                              <button
-                                key={pkg.path}
-                                type="button"
-                                className="fl-file-item is-package"
-                                onClick={() => {
-                                  if (pkg.items.length > 0) {
-                                    // A real file to show — open it directly, never the raw manifest.
-                                    setChildViewerPath(pkg.items[0])
-                                  } else {
-                                    // Instruction-only package: there's no file at all, just a live
-                                    // activity — kick it off in chat instead of trying to "open" anything.
-                                    setChildViewerPath(null)
-                                    sendChildText(`Let's start ${pkg.title}!`)
-                                  }
-                                }}
-                              >
-                                <BookOpen size={16} /><span>{pkg.title}<small>{pkg.items.length > 0 ? `${pkg.items.length} part${pkg.items.length === 1 ? '' : 's'}` : 'Adaptive practice'}</small></span>
-                              </button>
-                            ))}
+                            <div className="fl-child-package">
+                              <div className="fl-package-title"><BookOpen size={16} /><span>{childTask?.title || 'Your assignment'}<small>{currentItems.length} part{currentItems.length === 1 ? '' : 's'}{dateTimeLabel(curPkg?.createdAt) ? ` · ${dateTimeLabel(curPkg?.createdAt)}` : ''}</small></span></div>
+                              {currentItems.map((item, i) => {
+                                const { label } = parseAssetPath(item)
+                                return (
+                                  <button key={item} type="button" className="fl-file-item fl-package-item" onClick={() => setChildViewerPath(item)}>
+                                    <span className="fl-package-step">{i + 1}</span>
+                                    <FileGlyph name={item} size={15} />
+                                    <span>{label}</span>
+                                  </button>
+                                )
+                              })}
+                            </div>
                           </section>
-                        )}
-                        {materials.length > 0 && (
+                        ) : childTask?.package ? (
+                          // Instruction-only package (no files): kick off the live activity in chat.
                           <section className="fl-asset-group">
-                            <p className="fl-drawer-label">Your materials</p>
-                            {materials.map((p) => {
-                              const { label, date } = parseAssetPath(p)
-                              return (
-                                <button key={p} type="button" className="fl-file-item" onClick={() => setChildViewerPath(p)}>
-                                  <FileText size={16} /><span>{label}{date ? ` · ${date}` : ''}</span>
-                                </button>
-                              )
-                            })}
+                            <p className="fl-drawer-label">From your parent</p>
+                            <button type="button" className="fl-file-item is-package" onClick={() => { setChildViewerPath(null); sendChildText(`Let's start ${childTask?.title || 'my activity'}!`) }}>
+                              <BookOpen size={16} /><span>{childTask?.title || 'Your activity'}<small>Adaptive practice{dateTimeLabel(curPkg?.createdAt) ? ` · ${dateTimeLabel(curPkg?.createdAt)}` : ''}</small></span>
+                            </button>
                           </section>
-                        )}
+                        ) : null}
                         {attempts.length > 0 && (
                           <section className="fl-asset-group">
                             <p className="fl-drawer-label">Your work</p>

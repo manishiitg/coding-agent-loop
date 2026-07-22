@@ -19,6 +19,20 @@ import (
 type currentTask struct {
 	Path    string `json:"path"`
 	Package string `json:"package,omitempty"`
+	// Title and GuideNote carry the learning package's own info INTO the child's
+	// readable space (child/current-task.json), so the tutor reliably has the
+	// custom instructions without needing to read shared/packages/ (which the
+	// child sandbox restricts). GuideNote is the parent's pacing/what-to-do-if-
+	// stuck note for this bundle; empty for a plain single-file handoff.
+	Title     string `json:"title,omitempty"`
+	GuideNote string `json:"guide_note,omitempty"`
+	// Items is the FULL ordered list of the package's files, as child/active
+	// paths (every item is mirrored there on handoff). This is what gives the
+	// tutor context of the whole bundle — not just the first file — and keeps
+	// every part reachable by the child's strict sandbox (child/active is always
+	// allowed, unlike the original shared/ paths whose directories the child
+	// can't list). Empty for a single-file / instruction-only handoff.
+	Items []string `json:"items,omitempty"`
 }
 
 func currentTaskPath() (string, bool) { return resolveWorkspacePath("child/current-task.json") }
@@ -68,7 +82,8 @@ func handleHandoff(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var p, pkgManifest, pkgTitle string
+	var p, pkgManifest, pkgTitle, pkgGuide string
+	var childItems []string
 	if manifest := strings.TrimSpace(req.Manifest); manifest != "" {
 		pkg, ok := findPackageByManifest(manifest)
 		if !ok {
@@ -79,10 +94,15 @@ func handleHandoff(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 			return
 		}
+		// Approve AND mirror every item into child/active, so the whole bundle is
+		// reachable by the child's sandbox (not just the first file) and the tutor
+		// has the full list. mirrorToChildActive is idempotent and never clobbers
+		// progress already recorded on a re-handoff.
 		for _, item := range pkg.Items {
-			_ = approveForChild(item) // packages are approved in full at creation; this just keeps it idempotent
+			_ = approveForChild(item)
+			childItems = append(childItems, mirrorToChildActive(item))
 		}
-		pkgManifest, pkgTitle = pkg.Manifest, pkg.Title
+		pkgManifest, pkgTitle, pkgGuide = pkg.Manifest, pkg.Title, pkg.GuideNote
 		if len(pkg.Items) > 0 {
 			p = pkg.Items[0] // so open_file still shows the child something real, not a raw manifest
 		} else {
@@ -95,6 +115,13 @@ func handleHandoff(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		pkgManifest, pkgTitle = resolvePackageForPath(p)
+		// A single file that belongs to a package still carries that package's
+		// guide_note, so the tutor follows the same pacing/instructions.
+		if pkgManifest != "" {
+			if pkg, ok := findPackageByManifest(pkgManifest); ok {
+				pkgGuide = pkg.GuideNote
+			}
+		}
 	}
 
 	prev := loadCurrentTask()
@@ -107,7 +134,7 @@ func handleHandoff(w http.ResponseWriter, r *http.Request) {
 	// (via their own shell, already scoped to child/) without ever needing
 	// write access into shared/.
 	p = mirrorToChildActive(p)
-	saveCurrentTask(currentTask{Path: p, Package: pkgManifest})
+	saveCurrentTask(currentTask{Path: p, Package: pkgManifest, Title: pkgTitle, GuideNote: pkgGuide, Items: childItems})
 
 	writeJSON(w, http.StatusOK, map[string]any{
 		"ok":          true,

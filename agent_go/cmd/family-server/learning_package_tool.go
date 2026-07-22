@@ -58,8 +58,11 @@ func createLearningPackageTool(recordEvent func(toolEvent)) agentsession.Tool {
 			"medium difficulty, go harder after two correct in a row, easier after a miss. Keep going until she wants to stop.\" or " +
 			"\"Run adaptive GMAT-style quant practice: one question at a time, adjust difficulty from her answers, never repeat a " +
 			"question.\"). Use items when there's real pre-made material to hand off; use guide_note alone when the child should get " +
-			"freshly-generated, adapting questions each session instead of fixed material. This both creates the package AND hands it " +
-			"to the child in one step — you don't need to call approve_for_child separately for its items.",
+			"freshly-generated, adapting questions each session instead of fixed material. This creates the package, approves all its " +
+			"items, and adds the real 'Give to <child>' handoff button to your reply — you do NOT need to call approve_for_child " +
+			"separately. CRITICAL, exactly like approve_for_child: this does NOT put anything on the child's screen or start a session " +
+			"— only the parent physically tapping that button hands it over. So NEVER tell the parent the package is \"on its way\", " +
+			"\"sent\", or \"on the child's screen\"; say it's ready and to tap 'Give to <child>' below when they want to hand it over.",
 		Category: "family_tools",
 		Params: map[string]interface{}{
 			"type": "object",

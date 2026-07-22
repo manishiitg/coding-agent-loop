@@ -15,8 +15,8 @@ interface ChildChatState {
   setChildLiveStatus: (v: SetStateAction<string>) => void
   childFiles: string[]
   setChildFiles: (v: SetStateAction<string[]>) => void
-  childPackages: { path: string; title: string; items: string[]; guideNote?: string }[]
-  setChildPackages: (v: SetStateAction<{ path: string; title: string; items: string[]; guideNote?: string }[]>) => void
+  childPackages: { path: string; title: string; items: string[]; guideNote?: string; createdAt?: string }[]
+  setChildPackages: (v: SetStateAction<{ path: string; title: string; items: string[]; guideNote?: string; createdAt?: string }[]>) => void
   childViewerPath: string | null
   setChildViewerPath: (v: SetStateAction<string | null>) => void
   childViewerContent: { isText: boolean; content: string } | null

@@ -24,8 +24,8 @@ interface ParentChatState {
   // A REAL handoff Quill proposed via suggest_handoff — distinct from an
   // ordinary suggestion pill: clicking it performs the actual handoff
   // (approve + switch to Child Mode + greet), not a chat message.
-  pendingHandoff: { label: string; path: string } | null
-  setPendingHandoff: (v: SetStateAction<{ label: string; path: string } | null>) => void
+  pendingHandoff: { label: string; path: string; manifest?: string } | null
+  setPendingHandoff: (v: SetStateAction<{ label: string; path: string; manifest?: string } | null>) => void
 }
 
 export const useParentChatStore = create<ParentChatState>()((set) => ({

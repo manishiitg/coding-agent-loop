@@ -4,13 +4,68 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"html"
 	"os/exec"
+	"regexp"
 	"runtime"
 	"strings"
 	"time"
 
 	"github.com/manishiitg/coding-agent-loop/agent_go/internal/agentsession"
 )
+
+var emailBoldRE = regexp.MustCompile(`\*\*(.+?)\*\*`)
+
+// emailHTMLFromText renders a plain/markdown notification message into a compact,
+// EMAIL-SAFE inline-styled HTML body (Gmail strips <style>/<head>/class CSS, so
+// every element carries its own style — the same constraint AgentWorks documents
+// for notify_user's email_html). Supports the little markdown Quill actually
+// writes: a title, paragraphs, "- " bullets, and **bold**. Not a full markdown
+// engine — just enough to make the Pulse/notify email read nicely instead of as
+// a raw text blob.
+func emailHTMLFromText(title, body string) string {
+	inline := func(s string) string {
+		s = html.EscapeString(s)
+		return emailBoldRE.ReplaceAllString(s, `<strong>$1</strong>`)
+	}
+	var b strings.Builder
+	b.WriteString(`<div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;font-size:15px;line-height:1.6;color:#2b3a55;max-width:560px;margin:0 auto">`)
+	if strings.TrimSpace(title) != "" {
+		b.WriteString(`<h2 style="font-size:18px;color:#1f2d45;margin:0 0 12px">` + html.EscapeString(title) + `</h2>`)
+	}
+	inList := false
+	closeList := func() {
+		if inList {
+			b.WriteString(`</ul>`)
+			inList = false
+		}
+	}
+	for _, ln := range strings.Split(body, "\n") {
+		t := strings.TrimSpace(ln)
+		if t == "" {
+			closeList()
+			continue
+		}
+		switch {
+		case strings.HasPrefix(t, "- ") || strings.HasPrefix(t, "* "):
+			if !inList {
+				b.WriteString(`<ul style="margin:8px 0;padding-left:20px">`)
+				inList = true
+			}
+			b.WriteString(`<li style="margin:4px 0">` + inline(strings.TrimSpace(t[2:])) + `</li>`)
+		case strings.HasPrefix(t, "## "):
+			closeList()
+			b.WriteString(`<h3 style="font-size:16px;color:#1f2d45;margin:14px 0 6px">` + inline(strings.TrimSpace(t[3:])) + `</h3>`)
+		default:
+			closeList()
+			b.WriteString(`<p style="margin:8px 0">` + inline(t) + `</p>`)
+		}
+	}
+	closeList()
+	b.WriteString(`<p style="margin:18px 0 0;font-size:12px;color:#8a94a6">— SparkQuill</p>`)
+	b.WriteString(`</div>`)
+	return b.String()
+}
 
 // notifyResult is the honest, multi-channel delivery outcome — modeled on
 // AgentWorks' notify_user contract so the caller (a chat turn or Pulse) can
@@ -30,7 +85,20 @@ type notifyResult struct {
 // routing. A channel that isn't set up is skipped (not a failure); a channel
 // that's set up but errors is recorded as failed.
 func deliverNotification(ctx context.Context, title, msg string) notifyResult {
+	return deliverNotificationHTML(ctx, title, msg, "")
+}
+
+// deliverNotificationHTML is deliverNotification with an explicit HTML email
+// body (inline-styled, as Gmail strips <style>/<head>/class CSS — the same
+// contract AgentWorks' notify_user email_html uses). When htmlBody is empty the
+// plain message is auto-wrapped into a simple inline-styled HTML email, so every
+// notification email renders richly (not a bare plain-text blob) — this is what
+// makes the Pulse digest email HTML. Desktop and WhatsApp always get plain text.
+func deliverNotificationHTML(ctx context.Context, title, msg, htmlBody string) notifyResult {
 	res := notifyResult{Failed: map[string]string{}}
+	if strings.TrimSpace(htmlBody) == "" {
+		htmlBody = emailHTMLFromText(title, msg)
+	}
 
 	if err := sendDesktopNotification(ctx, title, msg); err != nil {
 		res.Failed["desktop"] = err.Error()
@@ -51,7 +119,7 @@ func deliverNotification(ctx context.Context, title, msg string) notifyResult {
 	stateMu.Lock()
 	extraTo := loadState().Pulse.NotifyEmails
 	stateMu.Unlock()
-	if sent, err := gmailNotify(title, msg, extraTo); err != nil {
+	if sent, err := gmailNotify(title, msg, htmlBody, extraTo); err != nil {
 		res.Failed["gmail"] = err.Error()
 	} else if sent {
 		res.Delivered = append(res.Delivered, "gmail")
@@ -82,28 +150,33 @@ func notifyTool() agentsession.Tool {
 		Name: "notify_user",
 		Description: "Send a short notification to the parent. It goes to every channel they've set up — a desktop " +
 			"notification, WhatsApp (if linked), and email (if Gmail is connected) — you do not choose which. Provide a title " +
-			"and a message. It returns a delivery status; report it honestly and do NOT claim it was sent if the status is " +
-			"\"failed\" or \"no_channels\".",
+			"and a message. The email is always sent as formatted HTML; the plain message is used as-is for desktop/WhatsApp and " +
+			"as the email's fallback. For a richer email you MAY pass email_html — but it MUST be EMAIL-SAFE: INLINE styles only " +
+			"(a style attribute on each element), because Gmail strips <style>/<head> blocks and class CSS. Omit email_html to let " +
+			"the message be auto-formatted. Returns a delivery status; report it honestly and do NOT claim it was sent if the " +
+			"status is \"failed\" or \"no_channels\".",
 		Category: "family_tools",
 		Params: map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
-				"title":   map[string]interface{}{"type": "string", "description": "short notification title"},
-				"message": map[string]interface{}{"type": "string", "description": "the notification body (1–2 sentences)"},
+				"title":      map[string]interface{}{"type": "string", "description": "short notification title"},
+				"message":    map[string]interface{}{"type": "string", "description": "the notification body (1–2 sentences), plain text — used for desktop/WhatsApp and as the email fallback"},
+				"email_html": map[string]interface{}{"type": "string", "description": "OPTIONAL rich HTML email body, inline-styled only (Gmail strips <style>/<head>/class CSS). Omit to auto-format the message."},
 			},
 			"required": []string{"title", "message"},
 		},
 		Handler: func(ctx context.Context, args map[string]interface{}) (string, error) {
 			title, _ := args["title"].(string)
 			msg, _ := args["message"].(string)
-			title, msg = strings.TrimSpace(title), strings.TrimSpace(msg)
+			htmlBody, _ := args["email_html"].(string)
+			title, msg, htmlBody = strings.TrimSpace(title), strings.TrimSpace(msg), strings.TrimSpace(htmlBody)
 			if msg == "" {
 				return "", fmt.Errorf("message is required")
 			}
 			if title == "" {
 				title = "SparkQuill"
 			}
-			b, _ := json.Marshal(deliverNotification(ctx, title, msg))
+			b, _ := json.Marshal(deliverNotificationHTML(ctx, title, msg, htmlBody))
 			return string(b), nil
 		},
 	}

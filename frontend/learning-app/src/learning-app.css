@@ -313,15 +313,10 @@ html, body, #root { margin: 0; height: 100%; }
 .fl-package-title small { display: block; font-weight: 500; color: #7a869a; font-size: var(--text-caption); }
 .fl-package-item { margin-left: 14px; }
 .fl-package-step { flex: 0 0 auto; display: grid; place-items: center; width: 18px; height: 18px; border-radius: 999px; background: #eef2f9; color: #55617a; font-size: 11px; font-weight: 700; }
-/* Child chat assignment banner — the current package shown at the top of the
-   tutor chat, so the child always sees what they're working on and its parts. */
-.fl-child-assignment { margin: 0 0 4px; padding: 10px 14px; background: #fff7e6; border: 1px solid #f2e2bd; border-radius: 14px; display: flex; flex-direction: column; gap: 8px; }
-.fl-assignment-head { display: flex; align-items: center; gap: 7px; color: #8a6d1f; font-weight: 750; }
-.fl-assignment-title { font-size: var(--text-secondary); }
-.fl-assignment-head small { margin-left: auto; font-weight: 600; color: #a98a3d; font-size: var(--text-caption); }
-.fl-assignment-parts { display: flex; flex-wrap: wrap; gap: 6px; }
-.fl-assignment-part { display: inline-flex; align-items: center; gap: 6px; padding: 5px 10px 5px 6px; border: 1px solid #eadfc2; border-radius: 999px; background: #fff; color: var(--navy); font-size: var(--text-caption); font-weight: 600; cursor: pointer; }
-.fl-assignment-part:hover { border-color: #e0cf9f; background: #fffdf7; }
+/* Current assignment shown in the child's top bar — just the package name, so
+   the child always sees what they're working on without extra clutter. */
+.fl-child-assignment-pill { display: inline-flex; align-items: center; gap: 6px; max-width: 42vw; padding: 5px 12px; background: #fff7e6; border: 1px solid #f2e2bd; border-radius: 999px; color: #8a6d1f; font-weight: 700; font-size: var(--text-caption); }
+.fl-child-assignment-pill span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 /* Printing a Markdown/text file from the viewer: it's rendered in-page (not in a
    printable iframe like HTML), so isolate just the viewer content when printing.
    Triggered by printViewerContent() adding .fl-printing to <html>. */

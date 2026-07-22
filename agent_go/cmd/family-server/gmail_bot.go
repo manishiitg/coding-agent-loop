@@ -52,20 +52,41 @@ func handleGmailStatus(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]interface{}{"connected": true, "email": p.EmailAddress})
 }
 
-// buildRawEmail builds a minimal RFC 2822 message and base64url-encodes it,
-// the shape the Gmail API's messages.send expects in its "raw" field.
-func buildRawEmail(to, subject, body string) string {
-	msg := "To: " + to + "\r\n" +
-		"Subject: " + subject + "\r\n" +
-		"Content-Type: text/plain; charset=\"UTF-8\"\r\n" +
-		"\r\n" + body
-	return base64.URLEncoding.WithPadding(base64.NoPadding).EncodeToString([]byte(msg))
+// buildRawEmail builds an RFC 2822 message and base64url-encodes it, the shape
+// the Gmail API's messages.send expects in its "raw" field. When htmlBody is
+// set, it emits a multipart/alternative with BOTH a text/plain fallback (body)
+// and a text/html part (htmlBody) — the same shape AgentWorks' notify email
+// uses. Gmail strips <style>/<head>/class CSS, so htmlBody must be inline-styled.
+func buildRawEmail(to, subject, body, htmlBody string) string {
+	if strings.TrimSpace(htmlBody) == "" {
+		msg := "To: " + to + "\r\n" +
+			"Subject: " + subject + "\r\n" +
+			"MIME-Version: 1.0\r\n" +
+			"Content-Type: text/plain; charset=\"UTF-8\"\r\n" +
+			"\r\n" + body
+		return base64.URLEncoding.WithPadding(base64.NoPadding).EncodeToString([]byte(msg))
+	}
+	const boundary = "==SparkQuillAlt=="
+	var b strings.Builder
+	b.WriteString("To: " + to + "\r\n")
+	b.WriteString("Subject: " + subject + "\r\n")
+	b.WriteString("MIME-Version: 1.0\r\n")
+	b.WriteString("Content-Type: multipart/alternative; boundary=\"" + boundary + "\"\r\n\r\n")
+	b.WriteString("--" + boundary + "\r\n")
+	b.WriteString("Content-Type: text/plain; charset=\"UTF-8\"\r\n\r\n")
+	b.WriteString(body + "\r\n\r\n")
+	b.WriteString("--" + boundary + "\r\n")
+	b.WriteString("Content-Type: text/html; charset=\"UTF-8\"\r\n\r\n")
+	b.WriteString(htmlBody + "\r\n\r\n")
+	b.WriteString("--" + boundary + "--\r\n")
+	return base64.URLEncoding.WithPadding(base64.NoPadding).EncodeToString([]byte(b.String()))
 }
 
-// sendGmailMessage sends one plain-text email via the gws CLI. Used both by
-// the test-send button and the multi-channel notification path.
-func sendGmailMessage(to, subject, body string) error {
-	raw := buildRawEmail(to, subject, body)
+// sendGmailMessage sends one email via the gws CLI — plain text, or a
+// plain+HTML multipart when htmlBody is non-empty. Used by the test-send button
+// and the multi-channel notification path.
+func sendGmailMessage(to, subject, body, htmlBody string) error {
+	raw := buildRawEmail(to, subject, body, htmlBody)
 	payload, _ := json.Marshal(map[string]string{"raw": raw})
 	cmd := exec.Command("gws", "gmail", "users", "messages", "send", "--params", `{"userId":"me"}`, "--json", string(payload))
 	if out, err := cmd.CombinedOutput(); err != nil {
@@ -79,7 +100,7 @@ func sendGmailMessage(to, subject, body string) error {
 // NotifyEmails, e.g. a second parent). Returns (false, nil) if Gmail isn't
 // connected — so a notification fan-out treats "no Gmail" as a skip, not a
 // failure. Recipients are de-duplicated case-insensitively.
-func gmailNotify(subject, body string, extraTo []string) (sent bool, err error) {
+func gmailNotify(subject, body, htmlBody string, extraTo []string) (sent bool, err error) {
 	p, perr := gmailProfileNow()
 	if perr != nil {
 		return false, nil // not connected — skip, not an error
@@ -95,7 +116,7 @@ func gmailNotify(subject, body string, extraTo []string) (sent bool, err error) 
 		seen[key] = true
 		recipients = append(recipients, e)
 	}
-	if serr := sendGmailMessage(strings.Join(recipients, ", "), subject, body); serr != nil {
+	if serr := sendGmailMessage(strings.Join(recipients, ", "), subject, body, htmlBody); serr != nil {
 		return false, serr
 	}
 	return true, nil
@@ -115,7 +136,7 @@ func handleGmailTest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := sendGmailMessage(p.EmailAddress, "SparkQuill test email",
-		"This is a test email from SparkQuill, sent "+time.Now().Format("2006-01-02 15:04:05")+".\n\nIf you got this, the Gmail connector is working."); err != nil {
+		"This is a test email from SparkQuill, sent "+time.Now().Format("2006-01-02 15:04:05")+".\n\nIf you got this, the Gmail connector is working.", ""); err != nil {
 		writeJSON(w, http.StatusOK, map[string]string{"error": err.Error()})
 		return
 	}

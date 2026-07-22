@@ -1795,16 +1795,6 @@ export default function LearningApp() {
                           <Printer size={14} />
                         </button>
                       )}
-                      {/^shared\/(tests|study|reports)\//.test(viewerPath) && (
-                        <button
-                          className="fl-give-to-child"
-                          type="button"
-                          disabled={sending}
-                          onClick={() => startHandoff(viewerPath)}
-                        >
-                          Give to {childName || 'child'}
-                        </button>
-                      )}
                     </div>
                     {metaOpen && viewerMeta && <FileMetaPanel meta={viewerMeta} />}
                     {/\.(png|jpe?g|gif|webp|svg|bmp)$/i.test(viewerPath) ? (
@@ -2151,33 +2141,13 @@ export default function LearningApp() {
                   <img className="fl-header-logo" src="/sparkquill-mark.svg" alt="" width={30} height={30} />
                   <div className="fl-child-hi"><strong>Hi {childName || 'Maya'}!</strong><small>Let’s keep learning together</small></div>
                 </div>
+                {childTask?.title && (!!childTask.items?.length || !!childTask.package) && (
+                  <div className="fl-child-assignment-pill"><BookOpen size={14} /><span>{childTask.title}</span></div>
+                )}
                 <div className="fl-child-top-right">
                   <button className="fl-parent-return" type="button" onClick={() => { setGateValue(''); setGateError(''); setPinGate(true) }}><LockKeyhole size={16} /> Parent Mode</button>
                 </div>
               </header>
-              {childTask && (!!childTask.items?.length || !!childTask.package) && (
-                <div className="fl-child-assignment">
-                  <div className="fl-assignment-head">
-                    <BookOpen size={15} />
-                    <span className="fl-assignment-title">{childTask.title || 'Your assignment'}</span>
-                    {childTask.items && childTask.items.length > 0 && <small>{childTask.items.length} part{childTask.items.length === 1 ? '' : 's'}</small>}
-                  </div>
-                  {childTask.items && childTask.items.length > 0 && (
-                    <div className="fl-assignment-parts">
-                      {childTask.items.map((item, i) => {
-                        const { label } = parseAssetPath(item)
-                        return (
-                          <button key={item} type="button" className="fl-assignment-part" onClick={() => setChildViewerPath(item)}>
-                            <span className="fl-package-step">{i + 1}</span>
-                            <FileGlyph name={item} size={14} />
-                            <span>{label}</span>
-                          </button>
-                        )
-                      })}
-                    </div>
-                  )}
-                </div>
-              )}
               <div className="fl-child-thread" aria-label="Tutor conversation">
                 <div className="fl-tmsg is-tutor">
                   <span className="fl-tmsg-avatar"><Sun size={20} /></span>

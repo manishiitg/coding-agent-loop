@@ -113,10 +113,10 @@ func parentSystemPrompt(child *Child, parentLabel string, pulse PulseConfig) str
 		"- parent/preferences.md — if it exists, read it early in the conversation: durable things the parent has told you before (exam dates, teaching/scheduling preferences, anything they've said that should carry forward) — apply them naturally without asking again. This file is kept current automatically; you never write to it yourself.\n" +
 		"Before you create study material, a test, a progress report, or the academic map, you MUST read the matching skill file in skills/ (e.g. `cat skills/create-test/SKILL.md`) and follow it exactly. Always output designed, self-contained, STATIC (view-only) HTML (per skills/_shared/html-design.md) — never plain text/markdown, and never a typed-answer/auto-save script — because " + name + " uses it on screen. This is NOT negotiable based on size: if the parent asks for a \"quick\", \"short\", or \"small\" test, that changes only the number of questions, never the format — a 3-question quick check is still full designed HTML, exactly like a 10-question one.\n" +
 		"When you make material or a test, actually write the file, then call the open_file tool with its path so it opens on the right side for the parent, and tell them in plain words what you made. Confirming what you opened does NOT require stating its path or filename in your reply — say \"I've opened the fractions test for you\", never the literal shared/tests/... path, even to \"be precise\". Keep file paths and technical details out of your reply unless the parent asks.\n" +
-		"IMPORTANT — creating something for " + name + " does NOT put it in front of " + name + ", and this is true NO MATTER what you know about file permissions or the sandbox: " + name + "'s own screen only shows files that have gone through approve_for_child — being technically readable under shared/ is NOT the same as appearing there, and you must not reason your way out of calling the tool because you know the file is already readable. Whenever the parent says anything like \"give/share/send/hand X to " + name + "\" (or clearly confirms your offer to do so), that sentence itself is your instruction to call approve_for_child with its path. Never call it unprompted just because you made the file.\n" +
-		"CRITICAL, read this exactly — this is the single most common mistake: approve_for_child ALREADY adds the real handoff button automatically (you don't need a second tool call for that) — but it does NOT hand your device to " + name + ", switch any screen, or start a session; only the parent physically clicking that button does. So no matter how completely you just finished calling approve_for_child, your reply must NEVER claim or imply the file already reached a live screen.\n" +
-		"  BAD (a real past failure — never repeat this exact pattern): parent says \"hand the quick check to Myra\" → you call approve_for_child → you reply \"Done — Myra now has the quick check test on her screen.\" This is false — nothing is on any screen yet.\n" +
-		"  GOOD: parent says \"hand the quick check to Myra\" → you call approve_for_child → you reply \"The quick check is ready and approved — tap 'Give to " + name + "' below whenever you're ready to hand it over.\" (suggest_handoff is only for the rarer case of re-offering a handoff for a file you did NOT just call approve_for_child on this turn.)\n" +
+		"IMPORTANT — HANDOFFS ARE PACKAGE-ONLY. " + name + " is always given a package (a bundle), never a lone file. Whenever the parent says anything like \"give/share/send/hand X to " + name + "\" (or confirms your offer to), call create_learning_package — even for a SINGLE thing (one test, one study sheet): make it a one-item package with a short title and the file as its only item. Do NOT try to hand off an individual file on its own; approve_for_child does NOT put a 'Give' button in the chat anymore (it only marks a file readable). create_learning_package is the ONLY thing that produces the real 'Give to " + name + "' handoff button.\n" +
+		"CRITICAL, the single most common mistake: create_learning_package adds the real handoff button automatically, but it does NOT hand your device to " + name + ", switch any screen, or start a session — only the parent physically tapping that button does. So no matter how completely you just built the package, your reply must NEVER claim or imply it already reached a live screen.\n" +
+		"  BAD (never do this): parent says \"hand the quick check to Myra\" → you make the package → you reply \"Done — Myra now has the quick check on her screen.\" This is false — nothing is on any screen yet.\n" +
+		"  GOOD: parent says \"hand the quick check to Myra\" → you call create_learning_package (title \"Quick Check\", that one test as the item) → you reply \"The quick check is ready — tap 'Give to " + name + "' below whenever you want to hand it over.\"\n" +
 		"At the END of every turn, call the suggest_actions tool with 2–4 buttons (short label + the message to send if clicked) for things the parent probably ISN'T already thinking about — the point is surfacing value they wouldn't get otherwise, not restating the obvious next step they were about to ask for anyway. Draw from categories like these (adapt the wording to what's actually true right now, never force one that doesn't fit):\n" +
 		"  - Stalled handoff: something was approved/handed off a while ago but there's no real evidence " + name + " engaged with it (check child/conversations/, child/attempts/) — flag it, e.g. \"Myra hasn't touched the Tenses quick check you sent Tuesday — want me to check in with her, or make a shorter version?\"\n" +
 		"  - Global best practice: a technique or approach for this topic/board you can bring in with web_search — something the parent likely doesn't already know.\n" +
@@ -606,24 +606,12 @@ func handleParentMessage(w http.ResponseWriter, r *http.Request) {
 			evMu.Lock()
 			events = append(events, toolEvent{Tool: "approve_for_child", Path: p})
 			evMu.Unlock()
-			// Auto-add the real handoff button here, rather than depending on the
-			// model reliably making a SECOND tool call (suggest_handoff) right
-			// after this one — that chaining was observed to fail repeatedly in
-			// practice (the model would call approve_for_child, then either skip
-			// the follow-up entirely or call suggest_actions instead, and still
-			// claim in text that the handoff already happened). Approving a file
-			// for the child IS the moment a handoff becomes possible, so this
-			// tool call alone is enough information to add the button — no
-			// second tool call required. suggest_handoff still exists for the
-			// rarer case of re-offering a handoff for an already-approved file.
-			childLabel := "child"
-			if s.Child != nil && strings.TrimSpace(s.Child.Name) != "" {
-				childLabel = s.Child.Name
-			}
-			handoffMu.Lock()
-			handoffSug = &handoffSuggestion{Label: "Give to " + childLabel, Path: p}
-			handoffMu.Unlock()
-			return fmt.Sprintf(`{"status":"ok","given_to_child":%q}`, p), nil
+			// NOTE: approve_for_child no longer surfaces a "Give to <child>" button.
+			// Handoffs are package-only now — the child receives a bundle, never a
+			// lone file — so the button comes exclusively from create_learning_package
+			// (see the post-turn handoff derivation and the prompt). This tool just
+			// marks a file readable for the child (e.g. an item being bundled).
+			return fmt.Sprintf(`{"status":"ok","approved":%q}`, p), nil
 		},
 	}
 
@@ -634,10 +622,11 @@ func handleParentMessage(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 
 	sess, err := agentsession.New(ctx, agentsession.Config{
-		Provider:     provider,
-		ModelID:      mediumTierModelID(provider),
-		WorkingDir:   workDir,
-		SystemPrompt: parentSystemPrompt(s.Child, s.ParentLabel, s.Pulse),
+		Provider:        provider,
+		ModelID:         mediumTierModelID(provider),
+		ReasoningEffort: "medium",
+		WorkingDir:      workDir,
+		SystemPrompt:    parentSystemPrompt(s.Child, s.ParentLabel, s.Pulse),
 		// Stable SessionID = the conversation id, so the SAME warm tmux session
 		// is reused across turns within this process. SessionHandle restores the
 		// coding agent's own `--resume` state across process restarts (loaded from

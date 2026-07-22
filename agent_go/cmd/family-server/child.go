@@ -208,10 +208,13 @@ func handleChildMessage(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 
 	sess, err := agentsession.New(ctx, agentsession.Config{
-		Provider:     provider,
-		ModelID:      mediumTierModelID(provider),
-		WorkingDir:   workDir,
-		SystemPrompt: childSystemPrompt(s.Child, s.ParentLabel),
+		Provider: provider,
+		// CHILD Mode uses the fast tier (Claude Code -> haiku): short, one-at-a-time
+		// tutoring turns where snappy responses matter more than deep reasoning.
+		ModelID:         lowTierModelID(provider),
+		ReasoningEffort: "medium",
+		WorkingDir:      workDir,
+		SystemPrompt:    childSystemPrompt(s.Child, s.ParentLabel),
 		// Stable SessionID reuses the warm tmux within this process; SessionHandle
 		// restores the coding agent's `--resume` state across restarts (loaded from
 		// disk) so context survives a restart without replaying the transcript.

@@ -63,13 +63,18 @@ type Handle = mcpagent.AgentSessionHandle
 // Config parameterizes a Session. Only Provider, WorkingDir and Tools are
 // really required for a useful session.
 type Config struct {
-	Provider     llm.Provider // e.g. llm.ProviderClaudeCode
-	ModelID      string       // "" -> llm.GetDefaultModel(provider)
-	WorkingDir   string       // scope root (Family/parent). "" -> process cwd
-	SystemPrompt string       // agent persona / instructions
-	Tools        []Tool       // app-specific custom tools
-	Logger       loggerv2.Logger
-	MaxTurns     int // 0 -> provider default
+	Provider llm.Provider // e.g. llm.ProviderClaudeCode
+	ModelID  string       // "" -> llm.GetDefaultModel(provider)
+	// ReasoningEffort, when set ("low"|"medium"|"high"|"max"), sets the model's
+	// reasoning/thinking effort for providers that support it (Claude Code does).
+	// Empty leaves the provider/model default. Plumbed via mcpagent.WithLLMConfig
+	// as the primary model's Options["reasoning_effort"].
+	ReasoningEffort string
+	WorkingDir      string // scope root (Family/parent). "" -> process cwd
+	SystemPrompt    string // agent persona / instructions
+	Tools           []Tool // app-specific custom tools
+	Logger          loggerv2.Logger
+	MaxTurns        int // 0 -> provider default
 	// SessionID, when set, makes turns RESUME the coding agent's own session
 	// (warm tmux/session resume) instead of cold-starting a fresh one. Use a
 	// stable id per conversation (e.g. the conversation id). Empty -> fresh
@@ -160,6 +165,18 @@ func New(ctx context.Context, cfg Config) (*Session, error) {
 		mcpagent.WithProvider(cfg.Provider),
 		mcpagent.WithCodeExecutionMode(true),
 		mcpagent.WithSessionID(sessionID),
+	}
+	if effort := strings.TrimSpace(cfg.ReasoningEffort); effort != "" {
+		// Set the primary model's reasoning/thinking effort. GetLLMModelConfig
+		// returns LLMConfig.Primary when its Provider is set, so specify the full
+		// model here (provider + id) alongside the Options.
+		opts = append(opts, mcpagent.WithLLMConfig(mcpagent.AgentLLMConfiguration{
+			Primary: mcpagent.LLMModel{
+				Provider: string(cfg.Provider),
+				ModelID:  modelID,
+				Options:  map[string]interface{}{"reasoning_effort": effort},
+			},
+		}))
 	}
 	if resume {
 		// Keep the coding agent's interactive (tmux) session alive so the next

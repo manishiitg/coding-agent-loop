@@ -27,3 +27,17 @@ func mediumTierModelID(provider llm.Provider) string {
 	}
 	return tiers.Medium.ModelID
 }
+
+// lowTierModelID resolves the provider's FAST tier model — for Claude Code this
+// is claude-haiku (vs. sonnet at the medium tier). Used for CHILD Mode: the
+// child tutor works one problem at a time in short back-and-forth turns where
+// latency matters far more than deep reasoning, so the smaller/faster model
+// gives a snappier experience without hurting the interaction. Falls back to ""
+// (agentsession default) when the provider has no published tier defaults.
+func lowTierModelID(provider llm.Provider) string {
+	tiers, ok := llmproviders.GetCodingAgentDefaultTierModels(llmproviders.Provider(provider))
+	if !ok {
+		return ""
+	}
+	return tiers.Low.ModelID
+}

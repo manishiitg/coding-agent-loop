@@ -20,6 +20,7 @@ import {
   Image as ImageIcon,
   Info,
   LockKeyhole,
+  Moon,
   Music,
   Presentation,
   PanelLeftClose,
@@ -116,6 +117,22 @@ function persistHandoffSide(side: 'tutor' | 'parent') {
 }
 function readHandoffSide(): 'tutor' | 'parent' {
   try { return localStorage.getItem(HANDOFF_SIDE_KEY) === 'tutor' ? 'tutor' : 'parent' } catch { return 'parent' }
+}
+
+// Dark/light theme, persisted the same way as the handoff side. Defaults to the
+// OS/browser's own preference the first time (no stored choice yet), then
+// whatever the parent explicitly picked via the toggle from then on.
+type Theme = 'light' | 'dark'
+const THEME_KEY = 'sparkquill.theme'
+function readTheme(): Theme {
+  try {
+    const stored = localStorage.getItem(THEME_KEY)
+    if (stored === 'light' || stored === 'dark') return stored
+  } catch { /* best-effort */ }
+  return (typeof window !== 'undefined' && window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) ? 'dark' : 'light'
+}
+function persistTheme(t: Theme) {
+  try { localStorage.setItem(THEME_KEY, t) } catch { /* best-effort */ }
 }
 
 // Markdown renders the agent's reply with react-markdown + GFM — the same
@@ -354,6 +371,9 @@ function parseAssetPath(p: string): { subject?: string; topic?: string; date?: s
 }
 
 export default function LearningApp() {
+  const [theme, setTheme] = useState<Theme>(readTheme)
+  const toggleTheme = () => setTheme((cur) => { const next: Theme = cur === 'dark' ? 'light' : 'dark'; persistTheme(next); return next })
+
   const screen = useSetupStore((s) => s.screen)
   const setScreen = useSetupStore((s) => s.setScreen)
   const engines = useSetupStore((s) => s.engines)
@@ -401,6 +421,11 @@ export default function LearningApp() {
   const setSuggestions = useParentChatStore((s) => s.setSuggestions)
   const pendingHandoff = useParentChatStore((s) => s.pendingHandoff)
   const setPendingHandoff = useParentChatStore((s) => s.setPendingHandoff)
+  // Before actually switching into Child Mode, ask the parent whether to
+  // continue Myra's existing conversation or start a brand-new one — handing
+  // off a package often means "just carry on the same chat", not a fresh
+  // start, so this is the parent's call rather than a silent guess.
+  const [pendingChildEntry, setPendingChildEntry] = useState<{ kind: 'path' | 'manifest'; value: string; greetingText: string } | null>(null)
   const menuOpen = useParentChatStore((s) => s.menuOpen)
   const setMenuOpen = useParentChatStore((s) => s.setMenuOpen)
   const [settingsOpen, setSettingsOpen] = useState(false)
@@ -574,6 +599,9 @@ export default function LearningApp() {
   const setViewerContent = useWorkspaceStore((s) => s.setViewerContent)
   const [viewerMeta, setViewerMeta] = useState<Record<string, unknown> | null>(null)
   const [metaOpen, setMetaOpen] = useState(false)
+  // Which package's guide_note (the parent's own pacing/instructions for that
+  // bundle) is currently revealed via its (i) button — collapsed by default.
+  const [openPackageNote, setOpenPackageNote] = useState<string | null>(null)
   const mapHtml = useWorkspaceStore((s) => s.mapHtml)
   const setMapHtml = useWorkspaceStore((s) => s.setMapHtml)
   const mapRefreshKey = useWorkspaceStore((s) => s.mapRefreshKey)
@@ -1197,7 +1225,14 @@ export default function LearningApp() {
   // itself won't reflect a setChildConversationId() call made earlier in the
   // same synchronous handler until the next render, so reading it from the
   // closure here would silently target the OLD conversation.
-  const sendChildText = (raw: string, base?: ParentMsg[], convIdOverride?: string) => {
+  // modelExtra is appended to what the MODEL sees for this one message, but
+  // never shown to the child or persisted in their transcript — for the
+  // package handoff kickoff, this is how the parent's actual guide_note
+  // instructions reach Quill directly on the first turn, rather than relying
+  // on it separately deciding to go read child/current-task.json on its own
+  // initiative (the same "hand it directly, don't trust a follow-up lookup"
+  // lesson already applied to approve_for_child's handoff button).
+  const sendChildText = (raw: string, base?: ParentMsg[], convIdOverride?: string, modelExtra?: string) => {
     const text = raw.trim()
     if (!text || childSending) return
     const convId = convIdOverride ?? childConversationId
@@ -1211,6 +1246,9 @@ export default function LearningApp() {
     statusSource.onmessage = (ev) => setChildLiveStatus(ev.data)
     statusSource.onerror = () => statusSource.close()
     const history = next.filter((m) => m.role === 'user' || m.role === 'assistant').map((m) => ({ role: m.role, text: m.text ?? '' }))
+    if (modelExtra && history.length > 0) {
+      history[history.length - 1] = { ...history[history.length - 1], text: history[history.length - 1].text + '\n\n' + modelExtra }
+    }
     fetch(`${FAMILY_API}/api/child/message`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -1243,7 +1281,7 @@ export default function LearningApp() {
   // conversation Quill often reasons "I already opened this earlier" and
   // skips the call, which used to leave the child staring at a bare file
   // list instead of the actual document.
-  const enterChildModeAfterHandoff = (newSession: boolean, greeting: string, filePath: string) => {
+  const enterChildModeAfterHandoff = (newSession: boolean, greeting: string, filePath: string, guideNote?: string, packageTitle?: string) => {
     // A dynamic/instruction-only package hands back its own manifest path (no
     // real file exists) — never show that raw JSON; let the conversation itself
     // be the content instead of trying to open anything.
@@ -1252,14 +1290,19 @@ export default function LearningApp() {
     persistHandoffSide('tutor')
     setScreen('tutor')
     setChildTreeRefreshKey((k) => k + 1)
+    // Hand the parent's real instructions to Quill directly on this first turn
+    // — never shown to the child, just extra context for the model.
+    const modelExtra = guideNote
+      ? `(For you, Quill — not from ${childName || 'the child'}: the parent's own instructions for${packageTitle ? ` "${packageTitle}"` : ' this'}: ${guideNote} Follow this pacing/order exactly.)`
+      : undefined
     if (newSession) {
       const freshId = newConversationId()
       setChildConversationId(freshId)
       setChildSuggestions([])
       setChildMessages([])
-      sendChildText(greeting, [], freshId)
+      sendChildText(greeting, [], freshId, modelExtra)
     } else {
-      sendChildText(greeting)
+      sendChildText(greeting, undefined, undefined, modelExtra)
     }
   }
 
@@ -1268,39 +1311,57 @@ export default function LearningApp() {
   // "dad", a name) when known, falling back to "parent" until Quill has asked.
   const handoffGreeting = (what: string) => `My ${parentLabel || 'parent'} just ${what}. Can you help me get started?`
 
-  // The real parent→child handoff behind "Give to <child>": approve the file,
-  // switch into child mode, and kick off Quill — it finds the just-shared
-  // material, opens it, and guides the child. No filename/path is shown; Quill
-  // composes everything the child reads.
-  const startHandoff = (path: string) => {
+  // Does the real API call: approve the file(s), switch into child mode, and
+  // kick off Quill — it finds the just-shared material, opens it, and guides
+  // the child. No filename/path is shown; Quill composes everything the child
+  // reads. resume asks the backend to keep Myra's existing conversation going
+  // instead of its own same-package heuristic.
+  const performHandoff = (kind: 'path' | 'manifest', value: string, greetingText: string, resume: boolean) => {
+    const body: Record<string, unknown> = { resume }
+    if (kind === 'manifest') body.manifest = value
+    else body.path = value
     fetch(`${FAMILY_API}/api/parent/handoff`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ path }),
+      body: JSON.stringify(body),
     })
       .then((res) => res.json())
-      .then((data: { new_session?: boolean; path?: string }) => {
-        enterChildModeAfterHandoff(!!data.new_session, handoffGreeting('shared something new for me to work on'), data.path || path)
+      .then((data: { new_session?: boolean; path?: string; guide_note?: string; package?: string }) => {
+        if (!data.path) return
+        enterChildModeAfterHandoff(!!data.new_session, handoffGreeting(greetingText), data.path, data.guide_note, data.package)
       })
       .catch(() => {})
+  }
+
+  // The real parent→child handoff behind "Give to <child>": a standalone file
+  // (no package) always starts a fresh conversation — there's nothing to
+  // "continue" (matches suggest_handoff's rarer, single-file re-offer case).
+  const startHandoff = (path: string) => {
+    performHandoff('path', path, 'shared something new for me to work on', false)
   }
 
   // Same handoff, but for a whole learning package at once (its manifest path)
   // — approves every item in the bundle in one call (create_learning_package
   // already did this when the package was made; this re-triggers it from the
   // Files browser, e.g. to hand off a package made earlier in the conversation).
+  // Only ASK continue-vs-fresh when this is genuinely the SAME package Myra is
+  // already partway through (childTask.package, loaded for the assignment
+  // pill) — a different package is unambiguously a fresh handoff, no need to
+  // ask. First-ever handoff has no childTask yet, so it's fresh too.
   const startPackageHandoff = (manifest: string) => {
-    fetch(`${FAMILY_API}/api/parent/handoff`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ manifest }),
-    })
-      .then((res) => res.json())
-      .then((data: { new_session?: boolean; path?: string }) => {
-        if (!data.path) return
-        enterChildModeAfterHandoff(!!data.new_session, handoffGreeting('set up something new for me to work on'), data.path)
-      })
-      .catch(() => {})
+    if (childTask?.package === manifest) {
+      setPendingChildEntry({ kind: 'manifest', value: manifest, greetingText: 'set up something new for me to work on' })
+    } else {
+      performHandoff('manifest', manifest, 'set up something new for me to work on', false)
+    }
+  }
+
+  // Runs the actual handoff once the parent has answered continue-vs-fresh.
+  const confirmChildEntry = (resume: boolean) => {
+    const entry = pendingChildEntry
+    if (!entry) return
+    setPendingChildEntry(null)
+    performHandoff(entry.kind, entry.value, entry.greetingText, resume)
   }
 
   const sendChildMessage = (event: FormEvent<HTMLFormElement>) => {
@@ -1375,7 +1436,7 @@ export default function LearningApp() {
 
   if (booting) {
     return (
-      <main className="learning-app">
+      <main className="learning-app" data-theme={theme}>
         <div className="fl-boot"><img src="/sparkquill-loader.svg" alt="" width={76} height={76} /><p>Starting SparkQuill…</p></div>
       </main>
     )
@@ -1383,7 +1444,7 @@ export default function LearningApp() {
 
   if (bootError) {
     return (
-      <main className="learning-app">
+      <main className="learning-app" data-theme={theme}>
         <div className="fl-boot">
           <img src="/sparkquill-mark.svg" alt="" width={64} height={64} />
           <p>Couldn’t reach SparkQuill on this computer.</p>
@@ -1395,7 +1456,7 @@ export default function LearningApp() {
 
   if (screen === 'parent') {
     return (
-      <main className="learning-app">
+      <main className="learning-app" data-theme={theme}>
         <div className="fl-shell" data-rail="closed" data-drawer={drawerOpen ? 'open' : 'closed'}>
           <section className="fl-center">
             <div className="fl-toolbar">
@@ -1528,6 +1589,9 @@ export default function LearningApp() {
                     </>
                   )}
                 </div>
+                <button className="fl-icon-btn" type="button" aria-label={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'} title={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'} onClick={toggleTheme}>
+                  {theme === 'dark' ? <Sun size={18} /> : <Moon size={18} />}
+                </button>
                 <button className="fl-icon-btn" type="button" aria-label="Settings" title="Settings" onClick={() => setSettingsOpen(true)}>
                   <SettingsIcon size={18} />
                 </button>
@@ -1690,11 +1754,12 @@ export default function LearningApp() {
           </section>
 
           <aside className="fl-drawer" aria-label="Learning workspace">
-            {!(drawerTab === 'files' && viewerPath) && (
+            {!((drawerTab === 'files' || drawerTab === 'uploaded') && viewerPath) && (
               <div className="fl-drawer-tabs" role="tablist" aria-label="Workspace views">
                 <button role="tab" aria-selected={drawerTab === 'map'} className={drawerTab === 'map' ? 'is-active' : ''} type="button" onClick={() => setDrawerTab('map')}>Academics</button>
                 <button role="tab" aria-selected={drawerTab === 'progress'} className={drawerTab === 'progress' ? 'is-active' : ''} type="button" onClick={() => setDrawerTab('progress')}>Progress</button>
                 <button role="tab" aria-selected={drawerTab === 'files'} className={drawerTab === 'files' ? 'is-active' : ''} type="button" onClick={() => setDrawerTab('files')}>Workspace</button>
+                <button role="tab" aria-selected={drawerTab === 'uploaded'} className={drawerTab === 'uploaded' ? 'is-active' : ''} type="button" onClick={() => setDrawerTab('uploaded')}>Uploaded</button>
                 <button
                   type="button"
                   className="fl-icon-btn fl-refresh-btn"
@@ -1757,116 +1822,114 @@ export default function LearningApp() {
                 </>
               )}
 
-              {drawerTab === 'files' && (
-                viewerPath ? (
-                  <div className="fl-viewer">
-                    <div className="fl-viewer-bar">
-                      <button className="fl-viewer-back" type="button" onClick={() => setViewerPath(null)}><ArrowLeft size={15} /> Files</button>
-                      <span className="fl-viewer-name">{viewerPath.split('/').pop()}</span>
+              {(drawerTab === 'files' || drawerTab === 'uploaded') && viewerPath ? (
+                <div className="fl-viewer">
+                  <div className="fl-viewer-bar">
+                    <button className="fl-viewer-back" type="button" onClick={() => setViewerPath(null)}><ArrowLeft size={15} /> Files</button>
+                    <span className="fl-viewer-name">{viewerPath.split('/').pop()}</span>
+                    <button
+                      className="fl-icon-btn"
+                      type="button"
+                      aria-label="Refresh"
+                      title="Reload this file"
+                      onClick={() => setViewerRefreshKey((k) => k + 1)}
+                    >
+                      <RefreshCw size={14} />
+                    </button>
+                    {viewerMeta && (
+                      <button
+                        className={`fl-icon-btn${metaOpen ? ' is-active' : ''}`}
+                        type="button"
+                        aria-label="About this file"
+                        aria-pressed={metaOpen}
+                        title="What Quill knows about this file"
+                        onClick={() => setMetaOpen((v) => !v)}
+                      >
+                        <Info size={14} />
+                      </button>
+                    )}
+                    {isPrintable(viewerPath) && (
                       <button
                         className="fl-icon-btn"
                         type="button"
-                        aria-label="Refresh"
-                        title="Reload this file"
-                        onClick={() => setViewerRefreshKey((k) => k + 1)}
+                        aria-label="Print"
+                        title="Print this page"
+                        onClick={() => printFile(viewerPath)}
                       >
-                        <RefreshCw size={14} />
+                        <Printer size={14} />
                       </button>
-                      {viewerMeta && (
-                        <button
-                          className={`fl-icon-btn${metaOpen ? ' is-active' : ''}`}
-                          type="button"
-                          aria-label="About this file"
-                          aria-pressed={metaOpen}
-                          title="What Quill knows about this file"
-                          onClick={() => setMetaOpen((v) => !v)}
-                        >
-                          <Info size={14} />
-                        </button>
-                      )}
-                      {isPrintable(viewerPath) && (
-                        <button
-                          className="fl-icon-btn"
-                          type="button"
-                          aria-label="Print"
-                          title="Print this page"
-                          onClick={() => printFile(viewerPath)}
-                        >
-                          <Printer size={14} />
-                        </button>
-                      )}
-                    </div>
-                    {metaOpen && viewerMeta && <FileMetaPanel meta={viewerMeta} />}
-                    {/\.(png|jpe?g|gif|webp|svg|bmp)$/i.test(viewerPath) ? (
-                      <img className="fl-viewer-img" src={`${FAMILY_API}/api/workspace/raw?path=${encodeURIComponent(viewerPath)}`} alt={viewerPath.split('/').pop() || ''} />
-                    ) : /\.pdf$/i.test(viewerPath) ? (
-                      // PDFs render in the browser's native viewer (with its own
-                      // zoom/page controls) — the raw endpoint serves them inline
-                      // with an application/pdf content type, so a plain iframe
-                      // pointed straight at it is all it takes. No sandbox here: it
-                      // would disable the built-in PDF viewer, and the bytes are our
-                      // own workspace file, not untrusted HTML.
-                      <iframe className="fl-viewer-frame" title="PDF preview" src={`${FAMILY_API}/api/workspace/raw?path=${encodeURIComponent(viewerPath)}`} />
-                    ) : !viewerContent ? (
-                      <p className="fl-note">Loading…</p>
-                    ) : !viewerContent.isText ? (
-                      <NonPreviewableFile path={viewerPath} meta={viewerMeta} />
-                    ) : (viewerPath.endsWith('.html') || viewerPath.endsWith('.htm')) ? (
-                      <iframe ref={iframeRef} className="fl-viewer-frame" title="File preview" sandbox="allow-scripts" srcDoc={viewerContent.content} />
-                    ) : (viewerPath.endsWith('.md') || viewerPath.endsWith('.markdown')) ? (
-                      <div className="fl-viewer-md"><Markdown text={viewerContent.content} /></div>
-                    ) : (
-                      <pre className="fl-viewer-pre">{viewerContent.content}</pre>
                     )}
                   </div>
-                ) : (
-                  <>
-                    <div className="fl-files-toggle">
-                      <button type="button" className={filesView === 'subjects' ? 'is-active' : ''} onClick={() => setFilesView('subjects')}>Subjects</button>
-                      <button type="button" className={filesView === 'uploaded' ? 'is-active' : ''} onClick={() => setFilesView('uploaded')}>Uploaded Material</button>
-                      <button type="button" className={filesView === 'advanced' ? 'is-active' : ''} onClick={() => setFilesView('advanced')}>All files</button>
-                    </div>
-                    {filesView === 'advanced' ? (
-                      treeNodes.length === 0 ? <p className="fl-note">No files yet.</p> : <FileTree nodes={treeNodes} onOpen={(p) => { setViewerImageList([]); setViewerPath(p) }} />
-                    ) : (() => {
-                      // Hierarchy: subject -> topic -> type (test/notes/...) -> date -> file.
-                      // "Subjects" and "Uploaded Material" are the same tree, filtered to
-                      // generated content vs. raw uploads; the academic map already has its
-                      // own real (agent-generated) view via the outer Subjects drawer tab,
-                      // so it's not duplicated here.
-                      type Entry = { path: string; date?: string; label: string }
-                      const typeOf = (p: string): string | null => {
-                        if (p === 'shared/academic-map.html') return null
-                        if (p.startsWith('shared/tests/')) return 'Practice tests'
-                        if (p.startsWith('shared/study/')) return 'Study guides'
-                        if (p.startsWith('shared/reports/')) return 'Reports'
-                        if (p.includes('/materials/')) return 'Uploaded material'
-                        return null
-                      }
-                      const typeSlug = (t: string) => t === 'Practice tests' ? 'tests' : t === 'Study guides' ? 'guides' : t === 'Reports' ? 'reports' : 'uploaded'
-                      const usable = allFiles.filter((p) => !p.endsWith('.meta.json') && !p.startsWith('skills/') && !p.includes('/conversations/') && !p.endsWith('child-profile.json'))
-                      const classified = usable.map((p) => ({ p, type: typeOf(p), ...parseAssetPath(p) })).filter((f) => f.type)
-                      const subjectsList = Array.from(new Set(classified.filter((f) => f.subject).map((f) => f.subject!))).sort()
-                      const wantedTypes = filesView === 'uploaded' ? ['Uploaded material'] : ['Practice tests', 'Study guides', 'Reports']
-                      const relevant = classified.filter((f) => wantedTypes.includes(f.type!) && (!filesSubjectFilter || f.subject === filesSubjectFilter))
+                  {metaOpen && viewerMeta && <FileMetaPanel meta={viewerMeta} />}
+                  {/\.(png|jpe?g|gif|webp|svg|bmp)$/i.test(viewerPath) ? (
+                    <img className="fl-viewer-img" src={`${FAMILY_API}/api/workspace/raw?path=${encodeURIComponent(viewerPath)}`} alt={viewerPath.split('/').pop() || ''} />
+                  ) : /\.pdf$/i.test(viewerPath) ? (
+                    // PDFs render in the browser's native viewer (with its own
+                    // zoom/page controls) — the raw endpoint serves them inline
+                    // with an application/pdf content type, so a plain iframe
+                    // pointed straight at it is all it takes. No sandbox here: it
+                    // would disable the built-in PDF viewer, and the bytes are our
+                    // own workspace file, not untrusted HTML.
+                    <iframe className="fl-viewer-frame" title="PDF preview" src={`${FAMILY_API}/api/workspace/raw?path=${encodeURIComponent(viewerPath)}`} />
+                  ) : !viewerContent ? (
+                    <p className="fl-note">Loading…</p>
+                  ) : !viewerContent.isText ? (
+                    <NonPreviewableFile path={viewerPath} meta={viewerMeta} />
+                  ) : (viewerPath.endsWith('.html') || viewerPath.endsWith('.htm')) ? (
+                    <iframe ref={iframeRef} className="fl-viewer-frame" title="File preview" sandbox="allow-scripts" srcDoc={viewerContent.content} />
+                  ) : (viewerPath.endsWith('.md') || viewerPath.endsWith('.markdown')) ? (
+                    <div className="fl-viewer-md"><Markdown text={viewerContent.content} /></div>
+                  ) : (
+                    <pre className="fl-viewer-pre">{viewerContent.content}</pre>
+                  )}
+                </div>
+              ) : drawerTab === 'files' ? (
+                <>
+                  <div className="fl-files-toggle">
+                    <button type="button" className={filesView === 'subjects' ? 'is-active' : ''} onClick={() => setFilesView('subjects')}>Subjects</button>
+                    <button type="button" className={filesView === 'advanced' ? 'is-active' : ''} onClick={() => setFilesView('advanced')}>All files</button>
+                  </div>
+                  {filesView === 'advanced' ? (
+                    treeNodes.length === 0 ? <p className="fl-note">No files yet.</p> : <FileTree nodes={treeNodes} onOpen={(p) => { setViewerImageList([]); setViewerPath(p) }} />
+                  ) : (() => {
+                    // Hierarchy: subject -> topic -> type (test/notes/...) -> date -> file.
+                    // Generated content only (tests/study guides/reports) — raw uploads
+                    // have their own "Uploaded" tab; the academic map already has its own
+                    // real (agent-generated) view via the outer Subjects drawer tab, so
+                    // it's not duplicated here.
+                    type Entry = { path: string; date?: string; label: string }
+                    const typeOf = (p: string): string | null => {
+                      if (p === 'shared/academic-map.html') return null
+                      if (p.startsWith('shared/tests/')) return 'Practice tests'
+                      if (p.startsWith('shared/study/')) return 'Study guides'
+                      if (p.startsWith('shared/reports/')) return 'Reports'
+                      return null
+                    }
+                    const typeSlug = (t: string) => t === 'Practice tests' ? 'tests' : t === 'Study guides' ? 'guides' : 'reports'
+                    const usable = allFiles.filter((p) => !p.endsWith('.meta.json') && !p.startsWith('skills/') && !p.includes('/conversations/') && !p.endsWith('child-profile.json'))
+                    const classified = usable.map((p) => ({ p, type: typeOf(p), ...parseAssetPath(p) })).filter((f) => f.type)
+                    const subjectsList = Array.from(new Set(classified.filter((f) => f.subject).map((f) => f.subject!))).sort()
+                    const relevant = classified.filter((f) => (!filesSubjectFilter || f.subject === filesSubjectFilter))
 
-                      // Packages nested under the subject their first item belongs to (an
-                      // instruction-only package with no items has no subject to attach to).
-                      const packagesBySubject = new Map<string, LearningPackage[]>()
-                      const unplacedPackages: LearningPackage[] = []
-                      if (filesView === 'subjects') {
-                        packages.forEach((pkg) => {
-                          const subj = pkg.items.length > 0 ? parseAssetPath(pkg.items[0]).subject : undefined
-                          if (subj && (!filesSubjectFilter || subj === filesSubjectFilter)) {
-                            if (!packagesBySubject.has(subj)) packagesBySubject.set(subj, [])
-                            packagesBySubject.get(subj)!.push(pkg)
-                          } else if (!subj && !filesSubjectFilter) {
-                            unplacedPackages.push(pkg)
-                          }
-                        })
+                    // Packages nested under the subject their first item belongs to (an
+                    // instruction-only package with no items has no subject to attach to).
+                    const packagesBySubject = new Map<string, LearningPackage[]>()
+                    const unplacedPackages: LearningPackage[] = []
+                    packages.forEach((pkg) => {
+                      const subj = pkg.items.length > 0 ? parseAssetPath(pkg.items[0]).subject : undefined
+                      if (subj && (!filesSubjectFilter || subj === filesSubjectFilter)) {
+                        if (!packagesBySubject.has(subj)) packagesBySubject.set(subj, [])
+                        packagesBySubject.get(subj)!.push(pkg)
+                      } else if (!subj && !filesSubjectFilter) {
+                        unplacedPackages.push(pkg)
                       }
-                      const renderPackages = (pkgs: LearningPackage[]) => pkgs.map((pkg) => (
-                        <div key={pkg.manifest} className="fl-file-item is-package fl-package-card">
+                    })
+                    // Same treatment as Child Mode's package view: list every part,
+                    // numbered, so the parent can open and preview any one of them
+                    // directly — not just see a summary count.
+                    const renderPackages = (pkgs: LearningPackage[]) => pkgs.map((pkg) => (
+                      <div key={pkg.manifest} className="fl-child-package fl-parent-package">
+                        <div className="fl-package-title">
                           <BookOpen size={16} />
                           <span>
                             {pkg.title}
@@ -1875,6 +1938,18 @@ export default function LearningApp() {
                               {dateTimeLabel(pkg.created_at) ? ` · ${dateTimeLabel(pkg.created_at)}` : ''}
                             </small>
                           </span>
+                          {pkg.guide_note && (
+                            <button
+                              className="fl-icon-btn fl-package-info"
+                              type="button"
+                              aria-label="Instructions for this package"
+                              aria-pressed={openPackageNote === pkg.manifest}
+                              title="See the instructions behind this package"
+                              onClick={() => setOpenPackageNote((cur) => (cur === pkg.manifest ? null : pkg.manifest))}
+                            >
+                              <Info size={14} />
+                            </button>
+                          )}
                           <button
                             className="fl-give-to-child"
                             type="button"
@@ -1884,106 +1959,177 @@ export default function LearningApp() {
                             Give to {childName || 'child'}
                           </button>
                         </div>
-                      ))
+                        {openPackageNote === pkg.manifest && pkg.guide_note && (
+                          <p className="fl-package-note">{pkg.guide_note}</p>
+                        )}
+                        {pkg.items.map((item, i) => {
+                          const { label } = parseAssetPath(item)
+                          return (
+                            <button key={item} type="button" className="fl-file-item fl-package-item" onClick={() => { setViewerImageList([]); setViewerPath(item) }}>
+                              <span className="fl-package-step">{i + 1}</span>
+                              <FileGlyph name={item} size={15} />
+                              <span>{label}</span>
+                            </button>
+                          )
+                        })}
+                      </div>
+                    ))
 
-                      const bySubject = new Map<string, Map<string, Map<string, Entry[]>>>()
-                      const general = new Map<string, Entry[]>()
-                      relevant.forEach((f) => {
-                        const entry: Entry = { path: f.p, date: f.date, label: f.label }
-                        if (!f.subject) {
-                          if (!general.has(f.type!)) general.set(f.type!, [])
-                          general.get(f.type!)!.push(entry)
-                          return
-                        }
-                        if (!bySubject.has(f.subject)) bySubject.set(f.subject, new Map())
-                        const topics = bySubject.get(f.subject)!
-                        const topicKey = f.topic || '—'
-                        if (!topics.has(topicKey)) topics.set(topicKey, new Map())
-                        const types = topics.get(topicKey)!
-                        if (!types.has(f.type!)) types.set(f.type!, [])
-                        types.get(f.type!)!.push(entry)
-                      })
-                      const byDateDesc = (a: Entry, b: Entry) => (b.date || '').localeCompare(a.date || '')
-                      const renderEntries = (entries: Entry[]) => {
-                        const isUploaded = filesView === 'uploaded'
-                        const sorted = [...entries].sort(byDateDesc)
-                        const imagePaths = sorted.filter((e) => IMAGE_PATH_RE.test(e.path)).map((e) => e.path)
-                        return (
-                          <div className={isUploaded ? 'fl-thumb-grid' : undefined}>
-                            {sorted.map((e) => (
-                              isUploaded && IMAGE_PATH_RE.test(e.path) ? (
-                                <button key={e.path} type="button" className="fl-thumb-item" onClick={() => { setViewerImageList(imagePaths); setViewerPath(e.path) }}>
-                                  <img className="fl-thumb-img" src={`${FAMILY_API}/api/workspace/raw?path=${encodeURIComponent(e.path)}`} alt="" loading="lazy" />
-                                  <span className="fl-thumb-caption">{e.label}{e.date ? ` · ${e.date}` : ''}</span>
-                                </button>
-                              ) : (
-                                <button key={e.path} type="button" className="fl-file-item" onClick={() => { setViewerImageList([]); setViewerPath(e.path) }}>
-                                  <FileGlyph name={e.path} size={16} />
-                                  <span>{e.label}{e.date ? ` · ${e.date}` : ''}</span>
-                                </button>
-                              )
-                            ))}
-                          </div>
-                        )
+                    const bySubject = new Map<string, Map<string, Map<string, Entry[]>>>()
+                    const general = new Map<string, Entry[]>()
+                    relevant.forEach((f) => {
+                      const entry: Entry = { path: f.p, date: f.date, label: f.label }
+                      if (!f.subject) {
+                        if (!general.has(f.type!)) general.set(f.type!, [])
+                        general.get(f.type!)!.push(entry)
+                        return
                       }
-                      return (
-                        <>
-                          {subjectsList.length > 0 && (
-                            <select
-                              className="fl-subject-select"
-                              aria-label="Filter by subject"
-                              value={filesSubjectFilter}
-                              onChange={(e) => setFilesSubjectFilter(e.target.value)}
-                            >
-                              <option value="">All subjects</option>
-                              {subjectsList.map((s) => <option key={s} value={s}>{s}</option>)}
-                            </select>
-                          )}
-                          {bySubject.size === 0 && general.size === 0 ? (
-                            <p className="fl-note">
-                              {filesView === 'uploaded'
-                                ? 'No uploaded material yet.'
-                                : 'Nothing here yet. Ask Quill to make study material or a test.'}
-                            </p>
-                          ) : (
-                            <>
-                              {Array.from(bySubject.entries()).map(([subj, topics]) => (
-                                <section key={subj} className="fl-asset-group">
-                                  <p className="fl-drawer-label">{subj}</p>
-                                  {renderPackages(packagesBySubject.get(subj) ?? [])}
-                                  {Array.from(topics.entries()).map(([top, types]) => (
-                                    <div key={top} className="fl-asset-topic">
-                                      <p className="fl-asset-topic-label">{top === '—' ? 'Other' : top}</p>
-                                      {Array.from(types.entries()).map(([type, entries]) => (
-                                        <div key={type} className={`fl-asset-type is-${typeSlug(type)}`}>
-                                          {filesView !== 'uploaded' && <p className="fl-asset-type-label">{type}</p>}
-                                          {renderEntries(entries)}
-                                        </div>
-                                      ))}
-                                    </div>
-                                  ))}
-                                </section>
-                              ))}
-                              {(general.size > 0 || unplacedPackages.length > 0) && (
-                                <section className="fl-asset-group">
-                                  <p className="fl-drawer-label">General</p>
-                                  {renderPackages(unplacedPackages)}
-                                  {Array.from(general.entries()).map(([type, entries]) => (
-                                    <div key={type} className={`fl-asset-type is-${typeSlug(type)}`}>
-                                      {filesView !== 'uploaded' && <p className="fl-asset-type-label">{type}</p>}
-                                      {renderEntries(entries)}
-                                    </div>
-                                  ))}
-                                </section>
-                              )}
-                            </>
-                          )}
-                        </>
-                      )
-                    })()}
+                      if (!bySubject.has(f.subject)) bySubject.set(f.subject, new Map())
+                      const topics = bySubject.get(f.subject)!
+                      const topicKey = f.topic || '—'
+                      if (!topics.has(topicKey)) topics.set(topicKey, new Map())
+                      const types = topics.get(topicKey)!
+                      if (!types.has(f.type!)) types.set(f.type!, [])
+                      types.get(f.type!)!.push(entry)
+                    })
+                    const byDateDesc = (a: Entry, b: Entry) => (b.date || '').localeCompare(a.date || '')
+                    const renderEntries = (entries: Entry[]) => (
+                      <div>
+                        {[...entries].sort(byDateDesc).map((e) => (
+                          <button key={e.path} type="button" className="fl-file-item" onClick={() => { setViewerImageList([]); setViewerPath(e.path) }}>
+                            <FileGlyph name={e.path} size={16} />
+                            <span>{e.label}{e.date ? ` · ${e.date}` : ''}</span>
+                          </button>
+                        ))}
+                      </div>
+                    )
+                    return (
+                      <>
+                        {subjectsList.length > 0 && (
+                          <select
+                            className="fl-subject-select"
+                            aria-label="Filter by subject"
+                            value={filesSubjectFilter}
+                            onChange={(e) => setFilesSubjectFilter(e.target.value)}
+                          >
+                            <option value="">All subjects</option>
+                            {subjectsList.map((s) => <option key={s} value={s}>{s}</option>)}
+                          </select>
+                        )}
+                        {bySubject.size === 0 && general.size === 0 ? (
+                          <p className="fl-note">Nothing here yet. Ask Quill to make study material or a test.</p>
+                        ) : (
+                          <>
+                            {Array.from(bySubject.entries()).map(([subj, topics]) => (
+                              <section key={subj} className="fl-asset-group">
+                                <p className="fl-drawer-label">{subj}</p>
+                                {renderPackages(packagesBySubject.get(subj) ?? [])}
+                                {Array.from(topics.entries()).map(([top, types]) => (
+                                  <div key={top} className="fl-asset-topic">
+                                    <p className="fl-asset-topic-label">{top === '—' ? 'Other' : top}</p>
+                                    {Array.from(types.entries()).map(([type, entries]) => (
+                                      <div key={type} className={`fl-asset-type is-${typeSlug(type)}`}>
+                                        <p className="fl-asset-type-label">{type}</p>
+                                        {renderEntries(entries)}
+                                      </div>
+                                    ))}
+                                  </div>
+                                ))}
+                              </section>
+                            ))}
+                            {(general.size > 0 || unplacedPackages.length > 0) && (
+                              <section className="fl-asset-group">
+                                <p className="fl-drawer-label">General</p>
+                                {renderPackages(unplacedPackages)}
+                                {Array.from(general.entries()).map(([type, entries]) => (
+                                  <div key={type} className={`fl-asset-type is-${typeSlug(type)}`}>
+                                    <p className="fl-asset-type-label">{type}</p>
+                                    {renderEntries(entries)}
+                                  </div>
+                                ))}
+                              </section>
+                            )}
+                          </>
+                        )}
+                      </>
+                    )
+                  })()}
+                </>
+              ) : drawerTab === 'uploaded' ? (() => {
+                // Raw parent-uploaded material (shared/materials/<subject>/<topic>/...)
+                // — its own tab, separate from Quill-generated tests/study guides/reports.
+                type Entry = { path: string; date?: string; label: string }
+                const usable = allFiles.filter((p) => !p.endsWith('.meta.json') && !p.startsWith('skills/') && !p.includes('/conversations/') && !p.endsWith('child-profile.json'))
+                const classified = usable
+                  .filter((p) => p.includes('/materials/'))
+                  .map((p) => ({ p, ...parseAssetPath(p) }))
+                const subjectsList = Array.from(new Set(classified.filter((f) => f.subject).map((f) => f.subject!))).sort()
+                const relevant = classified.filter((f) => !filesSubjectFilter || f.subject === filesSubjectFilter)
+
+                const bySubject = new Map<string, Entry[]>()
+                const general: Entry[] = []
+                relevant.forEach((f) => {
+                  const entry: Entry = { path: f.p, date: f.date, label: f.label }
+                  if (!f.subject) { general.push(entry); return }
+                  if (!bySubject.has(f.subject)) bySubject.set(f.subject, [])
+                  bySubject.get(f.subject)!.push(entry)
+                })
+                const byDateDesc = (a: Entry, b: Entry) => (b.date || '').localeCompare(a.date || '')
+                const renderEntries = (entries: Entry[]) => {
+                  const sorted = [...entries].sort(byDateDesc)
+                  const imagePaths = sorted.filter((e) => IMAGE_PATH_RE.test(e.path)).map((e) => e.path)
+                  return (
+                    <div className="fl-thumb-grid">
+                      {sorted.map((e) => (
+                        IMAGE_PATH_RE.test(e.path) ? (
+                          <button key={e.path} type="button" className="fl-thumb-item" onClick={() => { setViewerImageList(imagePaths); setViewerPath(e.path) }}>
+                            <img className="fl-thumb-img" src={`${FAMILY_API}/api/workspace/raw?path=${encodeURIComponent(e.path)}`} alt="" loading="lazy" />
+                            <span className="fl-thumb-caption">{e.label}{e.date ? ` · ${e.date}` : ''}</span>
+                          </button>
+                        ) : (
+                          <button key={e.path} type="button" className="fl-file-item" onClick={() => { setViewerImageList([]); setViewerPath(e.path) }}>
+                            <FileGlyph name={e.path} size={16} />
+                            <span>{e.label}{e.date ? ` · ${e.date}` : ''}</span>
+                          </button>
+                        )
+                      ))}
+                    </div>
+                  )
+                }
+                return (
+                  <>
+                    {subjectsList.length > 0 && (
+                      <select
+                        className="fl-subject-select"
+                        aria-label="Filter by subject"
+                        value={filesSubjectFilter}
+                        onChange={(e) => setFilesSubjectFilter(e.target.value)}
+                      >
+                        <option value="">All subjects</option>
+                        {subjectsList.map((s) => <option key={s} value={s}>{s}</option>)}
+                      </select>
+                    )}
+                    {bySubject.size === 0 && general.length === 0 ? (
+                      <p className="fl-note">No uploaded material yet. Use the attach button to add photos or documents — they’ll appear here.</p>
+                    ) : (
+                      <>
+                        {Array.from(bySubject.entries()).map(([subj, entries]) => (
+                          <section key={subj} className="fl-asset-group">
+                            <p className="fl-drawer-label">{subj}</p>
+                            {renderEntries(entries)}
+                          </section>
+                        ))}
+                        {general.length > 0 && (
+                          <section className="fl-asset-group">
+                            <p className="fl-drawer-label">General</p>
+                            {renderEntries(general)}
+                          </section>
+                        )}
+                      </>
+                    )}
                   </>
                 )
-              )}
+              })() : null}
             </div>
           </aside>
 
@@ -2078,6 +2224,20 @@ export default function LearningApp() {
             </div>
           )}
 
+          {pendingChildEntry && (
+            <div className="fl-signoff-backdrop" role="dialog" aria-modal="true" aria-labelledby="fl-continue-title" onClick={() => setPendingChildEntry(null)}>
+              <div className="fl-signoff-card" onClick={(e) => e.stopPropagation()}>
+                <div className="fl-signoff-icon"><BookOpen size={22} /></div>
+                <h2 id="fl-continue-title">Continue {childName || 'her'} chat, or start fresh?</h2>
+                <p>You're about to switch to {childName || 'your child'}'s screen. Should Quill pick up in the same ongoing conversation, or begin a brand-new one for this?</p>
+                <div className="fl-signoff-actions">
+                  <button className="fl-ghost-btn" type="button" onClick={() => confirmChildEntry(false)}>Start fresh</button>
+                  <button className="primary-button" type="button" onClick={() => confirmChildEntry(true)}>Continue her chat</button>
+                </div>
+              </div>
+            </div>
+          )}
+
           {settingsOpen && (
             <div className="fl-settings-backdrop" role="dialog" aria-modal="true" onClick={() => setSettingsOpen(false)}>
               <div className="fl-settings" onClick={(e) => e.stopPropagation()}>
@@ -2132,7 +2292,7 @@ export default function LearningApp() {
 
   if (screen === 'tutor') {
     return (
-      <main className="learning-app">
+      <main className="learning-app" data-theme={theme}>
         <div className="fl-child">
           <div className="fl-child-body">
             <section className="fl-child-chat">
@@ -2145,6 +2305,9 @@ export default function LearningApp() {
                   <div className="fl-child-assignment-pill"><BookOpen size={14} /><span>{childTask.title}</span></div>
                 )}
                 <div className="fl-child-top-right">
+                  <button className="fl-icon-btn" type="button" aria-label={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'} title={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'} onClick={toggleTheme}>
+                    {theme === 'dark' ? <Sun size={16} /> : <Moon size={16} />}
+                  </button>
                   <button className="fl-parent-return" type="button" onClick={() => { setGateValue(''); setGateError(''); setPinGate(true) }}><LockKeyhole size={16} /> Parent Mode</button>
                 </div>
               </header>
@@ -2344,7 +2507,7 @@ export default function LearningApp() {
   }
 
   return (
-    <main className="learning-app">
+    <main className="learning-app" data-theme={theme}>
       <header className="learning-header">
         <div className="learning-brand">
           <img className="brand-mark" src="/sparkquill-mark.svg" alt="" width={30} height={30} />
@@ -2359,6 +2522,9 @@ export default function LearningApp() {
             <i className={screen === 'pin' ? 'is-complete' : ''} />
           </span>
         </div>
+        <button className="fl-icon-btn" type="button" aria-label={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'} title={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'} onClick={toggleTheme}>
+          {theme === 'dark' ? <Sun size={18} /> : <Moon size={18} />}
+        </button>
       </header>
 
       <section className={`learning-stage is-${screen}`}>

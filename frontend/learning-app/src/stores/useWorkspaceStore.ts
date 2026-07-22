@@ -7,8 +7,8 @@ import { resolveSetState, type SetStateAction } from './storeUtils'
 interface WorkspaceState {
   drawerTab: DrawerTab
   setDrawerTab: (v: SetStateAction<DrawerTab>) => void
-  filesView: 'subjects' | 'uploaded' | 'advanced'
-  setFilesView: (v: SetStateAction<'subjects' | 'uploaded' | 'advanced'>) => void
+  filesView: 'subjects' | 'advanced'
+  setFilesView: (v: SetStateAction<'subjects' | 'advanced'>) => void
   treeNodes: TreeNode[]
   setTreeNodes: (v: SetStateAction<TreeNode[]>) => void
   wsFiles: WsFile[]

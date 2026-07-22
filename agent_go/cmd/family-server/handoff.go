@@ -76,6 +76,14 @@ func handleHandoff(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Path     string `json:"path"`
 		Manifest string `json:"manifest"`
+		// Resume, when the frontend sends it, is the PARENT'S explicit answer to
+		// "continue Myra's existing chat, or start fresh?" (asked only when the
+		// package genuinely matches what's already active — see
+		// startPackageHandoff in LearningApp.tsx) and overrides the same-package
+		// heuristic below entirely. Nil when the frontend didn't ask (a
+		// standalone file, or a different/first-ever package) — those cases fall
+		// back to the heuristic.
+		Resume *bool `json:"resume,omitempty"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "path or manifest is required"})
@@ -127,8 +135,13 @@ func handleHandoff(w http.ResponseWriter, r *http.Request) {
 	prev := loadCurrentTask()
 	// A standalone file (no package) always starts fresh; continuing the same
 	// package resumes; anything else (first handoff, or a different package) is
-	// also fresh.
-	newSession := pkgManifest == "" || pkgManifest != prev.Package
+	// also fresh. The parent's explicit Resume answer overrides this outright.
+	var newSession bool
+	if req.Resume != nil {
+		newSession = !*req.Resume
+	} else {
+		newSession = pkgManifest == "" || pkgManifest != prev.Package
+	}
 	// Point at the child's own live copy, not the parent's shared/ original —
 	// see mirrorToChildActive: this is what lets the child record progress
 	// (via their own shell, already scoped to child/) without ever needing
@@ -140,6 +153,7 @@ func handleHandoff(w http.ResponseWriter, r *http.Request) {
 		"ok":          true,
 		"path":        p,
 		"package":     pkgTitle,
+		"guide_note":  pkgGuide,
 		"new_session": newSession,
 	})
 }

@@ -9,11 +9,19 @@ import {
   Check,
   CheckCircle2,
   ExternalLink,
+  FileArchive,
+  FileCode,
+  FileSpreadsheet,
   FileText,
+  FileType,
+  Film,
   Folder,
   FolderOpen,
   Image as ImageIcon,
+  Info,
   LockKeyhole,
+  Music,
+  Presentation,
   PanelLeftClose,
   PanelLeftOpen,
   Paperclip,
@@ -168,7 +176,7 @@ function FileTree({ nodes, onOpen, depth = 0 }: { nodes: TreeNode[]; onOpen: (pa
             </details>
           ) : (
             <button className="fl-tree-file" type="button" onClick={() => onOpen(n.path)}>
-              {IMAGE_PATH_RE.test(n.name) ? <ImageIcon size={14} /> : <FileText size={14} />}
+              <FileGlyph name={n.name} size={14} />
               <span>{n.name}</span>
             </button>
           )}
@@ -178,6 +186,89 @@ function FileTree({ nodes, onOpen, depth = 0 }: { nodes: TreeNode[]; onOpen: (pa
   )
 }
 const IMAGE_PATH_RE = /\.(png|jpe?g|gif|webp|svg|bmp)$/i
+
+// FileGlyph renders a file-type icon coloured by extension, so the workspace
+// shows a PDF/Word/PowerPoint/Excel/image/archive at a glance rather than one
+// generic sheet-of-paper for everything.
+function fileGlyphFor(name: string): { Icon: typeof FileText; kind: string } {
+  const ext = (name.split('.').pop() || '').toLowerCase()
+  if (['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'bmp', 'heic'].includes(ext)) return { Icon: ImageIcon, kind: 'image' }
+  if (ext === 'pdf') return { Icon: FileType, kind: 'pdf' }
+  if (['doc', 'docx', 'rtf', 'odt'].includes(ext)) return { Icon: FileText, kind: 'doc' }
+  if (['ppt', 'pptx', 'odp'].includes(ext)) return { Icon: Presentation, kind: 'ppt' }
+  if (['xls', 'xlsx', 'csv', 'ods', 'tsv'].includes(ext)) return { Icon: FileSpreadsheet, kind: 'sheet' }
+  if (['zip', 'tar', 'gz', 'tgz', 'rar', '7z'].includes(ext)) return { Icon: FileArchive, kind: 'zip' }
+  if (['html', 'htm'].includes(ext)) return { Icon: FileCode, kind: 'html' }
+  if (['mp4', 'mov', 'avi', 'mkv', 'webm'].includes(ext)) return { Icon: Film, kind: 'video' }
+  if (['mp3', 'wav', 'm4a', 'aac', 'ogg', 'flac'].includes(ext)) return { Icon: Music, kind: 'audio' }
+  return { Icon: FileText, kind: 'file' }
+}
+function FileGlyph({ name, size = 16 }: { name: string; size?: number }) {
+  const { Icon, kind } = fileGlyphFor(name)
+  return <Icon size={size} className={`fl-glyph fl-glyph-${kind}`} />
+}
+
+// FileMetaPanel renders the sidecar metadata (<path>.meta.json) the process-file
+// skill writes for a filed document — what Quill understood the file to be. Only
+// the parent-meaningful fields are shown, in plain language (no raw JSON, no
+// paths), consistent with the rest of the parent UI.
+function FileMetaPanel({ meta }: { meta: Record<string, unknown> }) {
+  const str = (k: string): string => (typeof meta[k] === 'string' ? (meta[k] as string).trim() : '')
+  const concepts = Array.isArray(meta.key_concepts)
+    ? (meta.key_concepts as unknown[]).filter((c): c is string => typeof c === 'string' && c.trim() !== '')
+    : []
+  const summary = str('summary')
+  const subject = str('subject')
+  const topic = str('topic')
+  const type = str('type')
+  const chips = [subject, topic, type].filter(Boolean)
+  if (!summary && chips.length === 0 && concepts.length === 0) return null
+  return (
+    <div className="fl-meta-panel">
+      <p className="fl-meta-title"><Info size={13} /> What Quill knows about this file</p>
+      {chips.length > 0 && (
+        <div className="fl-meta-chips">
+          {chips.map((c, i) => <span key={i} className="fl-meta-chip">{c}</span>)}
+        </div>
+      )}
+      {summary && <p className="fl-meta-summary">{summary}</p>}
+      {concepts.length > 0 && (
+        <div className="fl-meta-concepts">
+          {concepts.map((c, i) => <span key={i} className="fl-meta-concept">{c}</span>)}
+        </div>
+      )}
+    </div>
+  )
+}
+
+// NonPreviewableFile is shown for files the browser can't display inline (Word,
+// PowerPoint, spreadsheets, archives, …). We deliberately don't try to convert
+// them — just show what Quill knows about the file (its metadata, if any) and a
+// Download button to open it on the device. Keeps preview simple: images, PDFs,
+// and HTML/text render inline; everything else is metadata + download.
+function NonPreviewableFile({ path, meta }: { path: string; meta: Record<string, unknown> | null }) {
+  const name = path.split('/').pop() || path
+  return (
+    <div className="fl-nopreview">
+      <div className="fl-nopreview-head">
+        <FileGlyph name={name} size={34} />
+        <span className="fl-nopreview-name">{name}</span>
+      </div>
+      {meta ? (
+        <FileMetaPanel meta={meta} />
+      ) : (
+        <p className="fl-note">This kind of file can’t be shown here — download it to open on your device.</p>
+      )}
+      <a
+        className="fl-download-btn"
+        href={`${FAMILY_API}/api/workspace/raw?path=${encodeURIComponent(path)}&download=1`}
+        download={name}
+      >
+        Download
+      </a>
+    </div>
+  )
+}
 
 // sanitizeDecorativeHtml allows a tiny, LLM-authored decorative fragment (a
 // dash of inline color/styling around the label) inside a suggestion pill,
@@ -438,6 +529,8 @@ export default function LearningApp() {
   const setViewerImageList = useWorkspaceStore((s) => s.setViewerImageList)
   const viewerContent = useWorkspaceStore((s) => s.viewerContent)
   const setViewerContent = useWorkspaceStore((s) => s.setViewerContent)
+  const [viewerMeta, setViewerMeta] = useState<Record<string, unknown> | null>(null)
+  const [metaOpen, setMetaOpen] = useState(false)
   const mapHtml = useWorkspaceStore((s) => s.mapHtml)
   const setMapHtml = useWorkspaceStore((s) => s.setMapHtml)
   const mapRefreshKey = useWorkspaceStore((s) => s.mapRefreshKey)
@@ -735,6 +828,25 @@ export default function LearningApp() {
       .then((r) => r.json())
       .then((d) => { if (!cancelled) setViewerContent({ isText: !!d.is_text, content: d.content ?? '' }) })
       .catch(() => { if (!cancelled) setViewerContent({ isText: false, content: '' }) })
+    return () => { cancelled = true }
+  }, [viewerPath, viewerRefreshKey])
+
+  // Probe for the file's metadata sidecar (<path>.meta.json — written by the
+  // process-file skill when Quill files an upload: subject, topic, type, a short
+  // summary, key concepts). When present, the viewer shows an info button that
+  // reveals it, so the parent can see what Quill understood a document to be.
+  useEffect(() => {
+    setViewerMeta(null)
+    setMetaOpen(false)
+    if (!viewerPath || viewerPath.endsWith('.meta.json')) return
+    let cancelled = false
+    fetch(`${FAMILY_API}/api/workspace/file?path=${encodeURIComponent(viewerPath + '.meta.json')}`)
+      .then((r) => r.json())
+      .then((d) => {
+        if (cancelled || !d || !d.is_text || !d.content) return
+        try { setViewerMeta(JSON.parse(d.content) as Record<string, unknown>) } catch { /* not valid meta; ignore */ }
+      })
+      .catch(() => {})
     return () => { cancelled = true }
   }, [viewerPath, viewerRefreshKey])
 
@@ -1541,7 +1653,7 @@ export default function LearningApp() {
                         <p className="fl-drawer-label">{subj}</p>
                         {files.map((f) => (
                           <div key={f.path} className="fl-asset">
-                            <span className="fl-asset-icon"><FileText size={17} /></span>
+                            <span className="fl-asset-icon"><FileGlyph name={f.name} size={17} /></span>
                             <span className="fl-asset-body"><strong>{f.name}</strong><small>{f.topic || 'material'}</small></span>
                           </div>
                         ))}
@@ -1592,6 +1704,18 @@ export default function LearningApp() {
                       >
                         <RefreshCw size={14} />
                       </button>
+                      {viewerMeta && (
+                        <button
+                          className={`fl-icon-btn${metaOpen ? ' is-active' : ''}`}
+                          type="button"
+                          aria-label="About this file"
+                          aria-pressed={metaOpen}
+                          title="What Quill knows about this file"
+                          onClick={() => setMetaOpen((v) => !v)}
+                        >
+                          <Info size={14} />
+                        </button>
+                      )}
                       {(viewerPath.endsWith('.html') || viewerPath.endsWith('.htm')) && (
                         <button
                           className="fl-icon-btn"
@@ -1614,12 +1738,21 @@ export default function LearningApp() {
                         </button>
                       )}
                     </div>
+                    {metaOpen && viewerMeta && <FileMetaPanel meta={viewerMeta} />}
                     {/\.(png|jpe?g|gif|webp|svg|bmp)$/i.test(viewerPath) ? (
                       <img className="fl-viewer-img" src={`${FAMILY_API}/api/workspace/raw?path=${encodeURIComponent(viewerPath)}`} alt={viewerPath.split('/').pop() || ''} />
+                    ) : /\.pdf$/i.test(viewerPath) ? (
+                      // PDFs render in the browser's native viewer (with its own
+                      // zoom/page controls) — the raw endpoint serves them inline
+                      // with an application/pdf content type, so a plain iframe
+                      // pointed straight at it is all it takes. No sandbox here: it
+                      // would disable the built-in PDF viewer, and the bytes are our
+                      // own workspace file, not untrusted HTML.
+                      <iframe className="fl-viewer-frame" title="PDF preview" src={`${FAMILY_API}/api/workspace/raw?path=${encodeURIComponent(viewerPath)}`} />
                     ) : !viewerContent ? (
                       <p className="fl-note">Loading…</p>
                     ) : !viewerContent.isText ? (
-                      <p className="fl-note">This file type can’t be previewed here.</p>
+                      <NonPreviewableFile path={viewerPath} meta={viewerMeta} />
                     ) : (viewerPath.endsWith('.html') || viewerPath.endsWith('.htm')) ? (
                       <iframe ref={iframeRef} className="fl-viewer-frame" title="File preview" sandbox="allow-scripts" srcDoc={viewerContent.content} />
                     ) : (viewerPath.endsWith('.md') || viewerPath.endsWith('.markdown')) ? (
@@ -1724,7 +1857,7 @@ export default function LearningApp() {
                                 </button>
                               ) : (
                                 <button key={e.path} type="button" className="fl-file-item" onClick={() => { setViewerImageList([]); setViewerPath(e.path) }}>
-                                  <FileText size={16} />
+                                  <FileGlyph name={e.path} size={16} />
                                   <span>{e.label}{e.date ? ` · ${e.date}` : ''}</span>
                                 </button>
                               )
@@ -2041,10 +2174,12 @@ export default function LearningApp() {
                   </div>
                   {IMAGE_PATH_RE.test(childViewerPath) ? (
                     <img className="fl-viewer-img" src={`${FAMILY_API}/api/workspace/raw?path=${encodeURIComponent(childViewerPath)}`} alt="" />
+                  ) : /\.pdf$/i.test(childViewerPath) ? (
+                    <iframe className="fl-viewer-frame" title="PDF preview" src={`${FAMILY_API}/api/workspace/raw?path=${encodeURIComponent(childViewerPath)}`} />
                   ) : !childViewerContent ? (
                     <p className="fl-note">Loading…</p>
                   ) : !childViewerContent.isText ? (
-                    <p className="fl-note">Can’t show this one here.</p>
+                    <NonPreviewableFile path={childViewerPath} meta={null} />
                   ) : (childViewerPath.endsWith('.html') || childViewerPath.endsWith('.htm')) ? (
                     <iframe className="fl-viewer-frame" title="Preview" sandbox="allow-scripts" srcDoc={childViewerContent.content} />
                   ) : childViewerPath.endsWith('.md') ? (

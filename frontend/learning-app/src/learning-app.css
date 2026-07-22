@@ -279,6 +279,33 @@ html, body, #root { margin: 0; height: 100%; }
 .fl-asset-icon.is-pdf { background: #fdecea; color: #c8493e; }
 .fl-asset-icon.is-image { background: #fff3d6; color: #a9781a; }
 .fl-asset-icon.is-test { background: #efeafc; color: #6a4bc0; }
+/* File-type glyph colors (by extension) — used in the file tree, the file list,
+   and the materials list so each format reads at a glance. */
+.fl-glyph { flex: 0 0 auto; }
+.fl-glyph-pdf { color: #d0453a; }
+.fl-glyph-doc { color: #2b6cb0; }
+.fl-glyph-ppt { color: #d97706; }
+.fl-glyph-sheet { color: #2f855a; }
+.fl-glyph-image { color: #805ad5; }
+.fl-glyph-zip { color: #718096; }
+.fl-glyph-html { color: #dd6b20; }
+.fl-glyph-video { color: #c53030; }
+.fl-glyph-audio { color: #3182ce; }
+.fl-glyph-file { color: #7c8aa0; }
+/* Metadata panel — what Quill filed a document as (from <path>.meta.json). */
+.fl-meta-panel { margin: 0 0 10px; padding: 12px 14px; border: 1px solid var(--line); border-left: 3px solid #c7b8e6; border-radius: 12px; background: #faf8ff; display: flex; flex-direction: column; gap: 9px; }
+.fl-meta-title { display: flex; align-items: center; gap: 6px; margin: 0; font-size: var(--text-caption); font-weight: 700; color: #6a4bc0; text-transform: uppercase; letter-spacing: 0.03em; }
+.fl-meta-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.fl-meta-chip { padding: 3px 10px; border-radius: 999px; background: #efeafc; color: #5a3fb0; font-size: var(--text-caption); font-weight: 650; text-transform: capitalize; }
+.fl-meta-summary { margin: 0; color: var(--navy); font-size: var(--text-secondary); line-height: 1.55; }
+.fl-meta-concepts { display: flex; flex-wrap: wrap; gap: 6px; }
+.fl-meta-concept { padding: 2px 9px; border-radius: 8px; background: #fff; border: 1px solid #e6ddf5; color: #6a5a8f; font-size: var(--text-caption); }
+/* Non-previewable file card: metadata + download (Word/PowerPoint/spreadsheets/…). */
+.fl-nopreview { display: flex; flex-direction: column; gap: 12px; padding: 16px; }
+.fl-nopreview-head { display: flex; align-items: center; gap: 10px; }
+.fl-nopreview-name { color: var(--navy); font-weight: 650; font-size: var(--text-secondary); word-break: break-word; }
+.fl-download-btn { align-self: flex-start; display: inline-flex; align-items: center; gap: 7px; padding: 9px 18px; border-radius: 11px; background: var(--navy, #2b3a55); color: #fff; font-weight: 650; font-size: var(--text-secondary); text-decoration: none; cursor: pointer; }
+.fl-download-btn:hover { filter: brightness(1.08); }
 .fl-asset-body { display: flex; flex-direction: column; gap: 4px; min-width: 0; flex: 1; }
 .fl-asset-body strong { color: var(--navy); font-size: var(--text-secondary); font-weight: 650; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .fl-asset-body small { color: #697a95; font-size: var(--text-caption); }

@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -118,7 +119,11 @@ func handleWorkspaceFile(w http.ResponseWriter, r *http.Request) {
 
 // handleWorkspaceRaw serves GET /api/workspace/raw?path=... — the raw bytes of a
 // workspace file (for images the viewer renders with <img>). http.ServeFile sets
-// the content type and handles range requests.
+// the content type and handles range requests. With ?download=1 it forces a
+// download (Content-Disposition: attachment) rather than inline render — used by
+// the viewer's Download button for files the browser can't preview (Word,
+// PowerPoint, spreadsheets, archives, …). The download attribute on an <a> is
+// ignored cross-origin, so the server has to set the disposition itself.
 func handleWorkspaceRaw(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -132,6 +137,10 @@ func handleWorkspaceRaw(w http.ResponseWriter, r *http.Request) {
 	if info, err := os.Stat(abs); err != nil || info.IsDir() {
 		http.Error(w, "not found", http.StatusNotFound)
 		return
+	}
+	if r.URL.Query().Get("download") != "" {
+		name := strings.ReplaceAll(filepath.Base(abs), `"`, "")
+		w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, name))
 	}
 	http.ServeFile(w, r, abs)
 }

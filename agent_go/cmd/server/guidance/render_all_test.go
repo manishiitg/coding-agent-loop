@@ -40,7 +40,7 @@ func TestFocusedScheduledPulseReferencesStayBoundedAndComplete(t *testing.T) {
 			},
 		},
 		"pulse-review-fixer": {
-			max: 5000,
+			max: 6200,
 			wants: []string{
 				"batches of at most two", "supported transport", "automatic", "pulse/reviews/<dated-review-run-id>/<module>.md",
 				"only Pulse Fixer", "global finding-ID reconciliation", "terminal current-run result",
@@ -494,7 +494,8 @@ func TestPulseGuidanceRejudgesActiveExperimentCadenceFromCurrentEvidence(t *test
 		"verify its fair-test state from current evidence",
 		"actual runtime control",
 		"zero valid outcome-bearing runs is not a fair test",
-		"repair, unblock, or revise the same experiment in place",
+		"recommend the smallest unblock or a strategy-level revision",
+		"recommend retiring or replacing it",
 		"runtime-path",
 	} {
 		if !strings.Contains(advisor, want) {
@@ -829,6 +830,12 @@ func TestGoalAdvisorTreatsCleanAbstentionAsStrategyEvidence(t *testing.T) {
 		t.Fatalf("render goal-advisor: %v", err)
 	}
 	for _, want := range []string{
+		"NON-NEGOTIABLE STRATEGY-FIRST PASS",
+		"strategy_ceiling",
+		"highest_leverage_thesis",
+		"why_not_incremental_repair",
+		"is not a valid Goal Advisor result",
+		"an operational defect must not consume the Goal Advisor run",
 		"A green answer to the first question must not mask",
 		"broader criteria within explicit user boundaries",
 		"Never recommend violating an explicit user exclusion",
@@ -839,8 +846,11 @@ func TestGoalAdvisorTreatsCleanAbstentionAsStrategyEvidence(t *testing.T) {
 		"Check optimization headroom even when every success criterion is currently",
 		"Treat a numeric target as a floor",
 		"preserve the successful baseline and propose a bounded",
-		"PHASE 1B - ACTIVE EXPERIMENT LIFECYCLE",
-		"Exactly one experiment may be active for a workflow",
+		"PHASE 1B - ACTIVE STRATEGY EXPERIMENT LIFECYCLE",
+		"Exactly one **strategy** experiment may be active for a workflow",
+		`data-experiment-kind="instrumentation"`,
+		`data-experiment-kind="strategy"`,
+		"Instrumentation is supporting work",
 		"Apply a 10x counterfactual as a thinking lens, not a promise",
 		`class="entry decision major advisor-experiment"`,
 		"Current strategy ceiling",
@@ -863,6 +873,7 @@ func TestGoalAdvisorMetricsFlowUsesPlanAndReportHandoff(t *testing.T) {
 	}
 	for _, want := range []string{
 		"does not revive a generic metrics subsystem",
+		"not the Advisor outcome and not an Advisor experiment by itself",
 		"decision it informs",
 		"normal `regular` measurement step",
 		"db/db.sqlite",

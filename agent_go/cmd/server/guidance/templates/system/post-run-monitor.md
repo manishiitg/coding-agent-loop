@@ -202,7 +202,11 @@ sections below as domain and evidence guidance.
    not send an auto-notification.
 5. For Goal Advisor, first obtain the read-only strategy review, then send that
    draft and its evidence to a separate read-only critic. The parent accepts,
-   narrows, or rejects the proposal using both results.
+   narrows, or rejects the proposal using both results. Reject a draft that does
+   not lead with the current strategy ceiling, one highest-leverage materially
+   different thesis, its relationship to the active strategy experiment, and
+   why incremental repair is insufficient. Maintenance or instrumentation alone
+   is never a valid Goal Advisor result.
 6. After each reviewer batch returns, compress it into an in-turn review ledger
    of at most 1000 characters per module while retaining every finding id,
    target key, severity, evidence pointer, recommended action, verification, and
@@ -629,12 +633,15 @@ Mark due when strategic judgment is needed:
 An unmet measured goal is a direct Goal Advisor trigger, not merely a signal for
 a later cadence check. Do not skip Goal Advisor just because execution is clean,
 the eval passed, or the module ran recently. If an active experiment already
-addresses that miss, preserve the experiment and use its `data-review-after`
-checkpoint instead of proposing another strategy. If the criterion has no usable
+addresses that miss through a materially different strategy, preserve the
+experiment and use its `data-review-after` checkpoint instead of proposing
+another strategy. A card that only adds diagnostics, attribution, reporting,
+evaluation, or measurement to the unchanged tactic is instrumentation, not an
+active strategy experiment, and must not defer Goal Advisor. If the criterion has no usable
 target or was not measured, label that explicitly and use the measurement-design
 path rather than claiming that the goal was missed.
 
-An active experiment earns that deferral only when Gate verifies all of the
+An active strategy experiment earns that deferral only when Gate verifies all of the
 following from current evidence:
 
 1. The approved change is applied and reachable in the real runtime control
@@ -651,9 +658,10 @@ following from current evidence:
    exposure rate, and latest evidence. New contradictory evidence or a flat
    trustworthy goal metric can justify reviewing earlier.
 
-When one of these conditions fails, select Goal Advisor to repair or advance
-that same experiment rather than creating a competing idea. Also select Bug
-Review when the cause is operational. When Goal Advisor is skipped, the visible
+When one of these conditions fails, select Goal Advisor to challenge, advance,
+revise, or recommend retiring that same strategy experiment. Goal Advisor does
+not perform the operational repair; also select Bug Review, Eval Health, Report
+Health, or the matching module when that cause is operational. When Goal Advisor is skipped, the visible
 Gate entry must name the experiment id, implementation/control-path evidence,
 valid run or exposure count, latest goal measurement and freshness, why the
 checkpoint is still fair, and the exact evidence that would trigger earlier
@@ -664,7 +672,7 @@ judgment.
 Goal Advisor is a Pulse-selected module, not a separate recurring schedule. Its
 expensive thinking stays outside the parent context through a read-only strategy
 reviewer followed by a separate read-only critic. The parent Pulse Fixer uses
-their combined evidence to record a proposal, advance the active experiment, or
+their combined evidence to record a proposal, advance the active strategy experiment, or
 apply an exact previously approved proposal. It does not launch
 `run_goal_advisor_review` and does not poll background executions.
 
@@ -714,10 +722,12 @@ only an exact previously approved proposal may be applied by the Pulse Fixer.
 
 The background Goal Advisor thinks like an experienced operator. It may apply a structural plan change only when the user already approved a Goal Advisor proposal in `report_human_inputs`. New strategic changes must be logged as proposal-only Advisor ideas and, when a decision is needed, created with `create_human_input_request`. When success cannot be judged from persisted evidence, the proposal may define a small decision-useful metric set and the exact normal `regular` measurement step needed to write timestamped rows to `db/db.sqlite`; this is a plan change, not a separate metrics subsystem. Report Health visualizes it only after approval and real data.
 
-Goal Advisor also owns one durable 10x/headroom experiment lifecycle in
-`builder/improve.html`. There may be only one active `.advisor-experiment` card
+Goal Advisor also owns one durable 10x/headroom **strategy** experiment lifecycle in
+`builder/improve.html`. There may be only one active strategy `.advisor-experiment` card
 (`proposed`, `deferred`, `approved`, `running`, `measuring`, or `blocked`) at a
-time. Pulse advances or measures that card at its checkpoint; it does not create
+time, and new cards use `data-experiment-kind="strategy"`. Instrumentation-only
+tracking does not count as that experiment and cannot block the strategy scan.
+Pulse advances or measures the strategy card at its checkpoint; it does not create
 daily bold-idea spam. Terminal states are `adopted`, `rejected`, and `retired`.
 When no experiment is active, a due healthy-headroom review applies the 10x
 counterfactual and may propose one bounded experiment while preserving the

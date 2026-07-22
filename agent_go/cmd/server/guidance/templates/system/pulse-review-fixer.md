@@ -29,7 +29,13 @@ guidance, and a response cap. Use `pulse-bug-review` for Bug Review;
 `review-artifact-drift` for artifacts; `improve-report`, `improve-evaluation`,
 `improve-learnings`, `improve-knowledge`, or `improve-database` for their matching
 health module; `llm-selection` plus verified cost/timing evidence for LLM/Ops;
-and current goal/experiment evidence for Goal Advisor. Reviewers never edit,
+and current goal/experiment evidence for Goal Advisor. Goal Advisor must complete
+its strategy-first pass before plan mechanics and return the strategy ceiling,
+one highest-leverage materially different thesis, its relationship to the active
+strategy experiment, and why incremental repair is insufficient. Reject an
+Advisor packet that contains only maintenance, instrumentation, eval/report
+correction, or measurement work. Instrumentation-only tracking does not count as
+the active strategy experiment. Reviewers never edit,
 publish, notify, ask the user, write HTML, or mark module state.
 
 Require a compact manifest: one-line verdict; next-check condition; at most five
@@ -55,8 +61,10 @@ do not trigger an external side effect merely to verify.
 
 Reconcile every reviewer finding ID to exactly one durable disposition before
 marking its module. Missing/duplicate dispositions block that module. Strategy
-and LLM/Ops changes remain proposals unless an exact still-valid approval exists;
-never broaden stale approval. Only the parent changes files, DB/contracts,
+and LLM/Ops changes remain proposals unless an exact still-valid approval exists.
+Goal Advisor operational findings are handoffs to the matching module and never
+become its primary outcome; do not let the single Fixer turn Advisor into a bug,
+eval, report, or instrumentation repair pass. Never broaden stale approval. Only the parent changes files, DB/contracts,
 plan/config, reports/evals, human-input state, changelog review state, module
 state, or `builder/improve.html`.
 

@@ -85,7 +85,7 @@ var allKinds = map[string]kindMeta{
 	"pulse":               {Group: "improve", Description: "Run one complete manual Pulse against retained evidence without changing schedules or running the workflow", Modes: []string{"workshop"}},
 	"pulse-setup":         {Group: "improve", Description: "Enable Pulse and set up the normal recurring workflow run schedule", Modes: []string{"workshop"}},
 	"pulse-fixer":         {Group: "improve", Description: "Apply and verify bounded safe fixes from existing Pulse or standalone review findings", Modes: []string{"workshop"}},
-	"goal-advisor":        {Group: "improve", Description: "Expert strategy advisor module: recover drifting goals, run periodic healthy 10x/headroom reviews, and advance one approval-gated experiment in builder/improve.html from proposal through measured outcome", Modes: []string{"workshop"}},
+	"goal-advisor":        {Group: "improve", Description: "Strategy-first expert advisor: identify the current strategy ceiling, challenge it with one materially different high-leverage thesis, and advance one approval-gated strategy experiment in builder/improve.html from proposal through measured outcome; operational repairs remain with Pulse maintenance modules", Modes: []string{"workshop"}},
 	"design-reporting-ui": {Group: "report", Description: "Design the reporting UI from scratch: author HTML document(s) (live data via window.report, single or tabbed per-entity) and register them in reports/report_plan.json", Modes: []string{"workshop"}},
 	"improve-report":      {Group: "report", Description: "Read-only report dashboard accuracy, goal tracking, live-data, layout, and responsive-design review", Modes: []string{"workshop"}},
 }

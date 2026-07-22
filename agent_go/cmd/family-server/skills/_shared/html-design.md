@@ -68,9 +68,20 @@ external assets, fonts, images, or network calls.
     <!-- cards go here -->
     <div class="foot">SparkQuill · generated from <child>’s workspace</div>
   </div>
+  <script>
+    // Lets the app's print icon (outside this sandboxed iframe) trigger a real
+    // print of THIS page's own window — a cross-origin frame can postMessage in
+    // but cannot call .print() on this window directly, so it asks instead.
+    window.addEventListener('message', function (e) {
+      if (e && e.data && e.data.__sq === 1 && e.data.op === 'print') window.print()
+    })
+  </script>
 </body>
 </html>
 ```
+
+A parent can print any HTML page from the print icon in the app's viewer (next to
+refresh) — no button needs to be built into the generated page itself.
 
 Use `.card` for each section, `.badge` for "Current", `.good`/`.focus` for going-well / to-practise,
 `.grid` of `.card`s for the academic map's subjects, and `.note` for honest caveats.

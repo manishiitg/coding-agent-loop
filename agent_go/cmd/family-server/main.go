@@ -4,6 +4,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"flag"
 	"log"
@@ -44,6 +45,14 @@ func main() {
 	_ = scaffoldFamilyFolders()
 	seedSkills()
 	seedWorkspace(loadState().Child) // idempotent: only fills in files that don't exist yet
+	if err := initWhatsAppBot(context.Background()); err != nil {
+		log.Printf("whatsapp: failed to initialize (real WhatsApp connection disabled): %v", err)
+	} else {
+		// If already paired, establish the live connection now so incoming
+		// messages arrive without waiting for the frontend to poll status.
+		whatsAppBot.EnsureConnecting(context.Background())
+	}
+	go startPulseTicker(context.Background())
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/health", handleHealth)
@@ -61,6 +70,20 @@ func main() {
 	mux.HandleFunc("/api/child/message", handleChildMessage)
 	mux.HandleFunc("/api/child/status", handleChildStatusStream)
 	mux.HandleFunc("/api/whatsapp/message", handleWhatsAppMessage)
+	mux.HandleFunc("/api/whatsapp/status", handleWhatsAppStatus)
+	mux.HandleFunc("/api/whatsapp/pair", handleWhatsAppPair)
+	mux.HandleFunc("/api/whatsapp/unpair", handleWhatsAppUnpair)
+	mux.HandleFunc("/api/gmail/status", handleGmailStatus)
+	mux.HandleFunc("/api/gmail/test", handleGmailTest)
+	mux.HandleFunc("/api/browser/status", handleBrowserStatus)
+	mux.HandleFunc("/api/pulse/config", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost {
+			handleSetPulseConfig(w, r)
+			return
+		}
+		handleGetPulseConfig(w, r)
+	})
+	mux.HandleFunc("/api/pulse/run", handlePulseRunNow)
 	mux.HandleFunc("/api/workspace/tree", handleWorkspaceTree)
 	mux.HandleFunc("/api/child/workspace/tree", handleChildWorkspaceTree)
 	mux.HandleFunc("/api/workspace/file", handleWorkspaceFile)

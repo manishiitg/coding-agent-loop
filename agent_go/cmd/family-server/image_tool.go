@@ -62,56 +62,82 @@ func readImageTool(engine string) agentsession.Tool {
 		Name:        "read_image",
 		Description: "Look at an image file (a photo, screenshot, or scan of notes/homework/a worksheet) and get back its text and a description. Use this to actually READ uploaded images — it sees the picture, so transcribe from it instead of guessing or using OCR. Pass the workspace-relative path.",
 		Category:    "family_tools",
-		Params: map[string]interface{}{
-			"type": "object",
-			"properties": map[string]interface{}{
-				"path":  map[string]interface{}{"type": "string", "description": "workspace-relative path to the image (from list_files / shared/inbox)"},
-				"query": map[string]interface{}{"type": "string", "description": "optional: what to focus on (default: transcribe everything and describe it)"},
-			},
-			"required": []string{"path"},
-		},
+		Params:      readImageParams,
 		Handler: func(ctx context.Context, args map[string]interface{}) (string, error) {
-			rel, _ := args["path"].(string)
-			abs, ok := resolveWorkspacePath(rel)
-			if !ok {
-				return "", fmt.Errorf("invalid path")
-			}
-			if info, err := os.Stat(abs); err != nil || info.IsDir() {
-				return "", fmt.Errorf("file not found")
-			}
-			if !imageExts[strings.ToLower(filepath.Ext(abs))] {
-				return "", fmt.Errorf("not an image file")
-			}
-			query, _ := args["query"].(string)
-			if strings.TrimSpace(query) == "" {
-				query = "Transcribe ALL the text you can see (printed and handwritten) exactly, and briefly describe any diagrams, tables, or figures."
-			}
-			// Pass the ABSOLUTE path as text — the coding CLI opens it with its native
-			// file-read/vision ability (the designed path for CLI providers). The
-			// image read runs through enginedetect.Chat with the shell/native tools
-			// ENABLED (not the bridge-only chat runtime, which disables them and would
-			// stop the CLI reading the file).
-			prompt := "You are transcribing an image for a family learning app. Open and look at the image file at this path using your file-read/vision ability, then " + query +
-				"\n\nImage path: " + abs +
-				"\n\nOnly report what is genuinely visible in the image — never invent content. If it is illegible, say so."
-
-			reply, err := withoutBridgeEnv(func() (string, error) {
-				// Allow the CLI's native Read tool so it can actually open/view the
-				// image file (the tmux CLI runs --permission-mode dontAsk and only
-				// enables tools passed via --allowed-tools).
-				return enginedetect.Chat(ctx, engine, "", workspaceRoot(),
-					"You are a careful transcriber of images for a family learning app. Report only what is truly visible.",
-					[]enginedetect.ChatMessage{{Role: "user", Text: prompt}},
-					llm.WithAllowedTools("Read Glob"))
-			})
-			log.Printf("[read_image] %s err=%v chars=%d", filepath.Base(abs), err, len(reply))
-			if err != nil {
-				return "", fmt.Errorf("image read failed: %w", err)
-			}
-			if strings.TrimSpace(reply) == "" {
-				return "(the image reader returned nothing)", nil
-			}
-			return reply, nil
+			return runReadImage(ctx, engine, args, func(string) bool { return true })
 		},
 	}
+}
+
+// childReadImageTool is the SAME read_image tool, restricted to paths the
+// child can actually see (childCanSee: child/ or parent-approved shared/
+// paths) — matching childOpenFile's boundary. Without this restriction the
+// child could pass any workspace path (e.g. parent/answer-keys/...) since
+// readImageTool's own path resolution has no scoping built in.
+func childReadImageTool(engine string) agentsession.Tool {
+	return agentsession.Tool{
+		Name:        "read_image",
+		Description: "Look at a photo you (or your parent) uploaded — a scan of your work, a worksheet, a screenshot — and get back its text and a description. Use this to actually READ an uploaded image instead of guessing. Pass the workspace-relative path.",
+		Category:    "family_tools",
+		Params:      readImageParams,
+		Handler: func(ctx context.Context, args map[string]interface{}) (string, error) {
+			return runReadImage(ctx, engine, args, childCanSee)
+		},
+	}
+}
+
+var readImageParams = map[string]interface{}{
+	"type": "object",
+	"properties": map[string]interface{}{
+		"path":  map[string]interface{}{"type": "string", "description": "workspace-relative path to the image"},
+		"query": map[string]interface{}{"type": "string", "description": "optional: what to focus on (default: transcribe everything and describe it)"},
+	},
+	"required": []string{"path"},
+}
+
+func runReadImage(ctx context.Context, engine string, args map[string]interface{}, allowed func(rel string) bool) (string, error) {
+	rel, _ := args["path"].(string)
+	if !allowed(rel) {
+		return "", fmt.Errorf("that image isn't available")
+	}
+	abs, ok := resolveWorkspacePath(rel)
+	if !ok {
+		return "", fmt.Errorf("invalid path")
+	}
+	if info, err := os.Stat(abs); err != nil || info.IsDir() {
+		return "", fmt.Errorf("file not found")
+	}
+	if !imageExts[strings.ToLower(filepath.Ext(abs))] {
+		return "", fmt.Errorf("not an image file")
+	}
+	query, _ := args["query"].(string)
+	if strings.TrimSpace(query) == "" {
+		query = "Transcribe ALL the text you can see (printed and handwritten) exactly, and briefly describe any diagrams, tables, or figures."
+	}
+	// Pass the ABSOLUTE path as text — the coding CLI opens it with its native
+	// file-read/vision ability (the designed path for CLI providers). The
+	// image read runs through enginedetect.Chat with the shell/native tools
+	// ENABLED (not the bridge-only chat runtime, which disables them and would
+	// stop the CLI reading the file).
+	prompt := "You are transcribing an image for a family learning app. Open and look at the image file at this path using your file-read/vision ability, then " + query +
+		"\n\nImage path: " + abs +
+		"\n\nOnly report what is genuinely visible in the image — never invent content. If it is illegible, say so."
+
+	reply, err := withoutBridgeEnv(func() (string, error) {
+		// Allow the CLI's native Read tool so it can actually open/view the
+		// image file (the tmux CLI runs --permission-mode dontAsk and only
+		// enables tools passed via --allowed-tools).
+		return enginedetect.Chat(ctx, engine, "", workspaceRoot(),
+			"You are a careful transcriber of images for a family learning app. Report only what is truly visible.",
+			[]enginedetect.ChatMessage{{Role: "user", Text: prompt}},
+			llm.WithAllowedTools("Read Glob"))
+	})
+	log.Printf("[read_image] %s err=%v chars=%d", filepath.Base(abs), err, len(reply))
+	if err != nil {
+		return "", fmt.Errorf("image read failed: %w", err)
+	}
+	if strings.TrimSpace(reply) == "" {
+		return "(the image reader returned nothing)", nil
+	}
+	return reply, nil
 }

@@ -52,14 +52,22 @@ type Message struct {
 	Text string
 }
 
+// Handle is a provider-native continuation handle (mcpagent's AgentSessionHandle)
+// — for Claude Code it carries the CLI's own `--resume` session UUID. Persist it
+// as opaque JSON per conversation and hand it back via Config.SessionHandle on the
+// next turn: that is what lets a coding-agent restore full prior context after a
+// process restart WITHOUT replaying the transcript (the CLI reloads it from its
+// own on-disk session store). This is exactly how AgentWorks survives restarts.
+type Handle = mcpagent.AgentSessionHandle
+
 // Config parameterizes a Session. Only Provider, WorkingDir and Tools are
 // really required for a useful session.
 type Config struct {
-	Provider     llm.Provider   // e.g. llm.ProviderClaudeCode
-	ModelID      string         // "" -> llm.GetDefaultModel(provider)
-	WorkingDir   string         // scope root (Family/parent). "" -> process cwd
-	SystemPrompt string         // agent persona / instructions
-	Tools        []Tool         // app-specific custom tools
+	Provider     llm.Provider // e.g. llm.ProviderClaudeCode
+	ModelID      string       // "" -> llm.GetDefaultModel(provider)
+	WorkingDir   string       // scope root (Family/parent). "" -> process cwd
+	SystemPrompt string       // agent persona / instructions
+	Tools        []Tool       // app-specific custom tools
 	Logger       loggerv2.Logger
 	MaxTurns     int // 0 -> provider default
 	// SessionID, when set, makes turns RESUME the coding agent's own session
@@ -67,6 +75,16 @@ type Config struct {
 	// stable id per conversation (e.g. the conversation id). Empty -> fresh
 	// throwaway session each turn (full-history replay).
 	SessionID string
+	// SessionHandle, when non-nil, restores the coding agent's provider-native
+	// continuation state (for Claude Code: its `--resume` session UUID) BEFORE
+	// the turn runs — so the CLI reloads full prior context from its own on-disk
+	// session store instead of us replaying the transcript. This is the durable,
+	// cross-restart context mechanism (the warm tmux session is only a
+	// same-process speed path and dies on restart). Capture the fresh handle
+	// after each turn via Session.Handle(), persist it per conversation, and pass
+	// it back here on the next turn. Exactly the AgentWorks model. Nil on the very
+	// first turn of a brand-new conversation (nothing to resume yet).
+	SessionHandle *Handle
 	// BridgeRoutingInstructions, when non-nil, overrides mcpagent's default
 	// per-provider bridge-tool-routing system-prompt text (see
 	// mcpagent.WithBridgeRoutingInstructions and
@@ -204,6 +222,16 @@ func New(ctx context.Context, cfg Config) (*Session, error) {
 		}
 	}
 
+	// Restore provider-native continuation state (Claude Code's `--resume` UUID,
+	// etc.) BEFORE the first generation so the CLI reloads full prior context
+	// from its own session store — the durable, cross-restart path. Applied even
+	// though the warm tmux may already hold context in-process: the two coexist
+	// (the provider reuses a live tmux when present, else mints a fresh one and
+	// resumes via this handle). This is what AgentWorks does after a restart.
+	if cfg.SessionHandle != nil && !cfg.SessionHandle.Empty() {
+		agent.ApplyAgentSessionHandle(cfg.SessionHandle)
+	}
+
 	// Track the warm-resume owner so /api/reset can proactively close its tmux
 	// session (the provider otherwise reaps it on idle).
 	if resume {
@@ -339,8 +367,13 @@ func CloseAllInteractiveSessions() {
 }
 
 // Ask runs one turn over the supplied history and returns the assistant reply.
-// In warm-resume mode the coding agent already holds the prior context, so only
-// the newest message is sent; otherwise the full history is replayed.
+// In resume mode the coding agent holds prior context itself — via the live warm
+// tmux session (same process) or the restored SessionHandle's `--resume` state
+// (after a restart) — so only the newest message is sent. This mirrors
+// AgentWorks: the persistent/resumed CLI reconstructs history from its own store;
+// the provider adapter only ever forwards the latest message in this mode, so
+// replaying the full thread here would be dropped anyway. Non-resume (throwaway)
+// sessions send the whole thread, since there is nothing to resume.
 func (s *Session) Ask(ctx context.Context, history []Message) (string, error) {
 	if s.resume && len(history) > 0 {
 		history = history[len(history)-1:]
@@ -385,6 +418,19 @@ func sanitizeReply(reply string) string {
 // Agent exposes the underlying agent for advanced callers (event listeners,
 // usage stats). May be nil after Close.
 func (s *Session) Agent() *mcpagent.Agent { return s.agent }
+
+// Handle returns the coding agent's latest provider-native continuation handle
+// (Claude Code's `--resume` UUID, etc.), captured from the just-completed turn.
+// Persist it per conversation and pass it back via Config.SessionHandle next turn
+// so context survives a process restart. Returns nil if the provider produced no
+// resumable handle (e.g. a throwaway non-resume session). Call after Ask, before
+// Close (it reads live agent state).
+func (s *Session) Handle() *Handle {
+	if s == nil || s.agent == nil {
+		return nil
+	}
+	return s.agent.CurrentAgentSessionHandle()
+}
 
 // Close disposes the per-turn agent. Safe to call more than once. It closes ONLY
 // this turn's agent — never the process-global bridge and never the provider's

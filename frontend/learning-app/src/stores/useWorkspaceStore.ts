@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import type { DrawerTab, TreeNode, WsFile } from './types'
+import type { DrawerTab, LearningPackage, TreeNode, WsFile } from './types'
 import { resolveSetState, type SetStateAction } from './storeUtils'
 
 // Parent-side workspace browsing: drawer tabs, the file tree/viewer, and the
@@ -7,10 +7,8 @@ import { resolveSetState, type SetStateAction } from './storeUtils'
 interface WorkspaceState {
   drawerTab: DrawerTab
   setDrawerTab: (v: SetStateAction<DrawerTab>) => void
-  filesView: 'subjects' | 'uploaded' | 'reference' | 'advanced'
-  setFilesView: (v: SetStateAction<'subjects' | 'uploaded' | 'reference' | 'advanced'>) => void
-  prefsContent: string | null
-  setPrefsContent: (v: SetStateAction<string | null>) => void
+  filesView: 'subjects' | 'uploaded' | 'advanced'
+  setFilesView: (v: SetStateAction<'subjects' | 'uploaded' | 'advanced'>) => void
   treeNodes: TreeNode[]
   setTreeNodes: (v: SetStateAction<TreeNode[]>) => void
   wsFiles: WsFile[]
@@ -38,6 +36,11 @@ interface WorkspaceState {
   setWsRefreshKey: (v: SetStateAction<number>) => void
   filesSubjectFilter: string
   setFilesSubjectFilter: (v: SetStateAction<string>) => void
+  // Learning packages the parent has bundled for the child (shared/packages/*.json)
+  // — shown as a summary section in the Files browser, mirroring what the
+  // child already sees under "From your parent".
+  packages: LearningPackage[]
+  setPackages: (v: SetStateAction<LearningPackage[]>) => void
 }
 
 export const useWorkspaceStore = create<WorkspaceState>()((set) => ({
@@ -45,8 +48,6 @@ export const useWorkspaceStore = create<WorkspaceState>()((set) => ({
   setDrawerTab: (v) => set((s) => ({ drawerTab: resolveSetState(v, s.drawerTab) })),
   filesView: 'subjects',
   setFilesView: (v) => set((s) => ({ filesView: resolveSetState(v, s.filesView) })),
-  prefsContent: null,
-  setPrefsContent: (v) => set((s) => ({ prefsContent: resolveSetState(v, s.prefsContent) })),
   treeNodes: [],
   setTreeNodes: (v) => set((s) => ({ treeNodes: resolveSetState(v, s.treeNodes) })),
   wsFiles: [],
@@ -71,4 +72,6 @@ export const useWorkspaceStore = create<WorkspaceState>()((set) => ({
   setWsRefreshKey: (v) => set((s) => ({ wsRefreshKey: resolveSetState(v, s.wsRefreshKey) })),
   filesSubjectFilter: '',
   setFilesSubjectFilter: (v) => set((s) => ({ filesSubjectFilter: resolveSetState(v, s.filesSubjectFilter) })),
+  packages: [],
+  setPackages: (v) => set((s) => ({ packages: resolveSetState(v, s.packages) })),
 }))

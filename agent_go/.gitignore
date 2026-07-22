@@ -21,6 +21,8 @@ runs
 # Compiled binaries
 /claude-code-chat
 /cmd/server/server
+/family-server
+/cmd/family-server/family-server
 
 # Example MCP server configs (may contain credentials/paths)
 examples/claude-code-chat/mcp_servers.json

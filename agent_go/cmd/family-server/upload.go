@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"io"
 	"net/http"
 	"os"
@@ -18,39 +19,22 @@ type uploadResponse struct {
 	Error   string `json:"error,omitempty"`
 }
 
-// inboxFiles lists the filenames currently staged in shared/inbox for the agent
-// to process. Used to deterministically nudge the agent to run the process-file
-// skill when uploads are waiting, rather than relying on the prompt alone.
-func inboxFiles() []string {
-	dir := filepath.Join(familyDataDir(), "workspace", "shared", "inbox")
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		return nil
+// saveCurrentUpload writes a small pointer file naming the exact path of a
+// child's just-uploaded photo — the SAME pattern as child/current-task.json
+// for handoffs. A prompt instruction telling the child agent to proactively
+// "ls child/inbox/" for a new upload proved unreliable in testing (the model
+// kept defaulting to checking shared/inbox instead); pointing it at one
+// specific, deterministic file to read removes the guessing entirely.
+func saveCurrentUpload(rel string) {
+	abs, ok := resolveWorkspacePath("child/current-upload.json")
+	if !ok {
+		return
 	}
-	out := []string{}
-	for _, e := range entries {
-		if !e.IsDir() && !strings.HasPrefix(e.Name(), ".") {
-			out = append(out, e.Name())
-		}
-	}
-	return out
-}
-
-// safeSeg sanitizes a string for use as a single path segment (no traversal,
-// no separators). Empty result becomes "misc".
-func safeSeg(s string) string {
-	s = strings.TrimSpace(s)
-	s = strings.ReplaceAll(s, "/", "-")
-	s = strings.ReplaceAll(s, "\\", "-")
-	s = strings.ReplaceAll(s, "..", "-")
-	s = strings.Trim(s, ". ")
-	if s == "" {
-		return "misc"
-	}
-	if len(s) > 80 {
-		s = s[:80]
-	}
-	return s
+	_ = os.MkdirAll(filepath.Dir(abs), 0o700)
+	b, _ := json.Marshal(struct {
+		Path string `json:"path"`
+	}{Path: rel})
+	_ = os.WriteFile(abs, b, 0o600)
 }
 
 // safeName sanitizes an uploaded filename to its base, no traversal.
@@ -92,7 +76,18 @@ func handleUpload(w http.ResponseWriter, r *http.Request) {
 	// it, and files it into shared/materials/<subject>/<topic>/ with a metadata
 	// JSON — see skills/process-file/SKILL.md. Subject/topic are decided from the
 	// file's content by the agent, not guessed from stale header state.
+	//
+	// scope=child routes instead to child/inbox/ — the child's OWN sandbox
+	// (childShellTool's WritePaths/ReadPaths are scoped to child/ only), so a
+	// child-uploaded photo (e.g. a scan of their answer) is immediately visible
+	// to their own agent turn without needing parent approval, unlike shared/
+	// which the child cannot see until explicitly approved.
 	relDir := filepath.Join("shared", "inbox")
+	scope := "shared"
+	if strings.TrimSpace(r.FormValue("scope")) == "child" {
+		relDir = filepath.Join("child", "inbox")
+		scope = "child"
+	}
 	absDir := filepath.Join(familyDataDir(), "workspace", relDir)
 	if err := os.MkdirAll(absDir, 0o700); err != nil {
 		writeJSON(w, http.StatusInternalServerError, uploadResponse{Error: err.Error()})
@@ -112,11 +107,15 @@ func handleUpload(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, uploadResponse{Error: "failed to save the file"})
 		return
 	}
+	relPath := filepath.ToSlash(filepath.Join(relDir, name))
+	if scope == "child" {
+		saveCurrentUpload(relPath)
+	}
 
 	writeJSON(w, http.StatusOK, uploadResponse{
 		Name:  name,
-		Path:  filepath.ToSlash(filepath.Join(relDir, name)),
+		Path:  relPath,
 		Size:  size,
-		Scope: "shared",
+		Scope: scope,
 	})
 }

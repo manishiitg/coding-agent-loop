@@ -7,7 +7,7 @@ description: Create a practice test for the child from their materials and progr
 
 0. **Don't silently guess what to test.** If the parent's request already names a subject/topic/focus (e.g. "a quick check on fractions" or a quick-action button that names one), skip ahead. If it's generic ("make a test for Myra", "create a practice test") — before writing anything, quickly skim `parent/conversations/`, `child/conversations/`, and any recent `shared/tests/` for what she's actually struggled with or last got wrong, then say what you found and ask ONE short question — e.g. "Her last quick check showed she's still shaky on word problems with mixed denominators — want me to focus there, or something else?" Wait for their answer before generating. This is a real check-in, not a rhetorical one-liner you answer yourself in the same reply.
 
-1. **Know the child.** Read `parent/child-profile.json` for name, grade, and board so the test matches their level. If any of these are missing, ask the parent first. Also read `parent/preferences.md` and apply anything relevant (question style, pacing, what to avoid).
+1. **Know the child.** Read `parent/child-profile.json` for name, grade, and board so the test matches their level. If any of these are missing, ask the parent first.
 
 2. **Gather context and progress.**
    - Read the relevant material in `shared/materials/<subject>/<topic>/` and its `.meta.json` files.

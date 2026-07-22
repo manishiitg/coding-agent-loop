@@ -16,8 +16,8 @@ export type ApiEngine = {
 
 export type ConvMeta = { id: string; title: string; when: string; scope: 'parent' | 'child'; updated: string }
 
-export type ParentMsg = { role: 'user' | 'assistant' | 'tool'; text?: string; tool?: string; name?: string; grade?: string; board?: string; stars?: number; reason?: string }
-export type StoredMsg = { role: string; text?: string; tool?: string; stars?: number; reason?: string }
+export type ParentMsg = { role: 'user' | 'assistant' | 'tool'; text?: string; tool?: string; name?: string; grade?: string; board?: string; stars?: number; reason?: string; source?: string }
+export type StoredMsg = { role: string; text?: string; tool?: string; stars?: number; reason?: string; source?: string }
 
 export type TreeNode = { name: string; path: string; type: 'dir' | 'file'; children?: TreeNode[] }
 
@@ -31,5 +31,5 @@ export type LearningPackage = { manifest: string; title: string; items: string[]
 // event) into what the UI renders — so reloading a conversation replays star
 // moments exactly where they happened, not just the surrounding text.
 export function toParentMsg(m: StoredMsg): ParentMsg {
-  return { role: m.role as ParentMsg['role'], text: m.text, tool: m.tool, stars: m.stars, reason: m.reason }
+  return { role: m.role as ParentMsg['role'], text: m.text, tool: m.tool, stars: m.stars, reason: m.reason, source: m.source }
 }

@@ -25,6 +25,12 @@ type ChatMessage struct {
 	Tool   string `json:"tool,omitempty"`
 	Stars  int    `json:"stars,omitempty"`
 	Reason string `json:"reason,omitempty"`
+	// Source marks how an assistant message was produced when it wasn't a
+	// direct reply to the parent typing — currently "pulse" for the periodic
+	// background check-in (see pulse.go), so the UI can badge it as a
+	// proactive Quill note rather than a reply to something the parent said.
+	// Empty for ordinary replies.
+	Source string `json:"source,omitempty"`
 }
 
 // Chat runs a single agent turn for the given engine over the supplied

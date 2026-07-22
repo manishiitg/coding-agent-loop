@@ -22,6 +22,11 @@ than pad it.
    - `parent/child-profile.json` — current star total.
    - Never invent a score, a percentage, or a diagnosis that isn't directly backed by
      one of the above.
+   - **For the Overall section specifically** (see below), you need the FULL history,
+     not just the recent few: count/skim every file in `child/attempts/*.json` and
+     `child/conversations/*.json` — this section is a cumulative rollup across
+     everything that's happened since the family started using SparkQuill, not a
+     recency snapshot.
 
 2. **Write** the report to the single fixed path `shared/reports/progress.html`
    (overwrite it in place every time — this is one living document, not a new
@@ -38,11 +43,22 @@ than pad it.
      moment (a problem she solved after effort, a test she finished, a pattern you
      genuinely see across attempts) — not generic encouragement, not restating
      "Right now."
+   - **Overall**: a handful of compact, cumulative facts computed from the FULL
+     evidence history (not just recent activity) — e.g. how many topics she's
+     attempted overall, how many tests completed, current star total/trend, one
+     durable strength that's held up across multiple attempts, one durable growth
+     area that keeps recurring. This is a rollup of numbers/facts, NEVER a
+     topic-by-topic list or subject breakdown — that level of detail belongs in the
+     Academic Map (`shared/academic-map.html`), not here. If this is a new family
+     with little history yet, say so plainly in one line instead of padding.
    - **Next**: one line, one concrete next step.
    - Skip anything you'd otherwise pad with — no separate "recent activity" list
      that just repeats what's already above, no generic closing note unless it says
      something the rest of the report hasn't already said.
    - If evidence is thin, say so in one honest line instead of filling space.
+   - Like the Academic Map, this file is always fully regenerated — never append a
+     dated entry or keep old wording around "for history"; each write replaces the
+     whole picture with the current one.
 
 3. **Tell the parent** it's ready and that it now appears in the **Progress** tab,
    visible to both them and the child.

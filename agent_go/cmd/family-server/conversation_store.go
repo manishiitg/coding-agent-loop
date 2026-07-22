@@ -11,6 +11,13 @@ import (
 	"github.com/manishiitg/coding-agent-loop/agent_go/internal/enginedetect"
 )
 
+// parentConversationID is the SINGLE canonical parent↔Quill conversation for
+// this family. Web chat, WhatsApp, and Pulse all read/write/resume THIS one —
+// one file (parent/conversations/parent.json), one warm tmux session — so
+// Quill has unified context no matter how the parent reaches it. The app is one
+// family with one ongoing conversation; there is no multi-conversation list.
+const parentConversationID = "parent"
+
 type storedConversation struct {
 	ID        string                     `json:"id"`
 	Scope     string                     `json:"scope"`
@@ -55,6 +62,26 @@ func persistConversation(scope, id string, messages []enginedetect.ChatMessage) 
 		return
 	}
 	_ = os.WriteFile(filepath.Join(dir, id+".json"), b, 0o600)
+}
+
+// loadStoredConversation reads one persisted conversation by id (same id
+// sanitization as persistConversation). Used by Pulse to load a specific,
+// known conversation directly rather than scanning the whole directory.
+func loadStoredConversation(scope, id string) (storedConversation, bool) {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return storedConversation{}, false
+	}
+	id = strings.NewReplacer("/", "_", "\\", "_", "..", "_").Replace(id)
+	b, err := os.ReadFile(filepath.Join(workspaceRoot(), scope, "conversations", id+".json"))
+	if err != nil {
+		return storedConversation{}, false
+	}
+	var conv storedConversation
+	if json.Unmarshal(b, &conv) != nil || conv.ID == "" {
+		return storedConversation{}, false
+	}
+	return conv, true
 }
 
 // handleWorkspaceFile serves GET /api/workspace/file?path=... — read one

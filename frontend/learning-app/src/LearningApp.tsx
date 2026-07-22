@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, type FormEvent, type ChangeEvent } from 'r
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import {
+  Activity,
   ArrowLeft,
   ArrowRight,
   BookOpen,
@@ -9,13 +10,18 @@ import {
   CheckCircle2,
   ExternalLink,
   FileText,
+  Folder,
+  FolderOpen,
+  Image as ImageIcon,
   LockKeyhole,
   PanelLeftClose,
   PanelLeftOpen,
   Paperclip,
   Plus,
+  Printer,
   RefreshCw,
   Send,
+  Settings as SettingsIcon,
   Sparkles,
   Star,
   Sun,
@@ -39,6 +45,7 @@ import {
   type TreeNode,
   type WsFile,
   type ChildSuggestion,
+  type LearningPackage,
 } from './stores'
 
 const FAMILY_API = (import.meta as { env?: { VITE_FAMILY_API?: string } }).env?.VITE_FAMILY_API ?? 'http://127.0.0.1:8010'
@@ -124,6 +131,11 @@ const PARENT_WAIT_HINTS = [
   'Tip: ask for several things at once — "make a guide, a quick test, and an advanced one" — bundled as one package.',
   'Tip: Quill can look up board-specific tips and exam strategies — just ask.',
   'Tip: you can ask Quill to explain a topic to you, not just make material for your child.',
+  'Tip: connect Gmail in Connectors, then just ask "did the school email anything?" — Quill checks for you.',
+  'Tip: link WhatsApp in Connectors to chat with Quill from your phone, and get check-ins there.',
+  'Tip: set up the Browser connector and Quill can peek at your school portal for new assignments.',
+  'Tip: turn on Pulse (top bar) and Quill checks in on its own — reviewing progress and the school portal.',
+  'Tip: just mention things in passing — "her exam is next Friday", "she gets anxious with timers" — Quill remembers and applies them later.',
 ]
 const CHILD_WAIT_HINTS = [
   'Tip: stuck? Just say "give me a hint!"',
@@ -131,6 +143,9 @@ const CHILD_WAIT_HINTS = [
   'Tip: tell Quill your answer — it will tell you if you got it right.',
   'Tip: ask for an example if a question feels tricky.',
   'Tip: you can ask Quill anything about what you\'re learning, not just the current question.',
+  'Tip: ask a parent to set up WhatsApp so you can practice with Quill on the phone too!',
+  'Tip: ask a parent to turn on Pulse so Quill keeps track of how you\'re doing.',
+  'Tip: ask a parent to connect the school portal so Quill can help with your assignments.',
 ]
 
 // FileTree renders the workspace as an expandable tree (AgentWorks-style). Files
@@ -144,11 +159,18 @@ function FileTree({ nodes, onOpen, depth = 0 }: { nodes: TreeNode[]; onOpen: (pa
         <li key={n.path}>
           {n.type === 'dir' ? (
             <details open={depth < 1}>
-              <summary className="fl-tree-dir">{n.name}</summary>
+              <summary className="fl-tree-dir">
+                <Folder className="fl-tree-icon is-closed" size={15} />
+                <FolderOpen className="fl-tree-icon is-open" size={15} />
+                <span>{n.name}</span>
+              </summary>
               {n.children && <FileTree nodes={n.children} onOpen={onOpen} depth={depth + 1} />}
             </details>
           ) : (
-            <button className="fl-tree-file" type="button" onClick={() => onOpen(n.path)}>{n.name}</button>
+            <button className="fl-tree-file" type="button" onClick={() => onOpen(n.path)}>
+              {IMAGE_PATH_RE.test(n.name) ? <ImageIcon size={14} /> : <FileText size={14} />}
+              <span>{n.name}</span>
+            </button>
           )}
         </li>
       ))}
@@ -250,27 +272,41 @@ export default function LearningApp() {
   const setPendingHandoff = useParentChatStore((s) => s.setPendingHandoff)
   const menuOpen = useParentChatStore((s) => s.menuOpen)
   const setMenuOpen = useParentChatStore((s) => s.setMenuOpen)
+  const [settingsOpen, setSettingsOpen] = useState(false)
+  const [savingEngine, setSavingEngine] = useState(false)
   const waOpen = useWhatsAppStore((s) => s.waOpen)
   const setWaOpen = useWhatsAppStore((s) => s.setWaOpen)
-  const waMessages = useWhatsAppStore((s) => s.waMessages)
-  const setWaMessages = useWhatsAppStore((s) => s.setWaMessages)
-  const waInput = useWhatsAppStore((s) => s.waInput)
-  const setWaInput = useWhatsAppStore((s) => s.setWaInput)
-  const waSending = useWhatsAppStore((s) => s.waSending)
-  const setWaSending = useWhatsAppStore((s) => s.setWaSending)
+  const [connectorSection, setConnectorSection] = useState<'whatsapp' | 'gmail' | 'browser'>('whatsapp')
+  const [waStatus, setWaStatus] = useState<{ paired: boolean; connected: boolean; qr_available: boolean; own_jid?: string } | null>(null)
+  const [waQrNonce, setWaQrNonce] = useState(0)
+  const [waUnpairing, setWaUnpairing] = useState(false)
+  const [gmailStatus, setGmailStatus] = useState<{ connected: boolean; email?: string } | null>(null)
+  const [gmailTesting, setGmailTesting] = useState(false)
+  const [gmailTestResult, setGmailTestResult] = useState<string | null>(null)
+  const [browserStatus, setBrowserStatus] = useState<{ cli_installed: boolean } | null>(null)
+  const [browserCopied, setBrowserCopied] = useState(false)
+  const [pulseConfig, setPulseConfig] = useState<{ enabled: boolean; cadence_hours: number; last_run_at?: string; school_gmail_query?: string; watch_sites?: string[]; notify_emails?: string[] } | null>(null)
+  const [savingPulse, setSavingPulse] = useState(false)
+  const [schoolQueryDraft, setSchoolQueryDraft] = useState('')
+  const [watchSitesDraft, setWatchSitesDraft] = useState('')
+  const [notifyEmailsDraft, setNotifyEmailsDraft] = useState('')
+  const [pulseSaved, setPulseSaved] = useState(false)
+  const [pulsePopoverOpen, setPulsePopoverOpen] = useState(false)
+  const [pendingConvUpdate, setPendingConvUpdate] = useState<StoredMsg[] | null>(null)
+  // Messages the parent typed while a turn was still processing — sent one at
+  // a time as the current turn finishes (see the drain effect). Shown as
+  // "queued" bubbles so they know it's coming.
+  const [queue, setQueue] = useState<string[]>([])
+  const [pulseRunning, setPulseRunning] = useState(false)
+  const [pulseRunError, setPulseRunError] = useState<string | null>(null)
   const wsFiles = useWorkspaceStore((s) => s.wsFiles)
   const setWsFiles = useWorkspaceStore((s) => s.setWsFiles)
   const allFiles = useWorkspaceStore((s) => s.allFiles)
   const setAllFiles = useWorkspaceStore((s) => s.setAllFiles)
-  // conversationId/childConversationId are lazily seeded with a fresh generated
-  // id on first render (same as before Zustand) — the stores default to '',
-  // which would send an empty conversation_id on the very first message before
-  // any resume/new-conversation action has run.
-  const [conversationId, setConversationId] = useState(newConversationId)
-  const conversations = useParentChatStore((s) => s.conversations)
-  const setConversations = useParentChatStore((s) => s.setConversations)
-  const childSessionsList = useParentChatStore((s) => s.childSessionsList)
-  const setChildSessionsList = useParentChatStore((s) => s.setChildSessionsList)
+  // The parent has ONE ongoing conversation with Quill — web, WhatsApp, and
+  // Pulse all share this single "parent" thread (matching the backend's
+  // parentConversationID). No multi-conversation list, so the id is fixed.
+  const conversationId = 'parent'
   const resumedRef = useRef(false)
   const childResumedRef = useRef(false)
   const childMessages = useChildChatStore((s) => s.childMessages)
@@ -283,8 +319,6 @@ export default function LearningApp() {
   const setChildSuggestions = useChildChatStore((s) => s.setChildSuggestions)
   const childLiveStatus = useChildChatStore((s) => s.childLiveStatus)
   const setChildLiveStatus = useChildChatStore((s) => s.setChildLiveStatus)
-  const childStars = useFamilyStore((s) => s.childStars)
-  const setChildStars = useFamilyStore((s) => s.setChildStars)
   const parentLabel = useFamilyStore((s) => s.parentLabel)
   const setParentLabel = useFamilyStore((s) => s.setParentLabel)
   const [childConversationId, setChildConversationId] = useState(newConversationId)
@@ -319,38 +353,32 @@ export default function LearningApp() {
             return { path: f.path, name: f.name, scope: parts[0] || '', subject: parts[mi + 1] || '', topic: parts[mi + 2] || '' }
           })
         if (!cancelled) { setWsFiles(mats); setAllFiles(files.map((f) => f.path)) }
-        // Derive past conversations from <scope>/conversations/*.json — the left
-        // rail reflects the file system, no bespoke conversations API.
-        const convPaths = files.filter((f) => f.path.includes('/conversations/') && f.path.endsWith('.json')).map((f) => f.path)
-        const metas = await Promise.all(convPaths.map(async (p) => {
-          try {
-            const d = await fetch(`${FAMILY_API}/api/workspace/file?path=${encodeURIComponent(p)}`).then((r) => r.json())
-            const c = JSON.parse(d.content) as { id: string; title?: string; updated_at?: string }
-            const scope: 'parent' | 'child' = p.startsWith('child/') ? 'child' : 'parent'
-            return { id: c.id, title: c.title || 'Conversation', when: relTime(c.updated_at || ''), scope, updated: c.updated_at || '' } as ConvMeta
-          } catch { return null }
-        }))
-        if (cancelled) return
-        const valid = metas.filter((m): m is ConvMeta => m !== null)
-        valid.sort((a, b) => b.updated.localeCompare(a.updated))
-        const parentConvs = valid.filter((c) => c.scope === 'parent')
-        setConversations(parentConvs)
-        const childConvs = valid.filter((c) => c.scope === 'child')
-        setChildSessionsList(childConvs)
-        // Resume the most recent conversation by default (once) so the parent
-        // continues where they left off instead of starting a fresh chat each load.
-        if (!resumedRef.current && parentMessages.length === 0 && parentConvs.length > 0) {
+        // Resume the single parent conversation (once) so the parent continues
+        // where they left off — including anything that arrived via WhatsApp or
+        // Pulse, since it's all the same thread now.
+        if (!resumedRef.current && parentMessages.length === 0) {
           resumedRef.current = true
-          const top = parentConvs[0]
-          fetch(`${FAMILY_API}/api/workspace/file?path=${encodeURIComponent(`${top.scope}/conversations/${top.id}.json`)}`)
+          fetch(`${FAMILY_API}/api/workspace/file?path=${encodeURIComponent('parent/conversations/parent.json')}`)
             .then((r) => r.json())
             .then((dd) => {
-              const c = JSON.parse(dd.content) as { id: string; messages?: StoredMsg[] }
-              setConversationId(c.id)
+              if (!dd?.content) return
+              const c = JSON.parse(dd.content) as { messages?: StoredMsg[] }
               setParentMessages((c.messages || []).map(toParentMsg))
             })
             .catch(() => {})
         }
+        // The child's own sessions still power the child-mode resume below.
+        const convPaths = files.filter((f) => f.path.includes('child/conversations/') && f.path.endsWith('.json')).map((f) => f.path)
+        const childMetas = await Promise.all(convPaths.map(async (p) => {
+          try {
+            const d = await fetch(`${FAMILY_API}/api/workspace/file?path=${encodeURIComponent(p)}`).then((r) => r.json())
+            const c = JSON.parse(d.content) as { id: string; updated_at?: string }
+            return { id: c.id, updated: c.updated_at || '' } as { id: string; updated: string }
+          } catch { return null }
+        }))
+        if (cancelled) return
+        const childConvs = childMetas.filter((m): m is { id: string; updated: string } => m !== null)
+          .sort((a, b) => b.updated.localeCompare(a.updated))
         // Same for the child's own conversation — without this, every page
         // refresh silently started a brand-new child session (fresh cold-start
         // agent turn, empty visible thread, lost stars/celebration history)
@@ -358,7 +386,7 @@ export default function LearningApp() {
         if (!childResumedRef.current && childMessages.length === 0 && childConvs.length > 0) {
           childResumedRef.current = true
           const top = childConvs[0]
-          fetch(`${FAMILY_API}/api/workspace/file?path=${encodeURIComponent(`${top.scope}/conversations/${top.id}.json`)}`)
+          fetch(`${FAMILY_API}/api/workspace/file?path=${encodeURIComponent(`child/conversations/${top.id}.json`)}`)
             .then((r) => r.json())
             .then((dd) => {
               const c = JSON.parse(dd.content) as { id: string; messages?: StoredMsg[] }
@@ -377,12 +405,11 @@ export default function LearningApp() {
   const threadEndRef = useRef<HTMLDivElement>(null)
   const childThreadEndRef = useRef<HTMLDivElement>(null)
   const iframeRef = useRef<HTMLIFrameElement>(null)
+  const childIframeRef = useRef<HTMLIFrameElement>(null)
   const drawerTab = useWorkspaceStore((s) => s.drawerTab)
   const setDrawerTab = useWorkspaceStore((s) => s.setDrawerTab)
   const filesView = useWorkspaceStore((s) => s.filesView)
   const setFilesView = useWorkspaceStore((s) => s.setFilesView)
-  const prefsContent = useWorkspaceStore((s) => s.prefsContent)
-  const setPrefsContent = useWorkspaceStore((s) => s.setPrefsContent)
   const childFiles = useChildChatStore((s) => s.childFiles)
   const setChildFiles = useChildChatStore((s) => s.setChildFiles)
   const childPackages = useChildChatStore((s) => s.childPackages)
@@ -401,6 +428,8 @@ export default function LearningApp() {
   const setFilesSubjectFilter = useWorkspaceStore((s) => s.setFilesSubjectFilter)
   const treeNodes = useWorkspaceStore((s) => s.treeNodes)
   const setTreeNodes = useWorkspaceStore((s) => s.setTreeNodes)
+  const packages = useWorkspaceStore((s) => s.packages)
+  const setPackages = useWorkspaceStore((s) => s.setPackages)
   const viewerPath = useWorkspaceStore((s) => s.viewerPath)
   const setViewerPath = useWorkspaceStore((s) => s.setViewerPath)
   const viewerRefreshKey = useWorkspaceStore((s) => s.viewerRefreshKey)
@@ -461,17 +490,180 @@ export default function LearningApp() {
     return () => { cancelled = true }
   }, [drawerTab, mapRefreshKey])
 
-  // Load parent/preferences.md for the Reference tab, refetched whenever it's
-  // opened or a turn just completed (the agent may have updated it).
+  // Learning packages the parent has bundled for the child — refetched whenever
+  // the Subjects tab is open or a turn just completed (Quill may have created one).
   useEffect(() => {
-    if (filesView !== 'reference') return
+    if (filesView !== 'subjects') return
     let cancelled = false
-    fetch(`${FAMILY_API}/api/workspace/file?path=${encodeURIComponent('parent/preferences.md')}`)
+    fetch(`${FAMILY_API}/api/parent/packages`)
       .then((r) => r.json())
-      .then((d) => { if (!cancelled) setPrefsContent(d.content ?? '') })
-      .catch(() => { if (!cancelled) setPrefsContent('') })
+      .then((d: LearningPackage[]) => { if (!cancelled) setPackages(d ?? []) })
+      .catch(() => { if (!cancelled) setPackages([]) })
     return () => { cancelled = true }
   }, [filesView, mapRefreshKey])
+
+  // Poll real WhatsApp pairing status while the connector modal's WhatsApp
+  // section is open — refreshes the QR (it's short-lived) until paired.
+  useEffect(() => {
+    if (!waOpen || connectorSection !== 'whatsapp') return
+    let cancelled = false
+    const poll = () => {
+      fetch(`${FAMILY_API}/api/whatsapp/status`)
+        .then((r) => r.json())
+        .then((d: { paired: boolean; connected: boolean; qr_available: boolean; own_jid?: string }) => {
+          if (cancelled) return
+          setWaStatus(d)
+          if (!d.paired) setWaQrNonce((n) => n + 1)
+        })
+        .catch(() => {})
+    }
+    poll()
+    const id = window.setInterval(poll, 3000)
+    return () => { cancelled = true; window.clearInterval(id) }
+  }, [waOpen, connectorSection])
+
+  // Gmail connection status (via the gws CLI, already authenticated on this
+  // machine) — checked once whenever the Gmail section is opened.
+  useEffect(() => {
+    if (!waOpen || connectorSection !== 'gmail') return
+    let cancelled = false
+    setGmailTestResult(null)
+    fetch(`${FAMILY_API}/api/gmail/status`)
+      .then((r) => r.json())
+      .then((d: { connected: boolean; email?: string }) => { if (!cancelled) setGmailStatus(d) })
+      .catch(() => { if (!cancelled) setGmailStatus({ connected: false }) })
+    return () => { cancelled = true }
+  }, [waOpen, connectorSection])
+
+  const sendGmailTest = () => {
+    setGmailTesting(true)
+    setGmailTestResult(null)
+    fetch(`${FAMILY_API}/api/gmail/test`, { method: 'POST' })
+      .then((r) => r.json())
+      .then((d: { ok?: boolean; sent_to?: string; error?: string }) => {
+        setGmailTestResult(d.ok ? `Sent — check ${d.sent_to}` : `Failed: ${d.error || 'unknown error'}`)
+      })
+      .catch(() => setGmailTestResult('Failed: could not reach SparkQuill.'))
+      .finally(() => setGmailTesting(false))
+  }
+
+  // Browser connector — just a one-time CLI-install check; whether a CDP
+  // Chrome is actually reachable is decided by agent-browser itself per call.
+  useEffect(() => {
+    if (!waOpen || connectorSection !== 'browser') return
+    let cancelled = false
+    fetch(`${FAMILY_API}/api/browser/status`)
+      .then((r) => r.json())
+      .then((d: { cli_installed: boolean }) => { if (!cancelled) setBrowserStatus(d) })
+      .catch(() => { if (!cancelled) setBrowserStatus({ cli_installed: false }) })
+    return () => { cancelled = true }
+  }, [waOpen, connectorSection])
+
+  // Pulse config — loaded on entering the parent screen (so the header pill
+  // reflects real status right away) and refreshed whenever Settings or the
+  // pill's own popover opens.
+  useEffect(() => {
+    if (screen !== 'parent' && !settingsOpen && !pulsePopoverOpen) return
+    let cancelled = false
+    fetch(`${FAMILY_API}/api/pulse/config`)
+      .then((r) => r.json())
+      .then((d: { enabled: boolean; cadence_hours: number; last_run_at?: string; school_gmail_query?: string; watch_sites?: string[]; notify_emails?: string[] }) => {
+        if (cancelled) return
+        setPulseConfig(d)
+        setSchoolQueryDraft(d.school_gmail_query || '')
+        setWatchSitesDraft((d.watch_sites || []).join('\n'))
+        setNotifyEmailsDraft((d.notify_emails || []).join(', '))
+      })
+      .catch(() => {})
+    return () => { cancelled = true }
+  }, [screen, settingsOpen, pulsePopoverOpen])
+
+  // Pick up async updates to the open conversation — Pulse (or a WhatsApp
+  // reply, if this same conversation is the real WhatsApp thread) can append
+  // a new message to this exact conversation file from the background, with
+  // nothing else telling this open tab to know. Poll lightly and, if the
+  // file has grown since we last rendered it, surface a small "new update"
+  // banner rather than silently rewriting the screen under the parent —
+  // they choose when to pull it in. Skip while a send is in flight.
+  useEffect(() => {
+    if (screen !== 'parent' || !conversationId) return
+    const id = window.setInterval(() => {
+      if (sending) return
+      fetch(`${FAMILY_API}/api/workspace/file?path=${encodeURIComponent(`parent/conversations/${conversationId}.json`)}`)
+        .then((r) => r.json())
+        .then((d) => {
+          if (!d?.content) return
+          const c = JSON.parse(d.content) as { messages?: StoredMsg[] }
+          const fresh = c.messages || []
+          if (fresh.length > parentMessages.length) {
+            setPendingConvUpdate(fresh)
+          }
+        })
+        .catch(() => {})
+    }, 20000)
+    return () => window.clearInterval(id)
+  }, [screen, conversationId, sending, parentMessages.length])
+
+  // Clear any pending "new update" banner whenever the parent switches
+  // conversations or sends their own message — it only ever refers to the
+  // specific conversation/point in time it was detected for.
+  useEffect(() => { setPendingConvUpdate(null) }, [conversationId])
+
+  // Drain the send queue: once the current turn finishes, send the next queued
+  // message. One at a time, in order — so the transcript stays well-formed and
+  // each reply builds on the previous. sendParentText itself flips `sending`
+  // back on, which re-guards this until that turn also completes.
+  useEffect(() => {
+    if (sending || queue.length === 0) return
+    const [next, ...rest] = queue
+    setQueue(rest)
+    sendParentText(next)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sending, queue])
+
+  const savePulseConfig = (patch: { enabled?: boolean; cadence_hours?: number; school_gmail_query?: string; watch_sites?: string[]; notify_emails?: string[] }) => {
+    setSavingPulse(true)
+    fetch(`${FAMILY_API}/api/pulse/config`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(patch),
+    })
+      .then((r) => r.json())
+      .then((d) => setPulseConfig(d))
+      .catch(() => {})
+      .finally(() => setSavingPulse(false))
+  }
+
+  // Runs Pulse right now (regardless of the recurring toggle) — used to test
+  // it without waiting for the ticker. Fires the request, then polls config
+  // and watches last_run_at change to know when the real turn (which can
+  // take a few minutes) has finished.
+  const runPulseNow = () => {
+    const before = pulseConfig?.last_run_at
+    setPulseRunError(null)
+    setPulseRunning(true)
+    fetch(`${FAMILY_API}/api/pulse/run`, { method: 'POST' })
+      .then((r) => r.json().then((d) => ({ ok: r.ok, d })))
+      .then(({ ok, d }) => {
+        if (!ok) { setPulseRunError(d.error || 'Could not start.'); setPulseRunning(false); return }
+        const poll = (attempt: number) => {
+          if (attempt > 300) { setPulseRunning(false); setPulseRunError('Taking longer than expected — check back shortly.'); return }
+          fetch(`${FAMILY_API}/api/pulse/config`)
+            .then((r) => r.json())
+            .then((cfg) => {
+              setPulseConfig(cfg)
+              if (cfg.last_run_at && cfg.last_run_at !== before) {
+                setPulseRunning(false)
+              } else {
+                window.setTimeout(() => poll(attempt + 1), 4000)
+              }
+            })
+            .catch(() => window.setTimeout(() => poll(attempt + 1), 4000))
+        }
+        window.setTimeout(() => poll(0), 4000)
+      })
+      .catch(() => { setPulseRunError('Could not reach SparkQuill.'); setPulseRunning(false) })
+  }
 
   // Load the child's own scoped file list (only what the parent has approved,
   // plus the child's own saved attempts) — refetches whenever the tutor screen
@@ -580,13 +772,13 @@ export default function LearningApp() {
   const [parentHintIndex, setParentHintIndex] = useState(0)
   useEffect(() => {
     if (!sending) { setParentHintIndex(0); return }
-    const id = window.setInterval(() => setParentHintIndex((i) => (i + 1) % PARENT_WAIT_HINTS.length), 3500)
+    const id = window.setInterval(() => setParentHintIndex((i) => (i + 1) % PARENT_WAIT_HINTS.length), 7000)
     return () => window.clearInterval(id)
   }, [sending])
   const [childHintIndex, setChildHintIndex] = useState(0)
   useEffect(() => {
     if (!childSending) { setChildHintIndex(0); return }
-    const id = window.setInterval(() => setChildHintIndex((i) => (i + 1) % CHILD_WAIT_HINTS.length), 3500)
+    const id = window.setInterval(() => setChildHintIndex((i) => (i + 1) % CHILD_WAIT_HINTS.length), 7000)
     return () => window.clearInterval(id)
   }, [childSending])
 
@@ -621,14 +813,13 @@ export default function LearningApp() {
     const load = (attempt: number) => {
       fetch(`${FAMILY_API}/api/setup`)
         .then((res) => { if (!res.ok) throw new Error(String(res.status)); return res.json() })
-        .then((data: { next_step?: string; engine?: string; child?: { name?: string; grade?: string; board?: string; stars?: number } | null; parent_label?: string }) => {
+        .then((data: { next_step?: string; engine?: string; child?: { name?: string; grade?: string; board?: string } | null; parent_label?: string }) => {
           if (cancelled) return
           if (data.engine) setEngine(data.engine)
           if (data.child) {
             if (data.child.name) setChildName(data.child.name)
             if (data.child.grade) setGrade(data.child.grade)
             if (data.child.board) setBoard(data.child.board)
-            if (data.child.stars) setChildStars(data.child.stars)
           }
           if (data.parent_label) setParentLabel(data.parent_label)
           const step = data.next_step
@@ -674,7 +865,6 @@ export default function LearningApp() {
   }
 
   const move = (next: Screen) => {
-    setSignoff(false)
     setScreen(next)
   }
 
@@ -732,12 +922,24 @@ export default function LearningApp() {
 
   const sendParentText = (raw: string) => {
     const text = raw.trim()
-    if (!text || sending) return
+    if (!text) return
+    // A turn is already running — don't drop the message, queue it. The drain
+    // effect sends it once the current turn finishes.
+    if (sending) {
+      setQueue((q) => [...q, text])
+      setFocusInput('')
+      return
+    }
     const next: ParentMsg[] = [...parentMessages, { role: 'user', text }]
     setParentMessages(next)
     setFocusInput('')
     setSuggestions([])
     setPendingHandoff(null)
+    // Drop any pending "new update" banner — the parent's own send supersedes
+    // it, and applying the stale pre-send snapshot would wipe out the message
+    // they just typed (a real bug this caused). Their send + reply, and the
+    // next poll, bring things current anyway.
+    setPendingConvUpdate(null)
     setSending(true)
     setLiveStatus('')
     // Live "what Quill is doing right now" line, sourced from the same turn's
@@ -745,7 +947,9 @@ export default function LearningApp() {
     const statusSource = new EventSource(`${FAMILY_API}/api/parent/status?conversation_id=${encodeURIComponent(conversationId)}`)
     statusSource.onmessage = (ev) => setLiveStatus(ev.data)
     statusSource.onerror = () => statusSource.close()
-    const history = next.filter((m) => m.role === 'user' || m.role === 'assistant').map((m) => ({ role: m.role, text: m.text ?? '' }))
+    // Keep source on each message so Pulse/etc. tags survive the round-trip and
+    // don't get flattened to plain replies when this turn re-persists history.
+    const history = next.filter((m) => m.role === 'user' || m.role === 'assistant').map((m) => ({ role: m.role, text: m.text ?? '', source: m.source }))
     fetch(`${FAMILY_API}/api/parent/message`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -774,22 +978,17 @@ export default function LearningApp() {
     sendParentText(focusInput)
   }
 
-  // WhatsApp simulator — previews how Quill replies over WhatsApp (plain text).
-  const sendWhatsApp = (raw: string) => {
-    const text = raw.trim()
-    if (!text || waSending) return
-    const next = [...waMessages, { role: 'user' as const, text }]
-    setWaMessages(next)
-    setWaInput('')
-    setWaSending(true)
-    fetch(`${FAMILY_API}/api/whatsapp/message`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ messages: next.map((m) => ({ role: m.role, text: m.text })), conversation_id: 'whatsapp-sim' }),
-    })
+  // Real WhatsApp connection (whatsmeow QR pairing) — see whatsapp_bot.go.
+  // Once paired, incoming messages in the linked account's own "Message
+  // Yourself" chat are handled directly by the backend event handler; there
+  // is no frontend send path for real WhatsApp messages.
+  const unpairWhatsApp = () => {
+    if (!window.confirm('Unlink SparkQuill from WhatsApp? You can always re-pair by scanning a new QR code.')) return
+    setWaUnpairing(true)
+    fetch(`${FAMILY_API}/api/whatsapp/unpair`, { method: 'POST' })
       .then((r) => r.json())
-      .then((d: { reply?: string; error?: string }) => setWaMessages((cur) => [...cur, { role: 'assistant', text: d.error ? `⚠️ ${d.error}` : (d.reply || '…') }]))
-      .catch(() => setWaMessages((cur) => [...cur, { role: 'assistant', text: '⚠️ Could not reach SparkQuill.' }]))
-      .finally(() => setWaSending(false))
+      .then(() => { setWaStatus(null); setWaQrNonce((n) => n + 1) })
+      .finally(() => setWaUnpairing(false))
   }
 
   // Load a past conversation into the chat view (reads the transcript file).
@@ -843,7 +1042,6 @@ export default function LearningApp() {
         const of = events.find((e) => e.tool === 'open_file' && e.path)
         if (of?.path) { setChildViewerPath(of.path); setChildViewerRefreshKey((k) => k + 1) }
         const cel = events.find((e) => e.tool === 'celebrate')
-        if (cel) setChildStars(cel.total ?? 0)
         setChildSuggestions(data.suggestions ?? [])
         setChildMessages((cur) => {
           const next: ParentMsg[] = [...cur, { role: 'assistant', text: data.error ? `Hmm, something went wrong — ${data.error}` : (data.reply || '(no response)') }]
@@ -907,6 +1105,24 @@ export default function LearningApp() {
       .catch(() => {})
   }
 
+  // Same handoff, but for a whole learning package at once (its manifest path)
+  // — approves every item in the bundle in one call (create_learning_package
+  // already did this when the package was made; this re-triggers it from the
+  // Files browser, e.g. to hand off a package made earlier in the conversation).
+  const startPackageHandoff = (manifest: string) => {
+    fetch(`${FAMILY_API}/api/parent/handoff`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ manifest }),
+    })
+      .then((res) => res.json())
+      .then((data: { new_session?: boolean; path?: string }) => {
+        if (!data.path) return
+        enterChildModeAfterHandoff(!!data.new_session, handoffGreeting('set up something new for me to work on'), data.path)
+      })
+      .catch(() => {})
+  }
+
   const sendChildMessage = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
     sendChildText(childInput)
@@ -941,6 +1157,42 @@ export default function LearningApp() {
       })
   }
 
+  const childFileInputRef = useRef<HTMLInputElement>(null)
+  const [childUploading, setChildUploading] = useState(false)
+
+  const onPickChildFiles = () => childFileInputRef.current?.click()
+
+  // A photo of the child's own work — lands in child/inbox/ (their own sandbox,
+  // not shared/) so Quill can see it immediately with no parent approval step.
+  // Auto-triggers a turn afterward (as if the child said so) since a kid won't
+  // reliably know to say "look at this" right after picking a photo.
+  const onChildFilesSelected = (event: ChangeEvent<HTMLInputElement>) => {
+    const files = event.target.files
+    if (!files || files.length === 0) return
+    setChildUploading(true)
+    const jobs = Array.from(files).map((f) => {
+      const fd = new FormData()
+      fd.append('file', f)
+      fd.append('scope', 'child')
+      return fetch(`${FAMILY_API}/api/upload`, { method: 'POST', body: fd })
+        .then((res) => res.json())
+        .then((data: { name?: string; error?: string }) => ({ name: data.name || f.name, error: data.error }))
+        .catch(() => ({ name: f.name, error: 'upload failed' }))
+    })
+    Promise.all(jobs)
+      .then((results) => {
+        const cards: ParentMsg[] = results.map((r) => ({ role: 'tool', tool: r.error ? 'upload_error' : 'upload', name: r.name }))
+        const ok = results.some((r) => !r.error)
+        const next = [...childMessages, ...cards]
+        setChildMessages(next)
+        if (ok) sendChildText('I just uploaded a photo of my work — can you take a look?', next)
+      })
+      .finally(() => {
+        setChildUploading(false)
+        if (childFileInputRef.current) childFileInputRef.current.value = ''
+      })
+  }
+
   if (booting) {
     return (
       <main className="learning-app">
@@ -964,49 +1216,10 @@ export default function LearningApp() {
   if (screen === 'parent') {
     return (
       <main className="learning-app">
-        <div className="fl-shell" data-rail={railOpen ? 'open' : 'closed'} data-drawer={drawerOpen ? 'open' : 'closed'}>
-          <aside className="fl-rail" aria-label="Conversations and sessions">
-            <button className="fl-new" type="button" onClick={startNewConversation}><Plus size={17} /> New conversation</button>
-            <div className="fl-rail-scroll">
-              <div className="fl-rail-group">
-                <p className="fl-rail-label">Parent conversations</p>
-                {conversations.length === 0 && <p className="fl-rail-empty">No conversations yet</p>}
-                {conversations.map((item) => (
-                  <button key={item.id} type="button" className={`fl-rail-item ${item.id === conversationId ? 'is-active' : ''}`} onClick={() => loadConversation(item)}>
-                    <span className="fl-rail-item-title">{item.title}</span>
-                    <span className="fl-rail-item-when">{item.when}</span>
-                  </button>
-                ))}
-              </div>
-              <div className="fl-rail-group">
-                <p className="fl-rail-label">Child sessions</p>
-                {childSessionsList.length === 0 && <p className="fl-rail-empty">No sessions yet</p>}
-                {childSessionsList.map((item) => (
-                  <button key={item.id} type="button" className="fl-rail-item" onClick={() => loadConversation(item)}>
-                    <span className="fl-rail-item-title">{item.title}</span>
-                    <span className="fl-rail-item-when">{item.when}</span>
-                  </button>
-                ))}
-              </div>
-            </div>
-            <div className="fl-rail-child">
-              <span className="fl-child-avatar">{initial}</span>
-              <span className="fl-child-meta"><strong>{childName || 'Your child'}</strong><small>Grade {grade} · {board}</small></span>
-            </div>
-          </aside>
-
+        <div className="fl-shell" data-rail="closed" data-drawer={drawerOpen ? 'open' : 'closed'}>
           <section className="fl-center">
             <div className="fl-toolbar">
               <div className="fl-toolbar-left">
-                <button
-                  className="fl-icon-btn"
-                  type="button"
-                  aria-label={railOpen ? 'Hide conversation list' : 'Show conversation list'}
-                  aria-pressed={railOpen}
-                  onClick={() => setRailOpen((value) => !value)}
-                >
-                  {railOpen ? <PanelLeftClose size={18} /> : <PanelLeftOpen size={18} />}
-                </button>
                 <img className="fl-header-logo" src="/sparkquill-mark.svg" alt="" width={30} height={30} />
                 <div className="fl-toolbar-title">
                   <strong className="fl-brand-word">Spark<span>Quill</span></strong>
@@ -1014,12 +1227,159 @@ export default function LearningApp() {
                 </div>
               </div>
               <div className="fl-toolbar-right">
+                <div className="fl-pulse-wrap">
+                  <button
+                    className="fl-pulse-pill"
+                    type="button"
+                    aria-label="Pulse"
+                    title="Pulse"
+                    onClick={() => setPulsePopoverOpen((v) => !v)}
+                  >
+                    <Activity size={14} />
+                    <span>Pulse</span>
+                    <span className={`fl-dot ${pulseConfig?.enabled ? 'is-ready' : ''}`} />
+                  </button>
+                  {pulsePopoverOpen && (
+                    <>
+                    <div className="fl-pulse-backdrop" onClick={() => setPulsePopoverOpen(false)} />
+                    <div className="fl-pulse-popover" role="dialog">
+                      <div className="fl-pulse-popover-head">
+                        <Activity size={15} />
+                        <span>Pulse</span>
+                        <span className={`fl-pulse-badge ${pulseConfig?.enabled ? 'is-on' : 'is-off'}`}>
+                          {pulseConfig?.enabled ? 'On' : 'Off'}
+                        </span>
+                        <button type="button" className="fl-pulse-popover-close" onClick={() => setPulsePopoverOpen(false)} aria-label="Close">×</button>
+                      </div>
+                      <div className="fl-pulse-body">
+                        <div className="fl-pulse-col">
+                          <p className="fl-pulse-popover-desc">Quill checks in on its own now and then — reviewing recent activity, keeping the progress report and academic map current.</p>
+                          <button
+                            type="button"
+                            className="fl-pulse-toggle"
+                            disabled={savingPulse || !pulseConfig}
+                            onClick={() => savePulseConfig({ enabled: !pulseConfig?.enabled })}
+                          >
+                            <span className={`fl-pulse-toggle-track ${pulseConfig?.enabled ? 'is-on' : ''}`}>
+                              <span className="fl-pulse-toggle-thumb" />
+                            </span>
+                            {pulseConfig?.enabled ? 'Turn off' : 'Turn on'}
+                          </button>
+                          <label className="fl-pulse-config-row">
+                            <span>Check every</span>
+                            <select
+                              value={pulseConfig?.cadence_hours ?? 24}
+                              disabled={savingPulse || !pulseConfig}
+                              onChange={(e) => savePulseConfig({ cadence_hours: Number(e.target.value) })}
+                            >
+                              <option value={6}>6 hours</option>
+                              <option value={12}>12 hours</option>
+                              <option value={24}>24 hours (daily)</option>
+                              <option value={72}>3 days</option>
+                              <option value={168}>weekly</option>
+                            </select>
+                          </label>
+                          <div className="fl-pulse-popover-meta">
+                            <span>Last check-in</span>
+                            <span>{pulseConfig?.last_run_at ? new Date(pulseConfig.last_run_at).toLocaleString() : 'Not yet'}</span>
+                          </div>
+                          {pulseConfig?.enabled && (
+                            <div className="fl-pulse-popover-meta">
+                              <span>Next check-in</span>
+                              <span>
+                                {pulseConfig.last_run_at
+                                  ? new Date(new Date(pulseConfig.last_run_at).getTime() + pulseConfig.cadence_hours * 3600_000).toLocaleString()
+                                  : `within ${pulseConfig.cadence_hours}h`}
+                              </span>
+                            </div>
+                          )}
+                          <button
+                            type="button"
+                            className="fl-pulse-run-now"
+                            disabled={pulseRunning || !pulseConfig}
+                            onClick={runPulseNow}
+                          >
+                            {pulseRunning ? 'Running… (a few minutes)' : 'Run now (test it)'}
+                          </button>
+                          {pulseRunError && <p className="fl-pulse-run-error">{pulseRunError}</p>}
+                        </div>
+
+                        <div className="fl-pulse-col">
+                          <p className="fl-pulse-config-hint">School email filter (optional) — a Gmail search for emails from school, e.g. <code>from:school.edu</code>. Quill only ever looks within this filter.</p>
+                          <input
+                            className="fl-pulse-config-input"
+                            type="text"
+                            placeholder="from:school.edu"
+                            value={schoolQueryDraft}
+                            onChange={(e) => { setSchoolQueryDraft(e.target.value); setPulseSaved(false) }}
+                          />
+                          <p className="fl-pulse-config-hint">Websites to check (optional) — any pages Quill should look at: a school portal, a class site, anything. One per line. Uses your signed-in browser (Connectors → Browser).</p>
+                          <textarea
+                            className="fl-pulse-config-input"
+                            rows={3}
+                            placeholder={"https://portal.myraschool.edu/assignments\nhttps://classroom.google.com/..."}
+                            value={watchSitesDraft}
+                            onChange={(e) => { setWatchSitesDraft(e.target.value); setPulseSaved(false) }}
+                          />
+                          <p className="fl-pulse-config-hint">Notify by email (optional) — extra addresses to email each check-in to, comma-separated. Quill always also emails the connected Gmail account.</p>
+                          <input
+                            className="fl-pulse-config-input"
+                            type="text"
+                            placeholder="dad@example.com, grandma@example.com"
+                            value={notifyEmailsDraft}
+                            onChange={(e) => { setNotifyEmailsDraft(e.target.value); setPulseSaved(false) }}
+                          />
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        className={`fl-pulse-save ${pulseSaved ? 'is-saved' : ''}`}
+                        disabled={savingPulse}
+                        onClick={() => {
+                          const sites = watchSitesDraft.split(/[\n,]/).map((s) => s.trim()).filter(Boolean)
+                          const emails = notifyEmailsDraft.split(',').map((s) => s.trim()).filter(Boolean)
+                          savePulseConfig({ school_gmail_query: schoolQueryDraft.trim(), watch_sites: sites, notify_emails: emails })
+                          setPulseSaved(true)
+                        }}
+                      >
+                        {savingPulse ? 'Saving…' : pulseSaved ? 'Saved ✓' : 'Save'}
+                      </button>
+                    </div>
+                    </>
+                  )}
+                </div>
+                <button className="fl-icon-btn" type="button" aria-label="Settings" title="Settings" onClick={() => setSettingsOpen(true)}>
+                  <SettingsIcon size={18} />
+                </button>
                 <button className="fl-whatsapp-btn" type="button" aria-label="WhatsApp" title="SparkQuill on WhatsApp" onClick={() => setWaOpen(true)}>
                   <svg viewBox="0 0 24 24" width="19" height="19" fill="currentColor" aria-hidden="true"><path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51l-.57-.01c-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.71.306 1.263.489 1.694.626.712.226 1.36.194 1.872.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413z"/></svg>
                 </button>
               </div>
             </div>
 
+            {pendingConvUpdate && (
+              <button
+                type="button"
+                className="fl-new-update-banner"
+                onClick={() => {
+                  // Re-fetch the CURRENT file on tap rather than applying the
+                  // snapshot captured when the banner appeared — the snapshot
+                  // can be stale (e.g. the parent sent a message after it was
+                  // taken), and applying it would drop that message.
+                  setPendingConvUpdate(null)
+                  fetch(`${FAMILY_API}/api/workspace/file?path=${encodeURIComponent(`parent/conversations/${conversationId}.json`)}`)
+                    .then((r) => r.json())
+                    .then((d) => {
+                      if (!d?.content) return
+                      const c = JSON.parse(d.content) as { messages?: StoredMsg[] }
+                      setParentMessages((c.messages || []).map(toParentMsg))
+                    })
+                    .catch(() => {})
+                }}
+              >
+                <RefreshCw size={14} /> New update — tap to refresh
+              </button>
+            )}
             <div className="fl-thread" aria-label="Parent learning conversation">
               <div className="fl-msg is-agent">
                 <span className="fl-msg-avatar is-sun"><Sun size={18} /></span>
@@ -1050,6 +1410,17 @@ export default function LearningApp() {
                     </div>
                   )
                 }
+                if (m.source === 'pulse' && m.role === 'user') {
+                  // The Pulse trigger — shown as a clear, centered "check-in
+                  // ran" divider rather than a fake parent bubble (it isn't
+                  // something the parent typed), so the whole automated turn
+                  // is visible: this divider, then Quill's reply below it.
+                  return (
+                    <div key={i} className="fl-pulse-divider">
+                      <Activity size={13} /> <span>{m.text}</span>
+                    </div>
+                  )
+                }
                 return (
                   <div key={i} className={`fl-msg ${m.role === 'user' ? 'is-parent' : 'is-agent'}`}>
                     {m.role === 'user' ? (
@@ -1059,8 +1430,10 @@ export default function LearningApp() {
                       </>
                     ) : (
                       <>
-                        <span className="fl-msg-avatar is-sun"><Sun size={18} /></span>
-                        <div className="fl-msg-col"><div className="fl-bubble"><Markdown text={m.text ?? ''} /></div></div>
+                        <span className={`fl-msg-avatar ${m.source === 'pulse' ? 'is-pulse' : 'is-sun'}`}>{m.source === 'pulse' ? <Activity size={17} /> : <Sun size={18} />}</span>
+                        <div className="fl-msg-col">
+                          <div className={`fl-bubble ${m.source === 'pulse' ? 'is-pulse' : ''}`}><Markdown text={m.text ?? ''} /></div>
+                        </div>
                       </>
                     )}
                   </div>
@@ -1075,6 +1448,13 @@ export default function LearningApp() {
                   </div>
                 </div>
               )}
+
+              {queue.map((q, i) => (
+                <div key={`q-${i}`} className="fl-msg is-parent">
+                  <div className="fl-msg-col"><div className="fl-bubble is-queued">{q} <span className="fl-queued-tag">queued</span></div></div>
+                  <span className="fl-msg-avatar is-parent">{initial}</span>
+                </div>
+              ))}
 
               {parentMessages.length === 0 && !sending && (
                 <div className="parent-quick-actions" aria-label="Suggested parent requests">
@@ -1109,10 +1489,9 @@ export default function LearningApp() {
               <button className="composer-icon" type="button" aria-label="Attach a photo or PDF" onClick={onPickFiles} disabled={uploading}><Paperclip size={19} /></button>
               <input
                 aria-label="Message the learning guide"
-                placeholder={`Ask anything about ${childName || 'your child'}’s learning…`}
+                placeholder={sending ? 'Quill is replying — your next message will be queued…' : `Ask anything about ${childName || 'your child'}’s learning…`}
                 value={focusInput}
                 onChange={(event) => setFocusInput(event.target.value)}
-                disabled={sending}
               />
               <div className="fl-composer-menu">
                 {menuOpen && <div className="fl-menu-backdrop" onClick={() => setMenuOpen(false)} />}
@@ -1213,6 +1592,17 @@ export default function LearningApp() {
                       >
                         <RefreshCw size={14} />
                       </button>
+                      {(viewerPath.endsWith('.html') || viewerPath.endsWith('.htm')) && (
+                        <button
+                          className="fl-icon-btn"
+                          type="button"
+                          aria-label="Print"
+                          title="Print this page"
+                          onClick={() => iframeRef.current?.contentWindow?.postMessage({ __sq: 1, op: 'print' }, '*')}
+                        >
+                          <Printer size={14} />
+                        </button>
+                      )}
                       {/^shared\/(tests|study|reports)\//.test(viewerPath) && (
                         <button
                           className="fl-give-to-child"
@@ -1243,12 +1633,9 @@ export default function LearningApp() {
                     <div className="fl-files-toggle">
                       <button type="button" className={filesView === 'subjects' ? 'is-active' : ''} onClick={() => setFilesView('subjects')}>Subjects</button>
                       <button type="button" className={filesView === 'uploaded' ? 'is-active' : ''} onClick={() => setFilesView('uploaded')}>Uploaded Material</button>
-                      <button type="button" className={filesView === 'reference' ? 'is-active' : ''} onClick={() => setFilesView('reference')}>Reference</button>
                       <button type="button" className={filesView === 'advanced' ? 'is-active' : ''} onClick={() => setFilesView('advanced')}>All files</button>
                     </div>
-                    {filesView === 'reference' ? (
-                      prefsContent === null ? <p className="fl-note">Loading…</p> : <Markdown text={prefsContent} />
-                    ) : filesView === 'advanced' ? (
+                    {filesView === 'advanced' ? (
                       treeNodes.length === 0 ? <p className="fl-note">No files yet.</p> : <FileTree nodes={treeNodes} onOpen={(p) => { setViewerImageList([]); setViewerPath(p) }} />
                     ) : (() => {
                       // Hierarchy: subject -> topic -> type (test/notes/...) -> date -> file.
@@ -1265,11 +1652,45 @@ export default function LearningApp() {
                         if (p.includes('/materials/')) return 'Uploaded material'
                         return null
                       }
+                      const typeSlug = (t: string) => t === 'Practice tests' ? 'tests' : t === 'Study guides' ? 'guides' : t === 'Reports' ? 'reports' : 'uploaded'
                       const usable = allFiles.filter((p) => !p.endsWith('.meta.json') && !p.startsWith('skills/') && !p.includes('/conversations/') && !p.endsWith('child-profile.json'))
                       const classified = usable.map((p) => ({ p, type: typeOf(p), ...parseAssetPath(p) })).filter((f) => f.type)
                       const subjectsList = Array.from(new Set(classified.filter((f) => f.subject).map((f) => f.subject!))).sort()
                       const wantedTypes = filesView === 'uploaded' ? ['Uploaded material'] : ['Practice tests', 'Study guides', 'Reports']
                       const relevant = classified.filter((f) => wantedTypes.includes(f.type!) && (!filesSubjectFilter || f.subject === filesSubjectFilter))
+
+                      // Packages nested under the subject their first item belongs to (an
+                      // instruction-only package with no items has no subject to attach to).
+                      const packagesBySubject = new Map<string, LearningPackage[]>()
+                      const unplacedPackages: LearningPackage[] = []
+                      if (filesView === 'subjects') {
+                        packages.forEach((pkg) => {
+                          const subj = pkg.items.length > 0 ? parseAssetPath(pkg.items[0]).subject : undefined
+                          if (subj && (!filesSubjectFilter || subj === filesSubjectFilter)) {
+                            if (!packagesBySubject.has(subj)) packagesBySubject.set(subj, [])
+                            packagesBySubject.get(subj)!.push(pkg)
+                          } else if (!subj && !filesSubjectFilter) {
+                            unplacedPackages.push(pkg)
+                          }
+                        })
+                      }
+                      const renderPackages = (pkgs: LearningPackage[]) => pkgs.map((pkg) => (
+                        <div key={pkg.manifest} className="fl-file-item is-package fl-package-card">
+                          <BookOpen size={16} />
+                          <span>
+                            {pkg.title}
+                            <small>{pkg.items.length > 0 ? `${pkg.items.length} part${pkg.items.length === 1 ? '' : 's'}` : 'Adaptive practice'}</small>
+                          </span>
+                          <button
+                            className="fl-give-to-child"
+                            type="button"
+                            disabled={sending}
+                            onClick={() => startPackageHandoff(pkg.manifest)}
+                          >
+                            Give to {childName || 'child'}
+                          </button>
+                        </div>
+                      ))
 
                       const bySubject = new Map<string, Map<string, Map<string, Entry[]>>>()
                       const general = new Map<string, Entry[]>()
@@ -1335,11 +1756,12 @@ export default function LearningApp() {
                               {Array.from(bySubject.entries()).map(([subj, topics]) => (
                                 <section key={subj} className="fl-asset-group">
                                   <p className="fl-drawer-label">{subj}</p>
+                                  {renderPackages(packagesBySubject.get(subj) ?? [])}
                                   {Array.from(topics.entries()).map(([top, types]) => (
                                     <div key={top} className="fl-asset-topic">
                                       <p className="fl-asset-topic-label">{top === '—' ? 'Other' : top}</p>
                                       {Array.from(types.entries()).map(([type, entries]) => (
-                                        <div key={type} className="fl-asset-type">
+                                        <div key={type} className={`fl-asset-type is-${typeSlug(type)}`}>
                                           {filesView !== 'uploaded' && <p className="fl-asset-type-label">{type}</p>}
                                           {renderEntries(entries)}
                                         </div>
@@ -1348,11 +1770,12 @@ export default function LearningApp() {
                                   ))}
                                 </section>
                               ))}
-                              {general.size > 0 && (
+                              {(general.size > 0 || unplacedPackages.length > 0) && (
                                 <section className="fl-asset-group">
                                   <p className="fl-drawer-label">General</p>
+                                  {renderPackages(unplacedPackages)}
                                   {Array.from(general.entries()).map(([type, entries]) => (
-                                    <div key={type} className="fl-asset-type">
+                                    <div key={type} className={`fl-asset-type is-${typeSlug(type)}`}>
                                       {filesView !== 'uploaded' && <p className="fl-asset-type-label">{type}</p>}
                                       {renderEntries(entries)}
                                     </div>
@@ -1372,22 +1795,139 @@ export default function LearningApp() {
 
           {waOpen && (
             <div className="fl-wa-backdrop" role="dialog" aria-modal="true" onClick={() => setWaOpen(false)}>
-              <div className="fl-wa" onClick={(e) => e.stopPropagation()}>
+              <div className="fl-connectors" onClick={(e) => e.stopPropagation()}>
                 <div className="fl-wa-head">
-                  <span className="fl-wa-title">SparkQuill on WhatsApp <em>· preview</em></span>
+                  <span className="fl-wa-title">Connectors</span>
                   <button className="fl-wa-close" type="button" onClick={() => setWaOpen(false)} aria-label="Close">×</button>
                 </div>
-                <div className="fl-wa-body">
-                  {waMessages.length === 0 && <p className="fl-wa-hint">This previews how Quill would reply over WhatsApp. Type a message as {childName || 'your child'}’s parent.</p>}
-                  {waMessages.map((m, i) => (
-                    <div key={i} className={`fl-wa-msg ${m.role === 'user' ? 'is-me' : 'is-quill'}`}>{m.text}</div>
-                  ))}
-                  {waSending && <div className="fl-wa-msg is-quill">…</div>}
+                <div className="fl-connectors-body">
+                  <nav className="fl-connectors-nav">
+                    <button type="button" className={connectorSection === 'whatsapp' ? 'is-active' : ''} onClick={() => setConnectorSection('whatsapp')}>WhatsApp</button>
+                    <button type="button" className={connectorSection === 'gmail' ? 'is-active' : ''} onClick={() => setConnectorSection('gmail')}>Gmail</button>
+                    <button type="button" className={connectorSection === 'browser' ? 'is-active' : ''} onClick={() => setConnectorSection('browser')}>Browser</button>
+                  </nav>
+                  <div className="fl-connectors-panel">
+                    {connectorSection === 'whatsapp' ? (
+                      waStatus?.paired ? (
+                        <div className="fl-connector-card">
+                          <p className="fl-connector-status is-connected">✓ Connected{waStatus.own_jid ? ` — +${waStatus.own_jid}` : ''}</p>
+                          <div className="fl-wa-howto">
+                            <p className="fl-wa-howto-title">How to chat with Quill on WhatsApp</p>
+                            <ol className="fl-note" style={{ paddingLeft: '1.2em', margin: '6px 0 0' }}>
+                              <li>Open WhatsApp on your phone.</li>
+                              <li>At the top, search for your own name — the chat labelled <strong>“(You)”</strong> or <strong>“Message yourself”</strong>.</li>
+                              <li>Type anything there, like <em>“How is Myra doing this week?”</em> — Quill reads it and replies right in that same chat.</li>
+                            </ol>
+                            <p className="fl-note" style={{ marginTop: '8px' }}>That’s it — it works just like texting. You can also send a photo of Myra’s worksheet there and Quill will look at it. Quill only ever answers in your own “message yourself” chat — never in your chats with other people.</p>
+                          </div>
+                          <button className="fl-ghost-btn" type="button" onClick={unpairWhatsApp} disabled={waUnpairing}>{waUnpairing ? 'Unlinking…' : 'Unlink WhatsApp'}</button>
+                        </div>
+                      ) : (
+                        <div className="fl-connector-card">
+                          <p className="fl-note">Scan this code with WhatsApp on your phone: <strong>Settings → Linked Devices → Link a Device.</strong></p>
+                          {waStatus?.qr_available ? (
+                            <img className="fl-wa-qr" src={`${FAMILY_API}/api/whatsapp/pair?n=${waQrNonce}`} alt="WhatsApp pairing QR code" />
+                          ) : (
+                            <div className="fl-wa-qr is-loading">Preparing QR…</div>
+                          )}
+                          <p className="fl-note">The code refreshes automatically every 30 seconds until scanned.</p>
+                        </div>
+                      )
+                    ) : connectorSection === 'gmail' ? (
+                      gmailStatus?.connected ? (
+                        <div className="fl-connector-card">
+                          <p className="fl-connector-status is-connected">✓ Connected{gmailStatus.email ? ` — ${gmailStatus.email}` : ''}</p>
+                          <p className="fl-note">Sends only ever go to this same address, and only when you click the button below.</p>
+                          <button className="fl-ghost-btn" type="button" onClick={sendGmailTest} disabled={gmailTesting}>{gmailTesting ? 'Sending…' : 'Send test email'}</button>
+                          {gmailTestResult && <p className="fl-note">{gmailTestResult}</p>}
+                        </div>
+                      ) : gmailStatus === null ? (
+                        <p className="fl-note">Checking Gmail connection…</p>
+                      ) : (
+                        <div className="fl-connector-card">
+                          <p className="fl-note">Not connected. Gmail uses the <code>gws</code> CLI on this computer — sign it into a Google account, then reopen this.</p>
+                        </div>
+                      )
+                    ) : (
+                      <div className="fl-connector-card">
+                        <p className="fl-connector-status" style={browserStatus?.cli_installed ? { color: 'var(--fl-green, #2e7d32)' } : undefined}>
+                          {browserStatus === null ? 'Checking…' : browserStatus.cli_installed ? '✓ Ready' : 'Not set up yet'}
+                        </p>
+                        <p className="fl-note">For things like school portals — assignments, report cards, uploaded books — the safest way for Quill to check them is to use a browser you're already signed into, so it never needs your password.</p>
+                        <div className="fl-install-steps">
+                          <p className="fl-note"><strong>One-time setup:</strong> copy this, paste it into the Terminal app on your Mac, and press Enter.</p>
+                          <div className="fl-code-row">
+                            <pre className="fl-code-block"><code>curl -fsSL 'https://raw.githubusercontent.com/manishiitg/coding-agent-loop/main/scripts/install-chrome-cdp-macOS.sh' | bash</code></pre>
+                            <button
+                              type="button"
+                              className="fl-ghost-btn"
+                              onClick={() => {
+                                navigator.clipboard.writeText("curl -fsSL 'https://raw.githubusercontent.com/manishiitg/coding-agent-loop/main/scripts/install-chrome-cdp-macOS.sh' | bash")
+                                setBrowserCopied(true)
+                                window.setTimeout(() => setBrowserCopied(false), 2000)
+                              }}
+                            >
+                              {browserCopied ? 'Copied!' : 'Copy'}
+                            </button>
+                          </div>
+                          <p className="fl-note">A new browser window opens on its own once it's done.</p>
+                        </div>
+                        <p className="fl-note">Then sign into the school portal (or anything else you'd like Quill to check) in that window, and just leave it open. From then on, Quill can look things up there whenever it's useful — it never sees or stores your password.</p>
+                        {browserStatus && !browserStatus.cli_installed && (
+                          <p className="fl-note">(Also needed once: ask whoever set this computer up to run <code>npm install -g agent-browser@latest</code>.)</p>
+                        )}
+                      </div>
+                    )}
+                  </div>
                 </div>
-                <form className="fl-wa-composer" onSubmit={(e) => { e.preventDefault(); sendWhatsApp(waInput) }}>
-                  <input value={waInput} onChange={(e) => setWaInput(e.target.value)} placeholder="Message SparkQuill…" disabled={waSending} />
-                  <button type="submit" disabled={waSending || !waInput.trim()} aria-label="Send"><Send size={16} /></button>
-                </form>
+              </div>
+            </div>
+          )}
+
+          {settingsOpen && (
+            <div className="fl-settings-backdrop" role="dialog" aria-modal="true" onClick={() => setSettingsOpen(false)}>
+              <div className="fl-settings" onClick={(e) => e.stopPropagation()}>
+                <div className="fl-settings-head">
+                  <span className="fl-settings-title">Settings</span>
+                  <button className="fl-wa-close" type="button" onClick={() => setSettingsOpen(false)} aria-label="Close">×</button>
+                </div>
+                <div className="fl-settings-body">
+                  <p className="fl-drawer-label">AI engine</p>
+                  <p className="fl-note">Which coding-agent engine Quill runs on for both the parent chat and Myra’s tutor.</p>
+                  {enginesState === 'loading' ? (
+                    <p className="fl-note">Checking available engines…</p>
+                  ) : engines.length === 0 ? (
+                    <p className="fl-note">No engines detected on this machine.</p>
+                  ) : (
+                    <div className="fl-settings-engines">
+                      {engines.map((item) => {
+                        const status = engineStatus(item)
+                        const active = engine === item.id
+                        return (
+                          <button
+                            key={item.id}
+                            type="button"
+                            className={`fl-settings-engine-card ${active ? 'is-active' : ''}`}
+                            disabled={!status.ready || savingEngine}
+                            onClick={() => {
+                              setEngine(item.id)
+                              setSavingEngine(true)
+                              fetch(`${FAMILY_API}/api/engine/selection`, {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({ engine: item.id }),
+                              }).finally(() => setSavingEngine(false))
+                            }}
+                          >
+                            <span className="fl-settings-engine-name">{item.name}</span>
+                            <span className={`fl-settings-engine-status ${status.ready ? 'is-ready' : ''}`}>{status.label}</span>
+                            {active && <Check size={16} />}
+                          </button>
+                        )
+                      })}
+                    </div>
+                  )}
+                </div>
               </div>
             </div>
           )}
@@ -1408,7 +1948,6 @@ export default function LearningApp() {
                   <div className="fl-child-hi"><strong>Hi {childName || 'Maya'}!</strong><small>Let’s keep learning together</small></div>
                 </div>
                 <div className="fl-child-top-right">
-                  {childStars > 0 && <span className="fl-star-badge"><Star size={15} fill="currentColor" strokeWidth={1.5} /> {childStars}</span>}
                   <button className="fl-parent-return" type="button" onClick={() => { setGateValue(''); setGateError(''); setPinGate(true) }}><LockKeyhole size={16} /> Parent Mode</button>
                 </div>
               </header>
@@ -1418,7 +1957,15 @@ export default function LearningApp() {
                   <div className="fl-tbubble">Hi {childName || 'Maya'}! Ready to keep learning? Tell me what you’re working on, or ask me anything — I’ll help you figure it out step by step.</div>
                 </div>
                 {childMessages.map((m, i) => (
-                  m.role === 'tool' && m.tool === 'celebrate' ? (
+                  m.role === 'tool' && (m.tool === 'upload' || m.tool === 'upload_error') ? (
+                    <div key={i} className="fl-tmsg is-tutor">
+                      <span className="fl-tmsg-avatar"><Paperclip size={16} /></span>
+                      <div className={`fl-toolcard ${m.tool === 'upload_error' ? 'is-error' : 'is-upload'}`}>
+                        <Paperclip size={15} />
+                        <span>{m.tool === 'upload_error' ? <>Couldn’t add your photo</> : <>Added your photo</>}</span>
+                      </div>
+                    </div>
+                  ) : m.role === 'tool' && m.tool === 'celebrate' ? (
                     <div key={i} className="fl-celebration" role="status">
                       <span className="fl-celebration-stars">
                         {Array.from({ length: m.stars ?? 1 }, (_, si) => (
@@ -1458,6 +2005,8 @@ export default function LearningApp() {
                 </div>
               )}
               <form className="fl-child-composer" onSubmit={sendChildMessage}>
+                <input ref={childFileInputRef} type="file" multiple accept="image/*" onChange={onChildFilesSelected} style={{ display: 'none' }} />
+                <button className="composer-icon" type="button" aria-label="Attach a photo of your work" onClick={onPickChildFiles} disabled={childSending || childUploading}><Paperclip size={19} /></button>
                 <input aria-label="Message your tutor" placeholder="Type your answer or ask for help…" value={childInput} onChange={(e) => setChildInput(e.target.value)} disabled={childSending} />
                 <button className="composer-send" type="submit" aria-label="Send message" disabled={childSending}><Send size={18} /></button>
               </form>
@@ -1478,6 +2027,17 @@ export default function LearningApp() {
                     >
                       <RefreshCw size={14} />
                     </button>
+                    {(childViewerPath.endsWith('.html') || childViewerPath.endsWith('.htm')) && (
+                      <button
+                        className="fl-icon-btn"
+                        type="button"
+                        aria-label="Print"
+                        title="Print this page"
+                        onClick={() => childIframeRef.current?.contentWindow?.postMessage({ __sq: 1, op: 'print' }, '*')}
+                      >
+                        <Printer size={14} />
+                      </button>
+                    )}
                   </div>
                   {IMAGE_PATH_RE.test(childViewerPath) ? (
                     <img className="fl-viewer-img" src={`${FAMILY_API}/api/workspace/raw?path=${encodeURIComponent(childViewerPath)}`} alt="" />

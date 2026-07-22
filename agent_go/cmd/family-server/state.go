@@ -44,10 +44,6 @@ type Child struct {
 	// plainly, then explain). Empty means "hints-first" (unchanged behavior for
 	// existing families that predate this setting).
 	TeachingStyle string `json:"teaching_style,omitempty"`
-	// Stars is a simple running encouragement count Quill awards for genuine
-	// effort/progress (celebrate tool). Purely positive reinforcement — never
-	// decremented, no numeric "score" implication.
-	Stars int `json:"stars,omitempty"`
 }
 
 // familyState is the persisted onboarding/config state.
@@ -59,7 +55,67 @@ type familyState struct {
 	// ABOUT them to the child — "mom", "dad", "grandma", a first name, etc.
 	// Empty means not yet asked/known; Quill asks for it conversationally
 	// (parentSystemPrompt's parentLabelNudge) rather than via a setup form.
-	ParentLabel string `json:"parent_label,omitempty"`
+	ParentLabel string      `json:"parent_label,omitempty"`
+	Pulse       PulseConfig `json:"pulse,omitempty"`
+}
+
+// PulseConfig is the parent-configurable settings for the Pulse background
+// check-in (see pulse.go). Opt-in by default (Enabled starts false) — Quill
+// should never start proactively messaging the parent until they turn it on.
+type PulseConfig struct {
+	Enabled bool `json:"enabled"`
+	// CadenceHours is how often Pulse runs, in hours. 0 means "not yet
+	// configured" and is treated as the default (24h) rather than "never".
+	CadenceHours int `json:"cadence_hours,omitempty"`
+	// LastRunAt (RFC3339 UTC) is when Pulse last actually ran, so the ticker
+	// knows whether the cadence window has elapsed.
+	LastRunAt string `json:"last_run_at,omitempty"`
+	// SchoolGmailQuery is a Gmail search filter (e.g. "from:school.edu") the
+	// parent configures so Quill can check for new school email — deliberately
+	// server-side config, never a free-form parameter the model controls, so
+	// Quill can only ever search within what the parent explicitly scoped.
+	SchoolGmailQuery string `json:"school_gmail_query,omitempty"`
+	// WatchSites are websites the parent wants Quill to check on each Pulse via
+	// agent_browser (reusing the parent's own signed-in CDP Chrome — see
+	// browser_status.go): a school portal, a class site, any third-party page —
+	// generic and multiple, not one fixed school portal. Only checked when the
+	// parent has set them, never URLs the model picks on its own.
+	WatchSites []string `json:"watch_sites,omitempty"`
+	// SchoolPortalURL is the legacy single-portal field, kept so older saved
+	// state still parses; folded into the effective site list (see Sites()).
+	SchoolPortalURL string `json:"school_portal_url,omitempty"`
+	// NotifyEmails are additional recipient addresses the parent wants Pulse
+	// digest emails sent to (e.g. both parents). Empty = send only to the
+	// connected Gmail account's own address (the default self-notify).
+	NotifyEmails []string `json:"notify_emails,omitempty"`
+}
+
+// Sites returns the effective de-duplicated list of websites to check —
+// WatchSites plus the legacy single SchoolPortalURL if it's still set.
+func (p PulseConfig) Sites() []string {
+	seen := map[string]bool{}
+	var out []string
+	add := func(u string) {
+		u = strings.TrimSpace(u)
+		if u == "" || seen[u] {
+			return
+		}
+		seen[u] = true
+		out = append(out, u)
+	}
+	for _, u := range p.WatchSites {
+		add(u)
+	}
+	add(p.SchoolPortalURL)
+	return out
+}
+
+func (p PulseConfig) cadence() time.Duration {
+	hours := p.CadenceHours
+	if hours <= 0 {
+		hours = 24
+	}
+	return time.Duration(hours) * time.Hour
 }
 
 var stateMu sync.Mutex
@@ -99,6 +155,7 @@ func scaffoldFamilyFolders() error {
 		"shared/reports",       // generated HTML progress reports (parent + child)
 		"child/attempts",       // child's submitted work
 		"child/conversations",  // child chat history
+		"child/inbox",          // child-uploaded photos (e.g. a scan of their answer)
 	}
 	for _, d := range dirs {
 		if err := os.MkdirAll(filepath.Join(base, filepath.FromSlash(d)), 0o700); err != nil {

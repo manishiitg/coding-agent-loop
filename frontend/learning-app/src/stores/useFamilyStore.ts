@@ -10,8 +10,6 @@ interface FamilyState {
   setGrade: (v: SetStateAction<string>) => void
   board: string
   setBoard: (v: SetStateAction<string>) => void
-  childStars: number
-  setChildStars: (v: SetStateAction<number>) => void
   // How the parent wants to be referred to when Quill talks ABOUT them to the
   // child ("mom", "dad", "grandma", a first name). Empty until Quill asks/learns it.
   parentLabel: string
@@ -25,8 +23,6 @@ export const useFamilyStore = create<FamilyState>()((set) => ({
   setGrade: (v) => set((s) => ({ grade: resolveSetState(v, s.grade) })),
   board: 'CBSE',
   setBoard: (v) => set((s) => ({ board: resolveSetState(v, s.board) })),
-  childStars: 0,
-  setChildStars: (v) => set((s) => ({ childStars: resolveSetState(v, s.childStars) })),
   parentLabel: '',
   setParentLabel: (v) => set((s) => ({ parentLabel: resolveSetState(v, s.parentLabel) })),
 }))

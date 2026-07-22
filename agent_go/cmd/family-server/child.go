@@ -166,9 +166,10 @@ func handleChildMessage(w http.ResponseWriter, r *http.Request) {
 
 	celebrate := agentsession.Tool{
 		Name: "celebrate",
-		Description: "Award " + childDisplayName(s.Child) + " 1-3 stars for genuine effort or progress — finishing a test, working through " +
-			"something hard, a nice improvement, real persistence. Call this in the moment it happens, not routinely. Never for just " +
-			"showing up or a single easy answer — save it for effort that actually deserves it, or it stops meaning anything.",
+		Description: "Award " + childDisplayName(s.Child) + " 1-3 stars for genuine effort or progress, right now, in the moment — " +
+			"finishing a test, working through something hard, a nice improvement, real persistence. This is shown live in the chat " +
+			"as it happens; it is not tracked as a running total anywhere. Call this in the moment it happens, not routinely. Never " +
+			"for just showing up or a single easy answer — save it for effort that actually deserves it, or it stops meaning anything.",
 		Category: "family_tools",
 		Params: map[string]interface{}{
 			"type": "object",
@@ -192,25 +193,10 @@ func handleChildMessage(w http.ResponseWriter, r *http.Request) {
 			if reason == "" {
 				return "", fmt.Errorf("reason is required")
 			}
-			stateMu.Lock()
-			cur := loadState()
-			if cur.Child == nil {
-				stateMu.Unlock()
-				return "", fmt.Errorf("no child profile yet")
-			}
-			cur.Child.Stars += stars
-			total := cur.Child.Stars
-			err := saveState(cur)
-			saved := cur.Child
-			stateMu.Unlock()
-			if err != nil {
-				return "", fmt.Errorf("failed to save stars: %w", err)
-			}
-			seedWorkspace(saved) // keep parent/child-profile.json (read by skills) in sync
 			evMu.Lock()
-			events = append(events, toolEvent{Tool: "celebrate", Stars: stars, Total: total, Reason: reason})
+			events = append(events, toolEvent{Tool: "celebrate", Stars: stars, Reason: reason})
 			evMu.Unlock()
-			return fmt.Sprintf(`{"status":"ok","stars_awarded":%d,"total_stars":%d}`, stars, total), nil
+			return fmt.Sprintf(`{"status":"ok","stars_awarded":%d}`, stars), nil
 		},
 	}
 
@@ -226,12 +212,13 @@ func handleChildMessage(w http.ResponseWriter, r *http.Request) {
 		ModelID:      mediumTierModelID(provider),
 		WorkingDir:   workDir,
 		SystemPrompt: childSystemPrompt(s.Child, s.ParentLabel),
-		// Only actually warm-resume once THIS process has completed a turn for
-		// this id — see warm_tracker.go: a restart kills the underlying warm
-		// session even though the frontend keeps using the same conversation_id.
-		SessionID:                 resumableSessionID(req.ConversationID),
+		// Stable SessionID reuses the warm tmux within this process; SessionHandle
+		// restores the coding agent's `--resume` state across restarts (loaded from
+		// disk) so context survives a restart without replaying the transcript.
+		SessionID:                 req.ConversationID,
+		SessionHandle:             loadSessionHandle("child", req.ConversationID),
 		BridgeRoutingInstructions: bridgeRoutingInstructions(),
-		Tools:                     withLiveStatus("child:"+req.ConversationID, []agentsession.Tool{childShellTool(), childOpenFile, childSuggestActions, celebrate, notifyTool()}),
+		Tools:                     withLiveStatus("child:"+req.ConversationID, []agentsession.Tool{childShellTool(), childOpenFile, childSuggestActions, celebrate, notifyTool(), childDiffPatchWorkspaceFileTool(), childReadImageTool(s.Engine)}),
 	})
 	if err != nil {
 		msg := friendlyTurnError(err)
@@ -245,6 +232,9 @@ func handleChildMessage(w http.ResponseWriter, r *http.Request) {
 	for _, m := range req.Messages {
 		history = append(history, agentsession.Message{Role: m.Role, Text: m.Text})
 	}
+	if suffix := pendingChildUploadSuffix(); suffix != "" && len(history) > 0 {
+		history[len(history)-1].Text += suffix
+	}
 
 	reply, err := sess.Ask(ctx, history)
 	if err != nil {
@@ -254,7 +244,7 @@ func handleChildMessage(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, parentMessageResponse{Error: msg})
 		return
 	}
-	markConversationWarm(req.ConversationID)
+	saveSessionHandle("child", req.ConversationID, sess.Handle())
 	evMu.Lock()
 	evs := events
 	evMu.Unlock()

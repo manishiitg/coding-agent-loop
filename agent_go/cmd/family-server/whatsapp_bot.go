@@ -340,13 +340,17 @@ func (w *waBot) handleEvent(rawEvt interface{}) {
 }
 
 // ingestWhatsAppMedia downloads an image/document attachment from an incoming
-// WhatsApp message into shared/inbox and returns the "(I sent it to <path>)"
-// suffix the model keys off, or "" if there's no attachment. Best-effort: a
-// failed download just drops the attachment (the text still gets handled).
-func (w *waBot) ingestWhatsAppMedia(evt *events.Message) string {
+// WhatsApp message into shared/inbox and reports whether one was saved.
+// Deliberately does NOT tell the model about it or the path — only text
+// messages go to the agent; the file just lands in the inbox and the
+// process-file skill's own "check shared/inbox/ before every reply" habit
+// picks it up naturally on whatever the next real turn is, the same as any
+// other inbox arrival. Best-effort: a failed download just drops the
+// attachment (any accompanying text still gets handled normally).
+func (w *waBot) ingestWhatsAppMedia(evt *events.Message) bool {
 	m := evt.Message
 	if m == nil {
-		return ""
+		return false
 	}
 	var dl whatsmeow.DownloadableMessage
 	var name string
@@ -361,21 +365,21 @@ func (w *waBot) ingestWhatsAppMedia(evt *events.Message) string {
 			name = "wa-" + evt.Info.ID + extForMime(m.DocumentMessage.GetMimetype(), ".bin")
 		}
 	default:
-		return ""
+		return false
 	}
 
 	w.mu.RLock()
 	client := w.client
 	w.mu.RUnlock()
 	if client == nil {
-		return ""
+		return false
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 	data, err := client.Download(ctx, dl)
 	if err != nil {
 		log.Printf("[whatsapp] media download failed: %v", err)
-		return ""
+		return false
 	}
 
 	name = sanitizeInboxName(name)
@@ -383,15 +387,15 @@ func (w *waBot) ingestWhatsAppMedia(evt *events.Message) string {
 	absDir := filepath.Join(familyDataDir(), "workspace", relDir)
 	if err := os.MkdirAll(absDir, 0o700); err != nil {
 		log.Printf("[whatsapp] inbox mkdir failed: %v", err)
-		return ""
+		return false
 	}
 	if err := os.WriteFile(filepath.Join(absDir, name), data, 0o600); err != nil {
 		log.Printf("[whatsapp] media save failed: %v", err)
-		return ""
+		return false
 	}
 	relPath := filepath.ToSlash(filepath.Join(relDir, name))
 	log.Printf("[whatsapp] saved attachment to %s (%d bytes)", relPath, len(data))
-	return "\n\n(I sent it to " + relPath + ")"
+	return true
 }
 
 // extForMime maps a media mimetype to a file extension, falling back to def.
@@ -449,19 +453,18 @@ func (w *waBot) handleIncomingMessage(evt *events.Message) {
 	}
 	text := extractWhatsAppMessageText(evt.Message)
 
-	// An image or document attachment: download it into shared/inbox and append
-	// the EXACT saved path to the text, so the model reads it via read_image /
-	// process-file — the same reliable pattern web and child uploads use. From
-	// here on it's the existing ingestion pipeline; only pulling the bytes out
-	// of the WhatsApp message is WhatsApp-specific.
-	if suffix := w.ingestWhatsAppMedia(evt); suffix != "" {
-		if strings.TrimSpace(text) == "" {
-			text = "I sent you this."
-		}
-		text = strings.TrimSpace(text) + suffix
-	}
+	// An image or document attachment: save it straight into shared/inbox and
+	// stop there — only text messages ever reach the agent. A bare attachment
+	// with no caption just gets acknowledged (👀) below and never starts a
+	// turn; the file sits in the inbox until the next real text message, at
+	// which point the process-file skill's own "check shared/inbox/ before
+	// every reply" habit picks it up like any other inbox arrival.
+	gotMedia := w.ingestWhatsAppMedia(evt)
 
 	if strings.TrimSpace(text) == "" {
+		if gotMedia {
+			w.react(info.Chat, info.Sender, info.ID, "👀")
+		}
 		return
 	}
 

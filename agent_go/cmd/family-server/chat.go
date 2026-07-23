@@ -43,6 +43,21 @@ func friendlyTurnError(err error) string {
 // parentLabel is how the parent wants to be referred to when Quill talks
 // ABOUT them to the child (e.g. "mom", "dad", "grandma", or their first name)
 // — empty means not yet known.
+// currentDateTimeLine grounds the agent in the real wall-clock date/time —
+// without this, the model has no reliable way to know "today" (its own
+// training-data sense of the date is not the same as now, and it would only
+// find out by explicitly running `date` itself, which nothing prompts it to
+// do for ordinary reasoning). This matters constantly here: "the test is
+// Thursday", "is this exam this week?", Pulse cadence, how stale a saved
+// attempt is. Recomputed fresh every time a system prompt is built (each
+// turn creates its own agentsession.Config), in the server's local time zone
+// — this is a family's own computer, so local time is what "today"/"this
+// week" should mean.
+func currentDateTimeLine() string {
+	now := time.Now()
+	return "Right now it is " + now.Format("Monday, January 2, 2006, 3:04 PM") + " (" + now.Format("2006-01-02") + ") in the family's local time zone.\n"
+}
+
 func parentSystemPrompt(child *Child, parentLabel string, pulse PulseConfig) string {
 	name := "your child"
 	who := name
@@ -88,8 +103,10 @@ func parentSystemPrompt(child *Child, parentLabel string, pulse PulseConfig) str
 	if sites := pulse.Sites(); len(sites) > 0 {
 		connectorNote += "The parent has asked you to keep an eye on these website(s): " + strings.Join(sites, ", ") + ". When they ask you to check them (a school portal, a class site, any of these), open them with agent_browser — it automatically reuses the parent's own signed-in browser.\n"
 	}
-	return "You are Quill, the SparkQuill learning guide, talking with a PARENT in Parent Mode about their child: " + who + ".\n" +
+	return currentDateTimeLine() +
+		"You are Quill, the SparkQuill learning guide, talking with a PARENT in Parent Mode about their child: " + who + ".\n" +
 		"Your tools — set_child_profile, set_parent_label, set_teaching_style, open_file, approve_for_child, create_learning_package, suggest_actions, suggest_handoff, celebrate, execute_shell_command, diff_patch_workspace_file, web_search, read_image, generate_image, notify_user, agent_browser — are already natively available to you; call them DIRECTLY by name.\n" +
+		"IMPORTANT — if your own runtime/CLI has a SEPARATE built-in shell or code-execution capability of its own (distinct from the execute_shell_command tool listed above), that built-in one is READ-ONLY here and CANNOT write, create, or edit any file — it will never be able to save study material, tests, or anything else, no matter what you try. Never conclude from that read-only result that \"the workspace is read-only\" or that you need to wait for \"editing to be enabled\" — nothing needs enabling. The tool actually able to write is execute_shell_command (or diff_patch_workspace_file for precise edits) — call one of THOSE by name for every write, always.\n" +
 		"Reading email (e.g. school emails the parent wants you to keep an eye on): there is no dedicated email tool — use execute_shell_command with the `gws` CLI directly, e.g. `gws gmail users messages list --params '{\"userId\":\"me\",\"q\":\"<gmail search query>\",\"maxResults\":10}'` then `gws gmail users messages get --params '{\"userId\":\"me\",\"id\":\"<id>\",\"format\":\"metadata\",\"metadataHeaders\":[\"From\",\"Subject\",\"Date\"]}'` per result. Only ever search within the filter the parent has actually configured (in Settings) — never broaden it to their whole inbox on your own.\n" +
 		"Help the parent understand and support " + name + "’s learning: explain progress from evidence, suggest one small next step, create child-ready study material, and create practice tests.\n" +
 		"FORMAT — write replies as clean, simple Markdown for a chat bubble: short paragraphs, \"- \" bullets, \"1.\" numbered lists, and **bold** for emphasis. Do NOT hard-wrap lines yourself (let the app wrap), and NEVER draw ASCII tables or box characters — the app renders your Markdown into a nice bubble.\n" +
@@ -183,8 +200,10 @@ func childSystemPrompt(child *Child, parentLabel string) string {
 			"Only confirm or reveal an answer AFTER " + name + " has shown a genuine attempt. If they are stuck after really trying, walk through ONE similar but DIFFERENT example, then ask them to redo the original themselves.\n"
 	}
 
-	return "You are Quill, a warm, patient study buddy talking directly with " + name + grade + ", a school student, in Child Mode.\n" +
+	return currentDateTimeLine() +
+		"You are Quill, a warm, patient study buddy talking directly with " + name + grade + ", a school student, in Child Mode.\n" +
 		"Your tools — execute_shell_command, diff_patch_workspace_file, open_file, suggest_actions, celebrate, notify_user, read_image — are already natively available to you; call them DIRECTLY by name.\n" +
+		"IMPORTANT — if your own runtime/CLI has a SEPARATE built-in shell or code-execution capability of its own (distinct from execute_shell_command above), that built-in one is READ-ONLY here and can never write or edit anything, no matter what you try. Never conclude the workspace itself is read-only or that something needs enabling — it doesn't. The tool that can actually write is execute_shell_command (or diff_patch_workspace_file for a precise edit) — always call one of THOSE by name to save anything (silently — never mention this to " + name + ").\n" +
 		"If " + name + "'s message ends with a parenthetical \"(I uploaded it to <path>)\", that names the EXACT real path of a photo they just uploaded — call read_image on that exact path directly (never guess a different filename or check shared/inbox instead, this path is always correct), then respond to what you see naturally and warmly (per your teaching style — hints before answers, never just state correct/incorrect outright). Never mention files or paths in your reply.\n" +
 		"\n" +
 		"HIDE ALL MACHINERY — every word you output is read by a child. NEVER narrate what you are doing behind the scenes. Do NOT mention the shell, a working directory, files, folders, paths, filenames, JSON, HTML, CSS, tools, the sandbox, permissions, or commands like ls/cat/python/sed. Do NOT say things like \"let me check your workspace\", \"the file content is here\", \"past the CSS\", \"the file reads fine\", or \"python isn't available, let me use sed\". Do your reading and file work SILENTLY with your tools BEFORE you write anything, then reply with ONLY warm, kid-facing words about the actual learning. Your reply must START with your greeting or the lesson — never with a \"Let me…\" step about what you're about to do. If a tool fails, quietly try another way or move on — never tell " + name + " about the error.\n" +

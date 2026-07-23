@@ -36,3 +36,49 @@ func TestMergeWorkflowCapabilitiesUpdateCanDisableNotifications(t *testing.T) {
 		t.Fatalf("notifications = %#v, want disabled", got.Notifications)
 	}
 }
+
+func TestMergeWorkflowCapabilitiesUpdateKeepsNotificationInstructions(t *testing.T) {
+	incoming := &WorkflowCapabilities{
+		Notifications: &WorkflowNotificationConfig{
+			RunSummaryInstructions:   "Include delivered outputs and the primary metric.",
+			PulseSummaryInstructions: "Put decisions and material fixes first.",
+		},
+	}
+	got := mergeWorkflowCapabilitiesUpdate(WorkflowCapabilities{}, incoming)
+	if got.Notifications == nil {
+		t.Fatal("notification instructions were discarded")
+	}
+	if got.Notifications.RunSummaryInstructions != incoming.Notifications.RunSummaryInstructions {
+		t.Fatalf("run instructions = %q, want %q", got.Notifications.RunSummaryInstructions, incoming.Notifications.RunSummaryInstructions)
+	}
+	if got.Notifications.PulseSummaryInstructions != incoming.Notifications.PulseSummaryInstructions {
+		t.Fatalf("pulse instructions = %q, want %q", got.Notifications.PulseSummaryInstructions, incoming.Notifications.PulseSummaryInstructions)
+	}
+}
+
+func TestMergeWorkflowCapabilitiesUpdateKeepsSummaryChannelRoutes(t *testing.T) {
+	incoming := &WorkflowCapabilities{Notifications: &WorkflowNotificationConfig{
+		RunSummaryChannels:   []string{"slack"},
+		PulseSummaryChannels: []string{"gmail"},
+	}}
+	got := mergeWorkflowCapabilitiesUpdate(WorkflowCapabilities{}, incoming)
+	if got.Notifications == nil {
+		t.Fatal("notification channel routes were discarded")
+	}
+	if len(got.Notifications.RunSummaryChannels) != 1 || got.Notifications.RunSummaryChannels[0] != "slack" {
+		t.Fatalf("run channels = %#v, want slack", got.Notifications.RunSummaryChannels)
+	}
+	if len(got.Notifications.PulseSummaryChannels) != 1 || got.Notifications.PulseSummaryChannels[0] != "gmail" {
+		t.Fatalf("pulse channels = %#v, want gmail", got.Notifications.PulseSummaryChannels)
+	}
+}
+
+func TestLegacyNotificationInstructionsRemainEffectiveForBothSections(t *testing.T) {
+	config := &WorkflowNotificationConfig{Instructions: "Use a detailed owner summary."}
+	if got := config.EffectiveRunSummaryInstructions(); got != config.Instructions {
+		t.Fatalf("run instructions = %q, want legacy %q", got, config.Instructions)
+	}
+	if got := config.EffectivePulseSummaryInstructions(); got != config.Instructions {
+		t.Fatalf("pulse instructions = %q, want legacy %q", got, config.Instructions)
+	}
+}

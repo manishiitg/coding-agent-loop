@@ -129,6 +129,22 @@ func trackedExecutionAppearsInRunningWorkflowList(exec *TrackedWorkflowExecution
 	return kind == "full_workflow" || kind == "workflow_builder_task"
 }
 
+func trackedExecutionBlocksNewWorkflowBuilderChat(exec *TrackedWorkflowExecution) bool {
+	if exec == nil || exec.Status != trackedExecutionStatusRunning {
+		return false
+	}
+	if strings.TrimSpace(exec.PhaseID) != "workflow-builder" {
+		return false
+	}
+	// Scheduled/background workflow work may use the workflow-builder phase for
+	// implementation details such as message-sequence items. It must not block a
+	// user from opening or continuing a normal builder chat for the same workflow.
+	if isScheduledSessionIdentity(exec.SessionID, exec.TriggeredBy) {
+		return false
+	}
+	return true
+}
+
 func trackedExecutionToActive(exec *TrackedWorkflowExecution) ActiveWorkflowExecution {
 	if exec == nil {
 		return ActiveWorkflowExecution{}

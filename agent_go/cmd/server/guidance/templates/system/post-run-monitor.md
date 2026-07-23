@@ -13,7 +13,7 @@ Pulse runs after a scheduled workflow run. It is not a fixed checklist. It is a 
 
 `builder/improve.html` is the authoritative durable source for Pulse history, prior fixes, findings, cadence reasoning, and decisions. The workflow's `db/db.sqlite` table `pulse_module_state` is only the current machine-readable Gate/worklist/result cache used by the scheduler and Pulse popup; it must not replace or contradict the HTML history. Every Gate decision, cadence reason, and module outcome that matters later must also be recorded visibly in `builder/improve.html`.
 
-When updating `builder/improve.html`, keep the first screen short and user-prioritized. Runloop renders pending **Needs your decision** requests above the HTML. The HTML then shows active **Assumptions challenged** only when consequential assumptions exist, followed by **Today's outcome**, goal progress, and recent activity. Signal tiles, cost/time, Maintenance Radar, cadence, and raw evidence stay inside the closed-by-default **Technical details** block. A collapsed **Agent log** at the bottom holds only compact current handoff state, evidence pointers, cursors, ids, and next-check conditions; it must not duplicate the report narrative. Do not duplicate the full latest-run Bug/Goal narrative at the top if the same details already appear in Recent runs or the timeline.
+When updating `builder/improve.html`, keep the first screen short and user-prioritized. Runloop renders pending **Needs your decision** requests above the HTML. The HTML then shows active **Assumptions challenged** only when consequential assumptions exist, followed by **Today's outcome**, goal progress, and recent activity. Signal tiles, cost/time, Maintenance Radar, and cadence may stay inside closed-by-default operator details, but raw evidence never appears in visible HTML. A hidden `#pulse-agent-handoff` marker may hold only compact interrupted-fix recovery state; it is not a visible Agent log and must not duplicate the report narrative. Do not duplicate the full latest-run Bug/Goal narrative at the top if the same details already appear in Recent runs or the timeline.
 
 ## Timeout Recovery
 
@@ -42,7 +42,7 @@ Gate uses a **progressive evidence scan**. Start with compact state and metadata
   `knowledgebase/_freshness.json` (`last_confirmed_run`, `last_confirmed_at`,
   `confirm_count`) — how recently an actual run re-confirmed each store
 - open and answered report human inputs in `db/db.sqlite`
-- Chief of Staff recommendation cards in `builder/improve.html`
+- legacy Chief of Staff recommendation cards in `builder/improve.html` are history only
 - compact cost/timing availability and change signals when present
 - workflow version, compact resolved LLM/tier/fallback signature, and backup/publish/notification readiness metadata
 
@@ -257,6 +257,14 @@ sections below as domain and evidence guidance.
    Then call `mark_pulse_module_result` for that module. A
    resumed Fixer starts at the first non-terminal row and revalidates any
    `fixing` row rather than repeating it.
+
+   The result tool is also the durable internal fix audit. When `result=changed`,
+   pass the exact workspace-relative `changed_files` and factual `verification`
+   checks; the tool rejects a changed result without both. Pass `before_refs`
+   and `after_refs` only for hashes, versions, or cursors that were actually
+   used to establish the change boundary. For failed or blocked work, keep the
+   exact technical error in `reason`. Do not invent empty audit detail, create a
+   second audit file, or copy these internal fields into visible Pulse HTML.
 8. Strategy changes and LLM/Ops changes remain proposal-only unless an exact
    matching request was already approved and still passes approval revalidation.
    Before applying it, compare its recorded approval basis with current state:
@@ -286,8 +294,35 @@ sections below as domain and evidence guidance.
    clean, changed, blocked, failed, and timed-out results. An optional separate
    `run_summary` or `pulse_fixer` card may summarize the batch; it must not
    replace the per-module cards. Preserve the user-first hierarchy and compact
-   agent handoff. Before marking the recovery ledger `complete`, perform one
-   global finding-ID reconciliation across reviewer manifests, canonical ledger
+   agent handoff.
+   Every module card is a user-facing outcome record, not a reviewer or recovery
+   log. Follow the `review-improve-log` plain-language card contract: visible
+   text states what happened, why it matters, and what happens next. Keep exact
+   technical evidence in the module reviewer result file and SQLite Pulse state,
+   not in the card. Keep `#pulse-agent-handoff` hidden and limited to interrupted-
+   fix recovery metadata. Never expose manifests,
+   hashes, finding ids, packet names, paths, state codes, `low_N`,
+   `changed_unverified`, `trusted packet`, `no_terminal_packet`, `retry_due`,
+   `approved_awaiting_evidence`, or reviewer-service recovery in the visible
+   layer. Use these exact translations:
+   - `no_terminal_packet` -> "The review did not finish."
+   - `retry_due` -> "Pulse will retry."
+   - `approved_awaiting_evidence` -> "Approved; waiting to confirm results."
+   Keep raw states only in internal evidence or invisible `data-*` attributes.
+   Label a failed reviewer result `Review incomplete` and say that the review
+   did not finish, no conclusion was accepted, and no unsupported change was
+   made. Apply this to Bug Review,
+   Artifact Review, Report/Eval/Learning/KB/DB
+   Health, Cost/Time, LLM Ops, Goal Advisor, Pulse Fixer, and run summaries.
+   Every visible result card uses the compact structure from
+   `review-improve-log`: **What happened**, optional **Why it matters**, and
+   **Next**, with at most 70 words across those fields. Before appending a
+   repeated failed/blocked/incomplete result, update the newest unresolved card
+   for the same module and same reason in place and increment its hidden
+   `data-repeat-count`. Append a new card only when the reason or outcome
+   materially changes; never merge different modules.
+   Before marking the recovery ledger `complete`, perform one global finding-ID reconciliation
+   across reviewer manifests, canonical ledger
    dispositions, per-module recovery rows, and final result cards. Do not claim
    Pulse completed or notify a clean outcome while any finding id is missing,
    duplicated without a canonical link, or lacks a durable disposition.
@@ -405,7 +440,6 @@ Mark due for real Bug findings:
   output; recommend the check that proves the effect, not db by default.
 - duplicate or shadow control stores for the same logical entity (for example,
   two strategy/arm tables) where writers, readers, or mirroring rules can drift
-- Chief of Staff recommendations that are operational bugs
 
 Also mark Bug Review due for a bounded exploratory QA checkpoint when any of
 these conditions holds:
@@ -614,7 +648,6 @@ Mark due when strategic judgment is needed:
 - Goal drift persists even when execution is clean
 - the current strategy appears capped or too narrow
 - a user answered a strategic question
-- a Chief of Staff recommendation is strategic
 - enough new cross-run evidence exists for an expert out-of-plan critique
 - a healthy workflow reaches its previously scheduled headroom checkpoint
 - an active `.advisor-experiment` has an answer, reaches `data-review-after`,
@@ -748,7 +781,7 @@ For Goal Advisor plan-change proposals, use the existing interaction shape inste
 - options: `approve`, `reject`, and `defer`, each with a short title and description
 - `context`: proposal, exact intended plan/config/eval/report edits, rationale, expected impact, risk, evidence paths, and an approval basis containing proposal Pulse/run/date, active experiment id, exact target ids, relevant artifact hashes or versions, success-criterion meaning, metric evidence as-of, and assumptions that must remain true
 
-On a later Pulse run, revalidate that approval basis before applying an approved proposal. Unrelated file changes do not make it stale, but changed target semantics, replaced plan/config/eval/report objects, changed goal meaning, superseding user decisions, invalidated assumptions, or materially changed evidence do. Never silently rebase or broaden the approved scope. Apply a still-valid proposal with normal plan/config/eval/report tools and then mark it consumed with `mark_human_input_consumed`. Consume a stale approval as `stale_not_applied`, record the reason, and create a refreshed proposal only when the same decision is still needed. Rejected or deferred proposals should be recorded and consumed, not silently retried. After consuming an answer, add/update a short Reflection / Hansei question-and-answer outcome card; pending questions are not duplicated in HTML.
+On a later Pulse run, revalidate that approval basis before applying an approved proposal. Unrelated file changes do not make it stale, but changed target semantics, replaced plan/config/eval/report objects, changed goal meaning, superseding user decisions, invalidated assumptions, or materially changed evidence do. Never silently rebase or broaden the approved scope. Apply a still-valid proposal with normal plan/config/eval/report tools and then mark it consumed with `mark_human_input_consumed`. Consume a stale approval as `stale_not_applied`, record the reason, and create a refreshed proposal only when the same decision is still needed. Rejected or deferred proposals should be recorded and consumed, not silently retried. After consuming an answer, add/update one short outcome card under the component that asked it: Goal Advisor in Improvements / `goal_advisor`, a known reviewer in Signals / its module, or a general Pulse question in Reflection / `run_summary`. Pending questions are not duplicated in HTML.
 
 Do not ask only in email or raw chat. Runloop renders the structured request first as **Needs your decision** from SQLite. When a later pass uses an answer, call `mark_human_input_consumed` and record the answer and outcome once in Reflection.
 

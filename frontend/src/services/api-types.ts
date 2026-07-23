@@ -2374,7 +2374,11 @@ export interface WorkflowNotificationInfoResponse {
   effective_state: WorkflowNotificationState
   destinations: WorkflowNotificationDestinationInfo[]
   account_channels: WorkflowNotificationAccountChannelInfo[]
-  // Per-workflow preferences from workflow.json notifications (display-only).
+  // Per-workflow content preferences from workflow.json notifications.
+  run_summary_instructions?: string
+  pulse_summary_instructions?: string
+  run_summary_channels?: string[]
+  pulse_summary_channels?: string[]
   exclude_channels?: string[]
   block_recipients?: string[]
 }
@@ -2534,6 +2538,12 @@ export interface WorkflowCapabilities {
 export interface WorkflowNotificationConfig {
   // Name of an encrypted workflow/user/global secret; never the webhook URL.
   slack_webhook_secret_name?: string
+  // Legacy shared guidance; new saves use the scoped fields below.
+  instructions?: string
+  run_summary_instructions?: string
+  pulse_summary_instructions?: string
+  run_summary_channels?: string[]
+  pulse_summary_channels?: string[]
 }
 
 export interface WorkflowExecutionDefaults {
@@ -2604,6 +2614,11 @@ export interface UpdateWorkflowManifestRequest {
   workshop_mode?: string // Standalone patch — avoids zeroing out other execution_defaults fields
   run_retention_count?: number
   post_run_monitor?: boolean
+  run_notification_instructions?: string
+  pulse_notification_instructions?: string
+  run_notification_channels?: string[]
+  pulse_notification_channels?: string[]
+  notification_instructions?: string
 }
 
 export interface DuplicateWorkflowManifestRequest {

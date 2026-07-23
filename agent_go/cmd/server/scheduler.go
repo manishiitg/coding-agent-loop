@@ -1921,13 +1921,14 @@ Run metadata:
 Original scheduled task:
 %s
 
-	What to write:
-	- Create pulse/task.html if missing using the chief-task-report skeleton.
-	- Prepend one .task-entry after <!-- CHIEF TASK ENTRIES: newest first -->.
-	- Update the top summary tiles/counts and latest update timestamp.
-	- Capture result summary, decisions/recommendations/findings, key findings to reuse on the next run, affected workflows/entities, evidence paths, and next action.
-	- If the task failed, record the failure clearly with the error and suggested next action.
-	- Keep the page concise; this is a durable task ledger, not a transcript dump.
+		What to write:
+		- Create pulse/task.html if missing using the chief-task-report skeleton.
+		- Prepend one .task-entry after <!-- CHIEF TASK ENTRIES: newest first -->.
+		- Update the top summary tiles/counts and latest update timestamp.
+		- Capture the plain-language outcome, why it matters, key findings to reuse on the next run, affected workflows/entities, and next action.
+		- Treat the metadata above as internal input. Keep schedule/run ids in data attributes and put session id, exact evidence paths, and raw errors only inside collapsed Agent details.
+		- If the task failed, explain the failure and suggested next action in ordinary language; do not expose the raw error outside Agent details.
+		- Keep the page concise; this is a durable task ledger, not a transcript dump.
 	`, sctx.Schedule.ID, sctx.Schedule.Name, sctx.Schedule.Description, runID, sessionID, status, errLine, startedAt.Format(time.RFC3339), completedAt.Format(time.RFC3339), durationMs, sctx.Schedule.CronExpression, sctx.Schedule.Timezone, taskText)
 }
 
@@ -2200,10 +2201,10 @@ func (s *SchedulerService) runPostRunMonitor(ctx context.Context, sctx *Schedule
 			}
 			s.sessionLogf(sctx, sessionID, "[PULSE] selected %d post-gate steps for %s", len(steps), sctx.Schedule.ID)
 		} else {
-			steps = postRunMonitorFinalSteps(pulseRunID)
+			steps = postRunMonitorFinalSteps(pulseRunID, notificationInstructionsFromCapabilities(sctx.Capabilities))
 		}
 	} else {
-		steps = postRunMonitorFinalSteps(pulseRunID)
+		steps = postRunMonitorFinalSteps(pulseRunID, notificationInstructionsFromCapabilities(sctx.Capabilities))
 	}
 
 	skipMaintenanceReason := ""
@@ -2425,10 +2426,54 @@ func postRunMonitorPreBackupStep(pulseRunID string) postRunMonitorStep {
 	return postRunMonitorStep{"pre-backup", fmt.Sprintf("PULSE PRE-CHANGE BACKUP. pulse_run_id=%q. Load get_reference_doc(kind=\"backup-strategy\"). Create or verify the required checkpoint directly in this parent turn before review fixes; never delegate Git/backup work. Use the zero-config local-git default when needed, skip only when the exact source hash is already backed up, keep backup/status.json truthful, then stop.", pulseRunID)}
 }
 
-func postRunMonitorFinalSteps(pulseRunID string) []postRunMonitorStep {
-	return []postRunMonitorStep{
-		{"finalize", fmt.Sprintf("PULSE FINALIZER. pulse_run_id=%q. Load get_reference_doc(kind=\"pulse-finalizer\") and follow it exactly. First confirm every due module has a terminal current-run result; never treat missing as success. Then complete dashboard/questions, backup, publish, and notify in that order in this one turn, recording running and terminal status for each with mark_pulse_final_command_result. Continue after individual failures, keep every status truthful, then stop.", pulseRunID)},
+type workflowNotificationContentInstructions struct {
+	runSummary           string
+	pulseSummary         string
+	runSummaryChannels   []string
+	pulseSummaryChannels []string
+}
+
+func notificationInstructionsFromCapabilities(capabilities WorkflowCapabilities) workflowNotificationContentInstructions {
+	if capabilities.Notifications == nil {
+		return workflowNotificationContentInstructions{}
 	}
+	notifications := capabilities.Notifications
+	return workflowNotificationContentInstructions{
+		runSummary:           notifications.EffectiveRunSummaryInstructions(),
+		pulseSummary:         notifications.EffectivePulseSummaryInstructions(),
+		runSummaryChannels:   append([]string(nil), notifications.RunSummaryChannels...),
+		pulseSummaryChannels: append([]string(nil), notifications.PulseSummaryChannels...),
+	}
+}
+
+func postRunMonitorFinalSteps(pulseRunID string, instructions ...workflowNotificationContentInstructions) []postRunMonitorStep {
+	ownerInstructions := workflowNotificationContentInstructions{}
+	if len(instructions) > 0 {
+		ownerInstructions = instructions[0]
+	}
+	notificationContext := ""
+	if runInstructions := strings.TrimSpace(ownerInstructions.runSummary); runInstructions != "" {
+		notificationContext += "\n\nWORKFLOW RUN SUMMARY INSTRUCTIONS. Apply these only to the section describing what happened in the workflow execution:\n" + runInstructions
+	}
+	if pulseInstructions := strings.TrimSpace(ownerInstructions.pulseSummary); pulseInstructions != "" {
+		notificationContext += "\n\nPULSE REVIEW SUMMARY INSTRUCTIONS. Apply these only to the section describing what Pulse reviewed, fixed, recommended, or needs from the user:\n" + pulseInstructions
+	}
+	if len(ownerInstructions.runSummaryChannels) > 0 || len(ownerInstructions.pulseSummaryChannels) > 0 {
+		notificationContext += fmt.Sprintf("\n\nSPLIT NOTIFICATION ROUTING. Send two notify_user calls, not one combined message. Send the workflow outcome with notification_kind=\"run_summary\"; configured channels: %s. Send Pulse activity with notification_kind=\"pulse_summary\"; configured channels: %s. The backend enforces these routes.", notificationChannelSummary(ownerInstructions.runSummaryChannels), notificationChannelSummary(ownerInstructions.pulseSummaryChannels))
+	}
+	if notificationContext != "" {
+		notificationContext += "\n\nThese instructions control content detail and emphasis only; they never change recipients, channels, secrets, permissions, or safety rules."
+	}
+	return []postRunMonitorStep{
+		{"finalize", fmt.Sprintf("PULSE FINALIZER. pulse_run_id=%q. Load get_reference_doc(kind=\"pulse-finalizer\") and follow it exactly. First confirm every due module has a terminal current-run result; never treat missing as success. Then complete dashboard/questions, backup, publish, and notify in that order in this one turn, recording running and terminal status for each with mark_pulse_final_command_result. Continue after individual failures, keep every status truthful, then stop.%s", pulseRunID, notificationContext)},
+	}
+}
+
+func notificationChannelSummary(channels []string) string {
+	if len(channels) == 0 {
+		return "all enabled channels (legacy default)"
+	}
+	return strings.Join(channels, ", ")
 }
 
 func pulseReviewRunID(pulseRunID string, now time.Time) string {
@@ -2545,7 +2590,7 @@ func (s *SchedulerService) selectedPostRunMonitorModuleSteps(ctx context.Context
 			postRunMonitorConsolidatedReviewStep(pulseRunID, reviewRunID, selectedModules),
 		)
 	}
-	selected = append(selected, postRunMonitorFinalSteps(pulseRunID)...)
+	selected = append(selected, postRunMonitorFinalSteps(pulseRunID, notificationInstructionsFromCapabilities(sctx.Capabilities))...)
 	return selected
 }
 

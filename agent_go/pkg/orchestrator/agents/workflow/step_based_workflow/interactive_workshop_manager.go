@@ -1358,7 +1358,6 @@ func GetToolsForWorkshopMode(mode string) []string {
 	autoImprovement := []string{
 		"capture_context",
 		"run_goal_advisor_review",
-		"mark_cos_recommendation_status",
 		"get_workflow_command_guidance", // canonical slash-command prose; see guidance package.
 		"get_reference_doc",             // reference docs (system/*.md) loaded on demand; see guidance package.
 	}
@@ -1496,9 +1495,6 @@ func goalAdvisorCommonMutationToolAgentAllowedToolNames() []string {
 		"get_step_prompts", "get_workflow_config", "get_llm_config", "get_cost_summary",
 		"list_skills", "search_skills", "list_published_llms", "list_provider_models",
 
-		// Non-plan workflow-facing state.
-		"mark_cos_recommendation_status",
-
 		// Report/dashboard shape plus the durable Pulse question flow.
 		"get_report_plan", "upsert_report_widget", "remove_report_widget",
 		"move_report_widget", "toggle_report_widget", "set_report_theme",
@@ -1565,15 +1561,6 @@ func (iwm *InteractiveWorkshopManager) registerWorkshopMutationToolsForToolAgent
 	registerInteractiveWorkshopTools(iwm, mcpAgentRef, logger)
 	guidance.RegisterGuidanceTool(mcpAgentRef, "workshop", logger)
 	guidance.RegisterReferenceDocTool(mcpAgentRef, "workshop", logger)
-	if err := RegisterChiefOfStaffRecommendationStatusTool(
-		mcpAgentRef,
-		workspacePath,
-		logger,
-		iwm.controller.ReadWorkspaceFile,
-		iwm.controller.WriteWorkspaceFile,
-	); err != nil {
-		logger.Warn(fmt.Sprintf("⚠️ %s: failed to register Chief of Staff recommendation status tool: %v", agentName, err))
-	}
 	if err := RegisterEvaluationValidationTools(
 		mcpAgentRef,
 		workspacePath,
@@ -2398,8 +2385,7 @@ For the full layout (every log file's schema, timing-debug walkthrough, cost led
 1. **Use step IDs**: Step IDs come from plan.json (e.g., "step-create-report"), not positional numbers.
 2. **Boolean config fields**: Only pass lock_learnings when explicitly changing it. Do NOT include it with false when updating other fields — this resets previously set values.
 3. **Never hardcode variables or secrets**: Use variable placeholders (e.g., {USER_ID}) in descriptions and learnings. Actual values belong in variables/variables.json / variable groups.
-4. **Never read application source code**: Do NOT search or read *.go, *.ts, or *.json files outside the workspace. You operate on workspace files only.
-5. **Back up recurring schedules**: Whenever you create or update a recurring schedule, also set up a backup so unattended runs persist their state off-box — a final backup message for `+"`workshop`"+`-mode schedules, or a backup step in the plan for `+"`workflow`"+`-mode schedules (there is no message queue to carry the instruction). Load `+"`get_reference_doc(kind=\"backup-strategy\")`"+` for the playbook; confirm with the user before skipping.
+4. **Back up recurring schedules**: Whenever you create or update a recurring schedule, also set up a backup so unattended runs persist their state off-box — a final backup message for `+"`workshop`"+`-mode schedules, or a backup step in the plan for `+"`workflow`"+`-mode schedules (there is no message queue to carry the instruction). Load `+"`get_reference_doc(kind=\"backup-strategy\")`"+` for the playbook; confirm with the user before skipping.
 `)
 
 var interactiveWorkshopUserTemplate = MustRegisterTemplate("interactiveWorkshopUser", `{{if .UserRequest}}{{.UserRequest}}{{else}}What would you like to do in the workshop?{{end}}`)
@@ -4250,7 +4236,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 			}
 
 			logger.Info(fmt.Sprintf("🛑 Workshop: step %q (execution_id=%q) cancelled", exec.StepID, execID))
-			return fmt.Sprintf("Step %q (execution_id=%q) has been cancelled.", exec.StepID, execID), nil
+			return fmt.Sprintf("Step %q (execution_id=%q) has been canceled.", exec.StepID, execID), nil
 		},
 		"workflow",
 	); err != nil {
@@ -6031,7 +6017,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 	// Tool: get_workflow_config — read-only view of workflow-level settings (MCP servers, skills, secrets, LLM config)
 	if err := mcpAgent.RegisterCustomTool(
 		"get_workflow_config",
-		"Show current workflow configuration: selected workflow MCP servers, selected workflow skills, secrets (names only, no values), one-way notification destinations, run retention, LLM config (tiered allocation with fallbacks, preset defaults), and schedules.",
+		"Show current workflow configuration: selected workflow MCP servers, selected workflow skills, secrets (names only, no values), workflow-scoped notification content instructions and one-way destinations, run retention, LLM config (tiered allocation with fallbacks, preset defaults), and schedules.",
 		map[string]interface{}{
 			"type":       "object",
 			"properties": map[string]interface{}{},
@@ -6092,22 +6078,70 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 			// --- One-way notifications (secret references only) ---
 			sb.WriteString("\n### Notifications\n")
 			var slackWebhookSecretName string
+			var runNotificationInstructions string
+			var pulseNotificationInstructions string
+			var runNotificationChannels []string
+			var pulseNotificationChannels []string
+			var notificationExcludeChannels []string
+			var notificationBlockRecipients []string
 			if content, readErr := ctrl.ReadWorkspaceFile(ctx, "workflow.json"); readErr == nil {
 				var manifest struct {
 					Capabilities struct {
 						Notifications struct {
-							SlackWebhookSecretName string `json:"slack_webhook_secret_name"`
+							SlackWebhookSecretName   string   `json:"slack_webhook_secret_name"`
+							RunSummaryInstructions   string   `json:"run_summary_instructions"`
+							PulseSummaryInstructions string   `json:"pulse_summary_instructions"`
+							RunSummaryChannels       []string `json:"run_summary_channels"`
+							PulseSummaryChannels     []string `json:"pulse_summary_channels"`
+							Instructions             string   `json:"instructions"`
+							ExcludeChannels          []string `json:"exclude_channels"`
+							BlockRecipients          []string `json:"block_recipients"`
 						} `json:"notifications"`
 					} `json:"capabilities"`
 				}
 				if json.Unmarshal([]byte(content), &manifest) == nil {
 					slackWebhookSecretName = strings.TrimSpace(manifest.Capabilities.Notifications.SlackWebhookSecretName)
+					runNotificationInstructions = strings.TrimSpace(manifest.Capabilities.Notifications.RunSummaryInstructions)
+					pulseNotificationInstructions = strings.TrimSpace(manifest.Capabilities.Notifications.PulseSummaryInstructions)
+					legacyInstructions := strings.TrimSpace(manifest.Capabilities.Notifications.Instructions)
+					if runNotificationInstructions == "" {
+						runNotificationInstructions = legacyInstructions
+					}
+					if pulseNotificationInstructions == "" {
+						pulseNotificationInstructions = legacyInstructions
+					}
+					notificationExcludeChannels = uniqueStringsPreserveOrder(manifest.Capabilities.Notifications.ExcludeChannels)
+					notificationBlockRecipients = uniqueStringsPreserveOrder(manifest.Capabilities.Notifications.BlockRecipients)
+					runNotificationChannels = uniqueStringsPreserveOrder(manifest.Capabilities.Notifications.RunSummaryChannels)
+					pulseNotificationChannels = uniqueStringsPreserveOrder(manifest.Capabilities.Notifications.PulseSummaryChannels)
 				}
 			}
 			if slackWebhookSecretName == "" {
 				sb.WriteString("- Slack Incoming Webhook: not configured\n")
 			} else {
 				sb.WriteString(fmt.Sprintf("- Slack Incoming Webhook: configured via encrypted secret **%s** (one-way notify_user delivery; URL hidden)\n", slackWebhookSecretName))
+			}
+			if runNotificationInstructions == "" {
+				sb.WriteString("- Workflow run summary instructions: not configured\n")
+			} else {
+				sb.WriteString("- Workflow run summary instructions:\n  " + strings.ReplaceAll(runNotificationInstructions, "\n", "\n  ") + "\n")
+			}
+			if pulseNotificationInstructions == "" {
+				sb.WriteString("- Pulse review summary instructions: not configured\n")
+			} else {
+				sb.WriteString("- Pulse review summary instructions:\n  " + strings.ReplaceAll(pulseNotificationInstructions, "\n", "\n  ") + "\n")
+			}
+			if len(runNotificationChannels) > 0 {
+				sb.WriteString(fmt.Sprintf("- Workflow run summary channels: %s\n", strings.Join(runNotificationChannels, ", ")))
+			}
+			if len(pulseNotificationChannels) > 0 {
+				sb.WriteString(fmt.Sprintf("- Pulse review summary channels: %s\n", strings.Join(pulseNotificationChannels, ", ")))
+			}
+			if len(notificationExcludeChannels) > 0 {
+				sb.WriteString(fmt.Sprintf("- Excluded channels: %s\n", strings.Join(notificationExcludeChannels, ", ")))
+			}
+			if len(notificationBlockRecipients) > 0 {
+				sb.WriteString(fmt.Sprintf("- Blocked recipients: %s\n", strings.Join(notificationBlockRecipients, ", ")))
 			}
 
 			// Show available secrets that can be added
@@ -6235,7 +6269,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 	// Tool: update_workflow_config — add/remove MCP servers, skills, secrets, and workflow-level knobs
 	if err := mcpAgent.RegisterCustomTool(
 		"update_workflow_config",
-		"Update workflow configuration: add/remove MCP servers, workflow-level tool allowlist entries, skills and secrets; configure a one-way Slack Incoming Webhook by encrypted secret name; set browser mode and optional specialized multi-profile CDP ports; and set run retention. Use get_workflow_config to inspect current workflow settings and list_skills to discover installed skill folder names. Most changes take effect immediately for subsequent steps; changing cdp_ports or Slack webhook configuration takes effect on the next workflow execution.",
+		"Update workflow configuration: add/remove MCP servers, workflow-level tool allowlist entries, skills and secrets; save workflow-scoped notification content instructions; configure a one-way Slack Incoming Webhook by encrypted secret name; set browser mode and optional specialized multi-profile CDP ports; and set run retention. Use get_workflow_config to inspect current workflow settings and list_skills to discover installed skill folder names. Most changes take effect immediately for subsequent steps; changing cdp_ports or Slack webhook configuration takes effect on the next workflow execution.",
 		map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
@@ -6282,6 +6316,28 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				"slack_webhook_secret_name": map[string]interface{}{
 					"type":        "string",
 					"description": "Name of an existing encrypted secret containing a complete Slack Incoming Webhook URL. This converts the credential into backend-only notification configuration and removes it from selected_secrets, selected_global_secret_names, and SECRET_* injection. notify_user sends a rich Block Kit card to it automatically and applies the change in the current builder turn; human_feedback never does because webhooks are one-way. Pass an empty string to disable workflow webhook delivery. Never put the URL itself in workflow.json or post to it directly.",
+				},
+				"run_notification_instructions": map[string]interface{}{
+					"type":        "string",
+					"maxLength":   2000,
+					"description": "Owner-approved guidance for the workflow execution section of notifications: what happened, outputs, failures, goal movement, metrics, detail, tone, and emphasis. Stored in workflow.json capabilities.notifications.run_summary_instructions. Pass an empty string to clear it. It cannot change recipients, channels, permissions, schedules, plan behavior, or delivery configuration.",
+				},
+				"pulse_notification_instructions": map[string]interface{}{
+					"type":        "string",
+					"maxLength":   2000,
+					"description": "Owner-approved guidance for the Pulse section of notifications: reviews, bugs, fixes, recommendations, decisions, backup/publish state, and next actions. Stored in workflow.json capabilities.notifications.pulse_summary_instructions. Pass an empty string to clear it. It cannot change recipients, channels, permissions, schedules, plan behavior, or delivery configuration.",
+				},
+				"run_notification_channels": map[string]interface{}{
+					"type":        "array",
+					"items":       map[string]interface{}{"type": "string", "enum": []string{"gmail", "slack", "whatsapp"}},
+					"minItems":    1,
+					"description": "Channels for the workflow run summary only. The backend enforces this allowlist. Omit to retain the current/default routing.",
+				},
+				"pulse_notification_channels": map[string]interface{}{
+					"type":        "array",
+					"items":       map[string]interface{}{"type": "string", "enum": []string{"gmail", "slack", "whatsapp"}},
+					"minItems":    1,
+					"description": "Channels for the Pulse review summary only. The backend enforces this allowlist. Omit to retain the current/default routing.",
 				},
 				"update_tier_fallbacks": map[string]interface{}{
 					"type":        "object",
@@ -6693,6 +6749,137 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				}
 			}
 
+			// --- Workflow-scoped notification content instructions ---
+			runRaw, runProvided := args["run_notification_instructions"]
+			pulseRaw, pulseProvided := args["pulse_notification_instructions"]
+			runChannelsRaw, runChannelsProvided := args["run_notification_channels"]
+			pulseChannelsRaw, pulseChannelsProvided := args["pulse_notification_channels"]
+			if (runProvided && runRaw != nil) || (pulseProvided && pulseRaw != nil) ||
+				(runChannelsProvided && runChannelsRaw != nil) || (pulseChannelsProvided && pulseChannelsRaw != nil) {
+				parseInstructions := func(name string, raw interface{}, provided bool) (string, error) {
+					if !provided || raw == nil {
+						return "", nil
+					}
+					value, ok := raw.(string)
+					if !ok {
+						return "", fmt.Errorf("%s must be a string", name)
+					}
+					value = strings.TrimSpace(value)
+					if len([]rune(value)) > 2000 {
+						return "", fmt.Errorf("%s must be at most 2000 characters", name)
+					}
+					return value, nil
+				}
+				runInstructions, parseErr := parseInstructions("run_notification_instructions", runRaw, runProvided)
+				if parseErr != nil {
+					return "Error: " + parseErr.Error() + ".", nil
+				}
+				pulseInstructions, parseErr := parseInstructions("pulse_notification_instructions", pulseRaw, pulseProvided)
+				if parseErr != nil {
+					return "Error: " + parseErr.Error() + ".", nil
+				}
+
+				content, readErr := iwm.controller.ReadWorkspaceFile(ctx, "workflow.json")
+				if readErr != nil {
+					return fmt.Sprintf("Failed to read workflow.json: %v", readErr), nil
+				}
+				var manifest map[string]interface{}
+				if parseErr := json.Unmarshal([]byte(content), &manifest); parseErr != nil {
+					return fmt.Sprintf("Failed to parse workflow.json: %v", parseErr), nil
+				}
+				caps, _ := manifest["capabilities"].(map[string]interface{})
+				if caps == nil {
+					caps = make(map[string]interface{})
+				}
+				notifications, _ := caps["notifications"].(map[string]interface{})
+				if notifications == nil {
+					notifications = make(map[string]interface{})
+				}
+				legacyInstructions, _ := notifications["instructions"].(string)
+				if !runProvided {
+					runInstructions, _ = notifications["run_summary_instructions"].(string)
+					if strings.TrimSpace(runInstructions) == "" {
+						runInstructions = legacyInstructions
+					}
+				}
+				if !pulseProvided {
+					pulseInstructions, _ = notifications["pulse_summary_instructions"].(string)
+					if strings.TrimSpace(pulseInstructions) == "" {
+						pulseInstructions = legacyInstructions
+					}
+				}
+				parseChannels := func(name string, raw interface{}, provided bool) ([]string, error) {
+					if !provided || raw == nil {
+						return nil, nil
+					}
+					values, ok := raw.([]interface{})
+					if !ok {
+						return nil, fmt.Errorf("%s must be an array", name)
+					}
+					allowed := map[string]bool{"gmail": true, "slack": true, "whatsapp": true}
+					channels := make([]string, 0, len(values))
+					seen := map[string]bool{}
+					for _, rawValue := range values {
+						value, ok := rawValue.(string)
+						if !ok || !allowed[strings.ToLower(strings.TrimSpace(value))] {
+							return nil, fmt.Errorf("%s contains an unsupported channel", name)
+						}
+						value = strings.ToLower(strings.TrimSpace(value))
+						if !seen[value] {
+							channels = append(channels, value)
+							seen[value] = true
+						}
+					}
+					if len(channels) == 0 {
+						return nil, fmt.Errorf("%s must contain at least one channel", name)
+					}
+					return channels, nil
+				}
+				runChannels, parseErr := parseChannels("run_notification_channels", runChannelsRaw, runChannelsProvided)
+				if parseErr != nil {
+					return "Error: " + parseErr.Error() + ".", nil
+				}
+				pulseChannels, parseErr := parseChannels("pulse_notification_channels", pulseChannelsRaw, pulseChannelsProvided)
+				if parseErr != nil {
+					return "Error: " + parseErr.Error() + ".", nil
+				}
+				delete(notifications, "instructions")
+				for key, value := range map[string]string{
+					"run_summary_instructions":   strings.TrimSpace(runInstructions),
+					"pulse_summary_instructions": strings.TrimSpace(pulseInstructions),
+				} {
+					if value == "" {
+						delete(notifications, key)
+					} else {
+						notifications[key] = value
+					}
+				}
+				if runChannelsProvided {
+					notifications["run_summary_channels"] = runChannels
+				}
+				if pulseChannelsProvided {
+					notifications["pulse_summary_channels"] = pulseChannels
+				}
+				if len(notifications) == 0 {
+					delete(caps, "notifications")
+				} else {
+					caps["notifications"] = notifications
+				}
+				manifest["capabilities"] = caps
+				manifest["updated_at"] = time.Now().UTC().Format(time.RFC3339)
+				updated, marshalErr := json.MarshalIndent(manifest, "", "  ")
+				if marshalErr != nil {
+					return fmt.Sprintf("Failed to marshal workflow.json: %v", marshalErr), nil
+				}
+				if writeErr := iwm.controller.WriteWorkspaceFile(ctx, "workflow.json", string(updated)); writeErr != nil {
+					return fmt.Sprintf("Failed to write workflow.json: %v", writeErr), nil
+				}
+
+				anyChanged = true
+				sb.WriteString("\n### Notification Instructions (updated)\nSaved separate workflow run and Pulse review content preferences in workflow.json.\n")
+				logger.Info(fmt.Sprintf("Updated workflow notification instructions: run_configured=%v pulse_configured=%v", strings.TrimSpace(runInstructions) != "", strings.TrimSpace(pulseInstructions) != ""))
+			}
+
 			// --- Workflow-scoped one-way Slack webhook ---
 			if raw, provided := args["slack_webhook_secret_name"]; provided && raw != nil {
 				secretName, isString := raw.(string)
@@ -7036,7 +7223,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 			}
 
 			if !anyChanged {
-				return "No changes applied. Provide at least one of: add_servers, remove_servers, add_tools, remove_tools, add_skills, remove_skills, add_secrets, remove_secrets, slack_webhook_secret_name, update_tier_fallbacks, lock_knowledgebase, browser_mode, cdp_ports, run_retention_count, post_run_monitor.", nil
+				return "No changes applied. Provide at least one of: add_servers, remove_servers, add_tools, remove_tools, add_skills, remove_skills, add_secrets, remove_secrets, run_notification_instructions, pulse_notification_instructions, run_notification_channels, pulse_notification_channels, slack_webhook_secret_name, update_tier_fallbacks, lock_knowledgebase, browser_mode, cdp_ports, run_retention_count, post_run_monitor.", nil
 			}
 
 			// Persist config changes to workflow.json manifest (file-backed)
@@ -9125,11 +9312,11 @@ func buildGoalAdvisorAdvisorInstruction(pulseRunID, focus string) string {
 	sb.WriteString(`
 Use ` + "`get_workflow_command_guidance(kind=\"goal-advisor\", focus=\"Pulse-selected Goal Advisor module; expert strategy advisor, not routine maintenance\")`" + ` as the strategy playbook, but this stage is read-only.
 
-Read the workflow evidence yourself: builder/improve.html including the Pulse Gate/worklist, soul/soul.md, latest run/eval evidence, planning/changelog, report/dashboard evidence, answered human inputs in db/db.sqlite/report_human_inputs, and queued Chief of Staff recommendations (.cos-rec, especially data-status="queued_goal_advisor").
+Read the workflow evidence yourself: builder/improve.html including the Pulse Gate/worklist, soul/soul.md, latest run/eval evidence, planning/changelog, report/dashboard evidence, and answered human inputs in db/db.sqlite/report_human_inputs.
 
 Analysis budget:
 - Spend this stage on goal reality, strategy ceiling, credible alternatives, and experiment evidence.
-- From builder/improve.html read only verdicts, the active .advisor-experiment, recent Goal Advisor entries, answered outcomes, and queued Chief of Staff recommendations. Use targeted search/extraction when it is large.
+- From builder/improve.html read only verdicts, the active .advisor-experiment, recent Goal Advisor entries, and answered outcomes. Ignore legacy Chief of Staff recommendation cards. Use targeted search/extraction when it is large.
 - Do not inspect CSS, visual design, unrelated timeline history, or page formatting. Do not load HTML style/skeleton guidance.
 - Return the strategic verdict even if the report markup is imperfect; formatting belongs to Report Health.
 

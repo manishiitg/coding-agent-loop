@@ -23,6 +23,44 @@ func TestAllGuidanceTemplatesRender(t *testing.T) {
 	}
 }
 
+func TestChiefOfStaffGuidanceKeepsTechnicalDetailsOutOfVisibleOutput(t *testing.T) {
+	tests := map[string][]string{
+		"org-pulse": {
+			"Are the org goals on track?",
+			"collapsed `Agent details` block",
+			"never paste raw technical evidence",
+		},
+		"org-goals": {
+			"The visible scorecard is for a business operator",
+			"collapsed `Agent details`",
+			"internal status codes",
+		},
+		"org-html": {
+			"Plain language first",
+			`<details class="agent-details">`,
+			"what happened, why it matters",
+		},
+		"chief-task-report": {
+			"Write the visible page for a business operator",
+			"Keep schedule/run/session ids",
+			`<summary>Agent details</summary>`,
+			"`success` becomes \"Completed\"",
+		},
+	}
+
+	for kind, wants := range tests {
+		rendered, err := renderFromRegistry(kind, tmplData{}, referenceKinds)
+		if err != nil {
+			t.Fatalf("render %s: %v", kind, err)
+		}
+		for _, want := range wants {
+			if !strings.Contains(rendered, want) {
+				t.Fatalf("%s guidance missing plain-language contract %q", kind, want)
+			}
+		}
+	}
+}
+
 func TestFocusedScheduledPulseReferencesStayBoundedAndComplete(t *testing.T) {
 	tests := map[string]struct {
 		max   int
@@ -47,7 +85,7 @@ func TestFocusedScheduledPulseReferencesStayBoundedAndComplete(t *testing.T) {
 			},
 		},
 		"pulse-finalizer": {
-			max: 3000,
+			max: 4500,
 			wants: []string{
 				"Never treat missing as skipped/successful", "Dashboard + questions", "directly in this parent",
 				"Publish", "Notify", "mark_pulse_final_command_result",
@@ -426,7 +464,7 @@ func TestPulseGuidanceRequiresAuthoritativeHTMLAndVisibleFreshness(t *testing.T)
 		"Assumptions challenged",
 		"Today's outcome",
 		`<details class="technical">`,
-		"Agent log",
+		"Hidden recovery handoff",
 		`#pulse-agent-handoff`,
 		"scheduler conditionally sends a dedicated archive turn",
 		"newest **20** timeline cards",
@@ -437,6 +475,10 @@ func TestPulseGuidanceRequiresAuthoritativeHTMLAndVisibleFreshness(t *testing.T)
 		"Reflection — Hansei",
 		"Improvements — Kaizen",
 		"Do not add a second active-question card",
+		"What happened",
+		"Why it matters",
+		"data-repeat-count",
+		"same module and same reason",
 	} {
 		if !strings.Contains(reviewLog, want) {
 			t.Fatalf("review-improve-log missing archive contract %q", want)
@@ -450,7 +492,7 @@ func TestPulseGuidanceRequiresAuthoritativeHTMLAndVisibleFreshness(t *testing.T)
 	if !strings.Contains(skeleton, `class="asof"`) || !strings.Contains(skeleton, ".tile .asof") {
 		t.Fatal("review-improve-log-skeleton missing visible tile freshness markup")
 	}
-	for _, want := range []string{`data-pulse-schema="2"`, `id="pulse-bug-verdict"`, `id="pulse-goal-verdict"`, `class="as"`, `class="assumptions"`, `class="technical"`, `class="agentlog"`, `id="pulse-agent-handoff"`, `data-pulse-section="signals" data-module="bug_review"`, `data-pulse-section="reflection" data-module="run_summary"`, `data-pulse-section="improvements" data-module="goal_advisor"`, `Today's outcome`} {
+	for _, want := range []string{`data-pulse-schema="2"`, `id="pulse-bug-verdict"`, `id="pulse-goal-verdict"`, `class="as"`, `class="assumptions"`, `class="technical"`, `id="pulse-agent-handoff"`, `hidden`, `data-pulse-section="signals" data-module="bug_review"`, `data-pulse-section="reflection" data-module="run_summary"`, `data-pulse-section="improvements" data-module="goal_advisor"`, `Today's outcome`} {
 		if !strings.Contains(skeleton, want) {
 			t.Fatalf("review-improve-log-skeleton missing stable verdict markup %q", want)
 		}
@@ -461,7 +503,7 @@ func TestPulseGuidanceRequiresAuthoritativeHTMLAndVisibleFreshness(t *testing.T)
 	if strings.Contains(skeleton, `class="goalcard"`) || strings.Contains(skeleton, `data-status="open"`) {
 		t.Fatal("review-improve-log-skeleton must not duplicate the Goal or an active SQLite question")
 	}
-	for _, want := range []string{`data-pulse-section="reflection" data-module="goal_advisor"`, `data-status="answered"`, `Question + answer`} {
+	for _, want := range []string{`data-pulse-section="improvements" data-module="goal_advisor"`, `data-status="answered"`, `Question + answer`} {
 		if !strings.Contains(skeleton, want) {
 			t.Fatalf("review-improve-log-skeleton missing historical question/answer contract %q", want)
 		}
@@ -549,6 +591,31 @@ func TestGoalAdvisorPrioritizesStrategyOverHTMLFormatting(t *testing.T) {
 	} {
 		if !strings.Contains(advisor, want) {
 			t.Fatalf("goal advisor missing analysis-first reporting contract %q", want)
+		}
+	}
+}
+
+func TestPulseCardsKeepTechnicalEvidenceOutOfUserTimeline(t *testing.T) {
+	logGuide, err := renderFromRegistry("review-improve-log", tmplData{}, referenceKinds)
+	if err != nil {
+		t.Fatalf("render review-improve-log: %v", err)
+	}
+	monitor, err := renderFromRegistry("post-run-monitor", tmplData{}, referenceKinds)
+	if err != nil {
+		t.Fatalf("render post-run-monitor: %v", err)
+	}
+	checks := map[string]struct {
+		rendered string
+		wants    []string
+	}{
+		"review-improve-log": {logGuide, []string{"reviewer result file", "#pulse-agent-handoff", "no_terminal_packet", "retry_due", "approved_awaiting_evidence", "The review did not finish.", "Pulse will retry.", "Approved; waiting to confirm results.", "Review incomplete"}},
+		"post-run-monitor":   {monitor, []string{"user-facing outcome record", "reviewer result file", "#pulse-agent-handoff", "no_terminal_packet", "retry_due", "approved_awaiting_evidence", "The review did not finish.", "Pulse will retry.", "Approved; waiting to confirm results.", "Review incomplete"}},
+	}
+	for label, check := range checks {
+		for _, want := range check.wants {
+			if !strings.Contains(check.rendered, want) {
+				t.Fatalf("%s missing human-readable card contract %q", label, want)
+			}
 		}
 	}
 }

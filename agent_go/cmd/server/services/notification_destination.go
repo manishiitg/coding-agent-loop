@@ -21,6 +21,12 @@ type NotificationDestination struct {
 	// suppresses an inherited account-level channel without touching the
 	// account-wide configuration. Matched case-insensitively.
 	ExcludeChannels []string
+
+	// Summary-specific allowlists. Empty means inherit the existing workflow
+	// routing. notify_user selects one by notification_kind and enforces it in
+	// the backend, including the workflow Slack webhook.
+	RunSummaryChannels   []string
+	PulseSummaryChannels []string
 }
 
 // SlackWebhookDest is a workflow-scoped, one-way Slack Incoming Webhook.
@@ -39,8 +45,8 @@ type GmailDest struct {
 
 	// BlockedRecipients is a per-notification denylist unioned with the
 	// account-wide GmailConfig.BlockedRecipients at send time. It lets a
-	// per-workflow notification preference (soul/soul.md ## Notifications, passed
-	// through by notify_user) reject additional recipients for this workflow
+	// per-workflow notification preference (workflow.json capabilities.notifications,
+	// applied by the backend) reject additional recipients for this workflow
 	// without editing the account-wide config. Never widens the allow-set — it
 	// can only block more, never unblock a globally-blocked address.
 	BlockedRecipients []string

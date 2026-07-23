@@ -547,6 +547,10 @@ func (e *Executor) HandleAgentBrowser(ctx context.Context, args map[string]inter
 		}
 	}
 	commandArgs = normalizeAgentBrowserCommandArgs(command, commandArgs)
+	if isBrowserOpenCommand(command) && len(commandArgs) > 0 {
+		log.Printf("[BROWSER] navigation: browser=%q agent=%q workflow=%q command=%q tab=%q target=%q",
+			session, agentSessionID, workflowSessionID, command, inlineCDPTab, displayCDPTabURL(commandArgs[0]))
+	}
 	if command == "tab" && len(commandArgs) > 0 && commandArgs[0] == "new" {
 		newTabRequest, newTabErr := parseNewCDPTabRequest(commandArgs)
 		if newTabErr != nil {

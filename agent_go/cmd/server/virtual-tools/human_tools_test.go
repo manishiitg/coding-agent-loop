@@ -475,6 +475,87 @@ func TestHandleNotifyUserFansOutToRegisteredConnectors(t *testing.T) {
 	}
 }
 
+func TestHandleNotifyUserEnforcesSummaryChannelRoute(t *testing.T) {
+	manager := services.GetNotificationManager()
+	gmailCh := make(chan *services.NotificationDestination, 1)
+	slackCh := make(chan *services.NotificationDestination, 1)
+	manager.RegisterConnector(&testUserNotificationConnector{name: "gmail", ch: gmailCh})
+	manager.RegisterConnector(&testUserNotificationConnector{name: "slack", ch: slackCh})
+	t.Cleanup(func() {
+		manager.UnregisterConnector("gmail")
+		manager.UnregisterConnector("slack")
+	})
+
+	ctx := context.WithValue(context.Background(), BotNotificationDestinationKey, &services.NotificationDestination{
+		UserID:               "user-1",
+		RunSummaryChannels:   []string{"slack"},
+		PulseSummaryChannels: []string{"gmail"},
+	})
+	if _, err := handleNotifyUser(ctx, map[string]interface{}{
+		"message_for_user":  "Run complete",
+		"notification_kind": "run_summary",
+	}); err != nil {
+		t.Fatalf("run summary notification: %v", err)
+	}
+	select {
+	case <-slackCh:
+	case <-time.After(time.Second):
+		t.Fatal("expected run summary on Slack")
+	}
+	select {
+	case <-gmailCh:
+		t.Fatal("run summary must not be sent to Gmail")
+	default:
+	}
+
+	if _, err := handleNotifyUser(ctx, map[string]interface{}{
+		"message_for_user":  "Pulse complete",
+		"notification_kind": "pulse_summary",
+	}); err != nil {
+		t.Fatalf("pulse summary notification: %v", err)
+	}
+	select {
+	case <-gmailCh:
+	case <-time.After(time.Second):
+		t.Fatal("expected Pulse summary on Gmail")
+	}
+	select {
+	case <-slackCh:
+		t.Fatal("Pulse summary must not be sent to Slack")
+	default:
+	}
+}
+
+func TestHandleNotifyUserSuppressesWorkflowSlackWebhookForGmailOnlyPulse(t *testing.T) {
+	manager := services.GetNotificationManager()
+	gmailCh := make(chan *services.NotificationDestination, 1)
+	manager.RegisterConnector(&testUserNotificationConnector{name: "gmail", ch: gmailCh})
+	t.Cleanup(func() { manager.UnregisterConnector("gmail") })
+
+	oldSend := sendRichSlackIncomingWebhook
+	webhookCalled := false
+	sendRichSlackIncomingWebhook = func(context.Context, string, string, services.SlackWebhookContent) (string, error) {
+		webhookCalled = true
+		return "webhook-message", nil
+	}
+	t.Cleanup(func() { sendRichSlackIncomingWebhook = oldSend })
+
+	ctx := context.WithValue(context.Background(), BotNotificationDestinationKey, &services.NotificationDestination{
+		UserID:               "user-1",
+		SlackWebhook:         &services.SlackWebhookDest{URL: "https://hooks.slack.com/services/test"},
+		PulseSummaryChannels: []string{"gmail"},
+	})
+	if _, err := handleNotifyUser(ctx, map[string]interface{}{
+		"message_for_user":  "Pulse complete",
+		"notification_kind": "pulse_summary",
+	}); err != nil {
+		t.Fatalf("pulse summary notification: %v", err)
+	}
+	if webhookCalled {
+		t.Fatal("Gmail-only Pulse summary must not reach the workflow Slack webhook")
+	}
+}
+
 func TestHandleNotifyUserEmailToOverridesDestination(t *testing.T) {
 	manager := services.GetNotificationManager()
 	ch := make(chan *services.NotificationDestination, 1)

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { PULSE_FIXED_COMMANDS, PULSE_FOOTER_COMMAND_IDS, PULSE_HISTORY_ITEMS, PULSE_MODULE_COMMANDS, PULSE_SECTIONS } from './pulseSections'
+import { PULSE_FIXED_COMMANDS, PULSE_FOOTER_COMMAND_IDS, PULSE_HISTORY_ITEMS, PULSE_HUMAN_INPUT_SOURCE_BY_SECTION, PULSE_MODULE_COMMANDS, PULSE_SECTIONS } from './pulseSections'
 
 describe('Pulse section design', () => {
   it('assigns every module and final command to exactly one section', () => {
@@ -30,5 +30,12 @@ describe('Pulse section design', () => {
       'reflection',
       'improvements',
     ])
+  })
+
+  it('keeps questions and answers with the Pulse area that asked them', () => {
+    expect(PULSE_HUMAN_INPUT_SOURCE_BY_SECTION).toEqual({
+      reflection: 'pulse',
+      improvements: 'goal_advisor',
+    })
   })
 })

@@ -45,6 +45,19 @@ func executeInteractiveWorkshopPromptForMode(t *testing.T, mode string) string {
 	return prompt
 }
 
+func TestInteractiveWorkshopPromptDoesNotBanAuthorizedSourceReview(t *testing.T) {
+	prompt := executeInteractiveWorkshopPromptForMode(t, "workshop")
+
+	for _, forbidden := range []string{
+		"Never read application source code",
+		"Do NOT search or read *.go, *.ts, or *.json files outside the workspace",
+	} {
+		if strings.Contains(prompt, forbidden) {
+			t.Fatalf("workshop prompt still contains blanket source-review ban %q", forbidden)
+		}
+	}
+}
+
 // After the message-sequence migration, the full pattern catalog lives in
 // templates/system/message-sequence.md (loaded via get_reference_doc). The
 // inline workshop prompt now carries only a brief mention of the seven

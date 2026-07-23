@@ -602,6 +602,15 @@ function scrollXtermFromWheel(
   event: WheelEvent,
   onViewportStickChange?: (isNearBottom: boolean) => void,
 ) {
+  const buffer = term.buffer.active
+  const wantsUp = event.deltaY < 0
+  const wantsDown = event.deltaY > 0
+  const canScrollUp = buffer.viewportY > 0
+  const canScrollDown = buffer.viewportY < buffer.baseY
+  if ((wantsUp && !canScrollUp) || (wantsDown && !canScrollDown) || (!wantsUp && !wantsDown)) {
+    onViewportStickChange?.(buffer.baseY - buffer.viewportY <= 1)
+    return
+  }
   const row = term.element?.querySelector('.xterm-rows > div') as HTMLElement | null
   const lineHeightPx = row?.getBoundingClientRect().height || RAW_XTERM_FONT_SIZE
   const rawLines = event.deltaMode === 1

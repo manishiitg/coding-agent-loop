@@ -7,6 +7,8 @@ describe('buildPulseTimelineHtml', () => {
 
     expect(result).toContain('window.__runloopRenderPulseModule = render')
     expect(result).toContain("querySelectorAll('.pulse-record,.run,.entry')")
+    expect(result).toContain('removeVisibleRuntimeIds(clone)')
+    expect(result).toContain('pulse_run_id|review_run_id|session_id|execution_id|run_id')
     expect(result).not.toContain("return 'bug_review'")
   })
 

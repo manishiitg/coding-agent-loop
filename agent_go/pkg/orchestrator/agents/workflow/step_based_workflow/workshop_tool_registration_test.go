@@ -149,11 +149,11 @@ func TestGenericAgentCanBeQueriedAndStoppedByExecutionID(t *testing.T) {
 	if err != nil {
 		t.Fatalf("stop generic agent: %v", err)
 	}
-	if !strings.Contains(stopped, "has been cancelled") {
+	if !strings.Contains(stopped, "has been canceled") {
 		t.Fatalf("unexpected stop response: %s", stopped)
 	}
 	if snapshot, ok := registry.GetSnapshot("generic-agent-review-costs-123"); !ok || snapshot.Status != WorkshopStepCancelled {
-		t.Fatalf("generic execution status = %+v, found=%v; want cancelled", snapshot, ok)
+		t.Fatalf("generic execution status = %+v, found=%v; want canceled", snapshot, ok)
 	}
 }
 

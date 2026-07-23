@@ -403,11 +403,6 @@ func (api *StreamingAPI) executeDelegatedTask(ctx context.Context, parentReq Que
 		if len(workflowReadOnlyFolders) > 0 {
 			log.Printf("[DELEGATION] Extracted read-only folder-guard paths from parent #workflow: %v", workflowReadOnlyFolders)
 		}
-		chiefOfStaffRecommendationWrites := chiefOfStaffRecommendationWriteFolders(ctx)
-		if len(chiefOfStaffRecommendationWrites) > 0 {
-			log.Printf("[DELEGATION] Allowing Chief of Staff recommendation writes to workflow improve logs: %v", chiefOfStaffRecommendationWrites)
-		}
-
 		// Apply per-user folder guard for all sub-agents.
 		// Writes are scoped to _users/<subAgentUserID>/Chats/ plus explicit task grants.
 		{
@@ -417,7 +412,6 @@ func (api *StreamingAPI) executeDelegatedTask(ctx context.Context, parentReq Que
 			orgPulseWrite := "pulse/"
 			extraFolders := append([]string{}, subResolvedGrants.WriteFolders...)
 			extraFolders = append(extraFolders, fileContextWriteFolders...)
-			extraFolders = append(extraFolders, chiefOfStaffRecommendationWrites...)
 			extraFolders = append(extraFolders, subPerUserChatHistory)
 			extraFolders = append(extraFolders, orgPulseWrite)
 			// Delegation path has no #workflow-derived blocked-write prefix (the parent

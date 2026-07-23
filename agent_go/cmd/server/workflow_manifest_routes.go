@@ -155,6 +155,15 @@ type UpdateWorkflowManifestRequest struct {
 	WorkshopMode      *string                    `json:"workshop_mode,omitempty"` // Standalone patch — avoids zeroing out other ExecutionDefaults fields
 	RunRetentionCount *int                       `json:"run_retention_count,omitempty"`
 	PostRunMonitor    *bool                      `json:"post_run_monitor,omitempty"` // Opt-in to the post-run monitor pass
+	// Notification instruction fields are standalone patches so the Notify
+	// popup can update content guidance without replacing workflow capabilities.
+	RunNotificationInstructions   *string   `json:"run_notification_instructions,omitempty"`
+	PulseNotificationInstructions *string   `json:"pulse_notification_instructions,omitempty"`
+	RunNotificationChannels       *[]string `json:"run_notification_channels,omitempty"`
+	PulseNotificationChannels     *[]string `json:"pulse_notification_channels,omitempty"`
+	// NotificationInstructions is retained for older clients that still send a
+	// single preference. New clients should use the two scoped fields above.
+	NotificationInstructions *string `json:"notification_instructions,omitempty"`
 }
 
 func mergeWorkflowCapabilitiesUpdate(existing WorkflowCapabilities, incoming *WorkflowCapabilities) WorkflowCapabilities {
@@ -168,6 +177,11 @@ func mergeWorkflowCapabilitiesUpdate(existing WorkflowCapabilities, incoming *Wo
 	if updated.Notifications == nil {
 		updated.Notifications = existing.Notifications
 	} else if strings.TrimSpace(updated.Notifications.SlackWebhookSecretName) == "" &&
+		strings.TrimSpace(updated.Notifications.RunSummaryInstructions) == "" &&
+		strings.TrimSpace(updated.Notifications.PulseSummaryInstructions) == "" &&
+		strings.TrimSpace(updated.Notifications.Instructions) == "" &&
+		len(updated.Notifications.RunSummaryChannels) == 0 &&
+		len(updated.Notifications.PulseSummaryChannels) == 0 &&
 		len(updated.Notifications.ExcludeChannels) == 0 &&
 		len(updated.Notifications.BlockRecipients) == 0 {
 		// An explicitly supplied empty object (no webhook, no exclude/block
@@ -235,6 +249,44 @@ func (api *StreamingAPI) handleUpdateWorkflowManifest(w http.ResponseWriter, r *
 	if req.PostRunMonitor != nil {
 		manifest.PostRunMonitor = req.PostRunMonitor
 	}
+	if req.RunNotificationInstructions != nil || req.PulseNotificationInstructions != nil ||
+		req.RunNotificationChannels != nil || req.PulseNotificationChannels != nil {
+		runInstructions := ""
+		pulseInstructions := ""
+		if manifest.Capabilities.Notifications != nil {
+			runInstructions = manifest.Capabilities.Notifications.EffectiveRunSummaryInstructions()
+			pulseInstructions = manifest.Capabilities.Notifications.EffectivePulseSummaryInstructions()
+		}
+		if req.RunNotificationInstructions != nil {
+			runInstructions = strings.TrimSpace(*req.RunNotificationInstructions)
+		}
+		if req.PulseNotificationInstructions != nil {
+			pulseInstructions = strings.TrimSpace(*req.PulseNotificationInstructions)
+		}
+		if manifest.Capabilities.Notifications == nil && (runInstructions != "" || pulseInstructions != "" ||
+			req.RunNotificationChannels != nil || req.PulseNotificationChannels != nil) {
+			manifest.Capabilities.Notifications = &WorkflowNotificationConfig{}
+		}
+		if manifest.Capabilities.Notifications != nil {
+			manifest.Capabilities.Notifications.RunSummaryInstructions = runInstructions
+			manifest.Capabilities.Notifications.PulseSummaryInstructions = pulseInstructions
+			manifest.Capabilities.Notifications.Instructions = ""
+			if req.RunNotificationChannels != nil {
+				manifest.Capabilities.Notifications.RunSummaryChannels = normalizeNotificationChannels(*req.RunNotificationChannels)
+			}
+			if req.PulseNotificationChannels != nil {
+				manifest.Capabilities.Notifications.PulseSummaryChannels = normalizeNotificationChannels(*req.PulseNotificationChannels)
+			}
+		}
+	} else if req.NotificationInstructions != nil {
+		instructions := strings.TrimSpace(*req.NotificationInstructions)
+		if manifest.Capabilities.Notifications == nil && instructions != "" {
+			manifest.Capabilities.Notifications = &WorkflowNotificationConfig{}
+		}
+		if manifest.Capabilities.Notifications != nil {
+			manifest.Capabilities.Notifications.Instructions = instructions
+		}
+	}
 
 	// Write updated manifest
 	if err := WriteWorkflowManifest(r.Context(), req.WorkspacePath, manifest); err != nil {
@@ -248,6 +300,21 @@ func (api *StreamingAPI) handleUpdateWorkflowManifest(w http.ResponseWriter, r *
 		"manifest":       manifest,
 		"workspace_path": req.WorkspacePath,
 	})
+}
+
+func normalizeNotificationChannels(channels []string) []string {
+	allowed := map[string]bool{"gmail": true, "slack": true, "whatsapp": true}
+	seen := map[string]bool{}
+	normalized := make([]string, 0, len(channels))
+	for _, raw := range channels {
+		channel := strings.ToLower(strings.TrimSpace(raw))
+		if !allowed[channel] || seen[channel] {
+			continue
+		}
+		seen[channel] = true
+		normalized = append(normalized, channel)
+	}
+	return normalized
 }
 
 // --- Delete manifest ---

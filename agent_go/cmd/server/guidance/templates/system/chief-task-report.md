@@ -23,6 +23,11 @@ similar scheduled work.
 - Do not include secrets, raw logs, tokens, or long transcripts.
 - Treat this page as the scheduled task's durable context. Each entry should make the next run
   smarter without requiring separate continuity files.
+- Write the visible page for a business operator. Lead with what happened, why it matters, and
+  what happens next. Use ordinary language and human-readable names.
+- Keep schedule/run/session ids, exact paths, table names, hashes, cursors, raw errors, and other
+  implementation detail out of visible cards. Retain them in data attributes and one collapsed
+  `<details class="agent-details"><summary>Agent details</summary>...</details>` block.
 - Design it as a **task dashboard**, not a transcript. Prefer status tiles, action lanes,
   key-finding widgets, evidence chips, and compact cards over paragraphs. Each task entry should
   be skimmable in 10 seconds.
@@ -40,8 +45,7 @@ similar scheduled work.
 
 Each scheduled task run entry should include:
 
-- schedule name and schedule id
-- run id and session id
+- task or schedule name
 - status: `success`, `error`, or `unknown`
 - started/completed timestamp and duration when provided
 - original task/request in one sentence
@@ -49,8 +53,13 @@ Each scheduled task run entry should include:
 - recommendations, decisions, or findings
 - **key findings to reuse next run** — compact, durable facts/patterns/decisions from this run
 - affected workflows/entities, if any
-- evidence paths
+- a human-readable evidence summary
 - next action / owner
+
+The entry must retain the schedule id and run id in `data-*` attributes for matching future runs.
+Put the session id, exact evidence paths, and exact error text only in collapsed `Agent details`.
+Translate status for the visible card: `success` becomes "Completed", `error` becomes "Needs
+attention", and `unknown` becomes "Could not confirm".
 
 Use stable attributes for parsing:
 
@@ -80,9 +89,13 @@ Preferred entry shape:
   <div class="widgets">
     <div class="widget"><b>Result</b><span class="big">Completed</span><span>One-line outcome.</span></div>
     <div class="widget"><b>Key finding</b><span>Durable fact/pattern to reuse next run.</span></div>
-    <div class="widget"><b>Evidence</b><span>Workflow/name/reports/... or conversation result.</span></div>
+    <div class="widget"><b>How we know</b><span>Human-readable proof, or "conversation result".</span></div>
     <div class="widget"><b>Next action</b><span>Owner + action, or "none".</span></div>
   </div>
+  <details class="agent-details">
+    <summary>Agent details</summary>
+    <div>Session id, exact paths, and raw error details when needed.</div>
+  </details>
 </article>
 ```
 

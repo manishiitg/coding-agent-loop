@@ -59,7 +59,6 @@ func knownWorkshopRegisteredToolNamesOutsideWorkflowPool() map[string]string {
 	)
 	add("workshop guidance/status tools",
 		"get_workflow_command_guidance", "get_reference_doc",
-		"mark_cos_recommendation_status",
 	)
 
 	return registered

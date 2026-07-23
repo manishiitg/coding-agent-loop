@@ -9,6 +9,7 @@ import {
   Mail,
   MailX,
   RefreshCw,
+  Save,
   ServerCog,
   Webhook,
   X,
@@ -18,6 +19,7 @@ import {
   type WorkflowNotificationInfo,
   type WorkflowNotificationState,
 } from '../../services/workflow-notifications'
+import { agentApi } from '../../services/api'
 import ModalPortal from '../ui/ModalPortal'
 import { formatNotificationStateLabel } from './notificationStatus'
 
@@ -78,6 +80,11 @@ export default function WorkflowNotificationPopup({
   const [loading, setLoading] = useState(false)
   const [info, setInfo] = useState<WorkflowNotificationInfo | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [runInstructions, setRunInstructions] = useState('')
+  const [pulseInstructions, setPulseInstructions] = useState('')
+  const [runChannels, setRunChannels] = useState<string[]>([])
+  const [pulseChannels, setPulseChannels] = useState<string[]>([])
+  const [savingInstructions, setSavingInstructions] = useState(false)
 
   const load = useCallback(async () => {
     if (!workspacePath && !loadInfo) return
@@ -86,6 +93,10 @@ export default function WorkflowNotificationPopup({
     try {
       const next = loadInfo ? await loadInfo() : await loadWorkflowNotificationInfo(workspacePath as string)
       setInfo(next)
+      setRunInstructions(next.runSummaryInstructions)
+      setPulseInstructions(next.pulseSummaryInstructions)
+      setRunChannels(next.runSummaryChannels)
+      setPulseChannels(next.pulseSummaryChannels)
       onStateLoaded?.(next.effectiveState)
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : 'Failed to load notification status')
@@ -105,6 +116,51 @@ export default function WorkflowNotificationPopup({
   const gmailReady = info?.gmail?.state === 'ready'
   const scopeName = info?.scopeLabel || workspacePath?.split('/').filter(Boolean).pop() || (scopeKind === 'chief-of-staff' ? 'Chief of Staff' : 'Workflow')
   const scopeLabel = scopeKind === 'chief-of-staff' ? 'Chief of Staff' : 'workflow'
+  const instructionsDirty = runInstructions.trim() !== (info?.runSummaryInstructions || '').trim()
+    || pulseInstructions.trim() !== (info?.pulseSummaryInstructions || '').trim()
+    || JSON.stringify(runChannels) !== JSON.stringify(info?.runSummaryChannels || [])
+    || JSON.stringify(pulseChannels) !== JSON.stringify(info?.pulseSummaryChannels || [])
+
+  const channelOptions = [
+    { id: 'slack', label: 'Slack' },
+    { id: 'gmail', label: 'Gmail' },
+  ]
+  const isChannelSelected = (channels: string[], channel: string) => channels.length === 0 || channels.includes(channel)
+  const toggleChannel = (channels: string[], channel: string, setChannels: (next: string[]) => void) => {
+    const current = channels.length === 0 ? channelOptions.map(option => option.id) : channels
+    const next = current.includes(channel) ? current.filter(value => value !== channel) : [...current, channel]
+    if (next.length > 0) setChannels(next)
+  }
+
+  const saveInstructions = async () => {
+    if (!workspacePath || scopeKind !== 'workflow' || savingInstructions) return
+    setSavingInstructions(true)
+    setError(null)
+    try {
+      const saved = await agentApi.updateWorkflowManifest({
+        workspace_path: workspacePath,
+        run_notification_instructions: runInstructions.trim(),
+        pulse_notification_instructions: pulseInstructions.trim(),
+        run_notification_channels: runChannels,
+        pulse_notification_channels: pulseChannels,
+      })
+      const persistedRun = saved?.manifest?.capabilities?.notifications?.run_summary_instructions || ''
+      const persistedPulse = saved?.manifest?.capabilities?.notifications?.pulse_summary_instructions || ''
+      const persistedRunChannels = saved?.manifest?.capabilities?.notifications?.run_summary_channels || []
+      const persistedPulseChannels = saved?.manifest?.capabilities?.notifications?.pulse_summary_channels || []
+      if (persistedRun.trim() !== runInstructions.trim()
+        || persistedPulse.trim() !== pulseInstructions.trim()
+        || JSON.stringify(persistedRunChannels) !== JSON.stringify(runChannels)
+        || JSON.stringify(persistedPulseChannels) !== JSON.stringify(pulseChannels)) {
+        throw new Error('The backend did not save these notification preferences. Restart AgentWorks to load the latest backend, then try again.')
+      }
+      await load()
+    } catch (saveError) {
+      setError(saveError instanceof Error ? saveError.message : 'Failed to save notification instructions')
+    } finally {
+      setSavingInstructions(false)
+    }
+  }
 
   return (
     <ModalPortal>
@@ -261,6 +317,71 @@ export default function WorkflowNotificationPopup({
                     </div>
                   </div>
                 </section>
+
+                {scopeKind === 'workflow' && (
+                  <section className="rounded-md border border-border">
+                    <div className="border-b border-border px-4 py-3">
+                      <h3 className="text-sm font-semibold text-foreground">Notification content</h3>
+                      <p className="mt-0.5 text-xs text-muted-foreground">Set separate content and delivery channels for the workflow result and Pulse's review.</p>
+                    </div>
+                    <div className="space-y-4 px-4 py-3">
+                      <label className="block space-y-1.5">
+                        <span className="text-xs font-medium text-foreground">Workflow run summary</span>
+                        <span className="block text-xs text-muted-foreground">What happened in the run: outcomes, outputs, failures, goal movement, and metrics.</span>
+                        <textarea
+                          value={runInstructions}
+                          onChange={(event) => setRunInstructions(event.target.value.slice(0, 2000))}
+                          placeholder="Example: Give me a detailed result summary with the key numbers, failures, and what was delivered."
+                          className="min-h-24 w-full resize-y rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground outline-none placeholder:text-muted-foreground focus:border-primary"
+                          aria-label="Workflow run notification instructions"
+                        />
+                        <span className="block text-right text-xs text-muted-foreground">{runInstructions.length}/2000</span>
+                        <span className="block text-xs font-medium text-foreground">Send through</span>
+                        <div className="flex flex-wrap gap-2">
+                          {channelOptions.map(channel => (
+                            <label key={`run-${channel.id}`} className="inline-flex cursor-pointer items-center gap-2 rounded-md border border-border px-2.5 py-1.5 text-xs text-foreground">
+                              <input type="checkbox" checked={isChannelSelected(runChannels, channel.id)} onChange={() => toggleChannel(runChannels, channel.id, setRunChannels)} className="accent-primary" />
+                              {channel.label}
+                            </label>
+                          ))}
+                        </div>
+                      </label>
+                      <label className="block space-y-1.5">
+                        <span className="text-xs font-medium text-foreground">Pulse review summary</span>
+                        <span className="block text-xs text-muted-foreground">What Pulse found or changed: reviews, fixes, recommendations, decisions, and next actions.</span>
+                        <textarea
+                          value={pulseInstructions}
+                          onChange={(event) => setPulseInstructions(event.target.value.slice(0, 2000))}
+                          placeholder="Example: Explain only material findings and fixes. Put decisions I need to make first."
+                          className="min-h-24 w-full resize-y rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground outline-none placeholder:text-muted-foreground focus:border-primary"
+                          aria-label="Pulse review notification instructions"
+                        />
+                        <span className="block text-right text-xs text-muted-foreground">{pulseInstructions.length}/2000</span>
+                        <span className="block text-xs font-medium text-foreground">Send through</span>
+                        <div className="flex flex-wrap gap-2">
+                          {channelOptions.map(channel => (
+                            <label key={`pulse-${channel.id}`} className="inline-flex cursor-pointer items-center gap-2 rounded-md border border-border px-2.5 py-1.5 text-xs text-foreground">
+                              <input type="checkbox" checked={isChannelSelected(pulseChannels, channel.id)} onChange={() => toggleChannel(pulseChannels, channel.id, setPulseChannels)} className="accent-primary" />
+                              {channel.label}
+                            </label>
+                          ))}
+                        </div>
+                      </label>
+                      <div className="flex items-center justify-between gap-3">
+                        <span className="text-xs text-muted-foreground">Used by the final Notify step on every Pulse run.</span>
+                        <button
+                          type="button"
+                          onClick={() => { void saveInstructions() }}
+                          disabled={!instructionsDirty || savingInstructions}
+                          className="inline-flex items-center gap-1.5 rounded-md bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground transition-colors hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50"
+                        >
+                          {savingInstructions ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
+                          Save preferences
+                        </button>
+                      </div>
+                    </div>
+                  </section>
+                )}
 
                 <div className="rounded-md border border-blue-500/20 bg-blue-500/5 px-4 py-3 text-xs text-muted-foreground">
                   Configure notification intent, the Slack destination, channel opt-outs, and blocked recipients through <code className="text-foreground">/notify</code>. This does not add a routing step. Short-lived questions that require an answer still use <code className="text-foreground">human_feedback</code> instead.

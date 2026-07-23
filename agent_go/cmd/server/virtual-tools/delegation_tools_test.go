@@ -362,6 +362,22 @@ func TestGetMultiAgentDelegationInstructionsAnchorsOrgPulseToLocalWorkspace(t *t
 	}
 }
 
+func TestGetMultiAgentDelegationInstructionsRequiresPlainLanguage(t *testing.T) {
+	out := GetMultiAgentDelegationInstructionsWithUser("_users/default/Chats", "default")
+
+	for _, want := range []string{
+		"Write for a business operator",
+		"Lead with the outcome, why it matters",
+		"Do not expose run/session ids",
+		"collapsed `Agent details` section",
+		"Never make the user decode phrases",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("delegation prompt missing plain-language requirement %q", want)
+		}
+	}
+}
+
 // TestGetMultiAgentDelegationInstructionsSize ensures the refactored prompt
 // stays under a reasonable size ceiling. The pre-refactor version was
 // ~10KB; the cheat-sheet rewrite targets ~8KB or less. The ceiling here

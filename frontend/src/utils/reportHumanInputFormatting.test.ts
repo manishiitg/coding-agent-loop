@@ -56,7 +56,9 @@ describe('report human input context formatting', () => {
   it('uses lifecycle labels that distinguish waiting from completed action', () => {
     expect(reportHumanInputStatusLabel(input('pending'))).toBe('Needs answer')
     expect(reportHumanInputStatusLabel(input('answered'))).toBe('Waiting for Pulse')
+    expect(reportHumanInputStatusLabel({ ...input('answered'), source: 'goal_advisor' })).toBe('Waiting for Goal Advisor')
     expect(reportHumanInputStatusLabel({ ...input('answered'), source: 'chief_of_staff' })).toBe('Waiting for Chief of Staff')
+    expect(reportHumanInputStatusLabel({ ...input('claimed'), source: 'goal_advisor' })).toBe('Goal Advisor is working')
     expect(reportHumanInputStatusLabel(input('consumed'))).toBe('Action completed')
     expect(reportHumanInputStatusLabel(input('dismissed'))).toBe('Dismissed')
   })

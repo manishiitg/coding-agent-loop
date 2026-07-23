@@ -73,3 +73,11 @@ card and one `mark_pulse_module_result` call for every due module. Before stoppi
 perform global finding-ID reconciliation and confirm every due module has a
 terminal current-run result. Never claim completion or a clean outcome while a
 result or disposition is missing.
+
+The cards are not copies of reviewer packets. Translate each result for a
+non-technical operator using the `review-improve-log` plain-language card
+contract. The visible layer contains the outcome, goal/user impact, and next
+step. Keep finding ids, paths, hashes, manifests, packet/recovery state, and raw
+verification evidence in the reviewer result files and the global Agent log;
+do not copy them into timeline cards. Reviewer failure is
+shown as `Review incomplete`, with no conclusion and no unsupported change.

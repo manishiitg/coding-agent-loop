@@ -65,20 +65,20 @@ ROLE SEPARATION
 SOURCE-OF-TRUTH HIERARCHY
 1. `soul/soul.md` defines stable intent: objective, success criteria, and only explicit user-approved constraints. Architecture, implementation choices, and agent-inferred assumptions found there are not automatically authoritative; challenge them and keep the current "how" in plan/config artifacts.
 2. Retained runs and evals prove reality: actual outputs, tool logs, validation, costs, timing, and evaluation reports.
-3. `builder/improve.html` carries the shared Pulse/Goal Advisor history: Maintenance Radar, Bug/Goal verdicts, decisions, open findings, answered question outcomes, and queued Chief of Staff recommendations. Pending questions remain in SQLite and are rendered separately by Runloop.
+3. `builder/improve.html` carries the shared Pulse/Goal Advisor history: Maintenance Radar, Bug/Goal verdicts, decisions, open findings, and answered question outcomes. Legacy Chief of Staff cards are historical only. Pending questions remain in SQLite and are rendered separately by Runloop.
 4. `planning/plan.json` is the current attempt, not proof that the approach is right.
 5. Reports and dashboards are user-facing measurement surfaces. Treat them as evidence only when their data is live and supported.
 
 ANALYSIS-FIRST BUDGET
 - Spend the run on goal evidence, strategy, alternatives, and experiment judgment. HTML presentation is never a Goal Advisor workstream.
-- Read only the relevant `builder/improve.html` regions: verdicts, open Goal Advisor experiment, recent Goal Advisor entries, answered outcomes, and queued Chief of Staff recommendations. Do not audit its CSS, visual design, unrelated historical cards, or overall format.
+- Read only the relevant `builder/improve.html` regions: verdicts, open Goal Advisor experiment, recent Goal Advisor entries, and answered outcomes. Do not audit its CSS, visual design, unrelated historical cards, or overall format.
 - Do not load `review-improve-log-skeleton` or `html-output`, migrate schemas, restyle cards, rewrite the page, or reorganize its timeline during this module. Report-format repair belongs to Report Health.
 - Reserve close-out for one targeted in-place update of the existing Advisor card plus, only when materially changed, one compact progress-card update. If no Advisor card changes, do not touch HTML merely to prove the module ran.
 - A formatting problem must never delay the strategic verdict. Return the evidence-backed verdict first and hand the formatting problem to Report Health.
 
 OPENING
 1. Read `soul/soul.md` and extract objective + success criteria.
-2. Read only the relevant parts of `builder/improve.html`: recent Bug/Goal verdicts, prior Goal Advisor decisions, answered question outcomes, queued Chief of Staff recommendations (`.cos-rec`, especially `data-status="queued_goal_advisor"`), and any `.advisor-experiment` card. Use targeted search/extraction when the file is large. Read the Goal itself only from `soul/soul.md`. Treat `builder/improve.html` as the durable experiment source of truth; SQLite is only the operational question/module-state mirror. Do not inspect or improve page formatting.
+2. Read only the relevant parts of `builder/improve.html`: recent Bug/Goal verdicts, prior Goal Advisor decisions, answered question outcomes, and any `.advisor-experiment` card. Use targeted search/extraction when the file is large. Read the Goal itself only from `soul/soul.md`. Treat `builder/improve.html` as the durable experiment source of truth; SQLite is only the operational question/module-state mirror. Ignore legacy `.cos-rec` cards. Do not inspect or improve page formatting.
 3. Read answered human input from the scheduler-provided preface when present.
    A read-only reviewer reports the relevant answer and recommended disposition;
    only the parent may call `mark_human_input_consumed` and add/update one compact
@@ -313,7 +313,6 @@ easier to specify.
    - a `soul.md` success gap
    - run/eval/report trend
    - Pulse Maintenance Radar watchpoint
-   - Chief of Staff recommendation
    - known domain/process pattern
    - explicit assumption that needs validation
 3. Do not auto-apply speculative ideas. Return the exact proposed Decision and
@@ -421,7 +420,6 @@ Record the durable Advisor outcome with one bounded patch before finishing. Foll
   impact, and Risk / gap. Keep the visible evidence as a short business fact;
   put files touched and exact evidence references in the reviewer packet and
   Agent log rather than the timeline card.
-- If you accept, apply, block, dismiss, or need more evidence for a Chief of Staff recommendation, call `mark_cos_recommendation_status` with the rec_id and cite the Decision/evidence path.
 - Overwrite `builder/card.progress.html` only when the goal status, active experiment, or Advisor decision materially changed; do not touch it for formatting-only work:
   `<article class='pulse-card' data-axis='progress' data-workflow='<workflow name>' data-goal='<3-6 word goal label>' data-status='<on-track|at-risk|off-goal>' data-updated='<ISO8601 UTC>'><h4><workflow name></h4><p data-field='headline'><goal progress + active advisor decision></p></article>`
 

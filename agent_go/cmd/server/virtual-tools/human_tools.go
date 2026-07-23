@@ -109,9 +109,14 @@ func CreateHumanTools() []llmtypes.Tool {
 			"description": "Optional short Block Kit context/footer such as scope and date. Other channels ignore this field.",
 		},
 		"exclude_channels": map[string]interface{}{
-			"type":  "array",
-			"items": map[string]interface{}{"type": "string", "enum": []string{"gmail", "slack", "whatsapp"}},
+			"type":        "array",
+			"items":       map[string]interface{}{"type": "string", "enum": []string{"gmail", "slack", "whatsapp"}},
 			"description": "Optional one-off override to SKIP account-level delivery channels for THIS notification only, by name (\"gmail\", \"slack\", \"whatsapp\"). The DURABLE per-workflow preference belongs in workflow.json notifications.exclude_channels and is applied automatically on every send — use this arg only for a one-time skip beyond that. Suppresses the channel for this send only; never changes the account-wide configuration. Omit to deliver to every enabled channel not already excluded by workflow.json. The always-on web UI and any configured workflow Slack webhook are unaffected.",
+		},
+		"notification_kind": map[string]interface{}{
+			"type":        "string",
+			"enum":        []string{"general", "run_summary", "pulse_summary"},
+			"description": "Classifies this notification so the backend can enforce its workflow-configured channel routing. Pulse finalizers use run_summary for the execution outcome and pulse_summary for Pulse review/fix activity. Use general for ordinary notifications.",
 		},
 	}
 	if gmailEnabled() {
@@ -448,11 +453,18 @@ func handleNotifyUser(ctx context.Context, args map[string]interface{}) (string,
 	if dest != nil && len(dest.ExcludeChannels) > 0 {
 		excludeChannels = append(excludeChannels, dest.ExcludeChannels...)
 	}
+	notificationKind, _ := args["notification_kind"].(string)
+	notificationKind = strings.ToLower(strings.TrimSpace(notificationKind))
+	routedChannels := summaryChannelsForKind(dest, notificationKind)
+	if len(routedChannels) > 0 {
+		excludeChannels = append(excludeChannels, excludedNotificationChannels(routedChannels)...)
+	}
 
 	// Synchronous send so we can report real per-channel delivery to the agent
 	// (and so the send isn't killed when this turn's context is canceled).
 	results := notificationManager.SendUserNotificationSync(ctx, messageForUser, "", dest, excludeChannels...)
-	if dest != nil && dest.SlackWebhook != nil {
+	webhookAllowed := len(routedChannels) == 0 || containsNotificationChannel(routedChannels, "slack")
+	if dest != nil && dest.SlackWebhook != nil && webhookAllowed {
 		msgID, sendErr := sendRichSlackIncomingWebhook(ctx, dest.SlackWebhook.URL, messageForUser, slackContent)
 		result := services.ConnectorResult{
 			Channel: "slack_webhook",
@@ -501,6 +513,44 @@ func handleNotifyUser(ctx context.Context, args map[string]interface{}) (string,
 	}
 	b, _ := json.Marshal(result)
 	return string(b), nil
+}
+
+func summaryChannelsForKind(dest *services.NotificationDestination, kind string) []string {
+	if dest == nil {
+		return nil
+	}
+	switch kind {
+	case "run_summary":
+		return dest.RunSummaryChannels
+	case "pulse_summary":
+		return dest.PulseSummaryChannels
+	default:
+		return nil
+	}
+}
+
+func excludedNotificationChannels(allowed []string) []string {
+	allowedSet := map[string]bool{}
+	for _, channel := range allowed {
+		allowedSet[strings.ToLower(strings.TrimSpace(channel))] = true
+	}
+	excluded := make([]string, 0, 3)
+	for _, channel := range []string{"gmail", "slack", "whatsapp"} {
+		if !allowedSet[channel] {
+			excluded = append(excluded, channel)
+		}
+	}
+	return excluded
+}
+
+func containsNotificationChannel(channels []string, target string) bool {
+	target = strings.ToLower(strings.TrimSpace(target))
+	for _, channel := range channels {
+		if strings.ToLower(strings.TrimSpace(channel)) == target {
+			return true
+		}
+	}
+	return false
 }
 
 func slackContentFromArgs(args map[string]interface{}) (services.SlackWebhookContent, error) {
@@ -674,7 +724,12 @@ func cloneNotificationDestination(dest *services.NotificationDestination) *servi
 	if dest == nil {
 		return nil
 	}
-	clone := &services.NotificationDestination{UserID: dest.UserID}
+	clone := &services.NotificationDestination{
+		UserID:               dest.UserID,
+		ExcludeChannels:      append([]string(nil), dest.ExcludeChannels...),
+		RunSummaryChannels:   append([]string(nil), dest.RunSummaryChannels...),
+		PulseSummaryChannels: append([]string(nil), dest.PulseSummaryChannels...),
+	}
 	if dest.Slack != nil {
 		clone.Slack = &services.SlackDest{
 			ChannelID: dest.Slack.ChannelID,
@@ -695,7 +750,8 @@ func cloneNotificationDestination(dest *services.NotificationDestination) *servi
 	}
 	if dest.Gmail != nil {
 		clone.Gmail = &services.GmailDest{
-			Email: dest.Gmail.Email,
+			Email:             dest.Gmail.Email,
+			BlockedRecipients: append([]string(nil), dest.Gmail.BlockedRecipients...),
 		}
 	}
 	// Content is treated as read-only by connectors, so sharing the pointer is
@@ -710,5 +766,8 @@ func notificationDestinationEmpty(dest *services.NotificationDestination) bool {
 			(dest.Slack == nil || dest.Slack.ChannelID == "") &&
 			(dest.SlackWebhook == nil || (dest.SlackWebhook.SecretName == "" && dest.SlackWebhook.URL == "")) &&
 			(dest.WhatsApp == nil || (dest.WhatsApp.ChannelID == "" && dest.WhatsApp.PhoneE164 == "")) &&
-			(dest.Gmail == nil || dest.Gmail.Email == ""))
+			(dest.Gmail == nil || dest.Gmail.Email == "") &&
+			len(dest.ExcludeChannels) == 0 &&
+			len(dest.RunSummaryChannels) == 0 &&
+			len(dest.PulseSummaryChannels) == 0)
 }

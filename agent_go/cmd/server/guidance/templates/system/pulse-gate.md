@@ -9,7 +9,7 @@ Read `soul/soul.md`, the authoritative current/history state in
 planning changelog names/review flags, compact plan/eval/report/DB/KB/learning
 freshness metadata, resolved workflow LLM/tier/fallback signature,
 backup/publish/notification readiness, open/answered `report_human_inputs`, and
-pending Chief of Staff recommendations. Do not load complete reports, broad DB
+pending human decisions. Do not load complete reports, broad DB
 rows, full KB/learnings, conversations, prompts, or tool logs unless a compact
 signal makes one targeted fact necessary.
 

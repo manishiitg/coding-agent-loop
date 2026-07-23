@@ -254,6 +254,11 @@ type StreamingAPI struct {
 	// delivery at the AgentWorks boundary. Production dispatch falls back to
 	// Agent.DeliverUserMessage.
 	internalUserMessageDeliveryHandler func(context.Context, *mcpagent.Agent, mcpagent.UserMessageDeliveryRequest) (mcpagent.UserMessageDeliveryResult, error)
+	// internalRetainedTerminalInputHandler lets routing tests cover the
+	// between-turn case where the Go Agent object has been released but the
+	// provider-owned main tmux pane is still alive. Production dispatch uses the
+	// provider's typed live-input entry point.
+	internalRetainedTerminalInputHandler func(context.Context, llmproviders.Provider, string, string, string) error
 
 	// Note: Removed session management - fresh agents created per request
 
@@ -585,11 +590,15 @@ type QueryRequest struct {
 	// contains a Slack Incoming Webhook URL. The URL itself is never serialized.
 	NotificationSlackWebhookSecretName string `json:"notification_slack_webhook_secret_name,omitempty"`
 	// Per-workflow notification preferences resolved from workflow.json
-	// notifications.exclude_channels / .block_recipients. Applied to every
-	// notify_user send in this run so an inherited account-level channel or
-	// recipient is suppressed for this workflow only.
-	NotificationExcludeChannels []string `json:"notification_exclude_channels,omitempty"`
-	NotificationBlockRecipients []string `json:"notification_block_recipients,omitempty"`
+	// notifications.*. Channel and recipient rules are backend-enforced;
+	// owner-authored content preferences are visible to Workflow Builder and
+	// used by the Pulse finalizer for their matching notification sections.
+	NotificationRunSummaryInstructions   string   `json:"notification_run_summary_instructions,omitempty"`
+	NotificationPulseSummaryInstructions string   `json:"notification_pulse_summary_instructions,omitempty"`
+	NotificationRunSummaryChannels       []string `json:"notification_run_summary_channels,omitempty"`
+	NotificationPulseSummaryChannels     []string `json:"notification_pulse_summary_channels,omitempty"`
+	NotificationExcludeChannels          []string `json:"notification_exclude_channels,omitempty"`
+	NotificationBlockRecipients          []string `json:"notification_block_recipients,omitempty"`
 	// Internal-only resolved notification credential. Unlike DecryptedSecrets,
 	// this value is never serialized, prompted, or injected as SECRET_*.
 	notificationSlackWebhookURL string `json:"-"`
@@ -632,6 +641,27 @@ type QueryRequest struct {
 	userID string `json:"-"`
 }
 
+func buildWorkflowNotificationInstructionsPrompt(runInstructions, pulseInstructions string) string {
+	runInstructions = strings.TrimSpace(runInstructions)
+	pulseInstructions = strings.TrimSpace(pulseInstructions)
+	if runInstructions == "" && pulseInstructions == "" {
+		return ""
+	}
+	prompt := "\n## Workflow Notification Preferences\n\n" +
+		"The workflow owner saved the following workflow-scoped guidance for notification content. " +
+		"Apply each preference only to its named section when designing, reviewing, or composing this workflow's notifications. " +
+		"It controls content, detail, tone, emphasis, subject/header/sign-off conventions, and similar presentation preferences only. " +
+		"It does not authorize changing recipients, channels, secrets, permissions, tools, schedules, plan behavior, or delivery configuration. " +
+		"Do not copy it into soul/soul.md; workflow.json is the source of truth.\n"
+	if runInstructions != "" {
+		prompt += "\n### Workflow run summary\n<workflow_run_summary_preferences>\n" + runInstructions + "\n</workflow_run_summary_preferences>\n"
+	}
+	if pulseInstructions != "" {
+		prompt += "\n### Pulse review summary\n<pulse_review_summary_preferences>\n" + pulseInstructions + "\n</pulse_review_summary_preferences>\n"
+	}
+	return prompt
+}
+
 func notificationDestinationFromQuery(req QueryRequest, userID string) *services.NotificationDestination {
 	platform := strings.ToLower(strings.TrimSpace(req.BotPlatform))
 	dest := &services.NotificationDestination{UserID: userID}
@@ -660,6 +690,8 @@ func notificationDestinationFromQuery(req QueryRequest, userID string) *services
 	if len(req.NotificationExcludeChannels) > 0 {
 		dest.ExcludeChannels = append([]string(nil), req.NotificationExcludeChannels...)
 	}
+	dest.RunSummaryChannels = append([]string(nil), req.NotificationRunSummaryChannels...)
+	dest.PulseSummaryChannels = append([]string(nil), req.NotificationPulseSummaryChannels...)
 	if len(req.NotificationBlockRecipients) > 0 {
 		if dest.Gmail == nil {
 			dest.Gmail = &services.GmailDest{}
@@ -877,6 +909,10 @@ func applyMultiAgentCapabilitiesToRequest(req *QueryRequest, caps WorkflowCapabi
 	req.CdpPorts = append([]int(nil), caps.CDPPorts...)
 	if caps.Notifications != nil {
 		req.NotificationSlackWebhookSecretName = strings.TrimSpace(caps.Notifications.SlackWebhookSecretName)
+		req.NotificationRunSummaryInstructions = caps.Notifications.EffectiveRunSummaryInstructions()
+		req.NotificationPulseSummaryInstructions = caps.Notifications.EffectivePulseSummaryInstructions()
+		req.NotificationRunSummaryChannels = append([]string(nil), caps.Notifications.RunSummaryChannels...)
+		req.NotificationPulseSummaryChannels = append([]string(nil), caps.Notifications.PulseSummaryChannels...)
 		req.NotificationExcludeChannels = append([]string(nil), caps.Notifications.ExcludeChannels...)
 		req.NotificationBlockRecipients = append([]string(nil), caps.Notifications.BlockRecipients...)
 	}
@@ -2833,7 +2869,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		req.PhaseID == workflowtypes.WorkflowStatusWorkflowBuilder &&
 		strings.TrimSpace(req.SelectedFolder) != "" {
 		if running := api.findRunningTrackedExecutionForWorkspaceWhere(req.SelectedFolder, func(exec *TrackedWorkflowExecution) bool {
-			return exec.PhaseID == workflowtypes.WorkflowStatusWorkflowBuilder
+			return trackedExecutionBlocksNewWorkflowBuilderChat(exec)
 		}); running != nil && running.SessionID != sessionID {
 			logfWithContext(queryLogCtx, "[WORKFLOW_BUSY] Rejected workflow_builder chat for workspace %q: running session %s started %s (triggered_by=%s)", req.SelectedFolder, running.SessionID, running.StartedAt.Format(time.RFC3339), running.TriggeredBy)
 			w.Header().Set("Content-Type", "application/json")
@@ -3103,6 +3139,10 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				req.DecryptedSecrets = api.loadSelectedSecrets(context.Background(), currentUserID, resolvedWPath, manifest.Capabilities.SelectedSecrets)
 				if manifest.Capabilities.Notifications != nil {
 					req.NotificationSlackWebhookSecretName = strings.TrimSpace(manifest.Capabilities.Notifications.SlackWebhookSecretName)
+					req.NotificationRunSummaryInstructions = manifest.Capabilities.Notifications.EffectiveRunSummaryInstructions()
+					req.NotificationPulseSummaryInstructions = manifest.Capabilities.Notifications.EffectivePulseSummaryInstructions()
+					req.NotificationRunSummaryChannels = append([]string(nil), manifest.Capabilities.Notifications.RunSummaryChannels...)
+					req.NotificationPulseSummaryChannels = append([]string(nil), manifest.Capabilities.Notifications.PulseSummaryChannels...)
 					req.NotificationExcludeChannels = append([]string(nil), manifest.Capabilities.Notifications.ExcludeChannels...)
 					req.NotificationBlockRecipients = append([]string(nil), manifest.Capabilities.Notifications.BlockRecipients...)
 				}
@@ -3214,6 +3254,10 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				req.DecryptedSecrets = api.loadSelectedSecrets(context.Background(), currentUserID, manifestWorkspacePath, caps.SelectedSecrets)
 				if caps.Notifications != nil {
 					req.NotificationSlackWebhookSecretName = strings.TrimSpace(caps.Notifications.SlackWebhookSecretName)
+					req.NotificationRunSummaryInstructions = caps.Notifications.EffectiveRunSummaryInstructions()
+					req.NotificationPulseSummaryInstructions = caps.Notifications.EffectivePulseSummaryInstructions()
+					req.NotificationRunSummaryChannels = append([]string(nil), caps.Notifications.RunSummaryChannels...)
+					req.NotificationPulseSummaryChannels = append([]string(nil), caps.Notifications.PulseSummaryChannels...)
 					req.NotificationExcludeChannels = append([]string(nil), caps.Notifications.ExcludeChannels...)
 					req.NotificationBlockRecipients = append([]string(nil), caps.Notifications.BlockRecipients...)
 				}
@@ -4168,14 +4212,6 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		// See conditional_grants.go for the registry. The result is reused across
 		// every folder guard and system prompt site below.
 		resolvedGrants := resolveConditionalGrants(req)
-		chiefOfStaffRecommendationWrites := []string(nil)
-		if !isWorkflowPhase && isToolBackedChatMode(req.AgentMode) {
-			chiefOfStaffRecommendationWrites = chiefOfStaffRecommendationWriteFolders(r.Context())
-			if len(chiefOfStaffRecommendationWrites) > 0 {
-				log.Printf("[CHIEF_OF_STAFF_RECOMMENDATIONS] Allowing recommendation writes to workflow improve logs: %v", chiefOfStaffRecommendationWrites)
-			}
-		}
-
 		// When skill-creator is selected, ensure it's installed (auto-fetch from GitHub
 		// if missing). This is the one piece of grant-specific logic that doesn't fit
 		// the registry — it's an install-on-demand side effect unique to skill-creator.
@@ -4325,7 +4361,6 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				orgPulseWrite := "pulse/"
 				additionalFolders := append([]string{}, resolvedGrants.WriteFolders...)
 				additionalFolders = append(additionalFolders, fileContextWriteFolders...)
-				additionalFolders = append(additionalFolders, chiefOfStaffRecommendationWrites...)
 				additionalFolders = append(additionalFolders, perUserChatHistory)
 				additionalFolders = append(additionalFolders, orgPulseWrite)
 				workspaceExecutors = wrapExecutorsWithPlanFolderGuard(workspaceExecutors, perUserChatsFolder, workflowReadOnlyFolders, additionalFolders...)
@@ -5201,6 +5236,13 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 					underlyingAgent.AppendSystemPrompt(capabilitySection)
 					log.Printf("[WORKFLOW_PHASE] Appended LLM/media capability snapshot to %s system prompt", workflowPhaseID)
 				}
+				if workflowPhaseID == workflowtypes.WorkflowStatusWorkflowBuilder {
+					if notificationPrompt := buildWorkflowNotificationInstructionsPrompt(req.NotificationRunSummaryInstructions, req.NotificationPulseSummaryInstructions); notificationPrompt != "" {
+						underlyingAgent.AppendSystemPrompt(notificationPrompt)
+						log.Printf("[WORKFLOW_PHASE] Appended workflow notification preferences to %s system prompt", workflowPhaseID)
+					}
+				}
+
 				if workflowPhaseID == workflowtypes.WorkflowStatusWorkflowBuilder || workflowPhaseID == workflowtypes.WorkflowStatusEvalBuilder {
 					// Secrets
 					phaseSecrets := mergeGlobalSecrets(req.DecryptedSecrets, req.SelectedGlobalSecrets)
@@ -6264,15 +6306,22 @@ func (api *StreamingAPI) sessionHasLiveCodingTmux(sessionID string) bool {
 // tmux pane. A child workflow/background pane is aggregate session activity,
 // but it cannot receive or preserve main-chat input.
 func (api *StreamingAPI) sessionHasLiveMainCodingTmux(sessionID string) bool {
+	_, ok := api.liveMainCodingTmuxSnapshot(sessionID)
+	return ok
+}
+
+// liveMainCodingTmuxSnapshot returns the provider-owned main pane for a chat.
+// The terminal is durable across logical turns; the Go Agent instance is not.
+func (api *StreamingAPI) liveMainCodingTmuxSnapshot(sessionID string) (terminals.Snapshot, bool) {
 	if api == nil || api.terminalStore == nil {
-		return false
+		return terminals.Snapshot{}, false
 	}
 	for _, snapshot := range api.terminalStore.ListRaw(sessionID) {
 		if terminalSnapshotHasLiveTmux(snapshot) && codingAgentSnapshotIsMainAgent(snapshot) {
-			return true
+			return snapshot, true
 		}
 	}
-	return false
+	return terminals.Snapshot{}, false
 }
 
 func (api *StreamingAPI) sessionHasRetainedCodingTmux(sessionID string) bool {
@@ -6285,6 +6334,43 @@ func (api *StreamingAPI) sessionHasRetainedCodingTmux(sessionID string) bool {
 func terminalSnapshotHasLiveTmux(snapshot terminals.Snapshot) bool {
 	return strings.TrimSpace(snapshot.TmuxSession) != "" &&
 		(snapshot.Active || strings.EqualFold(strings.TrimSpace(snapshot.ProcessState), "live"))
+}
+
+// retainedCodingAgentProvider infers the provider from durable terminal data
+// when continuation request state has already been cleaned up. The tmux naming
+// prefixes are created by the provider adapters and are more reliable than the
+// rendered status label; the label remains a compatibility fallback for older
+// retained panes.
+func retainedCodingAgentProvider(snapshot terminals.Snapshot) string {
+	tmuxSession := strings.ToLower(strings.TrimSpace(snapshot.TmuxSession))
+	switch {
+	case strings.HasPrefix(tmuxSession, "mlp-claude-code"), strings.HasPrefix(tmuxSession, "mlp-claude-"):
+		return string(llm.ProviderClaudeCode)
+	case strings.HasPrefix(tmuxSession, "mlp-codex-cli"):
+		return string(llm.ProviderCodexCLI)
+	case strings.HasPrefix(tmuxSession, "mlp-cursor-cli"):
+		return string(llm.ProviderCursorCLI)
+	case strings.HasPrefix(tmuxSession, "mlp-agy-cli"):
+		return string(llm.ProviderAgyCLI)
+	case strings.HasPrefix(tmuxSession, "mlp-pi-cli"):
+		return string(llm.ProviderPiCLI)
+	}
+
+	label := strings.ToLower(strings.TrimSpace(snapshot.Status.ProviderLabel))
+	switch {
+	case strings.Contains(label, "claude"):
+		return string(llm.ProviderClaudeCode)
+	case strings.Contains(label, "codex"):
+		return string(llm.ProviderCodexCLI)
+	case strings.Contains(label, "cursor"):
+		return string(llm.ProviderCursorCLI)
+	case strings.Contains(label, "agy") || strings.Contains(label, "antigravity"):
+		return string(llm.ProviderAgyCLI)
+	case strings.Contains(label, "pi-cli") || strings.HasPrefix(label, "pi "):
+		return string(llm.ProviderPiCLI)
+	default:
+		return ""
+	}
 }
 
 // markRetainedMainCodingTurnRunning bridges the process/turn lifecycle when a
@@ -6303,6 +6389,77 @@ func (api *StreamingAPI) markRetainedMainCodingTurnRunning(sessionID string) {
 		api.updateSessionStatus(sessionID, "running")
 		return
 	}
+}
+
+// deliverRetainedMainTerminalInput sends directly to a live main coding-agent
+// pane when its short-lived Go Agent object is no longer registered. A retained
+// tmux pane is still the same provider conversation, so starting a fresh
+// workflow-builder turn here would both lose continuity and allow unrelated
+// scheduled work to block the user's message.
+//
+// handled is true only when this is a live, supported coding-agent session. A
+// handled delivery error must be surfaced to the caller; it must never be
+// hidden behind an asynchronous next-turn fallback.
+func (api *StreamingAPI) deliverRetainedMainTerminalInput(ctx context.Context, sessionID, message string) (provider string, handled bool, err error) {
+	if api == nil {
+		return "", false, nil
+	}
+	snapshot, live := api.liveMainCodingTmuxSnapshot(sessionID)
+	if !live {
+		return "", false, nil
+	}
+
+	api.lastQueryMu.RLock()
+	request, ok := api.lastQueryRequests[sessionID]
+	api.lastQueryMu.RUnlock()
+	modelID := ""
+	if ok {
+		provider = strings.TrimSpace(request.Provider)
+		modelID = strings.TrimSpace(request.ModelID)
+		if request.LLMConfig != nil {
+			if provider == "" {
+				provider = strings.TrimSpace(request.LLMConfig.Primary.Provider)
+			}
+			if modelID == "" {
+				modelID = strings.TrimSpace(request.LLMConfig.Primary.ModelID)
+			}
+		}
+	}
+	if provider == "" {
+		provider = retainedCodingAgentProvider(snapshot)
+	}
+	if provider == "" {
+		return "", false, nil
+	}
+	contract, isCodingAgent := llmproviders.GetCodingAgentProviderContract(llmproviders.Provider(provider), modelID)
+	if !isCodingAgent || !contract.SupportsLiveInput {
+		return provider, false, nil
+	}
+
+	if api.internalRetainedTerminalInputHandler != nil {
+		return provider, true, api.internalRetainedTerminalInputHandler(ctx, llmproviders.Provider(provider), modelID, sessionID, message)
+	}
+	return provider, true, llmproviders.SendCodingAgentLiveInput(ctx, llmproviders.Provider(provider), modelID, sessionID, message)
+}
+
+func (api *StreamingAPI) recordRetainedTerminalLiveInput(sessionID, message, provider string) string {
+	messageID := newSteerMessageID()
+	api.recordLiveCodingAgentUserMessage(sessionID, message, provider, messageID, "sent_to_cli")
+	api.setSessionBusy(sessionID, false)
+	api.markRetainedMainCodingTurnRunning(sessionID)
+	return messageID
+}
+
+func writeRetainedTerminalLiveInputResponse(w http.ResponseWriter, sessionID, message, provider string, api *StreamingAPI) {
+	messageID := api.recordRetainedTerminalLiveInput(sessionID, message, provider)
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(LiveInputResponse{
+		Success:        true,
+		Message:        "User message delivered to retained coding-agent CLI",
+		DeliveryStatus: "sent_to_cli",
+		Provider:       provider,
+		MessageID:      messageID,
+	})
 }
 
 func codingAgentHasNativeResume(provider string, underlyingAgent *mcpagent.Agent) bool {
@@ -7053,6 +7210,32 @@ func (api *StreamingAPI) tryDeliverQueryAsLiveInput(w http.ResponseWriter, r *ht
 	if api == nil || strings.TrimSpace(message) == "" {
 		return false
 	}
+	// The terminal is the durable provider conversation. Prefer it before the
+	// short-lived Go Agent map: a stale or just-completed Agent must not send a
+	// user message through the new-turn path while its main tmux pane is live.
+	retainedInputCtx, retainedCancel := context.WithTimeout(r.Context(), liveCodingAgentInputTimeout)
+	defer retainedCancel()
+	retainedProvider, handled, err := api.deliverRetainedMainTerminalInput(retainedInputCtx, sessionID, message)
+	if handled {
+		if err != nil {
+			log.Printf("[QUERY->LIVE] Retained terminal delivery failed for session %s provider=%s: %v", sessionID, retainedProvider, err)
+			http.Error(w, fmt.Sprintf("Live input unavailable: %v", err), http.StatusConflict)
+			return true
+		}
+		api.recordRetainedTerminalLiveInput(sessionID, message, retainedProvider)
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(QueryResponse{
+			QueryID:        queryID,
+			SessionID:      sessionID,
+			Status:         queryStatusLiveInputDelivered,
+			Message:        "Delivered to retained coding-agent CLI",
+			DeliveryStatus: "sent_to_cli",
+			Provider:       retainedProvider,
+		})
+		log.Printf("[QUERY->LIVE] Delivered /api/query message directly to retained terminal for session %s provider=%s: %.80s", sessionID, retainedProvider, message)
+		return true
+	}
+
 	api.runningAgentsMux.RLock()
 	runningAgent := api.runningAgents[sessionID]
 	api.runningAgentsMux.RUnlock()
@@ -7151,21 +7334,31 @@ func (api *StreamingAPI) handleLiveInputMessage(w http.ResponseWriter, r *http.R
 		return
 	}
 
+	// A retained main tmux pane is the session's actual CLI conversation even
+	// while an old Go Agent entry remains registered. Route to it first so a
+	// completed Agent cannot turn this into a new workflow-builder request.
+	retainedInputCtx, retainedCancel := context.WithTimeout(r.Context(), liveCodingAgentInputTimeout)
+	defer retainedCancel()
+	retainedProvider, handled, err := api.deliverRetainedMainTerminalInput(retainedInputCtx, sessionID, req.Message)
+	if handled {
+		if err != nil {
+			log.Printf("[LIVE INPUT] Retained terminal delivery failed for session %s provider=%s: %v", sessionID, retainedProvider, err)
+			http.Error(w, fmt.Sprintf("Live input unavailable: %v", err), http.StatusConflict)
+			return
+		}
+		writeRetainedTerminalLiveInputResponse(w, sessionID, req.Message, retainedProvider, api)
+		log.Printf("[LIVE INPUT] Delivered user message directly to retained terminal for session %s provider=%s: %.80s", sessionID, retainedProvider, req.Message)
+		return
+	}
+
 	// Look up the running agent for this session
 	api.runningAgentsMux.RLock()
 	runningAgent, exists := api.runningAgents[sessionID]
 	api.runningAgentsMux.RUnlock()
 
 	if !exists || runningAgent == nil {
-		// No retained Go agent object — typically the brief gap *between* turns
-		// where the foreground-turn object is torn down/rebuilt while the
-		// coding-CLI tmux session is still alive. Returning 404 here is exactly
-		// what the UI surfaces as "the live coding-agent turn has ended" and then
-		// queues the message locally — a race, not a real failure. For a CLI
-		// session the tmux pane is the source of truth, so instead of rejecting,
-		// start the next turn from this message (the CLI resumes its session and
-		// processes it natively). Only if there's no prior query to template a
-		// turn from do we fall through to the 404.
+		// There is no live, provider-addressable retained terminal. A normal new
+		// turn is still appropriate when the previous pane truly exited.
 		if api.startNextTurnFromLiveInput(w, r, sessionID, req.Message, nil) {
 			return
 		}
@@ -7325,6 +7518,34 @@ func (api *StreamingAPI) startNextTurnFromLiveInput(w http.ResponseWriter, r *ht
 	baseReq.Message = message
 	baseReq.IsAutoNotification = false
 	baseReq.userID = GetUserIDFromContext(r.Context())
+
+	if baseReq.AgentMode == "workflow_phase" &&
+		baseReq.PhaseID == workflowtypes.WorkflowStatusWorkflowBuilder &&
+		strings.TrimSpace(baseReq.SelectedFolder) != "" {
+		if running := api.findRunningTrackedExecutionForWorkspaceWhere(baseReq.SelectedFolder, func(exec *TrackedWorkflowExecution) bool {
+			return trackedExecutionBlocksNewWorkflowBuilderChat(exec)
+		}); running != nil && running.SessionID != sessionID {
+			log.Printf("[LIVE INPUT] Refusing queued next turn for session %s: workflow builder is busy with session %s", sessionID, running.SessionID)
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusConflict)
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
+				"error":          "workflow_busy",
+				"message":        "Workflow builder chat is already running on this workflow. Stop the running chat before starting a new one.",
+				"workspace_path": running.WorkspacePath,
+				"running": map[string]interface{}{
+					"session_id":   running.SessionID,
+					"execution_id": running.ExecutionID,
+					"triggered_by": running.TriggeredBy,
+					"source":       running.Source,
+					"started_at":   running.StartedAt,
+					"phase_id":     running.PhaseID,
+					"phase_name":   running.PhaseName,
+					"title":        running.Title,
+				},
+			})
+			return true
+		}
+	}
 
 	payload, err := json.Marshal(baseReq)
 	if err != nil {

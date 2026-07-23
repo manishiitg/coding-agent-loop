@@ -323,6 +323,21 @@ func TestStripInlineTabFromOpenArgs(t *testing.T) {
 	if _, _, _, err := stripInlineTabFromOpenArgs([]string{"tab", "t1"}); err == nil {
 		t.Fatalf("expected malformed tab-prefixed open args to fail")
 	}
+
+	tab, cleaned, ok, err = stripInlineTabFromOpenArgs([]string{"t9", "https://example.com/path"})
+	if err != nil {
+		t.Fatalf("unexpected legacy tab-id normalization error: %v", err)
+	}
+	if !ok || tab != "t9" || len(cleaned) != 1 || cleaned[0] != "https://example.com/path" {
+		t.Fatalf("legacy tab-id normalization = (%q, %v, %v), want t9 URL true", tab, cleaned, ok)
+	}
+
+	if _, _, _, err := stripInlineTabFromOpenArgs([]string{"t9"}); err == nil {
+		t.Fatalf("expected bare tab id to be rejected as a navigation target")
+	}
+	if _, _, _, err := stripInlineTabFromOpenArgs([]string{"not-a-url"}); err == nil {
+		t.Fatalf("expected relative navigation target to be rejected")
+	}
 }
 
 func TestNormalizeOpenCommandArgs(t *testing.T) {
@@ -356,6 +371,13 @@ func TestNormalizeOpenCommandArgs(t *testing.T) {
 			name:        "redundant command then url",
 			args:        []string{"open", "https://example.com"},
 			wantCleaned: []string{"https://example.com"},
+		},
+		{
+			name:        "legacy omitted tab marker",
+			args:        []string{"t9", "https://example.com"},
+			wantTab:     "t9",
+			wantCleaned: []string{"https://example.com"},
+			wantOK:      true,
 		},
 	}
 

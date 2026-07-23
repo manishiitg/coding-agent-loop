@@ -346,7 +346,13 @@ func (s *Store) sessionHasBusyCodingTmux(sessionID string, mainOnly bool) bool {
 		if !snapshot.Active {
 			continue
 		}
-		if terminalContentLooksBusy(snapshot.Content) {
+		// Scrollback can retain an old spinner after Codex or Claude has returned
+		// to its input prompt. Only report the pane as busy when that spinner has
+		// not been superseded by a later settled prompt.
+		if terminalContentLooksBusy(snapshot.Content) &&
+			!terminalHasSettledPromptAfterBusy(snapshot.Content, map[string]interface{}{
+				"provider": snapshot.Status.ProviderLabel,
+			}) {
 			return true
 		}
 	}

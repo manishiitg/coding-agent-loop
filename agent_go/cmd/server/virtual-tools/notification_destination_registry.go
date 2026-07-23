@@ -42,6 +42,15 @@ func RegisterSessionNotificationDestination(sessionID string, dest *services.Not
 	if incoming.Gmail != nil {
 		current.Gmail = incoming.Gmail
 	}
+	if len(incoming.ExcludeChannels) > 0 {
+		current.ExcludeChannels = incoming.ExcludeChannels
+	}
+	if len(incoming.RunSummaryChannels) > 0 {
+		current.RunSummaryChannels = incoming.RunSummaryChannels
+	}
+	if len(incoming.PulseSummaryChannels) > 0 {
+		current.PulseSummaryChannels = incoming.PulseSummaryChannels
+	}
 	sessionNotificationDestinations.values[sessionID] = current
 }
 

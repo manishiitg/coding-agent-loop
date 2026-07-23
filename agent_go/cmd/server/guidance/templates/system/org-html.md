@@ -7,8 +7,8 @@ Use this before writing or materially changing:
 
 These files are product surfaces inside the Chief of Staff right panel. They are not raw
 logs, markdown replacements, or decorative pages. A CEO should understand the state of the
-org in the first screen: what is on track, what is drifting, what is unknown, and what
-decision is needed.
+org in the first screen: what is on track, what is drifting, what is unknown, and how
+workflows align with explicit goals.
 
 Also load `get_reference_doc(kind="html-output")` for the generic HTML rules. This doc is
 the org-specific structure and visual system.
@@ -33,9 +33,15 @@ the org-specific structure and visual system.
   The first screen should be mostly UI widgets: status banner, KPI tiles, priority/action
   board, evidence chips, score/progress bars, compact lists, and timeline cards. Use short
   prose only inside widgets; avoid long paragraph blocks.
+- **Plain language first.** Visible cards answer what happened, why it matters, whether the
+  goal is on track, and what happens next. Use business names and measured values. Never
+  require the user to decode tool names, run/session ids, file paths, table names, hashes,
+  cursors, raw errors, or internal status labels.
 - **Evidence first.** Every status needs a source: workflow name, run number/date, report,
   db table, Pulse headline, or explicit "missing evidence". Never color a card green/yellow/red
-  without the rule or evidence line that explains it.
+  without the rule or evidence that explains it. Show a human-readable source label in the
+  card; put exact technical provenance in stable data attributes or a collapsed
+  `<details class="agent-details"><summary>Agent details</summary>...</details>` block.
 - **Semantic structure.** Use stable ids/classes/data attributes so future agents can parse
   and update the page without guessing: `data-goal-id`, `data-status`, `data-workflow`,
   `data-date`, and the anchor comments shown below.
@@ -53,7 +59,7 @@ the org-specific structure and visual system.
   metadata for `@media (min-width: 640px)`.
 - **Valid CSS, no escaped braces.** Write raw CSS exactly as browsers expect it:
   `@media (min-width:640px){ ... }`, never `{{"{{"}} ... {{"}}"}}`. Repeated visual elements must use
-  classes from the baseline (`.kpi`, `.pill`, `.entry`, `.suggestions`), not repeated inline
+  classes from the baseline (`.kpi`, `.pill`, `.entry`), not repeated inline
   layout styles.
 
 ### Shared visual language
@@ -65,10 +71,10 @@ Both org pages should use the same richer shell:
 - meta row: last updated date/time and evidence freshness
 - status banner: the one-sentence read
 - KPI strip: compact color-coded tiles for counts/status
-- priority board: decision-needed / watch / healthy or next / blocked / done lanes
+- alignment board: aligned / supporting / unaligned or missing-measurement lanes
 - evidence chips: source paths, workflow names, confidence, freshness
 - progress/score bars: baseline -> current -> target, run freshness, or completion ratio
-- content cards: status, evidence, next action; never long freeform blocks
+- content cards: status, evidence, and evidence gap; never long freeform blocks
 - timeline/history: newest first, with each entry broken into small sub-widgets
 
 When editing an existing `pulse/goals.html` or `pulse/org-pulse.html`, upgrade the shell if
@@ -228,9 +234,8 @@ Top to bottom:
 3. KPI strip: total goals, on-track, at-risk/off-track, unknown/missing evidence.
 4. Goal cards, one per goal.
 5. Workflow alignment matrix: aligned, supporting, unaligned.
-6. Recommendations: the Chief of Staff's open proposals, grouped by goal, newest first.
-7. Measurement gaps.
-8. Change history, newest first.
+6. Measurement gaps.
+7. Change history, newest first.
 
 Each goal card must include:
 
@@ -243,24 +248,7 @@ Each goal card must include:
 - contributing workflows
 - latest evidence
 - confidence
-- next action
-
-The **Recommendations** section holds the Chief of Staff's open, proposal-only recommendations
-(the org-level ones from the Org Pulse "Generate recommendations" step; per-automation recs live
-in each workflow's `builder/improve.html`, not here). Render it as a list of recommendation cards
-grouped by goal, **newest first**, and clearly marked as proposals the user/builder decides on —
-nothing here is auto-applied. Each recommendation card carries:
-
-- stable `data-rec-id`
-- the goal it serves in `data-goal-id` (matching a goal card's `data-goal-id`)
-- `data-status` — `proposed` (default), `accepted`, `queued_goal_advisor`, `in_progress`, `needs_evidence`, `done`, `dismissed`, or `blocked`
-- `data-impact` and `data-effort` (e.g. `high`/`medium`/`low`)
-- a short title, the evidence it rests on, the proposed move, and the expected goal movement
-
-Update an existing recommendation in place (flip `data-status`) instead of duplicating it; keep
-accepted/done/dismissed ones for history rather than deleting them. Open statuses are `proposed`,
-`accepted`, `queued_goal_advisor`, `in_progress`, `needs_evidence`, and `blocked`; Org Pulse should call out stale open
-recommendations before creating new ones for the same goal/gap.
+- evidence gap
 
 Starter body:
 
@@ -344,7 +332,7 @@ Starter body:
         <span class="pill mini violet">freshness: missing</span>
       </div>
       <div class="evidence"><b>Latest evidence:</b> Missing until the contributing workflow reports this metric.</div>
-      <div class="next"><b>Next action:</b> Add measurement to the workflow report/evaluation or refine the goal.</div>
+      <div class="next"><b>Evidence gap:</b> The contributing workflow does not currently expose this metric.</div>
     </div>
   </article>
 
@@ -355,31 +343,11 @@ Starter body:
         <thead><tr><th>Workflow</th><th>Alignment</th><th>Goal / rationale</th><th>Evidence</th></tr></thead>
         <tbody>
           <tr data-workflow="Workflow/name" data-status="unaligned">
-            <td>Workflow name</td><td><span class="pill bad">Unaligned</span></td><td>Needs CEO decision</td><td>Not assessed</td>
+            <td>Workflow name</td><td><span class="pill bad">Unaligned</span></td><td>No explicit goal link</td><td>Not assessed</td>
           </tr>
         </tbody>
       </table>
     </div>
-  </section>
-
-  <div class="section-title">Recommendations</div>
-  <section class="suggestions" aria-label="Chief of Staff recommendations">
-    <!-- RECOMMENDATIONS: newest first · proposal-only · grouped by goal -->
-    <article class="card rec-card" data-rec-id="rec-slug" data-goal-id="goal-slug" data-status="proposed" data-impact="medium" data-effort="low">
-      <div class="card-h">
-        <div>
-          <h3><!-- Recommendation title --></h3>
-          <div class="meta">Goal: <!-- goal title --> · proposed YYYY-MM-DD</div>
-        </div>
-        <span class="pill unknown">Proposed</span>
-      </div>
-      <div class="card-b">
-        <div class="evidence"><b>Evidence:</b> <!-- runs/reports/tables/Pulse headlines that motivate it --></div>
-        <div class="evidence"><b>Proposed move:</b> <!-- new automation / different approach / cross-automation synergy / promotion --></div>
-        <div class="evidence"><b>Impact / effort:</b> <span class="pill mini">impact: medium</span> <span class="pill mini">effort: low</span></div>
-        <div class="next"><b>Expected movement:</b> <!-- which goal/KPI should move if accepted -->. Proposal only — the user/builder decides.</div>
-      </div>
-    </article>
   </section>
 
   <div class="section-title">Measurement gaps</div>
@@ -400,15 +368,15 @@ Starter body:
 
 ### `pulse/org-pulse.html` required structure
 
-`org-pulse.html` is the daily measured narrative. It should answer: what changed, what is
-drifting, which task findings matter, and what decision should the CEO make next.
+`org-pulse.html` is the daily measured narrative. It should answer: which goals are being met,
+which workflows align with them, what changed, and where evidence is stale or missing.
 
 Top to bottom:
 
 1. Header and meta.
 2. One status banner: the latest org read.
-3. KPI strip: goals on-track, workflows broken/drifting, unaligned workflows, suggestions.
-4. Priority board: decisions needed, watchpoints, healthy/recovered items.
+3. KPI strip: goals on-track, goals at risk/off-track, unaligned workflows, missing measurement.
+4. Alignment board: aligned, supporting, unaligned/missing-measurement workflows.
 5. Newest-first pulse entries, each as widget sections rather than a prose block.
 6. Archive index if the file grows large.
 
@@ -417,9 +385,7 @@ Each daily entry should include:
 - goal scorecard summary
 - workflow alignment delta
 - org health one-liner
-- LLM/model tier and cost audit (report-only)
-- task findings/promotions, if any
-- suggestion cards, if any
+- stale, missing, or contradictory evidence
 
 Starter body:
 
@@ -452,15 +418,15 @@ Starter body:
 
   <section class="kpis" aria-label="Org pulse summary">
     <div class="kpi ok"><div class="label">Goals on track</div><div class="value">0</div><div class="note">of 0</div></div>
-    <div class="kpi bad"><div class="label">Workflow issues</div><div class="value">0</div><div class="note">broken or drifting</div></div>
-    <div class="kpi warn"><div class="label">Unaligned</div><div class="value">0</div><div class="note">needs decision</div></div>
-    <div class="kpi info"><div class="label">Suggestions</div><div class="value">0</div><div class="note">open</div></div>
+    <div class="kpi bad"><div class="label">Goals at risk</div><div class="value">0</div><div class="note">at risk or off track</div></div>
+    <div class="kpi warn"><div class="label">Unaligned</div><div class="value">0</div><div class="note">workflows</div></div>
+    <div class="kpi info"><div class="label">Missing evidence</div><div class="value">0</div><div class="note">cannot measure</div></div>
   </section>
 
-  <section class="board" aria-label="Org priority board">
-    <div class="lane"><h3>Decisions</h3><div class="mini-list"><div class="mini-item">No decisions yet.</div></div></div>
-    <div class="lane"><h3>Watch</h3><div class="mini-list"><div class="mini-item">No watchpoints yet.</div></div></div>
-    <div class="lane"><h3>Healthy</h3><div class="mini-list"><div class="mini-item">No measured healthy items yet.</div></div></div>
+  <section class="board" aria-label="Workflow alignment">
+    <div class="lane"><h3>Aligned</h3><div class="mini-list"><div class="mini-item">No aligned workflows yet.</div></div></div>
+    <div class="lane"><h3>Supporting</h3><div class="mini-list"><div class="mini-item">No supporting workflows yet.</div></div></div>
+    <div class="lane"><h3>Unaligned or unknown</h3><div class="mini-list"><div class="mini-item">No measured items yet.</div></div></div>
   </section>
 
   <div class="section-title">Latest entries</div>
@@ -471,14 +437,14 @@ Starter body:
       <div class="widget-grid">
         <div class="widget"><b>Goal scorecard</b><span class="big">Not set</span><span class="sub">No `pulse/goals.html` evidence yet.</span></div>
         <div class="widget"><b>Org health</b><span class="big">Unknown</span><span class="sub">Workflow health can be reviewed, but goal progress cannot.</span></div>
-        <div class="widget"><b>LLM/cost</b><span class="big">No data</span><span class="sub">No model/cost evidence recorded yet.</span></div>
+        <div class="widget"><b>Workflow alignment</b><span class="big">Unknown</span><span class="sub">No explicit goal mapping is available yet.</span></div>
       </div>
       <div class="evidence-row">
         <span class="pill mini unknown">goals missing</span>
-        <span class="pill mini violet">task findings: none</span>
-        <span class="pill mini teal">next: setup</span>
+        <span class="pill mini violet">alignment unknown</span>
+        <span class="pill mini teal">evidence missing</span>
       </div>
-      <div class="next"><b>Suggestion:</b> Run `/org-setup` in Chief of Staff to define measurable goals.</div>
+      <div class="next"><b>Status:</b> Org-goal progress cannot be measured until explicit goals exist.</div>
     </article>
   </section>
 
@@ -493,12 +459,9 @@ Starter body:
 
 - Keep the active file concise. When `org-pulse.html` grows past roughly 20 entries or 70 KB,
   move older routine entries into a dated archive section or `pulse/archive/YYYY-MM.html`,
-  leaving recent entries and open suggestions in the active file.
+  leaving recent entries in the active file.
 - Never delete goal history unless the CEO explicitly asks. Mark changed goals in history.
-- Close or update repeated suggestions instead of duplicating them daily.
 - If the source evidence is stale, say so in the evidence line. A stale green status is worse
   than an honest unknown.
-- The LLM/cost audit is a reporting section, not a configuration surface. Render it inside the
-  daily pulse entry as a compact table or bullets with workflow, configured tier/model, observed
-  model, recent cost/tokens, evidence path, and note. Never imply model settings were changed by
-  Org Pulse.
+- Do not add recommendations, decisions, promotions, task findings, or LLM/cost audits to either
+  Org Pulse page.

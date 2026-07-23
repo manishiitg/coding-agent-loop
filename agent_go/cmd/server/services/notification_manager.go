@@ -184,9 +184,9 @@ func (nm *NotificationManager) SendUserNotification(ctx context.Context, message
 //
 // excludeChannels lets a single notification opt OUT of specific account-level
 // channels by connector Name() (e.g. "gmail"). This is how a per-workflow
-// notification preference — declared in soul/soul.md ## Notifications and passed
-// through by notify_user — suppresses an inherited global channel for that one
-// send without touching the account-wide config. Names are matched
+// notification preference — declared in workflow.json capabilities.notifications
+// and applied by the backend — suppresses an inherited global channel for that
+// one send without touching the account-wide config. Names are matched
 // case-insensitively; unknown names are ignored.
 func (nm *NotificationManager) SendUserNotificationSync(ctx context.Context, message string, contextMsg string, dest *NotificationDestination, excludeChannels ...string) []ConnectorResult {
 	excluded := make(map[string]bool, len(excludeChannels))

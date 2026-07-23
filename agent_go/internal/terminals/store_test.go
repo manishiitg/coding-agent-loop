@@ -2581,6 +2581,37 @@ func TestSessionHasBusyCodingTmuxIgnoresCompletedTerminal(t *testing.T) {
 	}
 }
 
+func TestSessionHasBusyCodingTmuxIgnoresHistoricalSpinnerBeforeSettledPrompt(t *testing.T) {
+	store := NewStore()
+	content := `Working (1m 36s • esc to interrupt)
+
+› Find and fix a bug in @filename
+
+No—137 of 143 USD rows are verified.
+
+─ Worked for 2m 13s ──────────────────────────────────────
+
+› Find and fix a bug in @filename`
+	store.HandleEvent("session-1", terminalEventWithMetadata(
+		"main:session-1",
+		content,
+		0,
+		map[string]interface{}{
+			"tmux_session":   "mlp-codex-cli-idle",
+			"execution_kind": "main_agent",
+			"provider":       "codex-cli",
+		},
+		time.Now(),
+	))
+
+	if store.SessionHasBusyCodingTmux("session-1") {
+		t.Fatal("a settled Codex prompt after an old spinner must be reported idle")
+	}
+	if !store.SessionHasRetainedCodingTmux("session-1") {
+		t.Fatal("the idle pane must remain retained for the next message")
+	}
+}
+
 func TestSessionHasBusyMainCodingTmuxIgnoresBusyChild(t *testing.T) {
 	store := NewStore()
 	store.HandleEvent("session-1", terminalEventWithMetadata(

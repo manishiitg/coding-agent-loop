@@ -936,13 +936,45 @@ func stripInlineTabFromOpenArgs(args []string) (tab string, cleaned []string, ok
 	if len(args) == 0 {
 		return "", args, false, nil
 	}
+	// Older/incorrect callers sometimes omit the literal "tab" marker and send
+	// ["t9", "https://example.com"]. Passing that through makes agent-browser
+	// navigate to https://t9/ and ignore the intended URL. Recover the obvious
+	// tab-id form here; labels still require the explicit marker so ordinary URL
+	// arguments cannot be mistaken for tab selections.
+	if isCDPTabID(args[0]) {
+		if len(args) < 2 {
+			return "", nil, false, fmt.Errorf("open command received tab id %q without a URL; pass a URL-only open request or use tab %s <url>", args[0], args[0])
+		}
+		if err := validateOpenTargetURL(args[1]); err != nil {
+			return "", nil, false, err
+		}
+		return strings.TrimSpace(args[0]), append([]string(nil), args[1:]...), true, nil
+	}
 	if args[0] != "tab" && args[0] != "--tab" {
+		if err := validateOpenTargetURL(args[0]); err != nil {
+			return "", nil, false, err
+		}
 		return "", args, false, nil
 	}
 	if len(args) < 3 || strings.TrimSpace(args[1]) == "" {
 		return "", nil, false, fmt.Errorf("open command uses %s but is missing <tab-id-or-label> and URL", args[0])
 	}
+	if err := validateOpenTargetURL(args[2]); err != nil {
+		return "", nil, false, err
+	}
 	return strings.TrimSpace(args[1]), append([]string(nil), args[2:]...), true, nil
+}
+
+func validateOpenTargetURL(raw string) error {
+	target := strings.TrimSpace(raw)
+	parsed, err := url.Parse(target)
+	if err != nil || strings.TrimSpace(parsed.Scheme) == "" {
+		return fmt.Errorf("browser navigation target %q must be an absolute URL with an explicit scheme such as https://; a CDP tab id such as t9 is not a URL", target)
+	}
+	if (parsed.Scheme == "http" || parsed.Scheme == "https") && strings.TrimSpace(parsed.Host) == "" {
+		return fmt.Errorf("browser navigation target %q must include a host", target)
+	}
+	return nil
 }
 
 func stringArgs(raw interface{}) []string {

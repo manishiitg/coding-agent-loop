@@ -45,8 +45,12 @@ type WorkflowNotificationInfoResponse struct {
 	// lists inherited account-level channels this workflow opts out of;
 	// BlockRecipients is the workflow's own email denylist (added to the
 	// account-wide one). Both are display-only here — edits go through /notify.
-	ExcludeChannels []string `json:"exclude_channels,omitempty"`
-	BlockRecipients []string `json:"block_recipients,omitempty"`
+	RunSummaryInstructions   string   `json:"run_summary_instructions,omitempty"`
+	PulseSummaryInstructions string   `json:"pulse_summary_instructions,omitempty"`
+	RunSummaryChannels       []string `json:"run_summary_channels,omitempty"`
+	PulseSummaryChannels     []string `json:"pulse_summary_channels,omitempty"`
+	ExcludeChannels          []string `json:"exclude_channels,omitempty"`
+	BlockRecipients          []string `json:"block_recipients,omitempty"`
 }
 
 func resolveSlackNotificationState(id, label string, capabilities WorkflowCapabilities, secretValue string, secretResolved bool) WorkflowNotificationDestinationInfo {
@@ -178,6 +182,10 @@ func (api *StreamingAPI) handleGetWorkflowNotifications(w http.ResponseWriter, r
 		AccountChannels: accountChannels,
 	}
 	if manifest.Capabilities.Notifications != nil {
+		response.RunSummaryInstructions = manifest.Capabilities.Notifications.EffectiveRunSummaryInstructions()
+		response.PulseSummaryInstructions = manifest.Capabilities.Notifications.EffectivePulseSummaryInstructions()
+		response.RunSummaryChannels = manifest.Capabilities.Notifications.RunSummaryChannels
+		response.PulseSummaryChannels = manifest.Capabilities.Notifications.PulseSummaryChannels
 		response.ExcludeChannels = manifest.Capabilities.Notifications.ExcludeChannels
 		response.BlockRecipients = manifest.Capabilities.Notifications.BlockRecipients
 	}

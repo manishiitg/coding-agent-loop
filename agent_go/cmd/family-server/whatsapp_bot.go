@@ -852,11 +852,19 @@ func (w *waBot) runTurn(text string) (string, error) {
 		SessionID:                 convID,
 		SessionHandle:             loadSessionHandle("parent", convID),
 		BridgeRoutingInstructions: bridgeRoutingInstructions(),
-		Tools: withLiveStatus("parent:"+convID, []agentsession.Tool{webSearchTool(), readImageTool(s.Engine), notifyTool(), shellTool(), agentBrowserTool(), sendWhatsAppFileTool(func(path string) {
-			sentFilesMu.Lock()
-			sentFiles = append(sentFiles, path)
-			sentFilesMu.Unlock()
-		})}),
+		// The ONE canonical parent manifest (parent_tools.go). This surface shares
+		// the SAME warm "parent" session as web chat and Pulse, so it must not
+		// register a narrower set — whichever surface starts the session would
+		// otherwise decide everyone's capabilities. Signals this channel can't
+		// render (suggestion buttons, the file-open pane) are simply dropped via
+		// nil sinks; the tools themselves stay registered and callable.
+		Tools: withLiveStatus("parent:"+convID, parentTools(s.Engine, parentChildLabel(s.Child), parentToolSinks{
+			onSentFile: func(path string) {
+				sentFilesMu.Lock()
+				sentFiles = append(sentFiles, path)
+				sentFilesMu.Unlock()
+			},
+		})),
 	})
 	if err != nil {
 		persistFull(friendlyTurnError(err))

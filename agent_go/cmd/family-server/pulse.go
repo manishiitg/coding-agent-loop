@@ -40,8 +40,15 @@ func appendPulseTurn(messages []enginedetect.ChatMessage, trigger, reply string)
 type pulseCheck struct {
 	trigger     string // clean parent-facing divider line (no file paths)
 	instruction string // full technical instruction sent to the model
-	tools       func(engine string) []agentsession.Tool
 }
+
+// NOTE: a pulseCheck deliberately has NO per-check tool list. Pulse runs on
+// the SAME shared warm "parent" session as web chat and WhatsApp, so a
+// narrower per-check manifest could not be honored anyway (the session's tool
+// set is fixed by whichever surface launched it) and actively risked defining
+// a crippled session for the other surfaces. Every check gets the one
+// canonical parentTools(...) manifest; what a check should FOCUS on stays in
+// its instruction text, which is the control that actually works here.
 
 // pulseReplyRules is the shared tail every check's instruction ends with, so
 // each focused turn produces one short, honest, parent-appropriate message.
@@ -70,12 +77,6 @@ func pulseChecks(s familyState) []pulseCheck {
 			"or opportunity stands out (a weak topic, something " + who + " hasn't practiced in a while, a natural next step), you may prepare " +
 			"study material or a test (skills/create-study-material/SKILL.md, skills/create-test/SKILL.md) — but do NOT create or hand off an " +
 			"activity for it; nothing gets handed to " + who + " without the parent explicitly asking, so just mention what you made." + pulseReplyRules,
-		tools: func(engine string) []agentsession.Tool {
-			return []agentsession.Tool{
-				webSearchTool(), readImageTool(engine), generateImageTool(), notifyTool(),
-				shellTool(), diffPatchWorkspaceFileTool(), createLearningActivityTool(who, func(toolEvent) {}),
-			}
-		},
 	}}
 
 	if sites := s.Pulse.Sites(); len(sites) > 0 {
@@ -100,9 +101,6 @@ func pulseChecks(s familyState) []pulseCheck {
 				"plainly what's actually new across the site(s) and what matters for " + who + " — be specific (names, dates, what you pulled in), not " +
 				"vague. If a site needs a login you can't get past, say it needs them to sign in first (via the Browser connector) rather than " +
 				"guessing." + pulseReplyRules,
-			tools: func(engine string) []agentsession.Tool {
-				return []agentsession.Tool{agentBrowserTool(), readImageTool(engine), shellTool(), diffPatchWorkspaceFileTool(), notifyTool()}
-			},
 		})
 	}
 
@@ -113,9 +111,6 @@ func pulseChecks(s familyState) []pulseCheck {
 				"Use execute_shell_command with the gws CLI (see your system instructions for the exact command shape) to check for anything " +
 				"new WITHIN that filter — never widen it to their whole inbox. If there's a relevant new email (a notice, a deadline, something " +
 				"about " + who + "), summarize it plainly for the parent." + pulseReplyRules,
-			tools: func(engine string) []agentsession.Tool {
-				return []agentsession.Tool{shellTool(), notifyTool()}
-			},
 		})
 	}
 
@@ -125,9 +120,6 @@ func pulseChecks(s familyState) []pulseCheck {
 			"skills/update-preferences/SKILL.md and follow it: check memory/preferences.md against what the parent has actually said across " +
 			"conversations/parent.json, and update it in place if there's something durable worth remembering (exam dates, scheduling/behavioral " +
 			"preferences, content preferences) that isn't already captured. Tell the parent in one short line what (if anything) you noted." + pulseReplyRules,
-		tools: func(engine string) []agentsession.Tool {
-			return []agentsession.Tool{shellTool(), diffPatchWorkspaceFileTool(), notifyTool()}
-		},
 	})
 
 	checks = append(checks, pulseCheck{
@@ -138,9 +130,6 @@ func pulseChecks(s familyState) []pulseCheck {
 			"her own activity conversations, and update it in place if a genuine interest (or clear disinterest) signal isn't already captured. This " +
 			"powers skills/discover-something-new/SKILL.md, which the parent can ask for anytime (\"make her something fun this weekend\"). " +
 			"Tell the parent in one short line what (if anything) you noted." + pulseReplyRules,
-		tools: func(engine string) []agentsession.Tool {
-			return []agentsession.Tool{shellTool(), diffPatchWorkspaceFileTool(), notifyTool()}
-		},
 	})
 
 	_ = engine
@@ -267,7 +256,7 @@ func runPulseCheckTurn(ctx context.Context, provider llm.Provider, s familyState
 		SessionID:                 convID,
 		SessionHandle:             loadSessionHandle("parent", convID),
 		BridgeRoutingInstructions: bridgeRoutingInstructions(),
-		Tools:                     withLiveStatus("pulse:"+convID, c.tools(s.Engine)),
+		Tools:                     withLiveStatus("pulse:"+convID, parentTools(s.Engine, parentChildLabel(s.Child), parentToolSinks{})),
 	})
 	if err != nil {
 		return "", fmt.Errorf("session setup failed: %w", err)

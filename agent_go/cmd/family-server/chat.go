@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"log"
 	"net/http"
 	"os"
@@ -344,10 +343,7 @@ func handleParentMessage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	childLabel := "the child"
-	if s.Child != nil && strings.TrimSpace(s.Child.Name) != "" {
-		childLabel = s.Child.Name
-	}
+	childLabel := parentChildLabel(s.Child)
 
 	provider, ok := engineToProvider(s.Engine)
 	if !ok {
@@ -391,196 +387,8 @@ func handleParentMessage(w http.ResponseWriter, r *http.Request) {
 	var newSecretMu sync.Mutex
 	var newSecretValues []string
 
-	setChildProfile := agentsession.Tool{
-		Name: "set_child_profile",
-		Description: "Save or update the child's profile — name, grade, and school board — once the parent tells you. " +
-			"Call this whenever you learn any of these so future sessions and material are tailored to the right level.",
-		Category: "family_tools",
-		Params: map[string]interface{}{
-			"type": "object",
-			"properties": map[string]interface{}{
-				"name":  map[string]interface{}{"type": "string", "description": "the child's name"},
-				"grade": map[string]interface{}{"type": "string", "description": "the child's grade/class, e.g. 10"},
-				"board": map[string]interface{}{"type": "string", "description": "the school board, e.g. CBSE, ICSE, State Board"},
-			},
-		},
-		Handler: func(_ context.Context, args map[string]interface{}) (string, error) {
-			nm, _ := args["name"].(string)
-			gr, _ := args["grade"].(string)
-			bd, _ := args["board"].(string)
-			nm, gr, bd = strings.TrimSpace(nm), strings.TrimSpace(gr), strings.TrimSpace(bd)
-			if nm == "" && gr == "" && bd == "" {
-				return "", fmt.Errorf("provide at least one of name, grade, board")
-			}
-			stateMu.Lock()
-			cur := loadState()
-			if cur.Child == nil {
-				cur.Child = &Child{Language: "en", CreatedAt: time.Now().UTC().Format(time.RFC3339)}
-			}
-			if nm != "" {
-				cur.Child.Name = nm
-			}
-			if gr != "" {
-				cur.Child.Grade = gr
-			}
-			if bd != "" {
-				cur.Child.Board = bd
-			}
-			err := saveState(cur)
-			saved := cur.Child
-			stateMu.Unlock()
-			if err != nil {
-				return "", fmt.Errorf("failed to save child profile: %w", err)
-			}
-			seedWorkspace(saved) // keep parent/child-profile.json (read by skills) in sync
-			evMu.Lock()
-			events = append(events, toolEvent{Tool: "set_child_profile", Name: saved.Name, Grade: saved.Grade, Board: saved.Board})
-			evMu.Unlock()
-			return fmt.Sprintf(`{"status":"ok","name":%q,"grade":%q,"board":%q}`, saved.Name, saved.Grade, saved.Board), nil
-		},
-	}
-
-	setParentLabel := agentsession.Tool{
-		Name: "set_parent_label",
-		Description: "Save how the parent wants to be referred to when you talk ABOUT them to the child — e.g. \"mom\", \"dad\", " +
-			"\"grandma\", or their first name. Call this once you learn it, whether the parent states it directly or you asked them.",
-		Category: "family_tools",
-		Params: map[string]interface{}{
-			"type": "object",
-			"properties": map[string]interface{}{
-				"label": map[string]interface{}{"type": "string", "description": "e.g. mom, dad, grandma, or a first name"},
-			},
-			"required": []string{"label"},
-		},
-		Handler: func(_ context.Context, args map[string]interface{}) (string, error) {
-			label, _ := args["label"].(string)
-			label = strings.TrimSpace(label)
-			if label == "" {
-				return "", fmt.Errorf("label is required")
-			}
-			stateMu.Lock()
-			cur := loadState()
-			cur.ParentLabel = label
-			err := saveState(cur)
-			stateMu.Unlock()
-			if err != nil {
-				return "", fmt.Errorf("failed to save parent label: %w", err)
-			}
-			evMu.Lock()
-			events = append(events, toolEvent{Tool: "set_parent_label", ParentLabel: label})
-			evMu.Unlock()
-			return fmt.Sprintf(`{"status":"ok","label":%q}`, label), nil
-		},
-	}
-
 	var sugMu sync.Mutex
 	var suggestions []suggestion
-	suggestActions := agentsession.Tool{
-		Name: "suggest_actions",
-		Description: "Offer the parent 2–4 clickable buttons for things they probably ISN'T already thinking about — not the " +
-			"obvious immediate next step (they don't need a button for what they were just about to say themselves). " +
-			"Aim for real value they wouldn't get otherwise: a global best practice or technique for this topic/board " +
-			"(use web_search), a way to personalize further for this specific child's actual pattern (from recent " +
-			"activity, not generic advice), or a genuine improvement to what already " +
-			"exists. Call this at the END of your turn. Each action has a short button label and the exact message that " +
-			"will be sent as if the parent typed it when they click. Do NOT use this for \"give/send/hand X to the " +
-			"child\" — create_learning_activity + open_activity already put that real button on the right automatically.",
-		Category: "family_tools",
-		Params: map[string]interface{}{
-			"type": "object",
-			"properties": map[string]interface{}{
-				"actions": map[string]interface{}{
-					"type": "array",
-					"items": map[string]interface{}{
-						"type": "object",
-						"properties": map[string]interface{}{
-							"label":   map[string]interface{}{"type": "string", "description": "short button text, 2–4 words"},
-							"message": map[string]interface{}{"type": "string", "description": "the message sent as the parent when clicked"},
-						},
-						"required": []string{"label", "message"},
-					},
-				},
-			},
-			"required": []string{"actions"},
-		},
-		Handler: func(_ context.Context, args map[string]interface{}) (string, error) {
-			raw, _ := args["actions"].([]interface{})
-			out := []suggestion{}
-			for _, it := range raw {
-				m, ok := it.(map[string]interface{})
-				if !ok {
-					continue
-				}
-				label, _ := m["label"].(string)
-				msg, _ := m["message"].(string)
-				label, msg = strings.TrimSpace(label), strings.TrimSpace(msg)
-				if label == "" || msg == "" {
-					continue
-				}
-				out = append(out, suggestion{Label: label, Message: msg})
-				if len(out) >= 4 {
-					break
-				}
-			}
-			sugMu.Lock()
-			suggestions = out
-			sugMu.Unlock()
-			return fmt.Sprintf(`{"status":"ok","count":%d}`, len(out)), nil
-		},
-	}
-
-	openFile := agentsession.Tool{
-		Name: "open_file",
-		Description: "Show a workspace file to the parent on the right side of the screen. Call this right after you " +
-			"create or update a file the parent should see (study material, a test, a progress report, the academic map) " +
-			"so it opens for them immediately. Pass the workspace-relative path.",
-		Category: "family_tools",
-		Params: map[string]interface{}{
-			"type": "object",
-			"properties": map[string]interface{}{
-				"path": map[string]interface{}{"type": "string", "description": "workspace-relative path to the file to display"},
-			},
-			"required": []string{"path"},
-		},
-		Handler: func(_ context.Context, args map[string]interface{}) (string, error) {
-			p, _ := args["path"].(string)
-			p = strings.TrimSpace(p)
-			if _, ok := resolveWorkspacePath(p); !ok {
-				return "", fmt.Errorf("invalid path")
-			}
-			evMu.Lock()
-			events = append(events, toolEvent{Tool: "open_file", Path: p})
-			evMu.Unlock()
-			return fmt.Sprintf(`{"status":"ok","opened":%q}`, p), nil
-		},
-	}
-
-	openActivity := agentsession.Tool{
-		Name: "open_activity",
-		Description: "Show a whole activity (its title, instructions, and item list) to the parent on the right side of the " +
-			"screen — a dedicated overview, not a single file. Call this right after create_learning_activity finishes (so the " +
-			"parent immediately sees it, with its own 'Give to <child>' button) and whenever the parent asks to see/review/open " +
-			"an EXISTING activity as a whole (\"show me that activity\", \"what's in the coding mission\"), as opposed to open_file " +
-			"for one specific file inside it. Pass the activity folder (dir), e.g. <Subject>/<Topic>/<slug>.",
-		Category: "family_tools",
-		Params: map[string]interface{}{
-			"type": "object",
-			"properties": map[string]interface{}{
-				"dir": map[string]interface{}{"type": "string", "description": "the activity folder, workspace-relative: <Subject>/<Topic>/<slug>"},
-			},
-			"required": []string{"dir"},
-		},
-		Handler: func(_ context.Context, args map[string]interface{}) (string, error) {
-			dir := strings.Trim(strings.TrimSpace(fmt.Sprint(args["dir"])), "/")
-			if _, ok := loadActivity(dir); !ok {
-				return "", fmt.Errorf("no activity found at %q (create it first)", dir)
-			}
-			evMu.Lock()
-			events = append(events, toolEvent{Tool: "open_activity", Path: dir})
-			evMu.Unlock()
-			return fmt.Sprintf(`{"status":"ok","opened":%q}`, dir), nil
-		},
-	}
 
 	agentTurnMu.Lock()
 	defer agentTurnMu.Unlock()
@@ -606,26 +414,32 @@ func handleParentMessage(w http.ResponseWriter, r *http.Request) {
 		StreamCallback: func(text string) {
 			statusHubs.publishDelta("parent:"+req.ConversationID, text)
 		},
-		Tools: withToolCallDebug(&debugMu, &debugCalls, "parent:"+req.ConversationID, withLiveStatus("parent:"+req.ConversationID, []agentsession.Tool{
-			setChildProfile, setParentLabel, openFile, openActivity,
-			createLearningActivityTool(childLabel, func(ev toolEvent) {
-				evMu.Lock()
-				events = append(events, ev)
-				evMu.Unlock()
-			}),
-			suggestActions, webSearchTool(), readImageTool(s.Engine), generateImageTool(), notifyTool(), shellTool(), diffPatchWorkspaceFileTool(), agentBrowserTool(),
-			sendWhatsAppFileTool(func(path string) {
-				sentFilesMu.Lock()
-				sentFiles = append(sentFiles, path)
-				sentFilesMu.Unlock()
-			}),
-			listSecretsTool(),
-			setSecretTool(func(_, value string) {
-				newSecretMu.Lock()
-				newSecretValues = append(newSecretValues, value)
-				newSecretMu.Unlock()
-			}),
-		})),
+		// The ONE canonical parent manifest (parent_tools.go) — identical across
+		// web chat, WhatsApp, and Pulse, because all of them share this same
+		// warm "parent" session.
+		Tools: withToolCallDebug(&debugMu, &debugCalls, "parent:"+req.ConversationID, withLiveStatus("parent:"+req.ConversationID,
+			parentTools(s.Engine, childLabel, parentToolSinks{
+				onEvent: func(ev toolEvent) {
+					evMu.Lock()
+					events = append(events, ev)
+					evMu.Unlock()
+				},
+				onSuggestions: func(v []suggestion) {
+					sugMu.Lock()
+					suggestions = v
+					sugMu.Unlock()
+				},
+				onSentFile: func(path string) {
+					sentFilesMu.Lock()
+					sentFiles = append(sentFiles, path)
+					sentFilesMu.Unlock()
+				},
+				onSecretSet: func(_, value string) {
+					newSecretMu.Lock()
+					newSecretValues = append(newSecretValues, value)
+					newSecretMu.Unlock()
+				},
+			}))),
 	})
 	if err != nil {
 		msg := friendlyTurnError(err)

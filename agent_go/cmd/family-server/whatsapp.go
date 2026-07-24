@@ -77,7 +77,12 @@ func handleWhatsAppMessage(w http.ResponseWriter, r *http.Request) {
 		SessionID:                 cid,
 		SessionHandle:             loadSessionHandle("parent", cid),
 		BridgeRoutingInstructions: bridgeRoutingInstructions(),
-		Tools:                     withLiveStatus("whatsapp:"+req.ConversationID, []agentsession.Tool{webSearchTool(), readImageTool(s.Engine), notifyTool(), shellTool()}),
+		// The ONE canonical parent manifest (parent_tools.go) — this is a
+		// parent-scope session (handles are stored under the "parent" scope, and
+		// cid is the parent conversation when the caller supplies it), so it must
+		// register the same tools as every other parent surface rather than a
+		// narrower subset that could define the shared warm session.
+		Tools: withLiveStatus("whatsapp:"+req.ConversationID, parentTools(s.Engine, parentChildLabel(s.Child), parentToolSinks{})),
 	})
 	if err != nil {
 		msg := friendlyTurnError(err)

@@ -77,6 +77,18 @@ YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
+# Resolve the repo root ONCE, before any `cd` below. Git invokes hooks with
+# GIT_DIR already exported into the environment (visible to every git command
+# this script runs); once GIT_DIR is set that way (as opposed to
+# auto-discovered), a later `git rev-parse --show-toplevel` call made from a
+# directory this script already `cd`'d into (e.g. agent_go/) can resolve the
+# work-tree root as CWD itself instead of the true repo root — silently
+# breaking every "cd back to root" step further down (this bit worktree
+# checkouts specifically, where the fallback auto-discovery path most needed
+# GIT_WORK_TREE to be inferred correctly). Always reference $REPO_ROOT below
+# instead of re-invoking show-toplevel after moving directories.
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+
 echo -e "${BLUE}🔒 Scanning for secrets with gitleaks...${NC}"
 
 # Check if gitleaks is available
@@ -141,9 +153,8 @@ echo -e "${GREEN}✅ No sensitive file patterns detected.${NC}"
 
 # Schema drift — runs only when staged files plausibly affect generated
 # schemas/types. See scripts/check-schema-drift.sh for the exact paths.
-REPO_ROOT_FOR_DRIFT="$(git rev-parse --show-toplevel)"
-if [ -x "$REPO_ROOT_FOR_DRIFT/scripts/check-schema-drift.sh" ]; then
-    if ! "$REPO_ROOT_FOR_DRIFT/scripts/check-schema-drift.sh"; then
+if [ -x "$REPO_ROOT/scripts/check-schema-drift.sh" ]; then
+    if ! "$REPO_ROOT/scripts/check-schema-drift.sh"; then
         exit 1
     fi
 fi
@@ -188,7 +199,6 @@ fi
 set -e
 
 # Frontend build check — only runs if any staged file is under frontend/
-REPO_ROOT="$(git rev-parse --show-toplevel)"
 FRONTEND_CHANGES=$(git diff --cached --name-only --diff-filter=ACMR | grep -E '^frontend/' || true)
 if [ -n "$FRONTEND_CHANGES" ]; then
     echo ""
@@ -212,7 +222,7 @@ fi
 if [ $LINT_EXIT -eq 0 ]; then
     echo ""
     echo -e "${GREEN}✅ Linting passed.${NC}"
-    cd "$(git rev-parse --show-toplevel)"
+    cd "$REPO_ROOT"
     echo -e "${BLUE}🏗️  Building agent_go...${NC}"
     if ! (cd agent_go && go build ./...); then
         echo -e "${RED}❌ Build failed! Commit blocked.${NC}"

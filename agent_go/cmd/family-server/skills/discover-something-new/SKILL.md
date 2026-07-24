@@ -1,87 +1,50 @@
 ---
 name: discover-something-new
-description: A fun, off-syllabus "something new to explore" activity for the child — animated and engaging (interaction happens in chat, not on the page), tailored to grade and interests learned over time. Parent-initiated, handed off like any other activity.
+description: A fun, off-syllabus "something new to explore" activity for the child — a light cover page plus a chat-driven discovery, tailored to grade and interests learned over time. Parent-initiated, handed off like any other activity.
 ---
 
 # Discover something new
 
-Trigger: the PARENT asks for something fun/off-syllabus for the child — "make her
-something fun this weekend", "surprise her with something new and interesting",
-"something new to explore" — NOT regular homework/study material tied to the
-syllabus. This is curiosity content, not graded, and not something the child asks
-for herself — you're building it for the parent to hand over, exactly like a test
-or study guide.
+Trigger: the PARENT asks for something fun and off-syllabus — "make her something
+fun this weekend", "surprise her with something new". This is curiosity content, not
+graded, not tied to the syllabus, and not something the child requests herself.
 
-1. **Know the child.** Read `memory/child-profile.json` for grade/age.
+1. **Know her.** `memory/child-profile.json` for grade/age, and `memory/interests.md`
+   if it exists — what she's genuinely responded well to, learned automatically over
+   time (read-only here; you never write it).
 
-2. **Read what's known about her interests**, if it exists:
-   `cat memory/interests.md`. This file is maintained automatically by a periodic
-   check (never by you, mid-conversation) from her own conversations — read-only
-   context here, same contract as `memory/preferences.md`.
+2. **Pick something genuinely fun and age-appropriate.** If `interests.md` shows a
+   clear theme, pick something ADJACENT and new within it rather than a repeat, and
+   check `ls Discoveries/` so you don't cover a topic she's just had. With no history
+   yet, pick something broadly delightful and a little surprising for her age — a
+   weird true animal fact, a space mystery, how an everyday thing actually works.
 
-3. **Pick a genuinely fun, age-appropriate topic.** If `memory/interests.md` shows
-   a clear theme she's responded well to (e.g. loved space, animals, how things
-   work), pick something ADJACENT and new within that theme — not a repeat. Check
-   `ls Discoveries/` for topics already covered recently so you don't repeat one.
-   With no interest history yet, pick something broadly delightful and a little
-   surprising for her age: a weird true animal fact, a space mystery, how an
-   everyday thing actually works, a strange bit of history — variety is fine
-   early on.
+3. **Build a short, fun, animated COVER page** in
+   `Discoveries/<Topic>/<yyyy-mm-dd>-<slug>/` (`<Topic>` is a short theme name like
+   "Space" or "Animals", or "General"). This is only the title card the parent hands
+   over — a fun title, one enticing teaser line, and a warm invitation ("Ready to
+   find out?"). Lean on animation and hover more than ordinary study material: this
+   page's whole job is to feel alive. It does NOT need to carry the discovery itself.
 
-4. **Create the activity folder** `Discoveries/<Topic>/<yyyy-mm-dd>-<slug>/` (date-stamp
-   with `date -u +%Y-%m-%d`; `<Topic>` is a short theme name like "Space" or
-   "Animals", or "General" if it doesn't fit one).
+4. **Finalize** the activity with `teaching_mode: "beginner"` (nothing here is being
+   tested) and a `goal` describing what finishing actually looks like — e.g. "get
+   through all the facts, hearing her guess for each one first, and end on the
+   closing question".
 
-5. **Build ONE short, fun, animated COVER page** — read `skills/_shared/html-design.md`
-   first (animation rules, and the SQ.choose pattern for any real choice). This
-   is the title card the parent sees and hands over — it does NOT need to
-   carry the whole discovery:
-   - A fun title + one enticing opening line/teaser for the topic.
-   - Use animation/hover generously — this page's whole job is to feel alive
-     and fun, more so than ordinary study material.
-   - A short, warm closing line inviting curiosity ("Ready to find out?").
-   Write it into the activity folder you created. The actual fact-by-fact
-   discovery — the guesses, the reveals, the "what should we explore next"
-   choices — happens turn by turn once handed off, via `show_scene` (see step
-   after next): that's what can use real SQ.choose buttons and follow
-   wherever the child's own curiosity takes it, which a page fixed at creation
-   time can't.
+5. **Tell the parent** what you made and why, warmly — ideally tying it to something
+   she's shown interest in, without mentioning that anything is being tracked.
 
-6. **Finalize and hand it off exactly like any other content** — call
-   `create_learning_activity` with the folder as `dir`, a short fun `title` (e.g.
-   "Something New!"), `items` = the page you wrote, `teaching_mode: "beginner"`
-   (there's nothing to test or hint at here), and a `goal` — what actually
-   finishing this discovery looks like (e.g. "get through all the facts, hear
-   her guess for each one first, and end on the closing question"). The
-   conversation WILL wander into her own tangents (that's good — engage with
-   them), but `goal` is what you keep steering back toward so the discovery
-   actually wraps up instead of drifting indefinitely. Then call
-   `open_activity(dir)` so the parent sees it immediately on the right, per
-   your main instructions. Do NOT call `open_file` directly or imply it's
-   already on her screen — the parent taps "Give to `<child>`" when ready, same
-   as a test or study guide.
+Never grade or score this. How well it landed is picked up automatically afterwards
+from her own conversations.
 
-7. **Tell the parent** in plain, warm words what you made and why (e.g. tying it
-   to something she's shown interest in) — never mention `memory/interests.md`,
-   file paths, or that you're "tracking" anything.
+## The discovery itself happens in chat, via show_scene
 
-Never grade or score this, never treat it like a lesson. How well it lands is
-learned automatically afterward from her own conversations — nothing you do here
-updates `memory/interests.md` directly.
+The cover page is just the opening. Once she starts, deliver each fact or beat as its
+own `show_scene`, generated fresh so it can follow HER reactions rather than a fixed
+script: the surprise, then — where it fits — an SQ.choose button offering a real next
+choice ("which do you think it is?", "what should we explore next?").
 
-## Once handed off — the actual discovery happens via show_scene
-
-The cover page from step 5 is just the title card. Once the child is handed
-off and starts chatting, deliver each fact/beat as its own `show_scene` —
-generated fresh, so it can follow HER reactions and tangents rather than a
-fixed script:
-- Each fact/beat: a small scene with the surprise, then (where it fits) an
-  SQ.choose button offering a real next choice — "what should we explore
-  next?", "which one do you think it is?" — never a `<details>` reveal.
-- If she takes it somewhere the original cover page never anticipated
-  (invents her own angle on the topic, asks to go a different direction),
-  follow her there — a fresh scene matching wherever she's actually taking it
-  beats forcing her back to a pre-planned sequence.
-- Keep `goal` as the loose anchor (see main instructions) — engage with
-  tangents, but steer back toward actually reaching some kind of closing
-  moment rather than drifting forever.
+If she takes it somewhere the cover page never anticipated, follow her there; a fresh
+scene matching where she's actually going beats forcing her back to a plan. Keep
+`goal` as the loose anchor — engage with tangents, but steer toward an actual closing
+moment rather than drifting forever.

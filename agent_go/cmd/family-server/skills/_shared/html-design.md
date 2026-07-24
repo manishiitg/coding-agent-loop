@@ -1,54 +1,42 @@
 # SparkQuill HTML design system
 
-Every HTML file the app generates (progress reports, academic map, study
-material, tests, and any other) MUST share this look so they feel like one
-product. Build a **complete standalone document** — inline everything, NO
-external assets, fonts, images, or network calls.
+Every HTML file the app generates (progress reports, academic map, study material,
+tests, and anything else) shares this look so they feel like one product. Build a
+**complete standalone document** — inline everything, no external assets, fonts,
+images, or network calls.
 
 ## Rules
-- Inline the CSS below in a `<style>` tag (adjust only where a skill asks).
-- **View-only, static HTML.** No `<input>`, `<textarea>`, `<select>`, or `<form>`
-  elements AT ALL — not even a plain, unscripted one. This is not just "no
-  auto-save JS": an empty text box with no script behind it is STILL wrong,
-  because the child will type into it expecting something to happen and
-  nothing will. If a page needs a "try it yourself" section, write the
-  question as plain text with blank space below it to work on paper — never
-  an on-screen box that looks fillable.
-  - BAD (never do this): `<input type="text" placeholder="Type your answer...">`
+
+- Inline the CSS below in a `<style>` tag; adjust only where a skill asks.
+- Warm, calm, encouraging, readable by a child. Rounded cards, generous spacing, one
+  clear title with the child's name and date. Only ever real data — never an invented
+  score.
+- **Make it visually engaging** — children respond to this far more than plain text.
+  Use CSS transitions and animation freely: a gentle fade-in on load, hover effects,
+  an animated diagram, a subtle progress-fill bar. These are passive: they play on
+  their own or on hover, with nothing to click.
+- **No form controls at all** — no `<input>`, `<textarea>`, `<select>`, or `<form>`,
+  not even an unscripted one. An empty text box is still wrong: the child will type
+  into it expecting something to happen, and nothing will. Write "try it yourself"
+  questions as plain text with space to work on paper.
+  - BAD: `<input type="text" placeholder="Type your answer...">`
   - GOOD: `<p><strong>1. What is 2/5 + 1/5?</strong></p><div class="answer-space"></div>`
-    (an empty `<div>` styled with height/border, not a form control)
-  It is a clean, well-designed document to read, not an app.
-- Warm, calm, encouraging — readable by a child. Never harsh.
-- Rounded cards, generous spacing, one clear title with the child's name + date.
-- Use only real data. Never invent scores.
-- **Make it visually engaging — children respond to this far more than plain text.**
-  Use CSS transitions/animations freely: a gentle fade/slide-in as the page loads,
-  hover effects on cards, an animated diagram or icon, a subtle progress-fill bar.
-  These are passive/decorative — they play automatically or on hover, nothing to
-  click.
-- **No click-to-REVEAL elements — no `<details>/<summary>`, no "tap to flip"
-  cards.** These silently show hidden content (a hint, an answer, a fun fact)
-  with no record of it happening — Quill never finds out the child looked, or
-  what she was even looking at. Write a "guess before you peek" moment as
-  plain text instead and let Quill prompt for the guess and reveal the answer
-  itself in chat.
-  - GOOD: `<p><strong>Guess: how many hearts does an octopus have?</strong></p>` (no reveal element) — Quill asks in chat, then reveals the fact in its own reply.
-  - BAD: `<details><summary>Reveal the answer</summary><p>Three hearts!</p></details>` — Quill never finds out she looked, or what she guessed.
-- **Click-to-CHOOSE elements are fine — but MUST use SQ.choose so Quill actually
-  sees the pick.** A page isn't stuck being non-interactive: a button
-  representing a genuine choice (which path, which answer, what to do next)
-  can call `parent.postMessage({__sq:1,op:'choose',text:'<exact message>'},'*')`
-  in its `onclick` — this sends that text to Quill exactly as if the child
-  typed it, so the choice becomes a real turn Quill responds to. A button
-  that does anything else (toggles local visibility, does nothing, or just
-  silently reveals something) is exactly as invisible to Quill as a
-  `<details>` reveal and is just as wrong.
+- **No click-to-REVEAL** — no `<details>/<summary>`, no tap-to-flip cards. They
+  silently show hidden content with no record it happened, so Quill never learns she
+  looked or what she guessed. Write the "guess before you peek" moment as plain text
+  and let Quill ask for the guess and reveal the answer in chat.
+  - BAD: `<details><summary>Reveal the answer</summary><p>Three hearts!</p></details>`
+- **Click-to-CHOOSE is welcome — via SQ.choose only.** A button representing a real
+  choice (which path, which answer, what next) sends its text to Quill exactly as if
+  the child typed it, making the choice a real turn Quill responds to. A button that
+  does anything else — toggling visibility, revealing something, nothing at all — is
+  as invisible to Quill as a `<details>` reveal, and just as wrong.
   - GOOD: `<button onclick="parent.postMessage({__sq:1,op:'choose',text:'Investigate Saturn'},'*')">Investigate Saturn</button>`
-  - BAD: `<button onclick="document.getElementById('a').style.display='block'">Show answer</button>` — Quill never knows this happened.
-- For content that changes turn-by-turn as the conversation actually unfolds
-  (not fixed at creation time) — see `show_scene` in your own instructions:
-  a small HTML snippet shown inline in a reply, generated fresh each time,
-  which can use the same SQ.choose pattern above.
+  - BAD: `<button onclick="document.getElementById('a').style.display='block'">Show answer</button>`
+- For content that should change turn by turn as the conversation unfolds — rather
+  than being fixed at creation time — use `show_scene` instead of this file: a small
+  snippet rendered inline in a reply, generated fresh, using the same SQ.choose
+  pattern.
 
 ## Base template
 
@@ -108,16 +96,9 @@ external assets, fonts, images, or network calls.
 </html>
 ```
 
-A parent can print any HTML page from the print icon in the app's viewer (next to
-refresh) — no button needs to be built into the generated page itself.
+Use `.card` for each section, `.badge` for marks or a "Current" tag, `.good`/`.focus`
+for going-well / to-practise, a `.grid` of `.card`s for the academic map's subjects,
+`.note` for honest caveats, and `.answered-note` for the tutor's progress marks.
 
-Use `.card` for each section, `.badge` for "Current", `.good`/`.focus` for going-well / to-practise,
-`.grid` of `.card`s for the academic map's subjects, and `.note` for honest caveats.
-
-A test is still a clean, well-formatted question sheet — numbered questions,
-marks as a `.badge`, blank space (or a printed line) under each question for
-working — it is just static: no answer box the page itself remembers. The
-child answers on paper or tells Quill in chat; that's how their work reaches
-their activity's own `attempts/` folder, and (editing the real file directly,
-via their shell — see childSystemPrompt) how a small `.answered-note` line
-ends up on the page itself, right under the question it belongs to.
+The parent can print any page from the print icon in the app's viewer — no print
+button belongs in the generated page itself.

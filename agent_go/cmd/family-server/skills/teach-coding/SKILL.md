@@ -5,84 +5,52 @@ description: Age/grade-appropriate approach for a coding/programming subject —
 
 # Teaching coding
 
-Coding is not like other subjects: the right material is very different by age, and
-—especially before high school— the goal is **computational thinking** (breaking a
+Coding is not like other subjects: the right material differs sharply by age, and
+— especially before high school — the goal is **computational thinking** (breaking a
 problem into steps, sequencing, loops, conditionals, spotting a logic error), not
-memorizing a programming language. A child who can confidently trace through and
-debug simple logic has learned the actually valuable skill, even if they've barely
-touched real syntax. Don't over-index on language features or "cover the syntax" —
-index on reasoning.
+memorizing a language. A child who can confidently trace and debug simple logic has
+learned the valuable skill even if she's barely touched real syntax. Index on
+reasoning, not on covering language features.
 
-Read `memory/child-profile.json` for grade, then match ONE of these bands:
+Read `memory/child-profile.json` for grade, then match ONE band:
 
-1. **Grade ~KG–2 (roughly ages 5–7): no real syntax on screen at all.** This age
-   needs hands-on, drag-and-drop tools (ScratchJr, code.org's earliest courses) —
-   a full coding tool cannot give them that here. Tell the parent this plainly
-   rather than faking it with text code a 6-year-old can't use. What you CAN
-   make: a CLICKABLE unplugged logic page (see the interactivity note below) —
-   click arrows/buttons to move a character step by step to a treasure, or tap
-   pictures into the right order — no code syntax anywhere, just sequencing as
-   a game.
+1. **Grade ~KG–2 (ages ~5–7): no syntax on screen at all.** This age needs
+   hands-on, drag-and-drop tools (ScratchJr, code.org's earliest courses), which
+   this app can't provide — tell the parent that plainly rather than faking it with
+   text code a 6-year-old can't use. What you CAN build: a clickable unplugged logic
+   page — move a character step by step to a treasure, or tap pictures into the right
+   order — sequencing as a game, no code anywhere.
 
-2. **Grade ~3–8 (roughly ages 8–13) — the default for most requests, logic FIRST,
-   MADE REAL through something she can actually click and see work.** The point
-   is computational thinking, with light syntax only as the vehicle to express
-   it — NOT language mastery. A page she can only read is far less exciting than
-   one she can interact with, so PREFER building a small, complete, ALREADY-WORKING
-   interactive mini-experience that embodies the concept, over a dry written
-   exercise:
-   - **Conditionals** → a click-through choose-your-own-adventure (click "go
-     left" / "go right", the story branches for real) — use SQ.choose for
-     these branch buttons (see the interactivity note below) so you actually
-     see which path she picked and can react to it in chat, not just let the
-     page silently show the other branch.
-   - **Sequencing** → a step-by-step character/robot that moves one click at a
-     time toward a goal, each click revealing the next step — plain
-     client-side JS is fine here, no real "choice" is being made.
-   - **Loops** → an on-screen counter or repeating animation she advances by
-     clicking "repeat", visibly showing the same action happening N times —
-     plain client-side JS.
-   - **Variables/state** → something simple that visibly changes and remembers
-     a value across clicks (a score, a health bar, an inventory count) — plain
-     client-side JS.
-   None of these ever use a text input for guesses/answers — turn "guess a
-   number" into "pick one of these 5 buttons" (with SQ.choose, since that's a
-   real choice) so it never needs a real form control.
-   Alongside the working demo, show the short, simplified logic/pseudocode
-   that drives it (a styled read-only block, e.g. "if left button clicked →
-   show the left path") so she connects *this reasoning* to *that behavior* —
-   the demo is a teaching tool for the logic, not a disconnected game.
-   Use the drier styles below as reinforcement AFTER the demo, not instead of it:
-   - "Predict the output" — a short snippet, ask what it prints/does, then explain why.
-   - "Find the bug" — a snippet with one deliberate logic error to spot and explain.
-   - "Trace it by hand" — walk through a loop or conditional step by step on paper.
-   Introduce only a FEW real constructs at a time and spend most of the material
-   on reasoning about them, not breadth of language features. This band is where
-   most requests for "coding for kids" land.
+2. **Grade ~3–8 (ages ~8–13) — the default for most requests. Logic first, made
+   real through something she can click and watch work.** A page she can only read
+   is far less alive than one that responds, so prefer building a small, complete,
+   already-working interactive demo that embodies the concept over a dry written
+   exercise. Conditionals suit a branching choose-your-own-adventure; sequencing, a
+   character that advances one step per click; loops, a counter or repeating
+   animation she drives; variables, something that visibly changes and remembers a
+   value across clicks.
 
-3. **Grade ~9–12 (roughly ages 14+): real code, real small projects.** Syntax
-   depth can grow and independent building matters more here, but problem-solving
-   and finishing something real still beats exhaustively covering language
-   features — favor small, complete projects (a simple game, a script that
-   solves a real small task) over syntax tours. The same "build something that
-   visibly works" instinct from band 2 still applies, just with more real syntax
-   shown alongside it.
+   Alongside the demo, show the short simplified pseudocode that drives it (a styled
+   read-only block, e.g. "if left button clicked → show the left path") so she
+   connects *this reasoning* to *that behaviour* — the demo teaches the logic, it
+   isn't a disconnected game. Then reinforce with the drier styles AFTER it, never
+   instead of it: "predict the output", "find the bug" (one deliberate logic error),
+   "trace it by hand". Introduce only a few constructs at a time.
 
-Format and the interactivity distinction (read `skills/_shared/html-design.md`
-first): the "no form controls" rule there (no `<input>`/`<textarea>`/`<select>`)
-still applies — build all clicking/branching with plain `<button>`s, never a
-text box. Buttons, branching content, and CSS animation are all explicitly
-welcome and are exactly what makes a coding demo feel real instead of a page
-to read — but per that skill, a `<details>` reveal is never OK (silently
-hides something with no record of it happening), and any button representing
-a genuine CHOICE (which path a conditional takes, a guess) must use SQ.choose
-so you actually see and can react to what she picked — a demo can also live
-in a `show_scene` snippet instead of the activity's one fixed file if you want
-it to adapt to a direction she takes the lesson in, not just play out a
-pre-written branch. Purely decorative motion (a counter animating, a sprite
-moving) can stay plain client-side JS with no SQ.choose needed — nothing is
-being chosen there. What remains genuinely out of scope is a live code EDITOR
-where she types and runs her OWN arbitrary code — this app has no
-code-execution engine; never build or imply one. Every demo here is pre-built
-by you and already working when she opens it, not something she programs
-herself.
+3. **Grade ~9–12 (ages ~14+): real code, real small projects.** Syntax depth and
+   independent building matter more here, but finishing something real still beats a
+   syntax tour — favour small complete projects (a simple game, a script that solves
+   an actual small task). The "build something that visibly works" instinct from band
+   2 still applies, just with more real syntax alongside it.
+
+**Interactivity** follows `skills/_shared/html-design.md` as-is: build clicking and
+branching with plain `<button>`s (never a text input), and any button representing a
+genuine CHOICE must use SQ.choose so you actually see what she picked. Purely
+decorative motion — a counter ticking, a sprite moving — is fine as plain client-side
+JS, since nothing is being chosen. A demo can also live in a `show_scene` snippet
+rather than the activity's fixed file when you want it to follow a direction she
+takes the lesson in.
+
+Out of scope: a live code EDITOR where she types and runs her own arbitrary code —
+this app has no code-execution engine, so never build or imply one. Every demo is
+pre-built by you and already working when she opens it.

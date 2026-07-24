@@ -15,14 +15,14 @@ func TestResolveDelegationTierConfigExpandsProviderProfile(t *testing.T) {
 	if resolved == nil {
 		t.Fatal("resolveDelegationTierConfig() = nil")
 	}
-	if resolved.Main == nil || resolved.Main.ModelID != "claude-opus-4-8" {
-		t.Fatalf("main = %+v, want claude-opus-4-8", resolved.Main)
+	if resolved.Main == nil || resolved.Main.ModelID != "claude-opus-5" {
+		t.Fatalf("main = %+v, want claude-opus-5", resolved.Main)
 	}
-	if got := resolved.Main.Options["reasoning_effort"]; got != "high" {
-		t.Fatalf("main reasoning_effort = %#v, want high", got)
+	if got := resolved.Main.Options["reasoning_effort"]; got != "medium" {
+		t.Fatalf("main reasoning_effort = %#v, want medium", got)
 	}
-	if resolved.ChiefOfStaff == nil || resolved.ChiefOfStaff.ModelID != "claude-opus-4-8" {
-		t.Fatalf("chief_of_staff = %+v, want claude-opus-4-8", resolved.ChiefOfStaff)
+	if resolved.ChiefOfStaff == nil || resolved.ChiefOfStaff.ModelID != "claude-opus-5" {
+		t.Fatalf("chief_of_staff = %+v, want claude-opus-5", resolved.ChiefOfStaff)
 	}
 	if resolved.High == nil || resolved.High.ModelID != "claude-sonnet-5" {
 		t.Fatalf("high = %+v, want claude-sonnet-5", resolved.High)

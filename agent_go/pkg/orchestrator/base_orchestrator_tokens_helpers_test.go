@@ -100,10 +100,11 @@ func TestResolvePricingProviderAndModelUsesClaudeCodeAliases(t *testing.T) {
 		model string
 		want  string
 	}{
-		{model: "", want: "claude-opus-4-8"},
-		{model: "auto", want: "claude-opus-4-8"},
-		{model: "claude-code", want: "claude-opus-4-8"},
-		{model: "opus", want: "claude-opus-4-8"},
+		{model: "", want: "claude-opus-5"},
+		{model: "auto", want: "claude-opus-5"},
+		{model: "claude-code", want: "claude-opus-5"},
+		{model: "opus", want: "claude-opus-5"},
+		{model: "Opus 5", want: "claude-opus-5"},
 		{model: "Opus 4.8", want: "claude-opus-4-8"},
 		{model: "claude-4.8-opus", want: "claude-opus-4-8"},
 		{model: "claude-opus-4-7", want: "claude-opus-4-7"},
@@ -157,8 +158,8 @@ func TestPricingMetadataCoversCodingAgentFrontierAliases(t *testing.T) {
 	if err != nil {
 		t.Fatalf("getModelMetadata(claude-code/opus): %v", err)
 	}
-	if opusMeta.ModelID != "claude-opus-4-8" || opusMeta.InputCostPer1MTokens != 5.00 || opusMeta.OutputCostPer1MTokens != 25.00 {
-		t.Fatalf("opus metadata = id %q in %.2f out %.2f, want claude-opus-4-8 5.00/25.00",
+	if opusMeta.ModelID != "claude-opus-5" || opusMeta.InputCostPer1MTokens != 5.00 || opusMeta.OutputCostPer1MTokens != 25.00 {
+		t.Fatalf("opus metadata = id %q in %.2f out %.2f, want claude-opus-5 5.00/25.00",
 			opusMeta.ModelID, opusMeta.InputCostPer1MTokens, opusMeta.OutputCostPer1MTokens)
 	}
 

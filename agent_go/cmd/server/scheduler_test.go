@@ -2503,8 +2503,15 @@ func TestApplyLLMAndSecretsToReqMapUsesCodingAgentAutoImproveDefaultForOptimizer
 	if got := primary["provider"]; got != "claude-code" {
 		t.Fatalf("provider = %#v, want claude-code", got)
 	}
-	if got := primary["model_id"]; got != "claude-opus-4-8" {
-		t.Fatalf("model_id = %#v, want claude-opus-4-8", got)
+	if got := primary["model_id"]; got != "claude-opus-5" {
+		t.Fatalf("model_id = %#v, want claude-opus-5", got)
+	}
+	options, ok := primary["options"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("options missing or wrong type: %#v", primary["options"])
+	}
+	if got := options["reasoning_effort"]; got != "medium" {
+		t.Fatalf("reasoning_effort = %#v, want medium", got)
 	}
 	if got := reqMap["llm_config_source"]; got != llmConfigSourceScheduledAutoImprove {
 		t.Fatalf("llm_config_source = %#v, want %q", got, llmConfigSourceScheduledAutoImprove)
@@ -3170,11 +3177,11 @@ func TestResolveChiefOfStaffLLMForScheduleUsesCodingAgentDefault(t *testing.T) {
 	if got == nil {
 		t.Fatal("resolveChiefOfStaffLLMForSchedule() = nil")
 	}
-	if got.Provider != "claude-code" || got.ModelID != "claude-opus-4-8" {
-		t.Fatalf("resolveChiefOfStaffLLMForSchedule() = %+v, want claude-code/claude-opus-4-8", got)
+	if got.Provider != "claude-code" || got.ModelID != "claude-opus-5" {
+		t.Fatalf("resolveChiefOfStaffLLMForSchedule() = %+v, want claude-code/claude-opus-5", got)
 	}
-	if got.Options["reasoning_effort"] != "high" {
-		t.Fatalf("reasoning_effort = %#v, want high", got.Options["reasoning_effort"])
+	if got.Options["reasoning_effort"] != "medium" {
+		t.Fatalf("reasoning_effort = %#v, want medium", got.Options["reasoning_effort"])
 	}
 }
 
@@ -3207,8 +3214,8 @@ func TestResolveChiefOfStaffLLMFromDelegationConfigUsesProviderDefault(t *testin
 	if got == nil {
 		t.Fatal("resolveChiefOfStaffLLMFromDelegationConfig() = nil")
 	}
-	if got.Provider != "claude-code" || got.ModelID != "claude-opus-4-8" {
-		t.Fatalf("resolveChiefOfStaffLLMFromDelegationConfig() = %+v, want claude-code/claude-opus-4-8", got)
+	if got.Provider != "claude-code" || got.ModelID != "claude-opus-5" {
+		t.Fatalf("resolveChiefOfStaffLLMFromDelegationConfig() = %+v, want claude-code/claude-opus-5", got)
 	}
 }
 

@@ -10,6 +10,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/manishiitg/coding-agent-loop/agent_go/internal/enginedetect"
@@ -118,7 +119,20 @@ func main() {
 	// http://127.0.0.1:<port>/. FAMILY_WEB_DIR points at the built dist. In dev
 	// (Vite on :5174) this is unset and the CORS allow-list handles cross-origin.
 	if webDir := strings.TrimSpace(os.Getenv("FAMILY_WEB_DIR")); webDir != "" {
-		mux.Handle("/", http.FileServer(http.Dir(webDir)))
+		files := http.FileServer(http.Dir(webDir))
+		mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+			// Serve index.html for any path that isn't a real file, so a
+			// reload or a stray deep link lands on the app instead of a bare
+			// 404. Missing ASSETS still 404 honestly (they're requested with
+			// an Accept that doesn't ask for HTML), which keeps a genuinely
+			// broken build visible instead of silently serving the shell.
+			clean := filepath.Join(webDir, filepath.Clean("/"+r.URL.Path))
+			if _, err := os.Stat(clean); err != nil && strings.Contains(r.Header.Get("Accept"), "text/html") {
+				http.ServeFile(w, r, filepath.Join(webDir, "index.html"))
+				return
+			}
+			files.ServeHTTP(w, r)
+		})
 		log.Printf("serving frontend from %s", webDir)
 	}
 

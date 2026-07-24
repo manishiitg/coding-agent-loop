@@ -1,0 +1,39 @@
+{
+  "name": "sparkquill-desktop",
+  "version": "0.1.0",
+  "description": "SparkQuill desktop app — family learning, on your own computer.",
+  "main": "main.js",
+  "private": true,
+  "repository": "github:manishiitg/coding-agent-loop",
+  "license": "UNLICENSED",
+  "scripts": {
+    "setup": "./dev-setup.sh",
+    "start": "npx electron .",
+    "build": "electron-builder --mac --arm64 --dir",
+    "dist": "electron-builder --mac --arm64 --publish always"
+  },
+  "dependencies": {
+    "detect-port": "^1.6.1"
+  },
+  "devDependencies": {
+    "electron": "^33.2.0",
+    "electron-builder": "^25.1.8"
+  },
+  "build": {
+    "appId": "com.sparkquill.desktop",
+    "productName": "SparkQuill",
+    "publish": ["github"],
+    "mac": {
+      "icon": "resources/icons/icon.png",
+      "category": "public.app-category.education",
+      "identity": null,
+      "target": ["dmg", "zip"]
+    },
+    "extraResources": [
+      { "from": "resources/family-server", "to": "family-server" },
+      { "from": "resources/web", "to": "web" },
+      { "from": "resources/icons", "to": "icons" }
+    ],
+    "files": ["main.js", "preload.js"]
+  }
+}

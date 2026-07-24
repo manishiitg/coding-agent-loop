@@ -1,0 +1,132 @@
+name: SparkQuill DMG
+
+# Separate from "Desktop DMG" (AgentWorks) on purpose: the two apps ship
+# independently, on their own tags, and neither should be blocked or
+# re-released by a change to the other.
+#
+# Tags are namespaced `sparkquill-v*` so they can't collide with AgentWorks'
+# plain `v*` tags in the same repo.
+on:
+  push:
+    branches:
+      - main
+      - codex/family-learning-prd
+    tags:
+      - 'sparkquill-v*'
+  pull_request:
+    paths:
+      - 'desktop-sparkquill/**'
+      - 'agent_go/cmd/family-server/**'
+      - 'frontend/learning-app/**'
+      - '.github/workflows/sparkquill-desktop.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: sparkquill-dmg-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  build:
+    runs-on: macos-15-intel
+    permissions:
+      # Only the tag build needs write, but the job is shared; the publish step
+      # itself is gated on the tag below.
+      contents: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Checkout MCPAgent dependency
+        uses: actions/checkout@v4
+        with:
+          repository: manishiitg/mcpagent
+          path: deps/mcpagent
+
+      - name: Checkout LLM provider dependency
+        uses: actions/checkout@v4
+        with:
+          repository: manishiitg/llm-provider-mcp
+          path: deps/multi-llm-provider-go
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.25.x'
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Build the frontend
+        working-directory: frontend/learning-app
+        run: |
+          npm ci
+          npm run build
+
+      - name: Stage the frontend into the app bundle
+        run: |
+          rm -rf desktop-sparkquill/resources/web
+          mkdir -p desktop-sparkquill/resources/web
+          cp -R frontend/learning-app/dist/. desktop-sparkquill/resources/web/
+
+      - name: Point Go at the checked-out dependencies
+        working-directory: agent_go
+        run: |
+          go mod edit -replace=github.com/manishiitg/mcpagent=../deps/mcpagent
+          go mod edit -replace=github.com/manishiitg/multi-llm-provider-go=../deps/multi-llm-provider-go
+          go mod download
+
+      - name: Build family-server
+        working-directory: agent_go
+        run: |
+          GOOS=darwin GOARCH=arm64 go build -o ../desktop-sparkquill/resources/family-server ./cmd/family-server/
+
+      - name: Install Electron dependencies
+        working-directory: desktop-sparkquill
+        run: npm ci
+
+      # --- pull request / branch: build only, keep the artifact ---------------
+      - name: Build the app (no publish)
+        if: ${{ !startsWith(github.ref, 'refs/tags/sparkquill-v') }}
+        working-directory: desktop-sparkquill
+        run: npx electron-builder --mac --arm64 --publish never
+
+      - name: Upload the artifact
+        if: ${{ !startsWith(github.ref, 'refs/tags/sparkquill-v') }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: sparkquill-dmg
+          path: |
+            desktop-sparkquill/dist/*.dmg
+            desktop-sparkquill/dist/*.zip
+          if-no-files-found: error
+          retention-days: 14
+
+      # --- tag: publish to the release ---------------------------------------
+      - name: Sync the version to the tag
+        if: startsWith(github.ref, 'refs/tags/sparkquill-v')
+        working-directory: desktop-sparkquill
+        run: |
+          VERSION="${GITHUB_REF#refs/tags/sparkquill-v}"
+          CURRENT="$(node -p "require('./package.json').version")"
+          # npm version errors if the target equals the current one, so only run
+          # it when it would actually change something.
+          if [ "$VERSION" != "$CURRENT" ]; then
+            npm version "$VERSION" --no-git-tag-version
+          fi
+
+      - name: Build and publish
+        if: startsWith(github.ref, 'refs/tags/sparkquill-v')
+        working-directory: desktop-sparkquill
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: npm run dist -- --arm64 --publish always

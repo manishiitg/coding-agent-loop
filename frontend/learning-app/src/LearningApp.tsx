@@ -67,7 +67,15 @@ import {
   type Activity,
 } from './stores'
 
-const FAMILY_API = (import.meta as { env?: { VITE_FAMILY_API?: string } }).env?.VITE_FAMILY_API ?? 'http://127.0.0.1:8010'
+// In the packaged desktop app the Go server serves this frontend itself, so the
+// API is same-origin — and must be read from the actual origin rather than a
+// fixed port, since the app falls forward to the next free port when 8010 is
+// taken (see desktop-sparkquill/main.js). The bridge only exists inside
+// Electron; in a browser this falls through to the dev default unchanged.
+const FAMILY_API =
+  (window as { sparkquill?: { apiBaseUrl(): string } }).sparkquill?.apiBaseUrl()
+  ?? (import.meta as { env?: { VITE_FAMILY_API?: string } }).env?.VITE_FAMILY_API
+  ?? 'http://127.0.0.1:8010'
 
 
 // autoGrowTextarea lets a composer grow with a long message instead of

@@ -1,0 +1,5 @@
+node_modules/
+dist/
+resources/family-server
+resources/web/
+*.log

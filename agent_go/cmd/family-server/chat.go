@@ -606,7 +606,7 @@ func handleParentMessage(w http.ResponseWriter, r *http.Request) {
 		StreamCallback: func(text string) {
 			statusHubs.publishDelta("parent:"+req.ConversationID, text)
 		},
-		Tools: withToolCallDebug(&debugMu, &debugCalls, withLiveStatus("parent:"+req.ConversationID, []agentsession.Tool{
+		Tools: withToolCallDebug(&debugMu, &debugCalls, "parent:"+req.ConversationID, withLiveStatus("parent:"+req.ConversationID, []agentsession.Tool{
 			setChildProfile, setParentLabel, openFile, openActivity,
 			createLearningActivityTool(childLabel, func(ev toolEvent) {
 				evMu.Lock()

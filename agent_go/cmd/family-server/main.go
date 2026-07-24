@@ -31,12 +31,17 @@ func main() {
 	// has to remember to set.
 	os.Setenv("NATIVE_WORKSPACE", "true")
 
-	// Opt into real content streaming for codex-cli's persistent-interactive
-	// (tmux) sessions — off by default in mcpagent/multi-llm-provider-go.
-	// Without this, agentsession.Config.StreamCallback never fires and every
+	// Opt into real content streaming for codex-cli's and cursor-cli's
+	// persistent-interactive (tmux) sessions — off by default in
+	// mcpagent/multi-llm-provider-go (codex tails its JSONL rollout file;
+	// cursor polls its own sqlite store.db — same idea, different source).
+	// Without these, agentsession.Config.StreamCallback never fires and every
 	// turn falls back to "reply only available once the whole turn finishes",
-	// exactly like before streaming existed.
+	// exactly like before streaming existed — which is also why tool-call
+	// events never appear mid-turn for that provider (they ride the same
+	// transcript tailer as the text stream).
 	os.Setenv("CODEX_CLI_STREAM_TRANSCRIPT", "1")
+	os.Setenv("CURSOR_CLI_STREAM_TRANSCRIPT", "1")
 
 	defaultPort := "8010"
 	if envPort := strings.TrimSpace(os.Getenv("FAMILY_PORT")); envPort != "" {

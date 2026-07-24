@@ -10,14 +10,17 @@ import (
 	"github.com/manishiitg/coding-agent-loop/agent_go/internal/agentsession"
 )
 
-// sseEvent is one message on a conversation's live stream — either a cosmetic
-// "what Quill is doing right now" status label (Type "status") or a real
-// content fragment of the reply as the model generates it (Type "delta").
-// Both share one connection/subscription per conversation since they're both
-// small, ordered, ephemeral signals for the SAME in-flight turn.
+// sseEvent is one message on a conversation's live stream: a cosmetic
+// "what Quill is doing right now" status label (Type "status"), a real
+// content fragment of the reply as the model generates it (Type "delta"), or
+// a raw tool-call event (Type "tool_call" — TEMPORARY debug visibility, see
+// tool_call_debug.go). All share one connection/subscription per conversation
+// since they're small, ordered, ephemeral signals for the SAME in-flight turn.
 type sseEvent struct {
 	Type string `json:"type"`
 	Text string `json:"text"`
+	Tool string `json:"tool,omitempty"`
+	Args string `json:"args,omitempty"`
 }
 
 // statusHub is a tiny in-memory pub-sub for live per-turn events, keyed by
@@ -43,6 +46,13 @@ func (h *statusHub) publish(conversationID, label string) {
 
 func (h *statusHub) publishDelta(conversationID, text string) {
 	h.publishEvent(conversationID, sseEvent{Type: "delta", Text: text})
+}
+
+// publishToolCall is the TEMPORARY tool-call visibility feature (see
+// tool_call_debug.go) — pushed live the moment a tool actually runs, so the
+// UI shows it right away instead of only once the whole turn finishes.
+func (h *statusHub) publishToolCall(conversationID, tool, args string) {
+	h.publishEvent(conversationID, sseEvent{Type: "tool_call", Tool: tool, Args: args})
 }
 
 func (h *statusHub) publishEvent(conversationID string, ev sseEvent) {

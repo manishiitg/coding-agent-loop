@@ -236,7 +236,7 @@ func handleChildMessage(w http.ResponseWriter, r *http.Request) {
 		StreamCallback: func(text string) {
 			statusHubs.publishDelta("child:"+activityDir, text)
 		},
-		Tools: withToolCallDebug(&debugMu, &debugCalls, withLiveStatus("child:"+activityDir, []agentsession.Tool{
+		Tools: withToolCallDebug(&debugMu, &debugCalls, "child:"+activityDir, withLiveStatus("child:"+activityDir, []agentsession.Tool{
 			childShellTool(), childOpenFile, childSuggestActions, celebrate, notifyTool(), childDiffPatchWorkspaceFileTool(), childReadImageTool(s.Engine),
 			childShowSceneTool(func(html string) {
 				sceneMu.Lock()

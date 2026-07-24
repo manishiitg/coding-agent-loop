@@ -372,6 +372,9 @@ html, body, #root { margin: 0; height: 100%; }
 .fl-package-detail-head h2 { margin: 0 0 4px; color: var(--heading); font-size: 1.05rem; }
 .fl-package-detail-actions { display: flex; align-items: center; gap: 8px; flex: 0 0 auto; }
 .fl-package-detail .fl-package-note { margin: 0 0 14px; }
+.fl-package-goal { margin: 0 12px 10px; padding: 10px 12px; background: #f5faf6; border: 1px solid #cfe8d6; border-left: 3px solid #79bd8f; border-radius: 10px; color: #2f5b40; font-size: var(--text-caption); line-height: 1.55; }
+.fl-package-goal strong { color: #1f7a4d; }
+.fl-package-detail .fl-package-goal { margin: 0 0 14px; }
 .fl-package-detail-items { display: flex; flex-direction: column; gap: 6px; }
 .fl-package-detail .fl-package-item { margin-left: 0; }
 /* Current assignment shown in the child's top bar — just the package name, so
@@ -540,7 +543,9 @@ body, .learning-app { -webkit-font-smoothing: antialiased; -moz-osx-font-smoothi
 .fl-file-item.has-preview:hover { transform: none; box-shadow: 0 1px 2px rgba(22, 34, 58, .04); }
 .fl-file-item.has-preview .fl-file-item-row { padding: 10px 14px; }
 .fl-item-preview { width: 100%; height: 220px; }
+.fl-item-preview.is-large { height: 520px; }
 .fl-item-preview-frame { display: block; width: 100%; height: 100%; border: 0; background: #fff; }
+.fl-item-preview-md { height: 100%; overflow-y: auto; padding: 14px 16px; background: #fff; font-size: var(--text-secondary); line-height: 1.6; }
 .fl-item-open-btn { position: absolute; top: 8px; right: 8px; z-index: 1; display: grid; place-items: center; width: 30px; height: 30px; border: 1px solid var(--line); border-radius: 999px; background: rgba(255, 255, 255, .92); color: var(--heading); cursor: pointer; box-shadow: 0 1px 4px rgba(22, 34, 58, .18); }
 .fl-item-open-btn:hover { background: #fff; box-shadow: 0 2px 8px rgba(22, 34, 58, .26); }
 

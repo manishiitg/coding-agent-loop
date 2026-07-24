@@ -69,13 +69,6 @@ import {
 
 const FAMILY_API = (import.meta as { env?: { VITE_FAMILY_API?: string } }).env?.VITE_FAMILY_API ?? 'http://127.0.0.1:8010'
 
-// TEMPORARY: turns the raw per-turn tool-call log (debug_tool_calls, from
-// chat.go/child.go's tool_call_debug.go) into small debug bubbles so tool
-// calls are visible live in the UI. Remove this, its call sites, and the
-// backend recorder together once no longer needed.
-function debugToolMsgs(calls?: { tool: string; args?: string }[]): ParentMsg[] {
-  return (calls ?? []).map((c) => ({ role: 'tool', tool: 'debug_call', text: c.tool + (c.args ? ' ' + c.args : '') }))
-}
 
 // autoGrowTextarea lets a composer grow with a long message instead of
 // staying a single row — resets to natural height first so it can shrink
@@ -245,27 +238,32 @@ function SceneFrame({ html }: { html: string }) {
   )
 }
 
-// ActivityItemPreview shows an activity item's actual HTML, at real (readable)
-// size, in a short scrollable box — so a parent can read a test/guide's real
-// content in place rather than just a filename. Falls back to a plain
-// icon+name row while loading, or for non-HTML items (images/PDF/markdown
-// already have their own list glyph, and aren't a page to peek into).
-function ActivityItemPreview({ path, name }: { path: string; name: string }) {
-  const [html, setHtml] = useState<string | null>(null)
+// ActivityItemPreview shows an activity item's actual content — HTML in a
+// sandboxed iframe, Markdown rendered in-page — at real (readable) size, in a
+// short scrollable box, so a parent can read a test/guide's real content in
+// place rather than just a filename. Falls back to a plain icon+name row
+// while loading, or for anything else (images/PDF already have their own
+// list glyph, and aren't a page to peek into). `large` gives it noticeably
+// more room — used when it's the only item in the activity, so there's
+// nothing else competing for space and more of the real content shows at once.
+function ActivityItemPreview({ path, name, large }: { path: string; name: string; large?: boolean }) {
+  const [content, setContent] = useState<{ kind: 'html' | 'md'; text: string } | null>(null)
   useEffect(() => {
     let cancelled = false
-    setHtml(null)
+    setContent(null)
     fetch(`${FAMILY_API}/api/workspace/file?path=${encodeURIComponent(path)}`)
       .then((res) => res.json())
       .then((d: { content?: string }) => {
         if (cancelled) return
-        const content = d.content ?? ''
-        setHtml(/^\s*<(!doctype|html)/i.test(content) ? rewriteRelativeAssetURLs(content, path) : null)
+        const raw = d.content ?? ''
+        if (/^\s*<(!doctype|html)/i.test(raw)) setContent({ kind: 'html', text: rewriteRelativeAssetURLs(raw, path) })
+        else if (/\.(md|markdown)$/i.test(path)) setContent({ kind: 'md', text: raw })
+        else setContent(null)
       })
-      .catch(() => { if (!cancelled) setHtml(null) })
+      .catch(() => { if (!cancelled) setContent(null) })
     return () => { cancelled = true }
   }, [path])
-  if (!html) {
+  if (!content) {
     return (
       <div className="fl-file-item-row">
         <FileGlyph name={name} size={15} />
@@ -274,8 +272,12 @@ function ActivityItemPreview({ path, name }: { path: string; name: string }) {
     )
   }
   return (
-    <div className="fl-item-preview">
-      <iframe className="fl-item-preview-frame" title="" sandbox="" srcDoc={html} />
+    <div className={`fl-item-preview${large ? ' is-large' : ''}`}>
+      {content.kind === 'html' ? (
+        <iframe className="fl-item-preview-frame" title="" sandbox="" srcDoc={content.text} />
+      ) : (
+        <div className="fl-item-preview-md"><Markdown text={content.text} /></div>
+      )}
     </div>
   )
 }
@@ -1284,8 +1286,17 @@ export default function LearningApp() {
     // makes the scroll stutter/lag behind instead of following the text.
     // 'auto' (instant) during streaming avoids that; 'smooth' is still nicer
     // for the normal, much-less-frequent case (a whole new message, a screen
-    // switch).
-    threadEndRef.current?.scrollIntoView({ behavior: streamingReply ? 'auto' : 'smooth', block: 'end' })
+    // switch). A turn that made MANY tool calls (each its own live debug
+    // bubble, see the SSE 'tool_call' handling below) can append a large
+    // batch of new DOM content in one go right as the turn finishes —
+    // scrolling in the SAME frame can measure
+    // a scrollHeight from before the browser has laid all of it out, landing
+    // short of the real bottom. rAF-deferring one frame lets layout settle
+    // first so the target position is measured against the final height.
+    const id = requestAnimationFrame(() => {
+      threadEndRef.current?.scrollIntoView({ behavior: streamingReply ? 'auto' : 'smooth', block: 'end' })
+    })
+    return () => cancelAnimationFrame(id)
   }, [parentMessages, sending, screen, streamingReply])
 
   // Same, for the child's own thread — this had no auto-scroll at all before,
@@ -1293,7 +1304,12 @@ export default function LearningApp() {
   // with no automatic scroll to reveal them.
   useEffect(() => {
     if (screen !== 'tutor') return
-    childThreadEndRef.current?.scrollIntoView({ behavior: childStreamingReply ? 'auto' : 'smooth', block: 'end' })
+    // See the parent effect above for why this is rAF-deferred — a turn with
+    // many tool calls can append a large batch of content in one go.
+    const id = requestAnimationFrame(() => {
+      childThreadEndRef.current?.scrollIntoView({ behavior: childStreamingReply ? 'auto' : 'smooth', block: 'end' })
+    })
+    return () => cancelAnimationFrame(id)
   }, [childMessages, childSending, screen, childStreamingReply])
 
   // Cycle a usable "how to use the chat" tip in the thinking indicator instead
@@ -1506,9 +1522,14 @@ export default function LearningApp() {
     const statusSource = new EventSource(`${FAMILY_API}/api/parent/status?conversation_id=${encodeURIComponent(conversationId)}`)
     statusSource.onmessage = (ev) => {
       try {
-        const parsed = JSON.parse(ev.data) as { type?: string; text?: string }
+        const parsed = JSON.parse(ev.data) as { type?: string; text?: string; tool?: string; args?: string }
         if (parsed.type === 'delta') setStreamingReply((cur) => cur + (parsed.text ?? ''))
         else if (parsed.type === 'status') setLiveStatus(parsed.text ?? '')
+        // TEMPORARY tool-call visibility, live as each call happens (not
+        // batched at the end) — see tool_call_debug.go.
+        else if (parsed.type === 'tool_call' && parsed.tool) {
+          setParentMessages((cur) => [...cur, { role: 'tool', tool: 'debug_call', text: parsed.tool + (parsed.args ? ' ' + parsed.args : '') }])
+        }
       } catch { /* ignore malformed event */ }
     }
     statusSource.onerror = () => statusSource.close()
@@ -1525,10 +1546,9 @@ export default function LearningApp() {
       body: JSON.stringify({ messages: history, conversation_id: conversationId, viewer_path: currentViewerPath || undefined }),
     })
       .then((res) => res.json())
-      .then((data: { reply?: string; error?: string; suggestions?: { label: string; message: string }[]; tool_events?: { tool: string; name?: string; grade?: string; board?: string; path?: string; parent_label?: string }[]; debug_tool_calls?: { tool: string; args?: string }[] }) => {
+      .then((data: { reply?: string; error?: string; suggestions?: { label: string; message: string }[]; tool_events?: { tool: string; name?: string; grade?: string; board?: string; path?: string; parent_label?: string }[] }) => {
         const events = data.tool_events ?? []
         const toolMsgs: ParentMsg[] = events.filter((e) => e.tool === 'set_child_profile').map((e) => ({ role: 'tool', tool: e.tool, name: e.name, grade: e.grade, board: e.board }))
-        const debugMsgs = debugToolMsgs(data.debug_tool_calls)
         const cp = events.find((e) => e.tool === 'set_child_profile')
         if (cp) { if (cp.name) setChildName(cp.name); if (cp.grade) setGrade(cp.grade); if (cp.board) setBoard(cp.board) }
         const pl = events.find((e) => e.tool === 'set_parent_label' && e.parent_label)
@@ -1541,7 +1561,7 @@ export default function LearningApp() {
         // until the parent notices and clicks the (easy-to-miss) chevron.
         if (op?.path) { setDrawerTab('files'); setViewerPath(null); setViewerActivityDir(op.path); setExpandedActivity(op.path) }
         setSuggestions(data.suggestions ?? [])
-        setParentMessages((cur) => [...cur, ...debugMsgs, ...toolMsgs, { role: 'assistant', text: data.error ? `Sorry — ${data.error}` : (data.reply || '(no response)') }])
+        setParentMessages((cur) => [...cur, ...toolMsgs, { role: 'assistant', text: data.error ? `Sorry — ${data.error}` : (data.reply || '(no response)') }])
       })
       .catch(() => setParentMessages((cur) => [...cur, { role: 'assistant', text: 'Sorry — I couldn’t reach the learning engine.' }]))
       .finally(() => { setSending(false); setLiveStatus(''); setStreamingReply(''); statusSource.close(); setMapRefreshKey((k) => k + 1) })
@@ -1614,11 +1634,14 @@ export default function LearningApp() {
     setChildStreamingReply('')
     const statusSource = new EventSource(`${FAMILY_API}/api/child/status?conversation_id=${encodeURIComponent(convId)}`)
     statusSource.onmessage = (ev) => {
-      // Same JSON envelope as the parent stream ({type:"status"|"delta",text}).
+      // Same JSON envelope as the parent stream ({type:"status"|"delta"|"tool_call",text,tool,args}).
       try {
-        const parsed = JSON.parse(ev.data) as { type?: string; text?: string }
+        const parsed = JSON.parse(ev.data) as { type?: string; text?: string; tool?: string; args?: string }
         if (parsed.type === 'delta') setChildStreamingReply((cur) => cur + (parsed.text ?? ''))
         else if (parsed.type === 'status') setChildLiveStatus(parsed.text ?? '')
+        else if (parsed.type === 'tool_call' && parsed.tool) {
+          setChildMessages((cur) => [...cur, { role: 'tool', tool: 'debug_call', text: parsed.tool + (parsed.args ? ' ' + parsed.args : '') }])
+        }
       } catch { /* ignore malformed event */ }
     }
     statusSource.onerror = () => statusSource.close()
@@ -1632,15 +1655,14 @@ export default function LearningApp() {
       body: JSON.stringify({ messages: history, conversation_id: convId }),
     })
       .then((res) => res.json())
-      .then((data: { reply?: string; error?: string; tool_events?: { tool: string; path?: string; stars?: number; total?: number; reason?: string }[]; suggestions?: ChildSuggestion[]; debug_tool_calls?: { tool: string; args?: string }[]; scene?: string }) => {
+      .then((data: { reply?: string; error?: string; tool_events?: { tool: string; path?: string; stars?: number; total?: number; reason?: string }[]; suggestions?: ChildSuggestion[]; scene?: string }) => {
         const events = data.tool_events ?? []
         const of = events.find((e) => e.tool === 'open_file' && e.path)
         if (of?.path) { setChildViewerPath(of.path); setChildViewerRefreshKey((k) => k + 1) }
         const cel = events.find((e) => e.tool === 'celebrate')
-        const debugMsgs = debugToolMsgs(data.debug_tool_calls)
         setChildSuggestions(data.suggestions ?? [])
         setChildMessages((cur) => {
-          const next: ParentMsg[] = [...cur, ...debugMsgs, { role: 'assistant', text: data.error ? `Hmm, something went wrong — ${data.error}` : (data.reply || '(no response)') }]
+          const next: ParentMsg[] = [...cur, { role: 'assistant', text: data.error ? `Hmm, something went wrong — ${data.error}` : (data.reply || '(no response)') }]
           if (cel) next.push({ role: 'tool', tool: 'celebrate', stars: cel.stars ?? 1, reason: cel.reason ?? '' })
           if (data.scene) next.push({ role: 'tool', tool: 'scene', html: data.scene })
           return next
@@ -1685,18 +1707,17 @@ export default function LearningApp() {
       body: JSON.stringify({ messages: history, conversation_id: convId }),
     })
       .then((res) => res.json())
-      .then((data: { reply?: string; error?: string; tool_events?: { tool: string; path?: string; stars?: number; total?: number; reason?: string }[]; suggestions?: ChildSuggestion[]; debug_tool_calls?: { tool: string; args?: string }[]; scene?: string }) => {
+      .then((data: { reply?: string; error?: string; tool_events?: { tool: string; path?: string; stars?: number; total?: number; reason?: string }[]; suggestions?: ChildSuggestion[]; scene?: string }) => {
         const events = data.tool_events ?? []
         const of = events.find((e) => e.tool === 'open_file' && e.path)
         if (of?.path) { setChildViewerPath(of.path); setChildViewerRefreshKey((k) => k + 1) }
         const cel = events.find((e) => e.tool === 'celebrate')
-        const debugMsgs = debugToolMsgs(data.debug_tool_calls)
         setChildSuggestions(data.suggestions ?? [])
         // Append to base (not hidden) — the synthetic kickoff message never
         // joins the visible thread, only Quill's real reply (and any debug
         // tool-call bubbles / scene) do.
         setChildMessages((cur) => {
-          const next: ParentMsg[] = [...cur, ...debugMsgs, { role: 'assistant', text: data.error ? `Hmm, something went wrong — ${data.error}` : (data.reply || '(no response)') }]
+          const next: ParentMsg[] = [...cur, { role: 'assistant', text: data.error ? `Hmm, something went wrong — ${data.error}` : (data.reply || '(no response)') }]
           if (cel) next.push({ role: 'tool', tool: 'celebrate', stars: cel.stars ?? 1, reason: cel.reason ?? '' })
           if (data.scene) next.push({ role: 'tool', tool: 'scene', html: data.scene })
           return next
@@ -2075,7 +2096,7 @@ export default function LearningApp() {
               {parentMessages.map((m, i) => {
                 if (m.role === 'tool') {
                   if (m.tool === 'debug_call') {
-                    // TEMPORARY: raw tool-call visibility, see debugToolMsgs.
+                    // TEMPORARY: raw tool-call visibility, live via SSE tool_call events.
                     return <div key={i} className="fl-debug-call">🔧 {m.text}</div>
                   }
                   if (m.tool === 'upload' || m.tool === 'upload_error') {
@@ -2282,6 +2303,14 @@ export default function LearningApp() {
                         that list, unchanged. */}
                     <button className="fl-viewer-back" type="button" onClick={() => setViewerPath(null)}><ArrowLeft size={15} /> Files</button>
                     <span className="fl-viewer-name">{viewerPath.split('/').pop()}</span>
+                    {viewerActivityDir && (() => {
+                      const act = activities.find((a) => a.dir === viewerActivityDir)
+                      return act ? (
+                        <button className="fl-give-to-child" type="button" disabled={sending} onClick={() => startActivityHandoff(act.dir, act.title)}>
+                          Give to {childName || 'child'}
+                        </button>
+                      ) : null
+                    })()}
                     <button
                       className="fl-icon-btn"
                       type="button"
@@ -2390,11 +2419,12 @@ export default function LearningApp() {
                         </div>
                       </div>
                       {(act.items.length === 0 || expanded) && act.guide_note && <p className="fl-package-note">{act.guide_note}</p>}
+                      {(act.items.length === 0 || expanded) && act.goal && <p className="fl-package-goal"><strong>Goal:</strong> {act.goal}</p>}
                       {expanded && act.items.length > 0 && (
                         <div className="fl-package-detail-items">
                           {act.items.map((item) => (
                             <div key={item.path} className="fl-file-item fl-package-item has-preview">
-                              <ActivityItemPreview path={item.path} name={item.name} />
+                              <ActivityItemPreview path={item.path} name={item.name} large={act.items.length === 1} />
                               <button
                                 type="button"
                                 className="fl-item-open-btn"
@@ -2478,9 +2508,10 @@ export default function LearningApp() {
                             )}
                           </div>
                           {(act.items.length === 0 || expanded) && act.guide_note && <p className="fl-package-note">{act.guide_note}</p>}
+                      {(act.items.length === 0 || expanded) && act.goal && <p className="fl-package-goal"><strong>Goal:</strong> {act.goal}</p>}
                           {expanded && act.items.map((item) => (
                             <div key={item.path} className="fl-file-item fl-package-item has-preview">
-                              <ActivityItemPreview path={item.path} name={item.name} />
+                              <ActivityItemPreview path={item.path} name={item.name} large={act.items.length === 1} />
                               <button
                                 type="button"
                                 className="fl-item-open-btn"
@@ -2888,7 +2919,7 @@ export default function LearningApp() {
               </header>
               <div className="fl-child-thread" aria-label="Tutor conversation">
                 {childMessages.map((m, i) => (
-                  // TEMPORARY: raw tool-call visibility, see debugToolMsgs.
+                  // TEMPORARY: raw tool-call visibility, live via SSE tool_call events.
                   m.role === 'tool' && m.tool === 'debug_call' ? (
                     <div key={i} className="fl-debug-call">🔧 {m.text}</div>
                   ) : m.role === 'tool' && (m.tool === 'upload' || m.tool === 'upload_error') ? (

@@ -20,17 +20,23 @@ type debugToolCall struct {
 
 // withToolCallDebug wraps every tool's Handler to record its name plus a short
 // args summary before running it — regardless of whether the tool also has a
-// withLiveStatus label. Purely observational: never changes a tool's behavior,
-// arguments, or return value.
-func withToolCallDebug(mu *sync.Mutex, calls *[]debugToolCall, tools []agentsession.Tool) []agentsession.Tool {
+// withLiveStatus label — AND publish it live on conversationID's SSE status
+// stream (see statusHub.publishToolCall) so the UI shows each call the moment
+// it happens instead of only once the whole turn finishes (a turn with many
+// tool calls could otherwise look totally silent for minutes, then dump every
+// debug bubble at once right at the end). Purely observational: never changes
+// a tool's behavior, arguments, or return value.
+func withToolCallDebug(mu *sync.Mutex, calls *[]debugToolCall, conversationID string, tools []agentsession.Tool) []agentsession.Tool {
 	out := make([]agentsession.Tool, len(tools))
 	for i, t := range tools {
 		name := t.Name
 		orig := t.Handler
 		t.Handler = func(ctx context.Context, args map[string]interface{}) (string, error) {
+			argSummary := summarizeToolArgs(args)
 			mu.Lock()
-			*calls = append(*calls, debugToolCall{Tool: name, Args: summarizeToolArgs(args)})
+			*calls = append(*calls, debugToolCall{Tool: name, Args: argSummary})
 			mu.Unlock()
+			statusHubs.publishToolCall(conversationID, name, argSummary)
 			return orig(ctx, args)
 		}
 		out[i] = t

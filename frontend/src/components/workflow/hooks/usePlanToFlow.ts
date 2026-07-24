@@ -2,7 +2,7 @@ import { useMemo, useRef, useEffect } from 'react'
 import type { Node, Edge } from '@xyflow/react'
 import dagre from 'dagre'
 import type { PlanStep, PlanningResponse, AgentLLMConfig, ValidationSchema, RoutingRoute, MessageSequenceItem } from '../../../utils/stepConfigMatching'
-import { isHumanInputStep, isTodoTaskStep, isRoutingStep, isMessageSequenceStep } from '../../../utils/stepConfigMatching'
+import { isHumanInputStep, isTodoTaskStep, isRoutingStep, isMessageSequenceStep, isRegularStep } from '../../../utils/stepConfigMatching'
 import type { ChangeType, PlanChanges } from './usePlanData'
 import type { VariablesManifest, EvaluationStep } from '../../../services/api-types'
 import type { VariablesNodeData } from '../nodes/VariablesNode'
@@ -1366,18 +1366,18 @@ function processSteps(
       lastExitNodeId = null
     }
 
-    // Handle message_sequence step next_step_id: draw an EXPLICIT edge to the
-    // target. Without this, a sequence's next_step_id only connected via array
-    // order, so when several routes' sequences all point at the same downstream
+    // Handle scripted and message_sequence next_step_id: draw an EXPLICIT edge to the
+    // target. Without this, a step's next_step_id only connected via array
+    // order, so when several route steps all point at the same downstream
     // step (e.g. each portal -> normalize), only the last one linked and the
-    // shared step looked unconnected. Now every sequence draws its own edge, so
+    // shared step looked unconnected. Now every explicit successor draws its own edge, so
     // the convergence (shared finish line) is visible.
-    if (isMessageSequenceStep(step) && step.next_step_id) {
+    if ((isMessageSequenceStep(step) || isRegularStep(step)) && step.next_step_id) {
       const sourceNodeId = (typeof lastExitNodeId === 'string' ? lastExitNodeId : node.id)
       const targetNodeId = step.next_step_id === 'end' ? 'end' : stepIdToNodeIdMap?.get(step.next_step_id)
       if (targetNodeId) {
         edges.push({
-          id: `${sourceNodeId}-msgseq-next-to-${targetNodeId}`,
+          id: `${sourceNodeId}-${isRegularStep(step) ? 'scripted' : 'msgseq'}-next-to-${targetNodeId}`,
           source: sourceNodeId,
           target: targetNodeId,
           type: 'smoothstep',

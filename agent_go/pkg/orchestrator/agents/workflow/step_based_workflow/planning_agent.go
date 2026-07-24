@@ -309,6 +309,7 @@ type PlanStepInterface interface {
 type RegularPlanStep struct {
 	Type StepType `json:"type"` // Always "regular" - required for JSON marshaling/unmarshaling
 	CommonStepFields
+	NextStepID      string        `json:"next_step_id,omitempty"`     // Optional explicit successor; empty preserves sequential execution
 	HasLoop         bool          `json:"has_loop"`                   // DEPRECATED: loop feature removed, kept for JSON backward compatibility
 	LoopCondition   string        `json:"loop_condition,omitempty"`   // DEPRECATED: loop feature removed
 	MaxIterations   int           `json:"max_iterations,omitempty"`   // DEPRECATED: loop feature removed
@@ -1015,6 +1016,10 @@ func getUpdateRegularStepSchema() string {
 							"type": "string",
 							"description": "OPTIONAL: Updated context output. Only include if you want to change it. If omitted, the existing context output is preserved."
 						},
+						"next_step_id": {
+							"type": "string",
+							"description": "OPTIONAL: Explicit next scripted or shared step ID, or 'end'. Omit to preserve sequential execution."
+						},
 						"reason": {
 							"type": "string",
 							"description": "REQUIRED: One-sentence rationale for why this change is being made. Captured into the plan changelog. Be specific — 'tighten validation' is weak; 'add validation_schema for context_output to catch upstream JSON-shape regressions surfaced in iteration-3' is good."
@@ -1078,6 +1083,10 @@ func getAddRegularStepSchema() string {
 			"context_output": {
 				"type": "string",
 				"description": "OPTIONAL: The context file this step creates for subsequent steps - e.g., 'step_1_results.json'. OMIT IT when the step's real output is the db (db/db.sqlite) — then validate the step with validation_schema.db instead of a file, and downstream steps read the db; this avoids a hand-written receipt file that drifts from the db. Provide it when a downstream step needs the result injected via context_dependencies, or you want a small file artifact. Execution agents work ONLY in the execution folder, so the file is written there. Keep JSON files SMALL (< 100KB); put large text (logs, content > 1KB) in a separate markdown file and reference it from JSON. JSON should hold structured data: counts, IDs, status, file references, brief summaries."
+			},
+			"next_step_id": {
+				"type": "string",
+				"description": "OPTIONAL: Explicit next scripted or shared step ID, or 'end'. Use this to chain multiple scripted steps within one route and converge without falling through into sibling routes. Omit for sequential execution."
 			},
 			"insert_after_step_id": {
 				"type": "string",
@@ -2456,6 +2465,9 @@ func mergePartialStepUpdate(existingStep PlanStepInterface, partialUpdate Partia
 		if partialUpdate.ContextOutput != "" {
 			updated.ContextOutput = FlexibleContextOutput(partialUpdate.ContextOutput)
 		}
+		if partialUpdate.NextStepID != "" {
+			updated.NextStepID = partialUpdate.NextStepID
+		}
 		// Loop fields ignored (feature removed)
 		if partialUpdate.ValidationSchema != nil {
 			updated.ValidationSchema = partialUpdate.ValidationSchema
@@ -2886,6 +2898,8 @@ func updateSingleStep(plan *PlanningResponse, partialUpdate PartialPlanStep, fie
 		changedFields = append(changedFields, "next_step_id")
 		oldNextStepID := ""
 		switch step := existingStep.(type) {
+		case *RegularPlanStep:
+			oldNextStepID = step.NextStepID
 		case *TodoTaskPlanStep:
 			oldNextStepID = step.NextStepID
 		case *HumanInputPlanStep:
@@ -4645,7 +4659,7 @@ func registerPlanModificationTools(
 	}
 	if err := mcpAgent.RegisterCustomTool(
 		"update_scripted_step",
-		"Update an existing deterministic scripted step. The internal plan type remains regular, but this tool only edits a checked-in script boundary implemented by learnings/<step-id>/main.py. Provide existing_step_id and only the contract fields to change. Do not use it for conversational or judgment-heavy work; those steps must be message_sequence. The plan is updated immediately. After a substantive change, update and test main.py and review whether validation, learnings, and downstream consumers still match the contract; run get_workflow_command_guidance(kind=\"review-artifact-drift\").",
+		"Update an existing deterministic scripted step. The internal plan type remains regular, but this tool only edits a checked-in script boundary implemented by learnings/<step-id>/main.py. Provide existing_step_id and only the contract fields to change. Use next_step_id to chain scripted steps inside a selected route and make the final script converge on a shared downstream step. Do not use it for conversational or judgment-heavy work; those steps must be message_sequence. The plan is updated immediately. After a substantive change, update and test main.py and review whether validation, learnings, and downstream consumers still match the contract; run get_workflow_command_guidance(kind=\"review-artifact-drift\").",
 		regularUpdateParams,
 		createUpdateRegularStepExecutor(workspacePath, logger, readFile, writeFile, unlockLearningsFunc),
 		"workflow",
@@ -4713,7 +4727,7 @@ func registerPlanModificationTools(
 	}
 	if err := mcpAgent.RegisterCustomTool(
 		"add_scripted_step",
-		"Add a deterministic scripted execution step. Use only for fixed API/SDK calls, CLI commands, known pagination, stable parsing/normalization/transforms, or mechanical persistence that share one source/auth/retry/output contract. The internal plan type is regular, but the backend always configures this step as declared_execution_mode=scripted. This tool does not create an LLM step and does not convert prose into code: author and test learnings/<step-id>/main.py before production. Use add_message_sequence_step for every conversational or judgment-heavy task, including one-turn work. Give the script an authoritative DB or explicit file output, freshness/provenance, fail-closed errors, idempotency where relevant, and deterministic validation. The plan and step config are updated immediately.",
+		"Add a deterministic scripted execution step. Use only for fixed API/SDK calls, CLI commands, known pagination, stable parsing/normalization/transforms, or mechanical persistence that share one source/auth/retry/output contract. The internal plan type is regular, but the backend always configures this step as declared_execution_mode=scripted. Use next_step_id to chain multiple scripts within one selected route and point the final script at the shared convergence step; omit it for legacy sequential execution. This tool does not create an LLM step and does not convert prose into code: author and test learnings/<step-id>/main.py before production. Use add_message_sequence_step for every conversational or judgment-heavy task, including one-turn work. Give the script an authoritative DB or explicit file output, freshness/provenance, fail-closed errors, idempotency where relevant, and deterministic validation. The plan and step config are updated immediately.",
 		regularParams,
 		createAddRegularStepExecutor(workspacePath, logger, readFile, writeFile, moveFile, unlockLearningsFunc),
 		"workflow",

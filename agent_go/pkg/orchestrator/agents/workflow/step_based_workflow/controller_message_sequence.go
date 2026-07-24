@@ -83,6 +83,7 @@ func normalizeRegularStepToMessageSequence(step *RegularPlanStep) *MessageSequen
 	return &MessageSequencePlanStep{
 		Type:             StepTypeMessageSeq,
 		CommonStepFields: step.CommonStepFields,
+		NextStepID:       step.NextStepID,
 		Items: []MessageSequenceItem{{
 			ID:   normalizedRegularSequenceItemID,
 			Type: "user_message",

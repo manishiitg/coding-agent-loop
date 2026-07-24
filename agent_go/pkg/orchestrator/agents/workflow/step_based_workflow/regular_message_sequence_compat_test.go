@@ -1,6 +1,9 @@
 package step_based_workflow
 
-import "testing"
+import (
+	"encoding/json"
+	"testing"
+)
 
 func TestScriptedToolNamesArePlanMutationsAndLegacyNamesAreNot(t *testing.T) {
 	for _, name := range []string{"add_scripted_step", "update_scripted_step"} {
@@ -12,6 +15,47 @@ func TestScriptedToolNamesArePlanMutationsAndLegacyNamesAreNot(t *testing.T) {
 		if IsPlanModificationTool(name) {
 			t.Fatalf("legacy authoring tool %q must not remain callable", name)
 		}
+	}
+}
+
+func TestScriptedToolSchemasExposeNextStepID(t *testing.T) {
+	for name, schema := range map[string]string{
+		"add_scripted_step":    getAddRegularStepSchema(),
+		"update_scripted_step": getUpdateRegularStepSchema(),
+	} {
+		var decoded struct {
+			Properties map[string]json.RawMessage `json:"properties"`
+		}
+		if err := json.Unmarshal([]byte(schema), &decoded); err != nil {
+			t.Fatalf("%s schema is invalid JSON: %v", name, err)
+		}
+		if _, ok := decoded.Properties["next_step_id"]; !ok {
+			t.Fatalf("%s schema does not expose next_step_id", name)
+		}
+	}
+}
+
+func TestScriptedStepNextStepIDRoundTripAndUpdate(t *testing.T) {
+	original := &RegularPlanStep{
+		Type:             StepTypeRegular,
+		CommonStepFields: CommonStepFields{ID: "script-a"},
+		NextStepID:       "script-b",
+	}
+	data, err := json.Marshal(original)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var decoded RegularPlanStep
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if decoded.NextStepID != "script-b" {
+		t.Fatalf("round-trip next_step_id = %q", decoded.NextStepID)
+	}
+
+	updated := mergePartialStepUpdate(original, PartialPlanStep{NextStepID: "shared"}).(*RegularPlanStep)
+	if updated.NextStepID != "shared" {
+		t.Fatalf("updated next_step_id = %q, want shared", updated.NextStepID)
 	}
 }
 
@@ -50,6 +94,7 @@ func TestNonScriptedRegularStepNormalizesToMessageSequence(t *testing.T) {
 			ContextOutput:       FlexibleContextOutput("analysis.json"),
 			ValidationSchema:    validation,
 		},
+		NextStepID:   "shared",
 		AgentConfigs: config,
 	}
 
@@ -65,6 +110,9 @@ func TestNonScriptedRegularStepNormalizesToMessageSequence(t *testing.T) {
 	}
 	if sequence.ContextOutput != regular.ContextOutput || sequence.ValidationSchema != validation || sequence.AgentConfigs != config {
 		t.Fatal("normalization did not preserve output, validation, or agent configuration")
+	}
+	if sequence.NextStepID != "shared" {
+		t.Fatalf("normalization lost next_step_id: %q", sequence.NextStepID)
 	}
 	if len(sequence.Items) != 1 || sequence.Items[0].ID != normalizedRegularSequenceItemID || sequence.Items[0].Type != "user_message" {
 		t.Fatalf("expected one normalized work turn, got %#v", sequence.Items)

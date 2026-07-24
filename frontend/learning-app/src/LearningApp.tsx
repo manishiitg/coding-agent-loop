@@ -19,6 +19,7 @@ import {
   BookOpen,
   Check,
   CheckCircle2,
+  ChevronDown,
   ExternalLink,
   FileArchive,
   FileCode,
@@ -144,6 +145,28 @@ function readTheme(): Theme {
 }
 function persistTheme(t: Theme) {
   try { localStorage.setItem(THEME_KEY, t) } catch { /* best-effort */ }
+}
+
+// rewriteRelativeAssetURLs fixes a bug in how generated HTML pages are
+// previewed: the viewer renders HTML via <iframe srcDoc={...}> (raw markup
+// injected directly, not loaded as a real document at its own URL), so it has
+// no base URL matching the file's actual folder on disk. A page that does
+// exactly what its own skill tells it to — save an illustration next to the
+// page and reference it with a plain relative `<img src="foo.png">` — silently
+// fails to load the image (the browser resolves "foo.png" against the SPA's
+// own URL, gets a 404, and falls back to showing the alt text in its place).
+// Rewrites bare-relative src="..." references (skipping absolute/data/anchor
+// URLs, which are already fine) into the real /api/workspace/raw endpoint for
+// that exact file, resolved against the HTML file's own directory.
+function rewriteRelativeAssetURLs(html: string, filePath: string): string {
+  if (!/^\s*<(!doctype|html)/i.test(html)) return html
+  const dir = filePath.includes('/') ? filePath.slice(0, filePath.lastIndexOf('/')) : ''
+  return html.replace(/\bsrc=(["'])(.*?)\1/gi, (whole, quote: string, ref: string) => {
+    if (/^(https?:)?\/\//i.test(ref) || ref.startsWith('/') || ref.startsWith('data:') || ref.startsWith('#')) return whole
+    const resolved = dir ? `${dir}/${ref}` : ref
+    const url = `${FAMILY_API}/api/workspace/raw?path=${encodeURIComponent(resolved)}`
+    return `src=${quote}${url}${quote}`
+  })
 }
 
 // workspaceRelativePath converts a link the agent wrote pointing at a
@@ -294,7 +317,7 @@ const PARENT_WAIT_HINTS = [
   'Tip: ask "How is my child doing so far?" anytime for an evidence-based read of their progress.',
   'Tip: once a test or guide is ready, use the "Give to child" button to hand it over.',
   'Tip: tell Quill how you want tutoring handled — e.g. "give one hint before the answer" — and it remembers.',
-  'Tip: ask for several things at once — "make a guide, a quick test, and an advanced one" — bundled as one package.',
+  'Tip: ask for several things at once — "make a guide, a quick test, and an advanced one" — bundled as one activity.',
   'Tip: Quill can look up board-specific tips and exam strategies — just ask.',
   'Tip: you can ask Quill to explain a topic to you, not just make material for your child.',
   'Tip: connect Gmail in Connectors, then just ask "did the school email anything?" — Quill checks for you.',
@@ -564,8 +587,6 @@ export default function LearningApp() {
   const setStreamingReply = useParentChatStore((s) => s.setStreamingReply)
   const suggestions = useParentChatStore((s) => s.suggestions)
   const setSuggestions = useParentChatStore((s) => s.setSuggestions)
-  const pendingHandoff = useParentChatStore((s) => s.pendingHandoff)
-  const setPendingHandoff = useParentChatStore((s) => s.setPendingHandoff)
   // Before actually switching into Child Mode, ask the parent whether to
   // continue Myra's existing conversation or start a brand-new one — handing
   // off a package often means "just carry on the same chat", not a fresh
@@ -744,13 +765,20 @@ export default function LearningApp() {
   const setViewerRefreshKey = useWorkspaceStore((s) => s.setViewerRefreshKey)
   const viewerImageList = useWorkspaceStore((s) => s.viewerImageList)
   const setViewerImageList = useWorkspaceStore((s) => s.setViewerImageList)
+  // The manifest path of an activity opened via open_activity (the whole
+  // activity overview). Can be set ALONGSIDE viewerPath (not just instead of
+  // it): clicking an item inside the activity view sets viewerPath without
+  // clearing this, so viewerPath's own "back" button falls through to the
+  // activity view again instead of the raw file list — viewerPath simply
+  // takes render priority over viewerPackage whenever both are set.
+  const [viewerPackage, setViewerPackage] = useState<string | null>(null)
   const viewerContent = useWorkspaceStore((s) => s.viewerContent)
   const setViewerContent = useWorkspaceStore((s) => s.setViewerContent)
   const [viewerMeta, setViewerMeta] = useState<Record<string, unknown> | null>(null)
   const [metaOpen, setMetaOpen] = useState(false)
   // Which package's guide_note (the parent's own pacing/instructions for that
   // bundle) is currently revealed via its (i) button — collapsed by default.
-  const [openPackageNote, setOpenPackageNote] = useState<string | null>(null)
+  const [expandedPackage, setExpandedPackage] = useState<string | null>(null)
   const mapHtml = useWorkspaceStore((s) => s.mapHtml)
   const setMapHtml = useWorkspaceStore((s) => s.setMapHtml)
   const mapRefreshKey = useWorkspaceStore((s) => s.mapRefreshKey)
@@ -804,16 +832,21 @@ export default function LearningApp() {
   }, [drawerTab, mapRefreshKey])
 
   // Learning packages the parent has bundled for the child — refetched whenever
-  // the Subjects tab is open or a turn just completed (Quill may have created one).
+  // the Files/Uploaded tab is open or a turn just completed (Quill may have
+  // created or added to one). Gated on the drawer tab (not narrowly on
+  // filesView === 'subjects' as before) because open_activity can jump straight
+  // to a package's own detail view regardless of which files sub-view was last
+  // selected — with the narrower gate, a package Quill had just created and
+  // opened could show "no longer available" simply because this fetch never ran.
   useEffect(() => {
-    if (filesView !== 'subjects') return
+    if (drawerTab !== 'files' && drawerTab !== 'uploaded') return
     let cancelled = false
     fetch(`${FAMILY_API}/api/parent/packages`)
       .then((r) => r.json())
       .then((d: LearningPackage[]) => { if (!cancelled) setPackages(d ?? []) })
       .catch(() => { if (!cancelled) setPackages([]) })
     return () => { cancelled = true }
-  }, [filesView, mapRefreshKey])
+  }, [drawerTab, mapRefreshKey])
 
   // Poll real WhatsApp pairing status while the connector modal's WhatsApp
   // section is open — refreshes the QR (it's short-lived) until paired.
@@ -1016,7 +1049,7 @@ export default function LearningApp() {
             const pkg = JSON.parse(d.content ?? '{}')
             return {
               path: p,
-              title: String(pkg.title ?? 'Learning package'),
+              title: String(pkg.title ?? 'Learning activity'),
               items: Array.isArray(pkg.items) ? pkg.items : [],
               guideNote: typeof pkg.guide_note === 'string' ? pkg.guide_note : undefined,
               createdAt: typeof pkg.created_at === 'string' ? pkg.created_at : undefined,
@@ -1029,8 +1062,8 @@ export default function LearningApp() {
   }, [childFiles])
 
   // The child's current assignment — read child/current-task.json so the child
-  // workspace can show ONLY the package the parent just handed off (its items,
-  // already mirrored into child/active), not every package/material.
+  // workspace can show ONLY the activity the parent just handed off (its real
+  // shared/ item paths), not every package/material.
   useEffect(() => {
     if (screen !== 'tutor') return
     let cancelled = false
@@ -1059,7 +1092,7 @@ export default function LearningApp() {
     setChildViewerContent(null)
     fetch(`${FAMILY_API}/api/workspace/file?path=${encodeURIComponent(childViewerPath)}`)
       .then((r) => r.json())
-      .then((d) => { if (!cancelled) setChildViewerContent({ isText: !!d.is_text, content: d.content ?? '' }) })
+      .then((d) => { if (!cancelled) setChildViewerContent({ isText: !!d.is_text, content: d.is_text ? rewriteRelativeAssetURLs(d.content ?? '', childViewerPath) : (d.content ?? '') }) })
       .catch(() => { if (!cancelled) setChildViewerContent({ isText: false, content: '' }) })
     return () => { cancelled = true }
   }, [childViewerPath, childViewerRefreshKey])
@@ -1071,7 +1104,7 @@ export default function LearningApp() {
     setViewerContent(null)
     fetch(`${FAMILY_API}/api/workspace/file?path=${encodeURIComponent(viewerPath)}`)
       .then((r) => r.json())
-      .then((d) => { if (!cancelled) setViewerContent({ isText: !!d.is_text, content: d.content ?? '' }) })
+      .then((d) => { if (!cancelled) setViewerContent({ isText: !!d.is_text, content: d.is_text ? rewriteRelativeAssetURLs(d.content ?? '', viewerPath) : (d.content ?? '') }) })
       .catch(() => { if (!cancelled) setViewerContent({ isText: false, content: '' }) })
     return () => { cancelled = true }
   }, [viewerPath, viewerRefreshKey])
@@ -1317,7 +1350,6 @@ export default function LearningApp() {
     setParentMessages(next)
     setFocusInput('')
     setSuggestions([])
-    setPendingHandoff(null)
     // Drop any pending "new update" banner — the parent's own send supersedes
     // it, and applying the stale pre-send snapshot would wipe out the message
     // they just typed (a real bug this caused). Their send + reply, and the
@@ -1345,13 +1377,17 @@ export default function LearningApp() {
     // Keep source on each message so Pulse/etc. tags survive the round-trip and
     // don't get flattened to plain replies when this turn re-persists history.
     const history = next.filter((m) => m.role === 'user' || m.role === 'assistant').map((m) => ({ role: m.role, text: m.text ?? '', source: m.source }))
+    // Only pass viewer_path while the right-side panel is actually showing a
+    // file (same condition the viewer JSX itself uses) — otherwise nothing is
+    // really "on screen" to reference.
+    const currentViewerPath = (drawerTab === 'files' || drawerTab === 'uploaded') ? viewerPath : ''
     fetch(`${FAMILY_API}/api/parent/message`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ messages: history, conversation_id: conversationId }),
+      body: JSON.stringify({ messages: history, conversation_id: conversationId, viewer_path: currentViewerPath || undefined }),
     })
       .then((res) => res.json())
-      .then((data: { reply?: string; error?: string; suggestions?: { label: string; message: string }[]; tool_events?: { tool: string; name?: string; grade?: string; board?: string; path?: string; parent_label?: string }[]; handoff?: { label: string; path: string; manifest?: string } }) => {
+      .then((data: { reply?: string; error?: string; suggestions?: { label: string; message: string }[]; tool_events?: { tool: string; name?: string; grade?: string; board?: string; path?: string; parent_label?: string }[] }) => {
         const events = data.tool_events ?? []
         const toolMsgs: ParentMsg[] = events.filter((e) => e.tool === 'set_child_profile').map((e) => ({ role: 'tool', tool: e.tool, name: e.name, grade: e.grade, board: e.board }))
         const cp = events.find((e) => e.tool === 'set_child_profile')
@@ -1359,9 +1395,10 @@ export default function LearningApp() {
         const pl = events.find((e) => e.tool === 'set_parent_label' && e.parent_label)
         if (pl?.parent_label) setParentLabel(pl.parent_label)
         const of = events.find((e) => e.tool === 'open_file' && e.path)
-        if (of?.path) { setDrawerTab('files'); setViewerImageList([]); setViewerPath(of.path); setViewerRefreshKey((k) => k + 1) }
+        if (of?.path) { setDrawerTab('files'); setViewerImageList([]); setViewerPackage(null); setViewerPath(of.path); setViewerRefreshKey((k) => k + 1) }
+        const op = events.find((e) => e.tool === 'open_activity' && e.path)
+        if (op?.path) { setDrawerTab('files'); setViewerPath(null); setViewerPackage(op.path) }
         setSuggestions(data.suggestions ?? [])
-        setPendingHandoff(data.handoff ?? null)
         setParentMessages((cur) => [...cur, ...toolMsgs, { role: 'assistant', text: data.error ? `Sorry — ${data.error}` : (data.reply || '(no response)') }])
       })
       .catch(() => setParentMessages((cur) => [...cur, { role: 'assistant', text: 'Sorry — I couldn’t reach the learning engine.' }]))
@@ -1429,7 +1466,6 @@ export default function LearningApp() {
     setConversationId(newConversationId())
     setParentMessages([])
     setSuggestions([])
-    setPendingHandoff(null)
   }
 
   // Child Mode tutor — talks to /api/child/message (sandboxed child agent).
@@ -1544,13 +1580,6 @@ export default function LearningApp() {
         enterChildModeAfterHandoff(!!data.new_session, handoffGreeting(greetingText), data.path, data.guide_note, data.package)
       })
       .catch(() => {})
-  }
-
-  // The real parent→child handoff behind "Give to <child>": a standalone file
-  // (no package) always starts a fresh conversation — there's nothing to
-  // "continue" (matches suggest_handoff's rarer, single-file re-offer case).
-  const startHandoff = (path: string) => {
-    performHandoff('path', path, 'shared something new for me to work on', false)
   }
 
   // Same handoff, but for a whole learning package at once (its manifest path)
@@ -1901,11 +1930,13 @@ export default function LearningApp() {
                 <div className="fl-msg is-agent">
                   <span className="fl-msg-avatar is-sun"><Sun size={18} /></span>
                   <div className="fl-msg-col">
-                    {streamingReply ? (
+                    {streamingReply && (
                       <div className="fl-bubble is-streaming"><Markdown text={streamingReply} /></div>
-                    ) : (
-                      <div className="fl-thinking"><img src="/sparkquill-loader.svg" alt="" width={38} height={38} /> <span>{liveStatus ? `Quill is: ${liveStatus}…` : PARENT_WAIT_HINTS[parentHintIndex]}</span></div>
                     )}
+                    <div className="fl-thinking">
+                      {!streamingReply && <img src="/sparkquill-loader.svg" alt="" width={38} height={38} />}
+                      <span>{liveStatus ? `Quill is: ${liveStatus}…` : PARENT_WAIT_HINTS[parentHintIndex]}</span>
+                    </div>
                   </div>
                 </div>
               )}
@@ -1922,17 +1953,6 @@ export default function LearningApp() {
                   <button type="button" onClick={() => setFocusInput(`How is ${childName || 'my child'} doing so far?`)}>Understand progress</button>
                   <button type="button" onClick={() => setFocusInput('Make a short revision worksheet for my child')}>Create study material</button>
                   <button type="button" onClick={() => setFocusInput('Create a short practice test for my child')}>Create a test</button>
-                </div>
-              )}
-              {pendingHandoff && !sending && (
-                <div className="fl-suggestions" aria-label="Handoff to child">
-                  <button
-                    type="button"
-                    className="fl-suggestion fl-suggestion-handoff"
-                    onClick={() => { const h = pendingHandoff; setPendingHandoff(null); if (h.manifest) { startPackageHandoff(h.manifest) } else { startHandoff(h.path) } }}
-                  >
-                    {pendingHandoff.label}
-                  </button>
                 </div>
               )}
               {suggestions.length > 0 && !sending && (
@@ -1956,7 +1976,7 @@ export default function LearningApp() {
               />
               <div className="fl-composer-menu">
                 {menuOpen && <div className="fl-menu-backdrop" onClick={() => setMenuOpen(false)} />}
-                <button type="button" className="composer-icon" aria-label="Quick actions" aria-expanded={menuOpen} onClick={() => setMenuOpen((v) => !v)} disabled={sending}><Sparkles size={19} /></button>
+                <button type="button" className="composer-icon" aria-label="Quick actions" aria-expanded={menuOpen} onClick={() => setMenuOpen((v) => !v)}><Sparkles size={19} /></button>
                 {menuOpen && (
                   <div className="fl-menu" role="menu">
                     {QUICK_SKILLS.map((s) => (
@@ -1965,7 +1985,7 @@ export default function LearningApp() {
                   </div>
                 )}
               </div>
-              <button className="composer-send" type="submit" aria-label="Send message" disabled={!focusInput.trim() || sending}><Send size={18} /></button>
+              <button className="composer-send" type="submit" aria-label="Send message" disabled={!focusInput.trim()}><Send size={18} /></button>
             </form>
             <p className="fl-disclaimer">SparkQuill can make mistakes. Please review important content before sharing it with {childName || 'your child'}.</p>
           </section>
@@ -2042,6 +2062,14 @@ export default function LearningApp() {
               {(drawerTab === 'files' || drawerTab === 'uploaded') && viewerPath ? (
                 <div className="fl-viewer">
                   <div className="fl-viewer-bar">
+                    {/* Clearing only viewerPath (never viewerPackage here) means
+                        "back" naturally falls through to the activity-detail
+                        branch below when this file was opened by clicking an
+                        item INSIDE that activity — returning to the activity,
+                        not the raw file list, exactly as browsing normally
+                        expects. A file opened from the general list (where
+                        viewerPackage is already null) still falls through to
+                        that list, unchanged. */}
                     <button className="fl-viewer-back" type="button" onClick={() => setViewerPath(null)}><ArrowLeft size={15} /> Files</button>
                     <span className="fl-viewer-name">{viewerPath.split('/').pop()}</span>
                     <button
@@ -2112,7 +2140,67 @@ export default function LearningApp() {
                   )}
                   </div>
                 </div>
-              ) : drawerTab === 'files' ? (
+              ) : (drawerTab === 'files' || drawerTab === 'uploaded') && viewerPackage ? (() => {
+                const pkg = packages.find((p) => p.manifest === viewerPackage)
+                if (!pkg) return <p className="fl-note">That activity is no longer available.</p>
+                const expanded = expandedPackage === pkg.manifest
+                return (
+                  <div className="fl-viewer">
+                    <div className="fl-viewer-bar">
+                      <button className="fl-viewer-back" type="button" onClick={() => setViewerPackage(null)}><ArrowLeft size={15} /> Files</button>
+                      <span className="fl-viewer-name">{pkg.title}</span>
+                    </div>
+                    <div key={viewerPackage} className="fl-viewer-body fl-package-detail">
+                      <div className="fl-package-detail-head">
+                        <div>
+                          <h2>{pkg.title}</h2>
+                          <p className="fl-note">
+                            {pkg.items.length > 0 ? `${pkg.items.length} part${pkg.items.length === 1 ? '' : 's'}` : 'Adaptive practice'}
+                            {dateTimeLabel(pkg.created_at) ? ` · ${dateTimeLabel(pkg.created_at)}` : ''}
+                          </p>
+                        </div>
+                        <div className="fl-package-detail-actions">
+                          {pkg.items.length > 0 && (
+                            <button
+                              type="button"
+                              className="fl-package-toggle"
+                              aria-expanded={expanded}
+                              aria-label={expanded ? 'Hide contents' : 'See what’s inside'}
+                              title={expanded ? 'Hide contents' : 'See what’s inside'}
+                              onClick={() => setExpandedPackage((cur) => (cur === pkg.manifest ? null : pkg.manifest))}
+                            >
+                              <ChevronDown size={14} className={expanded ? 'is-open' : ''} />
+                            </button>
+                          )}
+                          <button className="fl-give-to-child" type="button" disabled={sending} onClick={() => startPackageHandoff(pkg.manifest)}>
+                            Give to {childName || 'child'}
+                          </button>
+                        </div>
+                      </div>
+                      {pkg.guide_note && <p className="fl-package-note">{pkg.guide_note}</p>}
+                      {expanded && pkg.items.length > 0 && (
+                        <div className="fl-package-detail-items">
+                          {pkg.items.map((item, i) => {
+                            const { label } = parseAssetPath(item)
+                            return (
+                              <button
+                                key={item}
+                                type="button"
+                                className="fl-file-item fl-package-item"
+                                onClick={() => { setViewerImageList([]); setViewerPath(item); setViewerRefreshKey((k) => k + 1) }}
+                              >
+                                <span className="fl-package-step">{i + 1}</span>
+                                <FileGlyph name={item} size={15} />
+                                <span>{label}</span>
+                              </button>
+                            )
+                          })}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )
+              })() : drawerTab === 'files' ? (
                 <>
                   <div className="fl-files-toggle">
                     <button type="button" className={filesView === 'subjects' ? 'is-active' : ''} onClick={() => setFilesView('subjects')}>Subjects</button>
@@ -2156,53 +2244,54 @@ export default function LearningApp() {
                     // Same treatment as Child Mode's package view: list every part,
                     // numbered, so the parent can open and preview any one of them
                     // directly — not just see a summary count.
-                    const renderPackages = (pkgs: LearningPackage[]) => pkgs.map((pkg) => (
-                      <div key={pkg.manifest} className="fl-child-package fl-parent-package">
-                        <div className="fl-package-title">
-                          <BookOpen size={16} />
-                          <span>
-                            {pkg.title}
-                            <small>
-                              {pkg.items.length > 0 ? `${pkg.items.length} part${pkg.items.length === 1 ? '' : 's'}` : 'Adaptive practice'}
-                              {dateTimeLabel(pkg.created_at) ? ` · ${dateTimeLabel(pkg.created_at)}` : ''}
-                            </small>
-                          </span>
-                          {pkg.guide_note && (
+                    const renderPackages = (pkgs: LearningPackage[]) => pkgs.map((pkg) => {
+                      const expanded = expandedPackage === pkg.manifest
+                      return (
+                        <div key={pkg.manifest} className="fl-child-package fl-parent-package">
+                          <div className="fl-package-title">
+                            <BookOpen size={16} />
+                            <span>
+                              {pkg.title}
+                              <small>
+                                {pkg.items.length > 0 ? `${pkg.items.length} part${pkg.items.length === 1 ? '' : 's'}` : 'Adaptive practice'}
+                                {dateTimeLabel(pkg.created_at) ? ` · ${dateTimeLabel(pkg.created_at)}` : ''}
+                              </small>
+                            </span>
+                            {pkg.items.length > 0 && (
+                              <button
+                                type="button"
+                                className="fl-package-toggle"
+                                aria-expanded={expanded}
+                                aria-label={expanded ? 'Hide contents' : 'See what’s inside'}
+                                title={expanded ? 'Hide contents' : 'See what’s inside'}
+                                onClick={() => setExpandedPackage((cur) => (cur === pkg.manifest ? null : pkg.manifest))}
+                              >
+                                <ChevronDown size={14} className={expanded ? 'is-open' : ''} />
+                              </button>
+                            )}
                             <button
-                              className="fl-icon-btn fl-package-info"
+                              className="fl-give-to-child"
                               type="button"
-                              aria-label="Instructions for this package"
-                              aria-pressed={openPackageNote === pkg.manifest}
-                              title="See the instructions behind this package"
-                              onClick={() => setOpenPackageNote((cur) => (cur === pkg.manifest ? null : pkg.manifest))}
+                              disabled={sending}
+                              onClick={() => startPackageHandoff(pkg.manifest)}
                             >
-                              <Info size={14} />
+                              Give to {childName || 'child'}
                             </button>
-                          )}
-                          <button
-                            className="fl-give-to-child"
-                            type="button"
-                            disabled={sending}
-                            onClick={() => startPackageHandoff(pkg.manifest)}
-                          >
-                            Give to {childName || 'child'}
-                          </button>
+                          </div>
+                          {pkg.guide_note && <p className="fl-package-note">{pkg.guide_note}</p>}
+                          {expanded && pkg.items.map((item, i) => {
+                            const { label } = parseAssetPath(item)
+                            return (
+                              <button key={item} type="button" className="fl-file-item fl-package-item" onClick={() => { setViewerImageList([]); setViewerPath(item) }}>
+                                <span className="fl-package-step">{i + 1}</span>
+                                <FileGlyph name={item} size={15} />
+                                <span>{label}</span>
+                              </button>
+                            )
+                          })}
                         </div>
-                        {openPackageNote === pkg.manifest && pkg.guide_note && (
-                          <p className="fl-package-note">{pkg.guide_note}</p>
-                        )}
-                        {pkg.items.map((item, i) => {
-                          const { label } = parseAssetPath(item)
-                          return (
-                            <button key={item} type="button" className="fl-file-item fl-package-item" onClick={() => { setViewerImageList([]); setViewerPath(item) }}>
-                              <span className="fl-package-step">{i + 1}</span>
-                              <FileGlyph name={item} size={15} />
-                              <span>{label}</span>
-                            </button>
-                          )
-                        })}
-                      </div>
-                    ))
+                      )
+                    })
 
                     const bySubject = new Map<string, Map<string, Map<string, Entry[]>>>()
                     const general = new Map<string, Entry[]>()
@@ -2720,7 +2809,7 @@ export default function LearningApp() {
                           <section className="fl-asset-group">
                             <p className="fl-drawer-label">From your parent</p>
                             <div className="fl-child-package">
-                              <div className="fl-package-title"><BookOpen size={16} /><span>{childTask?.title || 'Your assignment'}<small>{currentItems.length} part{currentItems.length === 1 ? '' : 's'}{dateTimeLabel(curPkg?.createdAt) ? ` · ${dateTimeLabel(curPkg?.createdAt)}` : ''}</small></span></div>
+                              <div className="fl-package-title"><BookOpen size={16} /><span>{childTask?.title || 'Your activity'}<small>{currentItems.length} part{currentItems.length === 1 ? '' : 's'}{dateTimeLabel(curPkg?.createdAt) ? ` · ${dateTimeLabel(curPkg?.createdAt)}` : ''}</small></span></div>
                               {currentItems.map((item, i) => {
                                 const { label } = parseAssetPath(item)
                                 return (

@@ -13,7 +13,7 @@ import (
 	"github.com/manishiitg/coding-agent-loop/agent_go/internal/agentsession"
 )
 
-// learningPackage is the manifest a "create_learning_package" call writes under
+// learningPackage is the manifest a "create_learning_activity" call writes under
 // shared/packages/. It either bundles an ordered set of already-created files
 // (notes, study material, a basic test, an advanced test, ...) into one thing
 // the parent hands off in a single approval, or — when Items is empty — is a
@@ -43,29 +43,31 @@ func slugify(s string) string {
 	return s
 }
 
-// createLearningPackageTool bundles several already-created shared/ files
+// createLearningActivityTool bundles several already-created shared/ files
 // (e.g. notes + study material + a basic test + an advanced test) into one
-// package and approves the manifest AND every item for the child in a single
+// activity and approves the manifest AND every item for the child in a single
 // call — the parent hands off the whole thing at once instead of one file at
 // a time. The child's system prompt (childSystemPrompt) tells the tutor to
 // check shared/packages/ for approved manifests and follow their order/note.
-func createLearningPackageTool(childLabel string, recordEvent func(toolEvent)) agentsession.Tool {
+func createLearningActivityTool(childLabel string, recordEvent func(toolEvent)) agentsession.Tool {
 	if strings.TrimSpace(childLabel) == "" {
 		childLabel = "the child"
 	}
 	return agentsession.Tool{
-		Name: "create_learning_package",
-		Description: "Bundle pre-made files (notes, study material, a basic test, an advanced test, etc.) into one package for the " +
-			"child, in the order they should do them — OR create an instruction-only package with no files at all, just a guide_note " +
+		Name: "create_learning_activity",
+		Description: "Bundle pre-made files (notes, study material, a basic test, an advanced test, etc.) into one activity for the " +
+			"child, in the order they should do them — OR create an instruction-only activity with no files at all, just a guide_note " +
 			"describing an open-ended, dynamically-generated activity (e.g. \"Give " + childLabel + " one algebra word problem at a time. Start " +
 			"medium difficulty, go harder after two correct in a row, easier after a miss. Keep going until she wants to stop.\" or " +
 			"\"Run adaptive GMAT-style quant practice: one question at a time, adjust difficulty from her answers, never repeat a " +
 			"question.\"). Use items when there's real pre-made material to hand off; use guide_note alone when the child should get " +
-			"freshly-generated, adapting questions each session instead of fixed material. This creates the package, approves all its " +
-			"items, and adds the real 'Give to <child>' handoff button to your reply — you do NOT need to call approve_for_child " +
-			"separately. CRITICAL, exactly like approve_for_child: this does NOT put anything on the child's screen or start a session " +
-			"— only the parent physically tapping that button hands it over. So NEVER tell the parent the package is \"on its way\", " +
-			"\"sent\", or \"on the child's screen\"; say it's ready and to tap 'Give to <child>' below when they want to hand it over.",
+			"freshly-generated, adapting questions each session instead of fixed material — guide_note can also carry a teaching-style " +
+			"override for THIS activity specifically (e.g. \"no hints, be strict\"), separate from the parent's overall default. This " +
+			"creates the activity and approves all its items — call open_activity with the manifest path right after so the parent " +
+			"sees it immediately on the right, with its own real 'Give to <child>' button; this tool alone does not show anything or " +
+			"put a button in the chat. CRITICAL: neither this nor open_activity puts anything on the child's screen or starts a " +
+			"session — only the parent physically tapping 'Give to <child>' does. So NEVER tell the parent the activity is \"on its " +
+			"way\", \"sent\", or \"on the child's screen\"; say it's ready and where to tap when they want to hand it over.",
 		Category: "family_tools",
 		Params: map[string]interface{}{
 			"type": "object",
@@ -109,7 +111,7 @@ func createLearningPackageTool(childLabel string, recordEvent func(toolEvent)) a
 			}
 
 			for _, p := range items {
-				if err := approveForChild(p); err != nil {
+				if err := validateSharedFile(p); err != nil {
 					return "", fmt.Errorf("item %q: %w", p, err)
 				}
 			}
@@ -135,12 +137,9 @@ func createLearningPackageTool(childLabel string, recordEvent func(toolEvent)) a
 			if err := os.WriteFile(abs, b, 0o600); err != nil {
 				return "", fmt.Errorf("failed to write package manifest: %w", err)
 			}
-			if err := approveForChild(manifestRel); err != nil {
-				return "", fmt.Errorf("failed to hand off package manifest: %w", err)
-			}
 
 			if recordEvent != nil {
-				recordEvent(toolEvent{Tool: "create_learning_package", Path: manifestRel, Package: title})
+				recordEvent(toolEvent{Tool: "create_learning_activity", Path: manifestRel, Package: title})
 			}
 			return fmt.Sprintf(`{"status":"ok","package":%q,"manifest":%q,"items":%d}`, title, manifestRel, len(items)), nil
 		},

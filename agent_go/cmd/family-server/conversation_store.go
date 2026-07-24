@@ -4,8 +4,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -233,6 +235,42 @@ func handleWorkspaceFile(w http.ResponseWriter, r *http.Request) {
 // the viewer's Download button for files the browser can't preview (Word,
 // PowerPoint, spreadsheets, archives, …). The download attribute on an <a> is
 // ignored cross-origin, so the server has to set the disposition itself.
+// Two alternatives (double- vs single-quoted), each with its own capture
+// group — Go's RE2 engine has no backreferences, so a single pattern can't
+// require the closing quote to match the opening one.
+var rawAssetSrcRE = regexp.MustCompile(`(?i)\bsrc=(?:"([^"]*)"|'([^']*)')`)
+
+// rewriteRelativeAssetURLs fixes generated HTML whose own relative <img
+// src="foo.png"> (saved next to the page, exactly as skills instruct) can't
+// resolve against this endpoint's query-string-based addressing: per normal
+// URL-resolution rules, a relative reference against ".../raw?path=X&print=1"
+// merges onto the PATH only and drops the query entirely, resolving to
+// ".../foo.png" — a 404, not the real file. Mirrors the equivalent client-side
+// fix in LearningApp.tsx (the srcDoc viewer path) for the print path, which
+// renders the real file content directly rather than through React.
+func rewriteRelativeAssetURLs(html []byte, relPath string) []byte {
+	dir := filepath.ToSlash(filepath.Dir(relPath))
+	if dir == "." {
+		dir = ""
+	}
+	return rawAssetSrcRE.ReplaceAllFunc(html, func(m []byte) []byte {
+		sub := rawAssetSrcRE.FindSubmatch(m)
+		quote, ref := byte('"'), string(sub[1])
+		if sub[1] == nil {
+			quote, ref = '\'', string(sub[2])
+		}
+		if strings.Contains(ref, "://") || strings.HasPrefix(ref, "//") || strings.HasPrefix(ref, "/") ||
+			strings.HasPrefix(ref, "data:") || strings.HasPrefix(ref, "#") {
+			return m
+		}
+		resolved := ref
+		if dir != "" {
+			resolved = dir + "/" + ref
+		}
+		return []byte("src=" + string(quote) + "/api/workspace/raw?path=" + url.QueryEscape(resolved) + string(quote))
+	})
+}
+
 func handleWorkspaceRaw(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -255,7 +293,9 @@ func handleWorkspaceRaw(w http.ResponseWriter, r *http.Request) {
 	// auto-opens the browser's print dialog. This is the robust way to print a
 	// test/report: it doesn't depend on the generated HTML embedding a print
 	// handler (a skill can forget to), and it isn't blocked by the in-app viewer's
-	// iframe sandbox. Relative assets still resolve since it's the real file URL.
+	// iframe sandbox. A page's own relative asset references (e.g. an
+	// illustration saved next to it) don't resolve on their own here — see
+	// rewriteRelativeAssetURLs — so they're rewritten before serving.
 	if r.URL.Query().Get("print") != "" {
 		ext := strings.ToLower(filepath.Ext(abs))
 		if ext == ".html" || ext == ".htm" {
@@ -264,6 +304,7 @@ func handleWorkspaceRaw(w http.ResponseWriter, r *http.Request) {
 				http.Error(w, "not found", http.StatusNotFound)
 				return
 			}
+			b = rewriteRelativeAssetURLs(b, r.URL.Query().Get("path"))
 			w.Header().Set("Content-Type", "text/html; charset=utf-8")
 			_, _ = w.Write(b)
 			_, _ = w.Write([]byte("\n<script>window.addEventListener('load',function(){setTimeout(function(){window.print()},250)});</script>\n"))

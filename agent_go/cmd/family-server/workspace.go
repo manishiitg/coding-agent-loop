@@ -17,6 +17,19 @@ type treeNode struct {
 	Children []treeNode `json:"children,omitempty"`
 }
 
+// workspaceRootHiddenNames are top-level entries that are app/agent
+// machinery, not family content — the parent's Files tab shouldn't show
+// them at all. skills/ is app-shipped reference content reseeded from the
+// binary on every startup (see seedSkills), and AGENTS.md is mcpagent's own
+// auto-managed per-session system-prompt file, restored/cleaned up by the
+// coding-agent runtime itself. Scoped to top-level only (rel == "" in
+// buildTree) since a same-named subfolder deeper in real family content
+// (however unlikely) shouldn't be swept up by this.
+var workspaceRootHiddenNames = map[string]bool{
+	"skills":    true,
+	"AGENTS.md": true,
+}
+
 func buildTree(absDir, rel string) []treeNode {
 	entries, err := os.ReadDir(absDir)
 	if err != nil {
@@ -33,6 +46,9 @@ func buildTree(absDir, rel string) []treeNode {
 	for _, e := range entries {
 		name := e.Name()
 		if strings.HasPrefix(name, ".") {
+			continue
+		}
+		if rel == "" && workspaceRootHiddenNames[name] {
 			continue
 		}
 		childRel := name

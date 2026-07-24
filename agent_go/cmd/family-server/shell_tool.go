@@ -57,20 +57,21 @@ func runShellOutput(cmd *exec.Cmd) (string, error) {
 
 // childShellTool wires the EXISTING execute_shell_command for CHILD MODE, hardened
 // with the reused workspace/security.Isolator (macOS sandbox-exec / Linux
-// namespaces). The child may read/write its own work (child/), but shared/ is
-// readable ONLY for paths the parent has explicitly approved
-// (parent/approved-for-child.json, via the approve_for_child tool) — this is a
-// REAL access boundary, not just a UI filter: "give to child" changes what the
-// sandbox actually permits, so the parent's agent can't reason "it's already
-// under shared/, so it's already accessible" — until approved, it genuinely
-// isn't. The sandbox denies parent/ entirely — the child can never reach the
-// parent's answer keys or private notes. Also gets read-only access to the
-// real machine Downloads folder (see hostDownloadsPath), same grant AgentWorks
-// gives a workflow session.
+// namespaces). It's a REAL access boundary, not a UI filter: the sandbox is
+// deny-by-default (StrictAllowlist) and scoped to JUST the CURRENT activity —
+// the exact files the parent most recently handed off, plus the child's own
+// child/attempts/ scratch space and the child/current-task.json pointer. The
+// child reads AND writes those activity files directly (recording "✓ Answered"
+// progress notes onto the real file — there is no separate copy). Everything
+// else is invisible: older activities, the rest of shared/, and parent/
+// entirely — so the child can never reach the parent's answer keys or private
+// notes. Also gets read-only access to the real machine Downloads folder (see
+// hostDownloadsPath), same grant AgentWorks gives a workflow session. Keep
+// this scoping in sync with childCanSee/childCanWrite (child_workspace.go).
 func childShellTool() agentsession.Tool {
 	t := shellTool()
-	t.Description = "Run a shell command in your learning workspace. You can read the lessons and practice your parent " +
-		"has shared with you, and read or write your own work under child/attempts/. You cannot see the parent's answer keys."
+	t.Description = "Run a shell command in your learning workspace. You can read and write the lesson/practice your parent " +
+		"just handed you, and read or write your own work under child/attempts/. You cannot see the parent's answer keys."
 	t.Handler = func(ctx context.Context, args map[string]interface{}) (string, error) {
 		command, _ := args["command"].(string)
 		if strings.TrimSpace(command) == "" {
@@ -78,21 +79,12 @@ func childShellTool() agentsession.Tool {
 		}
 		cctx, cancel := context.WithTimeout(ctx, 90*time.Second)
 		defer cancel()
-		// Scope the child's readable files to JUST the current activity — the
-		// pointer, their own work, and the current package's items (all mirrored
-		// into child/active on handoff) — NOT every file ever approved. This keeps
-		// the tutor's context on the one assignment the parent just handed off,
-		// and stops the child browsing the whole shared workspace or old packages.
-		ct := loadCurrentTask()
-		readPaths := []string{"child/current-task.json", "child/attempts"}
-		switch {
-		case len(ct.Items) > 0:
-			readPaths = append(readPaths, ct.Items...) // child/active copies of the current package
-		case strings.TrimSpace(ct.Path) != "":
-			readPaths = append(readPaths, ct.Path)
-		default:
-			readPaths = append(readPaths, "child/active") // no current handoff: their own copies
-		}
+		// The current activity's real (shared/) item paths — readable AND
+		// writable, so the tutor annotates them in place. Plus the child's own
+		// scratch space and the pointer file.
+		items := currentActivityItems()
+		readPaths := append([]string{"child/current-task.json", "child/attempts"}, items...)
+		writePaths := append([]string{"child/attempts"}, items...)
 		blockedWrites := []string{}
 		if dl := hostDownloadsPath(); dl != "" {
 			readPaths = append(readPaths, dl)
@@ -102,11 +94,11 @@ func childShellTool() agentsession.Tool {
 			BaseDir:           workspaceRoot(),
 			WorkDir:           workspaceRoot(),
 			ReadPaths:         readPaths,
-			WritePaths:        []string{"child"},
+			WritePaths:        writePaths,
 			BlockedWritePaths: blockedWrites,
 			// StrictAllowlist: the child is an untrusted party — deny-by-default
-			// so only child/, approved shared/ paths, and Downloads are visible,
-			// not the rest of the real machine (see security.Isolator doc comment).
+			// so only the current activity's files, child/attempts, and Downloads
+			// are visible, not the rest of the real machine or workspace.
 			StrictAllowlist: true,
 		}
 		// Pass the whole command as a single string (args nil) so it is executed

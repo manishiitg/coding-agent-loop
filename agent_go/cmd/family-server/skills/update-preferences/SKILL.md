@@ -12,8 +12,12 @@ doing; just fold the result into your normal Pulse reply if it's worth a line.
 `parent/preferences.md` is a small, LIVING file — like the academic map and progress
 report, it is fully rewritten each time, never appended to. It exists to remember
 things the parent has told you in chat that aren't already captured by a dedicated
-field (`set_child_profile`, `set_parent_label`, `set_teaching_style`) — so they never
-have to repeat themselves in a later conversation.
+field (`set_child_profile`, `set_parent_label`) — so they never have to repeat
+themselves in a later conversation. This INCLUDES teaching-style-type statements
+("be strict, no hints on tests", "let him keep trying longer before helping") —
+there is no separate tool for that; it's captured here like any other preference,
+and applied when creating a new activity by folding it into that activity's own
+guide_note (see the main parent instructions).
 
 1. **Read what's already captured**: `cat parent/preferences.md` if it exists (it may
    not, on a fresh family — that's fine, start from empty).

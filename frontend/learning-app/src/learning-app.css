@@ -360,10 +360,20 @@ html, body, #root { margin: 0; height: 100%; }
 .fl-parent-package .fl-package-title { padding: 10px 12px 6px; }
 .fl-parent-package .fl-package-title > span:not(.fl-give-to-child) { flex: 1; min-width: 0; }
 .fl-parent-package .fl-package-item { margin-left: 14px; }
-.fl-package-info.is-active, .fl-package-info[aria-pressed="true"] { background: #eef2f9; color: var(--heading); }
 .fl-package-note { margin: 0 12px 10px; padding: 10px 12px; background: #faf8ff; border: 1px solid #e6ddf5; border-left: 3px solid #c7b8e6; border-radius: 10px; color: #4a4266; font-size: var(--text-caption); line-height: 1.55; }
+.fl-package-toggle { display: grid; place-items: center; width: 26px; height: 26px; margin: 0 12px 8px; padding: 0; border: 1px solid #e0e6f0; border-radius: 8px; background: var(--surface); color: #5f708d; cursor: pointer; }
+.fl-package-toggle:hover { color: var(--heading); border-color: #c3cede; }
+.fl-package-toggle svg { transition: transform .15s ease; }
+.fl-package-toggle svg.is-open { transform: rotate(180deg); }
 .fl-package-item { margin-left: 14px; }
 .fl-package-step { flex: 0 0 auto; display: grid; place-items: center; width: 18px; height: 18px; border-radius: 999px; background: #eef2f9; color: #55617a; font-size: 11px; font-weight: 700; }
+.fl-package-detail { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 18px 20px; gap: 4px; }
+.fl-package-detail-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 14px; margin-bottom: 6px; }
+.fl-package-detail-head h2 { margin: 0 0 4px; color: var(--heading); font-size: 1.05rem; }
+.fl-package-detail-actions { display: flex; align-items: center; gap: 8px; flex: 0 0 auto; }
+.fl-package-detail .fl-package-note { margin: 0 0 14px; }
+.fl-package-detail-items { display: flex; flex-direction: column; gap: 6px; }
+.fl-package-detail .fl-package-item { margin-left: 0; }
 /* Current assignment shown in the child's top bar — just the package name, so
    the child always sees what they're working on without extra clutter. */
 .fl-child-assignment-pill { display: inline-flex; align-items: center; gap: 6px; max-width: 42vw; padding: 5px 12px; background: #fff7e6; border: 1px solid #f2e2bd; border-radius: 999px; color: #8a6d1f; font-weight: 700; font-size: var(--text-caption); }
@@ -567,8 +577,6 @@ audio.fl-viewer-media { background: var(--surface); }
 .fl-suggestions { display: flex; flex-wrap: wrap; gap: 8px; margin: 4px 0 2px; }
 .fl-suggestion { display: inline-flex; align-items: center; gap: 6px; padding: 8px 15px; border: 1px solid #ecdcb4; border-radius: 999px; background: #fffaf0; color: #7a5c1a; font: inherit; font-size: var(--text-secondary); font-weight: 650; cursor: pointer; transition: background .12s ease, border-color .12s ease; }
 .fl-suggestion:hover { background: #fdeecb; border-color: #e6c877; }
-.fl-suggestion-handoff { border: 0; background: var(--yellow); color: var(--heading); font-weight: 700; }
-.fl-suggestion-handoff:hover { background: var(--yellow); filter: brightness(0.95); }
 
 .fl-whatsapp-btn { display: grid; place-items: center; width: 38px; height: 38px; border: 1px solid #cfe9d6; border-radius: 10px; background: #eafaf0; color: #1f9d55; cursor: pointer; }
 .fl-whatsapp-btn:hover { background: #d8f5e3; }

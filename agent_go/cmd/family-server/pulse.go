@@ -68,12 +68,12 @@ func pulseChecks(s familyState) []pulseCheck {
 			"shared/reports/progress.html per their skill files (skills/create-academic-map/SKILL.md, skills/create-progress-report/SKILL.md) — " +
 			"both are fully-regenerated current-state snapshots, never a dated log; replace the whole file with a fresh picture. If a clear gap " +
 			"or opportunity stands out (a weak topic, something " + who + " hasn't practiced in a while, a natural next step), you may prepare " +
-			"study material or a test (skills/create-study-material/SKILL.md, skills/create-test/SKILL.md) — but do NOT call approve_for_child; " +
-			"nothing gets handed to " + who + " without the parent explicitly asking, so just mention what you made." + pulseReplyRules,
+			"study material or a test (skills/create-study-material/SKILL.md, skills/create-test/SKILL.md) — but do NOT create or hand off an " +
+			"activity for it; nothing gets handed to " + who + " without the parent explicitly asking, so just mention what you made." + pulseReplyRules,
 		tools: func(engine string) []agentsession.Tool {
 			return []agentsession.Tool{
 				webSearchTool(), readImageTool(engine), generateImageTool(), notifyTool(),
-				shellTool(), diffPatchWorkspaceFileTool(), createLearningPackageTool(who, func(toolEvent) {}),
+				shellTool(), diffPatchWorkspaceFileTool(), createLearningActivityTool(who, func(toolEvent) {}),
 			}
 		},
 	}}
@@ -125,6 +125,19 @@ func pulseChecks(s familyState) []pulseCheck {
 			"skills/update-preferences/SKILL.md and follow it: check parent/preferences.md against what the parent has actually said across " +
 			"parent/conversations/, and update it in place if there's something durable worth remembering (exam dates, scheduling/behavioral " +
 			"preferences, content preferences) that isn't already captured. Tell the parent in one short line what (if anything) you noted." + pulseReplyRules,
+		tools: func(engine string) []agentsession.Tool {
+			return []agentsession.Tool{shellTool(), diffPatchWorkspaceFileTool(), notifyTool()}
+		},
+	})
+
+	checks = append(checks, pulseCheck{
+		trigger: "Automated check-in — learning " + who + "'s interests",
+		instruction: "This is an automated Pulse check-in, focused ONLY on what " + who + " genuinely enjoys, learned from her own " +
+			"conversations (not what the parent has said — that's the preferences check above). Read " +
+			"skills/update-child-interests/SKILL.md and follow it: check child/interests.md against " + who + "'s actual engagement across " +
+			"child/conversations/, and update it in place if a genuine interest (or clear disinterest) signal isn't already captured. This " +
+			"powers skills/discover-something-new/SKILL.md, which the parent can ask for anytime (\"make her something fun this weekend\"). " +
+			"Tell the parent in one short line what (if anything) you noted." + pulseReplyRules,
 		tools: func(engine string) []agentsession.Tool {
 			return []agentsession.Tool{shellTool(), diffPatchWorkspaceFileTool(), notifyTool()}
 		},

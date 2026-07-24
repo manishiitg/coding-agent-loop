@@ -91,11 +91,29 @@ func buildFilteredTree(root string, paths []string, alwaysInclude []string) []tr
 	return walk(root, "")
 }
 
-// childCanSee reports whether a workspace-relative path is something the child
-// is allowed to have opened on their screen: their own work under child/, or a
-// file the parent has explicitly approved (approved-for-child.json). This is
-// the same allow-list the child's file panel is built from, so the agent's
-// open_file can never surface something the parent hasn't handed off.
+// currentActivityItems returns the CURRENT activity's real workspace-relative
+// item paths (always under shared/ — there is no separate child-owned copy):
+// a multi-item activity's Items, a single-file handoff's Path, or nil if
+// nothing has been handed off yet. This is the ONE definition of "what's
+// active right now" — childCanSee, childCanWrite, handleChildWorkspaceTree,
+// and childShellTool's Read/WritePaths all build their scoping from this, so
+// they can never drift out of sync with each other.
+func currentActivityItems() []string {
+	ct := loadCurrentTask()
+	if len(ct.Items) > 0 {
+		return ct.Items
+	}
+	if p := strings.TrimSpace(ct.Path); p != "" {
+		return []string{p}
+	}
+	return nil
+}
+
+// childCanSee reports whether a workspace-relative path is something the
+// child is allowed to have opened on their screen: their own attempts, the
+// current-task pointer, or an item of the CURRENT activity. Once a new
+// activity is handed off, an older one's files are no longer reachable, so
+// the tutor/child can't drift back into stale content.
 func childCanSee(rel string) bool {
 	rel = strings.TrimPrefix(strings.TrimSpace(rel), "/")
 	if rel == "" {
@@ -104,10 +122,35 @@ func childCanSee(rel string) bool {
 	if _, ok := resolveWorkspacePath(rel); !ok {
 		return false
 	}
-	if strings.HasPrefix(rel, "child/") {
+	if rel == "child/current-task.json" || strings.HasPrefix(rel, "child/attempts") {
 		return true
 	}
-	for _, p := range loadApprovedForChild() {
+	for _, p := range currentActivityItems() {
+		if p == rel {
+			return true
+		}
+	}
+	return false
+}
+
+// childCanWrite reports whether the child agent may write to rel directly —
+// their own child/attempts/ scratch space, or an item of the CURRENT
+// activity (this is what lets the tutor record "✓ Answered" progress notes
+// straight onto the parent's own file — see childSystemPrompt). Must stay in
+// sync with childShellTool's WritePaths, which grants the sandboxed shell
+// this exact same scope.
+func childCanWrite(rel string) bool {
+	rel = strings.TrimPrefix(strings.TrimSpace(rel), "/")
+	if rel == "" {
+		return false
+	}
+	if _, ok := resolveWorkspacePath(rel); !ok {
+		return false
+	}
+	if strings.HasPrefix(rel, "child/attempts") {
+		return true
+	}
+	for _, p := range currentActivityItems() {
 		if p == rel {
 			return true
 		}
@@ -124,11 +167,14 @@ func childDisplayName(child *Child) string {
 	return "your student"
 }
 
-// GET /api/child/workspace/tree — the child's own view of the workspace: only
-// files the parent has approved (parent/approved-for-child.json) plus the
-// child's own attempts. This is a pacing/UX gate, not the security boundary —
-// the child agent's sandbox already permits reading all of shared/; this just
-// controls what shows up unprompted on the child's screen.
+// GET /api/child/workspace/tree — the child's own view of the workspace:
+// only the CURRENT activity's files plus the child's own attempts — the same
+// "current activity only" boundary as childCanSee and childShellTool's own
+// readPaths (see childCanSee's doc comment; keep all three in sync). This
+// really is the security boundary now, not just a display filter: the child
+// agent's own sandbox (childShellTool, StrictAllowlist) is scoped exactly
+// this narrowly too, so a file outside this set is neither shown here nor
+// actually readable by the tutor.
 func handleChildWorkspaceTree(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -136,7 +182,6 @@ func handleChildWorkspaceTree(w http.ResponseWriter, r *http.Request) {
 	}
 	root := workspaceRoot()
 	_ = os.MkdirAll(root, 0o700)
-	approved := loadApprovedForChild()
-	nodes := buildFilteredTree(root, approved, []string{"child/attempts"})
+	nodes := buildFilteredTree(root, currentActivityItems(), []string{"child/attempts"})
 	writeJSON(w, http.StatusOK, nodes)
 }

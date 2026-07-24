@@ -38,12 +38,6 @@ type Child struct {
 	Board     string `json:"board"`
 	Language  string `json:"language"`
 	CreatedAt string `json:"created_at"`
-	// TeachingStyle controls how the tutor handles a stuck child: "hints-first"
-	// (default — never reveal the answer until a genuine attempt), "guided"
-	// (a hint, then the answer sooner if still stuck), or "direct" (answer
-	// plainly, then explain). Empty means "hints-first" (unchanged behavior for
-	// existing families that predate this setting).
-	TeachingStyle string `json:"teaching_style,omitempty"`
 }
 
 // familyState is the persisted onboarding/config state.
@@ -159,7 +153,7 @@ func scaffoldFamilyFolders() error {
 		"parent/conversations", // parent chat history
 		"shared/inbox",         // uploads land here; the agent files them (process-file skill)
 		"shared/materials",     // uploaded school material (by subject/topic)
-		"shared/study",         // generated study material (child-visible once approved)
+		"shared/study",         // generated study material (child sees it when it's part of the current activity)
 		"shared/tests",         // generated practice tests
 		"shared/reports",       // generated HTML progress reports (parent + child)
 		"child/attempts",       // child's submitted work

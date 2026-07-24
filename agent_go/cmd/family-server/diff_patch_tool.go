@@ -36,22 +36,22 @@ func diffPatchWorkspaceFileTool() agentsession.Tool {
 }
 
 // childDiffPatchWorkspaceFileTool is the SAME diff_patch_workspace_file tool,
-// restricted to paths under child/ — matching exactly what childShellTool()
-// already allows the child to write (WritePaths: []string{"child"}). Without
-// this restriction, giving the child agent the plain diffPatchWorkspaceFileTool
-// would let it patch ANY workspace file (parent/, shared/, ...): unlike
-// childShellTool(), this tool applies the patch directly in-process with no
-// security.Isolator sandbox underneath it, so the path check here IS the only
-// boundary — it must stay in sync with childShellTool()'s WritePaths.
+// restricted via childCanWrite to exactly what the child may write: the
+// CURRENT activity's files (annotated in place — this is how "✓ Answered"
+// progress notes get recorded) and the child's own child/attempts/ scratch
+// space. Unlike childShellTool(), this tool applies the patch directly
+// in-process with no security.Isolator sandbox underneath it, so the
+// childCanWrite check here IS the only boundary — it must stay in sync with
+// childShellTool()'s WritePaths (both derive from currentActivityItems).
 func childDiffPatchWorkspaceFileTool() agentsession.Tool {
 	return agentsession.Tool{
 		Name: "diff_patch_workspace_file",
-		Description: "Apply a small unified diff patch to a file under child/ (e.g. your child/active/ copy of a test or study guide) — " +
+		Description: "Apply a small unified diff patch to the current lesson/test or your own work — " +
 			"faster and more reliable than rewriting the whole file for a small insertion like an answered-note line.",
 		Category: "family_tools",
 		Params:   diffPatchParams,
 		Handler: func(_ context.Context, args map[string]interface{}) (string, error) {
-			return applyWorkspaceDiffPatch(args, func(rel string) bool { return strings.HasPrefix(rel, "child/") })
+			return applyWorkspaceDiffPatch(args, childCanWrite)
 		},
 	}
 }

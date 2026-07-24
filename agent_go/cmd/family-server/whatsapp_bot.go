@@ -725,6 +725,20 @@ func (w *waBot) handleIncomingMessage(acct *waAccount, evt *events.Message) {
 		return
 	}
 
+	// If a turn is already running for the shared parent conversation (started
+	// from the web app, or another linked phone), try to inject this message
+	// into it LIVE instead of just queuing behind agentTurnMu — the same
+	// steer mechanism the web app's composer uses (see steer.go). This is
+	// genuinely different from queuing: without it, a second WhatsApp message
+	// sent while Quill is still mid-reply just waits its turn and gets
+	// processed as a completely separate turn afterward, even though the
+	// parent very likely meant to redirect or add to what's already running.
+	if trySteer(context.Background(), parentConversationID, text) {
+		appendUserMessageToConversation("parent", parentConversationID, text)
+		acct.react(info.Chat, info.Sender, info.ID, "↩️") // delivered live — no separate reply coming for THIS message
+		return
+	}
+
 	// Eager acknowledgement: 👀 on the parent's message the instant we accept it,
 	// so they see it was received while the (possibly 1-2 min) turn runs. If the
 	// turn runs long, layer on ⏳ ("still working"). Cleared when the reply is

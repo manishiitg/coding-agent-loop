@@ -78,10 +78,6 @@ func handleChildMessage(w http.ResponseWriter, r *http.Request) {
 			if !childCanSee(p) {
 				return "", fmt.Errorf("that file isn't available on the child's screen")
 			}
-			// Redirect to the child's own live copy (mirrored on first open) so
-			// any progress they record afterward via the shell lands on a file
-			// they can actually write to — shared/ stays read-only to them.
-			p = mirrorToChildActive(p)
 			evMu.Lock()
 			events = append(events, toolEvent{Tool: "open_file", Path: p})
 			evMu.Unlock()

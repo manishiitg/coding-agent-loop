@@ -91,17 +91,16 @@ func normalizeConversationID(id string) string {
 // raw commands, file paths, or tool/terminal output (§2A: no terminal, ever).
 // A tool not listed here (e.g. suggest_actions, bridge chatter) stays silent.
 var toolStatusLabels = map[string]string{
-	"read_image":              "Reading the image",
-	"generate_image":          "Drawing an illustration",
-	"web_search":              "Looking up best practices",
-	"set_child_profile":       "Saving the profile",
-	"open_file":               "Opening the file",
-	"approve_for_child":       "Sending it to your child",
-	"create_learning_package": "Putting the package together",
-	"set_teaching_style":      "Saving your teaching preference",
-	"notify_user":             "Sending a notification",
-	"execute_shell_command":   "Working through it",
-	"agent_browser":           "Checking that link",
+	"read_image":               "Reading the image",
+	"generate_image":           "Drawing an illustration",
+	"web_search":               "Looking up best practices",
+	"set_child_profile":        "Saving the profile",
+	"open_file":                "Opening the file",
+	"open_activity":            "Opening the activity",
+	"create_learning_activity": "Putting the activity together",
+	"notify_user":              "Sending a notification",
+	"execute_shell_command":    "Working through it",
+	"agent_browser":            "Checking that link",
 }
 
 // withLiveStatus wraps each tool whose name has a friendly label so its

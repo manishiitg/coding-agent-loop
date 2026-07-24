@@ -250,6 +250,7 @@ html, body, #root { margin: 0; height: 100%; }
 .fl-bubble { width: fit-content; padding: 12px 15px; border-radius: 16px 16px 16px 5px; background: var(--blue-soft); color: #2c456b; font-size: var(--text-body); line-height: 1.55; }
 .fl-msg.is-parent .fl-bubble { border-radius: 16px 16px 5px 16px; background: var(--navy); color: #fff; }
 .fl-msg.is-parent .fl-bubble.is-queued { background: #8496b5; opacity: .85; }
+.fl-tmsg.is-child .fl-tbubble.is-queued { background: #8496b5; opacity: .85; }
 .fl-queued-tag { display: inline-block; margin-left: 6px; padding: 1px 7px; border-radius: 999px; background: rgba(255,255,255,.25); font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .03em; vertical-align: middle; }
 .fl-time { color: #91a0b8; font-size: var(--text-caption); }
 .fl-evidence-chip, .fl-view-details { display: inline-flex; align-items: center; gap: 6px; width: fit-content; padding: 7px 11px; border: 1px solid #d6e6f4; border-radius: 10px; background: #f2f8fe; color: #2f6db0; font-size: var(--text-secondary); font-weight: 650; text-decoration: none; }
@@ -377,10 +378,22 @@ html, body, #root { margin: 0; height: 100%; }
 .fl-package-detail .fl-package-goal { margin: 0 0 14px; }
 .fl-package-detail-items { display: flex; flex-direction: column; gap: 6px; }
 .fl-package-detail .fl-package-item { margin-left: 0; }
-/* Current assignment shown in the child's top bar — just the package name, so
-   the child always sees what they're working on without extra clutter. */
-.fl-child-assignment-pill { display: inline-flex; align-items: center; gap: 6px; max-width: 42vw; padding: 5px 12px; background: #fff7e6; border: 1px solid #f2e2bd; border-radius: 999px; color: #8a6d1f; font-weight: 700; font-size: var(--text-caption); }
+/* Current assignment shown in the child's top bar — the activity name,
+   clickable (when it has a goal/plan to show) to reveal it in a small
+   popover, so the child always sees what they're working on without extra
+   clutter, but can still check the goal without asking. */
+.fl-child-assignment-wrap { position: relative; }
+.fl-child-assignment-pill { display: inline-flex; align-items: center; gap: 6px; max-width: 42vw; padding: 6px 13px; border: 0; border-radius: 999px; background: #fff7e6; border: 1px solid #f2e2bd; color: #8a6d1f; font: inherit; font-weight: 700; font-size: var(--text-caption); cursor: pointer; transition: background .12s ease, border-color .12s ease, box-shadow .12s ease; }
+.fl-child-assignment-pill:hover { background: #fdecc4; border-color: #e8cf94; box-shadow: 0 2px 8px rgba(138, 109, 31, .12); }
+.fl-child-assignment-pill:disabled { cursor: default; }
+.fl-child-assignment-pill:disabled:hover { background: #fff7e6; border-color: #f2e2bd; box-shadow: none; }
 .fl-child-assignment-pill span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fl-child-assignment-pill svg:last-child { flex: 0 0 auto; transition: transform .15s ease; }
+.fl-child-assignment-pill svg.is-open { transform: rotate(180deg); }
+.fl-child-goal-popover { position: absolute; top: calc(100% + 10px); left: 50%; transform: translateX(-50%); z-index: 30; width: min(360px, 82vw); padding: 14px 16px; border-radius: 14px; background: var(--surface); border: 1px solid var(--line); box-shadow: 0 14px 34px rgba(13, 35, 76, .18); text-align: left; }
+.fl-child-goal-popover p { margin: 0 0 12px; font-size: var(--text-secondary); line-height: 1.5; color: var(--heading); }
+.fl-child-goal-popover p:last-child { margin-bottom: 0; }
+.fl-child-goal-popover strong { display: block; margin-bottom: 3px; font-size: 10.5px; font-weight: 800; text-transform: uppercase; letter-spacing: .05em; color: #8a6d1f; }
 /* Printing a Markdown/text file from the viewer: it's rendered in-page (not in a
    printable iframe like HTML), so isolate just the viewer content when printing.
    Triggered by printViewerContent() adding .fl-printing to <html>. */
@@ -456,7 +469,7 @@ html, body, #root { margin: 0; height: 100%; }
    rail would otherwise take, exactly like .fl-shell[data-rail="closed"]. */
 .fl-child-body { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(0, 1fr) calc(348px + 244px); }
 .fl-child-chat { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
-.fl-child-top { display: flex; align-items: center; justify-content: space-between; gap: 16px; min-height: 60px; padding: 10px clamp(16px, 2.5vw, 36px); border-bottom: 1px solid var(--line); background: var(--header-bg); }
+.fl-child-top { display: flex; align-items: center; justify-content: space-between; gap: 16px; min-height: 60px; padding: 10px clamp(16px, 2.5vw, 36px); border-bottom: 1px solid var(--line); background: var(--header-bg); box-shadow: 0 2px 10px rgba(13, 35, 76, .04); position: relative; z-index: 5; }
 .fl-child-id { display: flex; align-items: center; gap: 12px; }
 .fl-child-avatar.is-big { width: 46px; height: 46px; font-size: var(--text-subheading); }
 .fl-child-hi strong { display: block; color: var(--heading); font-size: var(--text-subheading); font-weight: 800; }

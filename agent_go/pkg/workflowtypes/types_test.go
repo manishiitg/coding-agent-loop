@@ -93,7 +93,7 @@ func TestResolveProviderProfileConfigUsesBuilderDefaults(t *testing.T) {
 		model    string
 		effort   string
 	}{
-		{provider: "claude-code", model: "claude-opus-4-8", effort: "high"},
+		{provider: "claude-code", model: "claude-opus-5", effort: "medium"},
 		{provider: "codex-cli", model: "gpt-5.6-sol", effort: "high"},
 	}
 	for _, tt := range tests {
@@ -114,8 +114,11 @@ func TestResolveProviderProfileConfigUsesBuilderDefaults(t *testing.T) {
 
 func TestResolveProviderProfileMaintenanceConfigUsesProviderDefault(t *testing.T) {
 	got, ok := ResolveProviderProfileMaintenanceConfig(providerProfile("claude-code"))
-	if !ok || got.Provider != "claude-code" || got.ModelID != "claude-opus-4-8" {
+	if !ok || got.Provider != "claude-code" || got.ModelID != "claude-opus-5" {
 		t.Fatalf("ResolveProviderProfileMaintenanceConfig() = %+v, %v", got, ok)
+	}
+	if got.Options["reasoning_effort"] != "medium" {
+		t.Fatalf("reasoning_effort = %#v, want medium", got.Options["reasoning_effort"])
 	}
 }
 
@@ -138,8 +141,11 @@ func TestResolveProviderProfilePulseConfigUsesProviderDefault(t *testing.T) {
 
 func TestResolveProviderProfileChiefOfStaffConfigUsesProviderDefault(t *testing.T) {
 	got, ok := ResolveProviderProfileChiefOfStaffConfig(providerProfile("claude-code"))
-	if !ok || got.Provider != "claude-code" || got.ModelID != "claude-opus-4-8" {
+	if !ok || got.Provider != "claude-code" || got.ModelID != "claude-opus-5" {
 		t.Fatalf("ResolveProviderProfileChiefOfStaffConfig() = %+v, %v", got, ok)
+	}
+	if got.Options["reasoning_effort"] != "medium" {
+		t.Fatalf("reasoning_effort = %#v, want medium", got.Options["reasoning_effort"])
 	}
 }
 

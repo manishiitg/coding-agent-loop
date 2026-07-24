@@ -304,19 +304,6 @@ html, body, #root { margin: 0; height: 100%; }
 .fl-asset-group:first-child .fl-drawer-label,
 .fl-drawer-scroll > .fl-drawer-label:first-child { margin-top: 2px; padding-top: 0; border-top: 0; }
 .fl-asset-group { display: flex; flex-direction: column; gap: 10px; }
-.fl-asset-topic { margin: 0 0 14px 4px; }
-.fl-asset-topic-label { margin: 0 0 8px 2px; font-size: 15px; font-weight: 800; color: var(--heading); }
-.fl-asset-type { margin: 0 0 12px 12px; padding-left: 12px; border-left: 3px solid var(--line); }
-.fl-asset-type-label { display: inline-block; margin: 0 0 6px; padding: 3px 10px; border-radius: 999px; font-size: 10.5px; font-weight: 750; text-transform: uppercase; letter-spacing: .04em; background: #eef1f6; color: #5c6d88; }
-.fl-asset-type.is-guides { border-left-color: #a9c6e8; }
-.fl-asset-type.is-guides .fl-asset-type-label { background: #eaf2fb; color: #2f6db0; }
-.fl-asset-type.is-guides .fl-file-item { border-left: 3px solid #a9c6e8; }
-.fl-asset-type.is-tests { border-left-color: #f0c48a; }
-.fl-asset-type.is-tests .fl-asset-type-label { background: #fdf1de; color: #a9701a; }
-.fl-asset-type.is-tests .fl-file-item { border-left: 3px solid #f0c48a; }
-.fl-asset-type.is-reports { border-left-color: #b9dcc4; }
-.fl-asset-type.is-reports .fl-asset-type-label { background: #eaf7ee; color: #2f8a52; }
-.fl-asset-type.is-reports .fl-file-item { border-left: 3px solid #b9dcc4; }
 .fl-thumb-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); gap: 8px; margin-bottom: 6px; }
 .fl-thumb-item { display: flex; flex-direction: column; gap: 4px; padding: 0; border: 1px solid #ece3d2; border-radius: 12px; background: var(--surface); cursor: pointer; overflow: hidden; text-align: left; }
 .fl-thumb-item:hover { border-color: #e6d9bd; }
@@ -360,9 +347,6 @@ html, body, #root { margin: 0; height: 100%; }
 .fl-child-package { display: flex; flex-direction: column; gap: 4px; margin-bottom: 8px; }
 .fl-package-title { display: flex; align-items: center; gap: 8px; padding: 6px 4px 2px; color: var(--heading); font-weight: 700; }
 .fl-package-title small { display: block; font-weight: 500; color: #7a869a; font-size: var(--text-caption); }
-.fl-parent-package .fl-package-title { padding: 10px 12px 6px; }
-.fl-parent-package .fl-package-title > span:not(.fl-give-to-child) { flex: 1; min-width: 0; }
-.fl-parent-package .fl-package-item { margin-left: 14px; }
 .fl-package-note { margin: 0 12px 10px; padding: 10px 12px; background: #faf8ff; border: 1px solid #e6ddf5; border-left: 3px solid #c7b8e6; border-radius: 10px; color: #4a4266; font-size: var(--text-caption); line-height: 1.55; }
 .fl-package-toggle { display: grid; place-items: center; width: 26px; height: 26px; flex: 0 0 auto; margin: 0; padding: 0; border: 1px solid #e0e6f0; border-radius: 8px; background: var(--surface); color: #5f708d; cursor: pointer; }
 .fl-package-toggle:hover { color: var(--heading); border-color: #c3cede; }
@@ -596,6 +580,48 @@ details[open] > .fl-tree-dir .fl-tree-icon.is-open { display: block; }
 .fl-give-to-child { flex: 0 0 auto; padding: 6px 14px; border: 0; border-radius: 9px; background: var(--yellow); color: var(--heading); font: inherit; font-size: var(--text-secondary); font-weight: 700; cursor: pointer; white-space: nowrap; }
 .fl-give-to-child:hover { filter: brightness(0.95); }
 .fl-give-to-child:disabled { opacity: 0.6; cursor: default; }
+
+/* ---- Workspace tab: the parent's library of activities ----
+   Scoped under .fl-workspace so the child's own view and the Uploaded tab,
+   which share some of the older class names, are untouched. The activity is
+   the unit that matters here, so it gets the visual weight (a real card);
+   subject and topic step back to quiet signposting above it. */
+.fl-workspace { display: flex; flex-direction: column; }
+.fl-subject-bar { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 18px; }
+.fl-subject-bar button { padding: 5px 12px; border: 1px solid var(--line); border-radius: 999px; background: var(--surface); color: #5f708d; font: inherit; font-size: var(--text-caption); font-weight: 650; cursor: pointer; transition: background .12s ease, border-color .12s ease, color .12s ease; }
+.fl-subject-bar button:hover { border-color: #b9c6d8; color: var(--heading); }
+.fl-subject-bar button.is-active { background: var(--navy); border-color: var(--navy); color: #fff; }
+
+.fl-ws-subject { margin-bottom: 26px; }
+.fl-ws-subject-name { display: flex; align-items: center; gap: 8px; margin: 0 0 12px; color: var(--heading); font-size: 12px; font-weight: 800; letter-spacing: .07em; text-transform: uppercase; }
+.fl-ws-subject-name::after { content: ""; flex: 1; height: 1px; background: var(--line); }
+.fl-ws-subject-name span { order: 3; flex: 0 0 auto; min-width: 18px; padding: 1px 6px; border-radius: 999px; background: #eef2f8; color: #5f708d; font-size: 10.5px; font-weight: 700; letter-spacing: 0; text-align: center; }
+.fl-ws-topic { margin-bottom: 14px; }
+.fl-ws-topic:last-child { margin-bottom: 0; }
+.fl-ws-topic-name { margin: 0 0 8px 2px; color: #5f708d; font-size: var(--text-caption); font-weight: 700; }
+
+.fl-act { margin-bottom: 10px; border: 1px solid var(--line); border-radius: 14px; background: var(--surface); box-shadow: 0 1px 2px rgba(22, 34, 58, .04); overflow: hidden; transition: border-color .12s ease, box-shadow .12s ease; }
+.fl-act:hover { border-color: #c3cede; box-shadow: 0 4px 14px rgba(22, 34, 58, .07); }
+.fl-act.is-expanded { border-color: #b9c6d8; box-shadow: 0 6px 18px rgba(22, 34, 58, .09); }
+/* The one activity the child is actually on right now — the only real state
+   in this list, so it gets the accent. */
+.fl-act.is-current { border-color: #f0d68a; box-shadow: 0 2px 10px rgba(246, 185, 59, .18); }
+
+.fl-act-head { display: flex; align-items: flex-start; gap: 10px; width: 100%; padding: 13px 14px 0; border: 0; background: transparent; color: var(--heading); font: inherit; text-align: left; cursor: pointer; }
+.fl-act-head:disabled { cursor: default; }
+.fl-act-title { flex: 1; min-width: 0; font-size: var(--text-body); font-weight: 700; line-height: 1.35; }
+.fl-act-chev { flex: 0 0 auto; margin-top: 2px; color: #8a99ae; transition: transform .15s ease; }
+.fl-act-chev.is-open { transform: rotate(180deg); }
+
+.fl-act-row { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; padding: 8px 14px 13px; }
+.fl-act-sub { flex: 1; min-width: 0; color: #7a869a; font-size: var(--text-caption); }
+.fl-act-mode { flex: 0 0 auto; padding: 2px 9px; border-radius: 999px; background: #eef1f6; color: #5c6d88; font-size: 10.5px; font-weight: 750; letter-spacing: .04em; text-transform: uppercase; }
+.fl-act-mode.is-learn { background: #eaf7ee; color: #2f8a52; }
+.fl-act-mode.is-practice { background: #eaf2fb; color: #2f6db0; }
+.fl-act-mode.is-test { background: #fdf1de; color: #a9701a; }
+.fl-act-mode.is-live { background: var(--navy); color: #fff; text-transform: none; letter-spacing: 0; }
+.fl-act .fl-package-note, .fl-act .fl-package-goal { margin: 0 14px 12px; }
+.fl-act .fl-file-item { margin: 0 14px 12px; width: auto; }
 .fl-viewer-frame { width: 100%; flex: 1; min-height: 260px; border: 1px solid #ece3d2; border-radius: 10px; background: var(--surface); }
 .fl-map-frame { width: 100%; height: 100%; min-height: 320px; border: 0; background: var(--surface); }
 .fl-viewer-md { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 16px 18px; color: var(--ink); line-height: 1.62; }

@@ -144,6 +144,20 @@ function dateTimeLabel(iso?: string): string {
   return new Date(t).toLocaleString(undefined, { day: 'numeric', month: 'short', year: 'numeric', hour: 'numeric', minute: '2-digit', hour12: true })
 }
 
+// activityMode turns an activity's teaching_mode into the one word a parent
+// actually cares about when scanning their library: is this something she'll
+// be taught, something she'll practise, or something she's being tested on?
+// It's already recorded on every activity but was invisible in the UI until
+// now. Colours reuse the app's own long-standing guides/tests/reports tints.
+function activityMode(mode?: string): { label: string; cls: string } | null {
+  switch (mode) {
+    case 'beginner': return { label: 'Learn', cls: 'is-learn' }
+    case 'graduated': return { label: 'Practice', cls: 'is-practice' }
+    case 'strict': return { label: 'Test', cls: 'is-test' }
+    default: return null // older activities predate the field — say nothing rather than guess
+  }
+}
+
 // Which side of the handoff the browser should land on after a refresh.
 // Without this, a refresh always falls back to Parent Mode — letting a child
 // bypass the PIN gate entirely just by reloading the page. Persisted in
@@ -2505,42 +2519,44 @@ export default function LearningApp() {
                     // any one of them directly — not just see a summary count.
                     const renderActivities = (acts: Activity[]) => acts.map((act) => {
                       const expanded = expandedActivity === act.dir
+                      const openable = act.items.length > 0
+                      const mode = activityMode(act.teaching_mode)
+                      const isCurrent = childActivity?.dir === act.dir
+                      // Details show for an expanded activity, and always for an
+                      // adaptive one — it has no items to expand, so its guide
+                      // note IS the activity.
+                      const showDetails = expanded || !openable
                       return (
-                        <div key={act.dir} className="fl-child-package fl-parent-package">
-                          <div className="fl-package-title">
-                            <BookOpen size={16} />
-                            <span>
-                              {act.title}
-                              <small>
-                                {act.items.length > 0 ? `${act.items.length} part${act.items.length === 1 ? '' : 's'}` : 'Adaptive practice'}
-                                {dateTimeLabel(act.created_at) ? ` · ${dateTimeLabel(act.created_at)}` : ''}
-                              </small>
+                        <div key={act.dir} className={`fl-act${expanded ? ' is-expanded' : ''}${isCurrent ? ' is-current' : ''}`}>
+                          <button
+                            type="button"
+                            className="fl-act-head"
+                            aria-expanded={openable ? expanded : undefined}
+                            disabled={!openable}
+                            onClick={() => setExpandedActivity((cur) => (cur === act.dir ? null : act.dir))}
+                          >
+                            <span className="fl-act-title">{act.title}</span>
+                            {openable && <ChevronDown size={15} className={`fl-act-chev${expanded ? ' is-open' : ''}`} />}
+                          </button>
+                          <div className="fl-act-row">
+                            {isCurrent
+                              ? <span className="fl-act-mode is-live">With {childName || 'your child'} now</span>
+                              : mode && <span className={`fl-act-mode ${mode.cls}`}>{mode.label}</span>}
+                            <span className="fl-act-sub">
+                              {openable ? `${act.items.length} part${act.items.length === 1 ? '' : 's'}` : 'Adaptive'}
+                              {dateTimeLabel(act.created_at) ? ` · ${dateTimeLabel(act.created_at)}` : ''}
                             </span>
-                            {act.items.length > 0 && (
-                              <button
-                                type="button"
-                                className="fl-package-toggle"
-                                aria-expanded={expanded}
-                                aria-label={expanded ? 'Hide contents' : 'See what’s inside'}
-                                title={expanded ? 'Hide contents' : 'See what’s inside'}
-                                onClick={() => setExpandedActivity((cur) => (cur === act.dir ? null : act.dir))}
-                              >
-                                <ChevronDown size={14} className={expanded ? 'is-open' : ''} />
-                              </button>
-                            )}
-                            {(act.items.length === 0 || expanded) && (
-                              <button
-                                className="fl-give-to-child"
-                                type="button"
-                                disabled={sending}
-                                onClick={() => startActivityHandoff(act.dir, act.title)}
-                              >
-                                Give to {childName || 'child'}
-                              </button>
-                            )}
+                            <button
+                              className="fl-give-to-child"
+                              type="button"
+                              disabled={sending}
+                              onClick={() => startActivityHandoff(act.dir, act.title)}
+                            >
+                              Give to {childName || 'child'}
+                            </button>
                           </div>
-                          {(act.items.length === 0 || expanded) && act.guide_note && <p className="fl-package-note">{act.guide_note}</p>}
-                      {(act.items.length === 0 || expanded) && act.goal && <p className="fl-package-goal"><strong>Goal:</strong> {act.goal}</p>}
+                          {showDetails && act.guide_note && <p className="fl-package-note">{act.guide_note}</p>}
+                          {showDetails && act.goal && <p className="fl-package-goal"><strong>Goal:</strong> {act.goal}</p>}
                           {expanded && act.items.map((item) => (
                             <div key={item.path} className="fl-file-item fl-package-item has-preview">
                               <ActivityItemPreview path={item.path} name={item.name} large={act.items.length === 1} />
@@ -2559,42 +2575,55 @@ export default function LearningApp() {
                       )
                     })
                     return (
-                      <>
+                      <div className="fl-workspace">
                         {subjectsList.length > 0 && (
-                          <select
-                            className="fl-subject-select"
-                            aria-label="Filter by subject"
-                            value={filesSubjectFilter}
-                            onChange={(e) => setFilesSubjectFilter(e.target.value)}
-                          >
-                            <option value="">All subjects</option>
-                            {subjectsList.map((s) => <option key={s} value={s}>{s}</option>)}
-                          </select>
+                          <div className="fl-subject-bar" role="group" aria-label="Filter by subject">
+                            <button
+                              type="button"
+                              className={filesSubjectFilter === '' ? 'is-active' : ''}
+                              onClick={() => setFilesSubjectFilter('')}
+                            >
+                              All
+                            </button>
+                            {subjectsList.map((s) => (
+                              <button
+                                key={s}
+                                type="button"
+                                className={filesSubjectFilter === s ? 'is-active' : ''}
+                                onClick={() => setFilesSubjectFilter(filesSubjectFilter === s ? '' : s)}
+                              >
+                                {s}
+                              </button>
+                            ))}
+                          </div>
                         )}
                         {bySubject.size === 0 && unplaced.length === 0 ? (
                           <p className="fl-note">Nothing here yet. Ask Quill to make study material or a test.</p>
                         ) : (
                           <>
                             {Array.from(bySubject.entries()).map(([subj, topics]) => (
-                              <section key={subj} className="fl-asset-group">
-                                <p className="fl-drawer-label">{subj}</p>
+                              <section key={subj} className="fl-ws-subject">
+                                <h3 className="fl-ws-subject-name">
+                                  {subj}
+                                  <span>{Array.from(topics.values()).reduce((n, a) => n + a.length, 0)}</span>
+                                </h3>
                                 {Array.from(topics.entries()).map(([top, acts]) => (
-                                  <div key={top} className="fl-asset-topic">
-                                    <p className="fl-asset-topic-label">{top === '—' ? 'Other' : top}</p>
+                                  <div key={top} className="fl-ws-topic">
+                                    {top !== '—' && <p className="fl-ws-topic-name">{top}</p>}
                                     {renderActivities(acts)}
                                   </div>
                                 ))}
                               </section>
                             ))}
                             {unplaced.length > 0 && (
-                              <section className="fl-asset-group">
-                                <p className="fl-drawer-label">General</p>
-                                {renderActivities(unplaced)}
+                              <section className="fl-ws-subject">
+                                <h3 className="fl-ws-subject-name">General<span>{unplaced.length}</span></h3>
+                                <div className="fl-ws-topic">{renderActivities(unplaced)}</div>
                               </section>
                             )}
                           </>
                         )}
-                      </>
+                      </div>
                     )
                   })()}
                 </>

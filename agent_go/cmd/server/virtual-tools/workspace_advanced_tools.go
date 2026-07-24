@@ -1191,7 +1191,6 @@ func createWorkspaceDefaultImageAnalysisLLM(ctx context.Context, apiKeys *llm.Pr
 		{Provider: string(llm.ProviderVertex), ModelID: defaultImageAnalysisModelForProvider(string(llm.ProviderVertex))},
 		{Provider: string(llm.ProviderCodexCLI), ModelID: defaultImageAnalysisModelForProvider(string(llm.ProviderCodexCLI))},
 		{Provider: string(llm.ProviderCursorCLI), ModelID: defaultImageAnalysisModelForProvider(string(llm.ProviderCursorCLI))},
-		{Provider: string(llm.ProviderAgyCLI), ModelID: defaultImageAnalysisModelForProvider(string(llm.ProviderAgyCLI))},
 		{Provider: string(llm.ProviderClaudeCode), ModelID: defaultImageAnalysisModelForProvider(string(llm.ProviderClaudeCode))},
 	}
 
@@ -1253,9 +1252,6 @@ func hasWorkspaceDefaultImageAnalysisAuth(provider string, apiKeys *llm.Provider
 	case string(llm.ProviderCursorCLI):
 		_, err := exec.LookPath("cursor-agent")
 		return err == nil
-	case string(llm.ProviderAgyCLI):
-		_, err := exec.LookPath("agy")
-		return err == nil
 	}
 	if hasImageAnalysisProviderAuth(provider, apiKeys) {
 		return true
@@ -1295,8 +1291,6 @@ func createLLMFromConfig(ctx context.Context, config mcpagent.LLMModel) (llmtype
 			apiKeys.CodexCLI = config.APIKey
 		case llm.ProviderCursorCLI:
 			apiKeys.CursorCLI = config.APIKey
-		case llm.ProviderAgyCLI:
-			apiKeys.AgyCLI = config.APIKey
 		case llm.ProviderPiCLI:
 			apiKeys.PiCLI = config.APIKey
 		case llm.ProviderMiniMax:

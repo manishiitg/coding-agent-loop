@@ -74,7 +74,6 @@ var (
 	cleanupClaudeCodeProviderSessions = llmproviders.CleanupClaudeCodeTmuxSessions
 	cleanupCodexCLIProviderSessions   = llmproviders.CleanupCodexCLIInteractiveSessions
 	cleanupCursorCLIProviderSessions  = llmproviders.CleanupCursorCLIInteractiveSessions
-	cleanupAgyCLIProviderSessions     = llmproviders.CleanupAgyCLIInteractiveSessions
 	cleanupPiCLIProviderSessions      = llmproviders.CleanupPiCLIInteractiveSessions
 )
 
@@ -2131,7 +2130,6 @@ func cleanupCodingAgentInteractiveSessions(phase string) {
 	cleanupProvider("CLAUDE-CODE", cleanupClaudeCodeProviderSessions)
 	cleanupProvider("CODEX-CLI", cleanupCodexCLIProviderSessions)
 	cleanupProvider("CURSOR-CLI", cleanupCursorCLIProviderSessions)
-	cleanupProvider("AGY-CLI", cleanupAgyCLIProviderSessions)
 	cleanupProvider("PI-CLI", cleanupPiCLIProviderSessions)
 }
 
@@ -3984,7 +3982,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 
 		// Create new agent with streamCtx instead of r.Context()
 		log.Printf("[AGENT CONFIG DEBUG] Creating agent with ServerName: %s, UseCodeExecutionMode: %v", serverList, useCodeExecutionMode)
-		claudeCodePersistentInteractive, codexPersistentInteractive, cursorPersistentInteractive, agyPersistentInteractive, piPersistentInteractive := codingAgentPersistentInteractiveFlags(finalProvider)
+		claudeCodePersistentInteractive, codexPersistentInteractive, cursorPersistentInteractive, piPersistentInteractive := codingAgentPersistentInteractiveFlags(finalProvider)
 		claudeCodeTransport := codingAgentClaudeCodeChatTransport(finalProvider)
 		chatWorkingFolder := perUserChatsFolder
 		if isWorkflowPhase && workflowPhaseFolder != "" && workflowPhaseFolder != "default_workspace" {
@@ -4020,7 +4018,6 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			ClaudeCodePersistentInteractiveSession: claudeCodePersistentInteractive,
 			CodexPersistentInteractiveSession:      codexPersistentInteractive,
 			CursorPersistentInteractiveSession:     cursorPersistentInteractive,
-			AgyPersistentInteractiveSession:        agyPersistentInteractive,
 			CursorBridgeToolsMode:                  cursorPersistentInteractive,
 			PiPersistentInteractiveSession:         piPersistentInteractive,
 			ClaudeCodeTransport:                    claudeCodeTransport,
@@ -5362,8 +5359,6 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			// Symmetric across the tmux-backed coding-CLI providers.
 			reason := fmt.Sprintf("workshop mode changed %q -> %q", modeChangePrevMode, newWorkshopMode)
 			switch strings.ToLower(strings.TrimSpace(finalProvider)) {
-			case "agy-cli":
-				llmproviders.CloseAgyCLIInteractiveSessionForOwner(sessionID, reason)
 			case "cursor-cli":
 				llmproviders.CloseCursorCLIInteractiveSessionForOwner(sessionID, reason)
 			case "codex-cli":
@@ -6095,13 +6090,6 @@ func (api *StreamingAPI) captureChatHistoryAgentRuntime(sessionID, provider, mod
 				runtime.ResumeFlag = "--resume"
 				log.Printf("[CURSOR CLI] Saved session ID %s for session %s", sid, sessionID)
 			}
-		case "agy-cli":
-			if sid := strings.TrimSpace(underlyingAgent.AgySessionID); sid != "" {
-				runtime.ExternalSessionID = sid
-				runtime.ResumeSupported = true
-				runtime.ResumeFlag = "--conversation"
-				log.Printf("[AGY CLI] Saved conversation ID %s for session %s", sid, sessionID)
-			}
 		case "pi-cli":
 			if sid := strings.TrimSpace(underlyingAgent.PiSessionID); sid != "" {
 				runtime.ExternalSessionID = sid
@@ -6196,8 +6184,6 @@ func codingAgentHasNativeResume(provider string, underlyingAgent *mcpagent.Agent
 		return strings.TrimSpace(underlyingAgent.CodexSessionID) != "" || strings.TrimSpace(underlyingAgent.CodexProjectDirID) != ""
 	case "cursor-cli":
 		return strings.TrimSpace(underlyingAgent.CursorSessionID) != ""
-	case "agy-cli":
-		return strings.TrimSpace(underlyingAgent.AgySessionID) != ""
 	case "pi-cli":
 		return strings.TrimSpace(underlyingAgent.PiSessionID) != ""
 	default:
@@ -6288,13 +6274,6 @@ func (api *StreamingAPI) seedCodingAgentRuntimeFromRestoredConversation(sessionI
 		}
 		underlyingAgent.CursorSessionID = externalSessionID
 		log.Printf("[CURSOR CLI] Restored native session %s from chat history for session %s", externalSessionID, sessionID)
-		return true
-	case "agy-cli":
-		if externalSessionID == "" {
-			return false
-		}
-		underlyingAgent.AgySessionID = externalSessionID
-		log.Printf("[AGY CLI] Restored native conversation %s from chat history for session %s", externalSessionID, sessionID)
 		return true
 	case "pi-cli":
 		if externalSessionID == "" {
@@ -8343,7 +8322,7 @@ func (api *StreamingAPI) buildLLMToolsCallbacks() *todo_creation_human.LLMToolsC
 				return "provider is required.", nil
 			}
 			if !isPublishedLLMProviderAllowed(provider) {
-				return fmt.Sprintf("unsupported chat LLM provider %q. Use coding agents or direct API providers: codex-cli, cursor-cli, agy-cli, pi-cli, claude-code, bedrock, openai, anthropic, vertex, or azure.", provider), nil
+				return fmt.Sprintf("unsupported chat LLM provider %q. Use coding agents or direct API providers: codex-cli, cursor-cli, pi-cli, claude-code, bedrock, openai, anthropic, vertex, or azure.", provider), nil
 			}
 
 			validationOptions := cloneOptionsMap(options)

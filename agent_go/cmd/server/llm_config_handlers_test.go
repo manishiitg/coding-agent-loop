@@ -69,7 +69,7 @@ func TestClaudeCodeDiscoveryOptionsIncludeManualNewModels(t *testing.T) {
 
 func TestProviderManifestMarksDeprecatedCodingAgents(t *testing.T) {
 	t.Setenv("WORKSPACE_DOCS_PATH", t.TempDir())
-	t.Setenv("SUPPORTED_LLM_PROVIDERS", "agy-cli,pi-cli")
+	t.Setenv("SUPPORTED_LLM_PROVIDERS", "pi-cli")
 	t.Setenv("PATH", t.TempDir())
 
 	api := &StreamingAPI{}
@@ -101,7 +101,7 @@ func TestProviderManifestMarksDeprecatedCodingAgents(t *testing.T) {
 		t.Fatalf("decode manifest: %v", err)
 	}
 
-	want := map[string]string{"agy-cli": "pi-cli"}
+	want := map[string]string{}
 	seen := map[string]bool{}
 	for _, provider := range resp.Providers {
 		replacement, ok := want[provider.ID]
@@ -228,55 +228,6 @@ func TestBuildLLMDiscoveryHidesMissingAPIProvider(t *testing.T) {
 	response := buildLLMDiscovery(context.Background())
 	if len(response.Candidates) != 0 {
 		t.Fatalf("candidate count = %d, want 0: %+v", len(response.Candidates), response.Candidates)
-	}
-}
-
-func TestAgyCLIIsDeprecatedButRuntimeAllowed(t *testing.T) {
-	t.Setenv("WORKSPACE_DOCS_PATH", t.TempDir())
-	t.Setenv("SUPPORTED_LLM_PROVIDERS", "agy-cli")
-	t.Setenv("PATH", t.TempDir())
-
-	if !isPublishedLLMProviderAllowed("agy-cli") {
-		t.Fatal("agy-cli should remain allowed for restored/published legacy provider lists")
-	}
-	foundSupported := false
-	for _, provider := range getSupportedProviders() {
-		if provider == "agy-cli" {
-			foundSupported = true
-		}
-	}
-	if !foundSupported {
-		t.Fatalf("supported providers missing agy-cli: %v", getSupportedProviders())
-	}
-
-	response := buildLLMDiscovery(context.Background())
-	if len(response.Candidates) != 1 {
-		t.Fatalf("candidate count = %d, want 1: %+v", len(response.Candidates), response.Candidates)
-	}
-	candidate := response.Candidates[0]
-	if candidate.Provider != "agy-cli" {
-		t.Fatalf("provider = %q, want agy-cli", candidate.Provider)
-	}
-	if candidate.Label != "Antigravity CLI (Deprecated)" {
-		t.Fatalf("label = %q, want deprecated label", candidate.Label)
-	}
-	if !candidate.Deprecated {
-		t.Fatal("agy-cli discovery candidate should be marked deprecated")
-	}
-	if candidate.ReplacementProvider != "pi-cli" {
-		t.Fatalf("replacement_provider = %q, want pi-cli", candidate.ReplacementProvider)
-	}
-	if candidate.RuntimeCommand != "agy" {
-		t.Fatalf("runtime_command = %q, want agy", candidate.RuntimeCommand)
-	}
-	if candidate.RuntimeAvailable == nil || *candidate.RuntimeAvailable {
-		t.Fatalf("runtime_available = %v, want false for missing agy binary", candidate.RuntimeAvailable)
-	}
-	if candidate.Usable {
-		t.Fatal("usable = true, want false when agy binary is missing")
-	}
-	if len(candidate.Options) != 1 || candidate.Options[0] != "agy-cli" {
-		t.Fatalf("options = %v, want [agy-cli]", candidate.Options)
 	}
 }
 

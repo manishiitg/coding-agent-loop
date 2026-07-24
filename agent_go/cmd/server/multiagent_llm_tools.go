@@ -402,8 +402,6 @@ func providerRuntime(provider string) string {
 		return "codex"
 	case string(llm.ProviderCursorCLI):
 		return "cursor-agent"
-	case string(llm.ProviderAgyCLI):
-		return "agy"
 	case string(llm.ProviderPiCLI):
 		return "pi"
 	}
@@ -438,8 +436,6 @@ func providerAuthConfigured(provider string, keys *llm.ProviderAPIKeys) (bool, s
 		}
 		configured, _ := cursorCLILocalAuthState()
 		return configured, "Cursor CLI login or CURSOR_API_KEY/workspace provider auth"
-	case string(llm.ProviderAgyCLI):
-		return true, "Antigravity CLI local sign-in"
 	case string(llm.ProviderPiCLI):
 		return piProviderAuthConfigured(keys), "Provider-specific Pi API key or workspace provider auth"
 	case string(llm.ProviderMiniMax):
@@ -567,7 +563,6 @@ func buildChatLLMCapabilities(keys *llm.ProviderAPIKeys, includeModels bool) []l
 	providers := []string{
 		string(llm.ProviderCodexCLI),
 		string(llm.ProviderCursorCLI),
-		string(llm.ProviderAgyCLI),
 		string(llm.ProviderPiCLI),
 		string(llm.ProviderClaudeCode),
 		string(llm.ProviderOpenAI),
@@ -614,7 +609,6 @@ func buildFixedCapabilityProviders(keys *llm.ProviderAPIKeys, providerModels map
 		string(llm.ProviderMiniMax),
 		string(llm.ProviderCodexCLI),
 		string(llm.ProviderCursorCLI),
-		string(llm.ProviderAgyCLI),
 		string(llm.ProviderPiCLI),
 		string(llm.ProviderClaudeCode),
 		string(llm.ProviderElevenLabs),
@@ -740,20 +734,17 @@ func buildLLMCapabilities(ctx context.Context, capability string, includeModels 
 					string(llm.ProviderVertex):     {"gemini-3-pro-preview", "gemini-3-flash-preview", "gemini-3.1-flash-lite-preview"},
 					string(llm.ProviderCodexCLI):   {"codex-cli", "gpt-5.4", "gpt-5.4-mini", "gpt-5.3-codex", "gpt-5.3-codex-spark"},
 					string(llm.ProviderCursorCLI):  {"cursor-cli", "composer-2.5", "gpt-5", "sonnet-4-thinking", "sonnet-4"},
-					string(llm.ProviderAgyCLI):     {"agy-cli"},
 					string(llm.ProviderClaudeCode): claudeCodeCapabilityModels(),
 				},
 				map[string]string{
 					string(llm.ProviderVertex):     "gemini-3-pro-preview",
 					string(llm.ProviderCodexCLI):   "gpt-5.4-mini",
 					string(llm.ProviderCursorCLI):  "cursor-cli",
-					string(llm.ProviderAgyCLI):     "agy-cli",
 					string(llm.ProviderClaudeCode): "claude-code",
 				},
 				map[string][]string{
 					string(llm.ProviderCodexCLI):   {"Uses the local workspace image path because Codex CLI does not consume base64 ImageContent through the adapter."},
 					string(llm.ProviderCursorCLI):  {"Uses the local workspace image path because Cursor CLI tmux transport does not consume base64 ImageContent through the adapter."},
-					string(llm.ProviderAgyCLI):     {"Deprecated for new setup; retained for existing legacy defaults. Uses the local workspace image path through Antigravity CLI and requires local Agy sign-in."},
 					string(llm.ProviderClaudeCode): {"Uses the local workspace image path through Claude Code CLI."},
 				},
 			),
@@ -768,16 +759,12 @@ func buildLLMCapabilities(ctx context.Context, capability string, includeModels 
 				map[string][]string{
 					string(llm.ProviderVertex):   {"gemini-3.1-flash-image", "gemini-3-pro-image", "gemini-3.1-flash-lite-image"},
 					string(llm.ProviderCodexCLI): {"codex-cli", "gpt-5.4", "gpt-5.4-mini", "gpt-5.3-codex", "gpt-5.3-codex-spark"},
-					string(llm.ProviderAgyCLI):   {"agy-cli"},
 				},
 				map[string]string{
 					string(llm.ProviderVertex):   "gemini-3.1-flash-image",
 					string(llm.ProviderCodexCLI): "gpt-5.4-mini",
-					string(llm.ProviderAgyCLI):   "agy-cli",
 				},
-				map[string][]string{
-					string(llm.ProviderAgyCLI): {"Deprecated for new setup; retained for existing legacy defaults. Uses Antigravity CLI native image generation and local Agy sign-in."},
-				},
+				map[string][]string{},
 			),
 		}
 	}
@@ -1384,7 +1371,7 @@ func registerLLMCapabilityTools(registerTool func(string, string, map[string]int
 			"properties": map[string]interface{}{
 				"provider": map[string]interface{}{
 					"type":        "string",
-					"description": "Provider id such as pi-cli, codex-cli, cursor-cli, agy-cli, claude-code, openai, anthropic, vertex, azure, or bedrock.",
+					"description": "Provider id such as pi-cli, codex-cli, cursor-cli, claude-code, openai, anthropic, vertex, azure, or bedrock.",
 				},
 			},
 			"required": []string{"provider"},
@@ -1408,7 +1395,7 @@ func registerLLMCapabilityTools(registerTool func(string, string, map[string]int
 			"properties": map[string]interface{}{
 				"provider": map[string]interface{}{
 					"type":        "string",
-					"description": "Provider id such as pi-cli, codex-cli, cursor-cli, agy-cli, claude-code, openai, anthropic, vertex, azure, or bedrock.",
+					"description": "Provider id such as pi-cli, codex-cli, cursor-cli, claude-code, openai, anthropic, vertex, azure, or bedrock.",
 				},
 				"model_id": map[string]interface{}{
 					"type":        "string",
@@ -1447,7 +1434,7 @@ func registerLLMCapabilityTools(registerTool func(string, string, map[string]int
 				return "provider is required.", nil
 			}
 			if !isPublishedLLMProviderAllowed(provider) {
-				return fmt.Sprintf("unsupported chat LLM provider %q. Use coding agents or direct API providers: codex-cli, cursor-cli, agy-cli, pi-cli, claude-code, bedrock, openai, anthropic, vertex, or azure.", provider), nil
+				return fmt.Sprintf("unsupported chat LLM provider %q. Use coding agents or direct API providers: codex-cli, cursor-cli, pi-cli, claude-code, bedrock, openai, anthropic, vertex, or azure.", provider), nil
 			}
 
 			explicitAPIKeyProvided := strings.TrimSpace(apiKey) != ""
@@ -1551,7 +1538,7 @@ func registerLLMCapabilityTools(registerTool func(string, string, map[string]int
 				},
 				"provider": map[string]interface{}{
 					"type":        "string",
-					"description": "Provider id such as pi-cli, codex-cli, cursor-cli, agy-cli, claude-code, openai, anthropic, vertex, azure, or bedrock.",
+					"description": "Provider id such as pi-cli, codex-cli, cursor-cli, claude-code, openai, anthropic, vertex, azure, or bedrock.",
 				},
 				"model_id": map[string]interface{}{
 					"type":        "string",
@@ -1575,7 +1562,7 @@ func registerLLMCapabilityTools(registerTool func(string, string, map[string]int
 				return "name, provider, and model_id are required.", nil
 			}
 			if !isPublishedLLMProviderAllowed(provider) {
-				return fmt.Sprintf("unsupported published LLM provider %q. Use coding agents or direct API providers: codex-cli, cursor-cli, agy-cli, pi-cli, claude-code, bedrock, openai, anthropic, vertex, or azure.", provider), nil
+				return fmt.Sprintf("unsupported published LLM provider %q. Use coding agents or direct API providers: codex-cli, cursor-cli, pi-cli, claude-code, bedrock, openai, anthropic, vertex, or azure.", provider), nil
 			}
 
 			llms, err := LoadPublishedLLMs(ctx)
@@ -1634,7 +1621,7 @@ func registerLLMCapabilityTools(registerTool func(string, string, map[string]int
 			"properties": map[string]interface{}{
 				"provider": map[string]interface{}{
 					"type":        "string",
-					"description": "Provider id: pi-cli, codex-cli, cursor-cli, agy-cli, openai, anthropic, vertex, minimax, elevenlabs, deepgram, bedrock, or azure.",
+					"description": "Provider id: pi-cli, codex-cli, cursor-cli, openai, anthropic, vertex, minimax, elevenlabs, deepgram, bedrock, or azure.",
 				},
 				"api_key": map[string]interface{}{
 					"type":        "string",

@@ -96,7 +96,7 @@ func createWorkflowScheduleTools() []llmtypes.Tool {
 						},
 						"resume_previous": map[string]interface{}{
 							"type":        "boolean",
-							"description": "Optional opt-in for workshop runs backed by a coding-agent CLI (claude-code, cursor-cli, codex-cli, pi-cli, agy-cli). When true, each scheduled run resumes the previous run's thread (same CLI) instead of starting a fresh session, so the agent keeps prior context across runs. API model providers and non-resumable runs start fresh. Defaults to false; omit for fresh sessions.",
+							"description": "Optional opt-in for workshop runs backed by a coding-agent CLI (claude-code, cursor-cli, codex-cli, pi-cli). When true, each scheduled run resumes the previous run's thread (same CLI) instead of starting a fresh session, so the agent keeps prior context across runs. API model providers and non-resumable runs start fresh. Defaults to false; omit for fresh sessions.",
 						},
 					},
 					Required: []string{"workflow_path", "name", "cron_expression", "timezone"},

@@ -31,39 +31,28 @@ var supportedLLMProviders = []string{
 	"claude-code",
 	"codex-cli",
 	"cursor-cli",
-	"agy-cli",
 	"pi-cli",
 }
 
 func isDeprecatedLLMProvider(provider string) bool {
-	provider = strings.ToLower(strings.TrimSpace(provider))
-	return provider == "agy-cli"
+	_ = strings.ToLower(strings.TrimSpace(provider))
+	return false
 }
 
 func providerDeprecationReason(provider string) string {
-	provider = strings.ToLower(strings.TrimSpace(provider))
-	switch {
-	case provider == "agy-cli":
-		return "Antigravity CLI is retained for existing sessions only. Use Pi CLI for new multi-provider coding-agent setup."
-	default:
-		return ""
-	}
+	_ = strings.ToLower(strings.TrimSpace(provider))
+	return ""
 }
 
 func providerReplacementProvider(provider string) string {
-	provider = strings.ToLower(strings.TrimSpace(provider))
-	switch {
-	case provider == "agy-cli":
-		return "pi-cli"
-	default:
-		return ""
-	}
+	_ = strings.ToLower(strings.TrimSpace(provider))
+	return ""
 }
 
 func isPublishedLLMProviderAllowed(provider string) bool {
 	switch strings.ToLower(strings.TrimSpace(provider)) {
 	case "bedrock", "openai", "vertex", "anthropic", "azure",
-		"claude-code", "codex-cli", "cursor-cli", "agy-cli", "pi-cli":
+		"claude-code", "codex-cli", "cursor-cli", "pi-cli":
 		return true
 	default:
 		return false
@@ -305,9 +294,6 @@ func buildProviderAPIKeysFromEnv() *llm.ProviderAPIKeys {
 	if s := os.Getenv("CURSOR_API_KEY"); s != "" {
 		keys.CursorCLI = &s
 	}
-	if s := os.Getenv("AGY_API_KEY"); s != "" {
-		keys.AgyCLI = &s
-	}
 	if s := os.Getenv("PI_API_KEY"); s != "" {
 		keys.PiCLI = &s
 	} else if s := os.Getenv("GEMINI_API_KEY"); s != "" {
@@ -413,8 +399,6 @@ func providerDisplayLabel(provider string) string {
 		return "OpenAI Codex CLI"
 	case "cursor-cli":
 		return "Cursor CLI"
-	case "agy-cli":
-		return "Antigravity CLI (Deprecated)"
 	case "pi-cli":
 		return "Pi CLI"
 	case "claude-code":
@@ -474,8 +458,6 @@ func discoveryModelOptions(provider string) []string {
 		return []string{"codex-cli", "high", "medium", "low"}
 	case "cursor-cli":
 		return []string{"cursor-cli", "composer-2.5", "gpt-5", "sonnet-4-thinking", "sonnet-4"}
-	case "agy-cli":
-		return []string{"agy-cli"}
 	case "pi-cli":
 		return piCuratedModelIDs()
 	case "claude-code":
@@ -498,8 +480,6 @@ func discoverySetupHint(provider string, runtimeMissing bool) string {
 			return "Install Codex CLI so the codex command is available on the backend PATH."
 		case "cursor-cli":
 			return "Install Cursor CLI so the cursor-agent command is available on the backend PATH."
-		case "agy-cli":
-			return "Install Antigravity CLI so the agy command is available on the backend PATH."
 		case "pi-cli":
 			return "Install Pi CLI with npm install -g @earendil-works/pi-coding-agent, or ensure npx is available on the backend PATH."
 		case "claude-code":
@@ -514,8 +494,6 @@ func discoverySetupHint(provider string, runtimeMissing bool) string {
 		return "Run codex login or set CODEX_API_KEY, then test again."
 	case "cursor-cli":
 		return "Run cursor-agent login or set CURSOR_API_KEY, then test again."
-	case "agy-cli":
-		return "Run agy locally and complete Antigravity sign-in, then test again."
 	case "pi-cli":
 		return "Set PI_API_KEY, GEMINI_API_KEY, or GOOGLE_API_KEY, then test again."
 	case "claude-code":
@@ -538,7 +516,6 @@ func buildLLMDiscovery(ctx context.Context) llmDiscoveryResponse {
 		"codex-cli",
 		"cursor-cli",
 		"pi-cli",
-		"agy-cli",
 		"openai",
 		"anthropic",
 		"vertex",
@@ -955,8 +932,6 @@ func (api *StreamingAPI) populateValidationCredentialsFromMergedKeys(ctx context
 		setAPIKey(keys.CodexCLI)
 	case "cursor-cli":
 		setAPIKey(keys.CursorCLI)
-	case "agy-cli":
-		setAPIKey(keys.AgyCLI)
 	case "pi-cli":
 		if req.APIKey == "" {
 			req.APIKey = selectPiAPIKeyForModel(keys, req.ModelID)
@@ -1005,8 +980,6 @@ func validateProviderConfig(req llm.APIKeyValidationRequest) llm.APIKeyValidatio
 		return validateCodexCLI(req.APIKey)
 	case "cursor-cli":
 		return validateCursorCLI(req.APIKey, req.ModelID)
-	case "agy-cli":
-		return validateAgyCLI(req.APIKey, req.ModelID)
 	case "pi-cli":
 		return validatePiCLI(req.APIKey, req.ModelID, req.Options)
 	case "kimi":
@@ -1281,103 +1254,6 @@ func validateCursorCLI(apiKey, modelID string) llm.APIKeyValidationResponse {
 	return llm.APIKeyValidationResponse{
 		Valid:   true,
 		Message: fmt.Sprintf("Cursor CLI is working. Response: %s", responseText),
-	}
-}
-
-// validateAgyCLI validates Antigravity CLI through the real tmux adapter path.
-func validateAgyCLI(apiKey, modelID string) llm.APIKeyValidationResponse {
-	log.Printf("[AGY-CLI VALIDATION] Starting CLI validation")
-
-	agyPath, err := exec.LookPath("agy")
-	if err != nil {
-		log.Printf("[AGY-CLI VALIDATION] CLI not found on PATH: %v", err)
-		return llm.APIKeyValidationResponse{
-			Valid:   false,
-			Message: "Antigravity CLI not found. Install it so the agy command is available on the backend PATH.",
-		}
-	}
-	if _, err := exec.LookPath("tmux"); err != nil {
-		log.Printf("[AGY-CLI VALIDATION] tmux not found on PATH: %v", err)
-		return llm.APIKeyValidationResponse{
-			Valid:   false,
-			Message: "tmux not found. Antigravity CLI integration requires tmux for interactive mode.",
-		}
-	}
-	log.Printf("[AGY-CLI VALIDATION] CLI found at: %s", agyPath)
-
-	if modelID == "" {
-		modelID = "agy-cli"
-	}
-
-	workspaceDir, err := os.MkdirTemp("", "agy-cli-validation-*")
-	if err != nil {
-		return llm.APIKeyValidationResponse{
-			Valid:   false,
-			Message: "Could not create a temporary workspace for Antigravity CLI validation.",
-		}
-	}
-	defer os.RemoveAll(workspaceDir)
-
-	keys := &llm.ProviderAPIKeys{}
-	if apiKey == "" {
-		apiKey = os.Getenv("AGY_API_KEY")
-	}
-	if strings.TrimSpace(apiKey) != "" {
-		keys.AgyCLI = &apiKey
-	}
-
-	model, err := llm.InitializeLLM(llm.Config{
-		Provider: llm.ProviderAgyCLI,
-		ModelID:  modelID,
-		APIKeys:  keys,
-		Context:  context.Background(),
-	})
-	if err != nil {
-		return llm.APIKeyValidationResponse{
-			Valid:   false,
-			Message: fmt.Sprintf("Failed to initialize Antigravity CLI: %v", err),
-		}
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
-	defer cancel()
-
-	resp, err := model.GenerateContent(ctx, []llmtypes.MessageContent{
-		{
-			Role: llmtypes.ChatMessageTypeHuman,
-			Parts: []llmtypes.ContentPart{
-				llmtypes.TextContent{Text: "Reply with exactly: Antigravity CLI is working."},
-			},
-		},
-	}, llm.WithAgyWorkingDir(workspaceDir))
-	if err != nil {
-		if ctx.Err() == context.DeadlineExceeded {
-			return llm.APIKeyValidationResponse{
-				Valid:   false,
-				Message: "Antigravity CLI timed out after 90s. Check that you are authenticated with agy.",
-			}
-		}
-		return llm.APIKeyValidationResponse{
-			Valid:   false,
-			Message: fmt.Sprintf("Antigravity CLI error: %s", strings.TrimSpace(err.Error())),
-		}
-	}
-
-	responseText := ""
-	if resp != nil && len(resp.Choices) > 0 {
-		responseText = strings.TrimSpace(resp.Choices[0].Content)
-	}
-	if responseText == "" {
-		return llm.APIKeyValidationResponse{
-			Valid:   false,
-			Message: "Antigravity CLI returned an empty response. Check authentication with agy.",
-		}
-	}
-
-	log.Printf("[AGY-CLI VALIDATION SUCCESS] Got response: %s", responseText)
-	return llm.APIKeyValidationResponse{
-		Valid:   true,
-		Message: fmt.Sprintf("Antigravity CLI is working. Response: %s", responseText),
 	}
 }
 

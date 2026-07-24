@@ -8,6 +8,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/config v1.32.17
 	github.com/aws/aws-sdk-go-v2/service/bedrockruntime v1.50.6
 	github.com/creack/pty v1.1.24
+	github.com/gin-gonic/gin v1.12.0
 	github.com/golang-jwt/jwt/v5 v5.2.1
 	github.com/google/uuid v1.6.0
 	github.com/gorilla/mux v1.8.1
@@ -15,8 +16,8 @@ require (
 	github.com/invopop/jsonschema v0.13.0
 	github.com/joho/godotenv v1.5.1
 	github.com/manishiitg/coding-agent-loop/workspace v0.0.0
-	github.com/manishiitg/mcpagent v1.7.12-0.20260716131010-c895e829d33b
-	github.com/manishiitg/multi-llm-provider-go v0.7.4-0.20260718050808-753a2fdbe516
+	github.com/manishiitg/mcpagent v1.7.12-0.20260724072133-217d9b156b42
+	github.com/manishiitg/multi-llm-provider-go v0.7.4-0.20260724070526-684563002872
 	github.com/mark3labs/mcp-go v0.45.0
 	github.com/openai/openai-go/v3 v3.36.0
 	github.com/robfig/cron/v3 v3.0.1
@@ -32,10 +33,6 @@ require (
 )
 
 replace github.com/manishiitg/coding-agent-loop/workspace => ../workspace
-
-replace github.com/manishiitg/mcpagent => ../../mcpagent
-
-replace github.com/manishiitg/multi-llm-provider-go => ../../multi-llm-provider-go
 
 require (
 	cloud.google.com/go v0.123.0 // indirect
@@ -73,7 +70,6 @@ require (
 	github.com/fsnotify/fsnotify v1.9.0 // indirect
 	github.com/gabriel-vasile/mimetype v1.4.12 // indirect
 	github.com/gin-contrib/sse v1.1.0 // indirect
-	github.com/gin-gonic/gin v1.12.0 // indirect
 	github.com/go-logr/logr v1.4.3 // indirect
 	github.com/go-logr/stdr v1.2.2 // indirect
 	github.com/go-playground/locales v0.14.1 // indirect

@@ -98,8 +98,6 @@ func providerRuntime(provider string) string {
 		return "codex"
 	case string(llm.ProviderCursorCLI):
 		return "cursor-agent"
-	case string(llm.ProviderAgyCLI):
-		return "agy"
 	case string(llm.ProviderPiCLI):
 		return "pi"
 	}
@@ -348,9 +346,6 @@ func buildProviderAPIKeysFromEnv() *llm.ProviderAPIKeys {
 	}
 	if s := os.Getenv("CURSOR_API_KEY"); s != "" {
 		keys.CursorCLI = &s
-	}
-	if s := os.Getenv("AGY_API_KEY"); s != "" {
-		keys.AgyCLI = &s
 	}
 	if s := os.Getenv("PI_API_KEY"); s != "" {
 		keys.PiCLI = &s

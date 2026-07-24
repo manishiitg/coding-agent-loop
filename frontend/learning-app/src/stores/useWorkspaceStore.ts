@@ -7,8 +7,6 @@ import { resolveSetState, type SetStateAction } from './storeUtils'
 interface WorkspaceState {
   drawerTab: DrawerTab
   setDrawerTab: (v: SetStateAction<DrawerTab>) => void
-  filesView: 'subjects' | 'advanced'
-  setFilesView: (v: SetStateAction<'subjects' | 'advanced'>) => void
   treeNodes: TreeNode[]
   setTreeNodes: (v: SetStateAction<TreeNode[]>) => void
   wsFiles: WsFile[]
@@ -45,8 +43,6 @@ interface WorkspaceState {
 export const useWorkspaceStore = create<WorkspaceState>()((set) => ({
   drawerTab: 'map',
   setDrawerTab: (v) => set((s) => ({ drawerTab: resolveSetState(v, s.drawerTab) })),
-  filesView: 'subjects',
-  setFilesView: (v) => set((s) => ({ filesView: resolveSetState(v, s.filesView) })),
   treeNodes: [],
   setTreeNodes: (v) => set((s) => ({ treeNodes: resolveSetState(v, s.treeNodes) })),
   wsFiles: [],

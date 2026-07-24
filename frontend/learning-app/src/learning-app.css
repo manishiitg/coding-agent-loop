@@ -297,7 +297,9 @@ html, body, #root { margin: 0; height: 100%; }
 .fl-drawer-tabs button { flex: 1; min-height: 34px; border: 0; border-radius: 9px; background: transparent; color: #5f708d; font: inherit; font-size: var(--text-secondary); font-weight: 650; cursor: pointer; }
 .fl-drawer-tabs button:hover { background: #f1f5fa; color: var(--heading); }
 .fl-drawer-tabs button.is-active { background: var(--navy); color: #fff; }
-.fl-drawer-tabs .fl-refresh-btn { flex: 0 0 auto; width: 34px; height: 34px; min-height: 0; padding: 0; }
+.fl-drawer-tabs .fl-refresh-btn,
+.fl-drawer-tabs .fl-allfiles-btn { flex: 0 0 auto; width: 34px; height: 34px; min-height: 0; padding: 0; }
+.fl-drawer-tabs .fl-allfiles-btn.is-active { background: var(--navy); color: #fff; }
 .fl-drawer-label { margin: 22px 2px 10px; padding-top: 16px; border-top: 1px solid var(--line); color: var(--heading); font-size: 13px; font-weight: 800; letter-spacing: .05em; text-transform: uppercase; }
 .fl-asset-group:first-child .fl-drawer-label,
 .fl-drawer-scroll > .fl-drawer-label:first-child { margin-top: 2px; padding-top: 0; border-top: 0; }

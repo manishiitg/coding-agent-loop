@@ -840,8 +840,6 @@ export default function LearningApp() {
   const childScrollRestoreRef = useRef(0)
   const drawerTab = useWorkspaceStore((s) => s.drawerTab)
   const setDrawerTab = useWorkspaceStore((s) => s.setDrawerTab)
-  const filesView = useWorkspaceStore((s) => s.filesView)
-  const setFilesView = useWorkspaceStore((s) => s.setFilesView)
   // The ONE activity the child is currently bound to (/api/child/activity) —
   // the child workspace shows only this, not every activity ever created.
   const childActivity = useChildChatStore((s) => s.childActivity)
@@ -936,11 +934,10 @@ export default function LearningApp() {
 
   // Every activity, structured — refetched whenever the Files/Uploaded tab is
   // open or a turn just completed (Quill may have created or added to one).
-  // Gated on the drawer tab (not narrowly on filesView === 'subjects' as
-  // before) because open_activity can jump straight to an activity's own
-  // detail view regardless of which files sub-view was last selected — with
-  // the narrower gate, an activity Quill had just created and opened could
-  // show "no longer available" simply because this fetch never ran.
+  // Gated on the drawer tab as a whole, deliberately loosely: open_activity
+  // can jump straight to an activity's detail view from anywhere, and with a
+  // narrower gate an activity Quill had just created and opened could show
+  // "no longer available" simply because this fetch never ran.
   useEffect(() => {
     if (drawerTab !== 'files' && drawerTab !== 'uploaded') return
     let cancelled = false
@@ -1546,7 +1543,7 @@ export default function LearningApp() {
     // Only pass viewer_path while the right-side panel is actually showing a
     // file (same condition the viewer JSX itself uses) — otherwise nothing is
     // really "on screen" to reference.
-    const currentViewerPath = (drawerTab === 'files' || drawerTab === 'uploaded') ? viewerPath : ''
+    const currentViewerPath = (drawerTab === 'files' || drawerTab === 'allfiles' || drawerTab === 'uploaded') ? viewerPath : ''
     fetch(`${FAMILY_API}/api/parent/message`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -2248,12 +2245,25 @@ export default function LearningApp() {
           </section>
 
           <aside className="fl-drawer" aria-label="Learning workspace">
-            {!((drawerTab === 'files' || drawerTab === 'uploaded') && viewerPath) && (
+            {!((drawerTab === 'files' || drawerTab === 'allfiles' || drawerTab === 'uploaded') && viewerPath) && (
               <div className="fl-drawer-tabs" role="tablist" aria-label="Workspace views">
                 <button role="tab" aria-selected={drawerTab === 'map'} className={drawerTab === 'map' ? 'is-active' : ''} type="button" onClick={() => setDrawerTab('map')}>Academics</button>
                 <button role="tab" aria-selected={drawerTab === 'progress'} className={drawerTab === 'progress' ? 'is-active' : ''} type="button" onClick={() => setDrawerTab('progress')}>Progress</button>
                 <button role="tab" aria-selected={drawerTab === 'files'} className={drawerTab === 'files' ? 'is-active' : ''} type="button" onClick={() => setDrawerTab('files')}>Workspace</button>
                 <button role="tab" aria-selected={drawerTab === 'uploaded'} className={drawerTab === 'uploaded' ? 'is-active' : ''} type="button" onClick={() => setDrawerTab('uploaded')}>Uploaded</button>
+                {/* Browsing every raw file is a power-user escape hatch, not a
+                    peer of the four content views — an icon keeps it one tap
+                    away without competing with them for attention. */}
+                <button
+                  type="button"
+                  className={`fl-icon-btn fl-allfiles-btn${drawerTab === 'allfiles' ? ' is-active' : ''}`}
+                  aria-label="Browse all files"
+                  aria-pressed={drawerTab === 'allfiles'}
+                  title="Browse all files"
+                  onClick={() => setDrawerTab(drawerTab === 'allfiles' ? 'files' : 'allfiles')}
+                >
+                  <FolderOpen size={15} />
+                </button>
                 <button
                   type="button"
                   className="fl-icon-btn fl-refresh-btn"
@@ -2316,7 +2326,7 @@ export default function LearningApp() {
                 </>
               )}
 
-              {(drawerTab === 'files' || drawerTab === 'uploaded') && viewerPath ? (
+              {(drawerTab === 'files' || drawerTab === 'allfiles' || drawerTab === 'uploaded') && viewerPath ? (
                 <div className="fl-viewer">
                   <div className="fl-viewer-bar">
                     {/* Clearing only viewerPath (never viewerActivityDir here) means
@@ -2405,7 +2415,7 @@ export default function LearningApp() {
                   )}
                   </div>
                 </div>
-              ) : (drawerTab === 'files' || drawerTab === 'uploaded') && viewerActivityDir ? (() => {
+              ) : (drawerTab === 'files' || drawerTab === 'allfiles' || drawerTab === 'uploaded') && viewerActivityDir ? (() => {
                 const act = activities.find((a) => a.dir === viewerActivityDir)
                 if (!act) return <p className="fl-note">That activity is no longer available.</p>
                 const expanded = expandedActivity === act.dir
@@ -2467,15 +2477,11 @@ export default function LearningApp() {
                     </div>
                   </div>
                 )
-              })() : drawerTab === 'files' ? (
+              })() : drawerTab === 'allfiles' ? (
+                treeNodes.length === 0 ? <p className="fl-note">No files yet.</p> : <FileTree nodes={treeNodes} onOpen={(p) => { setViewerImageList([]); setViewerPath(p) }} />
+              ) : drawerTab === 'files' ? (
                 <>
-                  <div className="fl-files-toggle">
-                    <button type="button" className={filesView === 'subjects' ? 'is-active' : ''} onClick={() => setFilesView('subjects')}>Subjects</button>
-                    <button type="button" className={filesView === 'advanced' ? 'is-active' : ''} onClick={() => setFilesView('advanced')}>All files</button>
-                  </div>
-                  {filesView === 'advanced' ? (
-                    treeNodes.length === 0 ? <p className="fl-note">No files yet.</p> : <FileTree nodes={treeNodes} onOpen={(p) => { setViewerImageList([]); setViewerPath(p) }} />
-                  ) : (() => {
+                  {(() => {
                     // Hierarchy: subject -> topic -> activity -> item. Every piece of
                     // generated content IS an activity now, so this groups the
                     // structured /api/activities objects directly — no path-parsing.

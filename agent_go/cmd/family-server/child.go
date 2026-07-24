@@ -231,7 +231,7 @@ func handleChildMessage(w http.ResponseWriter, r *http.Request) {
 		// restores the coding agent's `--resume` state across restarts (loaded from
 		// disk) so context survives a restart without replaying the transcript.
 		SessionID:                 activityDir,
-		SessionHandle:             loadSessionHandle("child", activityDir),
+		SessionHandle:             loadSessionHandle("child", activityDir, provider),
 		BridgeRoutingInstructions: bridgeRoutingInstructions(),
 		StreamCallback: func(text string) {
 			statusHubs.publishDelta("child:"+activityDir, text)

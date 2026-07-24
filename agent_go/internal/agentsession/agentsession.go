@@ -119,7 +119,22 @@ type Session struct {
 	logger   loggerv2.Logger
 	shutdown func()
 	closed   bool
-	resume   bool // warm-resume mode: the coding agent keeps context across turns
+	// holdsPriorContext reports whether the coding agent can ACTUALLY
+	// reconstruct this conversation's history on its own — either a live warm
+	// tmux session for this id already exists in this process, or a valid
+	// provider-native SessionHandle was restored. Only then is it safe for Ask
+	// to send just the newest message.
+	//
+	// This is deliberately NOT the same as "a SessionID was configured". A
+	// SessionID expresses INTENT to keep the session warm going forward; it
+	// says nothing about whether prior context exists YET. Conflating the two
+	// silently dropped the entire conversation on every genuine cold start —
+	// the first turn after a process restart (warm tmux gone, no handle
+	// captured yet), a first turn whose handle failed to persist, or an engine
+	// switch (the stored handle belongs to the old provider and is correctly
+	// rejected). In all of those the CLI has nothing to resume from, so
+	// truncating to the last message left the model with no history at all.
+	holdsPriorContext bool
 }
 
 // New builds a per-turn Session. Following the AgentWorks model, it reuses the
@@ -169,6 +184,14 @@ func New(ctx context.Context, cfg Config) (*Session, error) {
 	if sessionID == "" {
 		sessionID = "agentsession-" + fmt.Sprintf("%d", time.Now().UnixNano())
 	}
+	// Whether the CLI can actually reconstruct history itself — see
+	// Session.holdsPriorContext. Checked BEFORE rememberInteractiveOwner below
+	// registers this turn's owner, so a first turn correctly reads "no warm
+	// session yet" rather than seeing the entry it is about to create. The
+	// provider must match too: a warm session (or handle) belonging to a
+	// different engine cannot give this one context.
+	handleRestored := cfg.SessionHandle != nil && !cfg.SessionHandle.Empty()
+	holdsPriorContext := resume && (handleRestored || hasWarmInteractiveOwner(sessionID, cfg.Provider))
 	opts := []mcpagent.AgentOption{
 		mcpagent.WithLogger(logger),
 		mcpagent.WithProvider(cfg.Provider),
@@ -280,10 +303,10 @@ func New(ctx context.Context, cfg Config) (*Session, error) {
 	}
 
 	s := &Session{
-		agent:    agent,
-		logger:   logger,
-		resume:   resume,
-		shutdown: agent.Close, // per-turn agent only; shared bridge + tmux persist
+		agent:             agent,
+		logger:            logger,
+		holdsPriorContext: holdsPriorContext,
+		shutdown:          agent.Close, // per-turn agent only; shared bridge + tmux persist
 	}
 	return s, nil
 }
@@ -380,6 +403,28 @@ func rememberInteractiveOwner(sessionID string, provider llm.Provider) {
 	ownerMu.Unlock()
 }
 
+// hasWarmInteractiveOwner reports whether THIS process already started a warm
+// interactive session for sessionID under the same provider — i.e. whether a
+// live CLI session plausibly still holds this conversation's context. Used to
+// decide whether history may be truncated to the newest message (see
+// Session.holdsPriorContext).
+//
+// The provider must match: after an engine switch the warm session belongs to
+// the previous engine and cannot supply context to the new one, so this
+// correctly reports false and the full thread is replayed.
+//
+// This is an optimistic signal, not proof of liveness — the provider reaps
+// sessions on idle, so an entry can outlive its tmux session. That failure mode
+// is benign and self-correcting: the restored SessionHandle covers it (the
+// provider mints a fresh session and `--resume`s from it), which is the same
+// path used after a process restart.
+func hasWarmInteractiveOwner(sessionID string, provider llm.Provider) bool {
+	ownerMu.Lock()
+	defer ownerMu.Unlock()
+	p, ok := warmOwners[sessionID]
+	return ok && p == provider
+}
+
 // CloseAllInteractiveSessions closes every warm coding-agent (tmux) session we
 // have started, via the provider's owner-scoped close. Use on reset/shutdown for
 // a clean slate; absent this call the provider reaps them on idle anyway. There
@@ -408,15 +453,21 @@ func CloseAllInteractiveSessions() {
 }
 
 // Ask runs one turn over the supplied history and returns the assistant reply.
-// In resume mode the coding agent holds prior context itself — via the live warm
-// tmux session (same process) or the restored SessionHandle's `--resume` state
-// (after a restart) — so only the newest message is sent. This mirrors
-// AgentWorks: the persistent/resumed CLI reconstructs history from its own store;
-// the provider adapter only ever forwards the latest message in this mode, so
-// replaying the full thread here would be dropped anyway. Non-resume (throwaway)
-// sessions send the whole thread, since there is nothing to resume.
+// When the coding agent demonstrably holds prior context itself — a live warm
+// tmux session in this process, or a restored SessionHandle's `--resume` state
+// after a restart — only the newest message is sent. This mirrors AgentWorks:
+// the persistent/resumed CLI reconstructs history from its own store, and the
+// provider adapter only forwards the latest message in that mode, so replaying
+// the full thread would be dropped anyway.
+//
+// Otherwise the FULL thread is sent, because there is nothing to reconstruct
+// from. That covers every genuine cold start — first turn after a restart, a
+// handle that never persisted, or an engine switch that correctly rejected the
+// previous provider's handle. Gating this on "a SessionID was configured"
+// instead (the previous behavior) discarded the whole conversation in exactly
+// those cases: intent to stay warm is not evidence that prior context exists.
 func (s *Session) Ask(ctx context.Context, history []Message) (string, error) {
-	if s.resume && len(history) > 0 {
+	if s.holdsPriorContext && len(history) > 0 {
 		history = history[len(history)-1:]
 	}
 	msgs := make([]llmtypes.MessageContent, 0, len(history))

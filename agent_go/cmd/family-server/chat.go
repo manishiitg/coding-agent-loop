@@ -409,7 +409,7 @@ func handleParentMessage(w http.ResponseWriter, r *http.Request) {
 		// the AgentWorks mechanism. Ask sends only the newest message; the CLI
 		// reconstructs history from its own session store.
 		SessionID:                 req.ConversationID,
-		SessionHandle:             loadSessionHandle("parent", req.ConversationID),
+		SessionHandle:             loadSessionHandle("parent", req.ConversationID, provider),
 		BridgeRoutingInstructions: bridgeRoutingInstructions(),
 		StreamCallback: func(text string) {
 			statusHubs.publishDelta("parent:"+req.ConversationID, text)

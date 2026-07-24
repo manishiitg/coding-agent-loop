@@ -850,7 +850,7 @@ func (w *waBot) runTurn(text string) (string, error) {
 		// AgentWorks mechanism. Ask sends only the newest message; the CLI
 		// reconstructs history from its own session store.
 		SessionID:                 convID,
-		SessionHandle:             loadSessionHandle("parent", convID),
+		SessionHandle:             loadSessionHandle("parent", convID, provider),
 		BridgeRoutingInstructions: bridgeRoutingInstructions(),
 		// The ONE canonical parent manifest (parent_tools.go). This surface shares
 		// the SAME warm "parent" session as web chat and Pulse, so it must not

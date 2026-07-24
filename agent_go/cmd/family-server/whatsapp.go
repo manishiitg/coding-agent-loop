@@ -75,7 +75,7 @@ func handleWhatsAppMessage(w http.ResponseWriter, r *http.Request) {
 		// Stable SessionID reuses the warm tmux within this process; SessionHandle
 		// restores the coding agent's `--resume` state across restarts.
 		SessionID:                 cid,
-		SessionHandle:             loadSessionHandle("parent", cid),
+		SessionHandle:             loadSessionHandle("parent", cid, provider),
 		BridgeRoutingInstructions: bridgeRoutingInstructions(),
 		// The ONE canonical parent manifest (parent_tools.go) — this is a
 		// parent-scope session (handles are stored under the "parent" scope, and

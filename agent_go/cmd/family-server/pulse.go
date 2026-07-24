@@ -254,7 +254,7 @@ func runPulseCheckTurn(ctx context.Context, provider llm.Provider, s familyState
 		WorkingDir:                filepath.Join(familyDataDir(), "workspace"),
 		SystemPrompt:              parentSystemPrompt(s.Child, s.ParentLabel, s.Pulse),
 		SessionID:                 convID,
-		SessionHandle:             loadSessionHandle("parent", convID),
+		SessionHandle:             loadSessionHandle("parent", convID, provider),
 		BridgeRoutingInstructions: bridgeRoutingInstructions(),
 		Tools:                     withLiveStatus("pulse:"+convID, parentTools(s.Engine, parentChildLabel(s.Child), parentToolSinks{})),
 	})

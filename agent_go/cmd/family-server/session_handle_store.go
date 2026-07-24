@@ -2,10 +2,13 @@ package main
 
 import (
 	"encoding/json"
+	"log"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/manishiitg/coding-agent-loop/agent_go/internal/agentsession"
+	"github.com/manishiitg/mcpagent/llm"
 )
 
 // Session-handle persistence — the durable, cross-restart context mechanism,
@@ -36,7 +39,26 @@ func sessionHandlePath(scope, id string) (string, bool) {
 
 // loadSessionHandle reads the persisted continuation handle for a conversation,
 // or nil if none exists yet (brand-new conversation, or handle not captured).
-func loadSessionHandle(scope, id string) *agentsession.Handle {
+//
+// provider is the engine THIS turn is about to run. A handle is provider-native
+// — it carries e.g. a Claude Code `--resume` UUID or a Codex thread id — so a
+// handle written by a different engine is meaningless (at best) to the current
+// one and is dropped here rather than passed down.
+//
+// This matters because the parent can switch engines at any time while the
+// conversation id stays the same, so the stored handle simply does not follow.
+// Passing a foreign handle down is actively harmful, not merely useless:
+// mcpagent's ApplyAgentSessionHandle applies the handle's native session id via
+// the OLD provider's setter and then RELABELS the handle as belonging to the
+// NEW provider (agent/session_handle.go — it overwrites
+// CodingProviderSessionHandle.Provider with the configured provider so a role
+// change can keep one conversation). The handle saved at the end of that turn
+// can therefore claim provider="codex-cli" while still carrying a Claude UUID —
+// and the NEXT turn feeds that UUID to `codex exec resume`, which cannot
+// resolve it. Dropping the mismatch here keeps that poisoned state from ever
+// being written: the new engine cold-starts once (correct — it genuinely has no
+// prior session) and saves its own valid handle.
+func loadSessionHandle(scope, id string, provider llm.Provider) *agentsession.Handle {
 	path, ok := sessionHandlePath(scope, id)
 	if !ok {
 		return nil
@@ -47,6 +69,10 @@ func loadSessionHandle(scope, id string) *agentsession.Handle {
 	}
 	var h agentsession.Handle
 	if json.Unmarshal(b, &h) != nil || h.Empty() {
+		return nil
+	}
+	if stored := strings.TrimSpace(h.Provider.Provider); stored != "" && stored != string(provider) {
+		log.Printf("[session-handle] dropping %s/%s handle from engine %q — this turn runs %q (engine changed; a provider-native handle does not carry over)", scope, id, stored, provider)
 		return nil
 	}
 	return &h

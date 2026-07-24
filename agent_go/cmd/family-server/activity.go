@@ -28,7 +28,8 @@ type activityManifest struct {
 	Subject           string   `json:"subject,omitempty"`
 	Topic             string   `json:"topic,omitempty"`
 	Items             []string `json:"items,omitempty"`
-	GuideNote         string   `json:"guide_note,omitempty"`
+	GuideNote         string   `json:"guide_note,omitempty"` // HOW to run it: pacing, tone, what to do if stuck
+	Goal              string   `json:"goal,omitempty"`       // WHAT completion looks like: the tutor steers back to this even if the chat wanders
 	TeachingMode      string   `json:"teaching_mode,omitempty"`       // beginner | graduated | strict
 	HintsBeforeAnswer int      `json:"hints_before_answer,omitempty"` // for graduated
 	Persona           string   `json:"persona,omitempty"`

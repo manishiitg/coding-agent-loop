@@ -32,16 +32,22 @@ Read `memory/child-profile.json` for grade, then match ONE of these bands:
    interactive mini-experience that embodies the concept, over a dry written
    exercise:
    - **Conditionals** → a click-through choose-your-own-adventure (click "go
-     left" / "go right", the story branches for real).
+     left" / "go right", the story branches for real) — use SQ.choose for
+     these branch buttons (see the interactivity note below) so you actually
+     see which path she picked and can react to it in chat, not just let the
+     page silently show the other branch.
    - **Sequencing** → a step-by-step character/robot that moves one click at a
-     time toward a goal, each click revealing the next step.
+     time toward a goal, each click revealing the next step — plain
+     client-side JS is fine here, no real "choice" is being made.
    - **Loops** → an on-screen counter or repeating animation she advances by
-     clicking "repeat", visibly showing the same action happening N times.
+     clicking "repeat", visibly showing the same action happening N times —
+     plain client-side JS.
    - **Variables/state** → something simple that visibly changes and remembers
-     a value across clicks (a score, a health bar, an inventory count).
-   Build these with plain buttons + JS show/hide (per the interactivity note
-   below) — NOT a text input for guesses/answers; turn "guess a number" into
-   "pick one of these 5 buttons" so it never needs a real form control.
+     a value across clicks (a score, a health bar, an inventory count) — plain
+     client-side JS.
+   None of these ever use a text input for guesses/answers — turn "guess a
+   number" into "pick one of these 5 buttons" (with SQ.choose, since that's a
+   real choice) so it never needs a real form control.
    Alongside the working demo, show the short, simplified logic/pseudocode
    that drives it (a styled read-only block, e.g. "if left button clicked →
    show the left path") so she connects *this reasoning* to *that behavior* —
@@ -64,12 +70,19 @@ Read `memory/child-profile.json` for grade, then match ONE of these bands:
 
 Format and the interactivity distinction (read `skills/_shared/html-design.md`
 first): the "no form controls" rule there (no `<input>`/`<textarea>`/`<select>`)
-still applies — build all clicking/branching with plain `<button>`s and JS
-show/hide, never a text box. That rule is NOT the same as "no interactivity" —
-buttons, branching content, `<details>` reveals, and CSS animation are all
-explicitly welcome (see that skill's "visually engaging" section) and are
-exactly what makes a coding demo feel real instead of a page to read. What
-remains genuinely out of scope is a live code EDITOR where she types and runs
-her OWN arbitrary code — this app has no code-execution engine; never build or
-imply one. Every demo here is pre-built by you and already working when she
-opens it, not something she programs herself.
+still applies — build all clicking/branching with plain `<button>`s, never a
+text box. Buttons, branching content, and CSS animation are all explicitly
+welcome and are exactly what makes a coding demo feel real instead of a page
+to read — but per that skill, a `<details>` reveal is never OK (silently
+hides something with no record of it happening), and any button representing
+a genuine CHOICE (which path a conditional takes, a guess) must use SQ.choose
+so you actually see and can react to what she picked — a demo can also live
+in a `show_scene` snippet instead of the activity's one fixed file if you want
+it to adapt to a direction she takes the lesson in, not just play out a
+pre-written branch. Purely decorative motion (a counter animating, a sprite
+moving) can stay plain client-side JS with no SQ.choose needed — nothing is
+being chosen there. What remains genuinely out of scope is a live code EDITOR
+where she types and runs her OWN arbitrary code — this app has no
+code-execution engine; never build or imply one. Every demo here is pre-built
+by you and already working when she opens it, not something she programs
+herself.

@@ -12,7 +12,7 @@ description: Create a practice test for the child from their materials and progr
 2. **Know the child.** Read `memory/child-profile.json` for name, grade, and board so the test matches their level. If any of these are missing, ask the parent first.
 
 3. **Gather context and progress.**
-   - Read the relevant material in `materials/<subject>/<topic>/` and its `.meta.json` files.
+   - Read the relevant `.meta.json` files in `materials/<subject>/<topic>/` — their `extracted_text` field already has the full content (process-file extracts it once so you don't need to re-read/re-OCR the original file); only open the raw file itself if `extracted_text` is missing or insufficient.
    - Look at what the child has struggled with: skim recent activity `conversation.json` files and the parent's own conversation for weak spots. Focus some questions there.
 
 4. **Create the activity folder** `<Subject>/<Topic>/<yyyy-mm-dd>-<slug>/` (date-stamp with `date -u +%Y-%m-%d`; never reuse an older activity's folder) and write the test INTO it.
@@ -34,7 +34,7 @@ description: Create a practice test for the child from their materials and progr
    - A note on which questions target which weakness, so the parent knows what to watch.
    - This file must NOT be listed as an item when you call `create_learning_activity` below — it stays out of `items` so the child never sees it in their activity view; what the tutor is allowed to reveal from it is governed entirely by `teaching_mode`.
 
-7. **Finalize the activity**: call `create_learning_activity` with the folder as `dir`, a short `title`, `items` = just the test's bare filename (not the key), and the `teaching_mode`/`hints_before_answer`/`persona` from the intake. Then call `open_activity(dir)` so the parent sees it on the right with its "Give to `<child>`" button.
+7. **Finalize the activity**: call `create_learning_activity` with the folder as `dir`, a short `title`, `items` = just the test's bare filename (not the key), the `teaching_mode`/`hints_before_answer`/`persona` from the intake, and a `goal` of "answer all N questions" (N = the actual question count). Then call `open_activity(dir)` so the parent sees it on the right with its "Give to `<child>`" button.
 
 8. **Tell the parent** what you made and why those questions — in plain words, no paths or filenames.
 

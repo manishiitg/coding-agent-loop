@@ -66,6 +66,13 @@ func handleChildMessage(w http.ResponseWriter, r *http.Request) {
 	// on the right, mirroring the parent flow (chat.go).
 	var evMu sync.Mutex
 	var events []toolEvent
+	// TEMPORARY: records every tool call this turn — see tool_call_debug.go.
+	var debugMu sync.Mutex
+	var debugCalls []debugToolCall
+	// Recorder for show_scene — at most one scene per turn is shown (the
+	// latest call wins if the model calls it more than once).
+	var sceneMu sync.Mutex
+	var scene string
 	childOpenFile := agentsession.Tool{
 		Name: "open_file",
 		Description: "Show a lesson, worksheet, or one of your own saved pages to " + childDisplayName(s.Child) +
@@ -212,12 +219,12 @@ func handleChildMessage(w http.ResponseWriter, r *http.Request) {
 
 	sess, err := agentsession.New(ctx, agentsession.Config{
 		Provider: provider,
-		// CHILD Mode uses the fast tier (Claude Code -> haiku; codex-cli -> gpt-5.6-luna)
-		// for short, one-at-a-time tutoring turns — high reasoning effort on top of
-		// that fast model, so it still thinks things through carefully without
-		// paying for a bigger model tier.
+		// CHILD Mode uses the fast tier (Claude Code -> haiku; codex-cli ->
+		// gpt-5.6-terra, see lowTierModelID) for short, one-at-a-time tutoring
+		// turns, paired with LOW reasoning effort — latency matters far more
+		// than deep reasoning for this kind of short back-and-forth turn.
 		ModelID:         lowTierModelID(provider),
-		ReasoningEffort: "high",
+		ReasoningEffort: "low",
 		WorkingDir:      workDir,
 		SystemPrompt:    childSystemPrompt(s.Child, s.ParentLabel, activityDir),
 		// Stable SessionID reuses the warm tmux within this process; SessionHandle
@@ -226,7 +233,17 @@ func handleChildMessage(w http.ResponseWriter, r *http.Request) {
 		SessionID:                 activityDir,
 		SessionHandle:             loadSessionHandle("child", activityDir),
 		BridgeRoutingInstructions: bridgeRoutingInstructions(),
-		Tools:                     withLiveStatus("child:"+activityDir, []agentsession.Tool{childShellTool(), childOpenFile, childSuggestActions, celebrate, notifyTool(), childDiffPatchWorkspaceFileTool(), childReadImageTool(s.Engine)}),
+		StreamCallback: func(text string) {
+			statusHubs.publishDelta("child:"+activityDir, text)
+		},
+		Tools: withToolCallDebug(&debugMu, &debugCalls, withLiveStatus("child:"+activityDir, []agentsession.Tool{
+			childShellTool(), childOpenFile, childSuggestActions, celebrate, notifyTool(), childDiffPatchWorkspaceFileTool(), childReadImageTool(s.Engine),
+			childShowSceneTool(func(html string) {
+				sceneMu.Lock()
+				scene = html
+				sceneMu.Unlock()
+			}),
+		})),
 	})
 	if err != nil {
 		msg := friendlyTurnError(err)
@@ -249,7 +266,10 @@ func handleChildMessage(w http.ResponseWriter, r *http.Request) {
 		// Persist the turn even on failure — see chat.go's parent handler for why.
 		msg := friendlyTurnError(err)
 		persistConversation("child", activityDir, withReply(req.Messages, msg))
-		writeJSON(w, http.StatusOK, parentMessageResponse{Error: msg})
+		debugMu.Lock()
+		debugOut := append([]debugToolCall(nil), debugCalls...)
+		debugMu.Unlock()
+		writeJSON(w, http.StatusOK, parentMessageResponse{Error: msg, DebugCalls: debugOut})
 		return
 	}
 	saveSessionHandle("child", activityDir, sess.Handle())
@@ -259,6 +279,12 @@ func handleChildMessage(w http.ResponseWriter, r *http.Request) {
 	sugMu.Lock()
 	sug := suggestions
 	sugMu.Unlock()
+	debugMu.Lock()
+	debugOut := append([]debugToolCall(nil), debugCalls...)
+	debugMu.Unlock()
+	sceneMu.Lock()
+	sceneOut := scene
+	sceneMu.Unlock()
 	reply = sanitizeAgentReply(reply)
 
 	toSave := withReply(req.Messages, reply)
@@ -267,9 +293,14 @@ func handleChildMessage(w http.ResponseWriter, r *http.Request) {
 		// replays the star moment exactly where it happened, not just the text.
 		toSave = append(toSave, enginedetect.ChatMessage{Role: "tool", Tool: "celebrate", Stars: cel.Stars, Reason: cel.Reason})
 	}
+	if sceneOut != "" {
+		// Persist the scene alongside the reply so reloading mid-conversation
+		// replays it exactly where it was shown, not just the reply text.
+		toSave = append(toSave, enginedetect.ChatMessage{Role: "tool", Tool: "scene", HTML: sceneOut})
+	}
 	persistConversation("child", activityDir, toSave)
 
-	writeJSON(w, http.StatusOK, parentMessageResponse{Reply: reply, ToolEvents: evs, Suggestions: sug})
+	writeJSON(w, http.StatusOK, parentMessageResponse{Reply: reply, ToolEvents: evs, Suggestions: sug, DebugCalls: debugOut, Scene: sceneOut})
 }
 
 func findCelebrateEvent(evs []toolEvent) *toolEvent {

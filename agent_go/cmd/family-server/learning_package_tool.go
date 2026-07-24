@@ -55,7 +55,10 @@ func createLearningActivityTool(childLabel string, recordEvent func(toolEvent)) 
 			"generates questions live), leave `items` empty and put the full activity description in `guide_note`. Set " +
 			"`teaching_mode` per the parent's wishes for THIS activity: beginner (tell the answer and keep correcting), graduated " +
 			"(give `hints_before_answer` hints, then reveal), or strict (hints only, never reveal). `persona` is the tutor's tone " +
-			"for this activity. After this, call open_activity(dir) so the parent sees it on the right with its 'Give to " + childLabel +
+			"for this activity. `goal` is what COMPLETING this activity concretely looks like (e.g. \"reach the final scene and " +
+			"design one explorer ship\", \"answer all 10 practice questions\") — distinct from `guide_note` (which is about HOW to " +
+			"run it, pacing/tone); the tutor uses `goal` to keep steering the child back toward finishing even after the " +
+			"conversation wanders into their own tangents. After this, call open_activity(dir) so the parent sees it on the right with its 'Give to " + childLabel +
 			"' button. Neither this nor open_activity hands anything to " + childLabel + " — only the parent tapping that button does; " +
 			"never say it's \"sent\" or \"on their screen\".",
 		Category: "family_tools",
@@ -70,6 +73,7 @@ func createLearningActivityTool(childLabel string, recordEvent func(toolEvent)) 
 					"description": "bare filenames inside the folder, in order (exclude any *-KEY.md answer key). Empty = instruction-only activity; then guide_note is required.",
 				},
 				"guide_note":          map[string]interface{}{"type": "string", "description": "pacing/what-to-do-if-stuck, or (for instruction-only) the full activity description"},
+				"goal":                map[string]interface{}{"type": "string", "description": "what completing this activity concretely looks like — the tutor keeps steering back to this even through tangents"},
 				"teaching_mode":       map[string]interface{}{"type": "string", "enum": []string{"beginner", "graduated", "strict"}, "description": "how the tutor handles answers for THIS activity"},
 				"hints_before_answer": map[string]interface{}{"type": "integer", "description": "for graduated mode: how many hints before revealing the answer"},
 				"persona":             map[string]interface{}{"type": "string", "description": "the tutor's tone/personality for this activity, e.g. \"playful coach\""},
@@ -118,6 +122,10 @@ func createLearningActivityTool(childLabel string, recordEvent func(toolEvent)) 
 			if len(items) == 0 && guideNote == "" {
 				return "", fmt.Errorf("either items (files in the folder) or guide_note (for an instruction-only activity) is required")
 			}
+			goal := strings.TrimSpace(fmt.Sprint(args["goal"]))
+			if goal == "<nil>" {
+				goal = ""
+			}
 			mode := strings.TrimSpace(fmt.Sprint(args["teaching_mode"]))
 			switch mode {
 			case "beginner", "graduated", "strict", "", "<nil>":
@@ -142,6 +150,7 @@ func createLearningActivityTool(childLabel string, recordEvent func(toolEvent)) 
 				Topic:             parts[1],
 				Items:             items,
 				GuideNote:         guideNote,
+				Goal:              goal,
 				TeachingMode:      mode,
 				HintsBeforeAnswer: hints,
 				Persona:           persona,

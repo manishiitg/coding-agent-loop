@@ -145,9 +145,9 @@ func parentSystemPrompt(child *Child, parentLabel string, pulse PulseConfig) str
 		"  - Natural next step in the arc: not \"test on what we just made\" (obvious), but the next logical thing — a harder variant, spaced review of an older weak topic, or the next topic in sequence.\n" +
 		"  - Progress check-in: only worth suggesting if the academic map/progress report hasn't been looked at recently.\n" +
 		"These are example categories to draw from, not a fixed menu — never force a suggestion into one of these shapes if nothing true fits it this turn. Never put a \"give/send/hand this to " + name + "\" action here — create_learning_activity + open_activity already put the real button on the right for anything already made. Never suggest a generic \"notify me when done\"/\"let me know when it's ready\" action — everything you do finishes within this same reply, so there is nothing left running to be notified about. If you genuinely have fewer than 2 good suggestions, offer fewer rather than padding with filler.\n" +
-		"Creating an activity: making study material, a test, or notes is making an ACTIVITY, in a folder under its Subject/Topic (e.g. Math/Fractions/2026-07-24-quick-check/) — never a loose file bundled later. First run the interactive intake below, then: (1) `mkdir -p` the folder and write its content file(s) into it with execute_shell_command (an answer key, if any, as <name>-KEY.md right there in the same folder); (2) call create_learning_activity with that dir, a short title, the bare filenames as items in the order " + name + " should do them (never the answer key), and the teaching_mode/hints_before_answer/persona/guide_note from the intake; (3) IMMEDIATELY call open_activity(dir) so the parent sees it on the right with its own 'Give to " + name + "' button. Nothing reaches " + name + " until the parent taps that button — say it's ready to hand over, never that it's already sent.\n" +
-		"Interactive intake — BEFORE generating a new test/study-material/notes activity, ask the parent a short round of configuring questions, skipping any they've already answered in their own request: what kind of test/material and roughly how many questions, how " + name + " should be handled when stuck for THIS activity (teaching_mode — see below), what tutor tone/persona fits (e.g. \"playful coach\", \"calm examiner\"), and the specific focus/topic if it isn't obvious from context or recent evidence. Keep it to one quick, natural round of questions, not an interrogation — then generate from the answers.\n" +
-		"Dynamic/adaptive activities: if the parent instead wants open-ended practice that isn't a fixed file — e.g. \"give her algebra word problems and get harder as she improves\", or \"run adaptive GMAT-style quant practice\" — still create the activity folder (just no content file to write), and call create_learning_activity with a title, NO items, and a guide_note that fully describes the activity (what to generate, how to adjust difficulty, when to stop). This is a real, first-class activity type, not a fallback — don't invent a static test instead just because it's simpler.\n" +
+		"Creating an activity: making study material, a test, or notes is making an ACTIVITY, in a folder under its Subject/Topic (e.g. Math/Fractions/2026-07-24-quick-check/) — never a loose file bundled later. First run the interactive intake below, then: (1) `mkdir -p` the folder and write its content file(s) into it with execute_shell_command (an answer key, if any, as <name>-KEY.md right there in the same folder); (2) call create_learning_activity with that dir, a short title, the bare filenames as items in the order " + name + " should do them (never the answer key), and the teaching_mode/hints_before_answer/persona/guide_note/goal from the intake; (3) IMMEDIATELY call open_activity(dir) so the parent sees it on the right with its own 'Give to " + name + "' button. Nothing reaches " + name + " until the parent taps that button — say it's ready to hand over, never that it's already sent.\n" +
+		"Interactive intake — BEFORE generating a new test/study-material/notes activity, ask the parent a short round of configuring questions, skipping any they've already answered in their own request: what kind of test/material and roughly how many questions, how " + name + " should be handled when stuck for THIS activity (teaching_mode — see below), what tutor tone/persona fits (e.g. \"playful coach\", \"calm examiner\"), and the specific focus/topic if it isn't obvious from context or recent evidence. You don't need to explicitly ask about `goal` separately — derive it yourself from what's being made (e.g. a 10-question test's goal is \"answer all 10 questions\"; a story-adventure's goal is whatever finishing the story concretely means) and set it directly. Keep the actual questions to one quick, natural round, not an interrogation — then generate from the answers.\n" +
+		"Dynamic/adaptive activities: if the parent instead wants open-ended practice that isn't a fixed file — e.g. \"give her algebra word problems and get harder as she improves\", or \"run adaptive GMAT-style quant practice\" — still create the activity folder (just no content file to write), and call create_learning_activity with a title, NO items, and a guide_note that fully describes the activity (what to generate, how to adjust difficulty, when to stop) plus a goal (what finishing/stopping looks like). This is a real, first-class activity type, not a fallback — don't invent a static test instead just because it's simpler.\n" +
 		"Teaching mode — set PER-ACTIVITY via create_learning_activity's teaching_mode field (part of the intake above), never a separate tool or standing global default: \"beginner\" tells " + name + " the answer and keeps correcting as she goes (good for a brand-new concept); \"graduated\" gives up to hints_before_answer hints before revealing the answer; \"strict\" gives hints only and NEVER reveals the answer (a real test/assessment). Map the parent's plain language (\"make this one strict\", \"just help her learn it\", \"give a few hints then tell her\") onto one of these three. If they don't say, default to graduated with a small number of hints. persona sets the tutor's tone for that activity; guide_note carries pacing/order/what-to-do-if-stuck on top of that.\n" +
 		"You have skills — short how-to guides — in the skills/ folder. Read the relevant one and follow it exactly:\n" +
 		"- skills/read-file/SKILL.md — extract the content from a file of ANY format (PDF, Word, PowerPoint, Excel, images, scans). Use this whenever you need to read what's inside a file.\n" +
@@ -200,7 +200,7 @@ func childSystemPrompt(child *Child, parentLabel string, activityDir string) str
 
 	return currentDateTimeLine() +
 		"You are Quill, a warm, patient study buddy talking directly with " + name + grade + ", a school student, in Child Mode.\n" +
-		"Your tools — execute_shell_command, diff_patch_workspace_file, open_file, suggest_actions, celebrate, notify_user, read_image — are already natively available to you; call them DIRECTLY by name.\n" +
+		"Your tools — execute_shell_command, diff_patch_workspace_file, open_file, show_scene, suggest_actions, celebrate, notify_user, read_image — are already natively available to you; call them DIRECTLY by name.\n" +
 		"IMPORTANT — if your own runtime/CLI has a SEPARATE built-in shell or code-execution capability of its own (distinct from execute_shell_command above), that built-in one is READ-ONLY here and can never write or edit anything, no matter what you try. Never conclude the workspace itself is read-only or that something needs enabling — it doesn't. The tool that can actually write is execute_shell_command (or diff_patch_workspace_file for a precise edit) — always call one of THOSE by name to save anything (silently — never mention this to " + name + ").\n" +
 		"If " + name + "'s message ends with a parenthetical \"(I uploaded it to <path>)\", that names the EXACT real path of a photo they just uploaded — call read_image on that exact path directly (never guess a different filename or check the wrong folder instead, this path is always correct), then respond to what you see naturally and warmly (per your teaching style — hints before answers, never just state correct/incorrect outright). Never mention files or paths in your reply.\n" +
 		"\n" +
@@ -217,7 +217,9 @@ func childSystemPrompt(child *Child, parentLabel string, activityDir string) str
 		"- Never mention files, folders, paths, filenames, or anything technical to " + name + " — talk about \"your quadratics test\" or \"the notes we made\", never a path or filename.\n" +
 		"Your workspace: you can see and edit exactly ONE folder — your current activity (everything in it is yours: its lessons/tests, activity.json, and your own attempts/) — nothing else exists for you. Save your own attempts and working under its attempts/ subfolder. Use your shell to open a worksheet or save your work.\n" +
 		"When you want " + name + " to look at a specific sheet, test, or their own saved work while you talk about it, call the open_file tool with its path — it opens on the right side of their screen. Do this when it genuinely helps them follow along (e.g. \"let's open your practice test\"), not for every message.\n" +
-		"Everything you need is in " + activityDir + "/activity.json — read it at the start (e.g. `cat \"" + activityDir + "/activity.json\"`). It has \"title\" (the activity name), \"teaching_mode\"/\"hints_before_answer\" (see the critical rule above), \"persona\" (adopt this tone/personality for the whole conversation), \"guide_note\" (the parent's own instructions: the order to go through things, pacing, what to do if " + name + " gets stuck), and \"items\" — the FULL ordered list of every file in the activity, ready to open and edit (bare filenames — join them onto " + activityDir + " yourself for open_file/shell paths). That items list IS your whole activity: work through those files in order, and when " + name + " wants a specific part (e.g. jumps to the final test), open that exact item from the list. FOLLOW guide_note exactly on top of teaching_mode — e.g. if it says \"read the notes first, then the practice test, point her back to the notes if stuck,\" do exactly that. For each file, call open_file with its path so it appears on their screen, read it yourself to see what it is, and warmly guide them into it. CRITICAL: call open_file EVERY single time, even if you're fairly sure you already opened this exact file earlier in this same conversation — the child's screen does not stay on that file by itself; if you don't call open_file THIS turn, they see a bare list instead of the actual document. If items is empty/missing, this is an instruction-only activity: guide_note is the FULL description (e.g. \"give algebra word problems one at a time, get harder after two correct in a row, easier after a miss\") — there's no fixed file to open, so generate each question yourself in the conversation, one at a time, adapting to how " + name + " does. Never ask " + name + " for a filename, and never tell them about activity.json or how you found it — just say something like \"Your " + parent + " set up a fractions practice for you — let's open it!\"\n" +
+		"Everything you need is in " + activityDir + "/activity.json — read it at the start (e.g. `cat \"" + activityDir + "/activity.json\"`). It has \"title\" (the activity name), \"teaching_mode\"/\"hints_before_answer\" (see the critical rule above), \"persona\" (adopt this tone/personality for the whole conversation), \"guide_note\" (the parent's own instructions: the order to go through things, pacing, what to do if " + name + " gets stuck), \"goal\" (what actually finishing this activity looks like — see below), and \"items\" — the FULL ordered list of every file in the activity, ready to open and edit (bare filenames — join them onto " + activityDir + " yourself for open_file/shell paths). That items list IS your whole activity: work through those files in order, and when " + name + " wants a specific part (e.g. jumps to the final test), open that exact item from the list. FOLLOW guide_note exactly on top of teaching_mode — e.g. if it says \"read the notes first, then the practice test, point her back to the notes if stuck,\" do exactly that. For each file, call open_file with its path so it appears on their screen, read it yourself to see what it is, and warmly guide them into it. Once shown, it STAYS on their screen turn after turn by itself — you do NOT need to re-call open_file on an unchanged file every turn, that's a wasted round-trip that only adds latency for no visible change. Call open_file again only when: (a) this is the first time showing this particular file this conversation, (b) you just edited it (see the progress-note rule below — the display only refreshes when you re-open it), or (c) you're switching " + name + " to a genuinely DIFFERENT file. If items is empty/missing, this is an instruction-only activity: guide_note is the FULL description (e.g. \"give algebra word problems one at a time, get harder after two correct in a row, easier after a miss\") — there's no fixed file to open, so generate each question yourself in the conversation, one at a time, adapting to how " + name + " does. Never ask " + name + " for a filename, and never tell them about activity.json or how you found it — just say something like \"Your " + parent + " set up a fractions practice for you — let's open it!\"\n" +
+		"show_scene — the activity's own file is fixed at creation time, so it can't follow " + name + " once she takes the conversation somewhere it never anticipated (invents her own characters/world, asks to go a different direction). For THAT, call show_scene with a small, freshly-written HTML snippet matching exactly what's happening right now — it's shown inline in this reply, not on the file panel. To offer a real choice inside a scene, use a button that calls SQ.choose so you actually see and respond to whichever one " + name + " picks (never a `<details>` reveal or a button that does nothing further): `<button onclick=\"parent.postMessage({__sq:1,op:'choose',text:'Investigate Saturn'},'*')\">Investigate Saturn</button>` — clicking it sends that exact text to you as if " + name + " typed it. Keep every scene small and self-contained (inline CSS, no external assets), and only call this when a visual moment genuinely adds something — most turns are fine as plain conversation.\n" +
+		"STAY ANCHORED TO THE GOAL — " + name + " will naturally take the conversation in her own direction (invent extra characters, ask tangential questions, want to talk about something else entirely). Engage with that warmly and don't shut it down, but \"goal\" in activity.json is what finishing actually means for this activity (e.g. \"reach the final scene and design one explorer ship\", \"answer all 10 practice questions\") — keep gently steering every few turns back toward actually reaching it, weaving her own tangents INTO the path there rather than either ignoring her ideas or letting the session drift forever without ever getting closer to done. If goal is missing (older activities created before this existed), just use guide_note/items as the anchor instead.\n" +
 		"CRITICAL, do this EVERY time without exception — recording progress ON the page itself: the activity's files are yours to edit directly. The moment " + name + " gives an answer to a specific question — right then, before your NEXT reply — you MUST: (1) call diff_patch_workspace_file on that item's path with a small unified diff inserting one line right under that question: `<p class=\"answered-note\">✓ Answered: <em>{what they said, verbatim}</em></p>` — never state or imply correct/incorrect in that note, that stays between you and the parent's answer key; prefer diff_patch_workspace_file over a raw shell edit, it's built exactly for a small precise insertion like this one; (2) call open_file on that SAME path again so the page visibly updates. Do this for every single answered question, not just some of them — a question that stays unmarked after being answered is a bug. For study material, do the same after actually working through a worked example or section together: `<p class=\"answered-note\">✓ Reviewed</p>` right under it, then re-open. Keep every other part of the file exactly as it was; only ever add these small notes, never rewrite content or remove questions.\n" +
 		"  BAD (never do this): " + name + " answers Question 1 correctly in chat → you celebrate in your reply → you move on to Question 2 without ever patching the file or calling open_file again. The page still looks exactly like it did before they answered — that's the bug.\n" +
 		"  GOOD: " + name + " answers Question 1 → you call diff_patch_workspace_file adding the answered-note under Question 1 → you call open_file on the same path → THEN you reply congratulating them and moving to Question 2.\n" +
@@ -291,10 +293,14 @@ type suggestion struct {
 }
 
 type parentMessageResponse struct {
-	Reply       string       `json:"reply,omitempty"`
-	Error       string       `json:"error,omitempty"`
-	ToolEvents  []toolEvent  `json:"tool_events,omitempty"`
-	Suggestions []suggestion `json:"suggestions,omitempty"`
+	Reply       string          `json:"reply,omitempty"`
+	Error       string          `json:"error,omitempty"`
+	ToolEvents  []toolEvent     `json:"tool_events,omitempty"`
+	Suggestions []suggestion    `json:"suggestions,omitempty"`
+	DebugCalls  []debugToolCall `json:"debug_tool_calls,omitempty"`
+	// Scene is a child-only field: a small HTML snippet the tutor generated
+	// this turn via show_scene, shown inline in the reply (see scene_tool.go).
+	Scene string `json:"scene,omitempty"`
 }
 
 // engineToProvider maps a persisted engine string to an mcpagent LLM provider.
@@ -364,6 +370,10 @@ func handleParentMessage(w http.ResponseWriter, r *http.Request) {
 	// Recorder captures custom-tool invocations for the response.
 	var evMu sync.Mutex
 	var events []toolEvent
+	// TEMPORARY: records every tool call this turn (name + args) for the
+	// tool-call visibility debug panel — see tool_call_debug.go.
+	var debugMu sync.Mutex
+	var debugCalls []debugToolCall
 	// Files send_whatsapp_file actually sent this turn — appended to the
 	// reply as real clickable links (see below) since the model's own reply
 	// text can't reliably do this (the system prompt tells it to keep file
@@ -596,7 +606,7 @@ func handleParentMessage(w http.ResponseWriter, r *http.Request) {
 		StreamCallback: func(text string) {
 			statusHubs.publishDelta("parent:"+req.ConversationID, text)
 		},
-		Tools: withLiveStatus("parent:"+req.ConversationID, []agentsession.Tool{
+		Tools: withToolCallDebug(&debugMu, &debugCalls, withLiveStatus("parent:"+req.ConversationID, []agentsession.Tool{
 			setChildProfile, setParentLabel, openFile, openActivity,
 			createLearningActivityTool(childLabel, func(ev toolEvent) {
 				evMu.Lock()
@@ -615,7 +625,7 @@ func handleParentMessage(w http.ResponseWriter, r *http.Request) {
 				newSecretValues = append(newSecretValues, value)
 				newSecretMu.Unlock()
 			}),
-		}),
+		})),
 	})
 	if err != nil {
 		msg := friendlyTurnError(err)
@@ -653,7 +663,10 @@ func handleParentMessage(w http.ResponseWriter, r *http.Request) {
 		newVals := append([]string(nil), newSecretValues...)
 		newSecretMu.Unlock()
 		retroactivelyRedactStoredConversation("parent", req.ConversationID, newVals)
-		writeJSON(w, http.StatusOK, parentMessageResponse{Error: msg})
+		debugMu.Lock()
+		debugOut := append([]debugToolCall(nil), debugCalls...)
+		debugMu.Unlock()
+		writeJSON(w, http.StatusOK, parentMessageResponse{Error: msg, DebugCalls: debugOut})
 		return
 	}
 	saveSessionHandle("parent", req.ConversationID, sess.Handle())
@@ -675,7 +688,10 @@ func handleParentMessage(w http.ResponseWriter, r *http.Request) {
 	newVals := append([]string(nil), newSecretValues...)
 	newSecretMu.Unlock()
 	retroactivelyRedactStoredConversation("parent", req.ConversationID, newVals)
-	writeJSON(w, http.StatusOK, parentMessageResponse{Reply: reply, ToolEvents: out, Suggestions: sug})
+	debugMu.Lock()
+	debugOut := append([]debugToolCall(nil), debugCalls...)
+	debugMu.Unlock()
+	writeJSON(w, http.StatusOK, parentMessageResponse{Reply: reply, ToolEvents: out, Suggestions: sug, DebugCalls: debugOut})
 }
 
 // fallbackParentMessage runs the legacy plain-completion path (no bridge tools)

@@ -22,7 +22,7 @@ Whenever there are files in `inbox/`, process each one before doing anything els
    mv "inbox/<filename>" "materials/<subject>/<topic>/<filename>"
    ```
 
-4. **Write metadata** next to it at `materials/<subject>/<topic>/<filename>.meta.json`:
+4. **Write metadata** next to it at `materials/<subject>/<topic>/<filename>.meta.json` — include the FULL text you extracted in step 1 as `extracted_text`, not just a summary. This is what makes step 1's read-image/OCR/liteparse work a one-time cost: any skill that needs this material later (create-test, create-study-material, create-academic-map, or you in a future chat) reads `extracted_text` straight from this file instead of re-running vision/OCR on the original again:
    ```json
    {
      "original_name": "<original filename>",
@@ -32,6 +32,7 @@ Whenever there are files in `inbox/`, process each one before doing anything els
      "type": "<type>",
      "summary": "<1-2 sentence summary of what the file contains>",
      "key_concepts": ["<concept>", "<concept>"],
+     "extracted_text": "<the full text/transcription you extracted in step 1 — verbatim, not a paraphrase>",
      "source": "parent-upload",
      "processed_at": "<run: date -u +%Y-%m-%dT%H:%M:%SZ>"
    }

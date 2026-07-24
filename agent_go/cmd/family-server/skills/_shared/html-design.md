@@ -23,17 +23,32 @@ external assets, fonts, images, or network calls.
 - Use only real data. Never invent scores.
 - **Make it visually engaging — children respond to this far more than plain text.**
   Use CSS transitions/animations freely: a gentle fade/slide-in as the page loads,
-  hover/tap effects on cards, an animated diagram or icon, a subtle progress-fill
-  bar, a `<details>/<summary>` reveal for "want a hint?" or a vocab flip-card.
-  This is NOT the same rule as the "no forms" one above — animation and simple
-  reveal/toggle interactivity are welcome; they just must never (a) use a real
-  form control, or (b) need the correct answer embedded in the page to work.
-  A `<details>` revealing a *hint* (not the answer) is fine; a `<details>`
-  revealing "the answer is 3/5" is not — that's the same leak the no-forms
-  rule exists to prevent, just via a different element.
-  - GOOD: `<details><summary>Need a hint?</summary><p>Try converting both fractions to the same denominator first.</p></details>`
-  - GOOD: a CSS `@keyframes` fade-in on `.card`, a hover lift on `.card:hover`, an animated SVG sun/cloud for a science diagram.
-  - BAD: `<details><summary>Check my answer</summary><p>Correct answer: 3/5</p></details>` — same answer-key leak as an embedded form.
+  hover effects on cards, an animated diagram or icon, a subtle progress-fill bar.
+  These are passive/decorative — they play automatically or on hover, nothing to
+  click.
+- **No click-to-REVEAL elements — no `<details>/<summary>`, no "tap to flip"
+  cards.** These silently show hidden content (a hint, an answer, a fun fact)
+  with no record of it happening — Quill never finds out the child looked, or
+  what she was even looking at. Write a "guess before you peek" moment as
+  plain text instead and let Quill prompt for the guess and reveal the answer
+  itself in chat.
+  - GOOD: `<p><strong>Guess: how many hearts does an octopus have?</strong></p>` (no reveal element) — Quill asks in chat, then reveals the fact in its own reply.
+  - BAD: `<details><summary>Reveal the answer</summary><p>Three hearts!</p></details>` — Quill never finds out she looked, or what she guessed.
+- **Click-to-CHOOSE elements are fine — but MUST use SQ.choose so Quill actually
+  sees the pick.** A page isn't stuck being non-interactive: a button
+  representing a genuine choice (which path, which answer, what to do next)
+  can call `parent.postMessage({__sq:1,op:'choose',text:'<exact message>'},'*')`
+  in its `onclick` — this sends that text to Quill exactly as if the child
+  typed it, so the choice becomes a real turn Quill responds to. A button
+  that does anything else (toggles local visibility, does nothing, or just
+  silently reveals something) is exactly as invisible to Quill as a
+  `<details>` reveal and is just as wrong.
+  - GOOD: `<button onclick="parent.postMessage({__sq:1,op:'choose',text:'Investigate Saturn'},'*')">Investigate Saturn</button>`
+  - BAD: `<button onclick="document.getElementById('a').style.display='block'">Show answer</button>` — Quill never knows this happened.
+- For content that changes turn-by-turn as the conversation actually unfolds
+  (not fixed at creation time) — see `show_scene` in your own instructions:
+  a small HTML snippet shown inline in a reply, generated fresh each time,
+  which can use the same SQ.choose pattern above.
 
 ## Base template
 

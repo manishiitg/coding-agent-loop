@@ -51,3 +51,4 @@ file "<path>"        # what is it, really? (extension can lie)
 - Only record content you have **actually extracted** — never invent or guess what a file contains if you couldn't read it.
 - Keep everything **local** — parsing/OCR must not send the file to a hosted service.
 - If extraction comes back empty or clearly wrong, say so and escalate (try `liteparse`, then `read_image`, then ask the parent) rather than pretending you read it.
+- **Before re-reading a file under `materials/`, check for `<file>.meta.json`'s `extracted_text` field first** — `process-file` saves the full extraction there specifically so vision/OCR only ever runs once per file. Only fall back to actually re-reading the raw file (vision/OCR again) if that field is missing, empty, or looks truncated/wrong for what you now need (e.g. an older material processed before this field existed).

@@ -32,7 +32,6 @@ import {
   Image as ImageIcon,
   Info,
   LockKeyhole,
-  Moon,
   Music,
   Presentation,
   PanelLeftClose,
@@ -69,6 +68,45 @@ import {
 } from './stores'
 
 const FAMILY_API = (import.meta as { env?: { VITE_FAMILY_API?: string } }).env?.VITE_FAMILY_API ?? 'http://127.0.0.1:8010'
+
+// TEMPORARY: turns the raw per-turn tool-call log (debug_tool_calls, from
+// chat.go/child.go's tool_call_debug.go) into small debug bubbles so tool
+// calls are visible live in the UI. Remove this, its call sites, and the
+// backend recorder together once no longer needed.
+function debugToolMsgs(calls?: { tool: string; args?: string }[]): ParentMsg[] {
+  return (calls ?? []).map((c) => ({ role: 'tool', tool: 'debug_call', text: c.tool + (c.args ? ' ' + c.args : '') }))
+}
+
+// autoGrowTextarea lets a composer grow with a long message instead of
+// staying a single row — resets to natural height first so it can shrink
+// back down too (e.g. after deleting text), then grows to fit content up to
+// a cap, beyond which the textarea's own CSS overflow-y:auto takes over.
+const COMPOSER_MAX_HEIGHT = 160
+function autoGrowTextarea(el: HTMLTextAreaElement) {
+  el.style.height = 'auto'
+  el.style.height = Math.min(el.scrollHeight, COMPOSER_MAX_HEIGHT) + 'px'
+}
+
+// The child/file viewer iframe is deliberately sandbox="allow-scripts" with
+// NO allow-same-origin (adding that would let a srcDoc page's script escape
+// the sandbox and touch the parent page/cookies) — which makes it a
+// cross-origin frame from the app's own perspective. Reading contentWindow.
+// scrollY or calling contentWindow.scrollTo() on a cross-origin frame throws
+// a SecurityError SYNCHRONOUSLY, uncaught, which crashes the whole React
+// render (a blank page) — so both directions must be wrapped, not just
+// best-effort skipped.
+function safeGetScrollY(win: Window | null | undefined): number {
+  try {
+    return win?.scrollY ?? 0
+  } catch {
+    return 0
+  }
+}
+function safeSetScrollY(win: Window | null | undefined, y: number) {
+  try {
+    win?.scrollTo(0, y)
+  } catch { /* cross-origin sandboxed frame — nothing to do */ }
+}
 
 function engineStatus(e: ApiEngine): { label: string; ready: boolean } {
   if (e.usable) return { label: 'Ready', ready: true }
@@ -126,9 +164,9 @@ function readHandoffSide(): 'tutor' | 'parent' {
   try { return localStorage.getItem(HANDOFF_SIDE_KEY) === 'tutor' ? 'tutor' : 'parent' } catch { return 'parent' }
 }
 
-// Dark/light theme, persisted the same way as the handoff side. Defaults to the
-// OS/browser's own preference the first time (no stored choice yet), then
-// whatever the parent explicitly picked via the toggle from then on.
+// Dark/light theme — follows the OS/browser's own preference (or a
+// previously-stored explicit choice, from when there was an in-app toggle).
+// No in-app toggle for now; kept read-only.
 type Theme = 'light' | 'dark'
 const THEME_KEY = 'sparkquill.theme'
 function readTheme(): Theme {
@@ -137,9 +175,6 @@ function readTheme(): Theme {
     if (stored === 'light' || stored === 'dark') return stored
   } catch { /* best-effort */ }
   return (typeof window !== 'undefined' && window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) ? 'dark' : 'light'
-}
-function persistTheme(t: Theme) {
-  try { localStorage.setItem(THEME_KEY, t) } catch { /* best-effort */ }
 }
 
 // rewriteRelativeAssetURLs fixes a bug in how generated HTML pages are
@@ -162,6 +197,87 @@ function rewriteRelativeAssetURLs(html: string, filePath: string): string {
     const url = `${FAMILY_API}/api/workspace/raw?path=${encodeURIComponent(resolved)}`
     return `src=${quote}${url}${quote}`
   })
+}
+
+// withSceneResizeScript appends a tiny bootstrap script to a show_scene
+// snippet so the iframe reports its own content height via postMessage —
+// SceneFrame below sizes itself to that instead of a fixed guess, so content
+// never gets clipped regardless of how tall a given scene turns out to be.
+// (contentWindow.scrollHeight can't be read from the outside — the iframe is
+// a cross-origin sandboxed frame — so the height has to self-report.)
+function withSceneResizeScript(html: string): string {
+  return html + `
+<script>(function(){
+  function report(){
+    var h = document.documentElement.scrollHeight;
+    parent.postMessage({ __sq: 1, op: 'scene-resize', height: h }, '*');
+  }
+  window.addEventListener('load', report);
+  if (window.ResizeObserver) new ResizeObserver(report).observe(document.documentElement);
+  setTimeout(report, 50);
+})();</script>`
+}
+
+// SceneFrame renders one show_scene snippet, auto-sized to its actual content
+// height (see withSceneResizeScript) instead of a fixed height that would
+// either clip taller scenes or leave dead space under shorter ones. Each
+// instance only reacts to resize reports from its OWN iframe (matched via
+// the message event's source window), so multiple scenes in the same thread
+// don't interfere with each other.
+function SceneFrame({ html }: { html: string }) {
+  const ref = useRef<HTMLIFrameElement>(null)
+  const [height, setHeight] = useState(160)
+  useEffect(() => {
+    const onMsg = (e: MessageEvent) => {
+      if (e.source !== ref.current?.contentWindow) return
+      const m = e.data
+      if (m && typeof m === 'object' && m.__sq === 1 && m.op === 'scene-resize' && typeof m.height === 'number') {
+        setHeight(Math.min(Math.max(m.height, 80), 520))
+      }
+    }
+    window.addEventListener('message', onMsg)
+    return () => window.removeEventListener('message', onMsg)
+  }, [])
+  return (
+    <div className="fl-scene-card">
+      <iframe ref={ref} className="fl-scene-frame" title="Scene" sandbox="allow-scripts" style={{ height }} srcDoc={withSceneResizeScript(html)} />
+    </div>
+  )
+}
+
+// ActivityItemPreview shows an activity item's actual HTML, at real (readable)
+// size, in a short scrollable box — so a parent can read a test/guide's real
+// content in place rather than just a filename. Falls back to a plain
+// icon+name row while loading, or for non-HTML items (images/PDF/markdown
+// already have their own list glyph, and aren't a page to peek into).
+function ActivityItemPreview({ path, name }: { path: string; name: string }) {
+  const [html, setHtml] = useState<string | null>(null)
+  useEffect(() => {
+    let cancelled = false
+    setHtml(null)
+    fetch(`${FAMILY_API}/api/workspace/file?path=${encodeURIComponent(path)}`)
+      .then((res) => res.json())
+      .then((d: { content?: string }) => {
+        if (cancelled) return
+        const content = d.content ?? ''
+        setHtml(/^\s*<(!doctype|html)/i.test(content) ? rewriteRelativeAssetURLs(content, path) : null)
+      })
+      .catch(() => { if (!cancelled) setHtml(null) })
+    return () => { cancelled = true }
+  }, [path])
+  if (!html) {
+    return (
+      <div className="fl-file-item-row">
+        <FileGlyph name={name} size={15} />
+        <span>{labelFromFilename(name).label}</span>
+      </div>
+    )
+  }
+  return (
+    <div className="fl-item-preview">
+      <iframe className="fl-item-preview-frame" title="" sandbox="" srcDoc={html} />
+    </div>
+  )
 }
 
 // workspaceRelativePath converts a link the agent wrote pointing at a
@@ -542,8 +658,7 @@ function parseMaterialPath(p: string): { subject?: string; topic?: string; date?
 }
 
 export default function LearningApp() {
-  const [theme, setTheme] = useState<Theme>(readTheme)
-  const toggleTheme = () => setTheme((cur) => { const next: Theme = cur === 'dark' ? 'light' : 'dark'; persistTheme(next); return next })
+  const [theme] = useState<Theme>(readTheme)
 
   const screen = useSetupStore((s) => s.screen)
   const setScreen = useSetupStore((s) => s.setScreen)
@@ -658,6 +773,8 @@ export default function LearningApp() {
   const setChildSuggestions = useChildChatStore((s) => s.setChildSuggestions)
   const childLiveStatus = useChildChatStore((s) => s.childLiveStatus)
   const setChildLiveStatus = useChildChatStore((s) => s.setChildLiveStatus)
+  const childStreamingReply = useChildChatStore((s) => s.childStreamingReply)
+  const setChildStreamingReply = useChildChatStore((s) => s.setChildStreamingReply)
   const parentLabel = useFamilyStore((s) => s.parentLabel)
   const setParentLabel = useFamilyStore((s) => s.setParentLabel)
 
@@ -715,6 +832,8 @@ export default function LearningApp() {
   const threadEndRef = useRef<HTMLDivElement>(null)
   const childThreadEndRef = useRef<HTMLDivElement>(null)
   const iframeRef = useRef<HTMLIFrameElement>(null)
+  const childIframeRef = useRef<HTMLIFrameElement>(null)
+  const childScrollRestoreRef = useRef(0)
   const drawerTab = useWorkspaceStore((s) => s.drawerTab)
   const setDrawerTab = useWorkspaceStore((s) => s.setDrawerTab)
   const filesView = useWorkspaceStore((s) => s.filesView)
@@ -1062,22 +1181,35 @@ export default function LearningApp() {
   }, [screen, childTreeRefreshKey])
 
   // The moment a distinct activity is bound (a fresh handoff, or resuming on
-  // reload) and nothing is open yet, show its first item — the same "don't
-  // wait on the model to remember to call open_file" guarantee the old
-  // handoff-response filePath gave, without threading a file path through
-  // the handoff call itself.
+  // reload), show its first item — the same "don't wait on the model to
+  // remember to call open_file" guarantee the old handoff-response filePath
+  // gave, without threading a file path through the handoff call itself.
+  // Always force it (not just when nothing is open yet): childViewerPath can
+  // still hold a PREVIOUS activity's last-viewed file at this point, and
+  // without overriding it the child would keep seeing that old file's
+  // content instead of the newly handed-off activity's own.
   const autoOpenedActivityRef = useRef<string | null>(null)
   useEffect(() => {
     if (screen !== 'tutor' || !childActivity) return
     if (autoOpenedActivityRef.current === childActivity.dir) return
     autoOpenedActivityRef.current = childActivity.dir
     const first = childActivity.items[0]
-    if (first && !childViewerPath) { setChildViewerPath(first.path); setChildViewerRefreshKey((k) => k + 1) }
-  }, [screen, childActivity, childViewerPath])
+    if (first) { setChildViewerPath(first.path); setChildViewerRefreshKey((k) => k + 1) }
+  }, [screen, childActivity])
 
-  // Load the selected file for the child's own inline viewer.
+  // Load the selected file for the child's own inline viewer. Re-opening the
+  // SAME file (e.g. Quill re-calling open_file after editing in a progress
+  // note) reloads the iframe's document, which resets its scroll to the top
+  // by itself — jarring if the child was actually reading further down the
+  // page. So: capture the current scroll position before a same-path
+  // refresh (not for a genuinely different file, where starting at the top
+  // is correct), and restore it once the refreshed content has loaded.
+  const childPrevViewerPathRef = useRef<string | null>(null)
   useEffect(() => {
-    if (!childViewerPath) { setChildViewerContent(null); return }
+    if (!childViewerPath) { setChildViewerContent(null); childPrevViewerPathRef.current = null; return }
+    const samePath = childPrevViewerPathRef.current === childViewerPath
+    childScrollRestoreRef.current = samePath ? safeGetScrollY(childIframeRef.current?.contentWindow) : 0
+    childPrevViewerPathRef.current = childViewerPath
     let cancelled = false
     setChildViewerContent(null)
     fetch(`${FAMILY_API}/api/workspace/file?path=${encodeURIComponent(childViewerPath)}`)
@@ -1146,7 +1278,14 @@ export default function LearningApp() {
   // jumped at the start and end of a turn, not while streaming.
   useEffect(() => {
     if (screen !== 'parent') return
-    threadEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' })
+    // While actively streaming, a fresh 'smooth' animation starts on every
+    // delta chunk (many times a second) and each one cuts off the previous
+    // one before it finishes — that competing-animation restart is what
+    // makes the scroll stutter/lag behind instead of following the text.
+    // 'auto' (instant) during streaming avoids that; 'smooth' is still nicer
+    // for the normal, much-less-frequent case (a whole new message, a screen
+    // switch).
+    threadEndRef.current?.scrollIntoView({ behavior: streamingReply ? 'auto' : 'smooth', block: 'end' })
   }, [parentMessages, sending, screen, streamingReply])
 
   // Same, for the child's own thread — this had no auto-scroll at all before,
@@ -1154,8 +1293,8 @@ export default function LearningApp() {
   // with no automatic scroll to reveal them.
   useEffect(() => {
     if (screen !== 'tutor') return
-    childThreadEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' })
-  }, [childMessages, childSending, screen])
+    childThreadEndRef.current?.scrollIntoView({ behavior: childStreamingReply ? 'auto' : 'smooth', block: 'end' })
+  }, [childMessages, childSending, screen, childStreamingReply])
 
   // Cycle a usable "how to use the chat" tip in the thinking indicator instead
   // of a bare "thinking…" — resets and restarts each time a new turn begins,
@@ -1175,12 +1314,15 @@ export default function LearningApp() {
 
   // Bridge for interactive HTML: the sandboxed viewer iframe posts SQ.save/load
   // messages; the app persists them to a workspace file (child/attempts) so the
-  // child's answers survive reloads and Quill can read them later.
+  // child's answers survive reloads and Quill can read them later. 'choose' is
+  // the newer op a show_scene snippet's button posts to offer a real choice —
+  // treated exactly like the child typing/tapping that text, so Quill actually
+  // sees and responds to whichever one she picks (see scene_tool.go).
   useEffect(() => {
     const onMsg = (e: MessageEvent) => {
       const m = e.data
       if (!m || typeof m !== 'object' || (m as { __sq?: unknown }).__sq !== 1) return
-      const msg = m as { op?: string; key?: string; id?: string; data?: unknown }
+      const msg = m as { op?: string; key?: string; id?: string; data?: unknown; text?: string }
       if (msg.op === 'save' && typeof msg.key === 'string') {
         fetch(`${FAMILY_API}/api/workspace/state`, {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -1191,6 +1333,8 @@ export default function LearningApp() {
           .then((r) => r.json())
           .then((d) => iframeRef.current?.contentWindow?.postMessage({ __sq: 1, op: 'loaded', id: msg.id, data: d?.data ?? null }, '*'))
           .catch(() => iframeRef.current?.contentWindow?.postMessage({ __sq: 1, op: 'loaded', id: msg.id, data: null }, '*'))
+      } else if (msg.op === 'choose' && typeof msg.text === 'string') {
+        sendChildTextRef.current(msg.text)
       }
     }
     window.addEventListener('message', onMsg)
@@ -1381,9 +1525,10 @@ export default function LearningApp() {
       body: JSON.stringify({ messages: history, conversation_id: conversationId, viewer_path: currentViewerPath || undefined }),
     })
       .then((res) => res.json())
-      .then((data: { reply?: string; error?: string; suggestions?: { label: string; message: string }[]; tool_events?: { tool: string; name?: string; grade?: string; board?: string; path?: string; parent_label?: string }[] }) => {
+      .then((data: { reply?: string; error?: string; suggestions?: { label: string; message: string }[]; tool_events?: { tool: string; name?: string; grade?: string; board?: string; path?: string; parent_label?: string }[]; debug_tool_calls?: { tool: string; args?: string }[] }) => {
         const events = data.tool_events ?? []
         const toolMsgs: ParentMsg[] = events.filter((e) => e.tool === 'set_child_profile').map((e) => ({ role: 'tool', tool: e.tool, name: e.name, grade: e.grade, board: e.board }))
+        const debugMsgs = debugToolMsgs(data.debug_tool_calls)
         const cp = events.find((e) => e.tool === 'set_child_profile')
         if (cp) { if (cp.name) setChildName(cp.name); if (cp.grade) setGrade(cp.grade); if (cp.board) setBoard(cp.board) }
         const pl = events.find((e) => e.tool === 'set_parent_label' && e.parent_label)
@@ -1391,9 +1536,12 @@ export default function LearningApp() {
         const of = events.find((e) => e.tool === 'open_file' && e.path)
         if (of?.path) { setDrawerTab('files'); setViewerImageList([]); setViewerActivityDir(null); setViewerPath(of.path); setViewerRefreshKey((k) => k + 1) }
         const op = events.find((e) => e.tool === 'open_activity' && e.path)
-        if (op?.path) { setDrawerTab('files'); setViewerPath(null); setViewerActivityDir(op.path) }
+        // Auto-expand so its actual content previews are visible right away —
+        // otherwise an activity with multiple items shows only its title/note
+        // until the parent notices and clicks the (easy-to-miss) chevron.
+        if (op?.path) { setDrawerTab('files'); setViewerPath(null); setViewerActivityDir(op.path); setExpandedActivity(op.path) }
         setSuggestions(data.suggestions ?? [])
-        setParentMessages((cur) => [...cur, ...toolMsgs, { role: 'assistant', text: data.error ? `Sorry — ${data.error}` : (data.reply || '(no response)') }])
+        setParentMessages((cur) => [...cur, ...debugMsgs, ...toolMsgs, { role: 'assistant', text: data.error ? `Sorry — ${data.error}` : (data.reply || '(no response)') }])
       })
       .catch(() => setParentMessages((cur) => [...cur, { role: 'assistant', text: 'Sorry — I couldn’t reach the learning engine.' }]))
       .finally(() => { setSending(false); setLiveStatus(''); setStreamingReply(''); statusSource.close(); setMapRefreshKey((k) => k + 1) })
@@ -1463,8 +1611,16 @@ export default function LearningApp() {
     setChildSuggestions([])
     setChildSending(true)
     setChildLiveStatus('')
+    setChildStreamingReply('')
     const statusSource = new EventSource(`${FAMILY_API}/api/child/status?conversation_id=${encodeURIComponent(convId)}`)
-    statusSource.onmessage = (ev) => setChildLiveStatus(ev.data)
+    statusSource.onmessage = (ev) => {
+      // Same JSON envelope as the parent stream ({type:"status"|"delta",text}).
+      try {
+        const parsed = JSON.parse(ev.data) as { type?: string; text?: string }
+        if (parsed.type === 'delta') setChildStreamingReply((cur) => cur + (parsed.text ?? ''))
+        else if (parsed.type === 'status') setChildLiveStatus(parsed.text ?? '')
+      } catch { /* ignore malformed event */ }
+    }
     statusSource.onerror = () => statusSource.close()
     const history = next.filter((m) => m.role === 'user' || m.role === 'assistant').map((m) => ({ role: m.role, text: m.text ?? '' }))
     if (modelExtra && history.length > 0) {
@@ -1476,21 +1632,87 @@ export default function LearningApp() {
       body: JSON.stringify({ messages: history, conversation_id: convId }),
     })
       .then((res) => res.json())
-      .then((data: { reply?: string; error?: string; tool_events?: { tool: string; path?: string; stars?: number; total?: number; reason?: string }[]; suggestions?: ChildSuggestion[] }) => {
+      .then((data: { reply?: string; error?: string; tool_events?: { tool: string; path?: string; stars?: number; total?: number; reason?: string }[]; suggestions?: ChildSuggestion[]; debug_tool_calls?: { tool: string; args?: string }[]; scene?: string }) => {
         const events = data.tool_events ?? []
         const of = events.find((e) => e.tool === 'open_file' && e.path)
         if (of?.path) { setChildViewerPath(of.path); setChildViewerRefreshKey((k) => k + 1) }
         const cel = events.find((e) => e.tool === 'celebrate')
+        const debugMsgs = debugToolMsgs(data.debug_tool_calls)
         setChildSuggestions(data.suggestions ?? [])
         setChildMessages((cur) => {
-          const next: ParentMsg[] = [...cur, { role: 'assistant', text: data.error ? `Hmm, something went wrong — ${data.error}` : (data.reply || '(no response)') }]
+          const next: ParentMsg[] = [...cur, ...debugMsgs, { role: 'assistant', text: data.error ? `Hmm, something went wrong — ${data.error}` : (data.reply || '(no response)') }]
           if (cel) next.push({ role: 'tool', tool: 'celebrate', stars: cel.stars ?? 1, reason: cel.reason ?? '' })
+          if (data.scene) next.push({ role: 'tool', tool: 'scene', html: data.scene })
           return next
         })
       })
       .catch(() => setChildMessages((cur) => [...cur, { role: 'assistant', text: 'I couldn’t reach the tutor just now — try again in a moment.' }]))
-      .finally(() => { setChildSending(false); setChildLiveStatus(''); statusSource.close(); setChildTreeRefreshKey((k) => k + 1) })
+      .finally(() => { setChildSending(false); setChildLiveStatus(''); setChildStreamingReply(''); statusSource.close(); setChildTreeRefreshKey((k) => k + 1) })
   }
+
+  // sendChildKickoff silently starts a turn after a handoff WITHOUT showing a
+  // fake "child said this" bubble — the greeting text (naming the real
+  // activity) is still sent to the model, since it needs some message to
+  // respond to, but only Quill's own real reply is added to the visible
+  // thread. base is the message list to keep showing beforehand (empty for a
+  // fresh session, the resumed history when continuing).
+  const sendChildKickoff = (greeting: string, base: ParentMsg[], modelExtra?: string) => {
+    const text = greeting.trim()
+    if (!text || childSending) return
+    const convId = childActivity?.dir ?? ''
+    const hidden: ParentMsg[] = [...base, { role: 'user', text }]
+    setChildInput('')
+    setChildSuggestions([])
+    setChildSending(true)
+    setChildLiveStatus('')
+    setChildStreamingReply('')
+    const statusSource = new EventSource(`${FAMILY_API}/api/child/status?conversation_id=${encodeURIComponent(convId)}`)
+    statusSource.onmessage = (ev) => {
+      try {
+        const parsed = JSON.parse(ev.data) as { type?: string; text?: string }
+        if (parsed.type === 'delta') setChildStreamingReply((cur) => cur + (parsed.text ?? ''))
+        else if (parsed.type === 'status') setChildLiveStatus(parsed.text ?? '')
+      } catch { /* ignore malformed event */ }
+    }
+    statusSource.onerror = () => statusSource.close()
+    const history = hidden.filter((m) => m.role === 'user' || m.role === 'assistant').map((m) => ({ role: m.role, text: m.text ?? '' }))
+    if (modelExtra && history.length > 0) {
+      history[history.length - 1] = { ...history[history.length - 1], text: history[history.length - 1].text + '\n\n' + modelExtra }
+    }
+    fetch(`${FAMILY_API}/api/child/message`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ messages: history, conversation_id: convId }),
+    })
+      .then((res) => res.json())
+      .then((data: { reply?: string; error?: string; tool_events?: { tool: string; path?: string; stars?: number; total?: number; reason?: string }[]; suggestions?: ChildSuggestion[]; debug_tool_calls?: { tool: string; args?: string }[]; scene?: string }) => {
+        const events = data.tool_events ?? []
+        const of = events.find((e) => e.tool === 'open_file' && e.path)
+        if (of?.path) { setChildViewerPath(of.path); setChildViewerRefreshKey((k) => k + 1) }
+        const cel = events.find((e) => e.tool === 'celebrate')
+        const debugMsgs = debugToolMsgs(data.debug_tool_calls)
+        setChildSuggestions(data.suggestions ?? [])
+        // Append to base (not hidden) — the synthetic kickoff message never
+        // joins the visible thread, only Quill's real reply (and any debug
+        // tool-call bubbles / scene) do.
+        setChildMessages((cur) => {
+          const next: ParentMsg[] = [...cur, ...debugMsgs, { role: 'assistant', text: data.error ? `Hmm, something went wrong — ${data.error}` : (data.reply || '(no response)') }]
+          if (cel) next.push({ role: 'tool', tool: 'celebrate', stars: cel.stars ?? 1, reason: cel.reason ?? '' })
+          if (data.scene) next.push({ role: 'tool', tool: 'scene', html: data.scene })
+          return next
+        })
+      })
+      .catch(() => setChildMessages((cur) => [...cur, { role: 'assistant', text: 'I couldn’t reach the tutor just now — try again in a moment.' }]))
+      .finally(() => { setChildSending(false); setChildLiveStatus(''); setChildStreamingReply(''); statusSource.close(); setChildTreeRefreshKey((k) => k + 1) })
+  }
+
+  // The SQ postMessage bridge (below) is registered once on mount, so it
+  // would otherwise always call the FIRST render's sendChildText — a stale
+  // closure over that render's childActivity/childMessages/etc. Routing
+  // through a ref kept current every render avoids that without having to
+  // tear down and re-add the window listener on every render instead.
+  const sendChildTextRef = useRef(sendChildText)
+  useEffect(() => { sendChildTextRef.current = sendChildText })
 
   // Enter Child Mode after a handoff response. new_session decides whether the
   // child continues their existing conversation (still the same activity) or
@@ -1504,16 +1726,21 @@ export default function LearningApp() {
     setScreen('tutor')
     setChildTreeRefreshKey((k) => k + 1)
     // Hand the parent's real instructions to Quill directly on this first turn
-    // — never shown to the child, just extra context for the model.
+    // — never shown to the child as a separate message, just extra context for
+    // the model. On a brand-new session, also have Quill fold a short, plain
+    // statement of the actual plan into the START of its own opening reply
+    // (not a generic "let's begin!") — this is the one place the guide_note's
+    // real content becomes visible to the child, since sendChildKickoff never
+    // renders a synthetic message of its own.
     const modelExtra = guideNote
-      ? `(For you, Quill — not from ${childName || 'the child'}: the parent's own instructions for${activityTitle ? ` "${activityTitle}"` : ' this'}: ${guideNote} Follow this pacing/order exactly.)`
+      ? `(For you, Quill — not from ${childName || 'the child'}: the parent's own instructions for${activityTitle ? ` "${activityTitle}"` : ' this'}: ${guideNote} Follow this pacing/order exactly.${newSession ? ` Open your very first reply with one short, plain sentence stating the actual plan in your own words (e.g. "Here's our plan: ...") before anything else — this is the only place ${childName || 'the child'} sees what this session is about, so state it concretely, not generically.` : ''})`
       : undefined
     if (newSession) {
       setChildSuggestions([])
       setChildMessages([])
-      sendChildText(greeting, [], modelExtra)
+      sendChildKickoff(greeting, [], modelExtra)
     } else {
-      sendChildText(greeting, undefined, modelExtra)
+      sendChildKickoff(greeting, childMessages, modelExtra)
     }
   }
 
@@ -1548,11 +1775,14 @@ export default function LearningApp() {
   // (childActivity.dir, loaded for the assignment pill) — a different activity
   // is unambiguously a fresh handoff, no need to ask. First-ever handoff has no
   // childActivity yet, so it's fresh too.
-  const startActivityHandoff = (dir: string) => {
+  // title names the REAL activity in the greeting ("set up 'X' for me..."),
+  // not a generic "something new" phrase that reads the same for every activity.
+  const startActivityHandoff = (dir: string, title: string) => {
+    const greetingText = `set up "${title}" for me to work on`
     if (childActivity?.dir === dir) {
-      setPendingChildEntry({ dir, greetingText: 'set up something new for me to work on' })
+      setPendingChildEntry({ dir, greetingText })
     } else {
-      performHandoff(dir, 'set up something new for me to work on', false)
+      performHandoff(dir, greetingText, false)
     }
   }
 
@@ -1571,6 +1801,18 @@ export default function LearningApp() {
 
   const fileInputRef = useRef<HTMLInputElement>(null)
   const [uploading, setUploading] = useState(false)
+
+  // Reset the composer back to its natural single-row height once its text
+  // is cleared (sent, or deleted by hand) — autoGrowTextarea only grows it
+  // as the user types, so shrinking back needs its own trigger.
+  const focusTextareaRef = useRef<HTMLTextAreaElement>(null)
+  useEffect(() => {
+    if (!focusInput && focusTextareaRef.current) focusTextareaRef.current.style.height = 'auto'
+  }, [focusInput])
+  const childTextareaRef = useRef<HTMLTextAreaElement>(null)
+  useEffect(() => {
+    if (!childInput && childTextareaRef.current) childTextareaRef.current.style.height = 'auto'
+  }, [childInput])
 
   const onPickFiles = () => fileInputRef.current?.click()
 
@@ -1790,9 +2032,6 @@ export default function LearningApp() {
                     </>
                   )}
                 </div>
-                <button className="fl-icon-btn" type="button" aria-label={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'} title={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'} onClick={toggleTheme}>
-                  {theme === 'dark' ? <Sun size={18} /> : <Moon size={18} />}
-                </button>
                 <button className="fl-icon-btn" type="button" aria-label="Settings" title="Settings" onClick={() => setSettingsOpen(true)}>
                   <SettingsIcon size={18} />
                 </button>
@@ -1835,6 +2074,10 @@ export default function LearningApp() {
 
               {parentMessages.map((m, i) => {
                 if (m.role === 'tool') {
+                  if (m.tool === 'debug_call') {
+                    // TEMPORARY: raw tool-call visibility, see debugToolMsgs.
+                    return <div key={i} className="fl-debug-call">🔧 {m.text}</div>
+                  }
                   if (m.tool === 'upload' || m.tool === 'upload_error') {
                     const bad = m.tool === 'upload_error'
                     return (
@@ -1927,11 +2170,19 @@ export default function LearningApp() {
             <form className="fl-composer" onSubmit={sendParentMessage}>
               <input ref={fileInputRef} type="file" multiple accept="image/*,application/pdf" onChange={onFilesSelected} style={{ display: 'none' }} />
               <button className="composer-icon" type="button" aria-label="Attach a photo or PDF" onClick={onPickFiles} disabled={uploading}><Paperclip size={19} /></button>
-              <input
+              <textarea
+                ref={focusTextareaRef}
                 aria-label="Message the learning guide"
                 placeholder={sending ? 'Quill is replying — your next message will be queued…' : `Ask anything about ${childName || 'your child'}’s learning…`}
                 value={focusInput}
-                onChange={(event) => setFocusInput(event.target.value)}
+                rows={1}
+                onChange={(event) => { setFocusInput(event.target.value); autoGrowTextarea(event.target) }}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter' && !event.shiftKey) {
+                    event.preventDefault()
+                    sendParentText(focusInput)
+                  }
+                }}
               />
               <div className="fl-composer-menu">
                 {menuOpen && <div className="fl-menu-backdrop" onClick={() => setMenuOpen(false)} />}
@@ -2131,25 +2382,29 @@ export default function LearningApp() {
                               <ChevronDown size={14} className={expanded ? 'is-open' : ''} />
                             </button>
                           )}
-                          <button className="fl-give-to-child" type="button" disabled={sending} onClick={() => startActivityHandoff(act.dir)}>
-                            Give to {childName || 'child'}
-                          </button>
+                          {(act.items.length === 0 || expanded) && (
+                            <button className="fl-give-to-child" type="button" disabled={sending} onClick={() => startActivityHandoff(act.dir, act.title)}>
+                              Give to {childName || 'child'}
+                            </button>
+                          )}
                         </div>
                       </div>
-                      {act.guide_note && <p className="fl-package-note">{act.guide_note}</p>}
+                      {(act.items.length === 0 || expanded) && act.guide_note && <p className="fl-package-note">{act.guide_note}</p>}
                       {expanded && act.items.length > 0 && (
                         <div className="fl-package-detail-items">
-                          {act.items.map((item, i) => (
-                            <button
-                              key={item.path}
-                              type="button"
-                              className="fl-file-item fl-package-item"
-                              onClick={() => { setViewerImageList([]); setViewerPath(item.path); setViewerRefreshKey((k) => k + 1) }}
-                            >
-                              <span className="fl-package-step">{i + 1}</span>
-                              <FileGlyph name={item.name} size={15} />
-                              <span>{labelFromFilename(item.name).label}</span>
-                            </button>
+                          {act.items.map((item) => (
+                            <div key={item.path} className="fl-file-item fl-package-item has-preview">
+                              <ActivityItemPreview path={item.path} name={item.name} />
+                              <button
+                                type="button"
+                                className="fl-item-open-btn"
+                                aria-label={`Open ${item.name}`}
+                                title="Open"
+                                onClick={() => { setViewerImageList([]); setViewerPath(item.path); setViewerRefreshKey((k) => k + 1) }}
+                              >
+                                <ExternalLink size={14} />
+                              </button>
+                            </div>
                           ))}
                         </div>
                       )}
@@ -2211,22 +2466,31 @@ export default function LearningApp() {
                                 <ChevronDown size={14} className={expanded ? 'is-open' : ''} />
                               </button>
                             )}
-                            <button
-                              className="fl-give-to-child"
-                              type="button"
-                              disabled={sending}
-                              onClick={() => startActivityHandoff(act.dir)}
-                            >
-                              Give to {childName || 'child'}
-                            </button>
+                            {(act.items.length === 0 || expanded) && (
+                              <button
+                                className="fl-give-to-child"
+                                type="button"
+                                disabled={sending}
+                                onClick={() => startActivityHandoff(act.dir, act.title)}
+                              >
+                                Give to {childName || 'child'}
+                              </button>
+                            )}
                           </div>
-                          {act.guide_note && <p className="fl-package-note">{act.guide_note}</p>}
-                          {expanded && act.items.map((item, i) => (
-                            <button key={item.path} type="button" className="fl-file-item fl-package-item" onClick={() => { setViewerImageList([]); setViewerPath(item.path) }}>
-                              <span className="fl-package-step">{i + 1}</span>
-                              <FileGlyph name={item.name} size={15} />
-                              <span>{labelFromFilename(item.name).label}</span>
-                            </button>
+                          {(act.items.length === 0 || expanded) && act.guide_note && <p className="fl-package-note">{act.guide_note}</p>}
+                          {expanded && act.items.map((item) => (
+                            <div key={item.path} className="fl-file-item fl-package-item has-preview">
+                              <ActivityItemPreview path={item.path} name={item.name} />
+                              <button
+                                type="button"
+                                className="fl-item-open-btn"
+                                aria-label={`Open ${item.name}`}
+                                title="Open"
+                                onClick={() => { setViewerImageList([]); setViewerPath(item.path) }}
+                              >
+                                <ExternalLink size={14} />
+                              </button>
+                            </div>
                           ))}
                         </div>
                       )
@@ -2619,19 +2883,15 @@ export default function LearningApp() {
                   <div className="fl-child-assignment-pill"><BookOpen size={14} /><span>{childActivity.title}</span></div>
                 )}
                 <div className="fl-child-top-right">
-                  <button className="fl-icon-btn" type="button" aria-label={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'} title={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'} onClick={toggleTheme}>
-                    {theme === 'dark' ? <Sun size={16} /> : <Moon size={16} />}
-                  </button>
                   <button className="fl-parent-return" type="button" onClick={() => { setGateValue(''); setGateError(''); setPinGate(true) }}><LockKeyhole size={16} /> Parent Mode</button>
                 </div>
               </header>
               <div className="fl-child-thread" aria-label="Tutor conversation">
-                <div className="fl-tmsg is-tutor">
-                  <span className="fl-tmsg-avatar"><Sun size={20} /></span>
-                  <div className="fl-tbubble">Hi {childName || 'Maya'}! Ready to keep learning? Tell me what you’re working on, or ask me anything — I’ll help you figure it out step by step.</div>
-                </div>
                 {childMessages.map((m, i) => (
-                  m.role === 'tool' && (m.tool === 'upload' || m.tool === 'upload_error') ? (
+                  // TEMPORARY: raw tool-call visibility, see debugToolMsgs.
+                  m.role === 'tool' && m.tool === 'debug_call' ? (
+                    <div key={i} className="fl-debug-call">🔧 {m.text}</div>
+                  ) : m.role === 'tool' && (m.tool === 'upload' || m.tool === 'upload_error') ? (
                     <div key={i} className="fl-tmsg is-tutor">
                       <span className="fl-tmsg-avatar"><Paperclip size={16} /></span>
                       <div className={`fl-toolcard ${m.tool === 'upload_error' ? 'is-error' : 'is-upload'}`}>
@@ -2648,6 +2908,11 @@ export default function LearningApp() {
                       </span>
                       <span className="fl-celebration-text">{m.reason}</span>
                     </div>
+                  ) : m.role === 'tool' && m.tool === 'scene' ? (
+                    <div key={i} className="fl-tmsg is-tutor">
+                      <span className="fl-tmsg-avatar"><Sun size={20} /></span>
+                      <SceneFrame html={m.html ?? ''} />
+                    </div>
                   ) : m.role === 'assistant' ? (
                     <div key={i} className="fl-tmsg is-tutor">
                       <span className="fl-tmsg-avatar"><Sun size={20} /></span>
@@ -2661,7 +2926,18 @@ export default function LearningApp() {
                   )
                 ))}
                 {childSending && (
-                  <div className="fl-thinking"><img src="/sparkquill-loader.svg" alt="" width={38} height={38} /> <span>{childLiveStatus ? `Quill is: ${childLiveStatus}…` : CHILD_WAIT_HINTS[childHintIndex]}</span></div>
+                  <div className="fl-tmsg is-tutor">
+                    <span className="fl-tmsg-avatar"><Sun size={20} /></span>
+                    <div className="fl-tbubble-col">
+                      {childStreamingReply && (
+                        <div className="fl-tbubble is-streaming"><Markdown text={childStreamingReply} /></div>
+                      )}
+                      <div className="fl-thinking">
+                        {!childStreamingReply && <img src="/sparkquill-loader.svg" alt="" width={38} height={38} />}
+                        <span>{childLiveStatus ? `Quill is: ${childLiveStatus}…` : CHILD_WAIT_HINTS[childHintIndex]}</span>
+                      </div>
+                    </div>
+                  </div>
                 )}
                 <div ref={childThreadEndRef} />
               </div>
@@ -2681,7 +2957,21 @@ export default function LearningApp() {
               <form className="fl-child-composer" onSubmit={sendChildMessage}>
                 <input ref={childFileInputRef} type="file" multiple accept="image/*" onChange={onChildFilesSelected} style={{ display: 'none' }} />
                 <button className="composer-icon" type="button" aria-label="Attach a photo of your work" onClick={onPickChildFiles} disabled={childSending || childUploading}><Paperclip size={19} /></button>
-                <input aria-label="Message your tutor" placeholder="Type your answer or ask for help…" value={childInput} onChange={(e) => setChildInput(e.target.value)} disabled={childSending} />
+                <textarea
+                  ref={childTextareaRef}
+                  aria-label="Message your tutor"
+                  placeholder="Type your answer or ask for help…"
+                  value={childInput}
+                  rows={1}
+                  disabled={childSending}
+                  onChange={(e) => { setChildInput(e.target.value); autoGrowTextarea(e.target) }}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && !e.shiftKey) {
+                      e.preventDefault()
+                      sendChildText(childInput)
+                    }
+                  }}
+                />
                 <button className="composer-send" type="submit" aria-label="Send message" disabled={childSending}><Send size={18} /></button>
               </form>
             </section>
@@ -2727,7 +3017,14 @@ export default function LearningApp() {
                   ) : !childViewerContent.isText ? (
                     <NonPreviewableFile path={childViewerPath} meta={null} />
                   ) : (childViewerPath.endsWith('.html') || childViewerPath.endsWith('.htm')) ? (
-                    <iframe className="fl-viewer-frame" title="Preview" sandbox="allow-scripts" srcDoc={childViewerContent.content} />
+                    <iframe
+                      ref={childIframeRef}
+                      className="fl-viewer-frame"
+                      title="Preview"
+                      sandbox="allow-scripts"
+                      srcDoc={childViewerContent.content}
+                      onLoad={(e) => safeSetScrollY(e.currentTarget.contentWindow, childScrollRestoreRef.current)}
+                    />
                   ) : childViewerPath.endsWith('.md') ? (
                     <div className="fl-viewer-md"><Markdown text={childViewerContent.content} /></div>
                   ) : (childViewerPath.endsWith('.json') || childViewerPath.endsWith('.jsonl')) ? (
@@ -2839,9 +3136,6 @@ export default function LearningApp() {
             <i className={screen === 'pin' ? 'is-complete' : ''} />
           </span>
         </div>
-        <button className="fl-icon-btn" type="button" aria-label={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'} title={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'} onClick={toggleTheme}>
-          {theme === 'dark' ? <Sun size={18} /> : <Moon size={18} />}
-        </button>
       </header>
 
       <section className={`learning-stage is-${screen}`}>

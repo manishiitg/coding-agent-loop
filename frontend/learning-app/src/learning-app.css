@@ -228,14 +228,14 @@ html, body, #root { margin: 0; height: 100%; }
 .fl-icon-btn { display: grid; place-items: center; flex: 0 0 auto; width: 38px; height: 38px; border: 1px solid #d7e0ec; border-radius: 11px; background: var(--surface); color: #3d567a; cursor: pointer; }
 .fl-icon-btn:hover { border-color: #9db2ca; background: #f7faff; color: var(--heading); }
 .fl-thread { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 16px; padding: 26px clamp(16px, 2.5vw, 36px); }
-.fl-composer { display: grid; grid-template-columns: auto minmax(0, 1fr) auto auto; gap: 8px; align-items: center; margin: 0 clamp(16px, 2.5vw, 36px) 10px; padding: 8px; border: 1px solid #cbd7e8; border-radius: 15px; background: var(--surface-2); }
-.fl-composer-menu { position: relative; display: flex; align-items: center; }
+.fl-composer { display: grid; grid-template-columns: auto minmax(0, 1fr) auto auto; gap: 8px; align-items: end; margin: 0 clamp(16px, 2.5vw, 36px) 10px; padding: 8px; border: 1px solid #cbd7e8; border-radius: 15px; background: var(--surface-2); }
+.fl-composer-menu { position: relative; display: flex; align-items: center; align-self: center; }
 .fl-menu-backdrop { position: fixed; inset: 0; z-index: 20; }
 .fl-menu { position: absolute; bottom: calc(100% + 10px); right: 0; z-index: 21; min-width: 232px; padding: 6px; border: 1px solid #e0d7c5; border-radius: 14px; background: var(--surface); box-shadow: 0 14px 34px rgba(13, 35, 76, .18); display: flex; flex-direction: column; gap: 2px; }
 .fl-menu button { display: flex; align-items: center; gap: 8px; width: 100%; text-align: left; padding: 10px 12px; border: 0; border-radius: 9px; background: transparent; color: var(--heading); font: inherit; font-size: var(--text-secondary); font-weight: 600; cursor: pointer; white-space: nowrap; }
 .fl-menu button:hover { background: #fdf4e0; }
-.fl-composer input { min-width: 0; height: 40px; border: 0; outline: 0; background: transparent; color: var(--heading); font: inherit; font-size: var(--text-body); }
-.fl-composer input::placeholder { color: #5f708c; }
+.fl-composer textarea { min-width: 0; min-height: 40px; max-height: 160px; padding: 9px 0; resize: none; overflow-y: auto; border: 0; outline: 0; background: transparent; color: var(--heading); font: inherit; font-size: var(--text-body); line-height: 1.4; }
+.fl-composer textarea::placeholder { color: #5f708c; }
 .fl-disclaimer { margin: 0 clamp(16px, 2.5vw, 36px) 16px; color: #8090a6; font-size: var(--text-caption); text-align: center; }
 
 /* Centre thread messages */
@@ -361,7 +361,7 @@ html, body, #root { margin: 0; height: 100%; }
 .fl-parent-package .fl-package-title > span:not(.fl-give-to-child) { flex: 1; min-width: 0; }
 .fl-parent-package .fl-package-item { margin-left: 14px; }
 .fl-package-note { margin: 0 12px 10px; padding: 10px 12px; background: #faf8ff; border: 1px solid #e6ddf5; border-left: 3px solid #c7b8e6; border-radius: 10px; color: #4a4266; font-size: var(--text-caption); line-height: 1.55; }
-.fl-package-toggle { display: grid; place-items: center; width: 26px; height: 26px; margin: 0 12px 8px; padding: 0; border: 1px solid #e0e6f0; border-radius: 8px; background: var(--surface); color: #5f708d; cursor: pointer; }
+.fl-package-toggle { display: grid; place-items: center; width: 26px; height: 26px; flex: 0 0 auto; margin: 0; padding: 0; border: 1px solid #e0e6f0; border-radius: 8px; background: var(--surface); color: #5f708d; cursor: pointer; }
 .fl-package-toggle:hover { color: var(--heading); border-color: #c3cede; }
 .fl-package-toggle svg { transition: transform .15s ease; }
 .fl-package-toggle svg.is-open { transform: rotate(180deg); }
@@ -471,7 +471,14 @@ html, body, #root { margin: 0; height: 100%; }
 .fl-tmsg.is-child { align-self: flex-end; justify-content: flex-end; }
 .fl-tmsg-avatar { display: grid; place-items: center; flex: 0 0 38px; width: 38px; height: 38px; border-radius: 13px; background: #fff2b3; color: #bc8500; }
 .fl-tmsg-avatar.is-child { border-radius: 50%; background: var(--coral); color: #fff; font-weight: 800; }
+.fl-tbubble-col { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+/* show_scene — a small, freshly-generated inline visual (see scene_tool.go).
+   No border/shadow/margin wrapper — just the generated HTML itself, so the
+   scene's own styling shows through directly instead of looking boxed-in. */
+.fl-scene-card { width: 100%; }
+.fl-scene-frame { display: block; width: 100%; border: 0; background: transparent; transition: height .15s ease; }
 .fl-tbubble { padding: 14px 16px; border-radius: 18px 18px 18px 6px; background: var(--surface); color: var(--reply-bubble-text); font-size: var(--text-body); line-height: 1.6; box-shadow: 0 6px 16px rgba(13, 35, 76, .06); }
+.fl-tbubble.is-streaming::after { content: ''; display: inline-block; width: 7px; height: 15px; margin-left: 2px; vertical-align: -2px; background: currentColor; opacity: .6; animation: fl-cursor-blink 1s step-end infinite; }
 .fl-tbubble strong { color: var(--heading); }
 .fl-tmsg.is-child .fl-tbubble { border-radius: 18px 18px 6px 18px; background: var(--navy); color: #fff; box-shadow: none; }
 
@@ -525,6 +532,17 @@ body, .learning-app { -webkit-font-smoothing: antialiased; -moz-osx-font-smoothi
 .fl-package-card { cursor: default; }
 .fl-package-card span { flex: 1; min-width: 0; }
 .fl-file-item.is-package small { color: #5f708d; font-size: var(--text-caption); font-weight: 600; }
+
+/* Live preview of an activity item's actual HTML — at real, readable size,
+   scrollable within a short box — shown in place of its row when the
+   activity is expanded. Loading/non-HTML items fall back to a plain row. */
+.fl-file-item.has-preview { position: relative; flex-direction: column; align-items: stretch; padding: 0; overflow: hidden; cursor: default; }
+.fl-file-item.has-preview:hover { transform: none; box-shadow: 0 1px 2px rgba(22, 34, 58, .04); }
+.fl-file-item.has-preview .fl-file-item-row { padding: 10px 14px; }
+.fl-item-preview { width: 100%; height: 220px; }
+.fl-item-preview-frame { display: block; width: 100%; height: 100%; border: 0; background: #fff; }
+.fl-item-open-btn { position: absolute; top: 8px; right: 8px; z-index: 1; display: grid; place-items: center; width: 30px; height: 30px; border: 1px solid var(--line); border-radius: 999px; background: rgba(255, 255, 255, .92); color: var(--heading); cursor: pointer; box-shadow: 0 1px 4px rgba(22, 34, 58, .18); }
+.fl-item-open-btn:hover { background: #fff; box-shadow: 0 2px 8px rgba(22, 34, 58, .26); }
 
 /* ---- Files tab: workspace tree + file/HTML viewer ---- */
 .fl-tree { list-style: none; margin: 0; padding: 0 0 0 2px; font-size: var(--text-secondary); }
@@ -617,6 +635,10 @@ audio.fl-viewer-media { background: var(--surface); }
 .fl-pulse-divider { display: flex; align-items: center; justify-content: center; gap: 6px; margin: 14px auto 6px; padding: 4px 12px; color: #3a5bbf; font-size: var(--text-caption); font-weight: 700; }
 .fl-pulse-divider::before, .fl-pulse-divider::after { content: ""; flex: 0 0 26px; height: 1px; background: #c9d5ef; }
 .fl-pulse-divider span { white-space: normal; text-align: center; }
+
+/* TEMPORARY: raw tool-call visibility debug bubble (see debugToolMsgs in
+   LearningApp.tsx) — remove alongside that code once no longer needed. */
+.fl-debug-call { margin: 4px 0 4px 44px; padding: 4px 10px; border: 1px dashed #c7c2b8; border-radius: 8px; background: #faf8f3; color: #7a7466; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; width: fit-content; max-width: 80%; overflow-wrap: break-word; }
 .fl-pulse-popover-link { display: block; width: 100%; margin-top: 12px; padding: 10px 14px; border: 0; border-top: 1px solid var(--line); background: var(--surface-2); color: #2f6db0; font: inherit; font-weight: 700; font-size: var(--text-caption); text-align: left; cursor: pointer; }
 .fl-pulse-popover-link:hover { background: #eef4fb; }
 .fl-pulse-popover-config { margin-top: 12px; padding: 12px 14px 14px; border-top: 1px solid var(--line); background: var(--surface-2); }
@@ -686,6 +708,15 @@ audio.fl-viewer-media { background: var(--surface); }
 .fl-settings-row select { border: 1px solid var(--line); border-radius: 8px; padding: 6px 10px; font: inherit; background: var(--surface); }
 .fl-settings-text-input { width: 100%; margin-top: 6px; padding: 9px 12px; border: 1px solid var(--line); border-radius: 10px; font: inherit; color: var(--heading); }
 .fl-settings-text-input:focus { outline: none; border-color: var(--sun); }
+/* Secrets form inside Settings — the shared .form-row grid (built for the
+   wider child-setup screen, 2 side-by-side columns) is too cramped in this
+   440px-wide modal, and its labels have no stacking style outside
+   .child-form-card, so "Name"/"Value" rendered squeezed inline next to
+   narrow inputs. Stack Name above Value instead, full width each. */
+.fl-settings .form-row { display: flex; flex-direction: column; gap: 12px; margin-top: 12px; }
+.fl-settings .form-row label { display: flex; flex-direction: column; gap: 6px; color: var(--heading); font-size: var(--text-secondary); font-weight: 600; }
+.fl-settings .form-row input { width: 100%; height: 42px; padding: 0 12px; border: 1px solid var(--line); border-radius: 10px; font: inherit; font-size: var(--text-body); background: var(--surface); color: var(--heading); }
+.fl-settings .form-row input:focus { outline: none; border-color: var(--sun); }
 .fl-code-block { flex: 1; min-width: 0; max-width: 100%; box-sizing: border-box; margin: 0; padding: 10px 12px; background: #0b1d42; color: #eaf1ff; border-radius: 8px; font-size: 12px; overflow-x: auto; white-space: pre; }
 
 /* Handoff button in the top header (moved from the drawer footer) */
@@ -718,9 +749,9 @@ audio.fl-viewer-media { background: var(--surface); }
 .fl-celebration-text { color: #8a5c0a; font-weight: 650; font-size: var(--text-secondary); }
 @keyframes fl-celebration-in { from { opacity: 0; transform: translateY(-6px); } to { opacity: 1; transform: translateY(0); } }
 @keyframes fl-star-pop { 0% { opacity: 0; transform: scale(0) rotate(-25deg); } 60% { opacity: 1; transform: scale(1.25) rotate(8deg); } 100% { opacity: 1; transform: scale(1) rotate(0); } }
-.fl-child-composer { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 8px; align-items: center; padding: 9px; border: 1px solid #cfdcec; border-radius: 16px; background: var(--surface); box-shadow: 0 8px 20px rgba(13, 35, 76, .06); }
-.fl-child-composer input { min-width: 0; height: 42px; border: 0; outline: 0; background: transparent; color: var(--heading); font: inherit; font-size: var(--text-body); padding-left: 8px; }
-.fl-child-composer input::placeholder { color: #6a7c95; }
+.fl-child-composer { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 8px; align-items: end; padding: 9px; border: 1px solid #cfdcec; border-radius: 16px; background: var(--surface); box-shadow: 0 8px 20px rgba(13, 35, 76, .06); }
+.fl-child-composer textarea { min-width: 0; min-height: 42px; max-height: 160px; padding: 10px 0 10px 8px; resize: none; overflow-y: auto; border: 0; outline: 0; background: transparent; color: var(--heading); font: inherit; font-size: var(--text-body); line-height: 1.4; }
+.fl-child-composer textarea::placeholder { color: #6a7c95; }
 .fl-child-side { display: flex; flex-direction: column; gap: 14px; }
 .fl-goal-card { display: flex; flex-direction: column; gap: 10px; padding: 20px; border: 1px solid #e4edf7; border-radius: 20px; background: var(--surface); box-shadow: 0 10px 24px rgba(13, 35, 76, .05); }
 .fl-goal-label { color: #5c6d88; font-size: var(--text-caption); font-weight: 700; letter-spacing: .04em; text-transform: uppercase; }

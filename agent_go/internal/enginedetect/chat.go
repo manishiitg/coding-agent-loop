@@ -12,19 +12,24 @@ import (
 )
 
 // ChatMessage is one turn in a conversation. Role is usually "user" or
-// "assistant"; "tool" is a persisted UI-only event (currently just the
-// child's celebrate moments) that never gets replayed back to the LLM as
+// "assistant"; "tool" is a persisted UI-only event (celebrate moments, or a
+// show_scene snippet) that never gets replayed back to the LLM as
 // conversational history — callers building a history to send a model filter
 // to user/assistant before doing so.
 type ChatMessage struct {
 	Role string `json:"role"` // "user" | "assistant" | "tool"
 	Text string `json:"text,omitempty"`
-	// Tool/Stars/Reason are only set when Role == "tool" (currently just
-	// "celebrate"), so the persisted transcript can replay the star moment
-	// exactly where it happened instead of losing it on reload.
+	// Tool/Stars/Reason are only set when Role == "tool" and Tool == "celebrate",
+	// so the persisted transcript can replay the star moment exactly where it
+	// happened instead of losing it on reload.
 	Tool   string `json:"tool,omitempty"`
 	Stars  int    `json:"stars,omitempty"`
 	Reason string `json:"reason,omitempty"`
+	// HTML is set when Role == "tool" and Tool == "scene" — a small,
+	// freshly-generated HTML snippet the child tutor showed inline in that
+	// turn's reply (see show_scene). Persisted so reloading mid-conversation
+	// replays it exactly where it was shown, not just the reply text.
+	HTML string `json:"html,omitempty"`
 	// Source marks how an assistant message was produced when it wasn't a
 	// direct reply to the parent typing — currently "pulse" for the periodic
 	// background check-in (see pulse.go), so the UI can badge it as a

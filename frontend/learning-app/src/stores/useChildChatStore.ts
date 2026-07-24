@@ -13,6 +13,8 @@ interface ChildChatState {
   setChildSuggestions: (v: SetStateAction<ChildSuggestion[]>) => void
   childLiveStatus: string
   setChildLiveStatus: (v: SetStateAction<string>) => void
+  childStreamingReply: string
+  setChildStreamingReply: (v: SetStateAction<string>) => void
   // The ONE activity the child is currently bound to (/api/child/activity) —
   // replaces the old scoped-tree scan + package-manifest lookup entirely.
   childActivity: Activity | null
@@ -36,6 +38,8 @@ export const useChildChatStore = create<ChildChatState>()((set) => ({
   setChildSuggestions: (v) => set((s) => ({ childSuggestions: resolveSetState(v, s.childSuggestions) })),
   childLiveStatus: '',
   setChildLiveStatus: (v) => set((s) => ({ childLiveStatus: resolveSetState(v, s.childLiveStatus) })),
+  childStreamingReply: '',
+  setChildStreamingReply: (v) => set((s) => ({ childStreamingReply: resolveSetState(v, s.childStreamingReply) })),
   childActivity: null,
   setChildActivity: (v) => set((s) => ({ childActivity: resolveSetState(v, s.childActivity) })),
   childViewerPath: null,

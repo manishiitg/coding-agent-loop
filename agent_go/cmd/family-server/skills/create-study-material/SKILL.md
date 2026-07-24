@@ -11,7 +11,7 @@ description: Create clear, child-ready study material (notes, worked examples, a
 
 2. **Know the child.** Read `memory/child-profile.json` for name, grade, and board so the material matches their level and syllabus. If any of these are missing, ask the parent first.
 
-3. **Gather context.** Read the relevant files in `materials/<subject>/<topic>/` and their `.meta.json` so the material matches what the child is actually studying — same syllabus, same notation, same method names.
+3. **Gather context.** Read the relevant `.meta.json` files in `materials/<subject>/<topic>/` — use their `extracted_text` (the full content process-file already extracted once) so the material matches what the child is actually studying — same syllabus, same notation, same method names. Only open the raw file itself if `extracted_text` is missing or insufficient.
 
 4. **Create the activity folder** `<Subject>/<Topic>/<yyyy-mm-dd>-<slug>/` (date-stamp with `date -u +%Y-%m-%d`; never reuse an older activity's folder).
 
@@ -27,6 +27,6 @@ description: Create clear, child-ready study material (notes, worked examples, a
 
 6. **Stay at the child's level and syllabus.** Do not introduce content beyond their materials without flagging it as optional/extension.
 
-7. **Finalize the activity**: call `create_learning_activity` with the folder as `dir`, a short `title`, `items` = the file(s) you wrote, and the `teaching_mode`/`persona` from the intake. Then call `open_activity(dir)` so the parent sees it on the right with its "Give to `<child>`" button.
+7. **Finalize the activity**: call `create_learning_activity` with the folder as `dir`, a short `title`, `items` = the file(s) you wrote, the `teaching_mode`/`persona` from the intake, and a `goal` describing what actually working through this material looks like (e.g. "read through every section and try the practice questions at the end"). Then call `open_activity(dir)` so the parent sees it on the right with its "Give to `<child>`" button.
 
 8. **Tell the parent** what you made — in plain words, no paths or filenames.

@@ -1,5 +1,10 @@
 ## Pulse — Dynamic Post-Run Steward
 
+This is the comprehensive/manual Pulse playbook. Scheduled Pulse runs load the
+focused stage references instead so no individual scheduler message or tool
+result carries the entire contract: `pulse-archive`, `pulse-gate`,
+`pulse-review-fixer`, and `pulse-finalizer`.
+
 Pulse runs after a scheduled workflow run. It is not a fixed checklist. It is a small sequence with one mandatory intelligence turn:
 
 1. **Gate / Worklist** — read the evidence, update `builder/improve.html`, and call `record_pulse_worklist`.
@@ -8,7 +13,7 @@ Pulse runs after a scheduled workflow run. It is not a fixed checklist. It is a 
 
 `builder/improve.html` is the authoritative durable source for Pulse history, prior fixes, findings, cadence reasoning, and decisions. The workflow's `db/db.sqlite` table `pulse_module_state` is only the current machine-readable Gate/worklist/result cache used by the scheduler and Pulse popup; it must not replace or contradict the HTML history. Every Gate decision, cadence reason, and module outcome that matters later must also be recorded visibly in `builder/improve.html`.
 
-When updating `builder/improve.html`, keep the first screen short and user-prioritized. Runloop renders pending **Needs your decision** requests above the HTML. The HTML then shows active **Assumptions challenged** only when consequential assumptions exist, followed by **Today's outcome**, goal progress, and recent activity. Signal tiles, cost/time, Maintenance Radar, cadence, and raw evidence stay inside the closed-by-default **Technical details** block. A collapsed **Agent log** at the bottom holds only compact current handoff state, evidence pointers, cursors, ids, and next-check conditions; it must not duplicate the report narrative. Do not duplicate the full latest-run Bug/Goal narrative at the top if the same details already appear in Recent runs or the timeline.
+When updating `builder/improve.html`, keep the first screen short and user-prioritized. Runloop renders pending **Needs your decision** requests above the HTML. The HTML then shows active **Assumptions challenged** only when consequential assumptions exist, followed by **Today's outcome**, goal progress, and recent activity. Signal tiles, cost/time, Maintenance Radar, and cadence may stay inside closed-by-default operator details, but raw evidence never appears in visible HTML. A hidden `#pulse-agent-handoff` marker may hold only compact interrupted-fix recovery state; it is not a visible Agent log and must not duplicate the report narrative. Do not duplicate the full latest-run Bug/Goal narrative at the top if the same details already appear in Recent runs or the timeline.
 
 ## Timeout Recovery
 
@@ -37,7 +42,7 @@ Gate uses a **progressive evidence scan**. Start with compact state and metadata
   `knowledgebase/_freshness.json` (`last_confirmed_run`, `last_confirmed_at`,
   `confirm_count`) — how recently an actual run re-confirmed each store
 - open and answered report human inputs in `db/db.sqlite`
-- Chief of Staff recommendation cards in `builder/improve.html`
+- legacy Chief of Staff recommendation cards in `builder/improve.html` are history only
 - compact cost/timing availability and change signals when present
 - workflow version, compact resolved LLM/tier/fallback signature, and backup/publish/notification readiness metadata
 
@@ -122,19 +127,16 @@ Gate must record exactly one decision for each module. A partial worklist is inv
 
 ## Parallel Review Team And Single Fixer
 
-The fixed module messages are entry points, not independent maintenance passes.
-The first selected module whose current `pulse_run_id` still has unresolved due
-modules owns the whole review batch:
-
-This consolidated protocol overrides older module-brief wording that says to
-launch a dedicated maintenance agent. Treat those module briefs as domain and
-evidence guidance only; do not execute their nested-agent calls.
+The scheduler sends one compact consolidated review turn containing the exact
+due-module list and a dated `review_run_id`. It never sends one parent turn per
+module. That single parent owns the whole review batch and uses the module
+sections below as domain and evidence guidance.
 
 1. Read `get_pulse_module_state`, the Gate/worklist, and any current
    `.pulse-fixer-recovery[data-pulse-run="<pulse_run_id>"]` ledger inside
    `#pulse-agent-handoff` in `builder/improve.html`. If every due module already
    has a current-run result and its durable result card exists, stop. This is
-   how later fixed module messages become harmless no-ops. If a recovery ledger
+   avoids repeating already completed review work. If a recovery ledger
    exists, resume from it: trust `fixed_verified` only after its evidence still
    verifies; repair a stale SQLite mirror from the HTML truth; and for a module
    left as `fixing`, inspect its named files, runtime state, and verification
@@ -143,7 +145,7 @@ evidence guidance only; do not execute their nested-agent calls.
    resumed only when its named next valid evidence boundary has arrived; until
    then preserve it without reapplying the change or claiming it is fixed.
 2. Create one reviewer task for **every** due module. Partition unresolved due
-   modules into consecutive parallel batches of at most four reviewers, and
+   modules into consecutive parallel batches of at most two reviewers, and
    issue each current batch's independent `call_generic_agent` calls in the
    same tool-call batch. Never rank the due worklist and run only a "top 3" or
    other subset: `due` means the review must receive a terminal result in this
@@ -172,7 +174,11 @@ evidence guidance only; do not execute their nested-agent calls.
    and an overflow count
    with compact finding ids and evidence pointers when more findings exist.
    A clean review must explicitly return an empty finding-id manifest. Never omit a
-   correctness finding merely to satisfy the cap. Do not add a reviewer-specific
+   correctness finding merely to satisfy the cap. Call `call_generic_agent`
+   directly as a tool. Never wrap it in `execute_shell_command`, curl, a
+   temporary script, a background process, or a polling loop. Pass the exact
+   scheduler-provided `pulse_run_id`, dated `review_run_id`, and module name on
+   every call. Do not add a reviewer-specific
    completion marker to the instructions:
    `call_generic_agent` appends and enforces its own authoritative final marker.
    The tool rejects a provider pane snapshot that does not contain that marker
@@ -189,11 +195,18 @@ evidence guidance only; do not execute their nested-agent calls.
    write.
 4. Reviewer agents only inspect and advise. The parent waits naturally for the
    synchronous tool results; it must not use sleep, `list_executions`,
-   `query_step`, or a polling loop. These synchronous calls return their result
-   directly and do not send an auto-notification.
+   `query_step`, or a polling loop. The backend saves each complete result to
+   `pulse/reviews/<YYYY-MM-DDTHH-MM-SS.mmmZ_pulse-id>/<module>.md` and returns a
+   compact path reference. Read each saved result before fixing. Separate files
+   prevent concurrent reviewers from writing a shared artifact. These calls do
+   not send an auto-notification.
 5. For Goal Advisor, first obtain the read-only strategy review, then send that
    draft and its evidence to a separate read-only critic. The parent accepts,
-   narrows, or rejects the proposal using both results.
+   narrows, or rejects the proposal using both results. Reject a draft that does
+   not lead with the current strategy ceiling, one highest-leverage materially
+   different thesis, its relationship to the active strategy experiment, and
+   why incremental repair is insufficient. Maintenance or instrumentation alone
+   is never a valid Goal Advisor result.
 6. After each reviewer batch returns, compress it into an in-turn review ledger
    of at most 1000 characters per module while retaining every finding id,
    target key, severity, evidence pointer, recommended action, verification, and
@@ -244,6 +257,14 @@ evidence guidance only; do not execute their nested-agent calls.
    Then call `mark_pulse_module_result` for that module. A
    resumed Fixer starts at the first non-terminal row and revalidates any
    `fixing` row rather than repeating it.
+
+   The result tool is also the durable internal fix audit. When `result=changed`,
+   pass the exact workspace-relative `changed_files` and factual `verification`
+   checks; the tool rejects a changed result without both. Pass `before_refs`
+   and `after_refs` only for hashes, versions, or cursors that were actually
+   used to establish the change boundary. For failed or blocked work, keep the
+   exact technical error in `reason`. Do not invent empty audit detail, create a
+   second audit file, or copy these internal fields into visible Pulse HTML.
 8. Strategy changes and LLM/Ops changes remain proposal-only unless an exact
    matching request was already approved and still passes approval revalidation.
    Before applying it, compare its recorded approval basis with current state:
@@ -273,8 +294,35 @@ evidence guidance only; do not execute their nested-agent calls.
    clean, changed, blocked, failed, and timed-out results. An optional separate
    `run_summary` or `pulse_fixer` card may summarize the batch; it must not
    replace the per-module cards. Preserve the user-first hierarchy and compact
-   agent handoff. Before marking the recovery ledger `complete`, perform one
-   global finding-ID reconciliation across reviewer manifests, canonical ledger
+   agent handoff.
+   Every module card is a user-facing outcome record, not a reviewer or recovery
+   log. Follow the `review-improve-log` plain-language card contract: visible
+   text states what happened, why it matters, and what happens next. Keep exact
+   technical evidence in the module reviewer result file and SQLite Pulse state,
+   not in the card. Keep `#pulse-agent-handoff` hidden and limited to interrupted-
+   fix recovery metadata. Never expose manifests,
+   hashes, finding ids, packet names, paths, state codes, `low_N`,
+   `changed_unverified`, `trusted packet`, `no_terminal_packet`, `retry_due`,
+   `approved_awaiting_evidence`, or reviewer-service recovery in the visible
+   layer. Use these exact translations:
+   - `no_terminal_packet` -> "The review did not finish."
+   - `retry_due` -> "Pulse will retry."
+   - `approved_awaiting_evidence` -> "Approved; waiting to confirm results."
+   Keep raw states only in internal evidence or invisible `data-*` attributes.
+   Label a failed reviewer result `Review incomplete` and say that the review
+   did not finish, no conclusion was accepted, and no unsupported change was
+   made. Apply this to Bug Review,
+   Artifact Review, Report/Eval/Learning/KB/DB
+   Health, Cost/Time, LLM Ops, Goal Advisor, Pulse Fixer, and run summaries.
+   Every visible result card uses the compact structure from
+   `review-improve-log`: **What happened**, optional **Why it matters**, and
+   **Next**, with at most 70 words across those fields. Before appending a
+   repeated failed/blocked/incomplete result, update the newest unresolved card
+   for the same module and same reason in place and increment its hidden
+   `data-repeat-count`. Append a new card only when the reason or outcome
+   materially changes; never merge different modules.
+   Before marking the recovery ledger `complete`, perform one global finding-ID reconciliation
+   across reviewer manifests, canonical ledger
    dispositions, per-module recovery rows, and final result cards. Do not claim
    Pulse completed or notify a clean outcome while any finding id is missing,
    duplicated without a canonical link, or lacks a durable disposition.
@@ -286,13 +334,14 @@ evidence guidance only; do not execute their nested-agent calls.
     replace a failed reviewer by improvising its deep audit in the parent; mark
     the module failed or blocked with the exact reviewer error and continue the
     independent safe modules.
-11. Return one concise combined result. Later module messages stop at step 1,
-    and the normal Pulse finalizer performs backup, publish, and the single user
-    notification after all due module results exist.
+11. Return one concise combined result. The normal Pulse finalizer performs
+    backup, publish, and the single user notification only after all due module
+    results exist.
 
 Read-only behavior is enforced by reviewer prompts, a read-only tool allowlist,
-and empty reviewer write paths. The single-fixer rule prevents concurrent writes
-and duplicate `improve.html` updates without adding backend coordination.
+and empty reviewer write paths. The single-fixer rule prevents concurrent
+writes and duplicate `improve.html` updates. The backend independently enforces
+the two-reviewer concurrency cap and persists one result file per module.
 
 ## Module Decisions
 
@@ -384,9 +433,13 @@ Mark due for real Bug findings:
   the next applicable decision or run, or whose real runtime consumer and
   canonical store cannot be named. A successful write to a plausible table is
   not proof that the allocator/router/executor read it.
+- a step whose validation gate can pass on a **self-asserted marker** — a
+  `context_output`/"done" file the step wrote itself — without proving the real
+  effect (persisted db rows, the authoritative external system, or a genuine
+  deliverable carrying run-specific proof). The gate must fit the step's real
+  output; recommend the check that proves the effect, not db by default.
 - duplicate or shadow control stores for the same logical entity (for example,
   two strategy/arm tables) where writers, readers, or mirroring rules can drift
-- Chief of Staff recommendations that are operational bugs
 
 Also mark Bug Review due for a bounded exploratory QA checkpoint when any of
 these conditions holds:
@@ -559,6 +612,8 @@ This is report-only, but it is not automatically due every Pulse. High-frequency
 
 Read workflow execution cost, evaluation cost, builder/Pulse overhead, token usage, model/tier evidence, missing cost buckets, and timing summaries. If any bucket is missing or unpriced, say that plainly instead of estimating.
 
+For raw ledgers under `costs/execution/` and `costs/evaluation/`, preserve the full bucket identity: `date + scope + group_folder + run_folder`. The same step ID in two groups is two separate cost rows, not one combined step. Within each bucket and model, `by_model` is the authoritative LLM total and `by_step_and_model` is attribution detail already included in that total; never add the detail rows on top of `by_model`. Reconcile `unattributed = max(0, by_model - sum(by_step_and_model))` per model and label a positive remainder as unattributed/orchestrator cost. An explicit `workflow_orchestrator` step is normal attributed detail and must not be counted again as a remainder. If attributed detail exceeds its model total, report telemetry inconsistency instead of silently producing a larger total. A step present in execution logs with no LLM attribution can legitimately be a scripted/zero-LLM step; show it as zero when presenting complete step coverage, and do not call it missing unless its contract required an LLM call. Historical files with no step map remain unattributed; never present the run-folder name as if it were a plan step.
+
 Do not change model tiers, prompts, schedules, or agent allocation from this module. If model selection looks wrong, record it as evidence for `llm_ops_review`.
 
 ### llm_ops_review
@@ -593,7 +648,6 @@ Mark due when strategic judgment is needed:
 - Goal drift persists even when execution is clean
 - the current strategy appears capped or too narrow
 - a user answered a strategic question
-- a Chief of Staff recommendation is strategic
 - enough new cross-run evidence exists for an expert out-of-plan critique
 - a healthy workflow reaches its previously scheduled headroom checkpoint
 - an active `.advisor-experiment` has an answer, reaches `data-review-after`,
@@ -612,12 +666,15 @@ Mark due when strategic judgment is needed:
 An unmet measured goal is a direct Goal Advisor trigger, not merely a signal for
 a later cadence check. Do not skip Goal Advisor just because execution is clean,
 the eval passed, or the module ran recently. If an active experiment already
-addresses that miss, preserve the experiment and use its `data-review-after`
-checkpoint instead of proposing another strategy. If the criterion has no usable
+addresses that miss through a materially different strategy, preserve the
+experiment and use its `data-review-after` checkpoint instead of proposing
+another strategy. A card that only adds diagnostics, attribution, reporting,
+evaluation, or measurement to the unchanged tactic is instrumentation, not an
+active strategy experiment, and must not defer Goal Advisor. If the criterion has no usable
 target or was not measured, label that explicitly and use the measurement-design
 path rather than claiming that the goal was missed.
 
-An active experiment earns that deferral only when Gate verifies all of the
+An active strategy experiment earns that deferral only when Gate verifies all of the
 following from current evidence:
 
 1. The approved change is applied and reachable in the real runtime control
@@ -634,9 +691,10 @@ following from current evidence:
    exposure rate, and latest evidence. New contradictory evidence or a flat
    trustworthy goal metric can justify reviewing earlier.
 
-When one of these conditions fails, select Goal Advisor to repair or advance
-that same experiment rather than creating a competing idea. Also select Bug
-Review when the cause is operational. When Goal Advisor is skipped, the visible
+When one of these conditions fails, select Goal Advisor to challenge, advance,
+revise, or recommend retiring that same strategy experiment. Goal Advisor does
+not perform the operational repair; also select Bug Review, Eval Health, Report
+Health, or the matching module when that cause is operational. When Goal Advisor is skipped, the visible
 Gate entry must name the experiment id, implementation/control-path evidence,
 valid run or exposure count, latest goal measurement and freshness, why the
 checkpoint is still fair, and the exact evidence that would trigger earlier
@@ -647,7 +705,7 @@ judgment.
 Goal Advisor is a Pulse-selected module, not a separate recurring schedule. Its
 expensive thinking stays outside the parent context through a read-only strategy
 reviewer followed by a separate read-only critic. The parent Pulse Fixer uses
-their combined evidence to record a proposal, advance the active experiment, or
+their combined evidence to record a proposal, advance the active strategy experiment, or
 apply an exact previously approved proposal. It does not launch
 `run_goal_advisor_review` and does not poll background executions.
 
@@ -697,10 +755,12 @@ only an exact previously approved proposal may be applied by the Pulse Fixer.
 
 The background Goal Advisor thinks like an experienced operator. It may apply a structural plan change only when the user already approved a Goal Advisor proposal in `report_human_inputs`. New strategic changes must be logged as proposal-only Advisor ideas and, when a decision is needed, created with `create_human_input_request`. When success cannot be judged from persisted evidence, the proposal may define a small decision-useful metric set and the exact normal `regular` measurement step needed to write timestamped rows to `db/db.sqlite`; this is a plan change, not a separate metrics subsystem. Report Health visualizes it only after approval and real data.
 
-Goal Advisor also owns one durable 10x/headroom experiment lifecycle in
-`builder/improve.html`. There may be only one active `.advisor-experiment` card
+Goal Advisor also owns one durable 10x/headroom **strategy** experiment lifecycle in
+`builder/improve.html`. There may be only one active strategy `.advisor-experiment` card
 (`proposed`, `deferred`, `approved`, `running`, `measuring`, or `blocked`) at a
-time. Pulse advances or measures that card at its checkpoint; it does not create
+time, and new cards use `data-experiment-kind="strategy"`. Instrumentation-only
+tracking does not count as that experiment and cannot block the strategy scan.
+Pulse advances or measures the strategy card at its checkpoint; it does not create
 daily bold-idea spam. Terminal states are `adopted`, `rejected`, and `retired`.
 When no experiment is active, a due healthy-headroom review applies the 10x
 counterfactual and may propose one bounded experiment while preserving the
@@ -721,7 +781,7 @@ For Goal Advisor plan-change proposals, use the existing interaction shape inste
 - options: `approve`, `reject`, and `defer`, each with a short title and description
 - `context`: proposal, exact intended plan/config/eval/report edits, rationale, expected impact, risk, evidence paths, and an approval basis containing proposal Pulse/run/date, active experiment id, exact target ids, relevant artifact hashes or versions, success-criterion meaning, metric evidence as-of, and assumptions that must remain true
 
-On a later Pulse run, revalidate that approval basis before applying an approved proposal. Unrelated file changes do not make it stale, but changed target semantics, replaced plan/config/eval/report objects, changed goal meaning, superseding user decisions, invalidated assumptions, or materially changed evidence do. Never silently rebase or broaden the approved scope. Apply a still-valid proposal with normal plan/config/eval/report tools and then mark it consumed with `mark_human_input_consumed`. Consume a stale approval as `stale_not_applied`, record the reason, and create a refreshed proposal only when the same decision is still needed. Rejected or deferred proposals should be recorded and consumed, not silently retried. After consuming an answer, add/update a short Reflection / Hansei question-and-answer outcome card; pending questions are not duplicated in HTML.
+On a later Pulse run, revalidate that approval basis before applying an approved proposal. Unrelated file changes do not make it stale, but changed target semantics, replaced plan/config/eval/report objects, changed goal meaning, superseding user decisions, invalidated assumptions, or materially changed evidence do. Never silently rebase or broaden the approved scope. Apply a still-valid proposal with normal plan/config/eval/report tools and then mark it consumed with `mark_human_input_consumed`. Consume a stale approval as `stale_not_applied`, record the reason, and create a refreshed proposal only when the same decision is still needed. Rejected or deferred proposals should be recorded and consumed, not silently retried. After consuming an answer, add/update one short outcome card under the component that asked it: Goal Advisor in Improvements / `goal_advisor`, a known reviewer in Signals / its module, or a general Pulse question in Reflection / `run_summary`. Pending questions are not duplicated in HTML.
 
 Do not ask only in email or raw chat. Runloop renders the structured request first as **Needs your decision** from SQLite. When a later pass uses an answer, call `mark_human_input_consumed` and record the answer and outcome once in Reflection.
 
@@ -763,6 +823,7 @@ dashboard recommendation or human-input request rather than creating a new one
 each run.
 
 When Gmail/email is available, default to rich email: set `email_subject`, `email_html`, and plain `email_body` on the same `notify_user` call. Use `email_to` only when the user's preference replaces the default To recipient. Use `email_cc` only when requested.
+For Slack, default to the backend-owned rich rendering on that same call: set `slack_title`, a factual `slack_color`, compact `slack_fields`, relevant `slack_sections`, and `slack_footer`. Never read a webhook secret or post Block Kit JSON directly.
 
 ## Style
 

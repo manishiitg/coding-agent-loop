@@ -9,6 +9,7 @@ import (
 
 	"github.com/manishiitg/coding-agent-loop/agent_go/cmd/server/services"
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/common"
+	mcpexecutor "github.com/manishiitg/mcpagent/executor"
 )
 
 type testUserNotificationConnector struct {
@@ -97,6 +98,27 @@ func TestHumanFeedbackDescriptionRequiresForegroundBridgeWait(t *testing.T) {
 	} {
 		if !strings.Contains(description, want) {
 			t.Fatalf("human_feedback description missing %q:\n%s", want, description)
+		}
+	}
+}
+
+func TestNotifyUserDefaultsToBackendOwnedRichSlack(t *testing.T) {
+	var description string
+	var parameters string
+	for _, tool := range CreateHumanTools() {
+		if tool.Function != nil && tool.Function.Name == "notify_user" {
+			description = tool.Function.Description
+			raw, err := json.Marshal(tool.Function.Parameters)
+			if err != nil {
+				t.Fatalf("marshal notify_user parameters: %v", err)
+			}
+			parameters = string(raw)
+			break
+		}
+	}
+	for _, want := range []string{"backend-owned rich Block Kit", "slack_title", "slack_fields", "slack_sections", "Never access a SECRET_* webhook"} {
+		if !strings.Contains(description+parameters, want) {
+			t.Fatalf("notify_user contract missing %q:\ndescription=%s\nparameters=%s", want, description, parameters)
 		}
 	}
 }
@@ -313,17 +335,20 @@ func TestHandleNotifyUserUsesBotDestination(t *testing.T) {
 }
 
 func TestHandleNotifyUserSendsWorkflowSlackWebhook(t *testing.T) {
-	original := sendSlackIncomingWebhook
-	t.Cleanup(func() { sendSlackIncomingWebhook = original })
+	original := sendRichSlackIncomingWebhook
+	t.Cleanup(func() { sendRichSlackIncomingWebhook = original })
 
 	called := false
-	sendSlackIncomingWebhook = func(_ context.Context, webhookURL, message string) (string, error) {
+	sendRichSlackIncomingWebhook = func(_ context.Context, webhookURL, message string, content services.SlackWebhookContent) (string, error) {
 		called = true
 		if webhookURL != "https://hooks.slack.com/services/T123/B456/secret" {
 			t.Fatalf("unexpected webhook URL")
 		}
 		if message != "Workflow finished" {
 			t.Fatalf("message = %q", message)
+		}
+		if content.Title != "QA complete" || content.Color != "success" || len(content.Fields) != 1 || content.Fields[0].Label != "Passed" {
+			t.Fatalf("rich Slack content = %#v", content)
 		}
 		return "webhook_ok", nil
 	}
@@ -334,7 +359,14 @@ func TestHandleNotifyUserSendsWorkflowSlackWebhook(t *testing.T) {
 			URL:        "https://hooks.slack.com/services/T123/B456/secret",
 		},
 	})
-	raw, err := handleNotifyUser(ctx, map[string]interface{}{"message_for_user": "Workflow finished"})
+	raw, err := handleNotifyUser(ctx, map[string]interface{}{
+		"message_for_user": "Workflow finished",
+		"slack_title":      "QA complete",
+		"slack_color":      "success",
+		"slack_fields": []interface{}{
+			map[string]interface{}{"label": "Passed", "value": "12"},
+		},
+	})
 	if err != nil {
 		t.Fatalf("handleNotifyUser: %v", err)
 	}
@@ -359,6 +391,48 @@ func TestHandleNotifyUserSendsWorkflowSlackWebhook(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("slack_webhook missing from delivered: %v", result.Delivered)
+	}
+}
+
+func TestHandleNotifyUserUsesSameSessionWebhookAcrossBridgeContext(t *testing.T) {
+	const sessionID = "builder-slack-refresh-bridge-test"
+	DeleteSessionNotificationDestination(sessionID)
+	t.Cleanup(func() { DeleteSessionNotificationDestination(sessionID) })
+
+	RegisterSessionNotificationDestination(sessionID, &services.NotificationDestination{UserID: "user-1"})
+	UpdateSessionSlackWebhook(sessionID, &services.SlackWebhookDest{
+		SecretName: "SLACK_NOTIFICATION_WEBHOOK_URL",
+		URL:        "https://hooks.slack.com/services/T123/B456/session-secret",
+	})
+
+	original := sendRichSlackIncomingWebhook
+	t.Cleanup(func() { sendRichSlackIncomingWebhook = original })
+	called := false
+	sendRichSlackIncomingWebhook = func(_ context.Context, webhookURL, message string, _ services.SlackWebhookContent) (string, error) {
+		called = true
+		if webhookURL != "https://hooks.slack.com/services/T123/B456/session-secret" {
+			t.Fatalf("webhook URL = %q, want refreshed session webhook", webhookURL)
+		}
+		if message != "Same-turn notification" {
+			t.Fatalf("message = %q", message)
+		}
+		return "webhook_ok", nil
+	}
+
+	// This is the context shape created by mcpagent's per-tool HTTP bridge: it
+	// contains the trusted session identity, not the original agentCtx values.
+	ctx := mcpexecutor.WithSessionID(context.Background(), sessionID)
+	raw, err := handleNotifyUser(ctx, map[string]interface{}{
+		"message_for_user": "Same-turn notification",
+	})
+	if err != nil {
+		t.Fatalf("handleNotifyUser: %v", err)
+	}
+	if !called {
+		t.Fatalf("Slack webhook was not called; result=%s", raw)
+	}
+	if !strings.Contains(raw, `"slack_webhook"`) {
+		t.Fatalf("result does not report Slack delivery: %s", raw)
 	}
 }
 
@@ -398,6 +472,87 @@ func TestHandleNotifyUserFansOutToRegisteredConnectors(t *testing.T) {
 	case <-slackCh:
 	case <-time.After(time.Second):
 		t.Fatal("expected Slack connector to be considered in fanout")
+	}
+}
+
+func TestHandleNotifyUserEnforcesSummaryChannelRoute(t *testing.T) {
+	manager := services.GetNotificationManager()
+	gmailCh := make(chan *services.NotificationDestination, 1)
+	slackCh := make(chan *services.NotificationDestination, 1)
+	manager.RegisterConnector(&testUserNotificationConnector{name: "gmail", ch: gmailCh})
+	manager.RegisterConnector(&testUserNotificationConnector{name: "slack", ch: slackCh})
+	t.Cleanup(func() {
+		manager.UnregisterConnector("gmail")
+		manager.UnregisterConnector("slack")
+	})
+
+	ctx := context.WithValue(context.Background(), BotNotificationDestinationKey, &services.NotificationDestination{
+		UserID:               "user-1",
+		RunSummaryChannels:   []string{"slack"},
+		PulseSummaryChannels: []string{"gmail"},
+	})
+	if _, err := handleNotifyUser(ctx, map[string]interface{}{
+		"message_for_user":  "Run complete",
+		"notification_kind": "run_summary",
+	}); err != nil {
+		t.Fatalf("run summary notification: %v", err)
+	}
+	select {
+	case <-slackCh:
+	case <-time.After(time.Second):
+		t.Fatal("expected run summary on Slack")
+	}
+	select {
+	case <-gmailCh:
+		t.Fatal("run summary must not be sent to Gmail")
+	default:
+	}
+
+	if _, err := handleNotifyUser(ctx, map[string]interface{}{
+		"message_for_user":  "Pulse complete",
+		"notification_kind": "pulse_summary",
+	}); err != nil {
+		t.Fatalf("pulse summary notification: %v", err)
+	}
+	select {
+	case <-gmailCh:
+	case <-time.After(time.Second):
+		t.Fatal("expected Pulse summary on Gmail")
+	}
+	select {
+	case <-slackCh:
+		t.Fatal("Pulse summary must not be sent to Slack")
+	default:
+	}
+}
+
+func TestHandleNotifyUserSuppressesWorkflowSlackWebhookForGmailOnlyPulse(t *testing.T) {
+	manager := services.GetNotificationManager()
+	gmailCh := make(chan *services.NotificationDestination, 1)
+	manager.RegisterConnector(&testUserNotificationConnector{name: "gmail", ch: gmailCh})
+	t.Cleanup(func() { manager.UnregisterConnector("gmail") })
+
+	oldSend := sendRichSlackIncomingWebhook
+	webhookCalled := false
+	sendRichSlackIncomingWebhook = func(context.Context, string, string, services.SlackWebhookContent) (string, error) {
+		webhookCalled = true
+		return "webhook-message", nil
+	}
+	t.Cleanup(func() { sendRichSlackIncomingWebhook = oldSend })
+
+	ctx := context.WithValue(context.Background(), BotNotificationDestinationKey, &services.NotificationDestination{
+		UserID:               "user-1",
+		SlackWebhook:         &services.SlackWebhookDest{URL: "https://hooks.slack.com/services/test"},
+		PulseSummaryChannels: []string{"gmail"},
+	})
+	if _, err := handleNotifyUser(ctx, map[string]interface{}{
+		"message_for_user":  "Pulse complete",
+		"notification_kind": "pulse_summary",
+	}); err != nil {
+		t.Fatalf("pulse summary notification: %v", err)
+	}
+	if webhookCalled {
+		t.Fatal("Gmail-only Pulse summary must not reach the workflow Slack webhook")
 	}
 }
 

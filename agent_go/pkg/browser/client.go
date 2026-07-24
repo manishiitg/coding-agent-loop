@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -136,6 +137,9 @@ func (c *Client) executeWorkspaceCommand(ctx context.Context, fullCommand string
 		return "", fmt.Errorf("failed to create request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
+	if token := strings.TrimSpace(os.Getenv("WORKSPACE_API_TOKEN")); token != "" {
+		req.Header.Set("X-Workspace-Token", token)
+	}
 
 	resp, err := c.HTTPClient.Do(req)
 	if err != nil {

@@ -8,7 +8,7 @@ import { useGlobalPresetStore } from '../stores/useGlobalPresetStore'
 import { isScheduledWorkflowSession, openActiveSession } from '../utils/workflowSessionRestore'
 import { useAppStore } from '../stores/useAppStore'
 import { isLocalActivityFallbackTab } from '../utils/activityFallback'
-import { hasIdleAliveCodingAgent, hasLiveBackgroundAgents, normalizedActivityStatus } from '../utils/activitySessions'
+import { hasIdleAliveCodingAgent, hasLiveBackgroundAgents, nonWorkflowActivityTitle, normalizedActivityStatus } from '../utils/activitySessions'
 import { runtimeNeedsUserInput, sessionRuntimeStatus } from '../utils/runtimeActivity'
 
 // This matches useChatStore's active-session cache TTL. A longer store TTL also
@@ -91,12 +91,7 @@ function sessionTitle(session: ActiveSessionInfo, workflow?: RunningWorkflowInfo
     )
   }
 
-  return (
-    session.current_execution_name ||
-    session.title ||
-    session.query ||
-    (isWorkflowSession(session) ? 'Automation' : 'Agent chat')
-  )
+  return nonWorkflowActivityTitle(session)
 }
 
 function displaySessionTitle(

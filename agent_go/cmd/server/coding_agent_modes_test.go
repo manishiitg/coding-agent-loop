@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -19,6 +20,7 @@ import (
 	"github.com/manishiitg/coding-agent-loop/agent_go/internal/terminals"
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/orchestrator"
 	mcpagent "github.com/manishiitg/mcpagent/agent"
+	llmproviders "github.com/manishiitg/multi-llm-provider-go"
 
 	pkgevents "github.com/manishiitg/mcpagent/events"
 	"github.com/manishiitg/mcpagent/llm"
@@ -682,6 +684,66 @@ func TestTryDeliverQueryAsLiveInputRetainedCodingAgentWithStaleTmuxFallsThrough(
 	}
 }
 
+func TestTryDeliverQueryAsLiveInputReactivatesSettledRetainedTmux(t *testing.T) {
+	store := internalevents.NewEventStore(10)
+	defer store.Stop()
+
+	const sessionID = "settled-retained-coding-session"
+	const terminalID = sessionID + ":main:" + sessionID
+	runningAgent := &mcpagent.Agent{ModelID: "claude-sonnet-4-6"}
+	runningAgent.SetProvider(llm.ProviderClaudeCode)
+	terminalStore := terminals.NewStore()
+	terminalStore.HandleEvent(sessionID, codingAgentTmuxReaperChunkEvent(
+		time.Now(),
+		sessionID,
+		"main:"+sessionID,
+		"mlp-claude-retained",
+	))
+	if _, ok := terminalStore.MarkTurnCompleted(terminalID); !ok {
+		t.Fatal("expected to settle retained terminal before follow-up")
+	}
+
+	api := &StreamingAPI{
+		eventStore:       store,
+		terminalStore:    terminalStore,
+		activeSessions:   map[string]*ActiveSessionInfo{sessionID: {SessionID: sessionID, Status: "completed"}},
+		runningAgents:    map[string]*mcpagent.Agent{sessionID: runningAgent},
+		runningAgentsMux: sync.RWMutex{},
+		agentCancelFuncs: map[string]context.CancelFunc{},
+		agentCancelMux:   sync.RWMutex{},
+		internalUserMessageDeliveryHandler: func(_ context.Context, _ *mcpagent.Agent, _ mcpagent.UserMessageDeliveryRequest) (mcpagent.UserMessageDeliveryResult, error) {
+			t.Fatal("live main tmux must be delivered through the durable provider path before the Go Agent map")
+			return mcpagent.UserMessageDeliveryResult{}, nil
+		},
+		internalRetainedTerminalInputHandler: func(_ context.Context, provider llmproviders.Provider, modelID, ownerSessionID, message string) error {
+			if provider != llmproviders.ProviderClaudeCode || modelID != "" || ownerSessionID != sessionID || message != "continue the retained turn" {
+				t.Fatalf("retained delivery = provider=%q model=%q session=%q message=%q", provider, modelID, ownerSessionID, message)
+			}
+			return nil
+		},
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/query", nil)
+	rr := httptest.NewRecorder()
+	if !api.tryDeliverQueryAsLiveInput(rr, req, sessionID, "continue the retained turn", "query_retained_follow_up") {
+		t.Fatalf("settled retained tmux did not accept follow-up: status=%d body=%s", rr.Code, rr.Body.String())
+	}
+
+	snapshot, ok := terminalStore.GetRaw(terminalID)
+	if !ok {
+		t.Fatal("reactivated terminal snapshot is missing")
+	}
+	if !snapshot.Active || snapshot.State != "running" || snapshot.ProcessState != "live" {
+		t.Fatalf("terminal lifecycle = active %v state %q process %q, want running/live", snapshot.Active, snapshot.State, snapshot.ProcessState)
+	}
+	if !api.sessionHasRetainedCodingTmux(sessionID) || !api.sessionHasLiveMainCodingTmux(sessionID) {
+		t.Fatal("reactivated retained main tmux must remain visible to routing and activity monitor")
+	}
+	if got := api.activeSessions[sessionID].Status; got != "running" {
+		t.Fatalf("session status = %q, want running after confirmed follow-up delivery", got)
+	}
+}
+
 func TestTryDeliverQueryAsLiveInputRetainedCodingAgentWithoutLiveTmuxFallsThrough(t *testing.T) {
 	store := internalevents.NewEventStore(10)
 	defer store.Stop()
@@ -725,6 +787,77 @@ func TestTryDeliverQueryAsLiveInputNoRetainedAgentFallsThrough(t *testing.T) {
 	}
 	if got := len(store.GetAllEventsRaw(sessionID)); got != 0 {
 		t.Fatalf("missing-agent fall-through recorded %d events, want 0", got)
+	}
+}
+
+func TestHandleLiveInputMessageDeliversDirectlyToLiveMainTmuxWithoutAgent(t *testing.T) {
+	store := internalevents.NewEventStore(10)
+	defer store.Stop()
+
+	const sessionID = "live-main-without-agent"
+	const terminalID = sessionID + ":main:" + sessionID
+	terminalStore := terminals.NewStore()
+	terminalStore.HandleEvent(sessionID, codingAgentTmuxReaperChunkEvent(
+		time.Now(), sessionID, "main:"+sessionID, "mlp-claude-retained-direct",
+	))
+	if _, ok := terminalStore.MarkTurnCompleted(terminalID); !ok {
+		t.Fatal("expected retained main terminal to settle before follow-up")
+	}
+
+	type liveInputCall struct {
+		provider llmproviders.Provider
+		modelID  string
+		session  string
+		message  string
+	}
+	calls := make(chan liveInputCall, 1)
+	api := &StreamingAPI{
+		eventStore:       store,
+		terminalStore:    terminalStore,
+		activeSessions:   map[string]*ActiveSessionInfo{sessionID: {SessionID: sessionID, Status: "completed"}},
+		runningAgents:    map[string]*mcpagent.Agent{},
+		runningAgentsMux: sync.RWMutex{},
+		internalRetainedTerminalInputHandler: func(_ context.Context, provider llmproviders.Provider, modelID, ownerSessionID, message string) error {
+			calls <- liveInputCall{provider: provider, modelID: modelID, session: ownerSessionID, message: message}
+			return nil
+		},
+	}
+
+	body := bytes.NewBufferString(`{"message":"deliver directly to the retained Claude pane"}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/sessions/"+sessionID+"/live-input", body)
+	req = mux.SetURLVars(req, map[string]string{"session_id": sessionID})
+	rr := httptest.NewRecorder()
+
+	api.handleLiveInputMessage(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", rr.Code, rr.Body.String())
+	}
+	var response LiveInputResponse
+	if err := json.NewDecoder(rr.Body).Decode(&response); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if !response.Success || response.DeliveryStatus != "sent_to_cli" || response.Provider != string(llm.ProviderClaudeCode) {
+		t.Fatalf("response = %#v, want confirmed Claude CLI delivery", response)
+	}
+
+	select {
+	case got := <-calls:
+		if got.provider != llmproviders.ProviderClaudeCode || got.modelID != "" || got.session != sessionID || got.message != "deliver directly to the retained Claude pane" {
+			t.Fatalf("retained terminal delivery = %#v", got)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("retained terminal live-input sender was not called")
+	}
+
+	snapshot, ok := terminalStore.GetRaw(terminalID)
+	if !ok || !snapshot.Active || snapshot.ProcessState != "live" || snapshot.State != "running" {
+		t.Fatalf("terminal lifecycle after retained delivery = %#v, want active running/live", snapshot)
+	}
+	if got := api.activeSessions[sessionID].Status; got != "running" {
+		t.Fatalf("session status = %q, want running", got)
+	}
+	if got := len(store.GetAllEventsRaw(sessionID)); got != 1 {
+		t.Fatalf("recorded event count = %d, want 1", got)
 	}
 }
 
@@ -928,6 +1061,112 @@ func TestStartNextTurnFromLiveInputAcknowledgesBeforeQueuedTurnRuns(t *testing.T
 	case <-handlerDone:
 	case <-time.After(time.Second):
 		t.Fatal("queued next-turn handler did not finish")
+	}
+}
+
+func TestStartNextTurnFromLiveInputReturnsConflictWhenBuilderChatActuallyBusy(t *testing.T) {
+	const sessionID = "queued-next-turn"
+	now := time.Now().UTC()
+	api := &StreamingAPI{
+		lastQueryRequests: map[string]QueryRequest{
+			sessionID: {
+				AgentMode:      "workflow_phase",
+				PhaseID:        "workflow-builder",
+				SelectedFolder: "Workflow/social-media",
+				Provider:       string(llm.ProviderClaudeCode),
+				ModelID:        "claude-opus-4-8",
+			},
+		},
+		trackedWorkflowExecutions: map[string]*TrackedWorkflowExecution{
+			"builder-chat": {
+				ExecutionID:   "builder-chat",
+				SessionID:     "different-builder-session",
+				Source:        trackedExecutionSourceWorkshopBackground,
+				Kind:          "workflow_builder_task",
+				WorkspacePath: "Workflow/social-media",
+				PhaseID:       "workflow-builder",
+				Status:        trackedExecutionStatusRunning,
+				TriggeredBy:   "workflow_builder",
+				StartedAt:     now,
+			},
+		},
+		internalQueryHandler: func(w http.ResponseWriter, req *http.Request) {
+			t.Fatal("queued next-turn handler must not start when builder chat is busy")
+		},
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/sessions/"+sessionID+"/live-input", nil)
+	req.Header.Set("X-Session-ID", sessionID)
+	rr := httptest.NewRecorder()
+
+	if !api.startNextTurnFromLiveInput(rr, req, sessionID, "send after this turn", nil) {
+		t.Fatal("startNextTurnFromLiveInput returned false")
+	}
+	if rr.Code != http.StatusConflict {
+		t.Fatalf("status = %d body=%s, want 409", rr.Code, rr.Body.String())
+	}
+	if !strings.Contains(rr.Body.String(), "workflow_busy") {
+		t.Fatalf("body = %s, want workflow_busy", rr.Body.String())
+	}
+}
+
+func TestStartNextTurnFromLiveInputDoesNotBlockScheduledMessageSequence(t *testing.T) {
+	const sessionID = "interactive-builder-session"
+	now := time.Now().UTC()
+	handled := make(chan QueryRequest, 1)
+	api := &StreamingAPI{
+		lastQueryRequests: map[string]QueryRequest{
+			sessionID: {
+				AgentMode:      "workflow_phase",
+				PhaseID:        "workflow-builder",
+				SelectedFolder: "Workflow/social-media",
+				Provider:       string(llm.ProviderClaudeCode),
+				ModelID:        "claude-opus-4-8",
+			},
+		},
+		trackedWorkflowExecutions: map[string]*TrackedWorkflowExecution{
+			"scheduled-message-sequence": {
+				ExecutionID:   "msgseq-execute-allocate-execute-and-verify-1",
+				SessionID:     "schedule-cron--social-media_1",
+				Source:        trackedExecutionSourceWorkshopBackground,
+				Kind:          "workflow_builder_task",
+				WorkspacePath: "Workflow/social-media",
+				PhaseID:       "workflow-builder",
+				Status:        trackedExecutionStatusRunning,
+				TriggeredBy:   "workflow_builder",
+				StartedAt:     now,
+			},
+		},
+		internalQueryHandler: func(w http.ResponseWriter, req *http.Request) {
+			var got QueryRequest
+			if err := json.NewDecoder(req.Body).Decode(&got); err != nil {
+				t.Errorf("decode queued request: %v", err)
+				w.WriteHeader(http.StatusBadRequest)
+				return
+			}
+			handled <- got
+			w.WriteHeader(http.StatusOK)
+		},
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/sessions/"+sessionID+"/live-input", nil)
+	req.Header.Set("X-Session-ID", sessionID)
+	rr := httptest.NewRecorder()
+
+	if !api.startNextTurnFromLiveInput(rr, req, sessionID, "tell me the strategies", nil) {
+		t.Fatal("startNextTurnFromLiveInput returned false")
+	}
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s, want 200", rr.Code, rr.Body.String())
+	}
+
+	select {
+	case got := <-handled:
+		if got.Query != "tell me the strategies" || got.Message != "tell me the strategies" {
+			t.Fatalf("queued query = %#v, want the live-input message", got)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("scheduled message-sequence prevented the interactive continuation from starting")
 	}
 }
 

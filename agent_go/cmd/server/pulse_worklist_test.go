@@ -222,6 +222,113 @@ func TestRecordPulseWorklistToolRequiresActiveScheduledRunID(t *testing.T) {
 	}
 }
 
+func TestMarkPulseModuleResultStoresMinimalDurableAudit(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("WORKSPACE_DOCS_PATH", root)
+	workspacePath := "Workflow/example"
+	pulseRunID := "schedule-cron--audit"
+	sessionID := "schedule-cron--audit-session"
+	if _, err := recordPulseWorklist(context.Background(), workspacePath, pulseRunID, completePulseWorklistDecisions(map[string]PulseWorklistDecision{
+		pulseModuleBugReview: {Module: pulseModuleBugReview, Due: true, Reason: "A verified repair is required."},
+	})); err != nil {
+		t.Fatalf("record worklist: %v", err)
+	}
+
+	release := registerTrustedPulseSession(sessionID, pulseRunID)
+	defer release()
+	ctx := mcpexecutor.WithSessionID(context.Background(), sessionID)
+	_, executors, _ := createPulseWorklistTools()
+	execute := executors["mark_pulse_module_result"].(func(context.Context, map[string]interface{}) (string, error))
+	_, err := execute(ctx, map[string]interface{}{
+		"workspace_path": workspacePath,
+		"pulse_run_id":   pulseRunID,
+		"module":         pulseModuleBugReview,
+		"result":         "changed",
+		"reason":         "Fixed the stale run binding.",
+		"evidence":       []string{"pulse/reviews/audit/bug_review.md"},
+		"changed_files":  []string{"planning/step_config.json"},
+		"verification":   []string{"targeted binding test passed"},
+		"before_refs":    []string{"step_config:sha256:before"},
+		"after_refs":     []string{"step_config:sha256:after"},
+	})
+	if err != nil {
+		t.Fatalf("mark module result: %v", err)
+	}
+
+	_, db, err := openPulseModuleStateDB(context.Background(), workspacePath, false)
+	if err != nil {
+		t.Fatalf("open state db: %v", err)
+	}
+	defer db.Close()
+	var result, reason, changedFilesJSON, verificationJSON, beforeRefsJSON, afterRefsJSON, recordedAt string
+	err = db.QueryRow(`SELECT result, reason, changed_files_json, verification_json,
+		before_refs_json, after_refs_json, recorded_at
+		FROM pulse_module_audit WHERE workspace_path=? AND module=? AND pulse_run_id=?`,
+		workspacePath, pulseModuleBugReview, pulseRunID,
+	).Scan(&result, &reason, &changedFilesJSON, &verificationJSON, &beforeRefsJSON, &afterRefsJSON, &recordedAt)
+	if err != nil {
+		t.Fatalf("read audit: %v", err)
+	}
+	if result != "changed" || reason != "Fixed the stale run binding." || recordedAt == "" {
+		t.Fatalf("audit identity mismatch: result=%q reason=%q recorded_at=%q", result, reason, recordedAt)
+	}
+	for name, tc := range map[string]struct {
+		raw  string
+		want string
+	}{
+		"changed_files": {changedFilesJSON, "planning/step_config.json"},
+		"verification":  {verificationJSON, "targeted binding test passed"},
+		"before_refs":   {beforeRefsJSON, "step_config:sha256:before"},
+		"after_refs":    {afterRefsJSON, "step_config:sha256:after"},
+	} {
+		var values []string
+		if err := json.Unmarshal([]byte(tc.raw), &values); err != nil {
+			t.Fatalf("decode %s: %v", name, err)
+		}
+		if len(values) != 1 || values[0] != tc.want {
+			t.Fatalf("%s = %v, want [%q]", name, values, tc.want)
+		}
+	}
+}
+
+func TestMarkPulseModuleChangedRequiresAuditProof(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("WORKSPACE_DOCS_PATH", root)
+	workspacePath := "Workflow/example"
+	pulseRunID := "schedule-cron--missing-audit"
+	sessionID := "schedule-cron--missing-audit-session"
+	if _, err := recordPulseWorklist(context.Background(), workspacePath, pulseRunID, completePulseWorklistDecisions(map[string]PulseWorklistDecision{
+		pulseModuleBugReview: {Module: pulseModuleBugReview, Due: true, Reason: "A verified repair is required."},
+	})); err != nil {
+		t.Fatalf("record worklist: %v", err)
+	}
+
+	release := registerTrustedPulseSession(sessionID, pulseRunID)
+	defer release()
+	ctx := mcpexecutor.WithSessionID(context.Background(), sessionID)
+	_, executors, _ := createPulseWorklistTools()
+	execute := executors["mark_pulse_module_result"].(func(context.Context, map[string]interface{}) (string, error))
+	_, err := execute(ctx, map[string]interface{}{
+		"workspace_path": workspacePath,
+		"pulse_run_id":   pulseRunID,
+		"module":         pulseModuleBugReview,
+		"result":         "changed",
+		"reason":         "Claims a change without proof.",
+	})
+	if err == nil || !strings.Contains(err.Error(), "changed_files is required") {
+		t.Fatalf("missing changed files error = %v", err)
+	}
+	states, err := getPulseModuleStates(context.Background(), workspacePath)
+	if err != nil {
+		t.Fatalf("get states: %v", err)
+	}
+	for _, state := range states {
+		if state.Module == pulseModuleBugReview && state.LastResult != "" {
+			t.Fatalf("invalid changed result was persisted: %+v", state)
+		}
+	}
+}
+
 func TestTrustedPulseRecoverySessionUsesOriginalLogicalRunID(t *testing.T) {
 	logicalRunID := "schedule-cron--original"
 	releaseInitial := registerTrustedPulseSession("schedule-cron--initial", logicalRunID)

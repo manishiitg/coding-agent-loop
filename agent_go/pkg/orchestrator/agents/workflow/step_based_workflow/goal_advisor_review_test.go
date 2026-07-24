@@ -79,7 +79,7 @@ func TestCompletedPulseReviewerResultRequiresFinalMarker(t *testing.T) {
 func TestBuildPulseReviewerInstructionMakesToolMarkerAuthoritative(t *testing.T) {
 	marker := pulseReviewerCompletionMarker("eval-health")
 	brief := "Return findings.\nEnd with exactly: REVIEW_COMPLETE eval_health"
-	instruction := buildPulseReviewerInstruction("Workflow/example", brief, marker)
+	instruction := buildPulseReviewerInstruction("Workflow/example", "pulse/reviews/run/eval_health.md", brief, marker)
 
 	if !strings.HasSuffix(instruction, marker) {
 		t.Fatalf("tool marker must be the final instruction, got:\n%s", instruction)
@@ -89,6 +89,16 @@ func TestBuildPulseReviewerInstructionMakesToolMarkerAuthoritative(t *testing.T)
 	}
 	if !strings.Contains(instruction, "overrides any earlier response-ending instruction") {
 		t.Fatalf("instruction must explain marker precedence, got:\n%s", instruction)
+	}
+	for _, want := range []string{
+		"ARTIFACT-FIRST RESULT CONTRACT",
+		"pulse/reviews/run/eval_health.md",
+		"not as a conversational message",
+		"trusted backend persists",
+	} {
+		if !strings.Contains(instruction, want) {
+			t.Fatalf("artifact-first instruction missing %q:\n%s", want, instruction)
+		}
 	}
 }
 

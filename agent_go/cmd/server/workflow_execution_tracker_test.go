@@ -95,9 +95,57 @@ func TestFindRunningTrackedExecutionForWorkspaceWhereDoesNotLetNewerScheduleHide
 	}
 
 	found := api.findRunningTrackedExecutionForWorkspaceWhere("Workflow/demo", func(exec *TrackedWorkflowExecution) bool {
-		return exec.PhaseID == "workflow-builder"
+		return trackedExecutionBlocksNewWorkflowBuilderChat(exec)
 	})
 	if found == nil || found.SessionID != "chat-session" {
 		t.Fatalf("builder lookup = %#v, want chat-session", found)
+	}
+}
+
+func TestScheduledWorkflowBuilderPhaseDoesNotBlockInteractiveBuilderChat(t *testing.T) {
+	now := time.Now().UTC()
+	api := &StreamingAPI{
+		trackedWorkflowExecutions: map[string]*TrackedWorkflowExecution{
+			"message-sequence": {
+				ExecutionID:   "msgseq-execute-allocate-execute-and-verify-1",
+				SessionID:     "schedule-cron--5227790a_1784694634941870000",
+				Source:        trackedExecutionSourceWorkshopBackground,
+				Kind:          "workflow_builder_task",
+				Name:          "Message sequence item -> [Execute] Allocator",
+				Title:         "Message sequence item -> [Execute] Allocator",
+				WorkspacePath: "Workflow/social-media",
+				PhaseID:       "workflow-builder",
+				PhaseName:     "Workflow Builder",
+				Status:        trackedExecutionStatusRunning,
+				TriggeredBy:   "workflow_builder",
+				StartedAt:     now,
+			},
+		},
+	}
+
+	found := api.findRunningTrackedExecutionForWorkspaceWhere("Workflow/social-media", func(exec *TrackedWorkflowExecution) bool {
+		return trackedExecutionBlocksNewWorkflowBuilderChat(exec)
+	})
+	if found != nil {
+		t.Fatalf("builder lookup = %#v, want nil for scheduled message-sequence work", found)
+	}
+}
+
+func TestInteractiveWorkflowBuilderTaskBlocksNewBuilderChat(t *testing.T) {
+	now := time.Now().UTC()
+	exec := &TrackedWorkflowExecution{
+		ExecutionID:   "builder-chat-1",
+		SessionID:     "builder-chat-session",
+		Source:        trackedExecutionSourceWorkshopBackground,
+		Kind:          "workflow_builder_task",
+		WorkspacePath: "Workflow/social-media",
+		PhaseID:       "workflow-builder",
+		Status:        trackedExecutionStatusRunning,
+		TriggeredBy:   "workflow_builder",
+		StartedAt:     now,
+	}
+
+	if !trackedExecutionBlocksNewWorkflowBuilderChat(exec) {
+		t.Fatal("interactive workflow-builder task should block a second builder chat")
 	}
 }

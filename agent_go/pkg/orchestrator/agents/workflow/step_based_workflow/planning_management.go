@@ -375,6 +375,8 @@ func validateNextStepIDReferences(plan *PlanningResponse) error {
 	walk = func(steps []PlanStepInterface) {
 		for _, step := range steps {
 			switch s := step.(type) {
+			case *RegularPlanStep:
+				ref(s.GetID(), "next_step_id", s.NextStepID)
 			case *RoutingPlanStep:
 				for _, route := range s.Routes {
 					ref(s.GetID(), fmt.Sprintf("route %q.next_step_id", route.RouteID), route.NextStepID)

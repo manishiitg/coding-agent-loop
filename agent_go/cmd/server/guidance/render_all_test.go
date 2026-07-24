@@ -23,6 +23,92 @@ func TestAllGuidanceTemplatesRender(t *testing.T) {
 	}
 }
 
+func TestChiefOfStaffGuidanceKeepsTechnicalDetailsOutOfVisibleOutput(t *testing.T) {
+	tests := map[string][]string{
+		"org-pulse": {
+			"Are the org goals on track?",
+			"collapsed `Agent details` block",
+			"never paste raw technical evidence",
+		},
+		"org-goals": {
+			"The visible scorecard is for a business operator",
+			"collapsed `Agent details`",
+			"internal status codes",
+		},
+		"org-html": {
+			"Plain language first",
+			`<details class="agent-details">`,
+			"what happened, why it matters",
+		},
+		"chief-task-report": {
+			"Write the visible page for a business operator",
+			"Keep schedule/run/session ids",
+			`<summary>Agent details</summary>`,
+			"`success` becomes \"Completed\"",
+		},
+	}
+
+	for kind, wants := range tests {
+		rendered, err := renderFromRegistry(kind, tmplData{}, referenceKinds)
+		if err != nil {
+			t.Fatalf("render %s: %v", kind, err)
+		}
+		for _, want := range wants {
+			if !strings.Contains(rendered, want) {
+				t.Fatalf("%s guidance missing plain-language contract %q", kind, want)
+			}
+		}
+	}
+}
+
+func TestFocusedScheduledPulseReferencesStayBoundedAndComplete(t *testing.T) {
+	tests := map[string]struct {
+		max   int
+		wants []string
+	}{
+		"pulse-archive": {
+			max:   3000,
+			wants: []string{"latest 15 calendar days", "strictly older than 15 calendar days", "undated history is never", "temporary files", "appears exactly once", "Never truncate"},
+		},
+		"pulse-gate": {
+			max: 5000,
+			wants: []string{
+				"progressive evidence scan", "CONCERNS:", "record_pulse_worklist", "one decision for every",
+				"cannot suppress a measured miss", "Gate must not launch reviewers",
+			},
+		},
+		"pulse-review-fixer": {
+			max: 6200,
+			wants: []string{
+				"batches of at most two", "supported transport", "automatic", "pulse/reviews/<dated-review-run-id>/<module>.md",
+				"only Pulse Fixer", "global finding-ID reconciliation", "terminal current-run result",
+			},
+		},
+		"pulse-finalizer": {
+			max: 4500,
+			wants: []string{
+				"Never treat missing as skipped/successful", "Dashboard + questions", "directly in this parent",
+				"Publish", "Notify", "mark_pulse_final_command_result",
+			},
+		},
+	}
+
+	for kind, tc := range tests {
+		rendered, err := renderFromRegistry(kind, tmplData{}, referenceKinds)
+		if err != nil {
+			t.Fatalf("render %s: %v", kind, err)
+		}
+		if got := len(rendered); got > tc.max {
+			t.Fatalf("%s reference grew to %d bytes (budget %d)", kind, got, tc.max)
+		}
+		for _, want := range tc.wants {
+			if !strings.Contains(rendered, want) {
+				t.Fatalf("%s reference missing %q", kind, want)
+			}
+		}
+	}
+}
+
 func TestManualPulseCommandsKeepRunSetupReviewAndFixBoundariesSeparate(t *testing.T) {
 	tests := map[string][]string{
 		"pulse": {
@@ -97,6 +183,38 @@ func TestEvaluationPlanGuidanceAcceptsSourceGroundedValidEmptyResults(t *testing
 	} {
 		if !strings.Contains(guidance, want) {
 			t.Fatalf("evaluation guidance missing %q\n\nGuidance:\n%s", want, guidance)
+		}
+	}
+}
+
+func TestPulseCostGuidanceReconcilesRawLedgersWithoutDoubleCounting(t *testing.T) {
+	postRun, err := renderFromRegistry("post-run-monitor", tmplData{}, referenceKinds)
+	if err != nil {
+		t.Fatalf("render post-run-monitor: %v", err)
+	}
+	reviewCost, err := renderFromRegistry("review-cost", tmplData{}, allKinds)
+	if err != nil {
+		t.Fatalf("render review-cost: %v", err)
+	}
+
+	for kind, rendered := range map[string]string{
+		"post-run-monitor": postRun,
+		"review-cost":      reviewCost,
+	} {
+		for _, want := range []string{
+			"group_folder",
+			"by_model",
+			"authoritative LLM total",
+			"by_step_and_model",
+			"never add",
+			"unattributed/orchestrator",
+			"workflow_orchestrator",
+			"scripted/zero-LLM step",
+			"run-folder",
+		} {
+			if !strings.Contains(rendered, want) {
+				t.Fatalf("%s cost reconciliation guidance missing %q", kind, want)
+			}
 		}
 	}
 }
@@ -202,7 +320,7 @@ func TestPulseGuidanceRequiresAuthoritativeHTMLAndVisibleFreshness(t *testing.T)
 		"mark_pulse_final_command_result",
 		"not automatically due every Pulse",
 		"Parallel Review Team And Single Fixer",
-		"parallel batches of at most four reviewers",
+		"parallel batches of at most two reviewers",
 		"under 3000 characters",
 		"in-turn review ledger",
 		".pulse-fixer-recovery",
@@ -228,7 +346,7 @@ func TestPulseGuidanceRequiresAuthoritativeHTMLAndVisibleFreshness(t *testing.T)
 		"same parent Pulse turn",
 		"does not launch",
 		"`run_goal_advisor_review`",
-		"without adding backend coordination",
+		"backend independently enforces",
 		"confirm every module marked",
 		"Never silently treat a",
 		"missing result as skipped or successful",
@@ -324,6 +442,10 @@ func TestPulseGuidanceRequiresAuthoritativeHTMLAndVisibleFreshness(t *testing.T)
 		"`efficiency_or_coaching`",
 		"`insufficient_evidence`",
 		"Route `efficiency_or_coaching` findings",
+		// Weak-validation-gate check: flag a gate that passes on a self-asserted
+		// marker without proving the real effect; not every step has a db.
+		"self-asserted marker",
+		"not every step has a db",
 	} {
 		if !strings.Contains(bugReview, want) {
 			t.Fatalf("pulse-bug-review missing %q", want)
@@ -342,7 +464,7 @@ func TestPulseGuidanceRequiresAuthoritativeHTMLAndVisibleFreshness(t *testing.T)
 		"Assumptions challenged",
 		"Today's outcome",
 		`<details class="technical">`,
-		"Agent log",
+		"Hidden recovery handoff",
 		`#pulse-agent-handoff`,
 		"scheduler conditionally sends a dedicated archive turn",
 		"newest **20** timeline cards",
@@ -353,6 +475,10 @@ func TestPulseGuidanceRequiresAuthoritativeHTMLAndVisibleFreshness(t *testing.T)
 		"Reflection — Hansei",
 		"Improvements — Kaizen",
 		"Do not add a second active-question card",
+		"What happened",
+		"Why it matters",
+		"data-repeat-count",
+		"same module and same reason",
 	} {
 		if !strings.Contains(reviewLog, want) {
 			t.Fatalf("review-improve-log missing archive contract %q", want)
@@ -366,7 +492,7 @@ func TestPulseGuidanceRequiresAuthoritativeHTMLAndVisibleFreshness(t *testing.T)
 	if !strings.Contains(skeleton, `class="asof"`) || !strings.Contains(skeleton, ".tile .asof") {
 		t.Fatal("review-improve-log-skeleton missing visible tile freshness markup")
 	}
-	for _, want := range []string{`data-pulse-schema="2"`, `id="pulse-bug-verdict"`, `id="pulse-goal-verdict"`, `class="as"`, `class="assumptions"`, `class="technical"`, `class="agentlog"`, `id="pulse-agent-handoff"`, `data-pulse-section="signals" data-module="bug_review"`, `data-pulse-section="reflection" data-module="run_summary"`, `data-pulse-section="improvements" data-module="goal_advisor"`, `Today's outcome`} {
+	for _, want := range []string{`data-pulse-schema="2"`, `id="pulse-bug-verdict"`, `id="pulse-goal-verdict"`, `class="as"`, `class="assumptions"`, `class="technical"`, `id="pulse-agent-handoff"`, `hidden`, `data-pulse-section="signals" data-module="bug_review"`, `data-pulse-section="reflection" data-module="run_summary"`, `data-pulse-section="improvements" data-module="goal_advisor"`, `Today's outcome`} {
 		if !strings.Contains(skeleton, want) {
 			t.Fatalf("review-improve-log-skeleton missing stable verdict markup %q", want)
 		}
@@ -377,7 +503,7 @@ func TestPulseGuidanceRequiresAuthoritativeHTMLAndVisibleFreshness(t *testing.T)
 	if strings.Contains(skeleton, `class="goalcard"`) || strings.Contains(skeleton, `data-status="open"`) {
 		t.Fatal("review-improve-log-skeleton must not duplicate the Goal or an active SQLite question")
 	}
-	for _, want := range []string{`data-pulse-section="reflection" data-module="goal_advisor"`, `data-status="answered"`, `Question + answer`} {
+	for _, want := range []string{`data-pulse-section="improvements" data-module="goal_advisor"`, `data-status="answered"`, `Question + answer`} {
 		if !strings.Contains(skeleton, want) {
 			t.Fatalf("review-improve-log-skeleton missing historical question/answer contract %q", want)
 		}
@@ -410,7 +536,8 @@ func TestPulseGuidanceRejudgesActiveExperimentCadenceFromCurrentEvidence(t *test
 		"verify its fair-test state from current evidence",
 		"actual runtime control",
 		"zero valid outcome-bearing runs is not a fair test",
-		"repair, unblock, or revise the same experiment in place",
+		"recommend the smallest unblock or a strategy-level revision",
+		"recommend retiring or replacing it",
 		"runtime-path",
 	} {
 		if !strings.Contains(advisor, want) {
@@ -464,6 +591,31 @@ func TestGoalAdvisorPrioritizesStrategyOverHTMLFormatting(t *testing.T) {
 	} {
 		if !strings.Contains(advisor, want) {
 			t.Fatalf("goal advisor missing analysis-first reporting contract %q", want)
+		}
+	}
+}
+
+func TestPulseCardsKeepTechnicalEvidenceOutOfUserTimeline(t *testing.T) {
+	logGuide, err := renderFromRegistry("review-improve-log", tmplData{}, referenceKinds)
+	if err != nil {
+		t.Fatalf("render review-improve-log: %v", err)
+	}
+	monitor, err := renderFromRegistry("post-run-monitor", tmplData{}, referenceKinds)
+	if err != nil {
+		t.Fatalf("render post-run-monitor: %v", err)
+	}
+	checks := map[string]struct {
+		rendered string
+		wants    []string
+	}{
+		"review-improve-log": {logGuide, []string{"reviewer result file", "#pulse-agent-handoff", "no_terminal_packet", "retry_due", "approved_awaiting_evidence", "The review did not finish.", "Pulse will retry.", "Approved; waiting to confirm results.", "Review incomplete"}},
+		"post-run-monitor":   {monitor, []string{"user-facing outcome record", "reviewer result file", "#pulse-agent-handoff", "no_terminal_packet", "retry_due", "approved_awaiting_evidence", "The review did not finish.", "Pulse will retry.", "Approved; waiting to confirm results.", "Review incomplete"}},
+	}
+	for label, check := range checks {
+		for _, want := range check.wants {
+			if !strings.Contains(check.rendered, want) {
+				t.Fatalf("%s missing human-readable card contract %q", label, want)
+			}
 		}
 	}
 }
@@ -745,6 +897,12 @@ func TestGoalAdvisorTreatsCleanAbstentionAsStrategyEvidence(t *testing.T) {
 		t.Fatalf("render goal-advisor: %v", err)
 	}
 	for _, want := range []string{
+		"NON-NEGOTIABLE STRATEGY-FIRST PASS",
+		"strategy_ceiling",
+		"highest_leverage_thesis",
+		"why_not_incremental_repair",
+		"is not a valid Goal Advisor result",
+		"an operational defect must not consume the Goal Advisor run",
 		"A green answer to the first question must not mask",
 		"broader criteria within explicit user boundaries",
 		"Never recommend violating an explicit user exclusion",
@@ -755,8 +913,11 @@ func TestGoalAdvisorTreatsCleanAbstentionAsStrategyEvidence(t *testing.T) {
 		"Check optimization headroom even when every success criterion is currently",
 		"Treat a numeric target as a floor",
 		"preserve the successful baseline and propose a bounded",
-		"PHASE 1B - ACTIVE EXPERIMENT LIFECYCLE",
-		"Exactly one experiment may be active for a workflow",
+		"PHASE 1B - ACTIVE STRATEGY EXPERIMENT LIFECYCLE",
+		"Exactly one **strategy** experiment may be active for a workflow",
+		`data-experiment-kind="instrumentation"`,
+		`data-experiment-kind="strategy"`,
+		"Instrumentation is supporting work",
 		"Apply a 10x counterfactual as a thinking lens, not a promise",
 		`class="entry decision major advisor-experiment"`,
 		"Current strategy ceiling",
@@ -779,6 +940,7 @@ func TestGoalAdvisorMetricsFlowUsesPlanAndReportHandoff(t *testing.T) {
 	}
 	for _, want := range []string{
 		"does not revive a generic metrics subsystem",
+		"not the Advisor outcome and not an Advisor experiment by itself",
 		"decision it informs",
 		"normal `regular` measurement step",
 		"db/db.sqlite",
@@ -892,6 +1054,12 @@ func TestDeterministicFetchersFeedLargeAgenticProcessors(t *testing.T) {
 				"fetch-and-normalize-authoritative-data",
 				"Do not use one step per endpoint",
 				"execute-request-spec",
+				// Store-writable allow-list (db/assets is the only step-writable file home).
+				"the hard allow-list",
+				// Validate-on-what-it-produces, db-first, no forced throwaway JSON.
+				"Validate on what the step actually produces",
+				"will not force a throwaway output file",
+				"has no gate at all",
 			},
 		},
 		"step-config": {

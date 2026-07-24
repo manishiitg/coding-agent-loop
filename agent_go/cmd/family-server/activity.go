@@ -28,8 +28,8 @@ type activityManifest struct {
 	Subject           string   `json:"subject,omitempty"`
 	Topic             string   `json:"topic,omitempty"`
 	Items             []string `json:"items,omitempty"`
-	GuideNote         string   `json:"guide_note,omitempty"` // HOW to run it: pacing, tone, what to do if stuck
-	Goal              string   `json:"goal,omitempty"`       // WHAT completion looks like: the tutor steers back to this even if the chat wanders
+	GuideNote         string   `json:"guide_note,omitempty"`          // HOW to run it: pacing, tone, what to do if stuck
+	Goal              string   `json:"goal,omitempty"`                // WHAT completion looks like: the tutor steers back to this even if the chat wanders
 	TeachingMode      string   `json:"teaching_mode,omitempty"`       // beginner | graduated | strict
 	HintsBeforeAnswer int      `json:"hints_before_answer,omitempty"` // for graduated
 	Persona           string   `json:"persona,omitempty"`
@@ -47,16 +47,16 @@ type Activity struct {
 // infrastructure/areas that must never be treated as a Subject folder when
 // discovering activities or listing subjects in the Files tab.
 var reservedTopLevel = map[string]bool{
-	"materials":              true,
-	"inbox":                  true,
-	"reports":                true,
-	"memory":                 true,
-	"conversations":          true,
-	"skills":                 true,
-	".agents":                true,
-	"_legacy":                true,
-	"backup":                 true,
-	"publish":                true,
+	"materials":               true,
+	"inbox":                   true,
+	"reports":                 true,
+	"memory":                  true,
+	"conversations":           true,
+	"skills":                  true,
+	".agents":                 true,
+	"_legacy":                 true,
+	"backup":                  true,
+	"publish":                 true,
 	"workspace.pre-v2-backup": true,
 }
 
@@ -89,20 +89,6 @@ func loadActivity(dir string) (Activity, bool) {
 		return Activity{}, false
 	}
 	return Activity{Dir: filepath.ToSlash(dir), activityManifest: m}, true
-}
-
-// activityItems returns the activity's item files as workspace-relative paths
-// (the bare manifest filenames joined onto the activity dir), in order.
-func activityItems(dir string) []string {
-	act, ok := loadActivity(dir)
-	if !ok {
-		return nil
-	}
-	out := make([]string, 0, len(act.Items))
-	for _, name := range act.Items {
-		out = append(out, filepath.ToSlash(filepath.Join(dir, name)))
-	}
-	return out
 }
 
 // listActivities walks the workspace (skipping reserved top-level areas) and

@@ -2,6 +2,7 @@ package services
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"net/http"
 	"strings"
@@ -74,8 +75,83 @@ func TestSendSlackIncomingWebhook(t *testing.T) {
 	if msgID != "webhook_ok" {
 		t.Fatalf("message ID = %q", msgID)
 	}
-	if gotBody != `{"text":"*Done*"}` {
-		t.Fatalf("body = %s", gotBody)
+	var payload struct {
+		Text        string `json:"text"`
+		Attachments []struct {
+			Color  string                   `json:"color"`
+			Blocks []map[string]interface{} `json:"blocks"`
+		} `json:"attachments"`
+	}
+	if err := json.Unmarshal([]byte(gotBody), &payload); err != nil {
+		t.Fatalf("decode body: %v; body=%s", err, gotBody)
+	}
+	if payload.Text != "*Done*" || len(payload.Attachments) != 1 || payload.Attachments[0].Color != "#4f46e5" || len(payload.Attachments[0].Blocks) != 1 {
+		t.Fatalf("unexpected rich default payload: %#v", payload)
+	}
+}
+
+func TestSendRichSlackIncomingWebhookBuildsValidatedBlockKit(t *testing.T) {
+	original := slackWebhookHTTPClient
+	t.Cleanup(func() { slackWebhookHTTPClient = original })
+
+	var gotBody []byte
+	slackWebhookHTTPClient = &http.Client{Transport: slackWebhookRoundTripFunc(func(req *http.Request) (*http.Response, error) {
+		gotBody, _ = io.ReadAll(req.Body)
+		return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader("ok")), Header: make(http.Header)}, nil
+	})}
+
+	content := SlackWebhookContent{
+		Title: "Confida QA",
+		Color: "warning",
+		Fields: []SlackWebhookField{
+			{Label: "Passed", Value: "12"},
+			{Label: "Incomplete", Value: "2"},
+		},
+		Sections: []SlackWebhookSection{{Heading: "Confirmed issues", Body: "<https://example.test/issues/42|#42> Login regression"}},
+		Footer:   "staging · 19 Jul",
+	}
+	if _, err := SendRichSlackIncomingWebhook(context.Background(), "https://hooks.slack.com/services/T123/B456/secret", "Two checks need attention.", content); err != nil {
+		t.Fatalf("send rich: %v", err)
+	}
+
+	var payload map[string]interface{}
+	if err := json.Unmarshal(gotBody, &payload); err != nil {
+		t.Fatalf("decode rich body: %v", err)
+	}
+	attachments, _ := payload["attachments"].([]interface{})
+	if len(attachments) != 1 {
+		t.Fatalf("attachments = %#v", attachments)
+	}
+	attachment, _ := attachments[0].(map[string]interface{})
+	if attachment["color"] != "#e8912d" {
+		t.Fatalf("color = %#v", attachment["color"])
+	}
+	blocks, _ := attachment["blocks"].([]interface{})
+	if len(blocks) != 5 { // header, lead summary, fields, section, footer
+		t.Fatalf("blocks = %d, want 5: %s", len(blocks), gotBody)
+	}
+}
+
+func TestBuildSlackWebhookPayloadRejectsInvalidRichContent(t *testing.T) {
+	_, err := buildSlackWebhookPayload("done", SlackWebhookContent{Color: "chartreuse"})
+	if err == nil || !strings.Contains(err.Error(), "slack_color") {
+		t.Fatalf("invalid color error = %v", err)
+	}
+	_, err = buildSlackWebhookPayload("done", SlackWebhookContent{Fields: []SlackWebhookField{{Label: "", Value: "1"}}})
+	if err == nil || !strings.Contains(err.Error(), "requires non-empty") {
+		t.Fatalf("invalid field error = %v", err)
+	}
+}
+
+func TestBuildSlackWebhookPayloadSplitsLongFallbackIntoBlocks(t *testing.T) {
+	payload, err := buildSlackWebhookPayload(strings.Repeat("x", slackSectionTextLimit+25), SlackWebhookContent{})
+	if err != nil {
+		t.Fatalf("build long fallback: %v", err)
+	}
+	attachments, _ := payload["attachments"].([]map[string]interface{})
+	blocks, _ := attachments[0]["blocks"].([]map[string]interface{})
+	if len(blocks) != 2 {
+		t.Fatalf("blocks = %d, want 2", len(blocks))
 	}
 }
 

@@ -72,13 +72,21 @@ func saveMultiAgentChatCapabilitiesHandler() http.HandlerFunc {
 			} else if found && existing != nil {
 				caps.Notifications = existing.Capabilities.Notifications
 				if caps.Notifications != nil {
-					caps.SelectedSecrets = appendUniqueString(caps.SelectedSecrets, caps.Notifications.SlackWebhookSecretName)
+					caps.SelectedSecrets = removeString(caps.SelectedSecrets, caps.Notifications.SlackWebhookSecretName)
+					if caps.SelectedGlobalSecretNames != nil {
+						filtered := removeString(*caps.SelectedGlobalSecretNames, caps.Notifications.SlackWebhookSecretName)
+						caps.SelectedGlobalSecretNames = &filtered
+					}
 				}
 			}
 		} else if strings.TrimSpace(caps.Notifications.SlackWebhookSecretName) == "" {
 			caps.Notifications = nil
 		} else {
-			caps.SelectedSecrets = appendUniqueString(caps.SelectedSecrets, caps.Notifications.SlackWebhookSecretName)
+			caps.SelectedSecrets = removeString(caps.SelectedSecrets, caps.Notifications.SlackWebhookSecretName)
+			if caps.SelectedGlobalSecretNames != nil {
+				filtered := removeString(*caps.SelectedGlobalSecretNames, caps.Notifications.SlackWebhookSecretName)
+				caps.SelectedGlobalSecretNames = &filtered
+			}
 		}
 		if err := WriteMultiAgentChatConfig(r.Context(), userID, caps); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)

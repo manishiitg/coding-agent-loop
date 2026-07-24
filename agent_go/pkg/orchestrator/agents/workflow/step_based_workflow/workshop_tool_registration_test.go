@@ -101,6 +101,62 @@ func TestRunningStatusToolsShareRapidPollGuard(t *testing.T) {
 	}
 }
 
+func TestGenericAgentCanBeQueriedAndStoppedByExecutionID(t *testing.T) {
+	agent := &mcpagent.Agent{}
+	workspacePath := t.TempDir()
+	base, err := orchestrator.NewBaseOrchestrator(
+		loggerv2.NewNoop(), nil, orchestrator.OrchestratorTypeWorkflow, "", 0, "",
+		nil, nil, false, &orchestrator.LLMConfig{}, 1, nil, nil, nil,
+	)
+	if err != nil {
+		t.Fatalf("NewBaseOrchestrator: %v", err)
+	}
+	base.SetWorkspacePath(workspacePath)
+	registry := NewWorkshopStepRegistry()
+	_, cancel := context.WithCancel(context.Background())
+	registry.Register(&WorkshopStepExecution{
+		ID:     "generic-agent-review-costs-123",
+		StepID: "generic-agent:review-costs",
+		Status: WorkshopStepRunning,
+		cancel: cancel,
+	})
+	session := &WorkshopChatSession{
+		controller:   &StepBasedWorkflowOrchestrator{BaseOrchestrator: base},
+		StepRegistry: registry,
+		config:       &WorkshopConfig{WorkspacePath: workspacePath},
+	}
+
+	RegisterWorkshopChatTools(agent, session, workshopToolTestLogger{})
+	queryStep := agent.GetCustomToolExecutor("query_step")
+	stopStep := agent.GetCustomToolExecutor("stop_step")
+	if queryStep == nil || stopStep == nil {
+		t.Fatal("generic execution control tools were not registered")
+	}
+
+	status, err := queryStep(context.Background(), map[string]interface{}{
+		"execution_id": "generic-agent-review-costs-123",
+	})
+	if err != nil {
+		t.Fatalf("query generic agent: %v", err)
+	}
+	if !strings.Contains(status, `Generic agent "review-costs"`) || !strings.Contains(status, "generic-agent-review-costs-123") {
+		t.Fatalf("generic execution query omitted identity:\n%s", status)
+	}
+
+	stopped, err := stopStep(context.Background(), map[string]interface{}{
+		"execution_id": "generic-agent-review-costs-123",
+	})
+	if err != nil {
+		t.Fatalf("stop generic agent: %v", err)
+	}
+	if !strings.Contains(stopped, "has been canceled") {
+		t.Fatalf("unexpected stop response: %s", stopped)
+	}
+	if snapshot, ok := registry.GetSnapshot("generic-agent-review-costs-123"); !ok || snapshot.Status != WorkshopStepCancelled {
+		t.Fatalf("generic execution status = %+v, found=%v; want canceled", snapshot, ok)
+	}
+}
+
 func TestRapidPollGuardAllowsChangedStateAndResetsAfterIdleWindow(t *testing.T) {
 	registry := NewWorkshopStepRegistry()
 	now := time.Date(2026, 7, 16, 12, 0, 0, 0, time.UTC)

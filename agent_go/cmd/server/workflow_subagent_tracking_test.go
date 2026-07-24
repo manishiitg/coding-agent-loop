@@ -207,6 +207,26 @@ func TestWorkflowStartNotificationPayloadAndInteractiveDelivery(t *testing.T) {
 	}
 }
 
+func TestGenericAgentStartNotificationIncludesExecutionControlID(t *testing.T) {
+	part := backgroundAgentStartNotificationPart(BackgroundAgentSnapshot{
+		ID:   "generic-agent-cost-review-123",
+		Name: "Generic agent: cost review",
+		Kind: "generic_agent",
+		Metadata: map[string]string{
+			"execution_type": "generic-agent",
+			"todo_id":        "cost-review",
+		},
+	})
+	for _, want := range []string{
+		"Generic agent: Generic agent: cost review",
+		"execution_id=generic-agent-cost-review-123",
+	} {
+		if !strings.Contains(part, want) {
+			t.Fatalf("generic-agent start notification missing %q: %s", want, part)
+		}
+	}
+}
+
 func TestBotBackgroundStartStillQueuesOutboundAcknowledgement(t *testing.T) {
 	const sessionID = "bot-slack-session"
 	const agentID = "bot-background-agent"

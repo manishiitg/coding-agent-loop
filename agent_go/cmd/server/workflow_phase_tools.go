@@ -79,17 +79,6 @@ func (api *StreamingAPI) installWorkflowPhaseTools(
 			return fmt.Errorf("register plan modification tools for workflow-builder: %w", err)
 		}
 		log.Printf("[WORKFLOW_PHASE] Registered plan modification tools for %s", workflowPhaseID)
-		if err := todo_creation_human.RegisterChiefOfStaffRecommendationStatusTool(
-			underlyingAgent,
-			phaseWorkspacePath,
-			api.logger,
-			phaseReadFile,
-			phaseWriteFile,
-		); err != nil {
-			return fmt.Errorf("register Chief of Staff recommendation status tool for workflow-builder: %w", err)
-		}
-		log.Printf("[WORKFLOW_PHASE] Registered Chief of Staff recommendation status tool for %s", workflowPhaseID)
-
 		// STOP-RACE GUARD: Check if the session was stopped while this goroutine
 		// was in flight. Without this check, the goroutine would create a new
 		// WorkshopChatSession with a fresh context.Background() that is never

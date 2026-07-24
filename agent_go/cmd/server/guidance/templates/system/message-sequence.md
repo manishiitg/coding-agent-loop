@@ -64,9 +64,26 @@ Use a non-empty `write_access` object, or `kind`, only when one turn should be n
 
 An item override can narrow but never exceed the step-level permissions. Write access is folder-level and per-file path lists are rejected. Use direct learning writes sparingly; normal step-level learning runs after the complete step.
 
+**Where a step can durably write (the hard allow-list).** The sandbox opens only these durable locations for a step, and denies everything else ("operation not permitted"):
+
+- `db/db.sqlite` and `db/assets/` — structured rows and durable **files** of any format (PDF, image, CSV, JSON, txt, zip). A downloaded or generated file that later steps or the builder must reach goes in `db/assets/` with a reference row in `db.sqlite`. This is the ONLY step-writable home for an arbitrary file.
+- `knowledgebase/notes/` — workflow-discovered narrative facts (KB direct-write only).
+- `learnings/_global/` — reusable HOW-to-run knowledge.
+- the step's own execution folder + `Downloads/` — volatile per-run scratch (wiped on re-run).
+
+`docs/`, `knowledgebase/context/`, other `knowledgebase/` subfolders, and any custom top-level folder are **builder-only or denied** — do not route a step's durable file there.
+
 ## PREVALIDATION
 
-The step-level `validation_schema` is always the final gate. The runtime runs it automatically after the configured work turns and before synthetic learning/knowledge closing turns. On a normal validation failure, it sends concrete failures back to the same conversation for correction and retries the gate. Infrastructure failures stop the step.
+The step-level `validation_schema` is the final gate when the step declares one. The runtime runs it automatically after the configured work turns and before synthetic learning/knowledge closing turns. On a normal validation failure, it sends concrete failures back to the same conversation for correction and retries the gate. Infrastructure failures stop the step.
+
+**Validate on what the step actually produces — prefer the db.** Choose the schema by the step's real output, not by habit:
+
+- Produces a structured JSON the next step reads → a `files` rule on that file, and declare the step's `context_output` to the same file name so the prompt and gate agree.
+- Produces db state (rows) or a side effect (a record created, a message sent, a lock updated) → a `db` rule: a read-only SQL assertion that the rows/values actually exist in `db/db.sqlite`. Do **not** declare a `context_output` — the runtime will not force a throwaway output file, and the step is checked on the real effect instead of a self-written marker.
+- The file **is** the deliverable but the agent writes it → require run-specific **proof** inside it (real ids, values read back from the authoritative system, timestamps the real system produced), so the gate confirms real work, not a self-asserted "done".
+
+A `db` rule is the stronger gate: it checks the source of truth the next step and the report actually read, so a fabricated or stale "success" can't pass by writing a tidy file. A step with **no** `validation_schema` has no gate at all — it is accepted on the agent's word (the weakest possible proof). Give any step whose result matters a real schema, db-first.
 
 Add an explicit `prevalidation` item only when an intermediate artifact must pass before later work turns proceed. If the final configured item already validates the same step-level schema, the runtime does not add a duplicate final gate.
 
@@ -77,6 +94,20 @@ Add an explicit `prevalidation` item only when an intermediate artifact must pas
   "validation_schema": {
     "files": [
       {"file_name": "output/result.json", "required": true, "validation_type": "json"}
+    ]
+  }
+}
+```
+
+For a step that persists to the db (the common case for state/side-effect work), gate on the db instead of a file — no `context_output` needed:
+
+```json
+{
+  "id": "verify-persisted",
+  "type": "prevalidation",
+  "validation_schema": {
+    "db": [
+      {"name": "rows written this run", "sql": "SELECT status FROM processed WHERE run_id = 'iteration-0'", "min_rows": 1}
     ]
   }
 }

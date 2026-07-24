@@ -42,7 +42,7 @@ func TestResolveWorkflowSlackNotificationState(t *testing.T) {
 		wantState   string
 	}{
 		{name: "not configured", manifest: notificationTestManifest(""), wantState: workflowNotificationStateNotConfigured},
-		{name: "not selected", manifest: notificationTestManifest("SLACK_NOTIFICATION_WEBHOOK_URL"), secretValue: "https://hooks.slack.com/services/T/B/S", secretFound: true, wantState: workflowNotificationStateMissingSecret},
+		{name: "backend-only secret need not be agent-selected", manifest: notificationTestManifest("SLACK_NOTIFICATION_WEBHOOK_URL"), secretValue: "https://hooks.slack.com/services/T/B/S", secretFound: true, wantState: workflowNotificationStateReady},
 		{name: "missing", manifest: notificationTestManifest("SLACK_NOTIFICATION_WEBHOOK_URL", "SLACK_NOTIFICATION_WEBHOOK_URL"), wantState: workflowNotificationStateMissingSecret},
 		{name: "invalid", manifest: notificationTestManifest("SLACK_NOTIFICATION_WEBHOOK_URL", "SLACK_NOTIFICATION_WEBHOOK_URL"), secretValue: "https://example.com/hook", secretFound: true, wantState: workflowNotificationStateInvalidSecret},
 		{name: "ready", manifest: notificationTestManifest("SLACK_NOTIFICATION_WEBHOOK_URL", "SLACK_NOTIFICATION_WEBHOOK_URL"), secretValue: "https://hooks.slack.com/services/T123/B456/secret", secretFound: true, wantState: workflowNotificationStateReady},

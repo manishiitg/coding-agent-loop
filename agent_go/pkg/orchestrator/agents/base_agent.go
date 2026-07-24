@@ -7,11 +7,11 @@ import (
 	"strings"
 	"time"
 
+	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/common"
 	mcpagent "github.com/manishiitg/mcpagent/agent"
 	internalLLM "github.com/manishiitg/mcpagent/llm"
 	"github.com/manishiitg/mcpagent/mcpclient"
 	"github.com/manishiitg/mcpagent/observability"
-	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/common"
 
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 )
@@ -147,6 +147,7 @@ func NewBaseAgent(
 	codingAgentKeepAlive bool, // Keep tmux-backed coding-agent sessions alive after this agent completes
 	forceStructuredCodingAgent bool, // Force structured JSON transport for coding-agent CLIs (overrides tmux default)
 	isolateCodingAgentWorkspace bool, // Run the coding-CLI session in a fresh tmp dir (workflow steps only; chat keeps user dir)
+	cliSecurityPolicy *llmtypes.CLISecurityPolicy, // Server-resolved immutable CLI security policy
 	runtimeOverrides mcpclient.RuntimeOverrides, // Runtime config overrides for MCP servers (e.g., output directories)
 ) (*BaseAgent, error) {
 	// Convert AgentMode to mcpagent.AgentMode
@@ -307,6 +308,12 @@ func NewBaseAgent(
 	if isolateCodingAgentWorkspace {
 		options = append(options, mcpagent.WithIsolatedSessionWorkspace(true))
 		logger.Info("🔒 Isolating coding-agent session in a fresh tmp dir (workflow-step isolation)",
+			loggerv2.String("agent_name", name))
+	}
+	if cliSecurityPolicy != nil {
+		options = append(options, mcpagent.WithCLISecurityPolicy(*cliSecurityPolicy))
+		logger.Info("🔒 Using server-resolved coding-agent CLI security policy",
+			loggerv2.String("mode", string(cliSecurityPolicy.Mode)),
 			loggerv2.String("agent_name", name))
 	}
 	if forceStructuredCodingAgent {

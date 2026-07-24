@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 )
@@ -180,11 +181,25 @@ func (nm *NotificationManager) SendUserNotification(ctx context.Context, message
 // (context.WithoutCancel) but time-bounded, so it is not killed when the agent's
 // request context is canceled at turn end (the cause of the "gws … signal: killed"
 // failures) and a stuck connector can't hang the turn forever.
-func (nm *NotificationManager) SendUserNotificationSync(ctx context.Context, message string, contextMsg string, dest *NotificationDestination) []ConnectorResult {
+//
+// excludeChannels lets a single notification opt OUT of specific account-level
+// channels by connector Name() (e.g. "gmail"). This is how a per-workflow
+// notification preference — declared in workflow.json capabilities.notifications
+// and applied by the backend — suppresses an inherited global channel for that
+// one send without touching the account-wide config. Names are matched
+// case-insensitively; unknown names are ignored.
+func (nm *NotificationManager) SendUserNotificationSync(ctx context.Context, message string, contextMsg string, dest *NotificationDestination, excludeChannels ...string) []ConnectorResult {
+	excluded := make(map[string]bool, len(excludeChannels))
+	for _, name := range excludeChannels {
+		if trimmed := strings.ToLower(strings.TrimSpace(name)); trimmed != "" {
+			excluded[trimmed] = true
+		}
+	}
+
 	nm.mu.RLock()
 	connectors := make([]NotificationConnector, 0, len(nm.connectors))
 	for _, connector := range nm.connectors {
-		if connector.IsEnabled() {
+		if connector.IsEnabled() && !excluded[strings.ToLower(connector.Name())] {
 			connectors = append(connectors, connector)
 		}
 	}

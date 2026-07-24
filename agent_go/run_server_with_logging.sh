@@ -871,6 +871,10 @@ if [ "$WITH_WORKSPACE" = true ]; then
     WORKSPACE_DOCS_PATH="$(cd "$WORKSPACE_DOCS_PATH" && pwd)"
     export WORKSPACE_DOCS_PATH
     export WORKSPACE_API_URL="${LOCALHOST_BASE_URL}:${WORKSPACE_PORT}"
+    if [ -z "${WORKSPACE_API_TOKEN:-}" ]; then
+        WORKSPACE_API_TOKEN="$(/usr/bin/openssl rand -hex 32 2>/dev/null || uuidgen | tr -d '-')"
+    fi
+    export WORKSPACE_API_TOKEN
 
     export NATIVE_WORKSPACE="true"
     echo "🧩 Native workspace start enabled"
@@ -1199,11 +1203,8 @@ start_native_workspace() {
     echo "=========================================" >> "$WORKSPACE_LOG_PATH"
     echo "" >> "$WORKSPACE_LOG_PATH"
 
-    # Bind to localhost only: the workspace API has no auth layer, so the bind
-    # address is the access control. Everything that needs it (agent server,
-    # frontend via proxy) runs on this machine in native mode. Docker keeps
-    # the all-interfaces default because the agent container connects over the
-    # compose network. Override with WORKSPACE_BIND_HOST if needed.
+    # Bind to localhost as defense in depth. Process-execution routes also
+    # require the server-only WORKSPACE_API_TOKEN generated above.
     WORKSPACE_BIND_HOST="${WORKSPACE_BIND_HOST:-127.0.0.1}"
     if [ "$BACKGROUND_MODE" = true ]; then
         nohup bash -lc "cd \"$WORKSPACE_DIR\" && exec go run . server --debug --host \"$WORKSPACE_BIND_HOST\" --port \"$WORKSPACE_PORT\" --docs-dir \"$WORKSPACE_DOCS_PATH\"" >> "$WORKSPACE_LOG_PATH" 2>&1 &

@@ -14,28 +14,43 @@ import (
 
 const chiefOfStaffNotificationLabel = "Chief of Staff"
 
-func appendUniqueString(values []string, value string) []string {
+func removeString(values []string, value string) []string {
 	value = strings.TrimSpace(value)
-	if value == "" {
-		return values
-	}
+	filtered := make([]string, 0, len(values))
 	for _, existing := range values {
-		if strings.TrimSpace(existing) == value {
-			return values
+		if strings.TrimSpace(existing) != value {
+			filtered = append(filtered, existing)
 		}
 	}
-	return append(values, value)
+	return filtered
 }
 
 func withChiefNotificationConfig(caps WorkflowCapabilities, secretName string) WorkflowCapabilities {
 	updated := caps
 	updated.SelectedSecrets = append([]string(nil), caps.SelectedSecrets...)
+	if caps.SelectedGlobalSecretNames != nil {
+		copied := append([]string(nil), (*caps.SelectedGlobalSecretNames)...)
+		updated.SelectedGlobalSecretNames = &copied
+	}
+	if caps.Notifications != nil {
+		updated.SelectedSecrets = removeString(updated.SelectedSecrets, caps.Notifications.SlackWebhookSecretName)
+		if updated.SelectedGlobalSecretNames != nil {
+			filtered := removeString(*updated.SelectedGlobalSecretNames, caps.Notifications.SlackWebhookSecretName)
+			updated.SelectedGlobalSecretNames = &filtered
+		}
+	}
 	secretName = strings.TrimSpace(secretName)
 	if secretName == "" {
 		updated.Notifications = nil
 		return updated
 	}
-	updated.SelectedSecrets = appendUniqueString(updated.SelectedSecrets, secretName)
+	// Notification credentials are backend-only and must never become agent
+	// SECRET_* environment variables.
+	updated.SelectedSecrets = removeString(updated.SelectedSecrets, secretName)
+	if updated.SelectedGlobalSecretNames != nil {
+		filtered := removeString(*updated.SelectedGlobalSecretNames, secretName)
+		updated.SelectedGlobalSecretNames = &filtered
+	}
 	updated.Notifications = &WorkflowNotificationConfig{SlackWebhookSecretName: secretName}
 	return updated
 }
@@ -48,13 +63,7 @@ func (api *StreamingAPI) resolveChiefNotificationSecret(ctx context.Context, use
 	if secretName == "" {
 		return "", false
 	}
-	selected := api.loadSelectedSecrets(ctx, userID, "", []string{secretName})
-	for _, secret := range mergeGlobalSecrets(selected, caps.SelectedGlobalSecretNames) {
-		if secret.Name == secretName {
-			return secret.Value, true
-		}
-	}
-	return "", false
+	return api.resolveBackendNotificationSecret(ctx, userID, "", secretName)
 }
 
 func (api *StreamingAPI) handleGetOrgNotifications(w http.ResponseWriter, r *http.Request) {

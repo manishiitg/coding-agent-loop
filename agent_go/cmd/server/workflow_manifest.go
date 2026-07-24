@@ -23,11 +23,14 @@ const WorkflowManifestSchemaVersion = 1
 // contract version. Unlike schema_version, this gates agent-run workflow
 // upgrades: Pulse can add version-specific messages and stamp this value only
 // after the workflow has been checked or migrated.
-const WorkflowContractCurrentVersion = "1.0.11"
+const WorkflowContractCurrentVersion = "1.0.14"
 
 const workflowContractInitialVersion = "1.0.0"
 const workflowContractMessageSequenceCodeVersion = "1.0.10"
 const workflowContractPulseHistoryVersion = "1.0.11"
+const workflowContractNotificationConfigVersion = "1.0.12"
+const workflowContractHumanInputOwnershipVersion = "1.0.13"
+const workflowContractHumanReadablePulseStateVersion = "1.0.14"
 
 const (
 	DefaultRunRetentionCount = 5
@@ -164,6 +167,51 @@ type WorkflowCapabilities struct {
 // are kept in the encrypted secret store and resolved immediately before a run.
 type WorkflowNotificationConfig struct {
 	SlackWebhookSecretName string `json:"slack_webhook_secret_name,omitempty"`
+
+	// RunSummaryInstructions controls the execution/outcome section of a
+	// notification. PulseSummaryInstructions controls the review/fix section.
+	// Both are ordinary workflow configuration, never secrets, recipients, or
+	// delivery credentials.
+	RunSummaryInstructions   string   `json:"run_summary_instructions,omitempty"`
+	PulseSummaryInstructions string   `json:"pulse_summary_instructions,omitempty"`
+	RunSummaryChannels       []string `json:"run_summary_channels,omitempty"`
+	PulseSummaryChannels     []string `json:"pulse_summary_channels,omitempty"`
+
+	// Instructions is the legacy shared content preference. Keep it as a
+	// fallback so workflows that saved the original single field retain their
+	// behavior until the owner saves separate preferences.
+	Instructions string `json:"instructions,omitempty"`
+
+	// ExcludeChannels lists account-level delivery channels this workflow opts
+	// OUT of, by connector name ("gmail", "slack", "whatsapp"). A channel enabled
+	// account-wide is inherited by every workflow; naming it here suppresses it
+	// for THIS workflow only, without changing the account-wide configuration.
+	ExcludeChannels []string `json:"exclude_channels,omitempty"`
+
+	// BlockRecipients is a per-workflow email denylist, unioned with the
+	// account-wide GmailConfig.BlockedRecipients at send time. It can only block
+	// MORE addresses for this workflow, never unblock a globally-blocked one.
+	BlockRecipients []string `json:"block_recipients,omitempty"`
+}
+
+func (c *WorkflowNotificationConfig) EffectiveRunSummaryInstructions() string {
+	if c == nil {
+		return ""
+	}
+	if value := strings.TrimSpace(c.RunSummaryInstructions); value != "" {
+		return value
+	}
+	return strings.TrimSpace(c.Instructions)
+}
+
+func (c *WorkflowNotificationConfig) EffectivePulseSummaryInstructions() string {
+	if c == nil {
+		return ""
+	}
+	if value := strings.TrimSpace(c.PulseSummaryInstructions); value != "" {
+		return value
+	}
+	return strings.TrimSpace(c.Instructions)
 }
 
 // WorkflowExecutionDefaults stores toolbar-level defaults for workflow execution.

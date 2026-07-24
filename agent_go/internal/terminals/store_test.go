@@ -2205,6 +2205,9 @@ func TestStoreSyntheticTurnLifecycleReactivatesRetainedMainTerminal(t *testing.T
 	if completed.ProcessState != "live" || completed.SnapshotKind != "live" {
 		t.Fatalf("settled retained tmux must remain live, process=%q snapshot=%q", completed.ProcessState, completed.SnapshotKind)
 	}
+	if !store.SessionHasRetainedCodingTmux("session-1") {
+		t.Fatal("settled turn with a live tmux must remain available for follow-up")
+	}
 	if completed.ChunkIndex <= running.ChunkIndex {
 		t.Fatalf("completed transition did not advance revision: running=%d completed=%d", running.ChunkIndex, completed.ChunkIndex)
 	}
@@ -2575,6 +2578,37 @@ func TestSessionHasBusyCodingTmuxIgnoresCompletedTerminal(t *testing.T) {
 
 	if store.SessionHasBusyCodingTmux("session-1") {
 		t.Fatal("a COMPLETED coding tmux (stale busy content) must NOT be reported busy")
+	}
+}
+
+func TestSessionHasBusyCodingTmuxIgnoresHistoricalSpinnerBeforeSettledPrompt(t *testing.T) {
+	store := NewStore()
+	content := `Working (1m 36s • esc to interrupt)
+
+› Find and fix a bug in @filename
+
+No—137 of 143 USD rows are verified.
+
+─ Worked for 2m 13s ──────────────────────────────────────
+
+› Find and fix a bug in @filename`
+	store.HandleEvent("session-1", terminalEventWithMetadata(
+		"main:session-1",
+		content,
+		0,
+		map[string]interface{}{
+			"tmux_session":   "mlp-codex-cli-idle",
+			"execution_kind": "main_agent",
+			"provider":       "codex-cli",
+		},
+		time.Now(),
+	))
+
+	if store.SessionHasBusyCodingTmux("session-1") {
+		t.Fatal("a settled Codex prompt after an old spinner must be reported idle")
+	}
+	if !store.SessionHasRetainedCodingTmux("session-1") {
+		t.Fatal("the idle pane must remain retained for the next message")
 	}
 }
 

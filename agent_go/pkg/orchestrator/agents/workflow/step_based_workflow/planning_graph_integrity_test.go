@@ -47,6 +47,11 @@ func TestValidatePlanStructureReportsEveryDanglingReference(t *testing.T) {
 			IfYesNextStepID: "missing-c",
 			IfNoNextStepID:  "end",
 		},
+		&RegularPlanStep{
+			Type:             StepTypeRegular,
+			CommonStepFields: CommonStepFields{ID: "scripted"},
+			NextStepID:       "missing-d",
+		},
 	}}
 
 	err := ValidatePlanStructure(plan)
@@ -58,10 +63,11 @@ func TestValidatePlanStructureReportsEveryDanglingReference(t *testing.T) {
 		t.Fatalf("error type = %T, want *PlanValidationError", err)
 	}
 	for _, want := range []string{
-		"PLAN_GRAPH_INVALID: 3 next-step reference(s)",
+		"PLAN_GRAPH_INVALID: 4 next-step reference(s)",
 		`route "route-a".next_step_id in step "router" points to missing step "missing-a"`,
 		`route "route-b".next_step_id in step "router" points to missing step "missing-b"`,
 		`if_yes_next_step_id in step "approval" points to missing step "missing-c"`,
+		`next_step_id in step "scripted" points to missing step "missing-d"`,
 		"No changes were saved",
 	} {
 		if !strings.Contains(err.Error(), want) {

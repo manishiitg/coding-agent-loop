@@ -5,8 +5,8 @@ import (
 	"strings"
 	"testing"
 
-	loggerv2 "github.com/manishiitg/mcpagent/logger/v2"
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/orchestrator"
+	loggerv2 "github.com/manishiitg/mcpagent/logger/v2"
 )
 
 func newJumpTestOrchestrator(t *testing.T) *StepBasedWorkflowOrchestrator {
@@ -71,6 +71,52 @@ func TestNavigateToNextStepIDOutcomes(t *testing.T) {
 				t.Fatalf("i = %d after jump, want %d (target index - 1)", i, tc.wantIndex)
 			}
 		})
+	}
+}
+
+func TestNavigateAfterRegularStepChainsAndConverges(t *testing.T) {
+	hcpo := newJumpTestOrchestrator(t)
+	scriptA := regularStep("script-a")
+	scriptA.NextStepID = "script-b"
+	scriptB := regularStep("script-b")
+	scriptB.NextStepID = "shared"
+	siblingBranch := regularStep("sibling-branch")
+	shared := regularStep("shared")
+	steps := []PlanStepInterface{scriptA, scriptB, siblingBranch, shared}
+	progress := &StepProgress{}
+
+	i, startFrom := 0, 0
+	outcome, err := hcpo.navigateAfterRegularStep(context.Background(), scriptA, steps, progress, &i, &startFrom)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if outcome != "jump" || i != 0 {
+		t.Fatalf("script-a navigation = (%q, i=%d), want jump to script-b", outcome, i)
+	}
+
+	i = 1
+	outcome, err = hcpo.navigateAfterRegularStep(context.Background(), scriptB, steps, progress, &i, &startFrom)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if outcome != "jump" || i != 2 {
+		t.Fatalf("script-b navigation = (%q, i=%d), want shared target index minus one", outcome, i)
+	}
+	// The execution loop increments i after this result, landing on index 3 and
+	// skipping the sibling branch at index 2.
+
+	sequential := regularStep("sequential")
+	i = 0
+	outcome, err = hcpo.navigateAfterRegularStep(context.Background(), sequential, steps, progress, &i, &startFrom)
+	if err != nil || outcome != "none" || i != 0 {
+		t.Fatalf("omitted next_step_id must preserve sequential execution: outcome=%q i=%d err=%v", outcome, i, err)
+	}
+
+	terminal := regularStep("terminal")
+	terminal.NextStepID = "end"
+	outcome, err = hcpo.navigateAfterRegularStep(context.Background(), terminal, steps, progress, &i, &startFrom)
+	if err != nil || outcome != "end" {
+		t.Fatalf("end navigation = %q, err=%v", outcome, err)
 	}
 }
 

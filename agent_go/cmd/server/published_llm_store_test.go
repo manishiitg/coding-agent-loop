@@ -17,7 +17,7 @@ func TestAutoPublishedCodingAgentLLMsIncludeConcreteClaudeAndCodexModels(t *test
 		"auto:claude-code:claude-haiku-4-5-20251001:high",
 		"auto:claude-code:claude-haiku-4-5-20251001:max",
 		"auto:claude-code:claude-sonnet-5:high",
-		"auto:claude-code:claude-opus-4-8:max",
+		"auto:claude-code:claude-opus-5:max",
 		"auto:codex-cli:gpt-5.3-codex-spark:high",
 		"auto:codex-cli:gpt-5.4:high",
 		"auto:codex-cli:gpt-5.4:xhigh",
@@ -48,15 +48,15 @@ func TestAutoPublishedCodingAgentLLMsSkipSavedDuplicate(t *testing.T) {
 		ID:       "user-claude-opus-high",
 		Name:     "Custom Claude Opus High",
 		Provider: "claude-code",
-		ModelID:  "claude-opus-4-8",
+		ModelID:  "claude-opus-5",
 		Options:  map[string]interface{}{"reasoning_effort": "high"},
 	}}
 
 	llms := buildAutoPublishedCodingAgentLLMs(context.Background(), saved)
-	if containsPublishedLLMID(llms, "auto:claude-code:claude-opus-4-8:high") {
+	if containsPublishedLLMID(llms, "auto:claude-code:claude-opus-5:high") {
 		t.Fatalf("auto-published duplicate was generated despite saved override: %#v", publishedLLMIDs(llms))
 	}
-	if !containsPublishedLLMID(llms, "auto:claude-code:claude-opus-4-8:max") {
+	if !containsPublishedLLMID(llms, "auto:claude-code:claude-opus-5:max") {
 		t.Fatalf("non-duplicate effort should still be generated: %#v", publishedLLMIDs(llms))
 	}
 }

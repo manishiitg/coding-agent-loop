@@ -41,6 +41,16 @@ type WorkflowNotificationInfoResponse struct {
 	EffectiveState  string                                   `json:"effective_state"`
 	Destinations    []WorkflowNotificationDestinationInfo    `json:"destinations"`
 	AccountChannels []WorkflowNotificationAccountChannelInfo `json:"account_channels"`
+	// Per-workflow preferences from workflow.json notifications. ExcludeChannels
+	// lists inherited account-level channels this workflow opts out of;
+	// BlockRecipients is the workflow's own email denylist (added to the
+	// account-wide one). Both are display-only here — edits go through /notify.
+	RunSummaryInstructions   string   `json:"run_summary_instructions,omitempty"`
+	PulseSummaryInstructions string   `json:"pulse_summary_instructions,omitempty"`
+	RunSummaryChannels       []string `json:"run_summary_channels,omitempty"`
+	PulseSummaryChannels     []string `json:"pulse_summary_channels,omitempty"`
+	ExcludeChannels          []string `json:"exclude_channels,omitempty"`
+	BlockRecipients          []string `json:"block_recipients,omitempty"`
 }
 
 func resolveSlackNotificationState(id, label string, capabilities WorkflowCapabilities, secretValue string, secretResolved bool) WorkflowNotificationDestinationInfo {
@@ -62,16 +72,9 @@ func resolveSlackNotificationState(id, label string, capabilities WorkflowCapabi
 		return destination
 	}
 
-	selected := false
-	for _, name := range capabilities.SelectedSecrets {
-		if strings.TrimSpace(name) == secretName {
-			selected = true
-			break
-		}
-	}
-	if !selected || !secretResolved || strings.TrimSpace(secretValue) == "" {
+	if !secretResolved || strings.TrimSpace(secretValue) == "" {
 		destination.State = workflowNotificationStateMissingSecret
-		destination.Summary = "The selected encrypted secret is missing or detached."
+		destination.Summary = "The encrypted notification secret is missing."
 		return destination
 	}
 	if err := services.ValidateSlackIncomingWebhookURL(secretValue); err != nil {
@@ -164,14 +167,7 @@ func (api *StreamingAPI) handleGetWorkflowNotifications(w http.ResponseWriter, r
 	secretResolved := false
 	if secretName != "" {
 		userID := GetUserIDFromContext(r.Context())
-		resolved := api.loadSelectedSecrets(r.Context(), userID, workspacePath, []string{secretName})
-		for _, secret := range mergeGlobalSecrets(resolved, manifest.Capabilities.SelectedGlobalSecretNames) {
-			if secret.Name == secretName {
-				secretValue = secret.Value
-				secretResolved = true
-				break
-			}
-		}
+		secretValue, secretResolved = api.resolveBackendNotificationSecret(r.Context(), userID, workspacePath, secretName)
 	}
 	slack := resolveWorkflowSlackNotificationState(manifest, secretValue, secretResolved)
 	accountChannels := notificationAccountChannels(r.Context())
@@ -184,6 +180,14 @@ func (api *StreamingAPI) handleGetWorkflowNotifications(w http.ResponseWriter, r
 		EffectiveState:  effectiveNotificationState(slack, accountChannels),
 		Destinations:    []WorkflowNotificationDestinationInfo{slack},
 		AccountChannels: accountChannels,
+	}
+	if manifest.Capabilities.Notifications != nil {
+		response.RunSummaryInstructions = manifest.Capabilities.Notifications.EffectiveRunSummaryInstructions()
+		response.PulseSummaryInstructions = manifest.Capabilities.Notifications.EffectivePulseSummaryInstructions()
+		response.RunSummaryChannels = manifest.Capabilities.Notifications.RunSummaryChannels
+		response.PulseSummaryChannels = manifest.Capabilities.Notifications.PulseSummaryChannels
+		response.ExcludeChannels = manifest.Capabilities.Notifications.ExcludeChannels
+		response.BlockRecipients = manifest.Capabilities.Notifications.BlockRecipients
 	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(response)

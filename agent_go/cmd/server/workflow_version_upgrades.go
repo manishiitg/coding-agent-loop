@@ -258,14 +258,87 @@ Goal: bring every workflow onto the current human-readable, responsive Pulse his
    - keep Kind/Search/Reset filtering when present, but no date picker.
 4. Attribute every dated recent-run row and timeline card with data-date, data-kind, data-pulse-section, and one canonical data-module:
    - Signals / Kizuki: bug_review, artifact_review, learning_health, knowledgebase_health, db_health, eval_health, report_health, cost_llm_time, or llm_ops_review. These cards state evidence-backed reviewer findings, not fixes;
-   - Reflection / Hansei: run_summary and historical question/answer outcomes. Preserve the actual question, selected option and/or free-form answer, outcome, and evidence. Current unanswered requests remain in report_human_inputs and must not be duplicated as hand-authored HTML cards;
-   - Improvements / Kaizen: pulse_fixer for verified bounded repairs and goal_advisor for proposals, approved decisions, experiments, and measured outcomes. Link improvements back to the Signal evidence they address.
+   - Reflection / Hansei: run_summary and general Pulse/run question-and-answer outcomes. Preserve the actual question, selected option and/or free-form answer, outcome, and evidence. Current unanswered requests remain in report_human_inputs and must not be duplicated as hand-authored HTML cards;
+   - Improvements / Kaizen: pulse_fixer for verified bounded repairs and goal_advisor for proposals, approved decisions, experiments, measured outcomes, and questions or answers asked by Goal Advisor. Link improvements back to the Signal evidence they address.
+   - Keep every historical question and answer with who asked it: Goal Advisor -> improvements/goal_advisor; a known reviewer -> signals/<reviewer module>; a general Pulse/run question -> reflection/run_summary. Reclassify old reflection/goal_advisor answer cards into improvements/goal_advisor.
    When an old card cannot be attributed to a specific reviewer from real evidence, classify it as run_summary / reflection. Never guess a reviewer and never collapse several module results into one mixed card.
 5. Keep one concise v1.0.11 migration entry under Improvements / pulse_fixer that records the report-shell migration and confirms that historical evidence was preserved. Do not expose secrets.
 6. Validate the final HTML structurally: one schema-2 root, one newest-first anchor, no duplicated Goal card, no date picker, no active hand-authored pending-question card, required metadata on dated records, responsive wrapping, and a single #pulse-agent-handoff block.
 7. Do not edit workflow.json. After this turn, the scheduler independently verifies the schema marker, responsive shell, newest-first anchor, dated-record metadata, migration entry, absence of a date picker, and the single handoff block. It stamps version "1.0.11" through its trusted manifest writer only when those checks pass. Do not change schema_version, alter the plan or schedules, process pending human answers, notify the user, publish, or make unrelated workflow changes in this step.
 
 Report whether builder/improve.html was created or upgraded, how many historical records were preserved and attributed, any records retained as run_summary because their origin was unknown, validation results, and blockers, then stop.`,
+	},
+	{
+		from:  "1.0.11",
+		to:    workflowContractNotificationConfigVersion,
+		label: "upgrade-1.0.12",
+		query: `WORKFLOW VERSION UPGRADE v1.0.11 -> v1.0.12.
+
+This is a product-managed preflight. Do ONLY this notification-config migration, then stop and wait for the next preflight turn or the scheduled workflow message.
+
+Goal: per-workflow notification preferences now live in structured workflow.json "notifications", NOT in soul/soul.md. The backend reads workflow.json.notifications and applies it to every notify_user send automatically. Move any existing soul.md notification preference into workflow.json and remove it from soul.md, without changing account-wide (global) notification settings.
+
+The workflow.json "notifications" object supports:
+  - "slack_webhook_secret_name": existing field, a workflow-scoped Slack Incoming Webhook secret reference (leave any existing value untouched);
+  - "exclude_channels": array of account-level channel names ("gmail", "slack", "whatsapp") this workflow opts OUT of. An account-level channel enabled globally is otherwise inherited by every workflow;
+  - "block_recipients": array of email addresses this workflow must never email, unioned with the account-wide denylist (block-only; never unblocks a globally-blocked address).
+
+1. Read workflow.json and soul/soul.md. If soul/soul.md has no "## Notifications" section AND workflow.json needs no change, this is a no-op migration — skip to step 4 (version bump only).
+2. If soul/soul.md has a "## Notifications" section, translate ONLY explicit, user-approved preferences into workflow.json "notifications":
+   - "do not email" / "no email" / "disable email for this workflow" -> add "gmail" to exclude_channels;
+   - "no Slack" / "no WhatsApp" for this workflow -> add that channel to exclude_channels;
+   - "never email X" / "do not email address X" -> add X to block_recipients.
+   Preserve any existing notifications.slack_webhook_secret_name and any exclude_channels/block_recipients already present (union, de-duplicated). Do NOT invent preferences, recipients, or channels that are not explicitly stated. Do NOT copy account-wide Gmail enablement, default recipient, or the global disallowed-recipients list into workflow.json — those stay account-level.
+3. Update soul/soul.md: remove the "## Notifications" section. If it also held a genuinely user-approved, non-channel/non-recipient constraint that has no structured home (e.g. an explicit cadence rule the user approved), move that single sentence into the "## Constraints" section rather than losing it; otherwise just delete the heading and its body. Keep ## Objective, ## Success Criteria, and ## Constraints. soul.md stays Markdown.
+4. Update workflow.json "version" to "1.0.12". Do not change schema_version. Do not run the workflow, alter schedules, notify the user, publish, or make unrelated changes in this step.
+
+Report which notification preferences were migrated into workflow.json.notifications (or that there were none), what was removed from soul.md, and any preference you could not map (left for the user), then stop.`,
+	},
+	{
+		from:  workflowContractNotificationConfigVersion,
+		to:    workflowContractHumanInputOwnershipVersion,
+		label: "upgrade-1.0.13",
+		query: `WORKFLOW VERSION UPGRADE v1.0.12 -> v1.0.13.
+
+This is a product-managed Pulse history preflight. Do ONLY this question-ownership and human-readable-history migration, then stop and wait for the next preflight turn or scheduled message. Do not run the workflow.
+
+Goal: historical questions and answers in builder/improve.html must remain under the component that asked them instead of all appearing in Reflection, and backend identifiers must not leak into the human-facing Pulse report.
+
+1. Read workflow.json and builder/improve.html. If builder/improve.html exists, call get_reference_doc(kind="review-improve-log") for the current attribution contract.
+2. Inspect historical question/answer cards (for example data-kind="input" or cards with data-question-id). Preserve their visible question, selected option/free-form answer, outcome, date, and status. Reclassify only when the asker is supported by real card or question evidence:
+   - Goal Advisor -> data-pulse-section="improvements", data-module="goal_advisor";
+   - a known Pulse reviewer -> data-pulse-section="signals", data-module="<that canonical reviewer module>";
+   - a general Pulse/run question, or an old card whose asker cannot be proven -> data-pulse-section="reflection", data-module="run_summary".
+3. Remove raw scheduler, session, execution, reviewer-task, review-run, and Pulse run identifiers from visible HTML text, including the visible Agent log. Replace them with a date/time or a short plain-language label where context is needed. Keep identifiers only in existing data-* attributes when required for internal matching; do not remove those attributes or change their values.
+4. Do not duplicate currently unanswered report_human_inputs in HTML. Do not rewrite CSS, redesign cards, reorder the timeline, alter findings/decisions, or change workflow behavior.
+5. Confirm every changed historical question/answer card has data-date, data-kind, data-pulse-section, data-module, and keeps its existing question id when present.
+6. Update workflow.json "version" to "1.0.13". Do not change schema_version, plan, steps, schedules, notification settings, publishing, or any unrelated file.
+
+Report how many cards were moved to Improvements, Signals, or retained in Reflection because the asker was unknown, and how many visible internal identifiers were removed, then stop.`,
+	},
+	{
+		from:  workflowContractHumanInputOwnershipVersion,
+		to:    workflowContractHumanReadablePulseStateVersion,
+		label: "upgrade-1.0.14",
+		query: `WORKFLOW VERSION UPGRADE v1.0.13 -> v1.0.14.
+
+This is a product-managed Pulse readability preflight. Do ONLY this visible-state-language migration, then stop and wait for the next preflight turn or scheduled message. Do not run the workflow.
+
+Goal: builder/improve.html remains a human-readable decision and outcome history. Technical proof stays in separate reviewer result files and SQLite Pulse state; every visible Pulse label and sentence uses plain English.
+
+1. Read workflow.json and builder/improve.html. If builder/improve.html does not exist, skip the HTML edit and continue to the version update.
+2. Inspect visible text in builder/improve.html, including badges, titles, summaries, next-action text, questions/answers, and any old visible Agent log. Replace these internal states with the exact human text:
+   - no_terminal_packet -> The review did not finish.
+   - retry_due -> Pulse will retry.
+   - approved_awaiting_evidence -> Approved; waiting to confirm results.
+3. Apply the same plain-language rule to obvious visible variants of those values, such as underscore-free or title-cased labels, without changing their meaning. Do not rewrite unrelated findings or redesign, reorder, or delete timeline cards.
+4. Remove visible Evidence, Manifest, Finding ID, Files touched, raw path, run/session id, hash, packet, schema/table, and recovery-ledger text from every card. Preserve the human meaning as Why this matters, What changed, How we will confirm, Risk, or Next when useful. Do not remove a real finding, decision, answer, outcome, or metric.
+5. Replace the visible Agent log/details control with one #pulse-agent-handoff element carrying the hidden attribute. Keep only minimal current interrupted-fix recovery metadata there; reviewer proof remains in reviewer result files and scheduler/module state remains in SQLite. Preserve required matching data-* attributes.
+6. Rewrite dense visible cards into at most 70 words using: What happened, optional Why it matters, and Next. Use only Checked, Needs attention, Fixed, Waiting to confirm, Blocked, Review incomplete, Skipped, or User decision as visible statuses. Preserve the original human finding, decision, answer, outcome, and meaningful metric.
+7. Consolidate repeated unresolved cards only when they have the same data-module and the same underlying human reason. Keep the newest card in the active timeline, update its latest date and data-repeat-count, and move older duplicates to the existing monthly archive. Never combine different modules, different reasons, user decisions, or experiment outcomes.
+8. Confirm none of the three raw state codes or technical field labels remains in visible text. Update workflow.json "version" to "1.0.14". Do not change schema_version, plans, steps, schedules, notifications, publishing, or any unrelated file.
+
+Report how many visible labels or sentences were translated, how many technical evidence fields were removed, how many repeated cards were consolidated or archived, whether the hidden recovery marker and required matching attributes were preserved, and any blocker, then stop.`,
 	},
 }
 

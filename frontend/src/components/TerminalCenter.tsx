@@ -10,6 +10,7 @@ import type { PollingEvent, RuntimeSnapshot, TerminalSnapshot } from '../service
 import { useGlobalPresetStore } from '../stores/useGlobalPresetStore'
 import { normalizeEventViewMode, useChatStore } from '../stores/useChatStore'
 import { useWorkflowStore } from '../stores/useWorkflowStore'
+import { useAppStore } from '../stores/useAppStore'
 import { TERMINAL_REFRESH_REQUEST_EVENT } from '../utils/terminalRefresh'
 import { GEOMETRY_RECONNECT_AFTER_CLOSE, planGeometryChange, planLiveAttachClose, terminalGridNeedsReconnect, terminalReconnectDelayMs, terminalSnapshotCanReconnect, type GeometryChangeStep } from '../utils/terminalReconnect'
 import { terminalPayloadHasVisibleContent } from '../utils/terminalVisibleContent'
@@ -29,6 +30,9 @@ import {
 import { MarkdownRenderer } from './ui/MarkdownRenderer'
 import { Tooltip, TooltipContent, TooltipTrigger } from './ui/tooltip'
 import { runtimeDisplayStatus } from '../utils/runtimeActivity'
+import { usePlanData } from './workflow/hooks/usePlanData'
+import type { PlanStep } from '../utils/stepConfigMatching'
+import { requestWorkflowPlanStepFocus } from '../utils/workflowPlanFocus'
 
 // Module-level ansi_up singleton for synthetic/structured terminal rows.
 // Real tmux panes render raw ANSI through xterm.js.
@@ -598,6 +602,15 @@ function scrollXtermFromWheel(
   event: WheelEvent,
   onViewportStickChange?: (isNearBottom: boolean) => void,
 ) {
+  const buffer = term.buffer.active
+  const wantsUp = event.deltaY < 0
+  const wantsDown = event.deltaY > 0
+  const canScrollUp = buffer.viewportY > 0
+  const canScrollDown = buffer.viewportY < buffer.baseY
+  if ((wantsUp && !canScrollUp) || (wantsDown && !canScrollDown) || (!wantsUp && !wantsDown)) {
+    onViewportStickChange?.(buffer.baseY - buffer.viewportY <= 1)
+    return
+  }
   const row = term.element?.querySelector('.xterm-rows > div') as HTMLElement | null
   const lineHeightPx = row?.getBoundingClientRect().height || RAW_XTERM_FONT_SIZE
   const rawLines = event.deltaMode === 1
@@ -815,27 +828,6 @@ function formatCost(cost: number): string {
   return '0'
 }
 
-function formatTerminalModelLabel(terminal: TerminalSnapshot): string {
-  const lines = stripAnsi(terminal.content || '')
-    .split(/\r?\n/)
-    .slice(0, 30)
-    .map(line => line.replace(/\s+/g, ' ').trim())
-    .filter(Boolean)
-
-  for (const line of lines) {
-    const explicit = line.match(/\bmodel:\s*([^·|]+?)(?:\s+\/model\b|\s*[·|]|$)/i)
-    if (explicit?.[1]) return explicit[1].trim()
-
-    const assignment = line.match(/\bmodel=([^\s·|]+)/i)
-    if (assignment?.[1]) return assignment[1].trim()
-
-    const claude = line.match(/\bClaude Code\s+v[\w.-]+.*?\s([A-Za-z]+(?:\s+\d+(?:\.\d+)?){1,2}(?:\s+with\s+[^·|]+)?)(?:\s+·\s+Claude Max|\s*[·|]|$)/i)
-    if (claude?.[1]) return claude[1].trim()
-  }
-
-  return ''
-}
-
 function stepTypeLabel(stepType?: string): string {
   const type = (stepType || '').trim()
   return type ? `${humanizeIdentifier(type)} step` : ''
@@ -845,47 +837,34 @@ function terminalStepTypeLabel(terminal: TerminalSnapshot): string {
   return stepTypeLabel(terminal.step_type)
 }
 
-function displayMetaWithoutStepType(terminal: TerminalSnapshot): string {
-  const meta = terminal.display_meta || ''
-  const stepType = (terminal.step_type || '').trim()
-  if (!meta || !stepType) return meta
-  const stepTypeLabel = humanizeIdentifier(stepType)
-  return meta
-    .split('·')
-    .map(part => part.trim())
-    .filter(part => part && part !== stepTypeLabel)
-    .join(' · ')
-}
-
-function formatTerminalMeta(terminal: TerminalSnapshot): string {
-  const chip = formatTransportChip(terminal)
-  const modelLabel = formatTerminalModelLabel(terminal)
-  const stepTypeLabel = terminalStepTypeLabel(terminal)
-  const parts: string[] = [
-    isArchivedTurnTerminal(terminal) ? 'Previous turn' : '',
-    chip,
-    stepTypeLabel,
-    modelLabel,
-  ]
-  if (terminal.step_attempt && terminal.step_attempt > 1) {
-    parts.push(`attempt ${terminal.step_attempt}`)
-  }
-  if (terminal.step_execution_mode) {
-    parts.push(formatStepExecutionModeChip(terminal.step_execution_mode))
-  }
-  const displayMeta = displayMetaWithoutStepType(terminal)
-  if (displayMeta) parts.push(displayMeta)
-  return [...new Set(parts.filter(Boolean))].join(' · ')
-}
-
-function formatStepExecutionModeChip(mode?: string): string {
-  const normalized = (mode || '').toLowerCase().trim()
-  if (normalized === 'learn_code') return 'Api'
-  return humanizeIdentifier(mode)
-}
-
 function formatSelectedTerminalMeta(terminal: TerminalSnapshot): string {
-  return [formatTerminalMeta(terminal), formatUpdatedAge(terminal)].filter(Boolean).join(' · ')
+  // The selected pane already exposes provider/model/transport and execution
+  // details in its status area. Keep this header to the minimum orientation
+  // context: the title is rendered separately, followed by type and freshness.
+  return [terminalStepTypeLabel(terminal), formatUpdatedAge(terminal)].filter(Boolean).join(' · ')
+}
+
+function findPlanStepByID(steps: PlanStep[] | undefined, stepID: string): PlanStep | null {
+  if (!steps?.length || !stepID) return null
+
+  const pending = [...steps]
+  const visited = new Set<PlanStep>()
+  while (pending.length > 0) {
+    const step = pending.shift()
+    if (!step || visited.has(step)) continue
+    visited.add(step)
+
+    if (step.id === stepID) return step
+    if (step.type !== 'todo_task') continue
+
+    if (step.todo_task_step) pending.push(step.todo_task_step)
+    for (const route of step.predefined_routes || []) {
+      if (route.route_id === stepID && route.sub_agent_step) return route.sub_agent_step
+      if (route.sub_agent_step) pending.push(route.sub_agent_step)
+    }
+  }
+
+  return null
 }
 
 function terminalPreValidationSummary(terminal: TerminalSnapshot): string {
@@ -3045,6 +3024,7 @@ const TerminalCenterInner: React.FC<TerminalCenterProps> = ({ currentSessionId, 
     return normalizeEventViewMode(tab?.viewMode ?? state.eventViewModePreference)
   })
   const terminalWorkflowPathFilter = isWorkflowTerminalContext ? activeWorkflowPath : null
+  const { plan: terminalWorkflowPlan } = usePlanData(terminalWorkflowPathFilter)
 
   const sessionEvents = useChatStore(state => (
     currentSessionId ? state.tabEvents[currentSessionId] : undefined
@@ -3612,6 +3592,31 @@ const TerminalCenterInner: React.FC<TerminalCenterProps> = ({ currentSessionId, 
     }
     return selectedTerminal
   }, [selectedTerminal, selectedTerminalDetailCacheKey, selectedTerminalKey, terminalDetailCache])
+  const selectedPlanStep = useMemo(() => {
+    const stepID = selectedTerminalView?.step_id?.trim()
+    if (!stepID || !terminalWorkflowPlan) return null
+    return findPlanStepByID(
+      [...terminalWorkflowPlan.steps, ...(terminalWorkflowPlan.orphan_steps || [])],
+      stepID,
+    )
+  }, [selectedTerminalView?.step_id, terminalWorkflowPlan])
+  const showSelectedPlanStep = useCallback(() => {
+    if (!selectedPlanStep) return
+
+    // Match the existing Plan toolbar behavior before asking the mounted canvas
+    // to reveal the node and its read-only detail sidebar.
+    useAppStore.getState().setWorkspaceMinimized(true)
+    const workflowStore = useWorkflowStore.getState()
+    workflowStore.setShowWorkspacePane(true)
+    workflowStore.setWorkflowWorkspaceView('flow')
+    workflowStore.setCanvasViewMode('flow')
+    workflowStore.setFocusedPane('preview')
+    requestWorkflowPlanStepFocus({
+      stepId: selectedPlanStep.id,
+      workspacePath: terminalWorkflowPathFilter,
+    })
+  }, [selectedPlanStep, terminalWorkflowPathFilter])
+
   const priorArchivedTurns = useMemo(
     () => (selectedTerminalView ? findPriorArchivedTurns(selectedTerminalView, terminals) : []),
     [selectedTerminalView, terminals],
@@ -4490,6 +4495,24 @@ const TerminalCenterInner: React.FC<TerminalCenterProps> = ({ currentSessionId, 
                       {isArchivedTurnTerminal(selectedTerminalView) && (
                         <TerminalArchivedTurnIcon />
                       )}
+                      <span
+                        className="max-w-[38%] shrink-0 truncate font-medium text-neutral-200"
+                        title={formatTerminalTitle(selectedTerminalView)}
+                      >
+                        {formatTerminalTitle(selectedTerminalView)}
+                      </span>
+                      {selectedPlanStep && (
+                        <button
+                          type="button"
+                          onClick={showSelectedPlanStep}
+                          className="inline-flex shrink-0 items-center justify-center rounded p-0.5 text-neutral-500 hover:bg-neutral-800/80 hover:text-neutral-100"
+                          title="Show step in plan"
+                          aria-label={`Show ${formatTerminalTitle(selectedTerminalView)} in plan`}
+                        >
+                          <Info className="h-3.5 w-3.5" />
+                        </button>
+                      )}
+                      <span className="shrink-0 opacity-35" aria-hidden="true">·</span>
                       <span className="min-w-0 flex-1 truncate opacity-80">
                         {formatSelectedTerminalMeta(selectedTerminalView)}
                       </span>

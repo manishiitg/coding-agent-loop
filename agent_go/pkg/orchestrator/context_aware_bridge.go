@@ -832,20 +832,31 @@ func (c *ContextAwareEventBridge) HandleEvent(ctx context.Context, event *events
 				}
 			} else {
 				// Step-based agent: persist to iteration folder (existing behavior)
-				var stepTokenData *StepTokenData
-				if currentPhase != "" {
-					stepTokenData = &StepTokenData{
-						Phase:            currentPhase,
-						Step:             currentStep,
-						StepID:           currentStepID,                   // Use step ID instead of index
-						InputTokens:      tokenEvent.PromptTokens,         // input tokens
-						OutputTokens:     tokenEvent.CompletionTokens,     // output tokens
-						CacheTokens:      cacheTokensSeparate.Total,       // total cache (backward compat)
-						CacheReadTokens:  cacheTokensSeparate.ReadTokens,  // cache reads (discounted)
-						CacheWriteTokens: cacheTokensSeparate.WriteTokens, // cache writes (premium 1.25x)
-						ReasoningTokens:  tokenEvent.ReasoningTokens,
-						LLMCallCount:     llmCallCount, // Extract actual call count from event
+				// A run-level coordinator also emits token usage, but it has no
+				// current plan step. Persist it under an explicit attribution key
+				// instead of leaving by_step_and_model empty; an empty map made the
+				// cost UI misleadingly present these calls as the run folder itself.
+				attributedPhase := currentPhase
+				attributedStepID := currentStepID
+				if strings.TrimSpace(attributedPhase) == "" {
+					if strings.TrimSpace(attributedStepID) != "" {
+						attributedPhase = "execution_only"
+					} else {
+						attributedPhase = "workflow_orchestrator"
+						attributedStepID = "workflow_orchestrator"
 					}
+				}
+				stepTokenData := &StepTokenData{
+					Phase:            attributedPhase,
+					Step:             currentStep,
+					StepID:           attributedStepID,                // Use step ID instead of index
+					InputTokens:      tokenEvent.PromptTokens,         // input tokens
+					OutputTokens:     tokenEvent.CompletionTokens,     // output tokens
+					CacheTokens:      cacheTokensSeparate.Total,       // total cache (backward compat)
+					CacheReadTokens:  cacheTokensSeparate.ReadTokens,  // cache reads (discounted)
+					CacheWriteTokens: cacheTokensSeparate.WriteTokens, // cache writes (premium 1.25x)
+					ReasoningTokens:  tokenEvent.ReasoningTokens,
+					LLMCallCount:     llmCallCount, // Extract actual call count from event
 				}
 
 				// Persist token usage directly to file (real-time persistence, no accumulation)

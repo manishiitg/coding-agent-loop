@@ -19,6 +19,7 @@ func resetCDPRegistryForTest(t *testing.T) {
 	cdpActiveTabs = make(map[int]string)
 	cdpTabAliases = make(map[string]string)
 	cdpOwnedTabs = make(map[string]cdpOwnedTab)
+	cdpRecordingTabs = make(map[string]cdpRecordingHandoff)
 	cdpTabSelectionsMu.Unlock()
 	t.Cleanup(func() {
 		resetCDPTabCleanupForTest()
@@ -31,6 +32,7 @@ func resetCDPRegistryForTest(t *testing.T) {
 		cdpActiveTabs = make(map[int]string)
 		cdpTabAliases = make(map[string]string)
 		cdpOwnedTabs = make(map[string]cdpOwnedTab)
+		cdpRecordingTabs = make(map[string]cdpRecordingHandoff)
 		cdpTabSelectionsMu.Unlock()
 	})
 }

@@ -69,10 +69,10 @@ func TestManagedCDPMultiWorkflowRealE2E(t *testing.T) {
 		owner := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/"), "/")
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		_, _ = fmt.Fprintf(w, `<!doctype html>
-<title>%s</title><h1 id=marker>%s</h1>
+<title>%s</title><style>body{background:rgb(16,16,16);color:white}</style><h1 id=marker>%s</h1>
 <input id=upload type=file>
 <output id=upload-name></output><output id=upload-body></output>
-<button id=animate onclick="this.textContent='clicked'; document.body.dataset.clicked='yes'">Animate</button>
+<button id=animate onclick="this.textContent='clicked'; document.body.dataset.clicked='yes'; document.body.style.background='rgb(0,220,0)'">Animate</button>
 <a id=download href="/download-file?owner=%s" download>Download</a>
 <script>
 document.querySelector('#upload').addEventListener('change', async (event) => {
@@ -344,7 +344,21 @@ document.querySelector('#upload').addEventListener('change', async (event) => {
 	// B may continue normal browser work, but it cannot start or stop workflow A's
 	// recording. Once A stops, B can record and publish its own WebM.
 	recordingA := "evidence/workflow-a.webm"
-	managed("record", "tab", workflowTabID, "start", recordingA)
+	startA := managed("record", "tab", workflowTabID, "start", recordingA)
+	if !strings.Contains(startA, "AGENTWORKS_RECORDING_CONTEXT") {
+		t.Fatalf("workflow A record start omitted context handoff: %q", startA)
+	}
+	recordingHandoffA, ok := getCDPRecordingHandoff(port, owner)
+	if !ok || recordingHandoffA.RecordingTab == "" || recordingHandoffA.RecordingTab == workflowTabID {
+		t.Fatalf("workflow A did not register a distinct temporary recording tab: %#v, %v", recordingHandoffA, ok)
+	}
+	if tabs := list(); !browserE2EHasTab(tabs, recordingHandoffA.RecordingTab) {
+		t.Fatalf("workflow A temporary recording tab %s was not visible after start: %#v", recordingHandoffA.RecordingTab, tabs)
+	}
+	if _, err := managedCall(ctx, "click", "tab", workflowTabID, "#animate"); err == nil || !strings.Contains(err.Error(), "RECORDING_CONTEXT_CHANGED") {
+		t.Fatalf("workflow A could interact before snapshotting fresh recording context: %v", err)
+	}
+	managed("snapshot", "tab", workflowTabID, "-i")
 	if _, err := managedCall(ctxB, "record", "tab", workflowBTabID, "start", "workflow-b/evidence/blocked.webm"); err == nil || !strings.Contains(err.Error(), "another workflow") {
 		t.Fatalf("workflow B recording was not blocked while A owned capture: %v", err)
 	}
@@ -355,16 +369,38 @@ document.querySelector('#upload').addEventListener('change', async (event) => {
 		t.Fatalf("workflow B normal command failed during workflow A recording: %q", output)
 	}
 	managed("click", "tab", workflowTabID, "#animate")
+	if output := managed("eval", "tab", workflowTabID, `document.body.dataset.clicked || ""`); !strings.Contains(output, "yes") {
+		t.Fatalf("workflow A action was not routed to its recording context: %q", output)
+	}
 	time.Sleep(750 * time.Millisecond)
-	managed("record", "tab", workflowTabID, "stop")
+	stopA := managed("record", "tab", workflowTabID, "stop")
+	if !strings.Contains(stopA, "original tab") || !strings.Contains(stopA, "restored") {
+		t.Fatalf("workflow A record stop omitted restoration: %q", stopA)
+	}
+	if tabs := list(); browserE2EHasTab(tabs, recordingHandoffA.RecordingTab) {
+		t.Fatalf("workflow A temporary recording tab %s remained open after stop: %#v", recordingHandoffA.RecordingTab, tabs)
+	}
 	browserE2EAssertFile(t, filepath.Join(workspaceDir, recordingA), []byte("\x1a\x45\xdf\xa3"), 100)
+	browserE2EAssertVideoContainsGreenFrame(t, filepath.Join(workspaceDir, recordingA))
+	if output := managed("eval", "tab", workflowTabID, `document.body.dataset.clicked || ""`); strings.Contains(output, "yes") {
+		t.Fatalf("workflow A original tab was mutated instead of isolated recording context: %q", output)
+	}
 
 	recordingB := "workflow-b/evidence/workflow-b.webm"
 	managedB("record", "tab", workflowBTabID, "start", recordingB)
+	recordingHandoffB, ok := getCDPRecordingHandoff(port, ownerB)
+	if !ok || recordingHandoffB.RecordingTab == "" || recordingHandoffB.RecordingTab == workflowBTabID {
+		t.Fatalf("workflow B did not register a distinct temporary recording tab: %#v, %v", recordingHandoffB, ok)
+	}
+	managedB("snapshot", "tab", workflowBTabID, "-i")
 	managedB("click", "tab", workflowBTabID, "#animate")
 	time.Sleep(750 * time.Millisecond)
 	managedB("record", "tab", workflowBTabID, "stop")
+	if tabs := list(); browserE2EHasTab(tabs, recordingHandoffB.RecordingTab) {
+		t.Fatalf("workflow B temporary recording tab %s remained open after stop: %#v", recordingHandoffB.RecordingTab, tabs)
+	}
 	browserE2EAssertFile(t, filepath.Join(workspaceDir, recordingB), []byte("\x1a\x45\xdf\xa3"), 100)
+	browserE2EAssertVideoContainsGreenFrame(t, filepath.Join(workspaceDir, recordingB))
 
 	// Replace the normal one-hour timers with short E2E timers. Cleaning workflow
 	// A must leave workflow B and the pre-existing user tab intact; cleaning B
@@ -431,6 +467,38 @@ func browserE2EAssertFile(t *testing.T, path string, prefix []byte, minimumSize 
 	}
 	if !bytes.HasPrefix(data, prefix) {
 		t.Fatalf("browser artifact %s prefix = %x, want %x", path, data[:min(len(data), len(prefix))], prefix)
+	}
+}
+
+// browserE2EAssertVideoContainsGreenFrame proves that the interaction reached
+// the page being recorded. A valid WebM header alone is insufficient: the
+// historical regression produced a playable video of an idle fresh context
+// while actions continued in the original tab.
+func browserE2EAssertVideoContainsGreenFrame(t *testing.T, path string) {
+	t.Helper()
+	ffmpeg, err := exec.LookPath("ffmpeg")
+	if err != nil {
+		t.Fatalf("live recording contract requires ffmpeg to inspect captured frames: %v", err)
+	}
+	cmd := exec.Command(ffmpeg,
+		"-v", "error",
+		"-sseof", "-0.1",
+		"-i", path,
+		"-vf", "scale=1:1",
+		"-frames:v", "1",
+		"-f", "rawvideo",
+		"-pix_fmt", "rgb24",
+		"pipe:1",
+	)
+	pixel, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("decode final recording frame %s: %v", path, err)
+	}
+	if len(pixel) < 3 {
+		t.Fatalf("decoded recording frame %s has %d bytes, want RGB pixel", path, len(pixel))
+	}
+	if pixel[1] < 120 || int(pixel[1]) < int(pixel[0])+50 || int(pixel[1]) < int(pixel[2])+50 {
+		t.Fatalf("recording %s final average pixel = rgb(%d,%d,%d), want visibly green interaction frame", path, pixel[0], pixel[1], pixel[2])
 	}
 }
 

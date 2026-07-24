@@ -71,6 +71,21 @@ const pulseModuleStateSchema = `CREATE TABLE IF NOT EXISTS pulse_module_state (
 	PRIMARY KEY (workspace_path, module)
 )`
 
+const pulseModuleAuditSchema = `CREATE TABLE IF NOT EXISTS pulse_module_audit (
+	workspace_path TEXT NOT NULL,
+	module TEXT NOT NULL,
+	pulse_run_id TEXT NOT NULL,
+	result TEXT NOT NULL,
+	reason TEXT NOT NULL,
+	evidence_json TEXT NOT NULL DEFAULT '[]',
+	changed_files_json TEXT NOT NULL DEFAULT '[]',
+	verification_json TEXT NOT NULL DEFAULT '[]',
+	before_refs_json TEXT NOT NULL DEFAULT '[]',
+	after_refs_json TEXT NOT NULL DEFAULT '[]',
+	recorded_at TEXT NOT NULL,
+	PRIMARY KEY (workspace_path, module, pulse_run_id)
+)`
+
 type PulseModuleState struct {
 	WorkspacePath       string   `json:"workspace_path"`
 	Module              string   `json:"module"`
@@ -99,12 +114,34 @@ type PulseWorklistDecision struct {
 	CooldownRuns        int      `json:"cooldown_runs"`
 }
 
+type PulseModuleAudit struct {
+	WorkspacePath string   `json:"workspace_path"`
+	Module        string   `json:"module"`
+	PulseRunID    string   `json:"pulse_run_id"`
+	Result        string   `json:"result"`
+	Reason        string   `json:"reason"`
+	Evidence      []string `json:"evidence,omitempty"`
+	ChangedFiles  []string `json:"changed_files,omitempty"`
+	Verification  []string `json:"verification,omitempty"`
+	BeforeRefs    []string `json:"before_refs,omitempty"`
+	AfterRefs     []string `json:"after_refs,omitempty"`
+	RecordedAt    string   `json:"recorded_at"`
+}
+
+type PulseModuleAuditInput struct {
+	ChangedFiles []string
+	Verification []string
+	BeforeRefs   []string
+	AfterRefs    []string
+}
+
 func ensurePulseModuleStateSchema(ctx context.Context, db *sql.DB) error {
 	if err := migratePulseModuleStateSchema(ctx, db); err != nil {
 		return err
 	}
 	stmts := []string{
 		pulseModuleStateSchema,
+		pulseModuleAuditSchema,
 		pulseFinalCommandStateSchema,
 	}
 	for _, stmt := range stmts {
@@ -117,6 +154,7 @@ func ensurePulseModuleStateSchema(ctx context.Context, db *sql.DB) error {
 	}
 	stmts = []string{
 		`CREATE INDEX IF NOT EXISTS idx_pulse_module_state_run ON pulse_module_state(last_pulse_run_id, last_decision)`,
+		`CREATE INDEX IF NOT EXISTS idx_pulse_module_audit_recorded ON pulse_module_audit(workspace_path, recorded_at DESC)`,
 	}
 	for _, stmt := range stmts {
 		if _, err := db.ExecContext(ctx, stmt); err != nil {
@@ -509,7 +547,12 @@ func markPulseModuleResult(ctx context.Context, workspacePath, module, pulseRunI
 	now := time.Now().UTC().Format(time.RFC3339)
 	evidence = normalizePulseEvidence(evidence)
 	evidenceJSON, _ := json.Marshal(evidence)
-	_, err = db.ExecContext(ctx, `INSERT INTO pulse_module_state (
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+	_, err = tx.ExecContext(ctx, `INSERT INTO pulse_module_state (
 			module, workspace_path, last_pulse_run_id, last_checked_at, last_ran_at,
 			last_result, last_result_reason, evidence_json, updated_at
 		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -525,6 +568,12 @@ func markPulseModuleResult(ctx context.Context, workspacePath, module, pulseRunI
 	if err != nil {
 		return nil, err
 	}
+	if err := recordPulseModuleAudit(ctx, tx, normalized, module, pulseRunID, result, reason, evidence, PulseModuleAuditInput{}, now); err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
 	state, err := getPulseModuleStateByModule(ctx, db, normalized, module)
 	if err != nil {
 		return nil, err
@@ -533,6 +582,10 @@ func markPulseModuleResult(ctx context.Context, workspacePath, module, pulseRunI
 }
 
 func markPulseModuleResultFromAgent(ctx context.Context, workspacePath, module, pulseRunID, result, reason string, evidence []string) (*PulseModuleState, error) {
+	return markPulseModuleResultFromAgentWithAudit(ctx, workspacePath, module, pulseRunID, result, reason, evidence, PulseModuleAuditInput{})
+}
+
+func markPulseModuleResultFromAgentWithAudit(ctx context.Context, workspacePath, module, pulseRunID, result, reason string, evidence []string, audit PulseModuleAuditInput) (*PulseModuleState, error) {
 	module = normalizePulseModule(module)
 	if !validPulseModules[module] {
 		return nil, fmt.Errorf("module %q is not valid", module)
@@ -556,8 +609,14 @@ func markPulseModuleResultFromAgent(ctx context.Context, workspacePath, module, 
 	defer db.Close()
 
 	now := time.Now().UTC().Format(time.RFC3339)
-	evidenceJSON, _ := json.Marshal(normalizePulseEvidence(evidence))
-	resultExec, err := db.ExecContext(ctx, `UPDATE pulse_module_state SET
+	evidence = normalizePulseEvidence(evidence)
+	evidenceJSON, _ := json.Marshal(evidence)
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+	resultExec, err := tx.ExecContext(ctx, `UPDATE pulse_module_state SET
 			last_ran_at = ?, last_result = ?, last_result_reason = ?, evidence_json = ?, updated_at = ?
 		WHERE workspace_path = ? AND module = ? AND last_pulse_run_id = ?
 			AND last_decision = 'due' AND last_result = ''`,
@@ -568,16 +627,53 @@ func markPulseModuleResultFromAgent(ctx context.Context, workspacePath, module, 
 	if changed, err := resultExec.RowsAffected(); err != nil {
 		return nil, err
 	} else if changed == 0 {
+		_ = tx.Rollback()
 		existing, readErr := getPulseModuleStateByModule(ctx, db, normalized, module)
 		if readErr != nil {
 			return nil, fmt.Errorf("Pulse module %q is not an unresolved due module for run %q", module, pulseRunID)
 		}
 		if existing.LastPulseRunID == pulseRunID && existing.LastResult == result {
+			if err := recordPulseModuleAudit(ctx, db, normalized, module, pulseRunID, result, reason, evidence, audit, now); err != nil {
+				return nil, err
+			}
 			return existing, nil
 		}
 		return nil, fmt.Errorf("Pulse module %q for run %q is already terminal or belongs to another run", module, pulseRunID)
 	}
+	if err := recordPulseModuleAudit(ctx, tx, normalized, module, pulseRunID, result, reason, evidence, audit, now); err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
 	return getPulseModuleStateByModule(ctx, db, normalized, module)
+}
+
+type pulseModuleAuditExecer interface {
+	ExecContext(context.Context, string, ...interface{}) (sql.Result, error)
+}
+
+func recordPulseModuleAudit(ctx context.Context, execer pulseModuleAuditExecer, workspacePath, module, pulseRunID, result, reason string, evidence []string, audit PulseModuleAuditInput, recordedAt string) error {
+	marshal := func(values []string) string {
+		encoded, _ := json.Marshal(normalizePulseEvidence(values))
+		return string(encoded)
+	}
+	_, err := execer.ExecContext(ctx, `INSERT INTO pulse_module_audit (
+			workspace_path, module, pulse_run_id, result, reason, evidence_json,
+			changed_files_json, verification_json, before_refs_json, after_refs_json, recorded_at
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(workspace_path, module, pulse_run_id) DO UPDATE SET
+			result=excluded.result,
+			reason=excluded.reason,
+			evidence_json=excluded.evidence_json,
+			changed_files_json=excluded.changed_files_json,
+			verification_json=excluded.verification_json,
+			before_refs_json=excluded.before_refs_json,
+			after_refs_json=excluded.after_refs_json,
+			recorded_at=excluded.recorded_at`,
+		workspacePath, module, pulseRunID, result, reason, marshal(evidence),
+		marshal(audit.ChangedFiles), marshal(audit.Verification), marshal(audit.BeforeRefs), marshal(audit.AfterRefs), recordedAt)
+	return err
 }
 
 func getPulseModuleStates(ctx context.Context, workspacePath string) ([]PulseModuleState, error) {
@@ -754,7 +850,7 @@ func createPulseWorklistTools() ([]llmtypes.Tool, map[string]interface{}, map[st
 		Type: "function",
 		Function: &llmtypes.FunctionDefinition{
 			Name:        "mark_pulse_module_result",
-			Description: "Mark a selected Pulse module as done, changed, blocked, failed, or skipped after its module review and Pulse Fixer work complete. Scheduler timeouts are recorded by the scheduler and cannot be overwritten by an agent.",
+			Description: "Mark a selected Pulse module as done, changed, blocked, failed, or skipped after its module review and Pulse Fixer work complete. This also writes the durable internal audit row for that run and module. For result=changed, changed_files and verification are required. before_refs and after_refs carry only useful hashes, versions, or cursors when they exist. Put an exact technical failure in reason for failed/blocked results. Scheduler timeouts are recorded by the scheduler and cannot be overwritten by an agent.",
 			Parameters: llmtypes.NewParameters(map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
@@ -764,6 +860,10 @@ func createPulseWorklistTools() ([]llmtypes.Tool, map[string]interface{}, map[st
 					"result":         map[string]interface{}{"type": "string", "enum": []string{"done", "changed", "blocked", "failed", "skipped"}},
 					"reason":         map[string]interface{}{"type": "string", "description": "One-sentence result summary."},
 					"evidence":       map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "string"}},
+					"changed_files":  map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "string"}, "description": "Exact workspace-relative files changed by this module. Required when result=changed; otherwise omit."},
+					"verification":   map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "string"}, "description": "Exact checks performed and their factual outcomes. Required when result=changed; otherwise include only when useful."},
+					"before_refs":    map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "string"}, "description": "Optional pre-change hashes, versions, or cursors used to detect drift."},
+					"after_refs":     map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "string"}, "description": "Optional post-change hashes, versions, or cursors paired with before_refs."},
 				},
 				"required": []string{"workspace_path", "pulse_run_id", "module", "result", "reason"},
 			}),
@@ -824,7 +924,21 @@ func createPulseWorklistTools() ([]llmtypes.Tool, map[string]interface{}, map[st
 			if err := validateTrustedPulseToolRunID(ctx, pulseRunID); err != nil {
 				return "", err
 			}
-			state, err := markPulseModuleResultFromAgent(ctx, workspacePath, module, pulseRunID, result, reason, stringSliceFromToolArg(args["evidence"]))
+			audit := PulseModuleAuditInput{
+				ChangedFiles: stringSliceFromToolArg(args["changed_files"]),
+				Verification: stringSliceFromToolArg(args["verification"]),
+				BeforeRefs:   stringSliceFromToolArg(args["before_refs"]),
+				AfterRefs:    stringSliceFromToolArg(args["after_refs"]),
+			}
+			if strings.EqualFold(strings.TrimSpace(result), "changed") {
+				if len(audit.ChangedFiles) == 0 {
+					return "", fmt.Errorf("changed_files is required when result=changed")
+				}
+				if len(audit.Verification) == 0 {
+					return "", fmt.Errorf("verification is required when result=changed")
+				}
+			}
+			state, err := markPulseModuleResultFromAgentWithAudit(ctx, workspacePath, module, pulseRunID, result, reason, stringSliceFromToolArg(args["evidence"]), audit)
 			if err != nil {
 				return "", err
 			}
@@ -965,6 +1079,9 @@ func strictIntToolArg(raw interface{}) (int, error) {
 }
 
 func stringSliceFromToolArg(raw interface{}) []string {
+	if values, ok := raw.([]string); ok {
+		return normalizePulseEvidence(values)
+	}
 	arr, ok := raw.([]interface{})
 	if !ok {
 		return nil

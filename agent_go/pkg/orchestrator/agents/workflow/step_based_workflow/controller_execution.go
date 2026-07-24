@@ -3489,7 +3489,19 @@ func (hcpo *StepBasedWorkflowOrchestrator) runExecutionPhase(
 		}
 
 		// Note: Progress tracking is handled inside executeSingleStep
-		// Continue to next step
+		// Scripted steps may explicitly chain within a selected route and then
+		// converge on a shared downstream step. Empty preserves legacy
+		// sequential execution.
+		if regularStep, ok := step.(*RegularPlanStep); ok {
+			outcome, navErr := hcpo.navigateAfterRegularStep(ctx, regularStep, breakdownSteps, progress, &i, &startFromStep)
+			if navErr != nil {
+				return navErr
+			}
+			if outcome == "end" {
+				hcpo.GetLogger().Info(fmt.Sprintf("🏁 scripted step %d next_step_id=end - terminating workflow", i+1))
+				break
+			}
+		}
 		continue
 	}
 
@@ -3512,6 +3524,20 @@ func (hcpo *StepBasedWorkflowOrchestrator) runExecutionPhase(
 
 	hcpo.GetLogger().Info(fmt.Sprintf("✅ All steps execution completed"))
 	return nil
+}
+
+func (hcpo *StepBasedWorkflowOrchestrator) navigateAfterRegularStep(
+	ctx context.Context,
+	step *RegularPlanStep,
+	breakdownSteps []PlanStepInterface,
+	progress *StepProgress,
+	i *int,
+	startFromStep *int,
+) (string, error) {
+	if step == nil || strings.TrimSpace(step.NextStepID) == "" {
+		return "none", nil
+	}
+	return hcpo.navigateToNextStepID(ctx, step.GetID(), step.NextStepID, breakdownSteps, progress, i, startFromStep, maxLLMJumpRepeats)
 }
 
 // sanitizeTitleForAgentName sanitizes a step title for use in agent names

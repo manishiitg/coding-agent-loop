@@ -17,8 +17,12 @@ import {
 } from 'lucide-react'
 import { agentApi } from '../../services/api'
 import { formatStartedAt } from '../../utils/duration'
+import {
+  buildDailyStepCostsByDate,
+  classifyPhase,
+  formatPhaseTitle,
+} from '../../utils/dailyCostBreakdown'
 import type {
-  ModelTokenUsage,
   TokenUsageFile,
   StepExecutionLogs,
   PhaseTokenUsageFile,
@@ -160,49 +164,6 @@ interface CombinedDailyCostSummaryEntry {
   updatedAt: string | null
 }
 
-interface DailyModelCostEntry {
-  modelID: string
-  provider: string
-  inputTokens: number
-  outputTokens: number
-  cacheReadTokens: number
-  cacheWriteTokens: number
-  reasoningTokens: number
-  llmCalls: number
-  totalCost: number
-}
-
-interface DailyStepCostEntry {
-  key: string
-  stepID: string
-  stepTitle: string
-  stageLabel: string
-  totalCost: number
-  inputTokens: number
-  outputTokens: number
-  llmCalls: number
-  models: DailyModelCostEntry[]
-}
-
-const formatPhaseTitle = (phaseID: string) => {
-  const phaseTitles: Record<string, string> = {
-    'workflow-builder': 'Automation Builder',
-    'report-execution': 'Report Execution',
-    planning: 'Planning',
-    'plan-improvement': 'Plan Improvement',
-    'evaluation-builder': 'Evaluation Builder',
-    'output-builder': 'Output Builder'
-  }
-
-  if (phaseTitles[phaseID]) return phaseTitles[phaseID]
-
-  return phaseID
-    .split(/[-_]/)
-    .filter(Boolean)
-    .map(part => part.charAt(0).toUpperCase() + part.slice(1))
-    .join(' ')
-}
-
 const getRunFolderDisplayName = (runFolder: string) => {
   // Show "iteration-N · group" so both dimensions are visible. Single-segment
   // values (legacy layout, or iteration-only) fall through unchanged.
@@ -220,42 +181,6 @@ const getRunFolderDisplayName = (runFolder: string) => {
 //   routing, todo_task, kb_update, kb_reorganize,
 //   kb_consolidate, review_step_code,
 //   Goal Advisor proposal/application work, evaluation_scoring.
-type StageBucket = 'execution' | 'learning' | 'evaluation' | 'knowledgebase' | 'routing' | 'workshop' | 'other'
-const classifyPhase = (phase: string): StageBucket => {
-  if (phase === 'execution_only') return 'execution'
-  if (phase === 'success_learning' || phase === 'failure_learning' || phase.includes('learning')) return 'learning'
-  if (phase === 'evaluation_scoring' || phase.startsWith('evaluation')) return 'evaluation'
-  if (phase.startsWith('kb_')) return 'knowledgebase'
-  if (phase === 'todo_task' || phase === 'routing' || phase.includes('routing')) return 'routing'
-  if (phase === 'review_step_code' || phase === 'goal_advisor' || phase === 'plan_change' || phase === 'replan_workflow_from_results') return 'workshop'
-  return 'other'
-}
-
-const formatStageLabel = (phase: string, scope?: string) => {
-  if (scope === 'evaluation') return 'Evaluation'
-  const bucket = classifyPhase(phase)
-  const labels: Record<StageBucket, string> = {
-    execution: 'Execution',
-    learning: 'Learning',
-    evaluation: 'Evaluation',
-    knowledgebase: 'Knowledgebase',
-    routing: 'Routing',
-    workshop: 'Workshop',
-    other: formatPhaseTitle(phase)
-  }
-  return labels[bucket]
-}
-
-const addModelUsage = (target: DailyModelCostEntry, usage: ModelTokenUsage) => {
-  target.inputTokens += usage.input_tokens || 0
-  target.outputTokens += usage.output_tokens || 0
-  target.cacheReadTokens += usage.cache_read_tokens || usage.cache_tokens || 0
-  target.cacheWriteTokens += usage.cache_write_tokens || 0
-  target.reasoningTokens += usage.reasoning_tokens || 0
-  target.llmCalls += usage.llm_call_count || 0
-  target.totalCost += usage.total_cost_usd || 0
-}
-
 const getRunTimestamp = (runCost: Pick<RunCosts, 'tokenUsage' | 'evaluationTokenUsage'>) => {
   const timestamp =
     runCost.tokenUsage?.updated_at ||
@@ -1070,157 +995,10 @@ const CostsPopup: React.FC<CostsPopupProps> = ({
       .sort((a, b) => b.date.localeCompare(a.date))
   }, [phaseDailyCostSummaries, runDailyCostSummaries])
 
-  const dailyStepCostsByDate = useMemo(() => {
-    const stepInfoById = new Map<string, { stepNum: number; title: string }>()
-    runCosts.forEach(runCost => {
-      Object.entries(runCost.steps || {}).forEach(([key, stepData]) => {
-        const stepID = stepData.step_id
-        if (!stepID) return
-        const match = key.match(/step-(\d+)/)
-        stepInfoById.set(stepID, {
-          stepNum: match ? parseInt(match[1], 10) : 0,
-          title: stepData.title || stepID
-        })
-      })
-    })
-
-    const byDate = new Map<string, Map<string, DailyStepCostEntry & { modelMap: Map<string, DailyModelCostEntry> }>>()
-
-    const ensureDateMap = (date: string) => {
-      let dateMap = byDate.get(date)
-      if (!dateMap) {
-        dateMap = new Map()
-        byDate.set(date, dateMap)
-      }
-      return dateMap
-    }
-
-    const ensureStep = (
-      date: string,
-      key: string,
-      stepID: string,
-      stepTitle: string,
-      stageLabel: string
-    ) => {
-      const dateMap = ensureDateMap(date)
-      let step = dateMap.get(key)
-      if (!step) {
-        step = {
-          key,
-          stepID,
-          stepTitle,
-          stageLabel,
-          totalCost: 0,
-          inputTokens: 0,
-          outputTokens: 0,
-          llmCalls: 0,
-          models: [],
-          modelMap: new Map<string, DailyModelCostEntry>()
-        }
-        dateMap.set(key, step)
-      }
-      return step
-    }
-
-    const addUsageToStep = (step: DailyStepCostEntry & { modelMap: Map<string, DailyModelCostEntry> }, modelID: string, usage: ModelTokenUsage) => {
-      step.inputTokens += usage.input_tokens || 0
-      step.outputTokens += usage.output_tokens || 0
-      step.llmCalls += usage.llm_call_count || 0
-      step.totalCost += usage.total_cost_usd || 0
-
-      let model = step.modelMap.get(modelID)
-      if (!model) {
-        model = {
-          modelID,
-          provider: usage.provider || 'unknown',
-          inputTokens: 0,
-          outputTokens: 0,
-          cacheReadTokens: 0,
-          cacheWriteTokens: 0,
-          reasoningTokens: 0,
-          llmCalls: 0,
-          totalCost: 0
-        }
-        step.modelMap.set(modelID, model)
-      }
-      addModelUsage(model, usage)
-    }
-
-    runDailyCostSummaries.forEach(daily => {
-      const stepMap = daily.tokenUsage.by_step_and_model || {}
-      Object.entries(stepMap).forEach(([stepKey, modelMap]) => {
-        const parts = stepKey.split(':')
-        const phase = parts[0] || ''
-        const stepID = parts.slice(1).join(':') || phase || 'run'
-        const info = stepInfoById.get(stepID)
-        const stepTitle = info
-          ? (info.stepNum > 0 ? `Step ${info.stepNum}: ${info.title}` : info.title)
-          : stepID
-        const step = ensureStep(
-          daily.date,
-          `${daily.scope}:${stepKey}`,
-          stepID,
-          stepTitle,
-          formatStageLabel(phase, daily.scope)
-        )
-
-        Object.entries(modelMap).forEach(([modelID, usage]) => {
-          addUsageToStep(step, modelID, usage)
-        })
-      })
-
-      if (Object.keys(stepMap).length === 0 && daily.tokenUsage.by_model) {
-        const step = ensureStep(
-          daily.date,
-          `${daily.scope}:${daily.runFolder}:total`,
-          daily.runFolder,
-          getRunFolderDisplayName(daily.runFolder),
-          daily.scope === 'evaluation' ? 'Evaluation' : 'Execution'
-        )
-        Object.entries(daily.tokenUsage.by_model).forEach(([modelID, usage]) => {
-          addUsageToStep(step, modelID, usage)
-        })
-      }
-    })
-
-    phaseDailyCostSummaries.forEach(daily => {
-      const phaseMap = daily.tokenUsage.by_phase_and_model || {}
-      Object.entries(phaseMap).forEach(([phaseID, modelMap]) => {
-        const step = ensureStep(
-          daily.date,
-          `builder:${phaseID}`,
-          phaseID,
-          formatPhaseTitle(phaseID),
-          'Builder'
-        )
-        Object.entries(modelMap).forEach(([modelID, usage]) => {
-          addUsageToStep(step, modelID, usage)
-        })
-      })
-
-      if (Object.keys(phaseMap).length === 0 && daily.tokenUsage.by_model) {
-        const step = ensureStep(
-          daily.date,
-          'builder:total',
-          'builder',
-          'Automation Builder',
-          'Builder'
-        )
-        Object.entries(daily.tokenUsage.by_model).forEach(([modelID, usage]) => {
-          addUsageToStep(step, modelID, usage)
-        })
-      }
-    })
-
-    return new Map(Array.from(byDate.entries()).map(([date, stepMap]) => {
-      const steps = Array.from(stepMap.values()).map(({ modelMap, ...step }) => ({
-        ...step,
-        models: Array.from(modelMap.values()).sort((a, b) => b.totalCost - a.totalCost || a.modelID.localeCompare(b.modelID))
-      }))
-      steps.sort((a, b) => b.totalCost - a.totalCost || a.stepTitle.localeCompare(b.stepTitle))
-      return [date, steps]
-    }))
-  }, [runCosts, runDailyCostSummaries, phaseDailyCostSummaries])
+  const dailyStepCostsByDate = useMemo(
+    () => buildDailyStepCostsByDate(runCosts, runDailyCostSummaries, phaseDailyCostSummaries),
+    [runCosts, runDailyCostSummaries, phaseDailyCostSummaries]
+  )
 
   if (!isOpen) return null
 
@@ -1415,7 +1193,9 @@ const CostsPopup: React.FC<CostsPopupProps> = ({
                                                   <tr className="bg-card/60">
                                                     <td className="px-3 py-2">
                                                       <div className="font-medium text-foreground">{step.stepTitle}</div>
-                                                      <div className="font-mono text-[10px] text-muted-foreground">{step.stepID}</div>
+                                                      <div className="font-mono text-[10px] text-muted-foreground">
+                                                        {step.groupLabel ? `${step.groupLabel} · ` : ''}{step.stepID}
+                                                      </div>
                                                     </td>
                                                     <td className="px-3 py-2 text-muted-foreground">{step.stageLabel}</td>
                                                     <td className="px-3 py-2 text-right font-mono text-muted-foreground">{step.llmCalls.toLocaleString()}</td>

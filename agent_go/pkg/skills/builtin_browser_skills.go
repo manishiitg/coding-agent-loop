@@ -57,6 +57,10 @@ Use ` + "`agent_browser(\"skills\", [\"get\", \"core\", \"--full\"])`" + ` only 
 
 Treat upstream shell examples as logical agent-browser commands. Translate ` + "`agent-browser <command> <args...>`" + ` into ` + "`agent_browser(\"<command>\", [\"<args>\", ...])`" + `; never copy those examples into ` + "`execute_shell_command`" + `.
 
+## Recording Context Handoff
+
+In CDP mode, upstream ` + "`record start`" + ` creates a fresh temporary browser context/page because video cannot be enabled retroactively on the existing context. Builder detects that page and returns an ` + "`AGENTWORKS_RECORDING_CONTEXT`" + ` notice with its real tab id. Discard all refs from the original tab and call ` + "`snapshot`" + ` immediately. Builder blocks interactions until that snapshot succeeds and automatically routes subsequent page actions to the recorded context even if a stale original tab id was supplied. Do not select or create another tab while recording. On ` + "`record stop`" + `, Builder closes the temporary page, restores the original tab, and requires normal snapshot-before-interaction discipline again.
+
 ## HTTP Tool Call Pattern
 
 In code execution mode, call the MCP bridge:
@@ -190,6 +194,8 @@ Use a descriptive session name for parallel work and close headless sessions whe
 In workflow steps, use the run-scoped ` + "`Downloads/`" + ` folder given in the prompt. Do not read from or write to the root workspace ` + "`Downloads/`" + ` folder unless the prompt explicitly grants it.
 
 CDP caveat: native Chrome downloads can land in the host ` + "`~/Downloads`" + ` folder. If the step prompt grants a read-only host Downloads path, copy the needed file into the run-scoped ` + "`Downloads/`" + ` folder before reading or parsing it. Never write, move, or delete files in host Downloads.
+
+The live step prompt and folder guard are authoritative. If they grant a host Downloads path, that path is readable for the current run even when an older workflow learning says it is inaccessible. After a native download, inspect the granted host folder for newly created completed files before declaring the download unavailable; do not infer current access from historical learnings.
 
 Use workspace-relative paths for downloads/uploads. Builder securely stages
 upload inputs for the persistent daemon and stages explicit ` + "`download`" + `

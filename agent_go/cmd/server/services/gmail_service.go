@@ -291,7 +291,7 @@ func (g *GmailService) pickRecipient(dest *NotificationDestination) (string, err
 	if candidate == "" {
 		return "", nil
 	}
-	recipients, err := g.validateRecipients([]string{candidate}, "to")
+	recipients, err := g.validateRecipients([]string{candidate}, "to", destBlockedRecipients(dest)...)
 	if err != nil {
 		return "", err
 	}
@@ -301,12 +301,28 @@ func (g *GmailService) pickRecipient(dest *NotificationDestination) (string, err
 	return strings.Join(recipients, ", "), nil
 }
 
-func (g *GmailService) validateCCRecipients(cc []string) ([]string, error) {
-	return g.validateRecipients(cc, "cc")
+func (g *GmailService) validateCCRecipients(cc []string, extraBlocked ...string) ([]string, error) {
+	return g.validateRecipients(cc, "cc", extraBlocked...)
 }
 
-func (g *GmailService) validateRecipients(recipients []string, label string) ([]string, error) {
-	return validateRecipientsAgainstList(recipients, label, g.blockedRecipients())
+// validateRecipients rejects any recipient in the account-wide blocked list OR
+// in extraBlocked (a per-notification/per-workflow denylist). The two lists are
+// unioned — extraBlocked can only add to the block set, never remove from it.
+func (g *GmailService) validateRecipients(recipients []string, label string, extraBlocked ...string) ([]string, error) {
+	blocked := g.blockedRecipients()
+	if len(extraBlocked) > 0 {
+		blocked = append(append([]string(nil), blocked...), extraBlocked...)
+	}
+	return validateRecipientsAgainstList(recipients, label, blocked)
+}
+
+// destBlockedRecipients extracts the per-notification Gmail denylist carried on
+// the destination hint (nil-safe), used to augment the account-wide blocked list.
+func destBlockedRecipients(dest *NotificationDestination) []string {
+	if dest != nil && dest.Gmail != nil {
+		return dest.Gmail.BlockedRecipients
+	}
+	return nil
 }
 
 func validateRecipientsAgainstList(recipients []string, label string, blockedRecipients []string) ([]string, error) {
@@ -365,7 +381,7 @@ func (g *GmailService) SendNotification(ctx context.Context, uniqueID string, me
 		htmlBody = gc.HTMLBody
 		attachments = gc.Attachments
 	}
-	cc, err = g.validateCCRecipients(cc)
+	cc, err = g.validateCCRecipients(cc, destBlockedRecipients(dest)...)
 	if err != nil {
 		return "", err
 	}
@@ -407,7 +423,7 @@ func (g *GmailService) SendUserNotification(ctx context.Context, message string,
 	if strings.TrimSpace(body) == "" && strings.TrimSpace(htmlBody) == "" && len(attachments) == 0 {
 		return "", nil
 	}
-	cc, err = g.validateCCRecipients(cc)
+	cc, err = g.validateCCRecipients(cc, destBlockedRecipients(dest)...)
 	if err != nil {
 		return "", err
 	}

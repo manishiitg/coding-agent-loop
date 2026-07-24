@@ -855,6 +855,7 @@ func RegisterWorkshopChatTools(
 	iwm := &InteractiveWorkshopManager{
 		controller:             session.controller,
 		workshopConfig:         session.config,
+		sessionID:              session.mainSessionID,
 		stepRegistry:           session.StepRegistry,
 		sessionCtx:             session.sessionCtx,
 		toolCallQueryFunc:      session.toolCallQueryFunc,

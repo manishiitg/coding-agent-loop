@@ -3,13 +3,24 @@ package server
 import "testing"
 
 func TestMergeWorkflowCapabilitiesUpdatePreservesNotificationsForOlderClients(t *testing.T) {
+	globalNames := []string{"SLACK_WEBHOOK", "GLOBAL_APP_TOKEN"}
 	existing := WorkflowCapabilities{
 		Notifications: &WorkflowNotificationConfig{SlackWebhookSecretName: "SLACK_WEBHOOK"},
 	}
-	incoming := &WorkflowCapabilities{BrowserMode: "auto"}
+	incoming := &WorkflowCapabilities{
+		BrowserMode:               "auto",
+		SelectedSecrets:           []string{"SLACK_WEBHOOK", "APP_TOKEN"},
+		SelectedGlobalSecretNames: &globalNames,
+	}
 	got := mergeWorkflowCapabilitiesUpdate(existing, incoming)
 	if got.Notifications == nil || got.Notifications.SlackWebhookSecretName != "SLACK_WEBHOOK" {
 		t.Fatalf("notifications were not preserved: %#v", got.Notifications)
+	}
+	if len(got.SelectedSecrets) != 1 || got.SelectedSecrets[0] != "APP_TOKEN" {
+		t.Fatalf("agent secrets = %#v, want only APP_TOKEN", got.SelectedSecrets)
+	}
+	if got.SelectedGlobalSecretNames == nil || len(*got.SelectedGlobalSecretNames) != 1 || (*got.SelectedGlobalSecretNames)[0] != "GLOBAL_APP_TOKEN" {
+		t.Fatalf("global agent secrets = %#v, want only GLOBAL_APP_TOKEN", got.SelectedGlobalSecretNames)
 	}
 }
 
@@ -23,5 +34,51 @@ func TestMergeWorkflowCapabilitiesUpdateCanDisableNotifications(t *testing.T) {
 	got := mergeWorkflowCapabilitiesUpdate(existing, incoming)
 	if got.Notifications != nil {
 		t.Fatalf("notifications = %#v, want disabled", got.Notifications)
+	}
+}
+
+func TestMergeWorkflowCapabilitiesUpdateKeepsNotificationInstructions(t *testing.T) {
+	incoming := &WorkflowCapabilities{
+		Notifications: &WorkflowNotificationConfig{
+			RunSummaryInstructions:   "Include delivered outputs and the primary metric.",
+			PulseSummaryInstructions: "Put decisions and material fixes first.",
+		},
+	}
+	got := mergeWorkflowCapabilitiesUpdate(WorkflowCapabilities{}, incoming)
+	if got.Notifications == nil {
+		t.Fatal("notification instructions were discarded")
+	}
+	if got.Notifications.RunSummaryInstructions != incoming.Notifications.RunSummaryInstructions {
+		t.Fatalf("run instructions = %q, want %q", got.Notifications.RunSummaryInstructions, incoming.Notifications.RunSummaryInstructions)
+	}
+	if got.Notifications.PulseSummaryInstructions != incoming.Notifications.PulseSummaryInstructions {
+		t.Fatalf("pulse instructions = %q, want %q", got.Notifications.PulseSummaryInstructions, incoming.Notifications.PulseSummaryInstructions)
+	}
+}
+
+func TestMergeWorkflowCapabilitiesUpdateKeepsSummaryChannelRoutes(t *testing.T) {
+	incoming := &WorkflowCapabilities{Notifications: &WorkflowNotificationConfig{
+		RunSummaryChannels:   []string{"slack"},
+		PulseSummaryChannels: []string{"gmail"},
+	}}
+	got := mergeWorkflowCapabilitiesUpdate(WorkflowCapabilities{}, incoming)
+	if got.Notifications == nil {
+		t.Fatal("notification channel routes were discarded")
+	}
+	if len(got.Notifications.RunSummaryChannels) != 1 || got.Notifications.RunSummaryChannels[0] != "slack" {
+		t.Fatalf("run channels = %#v, want slack", got.Notifications.RunSummaryChannels)
+	}
+	if len(got.Notifications.PulseSummaryChannels) != 1 || got.Notifications.PulseSummaryChannels[0] != "gmail" {
+		t.Fatalf("pulse channels = %#v, want gmail", got.Notifications.PulseSummaryChannels)
+	}
+}
+
+func TestLegacyNotificationInstructionsRemainEffectiveForBothSections(t *testing.T) {
+	config := &WorkflowNotificationConfig{Instructions: "Use a detailed owner summary."}
+	if got := config.EffectiveRunSummaryInstructions(); got != config.Instructions {
+		t.Fatalf("run instructions = %q, want legacy %q", got, config.Instructions)
+	}
+	if got := config.EffectivePulseSummaryInstructions(); got != config.Instructions {
+		t.Fatalf("pulse instructions = %q, want legacy %q", got, config.Instructions)
 	}
 }

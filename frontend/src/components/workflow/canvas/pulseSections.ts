@@ -1,5 +1,7 @@
 export type PulseSectionId = 'goal' | 'signals' | 'reflection' | 'improvements'
 
+export type PulseHumanInputSource = 'pulse' | 'goal_advisor'
+
 export type PulseCommandDefinition = {
   id: string
   label: string
@@ -40,6 +42,11 @@ export const PULSE_HISTORY_ITEMS: PulseCommandDefinition[] = [
 ]
 
 export const PULSE_FOOTER_COMMAND_IDS = ['backup', 'publish', 'notify'] as const
+
+export const PULSE_HUMAN_INPUT_SOURCE_BY_SECTION: Partial<Record<PulseSectionId, PulseHumanInputSource>> = {
+  reflection: 'pulse',
+  improvements: 'goal_advisor',
+}
 
 export const PULSE_SECTIONS: PulseSectionDefinition[] = [
   {

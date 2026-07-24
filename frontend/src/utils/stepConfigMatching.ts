@@ -186,6 +186,7 @@ interface CommonStepFields {
 // Regular step (may have loops)
 export interface RegularPlanStep extends CommonStepFields {
   type: 'regular';
+  next_step_id?: string;                    // Explicit successor for scripted route chains
   has_loop?: boolean;
   loop_condition?: string;
   max_iterations?: number;

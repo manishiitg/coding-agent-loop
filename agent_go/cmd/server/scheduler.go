@@ -1921,13 +1921,14 @@ Run metadata:
 Original scheduled task:
 %s
 
-	What to write:
-	- Create pulse/task.html if missing using the chief-task-report skeleton.
-	- Prepend one .task-entry after <!-- CHIEF TASK ENTRIES: newest first -->.
-	- Update the top summary tiles/counts and latest update timestamp.
-	- Capture result summary, decisions/recommendations/findings, key findings to reuse on the next run, affected workflows/entities, evidence paths, and next action.
-	- If the task failed, record the failure clearly with the error and suggested next action.
-	- Keep the page concise; this is a durable task ledger, not a transcript dump.
+		What to write:
+		- Create pulse/task.html if missing using the chief-task-report skeleton.
+		- Prepend one .task-entry after <!-- CHIEF TASK ENTRIES: newest first -->.
+		- Update the top summary tiles/counts and latest update timestamp.
+		- Capture the plain-language outcome, why it matters, key findings to reuse on the next run, affected workflows/entities, and next action.
+		- Treat the metadata above as internal input. Keep schedule/run ids in data attributes and put session id, exact evidence paths, and raw errors only inside collapsed Agent details.
+		- If the task failed, explain the failure and suggested next action in ordinary language; do not expose the raw error outside Agent details.
+		- Keep the page concise; this is a durable task ledger, not a transcript dump.
 	`, sctx.Schedule.ID, sctx.Schedule.Name, sctx.Schedule.Description, runID, sessionID, status, errLine, startedAt.Format(time.RFC3339), completedAt.Format(time.RFC3339), durationMs, sctx.Schedule.CronExpression, sctx.Schedule.Timezone, taskText)
 }
 
@@ -2012,24 +2013,13 @@ func (s *SchedulerService) runPostRunMonitor(ctx context.Context, sctx *Schedule
 
 	// Run Pulse as a sequence: lightweight Gate first, then only the modules Gate
 	// selected, then one ordered dashboard/backup/publish/notify finalizer. Each
-	// expensive maintenance turn stays focused while fixed final work reuses one
-	// context instead of paying for four repeated context loads.
-	answeredHumanInputs := formatAnsweredReportHumanInputsForAgent(ctx, sctx.WorkspacePath)
-	humanInputNote := ""
-	if answeredHumanInputs != "" {
-		humanInputNote = "\n\n" + answeredHumanInputs
-	}
+	// stage loads only its focused reference instead of receiving the whole Pulse
+	// contract in the visible user message.
 	pulseContext := "A scheduled run of this workflow just finished"
 	if sctx.PulseOnly {
 		pulseContext = "This is a manual Pulse-only review of the latest retained workflow evidence. The workflow was not executed by this action"
 	}
-	intro := fmt.Sprintf(
-		"You are Pulse, the post-run steward. %s: workspace_path=%q, evidence_status=%q, run_folder=%q. "+
-			"Call get_reference_doc(kind=\"post-run-monitor\") and follow it. Write builder/improve.html in simple user-facing language and priority order: Needs your decision first in Runloop, then active Assumptions challenged, Today's outcome, goal progress, recent activity, and collapsed technical detail. Keep the first screen compact, do not duplicate the latest-run narrative, put the takeaway first, use short labeled detail, and put raw evidence paths last. "+
-			"If you need user input, call create_human_input_request(workspace_path=%q, source=\"pulse\", ...) instead of hand-editing request state in HTML. "+
-			"For strategic plan-change approval, Goal Advisor must use that same existing report interaction flow: create_human_input_request(source=\"goal_advisor\", input_id=\"plan-proposal-...\", options approve/reject/defer, context=\"proposal + exact plan edits + evidence\"). "+
-			"We'll go one step at a time — do ONLY the step in each message, finish it, then stop and wait for the next.%s",
-		pulseContext, sctx.WorkspacePath, runStatus, runFolder, sctx.WorkspacePath, humanInputNote)
+	intro := postRunMonitorIntro(pulseContext, sctx.WorkspacePath, pulseRunID, runStatus, runFolder)
 
 	upgradeSteps := postRunMonitorUpgradeStepsForManifest(manifest)
 	s.sessionLogf(sctx, sessionID, "[PULSE] starting pulse for %s (run_folder=%s status=%s, upgrades=%d)", sctx.Schedule.ID, runFolder, runStatus, len(upgradeSteps))
@@ -2105,6 +2095,10 @@ func (s *SchedulerService) runPostRunMonitor(ctx context.Context, sctx *Schedule
 			if _, err := markPulseModuleResult(ctx, sctx.WorkspacePath, module, pulseRunID, resultName, reason, []string{"scheduler timeout/failure handling"}); err != nil {
 				s.sessionLogf(sctx, oldSessionID, "[PULSE] failed to record %s result for module %s: %v", resultName, module, err)
 			}
+		} else if st.label == "consolidated-review" {
+			if err := markUnresolvedPulseDueModules(ctx, sctx.WorkspacePath, pulseRunID, resultName, reason); err != nil {
+				s.sessionLogf(sctx, oldSessionID, "[PULSE] failed to reconcile unresolved consolidated modules: %v", err)
+			}
 		}
 		releaseTrustedSession(oldSessionID)
 		if result.outcome != postRunMonitorStepStartFailed {
@@ -2144,7 +2138,8 @@ func (s *SchedulerService) runPostRunMonitor(ctx context.Context, sctx *Schedule
 	}
 
 	// Archive is a conditional preflight, not a mandatory Pulse module. The
-	// scheduler only detects that the active HTML crossed a size/card threshold;
+	// scheduler only detects safely archivable dated history older than the
+	// retention window;
 	// the agent owns the semantic choice of which resolved history is safe to
 	// move. Archive failure is fail-open so Gate and final reporting still run.
 	if gateReady {
@@ -2206,10 +2201,10 @@ func (s *SchedulerService) runPostRunMonitor(ctx context.Context, sctx *Schedule
 			}
 			s.sessionLogf(sctx, sessionID, "[PULSE] selected %d post-gate steps for %s", len(steps), sctx.Schedule.ID)
 		} else {
-			steps = postRunMonitorFinalSteps(pulseRunID)
+			steps = postRunMonitorFinalSteps(pulseRunID, notificationInstructionsFromCapabilities(sctx.Capabilities))
 		}
 	} else {
-		steps = postRunMonitorFinalSteps(pulseRunID)
+		steps = postRunMonitorFinalSteps(pulseRunID, notificationInstructionsFromCapabilities(sctx.Capabilities))
 	}
 
 	skipMaintenanceReason := ""
@@ -2223,9 +2218,25 @@ func (s *SchedulerService) runPostRunMonitor(ctx context.Context, sctx *Schedule
 			}
 			continue
 		}
-		result := runStep(st)
-		if abortIfInterrupted(st, result) {
-			return
+		attempts := 1
+		if st.label == "consolidated-review" {
+			attempts = 2
+		}
+		var result postRunMonitorStepRunResult
+		for attempt := 1; attempt <= attempts; attempt++ {
+			result = runStep(st)
+			if abortIfInterrupted(st, result) {
+				return
+			}
+			if result.outcome == postRunMonitorStepCompleted && st.label == "consolidated-review" {
+				if err := validatePulseDueModuleResults(ctx, sctx.WorkspacePath, pulseRunID); err != nil {
+					result = postRunMonitorStepRunResult{outcome: postRunMonitorStepWaitFailed, err: err}
+					s.sessionLogf(sctx, sessionID, "[PULSE] consolidated review completion contract failed (attempt %d/%d): %v", attempt, attempts, err)
+				}
+			}
+			if result.outcome == postRunMonitorStepCompleted || attempt == attempts {
+				break
+			}
 		}
 		if result.outcome != postRunMonitorStepCompleted {
 			reason := handleStepFailure(st, result, i < len(steps)-1)
@@ -2265,6 +2276,11 @@ const (
 type postRunMonitorStepRunResult struct {
 	outcome postRunMonitorStepOutcome
 	err     error
+}
+
+func postRunMonitorIntro(contextSummary, workspacePath, pulseRunID, runStatus, runFolder string) string {
+	return fmt.Sprintf("PULSE RUN CONTEXT. %s. workspace_path=%q, pulse_run_id=%q, evidence_status=%q, run_folder=%q. The scheduler sends one stage at a time. Execute only the current stage, load only the focused reference named by that stage, use durable workflow state for human answers, keep user-facing output concise, then stop.",
+		contextSummary, workspacePath, pulseRunID, runStatus, runFolder)
 }
 
 func pulseModuleForPostRunMonitorStep(label string) string {
@@ -2364,23 +2380,7 @@ func postRunMonitorSteps() []postRunMonitorStep {
 func postRunMonitorGateStep(pulseRunID, runFolder, runStatus string) postRunMonitorStep {
 	return postRunMonitorStep{
 		label: "gate",
-		query: fmt.Sprintf("STEP 1 — PULSE GATE / WORKLIST. This is the only mandatory intelligence step for this Pulse run. pulse_run_id=%q, run_folder=%q, run_status=%q.\n\n"+
-			"Use a progressive evidence scan, not a full audit. First read builder/improve.html (authoritative history/current cadence), including any .advisor-experiment card and its data-status/data-review-after, get_pulse_module_state(workspace_path=\"<current workflow>\"), latest run metadata/summary, changelog filenames and review flags, existence/freshness metadata for plan/eval/report artifacts, the workflow.json version plus a compact resolved LLM/tier/fallback signature, backup/publish/notification readiness metadata, db/README or a compact schema summary, per-step learning metadata, a compact KB note index, open/answered report_human_inputs, and pending Chief of Staff recommendation cards. For the current run_folder, explicitly inspect every executed step/item's compact final result for the literal `CONCERNS:` marker: for regular/todo-task steps prefer runs/<run_folder>/logs/<step>/execution/execution-final-summary.json execution_result; when that file is absent for a failed, incomplete, or legacy run, use the latest applicable runs/<run_folder>/logs/<step>/execution/execution-attempt-*.json execution_result. For message-sequence steps use runs/<run_folder>/execution/<step>/session.json entries[].summary. Use the latest successful/final retry only for the fallback attempt files, and do not load *-conversation.json, prompts, tool-call logs, or other long logs just to find concerns. A completed run or step does not resolve a concern. Deduplicate each current concern against builder/improve.html, preserve its step/item and evidence path, classify it into the matching due module (or reviewed/no-action), and keep unresolved concerns visible in the Gate timeline/handoff until a module verifies resolution, records a blocker, or creates a durable human-input request. `CONCERNS:` is evidence to classify, not an automatic run failure or automatic Bug verdict. Gate must not create the human-input request itself; select the responsible module so its Pulse Fixer can do so. Do not load full report HTML, full KB/learnings, broad DB rows, long logs, or every cost file unless a compact signal makes that module plausibly due or you need one targeted fact to justify its decision. The selected module performs the deep audit later; Gate only chooses the evidence-backed worklist and cadence. If the scan finds a plausible bug signal, mark Bug Review due so its read-only reviewer can investigate and the Pulse Fixer can repair and verify it. Do not treat the SQLite module cache as historical truth.\n\n"+
-			"Update builder/improve.html first with a compact Pulse Gate / Worklist entry in the timeline area. Do not place full Gate details in the first-screen dashboard. Refresh Today's outcome (Outcome, Goal progress, Issues & fixes, Next Pulse) without duplicating the latest-run row. Preserve pending Needs your decision requests at the top through create_human_input_request/report_human_inputs. Keep at most three consequential Assumptions challenged items near the top; add one only when a non-user-confirmed assumption in soul/plan/steps/eval/KB/learnings/DB/report may materially cap the goal, and remove it when resolved. Architecture and implementation choices are revisable unless explicitly user-approved constraints. Refresh the bottom #pulse-agent-handoff in place with compact current Pulse/run ids, one row per module decision and next-check condition, cursor/open/pending ids, and evidence pointers. Never append Agent log copies or repeat the user-facing narrative there. The Gate entry should be plain English: what is healthy, what needs attention, which modules are due/skipped, and why. Update #pulse-bug-verdict and #pulse-goal-verdict in place; if either is missing from an otherwise current-format page, insert the standard two-element verdict block beside the workflow title without rewriting history, and never create a duplicate verdict block. Keep older trustworthy metrics when the latest route did not measure them, but visibly label every verdict, goal criterion, brief metric, and important tile with `as of run/date` or `not measured this run · last measured run/date`. Then call record_pulse_worklist exactly once with one decision for each module: bug_review, artifact_review, report_health, eval_health, learning_health, knowledgebase_health, db_health, cost_llm_time, llm_ops_review, goal_advisor. On a recovery attempt, if this exact pulse_run_id already has a complete worklist, do not record it again; repair and verify the HTML entry and #pulse-agent-handoff only.\n\n"+
-			"Be agentic: decide what is due from workflow evidence, not a hardcoded cadence. Every skipped module must include a reason, evidence, and at least one concrete next-check condition: next_check_at, a positive cooldown_runs, or next_check_after_run_id. Write that next check visibly in the Gate/Worklist entry so the user can understand it; SQLite only mirrors it for scheduler/popup state. Evidence can override an earlier cooldown, but if you check a module earlier than previously planned, state what new evidence caused the override. Every Gate must re-judge current goal evidence even when a prior next_check_at or advisor experiment data-review-after is still in the future; a checkpoint is a planned evidence boundary, not a lock. High-frequency workflows should normally roll up cost/time checks across several runs instead of running cost_llm_time every time; mark it due immediately for missing/unpriced telemetry, a material cost or latency change, a model/tier change, or when its planned next check arrives. Treat llm_ops_review as a low-frequency coaching pass: run it when it has never completed, its planned checkpoint arrives, the resolved model/tier/fallback config changes, cost evidence suggests avoidable overkill, or publish/notify/backup/version state materially changes. Otherwise schedule a meaningful later checkpoint instead of running it every Pulse. Final dashboard, backup, publish, and notify happen later in one ordered finalizer turn.\n\n"+
-			"When a defined material goal criterion is trustworthily below target, declining, or stalled, tighten Bug Review cadence even if all steps completed and no CONCERNS marker exists. If no exploratory QA checkpoint completed after the latest observed miss, bug_review is due now. While the goal stays off track, set a short evidence checkpoint based on a small number of meaningful outcome-bearing runs, exposures, or elapsed business time; a clean run, green eval, or absence of explicit concerns cannot justify a long calendar cooldown. Run Bug Review again when that checkpoint arrives and compare with prior QA evidence. Consecutive finding-free reviews over unchanged runtime paths may widen the checkpoint gradually, while continued lack of progress, a material change, new concern, or contradictory evidence tightens or resets it. Mark both bug_review and goal_advisor due when correctness and strategy both need judgment.\n\n"+
-			"Module meanings:\n"+
-			"- bug_review: due for real Bug signals, failed producing steps, stale guards, selector/API/runtime breakage, workflow code that reuses an older receipt/artifact, broken evidence contracts, hallucinated success, or CoS recommendations that are operational bugs. Also mark it due for targeted observable trace review when compact output/eval/validation/report/DB/artifact/CONCERNS evidence suggests a successful step chose the wrong tool/source/route, used stale inputs, ignored or misinterpreted returned evidence, stopped too early, or made an unsupported decision; do not audit every conversation. Run a bounded exploratory QA checkpoint when QA has never completed, a material plan/step/contract/tool/model change landed, enough new outcome-bearing runs accumulated, or a previously recorded risk checkpoint arrived. Do not run exploratory QA on every high-frequency Pulse; when skipped, set a concrete next check based on risk, meaningful runs, elapsed business time, or a material change. New failure or suspicious evidence overrides that cadence. Exploratory QA derives the behavioral contract and safely probes critical, negative, boundary, stale-run-isolation, and failure/recovery paths without producing external side effects. The reviewer is read-only; Pulse Fixer writes.\n"+
-			"- artifact_review: due when planning/changelog has unreviewed material plan/config changes, or when a plan/config change may have drifted learnings, KB, DB, report, eval, or step configs.\n"+
-			"- report_health: due when report HTML, report_plan, SQL/window.report usage, dashboard tabs, goal visibility, or published/report claims are stale, broken, misleading, or not aligned with plan/eval/db.\n"+
-			"- eval_health: due when evaluation_plan, eval rubric, eval run wiring, target run path, success criteria mapping, scoring thresholds, or eval reports are missing, stale, too lenient, gamed, misleading, or not aligned with soul/plan/report/db. If an eval accepts an older receipt/artifact for the current run, route it here as a correctness repair; do not route it to Goal Advisor or ask the user.\n"+
-			"- learning_health: due when plan/step behavior changed, learning locks look stale, learning_objective no longer matches, reusable execution HOW was discovered, stale selectors/API quirks may exist, or learnings need lock/unlock decisions. If a plan change makes locked learnings stale, mark this due and name the step ids.\n"+
-			"- knowledgebase_health: due when KB notes/context are missing, stale, contradictory, duplicated, in the wrong place, or step KB config no longer matches the plan. Do not rewrite knowledgebase/context; it is user-owned.\n"+
-			"- db_health: due when DB schema/contracts/assets/upsert rules do not match current writers, reports, evals, or plan outputs.\n"+
-			"- cost_llm_time: report run cost/eval cost/builder+Pulse overhead, missing cost buckets, timing, model/tier evidence; report-only unless a real config bug belongs to another module.\n"+
-			"- llm_ops_review: low-frequency workflow coaching for execution tier usage, resolved provider/model/fallback routing, Pulse and Maintenance models, publish/notify/backup/version readiness, and deduplicated efficiency_or_coaching trace findings retained by an earlier Bug Review. It proposes exact evidence-backed changes through the existing Needs your decision cards and never silently rewrites configuration. When a material goal criterion is below target, do not recommend lowering the model or reasoning tier for outcome-bearing, planning, judgment, diagnostic, recovery, eval, or verification steps. Only a deterministic non-bottleneck step with representative evidence proving quality-equivalent output and no downstream outcome loss may be proposed as an approval-required reversible downgrade trial; missing evidence means keep the tier.\n"+
-			"- goal_advisor: due immediately when a defined measurable success criterion is below target in trustworthy current-run or retained cross-run evidence and no active advisor experiment is already waiting for its planned measurement checkpoint. An unmet measured goal is a direct trigger, not merely a reason to schedule a later cadence check; do not skip it because execution is clean, eval passed, or Goal Advisor ran recently. If the criterion has no usable target or was not measured, label that explicitly and use Goal Advisor's measurement-design path instead of claiming a miss. Goal Advisor is also due when Goal drift persists, current strategy seems capped even if execution is clean, user answered a strategy question, CoS rec is strategic, enough new evidence exists for an expert out-of-plan critique, or a healthy workflow has accumulated enough meaningful outcome evidence for an optimization-headroom review. Also make it due for conditional plan-design review after a material plan structure/step-boundary/routing/store/validation/orchestration change, when repeated goal misses or recurring Bugs or material cost/latency evidence suggest the plan shape is limiting outcomes, or when its planned plan-design checkpoint arrives. Meeting a target is not a permanent skip: treat targets as minimums unless explicitly defined as caps, and periodically compare the successful baseline against credible ways to improve outcome rate, quality, cost, time, reach, or risk. Do not run this expensive review every Pulse; when a healthy workflow is skipped, set a concrete next check tied to meaningful outcome-bearing runs, a material outcome milestone, elapsed business time, a market/platform change, a plan-design risk, or new Chief of Staff evidence -- not merely raw high-frequency run count. Once that headroom or plan-design checkpoint arrives, Goal Advisor is due and cannot be rolled forward solely because the workflow remains healthy. If builder/improve.html has one active .advisor-experiment (status proposed, deferred, approved, running, measuring, or blocked), do not ask for another bold idea. Preserve that experiment and use its data-review-after checkpoint instead of proposing another strategy for the same miss. Gate may defer Goal Advisor for an active experiment only after proving that the approved change is applied and reachable in the real runtime control path, its primary and diagnostic measurements are fresh and persisted, meaningful valid outcome-bearing runs or exposures have occurred since application, no bug/blocker/drift prevents a fair test, and the checkpoint remains proportional to workflow cadence and latest evidence. Zero valid outcome-bearing runs means the experiment has not received a fair test. If implementation is broken or evidence is not accruing, select Goal Advisor to repair or advance that same experiment, not to create a competing experiment; also select bug_review when the cause is operational. A skipped Goal Advisor decision must name the experiment id, implementation/control-path evidence, valid run or exposure count, latest goal measurement and freshness, why the checkpoint remains fair, and the exact evidence that would trigger earlier review. The active experiment does not block plan-design monitoring of whether structure, instrumentation, or implementation prevents a fair test; select Goal Advisor for that monitoring when the plan-design trigger arrives, but do not create a competing experiment. Also select it when an answer, its data-review-after checkpoint, sufficient measurement evidence, an unblock signal, or decisive contradictory evidence requires advancing that same experiment. Never allow more than one active advisor experiment. A correct abstention or green eval is execution evidence, not goal progress: repeated no_job/no_match/no_candidate/stand_aside or zero downstream outcomes must make Goal Advisor due when they materially miss the soul success criteria. A trustworthy flat lagging metric (for example subscribers, responses, revenue, wins, or conversions) is enough to run strategic review even when the latest producing run has operational Bugs; mark both bug_review and goal_advisor due when appropriate. Do not use 'wait for a clean run' as an indefinite strategy cooldown, and do not restrict Goal Advisor to evidence from the latest route when retained cross-run goal evidence is already sufficient. Preserve explicit user exclusions, but challenge agent-chosen search breadth, source/channel mix, positioning, offer, thresholds, cadence, and brittle plan architecture. Goal Advisor does not do routine Bug Review/KB/learnings/DB cleanup.\n\n"+
-			"Do not launch reviewers or call mutation tools, plan modification tools, publish, backup, or notify in this Gate step. Only update the compact log entry and record_pulse_worklist. Then stop.",
+		query: fmt.Sprintf("PULSE GATE / WORKLIST. pulse_run_id=%q, run_folder=%q, run_status=%q. Load get_reference_doc(kind=\"pulse-gate\") and follow it exactly. Perform only the progressive Gate scan, update the compact durable handoff, call record_pulse_worklist exactly once with all ten module decisions, and stop. Do not launch reviewers, fix artifacts, back up, publish, or notify.",
 			pulseRunID, runFolder, runStatus),
 	}
 }
@@ -2399,15 +2399,12 @@ func postRunMonitorModuleSteps(pulseRunID string) []postRunMonitorModuleStep {
 		{pulseModuleLearningHealth, postRunMonitorStep{"learning-health", fmt.Sprintf("PULSE MODULE — LEARNING HEALTH. pulse_run_id=%q. Use the consolidated protocol: load get_reference_doc(kind=\"assumption-audit\") and pass it with the improve-learnings, optimize-playbook, and step-config checklists to a generic READ-ONLY REVIEW agent. Preserve consequential unresolved restrictions as Assumptions challenged. Inspect planning/plan.json, planning/step_config.json, planning/changelog, learnings/_global/SKILL.md, relevant references, per-step .learning_metadata.json, and latest run evidence. The reviewer returns stale HOW, policy/architecture leakage, missing learning coverage, and lock/unlock recommendations. It must not edit or mark state. The parent Pulse Fixer applies bounded learning and step-config changes, verifies them, updates builder/improve.html once, and calls mark_pulse_module_result(workspace_path=\"<current workflow>\", pulse_run_id=%q, module=\"learning_health\", result=\"done|changed|blocked|failed|skipped\", reason=\"...\", evidence=[...]).", pulseRunID, pulseRunID)}},
 		{pulseModuleKnowledgebaseHealth, postRunMonitorStep{"knowledgebase-health", fmt.Sprintf("PULSE MODULE — KNOWLEDGEBASE HEALTH. pulse_run_id=%q. Use the consolidated protocol: load get_reference_doc(kind=\"assumption-audit\") and pass it with the improve-knowledge, stores, and step-config checklists to a generic READ-ONLY REVIEW agent. Preserve consequential unresolved restrictions as Assumptions challenged. Inspect knowledgebase/notes, knowledgebase/context only as read-only user-owned context, KB access/contribution settings, latest run evidence, and report/eval consumers. The reviewer returns stale, duplicated, missing, contradictory, or tactic-bound notes and bounded config recommendations. It must never rewrite knowledgebase/context, edit files, or mark state. The parent Pulse Fixer applies bounded note/index/config changes, verifies them, updates builder/improve.html once, and calls mark_pulse_module_result(workspace_path=\"<current workflow>\", pulse_run_id=%q, module=\"knowledgebase_health\", result=\"done|changed|blocked|failed|skipped\", reason=\"...\", evidence=[...]).", pulseRunID, pulseRunID)}},
 		{pulseModuleDBHealth, postRunMonitorStep{"db-health", fmt.Sprintf("PULSE MODULE — DB HEALTH. pulse_run_id=%q. Use the consolidated protocol: load get_reference_doc(kind=\"assumption-audit\") and pass it with the improve-database and stores checklists to a generic READ-ONLY REVIEW agent. Preserve consequential unresolved restrictions as Assumptions challenged. Inspect db/db.sqlite schema/table contracts, db/README.md, db/assets, current plan writers, report SQL/window.report consumers, eval consumers, and latest run evidence. The reviewer returns integrity, contract, upsert, index, compatibility, and over-constrained-schema findings with exact verification commands. It must not execute DDL/DML, edit files, or mark state. The parent Pulse Fixer applies only bounded non-speculative contract/schema repairs, verifies integrity and consumers, updates builder/improve.html once, and calls mark_pulse_module_result(workspace_path=\"<current workflow>\", pulse_run_id=%q, module=\"db_health\", result=\"done|changed|blocked|failed|skipped\", reason=\"...\", evidence=[...]).", pulseRunID, pulseRunID)}},
-		{pulseModuleCostLLMTime, postRunMonitorStep{"cost-llm-time", fmt.Sprintf("PULSE MODULE — COST / LLM / TIME. pulse_run_id=%q. Use the consolidated protocol: send a generic READ-ONLY REVIEW agent the Gate evidence plus workflow.json capabilities.llm_config, step execution tiers, get_cost_summary(run_folder) when available, costs/execution, costs/evaluation, costs/phase/token_usage.json, and matching timing summaries. The reviewer returns a compact telemetry finding set with separately labeled workflow execution, evaluation, and builder/Pulse overhead buckets, including missing or unpriced evidence instead of estimates. It must not edit files, change model/config/schedules, write builder/improve.html or cards, ask the user, or mark state. The parent Pulse Fixer updates the cost/time tiles and builder/card.cost.html from verified evidence, without changing model allocation, then calls mark_pulse_module_result(workspace_path=\"<current workflow>\", pulse_run_id=%q, module=\"cost_llm_time\", result=\"done|changed|blocked|failed|skipped\", reason=\"...\", evidence=[...]).", pulseRunID, pulseRunID)}},
+		{pulseModuleCostLLMTime, postRunMonitorStep{"cost-llm-time", fmt.Sprintf("PULSE MODULE — COST / LLM / TIME. pulse_run_id=%q. Use the consolidated protocol: send a generic READ-ONLY REVIEW agent the Gate evidence plus workflow.json capabilities.llm_config, step execution tiers, get_cost_summary(run_folder) when available, costs/execution, costs/evaluation, costs/phase/token_usage.json, and matching timing summaries. For raw run ledgers, preserve date/scope/group_folder/run_folder identity; the same step ID in different groups is separate. Treat by_model as the authoritative LLM total and by_step_and_model as already-included attribution detail, never sum both; report the positive per-model remainder as unattributed/orchestrator, while an explicit workflow_orchestrator row is already attributed. An executed step with no LLM row may be scripted/zero-LLM, and a historical step-less total stays unattributed rather than becoming a run-folder-named step. The reviewer returns a compact telemetry finding set with separately labeled workflow execution, evaluation, and builder/Pulse overhead buckets, including missing or unpriced evidence instead of estimates. It must not edit files, change model/config/schedules, write builder/improve.html or cards, ask the user, or mark state. The parent Pulse Fixer updates the cost/time tiles and builder/card.cost.html from verified evidence, without changing model allocation, then calls mark_pulse_module_result(workspace_path=\"<current workflow>\", pulse_run_id=%q, module=\"cost_llm_time\", result=\"done|changed|blocked|failed|skipped\", reason=\"...\", evidence=[...]).", pulseRunID, pulseRunID)}},
 		{pulseModuleLLMOpsReview, postRunMonitorStep{"llm-ops-review", fmt.Sprintf("PULSE MODULE — LLM + OPERATIONS REVIEW. pulse_run_id=%q. Use the consolidated protocol for this low-frequency coaching pass. Give a generic READ-ONLY REVIEW agent get_reference_doc(kind=\"llm-selection\"), resolved LLM config, plan/step/eval tiers, latest cost/time evidence, current trustworthy Goal verdict and criterion evidence, any deduplicated efficiency_or_coaching execution-trace findings retained by Bug Review, notification preferences, backup/publish/report readiness, and workflow version. It returns evidence-backed recommendations for tier coverage/use, avoidable model/tool overkill, unnecessary retries or brittle execution shape, useful provider diversity, Pulse/Maintenance model fit, fallbacks, publish/password, notify safety, backup readiness, and version upgrades. When a material goal criterion is below target, it must not recommend lowering the model or reasoning tier for outcome-bearing, planning, judgment, diagnostic, recovery, eval, or verification steps. Only a deterministic non-bottleneck step with representative at-target evidence proving quality-equivalent output and no downstream outcome loss may be proposed as an approval-required reversible downgrade trial; missing quality evidence means keep the tier. It must not reclassify a correctness defect as coaching. It must not edit configuration/files, process human answers, write builder/improve.html, create questions, publish, notify, run the workflow, or mark state. The parent Pulse Fixer processes existing answered `llm-ops-` requests first; it applies only an exact approved bounded edit, verifies it, records and consumes the answer, and never invents providers, models, recipients, destinations, passwords, secrets, or credentials. It then refreshes one deduplicated `LLM & operations recommendations` area and may create at most two material structured decision requests through the existing human-input flow. Informational advice stays in HTML; no configuration changes without exact approval. Finally the parent calls mark_pulse_module_result(workspace_path=\"<current workflow>\", pulse_run_id=%q, module=\"llm_ops_review\", result=\"done|changed|blocked|failed|skipped\", reason=\"...\", evidence=[...]).", pulseRunID, pulseRunID)}},
-		{pulseModuleGoalAdvisor, postRunMonitorStep{"goal-advisor", fmt.Sprintf("PULSE MODULE — GOAL ADVISOR. pulse_run_id=%q. Run the read-only strategy advisor and separate read-only critic defined by the consolidated Pulse protocol. Use Gate evidence and the active .advisor-experiment to choose recovery, healthy 10x/headroom, active-experiment measurement, approved-answer review, or conditional plan-design review. When Gate evidence names a plan-design trigger, the strategy reviewer must load get_workflow_command_guidance(kind=\"design-plan\") as a read-only checklist; its normal write instruction is overridden, so it must not edit builder/improve.html or any workspace file. Use actual run, goal, eval, cost, latency, and failure evidence to return exactly one plan-design disposition: keep, simplify, restructure, or experiment. For any change disposition, compare the current plan with at most two credible alternatives and state expected benefit, affected goal criterion, evidence, risk, migration/rollback, and measurement. The separate critic must challenge whether the recommendation is materially better than the current plan. Preserve one active advisor experiment: it blocks a competing experiment but not plan-design monitoring of whether structure, instrumentation, or implementation prevents a fair test. During measurement, recommend only keep or a repair to the approved experiment unless decisive evidence supports retiring it; do not create an unrelated bold idea. Challenge consequential agent-inferred assumptions, and never turn operational correctness issues such as stale receipts, wrong paths, parsing/schema wiring, or fail-closed behavior into strategic questions; route those findings to Bug Review or Eval Health. Reviewers must not edit files, update builder/improve.html, create/consume questions, or mark module state. The parent Pulse Fixer consolidates advisor and critic results, including any plan-design disposition, records a proposal or advances/applies an exact approved experiment, then calls mark_pulse_module_result(workspace_path=\"<current workflow>\", pulse_run_id=%q, module=\"goal_advisor\", result=\"done|changed|blocked|failed|skipped\", reason=\"...\", evidence=[...]).", pulseRunID, pulseRunID)}},
+		{pulseModuleGoalAdvisor, postRunMonitorStep{"goal-advisor", fmt.Sprintf("PULSE MODULE — GOAL ADVISOR. pulse_run_id=%q. Run the read-only strategy advisor and separate read-only critic defined by the consolidated Pulse protocol. The reviewer must complete the strategy-first pass before plan mechanics: state the current strategy ceiling, one highest-leverage materially different thesis, its relationship to the current experiment, and why incremental repair is insufficient. A packet containing only bug repair, plan cleanup, instrumentation, eval/report correction, or measurement work is invalid. Use Gate evidence and any active strategy .advisor-experiment to choose healthy 10x/headroom, active-strategy challenge or measurement, approved-answer review, or conditional plan-design review. Instrumentation-only tracking is not an active strategy experiment and must not block a bold strategy proposal. When Gate evidence names a plan-design trigger, the strategy reviewer must load get_workflow_command_guidance(kind=\"design-plan\") as a read-only checklist; its normal write instruction is overridden, so it must not edit builder/improve.html or any workspace file. Use actual run, goal, eval, cost, latency, and failure evidence to return exactly one plan-design disposition: keep, simplify, restructure, or experiment. For any change disposition, compare the current plan with at most two credible alternatives and state expected benefit, affected goal criterion, evidence, risk, migration/rollback, and measurement. The separate critic must challenge whether the recommendation is materially better than the current plan. Preserve at most one active strategy experiment. Challenge an existing strategy experiment against the new thesis and recommend advancing, revising, retiring, or replacing it rather than repairing it indefinitely. Operational correctness issues such as stale receipts, wrong paths, parsing/schema wiring, fail-closed behavior, and standalone measurement/report/eval work are handoffs to Bug Review, Eval Health, Report Health, or the matching module; Goal Advisor does not fix them and continues strategic review whenever trustworthy business-outcome evidence remains. Reviewers must not edit files, update builder/improve.html, create/consume questions, or mark module state. The parent Pulse Fixer consolidates advisor and critic results, records a proposal or applies only an exact previously approved strategy experiment, and never turns a maintenance handoff into the Goal Advisor outcome. It then calls mark_pulse_module_result(workspace_path=\"<current workflow>\", pulse_run_id=%q, module=\"goal_advisor\", result=\"done|changed|blocked|failed|skipped\", reason=\"...\", evidence=[...]).", pulseRunID, pulseRunID)}},
 	}
-	const consolidatedReviewProtocol = "PULSE CONSOLIDATED REVIEW PROTOCOL. First load get_reference_doc(kind=\"post-run-monitor\") and follow its Parallel Review Team And Single Fixer section. This fixed module message is only an entry point. Read the current Gate/worklist, get_pulse_module_state, and any current .pulse-fixer-recovery ledger in builder/improve.html. If every due module already has a result and durable result card for this pulse_run_id, stop. If a recovery row is fixed_verified, revalidate its evidence; if it is fixing, inspect its named files/runtime state and finish, roll back, or retry without blindly reapplying it. Otherwise this parent turn owns ALL unresolved due modules: partition them into consecutive parallel batches of at most four, launch one compact READ-ONLY REVIEW call_generic_agent per due module in the current tool-call batch, and run every batch without dropping a module. Each reviewer response must stay under 3000 characters and use the reference contract's compact verdict/finding-id-manifest/target-key/evidence/fix/verification shape. After each batch, compress the results into the bounded in-turn review ledger; after all batches return, deduplicate that ledger and build a conflict map grouped by target key before mutation. Merge compatible fixes. Resolve incompatible fixes by explicit user approval, correctness/data integrity, preserved goal meaning, strategy improvement, then cost/convenience. If evidence cannot resolve a semantic conflict, create one focused decision request, block only affected modules, and do not mutate that target. Revalidate every approved Goal Advisor or LLM/Ops change against its recorded approval basis before mutation: target ids/runtime path, relevant hashes or versions, goal semantics, experiment id, evidence/risks, newer decisions, and conflict map. Unrelated drift is acceptable; semantic or material drift makes it stale. Never silently broaden or rebase stale approval: consume it as stale_not_applied and refresh the decision only if still needed. call_generic_agent is synchronous: its direct tool result is authoritative and no auto-notification is expected. The tool rejects partial provider snapshots and retries one incomplete result once. If a reviewer still fails, do not perform that deep review in the parent; mark only that module failed or blocked with the exact error and continue the safe modules. Use review-artifact-drift, improve-learnings, improve-knowledge, improve-database, improve-report, and improve-evaluation guidance only as read-only reviewer checklists. Then this parent becomes the Pulse Fixer: the only writer. Before mutation it initializes one compact recovery ledger in #pulse-agent-handoff. It applies bounded fixes sequentially and checkpoints each module as fixing then fixed_verified/no_change/blocked/failed with evidence. Before marking a module result, it reconciles every reviewer finding id to exactly one durable disposition; unmatched or duplicate ids block that module. Before marking the ledger complete, it performs one global finding-ID reconciliation across reviewer manifests, canonical ledger dispositions, recovery rows, and final result cards. The technical ledger is the only incremental builder/improve.html update; write user-facing cards once after the consolidated pass. Never claim Pulse completed or notify a clean outcome while a finding lacks a durable disposition. Do not use run_in_background, polling, or nested mutating maintenance agents. Treat the later module brief only as domain/evidence guidance; it must not launch another agent. Only the Pulse Fixer updates files, DB/contracts, plan/config, reports/evals, human-input state, changelog review state, module state, and builder/improve.html."
-	const postChangeEvidenceProtocol = "POST-CHANGE EVIDENCE BOUNDARY. Before each mutation record its start time, canonical target ids, pre-change hashes/versions, and latest relevant pre-change run/artifact ids. Old artifacts are baseline only, never proof. Accept verification only from a side-effect-free deterministic check executed after mutation through the real runtime consumer path, or a fresh post-mutation execution/eval/report artifact with matching run, step, target, and provenance. File existence, mtime alone, successful write, or rereading an older success is not proof. If proof requires a side-effecting or next scheduled producing run, do not trigger it merely to verify: checkpoint changed_unverified, mark the module blocked with awaiting_next_valid_run, record the exact next evidence boundary, and do not claim fixed. Resume changed_unverified only after that evidence boundary arrives."
 	const offTrackBugReviewProtocol = "OFF-TRACK GOAL QA. When Gate selected Bug Review because a material goal is below target, declining, or stalled, use the goal miss as risk evidence even if execution completed cleanly. Test whether the real runtime path implements the intended behavioral contract, inputs, routing, stores, outputs, and measurement correctly; distinguish a correctness bug from a strategy limitation, and compare this checkpoint with the latest prior QA evidence. Do not equate successful execution with correct or goal-effective behavior."
 	for i := range steps {
-		steps[i].step.query = consolidatedReviewProtocol + "\n\n" + postChangeEvidenceProtocol + "\n\n" + steps[i].step.query
 		if steps[i].module == pulseModuleBugReview {
 			steps[i].step.query += "\n\n" + offTrackBugReviewProtocol
 		}
@@ -2426,17 +2423,135 @@ func postRunMonitorModuleSteps(pulseRunID string) []postRunMonitorModuleStep {
 }
 
 func postRunMonitorPreBackupStep(pulseRunID string) postRunMonitorStep {
-	return postRunMonitorStep{"pre-backup", fmt.Sprintf("PULSE PRE-CHANGE BACKUP. pulse_run_id=%q. The Gate selected one or more mutating/reporting modules. Do not ask for confirmation. Read workflow.json.backup and call get_reference_doc(kind=\"backup-strategy\"). Perform the backup directly in THIS parent workflow turn. Never delegate backup or Git commands through run_in_background, call_generic_agent, a reviewer, or another sub-agent: those agents intentionally cannot write the workflow .git directory. Ensure there is a checkpoint before selected Pulse modules mutate workflow artifacts. If backup is disabled, set up the zero-config local-git default and write workflow.json.backup plus backup/status.json. If backup/status.json says the current source hash is already backed up, record that and skip the actual push. Report the backup result, then stop.", pulseRunID)}
+	return postRunMonitorStep{"pre-backup", fmt.Sprintf("PULSE PRE-CHANGE BACKUP. pulse_run_id=%q. Load get_reference_doc(kind=\"backup-strategy\"). Create or verify the required checkpoint directly in this parent turn before review fixes; never delegate Git/backup work. Use the zero-config local-git default when needed, skip only when the exact source hash is already backed up, keep backup/status.json truthful, then stop.", pulseRunID)}
 }
 
-func postRunMonitorFinalSteps(pulseRunID string) []postRunMonitorStep {
-	return []postRunMonitorStep{
-		{"finalize", fmt.Sprintf("PULSE FINALIZER. pulse_run_id=%q. Before final commands, read get_pulse_module_state and confirm every module marked due for this pulse_run_id has a terminal result. If any due result is missing, do not publish or notify a complete Pulse: load get_reference_doc(kind=\"post-run-monitor\"), run the consolidated READ-ONLY REVIEW plus single-fixer protocol for only the unresolved due modules, mark their results, and then continue. Never treat a missing result as skipped or successful. Complete the four final commands below in order in this ONE turn. Do not split them into more chat turns. Before each command call mark_pulse_final_command_result(workspace_path=\"<current workflow>\", pulse_run_id=%q, command=\"dashboard|backup|publish|notify\", status=\"running\", reason=\"...\"); immediately after it finishes call the same tool with done, skipped, blocked, or failed and a factual one-sentence reason. Use the actual single command name, not the pipe-separated example. Continue to Notify even when an earlier command fails, and report the failure honestly.\n\n"+
-			"1. DASHBOARD + QUESTIONS. Prepare the final user-facing Pulse/org state. Overwrite builder/card.health.html with one compact org-dashboard card fragment (inline content only, single-quoted attributes). In builder/improve.html refresh Today's outcome and keep technical/module detail collapsed; preserve active Assumptions challenged. Summarize selected modules ran/skipped, Bug/Goal state, user input requests, module outcomes, backup/publish intent, and next action. If a real user/business decision is needed, call create_human_input_request(workspace_path=\"<current workflow>\", source=\"pulse\", ...); Runloop renders it first as Needs your decision, so keep any matching HTML timeline marker compact. Mark dashboard done or failed.\n\n"+
-			"2. BACKUP. Mark backup running. Read workflow.json.backup, backup/status.json, and get_reference_doc(kind=\"backup-strategy\"). Perform backup and all Git commands directly in THIS parent finalizer turn. Never delegate them through run_in_background, call_generic_agent, a reviewer, or another sub-agent: delegated agents intentionally cannot write the workflow .git directory. Back up the final Gate + selected-module + dashboard state. If backup is disabled, set up the zero-config local-git default. Skip the actual backup only when the status/source-hash check proves this exact current state is already backed up; mark skipped with that reason. Otherwise perform it, always update backup/status.json, update the latest run row with the result, and mark done or failed.\n\n"+
-			"3. PUBLISH. Mark publish running. Read workflow.json.publish and publish/status.json. Mark skipped without deploying when publishing is disabled, has never been verified, or the current publish source hash matches last_source_hash. Only re-publish a verified destination when the source is stale, following get_reference_doc(kind=\"publish-strategy\"). Never perform the first/verifying publish unattended. If backup failed, do not publish unbacked changes; mark publish blocked. Always keep publish/status.json truthful, then mark done, skipped, blocked, or failed.\n\n"+
-			"4. NOTIFY. Mark notify running. Read builder/improve.html, builder/card.health.html, db/db.sqlite report_human_inputs, backup/status.json, and publish/status.json. Honor soul/soul.md ## Notifications; otherwise call notify_user once every run with the in-depth run summary. Enabled account-level notification channels such as Gmail are inherited and count as enabled for this workflow: never skip notification merely because no workflow-specific Slack webhook is configured, and never write redundant Gmail configuration into workflow.json. Include modules ran/skipped, Bug/Goal state, user requests, important outcomes, backup/publish status, dashboard URL when live, cost/time evidence or its planned next check, and next action. Judge backup protection from backup/status.json plus configured destinations, not merely a successful local Git command. If status is local_only or no verified destination is off-device, prominently say `Backup risk: local only` and explain that laptop loss also loses the checkpoint; never call it healthy or fully backed up, and recommend at least one verified remote Git or object-storage destination. Keep this warning in every notification until off-device protection is verified, while deduplicating any matching dashboard recommendation or human-input request. Gmail/email remains the default rich rendering when available. Mark notify done, skipped only when notifications are explicitly disabled, or failed. Then stop.", pulseRunID, pulseRunID)},
+type workflowNotificationContentInstructions struct {
+	runSummary           string
+	pulseSummary         string
+	runSummaryChannels   []string
+	pulseSummaryChannels []string
+}
+
+func notificationInstructionsFromCapabilities(capabilities WorkflowCapabilities) workflowNotificationContentInstructions {
+	if capabilities.Notifications == nil {
+		return workflowNotificationContentInstructions{}
 	}
+	notifications := capabilities.Notifications
+	return workflowNotificationContentInstructions{
+		runSummary:           notifications.EffectiveRunSummaryInstructions(),
+		pulseSummary:         notifications.EffectivePulseSummaryInstructions(),
+		runSummaryChannels:   append([]string(nil), notifications.RunSummaryChannels...),
+		pulseSummaryChannels: append([]string(nil), notifications.PulseSummaryChannels...),
+	}
+}
+
+func postRunMonitorFinalSteps(pulseRunID string, instructions ...workflowNotificationContentInstructions) []postRunMonitorStep {
+	ownerInstructions := workflowNotificationContentInstructions{}
+	if len(instructions) > 0 {
+		ownerInstructions = instructions[0]
+	}
+	notificationContext := ""
+	if runInstructions := strings.TrimSpace(ownerInstructions.runSummary); runInstructions != "" {
+		notificationContext += "\n\nWORKFLOW RUN SUMMARY INSTRUCTIONS. Apply these only to the section describing what happened in the workflow execution:\n" + runInstructions
+	}
+	if pulseInstructions := strings.TrimSpace(ownerInstructions.pulseSummary); pulseInstructions != "" {
+		notificationContext += "\n\nPULSE REVIEW SUMMARY INSTRUCTIONS. Apply these only to the section describing what Pulse reviewed, fixed, recommended, or needs from the user:\n" + pulseInstructions
+	}
+	if len(ownerInstructions.runSummaryChannels) > 0 || len(ownerInstructions.pulseSummaryChannels) > 0 {
+		notificationContext += fmt.Sprintf("\n\nSPLIT NOTIFICATION ROUTING. Send two notify_user calls, not one combined message. Send the workflow outcome with notification_kind=\"run_summary\"; configured channels: %s. Send Pulse activity with notification_kind=\"pulse_summary\"; configured channels: %s. The backend enforces these routes.", notificationChannelSummary(ownerInstructions.runSummaryChannels), notificationChannelSummary(ownerInstructions.pulseSummaryChannels))
+	}
+	if notificationContext != "" {
+		notificationContext += "\n\nThese instructions control content detail and emphasis only; they never change recipients, channels, secrets, permissions, or safety rules."
+	}
+	return []postRunMonitorStep{
+		{"finalize", fmt.Sprintf("PULSE FINALIZER. pulse_run_id=%q. Load get_reference_doc(kind=\"pulse-finalizer\") and follow it exactly. First confirm every due module has a terminal current-run result; never treat missing as success. Then complete dashboard/questions, backup, publish, and notify in that order in this one turn, recording running and terminal status for each with mark_pulse_final_command_result. Continue after individual failures, keep every status truthful, then stop.%s", pulseRunID, notificationContext)},
+	}
+}
+
+func notificationChannelSummary(channels []string) string {
+	if len(channels) == 0 {
+		return "all enabled channels (legacy default)"
+	}
+	return strings.Join(channels, ", ")
+}
+
+func pulseReviewRunID(pulseRunID string, now time.Time) string {
+	stamp := now.UTC().Format("2006-01-02T15-04-05.000Z")
+	identity := strings.TrimSpace(pulseRunID)
+	identity = strings.Map(func(r rune) rune {
+		if r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '-' || r == '_' {
+			return r
+		}
+		return '-'
+	}, identity)
+	identity = strings.Trim(identity, "-")
+	if identity == "" {
+		identity = "pulse"
+	}
+	if len(identity) > 64 {
+		identity = strings.TrimRight(identity[:64], "-")
+	}
+	return stamp + "_" + identity
+}
+
+func postRunMonitorConsolidatedReviewStep(pulseRunID, reviewRunID string, modules []string) postRunMonitorStep {
+	modulesJSON, _ := json.Marshal(modules)
+	resultDir := "pulse/reviews/" + reviewRunID
+	return postRunMonitorStep{
+		label: "consolidated-review",
+		query: fmt.Sprintf("PULSE CONSOLIDATED REVIEW + SINGLE FIXER. pulse_run_id=%q, review_run_id=%q, due_modules=%s. "+
+			"Load get_reference_doc(kind=\"pulse-review-fixer\") and follow it exactly. This stage owns every listed module. Run read-only reviewers in batches of at most two through the supported custom-tool API bridge, passing pulse_run_id=%q, review_run_id=%q, and module on every call. Reviewer children auto-notify this parent on completion; if the outer MCP shell call moves to the background, stop the current turn and wait for those notifications without polling. Read each backend-persisted %s/<module>.md result, then act as the only sequential fixer. Record exactly one honest terminal result per due module and stop only after none are unresolved.",
+			pulseRunID, reviewRunID, string(modulesJSON), pulseRunID, reviewRunID, resultDir),
+	}
+}
+
+func validatePulseDueModuleResults(ctx context.Context, workspacePath, pulseRunID string) error {
+	worklist, ok, err := getPulseWorklistForRun(ctx, workspacePath, pulseRunID)
+	if err != nil {
+		return fmt.Errorf("read Pulse worklist: %w", err)
+	}
+	if !ok {
+		return fmt.Errorf("Pulse worklist %q is missing", pulseRunID)
+	}
+	var unresolved []string
+	for _, module := range pulseModuleOrder {
+		state, exists := worklist[module]
+		if !exists || strings.TrimSpace(strings.ToLower(state.LastDecision)) != "due" {
+			continue
+		}
+		if strings.TrimSpace(state.LastResult) == "" {
+			unresolved = append(unresolved, module)
+		}
+	}
+	if len(unresolved) > 0 {
+		return fmt.Errorf("due Pulse modules lack terminal current-run results: %s", strings.Join(unresolved, ", "))
+	}
+	return nil
+}
+
+func markUnresolvedPulseDueModules(ctx context.Context, workspacePath, pulseRunID, result, reason string) error {
+	worklist, ok, err := getPulseWorklistForRun(ctx, workspacePath, pulseRunID)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return fmt.Errorf("Pulse worklist %q is missing", pulseRunID)
+	}
+	var failures []string
+	for _, module := range pulseModuleOrder {
+		state, exists := worklist[module]
+		if !exists || strings.TrimSpace(strings.ToLower(state.LastDecision)) != "due" || strings.TrimSpace(state.LastResult) != "" {
+			continue
+		}
+		if _, err := markPulseModuleResult(ctx, workspacePath, module, pulseRunID, result, reason, []string{"scheduler consolidated-review completion contract"}); err != nil {
+			failures = append(failures, module+": "+err.Error())
+		}
+	}
+	if len(failures) > 0 {
+		return fmt.Errorf("mark unresolved modules: %s", strings.Join(failures, "; "))
+	}
+	return nil
 }
 
 func (s *SchedulerService) selectedPostRunMonitorModuleSteps(ctx context.Context, sctx *ScheduleContext, pulseRunID string) []postRunMonitorStep {
@@ -2444,25 +2559,38 @@ func (s *SchedulerService) selectedPostRunMonitorModuleSteps(ctx context.Context
 	if err != nil {
 		s.sessionLogf(sctx, pulseRunID, "[PULSE] worklist read failed; using conservative fallback: %v", err)
 	}
-	var selected []postRunMonitorStep
+	var selectedModules []string
 	if !ok || err != nil {
-		selected = s.fallbackPostRunMonitorModuleSteps(ctx, sctx, pulseRunID, worklist)
+		for _, step := range s.fallbackPostRunMonitorModuleSteps(ctx, sctx, pulseRunID, worklist) {
+			if module := pulseModuleForPostRunMonitorStep(step.label); module != "" {
+				selectedModules = append(selectedModules, module)
+			}
+		}
 	} else if !pulseWorklistIsComplete(worklist) {
 		s.sessionLogf(sctx, pulseRunID, "[PULSE] worklist incomplete (%d/%d modules); using conservative fallback", len(worklist), len(pulseModuleOrder))
-		selected = s.fallbackPostRunMonitorModuleSteps(ctx, sctx, pulseRunID, worklist)
+		for _, step := range s.fallbackPostRunMonitorModuleSteps(ctx, sctx, pulseRunID, worklist) {
+			if module := pulseModuleForPostRunMonitorStep(step.label); module != "" {
+				selectedModules = append(selectedModules, module)
+			}
+		}
 	} else {
-		for _, moduleStep := range postRunMonitorModuleSteps(pulseRunID) {
-			state, exists := worklist[moduleStep.module]
+		for _, module := range pulseModuleOrder {
+			state, exists := worklist[module]
 			if !exists || strings.TrimSpace(strings.ToLower(state.LastDecision)) != "due" {
 				continue
 			}
-			selected = append(selected, moduleStep.step)
+			selectedModules = append(selectedModules, module)
 		}
 	}
-	if len(selected) > 0 {
-		selected = append([]postRunMonitorStep{postRunMonitorPreBackupStep(pulseRunID)}, selected...)
+	selected := make([]postRunMonitorStep, 0, 3)
+	if len(selectedModules) > 0 {
+		reviewRunID := pulseReviewRunID(pulseRunID, time.Now())
+		selected = append(selected,
+			postRunMonitorPreBackupStep(pulseRunID),
+			postRunMonitorConsolidatedReviewStep(pulseRunID, reviewRunID, selectedModules),
+		)
 	}
-	selected = append(selected, postRunMonitorFinalSteps(pulseRunID)...)
+	selected = append(selected, postRunMonitorFinalSteps(pulseRunID, notificationInstructionsFromCapabilities(sctx.Capabilities))...)
 	return selected
 }
 
@@ -3069,6 +3197,10 @@ func (s *SchedulerService) executeMultiAgentJob(ctx context.Context, sctx *Sched
 		"agent_mode":                  "simple",
 		"triggered_by":                "cron",
 		"disable_live_input_delivery": true,
+		// The global activity monitor is visible while this request is running.
+		// Send the concise schedule name on the first request instead of making
+		// the UI fall back to the complete scheduler instruction in `query`.
+		"session_title": strings.TrimSpace(sctx.Schedule.Name),
 	}
 	if query != "" {
 		reqMap["query"] = query

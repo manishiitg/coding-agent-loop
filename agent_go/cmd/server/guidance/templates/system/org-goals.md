@@ -82,20 +82,12 @@ For each relevant goal, report an **Org goal alignment** summary:
 - **workflow**: the workflow path/name and group that ran,
 - **status**: `on-track`, `at-risk`, `off-track`, or `unknown`,
 - **evidence**: the file/table/report/output that supports the status,
-- **gap**: what evidence is missing if status is `unknown`,
-- **next action**: run again, improve workflow measurement, create a missing workflow, or ask
-  the CEO to refine the goal.
+- **gap**: what evidence is missing if status is `unknown`.
 
 Do not invent proxy metrics. If the workflow does not produce the evidence needed for a
-goal target, say `unknown` and suggest adding that exact measurement to the workflow.
-When the next action is workflow-specific improvement or missing measurement, pass it to the
-workflow builder by adding a Chief of Staff recommendation card to that workflow's
-`builder/improve.html`. Include the goal/KPI target, alignment verdict, evidence path, gap,
-priority, suggested builder action, expected KPI/success-criteria impact, stable `data-cos-rec-id`,
-and lifecycle `data-status`. Workflow Pulse and Goal Advisor reply through
-`mark_cos_recommendation_status`; Chief of Staff should read those statuses before creating another
-recommendation for the same goal/gap. Do not edit the workflow plan/config directly from Chief of
-Staff chat.
+goal target, say `unknown` and name the exact missing measurement. Org Pulse reports the gap but
+does not recommend or apply a workflow change. Do not edit any workflow file from Chief of Staff
+chat.
 
 Update `pulse/goals.html` when a run or Org Pulse pass provides concrete new evidence that
 changes the scorecard (status, latest evidence, confidence, freshness/last-reviewed, or history).
@@ -166,5 +158,13 @@ Org Pulse reads `pulse/goals.html`, measures the named workflows against those g
 measured narrative into `pulse/org-pulse.html`.
 
 `pulse/goals.html` is the planned target and current scorecard. `pulse/org-pulse.html` is the
-daily measured narrative: what changed, what is drifting, which task findings matter, and what
-decision the CEO should make next.
+daily measured narrative: what changed, whether goals are being met, how workflows align, and
+where evidence is stale or missing. Org Pulse does not recommend or apply changes.
+
+### 6. Human-readable output
+
+The visible scorecard is for a business operator. Use the goal's own name, familiar metric names,
+current value, target, deadline, and one plain-language explanation. Do not make the user interpret
+run/session ids, file paths, database tables, hashes, cursors, raw errors, or internal status codes.
+Keep exact technical provenance only in stable data attributes or a collapsed `Agent details`
+section so a future Chief of Staff can verify the claim without cluttering the scorecard.

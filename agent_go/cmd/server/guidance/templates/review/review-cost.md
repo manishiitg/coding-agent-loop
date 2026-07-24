@@ -11,6 +11,8 @@ inspect Pulse CSS, or ask it to format cards.
 
 Anchor every judgment to the objective FIRST: read `soul/soul.md` (the workflow's goal + success criteria), recent eval reports, and cost ledgers under `costs/`. A cost cut is only "safe" if it does NOT threaten a primary success criterion or quality check; do not label a reduction safe without checking it against these.
 
+Reconcile the raw cost JSON before ranking drivers. Keep `date + scope + group_folder + run_folder` as the bucket identity, so identical step IDs in different groups remain separate. For each model in a bucket, `by_model` is the authoritative LLM total; `by_step_and_model` is attribution detail already contained in that total, so never add those detail rows on top. Compute a positive unattributed/orchestrator remainder per model as `max(0, by_model - sum(by_step_and_model))`; an explicit `workflow_orchestrator` row is already attributed and is not an additional remainder. Flag detail that exceeds the authoritative total as telemetry inconsistency. Treat an executed step with no LLM row as a legitimate scripted/zero-LLM step unless its contract required an LLM call. Treat historical step-less totals as unattributed, never as a synthetic step named after the run-folder name. Keep priced tool costs separate from LLM totals unless the ledger explicitly provides a combined authoritative total.
+
 Assess four things separately:
 1. Which steps, models, or phases are consuming the most cost?
 2. Which spend is necessary for success versus waste from retries, too many handoffs, overly expensive models, or unnecessary evaluation breadth?

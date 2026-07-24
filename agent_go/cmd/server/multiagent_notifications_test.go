@@ -13,7 +13,7 @@ func TestWithChiefNotificationConfigSelectsSecretWithoutLosingCapabilities(t *te
 	if updated.Notifications == nil || updated.Notifications.SlackWebhookSecretName != "SLACK_NOTIFICATION_WEBHOOK_URL" {
 		t.Fatalf("notifications = %#v", updated.Notifications)
 	}
-	if len(updated.SelectedSecrets) != 2 || updated.SelectedSecrets[0] != "EXISTING_SECRET" || updated.SelectedSecrets[1] != "SLACK_NOTIFICATION_WEBHOOK_URL" {
+	if len(updated.SelectedSecrets) != 1 || updated.SelectedSecrets[0] != "EXISTING_SECRET" {
 		t.Fatalf("selected secrets = %#v", updated.SelectedSecrets)
 	}
 	if len(updated.SelectedServers) != 1 || updated.SelectedServers[0] != "server-a" || updated.BrowserMode != "auto" {
@@ -25,23 +25,28 @@ func TestWithChiefNotificationConfigSelectsSecretWithoutLosingCapabilities(t *te
 }
 
 func TestWithChiefNotificationConfigIsIdempotentAndCanDisable(t *testing.T) {
+	globalNames := []string{"SLACK_NOTIFICATION_WEBHOOK_URL", "GLOBAL_APPLICATION_TOKEN"}
 	caps := WorkflowCapabilities{
-		SelectedSecrets: []string{"SLACK_NOTIFICATION_WEBHOOK_URL"},
+		SelectedSecrets:           []string{"SLACK_NOTIFICATION_WEBHOOK_URL"},
+		SelectedGlobalSecretNames: &globalNames,
 		Notifications: &WorkflowNotificationConfig{
 			SlackWebhookSecretName: "SLACK_NOTIFICATION_WEBHOOK_URL",
 		},
 	}
 
 	updated := withChiefNotificationConfig(caps, "SLACK_NOTIFICATION_WEBHOOK_URL")
-	if len(updated.SelectedSecrets) != 1 {
-		t.Fatalf("duplicate notification secret attached: %#v", updated.SelectedSecrets)
+	if len(updated.SelectedSecrets) != 0 {
+		t.Fatalf("notification secret must be detached from agent secrets: %#v", updated.SelectedSecrets)
+	}
+	if updated.SelectedGlobalSecretNames == nil || len(*updated.SelectedGlobalSecretNames) != 1 || (*updated.SelectedGlobalSecretNames)[0] != "GLOBAL_APPLICATION_TOKEN" {
+		t.Fatalf("global agent secrets = %#v, want only GLOBAL_APPLICATION_TOKEN", updated.SelectedGlobalSecretNames)
 	}
 	disabled := withChiefNotificationConfig(updated, "")
 	if disabled.Notifications != nil {
 		t.Fatalf("notifications = %#v, want nil", disabled.Notifications)
 	}
-	if len(disabled.SelectedSecrets) != 1 || disabled.SelectedSecrets[0] != "SLACK_NOTIFICATION_WEBHOOK_URL" {
-		t.Fatalf("disabling should not delete a reusable secret selection: %#v", disabled.SelectedSecrets)
+	if len(disabled.SelectedSecrets) != 0 {
+		t.Fatalf("backend-only notification secret remained selected: %#v", disabled.SelectedSecrets)
 	}
 }
 

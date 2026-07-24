@@ -14,6 +14,19 @@ type NotificationDestination struct {
 	Gmail        *GmailDest           // Gmail recipient hint
 	UserID       string               // workspace user ID, used to look up per-user preferences
 	Content      *NotificationContent // optional typed per-channel content (nil = plain message only)
+
+	// ExcludeChannels lists account-level connector names ("gmail", "slack",
+	// "whatsapp") to skip for this notification. Sourced from the workflow's
+	// workflow.json notifications.exclude_channels so a per-workflow preference
+	// suppresses an inherited account-level channel without touching the
+	// account-wide configuration. Matched case-insensitively.
+	ExcludeChannels []string
+
+	// Summary-specific allowlists. Empty means inherit the existing workflow
+	// routing. notify_user selects one by notification_kind and enforces it in
+	// the backend, including the workflow Slack webhook.
+	RunSummaryChannels   []string
+	PulseSummaryChannels []string
 }
 
 // SlackWebhookDest is a workflow-scoped, one-way Slack Incoming Webhook.
@@ -29,6 +42,14 @@ type SlackWebhookDest struct {
 // authenticated as.
 type GmailDest struct {
 	Email string
+
+	// BlockedRecipients is a per-notification denylist unioned with the
+	// account-wide GmailConfig.BlockedRecipients at send time. It lets a
+	// per-workflow notification preference (workflow.json capabilities.notifications,
+	// applied by the backend) reject additional recipients for this workflow
+	// without editing the account-wide config. Never widens the allow-set — it
+	// can only block more, never unblock a globally-blocked address.
+	BlockedRecipients []string
 }
 
 // SlackDest is the Slack-specific destination hint. ThreadTS is optional —

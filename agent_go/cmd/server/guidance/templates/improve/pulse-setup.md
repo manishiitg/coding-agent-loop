@@ -34,7 +34,7 @@ Set up this workflow so it can keep improving from scheduled runs:
 2. If candidate schedules exist, call `get_schedule_runs` on the most relevant ones.
 3. Read `soul/soul.md` for objective and success criteria.
 4. Read `variables/variables.json` for valid group names.
-5. Read `builder/improve.html` for Maintenance Radar, recent Bug/Goal verdicts, open findings, prior Goal Advisor decisions, historical question/answer outcomes, and Chief of Staff recommendations. Read `soul/soul.md` for the Goal; pending questions come from the human-input tools/preface, not HTML cards.
+5. Read `builder/improve.html` for Maintenance Radar, recent Bug/Goal verdicts, open findings, prior Goal Advisor decisions, and historical question/answer outcomes. Read `soul/soul.md` for the Goal; pending questions come from the human-input tools/preface, not HTML cards. Legacy Chief of Staff recommendation cards are history only.
 6. Read `planning/changelog/` if present. Recent plan/config changes increase regression risk and can make Pulse Gate select deeper modules on the next run.
 7. If success is not defined, call `get_workflow_command_guidance(kind="define-success")` and follow it before scheduling.
 

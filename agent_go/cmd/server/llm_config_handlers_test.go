@@ -53,8 +53,13 @@ func TestClaudeCodeDiscoveryOptionsIncludeManualNewModels(t *testing.T) {
 	if !containsLLMCapabilityString(options, "claude-fable-5") {
 		t.Fatalf("claude-code options = %v, want claude-fable-5", options)
 	}
-	if !containsLLMCapabilityString(options, "claude-opus-4-8") {
-		t.Fatalf("claude-code options = %v, want claude-opus-4-8", options)
+	if !containsLLMCapabilityString(options, "claude-opus-5") {
+		t.Fatalf("claude-code options = %v, want claude-opus-5", options)
+	}
+	for _, modelID := range []string{"claude-opus-4-8", "claude-opus-4-7", "claude-opus-4-6"} {
+		if !containsLLMCapabilityString(options, modelID) {
+			t.Fatalf("claude-code options = %v, want %s", options, modelID)
+		}
 	}
 	if !containsLLMCapabilityString(options, "claude-sonnet-5") {
 		t.Fatalf("claude-code options = %v, want claude-sonnet-5", options)

@@ -145,9 +145,9 @@ func normalizeAnthropicPricingModel(modelLower, originalModelID string) string {
 func normalizeClaudeCodePricingModel(modelLower, originalModelID string) string {
 	switch modelLower {
 	case "", "auto", "claude-code":
-		return "claude-opus-4-8"
+		return "claude-opus-5"
 	case "opus", "claude-opus":
-		return "claude-opus-4-8"
+		return "claude-opus-5"
 	case "sonnet", "claude-sonnet":
 		return "claude-sonnet-5"
 	case "fable", "claude-fable":
@@ -158,6 +158,8 @@ func normalizeClaudeCodePricingModel(modelLower, originalModelID string) string 
 	switch {
 	case strings.Contains(modelKey, "fable-5"):
 		return "claude-fable-5"
+	case strings.Contains(modelKey, "opus-5") || strings.Contains(modelKey, "5-opus"):
+		return "claude-opus-5"
 	case strings.Contains(modelKey, "opus-4-8") || strings.Contains(modelKey, "4-8-opus"):
 		return "claude-opus-4-8"
 	case strings.Contains(modelKey, "opus-4-7") || strings.Contains(modelKey, "4-7-opus"):

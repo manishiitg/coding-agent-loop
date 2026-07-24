@@ -328,7 +328,7 @@ func autoPublishedModelRank(provider, modelID string) int {
 			return 20
 		case strings.Contains(id, "sonnet"):
 			return 30
-		case strings.Contains(id, "opus-4-8"):
+		case strings.Contains(id, "opus-5"):
 			return 40
 		case strings.Contains(id, "opus"):
 			return 50

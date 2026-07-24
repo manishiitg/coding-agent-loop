@@ -323,6 +323,21 @@ func TestStripInlineTabFromOpenArgs(t *testing.T) {
 	if _, _, _, err := stripInlineTabFromOpenArgs([]string{"tab", "t1"}); err == nil {
 		t.Fatalf("expected malformed tab-prefixed open args to fail")
 	}
+
+	tab, cleaned, ok, err = stripInlineTabFromOpenArgs([]string{"t9", "https://example.com/path"})
+	if err != nil {
+		t.Fatalf("unexpected legacy tab-id normalization error: %v", err)
+	}
+	if !ok || tab != "t9" || len(cleaned) != 1 || cleaned[0] != "https://example.com/path" {
+		t.Fatalf("legacy tab-id normalization = (%q, %v, %v), want t9 URL true", tab, cleaned, ok)
+	}
+
+	if _, _, _, err := stripInlineTabFromOpenArgs([]string{"t9"}); err == nil {
+		t.Fatalf("expected bare tab id to be rejected as a navigation target")
+	}
+	if _, _, _, err := stripInlineTabFromOpenArgs([]string{"not-a-url"}); err == nil {
+		t.Fatalf("expected relative navigation target to be rejected")
+	}
 }
 
 func TestNormalizeOpenCommandArgs(t *testing.T) {
@@ -356,6 +371,13 @@ func TestNormalizeOpenCommandArgs(t *testing.T) {
 			name:        "redundant command then url",
 			args:        []string{"open", "https://example.com"},
 			wantCleaned: []string{"https://example.com"},
+		},
+		{
+			name:        "legacy omitted tab marker",
+			args:        []string{"t9", "https://example.com"},
+			wantTab:     "t9",
+			wantCleaned: []string{"https://example.com"},
+			wantOK:      true,
 		},
 	}
 
@@ -476,5 +498,56 @@ func TestAcquireSharedCDPLockHonorsContext(t *testing.T) {
 		t.Fatalf("second acquireSharedCDPLock() unexpectedly succeeded while lock was held")
 	} else if !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("second acquireSharedCDPLock() error = %v, want context deadline", err)
+	}
+}
+
+func TestFindCDPRecordingTabPrefersFreshActiveTab(t *testing.T) {
+	before := []cdpTabInfo{{TabID: "t1", Active: true, URL: "https://example.test"}}
+	after := []cdpTabInfo{
+		{TabID: "t1", Active: false, URL: "https://example.test"},
+		{TabID: "t2", Active: true, URL: "https://example.test"},
+	}
+
+	got, err := findCDPRecordingTab(before, after, "t1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != "t2" {
+		t.Fatalf("recording tab = %q, want t2", got)
+	}
+}
+
+func TestCDPRecordingHandoffRequiresSnapshotAndRestoresOriginal(t *testing.T) {
+	resetCDPRegistryForTest(t)
+	const (
+		port  = 19222
+		owner = "recording-owner"
+	)
+
+	setCDPRecordingHandoff(port, owner, cdpRecordingHandoff{
+		OriginalTab:   "t1",
+		RecordingTab:  "t2",
+		NeedsSnapshot: true,
+	})
+	if got := getCDPTabSelection(port, owner); got != "t2" {
+		t.Fatalf("selection during recording = %q, want t2", got)
+	}
+	handoff, ok := getCDPRecordingHandoff(port, owner)
+	if !ok || !handoff.NeedsSnapshot {
+		t.Fatalf("handoff before snapshot = %#v, %v", handoff, ok)
+	}
+
+	markCDPRecordingSnapshotReady(port, owner)
+	handoff, ok = getCDPRecordingHandoff(port, owner)
+	if !ok || handoff.NeedsSnapshot {
+		t.Fatalf("handoff after snapshot = %#v, %v", handoff, ok)
+	}
+
+	cleared, ok := clearCDPRecordingHandoff(port, owner)
+	if !ok || cleared.OriginalTab != "t1" || cleared.RecordingTab != "t2" {
+		t.Fatalf("cleared handoff = %#v, %v", cleared, ok)
+	}
+	if got := getCDPTabSelection(port, owner); got != "t1" {
+		t.Fatalf("selection after stop = %q, want t1", got)
 	}
 }

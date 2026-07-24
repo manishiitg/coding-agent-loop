@@ -4,6 +4,7 @@ import {
   hasIdleAliveCodingAgent,
   hasLiveBackgroundAgents,
   isTerminalActivityStatus,
+  nonWorkflowActivityTitle,
   RETAINED_TMUX_ACTIVE_WINDOW_MS,
 } from './activitySessions'
 
@@ -45,6 +46,32 @@ describe('activity session helpers', () => {
     expect(isTerminalActivityStatus('completed')).toBe(true)
     expect(isTerminalActivityStatus('stopped')).toBe(true)
     expect(isTerminalActivityStatus('running')).toBe(false)
+  })
+})
+
+describe('nonWorkflowActivityTitle', () => {
+  it('uses the short backend title for a scheduled Chief of Staff run', () => {
+    expect(nonWorkflowActivityTitle({
+      session_id: 'schedule-cron--daily_123',
+      triggered_by: 'cron',
+      title: 'Daily Financial Compliance Monitor',
+      query: 'NORMAL CHIEF OF STAFF TASK RUN.\n\nVery long scheduler envelope',
+    })).toBe('Daily Financial Compliance Monitor')
+  })
+
+  it('does not leak a legacy scheduled prompt into the activity UI', () => {
+    expect(nonWorkflowActivityTitle({
+      session_id: 'schedule-cron--daily_123',
+      triggered_by: 'cron',
+      query: 'NORMAL CHIEF OF STAFF TASK RUN.\n\nVery long scheduler envelope',
+    })).toBe('Chief of Staff task')
+  })
+
+  it('retains the user prompt fallback for an interactive chat', () => {
+    expect(nonWorkflowActivityTitle({
+      session_id: 'chat-123',
+      query: 'Review my portfolio',
+    })).toBe('Review my portfolio')
   })
 })
 

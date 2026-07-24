@@ -26,11 +26,24 @@ var (
 	cdpActiveTabs      = make(map[int]string)
 	cdpTabAliases      = make(map[string]string)
 	cdpOwnedTabs       = make(map[string]cdpOwnedTab)
+	cdpRecordingTabs   = make(map[string]cdpRecordingHandoff)
 )
 
 type cdpOwnedTab struct {
 	Alias string
 	TabID string
+}
+
+// cdpRecordingHandoff tracks agent-browser's temporary recording context.
+// agent-browser cannot add video capture to an existing BrowserContext, so
+// `record start` creates a new page (and usually a visible Chrome window). The
+// managed adapter must route the owner to that page until recording stops;
+// otherwise its normal selected-tab enforcement silently sends actions back to
+// the unrecorded original tab.
+type cdpRecordingHandoff struct {
+	OriginalTab   string
+	RecordingTab  string
+	NeedsSnapshot bool
 }
 
 type newCDPTabRequest struct {
@@ -147,7 +160,98 @@ func clearCDPTabSelectionsForPort(port int) {
 			delete(cdpOwnedTabs, key)
 		}
 	}
+	for key := range cdpRecordingTabs {
+		if strings.HasPrefix(key, prefix) {
+			delete(cdpRecordingTabs, key)
+		}
+	}
 	delete(cdpActiveTabs, port)
+}
+
+func getCDPRecordingHandoff(port int, ownerID string) (cdpRecordingHandoff, bool) {
+	cdpTabSelectionsMu.RLock()
+	defer cdpTabSelectionsMu.RUnlock()
+	handoff, ok := cdpRecordingTabs[cdpTabSelectionKey(port, ownerID)]
+	return handoff, ok
+}
+
+func setCDPRecordingHandoff(port int, ownerID string, handoff cdpRecordingHandoff) {
+	handoff.OriginalTab = strings.TrimSpace(handoff.OriginalTab)
+	handoff.RecordingTab = strings.TrimSpace(handoff.RecordingTab)
+	if handoff.OriginalTab == "" || handoff.RecordingTab == "" {
+		return
+	}
+	cdpTabSelectionsMu.Lock()
+	defer cdpTabSelectionsMu.Unlock()
+	cdpRecordingTabs[cdpTabSelectionKey(port, ownerID)] = handoff
+	cdpTabSelections[cdpTabSelectionKey(port, ownerID)] = handoff.RecordingTab
+	cdpActiveTabs[port] = handoff.RecordingTab
+}
+
+func markCDPRecordingSnapshotReady(port int, ownerID string) {
+	cdpTabSelectionsMu.Lock()
+	defer cdpTabSelectionsMu.Unlock()
+	key := cdpTabSelectionKey(port, ownerID)
+	handoff, ok := cdpRecordingTabs[key]
+	if !ok {
+		return
+	}
+	handoff.NeedsSnapshot = false
+	cdpRecordingTabs[key] = handoff
+}
+
+func clearCDPRecordingHandoff(port int, ownerID string) (cdpRecordingHandoff, bool) {
+	cdpTabSelectionsMu.Lock()
+	defer cdpTabSelectionsMu.Unlock()
+	key := cdpTabSelectionKey(port, ownerID)
+	handoff, ok := cdpRecordingTabs[key]
+	if !ok {
+		return cdpRecordingHandoff{}, false
+	}
+	delete(cdpRecordingTabs, key)
+	if handoff.OriginalTab != "" {
+		cdpTabSelections[key] = handoff.OriginalTab
+	}
+	if cdpActiveTabs[port] == handoff.RecordingTab {
+		delete(cdpActiveTabs, port)
+	}
+	return handoff, true
+}
+
+// findCDPRecordingTab identifies the fresh page created by agent-browser's
+// record start/restart operation. Prefer a newly-created active page, then the
+// only new page, then an active page different from the original. The final
+// fallback supports agent-browser versions that replace a target while
+// retaining their logical tN numbering.
+func findCDPRecordingTab(before, after []cdpTabInfo, originalTab string) (string, error) {
+	beforeIDs := make(map[string]bool, len(before))
+	for _, tab := range before {
+		if tabID := strings.TrimSpace(tab.TabID); tabID != "" {
+			beforeIDs[tabID] = true
+		}
+	}
+
+	var newTabs []cdpTabInfo
+	for _, tab := range after {
+		tabID := strings.TrimSpace(tab.TabID)
+		if tabID == "" || beforeIDs[tabID] {
+			continue
+		}
+		newTabs = append(newTabs, tab)
+		if tab.Active {
+			return tabID, nil
+		}
+	}
+	if len(newTabs) == 1 {
+		return strings.TrimSpace(newTabs[0].TabID), nil
+	}
+	for _, tab := range after {
+		tabID := strings.TrimSpace(tab.TabID)
+		if tab.Active && tabID != "" && tabID != strings.TrimSpace(originalTab) {
+			return tabID, nil
+		}
+	}
+	return "", fmt.Errorf("record start succeeded, but the fresh recording tab could not be identified (original=%q, before=%d tab(s), after=%d tab(s))", originalTab, len(before), len(after))
 }
 
 func clearCDPActiveTabForPort(port int) {
@@ -283,6 +387,14 @@ func clearCDPTabStateForOwner(port int, ownerID, tab string) {
 		}
 		if cdpActiveTabs[port] == alias || cdpActiveTabs[port] == tabID {
 			delete(cdpActiveTabs, port)
+		}
+	}
+	// Recording contexts are registered for crash-safe delayed cleanup without
+	// adding a public alias. Remove any such ownership record by its real tab ID
+	// after record stop closes the temporary page.
+	for key, owned := range cdpOwnedTabs {
+		if strings.HasPrefix(key, prefix) && (owned.Alias == tab || owned.TabID == tab) {
+			delete(cdpOwnedTabs, key)
 		}
 	}
 	if selected == tab {
@@ -824,13 +936,45 @@ func stripInlineTabFromOpenArgs(args []string) (tab string, cleaned []string, ok
 	if len(args) == 0 {
 		return "", args, false, nil
 	}
+	// Older/incorrect callers sometimes omit the literal "tab" marker and send
+	// ["t9", "https://example.com"]. Passing that through makes agent-browser
+	// navigate to https://t9/ and ignore the intended URL. Recover the obvious
+	// tab-id form here; labels still require the explicit marker so ordinary URL
+	// arguments cannot be mistaken for tab selections.
+	if isCDPTabID(args[0]) {
+		if len(args) < 2 {
+			return "", nil, false, fmt.Errorf("open command received tab id %q without a URL; pass a URL-only open request or use tab %s <url>", args[0], args[0])
+		}
+		if err := validateOpenTargetURL(args[1]); err != nil {
+			return "", nil, false, err
+		}
+		return strings.TrimSpace(args[0]), append([]string(nil), args[1:]...), true, nil
+	}
 	if args[0] != "tab" && args[0] != "--tab" {
+		if err := validateOpenTargetURL(args[0]); err != nil {
+			return "", nil, false, err
+		}
 		return "", args, false, nil
 	}
 	if len(args) < 3 || strings.TrimSpace(args[1]) == "" {
 		return "", nil, false, fmt.Errorf("open command uses %s but is missing <tab-id-or-label> and URL", args[0])
 	}
+	if err := validateOpenTargetURL(args[2]); err != nil {
+		return "", nil, false, err
+	}
 	return strings.TrimSpace(args[1]), append([]string(nil), args[2:]...), true, nil
+}
+
+func validateOpenTargetURL(raw string) error {
+	target := strings.TrimSpace(raw)
+	parsed, err := url.Parse(target)
+	if err != nil || strings.TrimSpace(parsed.Scheme) == "" {
+		return fmt.Errorf("browser navigation target %q must be an absolute URL with an explicit scheme such as https://; a CDP tab id such as t9 is not a URL", target)
+	}
+	if (parsed.Scheme == "http" || parsed.Scheme == "https") && strings.TrimSpace(parsed.Host) == "" {
+		return fmt.Errorf("browser navigation target %q must include a host", target)
+	}
+	return nil
 }
 
 func stringArgs(raw interface{}) []string {

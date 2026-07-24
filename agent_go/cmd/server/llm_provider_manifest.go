@@ -310,7 +310,16 @@ func providerModelIDs(provider string) []string {
 func claudeCodeCapabilityModels() []string {
 	ids := providerModelIDs("claude-code")
 	if len(ids) == 0 {
-		return []string{"claude-code", "claude-fable-5", "claude-opus-4-8", "claude-sonnet-5", "claude-sonnet-4-6"}
+		return []string{
+			"claude-code",
+			"claude-fable-5",
+			"claude-opus-5",
+			"claude-opus-4-8",
+			"claude-opus-4-7",
+			"claude-opus-4-6",
+			"claude-sonnet-5",
+			"claude-sonnet-4-6",
+		}
 	}
 	return ids
 }
@@ -630,6 +639,8 @@ func inferCursorModelGroup(modelID, _ string) string {
 		return "GPT-5.1"
 	case strings.HasPrefix(id, "gpt-5"):
 		return "GPT-5"
+	case strings.Contains(id, "claude-opus-5") || strings.Contains(id, "opus-5"):
+		return "Claude Opus 5"
 	case strings.Contains(id, "claude-opus-4-8") || strings.Contains(id, "opus-4-8"):
 		return "Claude Opus 4.8"
 	case strings.Contains(id, "claude-opus-4-7") || strings.Contains(id, "opus-4-7"):

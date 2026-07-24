@@ -27,6 +27,21 @@ export function buildPulseTimelineHtml(content: string): string {
     if (value.indexOf('knowledge') !== -1) return 'knowledgebase_health';
     return '';
   }
+  function removeVisibleRuntimeIds(root){
+    var walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+    var nodes = [];
+    while (walker.nextNode()) nodes.push(walker.currentNode);
+    nodes.forEach(function(node){
+      var value = node.nodeValue || '';
+      value = value
+        .replace(/schedule-(?:cron|manual)--[a-z0-9_-]+(?:_[0-9]+)?/gi, '')
+        .replace(/(?:pulse_run_id|review_run_id|session_id|execution_id|run_id)\\s*[:=]\\s*[^\\s;,)]+/gi, '')
+        .replace(/\\s+([,.;:)])/g, '$1')
+        .replace(/([·|])\\s*([·|])/g, '$1')
+        .replace(/\\s{2,}/g, ' ');
+      node.nodeValue = value.trim() ? value : '';
+    });
+  }
   function render(target){
     if (!target) return;
     var wrap = document.querySelector('.wrap') || document.body;
@@ -62,6 +77,7 @@ export function buildPulseTimelineHtml(content: string): string {
         Array.prototype.forEach.call(clone.querySelectorAll('[id]'), function(node){ node.removeAttribute('id'); });
         clone.hidden = false;
         clone.style.display = '';
+        removeVisibleRuntimeIds(clone);
         host.appendChild(clone);
       });
     }

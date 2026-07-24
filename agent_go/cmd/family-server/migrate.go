@@ -70,7 +70,7 @@ func migrateWorkspace(root string) error {
 		log.Printf("[migrate] backup already exists at %s, skipping", backupDir)
 	}
 
-	itemToActivityDir := map[string]string{}    // old item workspace-relative path -> new activity dir
+	itemToActivityDir := map[string]string{}     // old item workspace-relative path -> new activity dir
 	manifestToActivityDir := map[string]string{} // old shared/packages/*.json path -> new activity dir
 
 	if err := migratePackages(root, itemToActivityDir, manifestToActivityDir); err != nil {
@@ -681,9 +681,8 @@ func migrateAnswerKeys(root string, itemToActivityDir map[string]string) error {
 			log.Printf("[migrate] answer key %s: no confident match, moved to _legacy/answer-keys/", e.Name())
 			continue
 		}
-		dst := filepath.Join(root, filepath.FromSlash(best), e.Name())
 		destName := uniqueBase(filepath.Join(root, filepath.FromSlash(best)), e.Name())
-		dst = filepath.Join(root, filepath.FromSlash(best), destName)
+		dst := filepath.Join(root, filepath.FromSlash(best), destName)
 		if err := os.Rename(abs, dst); err != nil {
 			return err
 		}
@@ -691,13 +690,6 @@ func migrateAnswerKeys(root string, itemToActivityDir map[string]string) error {
 	}
 	removeIfEmpty(src)
 	return nil
-}
-
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
 }
 
 // --- step: memory + parent conversations -----------------------------------
@@ -708,9 +700,9 @@ func migrateMemoryAndParentConversations(root string) error {
 		return err
 	}
 	moves := map[string]string{
-		filepath.Join(root, "parent", "preferences.md"):    filepath.Join(memory, "preferences.md"),
-		filepath.Join(root, "parent", "browser-notes.md"):  filepath.Join(memory, "browser-notes.md"),
-		filepath.Join(root, "child", "interests.md"):       filepath.Join(memory, "interests.md"),
+		filepath.Join(root, "parent", "preferences.md"):     filepath.Join(memory, "preferences.md"),
+		filepath.Join(root, "parent", "browser-notes.md"):   filepath.Join(memory, "browser-notes.md"),
+		filepath.Join(root, "child", "interests.md"):        filepath.Join(memory, "interests.md"),
 		filepath.Join(root, "parent", "child-profile.json"): filepath.Join(memory, "child-profile.json"),
 	}
 	for src, dst := range moves {

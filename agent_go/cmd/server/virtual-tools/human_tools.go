@@ -11,6 +11,7 @@ import (
 
 	"github.com/manishiitg/coding-agent-loop/agent_go/cmd/server/services"
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/common"
+	mcpexecutor "github.com/manishiitg/mcpagent/executor"
 
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 )
@@ -62,7 +63,60 @@ func CreateHumanTools() []llmtypes.Tool {
 	notifyProps := map[string]interface{}{
 		"message_for_user": map[string]interface{}{
 			"type":        "string",
-			"description": "Message to send to the user",
+			"description": "Concise plain-text summary sent to every channel and used as the Slack/email fallback. When supplying rich Slack fields, make this the lead verdict rather than duplicating every detail.",
+		},
+		"slack_title": map[string]interface{}{
+			"type":        "string",
+			"maxLength":   150,
+			"description": "Optional Block Kit header. Use by default for workflow, Pulse, Chief of Staff, Goal Advisor, and other structured summaries. The backend owns the webhook URL and renders this safely; never post to a webhook directly.",
+		},
+		"slack_color": map[string]interface{}{
+			"type":        "string",
+			"enum":        []string{"neutral", "success", "warning", "danger"},
+			"description": "Block Kit accent color chosen from the factual outcome: success only when healthy, warning for incomplete/blocked, danger for confirmed failure, otherwise neutral.",
+		},
+		"slack_fields": map[string]interface{}{
+			"type":     "array",
+			"maxItems": 10,
+			"items": map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"label": map[string]interface{}{"type": "string"},
+					"value": map[string]interface{}{"type": "string"},
+				},
+				"required":             []string{"label", "value"},
+				"additionalProperties": false,
+			},
+			"description": "Optional compact Block Kit metric fields. Use for counts/statuses. Other channels ignore these fields.",
+		},
+		"slack_sections": map[string]interface{}{
+			"type":     "array",
+			"maxItems": 12,
+			"items": map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"heading": map[string]interface{}{"type": "string"},
+					"body":    map[string]interface{}{"type": "string"},
+				},
+				"required":             []string{"heading", "body"},
+				"additionalProperties": false,
+			},
+			"description": "Optional ordered Block Kit sections for changed areas, findings, issues, blockers, or next actions. Slack mrkdwn and <url|label> links are supported. Other channels ignore these fields.",
+		},
+		"slack_footer": map[string]interface{}{
+			"type":        "string",
+			"maxLength":   2000,
+			"description": "Optional short Block Kit context/footer such as scope and date. Other channels ignore this field.",
+		},
+		"exclude_channels": map[string]interface{}{
+			"type":        "array",
+			"items":       map[string]interface{}{"type": "string", "enum": []string{"gmail", "slack", "whatsapp"}},
+			"description": "Optional one-off override to SKIP account-level delivery channels for THIS notification only, by name (\"gmail\", \"slack\", \"whatsapp\"). The DURABLE per-workflow preference belongs in workflow.json notifications.exclude_channels and is applied automatically on every send — use this arg only for a one-time skip beyond that. Suppresses the channel for this send only; never changes the account-wide configuration. Omit to deliver to every enabled channel not already excluded by workflow.json. The always-on web UI and any configured workflow Slack webhook are unaffected.",
+		},
+		"notification_kind": map[string]interface{}{
+			"type":        "string",
+			"enum":        []string{"general", "run_summary", "pulse_summary"},
+			"description": "Classifies this notification so the backend can enforce its workflow-configured channel routing. Pulse finalizers use run_summary for the execution outcome and pulse_summary for Pulse review/fix activity. Use general for ordinary notifications.",
 		},
 	}
 	if gmailEnabled() {
@@ -88,6 +142,11 @@ func CreateHumanTools() []llmtypes.Tool {
 			"type":        "array",
 			"items":       map[string]interface{}{"type": "string"},
 			"description": "Optional. Absolute file paths on the server host to attach to the email (Gmail only).",
+		}
+		notifyProps["block_recipients"] = map[string]interface{}{
+			"type":        "array",
+			"items":       map[string]interface{}{"type": "string"},
+			"description": "Optional one-off email denylist for THIS notification (Gmail only). Addresses listed here are rejected as To or CC recipients, on top of BOTH the account-wide disallowed-recipients list AND the durable per-workflow denylist in workflow.json notifications.block_recipients — it can only block MORE, never unblock a globally-blocked address. Put addresses the workflow must never email in workflow.json notifications.block_recipients (applied automatically); use this arg only for a one-time block beyond that. If a blocked address is the resolved recipient, the email is skipped rather than sent elsewhere. Does not change any account-wide configuration; other channels ignore this.",
 		}
 		notifyProps["email_html"] = map[string]interface{}{
 			"type":        "string",
@@ -123,14 +182,14 @@ var channelLabels = map[string]string{
 	"gmail":    "Gmail (email)",
 }
 
-var sendSlackIncomingWebhook = services.SendSlackIncomingWebhook
+var sendRichSlackIncomingWebhook = services.SendRichSlackIncomingWebhook
 
 // buildNotifyDescription renders the notify_user description with the set of
 // channels enabled when the tool list is built (per session/run), so the agent
 // knows where its message will actually land. The always-on web UI connector is
 // not framed as an external channel.
 func buildNotifyDescription() string {
-	base := "Send a non-blocking notification to the human. Use this for FYIs, progress updates, alerts, and completion notices when you do not need to wait for a reply. If the workflow has a Slack Incoming Webhook configured, this tool automatically sends there in addition to enabled account-level channels; the webhook cannot receive replies. If you need the human to answer before continuing, use human_feedback instead. Returns a JSON delivery result — status (delivered|partial|failed|no_recipient|no_channels_configured) plus delivered/skipped/failed channel lists. Report it honestly to the user: do NOT claim the message was sent if status is failed or no_channels_configured."
+	base := "Send a non-blocking notification to the human. Use this for FYIs, progress updates, alerts, and completion notices when you do not need to wait for a reply. If the workflow has a Slack Incoming Webhook configured, this tool automatically sends a backend-owned rich Block Kit card there in addition to enabled account-level channels; even a plain message_for_user call receives the safe rich default. For workflow, Pulse, Chief of Staff, Goal Advisor, and other structured summaries, set slack_title, factual slack_color, compact slack_fields, relevant slack_sections, and slack_footer by default. Never access a SECRET_* webhook variable, construct a webhook payload in shell, post with curl, disable notify_user to avoid duplication, or ask for the URL after an encrypted webhook reference is configured—the backend exclusively owns delivery. If you need the human to answer before continuing, use human_feedback instead. Returns a JSON delivery result — status (delivered|partial|failed|no_recipient|no_channels_configured) plus delivered/skipped/failed channel lists. Report it honestly to the user: do NOT claim the message was sent if status is failed or no_channels_configured."
 
 	var labels []string
 	gmailOn := false
@@ -253,6 +312,39 @@ func emailListFromArg(raw interface{}) []string {
 	}
 }
 
+// stringListFromArg reads an array-or-string tool argument into a trimmed,
+// lowercased, de-duplicated slice. Used for simple token lists such as
+// exclude_channels ("gmail", "slack", "whatsapp") where email-style splitting
+// isn't needed.
+func stringListFromArg(raw interface{}) []string {
+	var values []string
+	switch v := raw.(type) {
+	case []interface{}:
+		for _, item := range v {
+			if s, ok := item.(string); ok {
+				values = append(values, s)
+			}
+		}
+	case []string:
+		values = v
+	case string:
+		values = []string{v}
+	default:
+		return nil
+	}
+	seen := map[string]bool{}
+	out := make([]string, 0, len(values))
+	for _, raw := range values {
+		token := strings.ToLower(strings.TrimSpace(raw))
+		if token == "" || seen[token] {
+			continue
+		}
+		seen[token] = true
+		out = append(out, token)
+	}
+	return out
+}
+
 func normalizeNotifyEmailList(values []string) []string {
 	seen := map[string]bool{}
 	out := make([]string, 0, len(values))
@@ -327,6 +419,18 @@ func handleNotifyUser(ctx context.Context, args map[string]interface{}) (string,
 		}
 		dest.Gmail = &services.GmailDest{Email: strings.Join(to, ", ")}
 	}
+	// Optional one-off email denylist for this send, unioned with both the
+	// account-wide blocked list and the per-workflow workflow.json
+	// notifications.block_recipients already carried on dest.Gmail.
+	if blocked := emailListFromArg(args["block_recipients"]); len(blocked) > 0 {
+		if dest == nil {
+			dest = &services.NotificationDestination{}
+		}
+		if dest.Gmail == nil {
+			dest.Gmail = &services.GmailDest{}
+		}
+		dest.Gmail.BlockedRecipients = append(dest.Gmail.BlockedRecipients, blocked...)
+	}
 	gc, err := gmailContentFromArgs(args)
 	if err != nil {
 		return "", err // e.g. email_html_file not found — feed the problem back to the agent
@@ -337,12 +441,31 @@ func handleNotifyUser(ctx context.Context, args map[string]interface{}) (string,
 		}
 		dest.Content = &services.NotificationContent{Gmail: gc}
 	}
+	slackContent, err := slackContentFromArgs(args)
+	if err != nil {
+		return "", err
+	}
+
+	// Per-workflow channel opt-out. The durable preference comes from workflow.json
+	// notifications.exclude_channels (carried on dest.ExcludeChannels); the optional
+	// exclude_channels arg adds a one-off skip for this send. Both are unioned.
+	excludeChannels := stringListFromArg(args["exclude_channels"])
+	if dest != nil && len(dest.ExcludeChannels) > 0 {
+		excludeChannels = append(excludeChannels, dest.ExcludeChannels...)
+	}
+	notificationKind, _ := args["notification_kind"].(string)
+	notificationKind = strings.ToLower(strings.TrimSpace(notificationKind))
+	routedChannels := summaryChannelsForKind(dest, notificationKind)
+	if len(routedChannels) > 0 {
+		excludeChannels = append(excludeChannels, excludedNotificationChannels(routedChannels)...)
+	}
 
 	// Synchronous send so we can report real per-channel delivery to the agent
 	// (and so the send isn't killed when this turn's context is canceled).
-	results := notificationManager.SendUserNotificationSync(ctx, messageForUser, "", dest)
-	if dest != nil && dest.SlackWebhook != nil {
-		msgID, sendErr := sendSlackIncomingWebhook(ctx, dest.SlackWebhook.URL, messageForUser)
+	results := notificationManager.SendUserNotificationSync(ctx, messageForUser, "", dest, excludeChannels...)
+	webhookAllowed := len(routedChannels) == 0 || containsNotificationChannel(routedChannels, "slack")
+	if dest != nil && dest.SlackWebhook != nil && webhookAllowed {
+		msgID, sendErr := sendRichSlackIncomingWebhook(ctx, dest.SlackWebhook.URL, messageForUser, slackContent)
 		result := services.ConnectorResult{
 			Channel: "slack_webhook",
 			OK:      sendErr == nil,
@@ -390,6 +513,75 @@ func handleNotifyUser(ctx context.Context, args map[string]interface{}) (string,
 	}
 	b, _ := json.Marshal(result)
 	return string(b), nil
+}
+
+func summaryChannelsForKind(dest *services.NotificationDestination, kind string) []string {
+	if dest == nil {
+		return nil
+	}
+	switch kind {
+	case "run_summary":
+		return dest.RunSummaryChannels
+	case "pulse_summary":
+		return dest.PulseSummaryChannels
+	default:
+		return nil
+	}
+}
+
+func excludedNotificationChannels(allowed []string) []string {
+	allowedSet := map[string]bool{}
+	for _, channel := range allowed {
+		allowedSet[strings.ToLower(strings.TrimSpace(channel))] = true
+	}
+	excluded := make([]string, 0, 3)
+	for _, channel := range []string{"gmail", "slack", "whatsapp"} {
+		if !allowedSet[channel] {
+			excluded = append(excluded, channel)
+		}
+	}
+	return excluded
+}
+
+func containsNotificationChannel(channels []string, target string) bool {
+	target = strings.ToLower(strings.TrimSpace(target))
+	for _, channel := range channels {
+		if strings.ToLower(strings.TrimSpace(channel)) == target {
+			return true
+		}
+	}
+	return false
+}
+
+func slackContentFromArgs(args map[string]interface{}) (services.SlackWebhookContent, error) {
+	content := services.SlackWebhookContent{}
+	content.Title, _ = args["slack_title"].(string)
+	content.Color, _ = args["slack_color"].(string)
+	content.Footer, _ = args["slack_footer"].(string)
+
+	if rawFields, ok := args["slack_fields"].([]interface{}); ok {
+		for i, raw := range rawFields {
+			entry, ok := raw.(map[string]interface{})
+			if !ok {
+				return content, fmt.Errorf("slack_fields[%d] must be an object", i)
+			}
+			label, _ := entry["label"].(string)
+			value, _ := entry["value"].(string)
+			content.Fields = append(content.Fields, services.SlackWebhookField{Label: label, Value: value})
+		}
+	}
+	if rawSections, ok := args["slack_sections"].([]interface{}); ok {
+		for i, raw := range rawSections {
+			entry, ok := raw.(map[string]interface{})
+			if !ok {
+				return content, fmt.Errorf("slack_sections[%d] must be an object", i)
+			}
+			heading, _ := entry["heading"].(string)
+			body, _ := entry["body"].(string)
+			content.Sections = append(content.Sections, services.SlackWebhookSection{Heading: heading, Body: body})
+		}
+	}
+	return content, nil
 }
 
 // handleHumanFeedback handles the human_feedback tool execution
@@ -504,6 +696,16 @@ func NotificationDestinationFromContext(ctx context.Context) *services.Notificat
 	if explicit, ok := ctx.Value(BotNotificationDestinationKey).(*services.NotificationDestination); ok && explicit != nil {
 		dest = cloneNotificationDestination(explicit)
 	}
+	// Coding-agent tools execute through a separate HTTP request context. The
+	// bridge preserves the trusted session ID, but not arbitrary values from the
+	// original agent context, so resolve the latest session destination here.
+	sessionID, _ := ctx.Value(common.ChatSessionIDKey).(string)
+	if strings.TrimSpace(sessionID) == "" {
+		sessionID = mcpexecutor.SessionIDFromContext(ctx)
+	}
+	if current := sessionNotificationDestination(sessionID); current != nil {
+		dest = current
+	}
 	if uid, ok := ctx.Value(common.UserIDKey).(string); ok && uid != "" {
 		if dest == nil {
 			dest = &services.NotificationDestination{}
@@ -522,7 +724,12 @@ func cloneNotificationDestination(dest *services.NotificationDestination) *servi
 	if dest == nil {
 		return nil
 	}
-	clone := &services.NotificationDestination{UserID: dest.UserID}
+	clone := &services.NotificationDestination{
+		UserID:               dest.UserID,
+		ExcludeChannels:      append([]string(nil), dest.ExcludeChannels...),
+		RunSummaryChannels:   append([]string(nil), dest.RunSummaryChannels...),
+		PulseSummaryChannels: append([]string(nil), dest.PulseSummaryChannels...),
+	}
 	if dest.Slack != nil {
 		clone.Slack = &services.SlackDest{
 			ChannelID: dest.Slack.ChannelID,
@@ -543,7 +750,8 @@ func cloneNotificationDestination(dest *services.NotificationDestination) *servi
 	}
 	if dest.Gmail != nil {
 		clone.Gmail = &services.GmailDest{
-			Email: dest.Gmail.Email,
+			Email:             dest.Gmail.Email,
+			BlockedRecipients: append([]string(nil), dest.Gmail.BlockedRecipients...),
 		}
 	}
 	// Content is treated as read-only by connectors, so sharing the pointer is
@@ -558,5 +766,8 @@ func notificationDestinationEmpty(dest *services.NotificationDestination) bool {
 			(dest.Slack == nil || dest.Slack.ChannelID == "") &&
 			(dest.SlackWebhook == nil || (dest.SlackWebhook.SecretName == "" && dest.SlackWebhook.URL == "")) &&
 			(dest.WhatsApp == nil || (dest.WhatsApp.ChannelID == "" && dest.WhatsApp.PhoneE164 == "")) &&
-			(dest.Gmail == nil || dest.Gmail.Email == ""))
+			(dest.Gmail == nil || dest.Gmail.Email == "") &&
+			len(dest.ExcludeChannels) == 0 &&
+			len(dest.RunSummaryChannels) == 0 &&
+			len(dest.PulseSummaryChannels) == 0)
 }

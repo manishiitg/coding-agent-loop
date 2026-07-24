@@ -9,6 +9,7 @@ import type { ActiveSessionInfo } from '../services/api-types'
 import { activateTab } from '../utils/activateTab'
 import { openActiveSession, openWorkflowPresetPage, pickWorkflowActiveSession, workflowSessionBotPlatform } from '../utils/workflowSessionRestore'
 import { runtimeHasBackgroundAgents, runtimeNeedsUserInput, sessionRuntimeStatus } from '../utils/runtimeActivity'
+import { nonWorkflowActivityTitle } from '../utils/activitySessions'
 
 interface QuickSwitcherProps {
   isOpen: boolean
@@ -81,7 +82,7 @@ const activeSessionLabel = (session: ActiveSessionInfo): string => {
       session.title ||
       'Automation'
   }
-  return session.title || session.query || 'Chat'
+  return nonWorkflowActivityTitle(session)
 }
 
 const activeSessionStatusLabel = (session: ActiveSessionInfo): string => {

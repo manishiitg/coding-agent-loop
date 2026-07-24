@@ -8,6 +8,13 @@ export interface WorkflowNotificationInfo {
   effectiveState: WorkflowNotificationState
   slackWebhook: WorkflowNotificationDestinationInfo
   gmail: WorkflowNotificationAccountChannelInfo | null
+  // Per-workflow content preferences from workflow.json notifications.
+  runSummaryInstructions: string
+  pulseSummaryInstructions: string
+  runSummaryChannels: string[]
+  pulseSummaryChannels: string[]
+  excludeChannels: string[]
+  blockRecipients: string[]
 }
 
 export async function loadWorkflowNotificationInfo(workspacePath: string): Promise<WorkflowNotificationInfo> {
@@ -23,6 +30,12 @@ export async function loadWorkflowNotificationInfo(workspacePath: string): Promi
     effectiveState: response.effective_state,
     slackWebhook,
     gmail: response.account_channels.find(channel => channel.id === 'gmail') || null,
+    runSummaryInstructions: response.run_summary_instructions || '',
+    pulseSummaryInstructions: response.pulse_summary_instructions || '',
+    runSummaryChannels: response.run_summary_channels || [],
+    pulseSummaryChannels: response.pulse_summary_channels || [],
+    excludeChannels: response.exclude_channels || [],
+    blockRecipients: response.block_recipients || [],
   }
 }
 
@@ -39,5 +52,11 @@ export async function loadOrgNotificationInfo(): Promise<WorkflowNotificationInf
     effectiveState: response.effective_state,
     slackWebhook,
     gmail: response.account_channels.find(channel => channel.id === 'gmail') || null,
+    runSummaryInstructions: response.run_summary_instructions || '',
+    pulseSummaryInstructions: response.pulse_summary_instructions || '',
+    runSummaryChannels: response.run_summary_channels || [],
+    pulseSummaryChannels: response.pulse_summary_channels || [],
+    excludeChannels: response.exclude_channels || [],
+    blockRecipients: response.block_recipients || [],
   }
 }

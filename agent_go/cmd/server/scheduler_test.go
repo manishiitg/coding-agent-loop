@@ -696,6 +696,9 @@ func TestBuildChiefTaskReportUpdateMessageUsesSingleSharedTaskHTML(t *testing.T)
 		"Prepare a cross-workflow recommendation report.",
 		"Prepend one .task-entry",
 		"key findings to reuse",
+		"Treat the metadata above as internal input",
+		"collapsed Agent details",
+		"ordinary language",
 	} {
 		if !strings.Contains(msg, want) {
 			t.Fatalf("task report update message missing %q:\n%s", want, msg)
@@ -842,17 +845,30 @@ func TestPostRunMonitorUsesDynamicModulesAndSingleFinalizer(t *testing.T) {
 	if finalizer == "" {
 		t.Fatal("finalizer step not found")
 	}
-	modulePrompts := map[string]string{
-		"bug_review":           bugReview,
-		"artifact_review":      artifact,
-		"report_health":        reportHealth,
-		"eval_health":          evalHealth,
-		"learning_health":      learningHealth,
-		"knowledgebase_health": kbHealth,
-		"db_health":            dbHealth,
-		"cost_llm_time":        cost,
-		"llm_ops_review":       llmOps,
-		"goal_advisor":         goalAdvisor,
+	// Detailed contracts live in focused/reference guidance. Scheduler messages
+	// intentionally carry only identifiers and the exact reference to load.
+	repoRoot := findRepoRoot(t)
+	readContract := func(rel string) string {
+		t.Helper()
+		raw, err := os.ReadFile(filepath.Join(repoRoot, rel))
+		if err != nil {
+			t.Fatalf("read %s: %v", rel, err)
+		}
+		return string(raw)
+	}
+	gatePrompt := gate
+	gate = gate + "\n" + readContract("agent_go/cmd/server/guidance/templates/system/pulse-gate.md") +
+		"\n" + readContract("agent_go/cmd/server/guidance/templates/system/post-run-monitor.md")
+	finalizerPrompt := finalizer
+	finalizer = finalizer + "\n" + readContract("agent_go/cmd/server/guidance/templates/system/pulse-finalizer.md") +
+		"\n" + readContract("agent_go/cmd/server/guidance/templates/system/post-run-monitor.md")
+	for _, pair := range []struct{ prompt, ref string }{
+		{gatePrompt, `get_reference_doc(kind="pulse-gate")`},
+		{finalizerPrompt, `get_reference_doc(kind="pulse-finalizer")`},
+	} {
+		if !strings.Contains(pair.prompt, pair.ref) {
+			t.Fatalf("compact stage prompt missing focused reference %q: %s", pair.ref, pair.prompt)
+		}
 	}
 	for _, want := range []string{
 		"exploratory QA review",
@@ -884,17 +900,12 @@ func TestPostRunMonitorUsesDynamicModulesAndSingleFinalizer(t *testing.T) {
 		}
 	}
 	for _, want := range []string{
-		"bounded exploratory QA checkpoint",
-		"QA has never completed",
-		"previously recorded risk checkpoint",
-		"tighten Bug Review cadence even if all steps completed",
-		"no exploratory QA checkpoint completed after the latest observed miss",
-		"cannot justify a long calendar cooldown",
-		"finding-free reviews over unchanged runtime paths may widen",
-		"Do not run exploratory QA on every high-frequency Pulse",
-		"targeted observable trace review",
-		"ignored or misinterpreted returned evidence",
-		"do not audit every conversation",
+		"progressive evidence scan",
+		"never a substitute for a baseline review",
+		"Missing baseline means",
+		"wrong tool/source/route/decision evidence",
+		"off-track material goal",
+		"bounded adaptive cadence",
 	} {
 		if !strings.Contains(gate, want) {
 			t.Fatalf("gate step missing semantic trace trigger %q:\n%s", want, gate)
@@ -923,46 +934,6 @@ func TestPostRunMonitorUsesDynamicModulesAndSingleFinalizer(t *testing.T) {
 			t.Fatalf("llm-ops step missing trace coaching handoff %q:\n%s", want, llmOps)
 		}
 	}
-	for module, prompt := range modulePrompts {
-		for _, want := range []string{
-			"PULSE CONSOLIDATED REVIEW PROTOCOL",
-			`get_reference_doc(kind="post-run-monitor")`,
-			"READ-ONLY REVIEW",
-			"parallel batches of at most four",
-			"under 3000 characters",
-			"bounded in-turn review ledger",
-			".pulse-fixer-recovery",
-			"without blindly reapplying",
-			"fixed_verified/no_change/blocked/failed",
-			"write user-facing cards once",
-			"conflict map grouped by target key",
-			"explicit user approval, correctness/data integrity, preserved goal meaning",
-			"block only affected modules",
-			"finding-id-manifest",
-			"reconciles every reviewer finding id",
-			"global finding-ID reconciliation",
-			"Never claim Pulse completed",
-			"recorded approval basis",
-			"Unrelated drift is acceptable",
-			"stale_not_applied",
-			"Never silently broaden or rebase",
-			"POST-CHANGE EVIDENCE BOUNDARY",
-			"Old artifacts are baseline only, never proof",
-			"mtime alone",
-			"changed_unverified",
-			"awaiting_next_valid_run",
-			"Pulse Fixer",
-			"only writer",
-			"Use review-artifact-drift",
-			"improve-learnings, improve-knowledge, improve-database, improve-report, and improve-evaluation",
-			"Do not use run_in_background",
-			"it must not launch another agent",
-		} {
-			if !strings.Contains(prompt, want) {
-				t.Fatalf("%s module missing consolidated review protocol %q:\n%s", module, want, prompt)
-			}
-		}
-	}
 	if strings.Contains(gate, "call harden_workflow(") || strings.Contains(gate, "call improve_learnings(") {
 		t.Fatalf("gate step should not run selected modules directly:\n%s", gate)
 	}
@@ -970,41 +941,14 @@ func TestPostRunMonitorUsesDynamicModulesAndSingleFinalizer(t *testing.T) {
 		"PULSE GATE / WORKLIST",
 		"get_pulse_module_state",
 		"record_pulse_worklist exactly once",
-		"High-frequency workflows should normally roll up cost/time checks",
-		"Treat llm_ops_review as a low-frequency coaching pass",
-		"due immediately when a defined measurable success criterion is below target",
-		"An unmet measured goal is a direct trigger",
-		"do not skip it because execution is clean, eval passed, or Goal Advisor ran recently",
-		"use Goal Advisor's measurement-design path instead of claiming a miss",
-		"A correct abstention or green eval is execution evidence, not goal progress",
-		"mark both bug_review and goal_advisor due when appropriate",
-		"tighten Bug Review cadence even if all steps completed",
-		"no exploratory QA checkpoint completed after the latest observed miss",
-		"cannot justify a long calendar cooldown",
-		"finding-free reviews over unchanged runtime paths may widen",
-		"Do not use 'wait for a clean run' as an indefinite strategy cooldown",
-		"retained cross-run goal evidence",
-		"Meeting a target is not a permanent skip",
-		"optimization-headroom review",
-		"conditional plan-design review",
-		"planned plan-design checkpoint",
-		"active experiment does not block plan-design monitoring",
-		"do not create a competing experiment",
-		"meaningful outcome-bearing runs",
-		"Once that headroom or plan-design checkpoint arrives",
-		"Never allow more than one active advisor experiment",
-		"data-review-after",
-		"Every Gate must re-judge current goal evidence",
-		"checkpoint is a planned evidence boundary, not a lock",
-		"Zero valid outcome-bearing runs means the experiment has not received a fair test",
-		"implementation/control-path evidence",
-		"repair or advance that same experiment",
-		"explicitly inspect every executed step/item's compact final result",
+		"cannot suppress a measured miss",
+		"Mark both Bug Review and Goal Advisor",
+		"For the supplied run folder, inspect every executed step/item's compact final",
 		"CONCERNS:",
-		"execution/execution-final-summary.json execution_result",
-		"execution/execution-attempt-*.json execution_result",
-		"session.json entries[].summary",
-		"not an automatic run failure or automatic Bug verdict",
+		"execution-final-summary.json",
+		"execution-attempt-*.json",
+		"session.json",
+		"not automatic run failure",
 	} {
 		if !strings.Contains(gate, want) {
 			t.Fatalf("gate step missing %q:\n%s", want, gate)
@@ -1021,8 +965,8 @@ func TestPostRunMonitorUsesDynamicModulesAndSingleFinalizer(t *testing.T) {
 		"cost_llm_time",
 		"llm_ops_review",
 		"goal_advisor",
-		"lock/unlock decisions",
-		"Goal Advisor does not do routine Bug Review/KB/learnings/DB cleanup",
+		"Gate must not launch reviewers",
+		"Operational correctness stays Bug/Eval work",
 	} {
 		if !strings.Contains(gate, want) {
 			t.Fatalf("gate step missing module/gating text %q:\n%s", want, gate)
@@ -1134,6 +1078,11 @@ func TestPostRunMonitorUsesDynamicModulesAndSingleFinalizer(t *testing.T) {
 		"costs/execution",
 		"costs/evaluation",
 		"costs/phase/token_usage.json",
+		"same step ID in different groups is separate",
+		"by_model as the authoritative LLM total",
+		"by_step_and_model as already-included attribution detail",
+		"unattributed/orchestrator",
+		"scripted/zero-LLM",
 		"timing summaries",
 		"builder/card.cost.html",
 		"must not edit files",
@@ -1170,12 +1119,14 @@ func TestPostRunMonitorUsesDynamicModulesAndSingleFinalizer(t *testing.T) {
 		"keep, simplify, restructure, or experiment",
 		"at most two credible alternatives",
 		"migration/rollback",
-		"blocks a competing experiment but not plan-design monitoring",
+		"Instrumentation-only tracking is not an active strategy experiment",
 		"must challenge whether the recommendation is materially better",
-		"one active advisor experiment",
-		"never turn operational correctness issues",
-		"route those findings to Bug Review or Eval Health",
-		"parent Pulse Fixer consolidates advisor and critic results",
+		"at most one active strategy experiment",
+		"why incremental repair is insufficient",
+		"never turns a maintenance handoff into the Goal Advisor outcome",
+		"Operational correctness issues such as",
+		"are handoffs to Bug Review, Eval Health, Report Health",
+		"The parent Pulse Fixer consolidates advisor and critic results",
 		"mark_pulse_module_result",
 	} {
 		if !strings.Contains(goalAdvisor, want) {
@@ -1184,26 +1135,19 @@ func TestPostRunMonitorUsesDynamicModulesAndSingleFinalizer(t *testing.T) {
 	}
 	for _, want := range []string{
 		"PULSE FINALIZER",
-		"confirm every module marked due",
-		"consolidated READ-ONLY REVIEW plus single-fixer protocol",
-		"Never treat a missing result as skipped or successful",
-		"ONE turn",
+		"confirm every due module",
+		"never treat missing as success",
+		"in that order in this one turn",
 		"mark_pulse_final_command_result",
-		"DASHBOARD + QUESTIONS",
+		"Dashboard + questions",
 		"builder/card.health.html",
 		"create_human_input_request",
-		"BACKUP",
-		"PUBLISH",
-		"source hash matches last_source_hash",
-		"NOTIFY",
-		"once every run",
-		"Bug/Goal state",
-		"backup/publish status",
+		"Backup",
+		"Publish",
+		"Notify",
 		"Backup risk: local only",
-		"no verified destination is off-device",
-		"never call it healthy or fully backed up",
-		"every notification until off-device protection is verified",
-		"dashboard URL when live",
+		"off-device destination",
+		"live URL",
 		"notify_user",
 	} {
 		if !strings.Contains(finalizer, want) {
@@ -1323,8 +1267,8 @@ func TestPulseStoreHealthModulesLoadAssumptionAudit(t *testing.T) {
 
 func TestPostRunMonitorPrependsWorkflowVersionUpgradeForOldManifest(t *testing.T) {
 	steps := postRunMonitorStepsForManifest(&WorkflowManifest{Version: "1.0.0"})
-	if got := len(steps); got != 23 {
-		t.Fatalf("postRunMonitorStepsForManifest(old) length = %d, want 23", got)
+	if got := len(steps); got != 26 {
+		t.Fatalf("postRunMonitorStepsForManifest(old) length = %d, want 26", got)
 	}
 	if got := steps[0].label; got != "upgrade-1.0.1" {
 		t.Fatalf("first step label = %q, want upgrade-1.0.1", got)
@@ -1373,8 +1317,14 @@ func TestPostRunMonitorPrependsWorkflowVersionUpgradeForOldManifest(t *testing.T
 	if got := steps[10].label; got != "upgrade-1.0.11" {
 		t.Fatalf("eleventh step label = %q, want upgrade-1.0.11", got)
 	}
-	if got := steps[11].label; got != "gate" {
-		t.Fatalf("twelfth step label = %q, want gate", got)
+	if got := steps[12].label; got != "upgrade-1.0.13" {
+		t.Fatalf("thirteenth step label = %q, want upgrade-1.0.13", got)
+	}
+	if got := steps[13].label; got != "upgrade-1.0.14" {
+		t.Fatalf("fourteenth step label = %q, want upgrade-1.0.14", got)
+	}
+	if got := steps[14].label; got != "gate" {
+		t.Fatalf("fifteenth step label = %q, want gate", got)
 	}
 }
 
@@ -1383,8 +1333,8 @@ func TestScheduledWorkshopTurnsRunAllMissingUpgradesBeforeFirstScheduleMessage(t
 	if err != nil {
 		t.Fatalf("scheduledWorkshopTurns: %v", err)
 	}
-	if got := len(turns); got != 12 {
-		t.Fatalf("turn count = %d, want 11 upgrades + 1 schedule message", got)
+	if got := len(turns); got != 15 {
+		t.Fatalf("turn count = %d, want 14 upgrades + 1 schedule message", got)
 	}
 	if turns[0].label != "upgrade-1.0.1" || turns[0].upgradeTarget != "1.0.1" {
 		t.Fatalf("first turn = %+v, want upgrade-1.0.1", turns[0])
@@ -1393,10 +1343,19 @@ func TestScheduledWorkshopTurnsRunAllMissingUpgradesBeforeFirstScheduleMessage(t
 		t.Fatalf("message-sequence upgrade turn = %+v, want upgrade-1.0.10", turns[9])
 	}
 	if turns[10].label != "upgrade-1.0.11" || turns[10].upgradeTarget != "1.0.11" {
-		t.Fatalf("last upgrade turn = %+v, want upgrade-1.0.11", turns[10])
+		t.Fatalf("pulse-history upgrade turn = %+v, want upgrade-1.0.11", turns[10])
 	}
-	if turns[11].label != "schedule-message-1" || turns[11].query != "run the workflow" || turns[11].upgradeTarget != "" {
-		t.Fatalf("normal schedule turn = %+v", turns[11])
+	if turns[11].label != "upgrade-1.0.12" || turns[11].upgradeTarget != "1.0.12" {
+		t.Fatalf("notification upgrade turn = %+v, want upgrade-1.0.12", turns[11])
+	}
+	if turns[12].label != "upgrade-1.0.13" || turns[12].upgradeTarget != "1.0.13" {
+		t.Fatalf("human-input ownership upgrade turn = %+v, want upgrade-1.0.13", turns[12])
+	}
+	if turns[13].label != "upgrade-1.0.14" || turns[13].upgradeTarget != "1.0.14" {
+		t.Fatalf("last upgrade turn = %+v, want upgrade-1.0.14", turns[13])
+	}
+	if turns[14].label != "schedule-message-1" || turns[14].query != "run the workflow" || turns[14].upgradeTarget != "" {
+		t.Fatalf("normal schedule turn = %+v", turns[14])
 	}
 }
 
@@ -1422,8 +1381,8 @@ func TestScheduledWorkshopTurnsRejectsUnknownVersionBeforeScheduleMessage(t *tes
 
 func TestPostRunMonitorPrependsWorkflowVersionUpgradeForMissingVersion(t *testing.T) {
 	steps := postRunMonitorStepsForManifest(&WorkflowManifest{})
-	if got := len(steps); got != 23 {
-		t.Fatalf("postRunMonitorStepsForManifest(missing version) length = %d, want 23", got)
+	if got := len(steps); got != 26 {
+		t.Fatalf("postRunMonitorStepsForManifest(missing version) length = %d, want 26", got)
 	}
 	if !strings.Contains(steps[0].query, `Current workflow.json version seen by scheduler: "1.0.0"`) {
 		t.Fatalf("missing version should be treated as 1.0.0:\n%s", steps[0].query)
@@ -1432,8 +1391,8 @@ func TestPostRunMonitorPrependsWorkflowVersionUpgradeForMissingVersion(t *testin
 
 func TestPostRunMonitorPrependsPublishGateUpgradeForVersion101Manifest(t *testing.T) {
 	steps := postRunMonitorStepsForManifest(&WorkflowManifest{Version: "1.0.1"})
-	if got := len(steps); got != 22 {
-		t.Fatalf("postRunMonitorStepsForManifest(1.0.1) length = %d, want 22", got)
+	if got := len(steps); got != 25 {
+		t.Fatalf("postRunMonitorStepsForManifest(1.0.1) length = %d, want 25", got)
 	}
 	if got := steps[0].label; got != "upgrade-1.0.2" {
 		t.Fatalf("first step label = %q, want upgrade-1.0.2", got)
@@ -1477,15 +1436,15 @@ func TestPostRunMonitorPrependsPublishGateUpgradeForVersion101Manifest(t *testin
 	if got := steps[9].label; got != "upgrade-1.0.11" {
 		t.Fatalf("tenth step label = %q, want upgrade-1.0.11", got)
 	}
-	if got := steps[10].label; got != "gate" {
-		t.Fatalf("eleventh step label = %q, want gate", got)
+	if got := steps[13].label; got != "gate" {
+		t.Fatalf("fourteenth step label = %q, want gate", got)
 	}
 }
 
 func TestPostRunMonitorPrependsHTMLReportUpgradeForVersion102Manifest(t *testing.T) {
 	steps := postRunMonitorStepsForManifest(&WorkflowManifest{Version: "1.0.2"})
-	if got := len(steps); got != 21 {
-		t.Fatalf("postRunMonitorStepsForManifest(1.0.2) length = %d, want 21", got)
+	if got := len(steps); got != 24 {
+		t.Fatalf("postRunMonitorStepsForManifest(1.0.2) length = %d, want 24", got)
 	}
 	if got := steps[0].label; got != "upgrade-1.0.3" {
 		t.Fatalf("first step label = %q, want upgrade-1.0.3", got)
@@ -1528,15 +1487,15 @@ func TestPostRunMonitorPrependsHTMLReportUpgradeForVersion102Manifest(t *testing
 	if got := steps[8].label; got != "upgrade-1.0.11" {
 		t.Fatalf("ninth step label = %q, want upgrade-1.0.11", got)
 	}
-	if got := steps[9].label; got != "gate" {
-		t.Fatalf("tenth step label = %q, want gate", got)
+	if got := steps[12].label; got != "gate" {
+		t.Fatalf("thirteenth step label = %q, want gate", got)
 	}
 }
 
 func TestPostRunMonitorPrependsPulseReadabilityUpgradeForVersion103Manifest(t *testing.T) {
 	steps := postRunMonitorStepsForManifest(&WorkflowManifest{Version: "1.0.3"})
-	if got := len(steps); got != 20 {
-		t.Fatalf("postRunMonitorStepsForManifest(1.0.3) length = %d, want 20", got)
+	if got := len(steps); got != 23 {
+		t.Fatalf("postRunMonitorStepsForManifest(1.0.3) length = %d, want 23", got)
 	}
 	if got := steps[0].label; got != "upgrade-1.0.4" {
 		t.Fatalf("first step label = %q, want upgrade-1.0.4", got)
@@ -1576,15 +1535,15 @@ func TestPostRunMonitorPrependsPulseReadabilityUpgradeForVersion103Manifest(t *t
 	if got := steps[7].label; got != "upgrade-1.0.11" {
 		t.Fatalf("eighth step label = %q, want upgrade-1.0.11", got)
 	}
-	if got := steps[8].label; got != "gate" {
-		t.Fatalf("ninth step label = %q, want gate", got)
+	if got := steps[11].label; got != "gate" {
+		t.Fatalf("twelfth step label = %q, want gate", got)
 	}
 }
 
 func TestPostRunMonitorPrependsPulseFilterUpgradeForVersion104Manifest(t *testing.T) {
 	steps := postRunMonitorStepsForManifest(&WorkflowManifest{Version: "1.0.4"})
-	if got := len(steps); got != 19 {
-		t.Fatalf("postRunMonitorStepsForManifest(1.0.4) length = %d, want 19", got)
+	if got := len(steps); got != 22 {
+		t.Fatalf("postRunMonitorStepsForManifest(1.0.4) length = %d, want 22", got)
 	}
 	if got := steps[0].label; got != "upgrade-1.0.5" {
 		t.Fatalf("first step label = %q, want upgrade-1.0.5", got)
@@ -1622,15 +1581,15 @@ func TestPostRunMonitorPrependsPulseFilterUpgradeForVersion104Manifest(t *testin
 	if got := steps[6].label; got != "upgrade-1.0.11" {
 		t.Fatalf("seventh step label = %q, want upgrade-1.0.11", got)
 	}
-	if got := steps[7].label; got != "gate" {
-		t.Fatalf("eighth step label = %q, want gate", got)
+	if got := steps[10].label; got != "gate" {
+		t.Fatalf("eleventh step label = %q, want gate", got)
 	}
 }
 
 func TestPostRunMonitorPrependsRichPulseWidgetUpgradeForVersion105Manifest(t *testing.T) {
 	steps := postRunMonitorStepsForManifest(&WorkflowManifest{Version: "1.0.5"})
-	if got := len(steps); got != 18 {
-		t.Fatalf("postRunMonitorStepsForManifest(1.0.5) length = %d, want 18", got)
+	if got := len(steps); got != 21 {
+		t.Fatalf("postRunMonitorStepsForManifest(1.0.5) length = %d, want 21", got)
 	}
 	if got := steps[0].label; got != "upgrade-1.0.6" {
 		t.Fatalf("first step label = %q, want upgrade-1.0.6", got)
@@ -1664,15 +1623,15 @@ func TestPostRunMonitorPrependsRichPulseWidgetUpgradeForVersion105Manifest(t *te
 	if got := steps[5].label; got != "upgrade-1.0.11" {
 		t.Fatalf("sixth step label = %q, want upgrade-1.0.11", got)
 	}
-	if got := steps[6].label; got != "gate" {
-		t.Fatalf("seventh step label = %q, want gate", got)
+	if got := steps[9].label; got != "gate" {
+		t.Fatalf("tenth step label = %q, want gate", got)
 	}
 }
 
 func TestPostRunMonitorPrependsLegacyOptimizerCleanupUpgradeForVersion106Manifest(t *testing.T) {
 	steps := postRunMonitorStepsForManifest(&WorkflowManifest{Version: "1.0.6"})
-	if got := len(steps); got != 17 {
-		t.Fatalf("postRunMonitorStepsForManifest(1.0.6) length = %d, want 17", got)
+	if got := len(steps); got != 20 {
+		t.Fatalf("postRunMonitorStepsForManifest(1.0.6) length = %d, want 20", got)
 	}
 	if got := steps[0].label; got != "upgrade-1.0.7" {
 		t.Fatalf("first step label = %q, want upgrade-1.0.7", got)
@@ -1707,15 +1666,15 @@ func TestPostRunMonitorPrependsLegacyOptimizerCleanupUpgradeForVersion106Manifes
 	if got := steps[4].label; got != "upgrade-1.0.11" {
 		t.Fatalf("fifth step label = %q, want upgrade-1.0.11", got)
 	}
-	if got := steps[5].label; got != "gate" {
-		t.Fatalf("sixth step label = %q, want gate", got)
+	if got := steps[8].label; got != "gate" {
+		t.Fatalf("ninth step label = %q, want gate", got)
 	}
 }
 
 func TestPostRunMonitorPrependsPulseDatePickerCleanupForVersion107Manifest(t *testing.T) {
 	steps := postRunMonitorStepsForManifest(&WorkflowManifest{Version: "1.0.7"})
-	if got := len(steps); got != 16 {
-		t.Fatalf("postRunMonitorStepsForManifest(1.0.7) length = %d, want 16", got)
+	if got := len(steps); got != 19 {
+		t.Fatalf("postRunMonitorStepsForManifest(1.0.7) length = %d, want 19", got)
 	}
 	if got := steps[0].label; got != "upgrade-1.0.8" {
 		t.Fatalf("first step label = %q, want upgrade-1.0.8", got)
@@ -1741,15 +1700,15 @@ func TestPostRunMonitorPrependsPulseDatePickerCleanupForVersion107Manifest(t *te
 	if got := steps[3].label; got != "upgrade-1.0.11" {
 		t.Fatalf("fourth step label = %q, want upgrade-1.0.11", got)
 	}
-	if got := steps[4].label; got != "gate" {
-		t.Fatalf("fifth step label = %q, want gate", got)
+	if got := steps[7].label; got != "gate" {
+		t.Fatalf("eighth step label = %q, want gate", got)
 	}
 }
 
 func TestPostRunMonitorPrependsStableSoulAndPulseHierarchyUpgradeForVersion108Manifest(t *testing.T) {
 	steps := postRunMonitorStepsForManifest(&WorkflowManifest{Version: "1.0.8"})
-	if got := len(steps); got != 15 {
-		t.Fatalf("postRunMonitorStepsForManifest(1.0.8) length = %d, want 15", got)
+	if got := len(steps); got != 18 {
+		t.Fatalf("postRunMonitorStepsForManifest(1.0.8) length = %d, want 18", got)
 	}
 	if got := steps[0].label; got != "upgrade-1.0.9" {
 		t.Fatalf("first step label = %q, want upgrade-1.0.9", got)
@@ -1777,15 +1736,15 @@ func TestPostRunMonitorPrependsStableSoulAndPulseHierarchyUpgradeForVersion108Ma
 	if got := steps[2].label; got != "upgrade-1.0.11" {
 		t.Fatalf("third step label = %q, want upgrade-1.0.11", got)
 	}
-	if got := steps[3].label; got != "gate" {
-		t.Fatalf("fourth step label = %q, want gate", got)
+	if got := steps[6].label; got != "gate" {
+		t.Fatalf("seventh step label = %q, want gate", got)
 	}
 }
 
 func TestPostRunMonitorPrependsMessageSequenceCodeMigrationForVersion109Manifest(t *testing.T) {
 	steps := postRunMonitorStepsForManifest(&WorkflowManifest{Version: "1.0.9"})
-	if got := len(steps); got != 14 {
-		t.Fatalf("postRunMonitorStepsForManifest(1.0.9) length = %d, want 14", got)
+	if got := len(steps); got != 17 {
+		t.Fatalf("postRunMonitorStepsForManifest(1.0.9) length = %d, want 17", got)
 	}
 	if got := steps[0].label; got != "upgrade-1.0.10" {
 		t.Fatalf("first step label = %q, want upgrade-1.0.10", got)
@@ -1806,15 +1765,15 @@ func TestPostRunMonitorPrependsMessageSequenceCodeMigrationForVersion109Manifest
 	if got := steps[1].label; got != "upgrade-1.0.11" {
 		t.Fatalf("second step label = %q, want upgrade-1.0.11", got)
 	}
-	if got := steps[2].label; got != "gate" {
-		t.Fatalf("third step label = %q, want gate", got)
+	if got := steps[5].label; got != "gate" {
+		t.Fatalf("sixth step label = %q, want gate", got)
 	}
 }
 
 func TestPostRunMonitorPrependsPulseHistoryContractUpgradeForVersion110Manifest(t *testing.T) {
 	steps := postRunMonitorStepsForManifest(&WorkflowManifest{Version: "1.0.10"})
-	if got := len(steps); got != 13 {
-		t.Fatalf("postRunMonitorStepsForManifest(1.0.10) length = %d, want 13", got)
+	if got := len(steps); got != 16 {
+		t.Fatalf("postRunMonitorStepsForManifest(1.0.10) length = %d, want 16", got)
 	}
 	if got := steps[0].label; got != "upgrade-1.0.11" {
 		t.Fatalf("first step label = %q, want upgrade-1.0.11", got)
@@ -1840,8 +1799,8 @@ func TestPostRunMonitorPrependsPulseHistoryContractUpgradeForVersion110Manifest(
 			t.Fatalf("Pulse history contract upgrade missing %q:\n%s", want, steps[0].query)
 		}
 	}
-	if got := steps[1].label; got != "gate" {
-		t.Fatalf("second step label = %q, want gate", got)
+	if got := steps[4].label; got != "gate" {
+		t.Fatalf("fifth step label = %q, want gate", got)
 	}
 }
 
@@ -1922,8 +1881,8 @@ func TestFinalizePulseHistoryContractUpgradeStampsVerifiedReport(t *testing.T) {
 	if err := json.Unmarshal([]byte(stored), &written); err != nil {
 		t.Fatalf("decode stamped workflow.json: %v", err)
 	}
-	if written.Version != WorkflowContractCurrentVersion {
-		t.Fatalf("stamped version = %q, want %q", written.Version, WorkflowContractCurrentVersion)
+	if written.Version != workflowContractPulseHistoryVersion {
+		t.Fatalf("stamped version = %q, want %q", written.Version, workflowContractPulseHistoryVersion)
 	}
 }
 
@@ -2064,14 +2023,16 @@ func TestSelectedPostRunMonitorModuleStepsUsesGateWorklist(t *testing.T) {
 	s := NewSchedulerService(nil)
 	steps := s.selectedPostRunMonitorModuleSteps(ctx, &ScheduleContext{WorkspacePath: workspacePath}, pulseRunID)
 	got := postRunStepLabels(steps)
-	want := []string{"pre-backup", "bug-review", "cost-llm-time", "llm-ops-review", "goal-advisor", "finalize"}
+	want := []string{"pre-backup", "consolidated-review", "finalize"}
 	if strings.Join(got, ",") != strings.Join(want, ",") {
 		t.Fatalf("selected labels = %#v, want %#v", got, want)
 	}
 	for _, required := range []string{
-		"direct tool result is authoritative",
-		"rejects partial provider snapshots",
-		"do not perform that deep review in the parent",
+		`due_modules=["bug_review","cost_llm_time","llm_ops_review","goal_advisor"]`,
+		`get_reference_doc(kind="pulse-review-fixer")`,
+		"batches of at most two",
+		"pulse/reviews/",
+		"Read each backend-persisted",
 	} {
 		if !strings.Contains(steps[1].query, required) {
 			t.Fatalf("consolidated reviewer protocol missing %q", required)
@@ -2079,14 +2040,160 @@ func TestSelectedPostRunMonitorModuleStepsUsesGateWorklist(t *testing.T) {
 	}
 }
 
+func TestPulseReviewRunIDAndConsolidatedPromptAreCompact(t *testing.T) {
+	reviewRunID := pulseReviewRunID("schedule-manual--manual-p_1784571312755290000", time.Date(2026, 7, 21, 0, 8, 44, 123000000, time.UTC))
+	if want := "2026-07-21T00-08-44.123Z_schedule-manual--manual-p_1784571312755290000"; reviewRunID != want {
+		t.Fatalf("review run id = %q, want %q", reviewRunID, want)
+	}
+	step := postRunMonitorConsolidatedReviewStep("pulse-run-1", reviewRunID, []string{
+		pulseModuleBugReview,
+		pulseModuleArtifactReview,
+		pulseModuleEvalHealth,
+		pulseModuleCostLLMTime,
+		pulseModuleGoalAdvisor,
+	})
+	if step.label != "consolidated-review" {
+		t.Fatalf("label = %q", step.label)
+	}
+	if len(step.query) > 2500 {
+		t.Fatalf("consolidated prompt is not compact: %d bytes", len(step.query))
+	}
+	for _, module := range []string{pulseModuleBugReview, pulseModuleArtifactReview, pulseModuleEvalHealth, pulseModuleCostLLMTime, pulseModuleGoalAdvisor} {
+		if strings.Count(step.query, module) != 1 {
+			t.Fatalf("module %q should appear exactly once in compact prompt:\n%s", module, step.query)
+		}
+	}
+	for _, forbidden := range []string{"PULSE MODULE — BUG REVIEW", "PULSE MODULE — ARTIFACT REVIEW", "PULSE MODULE — EVAL HEALTH"} {
+		if strings.Contains(step.query, forbidden) {
+			t.Fatalf("compact prompt repeated module brief %q", forbidden)
+		}
+	}
+}
+
+func TestScheduledPulseStagePromptsStayCompact(t *testing.T) {
+	intro := postRunMonitorIntro("trigger=manual", "Workflow/demo", "pulse-run-1", "completed", "runs/iteration-0")
+	archive := postRunMonitorArchiveStep(pulseImproveArchiveAssessment{Due: true, TimelineEntries: 24, RecentRunRows: 7}).query
+	gate := postRunMonitorGateStep("pulse-run-1", "runs/iteration-0", "completed").query
+	preBackup := postRunMonitorPreBackupStep("pulse-run-1").query
+	consolidated := postRunMonitorConsolidatedReviewStep("pulse-run-1", "2026-07-21T00-08-44.123Z_pulse-run-1", pulseModuleOrder).query
+	finalizer := postRunMonitorFinalSteps("pulse-run-1")[0].query
+
+	for name, tc := range map[string]struct {
+		prompt string
+		max    int
+	}{
+		"intro":               {intro, 500},
+		"archive":             {archive, 500},
+		"gate":                {gate, 600},
+		"pre-backup":          {preBackup, 500},
+		"consolidated-review": {consolidated, 1400},
+		"finalizer":           {finalizer, 650},
+	} {
+		if got := len(tc.prompt); got > tc.max {
+			t.Fatalf("%s scheduler prompt grew to %d bytes (budget %d):\n%s", name, got, tc.max, tc.prompt)
+		}
+	}
+	if got := len(intro) + len(consolidated); got > 1800 {
+		t.Fatalf("largest scheduled Pulse turn context is %d bytes before shared system prompt, want <= 1800", got)
+	}
+	for _, tc := range []struct{ prompt, ref string }{
+		{archive, `get_reference_doc(kind="pulse-archive")`},
+		{gate, `get_reference_doc(kind="pulse-gate")`},
+		{consolidated, `get_reference_doc(kind="pulse-review-fixer")`},
+		{finalizer, `get_reference_doc(kind="pulse-finalizer")`},
+	} {
+		if !strings.Contains(tc.prompt, tc.ref) {
+			t.Fatalf("compact prompt missing focused reference %q: %s", tc.ref, tc.prompt)
+		}
+	}
+}
+
+func TestValidatePulseDueModuleResultsAndFailureReconciliation(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	t.Setenv("WORKSPACE_DOCS_PATH", root)
+	workspacePath := "Workflow/demo"
+	pulseRunID := "pulse-run-results"
+	if _, err := recordPulseWorklist(ctx, workspacePath, pulseRunID, completePulseWorklistDecisions(map[string]PulseWorklistDecision{
+		pulseModuleBugReview:   {Module: pulseModuleBugReview, Due: true, Reason: "Bug evidence."},
+		pulseModuleEvalHealth:  {Module: pulseModuleEvalHealth, Due: true, Reason: "Eval evidence."},
+		pulseModuleGoalAdvisor: {Module: pulseModuleGoalAdvisor, Due: true, Reason: "Goal evidence."},
+	})); err != nil {
+		t.Fatalf("record worklist: %v", err)
+	}
+	if err := validatePulseDueModuleResults(ctx, workspacePath, pulseRunID); err == nil || !strings.Contains(err.Error(), "bug_review, eval_health, goal_advisor") {
+		t.Fatalf("missing-result validation error = %v", err)
+	}
+	if _, err := markPulseModuleResultFromAgent(ctx, workspacePath, pulseModuleBugReview, pulseRunID, "done", "Clean review.", []string{"pulse/reviews/run/bug_review.md"}); err != nil {
+		t.Fatalf("mark bug review: %v", err)
+	}
+	if err := markUnresolvedPulseDueModules(ctx, workspacePath, pulseRunID, "failed", "Consolidated review did not finish"); err != nil {
+		t.Fatalf("mark unresolved: %v", err)
+	}
+	if err := validatePulseDueModuleResults(ctx, workspacePath, pulseRunID); err != nil {
+		t.Fatalf("terminal validation: %v", err)
+	}
+	worklist, _, err := getPulseWorklistForRun(ctx, workspacePath, pulseRunID)
+	if err != nil {
+		t.Fatalf("read worklist: %v", err)
+	}
+	if got := worklist[pulseModuleBugReview].LastResult; got != "done" {
+		t.Fatalf("existing completed module was overwritten: %q", got)
+	}
+	for _, module := range []string{pulseModuleEvalHealth, pulseModuleGoalAdvisor} {
+		if got := worklist[module].LastResult; got != "failed" {
+			t.Fatalf("%s result = %q, want failed", module, got)
+		}
+	}
+}
+
 func TestPulseBackupRunsOnlyInParentTurn(t *testing.T) {
 	preBackup := postRunMonitorPreBackupStep("pulse-run-1").query
 	finalizer := postRunMonitorFinalSteps("pulse-run-1")[0].query
-	for name, message := range map[string]string{"pre-backup": preBackup, "finalizer": finalizer} {
-		for _, required := range []string{"THIS parent", "Never delegate", "run_in_background", "call_generic_agent", ".git directory"} {
-			if !strings.Contains(message, required) {
-				t.Fatalf("%s message missing parent-only backup guard %q", name, required)
-			}
+	for _, required := range []string{"directly in this parent turn", "never delegate Git/backup work", `get_reference_doc(kind="backup-strategy")`} {
+		if !strings.Contains(preBackup, required) {
+			t.Fatalf("pre-backup message missing parent-only backup guard %q", required)
+		}
+	}
+	if !strings.Contains(finalizer, `get_reference_doc(kind="pulse-finalizer")`) {
+		t.Fatalf("finalizer does not load its focused contract: %s", finalizer)
+	}
+	raw, err := os.ReadFile(filepath.Join(findRepoRoot(t), "agent_go/cmd/server/guidance/templates/system/pulse-finalizer.md"))
+	if err != nil {
+		t.Fatalf("read finalizer contract: %v", err)
+	}
+	for _, required := range []string{"directly in this parent", "never through a reviewer/sub-agent", "zero-config local-git default"} {
+		if !strings.Contains(string(raw), required) {
+			t.Fatalf("finalizer contract missing parent-only backup guard %q", required)
+		}
+	}
+}
+
+func TestPostRunMonitorFinalStepsIncludesOwnerNotificationInstructions(t *testing.T) {
+	runInstructions := "Include delivered outputs and the primary metric."
+	pulseInstructions := "Put decisions and material fixes first."
+	finalizer := postRunMonitorFinalSteps("pulse-run-1", workflowNotificationContentInstructions{
+		runSummary: runInstructions, pulseSummary: pulseInstructions,
+	})[0].query
+	for _, required := range []string{"WORKFLOW RUN SUMMARY INSTRUCTIONS", runInstructions, "PULSE REVIEW SUMMARY INSTRUCTIONS", pulseInstructions, "recipients, channels, secrets, permissions"} {
+		if !strings.Contains(finalizer, required) {
+			t.Fatalf("finalizer missing notification instruction guard %q: %s", required, finalizer)
+		}
+	}
+	withoutInstructions := postRunMonitorFinalSteps("pulse-run-1")[0].query
+	if strings.Contains(withoutInstructions, "SUMMARY INSTRUCTIONS") {
+		t.Fatalf("finalizer included owner instructions when none were configured: %s", withoutInstructions)
+	}
+}
+
+func TestPostRunMonitorFinalStepsIncludesSplitNotificationRouting(t *testing.T) {
+	finalizer := postRunMonitorFinalSteps("pulse-run-1", workflowNotificationContentInstructions{
+		runSummaryChannels:   []string{"slack"},
+		pulseSummaryChannels: []string{"gmail"},
+	})[0].query
+	for _, required := range []string{"SPLIT NOTIFICATION ROUTING", `notification_kind="run_summary"`, `notification_kind="pulse_summary"`, "configured channels: slack", "configured channels: gmail"} {
+		if !strings.Contains(finalizer, required) {
+			t.Fatalf("finalizer missing split-route instruction %q: %s", required, finalizer)
 		}
 	}
 }
@@ -2136,7 +2243,7 @@ func TestSelectedPostRunMonitorModuleStepsFallsBackForPartialWorklist(t *testing
 	s := NewSchedulerService(nil)
 	steps := s.selectedPostRunMonitorModuleSteps(ctx, &ScheduleContext{WorkspacePath: workspacePath}, pulseRunID)
 	got := postRunStepLabels(steps)
-	want := []string{"pre-backup", "bug-review", "finalize"}
+	want := []string{"pre-backup", "consolidated-review", "finalize"}
 	if strings.Join(got, ",") != strings.Join(want, ",") {
 		t.Fatalf("partial-worklist fallback labels = %#v, want %#v", got, want)
 	}
@@ -2168,7 +2275,7 @@ func TestSelectedPostRunMonitorModuleStepsPartialWorklistKeepsDueGoalAdvisor(t *
 	s := NewSchedulerService(nil)
 	steps := s.selectedPostRunMonitorModuleSteps(ctx, &ScheduleContext{WorkspacePath: workspacePath}, pulseRunID)
 	got := postRunStepLabels(steps)
-	want := []string{"pre-backup", "goal-advisor", "finalize"}
+	want := []string{"pre-backup", "consolidated-review", "finalize"}
 	if strings.Join(got, ",") != strings.Join(want, ",") {
 		t.Fatalf("partial-worklist fallback labels = %#v, want %#v", got, want)
 	}
@@ -2396,8 +2503,15 @@ func TestApplyLLMAndSecretsToReqMapUsesCodingAgentAutoImproveDefaultForOptimizer
 	if got := primary["provider"]; got != "claude-code" {
 		t.Fatalf("provider = %#v, want claude-code", got)
 	}
-	if got := primary["model_id"]; got != "claude-opus-4-8" {
-		t.Fatalf("model_id = %#v, want claude-opus-4-8", got)
+	if got := primary["model_id"]; got != "claude-opus-5" {
+		t.Fatalf("model_id = %#v, want claude-opus-5", got)
+	}
+	options, ok := primary["options"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("options missing or wrong type: %#v", primary["options"])
+	}
+	if got := options["reasoning_effort"]; got != "medium" {
+		t.Fatalf("reasoning_effort = %#v, want medium", got)
 	}
 	if got := reqMap["llm_config_source"]; got != llmConfigSourceScheduledAutoImprove {
 		t.Fatalf("llm_config_source = %#v, want %q", got, llmConfigSourceScheduledAutoImprove)
@@ -3063,11 +3177,11 @@ func TestResolveChiefOfStaffLLMForScheduleUsesCodingAgentDefault(t *testing.T) {
 	if got == nil {
 		t.Fatal("resolveChiefOfStaffLLMForSchedule() = nil")
 	}
-	if got.Provider != "claude-code" || got.ModelID != "claude-opus-4-8" {
-		t.Fatalf("resolveChiefOfStaffLLMForSchedule() = %+v, want claude-code/claude-opus-4-8", got)
+	if got.Provider != "claude-code" || got.ModelID != "claude-opus-5" {
+		t.Fatalf("resolveChiefOfStaffLLMForSchedule() = %+v, want claude-code/claude-opus-5", got)
 	}
-	if got.Options["reasoning_effort"] != "high" {
-		t.Fatalf("reasoning_effort = %#v, want high", got.Options["reasoning_effort"])
+	if got.Options["reasoning_effort"] != "medium" {
+		t.Fatalf("reasoning_effort = %#v, want medium", got.Options["reasoning_effort"])
 	}
 }
 
@@ -3100,8 +3214,8 @@ func TestResolveChiefOfStaffLLMFromDelegationConfigUsesProviderDefault(t *testin
 	if got == nil {
 		t.Fatal("resolveChiefOfStaffLLMFromDelegationConfig() = nil")
 	}
-	if got.Provider != "claude-code" || got.ModelID != "claude-opus-4-8" {
-		t.Fatalf("resolveChiefOfStaffLLMFromDelegationConfig() = %+v, want claude-code/claude-opus-4-8", got)
+	if got.Provider != "claude-code" || got.ModelID != "claude-opus-5" {
+		t.Fatalf("resolveChiefOfStaffLLMFromDelegationConfig() = %+v, want claude-code/claude-opus-5", got)
 	}
 }
 

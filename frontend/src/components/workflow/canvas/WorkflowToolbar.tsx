@@ -65,6 +65,7 @@ import {
   PULSE_FIXED_COMMANDS,
   PULSE_FOOTER_COMMAND_IDS,
   PULSE_HISTORY_ITEMS,
+  PULSE_HUMAN_INPUT_SOURCE_BY_SECTION,
   PULSE_MODULE_COMMANDS,
   PULSE_SECTIONS,
   type PulseSectionId,
@@ -166,7 +167,7 @@ function formatPulseNextCheck(state?: PulseModuleState): string {
     }
   }
   const afterRun = (state.next_check_after_run_id || '').trim()
-  if (afterRun) hints.push(`after run ${afterRun}`)
+  if (afterRun) hints.push('after newer workflow evidence is available')
   const cooldownRuns = state.cooldown_runs || 0
   if (cooldownRuns > 0) hints.push(`after ${cooldownRuns} workflow run${cooldownRuns === 1 ? '' : 's'}`)
   return hints.length > 0 ? `Next check: ${hints.join(' · ')}` : ''
@@ -222,13 +223,12 @@ type PulseStatusRowProps = {
   label: string
   description: string
   status: { label: string; detail: string; time: string }
-  runId?: string
   nextCheck?: string
   selected?: boolean
   onSelect?: () => void
 }
 
-function PulseStatusRow({ label, description, status, runId, nextCheck, selected = false, onSelect }: PulseStatusRowProps) {
+function PulseStatusRow({ label, description, status, nextCheck, selected = false, onSelect }: PulseStatusRowProps) {
   return (
     <button
       type="button"
@@ -239,11 +239,6 @@ function PulseStatusRow({ label, description, status, runId, nextCheck, selected
       <div className="min-w-0">
         <div className="flex min-w-0 flex-wrap items-center gap-2">
           <span className="text-sm font-medium text-foreground">{label}</span>
-          {runId && (
-            <span className="max-w-48 truncate rounded bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground" title={runId}>
-              {runId}
-            </span>
-          )}
         </div>
         <div className="mt-1 line-clamp-2 text-xs leading-5 text-muted-foreground" title={status.detail || description}>
           {status.detail || description}
@@ -390,13 +385,7 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
   const [showAccessPopup, setShowAccessPopup] = useState(false)
   const [showWorkflowSchedulesPanel, setShowWorkflowSchedulesPanel] = useState(false)
   const [workflowScheduleStats, setWorkflowScheduleStats] = useState<WorkflowScheduleStats>(EMPTY_WORKFLOW_SCHEDULE_STATS)
-  const [workflowScheduleStatsScope, setWorkflowScheduleStatsScope] = useState<string | null>(null)
   const [manualPulseStarting, setManualPulseStarting] = useState(false)
-
-  const workflowScheduleScope = useMemo(
-    () => `${presetQueryId || ''}:${normalizeWorkspacePath(workspacePath)}`,
-    [presetQueryId, workspacePath]
-  )
 
   const runPulseNow = useCallback(async () => {
     if (!workspacePath || manualPulseStarting) return
@@ -577,13 +566,11 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
       missed: matchingJobs.filter(job => job.enabled && (job.missed_run_count ?? 0) > 0).length,
       issues: matchingJobs.filter(job => job.last_status === 'error').length,
     })
-    setWorkflowScheduleStatsScope(workflowScheduleScope)
-  }, [workspacePath, presetQueryId, workflowScheduleScope])
+  }, [workspacePath, presetQueryId])
 
   const refreshWorkflowScheduleStats = useCallback(async () => {
     if (!workspacePath && !presetQueryId) {
       setWorkflowScheduleStats(EMPTY_WORKFLOW_SCHEDULE_STATS)
-      setWorkflowScheduleStatsScope(null)
       return
     }
 
@@ -595,14 +582,12 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
       updateWorkflowScheduleStats(resp.jobs || [])
     } catch {
       setWorkflowScheduleStats(EMPTY_WORKFLOW_SCHEDULE_STATS)
-      setWorkflowScheduleStatsScope(null)
     }
   }, [workspacePath, presetQueryId, updateWorkflowScheduleStats])
 
   useEffect(() => {
-    setWorkflowScheduleStatsScope(null)
     void refreshWorkflowScheduleStats()
-  }, [refreshWorkflowScheduleStats, workflowScheduleScope])
+  }, [refreshWorkflowScheduleStats])
 
   // Lightweight backup-status poll so the toolbar dot reflects health at a glance.
   const refreshBackupState = useCallback(async () => {
@@ -1187,14 +1172,6 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
 
             <div className="min-h-0 flex-1 overflow-y-auto">
               <div className="p-3 sm:p-4">
-                {workspacePath && (
-                  <ReportHumanInputPanel
-                    workspacePath={workspacePath}
-                    contentMode="pending"
-                    className="mb-4 w-full"
-                  />
-                )}
-
                 {activePulseSection === 'goal' && workspacePath && (
                   <section className="min-w-0 w-full" aria-label="Workflow goal">
                     <SoulViewer workspacePath={workspacePath} embedded />
@@ -1203,10 +1180,11 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
 
                 {activePulseSection !== 'goal' && (
                   <div className="min-w-0">
-                    {activePulseSection === 'reflection' && workspacePath && (
+                    {workspacePath && PULSE_HUMAN_INPUT_SOURCE_BY_SECTION[activePulseSection] && (
                       <ReportHumanInputPanel
                         workspacePath={workspacePath}
-                        contentMode="history"
+                        source={PULSE_HUMAN_INPUT_SOURCE_BY_SECTION[activePulseSection]}
+                        contentMode="all"
                         historyMode="expanded"
                         historyLimit={8}
                         className="mb-4 w-full"
@@ -1284,7 +1262,6 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
                             label={command.label}
                             description={command.description}
                             status={getPulseModuleStatus(state)}
-                            runId={state?.last_pulse_run_id}
                             nextCheck={formatPulseNextCheck(state)}
                             onSelect={() => setActivePulseTimeline({ module: command.id, label: command.label })}
                           />
@@ -1298,7 +1275,6 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
                             label={command.label}
                             description={command.description}
                             status={getPulseFinalCommandStatus(state)}
-                            runId={state?.pulse_run_id}
                             onSelect={() => setActivePulseTimeline({
                               module: command.id === 'dashboard' ? 'run_summary' : command.id,
                               label: command.label,

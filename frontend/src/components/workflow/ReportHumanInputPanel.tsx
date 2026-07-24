@@ -48,7 +48,7 @@ function consumedActorLabel(input: ReportHumanInput): string {
 }
 
 function answerHandlerLabel(input: ReportHumanInput): string {
-  return input.source === 'chief_of_staff' ? 'Chief of Staff' : 'Pulse'
+  return sourceLabel(input.source)
 }
 
 function statusTone(input: ReportHumanInput): string {
@@ -278,12 +278,6 @@ export function ReportHumanInputPanel({
                     {input.consumed_at && <div className="mt-1 text-[11px] text-emerald-200/70">Completed {inputTime(input.consumed_at)}</div>}
                   </div>
                 )}
-                {(input.run_id || input.evidence) && (
-                  <div className="flex flex-wrap gap-x-3 gap-y-1 text-[11px]">
-                    {input.run_id && <span>Run: <code className="rounded bg-muted px-1">{input.run_id}</code></span>}
-                    {input.evidence && <span>Evidence: <code className="rounded bg-muted px-1">{input.evidence}</code></span>}
-                  </div>
-                )}
                 {!answer && !input.note && !input.outcome_summary && <div>No saved answer details.</div>}
               </div>
             )}
@@ -434,7 +428,6 @@ export function ReportHumanInputPanel({
                   className="mt-3 min-h-20 w-full resize-y rounded-md border border-border bg-background px-2.5 py-2 text-sm text-foreground outline-none transition-colors placeholder:text-muted-foreground focus:border-cyan-400"
                 />
               )}
-              {input.evidence && <div className="mt-2 text-[11px] text-muted-foreground">Evidence: <code className="rounded bg-muted px-1">{input.evidence}</code></div>}
               <div className="mt-3 flex flex-wrap justify-end gap-2">
                 <button
                   type="button"

@@ -85,7 +85,7 @@ func runServer(cmd *cobra.Command, args []string) {
 	r.Use(func(c *gin.Context) {
 		c.Header("Access-Control-Allow-Origin", "*")
 		c.Header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, PATCH, OPTIONS")
-		c.Header("Access-Control-Allow-Headers", "Content-Type, Authorization, X-User-ID")
+		c.Header("Access-Control-Allow-Headers", "Content-Type, Authorization, X-User-ID, X-Workspace-Token")
 
 		if c.Request.Method == "OPTIONS" {
 			c.AbortWithStatus(204)
@@ -117,7 +117,7 @@ func runServer(cmd *cobra.Command, args []string) {
 		api.POST("/upload", handlers.UploadFile)
 
 		// Shell execution route
-		api.POST("/execute", handlers.ExecuteShellCommand)
+		api.POST("/execute", requireWorkspaceAPIToken(), handlers.ExecuteShellCommand)
 		api.GET("/processes", handlers.ListWorkflowProcesses)
 		api.POST("/processes/cleanup", handlers.CleanupWorkflowProcesses)
 
@@ -170,11 +170,10 @@ func runServer(cmd *cobra.Command, args []string) {
 
 	// Start server
 	// Use net.Listen to support dynamic port allocation (port 0).
-	// The workspace API has no authentication layer — every /api route is open
-	// to whoever can reach the port — so the bind address is the access
-	// control. Native mode binds 127.0.0.1 (set via BIND_HOST in
-	// run_server_with_logging.sh); Docker keeps the all-interfaces default so
-	// the agent container can reach it over the compose network.
+	// Native mode binds 127.0.0.1 as defense in depth. Process-execution routes
+	// additionally require WORKSPACE_API_TOKEN when the managed AgentWorks
+	// launcher configures it. Docker keeps the all-interfaces default so the
+	// agent container can reach it over the compose network.
 	host := viper.GetString("host")
 	listener, err := net.Listen("tcp", host+":"+port)
 	if err != nil {

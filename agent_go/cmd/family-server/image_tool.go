@@ -18,6 +18,18 @@ var imageExts = map[string]bool{
 	".gif": true, ".bmp": true, ".heic": true, ".tiff": true,
 }
 
+// engineSupportsVision reports whether the engine's own CLI has genuine
+// file-read + vision capability for read_image to rely on. Verified working
+// (real transcriptions logged) for claude-code, codex-cli, and cursor-cli.
+// Pi CLI's underlying `pi` tool has no such thing: multi-llm-provider-go's
+// picli adapter has no Read/Glob tool and explicitly rejects image content
+// (llmtypes.ImageContent) as unsupported — so telling it to "look at" a file
+// wouldn't silently work, it just wouldn't do anything meaningful. Better to
+// degrade clearly here than let the model pretend it looked.
+func engineSupportsVision(engine string) bool {
+	return strings.ToLower(strings.TrimSpace(engine)) != "pi-cli"
+}
+
 // bridgeEnvKeys are the process-global vars agentsession sets to put the coding
 // agent in bridge-only mode (native Bash/Read/Write replaced by the sandboxed
 // bridge). A nested image-reading CLI must NOT inherit them, or its native
@@ -96,6 +108,9 @@ var readImageParams = map[string]interface{}{
 }
 
 func runReadImage(ctx context.Context, engine string, args map[string]interface{}, allowed func(rel string) bool) (string, error) {
+	if !engineSupportsVision(engine) {
+		return "", fmt.Errorf("the current AI engine (Pi CLI) can't view images directly — switch to Codex CLI, Claude Code, or Cursor CLI to read a photo/scan, or ask the parent to describe what's in it")
+	}
 	rel, _ := args["path"].(string)
 	if !allowed(rel) {
 		return "", fmt.Errorf("that image isn't available")

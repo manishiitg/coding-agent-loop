@@ -100,7 +100,6 @@ func parentTools(engine, childLabel string, sinks parentToolSinks) []agentsessio
 		suggestActionsTool(sinks),
 		webSearchTool(),
 		readImageTool(engine),
-		generateImageTool(),
 		notifyTool(),
 		shellTool(),
 		diffPatchWorkspaceFileTool(),

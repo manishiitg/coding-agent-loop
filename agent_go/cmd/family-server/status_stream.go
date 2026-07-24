@@ -102,7 +102,6 @@ func normalizeConversationID(id string) string {
 // A tool not listed here (e.g. suggest_actions, bridge chatter) stays silent.
 var toolStatusLabels = map[string]string{
 	"read_image":               "Reading the image",
-	"generate_image":           "Drawing an illustration",
 	"web_search":               "Looking up best practices",
 	"set_child_profile":        "Saving the profile",
 	"open_file":                "Opening the file",

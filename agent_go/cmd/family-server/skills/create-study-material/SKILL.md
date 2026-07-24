@@ -23,7 +23,7 @@ description: Create clear, child-ready study material (notes, worked examples, a
    - 2–3 fully worked examples, step by step — this is teaching material, so showing the steps *is* the point.
    - **View-only, static** — no reveal buttons, no JS, no input boxes that save anything, per `skills/_shared/html-design.md`. Put "try it yourself" questions in their own `.card` at the end, after the worked examples, so the child sees the method before practicing — the ordering does the teaching, not a hide/reveal toggle.
    - An encouraging closing line addressed to the child.
-   - Where a picture would genuinely help (a diagram, a simple labelled drawing), use the `generate_image` tool to create one and save it INSIDE the same activity folder, then reference it with an `<img>` tag in the page. Don't force an illustration where a diagram wouldn't actually add anything.
+   - Where a picture would genuinely help (a diagram, a simple labelled drawing), build it directly in HTML/CSS/inline SVG — not a generated image (there's no reliable image-generation tool right now). A well-made CSS diagram or labelled SVG is often clearer than a photo anyway, and it's crisp at any size with no extra file to manage. Don't force an illustration where a diagram wouldn't actually add anything.
 
 6. **Stay at the child's level and syllabus.** Do not introduce content beyond their materials without flagging it as optional/extension.
 

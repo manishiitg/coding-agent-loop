@@ -12,12 +12,31 @@ import (
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 )
 
+// imageGenerationProvider picks which multi-llm-provider-go backend actually
+// generates the image. Of the family's four selectable chat engines, none of
+// Cursor CLI/Claude Code/Pi CLI support image generation at all — only Codex
+// CLI does (via its own logged-in CLI session, spun up as a SEPARATE process
+// from whatever engine is actually driving the conversation). Prefer
+// Vertex/Gemini instead whenever a key for it is actually configured: it's a
+// direct API call (no second CLI session to cold-start, so meaningfully
+// faster and not subject to the same-turn-deadline risk a nested Codex CLI
+// session runs into), and the app already resolves this same key for Pi CLI
+// (see internal/enginedetect/detect.go) — same env vars, same precedence.
+func imageGenerationProvider() llmproviders.Provider {
+	for _, name := range []string{"GEMINI_API_KEY", "VERTEX_API_KEY", "GOOGLE_API_KEY"} {
+		if strings.TrimSpace(os.Getenv(name)) != "" {
+			return llmproviders.ProviderVertex
+		}
+	}
+	return llmproviders.ProviderCodexCLI
+}
+
 // generateImageTool lets the agent create an illustrative picture (a diagram,
 // a friendly drawing) for study material — not photo-realistic uploads, those
-// come from the parent. Routed through the local Codex CLI's native image
-// generation (multi-llm-provider-go's codex-cli provider), which uses the
-// CLI's own logged-in session — no separate image-generation API key needed,
-// the same "reuse the CLI's own auth" pattern as read_image.
+// come from the parent. Uses imageGenerationProvider() above to pick Codex
+// CLI's own logged-in session (default, no separate API key needed — the
+// same "reuse the CLI's own auth" pattern as read_image) or Vertex/Gemini
+// when a key for it is configured.
 func generateImageTool() agentsession.Tool {
 	return agentsession.Tool{
 		Name: "generate_image",
@@ -52,7 +71,7 @@ func generateImageTool() agentsession.Tool {
 			}
 
 			model, err := llmproviders.InitializeImageGenerationModel(llmproviders.Config{
-				Provider: llmproviders.ProviderCodexCLI,
+				Provider: imageGenerationProvider(),
 				Context:  ctx,
 			})
 			if err != nil {

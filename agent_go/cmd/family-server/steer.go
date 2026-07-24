@@ -128,3 +128,33 @@ func handleParentSteer(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, map[string]bool{"steered": ok})
 }
+
+// handleChildSteer serves POST /api/child/steer — same idea as
+// handleParentSteer, for the child's own turn (see registerActiveTurn in
+// child.go). conversation_id here is the activity dir, the child's natural
+// per-activity conversation id.
+func handleChildSteer(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var req struct {
+		ConversationID string `json:"conversation_id"`
+		Message        string `json:"message"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]bool{"steered": false})
+		return
+	}
+	convID := strings.TrimSpace(req.ConversationID)
+	message := strings.TrimSpace(req.Message)
+	if convID == "" || message == "" {
+		writeJSON(w, http.StatusOK, map[string]bool{"steered": false})
+		return
+	}
+	ok := trySteer(r.Context(), convID, message)
+	if ok {
+		appendUserMessageToConversation("child", convID, message)
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"steered": ok})
+}

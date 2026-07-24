@@ -718,6 +718,7 @@ export default function LearningApp() {
   const setMenuOpen = useParentChatStore((s) => s.setMenuOpen)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [savingEngine, setSavingEngine] = useState(false)
+  const [goalPopoverOpen, setGoalPopoverOpen] = useState(false)
   // Secrets (credentials the parent saves for Quill's tools, e.g. a school
   // portal login) — settings-form only, never through chat, so a value typed
   // here never touches the model or the persisted conversation transcript.
@@ -753,6 +754,7 @@ export default function LearningApp() {
   // a time as the current turn finishes (see the drain effect). Shown as
   // "queued" bubbles so they know it's coming.
   const [queue, setQueue] = useState<string[]>([])
+  const [childQueue, setChildQueue] = useState<string[]>([])
   const [pulseRunning, setPulseRunning] = useState(false)
   const [pulseRunError, setPulseRunError] = useState<string | null>(null)
   const wsFiles = useWorkspaceStore((s) => s.wsFiles)
@@ -1110,6 +1112,15 @@ export default function LearningApp() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sending, queue])
 
+  // Same drain, for the child's own queue.
+  useEffect(() => {
+    if (childSending || childQueue.length === 0) return
+    const [next, ...rest] = childQueue
+    setChildQueue(rest)
+    sendChildText(next)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [childSending, childQueue])
+
   const savePulseConfig = (patch: { enabled?: boolean; cadence_hours?: number; school_gmail_query?: string; watch_sites?: string[]; notify_emails?: string[] }) => {
     setSavingPulse(true)
     fetch(`${FAMILY_API}/api/pulse/config`, {
@@ -1297,7 +1308,7 @@ export default function LearningApp() {
       threadEndRef.current?.scrollIntoView({ behavior: streamingReply ? 'auto' : 'smooth', block: 'end' })
     })
     return () => cancelAnimationFrame(id)
-  }, [parentMessages, sending, screen, streamingReply])
+  }, [parentMessages, sending, screen, streamingReply, queue])
 
   // Same, for the child's own thread — this had no auto-scroll at all before,
   // so new replies (and the "thinking" indicator) could land below the fold
@@ -1310,7 +1321,7 @@ export default function LearningApp() {
       childThreadEndRef.current?.scrollIntoView({ behavior: childStreamingReply ? 'auto' : 'smooth', block: 'end' })
     })
     return () => cancelAnimationFrame(id)
-  }, [childMessages, childSending, screen, childStreamingReply])
+  }, [childMessages, childSending, screen, childStreamingReply, childQueue])
 
   // Cycle a usable "how to use the chat" tip in the thinking indicator instead
   // of a bare "thinking…" — resets and restarts each time a new turn begins,
@@ -1474,15 +1485,14 @@ export default function LearningApp() {
   const sendParentText = (raw: string) => {
     const text = raw.trim()
     if (!text) return
-    // A turn is already running — queue it exactly as before (the same
-    // "queued" bubble shows immediately), but ALSO try to steer it into the
-    // live turn right away in the background: if that succeeds, pull it back
-    // out of the queue so the drain effect doesn't send it again as a
-    // separate turn once the current one finishes — it's already been
-    // delivered live. If steering isn't possible, it just stays queued,
-    // unchanged from today.
+    // A turn is already running — STEER is the primary path: try to inject
+    // it into the live turn right now (see steer.go). If that lands, show it
+    // as a normal message immediately (it's genuinely part of the
+    // conversation now, not a separate future turn) — only fall back to the
+    // "queued" bubble (sent as its own turn once this one finishes) when
+    // steering explicitly isn't possible (no turn actually in flight
+    // server-side, a non-tmux provider, or the request itself failed).
     if (sending) {
-      setQueue((q) => [...q, text])
       setFocusInput('')
       fetch(`${FAMILY_API}/api/parent/steer`, {
         method: 'POST',
@@ -1491,13 +1501,10 @@ export default function LearningApp() {
       })
         .then((res) => res.json())
         .then((data: { steered?: boolean }) => {
-          if (!data.steered) return
-          setQueue((q) => {
-            const idx = q.indexOf(text)
-            return idx === -1 ? q : [...q.slice(0, idx), ...q.slice(idx + 1)]
-          })
+          if (data.steered) setParentMessages((cur) => [...cur, { role: 'user', text }])
+          else setQueue((q) => [...q, text])
         })
-        .catch(() => {}) // couldn't even reach the server — stays queued, same as today
+        .catch(() => setQueue((q) => [...q, text])) // couldn't even reach the server — fall back to queued
       return
     }
     const next: ParentMsg[] = [...parentMessages, { role: 'user', text }]
@@ -1623,8 +1630,27 @@ export default function LearningApp() {
   // separately deciding to go read activity.json on its own initiative.
   const sendChildText = (raw: string, base?: ParentMsg[], modelExtra?: string) => {
     const text = raw.trim()
-    if (!text || childSending) return
+    if (!text) return
     const convId = childActivity?.dir ?? ''
+    // A turn is already running — STEER is the primary path (mirrors
+    // sendParentText above): try to inject it into the live turn right now.
+    // Only fall back to the "queued" bubble when steering genuinely isn't
+    // possible.
+    if (childSending) {
+      setChildInput('')
+      fetch(`${FAMILY_API}/api/child/steer`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ conversation_id: convId, message: text }),
+      })
+        .then((res) => res.json())
+        .then((data: { steered?: boolean }) => {
+          if (data.steered) setChildMessages((cur) => [...cur, { role: 'user', text }])
+          else setChildQueue((q) => [...q, text])
+        })
+        .catch(() => setChildQueue((q) => [...q, text]))
+      return
+    }
     const next: ParentMsg[] = [...(base ?? childMessages), { role: 'user', text }]
     setChildMessages(next)
     setChildInput('')
@@ -2910,9 +2936,31 @@ export default function LearningApp() {
                   <img className="fl-header-logo" src="/sparkquill-mark.svg" alt="" width={30} height={30} />
                   <div className="fl-child-hi"><strong>Hi {childName || 'Maya'}!</strong><small>Let’s keep learning together</small></div>
                 </div>
-                {childActivity?.title && (
-                  <div className="fl-child-assignment-pill"><BookOpen size={14} /><span>{childActivity.title}</span></div>
-                )}
+                {childActivity?.title && (() => {
+                  const hasInfo = !!(childActivity.goal || childActivity.guide_note)
+                  return (
+                    <div className="fl-child-assignment-wrap">
+                      {goalPopoverOpen && <div className="fl-menu-backdrop" onClick={() => setGoalPopoverOpen(false)} />}
+                      <button
+                        type="button"
+                        className="fl-child-assignment-pill"
+                        aria-expanded={hasInfo ? goalPopoverOpen : undefined}
+                        aria-label={hasInfo ? `${childActivity.title} — show the goal` : childActivity.title}
+                        onClick={() => hasInfo && setGoalPopoverOpen((v) => !v)}
+                      >
+                        <BookOpen size={14} />
+                        <span>{childActivity.title}</span>
+                        {hasInfo && <ChevronDown size={13} className={goalPopoverOpen ? 'is-open' : ''} />}
+                      </button>
+                      {goalPopoverOpen && hasInfo && (
+                        <div className="fl-child-goal-popover" role="dialog">
+                          {childActivity.goal && <p><strong>Goal</strong>{childActivity.goal}</p>}
+                          {childActivity.guide_note && <p><strong>Plan</strong>{childActivity.guide_note}</p>}
+                        </div>
+                      )}
+                    </div>
+                  )
+                })()}
                 <div className="fl-child-top-right">
                   <button className="fl-parent-return" type="button" onClick={() => { setGateValue(''); setGateError(''); setPinGate(true) }}><LockKeyhole size={16} /> Parent Mode</button>
                 </div>
@@ -2970,6 +3018,12 @@ export default function LearningApp() {
                     </div>
                   </div>
                 )}
+                {childQueue.map((q, i) => (
+                  <div key={`cq-${i}`} className="fl-tmsg is-child">
+                    <div className="fl-tbubble is-queued">{q} <span className="fl-queued-tag">queued</span></div>
+                    <span className="fl-tmsg-avatar is-child">{initial}</span>
+                  </div>
+                ))}
                 <div ref={childThreadEndRef} />
               </div>
               {childSuggestions.length > 0 && !childSending && (

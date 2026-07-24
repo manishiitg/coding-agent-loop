@@ -87,6 +87,7 @@ func main() {
 	mux.HandleFunc("/api/parent/status", handleParentStatusStream)
 	mux.HandleFunc("/api/parent/steer", handleParentSteer)
 	mux.HandleFunc("/api/child/message", handleChildMessage)
+	mux.HandleFunc("/api/child/steer", handleChildSteer)
 	mux.HandleFunc("/api/child/status", handleChildStatusStream)
 	mux.HandleFunc("/api/whatsapp/message", handleWhatsAppMessage)
 	mux.HandleFunc("/api/whatsapp/status", handleWhatsAppStatus)

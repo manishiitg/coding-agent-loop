@@ -261,6 +261,12 @@ func handleChildMessage(w http.ResponseWriter, r *http.Request) {
 		history[len(history)-1].Text += suffix
 	}
 
+	// Register this turn as steerable for its whole duration, so a follow-up
+	// message the child sends while it's still running can be injected live
+	// (see steer.go) instead of only ever being queued for afterward.
+	registerActiveTurn(activityDir, sess.Agent())
+	defer clearActiveTurn()
+
 	reply, err := sess.Ask(ctx, history)
 	if err != nil {
 		// Persist the turn even on failure — see chat.go's parent handler for why.

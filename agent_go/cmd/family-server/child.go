@@ -285,7 +285,6 @@ func handleChildMessage(w http.ResponseWriter, r *http.Request) {
 	sceneMu.Lock()
 	sceneOut := scene
 	sceneMu.Unlock()
-	reply = sanitizeAgentReply(reply)
 
 	toSave := withReply(req.Messages, reply)
 	if cel := findCelebrateEvent(evs); cel != nil {

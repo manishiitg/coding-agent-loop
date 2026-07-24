@@ -877,7 +877,6 @@ func (w *waBot) runTurn(text string) (string, error) {
 		return "", err
 	}
 	saveSessionHandle("parent", convID, sess.Handle())
-	reply = sanitizeAgentReply(reply)
 	reply = appendSentFileLinks(reply, sentFiles)
 	persistFull(reply)
 	return reply, nil

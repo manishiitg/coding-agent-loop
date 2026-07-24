@@ -677,7 +677,6 @@ func handleParentMessage(w http.ResponseWriter, r *http.Request) {
 	sugMu.Lock()
 	sug := append([]suggestion(nil), suggestions...)
 	sugMu.Unlock()
-	reply = sanitizeAgentReply(reply)
 	reply = appendSentFileLinks(reply, sentFiles)
 	// Reload-then-append (not req.Messages directly) so a message the parent
 	// steered in mid-turn — appended to disk by handleParentSteer while this

@@ -75,7 +75,8 @@ func buildNativeEnvironment() []string {
 
 	// Exact env var names to block
 	blockedExact := map[string]bool{
-		"MCP_API_TOKEN": true,
+		"MCP_API_TOKEN":       true,
+		"WORKSPACE_API_TOKEN": true,
 	}
 
 	var env []string

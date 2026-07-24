@@ -751,7 +751,7 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
         <button
           type="button"
           onClick={() => setExpandedWorkflowLLMRole(expanded ? null : row.key)}
-          className="flex w-full items-center gap-3 px-3 py-2.5 text-left transition-colors hover:bg-gray-50 dark:hover:bg-gray-800/70"
+          className="flex w-full items-center gap-3 px-3 py-2.5 text-left transition-colors hover:bg-gray-500/10"
           aria-expanded={expanded}
         >
           <div className="min-w-0 flex-1">

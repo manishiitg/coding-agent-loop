@@ -248,6 +248,7 @@ EOF`
 // (e.g. DB_PATH set by the workflow orchestrator) reaches the bridge request,
 // and that an explicit per-call extra_env overrides the session value.
 func TestExecuteShellCommand_InjectsSessionEnv(t *testing.T) {
+	t.Setenv("WORKSPACE_API_TOKEN", "server-only-token")
 	sessionID := "test-session-env"
 	common.SetSessionShellEnv(sessionID, map[string]string{
 		"DB_PATH":         "/abs/workflow/db/db.sqlite",
@@ -256,7 +257,9 @@ func TestExecuteShellCommand_InjectsSessionEnv(t *testing.T) {
 	defer ClearSessionShellConfig(sessionID)
 
 	var got ExecuteShellCommandParams
+	var gotWorkspaceToken string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotWorkspaceToken = r.Header.Get("X-Workspace-Token")
 		_ = json.NewDecoder(r.Body).Decode(&got)
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]interface{}{
@@ -279,6 +282,9 @@ func TestExecuteShellCommand_InjectsSessionEnv(t *testing.T) {
 
 	if got.ExtraEnv["DB_PATH"] != "/per/call/override.sqlite" {
 		t.Fatalf("per-call extra_env should win: DB_PATH=%q", got.ExtraEnv["DB_PATH"])
+	}
+	if gotWorkspaceToken != "server-only-token" {
+		t.Fatalf("workspace token header = %q", gotWorkspaceToken)
 	}
 	if got.ExtraEnv["STEP_OUTPUT_DIR"] != "/abs/workspace-docs/Workflow/test-workflow/runs/iteration-0/default/execution/step-score" {
 		t.Fatalf("session STEP_OUTPUT_DIR not injected: %q", got.ExtraEnv["STEP_OUTPUT_DIR"])

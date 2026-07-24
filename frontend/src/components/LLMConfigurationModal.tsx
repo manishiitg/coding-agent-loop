@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useMemo } from 'react'
-import { X, Settings, Lock } from 'lucide-react'
+import { X, Settings, Lock, ShieldCheck } from 'lucide-react'
 import { Button } from './ui/Button'
 import { TooltipProvider } from './ui/tooltip'
 import { useLLMStore, useAppStore } from '../stores'
@@ -9,6 +9,7 @@ import { APIProviderSection } from './llm/APIProviderSection'
 import { APIKeyProviderSection } from './APIKeyProviderSection'
 import { llmConfigService, type ModelMetadata, type ProviderManifestEntry } from '../services/llm-config-api'
 import { LibraryTab } from './llm/LibraryTab'
+import { CLISecuritySection } from './llm/CLISecuritySection'
 import { getProviderDisplayInfo } from '../utils/llmDisplay'
 import ModalPortal from './ui/ModalPortal'
 
@@ -28,7 +29,7 @@ type APIKeyError = Record<APIKeyProviderType, string | null>
 
 type AudioProviderTab = 'audio-gemini' | 'audio-minimax'
 
-type TabType = 'library' | LLMProvider | AudioProviderTab
+type TabType = 'library' | 'cli-security' | LLMProvider | AudioProviderTab
 
 const CHAT_CAPABILITIES = new Set(['chat', 'text'])
 const AUDIO_CAPABILITIES = new Set(['text_to_speech', 'speech_to_text', 'generate_music', 'audio_generation', 'audio_transcription', 'music_generation'])
@@ -477,6 +478,19 @@ export default function LLMConfigurationModal({ isOpen, onClose }: LLMConfigurat
                   <Settings className="w-4 h-4" />
                 </button>
 
+                <button
+                  onClick={() => setActiveTab('cli-security')}
+                  className={`w-full flex items-center gap-3 p-3 rounded-md text-left transition-colors ${
+                    activeTab === 'cli-security' ? 'bg-primary text-primary-foreground' : 'hover:bg-secondary'
+                  }`}
+                >
+                  <div className="flex-1">
+                    <div className="font-medium">CLI Security</div>
+                    <div className="text-xs opacity-75">Filesystem access</div>
+                  </div>
+                  <ShieldCheck className="w-4 h-4" />
+                </button>
+
                 {codingAgentProviderEntries.length > 0 && (
                   <>
                     <h3 className="text-sm font-medium text-muted-foreground mb-3 mt-6">Coding Agents</h3>
@@ -562,6 +576,7 @@ export default function LLMConfigurationModal({ isOpen, onClose }: LLMConfigurat
                   isProviderLocked={isProviderLocked}
                 />
               )}
+              {activeTab === 'cli-security' && <CLISecuritySection />}
 
               {/* Locked provider read-only banner */}
               {(() => {

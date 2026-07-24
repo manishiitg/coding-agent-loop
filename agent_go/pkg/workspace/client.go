@@ -10,6 +10,7 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/url"
+	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -493,6 +494,9 @@ func (c *Client) doRequest(ctx context.Context, method, path string, body interf
 		return nil, fmt.Errorf("create request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
+	if token := strings.TrimSpace(os.Getenv("WORKSPACE_API_TOKEN")); token != "" {
+		req.Header.Set("X-Workspace-Token", token)
+	}
 
 	// Include user ID header for auth/database scoping
 	if userID := c.getUserIDFromContext(ctx); userID != "" {

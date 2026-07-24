@@ -204,6 +204,7 @@ type LLMAgentConfig struct {
 	// workflow step config AgentConfigs.Transport == "structured".
 	ForceStructuredCodingAgent bool
 	CodingAgentWorkingDir      string
+	CLISecurityPolicy          *llmtypes.CLISecurityPolicy
 	APIKeys                    *llm.ProviderAPIKeys // API keys for providers
 
 	// Context summarization configuration
@@ -434,6 +435,10 @@ func NewLLMAgentWrapperWithTrace(ctx context.Context, config LLMAgentConfig, tra
 	if strings.TrimSpace(config.CodingAgentWorkingDir) != "" {
 		agentOptions = append(agentOptions, mcpagent.WithCodingAgentWorkingDir(config.CodingAgentWorkingDir))
 		logger.Info(fmt.Sprintf("🔗 Coding agent working directory: %s", config.CodingAgentWorkingDir))
+	}
+	if config.CLISecurityPolicy != nil {
+		agentOptions = append(agentOptions, mcpagent.WithCLISecurityPolicy(*config.CLISecurityPolicy))
+		logger.Info(fmt.Sprintf("🔒 Coding agent CLI security mode: %s", config.CLISecurityPolicy.Mode))
 	}
 	if config.CodexPersistentInteractiveSession {
 		agentOptions = append(agentOptions, mcpagent.WithCodexPersistentInteractiveSession(true))

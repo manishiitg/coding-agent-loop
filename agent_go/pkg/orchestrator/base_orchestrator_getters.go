@@ -7,6 +7,7 @@ import (
 	mcpagent "github.com/manishiitg/mcpagent/agent"
 	loggerv2 "github.com/manishiitg/mcpagent/logger/v2"
 	"github.com/manishiitg/mcpagent/observability"
+	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 )
 
 // GetLogger returns the orchestrator's logger
@@ -43,6 +44,25 @@ func (bo *BaseOrchestrator) GetWorkspacePath() string {
 // SetWorkspacePath sets the workspace path
 func (bo *BaseOrchestrator) SetWorkspacePath(workspacePath string) {
 	bo.workspacePath = workspacePath
+}
+
+// SetCLISecurityPolicy stores an immutable policy snapshot which is copied into
+// every coding-agent configuration created by this orchestrator.
+func (bo *BaseOrchestrator) SetCLISecurityPolicy(policy *llmtypes.CLISecurityPolicy) {
+	if policy == nil {
+		bo.cliSecurityPolicy = nil
+		return
+	}
+	copyPolicy := policy.Clone()
+	bo.cliSecurityPolicy = &copyPolicy
+}
+
+func (bo *BaseOrchestrator) GetCLISecurityPolicy() *llmtypes.CLISecurityPolicy {
+	if bo.cliSecurityPolicy == nil {
+		return nil
+	}
+	copyPolicy := bo.cliSecurityPolicy.Clone()
+	return &copyPolicy
 }
 
 // SetWorkspacePathForFolderGuard sets separate read and write paths for folder guard validation

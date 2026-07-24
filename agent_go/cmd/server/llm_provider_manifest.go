@@ -310,7 +310,16 @@ func providerModelIDs(provider string) []string {
 func claudeCodeCapabilityModels() []string {
 	ids := providerModelIDs("claude-code")
 	if len(ids) == 0 {
-		return []string{"claude-code", "claude-fable-5", "claude-opus-5", "claude-sonnet-5", "claude-sonnet-4-6"}
+		return []string{
+			"claude-code",
+			"claude-fable-5",
+			"claude-opus-5",
+			"claude-opus-4-8",
+			"claude-opus-4-7",
+			"claude-opus-4-6",
+			"claude-sonnet-5",
+			"claude-sonnet-4-6",
+		}
 	}
 	return ids
 }

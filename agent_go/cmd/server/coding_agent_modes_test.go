@@ -31,7 +31,6 @@ func TestCodingAgentPersistentInteractiveFlags(t *testing.T) {
 		wantClaudeCode bool
 		wantCodexCLI   bool
 		wantCursorCLI  bool
-		wantAgyCLI     bool
 		wantPiCLI      bool
 	}{
 		{
@@ -50,11 +49,6 @@ func TestCodingAgentPersistentInteractiveFlags(t *testing.T) {
 			wantCursorCLI: true,
 		},
 		{
-			name:       "agy chat gets persistent tmux",
-			provider:   string(llm.ProviderAgyCLI),
-			wantAgyCLI: true,
-		},
-		{
 			name:      "pi chat gets persistent tmux",
 			provider:  string(llm.ProviderPiCLI),
 			wantPiCLI: true,
@@ -67,9 +61,9 @@ func TestCodingAgentPersistentInteractiveFlags(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			gotClaudeCode, gotCodexCLI, gotCursorCLI, gotAgyCLI, gotPiCLI := codingAgentPersistentInteractiveFlags(tt.provider)
-			if gotClaudeCode != tt.wantClaudeCode || gotCodexCLI != tt.wantCodexCLI || gotCursorCLI != tt.wantCursorCLI || gotAgyCLI != tt.wantAgyCLI || gotPiCLI != tt.wantPiCLI {
-				t.Fatalf("flags = (%v, %v, %v, %v, %v), want (%v, %v, %v, %v, %v)", gotClaudeCode, gotCodexCLI, gotCursorCLI, gotAgyCLI, gotPiCLI, tt.wantClaudeCode, tt.wantCodexCLI, tt.wantCursorCLI, tt.wantAgyCLI, tt.wantPiCLI)
+			gotClaudeCode, gotCodexCLI, gotCursorCLI, gotPiCLI := codingAgentPersistentInteractiveFlags(tt.provider)
+			if gotClaudeCode != tt.wantClaudeCode || gotCodexCLI != tt.wantCodexCLI || gotCursorCLI != tt.wantCursorCLI || gotPiCLI != tt.wantPiCLI {
+				t.Fatalf("flags = (%v, %v, %v, %v), want (%v, %v, %v, %v)", gotClaudeCode, gotCodexCLI, gotCursorCLI, gotPiCLI, tt.wantClaudeCode, tt.wantCodexCLI, tt.wantCursorCLI, tt.wantPiCLI)
 			}
 		})
 	}
@@ -81,9 +75,9 @@ func TestCodingAgentPersistentInteractiveFlagsCoverTmuxContracts(t *testing.T) {
 			continue
 		}
 		t.Run(string(contract.Provider), func(t *testing.T) {
-			gotClaudeCode, gotCodexCLI, gotCursorCLI, gotAgyCLI, gotPiCLI := codingAgentPersistentInteractiveFlags(string(contract.Provider))
+			gotClaudeCode, gotCodexCLI, gotCursorCLI, gotPiCLI := codingAgentPersistentInteractiveFlags(string(contract.Provider))
 			count := 0
-			for _, enabled := range []bool{gotClaudeCode, gotCodexCLI, gotCursorCLI, gotAgyCLI, gotPiCLI} {
+			for _, enabled := range []bool{gotClaudeCode, gotCodexCLI, gotCursorCLI, gotPiCLI} {
 				if enabled {
 					count++
 				}
@@ -214,7 +208,6 @@ func TestRecordLiveCodingAgentUserMessageCapturesVisibleEvent(t *testing.T) {
 		{name: "claude code", provider: llm.ProviderClaudeCode},
 		{name: "codex cli", provider: llm.ProviderCodexCLI},
 		{name: "cursor cli", provider: llm.ProviderCursorCLI},
-		{name: "agy cli", provider: llm.ProviderAgyCLI},
 		{name: "pi cli", provider: llm.ProviderPiCLI},
 	}
 

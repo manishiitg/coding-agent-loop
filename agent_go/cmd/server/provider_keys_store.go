@@ -30,7 +30,6 @@ type StoredProviderKeys struct {
 	Vertex            string               `json:"vertex,omitempty"`
 	CodexCLI          string               `json:"codex_cli,omitempty"`
 	CursorCLI         string               `json:"cursor_cli,omitempty"`
-	AgyCLI            string               `json:"agy_cli,omitempty"`
 	PiCLI             string               `json:"pi_cli,omitempty"`
 	MiniMax           string               `json:"minimax,omitempty"`
 	MiniMaxCodingPlan string               `json:"minimax_coding_plan,omitempty"`
@@ -98,7 +97,6 @@ func hasStoredProviderKeys(keys *StoredProviderKeys) bool {
 		keys.Vertex,
 		keys.CodexCLI,
 		keys.CursorCLI,
-		keys.AgyCLI,
 		keys.PiCLI,
 		keys.MiniMax,
 		keys.MiniMaxCodingPlan,
@@ -189,9 +187,6 @@ func ProviderKeysToAPIKeysMap(keys *StoredProviderKeys) map[string]interface{} {
 	if keys.CursorCLI != "" {
 		m["cursor_cli"] = keys.CursorCLI
 	}
-	if keys.AgyCLI != "" {
-		m["agy_cli"] = keys.AgyCLI
-	}
 	if keys.PiCLI != "" {
 		m["pi_cli"] = keys.PiCLI
 	}
@@ -268,9 +263,6 @@ func LoadProviderKeysAsLLMKeys(ctx context.Context) *llm.ProviderAPIKeys {
 	if keys.CursorCLI != "" {
 		result.CursorCLI = &keys.CursorCLI
 	}
-	if keys.AgyCLI != "" {
-		result.AgyCLI = &keys.AgyCLI
-	}
 	if keys.PiCLI != "" {
 		result.PiCLI = &keys.PiCLI
 	}
@@ -314,9 +306,6 @@ func LoadProviderKeysAsLLMKeys(ctx context.Context) *llm.ProviderAPIKeys {
 	}
 	if result.CursorCLI != nil {
 		loaded = append(loaded, "cursor-cli")
-	}
-	if result.AgyCLI != nil {
-		loaded = append(loaded, "agy-cli")
 	}
 	if result.PiCLI != nil {
 		loaded = append(loaded, "pi-cli")
@@ -395,7 +384,6 @@ func MergedProviderAPIKeys(ctx context.Context) *llm.ProviderAPIKeys {
 		Vertex:     pick(envKeys.Vertex, wsKeys.Vertex),
 		CodexCLI:   pick(envKeys.CodexCLI, wsKeys.CodexCLI),
 		CursorCLI:  pick(envKeys.CursorCLI, wsKeys.CursorCLI),
-		AgyCLI:     pick(envKeys.AgyCLI, wsKeys.AgyCLI),
 		PiCLI:      pick(envKeys.PiCLI, wsKeys.PiCLI),
 		MiniMax:    pick(envKeys.MiniMax, wsKeys.MiniMax),
 		ElevenLabs: pick(envKeys.ElevenLabs, wsKeys.ElevenLabs),
@@ -539,7 +527,6 @@ func mergeStoredProviderKeyValues(existing, incoming *StoredProviderKeys) *Store
 		Vertex:     pick(existing.Vertex, incoming.Vertex),
 		CodexCLI:   pick(existing.CodexCLI, incoming.CodexCLI),
 		CursorCLI:  pick(existing.CursorCLI, incoming.CursorCLI),
-		AgyCLI:     pick(existing.AgyCLI, incoming.AgyCLI),
 		PiCLI:      pick(existing.PiCLI, incoming.PiCLI),
 		MiniMax:    pick(existing.MiniMax, incoming.MiniMax),
 		ElevenLabs: pick(existing.ElevenLabs, incoming.ElevenLabs),
@@ -641,7 +628,6 @@ func discardMaskedProviderKeys(keys *StoredProviderKeys) *StoredProviderKeys {
 	sanitized.Vertex = clearMasked(sanitized.Vertex)
 	sanitized.CodexCLI = clearMasked(sanitized.CodexCLI)
 	sanitized.CursorCLI = clearMasked(sanitized.CursorCLI)
-	sanitized.AgyCLI = clearMasked(sanitized.AgyCLI)
 	sanitized.PiCLI = clearMasked(sanitized.PiCLI)
 	sanitized.MiniMax = clearMasked(sanitized.MiniMax)
 	sanitized.MiniMaxCodingPlan = clearMasked(sanitized.MiniMaxCodingPlan)
@@ -679,7 +665,6 @@ func maskStoredProviderKeys(keys *StoredProviderKeys) *StoredProviderKeys {
 	masked.Vertex = maskProviderKey(masked.Vertex)
 	masked.CodexCLI = maskProviderKey(masked.CodexCLI)
 	masked.CursorCLI = maskProviderKey(masked.CursorCLI)
-	masked.AgyCLI = maskProviderKey(masked.AgyCLI)
 	masked.PiCLI = maskProviderKey(masked.PiCLI)
 	masked.MiniMax = maskProviderKey(masked.MiniMax)
 	masked.MiniMaxCodingPlan = maskProviderKey(masked.MiniMaxCodingPlan)

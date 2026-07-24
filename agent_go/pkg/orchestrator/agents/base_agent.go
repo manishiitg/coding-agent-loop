@@ -299,7 +299,6 @@ func NewBaseAgent(
 			mcpagent.WithClaudeCodePersistentInteractiveSession(true),
 			mcpagent.WithCodexPersistentInteractiveSession(true),
 			mcpagent.WithCursorPersistentInteractiveSession(true),
-			mcpagent.WithAgyPersistentInteractiveSession(true),
 			mcpagent.WithPiPersistentInteractiveSession(true),
 		)
 		logger.Info("🔗 Keeping tmux-backed coding-agent session alive after completion",

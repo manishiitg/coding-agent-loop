@@ -11,17 +11,6 @@ import (
 	llm "github.com/manishiitg/multi-llm-provider-go"
 )
 
-func TestLLMCapabilitiesIncludeAgyImageProviders(t *testing.T) {
-	caps := buildLLMCapabilities(context.Background(), "all", true)
-
-	if !capabilityHasProvider(caps, "read_image", "agy-cli") {
-		t.Fatalf("read_image capabilities should include agy-cli")
-	}
-	if !capabilityHasProvider(caps, "generate_image", "agy-cli") {
-		t.Fatalf("generate_image capabilities should include agy-cli")
-	}
-}
-
 func TestProviderAuthConfiguredTreatsPiProviderKeysAsPiAuth(t *testing.T) {
 	configured, source := providerAuthConfigured("pi-cli", &llm.ProviderAPIKeys{
 		PiProviderKeys: map[string]string{"zai": "zai-key"},
@@ -166,29 +155,6 @@ func TestValidateCursorCLIReportsLoginRequiredBeforeTmuxRun(t *testing.T) {
 	if !strings.Contains(resp.Message, "cursor-agent login") {
 		t.Fatalf("message = %q, want cursor-agent login hint", resp.Message)
 	}
-}
-
-func capabilityHasProvider(caps map[string]interface{}, capability, provider string) bool {
-	_, ok := capabilityProvider(caps, capability, provider)
-	return ok
-}
-
-func capabilityProvider(caps map[string]interface{}, capability, provider string) (llmCapabilityProvider, bool) {
-	entry, _ := caps[capability].(map[string]interface{})
-	if entry == nil {
-		return llmCapabilityProvider{}, false
-	}
-	providers, _ := entry["providers"].([]llmCapabilityProvider)
-	return capabilityProviderInList(providers, provider)
-}
-
-func capabilityProviderInList(providers []llmCapabilityProvider, provider string) (llmCapabilityProvider, bool) {
-	for _, candidate := range providers {
-		if candidate.Provider == provider {
-			return candidate, true
-		}
-	}
-	return llmCapabilityProvider{}, false
 }
 
 func withFakeExecutable(t *testing.T, name string) {

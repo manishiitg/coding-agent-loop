@@ -14,7 +14,6 @@ import (
 
 	unifiedevents "github.com/manishiitg/mcpagent/events"
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
-	agycliadapter "github.com/manishiitg/multi-llm-provider-go/pkg/adapters/agycli"
 	claudecodeadapter "github.com/manishiitg/multi-llm-provider-go/pkg/adapters/claudecode"
 	codexcliadapter "github.com/manishiitg/multi-llm-provider-go/pkg/adapters/codexcli"
 	cursorcliadapter "github.com/manishiitg/multi-llm-provider-go/pkg/adapters/cursorcli"
@@ -538,42 +537,5 @@ func TestMultiTurnChatE2E_Cursor(t *testing.T) {
 		// production (see task #19) stays visible until the root
 		// cause in the cursor adapter or TUI is fixed.
 		strictMemory: true,
-	})
-}
-
-func TestMultiTurnChatE2E_Agy(t *testing.T) {
-	model := strings.TrimSpace(os.Getenv("AGY_CLI_REAL_E2E_MODEL"))
-	if model == "" {
-		model = "agy-cli"
-	}
-	runMultiTurnChatE2E(t, multiTurnChatE2ESpec{
-		providerName: "agy",
-		providerKey:  "agy-cli",
-		envGate:      "RUN_AGY_CLI_REAL_E2E",
-		extraSkipFn: func(t *testing.T) {
-			if _, err := exec.LookPath("agy"); err != nil {
-				t.Skipf("agy binary not found: %v", err)
-			}
-			if _, err := exec.LookPath("tmux"); err != nil {
-				t.Skipf("tmux binary not found: %v", err)
-			}
-		},
-		newAdapter: func(t *testing.T) llmtypes.Model {
-			return agycliadapter.NewAgyCLIAdapter("", model, &e2eMockLogger{})
-		},
-		turnOptions: func(ownerSessionID string) []llmtypes.CallOption {
-			return []llmtypes.CallOption{
-				agycliadapter.WithInteractiveSessionID(ownerSessionID),
-				agycliadapter.WithPersistentInteractiveSession(true),
-				agycliadapter.WithDangerouslySkipPermissions(true),
-			}
-		},
-		// Antigravity tmux currently uses char-estimated token usage and has no
-		// cache accounting, so keep the cost/cache assertions disabled.
-		expectNonZero:    false,
-		expectCacheReads: false,
-		cleanup: func(ctx context.Context) {
-			_ = agycliadapter.CleanupAgyCLIInteractiveSessions(ctx)
-		},
 	})
 }

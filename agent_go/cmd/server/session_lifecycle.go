@@ -144,7 +144,6 @@ func (api *StreamingAPI) cancelSessionRuntimeWork(sessionID, closeReason string,
 // tmux kill-session) and is a no-op when no session is registered for the
 // owner, so calling all tmux providers is safe and provider-agnostic.
 func closeAllCodingCLIInteractiveSessionsForOwner(owner, reason string) {
-	llmproviders.CloseAgyCLIInteractiveSessionForOwner(owner, reason)
 	llmproviders.CloseCursorCLIInteractiveSessionForOwner(owner, reason)
 	llmproviders.CloseCodexCLIInteractiveSessionForOwner(owner, reason)
 	llmproviders.CloseClaudeCodeInteractiveSessionForOwner(owner, reason)
@@ -166,8 +165,6 @@ func gracefulCloseCodingCLITmuxByName(tmuxName, reason string) bool {
 		return false
 	}
 	switch {
-	case strings.HasPrefix(name, "mlp-agy-cli"):
-		llmproviders.CloseAgyCLIInteractiveSessionByTmux(name, reason)
 	case strings.HasPrefix(name, "mlp-claude-code"):
 		llmproviders.CloseClaudeCodeInteractiveSessionByTmux(name, reason)
 	case strings.HasPrefix(name, "mlp-codex-cli"):

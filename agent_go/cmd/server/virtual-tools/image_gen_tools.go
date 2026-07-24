@@ -572,8 +572,6 @@ func CreateImageGenExecutor(cfg ImageGenExecutorConfig) func(ctx context.Context
 			switch provider {
 			case "codex-cli":
 				providerAPIKeys.CodexCLI = apiKeyPtr
-			case "agy-cli":
-				providerAPIKeys.AgyCLI = apiKeyPtr
 			default:
 				providerAPIKeys.Vertex = apiKeyPtr
 			}
@@ -883,8 +881,6 @@ func CreateImageEditExecutor(cfg ImageGenExecutorConfig) func(ctx context.Contex
 			switch provider {
 			case "codex-cli":
 				providerAPIKeys.CodexCLI = apiKeyPtr
-			case "agy-cli":
-				providerAPIKeys.AgyCLI = apiKeyPtr
 			default:
 				providerAPIKeys.Vertex = apiKeyPtr
 			}

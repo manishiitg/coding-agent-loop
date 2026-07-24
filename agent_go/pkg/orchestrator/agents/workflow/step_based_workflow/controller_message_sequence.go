@@ -1034,8 +1034,6 @@ func closeMessageSequenceCodingSession(provider string, ownerSessionID string, r
 		return
 	}
 	switch strings.TrimSpace(provider) {
-	case string(llmproviders.ProviderAgyCLI):
-		llmproviders.CloseAgyCLIInteractiveSessionForOwner(ownerSessionID, reason)
 	case string(llmproviders.ProviderClaudeCode):
 		llmproviders.CloseClaudeCodeInteractiveSessionForOwner(ownerSessionID, reason)
 	case string(llmproviders.ProviderCodexCLI):

@@ -1152,24 +1152,6 @@ func TestCaptureChatHistoryAgentRuntimeStoresCodexThreadID(t *testing.T) {
 	}
 }
 
-func TestCaptureChatHistoryAgentRuntimeStoresAgyConversationID(t *testing.T) {
-	api := &StreamingAPI{}
-
-	runtime := api.captureChatHistoryAgentRuntime("agy-session", "agy-cli", "agy-cli", "Workflow/example", &mcpagent.Agent{
-		AgySessionID: "agy-conversation-1",
-	})
-
-	if runtime == nil {
-		t.Fatal("expected runtime metadata")
-	}
-	if runtime.Kind != "coding_agent" || runtime.Provider != "agy-cli" {
-		t.Fatalf("unexpected runtime identity: %#v", runtime)
-	}
-	if runtime.ExternalSessionID != "agy-conversation-1" || !runtime.ResumeSupported || runtime.ResumeFlag != "--conversation" {
-		t.Fatalf("unexpected Agy resume metadata: %#v", runtime)
-	}
-}
-
 func TestCaptureChatHistoryAgentRuntimeStoresPiSessionID(t *testing.T) {
 	api := &StreamingAPI{}
 
@@ -1432,25 +1414,6 @@ func TestSeedCodingAgentRuntimeFromRestoredConversationRestoresCodex(t *testing.
 	}
 }
 
-func TestSeedCodingAgentRuntimeFromRestoredConversationRestoresAgy(t *testing.T) {
-	api := &StreamingAPI{}
-	agent := &mcpagent.Agent{}
-	runtime := &ChatHistoryAgentRuntime{
-		Kind:              "coding_agent",
-		Provider:          "agy-cli",
-		ExternalSessionID: "agy-conversation-restored",
-		ResumeSupported:   true,
-	}
-
-	if !api.seedCodingAgentRuntimeFromRestoredConversation("agy-ui-session", "agy-cli", "", runtime, agent) {
-		t.Fatal("expected Agy resume state to be seeded")
-	}
-
-	if agent.AgySessionID != "agy-conversation-restored" {
-		t.Fatalf("agent AgySessionID = %q", agent.AgySessionID)
-	}
-}
-
 func TestSeedCodingAgentRuntimeFromRestoredConversationRestoresPi(t *testing.T) {
 	api := &StreamingAPI{}
 	agent := &mcpagent.Agent{}
@@ -1482,8 +1445,8 @@ func TestSeedCodingAgentRuntimeFromRestoredConversationDoesNotRestoreLegacyPromp
 	runtime, err := chatHistoryRuntimeFromJSON([]byte(`{
   "runtime": {
     "kind": "coding_agent",
-    "provider": "agy-cli",
-    "external_session_id": "agy-conversation-restored",
+    "provider": "pi-cli",
+    "external_session_id": "mlp-pi-restored",
     "resume_supported": true,
     "system_prompt": "<stale>mode=headless</stale>",
     "appended_system_prompts": ["<stale-browser-state>"],
@@ -1494,8 +1457,8 @@ func TestSeedCodingAgentRuntimeFromRestoredConversationDoesNotRestoreLegacyPromp
 		t.Fatalf("decode legacy runtime: runtime=%#v err=%v", runtime, err)
 	}
 
-	if !api.seedCodingAgentRuntimeFromRestoredConversation("agy-ui-session", "agy-cli", "", runtime, agent) {
-		t.Fatal("expected Agy resume state to be seeded")
+	if !api.seedCodingAgentRuntimeFromRestoredConversation("pi-ui-session", "pi-cli", "", runtime, agent) {
+		t.Fatal("expected Pi resume state to be seeded")
 	}
 	if got := agent.GetSystemPrompt(); got != currentPrompt {
 		t.Fatalf("native resume overwrote current prompt: got %q want %q", got, currentPrompt)
@@ -1506,17 +1469,17 @@ func TestCaptureChatHistoryAgentRuntimeOmitsPromptAndBrowserAvailability(t *test
 	api := &StreamingAPI{}
 	agent := &mcpagent.Agent{
 		CodingProviderSessionHandle: llmtypes.CodingProviderSessionHandle{
-			Provider:        "agy-cli",
-			NativeSessionID: "agy-conversation-roundtrip",
+			Provider:        "pi-cli",
+			NativeSessionID: "mlp-pi-roundtrip",
 			ProjectDirID:    "Workflow/example",
-			Model:           "agy-cli",
+			Model:           "pi-cli",
 		},
 	}
 	agent.SetSystemPrompt("<current>mode=cdp</current>")
 	agent.AppendSystemPrompt("<dynamic-browser-state>")
-	common.SetSessionBrowserMode("agy-ui-session", "cdp")
+	common.SetSessionBrowserMode("pi-ui-session", "cdp")
 
-	runtime := api.captureChatHistoryAgentRuntime("agy-ui-session", "agy-cli", "agy-cli", "Workflow/example", agent)
+	runtime := api.captureChatHistoryAgentRuntime("pi-ui-session", "pi-cli", "pi-cli", "Workflow/example", agent)
 	raw, err := json.Marshal(runtime)
 	if err != nil {
 		t.Fatal(err)
@@ -1539,14 +1502,14 @@ func TestSeedCodingAgentRuntimeFromRestoredConversationSkipsEmptySystemPrompt(t 
 	agent.SetSystemPrompt(preExisting)
 	runtime := &ChatHistoryAgentRuntime{
 		Kind:              "coding_agent",
-		Provider:          "agy-cli",
-		ExternalSessionID: "agy-conversation-restored",
+		Provider:          "pi-cli",
+		ExternalSessionID: "mlp-pi-restored",
 		ResumeSupported:   true,
 		// SystemPrompt intentionally empty (legacy runtime)
 	}
 
-	if !api.seedCodingAgentRuntimeFromRestoredConversation("agy-ui-session", "agy-cli", "", runtime, agent) {
-		t.Fatal("expected Agy resume state to be seeded")
+	if !api.seedCodingAgentRuntimeFromRestoredConversation("pi-ui-session", "pi-cli", "", runtime, agent) {
+		t.Fatal("expected Pi resume state to be seeded")
 	}
 
 	if got := agent.GetSystemPrompt(); got != preExisting {

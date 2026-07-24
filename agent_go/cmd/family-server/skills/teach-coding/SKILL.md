@@ -13,7 +13,7 @@ debug simple logic has learned the actually valuable skill, even if they've bare
 touched real syntax. Don't over-index on language features or "cover the syntax" —
 index on reasoning.
 
-Read `parent/child-profile.json` for grade, then match ONE of these bands:
+Read `memory/child-profile.json` for grade, then match ONE of these bands:
 
 1. **Grade ~KG–2 (roughly ages 5–7): no real syntax on screen at all.** This age
    needs hands-on, drag-and-drop tools (ScratchJr, code.org's earliest courses) —

@@ -6,10 +6,10 @@ import (
 	"strings"
 )
 
-// currentUploadPath is the child/current-upload.json pointer file written by
-// handleUpload (scope=child) — same pattern as child/current-task.json for
+// currentUploadPath is the current-upload.json pointer file written by
+// handleUpload (scope=child) — same pattern as current-activity.json for
 // handoffs.
-func currentUploadPath() (string, bool) { return resolveWorkspacePath("child/current-upload.json") }
+func currentUploadPath() (string, bool) { return resolveWorkspacePath("current-upload.json") }
 
 func loadCurrentUpload() (string, bool) {
 	abs, ok := currentUploadPath()
@@ -38,8 +38,8 @@ func clearCurrentUpload() {
 // pendingChildUploadSuffix checks for a just-uploaded child photo and, if one
 // exists, returns text to APPEND onto this turn's own last message naming its
 // EXACT path — rather than relying on the model to proactively guess which
-// folder to check (testing showed it unreliably defaults to shared/inbox), or
-// pre-computing the transcription for it to just trust (testing showed the
+// folder to check (testing showed it unreliably defaults to the top-level
+// inbox), or pre-computing the transcription for it to just trust (testing showed the
 // model treats an unverifiable claim embedded in a "user" message with the
 // same skepticism it would show the child fabricating an answer, and insists
 // on checking the real file itself anyway — reasonable caution, but it fights

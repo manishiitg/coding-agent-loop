@@ -63,9 +63,9 @@ func pulseChecks(s familyState) []pulseCheck {
 		trigger: "Automated check-in — reviewing recent learning activity",
 		instruction: "This is an automated Pulse check-in — the parent did not just ask you anything; you're reviewing on your own " +
 			"initiative, focused ONLY on " + who + "'s recent learning activity this turn (ignore email and the school portal — those are " +
-			"separate check-ins). Look at what's actually changed since your last check (recent conversations, child/attempts/, test results, " +
-			"uploaded materials, child/conversations/). If there's real new evidence, rebuild shared/academic-map.html and/or " +
-			"shared/reports/progress.html per their skill files (skills/create-academic-map/SKILL.md, skills/create-progress-report/SKILL.md) — " +
+			"separate check-ins). Look at what's actually changed since your last check (recent conversations, activity attempts/conversation.json across activities, test results, " +
+			"uploaded materials). If there's real new evidence, rebuild reports/academic-map.html and/or " +
+			"reports/progress.html per their skill files (skills/create-academic-map/SKILL.md, skills/create-progress-report/SKILL.md) — " +
 			"both are fully-regenerated current-state snapshots, never a dated log; replace the whole file with a fresh picture. If a clear gap " +
 			"or opportunity stands out (a weak topic, something " + who + " hasn't practiced in a while, a natural next step), you may prepare " +
 			"study material or a test (skills/create-study-material/SKILL.md, skills/create-test/SKILL.md) — but do NOT create or hand off an " +
@@ -92,8 +92,8 @@ func pulseChecks(s familyState) []pulseCheck {
 				"sections (snapshot the page, follow the obvious links) and gather as much concrete detail as you can — specific item names, due " +
 				"dates, topics, anything new or relevant to " + who + ". When a site has actual resource FILES worth keeping — worksheets, notes, " +
 				"PDFs, images, handouts, question papers — download them: clicking a download link puts the file in the parent's Downloads folder on " +
-				"this computer, so then use execute_shell_command to copy it into shared/materials/<subject>/<topic>/ (e.g. " +
-				"`cp ~/Downloads/<file> shared/materials/...`) so it becomes part of " + who + "'s workspace. Then INGEST what you saved the same way an " +
+				"this computer, so then use execute_shell_command to copy it into materials/<subject>/<topic>/ (e.g. " +
+				"`cp ~/Downloads/<file> materials/...`) so it becomes part of " + who + "'s workspace. Then INGEST what you saved the same way an " +
 				"uploaded file is handled: for an image call read_image to see what it actually is; for a PDF or document, read/convert it with your " +
 				"shell tools to pull out the real content; follow skills/process-file/SKILL.md to file it properly (right subject/topic, a short " +
 				"summary). The goal is that a useful resource on a site ends up usable INSIDE SparkQuill, not just noticed. Then tell the parent " +
@@ -122,8 +122,8 @@ func pulseChecks(s familyState) []pulseCheck {
 	checks = append(checks, pulseCheck{
 		trigger: "Automated check-in — updating what I remember about your preferences",
 		instruction: "This is an automated Pulse check-in, focused ONLY on your working memory of the parent's preferences. Read " +
-			"skills/update-preferences/SKILL.md and follow it: check parent/preferences.md against what the parent has actually said across " +
-			"parent/conversations/, and update it in place if there's something durable worth remembering (exam dates, scheduling/behavioral " +
+			"skills/update-preferences/SKILL.md and follow it: check memory/preferences.md against what the parent has actually said across " +
+			"conversations/parent.json, and update it in place if there's something durable worth remembering (exam dates, scheduling/behavioral " +
 			"preferences, content preferences) that isn't already captured. Tell the parent in one short line what (if anything) you noted." + pulseReplyRules,
 		tools: func(engine string) []agentsession.Tool {
 			return []agentsession.Tool{shellTool(), diffPatchWorkspaceFileTool(), notifyTool()}
@@ -134,8 +134,8 @@ func pulseChecks(s familyState) []pulseCheck {
 		trigger: "Automated check-in — learning " + who + "'s interests",
 		instruction: "This is an automated Pulse check-in, focused ONLY on what " + who + " genuinely enjoys, learned from her own " +
 			"conversations (not what the parent has said — that's the preferences check above). Read " +
-			"skills/update-child-interests/SKILL.md and follow it: check child/interests.md against " + who + "'s actual engagement across " +
-			"child/conversations/, and update it in place if a genuine interest (or clear disinterest) signal isn't already captured. This " +
+			"skills/update-child-interests/SKILL.md and follow it: check memory/interests.md against " + who + "'s actual engagement across " +
+			"her own activity conversations, and update it in place if a genuine interest (or clear disinterest) signal isn't already captured. This " +
 			"powers skills/discover-something-new/SKILL.md, which the parent can ask for anytime (\"make her something fun this weekend\"). " +
 			"Tell the parent in one short line what (if anything) you noted." + pulseReplyRules,
 		tools: func(engine string) []agentsession.Tool {
@@ -149,8 +149,8 @@ func pulseChecks(s familyState) []pulseCheck {
 
 // Pulse is SparkQuill's version of AgentWorks' Pulse feature (see the design
 // discussion this was built from): a periodic, opt-in check-in that reviews
-// recent learning activity and keeps shared/academic-map.html and
-// shared/reports/progress.html current, proposing new study material where a
+// recent learning activity and keeps reports/academic-map.html and
+// reports/progress.html current, proposing new study material where a
 // gap shows up. Deliberately much simpler than AgentWorks' multi-module
 // Gate/Reviewer/Fixer machinery (that exists because ONE workflow run can
 // touch ten disparate concern types with no natural home in its own output

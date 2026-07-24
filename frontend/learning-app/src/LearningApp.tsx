@@ -13,7 +13,7 @@ function loadMermaid() {
   return mermaidModule
 }
 import {
-  Activity,
+  Activity as PulseIcon,
   ArrowLeft,
   ArrowRight,
   BookOpen,
@@ -60,13 +60,12 @@ import {
   type Screen,
   type DrawerTab,
   type ApiEngine,
-  type ConvMeta,
   type ParentMsg,
   type StoredMsg,
   type TreeNode,
   type WsFile,
   type ChildSuggestion,
-  type LearningPackage,
+  type Activity,
 } from './stores'
 
 const FAMILY_API = (import.meta as { env?: { VITE_FAMILY_API?: string } }).env?.VITE_FAMILY_API ?? 'http://127.0.0.1:8010'
@@ -112,10 +111,6 @@ function dateTimeLabel(iso?: string): string {
   const t = Date.parse(iso)
   if (Number.isNaN(t)) return ''
   return new Date(t).toLocaleString(undefined, { day: 'numeric', month: 'short', year: 'numeric', hour: 'numeric', minute: '2-digit', hour12: true })
-}
-
-function newConversationId(): string {
-  return `conv-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`
 }
 
 // Which side of the handoff the browser should land on after a refresh.
@@ -171,17 +166,20 @@ function rewriteRelativeAssetURLs(html: string, filePath: string): string {
 
 // workspaceRelativePath converts a link the agent wrote pointing at a
 // workspace file — usually a full filesystem path like
-// "/Users/x/.sunlit-learning/workspace/shared/study/foo.md", occasionally
-// already-relative like "shared/study/foo.md" — into the workspace-relative
+// "/Users/x/.sunlit-learning/workspace/Math/Fractions/foo.md", occasionally
+// already-relative like "Math/Fractions/foo.md" — into the workspace-relative
 // form the viewer (/api/workspace/file?path=...) expects. Returns null for
-// anything that isn't a workspace file link (http(s) links, mailto, etc.),
-// so those keep their normal browser behavior.
+// anything that isn't a workspace file link (http(s) links, mailto, anchors,
+// absolute web paths), so those keep their normal browser behavior. Subject
+// names are arbitrary (not a fixed set of roots like the old shared/parent/
+// child split), so anything schemeless and non-absolute is treated as a
+// workspace-relative path rather than matching a fixed prefix list.
 function workspaceRelativePath(href: string): string | null {
   const marker = '/workspace/'
   const i = href.lastIndexOf(marker)
   if (i !== -1) return href.slice(i + marker.length)
-  if (/^(shared|parent|child|skills)\//.test(href)) return href
-  return null
+  if (/^[a-z][a-z0-9+.-]*:/i.test(href) || href.startsWith('#') || href.startsWith('/')) return null
+  return href
 }
 
 // ChatLink intercepts clicks on links the agent wrote pointing at a
@@ -304,7 +302,7 @@ const QUICK_SKILLS = [
   { label: 'Create study material', message: 'Create study material for my child — follow your create-study-material skill and make it a designed, static (view-only) HTML page.' },
   { label: 'Create a practice test', message: 'Create a practice test for my child — follow your create-test skill: an interactive HTML page that records my child’s typed answers, plus a separate answer key for me.' },
   { label: 'Update progress report', message: 'Build an updated progress report — follow your create-progress-report skill, make it a designed HTML page, and give me a short coach-style read of the evidence here in chat too.' },
-  { label: 'Update academic map', message: 'Update the academic map — follow your create-academic-map skill (designed HTML at shared/academic-map.html).' },
+  { label: 'Update academic map', message: 'Update the academic map — follow your create-academic-map skill (designed HTML at reports/academic-map.html).' },
   { label: 'Back up workspace', message: 'Back up my workspace now — follow your backup skill.' },
 ]
 
@@ -514,26 +512,33 @@ function sanitizeDecorativeHtml(html: string): string {
   return safe
 }
 
-// parseAssetPath reads whatever structure a generated/uploaded file's path
-// carries — shared/<type>/<subject>/<topic>/<yyyy-mm-dd>-<name>.ext, or a
-// shallower legacy path — into subject/topic/date + a human label. Filenames
-// are auto-generated noise (WhatsApp Image ..., s02.png) so the label prefers
-// the date-stripped name, falling back to "Photo"/"File" for image uploads
-// whose name carries no information at all.
-function parseAssetPath(p: string): { subject?: string; topic?: string; date?: string; label: string } {
-  const parts = p.split('/')
-  const rest = parts.slice(2) // drop "shared/<type>"
-  const filename = rest[rest.length - 1] || parts[parts.length - 1] || p
-  const subject = rest.length >= 3 ? rest[0] : rest.length === 2 ? rest[0] : undefined
-  const topic = rest.length >= 3 ? rest[1] : undefined
+// labelFromFilename turns a bare filename like
+// "2026-07-21-fractions-revision-worksheet.md" into a date + human label.
+// Filenames are sometimes auto-generated noise (WhatsApp Image ..., s02.png),
+// so the label prefers the date-stripped name, falling back to
+// "Photo"/"File" for image uploads whose name carries no information at all.
+function labelFromFilename(filename: string): { date?: string; label: string } {
   const nameNoExt = filename.replace(/\.[a-z0-9]+$/i, '')
   const dateMatch = nameNoExt.match(/^(\d{4}-\d{2}-\d{2})[-_](.+)$/)
   const date = dateMatch ? dateMatch[1] : undefined
   let rawLabel = (dateMatch ? dateMatch[2] : nameNoExt).replace(/[-_]+/g, ' ').trim()
   if (!rawLabel || /^(whatsapp image|img\d*|s\d+|image\d*|photo\d*)\b/i.test(rawLabel)) {
-    rawLabel = IMAGE_PATH_RE.test(p) ? 'Photo' : 'File'
+    rawLabel = IMAGE_PATH_RE.test(filename) ? 'Photo' : 'File'
   }
-  return { subject, topic, date, label: rawLabel }
+  return { date, label: rawLabel }
+}
+
+// parseMaterialPath reads a materials/<subject>/<topic>/<file> path (the only
+// remaining path shape the UI needs to reverse-derive subject/topic from —
+// generated content now lives in Activity objects, which already carry their
+// own subject/topic/items instead of encoding them in a path).
+function parseMaterialPath(p: string): { subject?: string; topic?: string; date?: string; label: string } {
+  const parts = p.split('/')
+  const rest = parts.slice(1) // drop "materials"
+  const filename = rest[rest.length - 1] || p
+  const subject = rest.length >= 1 ? rest[0] : undefined
+  const topic = rest.length >= 3 ? rest[1] : undefined
+  return { subject, topic, ...labelFromFilename(filename) }
 }
 
 export default function LearningApp() {
@@ -589,13 +594,21 @@ export default function LearningApp() {
   const setSuggestions = useParentChatStore((s) => s.setSuggestions)
   // Before actually switching into Child Mode, ask the parent whether to
   // continue Myra's existing conversation or start a brand-new one — handing
-  // off a package often means "just carry on the same chat", not a fresh
+  // off an activity often means "just carry on the same chat", not a fresh
   // start, so this is the parent's call rather than a silent guess.
-  const [pendingChildEntry, setPendingChildEntry] = useState<{ kind: 'path' | 'manifest'; value: string; greetingText: string } | null>(null)
+  const [pendingChildEntry, setPendingChildEntry] = useState<{ dir: string; greetingText: string } | null>(null)
   const menuOpen = useParentChatStore((s) => s.menuOpen)
   const setMenuOpen = useParentChatStore((s) => s.setMenuOpen)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [savingEngine, setSavingEngine] = useState(false)
+  // Secrets (credentials the parent saves for Quill's tools, e.g. a school
+  // portal login) — settings-form only, never through chat, so a value typed
+  // here never touches the model or the persisted conversation transcript.
+  const [secretNames, setSecretNames] = useState<string[]>([])
+  const [secretNameDraft, setSecretNameDraft] = useState('')
+  const [secretValueDraft, setSecretValueDraft] = useState('')
+  const [savingSecret, setSavingSecret] = useState(false)
+  const [deletingSecret, setDeletingSecret] = useState<string | null>(null)
   const waOpen = useWhatsAppStore((s) => s.waOpen)
   const setWaOpen = useWhatsAppStore((s) => s.setWaOpen)
   const [connectorSection, setConnectorSection] = useState<'whatsapp' | 'gmail' | 'browser'>('whatsapp')
@@ -647,22 +660,20 @@ export default function LearningApp() {
   const setChildLiveStatus = useChildChatStore((s) => s.setChildLiveStatus)
   const parentLabel = useFamilyStore((s) => s.parentLabel)
   const setParentLabel = useFamilyStore((s) => s.setParentLabel)
-  const [childConversationId, setChildConversationId] = useState(newConversationId)
 
   const wsRefreshKey = useWorkspaceStore((s) => s.wsRefreshKey)
   const setWsRefreshKey = useWorkspaceStore((s) => s.setWsRefreshKey)
   // Reflect the workspace file system in the drawer (materials the agent can
   // read). Refetches when entering the chat and after each upload/tool event.
+  // The child's own conversation resume lives in a separate effect below,
+  // keyed off /api/child/activity instead of scanning the tree — there is no
+  // longer a single flat child/conversations/ folder to walk.
   useEffect(() => {
-    // Also runs on 'tutor' (not just 'parent') — this is where the child's own
-    // conversation gets resumed from its persisted transcript on load; skipping
-    // it for tutor meant a refreshed child always silently got a brand-new,
-    // empty, cold-start session instead of continuing where they left off.
     if (screen !== 'parent' && screen !== 'tutor') return
     let cancelled = false
     fetch(`${FAMILY_API}/api/workspace/tree`)
       .then((res) => res.json())
-      .then(async (nodes: TreeNode[]) => {
+      .then((nodes: TreeNode[]) => {
         if (cancelled) return
         const files: { path: string; name: string }[] = []
         const walk = (ns: TreeNode[]) => ns?.forEach((n) => {
@@ -670,7 +681,7 @@ export default function LearningApp() {
           if (n.children) walk(n.children)
         })
         walk(nodes)
-        if (!cancelled) setTreeNodes(nodes)
+        setTreeNodes(nodes)
         const mats: WsFile[] = files
           .filter((f) => f.path.includes('/materials/') && !f.name.endsWith('.meta.json'))
           .map((f) => {
@@ -678,46 +689,19 @@ export default function LearningApp() {
             const mi = parts.indexOf('materials')
             return { path: f.path, name: f.name, scope: parts[0] || '', subject: parts[mi + 1] || '', topic: parts[mi + 2] || '' }
           })
-        if (!cancelled) { setWsFiles(mats); setAllFiles(files.map((f) => f.path)) }
+        setWsFiles(mats)
+        setAllFiles(files.map((f) => f.path))
         // Resume the single parent conversation (once) so the parent continues
         // where they left off — including anything that arrived via WhatsApp or
         // Pulse, since it's all the same thread now.
         if (!resumedRef.current && parentMessages.length === 0) {
           resumedRef.current = true
-          fetch(`${FAMILY_API}/api/workspace/file?path=${encodeURIComponent('parent/conversations/parent.json')}`)
+          fetch(`${FAMILY_API}/api/workspace/file?path=${encodeURIComponent('conversations/parent.json')}`)
             .then((r) => r.json())
             .then((dd) => {
               if (!dd?.content) return
               const c = JSON.parse(dd.content) as { messages?: StoredMsg[] }
               setParentMessages((c.messages || []).map(toParentMsg))
-            })
-            .catch(() => {})
-        }
-        // The child's own sessions still power the child-mode resume below.
-        const convPaths = files.filter((f) => f.path.includes('child/conversations/') && f.path.endsWith('.json')).map((f) => f.path)
-        const childMetas = await Promise.all(convPaths.map(async (p) => {
-          try {
-            const d = await fetch(`${FAMILY_API}/api/workspace/file?path=${encodeURIComponent(p)}`).then((r) => r.json())
-            const c = JSON.parse(d.content) as { id: string; updated_at?: string }
-            return { id: c.id, updated: c.updated_at || '' } as { id: string; updated: string }
-          } catch { return null }
-        }))
-        if (cancelled) return
-        const childConvs = childMetas.filter((m): m is { id: string; updated: string } => m !== null)
-          .sort((a, b) => b.updated.localeCompare(a.updated))
-        // Same for the child's own conversation — without this, every page
-        // refresh silently started a brand-new child session (fresh cold-start
-        // agent turn, empty visible thread, lost stars/celebration history)
-        // even though the screen itself now correctly stays on "tutor".
-        if (!childResumedRef.current && childMessages.length === 0 && childConvs.length > 0) {
-          childResumedRef.current = true
-          const top = childConvs[0]
-          fetch(`${FAMILY_API}/api/workspace/file?path=${encodeURIComponent(`child/conversations/${top.id}.json`)}`)
-            .then((r) => r.json())
-            .then((dd) => {
-              const c = JSON.parse(dd.content) as { id: string; messages?: StoredMsg[] }
-              setChildConversationId(c.id)
-              setChildMessages((c.messages || []).map(toParentMsg))
             })
             .catch(() => {})
         }
@@ -735,14 +719,10 @@ export default function LearningApp() {
   const setDrawerTab = useWorkspaceStore((s) => s.setDrawerTab)
   const filesView = useWorkspaceStore((s) => s.filesView)
   const setFilesView = useWorkspaceStore((s) => s.setFilesView)
-  const childFiles = useChildChatStore((s) => s.childFiles)
-  const setChildFiles = useChildChatStore((s) => s.setChildFiles)
-  const childPackages = useChildChatStore((s) => s.childPackages)
-  const setChildPackages = useChildChatStore((s) => s.setChildPackages)
-  // The child's CURRENT assignment (child/current-task.json) — the one package
-  // the parent most recently handed off. The child workspace shows only this,
-  // not every package/material ever approved.
-  const [childTask, setChildTask] = useState<{ title?: string; package?: string; items?: string[] } | null>(null)
+  // The ONE activity the child is currently bound to (/api/child/activity) —
+  // the child workspace shows only this, not every activity ever created.
+  const childActivity = useChildChatStore((s) => s.childActivity)
+  const setChildActivity = useChildChatStore((s) => s.setChildActivity)
   const childViewerPath = useChildChatStore((s) => s.childViewerPath)
   const setChildViewerPath = useChildChatStore((s) => s.setChildViewerPath)
   // Bumped whenever open_file fires, even for the SAME path — Quill re-opens
@@ -757,28 +737,28 @@ export default function LearningApp() {
   const setFilesSubjectFilter = useWorkspaceStore((s) => s.setFilesSubjectFilter)
   const treeNodes = useWorkspaceStore((s) => s.treeNodes)
   const setTreeNodes = useWorkspaceStore((s) => s.setTreeNodes)
-  const packages = useWorkspaceStore((s) => s.packages)
-  const setPackages = useWorkspaceStore((s) => s.setPackages)
+  const activities = useWorkspaceStore((s) => s.activities)
+  const setActivities = useWorkspaceStore((s) => s.setActivities)
   const viewerPath = useWorkspaceStore((s) => s.viewerPath)
   const setViewerPath = useWorkspaceStore((s) => s.setViewerPath)
   const viewerRefreshKey = useWorkspaceStore((s) => s.viewerRefreshKey)
   const setViewerRefreshKey = useWorkspaceStore((s) => s.setViewerRefreshKey)
   const viewerImageList = useWorkspaceStore((s) => s.viewerImageList)
   const setViewerImageList = useWorkspaceStore((s) => s.setViewerImageList)
-  // The manifest path of an activity opened via open_activity (the whole
-  // activity overview). Can be set ALONGSIDE viewerPath (not just instead of
-  // it): clicking an item inside the activity view sets viewerPath without
+  // The dir of an activity opened via open_activity (the whole activity
+  // overview). Can be set ALONGSIDE viewerPath (not just instead of it):
+  // clicking an item inside the activity view sets viewerPath without
   // clearing this, so viewerPath's own "back" button falls through to the
   // activity view again instead of the raw file list — viewerPath simply
-  // takes render priority over viewerPackage whenever both are set.
-  const [viewerPackage, setViewerPackage] = useState<string | null>(null)
+  // takes render priority over viewerActivityDir whenever both are set.
+  const [viewerActivityDir, setViewerActivityDir] = useState<string | null>(null)
   const viewerContent = useWorkspaceStore((s) => s.viewerContent)
   const setViewerContent = useWorkspaceStore((s) => s.setViewerContent)
   const [viewerMeta, setViewerMeta] = useState<Record<string, unknown> | null>(null)
   const [metaOpen, setMetaOpen] = useState(false)
-  // Which package's guide_note (the parent's own pacing/instructions for that
-  // bundle) is currently revealed via its (i) button — collapsed by default.
-  const [expandedPackage, setExpandedPackage] = useState<string | null>(null)
+  // Which activity's guide_note (the parent's own pacing/instructions for
+  // that activity) is currently revealed via its (i) button — collapsed by default.
+  const [expandedActivity, setExpandedActivity] = useState<string | null>(null)
   const mapHtml = useWorkspaceStore((s) => s.mapHtml)
   const setMapHtml = useWorkspaceStore((s) => s.setMapHtml)
   const mapRefreshKey = useWorkspaceStore((s) => s.mapRefreshKey)
@@ -805,46 +785,46 @@ export default function LearningApp() {
   const gateError = usePinGateStore((s) => s.gateError)
   const setGateError = usePinGateStore((s) => s.setGateError)
 
-  // Load the real, agent-generated shared/academic-map.html for the Subjects
+  // Load the real, agent-generated reports/academic-map.html for the Subjects
   // tab — refetches whenever the tab is opened or a turn just completed (the
   // agent may have rebuilt the map during that turn).
   useEffect(() => {
     if (drawerTab !== 'map') return
     let cancelled = false
-    fetch(`${FAMILY_API}/api/workspace/file?path=${encodeURIComponent('shared/academic-map.html')}`)
+    fetch(`${FAMILY_API}/api/workspace/file?path=${encodeURIComponent('reports/academic-map.html')}`)
       .then((r) => r.json())
       .then((d) => { if (!cancelled) setMapHtml(d.content ?? '') })
       .catch(() => { if (!cancelled) setMapHtml('') })
     return () => { cancelled = true }
   }, [drawerTab, mapRefreshKey])
 
-  // Load the real, agent-generated shared/reports/progress.html for the
-  // Progress tab — a single living document, rendered directly (not a link
-  // the parent has to click through to).
+  // Load the real, agent-generated reports/progress.html for the Progress tab
+  // — a single living document, rendered directly (not a link the parent has
+  // to click through to).
   useEffect(() => {
     if (drawerTab !== 'progress') return
     let cancelled = false
-    fetch(`${FAMILY_API}/api/workspace/file?path=${encodeURIComponent('shared/reports/progress.html')}`)
+    fetch(`${FAMILY_API}/api/workspace/file?path=${encodeURIComponent('reports/progress.html')}`)
       .then((r) => r.json())
       .then((d) => { if (!cancelled) setProgressHtml(d.content ?? '') })
       .catch(() => { if (!cancelled) setProgressHtml('') })
     return () => { cancelled = true }
   }, [drawerTab, mapRefreshKey])
 
-  // Learning packages the parent has bundled for the child — refetched whenever
-  // the Files/Uploaded tab is open or a turn just completed (Quill may have
-  // created or added to one). Gated on the drawer tab (not narrowly on
-  // filesView === 'subjects' as before) because open_activity can jump straight
-  // to a package's own detail view regardless of which files sub-view was last
-  // selected — with the narrower gate, a package Quill had just created and
-  // opened could show "no longer available" simply because this fetch never ran.
+  // Every activity, structured — refetched whenever the Files/Uploaded tab is
+  // open or a turn just completed (Quill may have created or added to one).
+  // Gated on the drawer tab (not narrowly on filesView === 'subjects' as
+  // before) because open_activity can jump straight to an activity's own
+  // detail view regardless of which files sub-view was last selected — with
+  // the narrower gate, an activity Quill had just created and opened could
+  // show "no longer available" simply because this fetch never ran.
   useEffect(() => {
     if (drawerTab !== 'files' && drawerTab !== 'uploaded') return
     let cancelled = false
-    fetch(`${FAMILY_API}/api/parent/packages`)
+    fetch(`${FAMILY_API}/api/activities`)
       .then((r) => r.json())
-      .then((d: LearningPackage[]) => { if (!cancelled) setPackages(d ?? []) })
-      .catch(() => { if (!cancelled) setPackages([]) })
+      .then((d: Activity[]) => { if (!cancelled) setActivities(d ?? []) })
+      .catch(() => { if (!cancelled) setActivities([]) })
     return () => { cancelled = true }
   }, [drawerTab, mapRefreshKey])
 
@@ -924,6 +904,48 @@ export default function LearningApp() {
     return () => { cancelled = true }
   }, [screen, settingsOpen, pulsePopoverOpen])
 
+  // Secret names (never values) — loaded whenever Settings is opened.
+  useEffect(() => {
+    if (!settingsOpen) return
+    let cancelled = false
+    fetch(`${FAMILY_API}/api/secrets`)
+      .then((r) => r.json())
+      .then((d: { names?: string[] }) => { if (!cancelled) setSecretNames(d.names ?? []) })
+      .catch(() => { if (!cancelled) setSecretNames([]) })
+    return () => { cancelled = true }
+  }, [settingsOpen])
+
+  const saveSecret = () => {
+    const name = secretNameDraft.trim()
+    const value = secretValueDraft.trim()
+    if (!name || !value) return
+    setSavingSecret(true)
+    fetch(`${FAMILY_API}/api/secrets`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name, value }),
+    })
+      .then((r) => r.json())
+      .then((d: { names?: string[] }) => {
+        setSecretNames(d.names ?? [])
+        setSecretNameDraft('')
+        setSecretValueDraft('')
+      })
+      .finally(() => setSavingSecret(false))
+  }
+
+  const deleteSecret = (name: string) => {
+    setDeletingSecret(name)
+    fetch(`${FAMILY_API}/api/secrets`, {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name }),
+    })
+      .then((r) => r.json())
+      .then((d: { names?: string[] }) => setSecretNames(d.names ?? []))
+      .finally(() => setDeletingSecret(null))
+  }
+
   // Pick up async updates to the open conversation — Pulse (or a WhatsApp
   // reply, if this same conversation is the real WhatsApp thread) can append
   // a new message to this exact conversation file from the background, with
@@ -935,7 +957,7 @@ export default function LearningApp() {
     if (screen !== 'parent' || !conversationId) return
     const id = window.setInterval(() => {
       if (sending) return
-      fetch(`${FAMILY_API}/api/workspace/file?path=${encodeURIComponent(`parent/conversations/${conversationId}.json`)}`)
+      fetch(`${FAMILY_API}/api/workspace/file?path=${encodeURIComponent('conversations/parent.json')}`)
         .then((r) => r.json())
         .then((d) => {
           if (!d?.content) return
@@ -1011,79 +1033,47 @@ export default function LearningApp() {
       .catch(() => { setPulseRunError('Could not reach SparkQuill.'); setPulseRunning(false) })
   }
 
-  // Load the child's own scoped file list (only what the parent has approved,
-  // plus the child's own saved attempts) — refetches whenever the tutor screen
-  // is entered or a child turn just completed.
+  // The ONE activity the child is currently bound to — replaces the old
+  // scoped-tree scan + package-manifest derivation entirely. Also resumes the
+  // child's own conversation (now the activity's own conversation.json)
+  // exactly once, the same "don't silently cold-start on refresh" fix the
+  // parent thread has above.
   useEffect(() => {
-    if (screen !== 'tutor') return
+    if (screen !== 'parent' && screen !== 'tutor') return
     let cancelled = false
-    fetch(`${FAMILY_API}/api/child/workspace/tree`)
+    fetch(`${FAMILY_API}/api/child/activity`)
       .then((r) => r.json())
-      .then((nodes: TreeNode[]) => {
+      .then((act: Activity | null) => {
         if (cancelled) return
-        const files: string[] = []
-        const walk = (ns: TreeNode[]) => ns?.forEach((n) => {
-          if (n.type === 'file' && !n.name.endsWith('.meta.json')) files.push(n.path)
-          if (n.children) walk(n.children)
-        })
-        walk(nodes)
-        setChildFiles(files)
-      })
-      .catch(() => { if (!cancelled) setChildFiles([]) })
-    return () => { cancelled = true }
-  }, [screen, childTreeRefreshKey])
-
-  // A learning package (shared/packages/*.json) bundles several approved files
-  // under one title/order — read each manifest so the materials list can show
-  // "the package" the parent handed off, instead of its raw manifest file plus
-  // every item repeated as its own separate entry.
-  useEffect(() => {
-    const manifestPaths = childFiles.filter((p) => p.startsWith('shared/packages/') && p.endsWith('.json'))
-    if (manifestPaths.length === 0) { setChildPackages([]); return }
-    let cancelled = false
-    Promise.all(manifestPaths.map((p) =>
-      fetch(`${FAMILY_API}/api/workspace/file?path=${encodeURIComponent(p)}`)
-        .then((r) => r.json())
-        .then((d: { content?: string }) => {
-          try {
-            const pkg = JSON.parse(d.content ?? '{}')
-            return {
-              path: p,
-              title: String(pkg.title ?? 'Learning activity'),
-              items: Array.isArray(pkg.items) ? pkg.items : [],
-              guideNote: typeof pkg.guide_note === 'string' ? pkg.guide_note : undefined,
-              createdAt: typeof pkg.created_at === 'string' ? pkg.created_at : undefined,
-            }
-          } catch { return null }
-        })
-        .catch(() => null)
-    )).then((results) => { if (!cancelled) setChildPackages(results.filter((r): r is { path: string; title: string; items: string[]; guideNote?: string; createdAt?: string } => r !== null)) })
-    return () => { cancelled = true }
-  }, [childFiles])
-
-  // The child's current assignment — read child/current-task.json so the child
-  // workspace can show ONLY the activity the parent just handed off (its real
-  // shared/ item paths), not every package/material.
-  useEffect(() => {
-    if (screen !== 'tutor') return
-    let cancelled = false
-    fetch(`${FAMILY_API}/api/workspace/file?path=${encodeURIComponent('child/current-task.json')}`)
-      .then((r) => r.json())
-      .then((d: { content?: string; is_text?: boolean }) => {
-        if (cancelled) return
-        if (!d?.is_text || !d.content) { setChildTask(null); return }
-        try {
-          const t = JSON.parse(d.content)
-          setChildTask({
-            title: typeof t.title === 'string' ? t.title : undefined,
-            package: typeof t.package === 'string' ? t.package : undefined,
-            items: Array.isArray(t.items) ? t.items.filter((x: unknown): x is string => typeof x === 'string') : [],
+        setChildActivity(act)
+        if (!act || childResumedRef.current || childMessages.length > 0) return
+        childResumedRef.current = true
+        fetch(`${FAMILY_API}/api/workspace/file?path=${encodeURIComponent(`${act.dir}/conversation.json`)}`)
+          .then((r2) => r2.json())
+          .then((dd) => {
+            if (!dd?.content) return
+            const c = JSON.parse(dd.content) as { messages?: StoredMsg[] }
+            setChildMessages((c.messages || []).map(toParentMsg))
           })
-        } catch { setChildTask(null) }
+          .catch(() => {})
       })
-      .catch(() => { if (!cancelled) setChildTask(null) })
+      .catch(() => { if (!cancelled) setChildActivity(null) })
     return () => { cancelled = true }
   }, [screen, childTreeRefreshKey])
+
+  // The moment a distinct activity is bound (a fresh handoff, or resuming on
+  // reload) and nothing is open yet, show its first item — the same "don't
+  // wait on the model to remember to call open_file" guarantee the old
+  // handoff-response filePath gave, without threading a file path through
+  // the handoff call itself.
+  const autoOpenedActivityRef = useRef<string | null>(null)
+  useEffect(() => {
+    if (screen !== 'tutor' || !childActivity) return
+    if (autoOpenedActivityRef.current === childActivity.dir) return
+    autoOpenedActivityRef.current = childActivity.dir
+    const first = childActivity.items[0]
+    if (first && !childViewerPath) { setChildViewerPath(first.path); setChildViewerRefreshKey((k) => k + 1) }
+  }, [screen, childActivity, childViewerPath])
 
   // Load the selected file for the child's own inline viewer.
   useEffect(() => {
@@ -1149,11 +1139,15 @@ export default function LearningApp() {
   // parent mode remounts this thread at its default (top) scroll position —
   // without screen in the deps, that remount doesn't trigger a re-scroll
   // since parentMessages/sending haven't changed, leaving the parent stuck
-  // scrolled to the top until they scroll down manually.
+  // scrolled to the top until they scroll down manually. streamingReply is
+  // ALSO a dep: the live-streamed reply bubble grows character-by-character
+  // while parentMessages/sending stay unchanged for the whole turn, so
+  // without it the view never follows the growing text — it only ever
+  // jumped at the start and end of a turn, not while streaming.
   useEffect(() => {
     if (screen !== 'parent') return
     threadEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' })
-  }, [parentMessages, sending, screen])
+  }, [parentMessages, sending, screen, streamingReply])
 
   // Same, for the child's own thread — this had no auto-scroll at all before,
   // so new replies (and the "thinking" indicator) could land below the fold
@@ -1395,9 +1389,9 @@ export default function LearningApp() {
         const pl = events.find((e) => e.tool === 'set_parent_label' && e.parent_label)
         if (pl?.parent_label) setParentLabel(pl.parent_label)
         const of = events.find((e) => e.tool === 'open_file' && e.path)
-        if (of?.path) { setDrawerTab('files'); setViewerImageList([]); setViewerPackage(null); setViewerPath(of.path); setViewerRefreshKey((k) => k + 1) }
+        if (of?.path) { setDrawerTab('files'); setViewerImageList([]); setViewerActivityDir(null); setViewerPath(of.path); setViewerRefreshKey((k) => k + 1) }
         const op = events.find((e) => e.tool === 'open_activity' && e.path)
-        if (op?.path) { setDrawerTab('files'); setViewerPath(null); setViewerPackage(op.path) }
+        if (op?.path) { setDrawerTab('files'); setViewerPath(null); setViewerActivityDir(op.path) }
         setSuggestions(data.suggestions ?? [])
         setParentMessages((cur) => [...cur, ...toolMsgs, { role: 'assistant', text: data.error ? `Sorry — ${data.error}` : (data.reply || '(no response)') }])
       })
@@ -1449,42 +1443,20 @@ export default function LearningApp() {
       .finally(() => setVoiceToggling(false))
   }
 
-  // Load a past conversation into the chat view (reads the transcript file).
-  const loadConversation = (item: ConvMeta) => {
-    fetch(`${FAMILY_API}/api/workspace/file?path=${encodeURIComponent(`${item.scope}/conversations/${item.id}.json`)}`)
-      .then((r) => r.json())
-      .then((d) => {
-        const c = JSON.parse(d.content) as { id: string; messages?: StoredMsg[] }
-        setConversationId(c.id)
-        setParentMessages((c.messages || []).map(toParentMsg))
-      })
-      .catch(() => {})
-  }
-
-  const startNewConversation = () => {
-    resumedRef.current = true
-    setConversationId(newConversationId())
-    setParentMessages([])
-    setSuggestions([])
-  }
-
   // Child Mode tutor — talks to /api/child/message (sandboxed child agent).
-  // convIdOverride lets a caller that JUST generated a fresh id (e.g. starting
-  // a new session right before this call) pass it explicitly — childConversationId
-  // itself won't reflect a setChildConversationId() call made earlier in the
-  // same synchronous handler until the next render, so reading it from the
-  // closure here would silently target the OLD conversation.
+  // The conversation id is the CURRENT activity's own dir (the backend now
+  // derives its session/live-status key from currentActivityDir() itself, not
+  // a client-generated id) — so there is exactly one child conversation per
+  // activity, matching activity.json's own conversation.json.
   // modelExtra is appended to what the MODEL sees for this one message, but
   // never shown to the child or persisted in their transcript — for the
-  // package handoff kickoff, this is how the parent's actual guide_note
-  // instructions reach Quill directly on the first turn, rather than relying
-  // on it separately deciding to go read child/current-task.json on its own
-  // initiative (the same "hand it directly, don't trust a follow-up lookup"
-  // lesson already applied to approve_for_child's handoff button).
-  const sendChildText = (raw: string, base?: ParentMsg[], convIdOverride?: string, modelExtra?: string) => {
+  // handoff kickoff, this is how the parent's actual guide_note instructions
+  // reach Quill directly on the first turn, rather than relying on it
+  // separately deciding to go read activity.json on its own initiative.
+  const sendChildText = (raw: string, base?: ParentMsg[], modelExtra?: string) => {
     const text = raw.trim()
     if (!text || childSending) return
-    const convId = convIdOverride ?? childConversationId
+    const convId = childActivity?.dir ?? ''
     const next: ParentMsg[] = [...(base ?? childMessages), { role: 'user', text }]
     setChildMessages(next)
     setChildInput('')
@@ -1521,37 +1493,27 @@ export default function LearningApp() {
   }
 
   // Enter Child Mode after a handoff response. new_session decides whether the
-  // child continues their existing conversation (still the same package) or
-  // starts a clean one (a different package, or a standalone file — per-
-  // handoff resume only makes sense while it's genuinely the same package).
-  // filePath is shown in the viewer directly, unconditionally — we already
-  // know exactly which file the handoff points to (the backend just told us),
-  // so we don't wait on Quill to call open_file itself. On a resumed
-  // conversation Quill often reasons "I already opened this earlier" and
-  // skips the call, which used to leave the child staring at a bare file
-  // list instead of the actual document.
-  const enterChildModeAfterHandoff = (newSession: boolean, greeting: string, filePath: string, guideNote?: string, packageTitle?: string) => {
-    // A dynamic/instruction-only package hands back its own manifest path (no
-    // real file exists) — never show that raw JSON; let the conversation itself
-    // be the content instead of trying to open anything.
-    const isManifest = filePath.startsWith('shared/packages/') && filePath.endsWith('.json')
-    setChildViewerPath(isManifest ? null : filePath)
+  // child continues their existing conversation (still the same activity) or
+  // starts a clean one (a different activity — per-handoff resume only makes
+  // sense while it's genuinely the same one). The activity's own first item
+  // (if any) is opened automatically by the auto-open effect above once
+  // childActivity reflects this handoff — no need to thread a file path
+  // through the handoff call itself.
+  const enterChildModeAfterHandoff = (newSession: boolean, greeting: string, guideNote?: string, activityTitle?: string) => {
     persistHandoffSide('tutor')
     setScreen('tutor')
     setChildTreeRefreshKey((k) => k + 1)
     // Hand the parent's real instructions to Quill directly on this first turn
     // — never shown to the child, just extra context for the model.
     const modelExtra = guideNote
-      ? `(For you, Quill — not from ${childName || 'the child'}: the parent's own instructions for${packageTitle ? ` "${packageTitle}"` : ' this'}: ${guideNote} Follow this pacing/order exactly.)`
+      ? `(For you, Quill — not from ${childName || 'the child'}: the parent's own instructions for${activityTitle ? ` "${activityTitle}"` : ' this'}: ${guideNote} Follow this pacing/order exactly.)`
       : undefined
     if (newSession) {
-      const freshId = newConversationId()
-      setChildConversationId(freshId)
       setChildSuggestions([])
       setChildMessages([])
-      sendChildText(greeting, [], freshId, modelExtra)
+      sendChildText(greeting, [], modelExtra)
     } else {
-      sendChildText(greeting, undefined, undefined, modelExtra)
+      sendChildText(greeting, undefined, modelExtra)
     }
   }
 
@@ -1560,41 +1522,37 @@ export default function LearningApp() {
   // "dad", a name) when known, falling back to "parent" until Quill has asked.
   const handoffGreeting = (what: string) => `My ${parentLabel || 'parent'} just ${what}. Can you help me get started?`
 
-  // Does the real API call: approve the file(s), switch into child mode, and
-  // kick off Quill — it finds the just-shared material, opens it, and guides
-  // the child. No filename/path is shown; Quill composes everything the child
+  // Does the real API call: bind the child to this activity, switch into
+  // child mode, and kick off Quill — it opens the activity and guides the
+  // child. No filename/path is shown; Quill composes everything the child
   // reads. resume asks the backend to keep Myra's existing conversation going
-  // instead of its own same-package heuristic.
-  const performHandoff = (kind: 'path' | 'manifest', value: string, greetingText: string, resume: boolean) => {
-    const body: Record<string, unknown> = { resume }
-    if (kind === 'manifest') body.manifest = value
-    else body.path = value
+  // instead of its own same-activity heuristic.
+  const performHandoff = (dir: string, greetingText: string, resume: boolean) => {
     fetch(`${FAMILY_API}/api/parent/handoff`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
+      body: JSON.stringify({ dir, resume }),
     })
       .then((res) => res.json())
-      .then((data: { new_session?: boolean; path?: string; guide_note?: string; package?: string }) => {
-        if (!data.path) return
-        enterChildModeAfterHandoff(!!data.new_session, handoffGreeting(greetingText), data.path, data.guide_note, data.package)
+      .then((data: { new_session?: boolean; dir?: string; title?: string; guide_note?: string }) => {
+        if (!data.dir) return
+        enterChildModeAfterHandoff(!!data.new_session, handoffGreeting(greetingText), data.guide_note, data.title)
       })
       .catch(() => {})
   }
 
-  // Same handoff, but for a whole learning package at once (its manifest path)
-  // — approves every item in the bundle in one call (create_learning_package
-  // already did this when the package was made; this re-triggers it from the
-  // Files browser, e.g. to hand off a package made earlier in the conversation).
-  // Only ASK continue-vs-fresh when this is genuinely the SAME package Myra is
-  // already partway through (childTask.package, loaded for the assignment
-  // pill) — a different package is unambiguously a fresh handoff, no need to
-  // ask. First-ever handoff has no childTask yet, so it's fresh too.
-  const startPackageHandoff = (manifest: string) => {
-    if (childTask?.package === manifest) {
-      setPendingChildEntry({ kind: 'manifest', value: manifest, greetingText: 'set up something new for me to work on' })
+  // Same handoff, but re-triggered from the Files browser (create_learning_activity
+  // already did the equivalent when the activity was made) — e.g. to hand off
+  // an activity made earlier in the conversation. Only ASK continue-vs-fresh
+  // when this is genuinely the SAME activity Myra is already partway through
+  // (childActivity.dir, loaded for the assignment pill) — a different activity
+  // is unambiguously a fresh handoff, no need to ask. First-ever handoff has no
+  // childActivity yet, so it's fresh too.
+  const startActivityHandoff = (dir: string) => {
+    if (childActivity?.dir === dir) {
+      setPendingChildEntry({ dir, greetingText: 'set up something new for me to work on' })
     } else {
-      performHandoff('manifest', manifest, 'set up something new for me to work on', false)
+      performHandoff(dir, 'set up something new for me to work on', false)
     }
   }
 
@@ -1603,7 +1561,7 @@ export default function LearningApp() {
     const entry = pendingChildEntry
     if (!entry) return
     setPendingChildEntry(null)
-    performHandoff(entry.kind, entry.value, entry.greetingText, resume)
+    performHandoff(entry.dir, entry.greetingText, resume)
   }
 
   const sendChildMessage = (event: FormEvent<HTMLFormElement>) => {
@@ -1623,7 +1581,7 @@ export default function LearningApp() {
     const jobs = Array.from(files).map((f) => {
       const fd = new FormData()
       fd.append('file', f)
-      fd.append('scope', 'shared')
+      fd.append('scope', 'parent')
       return fetch(`${FAMILY_API}/api/upload`, { method: 'POST', body: fd })
         .then((res) => res.json())
         .then((data: { name?: string; error?: string }) => ({ name: data.name || f.name, error: data.error }))
@@ -1645,10 +1603,11 @@ export default function LearningApp() {
 
   const onPickChildFiles = () => childFileInputRef.current?.click()
 
-  // A photo of the child's own work — lands in child/inbox/ (their own sandbox,
-  // not shared/) so Quill can see it immediately with no parent approval step.
-  // Auto-triggers a turn afterward (as if the child said so) since a kid won't
-  // reliably know to say "look at this" right after picking a photo.
+  // A photo of the child's own work — lands directly in their current
+  // activity folder (their own sandbox) so Quill can see it immediately with
+  // no parent approval step. Auto-triggers a turn afterward (as if the child
+  // said so) since a kid won't reliably know to say "look at this" right
+  // after picking a photo.
   const onChildFilesSelected = (event: ChangeEvent<HTMLInputElement>) => {
     const files = event.target.files
     if (!files || files.length === 0) return
@@ -1718,7 +1677,7 @@ export default function LearningApp() {
                     title="Pulse"
                     onClick={() => setPulsePopoverOpen((v) => !v)}
                   >
-                    <Activity size={14} />
+                    <PulseIcon size={14} />
                     <span>Pulse</span>
                     <span className={`fl-dot ${pulseConfig?.enabled ? 'is-ready' : ''}`} />
                   </button>
@@ -1727,7 +1686,7 @@ export default function LearningApp() {
                     <div className="fl-pulse-backdrop" onClick={() => setPulsePopoverOpen(false)} />
                     <div className="fl-pulse-popover" role="dialog">
                       <div className="fl-pulse-popover-head">
-                        <Activity size={15} />
+                        <PulseIcon size={15} />
                         <span>Pulse</span>
                         <span className={`fl-pulse-badge ${pulseConfig?.enabled ? 'is-on' : 'is-off'}`}>
                           {pulseConfig?.enabled ? 'On' : 'Off'}
@@ -1853,7 +1812,7 @@ export default function LearningApp() {
                   // can be stale (e.g. the parent sent a message after it was
                   // taken), and applying it would drop that message.
                   setPendingConvUpdate(null)
-                  fetch(`${FAMILY_API}/api/workspace/file?path=${encodeURIComponent(`parent/conversations/${conversationId}.json`)}`)
+                  fetch(`${FAMILY_API}/api/workspace/file?path=${encodeURIComponent('conversations/parent.json')}`)
                     .then((r) => r.json())
                     .then((d) => {
                       if (!d?.content) return
@@ -1903,7 +1862,7 @@ export default function LearningApp() {
                   // is visible: this divider, then Quill's reply below it.
                   return (
                     <div key={i} className="fl-pulse-divider">
-                      <Activity size={13} /> <span>{m.text}</span>
+                      <PulseIcon size={13} /> <span>{m.text}</span>
                     </div>
                   )
                 }
@@ -1916,7 +1875,7 @@ export default function LearningApp() {
                       </>
                     ) : (
                       <>
-                        <span className={`fl-msg-avatar ${m.source === 'pulse' ? 'is-pulse' : 'is-sun'}`}>{m.source === 'pulse' ? <Activity size={17} /> : <Sun size={18} />}</span>
+                        <span className={`fl-msg-avatar ${m.source === 'pulse' ? 'is-pulse' : 'is-sun'}`}>{m.source === 'pulse' ? <PulseIcon size={17} /> : <Sun size={18} />}</span>
                         <div className="fl-msg-col">
                           <div className={`fl-bubble ${m.source === 'pulse' ? 'is-pulse' : ''}`}><Markdown text={m.text ?? ''} /></div>
                         </div>
@@ -2062,13 +2021,13 @@ export default function LearningApp() {
               {(drawerTab === 'files' || drawerTab === 'uploaded') && viewerPath ? (
                 <div className="fl-viewer">
                   <div className="fl-viewer-bar">
-                    {/* Clearing only viewerPath (never viewerPackage here) means
+                    {/* Clearing only viewerPath (never viewerActivityDir here) means
                         "back" naturally falls through to the activity-detail
                         branch below when this file was opened by clicking an
                         item INSIDE that activity — returning to the activity,
                         not the raw file list, exactly as browsing normally
                         expects. A file opened from the general list (where
-                        viewerPackage is already null) still falls through to
+                        viewerActivityDir is already null) still falls through to
                         that list, unchanged. */}
                     <button className="fl-viewer-back" type="button" onClick={() => setViewerPath(null)}><ArrowLeft size={15} /> Files</button>
                     <span className="fl-viewer-name">{viewerPath.split('/').pop()}</span>
@@ -2140,61 +2099,58 @@ export default function LearningApp() {
                   )}
                   </div>
                 </div>
-              ) : (drawerTab === 'files' || drawerTab === 'uploaded') && viewerPackage ? (() => {
-                const pkg = packages.find((p) => p.manifest === viewerPackage)
-                if (!pkg) return <p className="fl-note">That activity is no longer available.</p>
-                const expanded = expandedPackage === pkg.manifest
+              ) : (drawerTab === 'files' || drawerTab === 'uploaded') && viewerActivityDir ? (() => {
+                const act = activities.find((a) => a.dir === viewerActivityDir)
+                if (!act) return <p className="fl-note">That activity is no longer available.</p>
+                const expanded = expandedActivity === act.dir
                 return (
                   <div className="fl-viewer">
                     <div className="fl-viewer-bar">
-                      <button className="fl-viewer-back" type="button" onClick={() => setViewerPackage(null)}><ArrowLeft size={15} /> Files</button>
-                      <span className="fl-viewer-name">{pkg.title}</span>
+                      <button className="fl-viewer-back" type="button" onClick={() => setViewerActivityDir(null)}><ArrowLeft size={15} /> Files</button>
+                      <span className="fl-viewer-name">{act.title}</span>
                     </div>
-                    <div key={viewerPackage} className="fl-viewer-body fl-package-detail">
+                    <div key={viewerActivityDir} className="fl-viewer-body fl-package-detail">
                       <div className="fl-package-detail-head">
                         <div>
-                          <h2>{pkg.title}</h2>
+                          <h2>{act.title}</h2>
                           <p className="fl-note">
-                            {pkg.items.length > 0 ? `${pkg.items.length} part${pkg.items.length === 1 ? '' : 's'}` : 'Adaptive practice'}
-                            {dateTimeLabel(pkg.created_at) ? ` · ${dateTimeLabel(pkg.created_at)}` : ''}
+                            {act.items.length > 0 ? `${act.items.length} part${act.items.length === 1 ? '' : 's'}` : 'Adaptive practice'}
+                            {dateTimeLabel(act.created_at) ? ` · ${dateTimeLabel(act.created_at)}` : ''}
                           </p>
                         </div>
                         <div className="fl-package-detail-actions">
-                          {pkg.items.length > 0 && (
+                          {act.items.length > 0 && (
                             <button
                               type="button"
                               className="fl-package-toggle"
                               aria-expanded={expanded}
                               aria-label={expanded ? 'Hide contents' : 'See what’s inside'}
                               title={expanded ? 'Hide contents' : 'See what’s inside'}
-                              onClick={() => setExpandedPackage((cur) => (cur === pkg.manifest ? null : pkg.manifest))}
+                              onClick={() => setExpandedActivity((cur) => (cur === act.dir ? null : act.dir))}
                             >
                               <ChevronDown size={14} className={expanded ? 'is-open' : ''} />
                             </button>
                           )}
-                          <button className="fl-give-to-child" type="button" disabled={sending} onClick={() => startPackageHandoff(pkg.manifest)}>
+                          <button className="fl-give-to-child" type="button" disabled={sending} onClick={() => startActivityHandoff(act.dir)}>
                             Give to {childName || 'child'}
                           </button>
                         </div>
                       </div>
-                      {pkg.guide_note && <p className="fl-package-note">{pkg.guide_note}</p>}
-                      {expanded && pkg.items.length > 0 && (
+                      {act.guide_note && <p className="fl-package-note">{act.guide_note}</p>}
+                      {expanded && act.items.length > 0 && (
                         <div className="fl-package-detail-items">
-                          {pkg.items.map((item, i) => {
-                            const { label } = parseAssetPath(item)
-                            return (
-                              <button
-                                key={item}
-                                type="button"
-                                className="fl-file-item fl-package-item"
-                                onClick={() => { setViewerImageList([]); setViewerPath(item); setViewerRefreshKey((k) => k + 1) }}
-                              >
-                                <span className="fl-package-step">{i + 1}</span>
-                                <FileGlyph name={item} size={15} />
-                                <span>{label}</span>
-                              </button>
-                            )
-                          })}
+                          {act.items.map((item, i) => (
+                            <button
+                              key={item.path}
+                              type="button"
+                              className="fl-file-item fl-package-item"
+                              onClick={() => { setViewerImageList([]); setViewerPath(item.path); setViewerRefreshKey((k) => k + 1) }}
+                            >
+                              <span className="fl-package-step">{i + 1}</span>
+                              <FileGlyph name={item.name} size={15} />
+                              <span>{labelFromFilename(item.name).label}</span>
+                            </button>
+                          ))}
                         </div>
                       )}
                     </div>
@@ -2209,62 +2165,48 @@ export default function LearningApp() {
                   {filesView === 'advanced' ? (
                     treeNodes.length === 0 ? <p className="fl-note">No files yet.</p> : <FileTree nodes={treeNodes} onOpen={(p) => { setViewerImageList([]); setViewerPath(p) }} />
                   ) : (() => {
-                    // Hierarchy: subject -> topic -> type (test/notes/...) -> date -> file.
-                    // Generated content only (tests/study guides/reports) — raw uploads
-                    // have their own "Uploaded" tab; the academic map already has its own
-                    // real (agent-generated) view via the outer Subjects drawer tab, so
-                    // it's not duplicated here.
-                    type Entry = { path: string; date?: string; label: string }
-                    const typeOf = (p: string): string | null => {
-                      if (p === 'shared/academic-map.html') return null
-                      if (p.startsWith('shared/tests/')) return 'Practice tests'
-                      if (p.startsWith('shared/study/')) return 'Study guides'
-                      if (p.startsWith('shared/reports/')) return 'Reports'
-                      return null
-                    }
-                    const typeSlug = (t: string) => t === 'Practice tests' ? 'tests' : t === 'Study guides' ? 'guides' : 'reports'
-                    const usable = allFiles.filter((p) => !p.endsWith('.meta.json') && !p.startsWith('skills/') && !p.includes('/conversations/') && !p.endsWith('child-profile.json'))
-                    const classified = usable.map((p) => ({ p, type: typeOf(p), ...parseAssetPath(p) })).filter((f) => f.type)
-                    const subjectsList = Array.from(new Set(classified.filter((f) => f.subject).map((f) => f.subject!))).sort()
-                    const relevant = classified.filter((f) => (!filesSubjectFilter || f.subject === filesSubjectFilter))
+                    // Hierarchy: subject -> topic -> activity -> item. Every piece of
+                    // generated content IS an activity now, so this groups the
+                    // structured /api/activities objects directly — no path-parsing.
+                    // Raw uploads have their own "Uploaded" tab; the academic map/
+                    // progress report have their own dedicated tabs, so they're not
+                    // duplicated here.
+                    const subjectsList = Array.from(new Set(activities.filter((a) => a.subject).map((a) => a.subject!))).sort()
+                    const relevant = activities.filter((a) => !filesSubjectFilter || a.subject === filesSubjectFilter)
 
-                    // Packages nested under the subject their first item belongs to (an
-                    // instruction-only package with no items has no subject to attach to).
-                    const packagesBySubject = new Map<string, LearningPackage[]>()
-                    const unplacedPackages: LearningPackage[] = []
-                    packages.forEach((pkg) => {
-                      const subj = pkg.items.length > 0 ? parseAssetPath(pkg.items[0]).subject : undefined
-                      if (subj && (!filesSubjectFilter || subj === filesSubjectFilter)) {
-                        if (!packagesBySubject.has(subj)) packagesBySubject.set(subj, [])
-                        packagesBySubject.get(subj)!.push(pkg)
-                      } else if (!subj && !filesSubjectFilter) {
-                        unplacedPackages.push(pkg)
-                      }
+                    const bySubject = new Map<string, Map<string, Activity[]>>()
+                    const unplaced: Activity[] = []
+                    relevant.forEach((a) => {
+                      if (!a.subject) { if (!filesSubjectFilter) unplaced.push(a); return }
+                      if (!bySubject.has(a.subject)) bySubject.set(a.subject, new Map())
+                      const topics = bySubject.get(a.subject)!
+                      const topicKey = a.topic || '—'
+                      if (!topics.has(topicKey)) topics.set(topicKey, [])
+                      topics.get(topicKey)!.push(a)
                     })
-                    // Same treatment as Child Mode's package view: list every part,
-                    // numbered, so the parent can open and preview any one of them
-                    // directly — not just see a summary count.
-                    const renderPackages = (pkgs: LearningPackage[]) => pkgs.map((pkg) => {
-                      const expanded = expandedPackage === pkg.manifest
+                    // List every part, numbered, so the parent can open and preview
+                    // any one of them directly — not just see a summary count.
+                    const renderActivities = (acts: Activity[]) => acts.map((act) => {
+                      const expanded = expandedActivity === act.dir
                       return (
-                        <div key={pkg.manifest} className="fl-child-package fl-parent-package">
+                        <div key={act.dir} className="fl-child-package fl-parent-package">
                           <div className="fl-package-title">
                             <BookOpen size={16} />
                             <span>
-                              {pkg.title}
+                              {act.title}
                               <small>
-                                {pkg.items.length > 0 ? `${pkg.items.length} part${pkg.items.length === 1 ? '' : 's'}` : 'Adaptive practice'}
-                                {dateTimeLabel(pkg.created_at) ? ` · ${dateTimeLabel(pkg.created_at)}` : ''}
+                                {act.items.length > 0 ? `${act.items.length} part${act.items.length === 1 ? '' : 's'}` : 'Adaptive practice'}
+                                {dateTimeLabel(act.created_at) ? ` · ${dateTimeLabel(act.created_at)}` : ''}
                               </small>
                             </span>
-                            {pkg.items.length > 0 && (
+                            {act.items.length > 0 && (
                               <button
                                 type="button"
                                 className="fl-package-toggle"
                                 aria-expanded={expanded}
                                 aria-label={expanded ? 'Hide contents' : 'See what’s inside'}
                                 title={expanded ? 'Hide contents' : 'See what’s inside'}
-                                onClick={() => setExpandedPackage((cur) => (cur === pkg.manifest ? null : pkg.manifest))}
+                                onClick={() => setExpandedActivity((cur) => (cur === act.dir ? null : act.dir))}
                               >
                                 <ChevronDown size={14} className={expanded ? 'is-open' : ''} />
                               </button>
@@ -2273,54 +2215,22 @@ export default function LearningApp() {
                               className="fl-give-to-child"
                               type="button"
                               disabled={sending}
-                              onClick={() => startPackageHandoff(pkg.manifest)}
+                              onClick={() => startActivityHandoff(act.dir)}
                             >
                               Give to {childName || 'child'}
                             </button>
                           </div>
-                          {pkg.guide_note && <p className="fl-package-note">{pkg.guide_note}</p>}
-                          {expanded && pkg.items.map((item, i) => {
-                            const { label } = parseAssetPath(item)
-                            return (
-                              <button key={item} type="button" className="fl-file-item fl-package-item" onClick={() => { setViewerImageList([]); setViewerPath(item) }}>
-                                <span className="fl-package-step">{i + 1}</span>
-                                <FileGlyph name={item} size={15} />
-                                <span>{label}</span>
-                              </button>
-                            )
-                          })}
+                          {act.guide_note && <p className="fl-package-note">{act.guide_note}</p>}
+                          {expanded && act.items.map((item, i) => (
+                            <button key={item.path} type="button" className="fl-file-item fl-package-item" onClick={() => { setViewerImageList([]); setViewerPath(item.path) }}>
+                              <span className="fl-package-step">{i + 1}</span>
+                              <FileGlyph name={item.name} size={15} />
+                              <span>{labelFromFilename(item.name).label}</span>
+                            </button>
+                          ))}
                         </div>
                       )
                     })
-
-                    const bySubject = new Map<string, Map<string, Map<string, Entry[]>>>()
-                    const general = new Map<string, Entry[]>()
-                    relevant.forEach((f) => {
-                      const entry: Entry = { path: f.p, date: f.date, label: f.label }
-                      if (!f.subject) {
-                        if (!general.has(f.type!)) general.set(f.type!, [])
-                        general.get(f.type!)!.push(entry)
-                        return
-                      }
-                      if (!bySubject.has(f.subject)) bySubject.set(f.subject, new Map())
-                      const topics = bySubject.get(f.subject)!
-                      const topicKey = f.topic || '—'
-                      if (!topics.has(topicKey)) topics.set(topicKey, new Map())
-                      const types = topics.get(topicKey)!
-                      if (!types.has(f.type!)) types.set(f.type!, [])
-                      types.get(f.type!)!.push(entry)
-                    })
-                    const byDateDesc = (a: Entry, b: Entry) => (b.date || '').localeCompare(a.date || '')
-                    const renderEntries = (entries: Entry[]) => (
-                      <div>
-                        {[...entries].sort(byDateDesc).map((e) => (
-                          <button key={e.path} type="button" className="fl-file-item" onClick={() => { setViewerImageList([]); setViewerPath(e.path) }}>
-                            <FileGlyph name={e.path} size={16} />
-                            <span>{e.label}{e.date ? ` · ${e.date}` : ''}</span>
-                          </button>
-                        ))}
-                      </div>
-                    )
                     return (
                       <>
                         {subjectsList.length > 0 && (
@@ -2334,37 +2244,25 @@ export default function LearningApp() {
                             {subjectsList.map((s) => <option key={s} value={s}>{s}</option>)}
                           </select>
                         )}
-                        {bySubject.size === 0 && general.size === 0 ? (
+                        {bySubject.size === 0 && unplaced.length === 0 ? (
                           <p className="fl-note">Nothing here yet. Ask Quill to make study material or a test.</p>
                         ) : (
                           <>
                             {Array.from(bySubject.entries()).map(([subj, topics]) => (
                               <section key={subj} className="fl-asset-group">
                                 <p className="fl-drawer-label">{subj}</p>
-                                {renderPackages(packagesBySubject.get(subj) ?? [])}
-                                {Array.from(topics.entries()).map(([top, types]) => (
+                                {Array.from(topics.entries()).map(([top, acts]) => (
                                   <div key={top} className="fl-asset-topic">
                                     <p className="fl-asset-topic-label">{top === '—' ? 'Other' : top}</p>
-                                    {Array.from(types.entries()).map(([type, entries]) => (
-                                      <div key={type} className={`fl-asset-type is-${typeSlug(type)}`}>
-                                        <p className="fl-asset-type-label">{type}</p>
-                                        {renderEntries(entries)}
-                                      </div>
-                                    ))}
+                                    {renderActivities(acts)}
                                   </div>
                                 ))}
                               </section>
                             ))}
-                            {(general.size > 0 || unplacedPackages.length > 0) && (
+                            {unplaced.length > 0 && (
                               <section className="fl-asset-group">
                                 <p className="fl-drawer-label">General</p>
-                                {renderPackages(unplacedPackages)}
-                                {Array.from(general.entries()).map(([type, entries]) => (
-                                  <div key={type} className={`fl-asset-type is-${typeSlug(type)}`}>
-                                    <p className="fl-asset-type-label">{type}</p>
-                                    {renderEntries(entries)}
-                                  </div>
-                                ))}
+                                {renderActivities(unplaced)}
                               </section>
                             )}
                           </>
@@ -2374,13 +2272,13 @@ export default function LearningApp() {
                   })()}
                 </>
               ) : drawerTab === 'uploaded' ? (() => {
-                // Raw parent-uploaded material (shared/materials/<subject>/<topic>/...)
-                // — its own tab, separate from Quill-generated tests/study guides/reports.
+                // Raw parent-uploaded material (materials/<subject>/<topic>/...) —
+                // its own tab, separate from Quill-generated activities.
                 type Entry = { path: string; date?: string; label: string }
                 const usable = allFiles.filter((p) => !p.endsWith('.meta.json') && !p.startsWith('skills/') && !p.includes('/conversations/') && !p.endsWith('child-profile.json'))
                 const classified = usable
-                  .filter((p) => p.includes('/materials/'))
-                  .map((p) => ({ p, ...parseAssetPath(p) }))
+                  .filter((p) => p === 'materials' || p.startsWith('materials/'))
+                  .map((p) => ({ p, ...parseMaterialPath(p) }))
                 const subjectsList = Array.from(new Set(classified.filter((f) => f.subject).map((f) => f.subject!))).sort()
                 const relevant = classified.filter((f) => !filesSubjectFilter || f.subject === filesSubjectFilter)
 
@@ -2648,6 +2546,55 @@ export default function LearningApp() {
                       })}
                     </div>
                   )}
+
+                  <p className="fl-drawer-label" style={{ marginTop: '20px' }}>Secrets</p>
+                  <p className="fl-note">Credentials Quill's tools can use — e.g. a school portal login. Saved here, never through chat, so a value you type below never appears in any saved conversation. Quill only ever sees the name, never the value.</p>
+                  {secretNames.length > 0 && (
+                    <ul className="fl-wa-account-list">
+                      {secretNames.map((name) => (
+                        <li key={name} className="fl-wa-account-row">
+                          <span>{name}</span>
+                          <button
+                            className="fl-ghost-btn"
+                            type="button"
+                            onClick={() => deleteSecret(name)}
+                            disabled={deletingSecret === name}
+                          >
+                            {deletingSecret === name ? 'Removing…' : 'Remove'}
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                  <div className="form-row">
+                    <label>
+                      <span>Name</span>
+                      <input
+                        type="text"
+                        placeholder="e.g. school portal password"
+                        value={secretNameDraft}
+                        onChange={(e) => setSecretNameDraft(e.target.value)}
+                      />
+                    </label>
+                    <label>
+                      <span>Value</span>
+                      <input
+                        type="password"
+                        placeholder="the credential itself"
+                        value={secretValueDraft}
+                        onChange={(e) => setSecretValueDraft(e.target.value)}
+                        onKeyDown={(e) => { if (e.key === 'Enter') saveSecret() }}
+                      />
+                    </label>
+                  </div>
+                  <button
+                    type="button"
+                    className="fl-ghost-btn"
+                    onClick={saveSecret}
+                    disabled={savingSecret || !secretNameDraft.trim() || !secretValueDraft.trim()}
+                  >
+                    {savingSecret ? 'Saving…' : 'Save secret'}
+                  </button>
                 </div>
               </div>
             </div>
@@ -2668,8 +2615,8 @@ export default function LearningApp() {
                   <img className="fl-header-logo" src="/sparkquill-mark.svg" alt="" width={30} height={30} />
                   <div className="fl-child-hi"><strong>Hi {childName || 'Maya'}!</strong><small>Let’s keep learning together</small></div>
                 </div>
-                {childTask?.title && (!!childTask.items?.length || !!childTask.package) && (
-                  <div className="fl-child-assignment-pill"><BookOpen size={14} /><span>{childTask.title}</span></div>
+                {childActivity?.title && (
+                  <div className="fl-child-assignment-pill"><BookOpen size={14} /><span>{childActivity.title}</span></div>
                 )}
                 <div className="fl-child-top-right">
                   <button className="fl-icon-btn" type="button" aria-label={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'} title={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'} onClick={toggleTheme}>
@@ -2744,7 +2691,7 @@ export default function LearningApp() {
                 <div className="fl-viewer">
                   <div className="fl-viewer-bar">
                     <button className="fl-viewer-back" type="button" onClick={() => setChildViewerPath(null)}><ArrowLeft size={15} /> Back</button>
-                    <span className="fl-viewer-name">{parseAssetPath(childViewerPath).label}</span>
+                    <span className="fl-viewer-name">{labelFromFilename(childViewerPath.split('/').pop() || childViewerPath).label}</span>
                     <button
                       className="fl-icon-btn"
                       type="button"
@@ -2793,14 +2740,12 @@ export default function LearningApp() {
               ) : (
                 <>
                   {(() => {
-                    // Show ONLY the current assignment (child/current-task.json) — the
-                    // one package the parent most recently handed off — plus the
-                    // child's own saved work. Not every package/material ever approved.
-                    const curPkg = childTask?.package ? childPackages.find((pkg) => pkg.path === childTask.package) : undefined
-                    const currentItems = childTask?.items ?? []
-                    const attempts = childFiles.filter((p) => p.startsWith('child/attempts/'))
-                    const hasCurrent = currentItems.length > 0 || !!childTask?.package
-                    if (!hasCurrent && attempts.length === 0) {
+                    // Show ONLY the current activity (/api/child/activity) — the one the
+                    // parent most recently handed off — plus the child's own saved work
+                    // (its attempts/ folder). Not every activity ever created.
+                    const currentItems = childActivity?.items ?? []
+                    const attempts = childActivity?.attempts ?? []
+                    if (!childActivity && attempts.length === 0) {
                       return <p className="fl-child-note"><Sparkles size={15} /> Ask Quill what to work on next!</p>
                     }
                     return (
@@ -2809,35 +2754,32 @@ export default function LearningApp() {
                           <section className="fl-asset-group">
                             <p className="fl-drawer-label">From your parent</p>
                             <div className="fl-child-package">
-                              <div className="fl-package-title"><BookOpen size={16} /><span>{childTask?.title || 'Your activity'}<small>{currentItems.length} part{currentItems.length === 1 ? '' : 's'}{dateTimeLabel(curPkg?.createdAt) ? ` · ${dateTimeLabel(curPkg?.createdAt)}` : ''}</small></span></div>
-                              {currentItems.map((item, i) => {
-                                const { label } = parseAssetPath(item)
-                                return (
-                                  <button key={item} type="button" className="fl-file-item fl-package-item" onClick={() => setChildViewerPath(item)}>
-                                    <span className="fl-package-step">{i + 1}</span>
-                                    <FileGlyph name={item} size={15} />
-                                    <span>{label}</span>
-                                  </button>
-                                )
-                              })}
+                              <div className="fl-package-title"><BookOpen size={16} /><span>{childActivity?.title || 'Your activity'}<small>{currentItems.length} part{currentItems.length === 1 ? '' : 's'}{dateTimeLabel(childActivity?.created_at) ? ` · ${dateTimeLabel(childActivity?.created_at)}` : ''}</small></span></div>
+                              {currentItems.map((item, i) => (
+                                <button key={item.path} type="button" className="fl-file-item fl-package-item" onClick={() => setChildViewerPath(item.path)}>
+                                  <span className="fl-package-step">{i + 1}</span>
+                                  <FileGlyph name={item.name} size={15} />
+                                  <span>{labelFromFilename(item.name).label}</span>
+                                </button>
+                              ))}
                             </div>
                           </section>
-                        ) : childTask?.package ? (
-                          // Instruction-only package (no files): kick off the live activity in chat.
+                        ) : childActivity ? (
+                          // Instruction-only activity (no files): kick off the live activity in chat.
                           <section className="fl-asset-group">
                             <p className="fl-drawer-label">From your parent</p>
-                            <button type="button" className="fl-file-item is-package" onClick={() => { setChildViewerPath(null); sendChildText(`Let's start ${childTask?.title || 'my activity'}!`) }}>
-                              <BookOpen size={16} /><span>{childTask?.title || 'Your activity'}<small>Adaptive practice{dateTimeLabel(curPkg?.createdAt) ? ` · ${dateTimeLabel(curPkg?.createdAt)}` : ''}</small></span>
+                            <button type="button" className="fl-file-item is-package" onClick={() => { setChildViewerPath(null); sendChildText(`Let's start ${childActivity?.title || 'my activity'}!`) }}>
+                              <BookOpen size={16} /><span>{childActivity?.title || 'Your activity'}<small>Adaptive practice{dateTimeLabel(childActivity?.created_at) ? ` · ${dateTimeLabel(childActivity?.created_at)}` : ''}</small></span>
                             </button>
                           </section>
                         ) : null}
                         {attempts.length > 0 && (
                           <section className="fl-asset-group">
                             <p className="fl-drawer-label">Your work</p>
-                            {attempts.map((p) => {
-                              const { label, date } = parseAssetPath(p)
+                            {attempts.map((item) => {
+                              const { label, date } = labelFromFilename(item.name)
                               return (
-                                <button key={p} type="button" className="fl-file-item" onClick={() => setChildViewerPath(p)}>
+                                <button key={item.path} type="button" className="fl-file-item" onClick={() => setChildViewerPath(item.path)}>
                                   <FileText size={16} /><span>{label}{date ? ` · ${date}` : ''}</span>
                                 </button>
                               )

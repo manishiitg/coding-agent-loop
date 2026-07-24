@@ -32,6 +32,8 @@ bin/*
 !frontend/src/**/*ecret*
 !frontend/src/api/secrets.ts
 !agent_go/cmd/server/secrets_tools.go
+!agent_go/cmd/family-server/secrets_store.go
+!agent_go/cmd/family-server/secrets_tools.go
 !agent_go/cmd/server/secrets_routes.go
 !agent_go/pkg/orchestrator/**/secrets_*.go
 !agent_go/cmd/server/guidance/templates/system/secret-management.md

@@ -27,12 +27,12 @@ Never write status into `publish.json`.
    wrong place. Only re-publish automatically once `publish/status.json` shows the
    destination is already `verified`.
 
-3. **Publish** the covered files (e.g. `shared/reports/*.html`,
-   `shared/academic-map.html`) using your shell. Easiest: **Google Drive via the
-   `gws` CLI** — `gws drive +upload` the report, then share the link (the parent
-   already has `gws` authenticated). Other options: copy to a synced folder, or
-   push to a Pages branch, as configured. Never publish parent-only files
-   (`parent/…`, answer keys) or secrets.
+3. **Publish** the covered files (e.g. `reports/*.html`) using your shell. Easiest:
+   **Google Drive via the `gws` CLI** — `gws drive +upload` the report, then share
+   the link (the parent already has `gws` authenticated). Other options: copy to a
+   synced folder, or push to a Pages branch, as configured. Never publish
+   parent-only files — any `*-KEY.md`/`*-KEY.html` answer key, or `memory/` — or
+   secrets.
 
 4. **Write `publish/status.json`** — `state` (`verified` / `pending` / `failed`),
    timestamps, the published location/URL per file, and any error.

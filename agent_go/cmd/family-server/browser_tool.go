@@ -44,11 +44,12 @@ func getBrowserExecutor() (*browser.Executor, error) {
 }
 
 // browserFolderGuardContext injects the same sandbox intent execute_shell_command
-// uses (shared/parent/child writable, plus the host Downloads folder readable)
-// so the reused Executor + loopback backend sandbox agent-browser identically
-// and can stage downloads/screenshots into the workspace.
+// uses for the parent (the whole workspace root writable, plus the host
+// Downloads folder readable) so the reused Executor + loopback backend
+// sandbox agent-browser identically and can stage downloads/screenshots into
+// the workspace. agent_browser is a parent-only tool (see chat.go).
 func browserFolderGuardContext(ctx context.Context) context.Context {
-	writePaths := []string{"shared", "parent", "child"}
+	writePaths := []string{"."}
 	readPaths := append([]string{"skills"}, writePaths...)
 	if dl := hostDownloadsPath(); dl != "" {
 		readPaths = append(readPaths, dl)
@@ -72,8 +73,8 @@ func agentBrowserTool() agentsession.Tool {
 			"CLI's command guide. (3) Every later call must start its args with [\"--cdp\", \"<endpoint>\", ...]. " +
 			"The parent's browser usually has MANY tabs and the active one is often unrelated — run command=\"tab\", args=[\"--cdp\", \"<endpoint>\"] " +
 			"to list them, pick the one matching what you want, switch to it, then read/snapshot. Never act on an unrelated tab. " +
-			"DOWNLOADS land in the parent's Downloads folder, not the workspace — after downloading, copy the file into shared/ with " +
-			"execute_shell_command before reading it. If status reports CDP isn't reachable, tell the parent to open their signed-in browser " +
+			"DOWNLOADS land in the parent's Downloads folder, not the workspace — after downloading, copy the file into materials/ or the " +
+			"activity folder it belongs to with execute_shell_command before reading it. If status reports CDP isn't reachable, tell the parent to open their signed-in browser " +
 			"from Connectors → Browser; don't keep retrying.",
 		Category: "family_tools",
 		Params: map[string]interface{}{

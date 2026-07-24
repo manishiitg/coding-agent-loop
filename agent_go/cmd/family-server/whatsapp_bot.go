@@ -151,10 +151,10 @@ func (a *waAccount) SendDocumentToSelf(ctx context.Context, data []byte, filenam
 }
 
 // ingestWhatsAppMedia downloads an image/document/voice-note attachment from
-// an incoming WhatsApp message into shared/inbox and reports whether one was
+// an incoming WhatsApp message into the inbox and reports whether one was
 // saved. For images/documents this deliberately does NOT tell the model about
 // it or the path — only text messages go to the agent; the file just lands in
-// the inbox and the process-file skill's own "check shared/inbox/ before every
+// the inbox and the process-file skill's own "check inbox/ before every
 // reply" habit picks it up naturally on whatever the next real turn is, the
 // same as any other inbox arrival. A voice note is different: it IS meant to
 // drive a turn, so on top of saving the raw audio, it's transcribed locally
@@ -200,7 +200,7 @@ func (a *waAccount) ingestWhatsAppMedia(evt *events.Message) (saved bool, voiceT
 	}
 
 	name = sanitizeInboxName(name)
-	relDir := filepath.Join("shared", "inbox")
+	relDir := "inbox"
 	absDir := filepath.Join(familyDataDir(), "workspace", relDir)
 	if err := os.MkdirAll(absDir, 0o700); err != nil {
 		log.Printf("[whatsapp] inbox mkdir failed: %v", err)
@@ -559,11 +559,10 @@ func (w *waBot) connectedAccounts() []*waAccount {
 
 // sendWhatsAppFileTool lets the parent-mode agent hand over a test or study
 // guide as a real PDF attachment on WhatsApp, instead of only describing it
-// in text — e.g. "send me the fractions test as a PDF on WhatsApp". Scoped
-// to shared/tests/ and shared/study/ only (not parent/answer-keys/ — those
-// stay off WhatsApp) rather than any arbitrary file, and only sends to
-// linked accounts' own self-chats (SendDocumentToAllSelf) — never a third
-// party.
+// in text — e.g. "send me the fractions test as a PDF on WhatsApp". Scoped to
+// files inside an activity folder only (not an answer key elsewhere, not any
+// arbitrary file) — those stay off WhatsApp — and only sends to linked
+// accounts' own self-chats (SendDocumentToAllSelf) — never a third party.
 // onSent, when non-nil, is called with the workspace-relative path of each
 // file successfully sent — so the caller (a web-chat or WhatsApp turn) can
 // append a real, clickable reference to the persisted reply afterward. The
@@ -576,13 +575,13 @@ func sendWhatsAppFileTool(onSent func(path string)) agentsession.Tool {
 		Description: "Send a test or study material file to the parent as a real PDF attachment on their own WhatsApp " +
 			"(their linked \"message yourself\" chat) — only call this when the parent explicitly asks for a file/PDF over " +
 			"WhatsApp. The file must already exist as a PDF (use agent_browser: open the file, then run its \"pdf\" command " +
-			"to export a PDF into the same folder, e.g. shared/tests/<subject>/<topic>/<name>.pdf, before calling this). " +
+			"to export a PDF into the same folder, e.g. <Subject>/<Topic>/<activity>/<name>.pdf, before calling this). " +
 			"Requires WhatsApp to be linked (Connectors → WhatsApp) — if it's not, tell the parent to link it there first.",
 		Category: "family_tools",
 		Params: map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
-				"path":    map[string]interface{}{"type": "string", "description": "workspace-relative path to the PDF, e.g. shared/tests/math/fractions/2026-07-23-quick-check.pdf"},
+				"path":    map[string]interface{}{"type": "string", "description": "workspace-relative path to the PDF, e.g. Math/Fractions/2026-07-23-quick-check/quick-check.pdf"},
 				"caption": map[string]interface{}{"type": "string", "description": "optional short caption to send with the file"},
 			},
 			"required": []string{"path"},
@@ -596,9 +595,8 @@ func sendWhatsAppFileTool(onSent func(path string)) agentsession.Tool {
 			if !strings.HasSuffix(strings.ToLower(rel), ".pdf") {
 				return "", fmt.Errorf("path must be a .pdf file")
 			}
-			allowed := strings.HasPrefix(rel, "shared/tests/") || strings.HasPrefix(rel, "shared/study/")
-			if !allowed {
-				return "", fmt.Errorf("send_whatsapp_file only sends files under shared/tests/ or shared/study/")
+			if findActivityForPath(rel) == "" {
+				return "", fmt.Errorf("send_whatsapp_file only sends files inside an activity folder")
 			}
 			abs, ok := resolveWorkspacePath(rel)
 			if !ok {
@@ -657,7 +655,7 @@ func extForMime(mime, def string) string {
 }
 
 // sanitizeInboxName strips path separators and dodgy characters from an
-// attachment filename so it can't escape shared/inbox.
+// attachment filename so it can't escape the inbox.
 func sanitizeInboxName(name string) string {
 	name = filepath.Base(strings.TrimSpace(name))
 	name = strings.NewReplacer("/", "_", "\\", "_", "..", "_", " ", "_").Replace(name)
@@ -693,11 +691,11 @@ func (w *waBot) handleIncomingMessage(acct *waAccount, evt *events.Message) {
 	}
 	text := extractWhatsAppMessageText(evt.Message)
 
-	// An image or document attachment: save it straight into shared/inbox and
+	// An image or document attachment: save it straight into the inbox and
 	// stop there — only text messages ever reach the agent. A bare attachment
 	// with no caption just gets acknowledged (👀) below and never starts a
 	// turn; the file sits in the inbox until the next real text message, at
-	// which point the process-file skill's own "check shared/inbox/ before
+	// which point the process-file skill's own "check inbox/ before
 	// every reply" habit picks it up like any other inbox arrival. A voice
 	// note is the exception: its local transcript (see ingestWhatsAppMedia)
 	// stands in for typed text below, so it drives a turn just like normal.
@@ -879,6 +877,7 @@ func (w *waBot) runTurn(text string) (string, error) {
 		return "", err
 	}
 	saveSessionHandle("parent", convID, sess.Handle())
+	reply = sanitizeAgentReply(reply)
 	reply = appendSentFileLinks(reply, sentFiles)
 	persistFull(reply)
 	return reply, nil

@@ -23,13 +23,14 @@ func generateImageTool() agentsession.Tool {
 		Name: "generate_image",
 		Description: "Generate an illustrative image (a simple diagram, a friendly drawing) from a text description, to make " +
 			"study material more visual for a child. This is for illustrations you create, not for reading uploaded photos " +
-			"(use read_image for that). Save it under shared/ next to the material it illustrates.",
+			"(use read_image for that). Save it inside the activity folder next to the material it illustrates, or under " +
+			"materials/<subject>/<topic>/ for a source-material illustration.",
 		Category: "family_tools",
 		Params: map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
 				"prompt":      map[string]interface{}{"type": "string", "description": "what to draw, in plain descriptive language"},
-				"output_path": map[string]interface{}{"type": "string", "description": "workspace-relative path to save the image (under shared/), e.g. shared/study/<subject>/<topic>/<name>.png"},
+				"output_path": map[string]interface{}{"type": "string", "description": "workspace-relative path to save the image, e.g. <Subject>/<Topic>/<activity>/<name>.png or materials/<subject>/<topic>/<name>.png"},
 			},
 			"required": []string{"prompt", "output_path"},
 		},
@@ -41,8 +42,9 @@ func generateImageTool() agentsession.Tool {
 			}
 			outPath, _ := args["output_path"].(string)
 			outPath = strings.TrimPrefix(strings.TrimSpace(outPath), "/")
-			if !strings.HasPrefix(outPath, "shared/") {
-				return "", fmt.Errorf("output_path must be under shared/")
+			parts := strings.SplitN(outPath, "/", 2)
+			if len(parts) < 2 || (parts[0] != "materials" && !isSubjectDir(parts[0])) {
+				return "", fmt.Errorf("output_path must be inside an activity folder (<Subject>/<Topic>/<activity>/...) or materials/<subject>/<topic>/...")
 			}
 			abs, ok := resolveWorkspacePath(outPath)
 			if !ok {

@@ -25,7 +25,23 @@ export type WsFile = { path: string; name: string; scope: string; subject: strin
 
 export type ChildSuggestion = { label: string; message: string; emoji?: string; tone?: string; html?: string }
 
-export type LearningPackage = { manifest: string; title: string; items: string[]; guide_note?: string; created_at?: string }
+export type ActivityItem = { path: string; name: string }
+
+// Activity mirrors the backend's activityResp (packages.go) — the
+// activity-folder model: a self-contained <Subject>/<Topic>/<slug>/ folder,
+// keyed by its own workspace-relative `dir` (not a separate manifest path).
+export type Activity = {
+  dir: string
+  title: string
+  subject?: string
+  topic?: string
+  items: ActivityItem[]
+  guide_note?: string
+  teaching_mode?: string
+  persona?: string
+  created_at?: string
+  attempts?: ActivityItem[]
+}
 
 // toParentMsg reconstructs a persisted transcript entry (incl. a celebrate
 // event) into what the UI renders — so reloading a conversation replays star

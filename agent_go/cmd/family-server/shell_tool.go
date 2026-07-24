@@ -58,20 +58,19 @@ func runShellOutput(cmd *exec.Cmd) (string, error) {
 // childShellTool wires the EXISTING execute_shell_command for CHILD MODE, hardened
 // with the reused workspace/security.Isolator (macOS sandbox-exec / Linux
 // namespaces). It's a REAL access boundary, not a UI filter: the sandbox is
-// deny-by-default (StrictAllowlist) and scoped to JUST the CURRENT activity —
-// the exact files the parent most recently handed off, plus the child's own
-// child/attempts/ scratch space and the child/current-task.json pointer. The
-// child reads AND writes those activity files directly (recording "✓ Answered"
-// progress notes onto the real file — there is no separate copy). Everything
-// else is invisible: older activities, the rest of shared/, and parent/
-// entirely — so the child can never reach the parent's answer keys or private
-// notes. Also gets read-only access to the real machine Downloads folder (see
-// hostDownloadsPath), same grant AgentWorks gives a workflow session. Keep
-// this scoping in sync with childCanSee/childCanWrite (child_workspace.go).
+// deny-by-default (StrictAllowlist) and scoped to JUST the CURRENT activity
+// FOLDER — the whole folder, read AND write (its content files, activity.json,
+// its conversation, its attempts). The child annotates the activity's files in
+// place (recording "✓ Answered" notes on the real file — no separate copy).
+// Everything else is invisible: older activities, materials, reports, memory,
+// other subjects — so the child can never reach anything the parent didn't hand
+// them. Also gets read-only access to the real machine Downloads folder (see
+// hostDownloadsPath). Keep this scoping in sync with childCanSee/childCanWrite
+// (child_workspace.go) — both derive from currentActivityDir().
 func childShellTool() agentsession.Tool {
 	t := shellTool()
-	t.Description = "Run a shell command in your learning workspace. You can read and write the lesson/practice your parent " +
-		"just handed you, and read or write your own work under child/attempts/. You cannot see the parent's answer keys."
+	t.Description = "Run a shell command in your learning workspace. You can read and write the activity your parent " +
+		"just handed you (all its files are in your current activity folder). You cannot see the parent's answer keys."
 	t.Handler = func(ctx context.Context, args map[string]interface{}) (string, error) {
 		command, _ := args["command"].(string)
 		if strings.TrimSpace(command) == "" {
@@ -79,12 +78,14 @@ func childShellTool() agentsession.Tool {
 		}
 		cctx, cancel := context.WithTimeout(ctx, 90*time.Second)
 		defer cancel()
-		// The current activity's real (shared/) item paths — readable AND
-		// writable, so the tutor annotates them in place. Plus the child's own
-		// scratch space and the pointer file.
-		items := currentActivityItems()
-		readPaths := append([]string{"child/current-task.json", "child/attempts"}, items...)
-		writePaths := append([]string{"child/attempts"}, items...)
+		// The current activity FOLDER — readable AND writable as a whole, so the
+		// tutor works through and annotates its files in place. Nothing else.
+		var scope []string
+		if dir := currentActivityDir(); dir != "" {
+			scope = []string{dir}
+		}
+		readPaths := append([]string{}, scope...)
+		writePaths := append([]string{}, scope...)
 		blockedWrites := []string{}
 		if dl := hostDownloadsPath(); dl != "" {
 			readPaths = append(readPaths, dl)
@@ -97,8 +98,8 @@ func childShellTool() agentsession.Tool {
 			WritePaths:        writePaths,
 			BlockedWritePaths: blockedWrites,
 			// StrictAllowlist: the child is an untrusted party — deny-by-default
-			// so only the current activity's files, child/attempts, and Downloads
-			// are visible, not the rest of the real machine or workspace.
+			// so only the current activity folder + Downloads are visible, not the
+			// rest of the real machine or workspace.
 			StrictAllowlist: true,
 		}
 		// Pass the whole command as a single string (args nil) so it is executed
@@ -122,24 +123,22 @@ func childShellTool() agentsession.Tool {
 // study material / tests it generates.
 //
 // Sandboxed with the SAME workspace/security.Isolator mechanism as Child Mode
-// and AgentWorks automations (macOS sandbox-exec / Linux namespaces) — not a
-// bespoke parent-only exemption. The parent can read everything (shared/,
-// parent/, skills/, child/ — it needs to skim child/ for progress evidence,
-// and can write into child/ too, e.g. filing something on the child's behalf)
-// but can only WRITE under shared/, parent/, and child/. skills/ is app-shipped
-// reference content seeded from the binary on every startup: the OS sandbox
-// makes it genuinely read-only here, the same guarantee that keeps the child
-// out of parent/ — this isn't a suggestion the agent can accidentally violate.
-// Also gets read-only access to the real machine Downloads folder (see
-// hostDownloadsPath), matching the grant AgentWorks gives a workflow session.
+// and AgentWorks automations (macOS sandbox-exec / Linux namespaces). The
+// parent is the trusted authoring agent, so it reads and writes the WHOLE
+// workspace (activities under <Subject>/<Topic>/, materials/, reports/,
+// memory/, answer keys, conversations) — the only carve-out is skills/, which
+// is app-shipped content re-seeded from the binary each startup and kept
+// read-only, and the real machine Downloads folder (read-only). Paths are
+// workspace-relative.
 func shellTool() agentsession.Tool {
 	return agentsession.Tool{
 		Name: "execute_shell_command",
 		Description: "Run a shell command inside the family learning workspace (its working directory). " +
-			"Use it to read uploaded material (e.g. cat \"shared/materials/<subject>/<topic>/notes.md\", or ls), " +
-			"read files the parent downloaded to this computer's Downloads folder, " +
-			"and to write the study material or practice tests you create (write files under shared/study/, " +
-			"shared/tests/, or parent/ for answer keys). Paths are relative to the workspace root.",
+			"Use it to read uploaded material (e.g. cat \"materials/<subject>/<topic>/notes.md\", or ls), " +
+			"read files the parent downloaded to this computer's Downloads folder, and to write the content you " +
+			"create — the study material / test HTML and its activity.json go inside a " +
+			"<Subject>/<Topic>/<activity>/ folder; an answer key goes in that same folder as <name>-KEY.md. " +
+			"Paths are relative to the workspace root.",
 		Category: "family_tools",
 		Params: map[string]interface{}{
 			"type": "object",
@@ -158,8 +157,11 @@ func shellTool() agentsession.Tool {
 			}
 			cctx, cancel := context.WithTimeout(ctx, 90*time.Second)
 			defer cancel()
-			readPaths := []string{"shared", "parent", "skills", "child"}
-			blockedWrites := []string{}
+			// Parent reads+writes the whole workspace root; skills/ is read-only
+			// (re-seeded from the binary), Downloads read-only.
+			readPaths := []string{"."}
+			writePaths := []string{"."}
+			blockedWrites := []string{"skills", ".agents", "AGENTS.md"}
 			if dl := hostDownloadsPath(); dl != "" {
 				readPaths = append(readPaths, dl)
 				blockedWrites = append(blockedWrites, dl)
@@ -168,7 +170,7 @@ func shellTool() agentsession.Tool {
 				BaseDir:           workspaceRoot(),
 				WorkDir:           workspaceRoot(),
 				ReadPaths:         readPaths,
-				WritePaths:        []string{"shared", "parent", "child"},
+				WritePaths:        writePaths,
 				BlockedWritePaths: blockedWrites,
 			}
 			cmd, cleanup, err := iso.ExecuteIsolated(cctx, command, nil)
@@ -176,6 +178,11 @@ func shellTool() agentsession.Tool {
 				return "", fmt.Errorf("sandbox setup failed: %w", err)
 			}
 			defer cleanup()
+			// Every saved secret is available to the parent's shell as
+			// SECRET_<NAME> (see secrets_store.go) — the raw value only ever
+			// reaches this sandboxed process's environment, never the model's
+			// own context. Parent-only: childShellTool() never gets these.
+			cmd.Env = append(cmd.Env, secretEnvPairs()...)
 			return runShellOutput(cmd)
 		},
 	}

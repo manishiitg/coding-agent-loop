@@ -70,10 +70,10 @@ func readImageTool(engine string) agentsession.Tool {
 }
 
 // childReadImageTool is the SAME read_image tool, restricted to paths the
-// child can actually see (childCanSee: child/ or parent-approved shared/
-// paths) — matching childOpenFile's boundary. Without this restriction the
-// child could pass any workspace path (e.g. parent/answer-keys/...) since
-// readImageTool's own path resolution has no scoping built in.
+// child can actually see (childCanSee: inside the current activity folder) —
+// matching childOpenFile's boundary. Without this restriction the child could
+// pass any workspace path (e.g. an answer key elsewhere) since readImageTool's
+// own path resolution has no scoping built in.
 func childReadImageTool(engine string) agentsession.Tool {
 	return agentsession.Tool{
 		Name:        "read_image",

@@ -26,9 +26,9 @@ var convFileMu sync.Mutex
 
 // parentConversationID is the SINGLE canonical parent↔Quill conversation for
 // this family. Web chat, WhatsApp, and Pulse all read/write/resume THIS one —
-// one file (parent/conversations/parent.json), one warm tmux session — so
-// Quill has unified context no matter how the parent reaches it. The app is one
-// family with one ongoing conversation; there is no multi-conversation list.
+// one file (conversations/parent.json), one warm tmux session — so Quill has
+// unified context no matter how the parent reaches it. The app is one family
+// with one ongoing conversation; there is no multi-conversation list.
 const parentConversationID = "parent"
 
 type storedConversation struct {
@@ -39,19 +39,55 @@ type storedConversation struct {
 	Messages  []enginedetect.ChatMessage `json:"messages"`
 }
 
-// persistConversation writes a chat transcript to <scope>/conversations/<id>.json.
-// This is a runtime side-effect of a chat turn (mirroring the engine's own
-// chat-history files) — not a CRUD API. Best-effort; failures are ignored so a
-// persistence hiccup never breaks the reply.
+// conversationLocation resolves where a conversation's files live. scope
+// "parent" is the one global thread at conversations/parent.json. Any other
+// scope ("child") is keyed by id = the ACTIVITY DIR the child is currently
+// bound to (not an opaque id) — its conversation lives INSIDE that activity
+// folder (<dir>/conversation.json), so reopening the same activity resumes
+// its own chat, and a different activity is a new one. Returns the directory
+// and file basename (without extension) so both the transcript and its
+// session-handle sibling (session_handle_store.go) can share this logic.
+func conversationLocation(scope, id string) (dir, base string, ok bool) {
+	if scope == "parent" {
+		return "conversations", "parent", true
+	}
+	dir = strings.Trim(strings.TrimSpace(id), "/")
+	if dir == "" {
+		return "", "", false
+	}
+	return dir, "conversation", true
+}
+
+// persistConversation writes a chat transcript (see conversationLocation for
+// where). This is a runtime side-effect of a chat turn (mirroring the
+// engine's own chat-history files) — not a CRUD API. Best-effort; failures
+// are ignored so a persistence hiccup never breaks the reply.
+//
+// Every message's text is redacted against every CURRENTLY known secret value
+// before it ever touches disk, regardless of which caller/scope invoked this
+// — so a credential re-typed in chat (the parent repeating an existing saved
+// password, say) never survives in the transcript. A secret set FOR THE FIRST
+// TIME mid-turn can't be caught here (this call may run before that tool call
+// happens) — see retroactivelyRedactStoredConversation for that case.
 func persistConversation(scope, id string, messages []enginedetect.ChatMessage) {
-	id = strings.TrimSpace(id)
-	if id == "" || (scope != "parent" && scope != "child") || len(messages) == 0 {
+	dirRel, base, ok := conversationLocation(scope, id)
+	if !ok || len(messages) == 0 {
 		return
 	}
-	id = strings.NewReplacer("/", "_", "\\", "_", "..", "_").Replace(id)
-	dir := filepath.Join(workspaceRoot(), scope, "conversations")
+	dir, ok := resolveWorkspacePath(dirRel)
+	if !ok {
+		return
+	}
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return
+	}
+	if secretValues := allSecretValues(); len(secretValues) > 0 {
+		redacted := make([]enginedetect.ChatMessage, len(messages))
+		for i, m := range messages {
+			m.Text = redactSecrets(m.Text, secretValues)
+			redacted[i] = m
+		}
+		messages = redacted
 	}
 	title := ""
 	for _, m := range messages {
@@ -74,7 +110,7 @@ func persistConversation(scope, id string, messages []enginedetect.ChatMessage) 
 	if err != nil {
 		return
 	}
-	writeFileAtomic(filepath.Join(dir, id+".json"), b)
+	writeFileAtomic(filepath.Join(dir, base+".json"), b)
 }
 
 // writeFileAtomic writes to a temp file in the same directory then renames it
@@ -180,12 +216,15 @@ func persistConversationReply(scope, id string, fallback []enginedetect.ChatMess
 // sanitization as persistConversation). Used by Pulse to load a specific,
 // known conversation directly rather than scanning the whole directory.
 func loadStoredConversation(scope, id string) (storedConversation, bool) {
-	id = strings.TrimSpace(id)
-	if id == "" {
+	dirRel, base, ok := conversationLocation(scope, id)
+	if !ok {
 		return storedConversation{}, false
 	}
-	id = strings.NewReplacer("/", "_", "\\", "_", "..", "_").Replace(id)
-	b, err := os.ReadFile(filepath.Join(workspaceRoot(), scope, "conversations", id+".json"))
+	dir, ok := resolveWorkspacePath(dirRel)
+	if !ok {
+		return storedConversation{}, false
+	}
+	b, err := os.ReadFile(filepath.Join(dir, base+".json"))
 	if err != nil {
 		return storedConversation{}, false
 	}

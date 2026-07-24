@@ -142,23 +142,17 @@ func saveState(s familyState) error {
 	return os.WriteFile(statePath(), b, 0o600)
 }
 
-// scaffoldFamilyFolders creates the parent/child/shared workspace folders.
-// These are the scope roots the FolderGuard will later confine sessions to.
+// scaffoldFamilyFolders creates the non-activity workspace areas — Subject/
+// activity folders (and their in-folder answer keys, conversations, attempts)
+// are created on demand as activities are made, not scaffolded up front.
 func scaffoldFamilyFolders() error {
 	base := filepath.Join(familyDataDir(), "workspace")
-	// A clean, role-scoped, content-typed layout (workflow-style: files in folders).
 	dirs := []string{
-		"parent/notes",         // parent-private notes
-		"parent/answer-keys",   // answer keys / marking — parent only
-		"parent/conversations", // parent chat history
-		"shared/inbox",         // uploads land here; the agent files them (process-file skill)
-		"shared/materials",     // uploaded school material (by subject/topic)
-		"shared/study",         // generated study material (child sees it when it's part of the current activity)
-		"shared/tests",         // generated practice tests
-		"shared/reports",       // generated HTML progress reports (parent + child)
-		"child/attempts",       // child's submitted work
-		"child/conversations",  // child chat history
-		"child/inbox",          // child-uploaded photos (e.g. a scan of their answer)
+		"materials",     // parent's uploaded raw source material, by subject/topic
+		"inbox",         // uploads land here; the agent files them (process-file skill)
+		"reports",       // generated HTML progress reports (parent + child)
+		"memory",        // preferences, browser notes, child interests/profile
+		"conversations", // the one parent<->Quill thread (conversations/parent.json)
 	}
 	for _, d := range dirs {
 		if err := os.MkdirAll(filepath.Join(base, filepath.FromSlash(d)), 0o700); err != nil {

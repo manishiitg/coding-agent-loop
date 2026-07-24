@@ -103,6 +103,6 @@ A test is still a clean, well-formatted question sheet — numbered questions,
 marks as a `.badge`, blank space (or a printed line) under each question for
 working — it is just static: no answer box the page itself remembers. The
 child answers on paper or tells Quill in chat; that's how their work reaches
-`child/attempts/`, and (on the child's own live copy under `child/active/`,
-edited via their shell — see childSystemPrompt) how a small `.answered-note`
-line ends up on the page itself, right under the question it belongs to.
+their activity's own `attempts/` folder, and (editing the real file directly,
+via their shell — see childSystemPrompt) how a small `.answered-note` line
+ends up on the page itself, right under the question it belongs to.

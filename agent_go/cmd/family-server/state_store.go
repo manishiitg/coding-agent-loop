@@ -24,12 +24,24 @@ func safeStateKey(k string) string {
 }
 
 // handleWorkspaceState persists interactive-HTML state (a child's typed answers,
-// quiz progress, etc.) to a workspace file under child/attempts/, so the state
-// survives reloads AND the agent can read the child's work later to give
-// feedback. POST {key,data} to save; GET ?key= to load. The write happens in the
-// app (parent frame), reached from the sandboxed HTML via postMessage.
+// quiz progress, etc.) to a workspace file under the CURRENT activity's own
+// attempts/ folder, so the state survives reloads AND the agent can read the
+// child's work later to give feedback — and it travels with the activity, not
+// a separate global scratch area. POST {key,data} to save; GET ?key= to load.
+// The write happens in the app (parent frame), reached from the sandboxed
+// HTML via postMessage.
 func handleWorkspaceState(w http.ResponseWriter, r *http.Request) {
-	dir := filepath.Join(workspaceRoot(), "child", "attempts")
+	activityDir := currentActivityDir()
+	if activityDir == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "no activity is currently active"})
+		return
+	}
+	abs, ok := resolveWorkspacePath(activityDir)
+	if !ok {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid activity"})
+		return
+	}
+	dir := filepath.Join(abs, "attempts")
 	switch r.Method {
 	case http.MethodGet:
 		key := safeStateKey(r.URL.Query().Get("key"))

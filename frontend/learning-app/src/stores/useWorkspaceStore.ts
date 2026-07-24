@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import type { DrawerTab, LearningPackage, TreeNode, WsFile } from './types'
+import type { Activity, DrawerTab, TreeNode, WsFile } from './types'
 import { resolveSetState, type SetStateAction } from './storeUtils'
 
 // Parent-side workspace browsing: drawer tabs, the file tree/viewer, and the
@@ -36,11 +36,10 @@ interface WorkspaceState {
   setWsRefreshKey: (v: SetStateAction<number>) => void
   filesSubjectFilter: string
   setFilesSubjectFilter: (v: SetStateAction<string>) => void
-  // Learning packages the parent has bundled for the child (shared/packages/*.json)
-  // — shown as a summary section in the Files browser, mirroring what the
-  // child already sees under "From your parent".
-  packages: LearningPackage[]
-  setPackages: (v: SetStateAction<LearningPackage[]>) => void
+  // Every activity (<Subject>/<Topic>/<slug>/activity.json) — the Files tab
+  // groups these by their own subject/topic, no path-parsing needed.
+  activities: Activity[]
+  setActivities: (v: SetStateAction<Activity[]>) => void
 }
 
 export const useWorkspaceStore = create<WorkspaceState>()((set) => ({
@@ -72,6 +71,6 @@ export const useWorkspaceStore = create<WorkspaceState>()((set) => ({
   setWsRefreshKey: (v) => set((s) => ({ wsRefreshKey: resolveSetState(v, s.wsRefreshKey) })),
   filesSubjectFilter: '',
   setFilesSubjectFilter: (v) => set((s) => ({ filesSubjectFilter: resolveSetState(v, s.filesSubjectFilter) })),
-  packages: [],
-  setPackages: (v) => set((s) => ({ packages: resolveSetState(v, s.packages) })),
+  activities: [],
+  setActivities: (v) => set((s) => ({ activities: resolveSetState(v, s.activities) })),
 }))

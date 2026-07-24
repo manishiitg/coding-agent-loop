@@ -20,13 +20,13 @@ type uploadResponse struct {
 }
 
 // saveCurrentUpload writes a small pointer file naming the exact path of a
-// child's just-uploaded photo — the SAME pattern as child/current-task.json
+// child's just-uploaded photo — the SAME pattern as current-activity.json
 // for handoffs. A prompt instruction telling the child agent to proactively
-// "ls child/inbox/" for a new upload proved unreliable in testing (the model
-// kept defaulting to checking shared/inbox instead); pointing it at one
-// specific, deterministic file to read removes the guessing entirely.
+// list their activity folder for a new upload proved unreliable in testing
+// (the model kept defaulting to checking the wrong folder instead); pointing
+// it at one specific, deterministic file to read removes the guessing entirely.
 func saveCurrentUpload(rel string) {
-	abs, ok := resolveWorkspacePath("child/current-upload.json")
+	abs, ok := resolveWorkspacePath("current-upload.json")
 	if !ok {
 		return
 	}
@@ -48,14 +48,18 @@ func safeName(name string) string {
 	return name
 }
 
-// POST /api/upload (multipart/form-data) — add school material to the workspace,
-// organized by scope/subject/topic. Fields:
+// POST /api/upload (multipart/form-data) — add school material to the workspace.
+// Fields:
 //
 //	file    (required) the uploaded file
-//	scope   parent|child|shared (default shared)
-//	subject, topic (optional; fall back to the persisted Subject/Topic)
+//	scope   parent|child (default parent)
 //
-// Files land at workspace/<scope>/materials/<subject>/<topic>/<filename>.
+// Files land at workspace/inbox/<filename> (parent) — the agent then reads,
+// classifies, and files each one into materials/<subject>/<topic>/ with a
+// metadata JSON, see skills/process-file/SKILL.md — or directly into the
+// child's current activity folder (scope=child), since the child is
+// sandboxed to exactly that one folder and it's immediately visible to their
+// own agent turn without needing parent approval.
 func handleUpload(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -72,20 +76,15 @@ func handleUpload(w http.ResponseWriter, r *http.Request) {
 	}
 	defer file.Close()
 
-	// Uploads land in a staging inbox. The agent then reads each file, classifies
-	// it, and files it into shared/materials/<subject>/<topic>/ with a metadata
-	// JSON — see skills/process-file/SKILL.md. Subject/topic are decided from the
-	// file's content by the agent, not guessed from stale header state.
-	//
-	// scope=child routes instead to child/inbox/ — the child's OWN sandbox
-	// (childShellTool's WritePaths/ReadPaths are scoped to child/ only), so a
-	// child-uploaded photo (e.g. a scan of their answer) is immediately visible
-	// to their own agent turn without needing parent approval, unlike shared/
-	// which the child cannot see until explicitly approved.
-	relDir := filepath.Join("shared", "inbox")
-	scope := "shared"
+	relDir := "inbox"
+	scope := "parent"
 	if strings.TrimSpace(r.FormValue("scope")) == "child" {
-		relDir = filepath.Join("child", "inbox")
+		dir := currentActivityDir()
+		if dir == "" {
+			writeJSON(w, http.StatusBadRequest, uploadResponse{Error: "no activity is currently active"})
+			return
+		}
+		relDir = dir
 		scope = "child"
 	}
 	absDir := filepath.Join(familyDataDir(), "workspace", relDir)

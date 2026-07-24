@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import type { ChildSuggestion, ParentMsg } from './types'
+import type { Activity, ChildSuggestion, ParentMsg } from './types'
 import { resolveSetState, type SetStateAction } from './storeUtils'
 
 interface ChildChatState {
@@ -13,10 +13,10 @@ interface ChildChatState {
   setChildSuggestions: (v: SetStateAction<ChildSuggestion[]>) => void
   childLiveStatus: string
   setChildLiveStatus: (v: SetStateAction<string>) => void
-  childFiles: string[]
-  setChildFiles: (v: SetStateAction<string[]>) => void
-  childPackages: { path: string; title: string; items: string[]; guideNote?: string; createdAt?: string }[]
-  setChildPackages: (v: SetStateAction<{ path: string; title: string; items: string[]; guideNote?: string; createdAt?: string }[]>) => void
+  // The ONE activity the child is currently bound to (/api/child/activity) —
+  // replaces the old scoped-tree scan + package-manifest lookup entirely.
+  childActivity: Activity | null
+  setChildActivity: (v: SetStateAction<Activity | null>) => void
   childViewerPath: string | null
   setChildViewerPath: (v: SetStateAction<string | null>) => void
   childViewerContent: { isText: boolean; content: string } | null
@@ -36,10 +36,8 @@ export const useChildChatStore = create<ChildChatState>()((set) => ({
   setChildSuggestions: (v) => set((s) => ({ childSuggestions: resolveSetState(v, s.childSuggestions) })),
   childLiveStatus: '',
   setChildLiveStatus: (v) => set((s) => ({ childLiveStatus: resolveSetState(v, s.childLiveStatus) })),
-  childFiles: [],
-  setChildFiles: (v) => set((s) => ({ childFiles: resolveSetState(v, s.childFiles) })),
-  childPackages: [],
-  setChildPackages: (v) => set((s) => ({ childPackages: resolveSetState(v, s.childPackages) })),
+  childActivity: null,
+  setChildActivity: (v) => set((s) => ({ childActivity: resolveSetState(v, s.childActivity) })),
   childViewerPath: null,
   setChildViewerPath: (v) => set((s) => ({ childViewerPath: resolveSetState(v, s.childViewerPath) })),
   childViewerContent: null,

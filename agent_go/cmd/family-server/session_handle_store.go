@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
-	"strings"
 
 	"github.com/manishiitg/coding-agent-loop/agent_go/internal/agentsession"
 )
@@ -17,19 +16,22 @@ import (
 // WITHOUT replaying the transcript. The warm tmux session is only a same-process
 // speed path and dies on restart; this file is what survives it.
 //
-// Stored at <scope>/conversations/<id>.session.json (same folder + id
-// sanitization as the conversation transcript itself), one handle per
-// conversation. Best-effort: a persistence hiccup must never break a reply, so
-// all failures are swallowed — worst case is one turn re-establishing a handle.
+// Stored alongside the conversation transcript itself (see
+// conversationLocation in conversation_store.go) as <base>.session.json, one
+// handle per conversation. Best-effort: a persistence hiccup must never break
+// a reply, so all failures are swallowed — worst case is one turn
+// re-establishing a handle.
 
 func sessionHandlePath(scope, id string) (string, bool) {
-	id = strings.TrimSpace(id)
-	if id == "" || (scope != "parent" && scope != "child") {
+	dirRel, base, ok := conversationLocation(scope, id)
+	if !ok {
 		return "", false
 	}
-	id = strings.NewReplacer("/", "_", "\\", "_", "..", "_").Replace(id)
-	dir := filepath.Join(workspaceRoot(), scope, "conversations")
-	return filepath.Join(dir, id+".session.json"), true
+	dir, ok := resolveWorkspacePath(dirRel)
+	if !ok {
+		return "", false
+	}
+	return filepath.Join(dir, base+".session.json"), true
 }
 
 // loadSessionHandle reads the persisted continuation handle for a conversation,

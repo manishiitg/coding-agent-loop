@@ -86,21 +86,23 @@ func seedWorkspace(child *Child) {
 	base := filepath.Join(familyDataDir(), "workspace")
 	if child != nil {
 		if b, err := json.MarshalIndent(child, "", "  "); err == nil {
-			_ = os.WriteFile(filepath.Join(base, "parent", "child-profile.json"), b, 0o600)
+			_ = os.MkdirAll(filepath.Join(base, "memory"), 0o700)
+			_ = os.WriteFile(filepath.Join(base, "memory", "child-profile.json"), b, 0o600)
 		}
 	}
 	name := "your child"
 	if child != nil && strings.TrimSpace(child.Name) != "" {
 		name = child.Name
 	}
-	mapPath := filepath.Join(base, "shared", "academic-map.html")
+	reportsDir := filepath.Join(base, "reports")
+	_ = os.MkdirAll(reportsDir, 0o700)
+	mapPath := filepath.Join(reportsDir, "academic-map.html")
 	if _, err := os.Stat(mapPath); os.IsNotExist(err) {
 		html := "<!doctype html>\n<meta charset=\"utf-8\">\n<title>Academic map</title>\n<h1>" + name + "’s academic map</h1>\n<p>This living view grows as " + name + " learns.</p>\n"
 		_ = os.WriteFile(mapPath, []byte(html), 0o600)
 	}
-	progressPath := filepath.Join(base, "shared", "reports", "progress.html")
+	progressPath := filepath.Join(reportsDir, "progress.html")
 	if _, err := os.Stat(progressPath); os.IsNotExist(err) {
-		_ = os.MkdirAll(filepath.Dir(progressPath), 0o700)
 		html := "<!doctype html>\n<meta charset=\"utf-8\">\n<title>Progress</title>\n<h1>" + name + "’s progress</h1>\n<p>This living report grows as " + name + " learns.</p>\n"
 		_ = os.WriteFile(progressPath, []byte(html), 0o600)
 	}

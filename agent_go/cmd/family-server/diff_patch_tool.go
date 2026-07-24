@@ -36,13 +36,13 @@ func diffPatchWorkspaceFileTool() agentsession.Tool {
 }
 
 // childDiffPatchWorkspaceFileTool is the SAME diff_patch_workspace_file tool,
-// restricted via childCanWrite to exactly what the child may write: the
-// CURRENT activity's files (annotated in place — this is how "✓ Answered"
-// progress notes get recorded) and the child's own child/attempts/ scratch
-// space. Unlike childShellTool(), this tool applies the patch directly
+// restricted via childCanWrite to exactly what the child may write: anything
+// inside the CURRENT activity folder — its content files (annotated in place,
+// this is how "✓ Answered" progress notes get recorded) and its own attempts/
+// scratch space. Unlike childShellTool(), this tool applies the patch directly
 // in-process with no security.Isolator sandbox underneath it, so the
 // childCanWrite check here IS the only boundary — it must stay in sync with
-// childShellTool()'s WritePaths (both derive from currentActivityItems).
+// childShellTool()'s WritePaths (both derive from currentActivityDir).
 func childDiffPatchWorkspaceFileTool() agentsession.Tool {
 	return agentsession.Tool{
 		Name: "diff_patch_workspace_file",

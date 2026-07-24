@@ -51,6 +51,11 @@ func main() {
 	// updates that ship with the binary. Both are idempotent.
 	_ = scaffoldFamilyFolders()
 	seedSkills()
+	// One-time migration from the old shared/parent/child layout to the
+	// activity-folder layout (see migrate.go), run BEFORE seedWorkspace so a
+	// real migrated reports/academic-map.html or progress.html always lands
+	// before seedWorkspace's own "only if missing" placeholder check runs.
+	runWorkspaceMigrationIfNeeded()
 	seedWorkspace(loadState().Child) // idempotent: only fills in files that don't exist yet
 	if err := initWhatsAppBot(context.Background()); err != nil {
 		log.Printf("whatsapp: failed to initialize (real WhatsApp connection disabled): %v", err)
@@ -71,7 +76,8 @@ func main() {
 	mux.HandleFunc("/api/parent/pin", handleSetPin)
 	mux.HandleFunc("/api/parent/pin/verify", handleVerifyPin)
 	mux.HandleFunc("/api/parent/handoff", handleHandoff)
-	mux.HandleFunc("/api/parent/packages", handlePackages)
+	mux.HandleFunc("/api/activities", handleActivities)
+	mux.HandleFunc("/api/child/activity", handleChildActivity)
 	mux.HandleFunc("/api/parent/message", handleParentMessage)
 	mux.HandleFunc("/api/parent/status", handleParentStatusStream)
 	mux.HandleFunc("/api/parent/steer", handleParentSteer)
@@ -94,11 +100,11 @@ func main() {
 	})
 	mux.HandleFunc("/api/pulse/run", handlePulseRunNow)
 	mux.HandleFunc("/api/workspace/tree", handleWorkspaceTree)
-	mux.HandleFunc("/api/child/workspace/tree", handleChildWorkspaceTree)
 	mux.HandleFunc("/api/workspace/file", handleWorkspaceFile)
 	mux.HandleFunc("/api/workspace/raw", handleWorkspaceRaw)
 	mux.HandleFunc("/api/workspace/state", handleWorkspaceState)
 	mux.HandleFunc("/api/upload", handleUpload)
+	mux.HandleFunc("/api/secrets", handleSecrets)
 	mux.HandleFunc("/api/reset", handleReset)
 
 	// In the packaged (Electron) app, serve the built SparkQuill frontend from the

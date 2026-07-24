@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -16,7 +15,8 @@ import (
 
 // POST /api/child/message — run one turn of Child Mode tutoring through the
 // selected engine. Same agentic runtime as the parent, but with the child tutor
-// prompt and the sandboxed child shell (shared/ + child/ only, never parent/).
+// prompt and the sandboxed child shell — scoped to exactly the current
+// activity folder (see child_workspace.go / shell_tool.go).
 func handleChildMessage(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -39,14 +39,21 @@ func handleChildMessage(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, parentMessageResponse{Error: "setup is not complete"})
 		return
 	}
+	// The child's conversation lives INSIDE the current activity folder
+	// (conversation.json) — one per activity, resumed whenever that same
+	// activity is reopened. There is no child session without one.
+	activityDir := currentActivityDir()
+	if activityDir == "" {
+		writeJSON(w, http.StatusBadRequest, parentMessageResponse{Error: "no activity has been handed off yet"})
+		return
+	}
 
 	workDir := filepath.Join(familyDataDir(), "workspace")
-	_ = os.MkdirAll(filepath.Join(workDir, "child", "attempts"), 0o700)
 
 	provider, ok := engineToProvider(s.Engine)
 	if !ok {
 		// Plain-completion fallback (no tools) for engines not yet mapped.
-		reply, err := enginedetect.Chat(r.Context(), s.Engine, "", workDir, childSystemPrompt(s.Child, s.ParentLabel), req.Messages)
+		reply, err := enginedetect.Chat(r.Context(), s.Engine, "", workDir, childSystemPrompt(s.Child, s.ParentLabel, activityDir), req.Messages)
 		if err != nil {
 			writeJSON(w, http.StatusOK, parentMessageResponse{Error: friendlyTurnError(err)})
 			return
@@ -212,18 +219,18 @@ func handleChildMessage(w http.ResponseWriter, r *http.Request) {
 		ModelID:         lowTierModelID(provider),
 		ReasoningEffort: "high",
 		WorkingDir:      workDir,
-		SystemPrompt:    childSystemPrompt(s.Child, s.ParentLabel),
+		SystemPrompt:    childSystemPrompt(s.Child, s.ParentLabel, activityDir),
 		// Stable SessionID reuses the warm tmux within this process; SessionHandle
 		// restores the coding agent's `--resume` state across restarts (loaded from
 		// disk) so context survives a restart without replaying the transcript.
-		SessionID:                 req.ConversationID,
-		SessionHandle:             loadSessionHandle("child", req.ConversationID),
+		SessionID:                 activityDir,
+		SessionHandle:             loadSessionHandle("child", activityDir),
 		BridgeRoutingInstructions: bridgeRoutingInstructions(),
-		Tools:                     withLiveStatus("child:"+req.ConversationID, []agentsession.Tool{childShellTool(), childOpenFile, childSuggestActions, celebrate, notifyTool(), childDiffPatchWorkspaceFileTool(), childReadImageTool(s.Engine)}),
+		Tools:                     withLiveStatus("child:"+activityDir, []agentsession.Tool{childShellTool(), childOpenFile, childSuggestActions, celebrate, notifyTool(), childDiffPatchWorkspaceFileTool(), childReadImageTool(s.Engine)}),
 	})
 	if err != nil {
 		msg := friendlyTurnError(err)
-		persistConversation("child", req.ConversationID, withReply(req.Messages, msg))
+		persistConversation("child", activityDir, withReply(req.Messages, msg))
 		writeJSON(w, http.StatusOK, parentMessageResponse{Error: msg})
 		return
 	}
@@ -241,17 +248,18 @@ func handleChildMessage(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		// Persist the turn even on failure — see chat.go's parent handler for why.
 		msg := friendlyTurnError(err)
-		persistConversation("child", req.ConversationID, withReply(req.Messages, msg))
+		persistConversation("child", activityDir, withReply(req.Messages, msg))
 		writeJSON(w, http.StatusOK, parentMessageResponse{Error: msg})
 		return
 	}
-	saveSessionHandle("child", req.ConversationID, sess.Handle())
+	saveSessionHandle("child", activityDir, sess.Handle())
 	evMu.Lock()
 	evs := events
 	evMu.Unlock()
 	sugMu.Lock()
 	sug := suggestions
 	sugMu.Unlock()
+	reply = sanitizeAgentReply(reply)
 
 	toSave := withReply(req.Messages, reply)
 	if cel := findCelebrateEvent(evs); cel != nil {
@@ -259,7 +267,7 @@ func handleChildMessage(w http.ResponseWriter, r *http.Request) {
 		// replays the star moment exactly where it happened, not just the text.
 		toSave = append(toSave, enginedetect.ChatMessage{Role: "tool", Tool: "celebrate", Stars: cel.Stars, Reason: cel.Reason})
 	}
-	persistConversation("child", req.ConversationID, toSave)
+	persistConversation("child", activityDir, toSave)
 
 	writeJSON(w, http.StatusOK, parentMessageResponse{Reply: reply, ToolEvents: evs, Suggestions: sug})
 }

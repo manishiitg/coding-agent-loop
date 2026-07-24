@@ -140,6 +140,7 @@ func (bo *BaseOrchestrator) createAgentConfigWithLLM(agentName string, maxTurns 
 	config.Timeout = 300 // Same timeout for all agents
 	config.RateLimit = 60
 	config.CodingAgentWorkingDir = resolveCodingAgentWorkingDir(bo.GetWorkspacePath())
+	config.CLISecurityPolicy = bo.GetCLISecurityPolicy()
 
 	// Inject MCP session ID for connection sharing across agents in the same workflow
 	// When set, connections are stored in a session registry and reused

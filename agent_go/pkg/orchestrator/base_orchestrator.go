@@ -83,6 +83,7 @@ type BaseOrchestrator struct {
 	useCodeExecutionMode bool          // MCP code execution mode
 	llmConfig            *LLMConfig    // LLM configuration
 	maxTurns             int           // Maximum turns for the orchestrator
+	cliSecurityPolicy    *llmtypes.CLISecurityPolicy
 
 	// Optional simple state (for workflow orchestrators)
 	objective     string

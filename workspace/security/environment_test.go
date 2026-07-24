@@ -37,6 +37,16 @@ func TestNativeEnvironmentRepairsPath(t *testing.T) {
 	}
 }
 
+func TestNativeEnvironmentDoesNotExposeWorkspaceExecutionToken(t *testing.T) {
+	t.Setenv("NATIVE_WORKSPACE", "true")
+	t.Setenv("WORKSPACE_API_TOKEN", "server-only-token")
+	for _, entry := range BuildSafeEnvironment() {
+		if strings.HasPrefix(entry, "WORKSPACE_API_TOKEN=") {
+			t.Fatal("workspace execution token leaked into shell environment")
+		}
+	}
+}
+
 func pathInList(pathValue, target string) bool {
 	for _, path := range strings.Split(pathValue, ":") {
 		if path == target {

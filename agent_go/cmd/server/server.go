@@ -28,6 +28,7 @@ import (
 	"github.com/manishiitg/coding-agent-loop/agent_go/internal/inspector"
 	agent "github.com/manishiitg/coding-agent-loop/agent_go/pkg/agentwrapper"
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/chathistory"
+	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/clisecurity"
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/costledger"
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/fsutil"
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/orchestrator"
@@ -245,7 +246,8 @@ type ActiveSessionInfo struct {
 
 // StreamingAPI represents the streaming API server
 type StreamingAPI struct {
-	config ServerConfig
+	config           ServerConfig
+	cliSecurityStore *clisecurity.Store
 
 	// internalQueryHandler is a narrow test seam for server-owned follow-up
 	// turns. Production dispatch falls back to handleQuery.
@@ -1431,8 +1433,18 @@ func runServer(cmd *cobra.Command, args []string) {
 		log.Printf("✅ Gmail service initialized (disabled — set config/gmail-config.json)")
 	}
 
+	cliSecurityRoot, err := clisecurity.DefaultRoot()
+	if err != nil {
+		log.Fatalf("Failed to resolve AgentWorks CLI security config directory: %v", err)
+	}
+	cliSecurityStore, err := clisecurity.NewStore(cliSecurityRoot)
+	if err != nil {
+		log.Fatalf("Failed to initialize AgentWorks CLI security store: %v", err)
+	}
+
 	api := &StreamingAPI{
 		config:                             config,
+		cliSecurityStore:                   cliSecurityStore,
 		agentCancelFuncs:                   make(map[string]context.CancelFunc),
 		workflowOrchestratorContexts:       make(map[string]context.CancelFunc),
 		activeWorkflowExecutions:           make(map[string]*ActiveWorkflowExecution),
@@ -1582,6 +1594,7 @@ func runServer(cmd *cobra.Command, args []string) {
 	apiRouter.HandleFunc("/query", api.handleQuery).Methods("POST", "OPTIONS")
 	apiRouter.HandleFunc("/health", api.handleHealth).Methods("GET")
 	apiRouter.HandleFunc("/capabilities", api.handleCapabilities).Methods("GET")
+	CLISecurityRoutes(apiRouter, api.cliSecurityStore)
 	apiRouter.HandleFunc("/cdp-check", api.handleCdpCheck).Methods("GET")
 	apiRouter.HandleFunc("/downloads/chrome-cdp-macOS.zip", api.handleChromeCdpDownload).Methods("GET")
 	apiRouter.HandleFunc("/llm-config/defaults", api.handleGetLLMDefaults).Methods("GET")
@@ -3372,6 +3385,16 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		workflowLLMConfig.APIKeys = workflowKeys
+		workflowCLISecurityPolicy, policyErr := api.cliSecurityStore.Resolve(
+			currentUserID,
+			"",
+			[]string{codingAgentWorkspaceWorkingDir(manifestWorkspacePath)},
+			[]string{codingAgentWorkspaceWorkingDir(manifestWorkspacePath)},
+		)
+		if policyErr != nil {
+			http.Error(w, "CLI security policy cannot be enforced: "+policyErr.Error(), http.StatusConflict)
+			return
+		}
 
 		// Create workflow orchestrator for this request.
 		// Note: req.MaxTurns is already normalized earlier in the handler:
@@ -3399,6 +3422,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, fmt.Sprintf("Failed to create workflow orchestrator: %v", err), http.StatusInternalServerError)
 			return
 		}
+		workflowOrchestrator.SetCLISecurityPolicy(workflowCLISecurityPolicy)
 
 		// Set selected skills on the orchestrator
 		if len(selectedSkills) > 0 {
@@ -4128,6 +4152,17 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		}
 		workspace.SetSessionWorkingDir(sessionID, chatWorkingFolder)
 		chatWorkingDir := codingAgentWorkspaceWorkingDir(chatWorkingFolder)
+		cliSecurityPolicy, err := api.cliSecurityStore.Resolve(
+			currentUserID,
+			finalProvider,
+			[]string{chatWorkingDir},
+			[]string{chatWorkingDir},
+		)
+		if err != nil {
+			logfWithContext(queryLogCtx, "[CLI_SECURITY] Failed to resolve policy: %v", err)
+			sendError(fmt.Sprintf("CLI security policy cannot be enforced: %v", err), true)
+			return
+		}
 		if piPersistentInteractive {
 			closed := api.cleanupConflictingPiCLIInteractiveSessions(sessionID, chatWorkingDir, "starting chat agent")
 			if closed > 0 {
@@ -4161,6 +4196,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			PiPersistentInteractiveSession:         piPersistentInteractive,
 			ClaudeCodeTransport:                    claudeCodeTransport,
 			CodingAgentWorkingDir:                  chatWorkingDir,
+			CLISecurityPolicy:                      cliSecurityPolicy,
 			APIKeys:                                mergedAPIKeys,
 			// Tool timeout, context summarization/editing, large-output offloading,
 			// and parallel tool execution are set by applySharedLLMAgentTuning below

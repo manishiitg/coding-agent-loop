@@ -16,6 +16,7 @@ app.setPath('userData', COMPAT_USER_DATA_PATH);
 // Dynamic ports (assigned at runtime)
 let dynamicAgentPort = 0;
 let dynamicWorkspacePort = 0;
+const workspaceApiToken = crypto.randomBytes(32).toString('hex');
 
 const HEALTH_TIMEOUT_MS = 90000;
 const HEALTH_POLL_MS = 500;
@@ -1116,7 +1117,8 @@ function spawnWorkspace(userDataPath) {
       // workspace-server executes /api/execute shell commands. Mark it native so
       // the safe shell env preserves the imported login-shell PATH/HOME instead
       // of using the Docker-style minimal PATH.
-      NATIVE_WORKSPACE: 'true'
+      NATIVE_WORKSPACE: 'true',
+      WORKSPACE_API_TOKEN: workspaceApiToken
     };
 
     // Prefer fixed port 45679 so frontend localStorage stays stable across launches.
@@ -1272,7 +1274,8 @@ function spawnAgent(userDataPath) {
       // host.docker.internal URLs in MCP_API_URL — which the LLM-generated
       // shell commands then fail to reach (host.docker.internal isn't
       // resolvable on macOS without Docker Desktop running).
-      NATIVE_WORKSPACE: 'true'
+      NATIVE_WORKSPACE: 'true',
+      WORKSPACE_API_TOKEN: workspaceApiToken
     };
 
 

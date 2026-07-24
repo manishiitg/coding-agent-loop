@@ -73,7 +73,7 @@ func pulseChecks(s familyState) []pulseCheck {
 		tools: func(engine string) []agentsession.Tool {
 			return []agentsession.Tool{
 				webSearchTool(), readImageTool(engine), generateImageTool(), notifyTool(),
-				shellTool(), diffPatchWorkspaceFileTool(), createLearningPackageTool(func(toolEvent) {}),
+				shellTool(), diffPatchWorkspaceFileTool(), createLearningPackageTool(who, func(toolEvent) {}),
 			}
 		},
 	}}

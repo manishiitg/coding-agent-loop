@@ -5,7 +5,7 @@ description: Create a practice test for the child from their materials and progr
 
 # Create a practice test
 
-0. **Don't silently guess what to test.** If the parent's request already names a subject/topic/focus (e.g. "a quick check on fractions" or a quick-action button that names one), skip ahead. If it's generic ("make a test for Myra", "create a practice test") — before writing anything, quickly skim `parent/conversations/`, `child/conversations/`, and any recent `shared/tests/` for what she's actually struggled with or last got wrong, then say what you found and ask ONE short question — e.g. "Her last quick check showed she's still shaky on word problems with mixed denominators — want me to focus there, or something else?" Wait for their answer before generating. This is a real check-in, not a rhetorical one-liner you answer yourself in the same reply.
+0. **Don't silently guess what to test.** If the parent's request already names a subject/topic/focus (e.g. "a quick check on fractions" or a quick-action button that names one), skip ahead. If it's generic ("make my child a test", "create a practice test") — before writing anything, quickly skim `parent/conversations/`, `child/conversations/`, and any recent `shared/tests/` for what the child has actually struggled with or last got wrong, then say what you found and ask ONE short question — e.g. "The last quick check showed still-shaky word problems with mixed denominators — want me to focus there, or something else?" Wait for their answer before generating. This is a real check-in, not a rhetorical one-liner you answer yourself in the same reply.
 
 1. **Know the child.** Read `parent/child-profile.json` for name, grade, and board so the test matches their level. If any of these are missing, ask the parent first.
 
@@ -26,7 +26,7 @@ description: Create a practice test for the child from their materials and progr
    - **View-only, static.** No answer box, no auto-save, no JS state — per `skills/_shared/html-design.md`. The child works it on paper or tells Quill their answers in chat; that's how the attempt reaches `child/attempts/`.
    - No answers and no hints that give them away — never embed the answer key in this file.
 
-4. **Write the answer key (parent-only)** as **HTML** to `parent/answer-keys/<yyyy-mm-dd>-<name>-KEY.html` (same date stamp, same shared design):
+4. **Write the answer key (parent-only)** as plain **Markdown** (not HTML — it's parent-only reference material, no need for the shared design system) to `parent/answer-keys/<yyyy-mm-dd>-<name>-KEY.md` (same date stamp):
    - Full worked solutions.
    - A note on which questions target which weakness, so the parent knows what to watch.
 

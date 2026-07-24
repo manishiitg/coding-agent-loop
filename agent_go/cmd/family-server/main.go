@@ -31,6 +31,13 @@ func main() {
 	// has to remember to set.
 	os.Setenv("NATIVE_WORKSPACE", "true")
 
+	// Opt into real content streaming for codex-cli's persistent-interactive
+	// (tmux) sessions — off by default in mcpagent/multi-llm-provider-go.
+	// Without this, agentsession.Config.StreamCallback never fires and every
+	// turn falls back to "reply only available once the whole turn finishes",
+	// exactly like before streaming existed.
+	os.Setenv("CODEX_CLI_STREAM_TRANSCRIPT", "1")
+
 	defaultPort := "8010"
 	if envPort := strings.TrimSpace(os.Getenv("FAMILY_PORT")); envPort != "" {
 		defaultPort = envPort
@@ -67,12 +74,14 @@ func main() {
 	mux.HandleFunc("/api/parent/packages", handlePackages)
 	mux.HandleFunc("/api/parent/message", handleParentMessage)
 	mux.HandleFunc("/api/parent/status", handleParentStatusStream)
+	mux.HandleFunc("/api/parent/steer", handleParentSteer)
 	mux.HandleFunc("/api/child/message", handleChildMessage)
 	mux.HandleFunc("/api/child/status", handleChildStatusStream)
 	mux.HandleFunc("/api/whatsapp/message", handleWhatsAppMessage)
 	mux.HandleFunc("/api/whatsapp/status", handleWhatsAppStatus)
 	mux.HandleFunc("/api/whatsapp/pair", handleWhatsAppPair)
 	mux.HandleFunc("/api/whatsapp/unpair", handleWhatsAppUnpair)
+	mux.HandleFunc("/api/whatsapp/voice", handleWhatsAppVoiceToggle)
 	mux.HandleFunc("/api/gmail/status", handleGmailStatus)
 	mux.HandleFunc("/api/gmail/test", handleGmailTest)
 	mux.HandleFunc("/api/browser/status", handleBrowserStatus)

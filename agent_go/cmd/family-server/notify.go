@@ -108,10 +108,11 @@ func deliverNotificationHTML(ctx context.Context, title, msg, htmlBody string) n
 
 	if whatsAppBot.IsConnected() {
 		sendCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
-		if err := whatsAppBot.SendToSelf(sendCtx, title+"\n\n"+msg); err != nil {
-			res.Failed["whatsapp"] = err.Error()
-		} else {
+		sent, err := whatsAppBot.SendToAllSelf(sendCtx, title+"\n\n"+msg)
+		if sent > 0 {
 			res.Delivered = append(res.Delivered, "whatsapp")
+		} else if err != nil {
+			res.Failed["whatsapp"] = err.Error()
 		}
 		cancel()
 	}

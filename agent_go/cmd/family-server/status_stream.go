@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"sync"
@@ -9,38 +10,59 @@ import (
 	"github.com/manishiitg/coding-agent-loop/agent_go/internal/agentsession"
 )
 
-// statusHub is a tiny in-memory pub-sub for live "what Quill is doing right
-// now" status lines, keyed by conversation id. It exists because mcpagent's
-// own tool-call events never fire for our persistent/tmux sessions (the CLI
-// runs its own agentic loop inside the pane and calls our bridge directly) —
-// so the only reliable signal is our own custom-tool Handler functions, which
-// DO run directly in this process. A handler publishes a friendly label right
-// when it starts; the SSE endpoint below fans it out to the browser.
-type statusHub struct {
-	mu   sync.Mutex
-	subs map[string]map[chan string]struct{}
+// sseEvent is one message on a conversation's live stream — either a cosmetic
+// "what Quill is doing right now" status label (Type "status") or a real
+// content fragment of the reply as the model generates it (Type "delta").
+// Both share one connection/subscription per conversation since they're both
+// small, ordered, ephemeral signals for the SAME in-flight turn.
+type sseEvent struct {
+	Type string `json:"type"`
+	Text string `json:"text"`
 }
 
-var statusHubs = &statusHub{subs: map[string]map[chan string]struct{}{}}
+// statusHub is a tiny in-memory pub-sub for live per-turn events, keyed by
+// conversation id. It exists because mcpagent's own tool-call/streaming
+// events never fire for our persistent/tmux sessions the way a direct API
+// integration would (the CLI runs its own agentic loop inside the pane and
+// calls our bridge directly) — so status labels rely on our own custom-tool
+// Handler functions, which DO run directly in this process; streaming deltas
+// rely on mcpagent's WithStreamingCallback (see agentsession.Config.StreamCallback),
+// which DOES work for tmux/persistent sessions once the provider's own
+// streaming env var is set (see main.go). The SSE endpoint below fans both
+// out to the browser over one connection.
+type statusHub struct {
+	mu   sync.Mutex
+	subs map[string]map[chan sseEvent]struct{}
+}
+
+var statusHubs = &statusHub{subs: map[string]map[chan sseEvent]struct{}{}}
 
 func (h *statusHub) publish(conversationID, label string) {
+	h.publishEvent(conversationID, sseEvent{Type: "status", Text: label})
+}
+
+func (h *statusHub) publishDelta(conversationID, text string) {
+	h.publishEvent(conversationID, sseEvent{Type: "delta", Text: text})
+}
+
+func (h *statusHub) publishEvent(conversationID string, ev sseEvent) {
 	conversationID = normalizeConversationID(conversationID)
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	for ch := range h.subs[conversationID] {
 		select {
-		case ch <- label:
+		case ch <- ev:
 		default: // slow/absent subscriber — drop rather than block the tool call
 		}
 	}
 }
 
-func (h *statusHub) subscribe(conversationID string) (chan string, func()) {
+func (h *statusHub) subscribe(conversationID string) (chan sseEvent, func()) {
 	conversationID = normalizeConversationID(conversationID)
-	ch := make(chan string, 8)
+	ch := make(chan sseEvent, 64) // deltas arrive far more often than status labels
 	h.mu.Lock()
 	if h.subs[conversationID] == nil {
-		h.subs[conversationID] = map[chan string]struct{}{}
+		h.subs[conversationID] = map[chan sseEvent]struct{}{}
 	}
 	h.subs[conversationID][ch] = struct{}{}
 	h.mu.Unlock()
@@ -116,6 +138,7 @@ func statusStreamHandler(scope string) http.HandlerFunc {
 			return
 		}
 		setSSEHeaders(w)
+		flusher.Flush() // push headers immediately -- otherwise they sit buffered until the first event
 
 		ch, unsubscribe := statusHubs.subscribe(scope + ":" + conversationID)
 		defer unsubscribe()
@@ -124,8 +147,12 @@ func statusStreamHandler(scope string) http.HandlerFunc {
 			select {
 			case <-r.Context().Done():
 				return
-			case label := <-ch:
-				fmt.Fprintf(w, "data: %s\n\n", label)
+			case ev := <-ch:
+				b, err := json.Marshal(ev)
+				if err != nil {
+					continue
+				}
+				fmt.Fprintf(w, "data: %s\n\n", b)
 				flusher.Flush()
 			}
 		}

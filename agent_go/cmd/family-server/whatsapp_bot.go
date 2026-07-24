@@ -2,11 +2,13 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -30,22 +32,226 @@ import (
 // attempt (and a fresh QR) is started the next time the frontend asks.
 const whatsappPairingTimeout = 30 * time.Second
 
-// waBot is a REAL WhatsApp connection via whatsmeow (the unofficial WhatsApp
-// Web multi-device protocol — the same mechanism as scanning a QR to link a
-// device in the real WhatsApp app). Deliberately single-account: this app is
-// one family, so there is exactly one bot instance, no per-user routing.
+// waAccount is ONE linked WhatsApp account — one parent's own phone, linked
+// via its own QR scan. Immutable after construction (client is set once and
+// never reassigned in place — unpairing removes the *waAccount from the
+// manager's map entirely rather than mutating it), so its methods need no
+// locking of their own.
+type waAccount struct {
+	client *whatsmeow.Client
+}
+
+func (a *waAccount) OwnJID() types.JID {
+	if a == nil || a.client == nil || a.client.Store == nil || a.client.Store.ID == nil {
+		return types.JID{}
+	}
+	return *a.client.Store.ID
+}
+
+// OwnLID returns this account's own LID identity (the "@lid" JID modern
+// WhatsApp uses alongside the phone-number JID). Self-chat messages arrive on
+// the LID identity, so isSelfChat must match it too — see the LID handling
+// AgentWorks' whatsapp_service.go also does.
+func (a *waAccount) OwnLID() types.JID {
+	if a == nil || a.client == nil || a.client.Store == nil {
+		return types.JID{}
+	}
+	return a.client.Store.LID
+}
+
+// isSelfChat is the safety boundary described on waBot: true only for THIS
+// account's own "Message Yourself" chat. Modern WhatsApp routes the self-chat
+// through the account's LID identity (chat server "lid"), so match BOTH the
+// classic phone-number JID and the LID — otherwise self-chat messages arrive
+// as "@lid" and get silently rejected.
+func (a *waAccount) isSelfChat(chat types.JID) bool {
+	if chat.User == "" {
+		return false
+	}
+	if own := a.OwnJID(); !own.IsEmpty() && chat.Server == types.DefaultUserServer && chat.User == own.User {
+		return true
+	}
+	if lid := a.OwnLID(); !lid.IsEmpty() && chat.Server == types.HiddenUserServer && chat.User == lid.User {
+		return true
+	}
+	return false
+}
+
+// react adds (or, with emoji "", clears) a whatsmeow emoji reaction on an
+// incoming message — the "got it / working on it" acknowledgement, since an
+// agent turn can take a minute or two and there'd otherwise be no sign the
+// message was received. Mirrors AgentWorks' WhatsApp reaction ack. Best-effort.
+func (a *waAccount) react(chat, sender types.JID, msgID types.MessageID, emoji string) {
+	if a == nil || a.client == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	reaction := a.client.BuildReaction(chat, sender, msgID, emoji)
+	if _, err := a.client.SendMessage(ctx, chat, reaction); err != nil {
+		log.Printf("[whatsapp] reaction failed: %v", err)
+	}
+}
+
+// SendToSelf pushes a message into this account's own "Message Yourself"
+// chat proactively — used by notify_user/Pulse.
+func (a *waAccount) SendToSelf(ctx context.Context, text string) error {
+	if a == nil || a.client == nil {
+		return fmt.Errorf("whatsapp not paired")
+	}
+	own := a.OwnJID()
+	if own.IsEmpty() {
+		return fmt.Errorf("whatsapp own JID unknown")
+	}
+	// OwnJID is this device's own JID (has a ":<device>" part, e.g.
+	// "919717071555:24@s.whatsapp.net") — whatsmeow rejects that as a
+	// message recipient ("message recipient must be a user JID with no
+	// device part"). ToNonAD strips it down to the plain addressable user
+	// JID, which is what SendMessage actually wants.
+	own = own.ToNonAD()
+	msg := &waProto.Message{Conversation: &text}
+	_, err := a.client.SendMessage(ctx, own, msg)
+	return err
+}
+
+// SendDocumentToSelf uploads a file and sends it as a WhatsApp document
+// attachment to this account's own "message yourself" chat — the same
+// self-chat-only pattern as SendToSelf. Used for handing over a test/study
+// material as a real PDF instead of only describing it in text.
+func (a *waAccount) SendDocumentToSelf(ctx context.Context, data []byte, filename, mimetype, caption string) error {
+	if a == nil || a.client == nil {
+		return fmt.Errorf("whatsapp not paired")
+	}
+	own := a.OwnJID()
+	if own.IsEmpty() {
+		return fmt.Errorf("whatsapp own JID unknown")
+	}
+	own = own.ToNonAD() // strip the ":<device>" part — see SendToSelf's comment
+	uploaded, err := a.client.Upload(ctx, data, whatsmeow.MediaDocument)
+	if err != nil {
+		return fmt.Errorf("upload document: %w", err)
+	}
+	fileLength := uint64(len(data))
+	doc := &waProto.DocumentMessage{
+		URL:           &uploaded.URL,
+		DirectPath:    &uploaded.DirectPath,
+		MediaKey:      uploaded.MediaKey,
+		Mimetype:      &mimetype,
+		FileName:      &filename,
+		FileSHA256:    uploaded.FileSHA256,
+		FileEncSHA256: uploaded.FileEncSHA256,
+		FileLength:    &fileLength,
+	}
+	if strings.TrimSpace(caption) != "" {
+		doc.Caption = &caption
+	}
+	msg := &waProto.Message{DocumentMessage: doc}
+	_, err = a.client.SendMessage(ctx, own, msg)
+	return err
+}
+
+// ingestWhatsAppMedia downloads an image/document/voice-note attachment from
+// an incoming WhatsApp message into shared/inbox and reports whether one was
+// saved. For images/documents this deliberately does NOT tell the model about
+// it or the path — only text messages go to the agent; the file just lands in
+// the inbox and the process-file skill's own "check shared/inbox/ before every
+// reply" habit picks it up naturally on whatever the next real turn is, the
+// same as any other inbox arrival. A voice note is different: it IS meant to
+// drive a turn, so on top of saving the raw audio, it's transcribed locally
+// (see transcribeAudioFile) and the transcript is returned so the caller can
+// treat it as if the parent had typed it. Best-effort throughout: a failed
+// download or transcription just degrades gracefully (any accompanying text
+// still gets handled normally; a voice note that fails to transcribe still
+// gets saved and silently acknowledged, same as an image/document).
+func (a *waAccount) ingestWhatsAppMedia(evt *events.Message) (saved bool, voiceText string) {
+	m := evt.Message
+	if m == nil {
+		return false, ""
+	}
+	var dl whatsmeow.DownloadableMessage
+	var name string
+	isVoice := false
+	switch {
+	case m.ImageMessage != nil:
+		dl = m.ImageMessage
+		name = "wa-" + evt.Info.ID + extForMime(m.ImageMessage.GetMimetype(), ".jpg")
+	case m.DocumentMessage != nil:
+		dl = m.DocumentMessage
+		name = strings.TrimSpace(m.DocumentMessage.GetFileName())
+		if name == "" {
+			name = "wa-" + evt.Info.ID + extForMime(m.DocumentMessage.GetMimetype(), ".bin")
+		}
+	case m.AudioMessage != nil:
+		dl = m.AudioMessage
+		isVoice = true
+		name = "wa-voice-" + evt.Info.ID + extForMime(m.AudioMessage.GetMimetype(), ".ogg")
+	default:
+		return false, ""
+	}
+	if a.client == nil {
+		return false, ""
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	data, err := a.client.Download(ctx, dl)
+	if err != nil {
+		log.Printf("[whatsapp] media download failed: %v", err)
+		return false, ""
+	}
+
+	name = sanitizeInboxName(name)
+	relDir := filepath.Join("shared", "inbox")
+	absDir := filepath.Join(familyDataDir(), "workspace", relDir)
+	if err := os.MkdirAll(absDir, 0o700); err != nil {
+		log.Printf("[whatsapp] inbox mkdir failed: %v", err)
+		return false, ""
+	}
+	absPath := filepath.Join(absDir, name)
+	if err := os.WriteFile(absPath, data, 0o600); err != nil {
+		log.Printf("[whatsapp] media save failed: %v", err)
+		return false, ""
+	}
+	relPath := filepath.ToSlash(filepath.Join(relDir, name))
+	log.Printf("[whatsapp] saved attachment to %s (%d bytes)", relPath, len(data))
+
+	if isVoice {
+		stateMu.Lock()
+		voiceOn := whatsAppVoiceEnabled(loadState())
+		stateMu.Unlock()
+		if !voiceOn {
+			log.Printf("[whatsapp] voice transcription disabled by parent — saved audio only")
+		} else {
+			transcript, err := transcribeAudioFile(ctx, absPath)
+			if err != nil {
+				log.Printf("[whatsapp] voice transcription unavailable: %v", err)
+			} else if strings.TrimSpace(transcript) != "" {
+				voiceText = strings.TrimSpace(transcript)
+				log.Printf("[whatsapp] transcribed voice note (%d chars)", len(voiceText))
+			}
+		}
+	}
+	return true, voiceText
+}
+
+// waBot manages every linked WhatsApp account (one per parent) via whatsmeow
+// (the unofficial WhatsApp Web multi-device protocol — the same mechanism as
+// scanning a QR to link a device in the real WhatsApp app). Each parent links
+// their OWN phone; all of them share the single "parent" conversation Quill
+// already uses for web chat + Pulse (one unified family memory, not
+// per-parent silos — the SAME shared conversation, just reachable from
+// multiple linked phones).
 //
-// Safety boundary: the bot only ever acts in the paired account's own
-// "Message Yourself" chat (see isSelfChat) — never a real contact or group.
-// Without that restriction, Quill would start replying to whoever else the
+// Safety boundary: each account only ever acts in ITS OWN paired "Message
+// Yourself" chat (see waAccount.isSelfChat) — never a real contact or group.
+// Without that restriction, Quill would start replying to whoever else a
 // linked phone talks to, which would be a serious safety problem for a
 // family app. This mirrors AgentWorks' whatsapp_service.go pattern, stripped
 // of its multi-tenant/routing-table machinery this app doesn't need.
 type waBot struct {
-	mu     sync.RWMutex
-	client *whatsmeow.Client
-	dbPath string
-	// bgCtx is a long-lived context for the connection/pairing goroutine —
+	mu        sync.RWMutex
+	container *sqlstore.Container
+	accounts  map[string]*waAccount // keyed by phone number (JID.User) once paired
+	// bgCtx is a long-lived context for the connection/pairing goroutines —
 	// deliberately NOT derived from any HTTP request's context. A request's
 	// context is canceled the instant that response is written, which would
 	// silently kill an in-flight whatsmeow Connect()/GetQRChannel() call if it
@@ -54,6 +260,7 @@ type waBot struct {
 	bgCtx context.Context
 
 	pairingMu sync.Mutex
+	pending   *waAccount // the in-progress (not-yet-paired) pairing slot; nil when none
 	qrMu      sync.RWMutex
 	lastQR    string
 	qrExpires time.Time
@@ -65,11 +272,11 @@ func whatsAppSessionPath() string {
 	return filepath.Join(familyDataDir(), "whatsapp", "session.db")
 }
 
-// initWhatsAppBot loads (or creates) the local device store and builds the
-// whatsmeow client. It does NOT connect to WhatsApp's servers — that only
-// happens lazily, the first time the parent opens the WhatsApp settings
-// section, via EnsureConnecting. Called once at server startup so IsPaired()
-// reflects real state immediately.
+// initWhatsAppBot opens (or creates) the local device store and reconnects
+// every already-paired account found in it. It does NOT block on any one
+// account's connect — each reconnects in its own goroutine so a slow/offline
+// phone never delays server startup or the others. Called once at server
+// startup so status reflects real state immediately.
 func initWhatsAppBot(ctx context.Context) error {
 	dbPath := whatsAppSessionPath()
 	if err := os.MkdirAll(filepath.Dir(dbPath), 0o700); err != nil {
@@ -82,57 +289,100 @@ func initWhatsAppBot(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("whatsapp: open session store: %w", err)
 	}
-	device, err := container.GetFirstDevice(ctx)
+	devices, err := container.GetAllDevices(ctx)
 	if err != nil {
-		return fmt.Errorf("whatsapp: load device: %w", err)
+		return fmt.Errorf("whatsapp: load devices: %w", err)
 	}
-	client := whatsmeow.NewClient(device, waLog.Noop)
-	client.AddEventHandler(whatsAppBot.handleEvent)
 
 	whatsAppBot.mu.Lock()
-	whatsAppBot.client = client
-	whatsAppBot.dbPath = dbPath
+	whatsAppBot.container = container
+	whatsAppBot.accounts = map[string]*waAccount{}
 	whatsAppBot.bgCtx = context.Background()
 	whatsAppBot.mu.Unlock()
+
+	for _, device := range devices {
+		acct := whatsAppBot.buildAccount(device)
+		if id := acct.OwnJID(); !id.IsEmpty() {
+			whatsAppBot.mu.Lock()
+			whatsAppBot.accounts[id.User] = acct
+			whatsAppBot.mu.Unlock()
+		}
+		go func(a *waAccount) {
+			if err := a.client.Connect(); err != nil {
+				log.Printf("[whatsapp] connect failed for %s: %v", a.OwnJID().User, err)
+			} else {
+				log.Printf("[whatsapp] connected as %s", a.OwnJID().String())
+			}
+		}(acct)
+	}
 	return nil
 }
 
-// EnsureConnecting starts (or resumes) the connection in the background —
-// idempotent and safe to call on every status/pair poll. If already paired,
-// this simply keeps/gets the live connection up so incoming messages arrive.
-// If not paired, it runs one QR-pairing attempt (bounded by
-// whatsappPairingTimeout); the next poll starts a fresh attempt if it lapsed.
+// buildAccount wraps a device in a client and registers its event handler,
+// bound to THIS account so incoming events are always checked against the
+// right JID/LID — never returns an already-registered account.
+func (w *waBot) buildAccount(device *store.Device) *waAccount {
+	client := whatsmeow.NewClient(device, waLog.Noop)
+	acct := &waAccount{client: client}
+	client.AddEventHandler(func(rawEvt interface{}) { w.handleEvent(acct, rawEvt) })
+	return acct
+}
+
+// EnsureConnecting reconnects any disconnected paired accounts and, if no
+// pairing attempt is currently in flight, starts one for a possible NEW
+// phone — so opening/polling the Connectors WhatsApp panel both keeps
+// existing links alive and offers a fresh QR to add one more parent.
+// Idempotent and safe to call on every status/pair poll.
 func (w *waBot) EnsureConnecting(_ context.Context) {
 	w.mu.RLock()
-	client := w.client
+	accounts := make([]*waAccount, 0, len(w.accounts))
+	for _, a := range w.accounts {
+		accounts = append(accounts, a)
+	}
 	bgCtx := w.bgCtx
 	w.mu.RUnlock()
-	if client == nil {
-		return
+
+	for _, a := range accounts {
+		if a.client != nil && !a.client.IsConnected() {
+			go func(a *waAccount) { _ = a.client.Connect() }(a)
+		}
 	}
-	if client.IsConnected() {
-		return
-	}
+
 	if !w.pairingMu.TryLock() {
-		return // an attempt is already in flight
+		return // a pairing attempt is already in flight
 	}
 	go func() {
 		defer w.pairingMu.Unlock()
-		w.connectOnce(bgCtx, client)
+		w.startPairingAttempt(bgCtx)
 	}()
 }
 
-func (w *waBot) connectOnce(ctx context.Context, client *whatsmeow.Client) {
-	log.Printf("[whatsapp] connectOnce starting (paired=%v)", client.Store.ID != nil)
-	if client.Store.ID != nil {
-		if err := client.Connect(); err != nil {
-			log.Printf("[whatsapp] connect failed: %v", err)
-		} else if id := client.Store.ID; id != nil {
-			log.Printf("[whatsapp] connected as %s", id.String())
-		}
+// startPairingAttempt runs one QR-pairing attempt for a BRAND NEW phone —
+// never touches already-linked accounts (each gets its own fresh
+// container.NewDevice()). On success the newly-paired account is added to
+// the accounts map under its own phone number; on timeout/failure nothing
+// changes and the next EnsureConnecting call starts a fresh attempt.
+func (w *waBot) startPairingAttempt(ctx context.Context) {
+	w.mu.RLock()
+	container := w.container
+	w.mu.RUnlock()
+	if container == nil {
 		return
 	}
+	device := container.NewDevice()
+	acct := w.buildAccount(device)
 
+	w.mu.Lock()
+	w.pending = acct
+	w.mu.Unlock()
+	defer func() {
+		w.mu.Lock()
+		w.pending = nil
+		w.mu.Unlock()
+	}()
+
+	client := acct.client
+	log.Printf("[whatsapp] starting a new pairing attempt")
 	qrChan, err := client.GetQRChannel(ctx)
 	if err != nil {
 		log.Printf("[whatsapp] GetQRChannel failed: %v", err)
@@ -169,11 +419,17 @@ func (w *waBot) connectOnce(ctx context.Context, client *whatsmeow.Client) {
 				w.qrMu.Unlock()
 				log.Printf("[whatsapp] QR ready (expires in %s)", evt.Timeout)
 			case "success":
-				log.Printf("[whatsapp] paired successfully")
+				own := acct.OwnJID()
+				log.Printf("[whatsapp] paired successfully as %s", own.String())
 				w.qrMu.Lock()
 				w.lastQR = ""
 				w.qrExpires = time.Time{}
 				w.qrMu.Unlock()
+				if !own.IsEmpty() {
+					w.mu.Lock()
+					w.accounts[own.User] = acct
+					w.mu.Unlock()
+				}
 				return
 			case "timeout":
 				w.qrMu.Lock()
@@ -191,38 +447,24 @@ func (w *waBot) connectOnce(ctx context.Context, client *whatsmeow.Client) {
 	}
 }
 
+// IsPaired reports whether at least one phone is linked.
 func (w *waBot) IsPaired() bool {
 	w.mu.RLock()
 	defer w.mu.RUnlock()
-	return w.client != nil && w.client.Store != nil && w.client.Store.ID != nil
+	return len(w.accounts) > 0
 }
 
+// IsConnected reports whether at least one linked phone currently has a live
+// connection.
 func (w *waBot) IsConnected() bool {
 	w.mu.RLock()
 	defer w.mu.RUnlock()
-	return w.client != nil && w.client.IsConnected()
-}
-
-func (w *waBot) OwnJID() types.JID {
-	w.mu.RLock()
-	defer w.mu.RUnlock()
-	if w.client == nil || w.client.Store == nil || w.client.Store.ID == nil {
-		return types.JID{}
+	for _, a := range w.accounts {
+		if a.client != nil && a.client.IsConnected() {
+			return true
+		}
 	}
-	return *w.client.Store.ID
-}
-
-// OwnLID returns the paired account's own LID identity (the "@lid" JID modern
-// WhatsApp uses alongside the phone-number JID). Self-chat messages arrive on
-// the LID identity, so isSelfChat must match it too — see the LID handling
-// AgentWorks' whatsapp_service.go also does.
-func (w *waBot) OwnLID() types.JID {
-	w.mu.RLock()
-	defer w.mu.RUnlock()
-	if w.client == nil || w.client.Store == nil {
-		return types.JID{}
-	}
-	return w.client.Store.LID
+	return false
 }
 
 func (w *waBot) GetQR() (code string, expires time.Time) {
@@ -245,157 +487,153 @@ func (w *waBot) GetQRImagePNG(size int) ([]byte, error) {
 	return qrcode.Encode(code, qrcode.Medium, size)
 }
 
-// isSelfChat is the safety boundary described on waBot: true only for the
-// paired account's own "Message Yourself" chat. Modern WhatsApp routes the
-// self-chat through the account's LID identity (chat server "lid"), so match
-// BOTH the classic phone-number JID and the LID — otherwise self-chat
-// messages arrive as "@lid" and get silently rejected.
-func (w *waBot) isSelfChat(chat types.JID) bool {
-	if chat.User == "" {
-		return false
-	}
-	if own := w.OwnJID(); !own.IsEmpty() && chat.Server == types.DefaultUserServer && chat.User == own.User {
-		return true
-	}
-	if lid := w.OwnLID(); !lid.IsEmpty() && chat.Server == types.HiddenUserServer && chat.User == lid.User {
-		return true
-	}
-	return false
-}
-
-func (w *waBot) Unpair(ctx context.Context) error {
+// Unpair removes ONE linked account by its phone number (JID.User) — logs it
+// out, disconnects, and deletes just its own device row, leaving every OTHER
+// linked account untouched. (The old single-account design deleted the whole
+// session DB file on unpair, which would have wiped out every other parent
+// too — that's exactly the regression this per-account deletion avoids.)
+func (w *waBot) Unpair(ctx context.Context, phone string) error {
 	w.mu.Lock()
-	client := w.client
-	dbPath := w.dbPath
-	w.client = nil
+	acct, ok := w.accounts[phone]
+	container := w.container
+	if ok {
+		delete(w.accounts, phone)
+	}
 	w.mu.Unlock()
-
-	if client != nil {
-		_ = client.Logout(ctx)
-		client.Disconnect()
+	if !ok || acct == nil || acct.client == nil {
+		return fmt.Errorf("no linked account for %q", phone)
 	}
 
-	w.qrMu.Lock()
-	w.lastQR = ""
-	w.qrExpires = time.Time{}
-	w.qrMu.Unlock()
-
-	for _, suffix := range []string{"", "-wal", "-shm"} {
-		if err := os.Remove(dbPath + suffix); err != nil && !os.IsNotExist(err) {
-			return fmt.Errorf("whatsapp: remove %s: %w", dbPath+suffix, err)
+	_ = acct.client.Logout(ctx)
+	acct.client.Disconnect()
+	if container != nil && acct.client.Store != nil {
+		if err := container.DeleteDevice(ctx, acct.client.Store); err != nil {
+			return fmt.Errorf("whatsapp: delete device: %w", err)
 		}
 	}
-	return initWhatsAppBot(ctx)
+	return nil
 }
 
-// SendToSelf pushes a message into the paired account's own "Message
-// Yourself" chat proactively — used by Pulse (pulse.go) when the parent's
-// most recently active conversation is the real WhatsApp thread, so an
-// unsolicited check-in actually reaches them instead of silently sitting in
-// a chat history file nobody's looking at.
-func (w *waBot) SendToSelf(ctx context.Context, text string) error {
-	w.mu.RLock()
-	client := w.client
-	w.mu.RUnlock()
-	if client == nil || !w.IsPaired() {
-		return fmt.Errorf("whatsapp not paired")
+// SendToAllSelf broadcasts a text notification to every currently-connected
+// linked account (every linked parent) — used by notify_user/Pulse. Returns
+// how many succeeded and the last error seen (if any), for an honest
+// per-channel delivery status.
+func (w *waBot) SendToAllSelf(ctx context.Context, text string) (sent int, lastErr error) {
+	for _, a := range w.connectedAccounts() {
+		if err := a.SendToSelf(ctx, text); err != nil {
+			lastErr = err
+			continue
+		}
+		sent++
 	}
-	own := w.OwnJID()
-	if own.IsEmpty() {
-		return fmt.Errorf("whatsapp own JID unknown")
-	}
-	msg := &waProto.Message{Conversation: &text}
-	_, err := client.SendMessage(ctx, own, msg)
-	return err
+	return sent, lastErr
 }
 
-// react adds (or, with emoji "", clears) a whatsmeow emoji reaction on an
-// incoming message — the "got it / working on it" acknowledgement, since an
-// agent turn can take a minute or two and there'd otherwise be no sign the
-// message was received. Mirrors AgentWorks' WhatsApp reaction ack. Best-effort.
-func (w *waBot) react(chat, sender types.JID, msgID types.MessageID, emoji string) {
-	w.mu.RLock()
-	client := w.client
-	w.mu.RUnlock()
-	if client == nil {
-		return
+// SendDocumentToAllSelf is SendToAllSelf for a document attachment — used by
+// send_whatsapp_file. Sends to every currently-connected linked account, not
+// just whichever one (if any) originated the turn — matching notify_user's
+// existing "goes to every channel you've set up" philosophy rather than
+// threading "which account asked" through the whole tool-call chain.
+func (w *waBot) SendDocumentToAllSelf(ctx context.Context, data []byte, filename, mimetype, caption string) (sent int, lastErr error) {
+	for _, a := range w.connectedAccounts() {
+		if err := a.SendDocumentToSelf(ctx, data, filename, mimetype, caption); err != nil {
+			lastErr = err
+			continue
+		}
+		sent++
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-	defer cancel()
-	reaction := client.BuildReaction(chat, sender, msgID, emoji)
-	if _, err := client.SendMessage(ctx, chat, reaction); err != nil {
-		log.Printf("[whatsapp] reaction failed: %v", err)
+	return sent, lastErr
+}
+
+func (w *waBot) connectedAccounts() []*waAccount {
+	w.mu.RLock()
+	defer w.mu.RUnlock()
+	out := make([]*waAccount, 0, len(w.accounts))
+	for _, a := range w.accounts {
+		if a.client != nil && a.client.IsConnected() {
+			out = append(out, a)
+		}
+	}
+	return out
+}
+
+// sendWhatsAppFileTool lets the parent-mode agent hand over a test or study
+// guide as a real PDF attachment on WhatsApp, instead of only describing it
+// in text — e.g. "send me the fractions test as a PDF on WhatsApp". Scoped
+// to shared/tests/ and shared/study/ only (not parent/answer-keys/ — those
+// stay off WhatsApp) rather than any arbitrary file, and only sends to
+// linked accounts' own self-chats (SendDocumentToAllSelf) — never a third
+// party.
+// onSent, when non-nil, is called with the workspace-relative path of each
+// file successfully sent — so the caller (a web-chat or WhatsApp turn) can
+// append a real, clickable reference to the persisted reply afterward. The
+// model's own reply text alone doesn't reliably do this: the system prompt
+// tells it to keep file paths out of prose, so without this the file was
+// sent but genuinely invisible anywhere in the chat transcript/UI.
+func sendWhatsAppFileTool(onSent func(path string)) agentsession.Tool {
+	return agentsession.Tool{
+		Name: "send_whatsapp_file",
+		Description: "Send a test or study material file to the parent as a real PDF attachment on their own WhatsApp " +
+			"(their linked \"message yourself\" chat) — only call this when the parent explicitly asks for a file/PDF over " +
+			"WhatsApp. The file must already exist as a PDF (use agent_browser: open the file, then run its \"pdf\" command " +
+			"to export a PDF into the same folder, e.g. shared/tests/<subject>/<topic>/<name>.pdf, before calling this). " +
+			"Requires WhatsApp to be linked (Connectors → WhatsApp) — if it's not, tell the parent to link it there first.",
+		Category: "family_tools",
+		Params: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"path":    map[string]interface{}{"type": "string", "description": "workspace-relative path to the PDF, e.g. shared/tests/math/fractions/2026-07-23-quick-check.pdf"},
+				"caption": map[string]interface{}{"type": "string", "description": "optional short caption to send with the file"},
+			},
+			"required": []string{"path"},
+		},
+		Handler: func(ctx context.Context, args map[string]interface{}) (string, error) {
+			if !whatsAppBot.IsConnected() {
+				return "", fmt.Errorf("whatsapp is not linked")
+			}
+			rel := strings.TrimSpace(fmt.Sprint(args["path"]))
+			caption, _ := args["caption"].(string)
+			if !strings.HasSuffix(strings.ToLower(rel), ".pdf") {
+				return "", fmt.Errorf("path must be a .pdf file")
+			}
+			allowed := strings.HasPrefix(rel, "shared/tests/") || strings.HasPrefix(rel, "shared/study/")
+			if !allowed {
+				return "", fmt.Errorf("send_whatsapp_file only sends files under shared/tests/ or shared/study/")
+			}
+			abs, ok := resolveWorkspacePath(rel)
+			if !ok {
+				return "", fmt.Errorf("invalid path")
+			}
+			data, err := os.ReadFile(abs)
+			if err != nil {
+				return "", fmt.Errorf("read %s: %w", rel, err)
+			}
+			sendCtx, cancel := context.WithTimeout(ctx, 60*time.Second)
+			defer cancel()
+			sent, sendErr := whatsAppBot.SendDocumentToAllSelf(sendCtx, data, filepath.Base(rel), "application/pdf", caption)
+			if sent == 0 {
+				if sendErr != nil {
+					return "", fmt.Errorf("send whatsapp document: %w", sendErr)
+				}
+				return "", fmt.Errorf("send whatsapp document: no connected accounts")
+			}
+			if onSent != nil {
+				onSent(rel)
+			}
+			return `{"status":"sent"}`, nil
+		},
 	}
 }
 
 // --- incoming messages -------------------------------------------------
 
-func (w *waBot) handleEvent(rawEvt interface{}) {
+func (w *waBot) handleEvent(acct *waAccount, rawEvt interface{}) {
 	switch evt := rawEvt.(type) {
 	case *events.Message:
-		w.handleIncomingMessage(evt)
+		w.handleIncomingMessage(acct, evt)
 	case *events.LoggedOut:
-		log.Printf("[whatsapp] logged out (reason=%v) — session invalid, re-pair required", evt.Reason)
+		log.Printf("[whatsapp] %s logged out (reason=%v) — session invalid, re-pair required", acct.OwnJID().User, evt.Reason)
 	}
-}
-
-// ingestWhatsAppMedia downloads an image/document attachment from an incoming
-// WhatsApp message into shared/inbox and reports whether one was saved.
-// Deliberately does NOT tell the model about it or the path — only text
-// messages go to the agent; the file just lands in the inbox and the
-// process-file skill's own "check shared/inbox/ before every reply" habit
-// picks it up naturally on whatever the next real turn is, the same as any
-// other inbox arrival. Best-effort: a failed download just drops the
-// attachment (any accompanying text still gets handled normally).
-func (w *waBot) ingestWhatsAppMedia(evt *events.Message) bool {
-	m := evt.Message
-	if m == nil {
-		return false
-	}
-	var dl whatsmeow.DownloadableMessage
-	var name string
-	switch {
-	case m.ImageMessage != nil:
-		dl = m.ImageMessage
-		name = "wa-" + evt.Info.ID + extForMime(m.ImageMessage.GetMimetype(), ".jpg")
-	case m.DocumentMessage != nil:
-		dl = m.DocumentMessage
-		name = strings.TrimSpace(m.DocumentMessage.GetFileName())
-		if name == "" {
-			name = "wa-" + evt.Info.ID + extForMime(m.DocumentMessage.GetMimetype(), ".bin")
-		}
-	default:
-		return false
-	}
-
-	w.mu.RLock()
-	client := w.client
-	w.mu.RUnlock()
-	if client == nil {
-		return false
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-	defer cancel()
-	data, err := client.Download(ctx, dl)
-	if err != nil {
-		log.Printf("[whatsapp] media download failed: %v", err)
-		return false
-	}
-
-	name = sanitizeInboxName(name)
-	relDir := filepath.Join("shared", "inbox")
-	absDir := filepath.Join(familyDataDir(), "workspace", relDir)
-	if err := os.MkdirAll(absDir, 0o700); err != nil {
-		log.Printf("[whatsapp] inbox mkdir failed: %v", err)
-		return false
-	}
-	if err := os.WriteFile(filepath.Join(absDir, name), data, 0o600); err != nil {
-		log.Printf("[whatsapp] media save failed: %v", err)
-		return false
-	}
-	relPath := filepath.ToSlash(filepath.Join(relDir, name))
-	log.Printf("[whatsapp] saved attachment to %s (%d bytes)", relPath, len(data))
-	return true
 }
 
 // extForMime maps a media mimetype to a file extension, falling back to def.
@@ -411,6 +649,8 @@ func extForMime(mime, def string) string {
 		return ".gif"
 	case strings.Contains(mime, "pdf"):
 		return ".pdf"
+	case strings.Contains(mime, "ogg"):
+		return ".ogg"
 	default:
 		return def
 	}
@@ -440,16 +680,16 @@ func extractWhatsAppMessageText(m *waProto.Message) string {
 	return ""
 }
 
-func (w *waBot) handleIncomingMessage(evt *events.Message) {
+func (w *waBot) handleIncomingMessage(acct *waAccount, evt *events.Message) {
 	info := evt.Info
-	if info.IsFromMe && !w.isSelfChat(info.Chat) {
+	if info.IsFromMe && !acct.isSelfChat(info.Chat) {
 		return // outgoing message to a real contact/group — never act on these
 	}
 	if info.IsGroup || info.Chat.Server == types.BroadcastServer {
 		return
 	}
-	if !w.isSelfChat(info.Chat) {
-		return // a real contact DMed the linked account — never reply as Quill
+	if !acct.isSelfChat(info.Chat) {
+		return // a real contact DMed this linked account — never reply as Quill
 	}
 	text := extractWhatsAppMessageText(evt.Message)
 
@@ -458,12 +698,29 @@ func (w *waBot) handleIncomingMessage(evt *events.Message) {
 	// with no caption just gets acknowledged (👀) below and never starts a
 	// turn; the file sits in the inbox until the next real text message, at
 	// which point the process-file skill's own "check shared/inbox/ before
-	// every reply" habit picks it up like any other inbox arrival.
-	gotMedia := w.ingestWhatsAppMedia(evt)
+	// every reply" habit picks it up like any other inbox arrival. A voice
+	// note is the exception: its local transcript (see ingestWhatsAppMedia)
+	// stands in for typed text below, so it drives a turn just like normal.
+	gotMedia, voiceText := acct.ingestWhatsAppMedia(evt)
+	if strings.TrimSpace(text) == "" && voiceText != "" {
+		text = "🎙️ " + voiceText
+		// Confirm what was actually heard right away, decoupled from the real
+		// turn below — a turn can take minutes, and speech-to-text isn't
+		// perfect, so the parent should see (and can correct/retype) what
+		// Quill transcribed without waiting for the full reply.
+		if acct.client != nil {
+			confirmCtx, confirmCancel := context.WithTimeout(context.Background(), 15*time.Second)
+			heard := fmt.Sprintf("🎙️ I heard: “%s”", voiceText)
+			if _, err := acct.client.SendMessage(confirmCtx, info.Chat, &waProto.Message{Conversation: &heard}); err != nil {
+				log.Printf("[whatsapp] voice transcript confirmation send failed: %v", err)
+			}
+			confirmCancel()
+		}
+	}
 
 	if strings.TrimSpace(text) == "" {
 		if gotMedia {
-			w.react(info.Chat, info.Sender, info.ID, "👀")
+			acct.react(info.Chat, info.Sender, info.ID, "👀")
 		}
 		return
 	}
@@ -472,43 +729,42 @@ func (w *waBot) handleIncomingMessage(evt *events.Message) {
 	// so they see it was received while the (possibly 1-2 min) turn runs. If the
 	// turn runs long, layer on ⏳ ("still working"). Cleared when the reply is
 	// sent; swapped to ⚠️ if the turn fails. Mirrors AgentWorks' reaction ack.
-	w.react(info.Chat, info.Sender, info.ID, "👀")
+	acct.react(info.Chat, info.Sender, info.ID, "👀")
 	longRunDone := make(chan struct{})
 	go func() {
 		select {
 		case <-longRunDone:
 		case <-time.After(12 * time.Second):
-			w.react(info.Chat, info.Sender, info.ID, "⏳")
+			acct.react(info.Chat, info.Sender, info.ID, "⏳")
 		}
 	}()
 
 	reply, err := w.runTurn(text)
 	close(longRunDone)
 	if err != nil {
-		w.react(info.Chat, info.Sender, info.ID, "⚠️")
+		acct.react(info.Chat, info.Sender, info.ID, "⚠️")
 		log.Printf("[whatsapp] turn failed: %v", err)
 		return
 	}
-	w.react(info.Chat, info.Sender, info.ID, "") // clear the ack — the reply is the completion signal
+	acct.react(info.Chat, info.Sender, info.ID, "") // clear the ack — the reply is the completion signal
 
-	w.mu.RLock()
-	client := w.client
-	w.mu.RUnlock()
-	if client == nil {
+	if acct.client == nil {
 		return
 	}
 	msg := &waProto.Message{Conversation: &reply}
 	sendCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	if _, err := client.SendMessage(sendCtx, info.Chat, msg); err != nil {
+	if _, err := acct.client.SendMessage(sendCtx, info.Chat, msg); err != nil {
 		log.Printf("[whatsapp] send failed: %v", err)
 	}
 }
 
-// runTurn runs one real agent turn for a message received over the actual
-// linked WhatsApp account — the same agentic runtime as the in-app WhatsApp
+// runTurn runs one real agent turn for a message received over any linked
+// WhatsApp account — the same agentic runtime as the in-app WhatsApp
 // simulator (handleWhatsAppMessage), just triggered by a whatsmeow event
-// instead of an HTTP request from the frontend.
+// instead of an HTTP request from the frontend. Every account funnels into
+// the SAME shared "parent" conversation, so it never needs to know which
+// account triggered it.
 func (w *waBot) runTurn(text string) (string, error) {
 	agentTurnMu.Lock()
 	defer agentTurnMu.Unlock()
@@ -551,15 +807,22 @@ func (w *waBot) runTurn(text string) (string, error) {
 	// the stored/visible message stays clean). Because the tmux session is shared
 	// with the web chat, the base system prompt may be the web one; this keeps
 	// replies phone-appropriate regardless.
-	history = append(history, agentsession.Message{Role: "user", Text: text + "\n\n(Replying over WhatsApp on the phone — keep it short and plain text: no markdown, headings, or file paths.)"})
+	history = append(history, agentsession.Message{Role: "user", Text: text + "\n\n(Replying over WhatsApp on the phone — keep it short and plain text: no markdown, headings, or file paths. IMPORTANT: there is no screen/panel here — calling open_file does NOT show the parent anything, it's a silent no-op on this channel. NEVER say \"I've opened it\" or \"it's ready and open\" here — that's only true on the web app. Instead, either describe what's in the file directly in your reply, or if the parent wants the actual file, use send_whatsapp_file to send it as a real PDF attachment (export to PDF via agent_browser first if it isn't one already). If the message above starts with 🎙️, that prefix means it's a LOCAL, ON-DEVICE TRANSCRIPT of a voice note the parent just sent — the text after it is genuinely what they said, already fully readable by you. Respond directly to its content exactly as you would a typed message; do NOT say you can't listen to or process voice/audio messages — you just did.)"})
 
+	// Persist the parent's message the INSTANT the turn starts (not just at
+	// completion) — same fix as the web chat path (see persistNewMessages'
+	// own doc comment): otherwise a steer landing mid-turn, or simply this
+	// snapshot going stale relative to disk, could get silently overwritten
+	// by fallback []enginedetect.ChatMessage built once here at turn start.
+	fallback := append([]enginedetect.ChatMessage(nil), prior...)
+	fallback = append(fallback, enginedetect.ChatMessage{Role: "user", Text: text})
+	persistNewMessages("parent", convID, fallback)
 	persistFull := func(reply string) {
-		full := append([]enginedetect.ChatMessage(nil), prior...)
-		full = append(full,
-			enginedetect.ChatMessage{Role: "user", Text: text},
-			enginedetect.ChatMessage{Role: "assistant", Text: reply})
-		persistConversation("parent", convID, full)
+		persistConversationReply("parent", convID, fallback, reply)
 	}
+
+	var sentFilesMu sync.Mutex
+	var sentFiles []string
 
 	sess, err := agentsession.New(ctx, agentsession.Config{
 		Provider:   provider,
@@ -577,7 +840,11 @@ func (w *waBot) runTurn(text string) (string, error) {
 		SessionID:                 convID,
 		SessionHandle:             loadSessionHandle("parent", convID),
 		BridgeRoutingInstructions: bridgeRoutingInstructions(),
-		Tools:                     withLiveStatus("parent:"+convID, []agentsession.Tool{webSearchTool(), readImageTool(s.Engine), notifyTool(), shellTool()}),
+		Tools: withLiveStatus("parent:"+convID, []agentsession.Tool{webSearchTool(), readImageTool(s.Engine), notifyTool(), shellTool(), agentBrowserTool(), sendWhatsAppFileTool(func(path string) {
+			sentFilesMu.Lock()
+			sentFiles = append(sentFiles, path)
+			sentFilesMu.Unlock()
+		})}),
 	})
 	if err != nil {
 		persistFull(friendlyTurnError(err))
@@ -585,24 +852,40 @@ func (w *waBot) runTurn(text string) (string, error) {
 	}
 	defer sess.Close()
 
+	// Register this turn as steerable too — it's the same "parent" conversation
+	// id as the web chat, so a follow-up the parent sends there while this
+	// WhatsApp-originated turn is still running can be injected live (see
+	// steer.go) instead of only ever queuing.
+	registerActiveTurn(convID, sess.Agent())
+	defer clearActiveTurn()
+
 	reply, err := sess.Ask(ctx, history)
 	if err != nil {
 		persistFull(friendlyTurnError(err))
 		return "", err
 	}
 	saveSessionHandle("parent", convID, sess.Handle())
+	reply = appendSentFileLinks(reply, sentFiles)
 	persistFull(reply)
 	return reply, nil
 }
 
 // --- HTTP routes ---------------------------------------------------------
 
-type whatsAppStatusResponse struct {
-	Paired      bool   `json:"paired"`
-	Connected   bool   `json:"connected"`
+type whatsAppAccountStatus struct {
+	JID       string `json:"jid"`
+	Connected bool   `json:"connected"`
+}
+
+type whatsAppPairingStatus struct {
 	QRAvailable bool   `json:"qr_available"`
 	QRExpiresAt string `json:"qr_expires_at,omitempty"`
-	OwnJID      string `json:"own_jid,omitempty"`
+}
+
+type whatsAppStatusResponse struct {
+	Accounts           []whatsAppAccountStatus  `json:"accounts"`
+	Pairing            whatsAppPairingStatus    `json:"pairing"`
+	VoiceTranscription voiceTranscriptionStatus `json:"voice_transcription"`
 }
 
 // GET /api/whatsapp/status
@@ -611,34 +894,42 @@ func handleWhatsAppStatus(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	// Always ensure the connection is live — EnsureConnecting is idempotent and
-	// no-ops if already connected. When paired it (re)establishes the live link
-	// so incoming messages arrive; when unpaired it drives the QR flow.
+	// Always ensure connections are live and a pairing attempt for a possible
+	// new phone is in flight — EnsureConnecting is idempotent.
 	whatsAppBot.EnsureConnecting(r.Context())
-	resp := whatsAppStatusResponse{
-		Paired:    whatsAppBot.IsPaired(),
-		Connected: whatsAppBot.IsConnected(),
+
+	whatsAppBot.mu.RLock()
+	resp := whatsAppStatusResponse{Accounts: make([]whatsAppAccountStatus, 0, len(whatsAppBot.accounts))}
+	for jid, acct := range whatsAppBot.accounts {
+		resp.Accounts = append(resp.Accounts, whatsAppAccountStatus{
+			JID:       jid,
+			Connected: acct.client != nil && acct.client.IsConnected(),
+		})
 	}
-	if own := whatsAppBot.OwnJID(); !own.IsEmpty() {
-		resp.OwnJID = own.User
-	}
+	whatsAppBot.mu.RUnlock()
+	sort.Slice(resp.Accounts, func(i, j int) bool { return resp.Accounts[i].JID < resp.Accounts[j].JID })
+
 	if code, expires := whatsAppBot.GetQR(); code != "" {
-		resp.QRAvailable = true
-		resp.QRExpiresAt = expires.UTC().Format(time.RFC3339)
+		resp.Pairing.QRAvailable = true
+		resp.Pairing.QRExpiresAt = expires.UTC().Format(time.RFC3339)
 	}
+
+	stateMu.Lock()
+	s := loadState()
+	stateMu.Unlock()
+	resp.VoiceTranscription = currentVoiceTranscriptionStatus(s)
+
 	writeJSON(w, http.StatusOK, resp)
 }
 
-// GET /api/whatsapp/pair — a PNG pairing QR code, or 404 if none is
-// available yet (already paired, or the code just hasn't arrived — the
-// frontend polls this alongside /status).
+// GET /api/whatsapp/pair — a PNG pairing QR code for the CURRENT pairing
+// attempt (adding one more phone), or 404 if none is available yet — the
+// frontend polls this alongside /status. Always available regardless of how
+// many phones are already linked (unlike the old single-account version,
+// pairing another phone never requires unlinking an existing one first).
 func handleWhatsAppPair(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-	if whatsAppBot.IsPaired() {
-		http.Error(w, "already paired", http.StatusConflict)
 		return
 	}
 	whatsAppBot.EnsureConnecting(r.Context())
@@ -655,13 +946,21 @@ func handleWhatsAppPair(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write(png)
 }
 
-// POST /api/whatsapp/unpair
+// POST /api/whatsapp/unpair — body {"jid": "<phone number>"}, unpairs just
+// that one linked account.
 func handleWhatsAppUnpair(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	if err := whatsAppBot.Unpair(r.Context()); err != nil {
+	var req struct {
+		JID string `json:"jid"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || strings.TrimSpace(req.JID) == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "jid is required"})
+		return
+	}
+	if err := whatsAppBot.Unpair(r.Context(), strings.TrimSpace(req.JID)); err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}

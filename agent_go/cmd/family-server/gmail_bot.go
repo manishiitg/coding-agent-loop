@@ -4,6 +4,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"mime"
 	"net/http"
 	"os/exec"
 	"strings"
@@ -58,6 +59,12 @@ func handleGmailStatus(w http.ResponseWriter, r *http.Request) {
 // and a text/html part (htmlBody) — the same shape AgentWorks' notify email
 // uses. Gmail strips <style>/<head>/class CSS, so htmlBody must be inline-styled.
 func buildRawEmail(to, subject, body, htmlBody string) string {
+	// RFC 2047-encode the subject: header fields are 7-bit ASCII only, so any
+	// non-ASCII character (an em dash, curly quotes, Hindi text, an emoji —
+	// whatever the model happens to write) sitting raw in the header breaks
+	// it for mail clients (mojibake or a literal "=?..." sequence shown to
+	// the parent). mime.BEncoding.Encode is a no-op for already-ASCII input.
+	subject = mime.BEncoding.Encode("UTF-8", subject)
 	if strings.TrimSpace(htmlBody) == "" {
 		msg := "To: " + to + "\r\n" +
 			"Subject: " + subject + "\r\n" +

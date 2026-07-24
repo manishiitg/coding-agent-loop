@@ -5,7 +5,7 @@ description: Create clear, child-ready study material (notes, worked examples, a
 
 # Create study material
 
-0. **Don't silently guess what to make it about.** If the parent's request already names a subject/topic/focus, skip ahead. If it's generic ("create study material for Myra") — before writing anything, quickly skim recent `parent/conversations/`, `child/conversations/`, and the academic map for what she's currently on or struggling with, then say what you found and ask ONE short question — e.g. "She's currently on fractions and decimals, and seemed to struggle with word problems last time — want me to focus there, or a different topic?" Wait for their answer before generating.
+0. **Don't silently guess what to make it about.** If the parent's request already names a subject/topic/focus, skip ahead. If it's generic ("create study material for my child") — before writing anything, quickly skim recent `parent/conversations/`, `child/conversations/`, and the academic map for what the child is currently on or struggling with, then say what you found and ask ONE short question — e.g. "Currently on fractions and decimals, and seemed to struggle with word problems last time — want me to focus there, or a different topic?" Wait for their answer before generating.
 
 1. **Know the child.** Read `parent/child-profile.json` for name, grade, and board so the material matches their level and syllabus. If any of these are missing, ask the parent first.
 

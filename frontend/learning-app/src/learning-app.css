@@ -140,6 +140,8 @@ html, body, #root { margin: 0; height: 100%; }
 .fl-boot p { margin: 0; font-size: var(--text-body); font-weight: 600; }
 .fl-thinking { display: inline-flex; align-items: center; gap: 8px; color: #5f708d; font-size: var(--text-secondary); }
 .fl-thinking img { display: block; }
+.fl-bubble.is-streaming::after { content: ''; display: inline-block; width: 7px; height: 15px; margin-left: 2px; vertical-align: -2px; background: currentColor; opacity: .6; animation: fl-cursor-blink 1s step-end infinite; }
+@keyframes fl-cursor-blink { 50% { opacity: 0; } }
 .fl-toolcard { display: inline-flex; align-items: center; gap: 8px; width: fit-content; padding: 9px 13px; border: 1px solid #ccebd8; border-radius: 12px; background: #eefaf1; color: #1f7a4d; font-size: var(--text-secondary); font-weight: 600; }
 .fl-toolcard svg { flex: 0 0 auto; color: #2aa96a; }
 .fl-toolcard strong { font-weight: 800; }
@@ -533,6 +535,14 @@ details[open] > .fl-tree-dir .fl-tree-icon.is-open { display: block; }
 
 .fl-viewer { display: flex; flex-direction: column; min-height: 0; flex: 1; }
 .fl-viewer-bar { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
+/* Wraps each opened file's content; re-keyed per path so this replays on
+   every open, even switching between two files of the same type. Stays a
+   flex column itself so .fl-viewer-frame's flex:1 sizing still reaches it. */
+.fl-viewer-body { display: flex; flex-direction: column; min-height: 0; flex: 1; animation: fl-viewer-reveal .28s ease-out; }
+@keyframes fl-viewer-reveal {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
 .fl-viewer-back { display: inline-flex; align-items: center; gap: 4px; padding: 5px 10px; border: 1px solid #e0d7c5; border-radius: 9px; background: var(--surface); color: #3d567a; font: inherit; font-size: var(--text-secondary); font-weight: 650; cursor: pointer; }
 .fl-viewer-name { flex: 1; min-width: 0; color: var(--heading); font-weight: 700; font-size: var(--text-secondary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .fl-give-to-child { flex: 0 0 auto; padding: 6px 14px; border: 0; border-radius: 9px; background: var(--yellow); color: var(--heading); font: inherit; font-size: var(--text-secondary); font-weight: 700; cursor: pointer; white-space: nowrap; }
@@ -544,6 +554,14 @@ details[open] > .fl-tree-dir .fl-tree-icon.is-open { display: block; }
 .fl-viewer-md h1, .fl-viewer-md h2, .fl-viewer-md h3, .fl-viewer-md h4 { color: var(--heading); }
 .fl-viewer-pre { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; overflow: auto; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .82rem; color: var(--ink); white-space: pre-wrap; }
 .fl-viewer-img { max-width: 100%; height: auto; border: 1px solid #ece3d2; border-radius: 12px; background: var(--surface); }
+.fl-viewer-media { width: 100%; border-radius: 12px; background: #000; }
+audio.fl-viewer-media { background: var(--surface); }
+.fl-inline-code { background: rgba(127, 127, 127, .14); padding: 2px 5px; border-radius: 5px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .9em; }
+.fl-code-block-plain { margin: 8px 0; padding: 12px 14px; border-radius: 10px; border: 1px solid var(--line); background: var(--surface); overflow-x: auto; white-space: pre-wrap; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .82rem; line-height: 1.55; }
+.fl-mermaid { margin: 10px 0; padding: 12px; border-radius: 10px; border: 1px solid var(--line); background: var(--surface); overflow-x: auto; text-align: center; }
+.fl-mermaid-loading { margin: 10px 0; padding: 12px 14px; border-radius: 10px; border: 1px solid var(--line); background: var(--surface); font-size: .85rem; opacity: .7; }
+.fl-mermaid-error { margin: 10px 0; padding: 12px 14px; border-radius: 10px; border: 1px solid #e2a5a5; background: rgba(226, 90, 90, .08); font-size: .8rem; color: #a33; }
+.fl-mermaid-error pre { white-space: pre-wrap; margin: 6px 0 0; }
 
 /* Agent-suggested next-step pills, shown after a reply */
 .fl-suggestions { display: flex; flex-wrap: wrap; gap: 8px; margin: 4px 0 2px; }
@@ -625,8 +643,22 @@ details[open] > .fl-tree-dir .fl-tree-icon.is-open { display: block; }
 .fl-code-row { display: flex; align-items: center; gap: 8px; width: 100%; min-width: 0; }
 .fl-connector-status { font-weight: 700; }
 .fl-connector-status.is-connected { color: #2f8a52; }
+.fl-wa-account-list { list-style: none; margin: 0; padding: 0; width: 100%; display: flex; flex-direction: column; gap: 8px; }
+.fl-wa-account-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 8px 12px; border-radius: 10px; background: var(--surface); border: 1px solid var(--line); font-size: var(--text-secondary); }
+.fl-wa-add-another { width: 100%; display: flex; flex-direction: column; gap: 10px; align-items: flex-start; padding-top: 8px; }
 .fl-wa-qr { width: 220px; height: 220px; border-radius: 12px; border: 1px solid var(--line); align-self: center; }
 .fl-wa-qr.is-loading { display: grid; place-items: center; color: #5f708d; font-size: var(--text-secondary); background: var(--surface-2); }
+.fl-wa-voice { width: 100%; padding: 12px 14px; border-radius: 12px; background: var(--surface-2); border: 1px solid var(--line); }
+.fl-wa-voice-row { display: flex; align-items: flex-start; justify-content: space-between; gap: 14px; }
+.fl-wa-voice-title { margin: 0 0 2px; font-weight: 800; color: var(--heading); font-size: var(--text-secondary); }
+.fl-wa-voice-error { color: #b23a3a; }
+.fl-toggle { position: relative; display: inline-block; width: 42px; height: 24px; flex-shrink: 0; }
+.fl-toggle input { position: absolute; inset: 0; opacity: 0; margin: 0; cursor: pointer; }
+.fl-toggle-slider { position: absolute; inset: 0; border-radius: 999px; background: #ccd5e3; transition: background .15s ease; }
+.fl-toggle-slider::before { content: ''; position: absolute; top: 3px; left: 3px; width: 18px; height: 18px; border-radius: 50%; background: #fff; transition: transform .15s ease; box-shadow: 0 1px 3px rgba(0,0,0,.25); }
+.fl-toggle input:checked + .fl-toggle-slider { background: var(--navy); }
+.fl-toggle input:checked + .fl-toggle-slider::before { transform: translateX(18px); }
+.fl-toggle input:disabled + .fl-toggle-slider { opacity: .6; cursor: not-allowed; }
 
 /* Settings modal (AI engine picker) */
 .fl-settings-backdrop { position: fixed; inset: 0; z-index: 60; display: grid; place-items: center; padding: 24px; background: rgba(11, 29, 66, .5); backdrop-filter: blur(3px); }

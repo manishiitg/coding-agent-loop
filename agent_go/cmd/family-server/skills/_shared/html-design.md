@@ -21,6 +21,19 @@ external assets, fonts, images, or network calls.
 - Warm, calm, encouraging — readable by a child. Never harsh.
 - Rounded cards, generous spacing, one clear title with the child's name + date.
 - Use only real data. Never invent scores.
+- **Make it visually engaging — children respond to this far more than plain text.**
+  Use CSS transitions/animations freely: a gentle fade/slide-in as the page loads,
+  hover/tap effects on cards, an animated diagram or icon, a subtle progress-fill
+  bar, a `<details>/<summary>` reveal for "want a hint?" or a vocab flip-card.
+  This is NOT the same rule as the "no forms" one above — animation and simple
+  reveal/toggle interactivity are welcome; they just must never (a) use a real
+  form control, or (b) need the correct answer embedded in the page to work.
+  A `<details>` revealing a *hint* (not the answer) is fine; a `<details>`
+  revealing "the answer is 3/5" is not — that's the same leak the no-forms
+  rule exists to prevent, just via a different element.
+  - GOOD: `<details><summary>Need a hint?</summary><p>Try converting both fractions to the same denominator first.</p></details>`
+  - GOOD: a CSS `@keyframes` fade-in on `.card`, a hover lift on `.card:hover`, an animated SVG sun/cloud for a science diagram.
+  - BAD: `<details><summary>Check my answer</summary><p>Correct answer: 3/5</p></details>` — same answer-key leak as an embedded form.
 
 ## Base template
 

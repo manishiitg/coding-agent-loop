@@ -11,6 +11,12 @@ interface ParentChatState {
   setSending: (v: SetStateAction<boolean>) => void
   liveStatus: string
   setLiveStatus: (v: SetStateAction<string>) => void
+  // Real content streamed in as the model generates its reply (see
+  // status_stream.go's "delta" events) — a live-updating preview shown while
+  // `sending` is true, replaced by the actual persisted message once the
+  // turn's blocking fetch resolves. '' when nothing has streamed in yet.
+  streamingReply: string
+  setStreamingReply: (v: SetStateAction<string>) => void
   suggestions: { label: string; message: string }[]
   setSuggestions: (v: SetStateAction<{ label: string; message: string }[]>) => void
   menuOpen: boolean
@@ -37,6 +43,8 @@ export const useParentChatStore = create<ParentChatState>()((set) => ({
   setSending: (v) => set((s) => ({ sending: resolveSetState(v, s.sending) })),
   liveStatus: '',
   setLiveStatus: (v) => set((s) => ({ liveStatus: resolveSetState(v, s.liveStatus) })),
+  streamingReply: '',
+  setStreamingReply: (v) => set((s) => ({ streamingReply: resolveSetState(v, s.streamingReply) })),
   suggestions: [],
   setSuggestions: (v) => set((s) => ({ suggestions: resolveSetState(v, s.suggestions) })),
   menuOpen: false,

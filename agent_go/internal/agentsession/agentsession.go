@@ -100,6 +100,15 @@ type Config struct {
 	// everywhere this Config is built; this field only exists so a caller can
 	// opt into custom wording later without further agentsession changes.
 	BridgeRoutingInstructions *string
+	// StreamCallback, when non-nil, is invoked with each content fragment as
+	// the model generates its reply (real token/chunk streaming, not just a
+	// cosmetic "working on it" status label) — via mcpagent.WithStreamingCallback,
+	// which only ever delivers content fragments (never tool-call/terminal
+	// chunks). Requires the provider's own streaming env var to be set for
+	// interactive/tmux sessions (e.g. CODEX_CLI_STREAM_TRANSCRIPT=1) — set once
+	// at process startup, not per-call. Nil is a no-op: the turn behaves exactly
+	// as before, reply available only once Ask returns.
+	StreamCallback func(text string)
 }
 
 // Session bundles a live agent with its in-process executor server. Not safe
@@ -204,6 +213,21 @@ func New(ctx context.Context, cfg Config) (*Session, error) {
 	}
 	if cfg.BridgeRoutingInstructions != nil {
 		opts = append(opts, mcpagent.WithBridgeRoutingInstructions(*cfg.BridgeRoutingInstructions))
+	}
+	if cfg.StreamCallback != nil {
+		opts = append(opts, mcpagent.WithStreamingCallback(func(chunk llmtypes.StreamChunk) {
+			// Only forward genuine reply-content chunks. For interactive/tmux
+			// providers the "content" stream is derived from tailing the raw
+			// pane, and other chunk types (tool_call/tool_call_start/tool_call_end/
+			// terminal/status_line) can carry literal terminal bytes — ANSI
+			// escapes, SSH-agent/spinner noise, control chars — confirmed live:
+			// without this check the app streamed raw pane scrollback straight
+			// into the chat bubble instead of the model's actual reply.
+			if chunk.Type != llmtypes.StreamChunkTypeContent {
+				return
+			}
+			cfg.StreamCallback(chunk.Content)
+		}))
 	}
 	if len(cfg.Tools) > 0 {
 		// Expose every app-registered custom tool as a NATIVE bridge tool for

@@ -1,6 +1,17 @@
-import { useState, useEffect, useRef, type FormEvent, type ChangeEvent } from 'react'
+import { useState, useEffect, useRef, useCallback, lazy, Suspense, type FormEvent, type ChangeEvent } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
+
+// Lazy-loaded the same way AgentWorks does it — react-syntax-highlighter's
+// language grammars are large, so keep them out of the initial bundle and
+// only fetch when a reply/file actually contains a fenced code block.
+const SyntaxHighlightedCode = lazy(() => import('./SyntaxHighlightedCode'))
+
+let mermaidModule: Promise<typeof import('mermaid').default> | null = null
+function loadMermaid() {
+  mermaidModule ??= import('mermaid').then((m) => m.default)
+  return mermaidModule
+}
 import {
   Activity,
   ArrowLeft,
@@ -135,11 +146,133 @@ function persistTheme(t: Theme) {
   try { localStorage.setItem(THEME_KEY, t) } catch { /* best-effort */ }
 }
 
+// workspaceRelativePath converts a link the agent wrote pointing at a
+// workspace file — usually a full filesystem path like
+// "/Users/x/.sunlit-learning/workspace/shared/study/foo.md", occasionally
+// already-relative like "shared/study/foo.md" — into the workspace-relative
+// form the viewer (/api/workspace/file?path=...) expects. Returns null for
+// anything that isn't a workspace file link (http(s) links, mailto, etc.),
+// so those keep their normal browser behavior.
+function workspaceRelativePath(href: string): string | null {
+  const marker = '/workspace/'
+  const i = href.lastIndexOf(marker)
+  if (i !== -1) return href.slice(i + marker.length)
+  if (/^(shared|parent|child|skills)\//.test(href)) return href
+  return null
+}
+
+// ChatLink intercepts clicks on links the agent wrote pointing at a
+// workspace file so they open in the right-side viewer in-app, instead of
+// performing a real browser navigation to a raw filesystem path (which the
+// dev/packaged server can't serve, and which was breaking "open this file"
+// requests). Anything else (real http(s) links) behaves normally.
+function ChatLink({ href, children }: { href?: string; children?: React.ReactNode }) {
+  const setDrawerTab = useWorkspaceStore((s) => s.setDrawerTab)
+  const setViewerPath = useWorkspaceStore((s) => s.setViewerPath)
+  const setViewerImageList = useWorkspaceStore((s) => s.setViewerImageList)
+  const setViewerRefreshKey = useWorkspaceStore((s) => s.setViewerRefreshKey)
+  const rel = href ? workspaceRelativePath(href) : null
+  if (rel) {
+    return (
+      <a
+        href={href}
+        onClick={(e) => {
+          if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button !== 0) return // let cmd/ctrl/middle-click etc. behave normally
+          e.preventDefault()
+          setDrawerTab('files')
+          setViewerImageList([])
+          setViewerPath(rel)
+          setViewerRefreshKey((k) => k + 1)
+        }}
+      >
+        {children}
+      </a>
+    )
+  }
+  return <a href={href} target="_blank" rel="noreferrer">{children}</a>
+}
+
+// MermaidDiagram renders a ```mermaid fenced block as an actual diagram —
+// ported from AgentWorks' MarkdownRenderer.tsx (self-contained there, no
+// store coupling, so this is a near-verbatim copy).
+let mermaidCounter = 0
+function MermaidDiagram({ content }: { content: string }) {
+  const [svg, setSvg] = useState('')
+  const [error, setError] = useState('')
+  const idRef = useRef(`mermaid-${mermaidCounter++}`)
+
+  const renderDiagram = useCallback(async () => {
+    try {
+      const mermaid = await loadMermaid()
+      mermaid.initialize({ startOnLoad: false, theme: readTheme() === 'dark' ? 'dark' : 'default', securityLevel: 'loose' })
+      const { svg: renderedSvg } = await mermaid.render(idRef.current, content)
+      setSvg(renderedSvg)
+      setError('')
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to render mermaid diagram')
+      setSvg('')
+    }
+  }, [content])
+
+  useEffect(() => { renderDiagram() }, [renderDiagram])
+
+  if (error) {
+    return (
+      <div className="fl-mermaid-error">
+        <div>Diagram error</div>
+        <pre>{error}</pre>
+      </div>
+    )
+  }
+  if (!svg) return <div className="fl-mermaid-loading">Rendering diagram…</div>
+  return <div className="fl-mermaid" dangerouslySetInnerHTML={{ __html: svg }} />
+}
+
 // Markdown renders the agent's reply with react-markdown + GFM — the same
 // battle-tested renderer the main AgentWorks frontend uses (handles tables,
-// nested lists, lazy-continuation of terminal-wrapped list items, code, etc.).
+// nested lists, lazy-continuation of terminal-wrapped list items, mermaid
+// diagrams, and syntax-highlighted code, etc.).
 function Markdown({ text }: { text: string }) {
-  return <ReactMarkdown remarkPlugins={[remarkGfm]}>{text}</ReactMarkdown>
+  return (
+    <ReactMarkdown
+      remarkPlugins={[remarkGfm]}
+      components={{
+        a: ChatLink,
+        // The `code` renderer below returns its own fully-formed element for
+        // fenced blocks (a MermaidDiagram, a Suspense-wrapped
+        // SyntaxHighlightedCode, or a styled <pre>) — react-markdown's
+        // default `pre` would otherwise wrap that a second time, so hand
+        // back children as-is here.
+        pre({ children }) {
+          return <>{children}</>
+        },
+        code(props) {
+          const { className, children, ...rest } = props as { className?: string; children?: React.ReactNode; node?: unknown }
+          const match = /language-(\w+)/.exec(className || '')
+          const isInline = !match && !String(children).includes('\n')
+          if (isInline) {
+            return <code className="fl-inline-code" {...rest}>{children}</code>
+          }
+          const codeString = String(children).replace(/\n$/, '')
+          if (!match) {
+            return <pre className="fl-code-block-plain">{codeString}</pre>
+          }
+          const language = match[1]
+          if (language === 'mermaid') return <MermaidDiagram content={codeString} />
+          if (['text', 'txt', 'plain', 'plaintext', 'terminal'].includes(language.toLowerCase())) {
+            return <pre className="fl-code-block-plain">{codeString}</pre>
+          }
+          return (
+            <Suspense fallback={<pre className="fl-code-block-plain">{codeString}</pre>}>
+              <SyntaxHighlightedCode code={codeString} language={language} isDark={readTheme() === 'dark'} />
+            </Suspense>
+          )
+        },
+      }}
+    >
+      {text}
+    </ReactMarkdown>
+  )
 }
 
 // QUICK_SKILLS are one-click shortcuts in the composer menu; each sends a message
@@ -218,6 +351,16 @@ const IMAGE_PATH_RE = /\.(png|jpe?g|gif|webp|svg|bmp)$/i
 // aren't previewed.
 function isPrintable(path: string): boolean {
   return /\.(html?|md|markdown)$/i.test(path)
+}
+
+// formatJSONText pretty-prints a .json/.jsonl file's raw text for the viewer;
+// falls back to the raw text unchanged if it doesn't parse (e.g. JSONL).
+function formatJSONText(content: string): string {
+  try {
+    return JSON.stringify(JSON.parse(content), null, 2)
+  } catch {
+    return content
+  }
 }
 
 // printFile prints a viewer file. HTML opens in a new tab that auto-prints
@@ -417,6 +560,8 @@ export default function LearningApp() {
   const setSending = useParentChatStore((s) => s.setSending)
   const liveStatus = useParentChatStore((s) => s.liveStatus)
   const setLiveStatus = useParentChatStore((s) => s.setLiveStatus)
+  const streamingReply = useParentChatStore((s) => s.streamingReply)
+  const setStreamingReply = useParentChatStore((s) => s.setStreamingReply)
   const suggestions = useParentChatStore((s) => s.suggestions)
   const setSuggestions = useParentChatStore((s) => s.setSuggestions)
   const pendingHandoff = useParentChatStore((s) => s.pendingHandoff)
@@ -433,9 +578,13 @@ export default function LearningApp() {
   const waOpen = useWhatsAppStore((s) => s.waOpen)
   const setWaOpen = useWhatsAppStore((s) => s.setWaOpen)
   const [connectorSection, setConnectorSection] = useState<'whatsapp' | 'gmail' | 'browser'>('whatsapp')
-  const [waStatus, setWaStatus] = useState<{ paired: boolean; connected: boolean; qr_available: boolean; own_jid?: string } | null>(null)
+  // Multiple phones can be linked (one per parent) — accounts is the list of
+  // already-paired numbers; pairing reflects whichever NEW phone's QR is
+  // currently being shown (there's always room to add one more).
+  const [waStatus, setWaStatus] = useState<{ accounts: { jid: string; connected: boolean }[]; pairing: { qr_available: boolean; qr_expires_at?: string }; voice_transcription?: { enabled: boolean; installed: boolean; installing: boolean; model_size_mb: number; error?: string } } | null>(null)
+  const [voiceToggling, setVoiceToggling] = useState(false)
   const [waQrNonce, setWaQrNonce] = useState(0)
-  const [waUnpairing, setWaUnpairing] = useState(false)
+  const [unpairingJid, setUnpairingJid] = useState<string | null>(null)
   const [gmailStatus, setGmailStatus] = useState<{ connected: boolean; email?: string } | null>(null)
   const [gmailTesting, setGmailTesting] = useState(false)
   const [gmailTestResult, setGmailTestResult] = useState<string | null>(null)
@@ -674,10 +823,10 @@ export default function LearningApp() {
     const poll = () => {
       fetch(`${FAMILY_API}/api/whatsapp/status`)
         .then((r) => r.json())
-        .then((d: { paired: boolean; connected: boolean; qr_available: boolean; own_jid?: string }) => {
+        .then((d: { accounts: { jid: string; connected: boolean }[]; pairing: { qr_available: boolean; qr_expires_at?: string }; voice_transcription?: { enabled: boolean; installed: boolean; installing: boolean; model_size_mb: number; error?: string } }) => {
           if (cancelled) return
           setWaStatus(d)
-          if (!d.paired) setWaQrNonce((n) => n + 1)
+          setWaQrNonce((n) => n + 1) // there's always a pairing slot open for one more phone
         })
         .catch(() => {})
     }
@@ -963,16 +1112,23 @@ export default function LearningApp() {
   }, [viewerPath, viewerImageList])
 
   // Keep the conversation scrolled to the latest message / thinking indicator.
+  // Also re-scroll on `screen` itself: switching from child mode back to
+  // parent mode remounts this thread at its default (top) scroll position —
+  // without screen in the deps, that remount doesn't trigger a re-scroll
+  // since parentMessages/sending haven't changed, leaving the parent stuck
+  // scrolled to the top until they scroll down manually.
   useEffect(() => {
+    if (screen !== 'parent') return
     threadEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' })
-  }, [parentMessages, sending])
+  }, [parentMessages, sending, screen])
 
   // Same, for the child's own thread — this had no auto-scroll at all before,
   // so new replies (and the "thinking" indicator) could land below the fold
   // with no automatic scroll to reveal them.
   useEffect(() => {
+    if (screen !== 'tutor') return
     childThreadEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' })
-  }, [childMessages, childSending])
+  }, [childMessages, childSending, screen])
 
   // Cycle a usable "how to use the chat" tip in the thinking indicator instead
   // of a bare "thinking…" — resets and restarts each time a new turn begins,
@@ -1131,11 +1287,30 @@ export default function LearningApp() {
   const sendParentText = (raw: string) => {
     const text = raw.trim()
     if (!text) return
-    // A turn is already running — don't drop the message, queue it. The drain
-    // effect sends it once the current turn finishes.
+    // A turn is already running — queue it exactly as before (the same
+    // "queued" bubble shows immediately), but ALSO try to steer it into the
+    // live turn right away in the background: if that succeeds, pull it back
+    // out of the queue so the drain effect doesn't send it again as a
+    // separate turn once the current one finishes — it's already been
+    // delivered live. If steering isn't possible, it just stays queued,
+    // unchanged from today.
     if (sending) {
       setQueue((q) => [...q, text])
       setFocusInput('')
+      fetch(`${FAMILY_API}/api/parent/steer`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ conversation_id: conversationId, message: text }),
+      })
+        .then((res) => res.json())
+        .then((data: { steered?: boolean }) => {
+          if (!data.steered) return
+          setQueue((q) => {
+            const idx = q.indexOf(text)
+            return idx === -1 ? q : [...q.slice(0, idx), ...q.slice(idx + 1)]
+          })
+        })
+        .catch(() => {}) // couldn't even reach the server — stays queued, same as today
       return
     }
     const next: ParentMsg[] = [...parentMessages, { role: 'user', text }]
@@ -1150,10 +1325,22 @@ export default function LearningApp() {
     setPendingConvUpdate(null)
     setSending(true)
     setLiveStatus('')
-    // Live "what Quill is doing right now" line, sourced from the same turn's
-    // tool handlers — purely cosmetic, so a stream error is silently ignored.
+    setStreamingReply('')
+    // Live status labels AND real streamed reply content share one SSE
+    // connection (see status_stream.go's sseEvent) — "status" replaces the
+    // cosmetic "Quill is: …" line, "delta" appends to the live reply preview
+    // shown while sending (see the streamingReply render block below). Both
+    // are best-effort UX: a stream error is silently ignored, and the final
+    // persisted reply (from the blocking fetch below) is always the source
+    // of truth regardless of what streamed in.
     const statusSource = new EventSource(`${FAMILY_API}/api/parent/status?conversation_id=${encodeURIComponent(conversationId)}`)
-    statusSource.onmessage = (ev) => setLiveStatus(ev.data)
+    statusSource.onmessage = (ev) => {
+      try {
+        const parsed = JSON.parse(ev.data) as { type?: string; text?: string }
+        if (parsed.type === 'delta') setStreamingReply((cur) => cur + (parsed.text ?? ''))
+        else if (parsed.type === 'status') setLiveStatus(parsed.text ?? '')
+      } catch { /* ignore malformed event */ }
+    }
     statusSource.onerror = () => statusSource.close()
     // Keep source on each message so Pulse/etc. tags survive the round-trip and
     // don't get flattened to plain replies when this turn re-persists history.
@@ -1178,7 +1365,7 @@ export default function LearningApp() {
         setParentMessages((cur) => [...cur, ...toolMsgs, { role: 'assistant', text: data.error ? `Sorry — ${data.error}` : (data.reply || '(no response)') }])
       })
       .catch(() => setParentMessages((cur) => [...cur, { role: 'assistant', text: 'Sorry — I couldn’t reach the learning engine.' }]))
-      .finally(() => { setSending(false); setLiveStatus(''); statusSource.close(); setMapRefreshKey((k) => k + 1) })
+      .finally(() => { setSending(false); setLiveStatus(''); setStreamingReply(''); statusSource.close(); setMapRefreshKey((k) => k + 1) })
   }
 
   const sendParentMessage = (event: FormEvent<HTMLFormElement>) => {
@@ -1190,13 +1377,39 @@ export default function LearningApp() {
   // Once paired, incoming messages in the linked account's own "Message
   // Yourself" chat are handled directly by the backend event handler; there
   // is no frontend send path for real WhatsApp messages.
-  const unpairWhatsApp = () => {
-    if (!window.confirm('Unlink SparkQuill from WhatsApp? You can always re-pair by scanning a new QR code.')) return
-    setWaUnpairing(true)
-    fetch(`${FAMILY_API}/api/whatsapp/unpair`, { method: 'POST' })
+  const unpairWhatsApp = (jid: string) => {
+    if (!window.confirm(`Unlink this WhatsApp number (+${jid})? You can always re-pair by scanning a new QR code.`)) return
+    setUnpairingJid(jid)
+    fetch(`${FAMILY_API}/api/whatsapp/unpair`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ jid }),
+    })
       .then((r) => r.json())
-      .then(() => { setWaStatus(null); setWaQrNonce((n) => n + 1) })
-      .finally(() => setWaUnpairing(false))
+      .then(() => {
+        setWaStatus((cur) => (cur ? { ...cur, accounts: cur.accounts.filter((a) => a.jid !== jid) } : cur))
+        setWaQrNonce((n) => n + 1)
+      })
+      .finally(() => setUnpairingJid(null))
+  }
+
+  // Toggles on-device WhatsApp voice-note transcription. Enabling kicks off a
+  // background install on the server (whisper-cli/ffmpeg via Homebrew if
+  // missing, then the ~148MB model download); the status poll above picks up
+  // "installing" → "installed" as it progresses. Disabling deletes the model
+  // file server-side right away to reclaim the space.
+  const toggleVoiceTranscription = (enabled: boolean) => {
+    setVoiceToggling(true)
+    fetch(`${FAMILY_API}/api/whatsapp/voice`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ enabled }),
+    })
+      .then((r) => r.json())
+      .then((d: { enabled: boolean; installed: boolean; installing: boolean; model_size_mb: number; error?: string }) => {
+        setWaStatus((cur) => (cur ? { ...cur, voice_transcription: d } : cur))
+      })
+      .finally(() => setVoiceToggling(false))
   }
 
   // Load a past conversation into the chat view (reads the transcript file).
@@ -1688,7 +1901,11 @@ export default function LearningApp() {
                 <div className="fl-msg is-agent">
                   <span className="fl-msg-avatar is-sun"><Sun size={18} /></span>
                   <div className="fl-msg-col">
-                    <div className="fl-thinking"><img src="/sparkquill-loader.svg" alt="" width={38} height={38} /> <span>{PARENT_WAIT_HINTS[parentHintIndex]}</span></div>
+                    {streamingReply ? (
+                      <div className="fl-bubble is-streaming"><Markdown text={streamingReply} /></div>
+                    ) : (
+                      <div className="fl-thinking"><img src="/sparkquill-loader.svg" alt="" width={38} height={38} /> <span>{liveStatus ? `Quill is: ${liveStatus}…` : PARENT_WAIT_HINTS[parentHintIndex]}</span></div>
+                    )}
                   </div>
                 </div>
               )}
@@ -1861,6 +2078,11 @@ export default function LearningApp() {
                     )}
                   </div>
                   {metaOpen && viewerMeta && <FileMetaPanel meta={viewerMeta} />}
+                  {/* key={viewerPath} forces a fresh mount (replaying the
+                      fl-viewer-body CSS reveal animation below) every time a
+                      different file opens, even if the previous file was the
+                      same content TYPE (e.g. one .md to another). */}
+                  <div key={viewerPath} className="fl-viewer-body">
                   {/\.(png|jpe?g|gif|webp|svg|bmp)$/i.test(viewerPath) ? (
                     <img className="fl-viewer-img" src={`${FAMILY_API}/api/workspace/raw?path=${encodeURIComponent(viewerPath)}`} alt={viewerPath.split('/').pop() || ''} />
                   ) : /\.pdf$/i.test(viewerPath) ? (
@@ -1871,6 +2093,10 @@ export default function LearningApp() {
                     // would disable the built-in PDF viewer, and the bytes are our
                     // own workspace file, not untrusted HTML.
                     <iframe className="fl-viewer-frame" title="PDF preview" src={`${FAMILY_API}/api/workspace/raw?path=${encodeURIComponent(viewerPath)}`} />
+                  ) : /\.(mp4|webm|mov|m4v)$/i.test(viewerPath) ? (
+                    <video className="fl-viewer-media" controls src={`${FAMILY_API}/api/workspace/raw?path=${encodeURIComponent(viewerPath)}`} />
+                  ) : /\.(mp3|wav|m4a|aac|ogg|oga|flac|opus)$/i.test(viewerPath) ? (
+                    <audio className="fl-viewer-media" controls src={`${FAMILY_API}/api/workspace/raw?path=${encodeURIComponent(viewerPath)}`} />
                   ) : !viewerContent ? (
                     <p className="fl-note">Loading…</p>
                   ) : !viewerContent.isText ? (
@@ -1879,9 +2105,12 @@ export default function LearningApp() {
                     <iframe ref={iframeRef} className="fl-viewer-frame" title="File preview" sandbox="allow-scripts" srcDoc={viewerContent.content} />
                   ) : (viewerPath.endsWith('.md') || viewerPath.endsWith('.markdown')) ? (
                     <div className="fl-viewer-md"><Markdown text={viewerContent.content} /></div>
+                  ) : (viewerPath.endsWith('.json') || viewerPath.endsWith('.jsonl')) ? (
+                    <pre className="fl-viewer-pre">{formatJSONText(viewerContent.content)}</pre>
                   ) : (
                     <pre className="fl-viewer-pre">{viewerContent.content}</pre>
                   )}
+                  </div>
                 </div>
               ) : drawerTab === 'files' ? (
                 <>
@@ -2148,31 +2377,80 @@ export default function LearningApp() {
                   </nav>
                   <div className="fl-connectors-panel">
                     {connectorSection === 'whatsapp' ? (
-                      waStatus?.paired ? (
-                        <div className="fl-connector-card">
-                          <p className="fl-connector-status is-connected">✓ Connected{waStatus.own_jid ? ` — +${waStatus.own_jid}` : ''}</p>
-                          <div className="fl-wa-howto">
-                            <p className="fl-wa-howto-title">How to chat with Quill on WhatsApp</p>
-                            <ol className="fl-note" style={{ paddingLeft: '1.2em', margin: '6px 0 0' }}>
-                              <li>Open WhatsApp on your phone.</li>
-                              <li>At the top, search for your own name — the chat labelled <strong>“(You)”</strong> or <strong>“Message yourself”</strong>.</li>
-                              <li>Type anything there, like <em>“How is Myra doing this week?”</em> — Quill reads it and replies right in that same chat.</li>
-                            </ol>
-                            <p className="fl-note" style={{ marginTop: '8px' }}>That’s it — it works just like texting. You can also send a photo of Myra’s worksheet there and Quill will look at it. Quill only ever answers in your own “message yourself” chat — never in your chats with other people.</p>
-                          </div>
-                          <button className="fl-ghost-btn" type="button" onClick={unpairWhatsApp} disabled={waUnpairing}>{waUnpairing ? 'Unlinking…' : 'Unlink WhatsApp'}</button>
-                        </div>
-                      ) : (
-                        <div className="fl-connector-card">
-                          <p className="fl-note">Scan this code with WhatsApp on your phone: <strong>Settings → Linked Devices → Link a Device.</strong></p>
-                          {waStatus?.qr_available ? (
+                      <div className="fl-connector-card">
+                        {(waStatus?.accounts?.length ?? 0) > 0 && (
+                          <>
+                            <p className="fl-connector-status is-connected">
+                              ✓ {waStatus!.accounts.length} number{waStatus!.accounts.length > 1 ? 's' : ''} linked
+                            </p>
+                            <ul className="fl-wa-account-list">
+                              {waStatus!.accounts.map((a) => (
+                                <li key={a.jid} className="fl-wa-account-row">
+                                  <span>+{a.jid}{!a.connected ? ' (reconnecting…)' : ''}</span>
+                                  <button
+                                    className="fl-ghost-btn"
+                                    type="button"
+                                    onClick={() => unpairWhatsApp(a.jid)}
+                                    disabled={unpairingJid === a.jid}
+                                  >
+                                    {unpairingJid === a.jid ? 'Unlinking…' : 'Unlink'}
+                                  </button>
+                                </li>
+                              ))}
+                            </ul>
+                            <div className="fl-wa-howto">
+                              <p className="fl-wa-howto-title">How to chat with Quill on WhatsApp</p>
+                              <ol className="fl-note" style={{ paddingLeft: '1.2em', margin: '6px 0 0' }}>
+                                <li>Open WhatsApp on your phone.</li>
+                                <li>At the top, search for your own name — the chat labelled <strong>“(You)”</strong> or <strong>“Message yourself”</strong>.</li>
+                                <li>Type anything there, like <em>“How is {childName || 'your child'} doing this week?”</em> — Quill reads it and replies right in that same chat.</li>
+                              </ol>
+                              <p className="fl-note" style={{ marginTop: '8px' }}>That’s it — it works just like texting. You can also send a photo of {childName || 'your child'}’s worksheet there and Quill will look at it. Quill only ever answers in your own “message yourself” chat — never in your chats with other people.</p>
+                            </div>
+                            {waStatus?.voice_transcription && (
+                              <div className="fl-wa-voice">
+                                <div className="fl-wa-voice-row">
+                                  <div>
+                                    <p className="fl-wa-voice-title">Understand voice notes</p>
+                                    <p className="fl-note">
+                                      {waStatus.voice_transcription.installing
+                                        ? `Setting this up on your computer (~${waStatus.voice_transcription.model_size_mb}MB, one-time) — this can take a minute…`
+                                        : waStatus.voice_transcription.enabled && waStatus.voice_transcription.installed
+                                          ? `On — voice notes are transcribed right on this computer (~${waStatus.voice_transcription.model_size_mb}MB used). Nothing is sent to the cloud for this.`
+                                          : `Let Quill understand voice notes you send on WhatsApp. Transcribed entirely on this computer — a one-time ~${waStatus.voice_transcription.model_size_mb}MB download, no ongoing cost.`}
+                                    </p>
+                                    {waStatus.voice_transcription.error && (
+                                      <p className="fl-note fl-wa-voice-error">Couldn’t set this up: {waStatus.voice_transcription.error}</p>
+                                    )}
+                                  </div>
+                                  <label className="fl-toggle">
+                                    <input
+                                      type="checkbox"
+                                      checked={waStatus.voice_transcription.enabled}
+                                      disabled={voiceToggling || waStatus.voice_transcription.installing}
+                                      onChange={(e) => toggleVoiceTranscription(e.target.checked)}
+                                    />
+                                    <span className="fl-toggle-slider" />
+                                  </label>
+                                </div>
+                              </div>
+                            )}
+                          </>
+                        )}
+                        <div className="fl-wa-add-another">
+                          <p className="fl-note">
+                            {(waStatus?.accounts?.length ?? 0) > 0
+                              ? 'Add another parent — scan with a different phone:'
+                              : 'Scan this code with WhatsApp on your phone:'} <strong>Settings → Linked Devices → Link a Device.</strong>
+                          </p>
+                          {waStatus?.pairing?.qr_available ? (
                             <img className="fl-wa-qr" src={`${FAMILY_API}/api/whatsapp/pair?n=${waQrNonce}`} alt="WhatsApp pairing QR code" />
                           ) : (
                             <div className="fl-wa-qr is-loading">Preparing QR…</div>
                           )}
                           <p className="fl-note">The code refreshes automatically every 30 seconds until scanned.</p>
                         </div>
-                      )
+                      </div>
                     ) : connectorSection === 'gmail' ? (
                       gmailStatus?.connected ? (
                         <div className="fl-connector-card">
@@ -2247,7 +2525,7 @@ export default function LearningApp() {
                 </div>
                 <div className="fl-settings-body">
                   <p className="fl-drawer-label">AI engine</p>
-                  <p className="fl-note">Which coding-agent engine Quill runs on for both the parent chat and Myra’s tutor.</p>
+                  <p className="fl-note">Which coding-agent engine Quill runs on for both the parent chat and {childName || 'your child'}’s tutor.</p>
                   {enginesState === 'loading' ? (
                     <p className="fl-note">Checking available engines…</p>
                   ) : engines.length === 0 ? (
@@ -2399,10 +2677,15 @@ export default function LearningApp() {
                       </button>
                     )}
                   </div>
+                  <div key={childViewerPath} className="fl-viewer-body">
                   {IMAGE_PATH_RE.test(childViewerPath) ? (
                     <img className="fl-viewer-img" src={`${FAMILY_API}/api/workspace/raw?path=${encodeURIComponent(childViewerPath)}`} alt="" />
                   ) : /\.pdf$/i.test(childViewerPath) ? (
                     <iframe className="fl-viewer-frame" title="PDF preview" src={`${FAMILY_API}/api/workspace/raw?path=${encodeURIComponent(childViewerPath)}`} />
+                  ) : /\.(mp4|webm|mov|m4v)$/i.test(childViewerPath) ? (
+                    <video className="fl-viewer-media" controls src={`${FAMILY_API}/api/workspace/raw?path=${encodeURIComponent(childViewerPath)}`} />
+                  ) : /\.(mp3|wav|m4a|aac|ogg|oga|flac|opus)$/i.test(childViewerPath) ? (
+                    <audio className="fl-viewer-media" controls src={`${FAMILY_API}/api/workspace/raw?path=${encodeURIComponent(childViewerPath)}`} />
                   ) : !childViewerContent ? (
                     <p className="fl-note">Loading…</p>
                   ) : !childViewerContent.isText ? (
@@ -2411,9 +2694,12 @@ export default function LearningApp() {
                     <iframe className="fl-viewer-frame" title="Preview" sandbox="allow-scripts" srcDoc={childViewerContent.content} />
                   ) : childViewerPath.endsWith('.md') ? (
                     <div className="fl-viewer-md"><Markdown text={childViewerContent.content} /></div>
+                  ) : (childViewerPath.endsWith('.json') || childViewerPath.endsWith('.jsonl')) ? (
+                    <pre className="fl-viewer-pre">{formatJSONText(childViewerContent.content)}</pre>
                   ) : (
                     <pre className="fl-viewer-pre">{childViewerContent.content}</pre>
                   )}
+                  </div>
                 </div>
               ) : (
                 <>

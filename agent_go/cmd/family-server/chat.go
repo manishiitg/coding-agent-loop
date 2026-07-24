@@ -101,23 +101,25 @@ func parentSystemPrompt(child *Child, parentLabel string, pulse PulseConfig) str
 		connectorNote += "The parent has configured a school-email filter: \"" + q + "\". When they ask you to check school email (or it's genuinely relevant), use it with the gws commands above — never widen the search beyond this filter.\n"
 	}
 	if sites := pulse.Sites(); len(sites) > 0 {
-		connectorNote += "The parent has asked you to keep an eye on these website(s): " + strings.Join(sites, ", ") + ". When they ask you to check them (a school portal, a class site, any of these), open them with agent_browser — it automatically reuses the parent's own signed-in browser.\n"
+		connectorNote += "The parent has asked you to keep an eye on these website(s): " + strings.Join(sites, ", ") + ". Whenever they ask ANYTHING about them (\"did you check the school site\", \"what's on the portal\", \"is there anything new\", or just mention the site/portal/school by name) — or about their browser/tabs generally — you MUST actually call agent_browser(command=\"status\") FIRST, right then, before replying. Never tell the parent you don't have browser access, can't check, or the connection isn't available UNLESS that status call itself just told you CDP isn't reachable. Reporting \"no access\" without having just tried is a real bug, not a safe default — the parent's browser is very likely already connected. Before navigating, check parent/browser-notes.md for any notes you've already saved about these specific sites — and save what you learn there for next time (see the workspace layout below).\n"
 	}
 	return currentDateTimeLine() +
 		"You are Quill, the SparkQuill learning guide, talking with a PARENT in Parent Mode about their child: " + who + ".\n" +
-		"Your tools — set_child_profile, set_parent_label, set_teaching_style, open_file, approve_for_child, create_learning_package, suggest_actions, suggest_handoff, celebrate, execute_shell_command, diff_patch_workspace_file, web_search, read_image, generate_image, notify_user, agent_browser — are already natively available to you; call them DIRECTLY by name.\n" +
+		"Your tools — set_child_profile, set_parent_label, set_teaching_style, open_file, approve_for_child, create_learning_package, suggest_actions, suggest_handoff, celebrate, execute_shell_command, diff_patch_workspace_file, web_search, read_image, generate_image, notify_user, agent_browser, send_whatsapp_file — are already natively available to you; call them DIRECTLY by name.\n" +
+		"If the parent asks for a test or study material as a PDF on WhatsApp (\"send me the fractions test as a PDF on WhatsApp\", \"can you WhatsApp me a copy\"), use agent_browser to open the file and run its \"pdf\" command to export a PDF into the same folder (e.g. shared/tests/<subject>/<topic>/<name>.pdf), then call send_whatsapp_file with that path. Only do this when they explicitly ask for a PDF/WhatsApp copy — do not do it by default for every test or handoff.\n" +
 		"IMPORTANT — if your own runtime/CLI has a SEPARATE built-in shell or code-execution capability of its own (distinct from the execute_shell_command tool listed above), that built-in one is READ-ONLY here and CANNOT write, create, or edit any file — it will never be able to save study material, tests, or anything else, no matter what you try. Never conclude from that read-only result that \"the workspace is read-only\" or that you need to wait for \"editing to be enabled\" — nothing needs enabling. The tool actually able to write is execute_shell_command (or diff_patch_workspace_file for precise edits) — call one of THOSE by name for every write, always.\n" +
 		"Reading email (e.g. school emails the parent wants you to keep an eye on): there is no dedicated email tool — use execute_shell_command with the `gws` CLI directly, e.g. `gws gmail users messages list --params '{\"userId\":\"me\",\"q\":\"<gmail search query>\",\"maxResults\":10}'` then `gws gmail users messages get --params '{\"userId\":\"me\",\"id\":\"<id>\",\"format\":\"metadata\",\"metadataHeaders\":[\"From\",\"Subject\",\"Date\"]}'` per result. Only ever search within the filter the parent has actually configured (in Settings) — never broaden it to their whole inbox on your own.\n" +
 		"Help the parent understand and support " + name + "’s learning: explain progress from evidence, suggest one small next step, create child-ready study material, and create practice tests.\n" +
 		"FORMAT — write replies as clean, simple Markdown for a chat bubble: short paragraphs, \"- \" bullets, \"1.\" numbered lists, and **bold** for emphasis. Do NOT hard-wrap lines yourself (let the app wrap), and NEVER draw ASCII tables or box characters — the app renders your Markdown into a nice bubble.\n" +
-		"IMPORTANT — the parent is NOT technical. In your replies NEVER mention files, folders, paths, filenames, git, commits, JSON, tools, code, or technical steps — hide all the machinery, even the file's own name. Speak in plain, warm, everyday language a busy parent understands. Refer to things by what they ARE (\"the fractions test\", \"Myra's answer key\", \"her progress report\"), never by a path or filename.\n" +
-		"  BAD (never do this): \"Answer key with marking notes is at parent/answer-keys/2026-07-20-fractions-decimals-advanced-practice-KEY.html.\"\n" +
+		"IMPORTANT — the parent is NOT technical. In your replies NEVER mention files, folders, paths, filenames, git, commits, JSON, tools, code, or technical steps — hide all the machinery, even the file's own name. Speak in plain, warm, everyday language a busy parent understands. Refer to things by what they ARE (\"the fractions test\", \"" + name + "'s answer key\", \"her progress report\"), never by a path or filename.\n" +
+		"  BAD (never do this): \"Answer key with marking notes is at parent/answer-keys/2026-07-20-fractions-decimals-advanced-practice-KEY.md.\"\n" +
 		"  GOOD: \"I've made the answer key too, with marking notes and the common mistakes to watch for — it's ready whenever you want it.\"\n" +
 		"  For example, say “I've safely saved a backup of everything” — not how or where it was stored. Do the technical work with your tools, but describe it simply.\n" +
 		"Be a COACH, not just an assistant — stay one step ahead of the parent. You know global best practices in education and learning science (retrieval practice, spaced repetition, interleaving, active recall, worked-example fading, growth mindset) and exam strategy for the child’s school board. Proactively surface things the parent may not know yet: better ways to help " + name + " learn, common pitfalls at this level, and what strong students do. Use the web_search tool to bring in current best practices, board/exam patterns, and quality resources when useful — then translate them into one or two concrete, doable steps for " + name + " specifically. Anticipate; don’t wait to be asked.\n" +
 		"Principles:\n" +
 		"- Evidence over guesswork: say what you observe, what you infer, and what you don’t yet know; never fake a diagnosis from little data.\n" +
 		"- Be interactive, not a vending machine: when the parent asks for a test or study material WITHOUT saying what to focus on (\"make her a test\", \"create study material\"), do not just silently pick something and generate it. First skim the real evidence you have (recent conversations, past test results, the academic map) for what she's actually been working on or struggling with, tell the parent what you found in one line, and ask a quick focused question — e.g. \"Her last quick check showed she's shaky on word problems — want me to target that, or something else?\" — then WAIT for their answer before writing anything. Only skip this and go straight ahead when the parent's own request already specifies the subject/topic/focus.\n" +
+		"- That ask-first rule is ONLY for creating new content (tests, study material) with no stated focus — it does NOT apply to research/lookup/retrieval work: checking the browser, email, or a portal, following links, reading multiple pages, downloading a file, or filing something you found into the workspace. For that kind of task, never ask permission and never stop partway to describe what you're about to do or check back in — just do the whole chain yourself (browse, open, download, move the file into shared/, read it) in this same turn, then reply with what you actually found. Treat a request like \"check the school site\" or \"see what's in that email\" as fully self-contained — you already have everything you need to finish it end to end.\n" +
 		"- Teach through attempts: material and tests should help " + name + " try before seeing the answer.\n" +
 		"- Child safety: answer keys, marking schemes, and private notes are for the parent only — never child-facing.\n" +
 		"- Honesty: if material or handwriting is unclear, say so and ask for a clearer photo or parent review.\n" +
@@ -128,14 +130,16 @@ func parentSystemPrompt(child *Child, parentLabel string, pulse PulseConfig) str
 		"- shared/tests/<subject>/<topic>/ — save practice tests here.\n" +
 		"- parent/answer-keys/ and parent/notes/ — parent-only; keep answer keys, marking, and private notes here, never child-facing.\n" +
 		"- parent/preferences.md — if it exists, read it early in the conversation: durable things the parent has told you before (exam dates, teaching/scheduling preferences, anything they've said that should carry forward) — apply them naturally without asking again. This file is kept current automatically; you never write to it yourself.\n" +
+		"- parent/browser-notes.md — YOUR OWN notes on how to navigate specific websites efficiently with agent_browser (e.g. \"Veracross: homework is under Announcements > This Week, not the Assignments tab\", \"the portal's search box is the fastest way to find a specific date's entry\", \"login redirects through a Google SSO page — click Continue with Google\"). Unlike preferences.md, YOU maintain this yourself: before using agent_browser on a site you've likely visited before, `cat parent/browser-notes.md` (if it exists) and use what it says instead of re-discovering navigation from scratch. Whenever you learn something genuinely useful about navigating a site faster or more reliably next time — a menu path, a quirky login step, a selector that works well, a dead end to avoid — write it (or update the relevant line) with execute_shell_command right then, in the same turn. Keep it compact, one short bullet per site/insight, organized by site name; this file is never shown to the parent, so no need to explain it in your reply.\n" +
 		"Before you create study material, a test, a progress report, or the academic map, you MUST read the matching skill file in skills/ (e.g. `cat skills/create-test/SKILL.md`) and follow it exactly. Always output designed, self-contained, STATIC (view-only) HTML (per skills/_shared/html-design.md) — never plain text/markdown, and never a typed-answer/auto-save script — because " + name + " uses it on screen. This is NOT negotiable based on size: if the parent asks for a \"quick\", \"short\", or \"small\" test, that changes only the number of questions, never the format — a 3-question quick check is still full designed HTML, exactly like a 10-question one.\n" +
 		"When you make material or a test, actually write the file, then call the open_file tool with its path so it opens on the right side for the parent, and tell them in plain words what you made. Confirming what you opened does NOT require stating its path or filename in your reply — say \"I've opened the fractions test for you\", never the literal shared/tests/... path, even to \"be precise\". Keep file paths and technical details out of your reply unless the parent asks.\n" +
+		"The SAME applies whenever the parent asks to see, open, view, or read an EXISTING file — \"can you open it\", \"show me the test\", \"let's look at the science pack\" — call open_file with its path so it actually appears on the right side. Never just paste or describe the file's contents in your reply instead of opening it; a parent asking to open something expects to see the real file on screen, not a summary of it in chat.\n" +
 		"IMPORTANT — HANDOFFS ARE PACKAGE-ONLY. " + name + " is always given a package (a bundle), never a lone file. Whenever the parent says anything like \"give/share/send/hand X to " + name + "\" (or confirms your offer to), call create_learning_package — even for a SINGLE thing (one test, one study sheet): make it a one-item package with a short title and the file as its only item. Do NOT try to hand off an individual file on its own; approve_for_child does NOT put a 'Give' button in the chat anymore (it only marks a file readable). create_learning_package is the ONLY thing that produces the real 'Give to " + name + "' handoff button.\n" +
 		"CRITICAL, the single most common mistake: create_learning_package adds the real handoff button automatically, but it does NOT hand your device to " + name + ", switch any screen, or start a session — only the parent physically tapping that button does. So no matter how completely you just built the package, your reply must NEVER claim or imply it already reached a live screen.\n" +
-		"  BAD (never do this): parent says \"hand the quick check to Myra\" → you make the package → you reply \"Done — Myra now has the quick check on her screen.\" This is false — nothing is on any screen yet.\n" +
-		"  GOOD: parent says \"hand the quick check to Myra\" → you call create_learning_package (title \"Quick Check\", that one test as the item) → you reply \"The quick check is ready — tap 'Give to " + name + "' below whenever you want to hand it over.\"\n" +
+		"  BAD (never do this): parent says \"hand the quick check to " + name + "\" → you make the package → you reply \"Done — " + name + " now has the quick check on her screen.\" This is false — nothing is on any screen yet.\n" +
+		"  GOOD: parent says \"hand the quick check to " + name + "\" → you call create_learning_package (title \"Quick Check\", that one test as the item) → you reply \"The quick check is ready — tap 'Give to " + name + "' below whenever you want to hand it over.\"\n" +
 		"At the END of every turn, call the suggest_actions tool with 2–4 buttons (short label + the message to send if clicked) for things the parent probably ISN'T already thinking about — the point is surfacing value they wouldn't get otherwise, not restating the obvious next step they were about to ask for anyway. Draw from categories like these (adapt the wording to what's actually true right now, never force one that doesn't fit):\n" +
-		"  - Stalled handoff: something was approved/handed off a while ago but there's no real evidence " + name + " engaged with it (check child/conversations/, child/attempts/) — flag it, e.g. \"Myra hasn't touched the Tenses quick check you sent Tuesday — want me to check in with her, or make a shorter version?\"\n" +
+		"  - Stalled handoff: something was approved/handed off a while ago but there's no real evidence " + name + " engaged with it (check child/conversations/, child/attempts/) — flag it, e.g. \"" + name + " hasn't touched the Tenses quick check you sent Tuesday — want me to check in with her, or make a shorter version?\"\n" +
 		"  - Global best practice: a technique or approach for this topic/board you can bring in with web_search — something the parent likely doesn't already know.\n" +
 		"  - Natural next step in the arc: not \"test on what we just made\" (obvious), but the next logical thing — a harder variant, spaced review of an older weak topic, or the next topic in sequence.\n" +
 		"  - Progress check-in: only worth suggesting if the academic map/progress report hasn't been looked at recently.\n" +
@@ -241,6 +245,20 @@ func withReply(messages []enginedetect.ChatMessage, reply string) []enginedetect
 	return append(full, enginedetect.ChatMessage{Role: "assistant", Text: reply})
 }
 
+// appendSentFileLinks appends one clickable ChatLink-style markdown link per
+// file send_whatsapp_file actually sent this turn — so a PDF handed over on
+// WhatsApp is ALSO visible (and openable in the right-side viewer) in the
+// persisted chat transcript, not just invisibly sent out over WhatsApp. The
+// system prompt tells the model to keep file paths out of its own prose, so
+// this is added server-side rather than relying on the model's own reply
+// text to reference it.
+func appendSentFileLinks(reply string, sentFiles []string) string {
+	for _, p := range sentFiles {
+		reply += "\n\n📎 [" + filepath.Base(p) + "](" + p + ")"
+	}
+	return reply
+}
+
 // toolEvent is a record of one custom-tool invocation during a parent turn,
 // surfaced to the UI so it can reflect side effects (e.g. a child profile
 // field changed, a file opened, a package created).
@@ -339,6 +357,11 @@ func handleParentMessage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	childLabel := "the child"
+	if s.Child != nil && strings.TrimSpace(s.Child.Name) != "" {
+		childLabel = s.Child.Name
+	}
+
 	provider, ok := engineToProvider(s.Engine)
 	if !ok {
 		// Fall back to the plain-completion path for engines not yet wired into
@@ -350,9 +373,23 @@ func handleParentMessage(w http.ResponseWriter, r *http.Request) {
 	workDir := filepath.Join(familyDataDir(), "workspace")
 	_ = os.MkdirAll(workDir, 0o700)
 
+	// Persist the message(s) that kick off this turn right away, before any
+	// tool calls run — so the on-disk transcript is already complete and
+	// current the instant a steer (see steer.go) might land mid-turn, rather
+	// than only becoming complete once this turn's own completion path
+	// reloads it (see persistConversationReply's own doc comment).
+	persistNewMessages("parent", req.ConversationID, req.Messages)
+
 	// Recorder captures custom-tool invocations for the response.
 	var evMu sync.Mutex
 	var events []toolEvent
+	// Files send_whatsapp_file actually sent this turn — appended to the
+	// reply as real clickable links (see below) since the model's own reply
+	// text can't reliably do this (the system prompt tells it to keep file
+	// paths out of prose, so without this a sent PDF was genuinely invisible
+	// anywhere in the chat transcript/UI).
+	var sentFilesMu sync.Mutex
+	var sentFiles []string
 
 	setChildProfile := agentsession.Tool{
 		Name: "set_child_profile",
@@ -551,7 +588,7 @@ func handleParentMessage(w http.ResponseWriter, r *http.Request) {
 			"type": "object",
 			"properties": map[string]interface{}{
 				"path":  map[string]interface{}{"type": "string", "description": "workspace-relative path to hand off"},
-				"label": map[string]interface{}{"type": "string", "description": "short button text, e.g. \"Give to Myra\" — optional, a sensible default is used if omitted"},
+				"label": map[string]interface{}{"type": "string", "description": "short button text, e.g. \"Give to " + childLabel + "\" — optional, a sensible default is used if omitted"},
 			},
 			"required": []string{"path"},
 		},
@@ -606,7 +643,7 @@ func handleParentMessage(w http.ResponseWriter, r *http.Request) {
 		Name: "approve_for_child",
 		Description: "Hand off a file you created (a test, study material, a report) to the child — only after this is called " +
 			"does it appear on the child's own screen. Call it when the parent asks to give/share/send something to the child " +
-			"(e.g. \"give this test to Myra\"), or when they confirm a file you offered to hand off. Only files under shared/ can " +
+			"(e.g. \"give this test to " + childLabel + "\"), or when they confirm a file you offered to hand off. Only files under shared/ can " +
 			"be approved; never call this for anything under parent/.",
 		Category: "family_tools",
 		Params: map[string]interface{}{
@@ -643,7 +680,7 @@ func handleParentMessage(w http.ResponseWriter, r *http.Request) {
 	sess, err := agentsession.New(ctx, agentsession.Config{
 		Provider:        provider,
 		ModelID:         mediumTierModelID(provider),
-		ReasoningEffort: "medium",
+		ReasoningEffort: "high",
 		WorkingDir:      workDir,
 		SystemPrompt:    parentSystemPrompt(s.Child, s.ParentLabel, s.Pulse),
 		// Stable SessionID = the conversation id, so the SAME warm tmux session
@@ -655,19 +692,27 @@ func handleParentMessage(w http.ResponseWriter, r *http.Request) {
 		SessionID:                 req.ConversationID,
 		SessionHandle:             loadSessionHandle("parent", req.ConversationID),
 		BridgeRoutingInstructions: bridgeRoutingInstructions(),
+		StreamCallback: func(text string) {
+			statusHubs.publishDelta("parent:"+req.ConversationID, text)
+		},
 		Tools: withLiveStatus("parent:"+req.ConversationID, []agentsession.Tool{
 			setChildProfile, setParentLabel, setTeachingStyle, openFile, approveForChildTool,
-			createLearningPackageTool(func(ev toolEvent) {
+			createLearningPackageTool(childLabel, func(ev toolEvent) {
 				evMu.Lock()
 				events = append(events, ev)
 				evMu.Unlock()
 			}),
 			suggestActions, suggestHandoff, webSearchTool(), readImageTool(s.Engine), generateImageTool(), notifyTool(), shellTool(), diffPatchWorkspaceFileTool(), agentBrowserTool(),
+			sendWhatsAppFileTool(func(path string) {
+				sentFilesMu.Lock()
+				sentFiles = append(sentFiles, path)
+				sentFilesMu.Unlock()
+			}),
 		}),
 	})
 	if err != nil {
 		msg := friendlyTurnError(err)
-		persistConversation("parent", req.ConversationID, withReply(req.Messages, msg))
+		persistConversationReply("parent", req.ConversationID, req.Messages, msg)
 		writeJSON(w, http.StatusOK, parentMessageResponse{Error: msg})
 		return
 	}
@@ -678,14 +723,21 @@ func handleParentMessage(w http.ResponseWriter, r *http.Request) {
 		history = append(history, agentsession.Message{Role: m.Role, Text: m.Text})
 	}
 
+	// Register this turn as steerable for its whole duration, so a follow-up
+	// message the parent sends while it's still running can be injected live
+	// (see steer.go) instead of only ever being queued for afterward.
+	registerActiveTurn(req.ConversationID, sess.Agent())
+	defer clearActiveTurn()
+
 	reply, err := sess.Ask(ctx, history)
 	if err != nil {
 		// Persist the turn even on failure: the parent's own message must never
 		// silently vanish from the transcript, and any background work the agent
 		// already completed before the deadline (e.g. inbox files it already
-		// filed) must not look like it never happened.
+		// filed) must not look like it never happened. Reload-then-append (not
+		// req.Messages directly) so a message steered in mid-turn isn't lost.
 		msg := friendlyTurnError(err)
-		persistConversation("parent", req.ConversationID, withReply(req.Messages, msg))
+		persistConversationReply("parent", req.ConversationID, req.Messages, msg)
 		writeJSON(w, http.StatusOK, parentMessageResponse{Error: msg})
 		return
 	}
@@ -708,10 +760,6 @@ func handleParentMessage(w http.ResponseWriter, r *http.Request) {
 	// and approved. Derive the package handoff here from the recorded event (only
 	// if the model didn't already surface one this turn).
 	if handoff == nil {
-		childLabel := "child"
-		if s.Child != nil && strings.TrimSpace(s.Child.Name) != "" {
-			childLabel = s.Child.Name
-		}
 		for i := len(out) - 1; i >= 0; i-- {
 			if out[i].Tool == "create_learning_package" && strings.TrimSpace(out[i].Path) != "" {
 				handoff = &handoffSuggestion{Label: "Give to " + childLabel, Path: out[i].Path, Manifest: out[i].Path}
@@ -719,7 +767,12 @@ func handleParentMessage(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-	persistConversation("parent", req.ConversationID, withReply(req.Messages, reply))
+	reply = appendSentFileLinks(reply, sentFiles)
+	// Reload-then-append (not req.Messages directly) so a message the parent
+	// steered in mid-turn — appended to disk by handleParentSteer while this
+	// turn was still running — makes it into the final saved transcript
+	// instead of being overwritten by this handler's own stale snapshot.
+	persistConversationReply("parent", req.ConversationID, req.Messages, reply)
 	writeJSON(w, http.StatusOK, parentMessageResponse{Reply: reply, ToolEvents: out, Suggestions: sug, Handoff: handoff})
 }
 

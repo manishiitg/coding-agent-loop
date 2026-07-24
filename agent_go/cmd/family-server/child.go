@@ -209,10 +209,12 @@ func handleChildMessage(w http.ResponseWriter, r *http.Request) {
 
 	sess, err := agentsession.New(ctx, agentsession.Config{
 		Provider: provider,
-		// CHILD Mode uses the fast tier (Claude Code -> haiku): short, one-at-a-time
-		// tutoring turns where snappy responses matter more than deep reasoning.
+		// CHILD Mode uses the fast tier (Claude Code -> haiku; codex-cli -> gpt-5.6-luna)
+		// for short, one-at-a-time tutoring turns — high reasoning effort on top of
+		// that fast model, so it still thinks things through carefully without
+		// paying for a bigger model tier.
 		ModelID:         lowTierModelID(provider),
-		ReasoningEffort: "medium",
+		ReasoningEffort: "high",
 		WorkingDir:      workDir,
 		SystemPrompt:    childSystemPrompt(s.Child, s.ParentLabel),
 		// Stable SessionID reuses the warm tmux within this process; SessionHandle

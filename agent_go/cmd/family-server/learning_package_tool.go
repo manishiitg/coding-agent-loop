@@ -49,12 +49,15 @@ func slugify(s string) string {
 // call — the parent hands off the whole thing at once instead of one file at
 // a time. The child's system prompt (childSystemPrompt) tells the tutor to
 // check shared/packages/ for approved manifests and follow their order/note.
-func createLearningPackageTool(recordEvent func(toolEvent)) agentsession.Tool {
+func createLearningPackageTool(childLabel string, recordEvent func(toolEvent)) agentsession.Tool {
+	if strings.TrimSpace(childLabel) == "" {
+		childLabel = "the child"
+	}
 	return agentsession.Tool{
 		Name: "create_learning_package",
 		Description: "Bundle pre-made files (notes, study material, a basic test, an advanced test, etc.) into one package for the " +
 			"child, in the order they should do them — OR create an instruction-only package with no files at all, just a guide_note " +
-			"describing an open-ended, dynamically-generated activity (e.g. \"Give Myra one algebra word problem at a time. Start " +
+			"describing an open-ended, dynamically-generated activity (e.g. \"Give " + childLabel + " one algebra word problem at a time. Start " +
 			"medium difficulty, go harder after two correct in a row, easier after a miss. Keep going until she wants to stop.\" or " +
 			"\"Run adaptive GMAT-style quant practice: one question at a time, adjust difficulty from her answers, never repeat a " +
 			"question.\"). Use items when there's real pre-made material to hand off; use guide_note alone when the child should get " +

@@ -1975,6 +1975,18 @@ func runServer(cmd *cobra.Command, args []string) {
 	apiRouter.HandleFunc("/mcp-config/status", api.handleGetMCPConfigStatus).Methods("GET")
 	apiRouter.HandleFunc("/mcp-config/logs", api.handleGetServerLogs).Methods("GET")
 
+	// Connections API routes (from connections_routes.go) - user-facing layer
+	// over MCP servers. Registered before the {id} routes so "catalog" is not
+	// swallowed by the path variable.
+	apiRouter.HandleFunc("/connections/catalog", api.handleGetConnectionsCatalog).Methods("GET", "OPTIONS")
+	apiRouter.HandleFunc("/connections", api.handleGetConnections).Methods("GET", "OPTIONS")
+	apiRouter.HandleFunc("/connections/{id}/connect", api.handleConnectIntegration).Methods("POST", "OPTIONS")
+	apiRouter.HandleFunc("/connections/{id}/disconnect", api.handleDisconnectConnection).Methods("POST", "OPTIONS")
+	apiRouter.HandleFunc("/connections/{id}/test", api.handleTestConnection).Methods("POST", "OPTIONS")
+	apiRouter.HandleFunc("/connections/{id}/tools", api.handleGetConnectionTools).Methods("GET", "OPTIONS")
+	apiRouter.HandleFunc("/connections/{id}/tools", api.handleSetConnectionTools).Methods("PUT", "OPTIONS")
+	apiRouter.HandleFunc("/connections/{id}", api.handleRemoveConnection).Methods("DELETE", "OPTIONS")
+
 	// Secrets encryption API routes (from secrets_routes.go)
 	apiRouter.HandleFunc("/secrets/encrypt", api.handleEncryptSecret).Methods("POST", "OPTIONS")
 	apiRouter.HandleFunc("/secrets/decrypt", api.handleDecryptSecret).Methods("POST", "OPTIONS")
@@ -3719,6 +3731,9 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		// Note: req.MaxTurns is already normalized earlier in the handler:
 		// 0 => default, negative => uncapped, positive => explicit limit.
 		// Note: provider and model parameters removed - LLM selection uses temp override → step config → preset LLM
+		// Honour the user's per-connection tool switches before the agent sees them.
+		selectedTools = api.applyDisabledTools(currentUserID, selectedServers, selectedTools)
+
 		workflowOrchestrator, err := orchtypes.NewWorkflowOrchestrator(
 			api.mcpConfigPath,    // mcpConfigPath
 			api.temperature,      // temperature
@@ -4442,6 +4457,9 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		} else if len(selectedTools) == 0 {
 			log.Printf("[TOOLS] No tool selection specified - will use ALL tools from selected servers")
 		}
+
+		// Honour the user's per-connection tool switches before the agent sees them.
+		selectedTools = api.applyDisabledTools(currentUserID, selectedServers, selectedTools)
 
 		// Multi-agent chat / generic agent always runs in code-execution mode
 		// regardless of provider. Tool-search and simple-agent paths have been

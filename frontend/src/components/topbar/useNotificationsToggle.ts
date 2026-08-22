@@ -1,17 +1,24 @@
 import { useEffect, useState } from 'react'
-import { Bell, BellOff } from 'lucide-react'
-import { Tooltip, TooltipContent, TooltipTrigger } from '../ui/tooltip'
 import { playNotificationSound } from '../../utils/sound'
-import { useIsElectron } from './useIsElectron'
+
+interface NotificationsToggle {
+  /** OS-level permission, re-checked whenever the window regains focus. */
+  osPermission: NotificationPermission
+  enabled: boolean
+  /** Blocked at the OS level — the in-app preference cannot help. */
+  blocked: boolean
+  description: string
+  toggle: () => void
+}
 
 /**
- * NotificationsControl - toggles desktop notifications + sound and surfaces the
- * OS permission state. Electron only; renders nothing in the browser.
+ * Desktop notification preference plus the OS permission behind it. Extracted
+ * from the old top-bar icon so the Workspace Tools drawer can render it as a
+ * row with its state spelled out instead of encoded in a bell glyph.
  */
-export default function NotificationsControl() {
-  const isElectron = useIsElectron()
+export function useNotificationsToggle(): NotificationsToggle {
   const [osPermission, setOsPermission] = useState<NotificationPermission>('default')
-  const [notificationsEnabled, setNotificationsEnabled] = useState(() => {
+  const [enabled, setEnabled] = useState(() => {
     return localStorage.getItem('mcp_notifications_enabled') !== 'false' // Default true
   })
 
@@ -25,8 +32,6 @@ export default function NotificationsControl() {
     window.addEventListener('focus', handleFocus)
     return () => window.removeEventListener('focus', handleFocus)
   }, [])
-
-  if (!isElectron) return null
 
   const testNotification = () => {
     playNotificationSound()
@@ -60,14 +65,16 @@ export default function NotificationsControl() {
     }
   }
 
-  const handleNotificationClick = () => {
-    if (osPermission === 'denied') {
+  const blocked = osPermission === 'denied'
+
+  const toggle = () => {
+    if (blocked) {
       alert('Notifications are blocked by your system settings. Please enable them in System Settings > Notifications > AgentWorks.')
       return
     }
 
-    const nextValue = !notificationsEnabled
-    setNotificationsEnabled(nextValue)
+    const nextValue = !enabled
+    setEnabled(nextValue)
     localStorage.setItem('mcp_notifications_enabled', String(nextValue))
 
     if (nextValue) {
@@ -76,31 +83,15 @@ export default function NotificationsControl() {
     }
   }
 
-  return (
-    <Tooltip>
-      <TooltipTrigger asChild>
-        <button
-          type="button"
-          onClick={handleNotificationClick}
-          aria-label="Notifications"
-          className={`p-1.5 rounded-md transition-colors hover:bg-gray-100 dark:hover:bg-gray-700 ${
-            osPermission === 'denied'
-              ? 'text-red-500 hover:text-red-600'
-              : notificationsEnabled
-                ? 'text-indigo-500 hover:text-indigo-600 dark:text-indigo-400 dark:hover:text-indigo-300'
-                : 'text-gray-400 hover:text-gray-600 dark:text-gray-500 dark:hover:text-gray-300'
-          }`}
-        >
-          {osPermission === 'denied' || !notificationsEnabled ? <BellOff className="w-4 h-4" /> : <Bell className="w-4 h-4" />}
-        </button>
-      </TooltipTrigger>
-      <TooltipContent side="bottom">
-        {osPermission === 'denied'
-          ? 'Notifications blocked by system. Click to learn more.'
-          : notificationsEnabled
-            ? 'Disable Notifications'
-            : 'Enable Notifications & Sound'}
-      </TooltipContent>
-    </Tooltip>
-  )
+  return {
+    osPermission,
+    enabled,
+    blocked,
+    description: blocked
+      ? 'Blocked by system settings'
+      : enabled
+        ? 'On — desktop alerts and sound'
+        : 'Off',
+    toggle,
+  }
 }

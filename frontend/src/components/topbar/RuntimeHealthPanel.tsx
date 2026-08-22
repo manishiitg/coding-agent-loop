@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { Activity, AlertTriangle, CheckCircle2, Monitor, RefreshCw, Terminal, Trash2 } from 'lucide-react'
-import IconPopover from '../ui/IconPopover'
+import { AlertTriangle, CheckCircle2, Monitor, RefreshCw, Terminal, Trash2 } from 'lucide-react'
 import { agentApi } from '../../services/api'
 
 interface BrowserProcess {
@@ -88,7 +87,12 @@ const errorMessage = (error: unknown, fallback: string) => {
   return error instanceof Error ? error.message : fallback
 }
 
-export default function RuntimeHealthControl() {
+/**
+ * RuntimeHealthPanel - browser sessions and workflow shell processes, with the
+ * cleanup actions for each. Rendered as a page inside the Workspace Tools
+ * drawer; it owns its own polling while mounted.
+ */
+export default function RuntimeHealthPanel() {
   const [browserProcesses, setBrowserProcesses] = useState<BrowserProcess[]>([])
   const [browserTracking, setBrowserTracking] = useState<BrowserSessionTracking[]>([])
   const [managedProcesses, setManagedProcesses] = useState<ManagedWorkflowProcess[]>([])
@@ -161,8 +165,6 @@ export default function RuntimeHealthControl() {
   )
   const totalCpu = browserProcesses.reduce((sum, process) => sum + process.cpu, 0)
   const totalMem = browserProcesses.reduce((sum, process) => sum + process.mem_mb, 0)
-  const attentionCount = browserSessionCount + staleProcesses.length
-  const tooltipLabel = `Runtime health: ${browserSessionCount} browser session${browserSessionCount === 1 ? '' : 's'}, ${staleProcesses.length} stale process${staleProcesses.length === 1 ? '' : 'es'}, ${managedProcesses.length} running process${managedProcesses.length === 1 ? '' : 'es'}`
 
   const cleanupBrowsers = async () => {
     setCleaningBrowsers(true)
@@ -189,22 +191,8 @@ export default function RuntimeHealthControl() {
     }
   }
 
-  const badge = attentionCount > 0 ? (
-    <span className={`absolute -top-1.5 -right-1.5 flex h-4 min-w-4 items-center justify-center rounded-full px-1 text-[10px] font-semibold text-white ${
-      staleProcesses.length > 0 ? 'bg-red-500' : 'bg-blue-500'
-    }`}>
-      {attentionCount > 9 ? '9+' : attentionCount}
-    </span>
-  ) : null
-
   return (
-    <IconPopover
-      icon={<Activity className="w-4 h-4" />}
-      label={tooltipLabel}
-      badge={badge}
-      panelClassName="w-[28rem]"
-    >
-      <div className="space-y-4 text-sm text-gray-900 dark:text-gray-100">
+    <div className="space-y-4 text-sm text-gray-900 dark:text-gray-100">
         <div className="flex items-center justify-between gap-3">
           <div>
             <div className="text-sm font-semibold">Runtime Health</div>
@@ -410,8 +398,7 @@ export default function RuntimeHealthControl() {
               )}
             </>
           )}
-        </section>
-      </div>
-    </IconPopover>
+      </section>
+    </div>
   )
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"html"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -30,6 +31,11 @@ var (
 	oauthFlows   = make(map[string]*OAuthFlowState) // state -> flow
 	oauthFlowsMu sync.RWMutex
 )
+
+// oauthResultMessageType is the postMessage marker the callback page sends to
+// the tab that started the flow. The frontend listens for it so the connect
+// finishes the moment the provider redirects back, instead of on the next poll.
+const oauthResultMessageType = "agentworks-oauth-result"
 
 func deriveOAuthRedirectURI(r *http.Request) string {
 	if publicURL := os.Getenv("PUBLIC_URL"); publicURL != "" {
@@ -89,104 +95,33 @@ type OAuthLogoutRequest struct {
 	ServerName string `json:"server_name"`
 }
 
-// handleOAuthCallback handles GET /api/oauth/callback - receives OAuth authorization code
-func (api *StreamingAPI) handleOAuthCallback(w http.ResponseWriter, r *http.Request) {
-	api.logger.Info(fmt.Sprintf("🔔 OAuth callback received: state=%s, code_present=%v, error=%s",
-		r.URL.Query().Get("state"), r.URL.Query().Get("code") != "", r.URL.Query().Get("error")))
-
-	query := r.URL.Query()
-
-	// Get state parameter
-	state := query.Get("state")
-	if state == "" {
-		w.WriteHeader(http.StatusBadRequest)
-		fmt.Fprintf(w, `
-<!DOCTYPE html>
-<html>
-<head><title>OAuth Error</title></head>
-<body style="font-family: Arial, sans-serif; text-align: center; padding: 50px;">
-	<h1>❌ Invalid Request</h1>
-	<p>Missing state parameter</p>
-	<p>You can close this window.</p>
-</body>
-</html>`)
-		return
+// oauthResultPage renders the page the provider redirects back to. The tab is
+// opened by the app, so instead of leaving the user parked on a dead page it
+// hands the outcome to the opener and closes itself; the manual note only
+// appears if the browser refuses the close.
+func writeOAuthResultPage(w http.ResponseWriter, status int, ok bool, heading, detail string) {
+	outcome := "error"
+	icon := "❌"
+	closing := "This tab will close and you will be back where you started."
+	if ok {
+		outcome = "success"
+		icon = "✅"
+		closing = "Taking you back to your workspace…"
 	}
 
-	// Find the OAuth flow
-	oauthFlowsMu.RLock()
-	flow, exists := oauthFlows[state]
-	oauthFlowsMu.RUnlock()
+	payload, _ := json.Marshal(map[string]string{
+		"type":    oauthResultMessageType,
+		"status":  outcome,
+		"message": detail,
+	})
 
-	if !exists {
-		w.WriteHeader(http.StatusBadRequest)
-		fmt.Fprintf(w, `
-<!DOCTYPE html>
-<html>
-<head><title>OAuth Error</title></head>
-<body style="font-family: Arial, sans-serif; text-align: center; padding: 50px;">
-	<h1>❌ Invalid or Expired State</h1>
-	<p>OAuth flow not found or expired</p>
-	<p>You can close this window and try again.</p>
-</body>
-</html>`)
-		return
-	}
-
-	// Check for error from OAuth provider
-	if errCode := query.Get("error"); errCode != "" {
-		errDesc := query.Get("error_description")
-		if errDesc == "" {
-			errDesc = errCode
-		}
-
-		w.WriteHeader(http.StatusBadRequest)
-		fmt.Fprintf(w, `
-<!DOCTYPE html>
-<html>
-<head><title>Authentication Failed</title></head>
-<body style="font-family: Arial, sans-serif; text-align: center; padding: 50px;">
-	<h1>❌ Authentication Failed</h1>
-	<p>%s</p>
-	<p>You can close this window.</p>
-</body>
-</html>`, errDesc)
-
-		// Send error to flow
-		select {
-		case flow.ErrChan <- fmt.Errorf("OAuth error: %s - %s", errCode, errDesc):
-		default:
-		}
-		return
-	}
-
-	// Get authorization code
-	code := query.Get("code")
-	if code == "" {
-		w.WriteHeader(http.StatusBadRequest)
-		fmt.Fprintf(w, `
-<!DOCTYPE html>
-<html>
-<head><title>OAuth Error</title></head>
-<body style="font-family: Arial, sans-serif; text-align: center; padding: 50px;">
-	<h1>❌ Missing Authorization Code</h1>
-	<p>No authorization code received</p>
-	<p>You can close this window.</p>
-</body>
-</html>`)
-		return
-	}
-
-	// Send code to flow
-	select {
-	case flow.CodeChan <- code:
-		// Success - show nice page
-		w.WriteHeader(http.StatusOK)
-		fmt.Fprintf(w, `
-<!DOCTYPE html>
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.WriteHeader(status)
+	fmt.Fprintf(w, `<!DOCTYPE html>
 <html>
 <head>
-	<title>Authentication Successful</title>
+	<meta charset="utf-8">
+	<title>%s</title>
 	<style>
 		body {
 			font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
@@ -203,44 +138,102 @@ func (api *StreamingAPI) handleOAuthCallback(w http.ResponseWriter, r *http.Requ
 			padding: 48px;
 			box-shadow: 0 20px 60px rgba(0,0,0,0.3);
 			text-align: center;
-			max-width: 400px;
+			max-width: 420px;
 		}
-		.success-icon {
-			font-size: 64px;
-			margin-bottom: 24px;
-		}
-		h1 {
-			color: #2d3748;
-			margin: 0 0 16px 0;
-			font-size: 24px;
-		}
-		p {
-			color: #718096;
-			margin: 0;
-			font-size: 16px;
-		}
+		.icon { font-size: 64px; margin-bottom: 24px; }
+		h1 { color: #2d3748; margin: 0 0 16px 0; font-size: 24px; }
+		p { color: #718096; margin: 0 0 8px 0; font-size: 16px; }
+		#manual { display: none; color: #a0aec0; font-size: 14px; margin-top: 16px; }
 	</style>
 </head>
 <body>
 	<div class="container">
-		<div class="success-icon">✅</div>
-		<h1>Authentication Successful!</h1>
-		<p>You can close this window and return to the application.</p>
+		<div class="icon">%s</div>
+		<h1>%s</h1>
+		<p>%s</p>
+		<p>%s</p>
+		<p id="manual">You can close this tab and return to your workspace tab.</p>
 	</div>
+	<script>
+		(function () {
+			var payload = %s;
+			try {
+				if (window.opener && !window.opener.closed) {
+					window.opener.postMessage(payload, '*');
+					window.opener.focus();
+				}
+			} catch (e) {}
+			// A tab opened by script may close itself. Give the opener a moment
+			// to act on the message first, and reveal the manual note if the
+			// browser declines the close.
+			setTimeout(function () { window.close(); }, 600);
+			setTimeout(function () {
+				document.getElementById('manual').style.display = 'block';
+			}, 2500);
+		})();
+	</script>
 </body>
-</html>`)
+</html>`, html.EscapeString(heading), icon, html.EscapeString(heading), html.EscapeString(detail), closing, payload)
+}
+
+// handleOAuthCallback handles GET /api/oauth/callback - receives OAuth authorization code
+func (api *StreamingAPI) handleOAuthCallback(w http.ResponseWriter, r *http.Request) {
+	api.logger.Info(fmt.Sprintf("🔔 OAuth callback received: state=%s, code_present=%v, error=%s",
+		r.URL.Query().Get("state"), r.URL.Query().Get("code") != "", r.URL.Query().Get("error")))
+
+	query := r.URL.Query()
+
+	// Get state parameter
+	state := query.Get("state")
+	if state == "" {
+		writeOAuthResultPage(w, http.StatusBadRequest, false, "Invalid Request", "Missing state parameter.")
+		return
+	}
+
+	// Find the OAuth flow
+	oauthFlowsMu.RLock()
+	flow, exists := oauthFlows[state]
+	oauthFlowsMu.RUnlock()
+
+	if !exists {
+		writeOAuthResultPage(w, http.StatusBadRequest, false, "Invalid or Expired State",
+			"This sign-in link is no longer valid. Start the connection again.")
+		return
+	}
+
+	// Check for error from OAuth provider
+	if errCode := query.Get("error"); errCode != "" {
+		errDesc := query.Get("error_description")
+		if errDesc == "" {
+			errDesc = errCode
+		}
+
+		writeOAuthResultPage(w, http.StatusBadRequest, false, "Authentication Failed", errDesc)
+
+		// Send error to flow
+		select {
+		case flow.ErrChan <- fmt.Errorf("OAuth error: %s - %s", errCode, errDesc):
+		default:
+		}
+		return
+	}
+
+	// Get authorization code
+	code := query.Get("code")
+	if code == "" {
+		writeOAuthResultPage(w, http.StatusBadRequest, false, "Missing Authorization Code",
+			"No authorization code was received.")
+		return
+	}
+
+	// Send code to flow
+	select {
+	case flow.CodeChan <- code:
+		writeOAuthResultPage(w, http.StatusOK, true, "Authentication Successful!",
+			"Access was granted.")
 	default:
-		w.WriteHeader(http.StatusInternalServerError)
-		fmt.Fprintf(w, `
-<!DOCTYPE html>
-<html>
-<head><title>OAuth Error</title></head>
-<body style="font-family: Arial, sans-serif; text-align: center; padding: 50px;">
-	<h1>❌ Internal Error</h1>
-	<p>Failed to process authorization code</p>
-	<p>You can close this window and try again.</p>
-</body>
-</html>`)
+		writeOAuthResultPage(w, http.StatusInternalServerError, false, "Internal Error",
+			"The authorization code could not be processed. Try connecting again.")
 	}
 }
 

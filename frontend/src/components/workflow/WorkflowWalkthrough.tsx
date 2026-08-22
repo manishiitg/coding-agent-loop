@@ -20,6 +20,11 @@ const STEPS: WalkthroughStep[] = [
     body: 'Click the automation name to switch or add an automation. Use the gear beside it to edit the selected automation.',
   },
   {
+    selector: '[data-tour="workspace-tools"]',
+    title: 'Workspace tools',
+    body: 'Opens a panel on the right holding everything that is not the automation itself: connections, models, skills, secrets, runtime health, bots, schedules, and this walkthrough.',
+  },
+  {
     selector: '[data-tour="workflow-schedules"]',
     title: 'Schedules',
     body: 'Open scheduled automation runs from here. It shows how many schedules exist and whether any are running now.',

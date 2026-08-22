@@ -1,0 +1,578 @@
+{
+  "version": 2,
+  "integrations": [
+    {
+      "id": "notion",
+      "server_name": "notion",
+      "name": "Notion",
+      "tagline": "Pages, databases, and docs",
+      "category": "productivity",
+      "status": "available",
+      "auth": "dcr",
+      "url": "https://mcp.notion.com/mcp",
+      "icon": "notion",
+      "brand_color": "#000000",
+      "docs_url": "https://developers.notion.com/docs/mcp",
+      "capabilities": [
+        "Search pages and databases",
+        "Read page content",
+        "Create and update pages"
+      ],
+      "sensitive_actions": [
+        "Create or edit pages in your workspace"
+      ]
+    },
+    {
+      "id": "linear",
+      "server_name": "linear",
+      "name": "Linear",
+      "tagline": "Issues, projects, and cycles",
+      "category": "productivity",
+      "status": "available",
+      "auth": "dcr",
+      "url": "https://mcp.linear.app/mcp",
+      "icon": "linear",
+      "brand_color": "#5E6AD2",
+      "docs_url": "https://linear.app/docs/mcp",
+      "capabilities": [
+        "Search and read issues",
+        "Create and update issues",
+        "Read projects and cycles"
+      ],
+      "sensitive_actions": [
+        "Create or update issues assigned to your team"
+      ]
+    },
+    {
+      "id": "asana",
+      "server_name": "asana",
+      "name": "Asana",
+      "tagline": "Tasks, projects, and portfolios",
+      "category": "productivity",
+      "status": "available",
+      "auth": "dcr",
+      "url": "https://mcp.asana.com/sse",
+      "icon": "asana",
+      "brand_color": "#F06A6A",
+      "docs_url": "https://developers.asana.com/docs/mcp-server",
+      "capabilities": [
+        "Search tasks and projects",
+        "Read task details and comments",
+        "Create and update tasks"
+      ],
+      "sensitive_actions": [
+        "Create or update tasks assigned to your team"
+      ]
+    },
+    {
+      "id": "atlassian",
+      "server_name": "atlassian",
+      "name": "Atlassian",
+      "tagline": "Jira issues and Confluence pages",
+      "category": "productivity",
+      "status": "available",
+      "auth": "dcr",
+      "url": "https://mcp.atlassian.com/v1/sse",
+      "icon": "atlassian",
+      "brand_color": "#0052CC",
+      "docs_url": "https://support.atlassian.com/atlassian-rovo-mcp-server/",
+      "capabilities": [
+        "Search Jira issues",
+        "Read and comment on issues",
+        "Search and read Confluence pages"
+      ],
+      "sensitive_actions": [
+        "Create or update Jira issues and Confluence pages"
+      ]
+    },
+    {
+      "id": "monday",
+      "server_name": "monday",
+      "name": "monday.com",
+      "tagline": "Boards, items, and updates",
+      "category": "productivity",
+      "status": "available",
+      "auth": "dcr",
+      "url": "https://mcp.monday.com/sse",
+      "brand_color": "#FF3D57",
+      "docs_url": "https://developer.monday.com/apps/docs/mondaycom-mcp-integration",
+      "capabilities": [
+        "Read boards and items",
+        "Create and update items",
+        "Post updates"
+      ],
+      "sensitive_actions": [
+        "Create or update items on your boards"
+      ],
+      "icon": "monday"
+    },
+    {
+      "id": "sentry",
+      "server_name": "sentry",
+      "name": "Sentry",
+      "tagline": "Errors and performance issues",
+      "category": "development",
+      "status": "available",
+      "auth": "dcr",
+      "url": "https://mcp.sentry.dev/mcp",
+      "icon": "sentry",
+      "brand_color": "#362D59",
+      "docs_url": "https://docs.sentry.io/product/sentry-mcp/",
+      "capabilities": [
+        "List and search issues",
+        "Read stack traces and event details",
+        "Inspect release health"
+      ],
+      "sensitive_actions": []
+    },
+    {
+      "id": "figma",
+      "server_name": "figma",
+      "name": "Figma",
+      "tagline": "Design files and components",
+      "category": "design",
+      "status": "available",
+      "auth": "dcr",
+      "url": "https://mcp.figma.com/mcp",
+      "icon": "figma",
+      "brand_color": "#F24E1E",
+      "docs_url": "https://help.figma.com/hc/en-us/articles/32132100833559",
+      "capabilities": [
+        "Read design files and frames",
+        "Inspect components and styles",
+        "Extract design tokens"
+      ],
+      "sensitive_actions": []
+    },
+    {
+      "id": "canva",
+      "server_name": "canva",
+      "name": "Canva",
+      "tagline": "Designs, brand kits, and exports",
+      "category": "design",
+      "status": "available",
+      "auth": "dcr",
+      "url": "https://mcp.canva.com/mcp",
+      "icon": "canva",
+      "brand_color": "#00C4CC",
+      "docs_url": "https://www.canva.dev/docs/apps/mcp-server/",
+      "capabilities": [
+        "Search and read designs",
+        "Create designs from templates",
+        "Export designs"
+      ],
+      "sensitive_actions": [
+        "Create or modify designs in your account"
+      ]
+    },
+    {
+      "id": "vercel",
+      "server_name": "vercel",
+      "name": "Vercel",
+      "tagline": "Projects, deployments, and logs",
+      "category": "development",
+      "status": "available",
+      "auth": "dcr",
+      "url": "https://mcp.vercel.com",
+      "icon": "vercel",
+      "brand_color": "#000000",
+      "docs_url": "https://vercel.com/docs/mcp/vercel-mcp",
+      "capabilities": [
+        "List projects and deployments",
+        "Read build and runtime logs",
+        "Inspect deployment status"
+      ],
+      "sensitive_actions": []
+    },
+    {
+      "id": "neon",
+      "server_name": "neon",
+      "name": "Neon",
+      "tagline": "Postgres databases and branches",
+      "category": "development",
+      "status": "available",
+      "auth": "dcr",
+      "url": "https://mcp.neon.tech/sse",
+      "brand_color": "#00E599",
+      "docs_url": "https://neon.com/docs/ai/neon-mcp-server",
+      "capabilities": [
+        "List projects and databases",
+        "Run read queries",
+        "Create and manage branches"
+      ],
+      "sensitive_actions": [
+        "Create, alter, or drop database objects"
+      ],
+      "icon": "neon"
+    },
+    {
+      "id": "cloudflare-observability",
+      "server_name": "cloudflare-observability",
+      "name": "Cloudflare Observability",
+      "tagline": "Logs, analytics, and errors",
+      "category": "development",
+      "status": "available",
+      "auth": "dcr",
+      "url": "https://observability.mcp.cloudflare.com/sse",
+      "icon": "cloudflare",
+      "brand_color": "#F38020",
+      "docs_url": "https://developers.cloudflare.com/agents/model-context-protocol/mcp-servers-for-cloudflare/",
+      "capabilities": [
+        "Query Workers logs and analytics",
+        "Inspect errors and traces"
+      ],
+      "sensitive_actions": []
+    },
+    {
+      "id": "webflow",
+      "server_name": "webflow",
+      "name": "Webflow",
+      "tagline": "Sites, collections, and CMS items",
+      "category": "development",
+      "status": "available",
+      "auth": "dcr",
+      "url": "https://mcp.webflow.com/sse",
+      "icon": "webflow",
+      "brand_color": "#146EF5",
+      "docs_url": "https://developers.webflow.com/data/docs/ai-tools",
+      "capabilities": [
+        "List sites and collections",
+        "Read and update CMS items",
+        "Publish site changes"
+      ],
+      "sensitive_actions": [
+        "Update CMS content or publish a site"
+      ]
+    },
+    {
+      "id": "wix",
+      "server_name": "wix",
+      "name": "Wix",
+      "tagline": "Sites, stores, and bookings",
+      "category": "development",
+      "status": "available",
+      "auth": "dcr",
+      "url": "https://mcp.wix.com/sse",
+      "icon": "wix",
+      "brand_color": "#0C6EFC",
+      "docs_url": "https://www.wix.com/studio/developers/mcp-server",
+      "capabilities": [
+        "Read site and store data",
+        "Manage products and orders",
+        "Read bookings"
+      ],
+      "sensitive_actions": [
+        "Create or update products, orders, and bookings"
+      ]
+    },
+    {
+      "id": "stripe",
+      "server_name": "stripe",
+      "name": "Stripe",
+      "tagline": "Payments, customers, and invoices",
+      "category": "finance",
+      "status": "available",
+      "auth": "dcr",
+      "url": "https://mcp.stripe.com",
+      "icon": "stripe",
+      "brand_color": "#635BFF",
+      "docs_url": "https://docs.stripe.com/mcp",
+      "capabilities": [
+        "Search customers and payments",
+        "Read invoices and subscriptions",
+        "Create payment links"
+      ],
+      "sensitive_actions": [
+        "Create charges, refunds, or customer records"
+      ]
+    },
+    {
+      "id": "paypal",
+      "server_name": "paypal",
+      "name": "PayPal",
+      "tagline": "Orders, invoices, and payouts",
+      "category": "finance",
+      "status": "available",
+      "auth": "dcr",
+      "url": "https://mcp.paypal.com/mcp",
+      "icon": "paypal",
+      "brand_color": "#003087",
+      "docs_url": "https://developer.paypal.com/tools/mcp-server/",
+      "capabilities": [
+        "Read orders and transactions",
+        "Create and send invoices",
+        "Inspect disputes"
+      ],
+      "sensitive_actions": [
+        "Create invoices or issue refunds"
+      ]
+    },
+    {
+      "id": "square",
+      "server_name": "square",
+      "name": "Square",
+      "tagline": "Payments, catalog, and customers",
+      "category": "finance",
+      "status": "available",
+      "auth": "dcr",
+      "url": "https://mcp.squareup.com/sse",
+      "icon": "square",
+      "brand_color": "#3E4348",
+      "docs_url": "https://developer.squareup.com/docs/mcp",
+      "capabilities": [
+        "Read payments and orders",
+        "Manage catalog items",
+        "Read customer records"
+      ],
+      "sensitive_actions": [
+        "Create orders, refunds, or catalog changes"
+      ]
+    },
+    {
+      "id": "plaid",
+      "server_name": "plaid",
+      "name": "Plaid",
+      "tagline": "Bank connections and transactions",
+      "category": "finance",
+      "status": "available",
+      "auth": "dcr",
+      "url": "https://api.dashboard.plaid.com/mcp/sse",
+      "brand_color": "#000000",
+      "docs_url": "https://plaid.com/docs/mcp/",
+      "capabilities": [
+        "Read linked accounts",
+        "Read transactions and balances"
+      ],
+      "sensitive_actions": []
+    },
+    {
+      "id": "intercom",
+      "server_name": "intercom",
+      "name": "Intercom",
+      "tagline": "Conversations and contacts",
+      "category": "communication",
+      "status": "available",
+      "auth": "dcr",
+      "url": "https://mcp.intercom.com/mcp",
+      "icon": "intercom",
+      "brand_color": "#1F8DED",
+      "docs_url": "https://developers.intercom.com/docs/guides/mcp",
+      "capabilities": [
+        "Search conversations",
+        "Read contacts and companies",
+        "Reply to conversations"
+      ],
+      "sensitive_actions": [
+        "Send replies to customer conversations"
+      ]
+    },
+    {
+      "id": "close",
+      "server_name": "close",
+      "name": "Close",
+      "tagline": "CRM leads and opportunities",
+      "category": "crm",
+      "status": "available",
+      "auth": "dcr",
+      "url": "https://mcp.close.com/mcp",
+      "brand_color": "#1289F5",
+      "docs_url": "https://developer.close.com/",
+      "capabilities": [
+        "Search leads and contacts",
+        "Read opportunities and activities",
+        "Create and update leads"
+      ],
+      "sensitive_actions": [
+        "Create or update CRM records"
+      ]
+    },
+    {
+      "id": "zapier",
+      "server_name": "zapier",
+      "name": "Zapier",
+      "tagline": "Actions across thousands of apps",
+      "category": "automation",
+      "status": "available",
+      "auth": "dcr",
+      "url": "https://mcp.zapier.com/api/mcp/mcp",
+      "icon": "zapier",
+      "brand_color": "#FF4F00",
+      "docs_url": "https://help.zapier.com/hc/en-us/articles/36265392843917",
+      "capabilities": [
+        "Run configured Zapier actions",
+        "Search across connected apps"
+      ],
+      "sensitive_actions": [
+        "Run actions that write to your connected apps"
+      ]
+    },
+    {
+      "id": "fireflies",
+      "server_name": "fireflies",
+      "name": "Fireflies",
+      "tagline": "Meeting recordings and transcripts",
+      "category": "productivity",
+      "status": "available",
+      "auth": "dcr",
+      "url": "https://api.fireflies.ai/mcp",
+      "brand_color": "#1F1F1F",
+      "docs_url": "https://docs.fireflies.ai/",
+      "capabilities": [
+        "Search meeting transcripts",
+        "Read summaries and action items"
+      ],
+      "sensitive_actions": []
+    },
+    {
+      "id": "globalping",
+      "server_name": "globalping",
+      "name": "Globalping",
+      "tagline": "Network measurements worldwide",
+      "category": "development",
+      "status": "available",
+      "auth": "dcr",
+      "url": "https://mcp.globalping.dev/sse",
+      "brand_color": "#17D4A7",
+      "docs_url": "https://globalping.io/docs",
+      "capabilities": [
+        "Run ping, traceroute, and DNS checks",
+        "Measure from many locations"
+      ],
+      "sensitive_actions": []
+    },
+    {
+      "id": "github",
+      "server_name": "github",
+      "name": "GitHub",
+      "tagline": "Repos, issues, and pull requests",
+      "category": "development",
+      "icon": "github",
+      "brand_color": "#181717",
+      "status": "available",
+      "auth": "oauth_app",
+      "url": "https://api.githubcopilot.com/mcp/",
+      "docs_url": "https://docs.github.com/en/copilot/how-tos/context/use-mcp/",
+      "auth_url": "https://github.com/login/oauth/authorize",
+      "token_url": "https://github.com/login/oauth/access_token",
+      "client_id_env": "GITHUB_OAUTH_CLIENT_ID",
+      "client_secret_env": "GITHUB_OAUTH_CLIENT_SECRET",
+      "scopes": [
+        "repo",
+        "read:org",
+        "read:user",
+        "user:email"
+      ],
+      "capabilities": [
+        "Search code and repositories",
+        "Read and comment on issues",
+        "Read pull requests and diffs",
+        "Create issues and pull requests"
+      ],
+      "sensitive_actions": [
+        "Create issues, comments, or pull requests"
+      ],
+      "setup_hint": "GitHub does not register applications automatically. Create an OAuth App in GitHub developer settings, then set GITHUB_OAUTH_CLIENT_ID and GITHUB_OAUTH_CLIENT_SECRET on the server."
+    },
+    {
+      "id": "slack",
+      "server_name": "slack",
+      "name": "Slack",
+      "tagline": "Channels, messages, and search",
+      "category": "communication",
+      "icon": "slack",
+      "brand_color": "#4A154B",
+      "status": "coming_soon",
+      "auth": "oauth_app",
+      "url": "https://mcp.slack.com/mcp",
+      "docs_url": "https://api.slack.com/docs/apps/mcp",
+      "auth_url": "https://slack.com/oauth/v2_user/authorize",
+      "token_url": "https://slack.com/api/oauth.v2.user.access",
+      "client_id_env": "SLACK_OAUTH_CLIENT_ID",
+      "scopes": [
+        "channels:history",
+        "channels:read",
+        "chat:write",
+        "groups:history",
+        "groups:read",
+        "im:history",
+        "im:read",
+        "search:read.public",
+        "users:read",
+        "reactions:read"
+      ],
+      "capabilities": [
+        "List channels and members",
+        "Read channel history",
+        "Search messages",
+        "Post messages and replies"
+      ],
+      "sensitive_actions": [
+        "Post messages to your Slack workspace"
+      ],
+      "setup_hint": "Slack hosts an official MCP server, but reaching it needs a Slack app of our own: the client id Slack publishes belongs to Claude Code and only accepts that app's callback. Registering one is a one-time job, after which every user connects in one click.",
+      "client_secret_env": "SLACK_OAUTH_CLIENT_SECRET"
+    },
+    {
+      "id": "google-workspace",
+      "server_name": "google-workspace",
+      "name": "Google Workspace",
+      "tagline": "Gmail, Drive, and Calendar",
+      "category": "productivity",
+      "icon": "google",
+      "brand_color": "#4285F4",
+      "status": "available",
+      "auth": "oauth_app",
+      "url": "https://gmailmcp.googleapis.com/mcp/v1",
+      "docs_url": "https://developers.google.com/workspace/guides/create-credentials",
+      "auth_url": "https://accounts.google.com/o/oauth2/v2/auth",
+      "token_url": "https://oauth2.googleapis.com/token",
+      "client_id_env": "GOOGLE_OAUTH_CLIENT_ID",
+      "client_secret_env": "GOOGLE_OAUTH_CLIENT_SECRET",
+      "scopes": [
+        "https://www.googleapis.com/auth/gmail.readonly",
+        "https://www.googleapis.com/auth/drive.readonly",
+        "https://www.googleapis.com/auth/calendar.readonly"
+      ],
+      "capabilities": [
+        "Read and search Gmail messages",
+        "List and read Drive files",
+        "Read Calendar events"
+      ],
+      "sensitive_actions": [
+        "Read the contents of your email"
+      ],
+      "setup_hint": "An administrator needs to set GOOGLE_OAUTH_CLIENT_ID and GOOGLE_OAUTH_CLIENT_SECRET on the server. Google does not support automatic client registration."
+    },
+    {
+      "id": "microsoft-365",
+      "server_name": "microsoft-365",
+      "name": "Microsoft 365",
+      "tagline": "Outlook, OneDrive, and Calendar",
+      "category": "productivity",
+      "brand_color": "#0078D4",
+      "status": "coming_soon",
+      "auth": "oauth_app",
+      "docs_url": "https://learn.microsoft.com/en-us/entra/identity-platform/quickstart-register-app",
+      "auth_url": "https://login.microsoftonline.com/common/oauth2/v2.0/authorize",
+      "token_url": "https://login.microsoftonline.com/common/oauth2/v2.0/token",
+      "client_id_env": "MICROSOFT_OAUTH_CLIENT_ID",
+      "client_secret_env": "MICROSOFT_OAUTH_CLIENT_SECRET",
+      "scopes": [
+        "offline_access",
+        "Mail.Read",
+        "Files.Read",
+        "Calendars.Read"
+      ],
+      "capabilities": [
+        "Read Outlook mail",
+        "List and read OneDrive files",
+        "Read Calendar events"
+      ],
+      "sensitive_actions": [
+        "Read the contents of your email"
+      ],
+      "setup_hint": "Set the Microsoft 365 remote MCP server URL in connections_catalog.json, then set MICROSOFT_OAUTH_CLIENT_ID and MICROSOFT_OAUTH_CLIENT_SECRET on the server.",
+      "icon": "microsoft"
+    }
+  ]
+}

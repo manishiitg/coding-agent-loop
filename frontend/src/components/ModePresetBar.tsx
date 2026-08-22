@@ -1,4 +1,4 @@
-import React, { lazy, Suspense, useState, useEffect, useCallback, useRef } from 'react'
+import React, { lazy, Suspense, useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { useShallow } from 'zustand/react/shallow'
 import { Workflow, Settings, Copy, Keyboard, Bot, Building2, HelpCircle, AlertCircle, Clock, Loader2, Pause } from 'lucide-react'
 import { useModeStore } from '../stores/useModeStore'
@@ -22,6 +22,7 @@ import { GlobalActivityMonitor } from './GlobalActivityMonitor'
 import WorkflowWalkthrough from './workflow/WorkflowWalkthrough'
 import { ProductSurfaceSwitcher } from './ProductSurfaceSwitcher'
 import WorkspaceTopBarControls from './WorkspaceTopBarControls'
+import type { WorkspaceToolItem, WorkspaceToolSection } from './topbar/WorkspaceToolsDrawer'
 import { useAppVersion } from './topbar/useAppVersion'
 import ConfirmationDialog from './ui/ConfirmationDialog'
 import LazyModalFallback from './ui/LazyModalFallback'
@@ -338,6 +339,51 @@ export const ModePresetBar: React.FC = () => {
     if (restoreWorkspaceAfterBotConnector) setWorkspaceMinimized(false)
     setRestoreWorkspaceAfterBotConnector(false)
   }, [restoreWorkspaceAfterBotConnector, setWorkspaceMinimized])
+
+  // The automation-scoped tools this bar owns, handed to the Workspace Tools
+  // drawer so they sit alongside the workspace-wide ones instead of competing
+  // for room in the top bar.
+  const workspaceToolSections: WorkspaceToolSection[] = useMemo(() => {
+    const items: WorkspaceToolItem[] = []
+
+    if (shouldShowBotConnector) {
+      items.push({
+        id: 'bots',
+        icon: <Bot className="w-4 h-4" />,
+        label: 'Bots',
+        detail: 'Connect WhatsApp, Slack, and other channels',
+        onClick: openBotConnector,
+        dataTour: 'bot-connector',
+        dataTestid: 'tour-bot-connector',
+      })
+    }
+
+    if (shouldShowScheduleHeader) {
+      items.push({
+        id: 'schedules',
+        icon: <Workflow className="w-4 h-4" />,
+        label: 'Automation schedules',
+        detail: workflowScheduleTooltip,
+        status: workflowScheduleSummary.runningWorkflows > 0 ? (
+          <span className="flex shrink-0 items-center gap-1 rounded-full bg-green-50 px-1.5 py-0.5 text-[10px] font-medium text-green-700 dark:bg-green-900/20 dark:text-green-300">
+            <span className="h-1.5 w-1.5 rounded-full bg-green-500" aria-hidden="true" />
+            {workflowScheduleSummary.runningWorkflows} running
+          </span>
+        ) : undefined,
+        onClick: () => setShowRunsPanel(true),
+        dataTour: 'workflow-schedules',
+        dataTestid: 'tour-workflow-schedules',
+      })
+    }
+
+    return [{ id: 'workspace', title: 'Workspace', items }]
+  }, [
+    shouldShowBotConnector,
+    shouldShowScheduleHeader,
+    openBotConnector,
+    workflowScheduleSummary.runningWorkflows,
+    workflowScheduleTooltip,
+  ])
 
   const handleEditWorkflowPreset = useCallback(async (preset: CustomPreset) => {
     const workspacePath = preset.selectedFolder?.filepath
@@ -832,27 +878,14 @@ export const ModePresetBar: React.FC = () => {
             <div className="flex shrink-0 items-center gap-2">
               <GlobalActivityMonitor />
 
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <button
-                    onClick={openWorkflowWalkthrough}
-                    data-testid="open-walkthrough-button"
-                    className="p-1 rounded-md text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 hover:text-gray-700 dark:hover:text-gray-200 transition-colors"
-                    aria-label="Open walkthrough"
-                  >
-                    <HelpCircle className="w-4 h-4" />
-                  </button>
-                </TooltipTrigger>
-                <TooltipContent side="bottom">Walkthrough</TooltipContent>
-              </Tooltip>
-
+              {/* Help sits in the bar rather than the drawer: someone who is
+                  lost should not have to open a panel to find the way out. */}
               <Tooltip>
                 <TooltipTrigger asChild>
                   <button
                     onClick={() => setShowShortcuts(true)}
-                    className="p-1 rounded-md text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 hover:text-gray-700 dark:hover:text-gray-200 transition-colors"
                     aria-label="Keyboard shortcuts"
-                    title="Keyboard shortcuts"
+                    className="p-1.5 rounded-md text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 hover:text-gray-700 dark:hover:text-gray-200 transition-colors"
                   >
                     <Keyboard className="w-4 h-4" />
                   </button>
@@ -860,59 +893,23 @@ export const ModePresetBar: React.FC = () => {
                 <TooltipContent side="bottom">Keyboard shortcuts</TooltipContent>
               </Tooltip>
 
-              {shouldShowBotConnector && (
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <button
-                      onClick={openBotConnector}
-                      data-tour="bot-connector"
-                      data-testid="tour-bot-connector"
-                      aria-label="Bots"
-                      title="Bots"
-                      className="p-1 rounded-md text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 hover:text-gray-700 dark:hover:text-gray-200 transition-colors"
-                    >
-                      <Bot className="w-4 h-4" />
-                    </button>
-                  </TooltipTrigger>
-                  <TooltipContent side="bottom">Bots</TooltipContent>
-                </Tooltip>
-              )}
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <button
+                    onClick={openWorkflowWalkthrough}
+                    data-testid="open-walkthrough-button"
+                    aria-label="Open walkthrough"
+                    className="p-1.5 rounded-md text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 hover:text-gray-700 dark:hover:text-gray-200 transition-colors"
+                  >
+                    <HelpCircle className="w-4 h-4" />
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent side="bottom">Walkthrough</TooltipContent>
+              </Tooltip>
 
-              {shouldShowScheduleHeader && (
-                <>
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <button
-                        onClick={() => setShowRunsPanel(true)}
-                        data-tour="workflow-schedules"
-                        data-testid="tour-workflow-schedules"
-                        aria-label="Workflow schedules"
-                        className={`relative flex items-center gap-2 rounded-md p-1 transition-colors ${
-                          workflowScheduleSummary.runningWorkflows > 0
-                            ? 'text-green-700 dark:text-green-300 bg-green-50 dark:bg-green-900/20 hover:bg-green-100 dark:hover:bg-green-900/30'
-                            : 'text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 hover:text-gray-700 dark:hover:text-gray-200'
-                        }`}
-                      >
-                        <Workflow className="w-4 h-4 flex-shrink-0" />
-                        {workflowScheduleSummary.runningWorkflows > 0 && (
-                          <>
-                            <span className="absolute -top-0.5 -right-0.5 w-2.5 h-2.5 rounded-full bg-green-500 border border-white dark:border-gray-800" />
-                            <span className="absolute -top-0.5 -right-0.5 w-2.5 h-2.5 rounded-full bg-green-500 animate-ping opacity-50" />
-                          </>
-                        )}
-                      </button>
-                    </TooltipTrigger>
-                    <TooltipContent side="bottom">
-                      {workflowScheduleTooltip}
-                    </TooltipContent>
-                  </Tooltip>
-                </>
-              )}
-
-              <span className="mx-0.5 h-5 w-px bg-gray-200 dark:bg-gray-700" />
-
-              {/* Config/account controls relocated from the former left sidebar */}
-              <WorkspaceTopBarControls />
+              {/* The rest — bots, schedules, connections, models, skills,
+                  secrets — live behind this one button. */}
+              <WorkspaceTopBarControls sections={workspaceToolSections} />
 
             </div>
           </TooltipProvider>

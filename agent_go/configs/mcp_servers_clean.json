@@ -413,6 +413,525 @@
         "token_url": "https://api.app.shortcut.com/oauth-authorization-code-flow/token",
         "token_file": "~/.config/mcpagent/tokens/default/Shortcut.json"
       }
+    },
+    "Context7": {
+      "url": "https://mcp.context7.com/mcp"
+    },
+    "DeepWiki": {
+      "url": "https://mcp.deepwiki.com/mcp"
+    },
+    "MicrosoftLearn": {
+      "url": "https://learn.microsoft.com/api/mcp"
+    },
+    "AWSKnowledge": {
+      "url": "https://knowledge-mcp.global.api.aws"
+    },
+    "Svelte": {
+      "url": "https://mcp.svelte.dev/mcp"
+    },
+    "CloudflareDocs": {
+      "url": "https://docs.mcp.cloudflare.com/mcp"
+    },
+    "Exa": {
+      "url": "https://mcp.exa.ai/mcp"
+    },
+    "Browserbase": {
+      "url": "https://mcp.browserbase.com/mcp"
+    },
+    "Clerk": {
+      "url": "https://mcp.clerk.com/mcp"
+    },
+    "LlamaCloud": {
+      "url": "https://mcp.llamaindex.ai/mcp"
+    },
+    "Typeform": {
+      "url": "https://mcp.typeform.com/mcp"
+    },
+    "Chainstack": {
+      "url": "https://mcp.chainstack.com/mcp"
+    },
+    "Nslookup": {
+      "url": "https://mcp.nslookup.io/mcp"
+    },
+    "Sonatype": {
+      "url": "https://mcp.guide.sonatype.com/mcp"
+    },
+    "HuggingFace": {
+      "url": "https://huggingface.co/mcp?login",
+      "oauth": {
+        "client_id": "https://agentworkshq.com/.well-known/mcp-client.json",
+        "auth_url": "https://huggingface.co/oauth/authorize",
+        "token_url": "https://huggingface.co/oauth/token",
+        "token_file": "~/.config/mcpagent/tokens/default/HuggingFace.json"
+      }
+    },
+    "Todoist": {
+      "url": "https://ai.todoist.net/mcp",
+      "oauth": {
+        "client_id": "https://agentworkshq.com/.well-known/mcp-client.json",
+        "auth_url": "https://todoist.com/oauth/authorize",
+        "token_url": "https://todoist.com/oauth/access_token",
+        "token_file": "~/.config/mcpagent/tokens/default/Todoist.json"
+      }
+    },
+    "Lucid": {
+      "url": "https://mcp.lucid.app/mcp",
+      "oauth": {
+        "client_id": "https://agentworkshq.com/.well-known/mcp-client.json",
+        "auth_url": "https://mcp.lucid.app/oauth/authorize",
+        "token_url": "https://mcp.lucid.app/oauth/token",
+        "token_file": "~/.config/mcpagent/tokens/default/Lucid.json"
+      }
+    },
+    "Zendesk": {
+      "url": "https://mcp.zendesk.com/mcp",
+      "oauth": {
+        "client_id": "https://agentworkshq.com/.well-known/mcp-client.json",
+        "auth_url": "https://mcp.zendesk.com/oauth/authorizations/new",
+        "token_url": "https://mcp.zendesk.com/mcp/oauth/token",
+        "token_file": "~/.config/mcpagent/tokens/default/Zendesk.json"
+      }
+    },
+    "Plain": {
+      "url": "https://mcp.plain.com/mcp",
+      "oauth": {
+        "client_id": "https://agentworkshq.com/.well-known/mcp-client.json",
+        "auth_url": "https://signin.auth.plain.com/oauth2/authorize",
+        "token_url": "https://signin.auth.plain.com/oauth2/token",
+        "token_file": "~/.config/mcpagent/tokens/default/Plain.json"
+      }
+    },
+    "Bitrise": {
+      "url": "https://mcp.bitrise.io/mcp",
+      "oauth": {
+        "client_id": "https://agentworkshq.com/.well-known/mcp-client.json",
+        "auth_url": "https://oauth.bitrise.io/oauth2/authorize",
+        "token_url": "https://oauth.bitrise.io/oauth2/token",
+        "token_file": "~/.config/mcpagent/tokens/default/Bitrise.json"
+      }
+    },
+    "Unstructured": {
+      "url": "https://mcp.transform.unstructured.io",
+      "oauth": {
+        "client_id": "https://agentworkshq.com/.well-known/mcp-client.json",
+        "auth_url": "https://mcp.transform.unstructured.io/authorize",
+        "token_url": "https://mcp.transform.unstructured.io/token",
+        "token_file": "~/.config/mcpagent/tokens/default/Unstructured.json"
+      }
+    },
+    "OpusClip": {
+      "url": "https://mcp.opus.pro/mcp",
+      "oauth": {
+        "client_id": "https://agentworkshq.com/.well-known/mcp-client.json",
+        "auth_url": "https://focused-horizon-38.authkit.app/oauth2/authorize",
+        "token_url": "https://focused-horizon-38.authkit.app/oauth2/token",
+        "token_file": "~/.config/mcpagent/tokens/default/OpusClip.json"
+      }
+    },
+    "Figma": {
+      "url": "https://mcp.figma.com/mcp",
+      "oauth": {
+        "auth_url": "https://www.figma.com/oauth/mcp",
+        "token_url": "https://api.figma.com/v1/oauth/token",
+        "registration_endpoint": "https://api.figma.com/v1/oauth/mcp/register",
+        "token_file": "~/.config/mcpagent/tokens/default/Figma.json"
+      }
+    },
+    "Dropbox": {
+      "url": "https://mcp.dropbox.com/mcp",
+      "oauth": {
+        "auth_url": "https://www.dropbox.com/oauth2/authorize",
+        "token_url": "https://api.dropboxapi.com/oauth2/token",
+        "registration_endpoint": "https://www.dropbox.com/oauth2/register",
+        "token_file": "~/.config/mcpagent/tokens/default/Dropbox.json"
+      }
+    },
+    "Postman": {
+      "url": "https://mcp.postman.com/mcp",
+      "oauth": {
+        "auth_url": "https://mcp.postman.com/authorize",
+        "token_url": "https://mcp.postman.com/token",
+        "registration_endpoint": "https://mcp.postman.com/register",
+        "token_file": "~/.config/mcpagent/tokens/default/Postman.json"
+      }
+    },
+    "Composio": {
+      "url": "https://connect.composio.dev/mcp",
+      "oauth": {
+        "auth_url": "https://connect.composio.dev/oauth/authorize",
+        "token_url": "https://login.composio.dev/oauth2/token",
+        "registration_endpoint": "https://login.composio.dev/oauth2/register",
+        "token_file": "~/.config/mcpagent/tokens/default/Composio.json"
+      }
+    },
+    "Mapbox": {
+      "url": "https://mcp.mapbox.com/mcp",
+      "oauth": {
+        "auth_url": "https://api.mapbox.com/oauth/2.1/authorize",
+        "token_url": "https://mcp.mapbox.com/oauth/token",
+        "registration_endpoint": "https://api.mapbox.com/oauth/register?scope=styles%3Atiles%20styles%3Aread%20fonts%3Aread%20datasets%3Aread%20tokens%3Aread",
+        "token_file": "~/.config/mcpagent/tokens/default/Mapbox.json"
+      }
+    },
+    "Axiom": {
+      "url": "https://mcp.axiom.co/mcp",
+      "oauth": {
+        "auth_url": "https://mcp.axiom.co/authorize",
+        "token_url": "https://mcp.axiom.co/token",
+        "registration_endpoint": "https://mcp.axiom.co/register",
+        "token_file": "~/.config/mcpagent/tokens/default/Axiom.json"
+      }
+    },
+    "NewRelic": {
+      "url": "https://mcp.newrelic.com/mcp",
+      "oauth": {
+        "auth_url": "https://oauth2.service.newrelic.com/oauth2/auth",
+        "token_url": "https://oauth2.service.newrelic.com/oauth2/token",
+        "registration_endpoint": "https://dcr.service.newrelic.com/register",
+        "token_file": "~/.config/mcpagent/tokens/default/NewRelic.json"
+      }
+    },
+    "Rootly": {
+      "url": "https://mcp.rootly.com/mcp",
+      "oauth": {
+        "auth_url": "https://rootly.com/oauth/authorize",
+        "token_url": "https://rootly.com/oauth/token",
+        "registration_endpoint": "https://rootly.com/oauth/register",
+        "token_file": "~/.config/mcpagent/tokens/default/Rootly.json"
+      }
+    },
+    "IncidentIO": {
+      "url": "https://mcp.incident.io/mcp",
+      "oauth": {
+        "auth_url": "https://app.incident.io/auth/plugin/authorize",
+        "token_url": "https://app.incident.io/auth/plugin/token",
+        "registration_endpoint": "https://mcp.incident.io/mcp/oauth/register",
+        "token_file": "~/.config/mcpagent/tokens/default/IncidentIO.json"
+      }
+    },
+    "Semgrep": {
+      "url": "https://mcp.semgrep.ai/mcp",
+      "oauth": {
+        "auth_url": "https://login.semgrep.dev/oauth2/authorize",
+        "token_url": "https://login.semgrep.dev/oauth2/token",
+        "registration_endpoint": "https://login.semgrep.dev/oauth2/register",
+        "token_file": "~/.config/mcpagent/tokens/default/Semgrep.json"
+      }
+    },
+    "Buildkite": {
+      "url": "https://mcp.buildkite.com/mcp",
+      "oauth": {
+        "auth_url": "https://mcp.buildkite.com/oauth/authorize",
+        "token_url": "https://mcp.buildkite.com/oauth/token",
+        "registration_endpoint": "https://mcp.buildkite.com/oauth/register",
+        "token_file": "~/.config/mcpagent/tokens/default/Buildkite.json"
+      }
+    },
+    "Algolia": {
+      "url": "https://mcp.algolia.com/mcp",
+      "oauth": {
+        "auth_url": "https://dashboard.algolia.com/2/oauth/authorize",
+        "token_url": "https://dashboard.algolia.com/2/oauth/token",
+        "registration_endpoint": "https://dashboard.algolia.com/2/oauth/register",
+        "token_file": "~/.config/mcpagent/tokens/default/Algolia.json"
+      }
+    },
+    "Klaviyo": {
+      "url": "https://mcp.klaviyo.com/mcp",
+      "oauth": {
+        "auth_url": "https://mcp.klaviyo.com/authorize",
+        "token_url": "https://mcp.klaviyo.com/token",
+        "registration_endpoint": "https://mcp.klaviyo.com/register",
+        "token_file": "~/.config/mcpagent/tokens/default/Klaviyo.json"
+      }
+    },
+    "Close": {
+      "url": "https://mcp.close.com/mcp",
+      "oauth": {
+        "auth_url": "https://app.close.com/oauth2/authorize/",
+        "token_url": "https://api.close.com/oauth2/token/",
+        "registration_endpoint": "https://api.close.com/oauth2/register/",
+        "token_file": "~/.config/mcpagent/tokens/default/Close.json"
+      }
+    },
+    "CalCom": {
+      "url": "https://mcp.cal.com/mcp",
+      "oauth": {
+        "auth_url": "https://mcp.cal.com/oauth/authorize",
+        "token_url": "https://mcp.cal.com/oauth/token",
+        "registration_endpoint": "https://mcp.cal.com/oauth/register",
+        "token_file": "~/.config/mcpagent/tokens/default/CalCom.json"
+      }
+    },
+    "Fireflies": {
+      "url": "https://api.fireflies.ai/mcp",
+      "oauth": {
+        "auth_url": "https://api.fireflies.ai/authorize",
+        "token_url": "https://api.fireflies.ai/token",
+        "registration_endpoint": "https://api.fireflies.ai/register",
+        "token_file": "~/.config/mcpagent/tokens/default/Fireflies.json"
+      }
+    },
+    "Jam": {
+      "url": "https://mcp.jam.dev/mcp",
+      "oauth": {
+        "auth_url": "https://api.jam.dev/oauth/authorize",
+        "token_url": "https://api.jam.dev/oauth/token",
+        "registration_endpoint": "https://api.jam.dev/oauth/register",
+        "token_file": "~/.config/mcpagent/tokens/default/Jam.json"
+      }
+    },
+    "Globalping": {
+      "url": "https://mcp.globalping.dev/mcp",
+      "oauth": {
+        "auth_url": "https://mcp.globalping.dev/authorize",
+        "token_url": "https://mcp.globalping.dev/token",
+        "registration_endpoint": "https://mcp.globalping.dev/register",
+        "token_file": "~/.config/mcpagent/tokens/default/Globalping.json"
+      }
+    },
+    "Retool": {
+      "url": "https://mcp.retool.com/mcp",
+      "oauth": {
+        "auth_url": "https://mcp.retool.com/auth/oauth2/authorize",
+        "token_url": "https://mcp.retool.com/api/oauth2/token",
+        "registration_endpoint": "https://mcp.retool.com/api/oauth2/register",
+        "token_file": "~/.config/mcpagent/tokens/default/Retool.json"
+      }
+    },
+    "Heroku": {
+      "url": "https://mcp.heroku.com/mcp",
+      "oauth": {
+        "auth_url": "https://mcp.heroku.com/auth",
+        "token_url": "https://mcp.heroku.com/token",
+        "registration_endpoint": "https://mcp.heroku.com/reg",
+        "token_file": "~/.config/mcpagent/tokens/default/Heroku.json"
+      }
+    },
+    "Okta": {
+      "url": "https://mcp.okta.com/mcp",
+      "oauth": {
+        "auth_url": "https://mcp.okta.com/oauth2/v1/authorize",
+        "token_url": "https://mcp.okta.com/oauth2/v1/token",
+        "registration_endpoint": "https://mcp.okta.com/oauth2/v1/clients",
+        "token_file": "~/.config/mcpagent/tokens/default/Okta.json"
+      }
+    },
+    "Replicate": {
+      "url": "https://mcp.replicate.com/mcp",
+      "oauth": {
+        "auth_url": "https://mcp.replicate.com/authorize",
+        "token_url": "https://mcp.replicate.com/token",
+        "registration_endpoint": "https://mcp.replicate.com/register",
+        "token_file": "~/.config/mcpagent/tokens/default/Replicate.json"
+      }
+    },
+    "Fal": {
+      "url": "https://mcp.fal.ai/mcp",
+      "oauth": {
+        "auth_url": "https://auth.fal.ai/authorize",
+        "token_url": "https://auth.fal.ai/oauth/token",
+        "registration_endpoint": "https://auth.fal.ai/oidc/register",
+        "token_file": "~/.config/mcpagent/tokens/default/Fal.json"
+      }
+    },
+    "Runway": {
+      "url": "https://mcp.runwayml.com/mcp",
+      "oauth": {
+        "auth_url": "https://mcp.runwayml.com/authorize",
+        "token_url": "https://mcp.runwayml.com/token",
+        "registration_endpoint": "https://mcp.runwayml.com/register",
+        "token_file": "~/.config/mcpagent/tokens/default/Runway.json"
+      }
+    },
+    "Strava": {
+      "url": "https://mcp.strava.com/mcp",
+      "oauth": {
+        "auth_url": "https://www.strava.com/oauth/mcp/authorize",
+        "token_url": "https://www.strava.com/oauth/mcp/token",
+        "registration_endpoint": "https://www.strava.com/oauth/mcp/register_client",
+        "token_file": "~/.config/mcpagent/tokens/default/Strava.json"
+      }
+    },
+    "Mercury": {
+      "url": "https://mcp.mercury.com/mcp",
+      "oauth": {
+        "auth_url": "https://mcp.mercury.com/authorize",
+        "token_url": "https://mcp.mercury.com/token",
+        "registration_endpoint": "https://mcp.mercury.com/register",
+        "token_file": "~/.config/mcpagent/tokens/default/Mercury.json"
+      }
+    },
+    "Alchemy": {
+      "url": "https://mcp.alchemy.com/mcp",
+      "oauth": {
+        "auth_url": "https://auth.alchemy.com/oauth/authorize",
+        "token_url": "https://auth.alchemy.com/oauth/token",
+        "registration_endpoint": "https://auth.alchemy.com/oauth/register",
+        "token_file": "~/.config/mcpagent/tokens/default/Alchemy.json"
+      }
+    },
+    "BrightData": {
+      "url": "https://mcp.brightdata.com/mcp",
+      "oauth": {
+        "auth_url": "https://brightdata.com/users/auth/mcp/authorize",
+        "token_url": "https://brightdata.com/users/auth/mcp/token",
+        "registration_endpoint": "https://brightdata.com/users/auth/mcp/register",
+        "token_file": "~/.config/mcpagent/tokens/default/BrightData.json"
+      }
+    },
+    "Octagon": {
+      "url": "https://mcp.octagonagents.com/mcp",
+      "oauth": {
+        "auth_url": "https://login.octagonai.co/oauth2/authorize",
+        "token_url": "https://login.octagonai.co/oauth2/token",
+        "registration_endpoint": "https://login.octagonai.co/oauth2/register",
+        "token_file": "~/.config/mcpagent/tokens/default/Octagon.json"
+      }
+    },
+    "Fibery": {
+      "url": "https://mcp.fibery.io/mcp",
+      "oauth": {
+        "auth_url": "https://mcp.fibery.io/authorize",
+        "token_url": "https://mcp.fibery.io/token",
+        "registration_endpoint": "https://mcp.fibery.io/register",
+        "token_file": "~/.config/mcpagent/tokens/default/Fibery.json"
+      }
+    },
+    "Bird": {
+      "url": "https://mcp.bird.com/mcp",
+      "oauth": {
+        "auth_url": "https://platform.bird.com/v1/oauth/authorize",
+        "token_url": "https://platform.bird.com/v1/oauth/token",
+        "registration_endpoint": "https://platform.bird.com/v1/oauth/register",
+        "token_file": "~/.config/mcpagent/tokens/default/Bird.json"
+      }
+    },
+    "Swagger": {
+      "url": "https://swagger.mcp.smartbear.com/mcp",
+      "oauth": {
+        "auth_url": "https://auth.swaggerhub.com/authorize",
+        "token_url": "https://auth.swaggerhub.com/token",
+        "registration_endpoint": "https://auth.swaggerhub.com/register",
+        "token_file": "~/.config/mcpagent/tokens/default/Swagger.json"
+      }
+    },
+    "Bugsnag": {
+      "url": "https://bugsnag.mcp.smartbear.com/mcp",
+      "oauth": {
+        "auth_url": "https://oauth.bugsnag.com/authorize",
+        "token_url": "https://oauth.bugsnag.com/token",
+        "registration_endpoint": "https://oauth.bugsnag.com/register",
+        "token_file": "~/.config/mcpagent/tokens/default/Bugsnag.json"
+      }
+    },
+    "CloudflareRadar": {
+      "url": "https://radar.mcp.cloudflare.com/mcp",
+      "oauth": {
+        "auth_url": "https://radar.mcp.cloudflare.com/oauth/authorize",
+        "token_url": "https://radar.mcp.cloudflare.com/token",
+        "registration_endpoint": "https://radar.mcp.cloudflare.com/register",
+        "token_file": "~/.config/mcpagent/tokens/default/CloudflareRadar.json"
+      }
+    },
+    "CloudflareObservability": {
+      "url": "https://observability.mcp.cloudflare.com/mcp",
+      "oauth": {
+        "auth_url": "https://observability.mcp.cloudflare.com/oauth/authorize",
+        "token_url": "https://observability.mcp.cloudflare.com/token",
+        "registration_endpoint": "https://observability.mcp.cloudflare.com/register",
+        "token_file": "~/.config/mcpagent/tokens/default/CloudflareObservability.json"
+      }
+    },
+    "CloudflareBrowserRendering": {
+      "url": "https://browser.mcp.cloudflare.com/mcp",
+      "oauth": {
+        "auth_url": "https://browser.mcp.cloudflare.com/oauth/authorize",
+        "token_url": "https://browser.mcp.cloudflare.com/token",
+        "registration_endpoint": "https://browser.mcp.cloudflare.com/register",
+        "token_file": "~/.config/mcpagent/tokens/default/CloudflareBrowserRendering.json"
+      }
+    },
+    "OpsLevel": {
+      "url": "https://app.opslevel.com/mcp",
+      "oauth": {
+        "auth_url": "https://app.opslevel.com/oauth/authorize",
+        "token_url": "https://app.opslevel.com/oauth/token",
+        "registration_endpoint": "https://app.opslevel.com/oauth/register",
+        "token_file": "~/.config/mcpagent/tokens/default/OpsLevel.json"
+      }
+    },
+    "Mabl": {
+      "url": "https://mcp.mabl.com/mcp",
+      "oauth": {
+        "auth_url": "https://mcp.mabl.com/authorize",
+        "token_url": "https://mcp.mabl.com/token",
+        "registration_endpoint": "https://mcp.mabl.com/register",
+        "token_file": "~/.config/mcpagent/tokens/default/Mabl.json"
+      }
+    },
+    "Easyship": {
+      "url": "https://mcp.easyship.com/mcp",
+      "oauth": {
+        "auth_url": "https://auth.easyship.com/oauth2/authorize",
+        "token_url": "https://public-api.easyship.com/oauth2/token",
+        "registration_endpoint": "https://mcp.easyship.com/oauth/register",
+        "token_file": "~/.config/mcpagent/tokens/default/Easyship.json"
+      }
+    },
+    "Guru": {
+      "url": "https://mcp.api.getguru.com/mcp",
+      "oauth": {
+        "auth_url": "https://mcp.api.getguru.com/oauth/mcp/authorize",
+        "token_url": "https://mcp.api.getguru.com/oauth/mcp/token",
+        "registration_endpoint": "https://mcp.api.getguru.com/oauth/mcp/register",
+        "token_file": "~/.config/mcpagent/tokens/default/Guru.json"
+      }
+    },
+    "QuickNode": {
+      "url": "https://mcp.quicknode.com/mcp",
+      "oauth": {
+        "auth_url": "https://mcp.quicknode.com/authorize",
+        "token_url": "https://mcp.quicknode.com/token",
+        "registration_endpoint": "https://mcp.quicknode.com/register",
+        "token_file": "~/.config/mcpagent/tokens/default/QuickNode.json"
+      }
+    },
+    "Hostinger": {
+      "url": "https://mcp.hostinger.com",
+      "oauth": {
+        "auth_url": "https://auth.hostinger.com/api/external/v1/oauth-server/authorize",
+        "token_url": "https://auth.hostinger.com/api/external/v1/oauth-server/token",
+        "registration_endpoint": "https://auth.hostinger.com/api/external/v1/oauth-server/register",
+        "token_file": "~/.config/mcpagent/tokens/default/Hostinger.json"
+      }
+    },
+    "Anima": {
+      "url": "https://public-api.animaapp.com/v1/mcp",
+      "oauth": {
+        "auth_url": "https://public-api.animaapp.com/oauth/authorize",
+        "token_url": "https://public-api.animaapp.com/oauth/token",
+        "registration_endpoint": "https://public-api.animaapp.com/oauth/register",
+        "token_file": "~/.config/mcpagent/tokens/default/Anima.json"
+      }
+    },
+    "Mobbin": {
+      "url": "https://api.mobbin.com/mcp",
+      "oauth": {
+        "auth_url": "https://ujasntkfphywizsdaapi.supabase.co/auth/v1/oauth/authorize",
+        "token_url": "https://ujasntkfphywizsdaapi.supabase.co/auth/v1/oauth/token",
+        "registration_endpoint": "https://ujasntkfphywizsdaapi.supabase.co/auth/v1/oauth/clients/register",
+        "token_file": "~/.config/mcpagent/tokens/default/Mobbin.json"
+      }
+    },
+    "Avalara": {
+      "url": "https://mcp.avalara.com/avatax",
+      "oauth": {
+        "auth_url": "https://identity.avalara.com/connect/authorize",
+        "token_url": "https://identity.avalara.com/connect/token",
+        "registration_endpoint": "https://identity.avalara.com/register/public",
+        "token_file": "~/.config/mcpagent/tokens/default/Avalara.json"
+      }
     }
   }
 }

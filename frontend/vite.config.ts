@@ -57,4 +57,15 @@ export default defineConfig({
     port: 5173,
     host: '0.0.0.0',
   },
+  build: {
+    // Connector brand marks are decoration on one panel, so they must not ride
+    // in the eager JS chunk. Vite inlines any asset under 4 kB as a base64 data
+    // URI by default, which would push the five smallest PNGs into the bundle
+    // the budget check measures. Emitting them as files instead costs a request
+    // only when that panel is actually opened.
+    assetsInlineLimit(filePath: string) {
+      if (filePath.includes('components/connectors/marks/')) return false
+      return undefined
+    },
+  },
 })

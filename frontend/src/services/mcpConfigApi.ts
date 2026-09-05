@@ -78,8 +78,19 @@ export class MCPConfigApi {
     });
 
     if (!response.ok) {
-      const errorData = await response.json();
-      throw new Error(errorData.message || `Failed to save config: ${response.statusText}`);
+      // The server may answer with JSON or plain text depending on which layer
+      // rejected the request, so read it as text and only then try to parse.
+      // Assuming JSON here used to throw, and the editor reported every server
+      // rejection as "Invalid JSON format".
+      const body = await response.text();
+      let message = body;
+      try {
+        const parsed = JSON.parse(body);
+        message = parsed.error || parsed.message || body;
+      } catch {
+        // not JSON; the raw text is the message
+      }
+      throw new Error(message.trim() || `Failed to save config: ${response.statusText}`);
     }
 
     return response.json();

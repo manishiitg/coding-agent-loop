@@ -1,5 +1,6 @@
 import { Boxes } from 'lucide-react'
 import { BRAND_MARKS } from './brandMarks'
+import { RASTER_MARKS } from './rasterMarks'
 
 interface ConnectionIconProps {
   /** Catalog `icon` slug, e.g. "notion". */
@@ -44,10 +45,14 @@ const tintFor = (name: string) => {
  * in `currentColor`, so they take the tile's neutral foreground and stay legible
  * in both themes without needing a colour of their own.
  *
- * Not every service publishes a mark to an openly licensed icon set, and a grid
- * of identical fallback glyphs is harder to scan than no logo at all. Those fall
- * back to a tinted monogram of the connector's initial when `name` is supplied,
- * and to a neutral glyph when it is not.
+ * Brands with no vector logo anywhere fall back to `rasterMarks` — the bitmap
+ * icon their own site serves. It cannot take `currentColor`, so those are
+ * pre-composited to clear the contrast bar on both grounds.
+ *
+ * Not every service publishes a mark at all, and a grid of identical fallback
+ * glyphs is harder to scan than no logo. Those fall back to a tinted monogram of
+ * the connector's initial when `name` is supplied, and to a neutral glyph when
+ * it is not.
  */
 export default function ConnectionIcon({
   icon,
@@ -56,6 +61,7 @@ export default function ConnectionIcon({
   className = '',
 }: ConnectionIconProps) {
   const mark = icon ? BRAND_MARKS[icon] : undefined
+  const raster = !mark && icon ? RASTER_MARKS[icon] : undefined
   const box = size === 'xs' ? 'h-5 w-5' : size === 'sm' ? 'h-9 w-9' : size === 'lg' ? 'h-12 w-12' : 'h-11 w-11'
   // The mark fills more of its tile than it used to — at the old ratio the
   // logos read as small dots inside a large rounded square.
@@ -63,7 +69,7 @@ export default function ConnectionIcon({
   const letter = size === 'xs' ? 'text-[9px]' : size === 'sm' ? 'text-sm' : size === 'lg' ? 'text-lg' : 'text-base'
 
   const initial = name?.trim().replace(/[^A-Za-z0-9]/g, '').charAt(0).toUpperCase()
-  const useMonogram = !mark && !!initial
+  const useMonogram = !mark && !raster && !!initial
 
   return (
     <span
@@ -86,6 +92,13 @@ export default function ConnectionIcon({
           aria-hidden="true"
           focusable="false"
           dangerouslySetInnerHTML={{ __html: mark.markup }}
+        />
+      ) : raster ? (
+        <img
+          src={raster}
+          className={`${glyph} object-contain`}
+          alt=""
+          aria-hidden="true"
         />
       ) : useMonogram ? (
         <span className={`${letter} font-semibold leading-none`} aria-hidden="true">

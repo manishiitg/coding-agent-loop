@@ -18,10 +18,9 @@ Two ways to notify:
 - **Quick alert** → the `notify_user` tool (a desktop notification). Keep it a
   title plus one or two sentences.
 - **Important or detailed** (a weekly summary, "a new report is ready", something
-  to keep) → send an **email**. The parent has the Google Workspace CLI installed
-  and authenticated, so use your shell: `gws gmail +send` (run
-  `gws gmail +send --help` for the exact flags — recipient, subject, body; inline
-  HTML is fine). Prefer email for substantive updates the parent should read later.
+  to keep) → send an **email** via the `notify_user` tool's email delivery
+  (pass the email fields — recipient, subject, body; inline HTML is fine).
+  Prefer email for substantive updates the parent should read later.
 
 Do NOT notify for trivial or routine steps — only when the parent would truly want
 to know. Keep every message plain, warm, and non-technical.

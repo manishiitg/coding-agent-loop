@@ -599,15 +599,16 @@ func formatWorkshopExecutionName(kind string, targetRunFolder string) string {
 // exact same tool/LLM/browser/image-gen setup as normal workflow execution.
 // Built by server.go using the same preset-loading logic as the normal workflow path.
 type WorkshopConfig struct {
-	WorkspacePath        string
-	RunFolder            string
-	MCPConfigPath        string
-	SelectedServers      []string
-	SelectedTools        []string
-	UseCodeExecutionMode bool
-	CustomTools          []llmtypes.Tool
-	CustomToolExecutors  map[string]interface{}
-	ToolCategories       map[string]string
+	ScheduleCollisionCheck ScheduleCollisionCheck
+	WorkspacePath          string
+	RunFolder              string
+	MCPConfigPath          string
+	SelectedServers        []string
+	SelectedTools          []string
+	UseCodeExecutionMode   bool
+	CustomTools            []llmtypes.Tool
+	CustomToolExecutors    map[string]interface{}
+	ToolCategories         map[string]string
 	// BrowserRuntime stores configured intent (auto/cdp/headless + candidate
 	// ports). The executor resolves live CDP reachability at tool-call time.
 	BrowserRuntime *browser.BrowserRuntimeConfig
@@ -1000,6 +1001,9 @@ func RegisterWorkshopChatTools(
 	session *WorkshopChatSession,
 	logger loggerv2.Logger,
 ) {
+	if session.config != nil {
+		mcpAgent = guardScheduleRegistrar(mcpAgent, session.config.ScheduleCollisionCheck)
+	}
 	iwm := &InteractiveWorkshopManager{
 		controller:             session.controller,
 		workshopConfig:         session.config,
@@ -1320,6 +1324,9 @@ func RegisterRunFullEvaluationTool(
 	session *WorkshopChatSession,
 	logger loggerv2.Logger,
 ) {
+	if session.config != nil {
+		mcpAgent = GuardScheduleTools(mcpAgent, session.config.ScheduleCollisionCheck)
+	}
 	if err := mcpAgent.RegisterCustomTool(
 		"run_full_evaluation",
 		"Run the full evaluation pipeline: execute all evaluation steps against a target execution run, then publish their outputs into evaluation_report.json for review. Evaluation always targets iteration-0 (the default execution run). Runs in background — you will be notified when complete.",
@@ -1870,6 +1877,9 @@ func RegisterRunFullWorkflowTool(
 	session *WorkshopChatSession,
 	logger loggerv2.Logger,
 ) {
+	if session.config != nil {
+		mcpAgent = GuardScheduleTools(mcpAgent, session.config.ScheduleCollisionCheck)
+	}
 	if err := mcpAgent.RegisterCustomTool(
 		"run_full_workflow",
 		"Execute the complete workflow: load the plan, resolve variables, and run all steps for a single variable group. Always uses iteration-0 and starts from the beginning. Runs in background - you will be notified when complete. Use send_step_message with the returned execution_id to steer whichever workflow child-agent turn is currently active. Use human_inputs for run-specific instructions or responses, keyed by the exact target step ID; each value is visible only to that step. If the plan contains human_input steps on the selected path, you MUST provide a response for each one. If the plan contains deterministic routing steps and the user's request already selected a branch, pass route_selections keyed by routing step ID. Pass disable_eval=true to skip the automatic evaluation pass after the workflow completes.",

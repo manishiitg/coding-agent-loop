@@ -2032,6 +2032,7 @@ func (s *SchedulerService) endQueuedLaunch(key string) {
 // runJob executes a scheduled job: updates runtime state, creates run history, executes, updates results.
 func (s *SchedulerService) runJob(ctx context.Context, sctx *ScheduleContext, runID string) (string, error) {
 	defer s.releaseScheduleRunContext(runID)
+	defer s.maintainRunLease(ctx, runID)()
 	schedID := sctx.Schedule.ID
 	runtimeKey := scheduleRuntimeKey(sctx)
 	startTime := time.Now().UTC()

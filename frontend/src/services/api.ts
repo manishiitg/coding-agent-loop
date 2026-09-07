@@ -50,6 +50,8 @@ import type {
   GmailConnection,
   GmailConnectionRequest,
   GmailConnectionsResponse,
+  GmailOAuthClient,
+  GmailOAuthClientsResponse,
   GmailAuthStatus,
   GmailTestResponse,
   ExecutionLogsResponse,
@@ -1482,6 +1484,35 @@ export const agentApi = {
       `/api/human-feedback/gmail/connections/${encodeURIComponent(id)}/auth/start`,
     )
     return apiResponse.data
+  },
+
+  // --- Gmail named OAuth clients (the Google Cloud OAuth app a connection
+  // authorizes under). Named so a second upload can never silently replace
+  // the credentials an existing connection depends on. ---
+
+  listGmailOAuthClients: async (): Promise<GmailOAuthClientsResponse> => {
+    const apiResponse = await api.get('/api/human-feedback/gmail/oauth-clients')
+    return apiResponse.data
+  },
+
+  // clientSecretJson is the parsed contents of the downloaded Desktop-app
+  // client_secret.json. replace must be explicit — the default is refuse,
+  // which is the whole point of naming clients.
+  createGmailOAuthClient: async (
+    name: string,
+    clientSecretJson: unknown,
+    replace = false,
+  ): Promise<GmailOAuthClient> => {
+    const apiResponse = await api.post('/api/human-feedback/gmail/oauth-clients', {
+      name,
+      client_secret_json: clientSecretJson,
+      replace,
+    })
+    return apiResponse.data
+  },
+
+  deleteGmailOAuthClient: async (name: string): Promise<void> => {
+    await api.delete(`/api/human-feedback/gmail/oauth-clients/${encodeURIComponent(name)}`)
   },
 
   // --- Shared bot connector config ("_global": allowed_emails etc.) ---

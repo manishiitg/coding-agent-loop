@@ -3,7 +3,7 @@ import { agentApi } from '../../../services/api'
 import { useWorkflowManifestStore } from '../../../stores/useWorkflowManifestStore'
 import { useCanWriteWorkflow } from '../../../hooks/useCanWriteWorkflow'
 import type {
-  ChannelRoute, GmailConfigRequest, GmailConfigResponse, GmailConnection, GmailTestResponse,
+  ChannelRoute, GmailConfigRequest, GmailConfigResponse, GmailConnection, GmailOAuthClient, GmailTestResponse,
   SlackConfig, SlackConfigRequest, SlackTestResponse, WhatsAppRoute, WhatsAppStatus,
 } from '../../../services/api-types'
 import { routeId, type ChannelKind, type WorkflowRoute } from './types'
@@ -113,6 +113,14 @@ export function useWorkflowBots(workspacePath: string | null) {
   // Optional: adopt a gws config directory that is ALREADY authenticated on the
   // host, instead of signing in through the browser.
   const [gmailNewConnectionDir, setGmailNewConnectionDir] = useState('')
+  // Named OAuth clients (the Google Cloud app a connection authorizes
+  // under). Every new connection must name one, so this list backs the
+  // "Add account" form's client selector.
+  const [gmailOAuthClients, setGmailOAuthClients] = useState<GmailOAuthClient[]>([])
+  const [gmailOAuthClientsBusy, setGmailOAuthClientsBusy] = useState(false)
+  const [gmailOAuthClientError, setGmailOAuthClientError] = useState<string | null>(null)
+  const [gmailNewClientName, setGmailNewClientName] = useState('')
+  const [gmailSelectedClientName, setGmailSelectedClientName] = useState('')
   // Set while a Google sign-in is in flight, so the row can say it is waiting.
   const [gmailAuthPending, setGmailAuthPending] = useState<string | null>(null)
   const [gmailTestedTo, setGmailTestedTo] = useState<string | null>(null)
@@ -182,6 +190,38 @@ export function useWorkflowBots(workspacePath: string | null) {
       setGmailConnections([])
     }
   }, [])
+
+  const loadGmailOAuthClients = useCallback(async () => {
+    try {
+      const data = await agentApi.listGmailOAuthClients()
+      const clients = data.clients || []
+      setGmailOAuthClients(clients)
+      // A single registered client is the overwhelmingly common case (one
+      // Google Cloud project); pick it by default so "Add account" is a
+      // single click rather than an extra dropdown interaction. Never
+      // overrides a choice the operator already made.
+      setGmailSelectedClientName(current => current || (clients.length === 1 ? clients[0].name : current))
+    } catch {
+      setGmailOAuthClients([])
+    }
+  }, [])
+
+  const createGmailOAuthClient = useCallback(async (name: string, clientSecretJson: unknown) => {
+    try {
+      setGmailOAuthClientsBusy(true)
+      setGmailOAuthClientError(null)
+      const client = await agentApi.createGmailOAuthClient(name, clientSecretJson)
+      await loadGmailOAuthClients()
+      setGmailSelectedClientName(client.name)
+      setGmailNewClientName('')
+      return true
+    } catch (error) {
+      setGmailOAuthClientError(error instanceof Error ? error.message : 'Failed to register the OAuth client')
+      return false
+    } finally {
+      setGmailOAuthClientsBusy(false)
+    }
+  }, [loadGmailOAuthClients])
 
   // Every mutation re-reads the list rather than patching local state, so the
   // server stays the single source of truth for status and which is default.
@@ -270,7 +310,8 @@ export function useWorkflowBots(workspacePath: string | null) {
       setGmailChecking(false)
     }
     void loadGmailConnections()
-  }, [loadGmailConnections])
+    void loadGmailOAuthClients()
+  }, [loadGmailConnections, loadGmailOAuthClients])
 
   useEffect(() => {
     void loadEmails()
@@ -690,6 +731,11 @@ export function useWorkflowBots(workspacePath: string | null) {
     gmailNewConnectionName, setGmailNewConnectionName,
     gmailNewConnectionDir, setGmailNewConnectionDir,
     loadGmailConnections, runGmailConnectionAction, connectGmailAccount,
+    // gmail OAuth clients (named Google Cloud apps connections authorize under)
+    gmailOAuthClients, gmailOAuthClientsBusy, gmailOAuthClientError,
+    gmailNewClientName, setGmailNewClientName,
+    gmailSelectedClientName, setGmailSelectedClientName,
+    loadGmailOAuthClients, createGmailOAuthClient,
   }
 }
 

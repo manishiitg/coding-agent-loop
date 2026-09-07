@@ -10,6 +10,11 @@ import { ChevronRight, ExternalLink } from 'lucide-react'
 // The steps are ordered by what actually blocks a first-time setup, and each
 // gotcha listed here is one that produces a confusing failure rather than a
 // clear error message.
+//
+// Sending itself goes through `gog` (github.com/openclaw/gogcli), not the
+// `gws` this guide referenced previously — but creating the Google Cloud
+// project/client is identical either way, since it's a Google Console
+// process neither CLI touches.
 
 const linkClass =
   'inline-flex items-center gap-1 text-primary underline underline-offset-2 hover:no-underline'
@@ -59,21 +64,30 @@ export function GmailSetupGuide() {
       >
         <ChevronRight className={`h-3.5 w-3.5 shrink-0 text-muted-foreground transition-transform ${open ? 'rotate-90' : ''}`} />
         First-time setup guide
-        <span className="font-normal text-muted-foreground">— needed once, before adding any account</span>
+        <span className="font-normal text-muted-foreground">— needed before adding your first account</span>
       </button>
 
       {open && (
         <div className="space-y-4 border-t border-border p-3">
           <p className="text-xs text-muted-foreground">
             Sending mail needs a Google Cloud OAuth client. Google has no API for creating one, so these
-            steps are done by hand in the Cloud Console. You only do this <strong>once</strong> — every
-            mailbox you add afterwards reuses the same client and is a single click.
+            steps are done by hand in the Cloud Console. Each client you register below gets its own
+            name — reuse a Google Cloud project (and its client) for every mailbox that should share it,
+            or create a new one if you want a separate project. A second upload never silently replaces
+            an existing client; it needs its own name.
           </p>
 
           <ol className="space-y-3">
-            <Step n={1} title="Install the Google Workspace CLI on the server">
-              <p>Mail is sent through <code>gws</code>, which must be on the server&rsquo;s PATH.</p>
-              <Cmd>npm install -g @googleworkspace/cli</Cmd>
+            <Step n={1} title="Install gog on the server">
+              <p>Mail is sent through <code>gog</code>, which must be on the server&rsquo;s PATH.</p>
+              <Cmd>brew install openclaw/tap/gogcli</Cmd>
+              <p>
+                No Homebrew on the box? Download a prebuilt binary from the{' '}
+                <a className={linkClass} href="https://github.com/openclaw/gogcli/releases" target="_blank" rel="noreferrer">
+                  releases page <ExternalLink className="h-3 w-3" />
+                </a>{' '}
+                and put it on PATH.
+              </p>
             </Step>
 
             <Step n={2} title="Pick or create a Google Cloud project">
@@ -120,10 +134,12 @@ export function GmailSetupGuide() {
               </Gotcha>
             </Step>
 
-            <Step n={6} title="Put the client file on the server">
-              <Cmd>{`mkdir -p ~/.config/gws
-mv ~/Downloads/client_secret_*.json ~/.config/gws/client_secret.json`}</Cmd>
-              <p>Verify it is the right type — the top-level key should read <code>installed</code>, not <code>web</code>.</p>
+            <Step n={6} title="Register the client">
+              <p>
+                Under <strong>OAuth clients</strong> below, give it a name and upload the downloaded JSON file
+                directly — no server filesystem access needed.
+              </p>
+              <p>Verify it is the right type first — the top-level key should read <code>installed</code>, not <code>web</code>.</p>
             </Step>
 
             <Step n={7} title="Give each sending mailbox access to the project">
@@ -149,9 +165,10 @@ mv ~/Downloads/client_secret_*.json ~/.config/gws/client_secret.json`}</Cmd>
 
             <Step n={8} title="Add your mailboxes">
               <p>
-                Setup is done. Under <strong>Sending accounts</strong> above, give the account a name, click{' '}
-                <strong>Add account</strong>, then <strong>Sign in with Google</strong> on its row. Repeat for each
-                mailbox — steps 1&ndash;7 are never needed again.
+                Setup is done. Under <strong>Sending accounts</strong> below, choose the client you just registered,
+                give the account a name, click <strong>Add account</strong>, then <strong>Sign in with Google</strong>{' '}
+                on its row. Repeat steps 2&ndash;7 only if you want a mailbox on a <em>separate</em> Google Cloud
+                project — otherwise every further mailbox reuses the same registered client.
               </p>
             </Step>
           </ol>

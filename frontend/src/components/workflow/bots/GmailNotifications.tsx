@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import { AlertTriangle, ChevronRight, Loader2, Mail, RotateCcw } from 'lucide-react'
 import { agentApi } from '../../../services/api'
 import { Button } from '../../ui/Button'
@@ -18,6 +19,10 @@ type GmailNotificationsBots = Pick<WorkflowBots,
   | 'gmailNewConnectionName' | 'setGmailNewConnectionName'
   | 'gmailNewConnectionDir' | 'setGmailNewConnectionDir'
   | 'runGmailConnectionAction' | 'connectGmailAccount'
+  | 'gmailOAuthClients' | 'gmailOAuthClientsBusy' | 'gmailOAuthClientError'
+  | 'gmailNewClientName' | 'setGmailNewClientName'
+  | 'gmailSelectedClientName' | 'setGmailSelectedClientName'
+  | 'createGmailOAuthClient'
 >
 
 export function GmailNotifications({ bots }: { bots: GmailNotificationsBots }) {
@@ -30,7 +35,28 @@ export function GmailNotifications({ bots }: { bots: GmailNotificationsBots }) {
     gmailNewConnectionName, setGmailNewConnectionName,
     gmailNewConnectionDir, setGmailNewConnectionDir,
     runGmailConnectionAction, connectGmailAccount,
+    gmailOAuthClients, gmailOAuthClientsBusy, gmailOAuthClientError,
+    gmailNewClientName, setGmailNewClientName,
+    gmailSelectedClientName, setGmailSelectedClientName,
+    createGmailOAuthClient,
   } = bots
+
+  const [newClientFile, setNewClientFile] = useState<File | null>(null)
+  const [newClientParseError, setNewClientParseError] = useState<string | null>(null)
+
+  const handleAddOAuthClient = async () => {
+    if (!newClientFile) return
+    setNewClientParseError(null)
+    let parsed: unknown
+    try {
+      parsed = JSON.parse(await newClientFile.text())
+    } catch {
+      setNewClientParseError('That file is not valid JSON — download the client_secret.json Google Cloud gave you and upload it unmodified.')
+      return
+    }
+    const ok = await createGmailOAuthClient(gmailNewClientName.trim(), parsed)
+    if (ok) setNewClientFile(null)
+  }
 
   return (
     <div className="rounded-md border border-border">
@@ -95,6 +121,53 @@ export function GmailNotifications({ bots }: { bots: GmailNotificationsBots }) {
 
               <Card className="space-y-3 p-4">
                 <div>
+                  <h4 className="text-sm font-medium">OAuth clients</h4>
+                  <p className="mt-0.5 text-xs text-muted-foreground">
+                    The Google Cloud app each account signs in through. Give it a name — a second upload never
+                    replaces an existing one by accident; it needs its own name.
+                  </p>
+                </div>
+                {gmailOAuthClientError && <StatusBanner tone="error">{gmailOAuthClientError}</StatusBanner>}
+                {newClientParseError && <StatusBanner tone="error">{newClientParseError}</StatusBanner>}
+                {gmailOAuthClients.length > 0 && (
+                  <ul className="space-y-1">
+                    {gmailOAuthClients.map(client => (
+                      <li key={client.name} className="flex items-center gap-2 rounded border border-border px-2 py-1.5 text-xs">
+                        <span className="font-medium">{client.name}</span>
+                        {client.client_id && <span className="truncate font-mono text-muted-foreground">{client.client_id}</span>}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+                <div className="flex flex-wrap items-center gap-2">
+                  <input
+                    type="text"
+                    value={gmailNewClientName}
+                    onChange={event => setGmailNewClientName(event.target.value)}
+                    disabled={readOnly}
+                    placeholder="Client name (e.g. primary)"
+                    className="flex-1 rounded-md border border-border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary"
+                  />
+                  <input
+                    type="file"
+                    accept="application/json"
+                    disabled={readOnly}
+                    onChange={event => setNewClientFile(event.target.files?.[0] || null)}
+                    className="flex-1 text-xs text-muted-foreground file:mr-2 file:rounded file:border file:border-border file:bg-muted/40 file:px-2 file:py-1 file:text-xs"
+                  />
+                  <Button
+                    variant="outline"
+                    disabled={readOnly || !gmailNewClientName.trim() || !newClientFile || gmailOAuthClientsBusy}
+                    title={readOnly ? READ_ONLY_TITLE : undefined}
+                    onClick={handleAddOAuthClient}
+                  >
+                    {gmailOAuthClientsBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Add client'}
+                  </Button>
+                </div>
+              </Card>
+
+              <Card className="space-y-3 p-4">
+                <div>
                   <h4 className="text-sm font-medium">Sending accounts</h4>
                   <p className="mt-0.5 text-xs text-muted-foreground">
                     Which mailbox notifications are sent from. A workflow may pick one; otherwise the default is used.
@@ -118,7 +191,10 @@ export function GmailNotifications({ bots }: { bots: GmailNotificationsBots }) {
                             {conn.auth?.checking ? 'Checking…' : conn.ready ? 'Connected' : 'Not connected'}
                           </span>
                         </div>
-                        <p className="mt-1 font-mono text-xs text-muted-foreground">{conn.email || 'Address not known yet'}</p>
+                        <p className="mt-1 font-mono text-xs text-muted-foreground">
+                          {conn.email || 'Address not known yet'}
+                          {conn.client_name && <span className="ml-2 text-muted-foreground/70">via {conn.client_name}</span>}
+                        </p>
 
                         <div className="mt-2 flex flex-wrap gap-2">
                           <button
@@ -168,6 +244,23 @@ export function GmailNotifications({ bots }: { bots: GmailNotificationsBots }) {
                 )}
 
                 <div className="space-y-2 border-t border-border pt-3">
+                  {gmailOAuthClients.length === 0 ? (
+                    <p className="text-xs text-amber-600 dark:text-amber-400">
+                      Add an OAuth client above first — every account needs one to sign in through.
+                    </p>
+                  ) : (
+                    <select
+                      value={gmailSelectedClientName}
+                      onChange={event => setGmailSelectedClientName(event.target.value)}
+                      disabled={readOnly}
+                      className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary"
+                    >
+                      <option value="" disabled>Choose an OAuth client…</option>
+                      {gmailOAuthClients.map(client => (
+                        <option key={client.name} value={client.name}>{client.name}</option>
+                      ))}
+                    </select>
+                  )}
                   <div className="flex gap-2">
                     <input
                       type="text"
@@ -179,11 +272,12 @@ export function GmailNotifications({ bots }: { bots: GmailNotificationsBots }) {
                     />
                     <Button
                       variant="outline"
-                      disabled={readOnly || !gmailNewConnectionName.trim() || gmailConnectionsBusy !== null}
+                      disabled={readOnly || !gmailNewConnectionName.trim() || !gmailSelectedClientName || gmailConnectionsBusy !== null}
                       title={readOnly ? READ_ONLY_TITLE : undefined}
                       onClick={() => runGmailConnectionAction('new', async () => {
                         await agentApi.createGmailConnection({
                           display_name: gmailNewConnectionName.trim(),
+                          client_name: gmailSelectedClientName,
                           config_home: gmailNewConnectionDir.trim() || undefined,
                         })
                         setGmailNewConnectionName('')

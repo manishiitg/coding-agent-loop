@@ -6,6 +6,7 @@ import {
   shouldRouteChatInputToLiveTransport,
   shouldAppendOptimisticLiveInputMessage,
   shouldRefreshSessionEventStream,
+  shouldShowLiveTerminalControl,
   shouldUseRetainedLiveInput,
 } from './liveInputSubmission'
 
@@ -29,6 +30,16 @@ describe('chatUsesStructuredTransport', () => {
       reportedTransport: 'structured',
       providerUsesStructuredTransport: false,
     })).toBe(true)
+  })
+})
+
+describe('shouldShowLiveTerminalControl', () => {
+  it('shows the terminal for Workflow Builder inside the AgentWorks product shell', () => {
+    expect(shouldShowLiveTerminalControl(true, true, true)).toBe(true)
+  })
+
+  it('keeps the compact product chat chrome for ordinary product chats', () => {
+    expect(shouldShowLiveTerminalControl(true, true, false)).toBe(false)
   })
 })
 

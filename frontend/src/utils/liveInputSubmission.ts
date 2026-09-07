@@ -34,6 +34,17 @@ export function chatUsesStructuredTransport({
   return providerUsesStructuredTransport
 }
 
+// Product surfaces normally keep their compact chat chrome, but Workflow
+// Builder is an inspectable retained tmux session even when it is rendered
+// inside the AgentWorks product shell.
+export function shouldShowLiveTerminalControl(
+  liveTerminalOffered: boolean,
+  isProductSurface: boolean,
+  isInteractiveWorkflowBuilder: boolean,
+): boolean {
+  return liveTerminalOffered && (!isProductSurface || isInteractiveWorkflowBuilder)
+}
+
 // Only an interactive transport can accept terminal-style live delivery.
 // Structured coding-agent turns resume through the ordinary query route; trying
 // /live-input first adds a predictable 404/409 and can race another JSON turn.

@@ -33,7 +33,7 @@ import { hasActiveSessionWork } from '../utils/activitySessions'
 import { headerStatusLabel, statusTone } from '../utils/globalActivityMonitorStatus'
 import { shouldClearAcceptedChatDraft } from '../utils/chatSubmissionDraft'
 import { liveTerminalControlKey } from '../utils/liveTerminalKeys'
-import { chatUsesStructuredTransport, shouldRouteChatInputToLiveTransport } from '../utils/liveInputSubmission'
+import { chatUsesStructuredTransport, shouldRouteChatInputToLiveTransport, shouldShowLiveTerminalControl } from '../utils/liveInputSubmission'
 import { effectiveLLMUnderLock, effectiveProviderUnderLock } from '../utils/effectiveLLM'
 import { normalizeEventViewMode } from '../stores/useChatStore'
 import { activateTab } from '../utils/activateTab'
@@ -3559,7 +3559,11 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
                       </TooltipContent>
                   </Tooltip>
                 )}
-                {liveTerminalOffered && activeTabId && !isProductSurface && (
+                {activeTabId && shouldShowLiveTerminalControl(
+                  liveTerminalOffered,
+                  isProductSurface,
+                  isInteractiveWorkflowBuilderChat,
+                ) && (
                   <Tooltip>
                     <TooltipTrigger asChild>
                       <Button

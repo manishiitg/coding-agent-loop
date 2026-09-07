@@ -14,7 +14,7 @@ type GmailNotificationsBots = Pick<WorkflowBots,
   | 'gmailOpen' | 'setGmailOpen' | 'gmailConfig' | 'setGmailConfig' | 'gmailBlockedText' | 'setGmailBlockedText'
   | 'gmailLoading' | 'gmailChecking' | 'gmailSaving' | 'gmailTesting' | 'gmailError' | 'gmailSuccess' | 'gmailTestResult'
   | 'gmailBlockedDefaults' | 'gmailDefaultIsBlocked' | 'gmailCanEnable' | 'gmailHasChanges' | 'loadGmail' | 'saveGmail' | 'testGmail'
-  | 'gmailConnections' | 'gmailConnectionsBusy' | 'gmailAuthPending'
+  | 'gmailConnections' | 'gmailConnectionsBusy' | 'gmailAuthPending' | 'gmailAuthUrl'
   | 'gmailNewConnectionName' | 'setGmailNewConnectionName'
   | 'gmailNewConnectionDir' | 'setGmailNewConnectionDir'
   | 'runGmailConnectionAction' | 'connectGmailAccount'
@@ -26,7 +26,7 @@ export function GmailNotifications({ bots }: { bots: GmailNotificationsBots }) {
     gmailOpen, setGmailOpen, gmailConfig, setGmailConfig, gmailBlockedText, setGmailBlockedText,
     gmailLoading, gmailChecking, gmailSaving, gmailTesting, gmailError, gmailSuccess, gmailTestResult,
     gmailBlockedDefaults, gmailDefaultIsBlocked, gmailCanEnable, gmailHasChanges, loadGmail, saveGmail, testGmail,
-    gmailConnections, gmailConnectionsBusy, gmailAuthPending,
+    gmailConnections, gmailConnectionsBusy, gmailAuthPending, gmailAuthUrl,
     gmailNewConnectionName, setGmailNewConnectionName,
     gmailNewConnectionDir, setGmailNewConnectionDir,
     runGmailConnectionAction, connectGmailAccount,
@@ -162,6 +162,28 @@ export function GmailNotifications({ bots }: { bots: GmailNotificationsBots }) {
                             Remove
                           </button>
                         </div>
+
+                        {gmailAuthPending === conn.id && gmailAuthUrl && (
+                          <div className="mt-2 rounded-md border border-border bg-muted/40 p-2">
+                            <p className="text-xs text-muted-foreground">
+                              A tab opened in your default Chrome profile. If this mailbox lives in a
+                              different profile, open that profile and paste this link there — copying
+                              the address bar out of the tab that opened will not work, because Google
+                              ties it to the profile it started in.
+                            </p>
+                            <div className="mt-1.5 flex items-center gap-2">
+                              <code className="flex-1 truncate rounded bg-background px-2 py-1 font-mono text-[11px] text-muted-foreground">
+                                {gmailAuthUrl}
+                              </code>
+                              <button
+                                onClick={() => navigator.clipboard?.writeText(gmailAuthUrl)}
+                                className="shrink-0 rounded border border-border px-2 py-1 text-xs text-muted-foreground hover:text-foreground"
+                              >
+                                Copy link
+                              </button>
+                            </div>
+                          </div>
+                        )}
                       </li>
                     ))}
                   </ul>

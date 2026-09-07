@@ -115,6 +115,15 @@ export function useWorkflowBots(workspacePath: string | null) {
   const [gmailNewConnectionDir, setGmailNewConnectionDir] = useState('')
   // Set while a Google sign-in is in flight, so the row can say it is waiting.
   const [gmailAuthPending, setGmailAuthPending] = useState<string | null>(null)
+  // The authorize URL handed to the browser, kept so the UI can offer it as
+  // copyable text. openExternal lands in whichever Chrome profile is frontmost,
+  // which is often not the profile holding the mailbox being connected. Copying
+  // the address bar out of that tab does not work: by then Chrome has followed
+  // Google's redirects and the bar holds a /signin/oauth/v3/consent?part=… URL
+  // whose continuation token is bound to the originating profile's cookies —
+  // pasting it into another profile fails with a bare "400 ... malformed".
+  // Only this original authorize URL is safe to paste anywhere.
+  const [gmailAuthUrl, setGmailAuthUrl] = useState<string | null>(null)
   const [gmailTestedTo, setGmailTestedTo] = useState<string | null>(null)
   const [gmailOpen, setGmailOpen] = useState(false)
 
@@ -211,7 +220,9 @@ export function useWorkflowBots(workspacePath: string | null) {
     try {
       setGmailError(null)
       setGmailAuthPending(id)
+      setGmailAuthUrl(null)
       const { auth_url } = await agentApi.startGmailConnectionAuth(id)
+      setGmailAuthUrl(auth_url)
 
       const electronAPI = (window as unknown as {
         electronAPI?: { openExternal?: (url: string) => void }
@@ -223,15 +234,21 @@ export function useWorkflowBots(workspacePath: string | null) {
       if (!electronAPI?.openExternal && !popup) {
         setGmailError('Allow pop-ups for this app, then try connecting again.')
         setGmailAuthPending(null)
+        setGmailAuthUrl(null)
         return
       }
 
       // The callback lands on the server, not in this document, so there is no
       // event here to listen for — and with an external browser there is no
       // window to watch closing either. Poll until the server reports ready.
+      //
+      // The window matches the server's 15-minute pending-state TTL rather than
+      // guessing shorter. Anyone whose mailbox lives in a different Chrome
+      // profile has to open that profile and paste the link across, and giving
+      // up while the server would still accept the callback strands them.
       const startedAt = Date.now()
       const timer = window.setInterval(async () => {
-        const timedOut = Date.now() - startedAt > 3 * 60 * 1000
+        const timedOut = Date.now() - startedAt > 15 * 60 * 1000
         if (popup && !popup.closed && !timedOut) return
 
         const data = await agentApi.listGmailConnections().catch(() => null)
@@ -240,11 +257,13 @@ export function useWorkflowBots(workspacePath: string | null) {
 
         window.clearInterval(timer)
         setGmailAuthPending(null)
+        setGmailAuthUrl(null)
         if (!connected) setGmailError('Sign-in did not complete. Try connecting again.')
         await loadGmailConnections()
       }, 1500)
     } catch (error) {
       setGmailAuthPending(null)
+      setGmailAuthUrl(null)
       setGmailError(error instanceof Error ? error.message : 'Could not start Google sign-in')
     }
   }, [loadGmailConnections])
@@ -686,7 +705,7 @@ export function useWorkflowBots(workspacePath: string | null) {
     gmailLoading, gmailChecking, gmailSaving, gmailTesting, gmailError, gmailSuccess, gmailTestResult,
     gmailBlockedDefaults, gmailDefaultIsBlocked, gmailTestPassed, gmailCanEnable, gmailHasChanges, loadGmail, saveGmail, testGmail,
     // gmail senders (multi-account)
-    gmailConnections, gmailConnectionsBusy, gmailAuthPending,
+    gmailConnections, gmailConnectionsBusy, gmailAuthPending, gmailAuthUrl,
     gmailNewConnectionName, setGmailNewConnectionName,
     gmailNewConnectionDir, setGmailNewConnectionDir,
     loadGmailConnections, runGmailConnectionAction, connectGmailAccount,

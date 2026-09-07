@@ -153,6 +153,14 @@ mv ~/Downloads/client_secret_*.json ~/.config/gws/client_secret.json`}</Cmd>
                 <strong>Add account</strong>, then <strong>Sign in with Google</strong> on its row. Repeat for each
                 mailbox — steps 1&ndash;7 are never needed again.
               </p>
+              <Gotcha>
+                The tab opens in whichever Chrome profile is frontmost. If the mailbox belongs to a different
+                profile, open that profile first and use <strong>Copy link</strong> on the row to paste the sign-in
+                link into it. Do not copy the URL out of the address bar of the tab that opened — by then Chrome has
+                followed Google&rsquo;s redirects, and that URL carries a token tied to the profile it started in.
+                Pasting it elsewhere fails with a bare{' '}
+                <code>400. That&rsquo;s an error. The server cannot process the request because it is malformed.</code>
+              </Gotcha>
             </Step>
           </ol>
 

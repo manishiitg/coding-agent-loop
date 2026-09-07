@@ -1,6 +1,22 @@
 package step_based_workflow
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
+
+func TestScriptedValidationFailureRetainsDiagnostics(t *testing.T) {
+	result := &ScriptedFastPathResult{RanScript: true, Error: "validation failed", Output: "missing nav-login on /intro"}
+	d := decideScriptedFastPath(result)
+	if !strings.Contains(d.PriorError, result.Error) || !strings.Contains(d.PriorError, result.Output) {
+		t.Fatalf("lost validation or output evidence: %q", d.PriorError)
+	}
+	result.Error += "\n" + result.Output
+	d = decideScriptedFastPath(result)
+	if strings.Count(d.PriorError, result.Output) != 1 {
+		t.Fatalf("duplicated output evidence: %q", d.PriorError)
+	}
+}
 
 // The scripted-step fallback is the feature: when a step's saved main.py fails,
 // the run must NOT fail. It falls back to the LLM carrying the broken script AND

@@ -2,9 +2,9 @@
 
 A branch step is a deterministic switch — a small in-flow next-step
 decision. It reads `route_selection.json`, resolves the selected value to
-one of its `routes[]`, and jumps to that route's `next_step_id`. Mechanics
-are identical to a routing step (`references/routing.md`); the only
-difference is intent. **Routing is now the "route" concept: a major,
+one of its `routes[]`, and jumps to that route's `next_step_id`. File-based
+selection follows routing (`references/routing.md`); branches additionally
+support a human decision via `route_source: "human"`. **Routing is now the "route" concept: a major,
 self-contained sub-workflow fork.** Use branch instead when the decision is
 small — a lightweight fork inside an otherwise normal plan, not a whole
 alternate path through the workflow. See PLAT-259.
@@ -81,16 +81,18 @@ The value may be:
 - a `routes[].route_id`
 - a unique `routes[].next_step_id`
 
-If the file exists but is invalid, the branch fails. If no file exists,
-`default_route_id` is used when set; otherwise the branch fails. Branch
-never silently chooses the first route.
+If a supplied file is invalid, the branch fails. With no supplied answer,
+a file-based branch uses `default_route_id` or fails; a human-decided branch
+follows the interactive/unattended resolution above. Branch never silently
+chooses the first route.
 
 ### Single mode
 
 Branch steps never execute agents. Leave `description` and `context_output`
 empty. The step reads a caller-preseeded `route_selection.json`, an explicit
 `route_source_file`, a `context_dependencies` entry named
-`route_selection.json`, or `default_route_id`.
+`route_selection.json`, or `default_route_id`. Human-decided branches can
+also obtain an answer through the prompt flow above; they still run no LLM.
 
 When an agent/probe/classifier must decide the route, model it as:
 
@@ -106,7 +108,7 @@ A branch step has:
 
 - `branch_question` — **REQUIRED (non-empty)**: the runtime errors if it is
   missing. It is not evaluated by an LLM; it is kept for plan
-  readability/compatibility, but you must still set it.
+  readability and used as the prompt for a human-decided branch.
 - `routes[]` — minimum 2 entries (required)
 - `default_route_id` — optional fallback `route_id` used when no route file
   exists
@@ -160,7 +162,9 @@ each option a `next_step_id` pointing to the shared downstream step, or
 - Setting `description` on a branch step. Use a prior message sequence for
   probe/judgment work.
 - `next_step_id` pointing to a step that does not exist yet.
-- Branch with no caller `route_selections`, no `route_source_file`, no
-  `route_selection.json` dependency, and no `default_route_id`.
+- File-based branch with no caller `route_selections`, no `route_source_file`,
+  no `route_selection.json` dependency, and no `default_route_id`. A human
+  branch may prompt interactively; unattended runs still need an answer or
+  safe non-approval default.
 - Using branch for what is actually a major sub-workflow fork — use routing
   instead.

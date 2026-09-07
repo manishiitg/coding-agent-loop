@@ -217,7 +217,7 @@ Do not guess tool names. If your provider explicitly lists direct sub-agent tool
 
 {{.LearningHistory}}
 
-{{if .IsCodeExecutionMode}}Saved sub-agent scripts live at `+"`"+`learnings/{step-id}/main.py`+"`"+`. Only inspect them when debugging a sub-agent failure or when you need to understand how that sub-agent executes its task.
+{{if .IsCodeExecutionMode}}Read workflow.json's code_layout_version before locating saved sub-agent scripts: version 1 uses code/{step-id}/main.py; absent/zero uses learnings/{step-id}/main.py. Version 1 executes canonical source directly; only legacy code uses run copies. Only inspect scripts when debugging a sub-agent failure or understanding its implementation.
 
 {{end}}**Note**: When updating shared workflow skill files, keep entries short and actionable — record tier configs, failure patterns, and routing decisions as concise bullet points, not detailed narratives.
 {{end}}

@@ -1,3 +1,5 @@
+**Saved-code paths:** Read `workflow.json.code_layout_version` first. In this reference, `<script-dir>` means `code/<step-id>` for version 1, or `learnings/<step-id>` for absent/zero (legacy). Resolve the placeholder before using a path; never infer the version from folders or migrate an existing workflow implicitly. Version 1 executes and repairs canonical source directly, with shared helpers under `WORKFLOW_CODE_ROOT`; only legacy workflows copy code into runs and save it back.
+
 ## STEP CONFIG — planning/step_config.json (per-step tuning)
 
 Every step has an optional config entry that overrides defaults for that step. All of it is set with **`update_step_config(step_id, ...)`** and removed with **`update_step_config(step_id, clear=[...])`** (clearing returns the field to its default). Never hand-edit `planning/step_config.json`. This doc is the one-stop map of the knobs; load the linked deep-dives when a knob needs more than the summary.
@@ -20,7 +22,7 @@ A step's access to each store is independent and defaults differently. Grant the
 
 | Lock | Scope | Effect | Set when |
 |---|---|---|---|
-| `lock_code` | per-step (scripted) | Freezes `learnings/{step}/main.py`, skips the fix loop | **user asks to lock** → allow it; **Workshop auto-locking on its own** → only after 10+ scenario-covering runs |
+| `lock_code` | per-step (scripted) | Freezes `<script-dir>/main.py`, skips the fix loop | **user asks to lock** → allow it; **Workshop auto-locking on its own** → only after 10+ scenario-covering runs |
 
 Knowledge-base writes are controlled per step instead: `knowledgebase_access`
 must permit writes and `knowledgebase_contribution` must state what durable
@@ -31,7 +33,7 @@ Only pass `lock_code` when explicitly changing it. Learning write eligibility is
 
 ### Execution mode + which model runs the step
 
-- **Execution mode is the step's plan type, not a config field**: `regular` = scripted (a checked-in `learnings/<step-id>/main.py`, created with `add_scripted_step`), `message_sequence` = agentic (the LLM acts each turn). Move an existing step between them with `change_step_type(step_id, target_type="scripted"|"message_sequence", reason)`. Two different paths, don't conflate them:
+- **Execution mode is the step's plan type, not a config field**: `regular` = scripted (a checked-in `<script-dir>/main.py`, created with `add_scripted_step`), `message_sequence` = agentic (the LLM acts each turn). Move an existing step between them with `change_step_type(step_id, target_type="scripted"|"message_sequence", reason)`. Two different paths, don't conflate them:
   - **Scripts are the default for DETERMINISTIC execution** — fixed API/SDK calls, CLI commands, known pagination, data fetching, stable parsing/normalization, math, data transforms, mechanical persistence, and fixed SQL. Create these as `regular` steps from initial design and author/test `main.py`; no prior run count is required. If behavior **varies run-to-run or needs adaptive judgment** (most browser/UI flows, LLM reasoning, fuzzy extraction, live discovery), keep it a `message_sequence`.
   - **Use coherent scripted fetchers, not micro-scripts** — batch related calls and transforms when they share one source/auth/retry/output contract. Do not create one scripted step per endpoint, command, or tiny transformation, and do not put an entire branching business workflow into one script. The usual architecture is scripted fetcher(s) → durable DB/file output → one large agentic message sequence.
   - **User explicitly asks for a scripted step** (e.g. "make this scripted so I can test it") → `change_step_type(step_id, target_type="scripted", reason=...)` right away — the user owns that call; **no run-count gate**. But if the work isn't deterministic, say so plainly first ("this flow reads live UI state, so a frozen script will break often — agentic is more reliable; want me to script it anyway?") and honor their decision.

@@ -1,3 +1,5 @@
+**Saved-code paths:** Read `workflow.json.code_layout_version` first. In this reference, `<script-dir>` means `code/<step-id>` for version 1, or `learnings/<step-id>` for absent/zero (legacy). Resolve the placeholder before using a path; never infer the version from folders or migrate an existing workflow implicitly. Version 1 executes and repairs canonical source directly, with shared helpers under `WORKFLOW_CODE_ROOT`; only legacy workflows copy code into runs and save it back.
+
 ## MESSAGE SEQUENCE — SAME-CONTEXT CONVERSATIONAL WORK
 
 Use `message_sequence` for one persistent conversation where later turns need the earlier turns' reasoning, tool output, critique, or context. Design one large sequence per coherent shared-context span. The step `description` is turn 0; `items[]` are turns 1..N.
@@ -12,7 +14,7 @@ Supported item types:
 - `foreach`: one templated follow-up per row from a read-only query against `db/db.sqlite`.
 - `prevalidation`: a deterministic backend validation gate with corrective feedback sent to the same conversation.
 
-`type: "code"` was removed in workflow contract v1.0.10. Deterministic code must be a standalone `regular` step — the type alone makes it scripted; create it with `add_scripted_step`, or move existing conversational work there with `change_step_type` — with its script at `learnings/<step-id>/main.py`. Connect conversational and scripted steps through explicit `context_dependencies`, `context_output`, database contracts, and validation.
+`type: "code"` was removed in workflow contract v1.0.10. Deterministic code must be a standalone `regular` step — the type alone makes it scripted; create it with `add_scripted_step`, or move existing conversational work there with `change_step_type` — with its script at `<script-dir>/main.py`. Connect conversational and scripted steps through explicit `context_dependencies`, `context_output`, database contracts, and validation.
 
 Preferred split when deterministic data is needed:
 
@@ -65,9 +67,9 @@ Use a non-empty `write_access` object, or `kind`, only when one turn should be n
 
 An item override can narrow but never exceed the step-level permissions. Write access is folder-level and per-file path lists are rejected. Use direct learning writes sparingly; normal step-level learning runs after the complete step.
 
-**Where a step can durably write (the hard allow-list).** The sandbox opens only these durable locations for a step, and denies everything else ("operation not permitted"):
+**Persistent stores and scratch space (the hard allow-list).** Access still depends on the current step/item grants. DB rows use managed tools; file grants do not authorize opening the live database:
 
-- `db/db.sqlite` and `db/assets/` — structured rows and durable **files** of any format (PDF, image, CSV, JSON, txt, zip). A downloaded or generated file that later steps or the builder must reach goes in `db/assets/` with a reference row in `db.sqlite`. This is the ONLY step-writable home for an arbitrary file.
+- DB rows via `mutate_workflow_db` (never direct SQLite access from an agentic step); `db/assets/` for durable **files** of any format (PDF, image, CSV, JSON, txt, zip). A downloaded or generated file that later steps or the builder must reach goes in `db/assets/` with a reference row in `db.sqlite`. This is the ONLY step-writable home for an arbitrary file.
 - `knowledgebase/notes/` — workflow-discovered narrative facts (KB direct-write only).
 - `learnings/_global/` — reusable HOW-to-run knowledge.
 - the step's own execution folder + `Downloads/` — volatile per-run scratch (wiped on re-run).

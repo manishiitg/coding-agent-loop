@@ -181,7 +181,7 @@ Each workflow lives in ` + "`" + absWorkflow + `/<name>/` + "`" + ` with:
 - ` + "`planning/plan.json`" + ` — step definitions (IDs, titles, descriptions, dependencies, validation). It no longer owns root objective/success fields; use ` + "`soul/soul.md`" + ` for that.
 - ` + "`planning/step_config.json`" + ` — per-step settings. Each step's ` + "`agent_configs`" + ` object controls execution mode:
   - ` + "`use_code_execution_mode`" + ` (bool) — ` + "`false`" + ` = direct tool calls, ` + "`true`" + ` = scripted Python (main.py)
-  - the execution model itself is the plan step type, not a config field: a ` + "`regular`" + ` step runs its persistent learnings/<step-id>/main.py, a ` + "`message_sequence`" + ` step is conversational (ephemeral per-run scripts when ` + "`use_code_execution_mode`" + ` is on).
+  - the execution model itself is the plan step type, not a config field: a ` + "`regular`" + ` step runs its persistent code/<step-id>/main.py (version 1; learnings/<step-id>/main.py for legacy), a ` + "`message_sequence`" + ` step is conversational (ephemeral per-run scripts when ` + "`use_code_execution_mode`" + ` is on).
 
 **Variables:**
 - ` + "`variables/variables.json`" + ` — **the only** source of runtime variable values. Shape: ` + "`{variables:[{name,value,group}], groups:[{id,name,enabled}]}`" + `. Groups enable batch execution with different value sets. ` + "`workflow.json`" + ` does NOT carry variable definitions.
@@ -189,8 +189,8 @@ Each workflow lives in ` + "`" + absWorkflow + `/<name>/` + "`" + ` with:
 **Learnings (reusable HOW-to-run knowledge):**
 - ` + "`learnings/_global/SKILL.md`" + ` — **global workflow learnings**: reusable HOW-to-run knowledge — selectors, auth flows, tool/API quirks, timing, parsing and retry patterns — shared across all steps. This is HOW to operate the target systems, NOT domain facts or run results: subject-matter facts belong in the knowledgebase, produced data in db/db.sqlite. (Per-step SKILL.md learnings have been removed.)
 - ` + "`learnings/_global/references/`" + ` and ` + "`learnings/_global/scripts/`" + ` — supporting files referenced by the global skill
-- ` + "`learnings/<step-id>/main.py`" + ` — **persistent saved script** for ` + "`scripted`" + ` steps. Source of truth; each run copies it into the per-run working folder.
-- ` + "`learnings/<step-id>/script_metadata.json`" + ` — version history + run stats for the saved script
+- ` + "`code/<step-id>/main.py (version 1; learnings/<step-id>/main.py for legacy)`" + ` — **persistent saved script** for ` + "`scripted`" + ` steps. Source of truth; version 1 runs it directly, while legacy runs copy it into the run working folder.
+- ` + "`code/<step-id>/script_metadata.json (legacy: learnings/<step-id>/script_metadata.json)`" + ` — version history + run stats for the saved script
 
 **Runs (execution output):**
 - ` + "`runs/iteration-0/`" + ` — **active run folder**. All new executions land here. When a new run starts, the previous ` + "`iteration-0`" + ` is backed up to a monotonic ` + "`iteration-{N}`" + ` folder. ` + "`workflow.json::run_retention_count`" + ` controls how many backup iterations are kept; default 3.
@@ -230,7 +230,7 @@ Each workflow lives in ` + "`" + absWorkflow + `/<name>/` + "`" + ` with:
 - **Schedules:** ` + "`execute_shell_command(command: \"python3 -c \\\"import json; scheds=json.load(open('" + absWorkflow + "/<name>/workflow.json')).get('schedules',[]); [print(f'{s[\\\\\\\"id\\\\\\\"]}: {s[\\\\\\\"cron_expression\\\\\\\"]} enabled={s.get(\\\\\\\"enabled\\\\\\\",True)}') for s in scheds]\\\"\")`" + `
 - **Variables + groups:** ` + "`execute_shell_command(command: \"cat " + absWorkflow + "/<name>/variables/variables.json\")`" + `
 - **Global workflow learnings:** ` + "`execute_shell_command(command: \"cat " + absWorkflow + "/<name>/learnings/_global/SKILL.md\")`" + `
-- **Saved step code (scripted steps only):** ` + "`execute_shell_command(command: \"cat " + absWorkflow + "/<name>/learnings/<step-id>/main.py\")`" + `
+- **Saved step code (scripted steps only):** Read workflow.json first. For code_layout_version=1: ` + "`execute_shell_command(command: \"cat " + absWorkflow + "/<name>/code/<step-id>/main.py\")`" + `. For absent/zero layout versions use learnings instead of code.
 - **Run logs:** start with ` + "`execute_shell_command(command: \"ls " + absWorkflow + "/<name>/runs/iteration-0/\")`" + ` for the latest active run, then inspect older retained ` + "`iteration-{N}`" + ` folders when Pulse decision timestamps indicate a relevant before-after window.
 - **Live report pages:** ` + "`execute_shell_command(command: \"find " + absWorkflow + "/<name>/db/reports -maxdepth 1 -type f -name '*.html' -print\")`" + `
 - **Full config (when needed):** ` + "`execute_shell_command(command: \"cat " + absWorkflow + "/<name>/workflow.json\")`" + `
@@ -254,7 +254,7 @@ Each workflow lives in ` + "`" + absWorkflow + `/<name>/` + "`" + ` with:
 
 ### What You Can Do
 - **Reuse global workflow learnings**: ` + "`learnings/_global/SKILL.md`" + ` contains reusable HOW-to-run knowledge for a workflow (how to log into a bank, parsing quirks, tool/API call patterns) — not domain facts or run results. Read it and reuse the guidance in your own delegated tasks for related work.
-- **Reuse saved step scripts**: For ` + "`scripted`" + ` steps, the canonical working script lives at ` + "`learnings/<step-id>/main.py`" + `. Read it to understand what a step does, or borrow patterns into your own scripts.
+- **Reuse saved step scripts**: For ` + "`scripted`" + ` steps, the canonical working script lives at ` + "`code/<step-id>/main.py (version 1; learnings/<step-id>/main.py for legacy)`" + `. Read it to understand what a step does, or borrow patterns into your own scripts.
 - **Inspect recent runs**: ` + "`runs/iteration-0/`" + ` always holds the most recent execution. Older ` + "`runs/iteration-{N}/`" + ` folders are retained history; use them for trends, regressions, and before/after comparisons against typed Pulse timestamps.
 
 ## Pulse and Goal Advisor — When to Use the Tools
@@ -529,7 +529,7 @@ Step definitions. **Required field**: ` + "`steps`" + ` (array, at least 1 step)
 - If call selection requires judgment, use an agentic request-specification step, then a deterministic executor, then an agentic interpretation sequence.
 - Use multiple large sequences when their contexts should not be shared: different credentials/security exposure, independent durable outputs or retries, clean-room independence, human/routing boundaries, or unrelated context that would distract or contaminate the next agent. Split only when the builder can name that boundary; a desire to validate the same output is not enough.
 
-**Execution-mode handoff:** ` + "`plan.json`" + ` stores structure, not per-step execution mode. After ` + "`create_workflow`" + ` returns, tell the user to open the workflow in Workshop. Before the first production run, Workshop must declare deterministic fetch/parse/persist steps ` + "`scripted`" + ` with ` + "`update_step_config`" + `, author and test ` + "`learnings/<step-id>/main.py`" + `, and keep judgment/message-sequence/browser work ` + "`agentic`" + `. The 10-run bar applies only before ` + "`lock_code=true`" + ` freezes a script, not before selecting scripted mode.
+**Execution-mode handoff:** ` + "`plan.json`" + ` stores structure, not per-step execution mode. After ` + "`create_workflow`" + ` returns, tell the user to open the workflow in Workshop. Before the first production run, Workshop must declare deterministic fetch/parse/persist steps ` + "`scripted`" + ` with ` + "`update_step_config`" + `, author and test ` + "`code/<step-id>/main.py (version 1; learnings/<step-id>/main.py for legacy)`" + `, and keep judgment/message-sequence/browser work ` + "`agentic`" + `. The 10-run bar applies only before ` + "`lock_code=true`" + ` freezes a script, not before selecting scripted mode.
 
 **Step types**:
 - ` + "`message_sequence`" + ` — the default for substantial same-context reasoning: complete the outcome, verify it against evidence, then repair gaps in focused follow-up messages.
@@ -809,9 +809,9 @@ func buildSingleWorkflowContext(client *skills.WorkspaceAPIClient, wsPath string
 - Step config: `+"`%s/planning/step_config.json`"+` — per-step LLM, tools, and execution mode (`+"`agent_configs.use_code_execution_mode`"+`; the plan step type decides scripted vs conversational)
 - Variables: `+"`%s/variables/variables.json`"+` — sole source of variable values + groups (workflow.json does NOT carry variable definitions)
 - Global workflow learnings: `+"`%s/learnings/_global/SKILL.md`"+` (plus `+"`references/`"+` and `+"`scripts/`"+` siblings) — shared domain knowledge for the whole workflow
-- Per-step saved scripts: `+"`%s/learnings/{step_id}/main.py`"+` — persistent script for `+"`scripted`"+` steps (source of truth, reused across runs)
+- Per-step saved scripts: `+"`%s/<source-root>/{step_id}/main.py`"+` — source-root is code for code_layout_version=1, otherwise learnings; persistent script for `+"`scripted`"+` steps (source of truth, reused across runs)
 - Knowledgebase: `+"`%s/knowledgebase/`"+` — persistent files across runs
-- Runs: `+"`%s/runs/iteration-0/`"+` is the **active** run; older runs are backed up to monotonic `+"`iteration-{N}/`"+` folders. `+"`workflow.json::run_retention_count`"+` controls how many backups are kept; default 3. Per-run layout: `+"`runs/iteration-{N}/{group}/execution/{step-id}/code/main.py`"+` for working main.py copies.
+- Runs: `+"`%s/runs/iteration-0/`"+` is the **active** run; older runs are backed up to monotonic `+"`iteration-{N}/`"+` folders. `+"`workflow.json::run_retention_count`"+` controls how many backups are kept; default 3. Per-run layout: `+"`runs/iteration-{N}/{group}/execution/{step-id}/code/main.py`"+` for legacy working main.py copies only; version 1 executes canonical source directly.
 - Live report dashboard: `+"`%s/db/reports/index.html`"+` — one complete HTML experience that reads `+"`db/db.sqlite`"+` through `+"`window.report`"+`, owns its internal navigation, and uses report assets under `+"`%s/db/assets/`"+`
 - Legacy finished-run prose: `+"`%s/reports/{group-name}/{timestamp}.md`"+` — supporting evidence when present, not the live dashboard contract
 - Evaluation reports: `+"`%s/evaluation/runs/{runFolder}/evaluation_report.json`"+`

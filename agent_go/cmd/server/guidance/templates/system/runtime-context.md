@@ -1,3 +1,5 @@
+**Saved-code paths:** Read `workflow.json.code_layout_version` first. In this reference, `<script-dir>` means `code/<step-id>` for version 1, or `learnings/<step-id>` for absent/zero (legacy). Resolve the placeholder before using a path; never infer the version from folders or migrate an existing workflow implicitly. Version 1 executes and repairs canonical source directly, with shared helpers under `WORKFLOW_CODE_ROOT`; only legacy workflows copy code into runs and save it back.
+
 ## Runtime context and user rules
 
 Read this before doing workflow-specific work directly, answering questions
@@ -10,7 +12,7 @@ and Run. Reading a reference does not grant its tools or write permissions.
   constraints. Keep it Markdown; implementation choices are revisable.
 - `learnings/_global/SKILL.md` describes HOW to operate the workflow's target
   systems. Read it first when present. For a known scripted step, inspect
-  `learnings/<step-id>/main.py` for its proven behavior before inventing another
+  `<script-dir>/main.py` for its proven behavior before inventing another
   implementation. In Run, do not edit either artifact.
 - `knowledgebase/context/context.md` contains user-owned business rules and
   examples. For discovered knowledge, read `knowledgebase/notes/_index.json`

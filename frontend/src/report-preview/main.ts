@@ -122,6 +122,17 @@ function createPreviewDataApi(): ReportDataApi {
     },
     // The file endpoint accepts the token as a query parameter, so the URL is
     // usable directly in <img src> / <iframe src> without a blob round-trip.
+    mediaUrl: async (path: string) => {
+      const allowed = allowedReportPath(path)
+      if (!allowed?.startsWith('db/assets/')) return null
+      const response = await fetch(apiUrl('media-url', {}), {
+        method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ workspace, path: allowed }),
+      })
+      if (!response.ok) throw new Error(`Media unavailable (HTTP ${response.status})`)
+      const body = await response.json() as { url: string }
+      return new URL(body.url, window.location.href).href
+    },
     fileUrl: async (path: string) => {
       const allowed = allowedReportPath(path)
       return allowed ? apiUrl('file', { path: allowed }) : null

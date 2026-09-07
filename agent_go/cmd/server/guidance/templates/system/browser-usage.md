@@ -166,14 +166,18 @@ After it is reachable, configure the workflow with that port, for example
 Always use **workspace-relative paths** (e.g. `Downloads/report.pdf`,
 `Chats/output.csv`). Do not construct absolute paths yourself. The backend
 checks the current read grants and stages uploads for the persistent daemon.
-To upload a file you generated, write it to `Chats/` via
-`execute_shell_command`, then upload that path.
+To upload a file you generated, write it within the current session's
+authorized output space, then pass its workspace-relative path. `Chats/` is
+for chats that have that grant; a workflow step uses its own execution output
+space or `db/assets/` for a durable file, not a builder-only folder.
 
 For an explicit managed download, pass a workspace-relative authorized output
 path: `browser("download", ["@ref", "Downloads/report.pdf"])` (plus the CDP
 tab inline when applicable). The backend stages and publishes the completed
 file. A normal click in visible Chrome may instead download into the host
-Downloads folder, which is read-only to the agent.
+Downloads folder. Use only the host Downloads grants actually provided to
+this session; do not assume that workspace-relative `Downloads/` names the
+same directory.
 
 ## Session limits
 

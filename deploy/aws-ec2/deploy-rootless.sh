@@ -15,13 +15,34 @@ HYPERFRAMES_VERSION="${HYPERFRAMES_VERSION:-0.8.6}"
 # box never drifts from what is checked in here.
 AGENTWORKS_PROVIDER="${AGENTWORKS_PROVIDER:-cursor-cli}"
 AGENTWORKS_MODEL="${AGENTWORKS_MODEL:-cursor-cli}"
-SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
-WORKSPACE_ROOT="${WORKSPACE_ROOT:-$(cd "$REPO_ROOT/.." && pwd)}"
-# A worktree contains the Video Studio source being deployed but may sit
-# outside the shared Go workspace that supplies the sibling modules. Keep the
-# two roots explicit so a deploy never silently builds a different checkout.
-BUILDER_REPO_ROOT="${BUILDER_REPO_ROOT:-$REPO_ROOT}"
+LOCAL_SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+LOCAL_REPO_ROOT="$(cd "$LOCAL_SCRIPT_DIR/../.." && pwd)"
+DEPLOY_SOURCE_MODE="${DEPLOY_SOURCE_MODE:-remote-main}"
+DEPLOY_BRANCH="${DEPLOY_BRANCH:-main}"
+SOURCE_ROOT=""
+
+for command in aws git go npm jq rsync ssh docker; do command -v "$command" >/dev/null || { echo "Missing $command" >&2; exit 1; }; done
+
+# Production deploys build only committed source from clean, fresh clones of
+# all three repositories. This prevents an untracked file or a dirty sibling
+# checkout from silently entering a release. local is an explicit developer
+# override, never the default.
+if [[ "$DEPLOY_SOURCE_MODE" == "remote-main" ]]; then
+  SOURCE_ROOT="$(mktemp -d)"
+  git clone --quiet --depth 1 --single-branch --branch "$DEPLOY_BRANCH" "$(git -C "$LOCAL_REPO_ROOT" remote get-url origin)" "$SOURCE_ROOT/mcp-agent-builder-go"
+  git clone --quiet --depth 1 --single-branch --branch "$DEPLOY_BRANCH" "$(git -C "$LOCAL_REPO_ROOT/../mcpagent" remote get-url origin)" "$SOURCE_ROOT/mcpagent"
+  git clone --quiet --depth 1 --single-branch --branch "$DEPLOY_BRANCH" "$(git -C "$LOCAL_REPO_ROOT/../multi-llm-provider-go" remote get-url origin)" "$SOURCE_ROOT/multi-llm-provider-go"
+  BUILDER_REPO_ROOT="$SOURCE_ROOT/mcp-agent-builder-go"
+  WORKSPACE_ROOT="$SOURCE_ROOT"
+elif [[ "$DEPLOY_SOURCE_MODE" == "local" ]]; then
+  BUILDER_REPO_ROOT="${BUILDER_REPO_ROOT:-$LOCAL_REPO_ROOT}"
+  WORKSPACE_ROOT="${WORKSPACE_ROOT:-$(cd "$BUILDER_REPO_ROOT/.." && pwd)}"
+else
+  echo "DEPLOY_SOURCE_MODE must be remote-main or local" >&2
+  exit 1
+fi
+REPO_ROOT="$BUILDER_REPO_ROOT"
+SCRIPT_DIR="$BUILDER_REPO_ROOT/deploy/aws-ec2"
 
 # This host has one fixed deployment contract: AgentWorks supplies the shared
 # application shell and Video Studio is the only product backend. Fail before
@@ -36,19 +57,23 @@ grep -Fq 'Environment=AGENT_PRODUCTS=video-studio' "$SCRIPT_DIR/rootless/video-s
 }
 
 aws_rts() { aws --profile "$AWS_PROFILE_NAME" --region "$AWS_REGION" "$@"; }
-for command in aws go npm jq rsync ssh docker; do command -v "$command" >/dev/null || { echo "Missing $command" >&2; exit 1; }; done
 
 HOST_IP="$(aws_rts cloudformation describe-stacks --stack-name "$STACK_NAME" --query 'Stacks[0].Outputs[?OutputKey==`ElasticIp`].OutputValue | [0]' --output text)"
 RELEASE_ID="$(git -C "$REPO_ROOT" rev-parse --short HEAD)-$(date +%Y%m%d%H%M%S)"
 BUILD_DIR="$(mktemp -d)"
 GLOBAL_FILE="$(mktemp)"
-trap 'rm -rf "$BUILD_DIR" "$GLOBAL_FILE"' EXIT
+trap 'rm -rf "$BUILD_DIR" "$GLOBAL_FILE"; if [[ -n "${SOURCE_ROOT:-}" ]]; then rm -rf "$SOURCE_ROOT"; fi' EXIT
 mkdir -p "$BUILD_DIR/bin" "$BUILD_DIR/frontend" "$BUILD_DIR/configs" "$BUILD_DIR/systemd" "$BUILD_DIR/claude-skills" "$BUILD_DIR/browser"
 # Build exactly the requested checkout while resolving the shared sibling
 # modules from the declared workspace root. The checked-in go.work may point
 # at a primary checkout instead of this worktree.
 DEPLOY_GOWORK="$BUILD_DIR/go.work"
 (cd "$BUILD_DIR" && go work init "$BUILDER_REPO_ROOT/agent_go" "$BUILDER_REPO_ROOT/workspace" "$WORKSPACE_ROOT/mcpagent" "$WORKSPACE_ROOT/multi-llm-provider-go")
+{
+  printf 'mcp-agent-builder-go=%s\n' "$(git -C "$BUILDER_REPO_ROOT" rev-parse HEAD)"
+  printf 'mcpagent=%s\n' "$(git -C "$WORKSPACE_ROOT/mcpagent" rev-parse HEAD)"
+  printf 'multi-llm-provider-go=%s\n' "$(git -C "$WORKSPACE_ROOT/multi-llm-provider-go" rev-parse HEAD)"
+} > "$BUILD_DIR/SOURCE_REVISIONS"
 
 if [[ "$REUSE_CURRENT_AGENT" == "1" ]]; then
   # The agent ships with its native STT libraries in bin/lib; reuse both.

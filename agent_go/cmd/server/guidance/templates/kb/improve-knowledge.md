@@ -83,9 +83,9 @@ move workflow-discovered material into user-owned `knowledgebase/context/`.
 
 BOUNDARIES
 
-1. Work only on `knowledgebase/notes/` and `knowledgebase/notes/_index.json`. Never edit or delete `knowledgebase/_freshness.json` — it is a code-owned freshness ledger written by the runtime; read it, do not touch it.
+1. Return recommendations for `knowledgebase/notes/` and `knowledgebase/notes/_index.json`; the reviewer edits nothing. Never recommend editing or deleting `knowledgebase/_freshness.json` — it is a code-owned freshness ledger written by the runtime; read it for evidence only.
 2. Never read or write `knowledgebase/context/`. That folder is user-owned runtime business context, not maintenance-owned notes.
-3. Do not edit planning files, eval files, report files, learnings, or db files unless the user explicitly asks outside this command.
+3. Do not edit planning files, eval files, report files, learnings, or db files. Hand off any required changes outside the notes scope to the parent; this review command never becomes a writer.
 4. This review is available in Workshop because KB shape can be part of workflow design or Pulse cleanup. It is not available in Run mode.
 
 READ FIRST

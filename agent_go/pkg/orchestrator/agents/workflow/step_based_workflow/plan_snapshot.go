@@ -107,6 +107,9 @@ func executionPlanFromContext(ctx context.Context) *PlanningResponse {
 // and does not mutate execution state. The explicit scope avoids temporarily
 // changing isEvaluationMode during cross-plan configuration lookups.
 func (hcpo *StepBasedWorkflowOrchestrator) ReadCurrentPlan(ctx context.Context, evaluation bool) (*PlanningResponse, error) {
+	if err := hcpo.loadCodeLayout(ctx); err != nil {
+		return nil, err
+	}
 	if !evaluation {
 		return readPlanFromFile(ctx, hcpo.GetWorkspacePath(), hcpo.ReadWorkspaceFile)
 	}

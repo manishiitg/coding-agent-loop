@@ -419,11 +419,11 @@ func countSQLPlaceholders(sqlText string) int {
 func CheckScriptedCodeDBQueries(ctx context.Context, workspacePath, stepID string, readFile func(context.Context, string) (string, error)) (StepDriftCheck, error) {
 	check := StepDriftCheck{CheckID: scriptedCodeDriftCheckID}
 
-	codePath := normalizePathForWorkspaceAPI(filepath.Join("learnings", stepID, "main.py"), workspacePath)
+	codePath := normalizePathForWorkspaceAPI(filepath.Join(savedCodeDirectory(ctx, workspacePath, stepID, readFile), "main.py"), workspacePath)
 	code, err := readFile(ctx, codePath)
 	if err != nil || strings.TrimSpace(code) == "" {
 		check.Status = "pass"
-		check.Evidence = "no learnings/" + stepID + "/main.py found; this step is not scripted, nothing to check"
+		check.Evidence = "no " + codePath + " found; no saved code to check"
 		return check, nil
 	}
 

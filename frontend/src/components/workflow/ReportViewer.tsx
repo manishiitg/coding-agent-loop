@@ -4,7 +4,7 @@
 
 import { memo, useCallback, useEffect, useMemo, useState } from 'react'
 import { BarChart3, Loader2, RefreshCw } from 'lucide-react'
-import { agentApi, workspaceApi } from '../../services/api'
+import api, { agentApi, workspaceApi, getApiBaseUrl } from '../../services/api'
 import { useReportFilePreviewStore } from '../../stores/useReportFilePreviewStore'
 import { useWorkflowStore } from '../../stores/useWorkflowStore'
 import {
@@ -86,6 +86,13 @@ function useReportDataApi(workspacePath: string, sendChatMessage: ReportDataApi[
         const text = await getText(path)
         if (text == null) return null
         return renderReportMarkdown(text, reportMarkdownBasePath(path)) || null
+      },
+      mediaUrl: async (path: string) => {
+        const allowed = allowedReportPath(path)
+        if (!allowed?.startsWith('db/assets/')) return null
+        const response = await api.post('/workflow/report-preview/media-url', { workspace: workspacePath, path: allowed })
+        // Resolve against the configured API origin (also supports remote workspaces).
+        return new URL(response.data.url, new URL(getApiBaseUrl(), window.location.href)).href
       },
       fileUrl: async (path: string) => {
         const allowed = allowedReportPath(path)

@@ -1,3 +1,5 @@
+**Saved-code paths:** Read `workflow.json.code_layout_version` first. In this reference, `<script-dir>` means `code/<step-id>` for version 1, or `learnings/<step-id>` for absent/zero (legacy). Resolve the placeholder before using a path; never infer the version from folders or migrate an existing workflow implicitly. Version 1 executes and repairs canonical source directly, with shared helpers under `WORKFLOW_CODE_ROOT`; only legacy workflows copy code into runs and save it back.
+
 ## Workshop Mode — Core Operating Flow
 
 Workshop mode is for **designing, running, evaluating, repairing, and
@@ -61,7 +63,7 @@ reliability. Use Goal Advisor for strategy or path redesign.
 - Applies small evidence-backed structural fixes when the failure is
   caused by missing/split/obsolete steps or bad step boundaries.
 - Patches `main.py` only for `scripted` steps; deletes stale
-  `learnings/{step-id}/main.py` for `agentic` steps.
+  `<script-dir>/main.py` for `agentic` steps.
 - Updates step config (execution mode, servers, learnings,
   KB/db/report/eval wiring).
 - Locks stable learnings when they converge and records review

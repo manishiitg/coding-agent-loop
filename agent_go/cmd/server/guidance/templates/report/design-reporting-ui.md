@@ -87,6 +87,31 @@ send during rendering or polling.
    (`db/assets/chart.png`, `db/reports/proof.pdf`, or paths relative to the
    .md file) work: images load, links open the in-report file preview.
    Use `getText` only when you genuinely want the raw source.
+   For test recordings or audio saved under `db/assets/`, use
+   `await window.report.mediaUrl(path)` with a native `<video controls>` or
+   `<audio controls>` element. This returns an authenticated, file-scoped URL
+   with byte-range streaming; `fileUrl` still downloads a blob. Request a fresh
+   URL when the user opens a recording, not for every row during initial render.
+   URLs expire after at most 30 minutes (or the current preview/session expiry);
+   do not persist them in the database. Persist the workspace-relative file path
+   with the run/test result instead. On expiry, offer a retry that obtains a new
+   URL, preserving the playback position where possible; do not retry indefinitely.
+
+   ```js
+   async function watchRecording(recordingPath) {
+     const url = await window.report.mediaUrl(recordingPath);
+     if (!url) throw new Error('Recording is unavailable');
+     const player = document.getElementById('test-recording');
+     player.preload = 'metadata';
+     player.src = url;
+     player.load(); // native controls let the user start playback
+   }
+   ```
+
+   Use `<video id="test-recording" controls playsinline></video>`, handle errors
+   visibly, and only record tests when requested by the workflow/user. Ensure the
+   recording is finalized before storing its durable path. This API serves
+   existing media; it does not automatically record tests or attach their results.
 5. Call `validate_report_html` after editing; repair every error. It now
    also runs every literal `window.report.query` SQL against the live
    `db/db.sqlite`, checks that every referenced `db/` file exists, rejects

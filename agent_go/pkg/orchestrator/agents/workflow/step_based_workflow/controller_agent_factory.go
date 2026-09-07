@@ -544,6 +544,13 @@ func (hcpo *StepBasedWorkflowOrchestrator) setupExecutionFolderGuard(stepPath st
 	// (workspace/security/sandbox_tool_env.go); this grant is what makes it
 	// writable for every step of the workflow, root-wide write or not.
 	sandboxCachePath := fmt.Sprintf("%s/%s", baseWorkspacePath, security.SandboxPersistentDirName)
+	if hcpo.usesCodeTree() {
+		codePath := baseWorkspacePath + "/code"
+		readPaths = append(readPaths, codePath)
+		if stepConfig == nil || stepConfig.LockCode == nil || !*stepConfig.LockCode {
+			writePaths = append(writePaths, codePath)
+		}
+	}
 	readPaths = append(readPaths, sandboxCachePath)
 	writePaths = append(writePaths, sandboxCachePath)
 	return common.DeduplicateStrings(readPaths), common.DeduplicateStrings(writePaths)
@@ -836,16 +843,14 @@ func (hcpo *StepBasedWorkflowOrchestrator) disableParentAgentTimeout(config *age
 
 // prepareCustomTools filters and prepares custom tools based on step config
 func (hcpo *StepBasedWorkflowOrchestrator) prepareCustomTools(stepConfig *AgentConfigs) ([]llmtypes.Tool, map[string]interface{}) {
-	var toolsToRegister []llmtypes.Tool
-	var executorsToUse map[string]interface{}
-
+	// Explicit selection narrows optional tools. Defaults and explicit lists
+	// share the same capability-derived additions below.
+	enabledTools := []string{"workspace_advanced:*", "human_tools:*"}
 	if stepConfig != nil && len(stepConfig.EnabledCustomTools) > 0 {
-		// Migrate old tool configs: strip deprecated categories and ensure workspace_advanced is present.
-		var enabledTools []string
+		enabledTools = nil
 		hasAdvanced := false
 		for _, entry := range stepConfig.EnabledCustomTools {
-			// workspace_image* entries are retired and must not re-enable provider
-			// media tools through old workflow manifests.
+			// Retired media categories cannot re-enable provider tools.
 			if entry == "workspace_image:*" || strings.HasPrefix(entry, "workspace_image:") ||
 				entry == "workspace_image_gen:*" || strings.HasPrefix(entry, "workspace_image_gen:") ||
 				entry == "workspace_image_edit:*" || strings.HasPrefix(entry, "workspace_image_edit:") {
@@ -860,78 +865,35 @@ func (hcpo *StepBasedWorkflowOrchestrator) prepareCustomTools(stepConfig *AgentC
 			enabledTools = append(enabledTools, "workspace_advanced:*")
 			hcpo.GetLogger().Info("🔧 Auto-including workspace_advanced:*")
 		}
-		// Workflow DB tools are capability-derived, not model-selected. A custom
-		// tool allowlist may narrow other tools but cannot remove the safe query
-		// path or escalate a read-only step to mutation authority.
-		enabledTools = append(enabledTools, "workflow_db:query_workflow_db")
-		if resolveDBAccess(stepConfig) == DBAccessReadWrite {
-			enabledTools = append(enabledTools, "workflow_db:mutate_workflow_db", "workflow_db:apply_workflow_db_migration")
-		}
-		// PLAT-184. This workflow's own cost ledger is capability-derived like
-		// query_workflow_db above: a custom allowlist may narrow other tools,
-		// but every step (including Pulse's Technical Review reviewer, which
-		// runs through this same path) can always read its own workflow's cost
-		// and token breakdown.
-		enabledTools = append(enabledTools, "workflow_costs:query_workflow_costs")
-
-		// Auto-include workspace_browser:* if agent_browser exists in the workspace tools pool
-		// (present when preset has enable_browser_access: true) and not already listed.
-		hasBrowserCategory := false
-		for _, entry := range enabledTools {
-			if strings.HasPrefix(entry, "workspace_browser") {
-				hasBrowserCategory = true
-				break
-			}
-		}
-		if !hasBrowserCategory {
-			for _, tool := range hcpo.WorkspaceTools {
-				if tool.Function != nil && tool.Function.Name == "agent_browser" {
-					enabledTools = append(enabledTools, "workspace_browser:*")
-					hcpo.GetLogger().Info("🔧 Auto-including workspace_browser:* (headless browser enabled at workflow level)")
-					break
-				}
-			}
-		}
-
-		enabledTools = withoutRetiredRunConcernTool(enabledTools)
-		// Filter tools based on unified format (category:tool or category:*)
-		toolsToRegister, executorsToUse = orchestrator.FilterCustomToolsByCategory(
-			hcpo.WorkspaceTools,
-			hcpo.WorkspaceToolExecutors,
-			enabledTools,
-		)
-		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Filtered custom tools: %d tools enabled from %d entries: %v", len(toolsToRegister), len(enabledTools), enabledTools))
-	} else {
-		// Default: enable only advanced + human tools (not all tools)
-		// This avoids exposing basic file tools that may not be needed
-		defaultEnabledTools := []string{
-			"workspace_advanced:*",
-			"human_tools:*",
-			"workflow_db:query_workflow_db",
-			// PLAT-184, capability-derived like query_workflow_db above.
-			"workflow_costs:query_workflow_costs",
-		}
-		if resolveDBAccess(stepConfig) == DBAccessReadWrite {
-			defaultEnabledTools = append(defaultEnabledTools, "workflow_db:mutate_workflow_db")
-		}
-		// Auto-include browser tools if agent_browser exists in the workspace tools pool
-		// (present when preset has enable_browser_access: true)
-		for _, tool := range hcpo.WorkspaceTools {
-			if tool.Function != nil && tool.Function.Name == "agent_browser" {
-				defaultEnabledTools = append(defaultEnabledTools, "workspace_browser:*")
-				break
-			}
-		}
-		defaultEnabledTools = withoutRetiredRunConcernTool(defaultEnabledTools)
-		toolsToRegister, executorsToUse = orchestrator.FilterCustomToolsByCategory(
-			hcpo.WorkspaceTools,
-			hcpo.WorkspaceToolExecutors,
-			defaultEnabledTools,
-		)
-		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using default tool set (advanced + human): %d tools enabled", len(toolsToRegister)))
 	}
 
-	return toolsToRegister, executorsToUse
+	// DB and cost access come from capabilities, not from whether an explicit
+	// tool list was supplied. Filtering against the actual workspace pool below
+	// cannot introduce a tool withheld by the owning profile.
+	enabledTools = append(enabledTools, "workflow_db:query_workflow_db", "workflow_costs:query_workflow_costs")
+	if resolveDBAccess(stepConfig) == DBAccessReadWrite {
+		enabledTools = append(enabledTools, "workflow_db:mutate_workflow_db", "workflow_db:apply_workflow_db_migration")
+	}
+
+	hasBrowserCategory := false
+	for _, entry := range enabledTools {
+		if strings.HasPrefix(entry, "workspace_browser") {
+			hasBrowserCategory = true
+			break
+		}
+	}
+	if !hasBrowserCategory {
+		for _, tool := range hcpo.WorkspaceTools {
+			if tool.Function != nil && tool.Function.Name == "agent_browser" {
+				enabledTools = append(enabledTools, "workspace_browser:*")
+				break
+			}
+		}
+	}
+	enabledTools = withoutRetiredRunConcernTool(enabledTools)
+	tools, executors := orchestrator.FilterCustomToolsByCategory(hcpo.WorkspaceTools, hcpo.WorkspaceToolExecutors, enabledTools)
+	hcpo.GetLogger().Info(fmt.Sprintf("🔧 Filtered custom tools: %d tools enabled from %d entries: %v", len(tools), len(enabledTools), enabledTools))
+	return tools, executors
 }
 
 // withoutRetiredRunConcernTool prevents legacy workflow configuration from
@@ -1431,7 +1393,10 @@ func (hcpo *StepBasedWorkflowOrchestrator) createExecutionOnlyAgent(ctx context.
 		if directDBAccess {
 			dbAbsPath = filepath.Join(GetPromptDocsRoot(), hcpo.GetWorkspacePath(), DBFolderName, "db.sqlite")
 		}
-		workspaceEnv := hcpo.snapshotWorkspaceEnv()
+		workspaceEnv := hcpo.codeRuntimeEnv(hcpo.snapshotWorkspaceEnv())
+		if directDBAccess && hcpo.usesCodeTree() {
+			common.SetSessionWorkingDir(config.MCPSessionID, hcpo.scriptedWorkingDir(stepID, stepExecutionPath))
+		}
 		registerStepSessionShellEnv(config.MCPSessionID, stepOutputAbsPath, stepExecutionAbsPath, dbAbsPath, hcpo.selectedRunFolder, workspaceEnv)
 		injectStepEnvIntoShellExecutor(executorsToUse, stepOutputAbsPath, stepExecutionAbsPath, dbAbsPath, hcpo.selectedRunFolder, config.MCPSessionID, workspaceEnv)
 		hcpo.GetLogger().Info(fmt.Sprintf("📂 Injecting step shell env into execute_shell_command for %s: STEP_OUTPUT_DIR=%s MCP_SESSION_ID=%s", stepID, stepOutputAbsPath, config.MCPSessionID))
@@ -1832,7 +1797,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) createOrchestratorAgent(ctx context.C
 		if directDBAccess {
 			dbAbsPath = filepath.Join(GetPromptDocsRoot(), hcpo.GetWorkspacePath(), DBFolderName, "db.sqlite")
 		}
-		workspaceEnv := hcpo.snapshotWorkspaceEnv()
+		workspaceEnv := hcpo.codeRuntimeEnv(hcpo.snapshotWorkspaceEnv())
 		registerStepSessionShellEnv(config.MCPSessionID, stepOutputAbsPath, stepExecutionAbsPath, dbAbsPath, hcpo.selectedRunFolder, workspaceEnv)
 		injectStepEnvIntoShellExecutor(executorsToUse, stepOutputAbsPath, stepExecutionAbsPath, dbAbsPath, hcpo.selectedRunFolder, config.MCPSessionID, workspaceEnv)
 		hcpo.GetLogger().Info(fmt.Sprintf("📂 Injecting step shell env into execute_shell_command for todo task %s: STEP_OUTPUT_DIR=%s MCP_SESSION_ID=%s", stepID, stepOutputAbsPath, config.MCPSessionID))

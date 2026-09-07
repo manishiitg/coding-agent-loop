@@ -14,7 +14,7 @@ import {
   Gauge,
 } from 'lucide-react'
 import { useWorkflowStore, type RunFolder } from '../../../stores/useWorkflowStore'
-import { WORKSPACE_VIEWS, type WorkspaceViewId } from '../workspaceViews'
+import { PRIMARY_WORKSPACE_TOOLBAR_VIEWS, WORKSPACE_VIEWS, type WorkspaceViewId } from '../workspaceViews'
 import { useChatStore } from '../../../stores/useChatStore'
 import { useAuthStore } from '../../../stores/useAuthStore'
 import type { ScheduledJob, VariablesManifest } from '../../../services/api-types'
@@ -111,7 +111,6 @@ function normalizeWorkspacePath(path?: string | null): string {
 
 interface WorkflowToolbarProps {
   status: WorkflowExecutionStatus
-  hasPlan: boolean
   plan?: PlanningResponse | null  // Plan data used by toolbar actions
   currentPhase?: string
   workspacePath?: string | null
@@ -137,7 +136,6 @@ interface WorkflowToolbarProps {
 
 export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
   status,
-  hasPlan,
   workspacePath,
   presetQueryId,
   variablesManifest,
@@ -176,12 +174,9 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
   // No explicit view means the pane is on whichever canvas view was last open.
   const activeWorkspaceView: WorkspaceViewId = workflowWorkspaceView ?? lastCanvasView
 
-  // Button clusters come from the view registry, in registry order. The
-  // Plan button is the one view that hides itself until a plan exists.
-  const workspaceViewDefinitions = useMemo(
-    () => WORKSPACE_VIEWS.filter(view => view.toolbarGroup === 'views' && view.id !== 'evaluation' && view.id !== 'schedules' && (view.id !== 'flow' || hasPlan)),
-    [hasPlan],
-  )
+  // Button clusters come from the view registry, in registry order. Plan is
+  // always present, including for a new workflow with no steps yet.
+  const workspaceViewDefinitions = PRIMARY_WORKSPACE_TOOLBAR_VIEWS
   const capabilityViewDefinitions = useMemo(
     () => WORKSPACE_VIEWS.filter(view => view.toolbarGroup === 'capabilities'),
     [],

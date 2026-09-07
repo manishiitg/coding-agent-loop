@@ -1,6 +1,7 @@
 [Unit]
 Description=Video Studio cookie-auth gateway (user service)
 After=video-studio-agent.service video-studio-workspace.service
+ConditionPathIsMountPoint=/data/video-studio
 
 [Service]
 EnvironmentFile=%h/video-studio/.env

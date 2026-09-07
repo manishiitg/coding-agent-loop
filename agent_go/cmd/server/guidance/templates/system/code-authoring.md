@@ -2,19 +2,24 @@
 
 Apply these when writing or patching a step's `main.py`. Scripts must run identically for every group/user, every iteration — so the rules err toward strictness.
 
+**Source layout (read workflow.json first)**
+- `code_layout_version: 1`: saved source is `code/<step-id>/main.py`. Steps execute it directly and may read/write shared helpers anywhere under this workflow's `code/` when unlocked. There is no execution copy or copy-back. Repair the canonical code and retry. `WORKFLOW_CODE_ROOT` is the absolute import root; use packages such as `from shared.utils import ...` with `__init__.py` where needed. Never infer paths from the DB or directory depth.
+- Absent/zero `code_layout_version`: legacy source remains `learnings/<step-id>/main.py` with execution copies and controller save-back. Do not move an existing workflow to the new layout or infer its version from folder existence. The legacy path examples below apply only to this version.
+- New-layout Python dependencies: use `python3 -m pip install --target "$WORKFLOW_CODE_DEPS" <package>`. The controller adds this persistent workflow directory to PYTHONPATH for both execution and repair shells. Verify with the actual `execute_step` runner for the intended group. Keep outputs in `STEP_OUTPUT_DIR` or durable `db/assets/`, never mixed into code.
+
 **Environment access (strict)**
-- `os.environ['KEY']` ALWAYS. NEVER `os.environ.get('KEY', 'fallback')`. A missing env var must raise KeyError — silent fallbacks hide misconfig.
+- Use `os.environ['KEY']` for required configuration, credentials, and paths. A missing required variable must raise KeyError; never mask it with a fallback. Explicitly optional context/diagnostic flags such as `VAR_GROUP_NAME` and `SCRIPT_VERBOSE` may use `.get()` with a documented safe default.
 - Workflow variables → `VAR_<NAME>` (config: user IDs, sheet IDs, URLs).
 - Secrets → `SECRET_<NAME>` (passwords, API keys, tokens).
-- Special vars: `STEP_OUTPUT_DIR` (write all step outputs here), `STEP_EXECUTION_DIR` (parent execution folder; use for sibling-step reads only, never as a write target), `DB_PATH` (**ABSOLUTE** path to the workflow `db/db.sqlite` — ALWAYS use `os.environ['DB_PATH']` / `"$DB_PATH"` for sqlite; never a relative `db/db.sqlite`: a step's working directory is its own execution folder, not the workflow root, so a relative path fails with "unable to open database file" or silently writes a stray empty db), `MCP_API_URL`, `MCP_API_TOKEN`, `VAR_GROUP_NAME` (use `.get('VAR_GROUP_NAME', '')` — this one is optional).
+- Special vars: `STEP_OUTPUT_DIR` (write all step outputs here), `STEP_EXECUTION_DIR` (parent execution folder; never a write target or a substitute for controller-resolved context dependencies), `DB_PATH` (**ABSOLUTE** path to the workflow `db/db.sqlite` — ALWAYS use `os.environ['DB_PATH']` / `"$DB_PATH"` for sqlite; never a relative `db/db.sqlite`: the working directory is the canonical step source directory in version 1 or a run directory in legacy, not the workflow root, so a relative path fails with "unable to open database file" or silently writes a stray empty db), `MCP_API_URL`, `MCP_API_TOKEN`, `VAR_GROUP_NAME` (use `.get('VAR_GROUP_NAME', '')` — this one is optional).
 - NO hardcoded user IDs, account numbers, URLs, paths, or credentials. Every dynamic value flows from env or sys.argv.
 - **The step description shows RESOLVED current-run values.** Those are for context only. NEVER copy any name, ID, or literal value from the description into the script — or into any `export` you issue manually. The same script runs for every group/user; a copied value from one run breaks the others.
 
 **Input/output**
 - Input data arrives via `sys.argv[1]`, `sys.argv[2]`, ... — these are the resolved `context_dependencies`. Read them.
 - NEVER construct paths to sibling step folders (e.g. `execution/login-step/output.json`). The controller resolves correct per-group paths and passes them as sys.argv. If you need data not in sys.argv, add it as a `context_dependency` in `plan.json` — do not hardcode.
-- Write output files to `os.environ['STEP_OUTPUT_DIR']` with the exact filenames and structure the validation_schema requires. `STEP_OUTPUT_DIR` is **volatile** (per-run, wiped on re-run). A durable **file** that later steps, runs, or the builder must reach — a download, generated PDF/CSV/image/zip, any format — goes under `db/assets/` (write it via the workspace root, e.g. `os.path.join(os.path.dirname(os.environ['DB_PATH']), 'assets', name)`), with a reference row in `db.sqlite`. `db/assets/` is the only durable location a step can write an arbitrary file; a custom folder is denied by the sandbox.
-- A missing package is not a dead end: `pip install --user <pkg>` (or `npm install -g <pkg>`) works inside the sandbox and persists in this workflow's `.sandbox-cache/` — the first run installs, every later run finds it "already satisfied" with no network. Do it in a setup line of the step before importing, and never use it for data: `$SANDBOX_PERSISTENT_DIR` is for installed tooling (packages, a venv, a downloaded binary in its `bin/`), `db/assets/` is for files. Anything needing root or `apt` cannot be installed from a step; report that gap instead.
+- Write output files to `os.environ['STEP_OUTPUT_DIR']` with the exact filenames and structure the validation_schema requires. `STEP_OUTPUT_DIR` is **volatile** (per-run, wiped on re-run). A durable **file** that later steps, runs, or the builder must reach — a download, generated PDF/CSV/image/zip, any format — goes under `db/assets/` (write it via the workspace root, e.g. `os.path.join(os.path.dirname(os.environ['DB_PATH']), 'assets', name)`), with a reference row in `db.sqlite`. Use `db/assets/` for durable output files. Version 1 source and shared helpers belong in `code/`; other paths require explicit Folder Guard grants.
+- Check `python3 -m pip --version` before installing a Python dependency. Missing pip/venv is a server prerequisite failure; report it rather than repeatedly rewriting the test. For version 1, install with `python3 -m pip install --target "$WORKFLOW_CODE_DEPS" package`; the controller includes that persistent directory in `PYTHONPATH`. Do not choose a separate venv interpreter for a saved script: the runner uses `python3`. For legacy workflows verify the actual runner dependency path before installing. Never disable host package protections. Package caches persist under `.sandbox-cache/`. Use the managed `agent_browser` integration for browser tests instead of installing a second browser stack. Anything needing root or `apt` must be installed by the server operator.
 
 **Data authenticity — no fabrication**
 - Every value written to output files MUST trace to a real MCP tool call, API response, or input file. No hardcoded rows, no invented records.
@@ -30,14 +35,26 @@ Apply these when writing or patching a step's `main.py`. Scripts must run identi
 - `VERBOSE = os.environ.get('SCRIPT_VERBOSE', '') == '1'`. Guard debug prints with `if VERBOSE:`. Log state before and after each major action. Stdout is the ONLY debugging channel available to the fix loop.
 
 **Robustness across groups**
-- The same script runs for every group/user with different data. Use `.get()` with safe defaults for *data* fields (not env vars), handle empty lists, `None` values, date-as-string-vs-number variants, missing optional files.
+- The same script runs for every group/user with different data. Use `.get()` with safe defaults for optional *data* fields (never required configuration), handle empty lists, `None` values, date-as-string-vs-number variants, missing optional files.
 - Print diagnostic context BEFORE raising. The error output is how the next fix pass understands what broke.
 - If the same script keeps failing for specific groups, branch on `os.environ.get('VAR_GROUP_NAME', '')` rather than forcing one code path.
 
+**Code documentation — builder and repair agents**
+- Apply these requirements when creating or repairing scripts and shared helpers. Keep documentation proportional to the code; a simple test should remain simple.
+- Start each entry point with a concise module docstring explaining its purpose, required environment-variable names and input arguments, outputs/side effects, and how it is executed through the platform. Document names and formats, never actual credentials or sensitive values.
+- Give shared helpers and non-obvious functions docstrings describing their inputs, return values, side effects, and important failure behavior. Use clear names and small functions; do not comment every obvious assignment or repeat the code in prose.
+- Explain the reasoning behind non-obvious assertions, selectors, retries, timeouts, ordering constraints, and workarounds in nearby comments. Identify observed limitations honestly; do not invent explanations for failures.
+- During repair, update affected docstrings and comments together with the implementation. Remove stale explanations. Explain a workaround's reason and when it can be removed; keep the repair history in the run/repair report rather than accumulating dated change logs in the source.
+- Before finishing, check that the documented inputs, outputs, shared-helper behavior, and failure conditions agree with the changed code and the verification actually performed.
+
 **Patching discipline**
-- Edit `learnings/{step-id}/main.py` — this is the source of truth. NEVER edit `execution/{step-id}/code/main.py`; the controller overwrites it from learnings on every run.
+- In builder chat, edit the saved source selected by the manifest: `code/{step-id}/main.py` for version 1, `learnings/{step-id}/main.py` for legacy. During controller-managed authoring/repair, use the explicit working directory supplied in that turn. Version 1 edits canonical source in place; only legacy execution copies are saved back by the controller. Never patch a stale run copy from builder chat.
 - Prefer `diff_patch_workspace_file` for targeted changes — preserves working code and reduces regressions. Full rewrite (cat-heredoc) only when restructuring large portions.
-- Helper files alongside main.py also live in `learnings/{step-id}/` — patch them the same way.
+- Version 1 helpers may live anywhere in the workflow's `code/` tree; import shared packages through `WORKFLOW_CODE_ROOT`, already included in `PYTHONPATH`. Unlocked steps may repair shared helpers in place. Keep outputs in `STEP_OUTPUT_DIR` or durable `db/assets/`, not in source folders.
+- For legacy workflows, keep helpers adjacent to main.py in `learnings/{step-id}/`; the controller copies them with the entry point. Do not infer source/import roots from `__file__.parents[...]` or `DB_PATH`, or assume `learnings/_global/scripts` is on the runtime import path.
+- Test with `execute_step` for the intended group so the controller supplies the runtime environment and input arguments. A generic builder shell is not a step execution: do not invent `STEP_OUTPUT_DIR` or bypass managed DB access to simulate it. Missing declared `VAR_*` in a builder shell is a platform environment issue to report.
+- Shell commands must be POSIX-compatible unless explicitly wrapped in `bash -lc`; `set -o pipefail` requires Bash. Tool JSON does not expand shell variables: resolve `os.environ['VAR_BASE_URL']` before passing the URL to `agent_browser`.
+- Distinguish a failed assertion from a script that could not run. Inspect the actual page/result and diagnostics before repairing an assertion; do not weaken expected behavior merely to obtain a pass.
 
 **Never hand-escape prose into a string literal**
 

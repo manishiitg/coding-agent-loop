@@ -60,8 +60,8 @@ learnings in this mode.
 | Symptom | Likely cause | Fix |
 |---|---|---|
 | Agent didn't attempt the task | Step description is unclear | Rewrite it |
-| Agent used wrong approach | Description missing constraints | Add HOW instructions |
-| Agent missed fields/data | Validation gap | Update `validation_schema` and clarify output structure |
+| Agent used wrong approach | Missing or stale execution guidance | Fix and wire the relevant skill/learnings; add only task-specific constraints to the description |
+| Agent missed fields/data | Output contract or evidence gap | Correct `validation_schema` or the canonical output contract; clarify intended outcome/source evidence in the description |
 | Agent couldn't find data from previous steps | Wiring gap | Fix `context_dependencies` chain |
 | Validation rejected correct output | Schema too strict | Update it |
 | Agent wasted turns on irrelevant tool calls | Description too vague | Tighten it |

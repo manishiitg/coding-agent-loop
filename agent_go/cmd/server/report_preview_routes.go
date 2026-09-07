@@ -88,6 +88,8 @@ func scopeAllowsPath(scope, requestPath string) bool {
 		return true
 	case reportPreviewScope:
 		return strings.HasPrefix(requestPath, reportPreviewAPIPrefix)
+	case reportMediaScope:
+		return requestPath == reportMediaStreamPath
 	}
 	return false
 }

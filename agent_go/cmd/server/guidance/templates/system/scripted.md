@@ -36,7 +36,7 @@ share one conversation, or needs a specialist that remembers across calls, it is
 ## Execution mode
 
 - **Scripted / code-execution mode** is the only mode for new regular steps. Create one with `add_scripted_step`; the internal plan type remains `regular`. The builder authors a `main.py` saved under
-  `learnings/{step-id}/` and re-runs it on later runs (scripted fast path). Use for
+  `code/{step-id}/` when workflow.json has `code_layout_version: 1`; absent/0 stays at `learnings/{step-id}/`. Never move legacy workflows implicitly. Test using `execute_step(fast_path_only=true)` so the actual runner supplies the selected group's environment, inputs, permissions and working directory. New-layout source and shared helpers are edited in place, not copied into a run. Use for
   deterministic, repeatable execution. No run-history threshold is required to declare an obviously deterministic step scripted; 10+ representative successful runs are required only before `lock_code=true` freezes it. See `read_skill(skills=[{"name":"builder-reference","path":"references/code-authoring.md"}])`.
 - Judgment, adaptive discovery, ambiguous live evidence, and browser/UI work use `message_sequence`.
 
@@ -50,7 +50,7 @@ Preferred data shape: `regular scripted fetcher(s) → message_sequence processo
 - Same-context ordered turns, a stateful conversation, self-validation/grounding
   gate, or stepping through a db array row-by-row → **`message_sequence`**
   (incl. its `foreach` item).
-- Pausing for human approval/selection → **`human_input`**.
+- Pausing for a fixed human approval/selection → **`branch` with `route_source="human"`**; capturing a free-form value → **`human_input` (`text`)**.
 
 ## Anti-patterns
 

@@ -150,19 +150,19 @@ aggregate:
 - Anything over ~25 MB per file
 - Anything that pushes a single git repo over ~500 MB total
 
-Secret handling depends on the **per-workflow git repo's visibility** —
-check it first and let it decide, do NOT skip the whole backup just because
-the workflow has a password:
+Verify the **per-workflow git repo's visibility** before backing up workflow
+content. A private repository does not by itself authorize copying secrets.
+Do not skip the non-secret backup just because the workflow has a password:
 
 ```
 gh repo view <owner/repo> --json visibility -q .visibility   # PRIVATE | PUBLIC
 ```
 
-- **Private GitHub repo** — you MAY include the workflow's OWN secrets
-  (`secrets.json`, `workflow_secrets/`) so the backup is self-contained and
-  the workflow restores to a working state. Stage them explicitly
-  (`git add secrets.json workflow_secrets/`). The trade-off is plaintext in a
-  private repo, so only do this once visibility is **confirmed PRIVATE**.
+- **Private GitHub repo** — back up non-secret workflow content. Keep
+  `secrets.json`, `workflow_secrets/`, credentials, and keys out of Git, just
+  as for a public repository. Preserve secrets through the designated secret
+  system; if recovery requires a separate export, use only an explicitly
+  approved, supported secure export process, not plaintext staging.
 - **Public repo, unknown visibility, or ANY large-file backend** — never
   commit/push secrets (`secrets.json`, `workflow_secrets/`, `*.key`, `*.pem`,
   `.env*`, `credentials*`, `*.token`). Back up everything else and keep
@@ -172,8 +172,8 @@ gh repo view <owner/repo> --json visibility -q .visibility   # PRIVATE | PUBLIC
   workflow's own; and PII unless the destination is explicitly approved.
 
 The presence of a secret file is never a reason to abandon the backup: at
-minimum commit everything non-secret; on a confirmed-private repo, include the
-workflow's own secrets too.
+minimum commit the authorized non-secret content and report any unresolved
+secret-recovery dependency without disclosing values.
 
 This is **enforced**: a `git push` carrying secret files to a confirmed-public
 GitHub repo is hard-blocked by the shell guard (private / unknown / non-GitHub

@@ -1,3 +1,5 @@
+**Saved-code paths:** Read `workflow.json.code_layout_version` first. In this reference, `<script-dir>` means `code/<step-id>` for version 1, or `learnings/<step-id>` for absent/zero (legacy). Resolve the placeholder before using a path; never infer the version from folders or migrate an existing workflow implicitly. Version 1 executes and repairs canonical source directly, with shared helpers under `WORKFLOW_CODE_ROOT`; only legacy workflows copy code into runs and save it back.
+
 ## Three persistent stores — skill vs knowledgebase vs db
 
 Every workflow has three separate stores that survive across runs. They are NOT interchangeable. Mixing them up bloats prompts with irrelevant content and makes later runs harder to debug.
@@ -67,12 +69,12 @@ When the user gives context that future step agents will need at run time, do no
 
 ### Direct-Work Grounding Rule
 
-When you do workflow work yourself instead of delegating to a normal step, first ground yourself in the workflow's own operating memory. Read `learnings/_global/SKILL.md` when it exists; read relevant `knowledgebase/context/`, `knowledgebase/notes/_index.json` + targeted notes, `db/` contracts/data, and recent `runs/iteration-0/` artifacts as needed. For `scripted` steps, read the canonical `learnings/{step-id}/main.py` when it is relevant to the task. Then use those patterns while acting directly. Do not improvise a fresh approach when the workflow has already generated a skill, script, KB context, or prior run evidence that explains how to do it.
+When you do workflow work yourself instead of delegating to a normal step, first ground yourself in the workflow's own operating memory. Read `learnings/_global/SKILL.md` when it exists; read relevant `knowledgebase/context/`, `knowledgebase/notes/_index.json` + targeted notes, `db/` contracts/data, and recent `runs/iteration-0/` artifacts as needed. For `scripted` steps, read the canonical `<script-dir>/main.py` when it is relevant to the task. Then use those patterns while acting directly. Do not improvise a fresh approach when the workflow has already generated a skill, script, KB context, or prior run evidence that explains how to do it.
 
 If a step needs business context while running, explicitly wire it in BOTH places: set `knowledgebase_access="read"` for KB context, and update the step description to say which `knowledgebase/context/context.md` section or rule family it must read and apply. Also add the right `context_dependencies` for prior run outputs, reference the `db/README.md` contract for db reads/writes, or use variables/placeholders for group-specific values. A step should not depend on untracked chat memory.
 
 **Step config knobs for KB (use update_step_config):**
-- knowledgebase_access — one of read / write / read-write / none. **Defaults to 'none' — KB is opt-in per step.** Set to 'read' on steps that consume KB notes, 'read-write' (or 'write') on steps that produce KB narrative via knowledgebase_contribution. Leave unset for steps that have nothing to do with KB.
+- knowledgebase_access — one of read / write / read-write / none. **Defaults to 'read'.** An unset access value with a staged `knowledgebase_contribution` promotes to `read-write`; explicit `none` always wins. Set write/read-write plus a concrete contribution for producers. Set `none` explicitly when KB context would mislead the step; do not treat an omitted field as opting out.
 - knowledgebase_contribution — natural-language instruction: what to contribute to notes/ from this step (which topic file(s), what observations). In direct-write-method it's the contract for the step agent's self-review turn; in agent-write-method it's the instruction handed to a separate post-step KB update agent. If empty, NO KB writes happen regardless of access.
 
 ### Forward-pipe vs persistent state — context_output vs db/
@@ -150,7 +152,7 @@ Keep the step **read-only** (`learnings_access` unset or `"read"`) when it is ma
 - mechanical transforms, aggregation, dedupe, formatting, and report data shaping,
 - human input/approval/message-only steps,
 - pure db/KB consumers that do not interact with an external system,
-- mature scripted steps where `learnings/{step-id}/main.py` already encodes the HOW.
+- mature scripted steps where `<script-dir>/main.py` already encodes the HOW.
 
 Use `learnings_access="none"` rarely:
 - when shared HOW would confuse an isolated deterministic step,
@@ -173,4 +175,4 @@ Learning content should answer **"how should this step operate next time?"** It 
 - **Step drives a UI/browser or performs adaptive third-party discovery with fussy state/timing**: worth learning and generally agentic. A fixed third-party API/SDK request, CLI command, deterministic fetch/pagination rule, or stable parser is different: make it scripted from initial design, batch related calls under one source/auth/retry/output contract, and keep `lock_code=false` until representative evidence justifies freezing it.
 - **Step is pure data transformation, math, or file IO**: neither. Leave both empty.
 - **Step calls an LLM for analysis/classification**: worth KB (facts discovered) if outputs are domain facts; not worth learning (the LLM prompt is stable and doesn't need SKILL.md tips).
-- **Step is scripted (a `regular` step whose work is `learnings/{step-id}/main.py`)**: generally leave `learning_objective` empty. The saved `learnings/{step-id}/main.py` script IS the captured HOW — running a separate learning pass on top of it just duplicates work and risks drift between the script and SKILL.md. Only opt in if there's HOW-knowledge the script itself can't encode (e.g. out-of-band operator notes, cross-step patterns that belong in the shared `_global/` skill).
+- **Step is scripted (a `regular` step whose work is `<script-dir>/main.py`)**: generally leave `learning_objective` empty. The saved `<script-dir>/main.py` script IS the captured HOW — running a separate learning pass on top of it just duplicates work and risks drift between the script and SKILL.md. Only opt in if there's HOW-knowledge the script itself can't encode (e.g. out-of-band operator notes, cross-step patterns that belong in the shared `_global/` skill).

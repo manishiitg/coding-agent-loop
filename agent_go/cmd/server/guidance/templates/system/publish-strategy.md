@@ -72,8 +72,9 @@ A live report won't work on static hosting. Bake it to static HTML at publish ti
 
 1. **Find the queries.** Read `db/reports/index.html`, including each internal view, and collect
    every `window.report.query("…")` SQL string it runs.
-2. **Run them** against `db/db.sqlite` (`sqlite3 -json db/db.sqlite "<sql>"`), capturing each
-   result set as JSON.
+2. **Run them** through `query_workflow_db`, capturing each result set as JSON.
+   Use the managed DB boundary; do not open the live database with `sqlite3` or
+   Python while authoring/publishing the snapshot.
 3. **Inline the data + a shim** into a copy of the report HTML, so the page reads baked data
    instead of the live bridge:
    ```html

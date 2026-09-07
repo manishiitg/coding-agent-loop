@@ -1,5 +1,23 @@
 # Pulse Platform-Issue Register
 
+## Streaming report video/audio evidence — PLAT-299
+
+[PLAT-299](pulse_platform/plat-299.md) adds `window.report.mediaUrl`, file-scoped
+expiring playback credentials, authenticated range streaming, and report guidance
+for durable test recordings. Implemented locally; targeted tests pass and
+deployment pending. Existing `fileUrl` behavior remains compatible.
+
+## Workflow code layout and consistent scripted execution — PLAT-298
+
+[PLAT-298](pulse_platform/plat-298.md) is **implemented locally; production acceptance pending**. New workflows use a versioned
+`code/` source tree with workflow-wide step read/write access, shared helpers and
+direct execution. Existing workflows remain on their legacy layout. Builder
+tests, schedules and repair retries must share paths, environment, interpreter,
+permissions and validation. Includes documented code requirements, dependency
+provisioning, preflight and failure diagnostics. Focused tests and frontend type-check pass;
+live builder/schedule/repair acceptance and deployment are pending. Persistent RTS EBS
+workspace storage and installation checks are documented in the ticket.
+
 ## Codex retained-session, resume and structured-event reliability — PLAT-297
 
 [PLAT-297](pulse_platform/plat-297.md) records the completed Codex reliability

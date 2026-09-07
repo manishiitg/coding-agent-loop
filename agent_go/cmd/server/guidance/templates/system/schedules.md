@@ -59,13 +59,13 @@ Workflow schedules always use the workshop builder execution path. Do not create
 
 ### Back up scheduled workflows
 
-Scheduled runs execute unattended and accumulate state (`workflow.json`, `planning/`, `knowledgebase/`, `learnings/`, `db/`, reports) that otherwise lives only on local disk. **Whenever you set up a recurring schedule, also arrange a backup** so each run persists its output off-box. Load `read_skill(skills=[{"name":"builder-reference","path":"references/backup-strategy.md"}])`, follow it once to initialise the workflow's backup destination, and persist the result in `workflow.json.backup`.
+Scheduled runs execute unattended and accumulate state (`workflow.json`, `planning/`, `knowledgebase/`, `learnings/`, `db/`, reports) that otherwise lives only on local disk. **Whenever you set up a recurring schedule, decide its backup coverage** against the existing owner policy and Pulse cadence. For enabled backup, arrange off-device persistence; do not override an approved disabled/off policy. Load `read_skill(skills=[{"name":"builder-reference","path":"references/backup-strategy.md"}])`, follow it once to initialise the workflow's backup destination, and persist the result in `workflow.json.backup`.
 
-- Set `workflow.json.backup.enabled=true`, `mode="agent"`, `triggers.after_scheduled_run=true`, and a `destinations` entry for each backup target (git/github for config, R2/S3/B2/HuggingFace for large artifacts as needed).
+- When backup is enabled by the chosen policy, set `workflow.json.backup.enabled=true`, `mode="agent"`, `triggers.after_scheduled_run=true`, and a `destinations` entry for each backup target (git/github for config, R2/S3/B2/HuggingFace for large artifacts as needed).
 - After each backup attempt, write `backup/status.json` with the destination results, timestamps, summary, and errors. Do not put changing backup status in `workflow.json`.
 - If you rely on the default full-workflow message, the auto-notification after `run_full_workflow` will still ask the builder to honor `workflow.json.backup` and write `backup/status.json`.
 
-Confirm with the user before skipping backup on a recurring schedule.
+Honor an existing user-approved disabled/off backup policy without asking again. If backup coverage has not been decided, resolve it while configuring the schedule; do not add an interactive confirmation to an unattended run.
 
 ### Writing messages for scheduled runs
 
@@ -73,18 +73,18 @@ Confirm with the user before skipping backup on a recurring schedule.
 
 - Write each message as a plain instruction, like you would type in chat: `"Run the full workflow"`, `"Generate the final report"`.
 - **Route-backed mode (default)**: select planned work through `group_names` plus optional `route_selections`, and keep `messages` empty. Use this for durable workflow behavior so one canonical plan owns its lifecycle.
-- **Direct-sequence mode (supported exception)**: use one or more messages when the conversation itself is genuinely schedule-specific and should not become reusable plan behavior. Set `direct_messages_reason` with the concrete tradeoff. These turns run in the workshop but are not canonical steps, so step learnings, validation/retry, repair, and Pulse attribution are weaker or unavailable unless the sequence explicitly invokes planned work.
+- **Direct-sequence mode (supported exception)**: use one or more messages when the conversation itself is genuinely schedule-specific and should not become reusable plan behavior. Set `direct_messages_reason` with the concrete tradeoff. These turns use the workshop execution path with Run authority (`workshop_mode="run"`), but are not canonical steps, so step learnings, validation/retry, repair, and Pulse attribution are weaker or unavailable unless the sequence explicitly invokes planned work.
 - Never choose solely from message length. Compare behavior, inputs/outputs, external side effects, approval boundaries, failure behavior, and expected reuse.
 - Read `variables/variables.json` for available group names and include them explicitly in the message if needed.
 
 **CRITICAL — schedules run unattended; messages must never require human input:**
 
-- Explicitly tell the agent to make all decisions autonomously: `"Do not ask for confirmation, proceed automatically"`.
+- Scope unattended work to existing authorization. Supply known human answers explicitly; a schedule is not permission to invent approval or change workflow design.
 - Provide all required parameters upfront in the message (group names, run folders, step IDs) so the agent never needs to ask.
-- Tell the agent to skip or use defaults for anything unclear rather than pausing to ask.
+- Use only configured, authorized safe defaults. If required input or approval is missing, leave the affected action unexecuted and report it or persist a pending decision through the available decision tools; do not guess.
 - Never include open-ended questions or `"let me know"` style instructions.
 - **Bad**: `"Run the workflow and ask me which steps to optimize"`.
-- **Good**: `"Review runs/iteration-0 for group-1, collect read-only reliability evidence, then let the parent fixer choose a bounded repair, an approved plan change, a Goal Advisor proposal, or no action."`
+- **Good**: `"Run the planned daily-processing route for group-1. Process only explicitly approved items; leave pending items untouched and report missing inputs."`
 
 Pulse module cadence is not encoded in schedule JSON. Pulse Gate stores module state in `db/db.sqlite` and decides which modules are due after each normal run.
 

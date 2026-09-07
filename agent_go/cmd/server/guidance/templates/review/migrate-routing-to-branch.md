@@ -5,7 +5,7 @@
 `routing` used to mean "any deterministic N-way switch," and every plan authored before PLAT-259 still uses it that way. Going forward, `routing` means specifically a major, self-contained sub-workflow fork, and `branch` means a small in-flow next-step decision. This command:
 
 1. Reclassifies each existing `routing` step in the current plan as `branch` if it's really the small-decision case.
-2. Checks every `routing` step that stays `routing` against the two route best practices (no shared downstream steps between sibling routes; every routing step should be paired with real eval coverage) — the same judgment checks `plan_drift_review` applies (`references/plan-drift-review.md`), run here directly against the live plan instead of waiting for that module's schedule.
+2. Checks every `routing` step that stays `routing` against the two route best practices (no shared exclusive interior steps between sibling routes (explicit convergence is allowed); when an eval plan exists, every route should have real eval coverage) — the same judgment checks `plan_drift_review` applies (`references/plan-drift-review.md`), run here directly against the live plan instead of waiting for that module's schedule.
 3. Reports a clear summary: what converted, what stayed `routing` and why, and what best-practice findings were filed.
 
 Take action by default per the normal workshop philosophy — do not ask permission before converting an unambiguous case. Only stop and ask the operator when a routing step's classification is genuinely ambiguous (see step 1).

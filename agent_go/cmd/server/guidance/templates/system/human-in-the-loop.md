@@ -18,7 +18,8 @@ Workshop; executing a workflow does not authorize changing its plan.
 | Situation | Mechanism | What waits / what happens next |
 | --- | --- | --- |
 | Ordinary clarification, choosing scope, or discussing an output | Normal workflow chat | Ask in the conversation. The user's reply continues the conversation; pass known answers into execution where appropriate. |
-| A planned checkpoint inside an interactive pipeline | `human_input` plan step | The selected execution path waits for an answer unless one was supplied already. Supports text, yes/no, and multiple choice; the answer may route the next step. |
+| A planned free-form value inside an interactive pipeline | `human_input` plan step (`text`) | Capture a value into a variable; existing legacy choice steps remain supported. |
+| A planned fixed-choice decision inside an interactive pipeline | `branch` with `route_source="human"` | The routes are the options. Use an explicit known answer via `route_selections`; otherwise an interactive run prompts, while an unattended run uses a safe non-approval default or fails. |
 | An unexpected, urgent human-only input while an agent is working | `human_feedback` | The calling agent turn waits for the bounded response card. Answering returns to the same tool call; expiry is not approval. |
 | A review decision that can wait beyond this turn/run | `create_human_input_request` | Persist a question in the workflow's decision system and finish/park the affected work. A later consumer reads the explicit saved answer. |
 | The user reviews individual business items in a dashboard | Report-owned DB approval | `window.report.updateField`/`updateFields` saves the item's status. An existing consumer route/step reads approved items later; the write alone starts nothing. |
@@ -32,8 +33,8 @@ every side effect on that route.
 
 ### Planned checkpoint versus an unattended run
 
-Use a `human_input` step when an interactive run genuinely needs new information
-at that point: draft → human review → approved action. Put the review before
+Use `human_input` for a free-form value and a human-decided `branch` for a
+fixed choice such as draft → approve/hold → action. Put the review before
 the action it governs and provide the actual draft/change/evidence to review.
 Do not add a checkpoint just to repeat a route choice or answer from chat.
 
@@ -41,11 +42,11 @@ Do not add a checkpoint just to repeat a route choice or answer from chat.
   that exact step. It is not permission for the builder to choose an answer.
 - `run_full_workflow(..., human_inputs={step_id: answer})` requires responses
   for human-input steps on the selected path at launch. Use exact step IDs;
-  use `route_selections` for routing choices, not `human_inputs`.
-- Consequently, do not promise that a full-workflow call will stop later to
-  ask for approval of output it has not produced yet. Run through the draft
-  boundary, obtain the real answer, then execute the appropriate consumer with
-  its required inputs; or use durable proposal/approval/consumer stages.
+  use `route_selections` for routing and branch choices, not `human_inputs`.
+- Do not pre-supply approval for output the user has not reviewed. Use an
+  interactive human branch when the execution entry point supports waiting;
+  otherwise run through the draft boundary, obtain the real answer, and then
+  execute the consumer, or use durable proposal/approval/consumer stages.
 - Schedules must complete unattended. For decisions that may take hours/days,
   persist the proposal, leave it pending, and end the producing run. A later
   authorized run/route consumes the answer. Do not hold a blocking call open

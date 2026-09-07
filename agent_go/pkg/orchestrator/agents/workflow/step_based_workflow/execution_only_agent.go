@@ -160,7 +160,7 @@ End your response with exactly one of:
 var executionOnlyUserTemplate = MustRegisterTemplate("executionOnlyUser", `{{if eq .IsContributionTurn "true"}}{{.BaseDescription}}{{else}}{{if .OrchestratorInstructions}}## Orchestrator Instructions (HIGHEST PRIORITY)
 {{.OrchestratorInstructions}}
 {{else}}**DESCRIPTION**: {{.BaseDescription}}
-{{end}}{{if eq .IsScriptedMode "true"}}**MODE NOTE (scripted)**: Implement the task below as reusable Python code. Write it to the run's own `+"`"+`code/main.py`+"`"+` — the exact absolute path is in the **Code Execution Mode** section below. The platform persists a passing script to `+"`"+`learnings/{step-id}/main.py`+"`"+` for you after the turn; **that path is read-only to this step, so never try to write it yourself** — a denial there means the contract is working, not that persistence failed. Treat the resolved **Inputs** list and declared tools as the source of truth. If the description contains hardcoded `+"`"+`step-N`+"`"+` paths or interactive browser steps, adapt them into Python logic instead of copying them literally.
+{{end}}{{if eq .IsScriptedMode "true"}}**MODE NOTE (scripted)**: Implement the task below as reusable Python code. Use the exact main.py path in the **Code Execution Mode** section: canonical workflow code for version 1, or the run's code/main.py for legacy workflows. Never guess the source path. Treat the resolved **Inputs** list and declared tools as the source of truth. Adapt hardcoded sibling step paths into declared input arguments.
 {{else}}**MODE NOTE (agentic)**: This step is running in normal `+"`"+`agentic`+"`"+` mode, not `+"`"+`scripted`+"`"+`. **Tool calls come first.** Call the available tools and APIs directly to inspect state, fetch data, and produce outputs. Do **not** try to write one large reusable Python script for the whole task — that is what `+"`"+`scripted`+"`"+` mode is for, which this step is not in. Use short one-off shell or Python snippets via `+"`"+`execute_shell_command`+"`"+` only when consolidating several tool calls into one materially helps a specific subtask (e.g. batching API calls, parsing JSON with `+"`"+`jq`+"`"+`). A single tool call is a perfectly valid step.
 {{end}}**LOCATION**: {{.StepExecutionPath}}/ (Workspace: {{.WorkspacePath}})
 
@@ -360,6 +360,9 @@ func (hctpeoa *WorkflowExecutionOnlyAgent) executionOnlySystemPromptProcessor(te
 		priorScript := templateVars["ScriptedPriorScript"]
 		priorError := templateVars["ScriptedPriorError"]
 		codeDirAbsPath := filepath.Join(stepExecutionPath, "code")
+		if supplied := templateVars["ScriptedWorkingDir"]; supplied != "" {
+			codeDirAbsPath = supplied
+		}
 
 		// Parse input arg paths from templateVars (newline-separated)
 		var inputArgPaths []string
@@ -382,7 +385,10 @@ func (hctpeoa *WorkflowExecutionOnlyAgent) executionOnlySystemPromptProcessor(te
 		validationSchemaJSON := templateVars["ValidationSchema"]
 		hasBrowser := templateVars["HasBrowserAccess"] == "true"
 		isCodeLocked := templateVars["IsScriptedLocked"] == "true"
-		codeExecutionSection += GetScriptedModeInstructions(codeDirAbsPath, stepExecutionPath, isRelearnMode, priorScript, priorError, inputArgPaths, envVarNames, varMappingLines, validationSchemaJSON, hasBrowser, isCodeLocked, useProjectedReferenceSkills)
+		codeExecutionSection += GetScriptedModeInstructions(codeDirAbsPath, stepExecutionPath, isRelearnMode, priorScript, priorError, inputArgPaths, envVarNames, varMappingLines, validationSchemaJSON, hasBrowser, isCodeLocked, useProjectedReferenceSkills, templateVars["DirectCodeSource"] == "true")
+		if templateVars["DirectCodeSource"] == "true" && !isCodeLocked {
+			codeExecutionSection += "\nThis workflow uses canonical code/ source. Edit the supplied working directory and shared helpers in WORKFLOW_CODE_ROOT directly. The controller runs this code after each authoring/repair turn; do not execute main.py separately or fabricate outputs to satisfy validation. No copy-back is performed. Keep outputs at STEP_OUTPUT_DIR or db/assets.\n"
+		}
 	}
 
 	// Get variable names and values for system prompt

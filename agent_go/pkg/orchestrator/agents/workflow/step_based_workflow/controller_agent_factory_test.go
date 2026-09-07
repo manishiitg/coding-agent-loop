@@ -281,14 +281,15 @@ func TestPrepareCustomToolsMaterializesDBCapabilityFromDBAccess(t *testing.T) {
 	tests := []struct {
 		name   string
 		access string
+		config *AgentConfigs
 	}{
-		{name: "narrow explicit tool list", access: DBAccessReadWrite},
+		{name: "default tool list", access: DBAccessReadWrite},
+		{name: "empty explicit tool list", access: DBAccessReadWrite, config: &AgentConfigs{}},
+		{name: "narrow explicit tool list", access: DBAccessReadWrite, config: &AgentConfigs{EnabledCustomTools: []string{"workspace_advanced:execute_shell_command"}}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			tools, executors := hcpo.prepareCustomTools(&AgentConfigs{
-				EnabledCustomTools: []string{"workspace_advanced:execute_shell_command"},
-			})
+			tools, executors := hcpo.prepareCustomTools(tt.config)
 			names := make([]string, 0, len(tools))
 			for _, definition := range tools {
 				if definition.Function != nil {
@@ -302,16 +303,22 @@ func TestPrepareCustomToolsMaterializesDBCapabilityFromDBAccess(t *testing.T) {
 			if !gotMutation {
 				t.Fatalf("db_access=%q missing uniform mutation capability (tools=%v)", tt.access, names)
 			}
-			// PLAT-221 follow-up: apply_workflow_db_migration was registered and
-			// tested, but never added here, so a narrow explicit tool list (or
-			// any real read-write step) silently never received it -- the tool
-			// existed and worked, but no real Workshop/Pulse/workflow-step
-			// session could ever reach it.
+			// Migration follows the same DB capability in default and explicit
+			// selections; changing the optional tool list must not change it.
 			gotMigration := slices.Contains(names, "apply_workflow_db_migration") && executors["apply_workflow_db_migration"] != nil
 			if !gotMigration {
 				t.Fatalf("db_access=%q missing uniform migration capability (tools=%v)", tt.access, names)
 			}
 		})
+	}
+	// Capability additions must not fabricate tools absent from the parent's
+	// authorized pool, even when an explicit selection asks for them.
+	base.WorkspaceTools = []llmtypes.Tool{tool("execute_shell_command"), tool("query_workflow_db")}
+	for _, config := range []*AgentConfigs{nil, {EnabledCustomTools: []string{"workflow_db:*"}}} {
+		tools, executors := hcpo.prepareCustomTools(config)
+		if len(tools) != 2 || executors["mutate_workflow_db"] != nil || executors["apply_workflow_db_migration"] != nil {
+			t.Fatal("tool selection exposed DB mutation outside the authorized pool")
+		}
 	}
 }
 

@@ -1,3 +1,5 @@
+**Saved-code paths:** Read `workflow.json.code_layout_version` first. In this reference, `<script-dir>` means `code/<step-id>` for version 1, or `learnings/<step-id>` for absent/zero (legacy). Resolve the placeholder before using a path; never infer the version from folders or migrate an existing workflow implicitly. Version 1 executes and repairs canonical source directly, with shared helpers under `WORKFLOW_CODE_ROOT`; only legacy workflows copy code into runs and save it back.
+
 ## Plan drift review
 
 `plan_drift_review` is a review-**and**-fix module, the same shape as
@@ -109,7 +111,7 @@ Then do the judgment checks a Go function cannot:
 
 - **Step description accuracy** — does the description still match the
   step's actual configured behavior (prompt, tools, store access)?
-- **Learnings / KB content staleness** — does `learnings/<step-id>/main.py`
+- **Learnings / KB content staleness** — does `<script-dir>/main.py`
   or its knowledgebase notes still describe what the step currently does?
 - **Learnings / KB access appropriateness** — is the step's
   `knowledgebase_access` / learnings access mode still the
@@ -149,7 +151,7 @@ Apply the same reference-backed pattern to the other specialized step types:
 - For `step_type: "regular"` (the scripted step), load
   `references/scripted.md` and record **`scripted_best_practices`**. Confirm the
   work is genuinely deterministic rather than judgment-heavy; declared mode,
-  `learnings/<step-id>/main.py`, inputs, outputs, and description agree; fixed
+  `<script-dir>/main.py`, inputs, outputs, and description agree; fixed
   API/CLI calls, parsing, persistence, retries, and errors are fail-closed and
   idempotent where required; validation proves the real durable result; and a
   retained recent run shows the script actually performs its stated job. If a

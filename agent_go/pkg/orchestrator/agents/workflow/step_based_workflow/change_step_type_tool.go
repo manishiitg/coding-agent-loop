@@ -257,7 +257,8 @@ func createChangeStepTypeExecutor(
 		logPlanChange(ctx, workspacePath, entry, readFile, withPlanMutationWriteAccess(workspacePath, writeFile), logger)
 		reviewNotice := handlePlanStepDependentArtifactReview(ctx, workspacePath, stepID, fieldChanges, readFile, writeFile, logger)
 
-		scriptPath := normalizePathForWorkspaceAPI(filepath.Join("learnings", stepID, "main.py"), workspacePath)
+		scriptDir := savedCodeDirectory(ctx, workspacePath, stepID, readFile)
+		scriptPath := normalizePathForWorkspaceAPI(filepath.Join(scriptDir, "main.py"), workspacePath)
 		scriptContent, scriptErr := readFile(ctx, scriptPath)
 		scriptExists := scriptErr == nil && strings.TrimSpace(scriptContent) != ""
 
@@ -266,19 +267,19 @@ func createChangeStepTypeExecutor(
 		case changeStepTypeTargetScripted:
 			fmt.Fprintf(&b, "Converted step %q to a scripted step (plan type %s; a regular step runs its checked-in script).", stepID, result.newType)
 			if result.droppedItems > 0 {
-				fmt.Fprintf(&b, " Dropped %d conversational item(s): a scripted step's work lives entirely in learnings/%s/main.py.", result.droppedItems, stepID)
+				fmt.Fprintf(&b, " Dropped %d conversational item(s): a scripted step's work lives entirely in %s/main.py.", result.droppedItems, scriptDir)
 			}
 			if scriptExists {
-				fmt.Fprintf(&b, " learnings/%s/main.py already exists and will now run through the real scripted executor.", stepID)
+				fmt.Fprintf(&b, " %s/main.py already exists and will now run through the real scripted executor.", scriptDir)
 			} else {
-				fmt.Fprintf(&b, " learnings/%s/main.py does NOT exist yet -- the step fails until it does: write it with update_scripted_step(existing_step_id=%q, code=...).", stepID, stepID)
+				fmt.Fprintf(&b, " %s/main.py does NOT exist yet -- author this file with the workspace editing tools, then test with execute_step(fast_path_only=true).", scriptDir)
 			}
 			b.WriteString(" Keep validation_schema strict, and move any judgment or verification that lived in the old turns into a message_sequence that consumes this step's output rather than into the script.")
 		default:
 			fmt.Fprintf(&b, "Converted step %q to a message_sequence with one execute-and-verify item.", stepID)
 			b.WriteString(" Refine the turns with update_message_sequence_step.")
 			if scriptExists {
-				fmt.Fprintf(&b, " learnings/%s/main.py still exists; a script nothing runs is artifact debt -- delete it, or keep it only if the sequence is meant to invoke it.", stepID)
+				fmt.Fprintf(&b, " %s/main.py still exists; a script nothing runs is artifact debt -- delete it, or keep it only if the sequence is meant to invoke it.", scriptDir)
 			}
 		}
 		b.WriteString(" Recorded in planning/changelog with the full step JSON before and after, so it can be reverted.")

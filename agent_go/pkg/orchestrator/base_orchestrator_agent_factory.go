@@ -431,6 +431,7 @@ func (bo *BaseOrchestrator) CreateAndSetupStandardAgent(
 
 	// Setup agent using common helper (pass config to check agent-specific code execution mode)
 	if err := bo.setupStandardAgent(ctx, agent, config, agentName, phase, step, iteration, stepID); err != nil {
+		_ = agent.Close()
 		return nil, err
 	}
 
@@ -472,6 +473,9 @@ func (bo *BaseOrchestrator) CreateAndSetupStandardAgentWithConfig(
 
 	// Setup agent using common helper (pass config to check agent-specific code execution mode)
 	if err := bo.setupStandardAgent(ctx, agent, config, config.AgentName, phase, step, iteration, stepID); err != nil {
+		// Initialize may have allocated resources before a later setup stage
+		// fails. The caller never receives this agent, so it cannot close it.
+		_ = agent.Close()
 		return nil, err
 	}
 

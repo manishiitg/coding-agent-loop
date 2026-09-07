@@ -3,8 +3,8 @@
 `human_input` is the step type that **blocks the workflow and asks the
 user a question**, returning their response to drive subsequent steps.
 Load this skill when adding or editing a human_input step, deciding
-between input types, or pairing it with a `routing` step for
-user-driven branching.
+how to capture a free-form value, or preserving a legacy input step. For
+fixed-choice decisions, load `references/branch.md`.
 
 Use `add_human_input_step` / `update_human_input_step` to manage these
 in the plan.
@@ -36,15 +36,12 @@ unchanged.
 
 ## Input types
 
-Set the `input_type` on the step:
+Set `response_type: "text"` for a new step. Use it when the answer space
+is open (e.g., "What is the company name?", "Paste the OTP from email").
 
-- **`text`** — free-form text response. Use when the answer space is
-  open (e.g., "What's the company name?", "Paste the OTP from email").
-- **`yesno`** — boolean response. Use for confirmation gates inside a
-  running workflow (e.g., "Send the report now?").
-- **`multiple_choice`** — one selection from a fixed list. Use when the
-  running workflow must ask for one enumerable answer (e.g., "Which
-  environment?" -> ["staging", "production"]).
+`yesno` and `multiple_choice` are legacy response types supported when
+reading or updating existing steps. Do not create new steps with them; use
+a human-decided branch for confirmations and fixed choices.
 
 ## Branching from human_input
 
@@ -85,7 +82,7 @@ for workflows that need an explicit router node.
 Schedules run **unattended** — human_input steps in a workflow that's
 scheduled cannot wait for a real human. Two strategies:
 
-1. **Pre-supply responses via `human_inputs` arg**: `run_full_workflow(group_name, human_inputs={"step-id": "yes"})`.
+1. **Pre-supply responses via `human_inputs` arg**: `run_full_workflow(group_name, human_inputs={"ask-month": "Mar26"})`.
    The schedule's message provides the response upfront. Required for
    any human_input step in a scheduled run, or the schedule fails with
    "missing human_input responses".
@@ -126,8 +123,8 @@ into a text field).
 
 ## Tools
 
-- **`add_human_input_step(step_id, prompt, input_type, options?, context_output, ...)`** — add the step. `options` is required for `multiple_choice`.
-- **`update_human_input_step(step_id, prompt?, input_type?, options?, ...)`** — edit.
+- **`add_human_input_step(id, title, question, next_step_id, insert_after_step_id, reason, response_type="text", ...)`** — add a free-form value step; optionally set `variable_name` and `context_output`.
+- **`update_human_input_step(existing_step_id, question?, response_type?, ...)`** — edit an existing step. Legacy option fields are only for maintaining existing choice steps.
 - **`execute_step(step_id, group_name, human_input="<response>")`** — in workshop mode, test by passing the response directly via `human_input`. Skips the actual prompt UX.
 
 For the full signatures + parameters see

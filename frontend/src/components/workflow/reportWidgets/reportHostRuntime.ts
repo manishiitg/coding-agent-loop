@@ -76,7 +76,7 @@ export const REPORT_BOOTSTRAP = `<script>(function(){
       });
     };
   }
-  ['query', 'get', 'getText', 'getHtml', 'fileUrl', 'updateField', 'updateFields'].forEach(function(name){
+  ['query', 'get', 'getText', 'getHtml', 'fileUrl', 'mediaUrl', 'updateField', 'updateFields'].forEach(function(name){
     api[name] = queueCall(name);
   });
   api.openFile = function(){
@@ -452,6 +452,7 @@ export function installReportHost(frame: HTMLIFrameElement, options: ReportHostI
     getHtml: dataApi.getHtml,
     renderMarkdown: dataApi.renderMarkdown,
     fileUrl: dataApi.fileUrl,
+    mediaUrl: dataApi.mediaUrl,
     openFile: dataApi.openFile,
     updateField: dataApi.updateField,
     updateFields: dataApi.updateFields,
@@ -472,6 +473,7 @@ export function installReportHost(frame: HTMLIFrameElement, options: ReportHostI
     getText: dataApi.getText as (...args: unknown[]) => unknown,
     getHtml: dataApi.getHtml as (...args: unknown[]) => unknown,
     fileUrl: dataApi.fileUrl as (...args: unknown[]) => unknown,
+    mediaUrl: dataApi.mediaUrl as (...args: unknown[]) => unknown,
     updateField: dataApi.updateField as (...args: unknown[]) => unknown,
     updateFields: dataApi.updateFields as (...args: unknown[]) => unknown,
   }

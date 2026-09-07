@@ -6,7 +6,7 @@
 |---|---|
 | Assigned agent | Codex |
 | Ticket state | `implemented on main — concurrent Builder and Run chats use separate prompts, tools, skills and private CLI runtimes while sharing the guarded workflow workspace; scheduled runs use the Run surface. Cross-provider cleanup and real two-user authorization remain follow-up acceptance work` |
-| Last synchronized | `2026-09-06` |
+| Last synchronized | `2026-09-07` |
 
 - **Related:** [PLAT-262](plat-262.md) (server-enforced Run permissions),
   [PLAT-297](plat-297.md) (Codex retained-session, resume and structured-event
@@ -434,3 +434,24 @@ The AgentWorks repository-wide commit hook still reports 18 existing non-blockin
 lint findings (one `reflect.Ptr` vet suggestion and 17 spelling findings), all in
 files outside this patch. This audit does not claim that repository-wide lint is
 clean; provider and mcpagent lint are clean.
+
+## 2026-09-07 — Overlapping message-sequence cleanup regression (local fix)
+
+The social-media run reproduced a same-mode session ownership collision: a
+cancelled execution completed cleanup after its replacement had started, and
+both used the same deterministic message-sequence session ID. The old cleanup
+removed the new execution's shell cwd/guard, producing `WORKFLOW STEP CONFIG
+ERROR: ... refusing workspace-root fallback`.
+
+New runtimes now receive a unique owner suffix; only turns in the same live
+sequence reuse it. Saved history cannot reclaim an old runtime identity. The
+regression test failed before the fix and passes after it. This addition is
+**local source, not yet deployed**; no live retry or server restart was done.
+See [incident and verification record](../../audits/message-sequence-session-cleanup-2026-09-07.md).
+
+The follow-up lifecycle review also fixes failed-creation rollback, final MCP
+connection cleanup for the owned runtime, and inconsistent DB tool selection
+between default and explicit lists. Shared browser sessions remain separately
+owned. Permanent tests cover those cases, restricted parent tool pools, and
+partially initialized agent cleanup. These changes remain **local, not
+deployed**. See the [session/tool lifecycle review](../../audits/session-tool-lifecycle-review-2026-09-07.md).

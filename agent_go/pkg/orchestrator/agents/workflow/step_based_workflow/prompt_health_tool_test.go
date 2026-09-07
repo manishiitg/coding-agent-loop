@@ -26,6 +26,10 @@ func TestRegisteredPromptHealthReadsCurrentPlan(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		mu.Lock()
 		defer mu.Unlock()
+		if r.URL.Path == "/api/documents/Workflow/test-flow/workflow.json" {
+			http.NotFound(w, r)
+			return
+		}
 		if r.Method != http.MethodGet || r.URL.Path != "/api/documents/Workflow/test-flow/planning/plan.json" {
 			t.Errorf("unexpected workspace request: %s %s", r.Method, r.URL.Path)
 			http.NotFound(w, r)
@@ -110,6 +114,10 @@ func TestCurrentPromptHealthEvaluationSnapshot(t *testing.T) {
 	controller.isEvaluationMode = true
 	reads := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/documents/Workflow/test-flow/workflow.json" {
+			http.NotFound(w, r)
+			return
+		}
 		if r.URL.Path != "/api/documents/Workflow/test-flow/evaluation/evaluation_plan.json" {
 			t.Errorf("unexpected evaluation path: %s", r.URL.Path)
 		}

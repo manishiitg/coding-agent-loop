@@ -12,16 +12,12 @@ const running = {
 }
 
 describe('routeForQueuedMessage', () => {
-  it('sends a workflow chat through /api/query, the way typing does', () => {
-    // The reported bug: "ask in chat" on a pending decision parked as a chip on
-    // a running claudecode workflow session and never arrived.
-    expect(routeForQueuedMessage({ ...running, isWorkflowMode: true })).toBe('live-query')
+  it('keeps workflow messages queued while the current turn is running', () => {
+    expect(routeForQueuedMessage({ ...running, isWorkflowMode: true })).toBe('wait')
   })
 
-  it('sends a coding CLI through /api/query even outside workflow mode', () => {
-    // ChatInput's single-entry rule: tmux transport always goes to /api/query,
-    // never to the steer endpoint.
-    expect(routeForQueuedMessage({ ...running, isTmuxCLIProvider: true, canSteer: true })).toBe('live-query')
+  it('keeps a busy coding CLI queued even when steer is available', () => {
+    expect(routeForQueuedMessage({ ...running, isTmuxCLIProvider: true, canSteer: true })).toBe('wait')
   })
 
   it('steers an API provider that has a live turn', () => {

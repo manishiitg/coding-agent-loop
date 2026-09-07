@@ -2359,27 +2359,26 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
       }, 0)
     }
 
-    // Queue-aware onSubmit. Non-coding agents cannot accept another turn while
-    // streaming, so slash-command prompts go through the normal queue. Coding
-    // agent CLIs are different: their live tmux session accepts follow-up input,
-    // so slash commands should be delivered immediately just like regular text.
+    // Queue-aware onSubmit. A retained coding CLI can be temporarily unable to
+    // acknowledge input while it is inside a tool transaction. Keep every
+    // follow-up in the ordered tab queue until the active turn reaches idle.
     const queueAwareOnSubmit = (query: string) => {
       const trimmed = query?.trim()
       if (!trimmed) return
-      // tmux-transport (CLI): SINGLE-ENTRY routing — always /api/query. The backend
-      // attempts the minimal live-input path first and falls back to a full
-      // resume/new turn when the retained CLI is no longer available.
-      if (routeLiveInputToCLI) {
-        onSubmit(trimmed, { preferLiveInput: true })
-        return
-      }
       if (isStreaming) {
         const currentQueued = tabConfig?.queuedMessages || []
         setTabConfig(activeTabId, {
           inputText: '',
           queuedMessages: [...currentQueued, trimmed]
         })
-        addToast('Builder is busy — slash command queued', 'info')
+        addToast('Builder is busy — message queued for the next turn', 'info')
+        return
+      }
+      // tmux-transport (CLI): SINGLE-ENTRY routing — always /api/query. The backend
+      // attempts the minimal live-input path first and falls back to a full
+      // resume/new turn when the retained CLI is no longer available.
+      if (routeLiveInputToCLI) {
+        onSubmit(trimmed, { preferLiveInput: true })
         return
       }
       onSubmit(trimmed)
@@ -2469,25 +2468,23 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
   // routeSubmit is the single send-routing decision shared by Enter (handleKeyDown)
   // and the Send button (handleSubmit).
   //
-  // TMUX-TRANSPORT (CLI coding agent) — SINGLE-ENTRY routing: the frontend does not
-  // inspect terminal liveness. ChatArea first asks the backend for minimal live
-  // delivery; the backend either submits to the retained CLI / resumes a saved turn,
-  // or rejects it so ChatArea performs full turn setup. Video Studio is the exception:
-  // its structured product turns deliberately queue follow-ups until the active turn
-  // completes, rather than attempting to steer a provider-owned CLI session.
+  // TMUX-TRANSPORT (CLI coding agent) — idle messages use the normal single-entry
+  // backend route. While a turn is streaming, follow-ups stay in the ordered tab
+  // queue. This avoids racing Cursor while it is inside a tool transaction and
+  // prevents a temporary delivery timeout from becoming a fatal 409 in the chat.
   //
   // NON-tmux (API/LLM): isStreaming-based steer-vs-queue, unchanged.
   const routeSubmit = useCallback(async (query: string) => {
     const trimmed = query?.trim() || ''
     if (!trimmed) return
 
-    // Video Studio has a structured, completion-oriented conversation surface.
-    // A follow-up must never race the active coding-agent turn or be injected
-    // into an uncertain tmux setup window. Keep it durably in the tab queue;
+    // A follow-up must never race the active turn or be injected into an
+    // uncertain tmux/tool transaction window. Keep it durably in the tab queue;
     // ChatArea flushes that queue in submission order once the turn is idle.
-    if (isProductSurface && isStreaming) {
+    if (isStreaming) {
       clearInputState()
       queueStreamingMessage(query)
+      addToast('Agent is busy — message queued for the next turn', 'info')
       return
     }
 
@@ -2574,7 +2571,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
       const reason = getSubmitBlockReason()
       if (reason) addToast(reason, 'info')
     }
-  }, [routeLiveInputToCLI, hasSubmitTarget, activeTabId, effectiveProviderForSteer, onSubmit, scheduleLiveMessageDeliveryClear, clearInputState, getSubmitBlockReason, addToast, canSubmitImmediately, canSubmit, isStreaming, queueStreamingMessage, isProductSurface])
+  }, [routeLiveInputToCLI, hasSubmitTarget, activeTabId, effectiveProviderForSteer, onSubmit, scheduleLiveMessageDeliveryClear, clearInputState, getSubmitBlockReason, addToast, canSubmitImmediately, canSubmit, isStreaming, queueStreamingMessage])
 
   const handleKeyDown = useCallback((e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     // If any selection dialog is open, let it handle keyboard events

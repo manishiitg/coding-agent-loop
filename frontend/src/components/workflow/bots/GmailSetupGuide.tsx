@@ -1,5 +1,7 @@
 import { useState } from 'react'
 import { ChevronRight, ExternalLink } from 'lucide-react'
+import { getApiBaseUrl } from '../../../services/api'
+import { resolveGmailOAuthCallbackUrl } from './gmailOAuthCallback'
 
 // ── First-time Google setup, as a guide ───────────────────────────────────
 //
@@ -53,6 +55,10 @@ function Gotcha({ children }: { children: React.ReactNode }) {
 
 export function GmailSetupGuide() {
   const [open, setOpen] = useState(false)
+  const callbackUrl = resolveGmailOAuthCallbackUrl(
+    getApiBaseUrl(),
+    typeof window === 'undefined' ? '' : window.location.origin,
+  )
 
   return (
     <div className="rounded-md border border-border">
@@ -139,10 +145,15 @@ export function GmailSetupGuide() {
               </p>
               <Gotcha>
                 Application type must be <strong>Web application</strong>. Under <strong>Authorized redirect URIs</strong>,
-                add the exact AgentWorks callback shown below. A Desktop client cannot authorize this hosted callback
-                and Google returns <code>400: redirect_uri_mismatch</code>.
+                add the exact AgentWorks callback shown below. A Google OAuth client created with the
+                <strong> Desktop app</strong> application type cannot authorize this callback, and Google returns
+                <code> 400: redirect_uri_mismatch</code>.
               </Gotcha>
-              <Cmd>https://video.realtrainingsys.com/api/human-feedback/gmail/auth/callback</Cmd>
+              <Cmd>{callbackUrl}</Cmd>
+              <p>
+                This address follows the active environment automatically: the current site origin on web, or the
+                configured API server when AgentWorks is running in Desktop.
+              </p>
             </Step>
 
             <Step n={6} title="Register the client">

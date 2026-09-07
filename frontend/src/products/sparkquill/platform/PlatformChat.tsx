@@ -57,6 +57,22 @@ export function applyFamilyEngineToOpenTabs(engine: string, model?: string): voi
 export async function startNewParentConversation(): Promise<void> {
   const store = useChatStore.getState()
   await agentApi.startNewAgentProfileConversation(PARENT_PROFILE_ID, {})
+  await forgetOpenParentTabs()
+}
+
+/**
+ * Reopens an earlier parent conversation: the server makes it the live one
+ * (the one it replaces stays in history), and the page's tab for the old
+ * live conversation is closed so the next PlatformChat mount opens it. The
+ * caller remounts PlatformChat (a changed `key`) after this resolves.
+ */
+export async function switchParentConversation(sessionId: string): Promise<void> {
+  await agentApi.switchAgentProfileConversation(PARENT_PROFILE_ID, { session_id: sessionId })
+  await forgetOpenParentTabs()
+}
+
+async function forgetOpenParentTabs(): Promise<void> {
+  const store = useChatStore.getState()
   openedTab = null
   for (const tab of Object.values(store.chatTabs)) {
     if (tab.metadata?.agentProfileId === PARENT_PROFILE_ID) await store.closeTab(tab.tabId, true, false)

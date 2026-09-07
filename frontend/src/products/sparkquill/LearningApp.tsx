@@ -35,6 +35,9 @@ import {
   PinOff,
   Bell,
   MessagesSquare,
+  PanelLeftClose,
+  PanelLeftOpen,
+  Plus,
   Trash2,
 } from 'lucide-react'
 import './learning-app.css'
@@ -54,7 +57,8 @@ import {
   type Activity,
   type VoiceStatus,
 } from './stores'
-import PlatformChat, { PARENT_PROFILE_ID, applyFamilyEngineToOpenTabs, startNewParentConversation, type ProductInteraction, type ProductPresentation } from './platform/PlatformChat'
+import PlatformChat, { PARENT_PROFILE_ID, applyFamilyEngineToOpenTabs, startNewParentConversation, switchParentConversation, type ProductInteraction, type ProductPresentation } from './platform/PlatformChat'
+import type { ParentChat } from './api/familyApi'
 import { loadAgentProfileCapabilityEnabled } from '../../utils/agentProfileCapabilities'
 import PulseHistoryViewer from './platform/PulseHistoryViewer'
 import type { ProductNotification } from '../../platform/notifications/useProductNotifications'
@@ -1092,7 +1096,22 @@ export default function LearningApp() {
   // newest first, with per-item delete and a bulk "older than N days" sweep —
   // the missing cleanup mechanism for old activities. Independent of which
   // drawer tab is open (the Activities tab's own fetch is gated on that).
-  const [chatsPopoverOpen, setChatsPopoverOpen] = useState(false)
+  // The chats rail on the left, like a chat app's sidebar: the parent's
+  // earlier chats with Quill (open one, delete one, start a new one) and the
+  // child's activity chats with their cleanup. Its open state is a per-device
+  // convenience remembered in the browser.
+  const [chatsRailOpen, setChatsRailOpen] = useState<boolean>(() => {
+    try { return window.localStorage.getItem('sparkquill.chats-rail') !== 'closed' } catch { return true }
+  })
+  const toggleChatsRail = () => {
+    setChatsRailOpen((open) => {
+      try { window.localStorage.setItem('sparkquill.chats-rail', open ? 'closed' : 'open') } catch { /* private mode */ }
+      return !open
+    })
+  }
+  const [parentChats, setParentChats] = useState<ParentChat[]>([])
+  const [switchingChat, setSwitchingChat] = useState(false)
+  const [parentChatsError, setParentChatsError] = useState<string | null>(null)
   const [loadingChats, setLoadingChats] = useState(false)
   const [deleteOlderDays, setDeleteOlderDays] = useState('30')
   const [deletingChatDirs, setDeletingChatDirs] = useState<string[]>([])
@@ -1328,7 +1347,7 @@ export default function LearningApp() {
   const activities = useSparkQuillWorkspaceStore((s) => s.activities)
   const setActivities = useSparkQuillWorkspaceStore((s) => s.setActivities)
   useEffect(() => {
-    if (!chatsPopoverOpen) return
+    if (!chatsRailOpen) return
     let cancelled = false
     setLoadingChats(true)
     api.activities()
@@ -1336,7 +1355,39 @@ export default function LearningApp() {
       .catch(() => undefined)
       .finally(() => { if (!cancelled) setLoadingChats(false) })
     return () => { cancelled = true }
-  }, [chatsPopoverOpen, setActivities])
+  }, [chatsRailOpen, setActivities])
+  // The parent's chats with Quill: refetched when the rail opens and after
+  // the live conversation changes (new chat, or an earlier one reopened) —
+  // a new chat gets its title from its first message, so also a little
+  // after the conversation remounts.
+  const loadParentChats = useCallback(() => {
+    api.listParentChats()
+      .then((chats) => { setParentChats(chats); setParentChatsError(null) })
+      .catch((err) => setParentChatsError(err instanceof Error ? err.message : 'Could not load chats.'))
+  }, [])
+  useEffect(() => {
+    if (!chatsRailOpen) return
+    loadParentChats()
+    const later = window.setTimeout(loadParentChats, 15_000)
+    return () => window.clearTimeout(later)
+  }, [chatsRailOpen, parentChatEpoch, loadParentChats])
+  const openParentChat = (chat: ParentChat) => {
+    if (chat.current || switchingChat) return
+    setSwitchingChat(true)
+    switchParentConversation(chat.session_id)
+      .then(() => setParentChatEpoch((n) => n + 1))
+      .catch((err) => setParentChatsError(err instanceof Error ? err.message : 'Could not open that chat.'))
+      .finally(() => setSwitchingChat(false))
+  }
+  const deleteParentChat = (chat: ParentChat) => {
+    if (chat.current || !window.confirm(`Permanently delete "${chat.title}"? This cannot be undone.`)) return
+    api.deleteParentChat(chat.session_id)
+      .then(() => setParentChats((cur) => cur.filter((c) => c.session_id !== chat.session_id)))
+      .catch((err) => setParentChatsError(err instanceof Error ? err.message : 'Could not delete that chat.'))
+  }
+  const startNewChatFromRail = () => {
+    window.dispatchEvent(new CustomEvent('agentworks:product-new-conversation', { detail: { profileId: PARENT_PROFILE_ID } }))
+  }
   const deleteChats = (dirs: string[], confirmMessage: string) => {
     if (dirs.length === 0 || !window.confirm(confirmMessage)) return
     setDeleteChatsError(null)
@@ -2053,13 +2104,96 @@ export default function LearningApp() {
         <div
           ref={parentBodyRef}
           className={`fl-shell${parentResizing ? ' is-resizing' : ''}`}
-          data-rail="closed"
+          data-rail={chatsRailOpen ? 'open' : 'closed'}
           data-drawer={drawerOpen ? 'open' : 'closed'}
           style={{ ['--parent-side-w' as string]: `${Math.round(parentSideWidth)}px` }}
         >
+          <aside className="fl-rail" aria-label="Chats" aria-hidden={!chatsRailOpen}>
+            <button className="fl-new" type="button" onClick={startNewChatFromRail} disabled={switchingChat}>
+              <Plus size={16} /> New chat
+            </button>
+            <div className="fl-rail-scroll">
+              <div className="fl-rail-group">
+                <p className="fl-rail-label">Chats with Quill</p>
+                {parentChatsError && <p className="fl-rail-empty">{parentChatsError}</p>}
+                {parentChats.length === 0 && !parentChatsError ? (
+                  <p className="fl-rail-empty">No chats yet.</p>
+                ) : (
+                  parentChats.map((chat) => (
+                    <div key={chat.session_id} className={`fl-rail-row${chat.current ? ' is-active' : ''}`}>
+                      <button
+                        type="button"
+                        className={`fl-rail-item${chat.current ? ' is-active' : ''}`}
+                        onClick={() => openParentChat(chat)}
+                        disabled={switchingChat}
+                        title={chat.current ? 'This chat' : 'Open this chat'}
+                      >
+                        <span className="fl-rail-item-title">{chat.title}</span>
+                        <span className="fl-rail-item-when">{chat.current ? 'Now' : dateTimeLabel(chat.updated_at) || ''}</span>
+                      </button>
+                      {!chat.current && (
+                        <button
+                          type="button"
+                          className="fl-rail-delete"
+                          aria-label={`Delete ${chat.title}`}
+                          title="Delete this chat"
+                          onClick={() => deleteParentChat(chat)}
+                        >
+                          <Trash2 size={14} />
+                        </button>
+                      )}
+                    </div>
+                  ))
+                )}
+              </div>
+              <div className="fl-rail-group">
+                <p className="fl-rail-label">{childName || 'Your child'}’s activity chats</p>
+                <div className="fl-rail-cleanup">
+                  <span>Older than</span>
+                  <input
+                    type="number"
+                    min={1}
+                    aria-label="Days"
+                    value={deleteOlderDays}
+                    onChange={(e) => setDeleteOlderDays(e.target.value)}
+                  />
+                  <span>days</span>
+                  <button type="button" onClick={deleteOldChats}>Delete</button>
+                </div>
+                {deleteChatsError && <p className="fl-rail-empty">{deleteChatsError}</p>}
+                {loadingChats && activities.length === 0 ? (
+                  <p className="fl-rail-empty">Loading…</p>
+                ) : activities.length === 0 ? (
+                  <p className="fl-rail-empty">No activity chats yet.</p>
+                ) : (
+                  activities.map((act) => (
+                    <div key={act.dir} className="fl-rail-row">
+                      <div className="fl-rail-item is-static">
+                        <span className="fl-rail-item-title">{act.title}</span>
+                        <span className="fl-rail-item-when">{dateTimeLabel(act.created_at) || 'Undated'}</span>
+                      </div>
+                      <button
+                        type="button"
+                        className="fl-rail-delete"
+                        aria-label={`Delete ${act.title}`}
+                        title="Delete this chat"
+                        disabled={deletingChatDirs.includes(act.dir)}
+                        onClick={() => deleteChats([act.dir], `Permanently delete "${act.title}"? This cannot be undone.`)}
+                      >
+                        <Trash2 size={14} />
+                      </button>
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+          </aside>
           <section className="fl-center">
             <div className="fl-toolbar">
               <div className="fl-toolbar-left">
+                <button className="fl-icon-btn fl-rail-toggle" type="button" aria-label={chatsRailOpen ? 'Hide chats' : 'Show chats'} title={chatsRailOpen ? 'Hide chats' : 'Show chats'} aria-pressed={chatsRailOpen} onClick={toggleChatsRail}>
+                  {chatsRailOpen ? <PanelLeftClose size={18} /> : <PanelLeftOpen size={18} />}
+                </button>
                 <img className="fl-header-logo" src="/sparkquill-mark.svg" alt="" width={30} height={30} />
                 <div className="fl-toolbar-title">
                   <strong className="fl-brand-word">Spark<span>Quill</span></strong>
@@ -2067,69 +2201,6 @@ export default function LearningApp() {
                 </div>
               </div>
               <div className="fl-toolbar-right">
-                <div className="fl-pulse-wrap">
-                  <button
-                    className="fl-pulse-pill"
-                    type="button"
-                    aria-label="Chats"
-                    title="Chats"
-                    onClick={() => setChatsPopoverOpen((v) => !v)}
-                  >
-                    <MessagesSquare size={14} />
-                    <span>Chats</span>
-                  </button>
-                  {chatsPopoverOpen && (
-                    <>
-                      <div className="fl-pulse-backdrop" onClick={() => setChatsPopoverOpen(false)} />
-                      <div className="fl-pulse-popover fl-chats-popover" role="dialog">
-                        <div className="fl-pulse-popover-head">
-                          <MessagesSquare size={15} />
-                          <span>Chats</span>
-                          <button type="button" className="fl-pulse-popover-close" onClick={() => setChatsPopoverOpen(false)} aria-label="Close">×</button>
-                        </div>
-                        <div className="fl-chats-cleanup">
-                          <span>Delete chats older than</span>
-                          <input
-                            type="number"
-                            min={1}
-                            className="fl-chats-days-input"
-                            value={deleteOlderDays}
-                            onChange={(e) => setDeleteOlderDays(e.target.value)}
-                          />
-                          <span>days</span>
-                          <button type="button" className="fl-chats-delete-old" onClick={deleteOldChats}>Delete</button>
-                        </div>
-                        {deleteChatsError && <p className="fl-pulse-run-error">{deleteChatsError}</p>}
-                        <div className="fl-chats-list">
-                          {loadingChats && activities.length === 0 ? (
-                            <p className="fl-note">Loading…</p>
-                          ) : activities.length === 0 ? (
-                            <p className="fl-note">No chats yet.</p>
-                          ) : (
-                            activities.map((act) => (
-                              <div key={act.dir} className="fl-chats-row">
-                                <div className="fl-chats-row-info">
-                                  <span className="fl-chats-row-title">{act.title}</span>
-                                  <span className="fl-chats-row-date">{dateTimeLabel(act.created_at) || 'Undated'}</span>
-                                </div>
-                                <button
-                                  type="button"
-                                  className="fl-chats-row-delete"
-                                  aria-label={`Delete ${act.title}`}
-                                  title="Delete this chat"
-                                  disabled={deletingChatDirs.includes(act.dir)}
-                                  onClick={() => deleteChats([act.dir], `Permanently delete "${act.title}"? This cannot be undone.`)}
-                                >
-                                  <Trash2 size={14} />
-                                </button>
-                              </div>
-                            ))
-                          )}
-                        </div>
-                      </div>
-                    </>
-                  )}
-                </div>
                 <div className="fl-pulse-wrap">
                   <button
                     className="fl-pulse-pill"

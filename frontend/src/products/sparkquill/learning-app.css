@@ -217,8 +217,9 @@
    this grid now has three grid-item children (section, resizer div, aside),
    so the column count has to say so explicitly or the browser silently
    misplaces the third. */
-.fl-shell { display: grid; grid-template-columns: minmax(0, 1fr) auto var(--parent-side-w, 592px); height: 100vh; height: 100dvh; background: var(--cream); transition: grid-template-columns .2s ease; }
-.fl-shell[data-drawer="closed"] { grid-template-columns: minmax(0, 1fr) 0 0; }
+.fl-shell { --rail-w: 0px; display: grid; grid-template-columns: var(--rail-w) minmax(0, 1fr) auto var(--parent-side-w, 592px); height: 100vh; height: 100dvh; background: var(--cream); transition: grid-template-columns .2s ease; }
+.fl-shell[data-rail="open"] { --rail-w: 272px; }
+.fl-shell[data-drawer="closed"] { grid-template-columns: var(--rail-w) minmax(0, 1fr) 0 0; }
 .fl-shell.is-resizing { transition: none; cursor: col-resize; user-select: none; }
 .fl-shell.is-resizing iframe { pointer-events: none; }
 @media (prefers-reduced-motion: reduce) { .fl-shell { transition: none; } }
@@ -256,6 +257,22 @@
 .fl-rail-item-title { font-size: var(--text-secondary); font-weight: 600; line-height: 1.3; }
 .fl-rail-item-when { font-size: var(--text-caption); color: #8093b4; }
 .fl-rail-item.is-active .fl-rail-item-when { color: #e7d9a6; }
+.fl-rail-item-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fl-rail-item.is-static { cursor: default; }
+.fl-rail-item.is-static:hover { background: transparent; }
+.fl-rail-item:disabled { cursor: progress; opacity: .7; }
+.fl-rail-row { display: flex; align-items: center; gap: 2px; min-width: 0; }
+.fl-rail-row .fl-rail-item { flex: 1; min-width: 0; }
+.fl-rail-delete { flex: 0 0 auto; display: grid; place-items: center; width: 28px; height: 28px; border: 0; border-radius: 8px; background: transparent; color: #8ea3c6; cursor: pointer; opacity: 0; transition: opacity .12s ease; }
+.fl-rail-row:hover .fl-rail-delete,
+.fl-rail-delete:focus-visible { opacity: 1; }
+.fl-rail-delete:hover { background: rgba(255, 255, 255, .1); color: #ffb4b4; }
+.fl-rail-delete:disabled { opacity: .35; cursor: default; }
+.fl-rail-cleanup { display: flex; align-items: center; gap: 6px; margin: 2px 8px 8px; font-size: var(--text-caption); color: #9fb0cc; white-space: nowrap; }
+.fl-rail-cleanup input { width: 46px; padding: 3px 4px; border: 1px solid rgba(255, 255, 255, .18); border-radius: 6px; background: rgba(255, 255, 255, .06); color: #fff; font: inherit; font-size: var(--text-caption); text-align: center; }
+.fl-rail-cleanup button { margin-left: auto; padding: 4px 9px; border: 0; border-radius: 7px; background: #b23b3b; color: #fff; font: inherit; font-size: var(--text-caption); font-weight: 650; cursor: pointer; }
+.fl-rail-cleanup button:hover { filter: brightness(1.08); }
+.fl-rail-toggle { flex: 0 0 auto; }
 .fl-rail-child { display: flex; align-items: center; gap: 10px; margin: 8px 12px 14px; padding: 11px; border-radius: 14px; background: rgba(255, 255, 255, .06); white-space: nowrap; }
 .fl-child-avatar { display: grid; place-items: center; flex: 0 0 36px; width: 36px; height: 36px; border-radius: 50%; background: var(--coral); color: #fff; font-weight: 800; }
 .fl-child-meta { display: grid; gap: 1px; min-width: 0; }

@@ -41,6 +41,9 @@ type AgentProfileChatRequest struct {
 
 type AgentProfileConversationRequest struct {
 	ConversationKey string `json:"conversation_key,omitempty"`
+	// SessionID names an earlier conversation of the slot to make live again
+	// (POST …/conversation/switch); the other conversation routes ignore it.
+	SessionID string `json:"session_id,omitempty"`
 }
 
 type AgentProfileConversationResponse struct {

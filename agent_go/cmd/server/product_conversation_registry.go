@@ -62,6 +62,194 @@ type ProductConversationRecord struct {
 type productConversationRegistryDocument struct {
 	Version int                                  `json:"version"`
 	Entries map[string]ProductConversationRecord `json:"entries"`
+	// Previous keeps, per entry, the conversations a rotation or a switch
+	// moved out of the live slot, newest first, so a product can list,
+	// reopen or forget its earlier chats. Identities only; the transcripts
+	// stay in chat_history.
+	Previous map[string][]ProductConversationRecord `json:"previous,omitempty"`
+}
+
+// productConversationPreviousLimit bounds how many earlier conversations one
+// slot remembers; the oldest fall off (their transcripts remain on disk).
+const productConversationPreviousLimit = 200
+
+// rememberPreviousConversation moves a record to the front of a slot's
+// previous list, dropping any older copy of the same session.
+func rememberPreviousConversation(document *productConversationRegistryDocument, entryKey string, record ProductConversationRecord) {
+	if strings.TrimSpace(record.SessionID) == "" {
+		return
+	}
+	if document.Previous == nil {
+		document.Previous = map[string][]ProductConversationRecord{}
+	}
+	kept := make([]ProductConversationRecord, 0, len(document.Previous[entryKey])+1)
+	kept = append(kept, record)
+	for _, previous := range document.Previous[entryKey] {
+		if previous.SessionID != record.SessionID {
+			kept = append(kept, previous)
+		}
+	}
+	if len(kept) > productConversationPreviousLimit {
+		kept = kept[:productConversationPreviousLimit]
+	}
+	document.Previous[entryKey] = kept
+}
+
+func (store productConversationRegistryStore) loadDocument(ctx context.Context, path string) (productConversationRegistryDocument, error) {
+	document := productConversationRegistryDocument{Version: productConversationRegistryVersion, Entries: map[string]ProductConversationRecord{}}
+	raw, exists, err := store.read(ctx, path)
+	if err != nil {
+		return document, fmt.Errorf("read product conversation registry: %w", err)
+	}
+	if exists && strings.TrimSpace(raw) != "" {
+		if err := json.Unmarshal([]byte(raw), &document); err != nil {
+			return document, fmt.Errorf("decode product conversation registry: %w", err)
+		}
+		if document.Entries == nil {
+			document.Entries = map[string]ProductConversationRecord{}
+		}
+	}
+	return document, nil
+}
+
+// history reports a slot's live conversation (ok=false when none has been
+// opened yet) and the ones moved out of it, newest first.
+func (store productConversationRegistryStore) history(ctx context.Context, userID string, profile agentprofiles.Profile, binding productConversationBinding) (current ProductConversationRecord, ok bool, previous []ProductConversationRecord, err error) {
+	path := productConversationRegistryPath(userID)
+	mutex := productConversationRegistryMutex(path)
+	mutex.Lock()
+	defer mutex.Unlock()
+	document, err := store.loadDocument(ctx, path)
+	if err != nil {
+		return ProductConversationRecord{}, false, nil, err
+	}
+	entryKey := productConversationRegistryEntryKey(profile.ID, binding.ConversationKey)
+	current, ok = document.Entries[entryKey]
+	previous = append([]ProductConversationRecord(nil), document.Previous[entryKey]...)
+	return current, ok, previous, nil
+}
+
+// liveSessionIDs is every session a profile's slots currently point at — its
+// main chat and any isolated ones (a check-in, a second phone).
+func (store productConversationRegistryStore) liveSessionIDs(ctx context.Context, userID, profileID string) (map[string]bool, error) {
+	path := productConversationRegistryPath(userID)
+	mutex := productConversationRegistryMutex(path)
+	mutex.Lock()
+	defer mutex.Unlock()
+	document, err := store.loadDocument(ctx, path)
+	if err != nil {
+		return nil, err
+	}
+	live := map[string]bool{}
+	prefix := strings.TrimSpace(profileID) + "/"
+	for entryKey, record := range document.Entries {
+		if strings.HasPrefix(entryKey, prefix) && strings.TrimSpace(record.SessionID) != "" {
+			live[record.SessionID] = true
+		}
+	}
+	return live, nil
+}
+
+// switchTo makes an earlier conversation the slot's live one again; the one
+// it replaces joins the previous list. A session not in that list is
+// accepted only when the caller verified it is this slot's (a chat rotated
+// before the registry kept history), and gets a fresh conversation id.
+func (store productConversationRegistryStore) switchTo(ctx context.Context, userID string, profile agentprofiles.Profile, binding productConversationBinding, sessionID string, verified bool) (ProductConversationRecord, error) {
+	sessionID = strings.TrimSpace(sessionID)
+	if sessionID == "" {
+		return ProductConversationRecord{}, fmt.Errorf("session_id is required")
+	}
+	path := productConversationRegistryPath(userID)
+	mutex := productConversationRegistryMutex(path)
+	mutex.Lock()
+	defer mutex.Unlock()
+	document, err := store.loadDocument(ctx, path)
+	if err != nil {
+		return ProductConversationRecord{}, err
+	}
+	entryKey := productConversationRegistryEntryKey(profile.ID, binding.ConversationKey)
+	current, ok := document.Entries[entryKey]
+	if !ok {
+		return ProductConversationRecord{}, fmt.Errorf("product conversation %q has not been opened yet", entryKey)
+	}
+	if current.SessionID == sessionID {
+		return current, nil
+	}
+	now := store.now().UTC().Format(time.RFC3339Nano)
+	var target *ProductConversationRecord
+	remaining := make([]ProductConversationRecord, 0, len(document.Previous[entryKey]))
+	for _, previous := range document.Previous[entryKey] {
+		if previous.SessionID == sessionID && target == nil {
+			found := previous
+			target = &found
+			continue
+		}
+		remaining = append(remaining, previous)
+	}
+	if target == nil {
+		if !verified {
+			return ProductConversationRecord{}, fmt.Errorf("session %q is not one of this conversation's earlier chats", sessionID)
+		}
+		restored := current
+		restored.ConversationID = "conversation-" + store.newID()
+		restored.SessionID = sessionID
+		restored.CreatedAt = now
+		target = &restored
+	}
+	if document.Previous == nil {
+		document.Previous = map[string][]ProductConversationRecord{}
+	}
+	document.Previous[entryKey] = remaining
+	rememberPreviousConversation(&document, entryKey, current)
+	target.UpdatedAt = now
+	if strings.TrimSpace(binding.ManifestPath) != "" {
+		if err := store.writeManifestSessionID(ctx, binding.ManifestPath, target.SessionID); err != nil {
+			return ProductConversationRecord{}, err
+		}
+	}
+	document.Version = productConversationRegistryVersion
+	document.Entries[entryKey] = *target
+	if err := store.writeDocument(ctx, path, document); err != nil {
+		return ProductConversationRecord{}, err
+	}
+	return *target, nil
+}
+
+// forget drops an earlier conversation from a slot's previous list. The live
+// conversation is refused: start a new chat first. A session the registry
+// never listed (rotated before it kept history) is simply not there.
+func (store productConversationRegistryStore) forget(ctx context.Context, userID string, profile agentprofiles.Profile, binding productConversationBinding, sessionID string) error {
+	sessionID = strings.TrimSpace(sessionID)
+	if sessionID == "" {
+		return fmt.Errorf("session_id is required")
+	}
+	path := productConversationRegistryPath(userID)
+	mutex := productConversationRegistryMutex(path)
+	mutex.Lock()
+	defer mutex.Unlock()
+	document, err := store.loadDocument(ctx, path)
+	if err != nil {
+		return err
+	}
+	entryKey := productConversationRegistryEntryKey(profile.ID, binding.ConversationKey)
+	if current, ok := document.Entries[entryKey]; ok && current.SessionID == sessionID {
+		return fmt.Errorf("this is the live conversation — start a new chat before deleting it")
+	}
+	remaining := make([]ProductConversationRecord, 0, len(document.Previous[entryKey]))
+	for _, previous := range document.Previous[entryKey] {
+		if previous.SessionID != sessionID {
+			remaining = append(remaining, previous)
+		}
+	}
+	if len(remaining) == len(document.Previous[entryKey]) {
+		return nil
+	}
+	if document.Previous == nil {
+		document.Previous = map[string][]ProductConversationRecord{}
+	}
+	document.Previous[entryKey] = remaining
+	document.Version = productConversationRegistryVersion
+	return store.writeDocument(ctx, path, document)
 }
 
 type productConversationBinding struct {
@@ -252,6 +440,11 @@ func (store productConversationRegistryStore) rotate(
 		if err := store.writeManifestSessionID(ctx, binding.ManifestPath, record.SessionID); err != nil {
 			return ProductConversationRecord{}, err
 		}
+	}
+	// The conversation this one replaces stays listed, so the product can
+	// reopen it (its transcript is still in chat_history).
+	if existing, ok := document.Entries[entryKey]; ok {
+		rememberPreviousConversation(&document, entryKey, existing)
 	}
 	document.Version = productConversationRegistryVersion
 	document.Entries[entryKey] = record

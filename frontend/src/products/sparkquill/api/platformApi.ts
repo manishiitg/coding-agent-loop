@@ -13,7 +13,7 @@ import type { ApiEngine, QuickCommand, VoiceStatus } from '../stores/types'
 // adapter is not.
 const secrets = () => import('../../../api/secrets').then((m) => m.secretsApi)
 import type {
-  FamilyApi, FastMode, ModelInfo, PulseConfig, SetupState,
+  FamilyApi, FastMode, ModelInfo, ParentChat, PulseConfig, SetupState,
   StoredConversation,
   WhatsAppStatus, WhatsAppVoiceTranscription,
 } from './familyApi'
@@ -259,6 +259,13 @@ export function createPlatformApi(options: PlatformApiOptions): FamilyApi {
     verifyPin: (pin) => ws.verifyPin(pin),
 
 
+    listParentChats: async () => {
+      const r = await request<{ current?: ParentChat | null; previous?: ParentChat[] }>('GET', `/api/agent-profiles/${PARENT_PROFILE}/conversations`)
+      return [...(r.current ? [{ ...r.current, current: true }] : []), ...(r.previous ?? []).map((c) => ({ ...c, current: false }))]
+    },
+    deleteParentChat: async (sessionId) => {
+      await request('DELETE', `/api/agent-profiles/${PARENT_PROFILE}/conversations/${encodeURIComponent(sessionId)}`)
+    },
     childActivity: () => ws.currentActivity(),
     handoff: (dir, resume) => ws.handoff(dir, resume),
     resetChildConversation: async (activityDir) => {

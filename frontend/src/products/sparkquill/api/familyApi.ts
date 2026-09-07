@@ -47,6 +47,16 @@ export type PulseConfigPatch = Partial<Pick<PulseConfig, 'enabled' | 'cadence_ho
 
 export type StoredConversation = { messages?: StoredMsg[] }
 
+/** One of the parent's conversations with Quill, as the chats rail lists them. */
+export type ParentChat = {
+  session_id: string
+  title: string
+  created_at?: string
+  updated_at?: string
+  message_count?: number
+  current: boolean
+}
+
 export interface FamilyApi {
   /** Where the backend lives; shown in the "can't reach" message. */
   readonly baseUrl: string
@@ -59,6 +69,12 @@ export interface FamilyApi {
   saveChild(child: { name: string; grade: string; board: string }): Promise<void>
   setPin(pin: string): Promise<{ error?: string }>
   verifyPin(pin: string): Promise<{ ok?: boolean }>
+
+  // ---- the parent's chats with Quill ----------------------------------------
+  /** The live chat first, then earlier ones newest first. */
+  listParentChats(): Promise<ParentChat[]>
+  /** Forgets an earlier chat and deletes its transcript; the live one is refused. */
+  deleteParentChat(sessionId: string): Promise<void>
 
   // ---- child conversation --------------------------------------------------
   childActivity(): Promise<Activity | null>

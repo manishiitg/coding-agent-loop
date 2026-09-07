@@ -103,8 +103,8 @@ func TestResolveProviderProfileConfigUsesBuilderDefaults(t *testing.T) {
 		model    string
 		effort   string
 	}{
-		{provider: "claude-code", model: "claude-sonnet-5", effort: "high"},
-		{provider: "codex-cli", model: "gpt-5.6-sol", effort: "high"},
+		{provider: "claude-code", model: "claude-fable-5-1", effort: "medium"},
+		{provider: "codex-cli", model: "gpt-6-astra", effort: "medium"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.provider, func(t *testing.T) {

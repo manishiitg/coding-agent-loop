@@ -75,7 +75,7 @@ func generateTextLLMToolDef() llmtypes.Tool {
 		Type: "function",
 		Function: &llmtypes.FunctionDefinition{
 			Name:        "generate_text_llm",
-			Description: "Generate text with the workspace tiered LLM configuration. Provide the user message and choose the 'high', 'medium', or 'low' tier to run it.",
+			Description: "Generate text with the current workflow's tiered LLM configuration. High, medium, and low map to that workflow's tier_1, tier_2, and tier_3. The tool requires a current workflow and never uses a global tier configuration.",
 			Parameters: llmtypes.NewParameters(map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{

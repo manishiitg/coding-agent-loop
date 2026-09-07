@@ -31,6 +31,7 @@ func TestCodingAgentPersistentInteractiveFlags(t *testing.T) {
 		name            string
 		provider        string
 		allowPersistent bool
+		structured      bool
 		wantClaudeCode  bool
 		wantCodexCLI    bool
 		wantCursorCLI   bool
@@ -52,6 +53,13 @@ func TestCodingAgentPersistentInteractiveFlags(t *testing.T) {
 			name:            "cursor chat uses structured transport",
 			provider:        string(llm.ProviderCursorCLI),
 			allowPersistent: true,
+			structured:      true,
+		},
+		{
+			name:            "cursor workflow builder gets persistent tmux",
+			provider:        string(llm.ProviderCursorCLI),
+			allowPersistent: true,
+			wantCursorCLI:   true,
 		},
 		{
 			name:            "pi chat gets persistent tmux",
@@ -72,7 +80,7 @@ func TestCodingAgentPersistentInteractiveFlags(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			gotClaudeCode, gotCodexCLI, gotCursorCLI, gotPiCLI := codingAgentPersistentInteractiveFlags(tt.provider, tt.allowPersistent)
+			gotClaudeCode, gotCodexCLI, gotCursorCLI, gotPiCLI := codingAgentPersistentInteractiveFlags(tt.provider, tt.allowPersistent, tt.structured)
 			if gotClaudeCode != tt.wantClaudeCode || gotCodexCLI != tt.wantCodexCLI || gotCursorCLI != tt.wantCursorCLI || gotPiCLI != tt.wantPiCLI {
 				t.Fatalf("flags = (%v, %v, %v, %v), want (%v, %v, %v, %v)", gotClaudeCode, gotCodexCLI, gotCursorCLI, gotPiCLI, tt.wantClaudeCode, tt.wantCodexCLI, tt.wantCursorCLI, tt.wantPiCLI)
 			}
@@ -85,11 +93,8 @@ func TestCodingAgentPersistentInteractiveFlagsCoverTmuxContracts(t *testing.T) {
 		if contract.Transport != llm.CodingAgentTransportTmux {
 			continue
 		}
-		if codingAgentUsesStructuredTransport(string(contract.Provider)) {
-			continue
-		}
 		t.Run(string(contract.Provider), func(t *testing.T) {
-			gotClaudeCode, gotCodexCLI, gotCursorCLI, gotPiCLI := codingAgentPersistentInteractiveFlags(string(contract.Provider), true)
+			gotClaudeCode, gotCodexCLI, gotCursorCLI, gotPiCLI := codingAgentPersistentInteractiveFlags(string(contract.Provider), true, false)
 			count := 0
 			for _, enabled := range []bool{gotClaudeCode, gotCodexCLI, gotCursorCLI, gotPiCLI} {
 				if enabled {
@@ -98,6 +103,29 @@ func TestCodingAgentPersistentInteractiveFlagsCoverTmuxContracts(t *testing.T) {
 			}
 			if count != 1 {
 				t.Fatalf("provider %q enables %d persistent flags, want exactly one", contract.Provider, count)
+			}
+		})
+	}
+}
+
+func TestCodingAgentUsesStructuredTransportForChat(t *testing.T) {
+	tests := []struct {
+		name            string
+		provider        string
+		policy          string
+		workflowBuilder bool
+		wantStructured  bool
+	}{
+		{name: "Cursor ordinary chat stays structured", provider: "cursor-cli", wantStructured: true},
+		{name: "Cursor workflow builder uses tmux", provider: "cursor-cli", workflowBuilder: true},
+		{name: "Cursor workflow builder overrides structured profile", provider: "cursor-cli", policy: "structured", workflowBuilder: true},
+		{name: "Claude workflow builder keeps provider default", provider: "claude-code", workflowBuilder: true},
+		{name: "explicit structured Claude remains structured", provider: "claude-code", policy: "structured", workflowBuilder: true, wantStructured: true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := codingAgentUsesStructuredTransportForChat(tc.provider, tc.policy, tc.workflowBuilder); got != tc.wantStructured {
+				t.Fatalf("structured = %v, want %v", got, tc.wantStructured)
 			}
 		})
 	}
@@ -140,6 +168,7 @@ func TestCodingAgentRequestAllowsPersistentInteractive(t *testing.T) {
 	}{
 		{name: "ordinary user chat", req: &QueryRequest{AgentMode: "multi-agent"}, sessionID: "chat-1", want: true},
 		{name: "ordinary workflow builder chat", req: &QueryRequest{AgentMode: "workflow_phase", PhaseID: "workflow-builder"}, sessionID: "builder-chat-1", want: true},
+		{name: "scheduled workflow builder phase is not interactive", req: &QueryRequest{AgentMode: "workflow_phase", PhaseID: "workflow-builder", TriggeredBy: "cron"}, sessionID: "schedule-builder-1"},
 		{name: "scheduled trigger", req: &QueryRequest{TriggeredBy: "cron"}, sessionID: "chat-1"},
 		{name: "scheduled session id", req: &QueryRequest{}, sessionID: "schedule-manual--123"},
 		{name: "scheduled consecutive turns retain native CLI", req: &QueryRequest{TriggeredBy: "cron", KeepNativeSessionAlive: true}, sessionID: "schedule-manual--123", want: true},

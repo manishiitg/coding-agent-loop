@@ -20,7 +20,7 @@ Workshop; executing a workflow does not authorize changing its plan.
 | Ordinary clarification, choosing scope, or discussing an output | Normal workflow chat | Ask in the conversation. The user's reply continues the conversation; pass known answers into execution where appropriate. |
 | A planned free-form value inside an interactive pipeline | `human_input` plan step (`text`) | Capture a value into a variable; existing legacy choice steps remain supported. |
 | A planned fixed-choice decision inside an interactive pipeline | `branch` with `route_source="human"` | The routes are the options. Use an explicit known answer via `route_selections`; otherwise an interactive run prompts, while an unattended run uses a safe non-approval default or fails. |
-| An unexpected, urgent human-only input while an agent is working | `human_feedback` | The calling agent turn waits for the bounded response card. Answering returns to the same tool call; expiry is not approval. |
+| An unexpected, urgent human-only input while a workflow step is running | `human_feedback` | The calling execution agent waits for the bounded response card. Answering returns to the same tool call; expiry is not approval. This tool is unavailable in Builder chat. |
 | A review decision that can wait beyond this turn/run | `create_human_input_request` | Persist a question in the workflow's decision system and finish/park the affected work. A later consumer reads the explicit saved answer. |
 | The user reviews individual business items in a dashboard | Report-owned DB approval | `window.report.updateField`/`updateFields` saves the item's status. An existing consumer route/step reads approved items later; the write alone starts nothing. |
 | A report action should hand a specific task to the agent now | Report `sendChatMessage` | The app shows the message for user review, then queues it in an existing or new workflow chat. Save an existing business approval first when the request depends on it. |
@@ -62,7 +62,7 @@ read `builder-reference`, `references/running-steps.md` when available.
 
 ### Urgent response card
 
-Use `human_feedback` for short-lived human-only input such as an OTP, CAPTCHA,
+Running workflow steps may use `human_feedback` for short-lived human-only input such as an OTP, CAPTCHA,
 or an immediate decision that cannot wait. Ordinary Builder questions belong
 in chat. The card is in-app only: it does not fan out through Gmail, Slack,
 webhooks, or notification connectors.

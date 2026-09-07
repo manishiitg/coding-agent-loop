@@ -9,9 +9,9 @@ import (
 	"github.com/manishiitg/mcpagent/llm"
 )
 
-func codingAgentPersistentInteractiveFlags(provider string, allowPersistentInteractive bool) (claudeCode bool, codexCLI bool, cursorCLI bool, piCLI bool) {
+func codingAgentPersistentInteractiveFlags(provider string, allowPersistentInteractive, usesStructuredTransport bool) (claudeCode bool, codexCLI bool, cursorCLI bool, piCLI bool) {
 	normalizedProvider := strings.ToLower(strings.TrimSpace(provider))
-	if codingAgentUsesStructuredTransport(normalizedProvider) {
+	if usesStructuredTransport {
 		return false, false, false, false
 	}
 	if !allowPersistentInteractive ||
@@ -31,6 +31,19 @@ func codingAgentPersistentInteractiveFlags(provider string, allowPersistentInter
 	default:
 		return false, false, false, false
 	}
+}
+
+// codingAgentUsesStructuredTransportForChat resolves the transport for a
+// user-facing chat. Cursor normally prefers its structured JSON protocol, but
+// the interactive Workflow Builder deliberately uses retained tmux so a user
+// can inspect the terminal and steer the active turn. Workflow execution does
+// not use this helper: steps and background execution remain force-structured
+// in applyWorkflowTransportToAgentConfig.
+func codingAgentUsesStructuredTransportForChat(provider, policy string, isInteractiveWorkflowBuilder bool) bool {
+	if isInteractiveWorkflowBuilder && strings.EqualFold(strings.TrimSpace(provider), string(llm.ProviderCursorCLI)) {
+		return false
+	}
+	return codingAgentUsesStructuredTransportForPolicy(provider, policy)
 }
 
 // codingAgentUsesStructuredTransport is the product-level default for coding

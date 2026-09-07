@@ -39,7 +39,6 @@ import (
 	agent "github.com/manishiitg/coding-agent-loop/agent_go/pkg/agentwrapper"
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/chathistory"
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/clisecurity"
-	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/voicestt"
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/costledger"
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/fsutil"
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/orchestrator"
@@ -47,6 +46,7 @@ import (
 	orchEvents "github.com/manishiitg/coding-agent-loop/agent_go/pkg/orchestrator/events"
 	orchtypes "github.com/manishiitg/coding-agent-loop/agent_go/pkg/orchestrator/types"
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/schedulerstate"
+	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/voicestt"
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/workflowtypes"
 
 	"github.com/manishiitg/mcpagent/agent/codeexec"
@@ -4070,6 +4070,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			secretEnvVars["SECRET_"+s.Name] = s.Value
 		}
 		sessionAwareExecutors, workspaceEnv := virtualtools.CreateWorkspaceAdvancedToolExecutorsWithSessionAndEnv(currentUserID, sessionID, secretEnvVars)
+		virtualtools.SetGenerateTextWorkflowTierConfig(sessionAwareExecutors, getWorkspaceAPIURL(), generateTextWorkflowTiers(presetLLMConfig))
 		if mode := validatedWorkflowExecutionMode(req.ExecutionOptions); mode != "" {
 			workspaceEnv["WORKFLOW_EXECUTION_MODE"] = mode
 		}
@@ -4792,9 +4793,9 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				profileBridgeRoutingInstructions = &empty
 			}
 		}
-		forceStructuredCodingAgent := codingAgentUsesStructuredTransportForPolicy(finalProvider, profileTransportPolicy)
 		allowPersistentInteractive := codingAgentRequestAllowsPersistentInteractive(&req, sessionID)
-		claudeCodePersistentInteractive, codexPersistentInteractive, cursorPersistentInteractive, piPersistentInteractive := codingAgentPersistentInteractiveFlags(finalProvider, allowPersistentInteractive)
+		forceStructuredCodingAgent := codingAgentUsesStructuredTransportForChat(finalProvider, profileTransportPolicy, isWorkflowBuilderPhase && allowPersistentInteractive)
+		claudeCodePersistentInteractive, codexPersistentInteractive, cursorPersistentInteractive, piPersistentInteractive := codingAgentPersistentInteractiveFlags(finalProvider, allowPersistentInteractive, forceStructuredCodingAgent)
 		claudeCodeTransport := codingAgentClaudeCodeChatTransport(finalProvider)
 		if forceStructuredCodingAgent {
 			// A structured coding CLI is a one-shot native JSON process. There is
@@ -5083,10 +5084,11 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				chatAgentSecretEnv["SECRET_"+s.Name] = s.Value
 			}
 			workspaceRegistry := virtualtools.CreateWorkspaceToolRegistry(virtualtools.WorkspaceToolRegistryConfig{
-				WorkspaceAPIURL: getWorkspaceAPIURL(),
-				UserID:          currentUserID,
-				SessionID:       sessionID,
-				ExtraEnvVars:    chatAgentSecretEnv,
+				WorkspaceAPIURL:      getWorkspaceAPIURL(),
+				UserID:               currentUserID,
+				SessionID:            sessionID,
+				ExtraEnvVars:         chatAgentSecretEnv,
+				GenerateTextLLMTiers: generateTextWorkflowTiers(presetLLMConfig),
 			})
 			if len(chatAgentSecretEnv) > 0 {
 				logfWithContext(queryLogCtx, "[SECRETS] Injected %d secret(s) into chat agent shell env (isWorkflowPhase=%v)", len(chatAgentSecretEnv), isWorkflowPhase)
@@ -5382,6 +5384,10 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			for _, tool := range allTools {
 				if tool.Function != nil {
 					toolName := tool.Function.Name
+					if !primaryChatAllowsCustomTool(toolName, isWorkflowBuilderPhase) {
+						log.Printf("[CUSTOM TOOLS] Skipping execution-only tool %s for Workflow Builder chat", toolName)
+						continue
+					}
 
 					// Skip workspace tools - already registered above.
 					switch toolCategories[toolName] {
@@ -9522,6 +9528,7 @@ func (api *StreamingAPI) buildWorkshopConfig(
 		secretEnvVars["SECRET_"+s.Name] = s.Value
 	}
 	sessionAwareExecutors, workspaceEnv := virtualtools.CreateWorkspaceAdvancedToolExecutorsWithSessionAndEnv(currentUserID, sessionID, secretEnvVars)
+	virtualtools.SetGenerateTextWorkflowTierConfig(sessionAwareExecutors, getWorkspaceAPIURL(), generateTextWorkflowTiersFromResolved(cfg.TieredConfig))
 	if mode := validatedWorkflowExecutionMode(req.ExecutionOptions); mode != "" {
 		workspaceEnv["WORKFLOW_EXECUTION_MODE"] = mode
 	}
@@ -11156,6 +11163,39 @@ func workshopConvertTieredLLMConfig(config *workflowtypes.TieredLLMConfig) *todo
 	}
 
 	return tiered
+}
+
+// generateTextWorkflowTiers converts the current workflow manifest's model
+// roles into the compact config consumed by generate_text_llm. Provider-profile
+// workflows (including Cursor managing the full workflow) are expanded first,
+// so this path never consults the unrelated global delegation-tier settings.
+func generateTextWorkflowTiers(config *workflowtypes.PresetLLMConfig) *virtualtools.WorkflowLLMTierConfig {
+	if config == nil {
+		return nil
+	}
+	_, tiers := workshopResolveLLMConfig(lockedPresetLLMConfig(config))
+	return generateTextWorkflowTiersFromResolved(tiers)
+}
+
+func generateTextWorkflowTiersFromResolved(tiers *todo_creation_human.TieredLLMConfig) *virtualtools.WorkflowLLMTierConfig {
+	if tiers == nil {
+		return nil
+	}
+	toTierModel := func(model *todo_creation_human.AgentLLMConfig) *virtualtools.TierModel {
+		if model == nil {
+			return nil
+		}
+		return &virtualtools.TierModel{
+			Provider: model.Provider,
+			ModelID:  model.ModelID,
+			Options:  model.Options,
+		}
+	}
+	return &virtualtools.WorkflowLLMTierConfig{
+		High:   toTierModel(tiers.Tier1),
+		Medium: toTierModel(tiers.Tier2),
+		Low:    toTierModel(tiers.Tier3),
+	}
 }
 
 func workshopResolveLLMConfig(config *workflowtypes.PresetLLMConfig) (*todo_creation_human.AgentLLMConfig, *todo_creation_human.TieredLLMConfig) {

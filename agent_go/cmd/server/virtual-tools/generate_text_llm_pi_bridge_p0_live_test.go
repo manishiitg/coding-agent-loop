@@ -80,7 +80,15 @@ func TestGenerateTextLLMPiBridgeP0(t *testing.T) {
 		t.Fatalf("initialize Pi CLI: %v", err)
 	}
 
-	executor := createGenerateTextLLMExecutor(workspaceURL)
+	tierProvider := strings.TrimSpace(os.Getenv("GENERATE_TEXT_LLM_P0_TIER_PROVIDER"))
+	tierModelID := strings.TrimSpace(os.Getenv("GENERATE_TEXT_LLM_P0_TIER_MODEL"))
+	if tierProvider == "" || tierModelID == "" {
+		t.Skip("GENERATE_TEXT_LLM_P0_TIER_PROVIDER and GENERATE_TEXT_LLM_P0_TIER_MODEL are required as the current-workflow tier fixture")
+	}
+	tierModel := &TierModel{Provider: tierProvider, ModelID: tierModelID}
+	executor := createGenerateTextLLMExecutor(workspaceURL, &WorkflowLLMTierConfig{
+		High: tierModel, Medium: tierModel, Low: tierModel,
+	})
 	runs := make([]generateTextLLMP0TierRun, 0, len(generateTextLLMP0Tiers))
 	for _, tier := range generateTextLLMP0Tiers {
 		runs = append(runs, runGenerateTextLLMPiBridgeP0Tier(t, model, apiKey, apiURL, apiToken, executor, tier))

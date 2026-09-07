@@ -33,6 +33,7 @@ import { hasActiveSessionWork } from '../utils/activitySessions'
 import { headerStatusLabel, statusTone } from '../utils/globalActivityMonitorStatus'
 import { shouldClearAcceptedChatDraft } from '../utils/chatSubmissionDraft'
 import { liveTerminalControlKey } from '../utils/liveTerminalKeys'
+import { chatUsesStructuredTransport, shouldRouteChatInputToLiveTransport, shouldShowLiveTerminalControl } from '../utils/liveInputSubmission'
 import { effectiveLLMUnderLock, effectiveProviderUnderLock } from '../utils/effectiveLLM'
 import { normalizeEventViewMode } from '../stores/useChatStore'
 import { activateTab } from '../utils/activateTab'
@@ -432,6 +433,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     return isChatCompatiblePhase(tab.metadata.phaseId) ? tab.metadata.phaseId : undefined
   })
   const isWorkflowPhaseChat = !!workflowPhaseId
+  const isInteractiveWorkflowBuilderChat = workflowPhaseId === 'workflow-builder'
   const workflowPhasePreset = useGlobalPresetStore(state => state.getActivePreset('workflow'))
   const activeWorkflowPresetId = useGlobalPresetStore(state => state.activePresetIds.workflow)
   // Read Builder LLM from workflow manifest (source of truth), not the global preset.
@@ -587,7 +589,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
   // not the stale model config a durable tab may have inherited before the
   // profile contract existed. The running session still wins below so a real
   // server-selected fallback remains visible while it is active.
-  const [agentProfileRuntime, setAgentProfileRuntime] = useState<{ provider: string; model_id: string } | null>(null)
+  const [agentProfileRuntime, setAgentProfileRuntime] = useState<{ provider: string; model_id: string; transport?: string } | null>(null)
   useEffect(() => {
     if (!isProductSurface || !agentProfileId) {
       setAgentProfileRuntime(null)
@@ -769,12 +771,23 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     tabConfig?.llmConfig?.provider,
     workflowPhasePreset?.llmConfig?.builder_llm?.provider,
     workflowPhasePreset?.llmConfig?.provider])
-  // Cursor always runs on the structured (--print) transport in chat unless a
-  // product profile says tmux (server: codingAgentUsesStructuredTransport), so
-  // there is no live terminal to open: the pane could only ever say
-  // "Starting…". Hide the toggle for it instead (user request, 2026-09-03).
-  const liveTerminalOffered = mainTerminalAvailable
-    && !STRUCTURED_TRANSPORT_PROVIDERS.has((effectiveProviderForSteer || '').trim().toLowerCase())
+  // Cursor normally runs on structured JSON, while Workflow Builder uses a
+  // retained tmux pane for terminal inspection and live steering. Prefer the
+  // backend-reported transport once a session exists; this fallback keeps the
+  // control correct before the first runtime event arrives.
+  const activeReportedTransport = (activeSession?.runtime?.transport || '').trim().toLowerCase()
+  const profileReportedTransport = (agentProfileRuntime?.transport || '').trim().toLowerCase()
+  const reportedTransport = ['structured', 'tmux'].includes(activeReportedTransport)
+    ? activeReportedTransport
+    : ['structured', 'tmux'].includes(profileReportedTransport)
+      ? profileReportedTransport
+      : ''
+  const currentChatUsesStructuredTransport = chatUsesStructuredTransport({
+    isInteractiveWorkflowBuilder: isInteractiveWorkflowBuilderChat,
+    reportedTransport,
+    providerUsesStructuredTransport: STRUCTURED_TRANSPORT_PROVIDERS.has((effectiveProviderForSteer || '').trim().toLowerCase()),
+  })
+  const liveTerminalOffered = mainTerminalAvailable && !currentChatUsesStructuredTransport
   useEffect(() => {
     if (!providerManifestLoaded) {
       void loadProviderManifest()
@@ -795,9 +808,11 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
   // the normal queued-message path. This lets new coding CLIs work without
   // adding another frontend provider list.
   const supportsLiveCodingAgentInput = useMemo(
-    () => selectedProviderManifestEntry?.coding_agent?.supports_live_input === true
-      || FALLBACK_LIVE_INPUT_PROVIDERS.has(effectiveProviderForSteer || ''),
-    [effectiveProviderForSteer, selectedProviderManifestEntry]
+    () => !currentChatUsesStructuredTransport && (
+      selectedProviderManifestEntry?.coding_agent?.supports_live_input === true
+      || FALLBACK_LIVE_INPUT_PROVIDERS.has(effectiveProviderForSteer || '')
+    ),
+    [currentChatUsesStructuredTransport, effectiveProviderForSteer, selectedProviderManifestEntry]
   )
   const canShowSteer = useMemo(() => canSteer && !isCLIProvider, [canSteer, isCLIProvider])
   const browserMode = useMemo(() => tabConfig?.browserMode ?? 'auto', [tabConfig?.browserMode])
@@ -1679,8 +1694,13 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
   // whether to inject into an attached CLI, resume native history, or start a new
   // turn. The local queue is only useful for non-workflow API chat providers.
   const routeLiveInputToCLI = useMemo(
-    () => Boolean(tabSessionId) && (mainAgentIsTmuxCLI || isWorkflowMode),
-    [isWorkflowMode, mainAgentIsTmuxCLI, tabSessionId]
+    () => shouldRouteChatInputToLiveTransport({
+      hasSession: Boolean(tabSessionId),
+      isCodingAgentProvider: mainAgentIsTmuxCLI,
+      isWorkflowMode,
+      usesStructuredTransport: currentChatUsesStructuredTransport,
+    }),
+    [currentChatUsesStructuredTransport, isWorkflowMode, mainAgentIsTmuxCLI, tabSessionId]
   )
 
   // Deliver queued HUMAN messages into a turn that is already running, using
@@ -1700,8 +1720,10 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     const route = routeForQueuedMessage({
       isStreaming,
       hasSession: Boolean(tabSessionId),
-      isWorkflowMode,
-      isTmuxCLIProvider: mainAgentIsTmuxCLI,
+      // Structured workflow chats have no live process to inject into. Keep
+      // their follow-up queued until the current JSON turn reaches idle.
+      isWorkflowMode: isWorkflowMode && !currentChatUsesStructuredTransport,
+      isTmuxCLIProvider: mainAgentIsTmuxCLI && !currentChatUsesStructuredTransport,
       canSteer,
     })
     if (route === 'wait') return
@@ -1727,6 +1749,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
   }, [
     activeTabId,
     canSteer,
+    currentChatUsesStructuredTransport,
     handleSteerQueuedMessage,
     isStreaming,
     isWorkflowMode,
@@ -3611,7 +3634,11 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
                       </TooltipContent>
                   </Tooltip>
                 )}
-                {liveTerminalOffered && activeTabId && !isProductSurface && (
+                {activeTabId && shouldShowLiveTerminalControl(
+                  liveTerminalOffered,
+                  isProductSurface,
+                  isInteractiveWorkflowBuilderChat,
+                ) && (
                   <Tooltip>
                     <TooltipTrigger asChild>
                       <Button

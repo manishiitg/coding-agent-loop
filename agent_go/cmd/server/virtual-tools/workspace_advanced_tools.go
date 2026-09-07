@@ -203,8 +203,25 @@ func CreateWorkspaceAdvancedToolExecutorsWithURL(wsURL, userID, sessionID string
 
 func attachWorkspaceAdvancedLLMExecutors(executors map[string]func(ctx context.Context, args map[string]any) (string, error), workspaceURL string) {
 	wrapReadImageExecutor(executors, workspaceURL)
-	executors["generate_text_llm"] = createGenerateTextLLMExecutor(workspaceURL)
+	// This executor starts unbound. The server replaces it after resolving the
+	// current workflow's manifest; generate_text_llm must never choose models
+	// from a global workspace default.
+	executors["generate_text_llm"] = createGenerateTextLLMExecutor(workspaceURL, nil)
 	executors["search_web_llm"] = createSearchWebLLMExecutor(workspaceURL)
+}
+
+// SetGenerateTextWorkflowTierConfig binds generate_text_llm exclusively to
+// the current workflow's high/medium/low model configuration. A nil config is
+// intentionally fail-closed for chats that are not attached to a workflow.
+func SetGenerateTextWorkflowTierConfig(
+	executors map[string]func(ctx context.Context, args map[string]any) (string, error),
+	workspaceURL string,
+	config *WorkflowLLMTierConfig,
+) {
+	if executors == nil {
+		return
+	}
+	executors["generate_text_llm"] = createGenerateTextLLMExecutor(workspaceURL, config)
 }
 
 // getMCPExtraEnv returns MCP-related env vars to inject into shell commands.
@@ -246,7 +263,16 @@ type generateTextLLMResult struct {
 	Response string `json:"response"`
 }
 
-func createGenerateTextLLMExecutor(workspaceURL string) func(ctx context.Context, args map[string]any) (string, error) {
+// WorkflowLLMTierConfig is the resolved high/medium/low model set from one
+// workflow manifest. It is intentionally distinct from DelegationTierConfig,
+// which belongs to the general multi-agent delegation feature.
+type WorkflowLLMTierConfig struct {
+	High   *TierModel
+	Medium *TierModel
+	Low    *TierModel
+}
+
+func createGenerateTextLLMExecutor(workspaceURL string, workflowTiers *WorkflowLLMTierConfig) func(ctx context.Context, args map[string]any) (string, error) {
 	return func(ctx context.Context, args map[string]any) (string, error) {
 		userMessage := strings.TrimSpace(fmt.Sprintf("%v", args["user_message"]))
 		if userMessage == "" {
@@ -258,7 +284,7 @@ func createGenerateTextLLMExecutor(workspaceURL string) func(ctx context.Context
 			return "", fmt.Errorf("tier must be one of: high, medium, low")
 		}
 
-		tierModel, err := loadWorkspaceTierModel(ctx, workspaceURL, tier)
+		tierModel, err := loadWorkflowTierModel(workflowTiers, tier)
 		if err != nil {
 			return "", err
 		}
@@ -275,7 +301,7 @@ func createGenerateTextLLMExecutor(workspaceURL string) func(ctx context.Context
 					llmtypes.TextContent{Text: userMessage},
 				},
 			},
-		})
+		}, structuredOneShotCallOptions(llm.Provider(tierModel.Provider))...)
 		if err != nil {
 			return "", fmt.Errorf("generate_text_llm failed for tier %q: %w", tier, err)
 		}
@@ -307,7 +333,7 @@ func createGenerateTextLLMExecutor(workspaceURL string) func(ctx context.Context
 //
 // Pass tier "low", "medium", or "high"; system + user are the two messages.
 // Returns the model's text response, trimmed.
-func GenerateTextOneShot(ctx context.Context, tier, systemMessage, userMessage string) (string, error) {
+func GenerateTextOneShot(ctx context.Context, workflowTiers *WorkflowLLMTierConfig, tier, systemMessage, userMessage string) (string, error) {
 	if strings.TrimSpace(userMessage) == "" {
 		return "", fmt.Errorf("user_message is required")
 	}
@@ -318,7 +344,7 @@ func GenerateTextOneShot(ctx context.Context, tier, systemMessage, userMessage s
 
 	workspaceURL := getWorkspaceAPIURL()
 
-	tierModel, err := loadWorkspaceTierModel(ctx, workspaceURL, tier)
+	tierModel, err := loadWorkflowTierModel(workflowTiers, tier)
 	if err != nil {
 		return "", err
 	}
@@ -340,7 +366,7 @@ func GenerateTextOneShot(ctx context.Context, tier, systemMessage, userMessage s
 		Parts: []llmtypes.ContentPart{llmtypes.TextContent{Text: userMessage}},
 	})
 
-	resp, err := llmModel.GenerateContent(ctx, messages)
+	resp, err := llmModel.GenerateContent(ctx, messages, structuredOneShotCallOptions(llm.Provider(tierModel.Provider))...)
 	if err != nil {
 		return "", fmt.Errorf("GenerateTextOneShot failed for tier %q: %w", tier, err)
 	}
@@ -455,9 +481,10 @@ func executeMCPWebSearch(ctx context.Context, request mcpWebSearchRequest) (stri
 	return strings.TrimSpace(mcpclient.ToolResultAsString(result)), nil
 }
 
-func loadWorkspaceTierModel(ctx context.Context, workspaceURL, tier string) (*TierModel, error) {
-	cfg := loadWorkspaceTierConfig(ctx, workspaceURL)
-
+func loadWorkflowTierModel(cfg *WorkflowLLMTierConfig, tier string) (*TierModel, error) {
+	if cfg == nil {
+		return nil, fmt.Errorf("generate_text_llm requires a current workflow with capabilities.llm_config")
+	}
 	var model *TierModel
 	switch tier {
 	case "high":
@@ -469,80 +496,10 @@ func loadWorkspaceTierModel(ctx context.Context, workspaceURL, tier string) (*Ti
 	}
 
 	if model == nil || strings.TrimSpace(model.Provider) == "" || strings.TrimSpace(model.ModelID) == "" {
-		return nil, fmt.Errorf("tier %q is not configured in workspace tier config", tier)
+		return nil, fmt.Errorf("tier %q is not configured in the current workflow's capabilities.llm_config", tier)
 	}
 
-	return model, nil
-}
-
-func loadWorkspaceTierConfig(ctx context.Context, workspaceURL string) *DelegationTierConfig {
-	cfg := &DelegationTierConfig{
-		High:   envTierModel("DELEGATION_TIER_HIGH_PROVIDER", "DELEGATION_TIER_HIGH_MODEL"),
-		Medium: envTierModel("DELEGATION_TIER_MEDIUM_PROVIDER", "DELEGATION_TIER_MEDIUM_MODEL"),
-		Low:    envTierModel("DELEGATION_TIER_LOW_PROVIDER", "DELEGATION_TIER_LOW_MODEL"),
-	}
-
-	if workspaceURL == "" {
-		return cfg
-	}
-
-	rawCfg, exists, err := services.LoadDelegationTierConfig(ctx, workspaceURL)
-	if err != nil {
-		log.Printf("[GENERATE_TEXT_LLM] Failed to load workspace tier config: %v", err)
-		return cfg
-	}
-	if !exists || len(rawCfg) == 0 {
-		return cfg
-	}
-
-	data, err := json.Marshal(rawCfg)
-	if err != nil {
-		log.Printf("[GENERATE_TEXT_LLM] Failed to marshal workspace tier config: %v", err)
-		return cfg
-	}
-
-	var workspaceCfg DelegationTierConfig
-	if err := json.Unmarshal(data, &workspaceCfg); err != nil {
-		log.Printf("[GENERATE_TEXT_LLM] Failed to parse workspace tier config: %v", err)
-		return cfg
-	}
-	if workspaceCfg.Mode == "provider_profile" && strings.TrimSpace(workspaceCfg.Provider) != "" {
-		if defaults, ok := llmproviders.GetCodingAgentDefaultTierModels(llmproviders.Provider(strings.TrimSpace(workspaceCfg.Provider))); ok {
-			toTier := func(ref llmproviders.CodingAgentTierModelRef) *TierModel {
-				if ref.Provider == "" || ref.ModelID == "" {
-					return nil
-				}
-				return &TierModel{Provider: ref.Provider, ModelID: ref.ModelID, Options: ref.Options}
-			}
-			workspaceCfg.High = toTier(defaults.High)
-			workspaceCfg.Medium = toTier(defaults.Medium)
-			workspaceCfg.Low = toTier(defaults.Low)
-		}
-	}
-
-	if sanitized := sanitizeTierModelLocal(workspaceCfg.High); sanitized != nil {
-		cfg.High = sanitized
-	}
-	if sanitized := sanitizeTierModelLocal(workspaceCfg.Medium); sanitized != nil {
-		cfg.Medium = sanitized
-	}
-	if sanitized := sanitizeTierModelLocal(workspaceCfg.Low); sanitized != nil {
-		cfg.Low = sanitized
-	}
-
-	return cfg
-}
-
-func envTierModel(providerEnv, modelEnv string) *TierModel {
-	provider := strings.TrimSpace(os.Getenv(providerEnv))
-	modelID := strings.TrimSpace(os.Getenv(modelEnv))
-	if provider == "" || modelID == "" {
-		return nil
-	}
-	return &TierModel{
-		Provider: provider,
-		ModelID:  modelID,
-	}
+	return sanitizeTierModelLocal(model), nil
 }
 
 func sanitizeTierModelLocal(model *TierModel) *TierModel {
@@ -698,6 +655,33 @@ func createLLMFromTierModel(ctx context.Context, model *TierModel, apiKeys *llm.
 	}
 
 	return llm.InitializeLLM(llmCfg)
+}
+
+// structuredOneShotCallOptions keeps generate_text_llm out of every coding
+// CLI's interactive/tmux path. The tool is a bounded one-shot operation, so a
+// provider-native structured stream is the only valid CLI transport. Ordinary
+// HTTP/API providers have no CLI transport option and receive no extra option.
+func structuredOneShotCallOptions(provider llm.Provider) []llmtypes.CallOption {
+	options := make([]llmtypes.CallOption, 0, 2)
+	switch provider {
+	case llm.ProviderClaudeCode:
+		options = append(options, llmproviders.WithClaudeStructuredTransport(true))
+	case llm.ProviderCodexCLI:
+		options = append(options, llmproviders.WithCodexStructuredTransport(true))
+	case llm.ProviderCursorCLI:
+		options = append(options, llmproviders.WithCursorStructuredTransport(true))
+	case llm.ProviderPiCLI:
+		options = append(options, llmproviders.WithPiStructuredTransport(true))
+	default:
+		return nil
+	}
+
+	// Use the stable workspace root rather than the release directory as the
+	// CLI cwd. No interactive session ID, persistence, or resume option is added.
+	if workingDir := llmproviders.CodingAgentWorkingDirOption(llmproviders.Provider(provider), fsutil.WorkspaceDocsRoot()); workingDir != nil {
+		options = append(options, workingDir)
+	}
+	return options
 }
 
 func resolveRuntimeModelIDForVirtualTool(provider llm.Provider, modelID string) string {

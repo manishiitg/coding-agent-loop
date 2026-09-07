@@ -172,8 +172,11 @@ func TestToolSetInvariants(t *testing.T) {
 				t.Fatalf("mode=%s: expected %q in allow-list", mode, n)
 			}
 		}
-		if !allowSet["human_feedback"] {
-			t.Fatalf("mode=%s: blocking human_feedback must be exposed for explicit tests and urgent short-lived input", mode)
+		if mode == "workshop" && allowSet["human_feedback"] {
+			t.Fatal("workshop mode must ask through normal Builder chat, not blocking human_feedback")
+		}
+		if mode == "run" && !allowSet["human_feedback"] {
+			t.Fatal("run mode must retain blocking human_feedback for urgent execution-only input")
 		}
 		if mode == "run" && allowSet["answer_human_input_request"] {
 			t.Fatal("run mode must not let a scheduled/runtime agent answer a user decision")
@@ -229,5 +232,17 @@ func TestToolSetInvariants(t *testing.T) {
 		if run[n] {
 			t.Fatalf("run allow-list must not expose Pulse mutation tool %q", n)
 		}
+	}
+}
+
+func TestPrimaryWorkflowBuilderChatExcludesBlockingHumanFeedback(t *testing.T) {
+	if primaryChatAllowsCustomTool("human_feedback", true) {
+		t.Fatal("Workflow Builder must not expose human_feedback")
+	}
+	if !primaryChatAllowsCustomTool("notify_user", true) {
+		t.Fatal("Workflow Builder must retain non-blocking notify_user")
+	}
+	if !primaryChatAllowsCustomTool("human_feedback", false) {
+		t.Fatal("non-Builder execution contexts must retain human_feedback")
 	}
 }

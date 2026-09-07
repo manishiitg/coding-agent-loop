@@ -6,6 +6,57 @@ export type LiveInputSubmissionCoordinator = <T>(
   submit: () => Promise<T>,
 ) => Promise<T>
 
+export interface ChatInputLiveRouteDecision {
+  hasSession: boolean
+  isCodingAgentProvider: boolean
+  isWorkflowMode: boolean
+  usesStructuredTransport: boolean
+}
+
+export interface ChatTransportDecision {
+  isInteractiveWorkflowBuilder: boolean
+  reportedTransport: string
+  providerUsesStructuredTransport: boolean
+}
+
+// Workflow Builder is the one deliberate exception to Cursor's normal
+// structured transport. Runtime/profile summaries describe the provider-level
+// default and can therefore still say "structured" even while the Builder's
+// real process is retained in tmux. The chat-specific contract must win.
+export function chatUsesStructuredTransport({
+  isInteractiveWorkflowBuilder,
+  reportedTransport,
+  providerUsesStructuredTransport,
+}: ChatTransportDecision): boolean {
+  if (isInteractiveWorkflowBuilder) return false
+  if (reportedTransport === 'structured') return true
+  if (reportedTransport === 'tmux') return false
+  return providerUsesStructuredTransport
+}
+
+// Product surfaces normally keep their compact chat chrome, but Workflow
+// Builder is an inspectable retained tmux session even when it is rendered
+// inside the AgentWorks product shell.
+export function shouldShowLiveTerminalControl(
+  liveTerminalOffered: boolean,
+  isProductSurface: boolean,
+  isInteractiveWorkflowBuilder: boolean,
+): boolean {
+  return liveTerminalOffered && (!isProductSurface || isInteractiveWorkflowBuilder)
+}
+
+// Only an interactive transport can accept terminal-style live delivery.
+// Structured coding-agent turns resume through the ordinary query route; trying
+// /live-input first adds a predictable 404/409 and can race another JSON turn.
+export function shouldRouteChatInputToLiveTransport({
+  hasSession,
+  isCodingAgentProvider,
+  isWorkflowMode,
+  usesStructuredTransport,
+}: ChatInputLiveRouteDecision): boolean {
+  return hasSession && !usesStructuredTransport && (isCodingAgentProvider || isWorkflowMode)
+}
+
 // A rapid Enter/double-click can invoke ChatInput twice before the first
 // /live-input response clears the draft. Share the complete submission promise
 // for that exact session + message so the HTTP mutation, optimistic event, and

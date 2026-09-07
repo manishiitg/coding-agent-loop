@@ -119,6 +119,15 @@ export function GmailSetupGuide() {
                 sign in — anyone else gets a generic &ldquo;Access blocked&rdquo; with no explanation. Add every mailbox you plan
                 to connect, or publish the app so the list no longer applies.
               </Gotcha>
+              <Gotcha>
+                Requesting a scope in code is not enough — Google only shows a scope on the consent screen (and
+                only grants it) if it is also added under <strong>Data access</strong> (older Console: still the{' '}
+                <strong>Scopes</strong> step) on this same OAuth consent screen. A project reused from something
+                else, or one where this step was skipped, silently drops <code>gmail.send</code>/
+                <code>gmail.readonly</code> — sign-in appears to succeed, showing only &ldquo;Email address&rdquo;
+                on the consent screen, and every send afterward fails with an insufficient-scope error. Add both
+                scopes there explicitly before connecting a mailbox.
+              </Gotcha>
             </Step>
 
             <Step n={5} title="Create the OAuth client">
@@ -136,8 +145,8 @@ export function GmailSetupGuide() {
 
             <Step n={6} title="Register the client">
               <p>
-                Under <strong>OAuth clients</strong> below, give it a name and upload the downloaded JSON file
-                directly — no server filesystem access needed.
+                Under <strong>OAuth clients</strong> below, enter the mailbox you're connecting and upload the
+                downloaded JSON file directly — no server filesystem access needed.
               </p>
               <p>Verify it is the right type first — the top-level key should read <code>installed</code>, not <code>web</code>.</p>
             </Step>
@@ -170,6 +179,14 @@ export function GmailSetupGuide() {
                 on its row. Repeat steps 2&ndash;7 only if you want a mailbox on a <em>separate</em> Google Cloud
                 project — otherwise every further mailbox reuses the same registered client.
               </p>
+              <Gotcha>
+                The tab opens in whichever Chrome profile is frontmost. If the mailbox belongs to a different
+                profile, open that profile first and use <strong>Copy link</strong> on the row to paste the sign-in
+                link into it. Do not copy the URL out of the address bar of the tab that opened — by then Chrome has
+                followed Google&rsquo;s redirects, and that URL carries a token tied to the profile it started in.
+                Pasting it elsewhere fails with a bare{' '}
+                <code>400. That&rsquo;s an error. The server cannot process the request because it is malformed.</code>
+              </Gotcha>
             </Step>
           </ol>
 

@@ -402,8 +402,9 @@ func IsHumanToolCategory(category string) bool {
 // notify_user invisible. That allow-list is gone: registration is now the only
 // source, so nothing can be allowed-but-unregistered.
 //
-// human_feedback is available for explicit channel tests and truly urgent,
-// short-lived human-only input; ordinary builder questions stay in chat.
+// human_feedback belongs to running workflow agents that may need truly urgent,
+// short-lived human-only input. It is excluded from interactive Builder chat,
+// where the agent asks the user directly in its ordinary response channel.
 // notify_user is the non-blocking outbound push (Slack/WhatsApp/Gmail).
 // get_human_input_request, list_approved_fixer_decisions, create_human_input_request,
 // answer_human_input_request, and mark_human_input_consumed implement the
@@ -419,14 +420,16 @@ func WorkshopHumanToolNames() []string {
 // chat may record the user's answer itself.
 func HumanToolNamesForWorkshopMode(mode string) []string {
 	names := WorkshopHumanToolNames()
-	if strings.TrimSpace(mode) != "run" {
-		return names
-	}
-	filtered := make([]string, 0, len(names)-1)
+	mode = strings.TrimSpace(mode)
+	filtered := make([]string, 0, len(names))
 	for _, name := range names {
-		if name != "answer_human_input_request" {
-			filtered = append(filtered, name)
+		if mode == "run" && name == "answer_human_input_request" {
+			continue
 		}
+		if mode != "run" && name == "human_feedback" {
+			continue
+		}
+		filtered = append(filtered, name)
 	}
 	return filtered
 }

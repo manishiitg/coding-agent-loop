@@ -130,3 +130,28 @@ func TestWorkshopResolveLLMConfigExpandsCodingAgentMode(t *testing.T) {
 		t.Fatalf("unexpected low tier: %+v", tiered.Tier3)
 	}
 }
+
+func TestGenerateTextWorkflowTiersExpandsCursorProviderProfile(t *testing.T) {
+	defaults, ok := llmproviders.GetCodingAgentDefaultTierModels(llmproviders.ProviderCursorCLI)
+	if !ok {
+		t.Fatal("expected Cursor coding-agent defaults")
+	}
+
+	tiers := generateTextWorkflowTiers(&workflowtypes.PresetLLMConfig{
+		SchemaVersion: workflowtypes.LLMConfigSchemaVersion,
+		Mode:          workflowtypes.LLMConfigModeProviderProfile,
+		Provider:      string(llmproviders.ProviderCursorCLI),
+	})
+	if tiers == nil || tiers.High == nil || tiers.Medium == nil || tiers.Low == nil {
+		t.Fatalf("generateTextWorkflowTiers() = %+v, want all Cursor workflow tiers", tiers)
+	}
+	if tiers.High.Provider != defaults.High.Provider || tiers.High.ModelID != defaults.High.ModelID {
+		t.Fatalf("high tier = %+v, want Cursor workflow high %+v", tiers.High, defaults.High)
+	}
+	if tiers.Medium.Provider != defaults.Medium.Provider || tiers.Medium.ModelID != defaults.Medium.ModelID {
+		t.Fatalf("medium tier = %+v, want Cursor workflow medium %+v", tiers.Medium, defaults.Medium)
+	}
+	if tiers.Low.Provider != defaults.Low.Provider || tiers.Low.ModelID != defaults.Low.ModelID {
+		t.Fatalf("low tier = %+v, want Cursor workflow low %+v", tiers.Low, defaults.Low)
+	}
+}

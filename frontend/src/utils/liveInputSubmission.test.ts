@@ -1,11 +1,68 @@
 import { describe, expect, it, vi } from 'vitest'
 
 import {
+  chatUsesStructuredTransport,
   createLiveInputSubmissionCoordinator,
+  shouldRouteChatInputToLiveTransport,
   shouldAppendOptimisticLiveInputMessage,
   shouldRefreshSessionEventStream,
+  shouldShowLiveTerminalControl,
   shouldUseRetainedLiveInput,
 } from './liveInputSubmission'
+
+describe('chatUsesStructuredTransport', () => {
+  it('keeps Workflow Builder on tmux even when a provider summary says structured', () => {
+    expect(chatUsesStructuredTransport({
+      isInteractiveWorkflowBuilder: true,
+      reportedTransport: 'structured',
+      providerUsesStructuredTransport: true,
+    })).toBe(false)
+  })
+
+  it('uses the reported transport for ordinary chats', () => {
+    expect(chatUsesStructuredTransport({
+      isInteractiveWorkflowBuilder: false,
+      reportedTransport: 'tmux',
+      providerUsesStructuredTransport: true,
+    })).toBe(false)
+    expect(chatUsesStructuredTransport({
+      isInteractiveWorkflowBuilder: false,
+      reportedTransport: 'structured',
+      providerUsesStructuredTransport: false,
+    })).toBe(true)
+  })
+})
+
+describe('shouldShowLiveTerminalControl', () => {
+  it('shows the terminal for Workflow Builder inside the AgentWorks product shell', () => {
+    expect(shouldShowLiveTerminalControl(true, true, true)).toBe(true)
+  })
+
+  it('keeps the compact product chat chrome for ordinary product chats', () => {
+    expect(shouldShowLiveTerminalControl(true, true, false)).toBe(false)
+  })
+})
+
+describe('shouldRouteChatInputToLiveTransport', () => {
+  const base = {
+    hasSession: true,
+    isCodingAgentProvider: true,
+    isWorkflowMode: true,
+    usesStructuredTransport: false,
+  }
+
+  it('routes an interactive coding-agent chat through live input', () => {
+    expect(shouldRouteChatInputToLiveTransport(base)).toBe(true)
+  })
+
+  it('routes structured Cursor follow-ups through the normal query path', () => {
+    expect(shouldRouteChatInputToLiveTransport({ ...base, usesStructuredTransport: true })).toBe(false)
+  })
+
+  it('requires an existing backend session', () => {
+    expect(shouldRouteChatInputToLiveTransport({ ...base, hasSession: false })).toBe(false)
+  })
+})
 
 describe('createLiveInputSubmissionCoordinator', () => {
   it('executes a rapid duplicate live message exactly once', async () => {

@@ -10,20 +10,64 @@ import { GmailSetupGuide } from './GmailSetupGuide'
 
 // ── Email notifications (account-wide, shared by every workflow) ──────────
 
+// Shortens a full OAuth scope URL to its last path segment for display (e.g.
+// "https://www.googleapis.com/auth/gmail.send" -> "gmail.send"); shows the
+// full string on hover via the caller's title attribute.
+function formatGmailScope(scope: string): string {
+  const parts = scope.split('/')
+  return parts[parts.length - 1] || scope
+}
+
 type GmailNotificationsBots = Pick<WorkflowBots,
   | 'readOnly'
   | 'gmailOpen' | 'setGmailOpen' | 'gmailConfig' | 'setGmailConfig' | 'gmailBlockedText' | 'setGmailBlockedText'
   | 'gmailLoading' | 'gmailChecking' | 'gmailSaving' | 'gmailTesting' | 'gmailError' | 'gmailSuccess' | 'gmailTestResult'
   | 'gmailBlockedDefaults' | 'gmailDefaultIsBlocked' | 'gmailCanEnable' | 'gmailHasChanges' | 'loadGmail' | 'saveGmail' | 'testGmail'
-  | 'gmailConnections' | 'gmailConnectionsBusy' | 'gmailAuthPending'
-  | 'gmailNewConnectionName' | 'setGmailNewConnectionName'
-  | 'gmailNewConnectionDir' | 'setGmailNewConnectionDir'
+  | 'gmailConnections' | 'gmailConnectionsBusy' | 'gmailAuthPending' | 'gmailAuthUrl'
   | 'runGmailConnectionAction' | 'connectGmailAccount'
   | 'gmailOAuthClients' | 'gmailOAuthClientsBusy' | 'gmailOAuthClientError'
-  | 'gmailNewClientName' | 'setGmailNewClientName'
-  | 'gmailSelectedClientName' | 'setGmailSelectedClientName'
+  | 'gmailNewClientEmail' | 'setGmailNewClientEmail'
   | 'createGmailOAuthClient' | 'deleteGmailOAuthClient'
 >
+
+// Shown while a sign-in is in flight, so the link can be pasted into a
+// different Chrome profile than the one the auto-opened tab landed in —
+// copying the address bar out of that tab does not work (see gmailAuthUrl's
+// comment in useWorkflowBots.ts for why).
+function SignInLinkBox({ url }: { url: string }) {
+  const [copyState, setCopyState] = useState<'idle' | 'copied' | 'failed'>('idle')
+
+  const handleCopy = async () => {
+    try {
+      await navigator.clipboard.writeText(url)
+      setCopyState('copied')
+    } catch {
+      setCopyState('failed')
+    }
+    window.setTimeout(() => setCopyState('idle'), 2000)
+  }
+
+  return (
+    <div className="mt-2 rounded-md border border-border bg-muted/40 p-2">
+      <p className="text-xs text-muted-foreground">
+        A tab opened in your default Chrome profile. If this mailbox lives in a different profile,
+        open that profile and paste this link there — copying the address bar out of the tab that
+        opened will not work, since Google ties it to the profile it started in.
+      </p>
+      <div className="mt-1.5 flex items-center gap-2">
+        <code className="flex-1 truncate rounded bg-background px-2 py-1 font-mono text-[11px] text-muted-foreground">
+          {url}
+        </code>
+        <button
+          onClick={handleCopy}
+          className="shrink-0 rounded border border-border px-2 py-1 text-xs text-muted-foreground hover:text-foreground"
+        >
+          {copyState === 'copied' ? 'Copied!' : copyState === 'failed' ? 'Copy failed' : 'Copy link'}
+        </button>
+      </div>
+    </div>
+  )
+}
 
 export function GmailNotifications({ bots }: { bots: GmailNotificationsBots }) {
   const {
@@ -31,13 +75,10 @@ export function GmailNotifications({ bots }: { bots: GmailNotificationsBots }) {
     gmailOpen, setGmailOpen, gmailConfig, setGmailConfig, gmailBlockedText, setGmailBlockedText,
     gmailLoading, gmailChecking, gmailSaving, gmailTesting, gmailError, gmailSuccess, gmailTestResult,
     gmailBlockedDefaults, gmailDefaultIsBlocked, gmailCanEnable, gmailHasChanges, loadGmail, saveGmail, testGmail,
-    gmailConnections, gmailConnectionsBusy, gmailAuthPending,
-    gmailNewConnectionName, setGmailNewConnectionName,
-    gmailNewConnectionDir, setGmailNewConnectionDir,
+    gmailConnections, gmailConnectionsBusy, gmailAuthPending, gmailAuthUrl,
     runGmailConnectionAction, connectGmailAccount,
     gmailOAuthClients, gmailOAuthClientsBusy, gmailOAuthClientError,
-    gmailNewClientName, setGmailNewClientName,
-    gmailSelectedClientName, setGmailSelectedClientName,
+    gmailNewClientEmail, setGmailNewClientEmail,
     createGmailOAuthClient, deleteGmailOAuthClient,
   } = bots
 
@@ -53,27 +94,20 @@ export function GmailNotifications({ bots }: { bots: GmailNotificationsBots }) {
   const [newClientFile, setNewClientFile] = useState<File | null>(null)
   const [newClientParseError, setNewClientParseError] = useState<string | null>(null)
 
-  // Match the backend's slug pattern (lowercase letters/digits/hyphens).
-  const slugifyClientName = (value: string) =>
-    value.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 63)
+  // A second (or third...) mailbox reusing an already-registered client
+  // (the documented pattern: grant each mailbox IAM access to the same
+  // project) needs its own small entry point, scoped to that client's row,
+  // now that adding the client itself also creates its first account.
+  const [addMailboxFor, setAddMailboxFor] = useState<string | null>(null)
+  const [addMailboxEmail, setAddMailboxEmail] = useState('')
 
-  // The downloaded JSON already names the Google Cloud project — prefill the
-  // name field from it instead of asking the user to type one, so picking
-  // the file is normally the only step. Never overrides a name they already
-  // typed, and silently leaves the field blank on a file that doesn't parse
-  // (handleAddOAuthClient reports that error on submit instead).
-  const handleClientFileChange = async (file: File | null) => {
-    setNewClientFile(file)
-    setNewClientParseError(null)
-    if (!file || gmailNewClientName.trim()) return
-    try {
-      const parsed = JSON.parse(await file.text()) as Record<string, unknown>
-      const entry = (parsed.installed ?? parsed.web) as Record<string, unknown> | undefined
-      const projectId = typeof entry?.project_id === 'string' ? entry.project_id : undefined
-      if (projectId) setGmailNewClientName(slugifyClientName(projectId))
-    } catch {
-      // Leave the name blank — the submit handler below surfaces the parse error.
-    }
+  const handleAddMailbox = async (clientName: string) => {
+    const email = addMailboxEmail.trim()
+    if (!email) return
+    await runGmailConnectionAction('new', () =>
+      agentApi.createGmailConnection({ display_name: email, client_name: clientName }))
+    setAddMailboxFor(null)
+    setAddMailboxEmail('')
   }
 
   const handleAddOAuthClient = async () => {
@@ -86,7 +120,10 @@ export function GmailNotifications({ bots }: { bots: GmailNotificationsBots }) {
       setNewClientParseError('That file is not valid JSON — download the client_secret.json Google Cloud gave you and upload it unmodified.')
       return
     }
-    const ok = await createGmailOAuthClient(gmailNewClientName.trim(), parsed)
+    // createGmailOAuthClient derives the internal client name from this
+    // email — asking for the mailbox directly is what an operator actually
+    // thinks in terms of, not an arbitrary label for the Google Cloud app.
+    const ok = await createGmailOAuthClient(gmailNewClientEmail.trim(), parsed)
     if (ok) setNewClientFile(null)
   }
 
@@ -155,8 +192,10 @@ export function GmailNotifications({ bots }: { bots: GmailNotificationsBots }) {
                 <div>
                   <h4 className="text-sm font-medium">OAuth clients</h4>
                   <p className="mt-0.5 text-xs text-muted-foreground">
-                    The Google Cloud app each account signs in through. Give it a name — a second upload never
-                    replaces an existing one by accident; it needs its own name.
+                    The Google Cloud app each account signs in through. Say which mailbox it's for, upload the
+                    client file, and that mailbox appears below as a sending account, ready to sign in — a
+                    second upload never replaces an existing client by accident. Adding another <em>mailbox</em>{' '}
+                    that reuses this same client is done from its row below, not here.
                   </p>
                 </div>
                 {gmailOAuthClientError && <StatusBanner tone="error">{gmailOAuthClientError}</StatusBanner>}
@@ -164,40 +203,71 @@ export function GmailNotifications({ bots }: { bots: GmailNotificationsBots }) {
                 {gmailOAuthClients.length > 0 && (
                   <ul className="space-y-1">
                     {gmailOAuthClients.map(client => (
-                      <li key={client.name} className="flex items-center gap-2 rounded border border-border px-2 py-1.5 text-xs">
-                        <span className="font-medium">{client.name}</span>
-                        {client.client_id && <span className="truncate font-mono text-muted-foreground">{client.client_id}</span>}
-                        <button
-                          onClick={() => handleRemoveOAuthClient(client.name)}
-                          disabled={readOnly || gmailOAuthClientsBusy}
-                          title={readOnly ? READ_ONLY_TITLE : undefined}
-                          className="ml-auto rounded border border-border px-2 py-0.5 text-red-600 hover:bg-red-50 disabled:opacity-40 dark:text-red-400 dark:hover:bg-red-900/20"
-                        >
-                          Remove
-                        </button>
+                      <li key={client.name} className="rounded border border-border px-2 py-1.5 text-xs">
+                        <div className="flex items-center gap-2">
+                          <span className="font-medium">{client.name}</span>
+                          {client.client_id && <span className="truncate font-mono text-muted-foreground">{client.client_id}</span>}
+                          <button
+                            onClick={() => setAddMailboxFor(current => (current === client.name ? null : client.name))}
+                            disabled={readOnly}
+                            title={readOnly ? READ_ONLY_TITLE : undefined}
+                            className="ml-auto rounded border border-border px-2 py-0.5 text-muted-foreground hover:text-foreground disabled:opacity-40"
+                          >
+                            + Add mailbox
+                          </button>
+                          <button
+                            onClick={() => handleRemoveOAuthClient(client.name)}
+                            disabled={readOnly || gmailOAuthClientsBusy}
+                            title={readOnly ? READ_ONLY_TITLE : undefined}
+                            className="rounded border border-border px-2 py-0.5 text-red-600 hover:bg-red-50 disabled:opacity-40 dark:text-red-400 dark:hover:bg-red-900/20"
+                          >
+                            Remove
+                          </button>
+                        </div>
+                        {addMailboxFor === client.name && (
+                          <div className="mt-1.5 flex items-center gap-2">
+                            <input
+                              type="email"
+                              autoFocus
+                              value={addMailboxEmail}
+                              onChange={event => setAddMailboxEmail(event.target.value)}
+                              disabled={readOnly}
+                              placeholder="another-mailbox@example.com"
+                              className="flex-1 rounded border border-border bg-background px-2 py-1 text-xs focus:outline-none focus:ring-2 focus:ring-primary"
+                            />
+                            <Button
+                              variant="outline"
+                              disabled={readOnly || !addMailboxEmail.trim() || gmailConnectionsBusy !== null}
+                              title={readOnly ? READ_ONLY_TITLE : undefined}
+                              onClick={() => handleAddMailbox(client.name)}
+                            >
+                              Add
+                            </Button>
+                          </div>
+                        )}
                       </li>
                     ))}
                   </ul>
                 )}
                 <div className="flex flex-wrap items-center gap-2">
                   <input
-                    type="text"
-                    value={gmailNewClientName}
-                    onChange={event => setGmailNewClientName(event.target.value)}
+                    type="email"
+                    value={gmailNewClientEmail}
+                    onChange={event => setGmailNewClientEmail(event.target.value)}
                     disabled={readOnly}
-                    placeholder="Client name (e.g. primary)"
+                    placeholder="Mailbox this client is for (e.g. you@example.com)"
                     className="flex-1 rounded-md border border-border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary"
                   />
                   <input
                     type="file"
                     accept="application/json"
                     disabled={readOnly}
-                    onChange={event => void handleClientFileChange(event.target.files?.[0] || null)}
+                    onChange={event => setNewClientFile(event.target.files?.[0] || null)}
                     className="flex-1 text-xs text-muted-foreground file:mr-2 file:rounded file:border file:border-border file:bg-muted/40 file:px-2 file:py-1 file:text-xs"
                   />
                   <Button
                     variant="outline"
-                    disabled={readOnly || !gmailNewClientName.trim() || !newClientFile || gmailOAuthClientsBusy}
+                    disabled={readOnly || !gmailNewClientEmail.trim() || !newClientFile || gmailOAuthClientsBusy}
                     title={readOnly ? READ_ONLY_TITLE : undefined}
                     onClick={handleAddOAuthClient}
                   >
@@ -235,6 +305,15 @@ export function GmailNotifications({ bots }: { bots: GmailNotificationsBots }) {
                           {conn.email || 'Address not known yet'}
                           {conn.client_name && <span className="ml-2 text-muted-foreground/70">via {conn.client_name}</span>}
                         </p>
+                        {conn.auth?.scopes && conn.auth.scopes.length > 0 && (
+                          <p className="mt-1 flex flex-wrap gap-1">
+                            {conn.auth.scopes.map(scope => (
+                              <span key={scope} className="rounded bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground" title={scope}>
+                                {formatGmailScope(scope)}
+                              </span>
+                            ))}
+                          </p>
+                        )}
 
                         <div className="mt-2 flex flex-wrap gap-2">
                           <button
@@ -278,68 +357,21 @@ export function GmailNotifications({ bots }: { bots: GmailNotificationsBots }) {
                             Remove
                           </button>
                         </div>
+
+                        {gmailAuthPending === conn.id && gmailAuthUrl && (
+                          <SignInLinkBox url={gmailAuthUrl} />
+                        )}
                       </li>
                     ))}
                   </ul>
                 )}
 
-                <div className="space-y-2 border-t border-border pt-3">
-                  {gmailOAuthClients.length === 0 ? (
-                    <p className="text-xs text-amber-600 dark:text-amber-400">
-                      Add an OAuth client above first — every account needs one to sign in through.
-                    </p>
-                  ) : (
-                    <select
-                      value={gmailSelectedClientName}
-                      onChange={event => setGmailSelectedClientName(event.target.value)}
-                      disabled={readOnly}
-                      className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary"
-                    >
-                      <option value="" disabled>Choose an OAuth client…</option>
-                      {gmailOAuthClients.map(client => (
-                        <option key={client.name} value={client.name}>{client.name}</option>
-                      ))}
-                    </select>
-                  )}
-                  <div className="flex gap-2">
-                    <input
-                      type="text"
-                      value={gmailNewConnectionName}
-                      onChange={event => setGmailNewConnectionName(event.target.value)}
-                      disabled={readOnly}
-                      placeholder="Account name (e.g. Work)"
-                      className="flex-1 rounded-md border border-border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary"
-                    />
-                    <Button
-                      variant="outline"
-                      disabled={readOnly || !gmailNewConnectionName.trim() || !gmailSelectedClientName || gmailConnectionsBusy !== null}
-                      title={readOnly ? READ_ONLY_TITLE : undefined}
-                      onClick={() => runGmailConnectionAction('new', async () => {
-                        await agentApi.createGmailConnection({
-                          display_name: gmailNewConnectionName.trim(),
-                          client_name: gmailSelectedClientName,
-                          config_home: gmailNewConnectionDir.trim() || undefined,
-                        })
-                        setGmailNewConnectionName('')
-                        setGmailNewConnectionDir('')
-                      })}
-                    >
-                      Add account
-                    </Button>
-                  </div>
-                  <input
-                    type="text"
-                    value={gmailNewConnectionDir}
-                    onChange={event => setGmailNewConnectionDir(event.target.value)}
-                    disabled={readOnly}
-                    placeholder="Existing gws config directory (optional)"
-                    className="w-full rounded-md border border-border bg-background px-3 py-2 font-mono text-xs focus:outline-none focus:ring-2 focus:ring-primary"
-                  />
-                  <p className="text-xs text-muted-foreground">
-                    Add the account, then click <strong>Sign in with Google</strong> on its row to authorize it in your browser.
-                    The directory field is only needed to adopt a <code>gws</code> profile already authenticated on the host.
+                {gmailOAuthClients.length === 0 && (
+                  <p className="border-t border-border pt-3 text-xs text-amber-600 dark:text-amber-400">
+                    Add an OAuth client above first — every account needs one to sign in through, and adding one
+                    creates its first sending account automatically.
                   </p>
-                </div>
+                )}
               </Card>
               <Card className="space-y-3 p-4">
                 <div>

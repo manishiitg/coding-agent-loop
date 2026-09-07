@@ -44,6 +44,29 @@ export function GmailNotifications({ bots }: { bots: GmailNotificationsBots }) {
   const [newClientFile, setNewClientFile] = useState<File | null>(null)
   const [newClientParseError, setNewClientParseError] = useState<string | null>(null)
 
+  // Match the backend's slug pattern (lowercase letters/digits/hyphens).
+  const slugifyClientName = (value: string) =>
+    value.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 63)
+
+  // The downloaded JSON already names the Google Cloud project — prefill the
+  // name field from it instead of asking the user to type one, so picking
+  // the file is normally the only step. Never overrides a name they already
+  // typed, and silently leaves the field blank on a file that doesn't parse
+  // (handleAddOAuthClient reports that error on submit instead).
+  const handleClientFileChange = async (file: File | null) => {
+    setNewClientFile(file)
+    setNewClientParseError(null)
+    if (!file || gmailNewClientName.trim()) return
+    try {
+      const parsed = JSON.parse(await file.text()) as Record<string, unknown>
+      const entry = (parsed.installed ?? parsed.web) as Record<string, unknown> | undefined
+      const projectId = typeof entry?.project_id === 'string' ? entry.project_id : undefined
+      if (projectId) setGmailNewClientName(slugifyClientName(projectId))
+    } catch {
+      // Leave the name blank — the submit handler below surfaces the parse error.
+    }
+  }
+
   const handleAddOAuthClient = async () => {
     if (!newClientFile) return
     setNewClientParseError(null)
@@ -152,7 +175,7 @@ export function GmailNotifications({ bots }: { bots: GmailNotificationsBots }) {
                     type="file"
                     accept="application/json"
                     disabled={readOnly}
-                    onChange={event => setNewClientFile(event.target.files?.[0] || null)}
+                    onChange={event => void handleClientFileChange(event.target.files?.[0] || null)}
                     className="flex-1 text-xs text-muted-foreground file:mr-2 file:rounded file:border file:border-border file:bg-muted/40 file:px-2 file:py-1 file:text-xs"
                   />
                   <Button

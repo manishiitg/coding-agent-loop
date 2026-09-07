@@ -1,5 +1,6 @@
 [Unit]
 Description=Video Studio workspace API (user service)
+ConditionPathIsMountPoint=/data/video-studio
 
 [Service]
 EnvironmentFile=%h/video-studio/.env

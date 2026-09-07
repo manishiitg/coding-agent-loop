@@ -1,6 +1,7 @@
 [Unit]
 Description=Video Studio agent API (user service)
 After=network-online.target
+ConditionPathIsMountPoint=/data/video-studio
 
 [Service]
 EnvironmentFile=%h/video-studio/.env

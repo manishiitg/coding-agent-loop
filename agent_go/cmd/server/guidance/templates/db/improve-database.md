@@ -69,8 +69,8 @@ manifest clean.
 BOUNDARIES
 
 1. Return one concrete recommended instruction and optional focus for the Pulse Fixer; there is no separate DB-maintenance tool.
-2. Work only on `db/` files (`db/db.sqlite` + `db/README.md`). Do not edit `planning/`, `reports/`, `knowledgebase/`, `learnings/`, `evaluation/`, or run outputs from this command.
-3. Treat `db/db.sqlite` as structured state, not scratch output. Never delete rows, transform column values, or rewrite data semantics unless the user explicitly asks for that migration.
+2. Review DB contracts and data; read relevant producers and consumers for evidence. Return recommendations only. The reviewer edits no files or rows, including `db/`.
+3. Treat `db/db.sqlite` as structured state, not scratch output. Recommend row deletion, value transformation, or semantic migration only within explicit user authorization; execution belongs to the parent fixer through managed tools.
 4. Prefer contract and schema improvements: `db/README.md`, table schema consistency, PRIMARY KEY / index clarity, report compatibility (the `sql` widgets resolve), and data integrity.
 
 READ FIRST
@@ -78,8 +78,8 @@ READ FIRST
 1. Read `soul/soul.md` if present to understand the workflow objective and success criteria.
 2. Read `planning/plan.json` and `planning/step_config.json` if present. Identify steps that produce, consume, save, track, upsert, append, deduplicate, or report persistent data.
 3. Read `db/reports/index.html`. Map each internal report view to its `window.report.query` SQL and durable file/asset sources.
-4. Read `db/README.md` if present, then inspect the database: `sqlite3 db/db.sqlite ".tables"` and `.schema <table>` for each table; also note `db/assets/`.
-5. Sample each relevant table enough to understand shape. Do not dump whole tables; use `sqlite3 db/db.sqlite "SELECT * FROM <table> LIMIT 5"`, `SELECT COUNT(*)`, and targeted queries.
+4. Read `db/README.md` if present, then inspect tables and DDL through `query_workflow_db` (bounded queries against `sqlite_master`); also note `db/assets/`. Never open the database through shell, Python, or `sqlite3`.
+5. Sample each relevant table enough to understand shape. Do not dump whole tables; use `query_workflow_db` with `SELECT * FROM <table> LIMIT 5`, `SELECT COUNT(*)`, and targeted queries.
    Include every content-bearing TEXT/JSON column in `db_ownership_manifest`,
    using bounded samples and length/count summaries rather than whole dumps.
 6. Build a control-state ownership map for tables that affect allocation,

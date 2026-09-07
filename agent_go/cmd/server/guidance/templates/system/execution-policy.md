@@ -4,7 +4,8 @@ When calling `run_full_workflow` for a multi-group workflow, **default
 to sequential per-group execution** — pass
 `group_name="<single-group>"` and wait for that group to finish before
 starting the next. Only run groups in parallel when the user explicitly
-says so ("run all groups", "run in parallel", "all at once", etc.).
+says so ("run in parallel", "all at once", etc.). "Run all groups" selects scope;
+it does not authorize parallel execution.
 
 ## Why per-group by default
 

@@ -2,6 +2,7 @@ package step_based_workflow
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -59,7 +60,8 @@ func (hcpo *StepBasedWorkflowOrchestrator) cleanStepOutputDir(ctx context.Contex
 // ScriptedMetadata persists script provenance and runtime statistics.
 type ScriptedMetadata struct {
 	StepID         string         `json:"step_id"`
-	ScriptVersion  int            `json:"script_version"` // incremented each time the LLM rewrites the script
+	ScriptVersion  int            `json:"script_version"`             // incremented each time the LLM rewrites the script
+	EntryPointHash string         `json:"entry_point_hash,omitempty"` // canonical entry-point revision; helpers remain shared source
 	CreatedAt      string         `json:"created_at"`
 	LastRunAt      string         `json:"last_run_at"`
 	TotalRuns      int            `json:"total_runs"`
@@ -257,9 +259,13 @@ func decideScriptedFastPath(result *ScriptedFastPathResult) ScriptedFastPathDeci
 		return ScriptedFastPathDecision{FastPathDone: true}
 	case result.RanScript:
 		// Ran but failed: hand the LLM the script AND the error to relearn from.
+		priorError := result.Error
+		if result.Output != "" && !strings.Contains(priorError, result.Output) {
+			priorError += "\n\nScript stdout/stderr:\n" + result.Output
+		}
 		return ScriptedFastPathDecision{
 			PriorScript: result.ExistingScript,
-			PriorError:  result.Error,
+			PriorError:  priorError,
 		}
 	case result.ExistingScript != "":
 		// A saved script exists but was never executed. Reuse/update path —
@@ -652,16 +658,10 @@ func getScriptedDirRelPath(stepID string, isEvalMode bool) string {
 	return fmt.Sprintf("learnings/%s", stepID)
 }
 
-// getScriptedScriptAbsPath returns the absolute path to the saved main.py.
-// NOTE: Only used for passing paths to execScriptedScript (workspace API receives abs paths inside Docker).
-func getScriptedScriptAbsPath(docsRoot, workspacePath, stepID string, isEvalMode bool) string {
-	return filepath.Join(docsRoot, workspacePath, getScriptedDirRelPath(stepID, isEvalMode), "main.py")
-}
-
 // readScriptedMetadataAPI reads script_metadata.json via the workspace API.
 // Returns nil if the file is missing or cannot be parsed.
 func (hcpo *StepBasedWorkflowOrchestrator) readScriptedMetadataAPI(ctx context.Context, stepID string) *ScriptedMetadata {
-	relPath := getScriptedDirRelPath(stepID, hcpo.isEvaluationMode) + "/script_metadata.json"
+	relPath := hcpo.scriptedSourceDir(stepID) + "/script_metadata.json"
 	data, err := hcpo.ReadWorkspaceFile(ctx, relPath)
 	if err != nil {
 		return nil
@@ -732,7 +732,7 @@ func scriptArtifactsChanged(before, after map[string]string) bool {
 
 // writeScriptedMetadataAPI writes script_metadata.json via the workspace API.
 func (hcpo *StepBasedWorkflowOrchestrator) writeScriptedMetadataAPI(ctx context.Context, stepID string, meta ScriptedMetadata) error {
-	relPath := getScriptedDirRelPath(stepID, hcpo.isEvaluationMode) + "/script_metadata.json"
+	relPath := hcpo.scriptedSourceDir(stepID) + "/script_metadata.json"
 	data, err := json.MarshalIndent(meta, "", "  ")
 	if err != nil {
 		return fmt.Errorf("marshal: %w", err)
@@ -742,7 +742,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) writeScriptedMetadataAPI(ctx context.
 
 // hasValidLearnedScriptAPI returns true if main.py exists via workspace API.
 func (hcpo *StepBasedWorkflowOrchestrator) hasValidLearnedScriptAPI(ctx context.Context, stepID string) bool {
-	scriptRelPath := getScriptedDirRelPath(stepID, hcpo.isEvaluationMode) + "/main.py"
+	scriptRelPath := hcpo.scriptedSourceDir(stepID) + "/main.py"
 	_, err := hcpo.ReadWorkspaceFile(ctx, scriptRelPath)
 	return err == nil
 }
@@ -851,6 +851,35 @@ func (hcpo *StepBasedWorkflowOrchestrator) resolveScriptedShellGuard(
 	}, nil
 }
 
+// Only inspect unconditional top-level imports/config reads. Conditional imports
+// and runtime configuration belong to the script; do not execute modules here.
+const scriptedBundlePreflight = `import ast, importlib.util, os, pathlib, sys
+root = pathlib.Path(sys.argv[1]).parent
+sys.path.insert(0, str(root))
+problems = []
+for p in sorted(root.glob('*.py')):
+    tree = ast.parse(p.read_bytes(), filename=str(p))
+    compile(tree, str(p), 'exec')
+    for node in tree.body:
+        names = []
+        if isinstance(node, ast.Import):
+            names = [a.name.split('.')[0] for a in node.names]
+        elif isinstance(node, ast.ImportFrom) and node.level == 0 and node.module:
+            names = [node.module.split('.')[0]]
+        for name in names:
+            if importlib.util.find_spec(name) is None:
+                problems.append(f'{p.name}: missing module {name}')
+        if isinstance(node, (ast.Assign, ast.AnnAssign)):
+            for ref in ast.walk(node):
+                if isinstance(ref, ast.Subscript) and isinstance(ref.value, ast.Attribute) and isinstance(ref.value.value, ast.Name) and ref.value.value.id == 'os' and ref.value.attr == 'environ' and isinstance(ref.slice, ast.Constant) and isinstance(ref.slice.value, str):
+                    if ref.slice.value not in os.environ:
+                        problems.append(f'{p.name}: missing environment variable {ref.slice.value}')
+if problems:
+    print('[preflight] ' + '\n[preflight] '.join(problems), file=sys.stderr)
+    sys.exit(1)
+print('[preflight] Python bundle syntax, top-level imports and configuration OK', flush=True)
+`
+
 // execScriptedScript runs python3 <mainPy> <args...> via the workspace shell API.
 // Uses workspace.Client (same path as the LLM agent's execute_shell_command tool) so that
 // folder guard, ExtraEnv (SECRET_*, MCP_API_URL), and path handling all work consistently.
@@ -882,13 +911,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) execScriptedScript(
 
 	// Build command: STEP_OUTPUT_DIR is passed via ExtraEnv so no inline env prefix needed.
 	// Use absolute paths for main.py and args — /app/workspace-docs/... is valid inside Docker.
-	var sb strings.Builder
-	sb.WriteString("python3 -B ")
-	sb.WriteString(shellQuotePath(mainPyAbsPath))
-	for _, arg := range inputArgs {
-		sb.WriteString(" ")
-		sb.WriteString(shellQuotePath(arg))
-	}
+	command := scriptedCommand(mainPyAbsPath, inputArgs)
 
 	includeCodeDir := workDirRel == stepExecutionRelPath+"/code"
 	guard, guardErr := hcpo.resolveScriptedShellGuard(ctx, step, stepIndex, stepPath, stepExecutionRelPath, includeCodeDir)
@@ -928,6 +951,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) execScriptedScript(
 	// fails with "DB_PATH unset and no root found". Set it here to the same absolute
 	// path the agent path uses. Set AFTER the workspace-env merge so it always wins.
 	extraEnv["DB_PATH"] = filepath.Join(docsRoot, hcpo.GetWorkspacePath(), DBFolderName, "db.sqlite")
+	extraEnv = hcpo.codeRuntimeEnv(extraEnv)
 
 	// RUN_FOLDER: the workspace-relative "iteration-N/<group>" segment under
 	// runs/, e.g. "iteration-85/confida-staging". PLAT-185: a script that needs
@@ -968,7 +992,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) execScriptedScript(
 	timeout := 0
 	useShell := true
 	reqParams := workspace.ExecuteShellCommandParams{
-		Command:          sb.String(),
+		Command:          command,
 		WorkingDirectory: workDirRel,
 		Timeout:          &timeout,
 		UseShell:         &useShell,
@@ -1038,7 +1062,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) tryRunSavedScriptedScript(
 	stepID := step.GetID()
 
 	if !hcpo.hasValidLearnedScriptAPI(ctx, stepID) {
-		scriptRelPath := getScriptedDirRelPath(stepID, hcpo.isEvaluationMode) + "/main.py"
+		scriptRelPath := hcpo.scriptedSourceDir(stepID) + "/main.py"
 		existingScript, _ := hcpo.ReadWorkspaceFile(ctx, scriptRelPath)
 		hcpo.GetLogger().Info(fmt.Sprintf("🐍 [scripted] No saved script for step %d (%s) — LLM will generate from scratch", stepIndex+1, stepID))
 		return &ScriptedFastPathResult{RanScript: false, ExistingScript: existingScript}
@@ -1047,12 +1071,12 @@ func (hcpo *StepBasedWorkflowOrchestrator) tryRunSavedScriptedScript(
 	hcpo.GetLogger().Info(fmt.Sprintf("🐍 [scripted] Executing saved script for step %d (%s) — 0 LLM tokens", stepIndex+1, stepID))
 
 	// Read existing script content for relearn context (if script fails).
-	learnDirRelPath := getScriptedDirRelPath(stepID, hcpo.isEvaluationMode)
+	learnDirRelPath := hcpo.scriptedSourceDir(stepID)
 	scriptRelPath := learnDirRelPath + "/main.py"
 	existingScript, _ := hcpo.ReadWorkspaceFile(ctx, scriptRelPath)
 
 	stepExecutionAbsPath := filepath.Join(docsRoot, stepExecutionRelPath)
-	codeDirRelPath := stepExecutionRelPath + "/code"
+	codeDirRelPath := hcpo.scriptedWorkingDir(stepID, stepExecutionRelPath)
 	codeDirAbsPath := filepath.Join(docsRoot, codeDirRelPath)
 	mainPyAbsPath := filepath.Join(codeDirAbsPath, "main.py")
 
@@ -1073,31 +1097,33 @@ func (hcpo *StepBasedWorkflowOrchestrator) tryRunSavedScriptedScript(
 	// working copy. If the user or workflow builder patches learnings, the next run must
 	// pick up the change. LLM relearn fixes are saved back to learnings/ via
 	// saveScriptedScriptToLearnings, so always copying from learnings is safe.
-	if mkErr := createFolderViaAPI(ctx, codeDirRelPath); mkErr != nil {
-		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ [scripted] Failed to create code/ dir for saved script copy: %v", mkErr))
-	}
-	learnFiles, listErr := hcpo.BaseOrchestrator.ListWorkspaceFiles(ctx, learnDirRelPath)
-	if listErr != nil {
-		// Fallback: copy just main.py
-		if writeErr := hcpo.WriteWorkspaceFile(ctx, codeDirRelPath+"/main.py", existingScript); writeErr != nil {
-			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ [scripted] Failed to copy main.py to code/: %v", writeErr))
+	if !hcpo.usesCodeTree() {
+		if mkErr := createFolderViaAPI(ctx, codeDirRelPath); mkErr != nil {
+			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ [scripted] Failed to create code/ dir for saved script copy: %v", mkErr))
 		}
-	} else {
-		for _, f := range learnFiles {
-			fileName := filepath.Base(f)
-			if fileName == "" || fileName == "." || fileName == "script_metadata.json" || fileName == ".learning_metadata.json" || strings.HasSuffix(fileName, ".md") {
-				continue // skip metadata and legacy note files; only copy script artifacts
+		learnFiles, listErr := hcpo.BaseOrchestrator.ListWorkspaceFiles(ctx, learnDirRelPath)
+		if listErr != nil {
+			// Fallback: copy just main.py
+			if writeErr := hcpo.WriteWorkspaceFile(ctx, codeDirRelPath+"/main.py", existingScript); writeErr != nil {
+				hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ [scripted] Failed to copy main.py to code/: %v", writeErr))
 			}
-			content, readErr := hcpo.ReadWorkspaceFile(ctx, learnDirRelPath+"/"+fileName)
-			if readErr != nil {
-				continue
-			}
-			if writeErr := hcpo.WriteWorkspaceFile(ctx, codeDirRelPath+"/"+fileName, content); writeErr != nil {
-				hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ [scripted] Failed to copy %s to code/: %v", fileName, writeErr))
+		} else {
+			for _, f := range learnFiles {
+				fileName := filepath.Base(f)
+				if fileName == "" || fileName == "." || fileName == "script_metadata.json" || fileName == ".learning_metadata.json" || strings.HasSuffix(fileName, ".md") {
+					continue // skip metadata and legacy note files; only copy script artifacts
+				}
+				content, readErr := hcpo.ReadWorkspaceFile(ctx, learnDirRelPath+"/"+fileName)
+				if readErr != nil {
+					continue
+				}
+				if writeErr := hcpo.WriteWorkspaceFile(ctx, codeDirRelPath+"/"+fileName, content); writeErr != nil {
+					hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ [scripted] Failed to copy %s to code/: %v", fileName, writeErr))
+				}
 			}
 		}
+		hcpo.GetLogger().Info(fmt.Sprintf("🐍 [scripted] Copied saved script from learnings/%s/ to %s/", stepID, codeDirRelPath))
 	}
-	hcpo.GetLogger().Info(fmt.Sprintf("🐍 [scripted] Copied saved script from learnings/%s/ to %s/", stepID, codeDirRelPath))
 
 	// Static code review before execution — catch anti-patterns that would fail on reuse
 	codeIssues := reviewMainPyScript(existingScript)
@@ -1261,6 +1287,10 @@ func (hcpo *StepBasedWorkflowOrchestrator) saveScriptedScriptToLearnings(
 	step PlanStepInterface,
 	stepExecutionAbsPath string,
 ) {
+	// Canonical code was repaired in place. Never copy stale execution code back.
+	if hcpo.usesCodeTree() {
+		return
+	}
 	stepID := step.GetID()
 	ctx := context.Background()
 
@@ -1284,7 +1314,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) saveScriptedScriptToLearnings(
 		return
 	}
 
-	learnDirRelPath := getScriptedDirRelPath(stepID, hcpo.isEvaluationMode)
+	learnDirRelPath := hcpo.scriptedSourceDir(stepID)
 
 	// Snapshot old file contents from learnings/ before overwriting — used for diff debugging.
 	oldFileContents := map[string]string{}
@@ -1469,7 +1499,22 @@ func generateSimpleDiff(fileName, oldContent, newContent string) string {
 func (hcpo *StepBasedWorkflowOrchestrator) updateScriptedRunStats(ctx context.Context, stepID string, record RunRecord, isLocked bool) {
 	meta := hcpo.readScriptedMetadataAPI(ctx, stepID)
 	if meta == nil {
-		return
+		if !hcpo.usesCodeTree() {
+			return
+		}
+		meta = &ScriptedMetadata{StepID: stepID, CreatedAt: time.Now().UTC().Format(time.RFC3339)}
+	}
+	if hcpo.usesCodeTree() {
+		if source, err := hcpo.ReadWorkspaceFile(ctx, hcpo.scriptedSourceDir(stepID)+"/main.py"); err == nil {
+			hash := fmt.Sprintf("%x", sha256.Sum256([]byte(source)))
+			if hash != meta.EntryPointHash {
+				if meta.EntryPointHash != "" {
+					meta.RelearnCount++
+				}
+				meta.ScriptVersion++
+				meta.EntryPointHash = hash
+			}
+		}
 	}
 	now := time.Now().UTC().Format(time.RFC3339)
 	meta.TotalRuns++
@@ -1643,7 +1688,8 @@ func (hcpo *StepBasedWorkflowOrchestrator) saveScriptedFastPathLog(
 // stepOutputAbsPath is the step output folder (execution/step-x/) — STEP_OUTPUT_DIR env var points here.
 // inputArgPaths are the absolute paths passed as sys.argv[1], sys.argv[2], ...
 // envVarNames are the env var names available to the script (SECRET_*, MCP_API_URL, STEP_OUTPUT_DIR).
-func GetScriptedModeInstructions(codeDirAbsPath, stepOutputAbsPath string, isRelearn bool, priorScript, priorError string, inputArgPaths []string, envVarNames []string, varMappingLines []string, validationSchemaJSON string, hasBrowser, isCodeLocked, useProjectedReferenceSkills bool) string {
+func GetScriptedModeInstructions(codeDirAbsPath, stepOutputAbsPath string, isRelearn bool, priorScript, priorError string, inputArgPaths []string, envVarNames []string, varMappingLines []string, validationSchemaJSON string, hasBrowser, isCodeLocked, useProjectedReferenceSkills bool, directSource ...bool) string {
+	canonical := len(directSource) > 0 && directSource[0]
 	var sb strings.Builder
 	sb.WriteString("\n\n## Code Execution Mode\n\n")
 	if isCodeLocked {
@@ -1654,7 +1700,11 @@ func GetScriptedModeInstructions(codeDirAbsPath, stepOutputAbsPath string, isRel
 		sb.WriteString(fmt.Sprintf("3. If environmental, drive the task to completion *interactively* — write outputs directly to `%s` (available as `os.environ['STEP_OUTPUT_DIR']`) using snapshots and direct tool calls so this run produces valid outputs. Do not edit the script.\n", stepOutputAbsPath))
 		sb.WriteString("4. If you find a real script bug, surface it clearly in your reply so the orchestrator can clear `lock_code` and have you patch the script on a future run. Do not patch it now.\n\n")
 	} else {
-		sb.WriteString("You are in **code execution mode**. Your primary goal is to write a reusable Python solution (`main.py`). If you are unable to write a working main.py, you may fall back to calling MCP tools directly via the API to complete the task — but always prefer writing main.py since it becomes a saved script for future runs.\n\n")
+		if canonical {
+			sb.WriteString("You are in **code execution mode**. Write or repair the canonical reusable Python solution (`main.py`). The controller executes it with the step's runtime after your turn and returns failures for repair. Do not substitute hand-made outputs for a passing script.\n\n")
+		} else {
+			sb.WriteString("You are in **code execution mode**. Your primary goal is to write a reusable Python solution (`main.py`). If you are unable to write a working main.py, you may fall back to calling MCP tools directly via the API to complete the task — but always prefer writing main.py since it becomes a saved script for future runs.\n\n")
+		}
 		sb.WriteString("**Your working directory (write all code files here):**\n")
 		sb.WriteString(fmt.Sprintf("```\n%s\n```\n\n", codeDirAbsPath))
 		sb.WriteString("**This run's working-directory rules:**\n")
@@ -1662,7 +1712,9 @@ func GetScriptedModeInstructions(codeDirAbsPath, stepOutputAbsPath string, isRel
 		sb.WriteString(fmt.Sprintf("- You may also write helper modules (e.g. `utils.py`) to `%s/` — they will be available since the script runs with that as cwd\n", codeDirAbsPath))
 		sb.WriteString(fmt.Sprintf("- Write all **output files** to `%s` (available as `os.environ['STEP_OUTPUT_DIR']`)\n", stepOutputAbsPath))
 		sb.WriteString("- Before writing main.py, you may call tools via the API to inspect the current state (e.g. take a browser snapshot, check page content, read files) to understand the system before coding your solution\n")
-		sb.WriteString(fmt.Sprintf("- To test, just run: `python3 '%s/main.py'` — **all env vars listed below are pre-injected; do NOT manually `export` any values**\n", codeDirAbsPath))
+		if !canonical {
+			sb.WriteString(fmt.Sprintf("- To test, just run: `python3 '%s/main.py'` — **all env vars listed below are pre-injected; do NOT manually `export` any values**\n", codeDirAbsPath))
+		}
 		sb.WriteString("- After your turn, the system will run main.py and give you the error output if it fails — you'll get multiple fix attempts\n")
 		sb.WriteString("- A passing `main.py` becomes the saved script for this step and will be tried first on future runs before calling the LLM again\n\n")
 	}

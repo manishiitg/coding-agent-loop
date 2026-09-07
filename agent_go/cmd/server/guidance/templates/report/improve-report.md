@@ -82,10 +82,10 @@ EVALUATION VERDICTS
   `db/db.sqlite`'s framework-owned `eval_results` table (one row per `run_folder` +
   `step_id`: `score`, `max_score`, `reasoning`, `evidence`) — no extra step or measurement
   contract needed. Query it directly via `window.report.query`, same as any other table.
-- Never blend `eval_results` rows into one combined pass/fail number. Per soul.md's "no
-  blob score" rule, each row is its own criterion; show them as separate signals (one per
-  row, or grouped under the success criterion each step scores) with a worst-case rollup
-  at most, not an average.
+- Keep each `eval_results` criterion visible with its score, evidence, route, and
+  run. Do not invent a combined score or assume `soul.md` defines an aggregation
+  rule. Show an aggregate only when the workflow explicitly defines its semantics;
+  retain the individual criteria and coverage so missing evaluations stay visible.
 - A criterion with no matching `eval_results` row for the current `run_folder` has not
   been evaluated yet for this run — show "not evaluated" or the last available run's
   verdict with its run/date, never zero or "passing" by default.
@@ -110,7 +110,8 @@ by the parent when available — read the screenshots with `read_image` rather
 than assuming the layout — then read the actual `db/reports/index.html`
 document. If no preview was supplied, say so and inspect the raw responsive
 HTML/CSS/JS without pretending to have seen the rendering. For HTML reports, also sample the data they read: run their
-queries against `db/db.sqlite` (`sqlite3 db/db.sqlite ".schema"` + `SELECT ... LIMIT`), and check `db/assets/`, `knowledgebase/context/context.md`, and `knowledgebase/notes/`. Use the available view plus raw data/document to propose improvements in these categories:
+queries through `query_workflow_db` (schema from `sqlite_master` plus bounded
+`SELECT ... LIMIT`; never raw `sqlite3` access), and check `db/assets/`, `knowledgebase/context/context.md`, and `knowledgebase/notes/`. Use the available view plus raw data/document to propose improvements in these categories:
 
 1. **Live vs stale.** The report is HTML; it should read its numbers live via `window.report.query` so it never goes stale. Flag any report that hardcodes data as static text (it should query the db instead), or that depends on a workflow step regenerating it each run (it shouldn't — author once, read live).
 2. **Layout (insight-first / inverted pyramid).** Does it lead with the answer? Canonical skeleton: conditional alert/status banner → headline KPI tiles → the key supporting chart → detailed tables last. A report should read like a briefing (answer first, evidence below), not a data dump. When it has internal views, does each view answer a distinct question?

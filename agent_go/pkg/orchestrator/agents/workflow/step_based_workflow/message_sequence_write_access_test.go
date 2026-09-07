@@ -67,8 +67,10 @@ func TestMessageSequenceRuntimeSessionIDStableForSequence(t *testing.T) {
 		currentGroupName:  "Acme Group",
 	}
 
-	gotA := hcpo.messageSequenceRuntimeSessionID("step-5", "review-specialist")
-	gotB := hcpo.messageSequenceRuntimeSessionID("step-5", "review-specialist")
+	session := &messageSequenceSession{}
+	gotA := hcpo.messageSequenceRuntimeSessionID(session, "step-5", "review-specialist")
+	session.runtime = &messageSequenceRuntime{SessionID: gotA}
+	gotB := hcpo.messageSequenceRuntimeSessionID(session, "step-5", "review-specialist")
 	if gotA != gotB {
 		t.Fatalf("runtime session id changed between sequence items: %q vs %q", gotA, gotB)
 	}
@@ -83,9 +85,9 @@ func TestMessageSequenceRuntimeSessionIDStableForSequence(t *testing.T) {
 func TestMessageSequenceRuntimeSessionIDOmitsEmptyScope(t *testing.T) {
 	hcpo := &StepBasedWorkflowOrchestrator{}
 
-	got := hcpo.messageSequenceRuntimeSessionID("step-2", "writer")
-	if got != "msgseq-step-2-writer" {
-		t.Fatalf("runtime session id = %q, want msgseq-step-2-writer", got)
+	got := hcpo.messageSequenceRuntimeSessionID(nil, "step-2", "writer")
+	if !strings.HasPrefix(got, "msgseq-step-2-writer-") {
+		t.Fatalf("runtime session id = %q, want msgseq-step-2-writer-<unique owner>", got)
 	}
 }
 

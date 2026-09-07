@@ -1,3 +1,5 @@
+**Saved-code paths:** Read `workflow.json.code_layout_version` first. In this reference, `<script-dir>` means `code/<step-id>` for version 1, or `learnings/<step-id>` for absent/zero (legacy). Resolve the placeholder before using a path; never infer the version from folders or migrate an existing workflow implicitly. Version 1 executes and repairs canonical source directly, with shared helpers under `WORKFLOW_CODE_ROOT`; only legacy workflows copy code into runs and save it back.
+
 Use this to run a manual artifact-drift audit after plan or configuration
 changes — the on-demand equivalent of Pulse's scheduled pass, sharing the
 exact same candidate collector, repair contract, and completion writer as
@@ -97,7 +99,7 @@ Load `read_skill(skills=[{"name":"builder-reference","path":"references/assumpti
      the other typed plan-mod tools) — `planning/` is never a granted write
      path for any other tool, so `plan.json` itself is always fully and
      truthfully captured here. A direct edit to a step's own code
-     (`learnings/<step-id>/main.py`) or a shared doc (`db/README.md`) made via
+     (`<script-dir>/main.py`) or a shared doc (`db/README.md`) made via
      `diff_patch_workspace_file`/`update_workspace_file` is a different kind
      of change and does not produce a changelog entry, even when it happens
      in the same turn as a plan-tool call — the entry that turn produces
@@ -131,7 +133,7 @@ Load `read_skill(skills=[{"name":"builder-reference","path":"references/assumpti
      actually sends, so it is a first-class contract with the plan, not
      configuration noise: read every message and resolve each to the plan step
      it drives.
-   - `learnings/<step-id>/main.py`, script metadata, per-step learning metadata, and relevant `learnings/_global/` guidance — plan_drift_review's
+   - `<script-dir>/main.py`, script metadata, per-step learning metadata, and relevant `learnings/_global/` guidance — plan_drift_review's
      `scripted_code_db_queries` check only covers whether a scripted step's SQL
      still resolves against the live schema; content staleness, stale locks,
      and access-mode appropriateness stay this checklist's job (or the

@@ -35,6 +35,7 @@ type UserClaims struct {
 	// browser rendering one workflow's report), bound to ScopeWorkspace.
 	Scope          string `json:"scope,omitempty"`
 	ScopeWorkspace string `json:"scope_workspace,omitempty"`
+	ScopeFile      string `json:"scope_file,omitempty"` // exact file for report media playback
 	jwt.RegisteredClaims
 }
 

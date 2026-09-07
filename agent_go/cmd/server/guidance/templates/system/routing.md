@@ -2,15 +2,15 @@
 
 **Routing is now the "route" concept: a major, self-contained sub-workflow
 fork** — not a small in-flow decision. For a lightweight next-step choice,
-use a **`branch` step** instead (`references/branch.md`); it has the exact
-same mechanics described below, just its own type tag, so guidance,
+use a **`branch` step** instead (`references/branch.md`); it shares the file-based
+selection mechanics below and additionally supports `route_source="human"`, so guidance,
 reporting, and eval tooling can tell a major fork apart from a small
 decision. Everything else on this page still applies unchanged to routing
 steps. See PLAT-259.
 
 A routing step is a deterministic switch. It reads `route_selection.json`, resolves the selected value to one of its `routes[]`, and branches to that route's `next_step_id`.
 
-Use routing when the workflow must run **exactly one** of N existing downstream steps. The common case is a fixed branch selected from the user's request to the builder; the builder/caller passes that choice as `route_selections` when starting the workflow. Do not put judgment inside the routing step itself; put judgment in an earlier message sequence or caller-provided `route_selections`. If an agent decision is needed, add a message sequence before routing that writes `route_selection.json` in its own output folder.
+Use routing when the workflow must run **exactly one** of N major downstream sub-workflows. The common case is a fixed branch selected from the user's request to the builder; the builder/caller passes that choice as `route_selections` when starting the workflow. Do not put judgment inside the routing step itself; put judgment in an earlier message sequence or caller-provided `route_selections`. If an agent decision is needed, add a message sequence before routing that writes `route_selection.json` in its own output folder.
 
 **A plan has at most one routing step.** Routing is the workflow's mode
 selector: the single fork whose route a schedule or caller picks via
@@ -27,7 +27,7 @@ rule keep the routing steps they already have (PLAT-294).
 
 ### When to use routing
 
-- The path forward is conditional on a known signal (e.g., "logged in", "MFA required", "document type is invoice")
+- The alternatives are major workflow modes (e.g., acquire customers, process approved work, or measure outcomes); small signal-driven gates such as login/MFA use branch
 - The user already told the builder which fixed workflow mode/job/branch to run
 - There are 2-N mutually exclusive paths and only one should run
 - The selected path can be represented as a stable `route_id` or a unique `next_step_id`

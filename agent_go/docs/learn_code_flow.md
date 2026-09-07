@@ -2,6 +2,34 @@
 
 This is the current source of truth for scripted workflow execution.
 
+## Source layout (PLAT-298)
+
+Read `workflow.json.code_layout_version` first. New workflows have version 1:
+
+- Canonical source: `code/<step-id>/main.py`; shared packages anywhere in `code/`.
+- The controller executes that source directly; no run-folder copy or copy-back.
+- `WORKFLOW_CODE_ROOT` is the absolute import root; `PYTHONPATH` includes it and
+  `WORKFLOW_CODE_DEPS` (`.sandbox-cache/python-packages`). Install dependencies
+  with `python3 -m pip install --target "$WORKFLOW_CODE_DEPS" ...`, not a separate
+  interpreter/venv that the controller does not use.
+- Builder tests use `execute_step(fast_path_only=true)`. Authoring/repair turns
+  return to the controller for execution through the same shell runner. A failed
+  script cannot be replaced by hand-made successful output in this layout.
+- Step source and unlocked shared helpers are writable within the workflow;
+  locked code is read-only. Execution outputs remain in `STEP_OUTPUT_DIR`.
+- Statistics live beside the source in `code/<step-id>/script_metadata.json`.
+  Entry-point hashes track entry revisions; they are not whole-tree snapshots.
+- Evaluation uses the same source layout and the evaluation runtime's own inputs.
+- Imports and clones preserve the source manifest's version. Manifest capability
+  updates preserve the existing version; no implicit migration is performed.
+
+Absent/zero versions retain the legacy `learnings/<step-id>/main.py` layout and
+copy/save-back behavior described below. Directory existence never changes the
+version. All source, dependencies, database assets and retained run artifacts
+are under the persistent workspace docs root, not a release directory. Run
+retention can still prune old run outputs; durable reporting media belongs in
+`db/assets/`. Disk persistence does not replace a backup/restore policy.
+
 A workflow step's execution model is decided by its plan `type` alone:
 
 - `regular` — a **scripted** step. Its work is a reusable `learnings/{step-id}/main.py` that is tried on every run before any LLM turn, and repaired by the LLM when it fails.

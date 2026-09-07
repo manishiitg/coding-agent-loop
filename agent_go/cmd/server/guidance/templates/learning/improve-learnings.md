@@ -1,3 +1,5 @@
+**Saved-code paths:** Read `workflow.json.code_layout_version` first. In this reference, `<script-dir>` means `code/<step-id>` for version 1, or `learnings/<step-id>` for absent/zero (legacy). Resolve the placeholder before using a path; never infer the version from folders or migrate an existing workflow implicitly. Version 1 executes and repairs canonical source directly, with shared helpers under `WORKFLOW_CODE_ROOT`; only legacy workflows copy code into runs and save it back.
+
 # ENGINEERING REVIEW — STORES HEALTH / LEARNINGS LENS
 
 Review whether `learnings/_global/` supports the current plan and objective. This
@@ -136,7 +138,7 @@ This command maintains reusable HOW-to-run knowledge such as selectors, tool/API
 BOUNDARIES
 
 1. Return a concrete recommended instruction and optional focus for the Pulse Fixer; there is no separate learning-maintenance tool.
-2. The reviewer is read-only everywhere. Its learning-content mutation scope recommendation is `learnings/_global/`; it may also recommend `update_step_config` changes for bad `learning_objective` / `learnings_access` settings and routed KB/DB follow-up through the matching Stores lens. Never recommend editing per-step `learnings/{step-id}/main.py` as content cleanup. Never edit or delete `learnings/_global/_freshness.json` — it is a code-owned freshness ledger written by the runtime; read it, do not touch it.
+2. The reviewer is read-only everywhere. Its learning-content mutation scope recommendation is `learnings/_global/`; it may also recommend `update_step_config` changes for bad `learning_objective` / `learnings_access` settings and routed KB/DB follow-up through the matching Stores lens. Never recommend editing per-step `<script-dir>/main.py` as content cleanup. Never edit or delete `learnings/_global/_freshness.json` — it is a code-owned freshness ledger written by the runtime; read it, do not touch it.
 3. If you discover stale per-step scripts, bad `learning_objective`, wrong `learnings_access`, or code-lock issues, record/recommend them for the parent Pulse Fixer or an explicit manual fix. Eval rubric, coverage, or scoring issues belong to `/improve-evaluation`, not here.
 4. Keep WHAT-the-workflow-discovered out of the entire skill package. User-supplied runtime context belongs in `knowledgebase/context/`; workflow-discovered subject-matter facts belong in `knowledgebase/notes/` or `db/db.sqlite`, not in either `SKILL.md` or its references.
 5. Enforce a lean index shape. `learnings/_global/SKILL.md` is an **index**: frontmatter, a short scope note, and links to focused files under `learnings/_global/references/`. Detailed selectors, API quirks, auth flows, file-format notes, retry patterns, and step-specific HOW guidance belong in reference files, not in the root `SKILL.md`. Keep it as lean as the content allows; there is no line quota to fill, and a mostly-links index of any length is healthier than a short one stuffed with detail.

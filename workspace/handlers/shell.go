@@ -429,6 +429,7 @@ func isAllowedShellExtraEnvKey(key string) bool {
 		strings.HasPrefix(key, "SCRIPT_") ||
 		strings.HasPrefix(key, "RUNLOOP_") ||
 		key == "DB_PATH" ||
+		key == "WORKFLOW_CODE_ROOT" || key == "WORKFLOW_CODE_DEPS" || key == "PYTHONPATH" ||
 		key == "PYTHONDONTWRITEBYTECODE"
 }
 

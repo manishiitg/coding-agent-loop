@@ -351,7 +351,7 @@ is its `measurement_gap`; broken implementation belongs to Engineering Review.
 Only when the audit shows a material ceiling, unexplained opportunity gap, or a
 reached strategic checkpoint should the next phase explore materially different
 theses. Reject maintenance- or instrumentation-only strategic results.
-Reviewers never edit, publish, notify, ask the user, write HTML, or mark state.
+Read-only child reviewers never edit, publish, notify, ask the user, write HTML, or mark state. The coordinating review sequence retains only the typed persistence and repair authority explicitly assigned to its current phase above; a read-only checklist does not inherit that authority.
 
 The **Stores Health** turn loads `improve-learnings`, `improve-knowledge`, and
 `improve-database` when selected by Gate evidence. It is an Engineering Review

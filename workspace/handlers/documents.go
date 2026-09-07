@@ -933,6 +933,27 @@ func GetRawDocument(c *gin.Context) {
 		})
 		return
 	}
+	if c.Query("report_media") == "true" {
+		marker := "/db/assets/"
+		idx := strings.Index(filepath.ToSlash(filePath), marker)
+		if idx < 0 {
+			c.AbortWithStatus(http.StatusForbidden)
+			return
+		}
+		assetsRoot := filePath[:idx] + "/db/assets"
+		realRoot, rootErr := filepath.EvalSymlinks(assetsRoot)
+		realFile, fileErr := filepath.EvalSymlinks(filePath)
+		if rootErr != nil || fileErr != nil {
+			c.AbortWithStatus(http.StatusNotFound)
+			return
+		}
+		// The durable assets root itself cannot redirect outside this workflow.
+		if realRoot != filepath.Clean(assetsRoot) || !strings.HasPrefix(realFile, realRoot+string(os.PathSeparator)) {
+			c.AbortWithStatus(http.StatusForbidden)
+			return
+		}
+		filePath = realFile
+	}
 
 	// Validate file path for security
 	if !utils.IsValidFilePath(filePath, docsDir) {
@@ -953,12 +974,16 @@ func GetRawDocument(c *gin.Context) {
 			Error:   fmt.Sprintf("File not found: %s", filePathParam),
 		})
 		return
-	} else if err != nil || info.IsDir() {
+	} else if err != nil {
 		c.JSON(http.StatusInternalServerError, models.APIResponse[any]{
 			Success: false,
 			Message: "Failed to get file info",
 			Error:   err.Error(),
 		})
+		return
+	}
+	if info.IsDir() {
+		c.Status(http.StatusBadRequest)
 		return
 	}
 

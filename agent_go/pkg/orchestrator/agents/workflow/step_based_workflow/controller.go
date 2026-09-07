@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	virtualtools "github.com/manishiitg/coding-agent-loop/agent_go/cmd/server/virtual-tools"
@@ -59,6 +60,7 @@ func ChainSubAgentNotifiers(notifiers ...SubAgentNotifier) SubAgentNotifier {
 // - Always includes independent steps extraction for parallel execution
 // - NEW: Includes learning phase after each step execution and validation
 type StepBasedWorkflowOrchestrator struct {
+	codeLayoutVersion atomic.Int32
 	// Base orchestrator for common functionality
 	*orchestrator.BaseOrchestrator
 	// NEW: Store planning conversation for iterative refinement

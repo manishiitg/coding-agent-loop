@@ -247,6 +247,26 @@ func TestAddBranchStepPersistsRouteSourceHuman(t *testing.T) {
 }
 
 func TestAddHumanInputStepRejectsDecisionTypesAndKeepsText(t *testing.T) {
+	// Discovery must not advertise choices the mutation rejects, while the
+	// update schema must retain support for existing legacy choice steps.
+	var addSchema, updateSchema struct {
+		Properties map[string]struct {
+			Enum []string `json:"enum"`
+		} `json:"properties"`
+	}
+	if err := json.Unmarshal([]byte(getAddHumanInputStepSchema()), &addSchema); err != nil {
+		t.Fatal(err)
+	}
+	if got := addSchema.Properties["response_type"].Enum; len(got) != 1 || got[0] != "text" {
+		t.Fatalf("new-step schema must advertise only supported free-form input, got %v", got)
+	}
+	if err := json.Unmarshal([]byte(getUpdateHumanInputStepSchema()), &updateSchema); err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Join(updateSchema.Properties["response_type"].Enum, ","); got != "text,yesno,multiple_choice" {
+		t.Fatalf("updates must preserve legacy choice support, got %s", got)
+	}
+
 	plan := &PlanningResponse{Steps: []PlanStepInterface{cardinalityTestRegularStep("draft")}}
 	readFile, writeFile, _, writtenPlan := convertRoutingBranchTestPlanFileIO(t, plan)
 	add := createSingleStepAdder("workflow", loggerv2.NewNoop(), readFile, writeFile, cardinalityTestNoopMove, "human_input")

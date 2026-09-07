@@ -90,13 +90,14 @@ const (
 
 // WorkflowManifest is the top-level workflow.json structure that lives in each workspace.
 type WorkflowManifest struct {
-	SchemaVersion int                       `json:"schema_version"`
-	ID            string                    `json:"id"`
-	Version       string                    `json:"version,omitempty"`
-	Label         string                    `json:"label"`
-	Capabilities  WorkflowCapabilities      `json:"capabilities"`
-	ExecutionDefs WorkflowExecutionDefaults `json:"execution_defaults"`
-	Schedules     []WorkflowSchedule        `json:"schedules"`
+	CodeLayoutVersion int                       `json:"code_layout_version,omitempty"` // 0: legacy learnings; 1: persistent code tree
+	SchemaVersion     int                       `json:"schema_version"`
+	ID                string                    `json:"id"`
+	Version           string                    `json:"version,omitempty"`
+	Label             string                    `json:"label"`
+	Capabilities      WorkflowCapabilities      `json:"capabilities"`
+	ExecutionDefs     WorkflowExecutionDefaults `json:"execution_defaults"`
+	Schedules         []WorkflowSchedule        `json:"schedules"`
 	// CreatedBy is the user ID that created this workflow, stamped once at
 	// creation time (handleCreateWorkflowManifest) from the authenticated
 	// request. Scheduled/cron runs have no logged-in user of their own --
@@ -555,6 +556,9 @@ func validateScheduleRuntimePolicy(schedule WorkflowSchedule) error {
 
 // ValidateManifest checks that a WorkflowManifest has required fields and valid values.
 func ValidateManifest(m *WorkflowManifest) error {
+	if m.CodeLayoutVersion < 0 || m.CodeLayoutVersion > 1 {
+		return fmt.Errorf("unsupported code_layout_version %d", m.CodeLayoutVersion)
+	}
 	if m.SchemaVersion < 1 {
 		return fmt.Errorf("schema_version must be >= 1")
 	}
@@ -872,10 +876,11 @@ func NewWorkflowManifest(label string) *WorkflowManifest {
 	now := time.Now().UTC().Format(time.RFC3339)
 	noGlobalSecrets := []string{}
 	return &WorkflowManifest{
-		SchemaVersion: WorkflowManifestSchemaVersion,
-		ID:            "wf_" + uuid.New().String()[:8],
-		Version:       WorkflowContractCurrentVersion,
-		Label:         label,
+		CodeLayoutVersion: 1,
+		SchemaVersion:     WorkflowManifestSchemaVersion,
+		ID:                "wf_" + uuid.New().String()[:8],
+		Version:           WorkflowContractCurrentVersion,
+		Label:             label,
 		Capabilities: WorkflowCapabilities{
 			SelectedServers:           []string{},
 			SelectedTools:             []string{},
@@ -1155,6 +1160,19 @@ func manifestChangelogChange(path string, beforeOK, afterOK bool) step_based_wor
 
 // WriteWorkflowManifest validates and writes workflow.json to a workspace.
 func WriteWorkflowManifest(ctx context.Context, workspacePath string, m *WorkflowManifest) error {
+	previous, previousExists, readErr := readFileFromWorkspace(ctx, manifestPath(workspacePath))
+	if readErr != nil {
+		return fmt.Errorf("read existing workflow.json before update: %w", readErr)
+	}
+	// Source layout is a creation-time contract, not an editable capability.
+	// Older clients omit this field; never silently switch their source tree.
+	if previousExists {
+		var prior WorkflowManifest
+		if err := json.Unmarshal([]byte(previous), &prior); err != nil {
+			return fmt.Errorf("parse existing workflow.json before update: %w", err)
+		}
+		m.CodeLayoutVersion = prior.CodeLayoutVersion
+	}
 	workflowtypes.NormalizePresetLLMConfig(m.Capabilities.LLMConfig)
 	// Ensure nil slices become empty arrays in JSON
 	ensureManifestSlices(m)
@@ -1171,7 +1189,6 @@ func WriteWorkflowManifest(ctx context.Context, workspacePath string, m *Workflo
 		return fmt.Errorf("failed to marshal workflow.json: %w", err)
 	}
 
-	previous, previousExists, _ := readFileFromWorkspace(ctx, manifestPath(workspacePath))
 	if err := writeFileToWorkspace(ctx, manifestPath(workspacePath), string(data)); err != nil {
 		return fmt.Errorf("failed to write workflow.json: %w", err)
 	}

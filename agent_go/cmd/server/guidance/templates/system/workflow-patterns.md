@@ -140,17 +140,17 @@ patterns do not override it. A fixed child set and order does not justify an `or
 
 **Layout**:
 - One large `message_sequence` drafts/proposes, re-opens evidence, proves the approval package, and repairs it before the human boundary
-- `human_input` approves, selects, or edits; this is an intentional context boundary because new external information enters the run
+- A `branch` with `route_source="human"` handles approve/hold or a fixed selection; `human_input` (`text`) captures a free-form edit/value. This is an intentional context boundary because new external information enters the run
 - After approval, use a scripted `regular` for a fixed API/CLI publish/execute action with authoritative read-back verification, or another large `message_sequence` only when adaptive post-approval judgment needs its own shared context
-- Or `human_input` directly inside a `orchestrator` route when the orchestrator should pause per item
-- Different from pattern #2's seed: this `human_input` sits mid-pipeline, not at the start
+- For per-item reviews or unattended work, use the durable proposal/approval/consumer pattern in `references/human-in-the-loop.md`; do not assume an orchestrator route accepts a human-input sub-agent type
+- Different from pattern #2's seed: this checkpoint sits mid-pipeline, not at the start
 
 **When to use**: irreversible actions (publish, submit, send), creative judgment (topic, tone), or contested decisions (which lead to pursue).
 
 **Pitfalls**:
 - Asking too many checkpoint questions — fatigue makes the user rubber-stamp.
 - Putting the checkpoint after a costly step rather than before — the cost is sunk by approval time.
-- Free-text `human_input` when a `multiple_choice` would do — choices reduce ambiguity and route cleanly.
+- Free-text `human_input` for a fixed choice — use a human-decided branch; legacy `multiple_choice` human inputs are not the new-step pattern.
 
 ---
 

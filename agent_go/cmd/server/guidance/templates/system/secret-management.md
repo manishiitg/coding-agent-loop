@@ -23,7 +23,7 @@ Secrets are credentials (API keys, tokens, passwords). They may come from three 
 
 ### Safety rules
 
-Secret values must never be printed, echoed, logged, or pasted into another tool's arguments. If a user pastes a secret in chat, treat it as sensitive: store it, then acknowledge only by name.
+Secret values must never be printed, echoed, logged, or passed to unrelated tools. The designated `set_workflow_secret` / `set_user_secret` tool may receive a user-provided value for the requested save; that exception does not authorize plaintext files, shell commands, or disclosure to other tools. If a user pastes a secret in chat, treat it as sensitive: store it, then acknowledge only by name.
 
 Do not tell the user to rotate the secret after a normal requested save. Recommend rotation only for a concrete exposure event such as logs, files, commits, or the wrong channel.
 

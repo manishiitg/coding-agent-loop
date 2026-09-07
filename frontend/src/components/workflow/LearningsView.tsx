@@ -491,6 +491,19 @@ export default function LearningsView({ workspacePath, plan }: LearningsViewProp
       let codeFileName = ''
       let error: string | null = null
 
+      // The manifest, not directory presence, selects canonical code. A missing
+      // learnings folder must not hide a new-layout step's saved implementation.
+      const manifestResponse = await agentApi.getPlannerFileContent(`${workspacePath}/workflow.json`)
+      const canonicalCode = manifestResponse.success && manifestResponse.data?.content
+        ? JSON.parse(manifestResponse.data.content).code_layout_version === 1 : false
+      if (canonicalCode) {
+        const source = await agentApi.getPlannerFileContent(`${workspacePath}/code/${stepId}/main.py`)
+        if (source.success && source.data?.content) {
+          codeContent = source.data.content
+          codeFileName = 'main.py'
+        }
+      }
+
       const flattenLeafFiles = (items: Array<PlannerFile & { name?: string }>) => {
         const out: Array<PlannerFile & { name?: string }> = []
         const seen = new Set<string>()
@@ -533,7 +546,7 @@ export default function LearningsView({ workspacePath, plan }: LearningsViewProp
       }
 
       // List files in the learnings folder to find the markdown file and saved scripts
-      const filesResponse = await agentApi.getPlannerFiles(learningsPath, 100, 3)
+      const filesResponse = await agentApi.getPlannerFiles(learningsPath, 100, 3).catch(() => [])
       const rawFiles: Array<PlannerFile & { name?: string }> = Array.isArray(filesResponse)
         ? filesResponse
         : (filesResponse?.data && Array.isArray(filesResponse.data) ? filesResponse.data : [])
@@ -567,7 +580,7 @@ export default function LearningsView({ workspacePath, plan }: LearningsViewProp
 
       // Fallback: some workspace API responses only return top-level entries for the
       // folder listing, so check code/ explicitly as well.
-      if (codeFiles.length === 0) {
+      if (!canonicalCode && codeFiles.length === 0) {
         try {
           const codePath = `${learningsPath}/code`
           const codeFilesResponse = await agentApi.getPlannerFiles(codePath, 100)
@@ -602,7 +615,7 @@ export default function LearningsView({ workspacePath, plan }: LearningsViewProp
         return aRel.localeCompare(bRel)
       })[0]
 
-      if (codeFile) {
+      if (!canonicalCode && codeFile) {
         const rawCodeFilePath = codeFile.filepath || codeFile.name
         const codeFilePath = rawCodeFilePath ? resolveAbsPath(rawCodeFilePath) : ''
         if (codeFilePath) {

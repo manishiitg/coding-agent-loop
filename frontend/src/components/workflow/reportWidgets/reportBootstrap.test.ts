@@ -60,11 +60,13 @@ describe('withReportBootstrap', () => {
     // was undefined at this point and calling it threw a TypeError.
     const report = win.report as {
       query: (sql: string) => Promise<unknown>
+      mediaUrl: (path: string) => Promise<unknown>
       openFile: (path: string) => void
     }
     const resultPromise = report.query('select 1')
     expect(resultPromise).toBeInstanceOf(Promise)
     report.openFile('db/a.png')
+    const mediaPromise = report.mediaUrl('db/assets/clip.webm')
 
     const pending = win.__reportPendingCalls as Array<{
       name: string
@@ -72,12 +74,15 @@ describe('withReportBootstrap', () => {
       resolve: (v: unknown) => void
       reject: (e: unknown) => void
     }>
-    expect(pending).toHaveLength(2)
+    expect(pending).toHaveLength(3)
     expect(pending[0]).toMatchObject({ name: 'query', args: ['select 1'] })
     expect(pending[1]).toMatchObject({ name: 'openFile', args: ['db/a.png'] })
+    expect(pending[2]).toMatchObject({ name: 'mediaUrl', args: ['db/assets/clip.webm'] })
 
     // Host replay (what inject() does once the real API exists).
     pending[0].resolve([{ ok: 1 }])
     await expect(resultPromise).resolves.toEqual([{ ok: 1 }])
+    pending[2].resolve('/api/workflow/report-media?token=file-only')
+    await expect(mediaPromise).resolves.toBe('/api/workflow/report-media?token=file-only')
   })
 })

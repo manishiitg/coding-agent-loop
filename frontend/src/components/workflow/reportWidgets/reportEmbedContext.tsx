@@ -39,6 +39,8 @@ export interface ReportDataApi {
   // etc.; openFile opens the file in the in-report preview modal. Both scoped to
   // db/ knowledgebase/ docs/.
   fileUrl: (path: string) => Promise<string | null>
+  /** Expiring authenticated range-streaming URL for db/assets video/audio. */
+  mediaUrl: (path: string) => Promise<string | null>
   openFile: (path: string) => void
   // updateField writes exactly one cell; updateFields writes several columns on
   // the same row in one atomic call (a form submit). Both share the same

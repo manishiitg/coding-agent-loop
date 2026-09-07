@@ -10,6 +10,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/google/uuid"
+
 	virtualtools "github.com/manishiitg/coding-agent-loop/agent_go/cmd/server/virtual-tools"
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/common"
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/costobserver"
@@ -1203,11 +1205,19 @@ func (hcpo *StepBasedWorkflowOrchestrator) getMessageSequenceRuntime(ctx context
 		return session.runtime, ctx, nil
 	}
 
-	sessionID := hcpo.messageSequenceRuntimeSessionID(stepPath, step.GetID())
-	if session.runtime != nil && strings.TrimSpace(session.runtime.SessionID) != "" {
-		sessionID = strings.TrimSpace(session.runtime.SessionID)
-	}
+	sessionID := hcpo.messageSequenceRuntimeSessionID(session, stepPath, step.GetID())
 	session.RuntimeSessionID = sessionID
+	ready := session.runtime != nil && session.runtime.Agent != nil
+	if !ready {
+		// Own the allocation before registering any capabilities. A failed
+		// setup must retire this attempt, never a serialized history ID.
+		session.runtime = &messageSequenceRuntime{SessionID: sessionID}
+		defer func() {
+			if !ready {
+				hcpo.closeMessageSequenceRuntime(session, "message_sequence setup failed")
+			}
+		}()
+	}
 	if err := hcpo.materializeWorkflowGuardPaths(readPaths, writePaths); err != nil {
 		return nil, ctx, err
 	}
@@ -1241,21 +1251,17 @@ func (hcpo *StepBasedWorkflowOrchestrator) getMessageSequenceRuntime(ctx context
 	if err != nil {
 		return nil, agentCtx, err
 	}
-	provider := ""
+	session.runtime.Agent = agent
 	if cfg := agent.GetConfig(); cfg != nil {
-		provider = cfg.LLMConfig.Primary.Provider
-		if strings.TrimSpace(cfg.MCPSessionID) != "" {
-			sessionID = strings.TrimSpace(cfg.MCPSessionID)
-			session.RuntimeSessionID = sessionID
-			hcpo.configureSubAgentSessionGuard(sessionID, "message-sequence", step.GetID(), readPaths, writePaths)
-			hcpo.setMessageSequenceShellEnv(sessionID, stepPath, step.GetID())
+		session.runtime.Provider = cfg.LLMConfig.Primary.Provider
+		if actualID := strings.TrimSpace(cfg.MCPSessionID); actualID != sessionID {
+			return nil, agentCtx, fmt.Errorf("message_sequence agent session %q does not match allocated runtime %q", actualID, sessionID)
 		}
 	}
-	session.runtime = &messageSequenceRuntime{
-		Agent:     agent,
-		SessionID: sessionID,
-		Provider:  provider,
-	}
+	// Agent creation applies its full-step guard; restore this item's scope.
+	hcpo.configureSubAgentSessionGuard(sessionID, "message-sequence", step.GetID(), readPaths, writePaths)
+	hcpo.setMessageSequenceShellEnv(sessionID, stepPath, step.GetID())
+	ready = true
 	return session.runtime, agentCtx, nil
 }
 
@@ -1279,7 +1285,14 @@ func (hcpo *StepBasedWorkflowOrchestrator) setMessageSequenceShellEnv(sessionID,
 	configureWorkflowDBSession(sessionID, hcpo.GetWorkspacePath(), DBAccessReadWrite, false)
 }
 
-func (hcpo *StepBasedWorkflowOrchestrator) messageSequenceRuntimeSessionID(stepPath string, stepID string) string {
+// Reuse only the live runtime owned by this sequence. Serialized session IDs
+// describe prior executions; they must not revive a stopped runtime or collide
+// with another execution using the same workflow/run/group/step coordinates.
+// In particular, cancellation cleanup may finish after a replacement starts.
+func (hcpo *StepBasedWorkflowOrchestrator) messageSequenceRuntimeSessionID(session *messageSequenceSession, stepPath string, stepID string) string {
+	if session != nil && session.runtime != nil && strings.TrimSpace(session.runtime.SessionID) != "" {
+		return strings.TrimSpace(session.runtime.SessionID)
+	}
 	parts := []string{"msgseq"}
 	if strings.TrimSpace(hcpo.selectedRunFolder) != "" {
 		parts = append(parts, sanitizeMessageSequenceExecutionIDPart(hcpo.selectedRunFolder))
@@ -1288,6 +1301,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) messageSequenceRuntimeSessionID(stepP
 		parts = append(parts, sanitizeMessageSequenceExecutionIDPart(hcpo.currentGroupName))
 	}
 	parts = append(parts, sanitizeMessageSequenceExecutionIDPart(stepPath), sanitizeMessageSequenceExecutionIDPart(stepID))
+	parts = append(parts, uuid.NewString())
 	return strings.Join(parts, "-")
 }
 
@@ -1297,6 +1311,11 @@ func (hcpo *StepBasedWorkflowOrchestrator) closeMessageSequenceRuntime(session *
 	}
 	runtime := session.runtime
 	session.runtime = nil
+	if strings.TrimSpace(runtime.SessionID) != "" {
+		// Prevent connection recovery from recreating a session while it is
+		// being retired. Shared browser/group sessions have different owners.
+		mcpagent.MarkSessionsStopped([]string{runtime.SessionID})
+	}
 	if runtime.Agent != nil {
 		_ = runtime.Agent.Close()
 	}
@@ -1307,13 +1326,9 @@ func (hcpo *StepBasedWorkflowOrchestrator) closeMessageSequenceRuntime(session *
 	closeMessageSequenceCodingSession(runtime.Provider, runtime.SessionID, reason)
 	common.ClearSessionShellConfig(runtime.SessionID)
 	virtualtools.DeleteSessionNotificationDestination(runtime.SessionID)
-	// Reclaim the isolated coding-CLI workspace for this runtime. Agent.Close
-	// above deliberately leaves it in place — a new Agent is built per turn, so
-	// closing one turn's agent must not delete the workspace the next turn
-	// resumes into. This IS the end of the sequence, so the dir goes now.
-	// Without it the workspace (and the CLI conversation inside it) leaks, one
-	// per message_sequence step.
-	mcpagent.RemoveIsolatedSessionWorkspace(runtime.SessionID)
+	// Agent.Close preserves MCP connections between turns. At true sequence
+	// termination, retire that registry and its isolated workspace as well.
+	mcpagent.CloseSession(runtime.SessionID)
 }
 
 func closeMessageSequenceCodingSession(provider string, ownerSessionID string, reason string) {

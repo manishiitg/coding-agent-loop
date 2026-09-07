@@ -1,3 +1,5 @@
+**Saved-code paths:** Read `workflow.json.code_layout_version` first. In this reference, `<script-dir>` means `code/<step-id>` for version 1, or `learnings/<step-id>` for absent/zero (legacy). Resolve the placeholder before using a path; never infer the version from folders or migrate an existing workflow implicitly. Version 1 executes and repairs canonical source directly, with shared helpers under `WORKFLOW_CODE_ROOT`; only legacy workflows copy code into runs and save it back.
+
 ## OPTIMIZATION GUIDELINES
 
 **Important**: For proactive optimization suggestions (learning config, server scoping, description refinement), wait until a step has had a few successful runs before pushing changes. But for **debugging failures** — when a step produces wrong output or doesn't do what it should — investigate and fix immediately, don't wait.
@@ -8,19 +10,19 @@ When helping users optimize steps, follow these principles:
 
 ### 1. Validation Schema vs Success Criteria — They Serve Different Purposes
 
-**validation_schema** (pre-validation) is the **only automated gate** that pass/fails a step. It runs code-based structural checks — no LLM involved. If pre-validation fails, the step fails and retries. If it passes, the step is auto-approved. Design it to catch everything that matters:
+**validation_schema** is the deterministic output gate. It runs code-based checks with no LLM involved; a failed check follows the step's configured retry/failure policy. Passing validates the checked output, not human approval or proof of every semantic claim. Keep the gate focused on the downstream contract (see `references/step-description.md`):
 - **File existence**: Output files must exist
-- **Field completeness**: ALL required fields present, not just the obvious ones. E.g., for a login step, don't just check "$.login_success" as boolean — also require "$.pan", "$.dashboard_url", "$.account_name" so a stale file from a previous run can't pass
+- **Field completeness**: Require the fields consumers actually depend on. For a login check, validate the observed account identity if it matters to the next action; do not require unrelated identity fields simply to enlarge the schema
 - **Value constraints**: Types, min/max lengths, regex patterns for format validation, min/max values for numbers
 - **Cross-field consistency**: Use "consistency_check" to compare related fields (e.g., array length matches a count field)
-- **Anti-staleness**: Include enough field checks that leftover files from previous runs are unlikely to pass. The more specific the schema, the harder it is for stale data to sneak through.
+- **Anti-staleness**: Check relevant run/source identity and authoritative read-back evidence. Extra field names or non-empty strings alone cannot distinguish a stale or fabricated result from a real observation.
 
 Step-level `success_criteria` is no longer part of the recommended step design. Put semantic completion guidance into `description`, and put machine-checkable requirements into `validation_schema`.
 - **validation_schema**: Check login_status.json has login_success=boolean, pan=string, dashboard_url=string (pattern: /dashboard/), account_name=string (min_length: 1)
 
 If a step needs **semantic/LLM-based validation** (e.g., "verify the summary is accurate"), keep it in the same shared context: use or convert to one large `message_sequence`, add a focused user-message turn that re-opens the real evidence and proves the criteria, then a repair/double-check turn. Keep machine-checkable proof/provenance in the top-level `validation_schema`. Add a separate validation step only for genuine clean-room independence, different permissions/tools, or an independently rerunnable artifact/failure domain.
 
-After a step runs successfully, always check: could a stale/fake output file pass this schema? If yes, tighten it.
+When reviewing a successful step, check whether its evidence establishes freshness and authenticity. Add targeted provenance checks or semantic evidence verification where needed; do not treat an exhaustive schema as proof.
 
 ### 2. Learning Configuration
 
@@ -31,7 +33,7 @@ The learning system has **one active permission control** per step: `learnings_a
 - **Writes are direct-only**: when `learnings_access="read-write"` and `learning_objective` are set, the step agent itself writes `_global/SKILL.md` in a dedicated post-completion user-message turn. Folder guard widens only for that turn; main execution cannot write learnings. This turn is part of step finalization, so it completes before the workflow advances to the next step. Direct-mode guidance is NOT in the step's main system prompt — the agent sees it only in the dedicated turn. Parallel direct-learning turns are serialized by an in-process mutex.
 - **Do not write learnings** for routing/condition steps, schema validation, mechanical transforms, aggregation/report data shaping, human approval/input, message-only steps, pure db/KB readers, or mature scripted steps whose `main.py` already captures the execution method. Leave these at `"read"` unless `_global/SKILL.md` would actively mislead them.
 - **Use `"none"` sparingly** — only when the global skill content would actively mislead the step (rare) or when the step is so divorced from the target system that reading the skill just burns tokens.
-- **scripted steps**: usually `learnings_access: "read"` (not `"read-write"`). The saved `learnings/{step-id}/main.py` IS the learned artifact — the HOW is encoded as code. Opt into write only when there's cross-step HOW knowledge the script itself can't capture (e.g. operator notes, patterns spanning multiple steps).
+- **scripted steps**: usually `learnings_access: "read"` (not `"read-write"`). The saved `<script-dir>/main.py` IS the learned artifact — the HOW is encoded as code. Opt into write only when there's cross-step HOW knowledge the script itself can't capture (e.g. operator notes, patterns spanning multiple steps).
 - **Clearing a bad setting**: if a step was miss-configured with `learnings_access: "read-write"` but shouldn't contribute, clear it via `update_step_config(step_id, clear_fields=["learnings_access", "learning_objective"])`.
 
 Good `learning_objective` examples:
@@ -47,7 +49,7 @@ Only saved scripted code has a lock. Learning writes are controlled directly by 
 
 | Lock | Scope | Freezes | Prevents | Use when |
 | --- | --- | --- | --- | --- |
-| `lock_code` | Per-step (scripted only) | `learnings/{step-id}/main.py` | Execution-agent rewrites on failure, fast-path repair loop, and learning-agent replacement of the script | The user explicitly wanted `scripted`, the step is highly deterministic, and script/eval evidence shows 10+ successful scenario-covering runs. Hand-patched scripts still need this evidence before freezing, otherwise keep `lock_code=false` so repair can continue. |
+| `lock_code` | Per-step (scripted only) | `<script-dir>/main.py` | Execution-agent rewrites on failure, fast-path repair loop, and learning-agent replacement of the script | The user explicitly wanted `scripted`, the step is highly deterministic, and script/eval evidence shows 10+ successful scenario-covering runs. Hand-patched scripts still need this evidence before freezing, otherwise keep `lock_code=false` so repair can continue. |
 
 **After hand-editing an artifact**: do not lock it automatically. Verify the edit against real scenario-covering runs first. Lock only when the user explicitly asks or the artifact has enough evidence to be treated as stable; otherwise leave it unlocked so later runs can expose and repair drift. Record the decision in `review_notes`.
 
@@ -88,15 +90,15 @@ You can read, edit, and delete them using **execute_shell_command** and **diff_p
 
 ### 3b. Debugging & Fixing Scripted Code Steps (scripted)
 
-When patching `learnings/{step-id}/main.py`, also load the full main.py authoring rules:
+When patching `<script-dir>/main.py`, also load the full main.py authoring rules:
 `read_skill(skills=[{"name":"builder-reference","path":"references/code-authoring.md"}])` — covers env access, sys.argv contract, data authenticity, logging, robustness, patching discipline.
 
-For steps in scripted mode, the saved Python script at `learnings/{step-id}/main.py` is the primary artifact. When a scripted step fails, follow this workflow:
+For steps in scripted mode, the saved Python script at `<script-dir>/main.py` is the primary artifact. When a scripted step fails, follow this workflow:
 
 **1. Diagnose** — Understand what went wrong:
-- Read the script: `cat learnings/{step-id}/main.py`
+- Read the script: `cat <script-dir>/main.py`
 - Read the execution log: `cat runs/{iteration}/{group}/logs/{step-id}/execution/scripted_fast_path.json` — contains exit_code, stdout output, and error
-- Read script_metadata.json: `cat learnings/{step-id}/script_metadata.json` — shows recent_runs (last 10 with error snippets), per-group stats, duration trends, last failure details, and success/failure streak
+- Read script_metadata.json: `cat <script-dir>/script_metadata.json` — shows recent_runs (last 10 with error snippets), per-group stats, duration trends, last failure details, and success/failure streak
 - Check pre-validation results: `cat runs/{iteration}/{group}/logs/{step-id}/pre_validation.json`
 - Use `debug_step(step_id)` for a comprehensive analysis including the script metadata
 
@@ -109,7 +111,7 @@ For steps in scripted mode, the saved Python script at `learnings/{step-id}/main
 - This is the fastest way to diagnose issues like changed selectors, timing problems, unexpected page states, or API response changes — you see exactly what the script would see at runtime
 
 **2. Fix** — Patch the script directly:
-- Use **diff_patch_workspace_file** to edit `learnings/{step-id}/main.py` (this is the source of truth — execution/code/ is a disposable copy that gets overwritten from learnings on every run)
+- Use **diff_patch_workspace_file** to edit `<script-dir>/main.py` (resolve the manifest-selected source first; version 1 has no execution copy)
 - For helper files alongside main.py, also patch them in `learnings/{step-id}/`
 - Common fixes: selector changes, timeout adjustments, error handling, missing env var reads, wrong API endpoints, date format issues
 - If diagnosis revealed the fix (e.g., a selector changed), apply it directly. If the issue is complex, use your live MCP access to prototype the fix interactively before patching.
@@ -123,15 +125,15 @@ For steps in scripted mode, the saved Python script at `learnings/{step-id}/main
 **4. Validate across groups** — If the workflow has multiple groups, test the fix against other groups too. Check `script_metadata.json` group_stats to see which groups were failing.
 
 **5. Lock code when proven** — After confirming the fix works:
-- `update_step_config(step_id, lock_code=true)` to freeze `learnings/{step-id}/main.py` itself only after the scripted gate is satisfied: explicit user request, highly deterministic behavior, and 10+ successful scenario-covering runs with eval/run evidence at target. With `lock_code=true`, the script is used as-is on every run: the fix loop cannot rewrite it, and the execution agent will never replace it after a failure.
+- `update_step_config(step_id, lock_code=true)` to freeze `<script-dir>/main.py` itself only after the scripted gate is satisfied: explicit user request, highly deterministic behavior, and 10+ successful scenario-covering runs with eval/run evidence at target. With `lock_code=true`, the script is used as-is on every run: the fix loop cannot rewrite it, and the execution agent will never replace it after a failure.
 - **Do not lock code just because you hand-patched it.** After a hand-fix, keep `lock_code=false` until the script proves stable across the 10+ run scenario surface.
 
-**Key principle**: Always edit `learnings/{step-id}/main.py`, never `execution/{step-id}/code/main.py`. The execution copy is overwritten from learnings on every run.
+**Key principle**: Always edit `<script-dir>/main.py`, never `execution/{step-id}/code/main.py`. In builder/reviewer turns edit canonical source; controller-managed legacy repair instead uses its explicitly supplied execution directory. Only legacy workflows copy source into runs.
 
 **Force complete rewrite**: If the saved script has fundamental issues (wrong approach, bad patterns like JavaScript injection instead of ref-based browser interaction), delete the learnings script to force the LLM to write from scratch:
-- `rm learnings/{step-id}/main.py` — deletes the saved script
+- `rm <script-dir>/main.py` — deletes the saved script
 - Then run `execute_step(step_id, group_name)` — the LLM will generate a fresh main.py using the step description, skill files, and proper tool discovery via get_api_spec
-- Do NOT just delete `execution/{step-id}/code/main.py` — the controller copies from learnings on every run, so the execution copy gets restored automatically
+- Do NOT just delete `execution/{step-id}/code/main.py` — in legacy workflows this disposable copy is restored from saved source; version 1 has no such copy
 
 ### 4. Server & Tool Scoping
 Each step should only have the MCP servers and tools it actually needs. After a step runs, review the execution logs to compare configured servers vs actually used tools, then use **update_step_config** to restrict servers to the minimum required set. This reduces tool discovery noise and speeds up execution.
@@ -142,7 +144,7 @@ Installed skills are reusable capability instructions under `<workspace-root>/sk
 
 - Workflow-selected skills from `update_workflow_config(add_skills=[...])` are builder/workshop discovery context. They do not automatically reach runtime step agents.
 - Runtime step agents receive only skills listed in that step's `enabled_skills`. Use `update_step_config(step_id, enabled_skills=[...])` when a step actually needs an installed skill.
-- If a failing step is doing ad-hoc work covered by an installed skill, enable the skill on that step and keep the step description focused on task, inputs, outputs, and validation contract.
+- If a failing step is doing ad-hoc work covered by an installed skill, enable the skill on that step and keep the step description focused on task, inputs, intended outcome, and constraints; keep output structure in its schema or canonical contract.
 - If a skill is enabled but irrelevant to the step, remove it from that step to reduce prompt noise.
 - If guidance is workflow-specific (selectors discovered in this workflow, account names, run paths, current plan details), put it in `learnings/_global/` via the learning tools instead of editing an external skill.
 
@@ -162,18 +164,18 @@ The step **description** in plan.json is the primary instruction the execution a
 **When to optimize**: After a step has run multiple times and learnings have stabilized, review the description for clarity and precision. Don't optimize descriptions on steps that are still evolving.
 
 **Principles**:
-- **Be specific about the expected output**: Instead of "create a report", say "create a JSON report at output/report.json with fields: title, summary, findings (array of {issue, severity, recommendation})".
+- **Be specific about the expected outcome**: Instead of "create a report", say "Assess the supplied findings, explain their impact, and save the assessment to report.json in STEP_OUTPUT_DIR." Put field names, types, required keys, and shape in `validation_schema` or an accessible canonical contract, not in the description.
 - **Reference context_output files from prior steps**: E.g., "Using the data from step-extract-data's context_output, generate...". The execution agent receives prior step outputs as context.
 - **Include constraints and edge cases**: If the step should handle missing data gracefully, say so. If there's a size limit or format requirement, specify it.
 - **Remove vague qualifiers**: Replace "good", "appropriate", "relevant" with concrete criteria the agent can evaluate.
-- **Incorporate patterns from learnings**: If learnings consistently capture the same pattern (e.g., "always check for empty arrays"), fold that into the description itself — then consider disabling/locking learning for that step.
+- **Keep WHAT and HOW separate**: Keep objectives, task-specific business constraints, authorization boundaries, and success criteria in the description. Curate reusable methods and verified procedures in accessible skills/learnings; use `learnings_access="read"` when contributions stabilize. See `references/step-description.md`.
 - **Keep the boundary coherent**: The description may include many tool calls or sub-actions, but it should still serve one durable output contract. If it starts mixing unrelated outputs, validation gates, retry domains, stores, or approval/routing decisions, split at those boundaries.
 
 **How to update**: Use the plan modification tools (`update_scripted_step`, `update_message_sequence_step`, `update_orchestrator_step`, `update_orchestrator_route`, `update_routing_step`, `update_human_input_step`, or `update_validation_schema`) to update step descriptions and validation. Do not patch `planning/plan.json` directly; it is system-managed and guarded. The change takes effect on the next execution.
 
 **Description review bookkeeping is required**: After you change or approve a description, immediately call `update_step_config` to record:
 - `description_reviewed` + `review_notes`
-If the step description changes later, clear `description_reviewed` yourself — the system does not auto-invalidate the review.
+Plan modification tools automatically clear `description_reviewed` when a reviewed contract changes (including description, dependencies, schema, messages, or routing). Review the final edited contract before marking it reviewed again. If the tool reports a bookkeeping failure, repair that metadata; do not assume the old review is current.
 
 **Dependencies after changes**: Follow `builder-reference/references/plan-change-impact.md`. After related edits, do one combined compatibility check in the current agent before the targeted test; inspect only affected dependencies. Do not launch a separate drift reviewer for each edit or test retry. Reserve the full `/review-artifact-drift` audit for scheduled Pulse or an explicit user request. Record inspected changelog entries through typed review metadata.
 
@@ -190,7 +192,7 @@ After running a step, review it for optimization — but follow this priority or
   - Are they **specific and actionable**? Vague learnings like "be careful with the API" waste tokens. Good learnings describe exact patterns: "The /api/v2/data endpoint returns paginated results — always follow next_page_token until null."
   - Do they **contradict the step description**? If so, either update the description or delete the misleading learning.
   - Do they **match the current step config**? Cross-check learnings against the step's configured servers, tools, and description. Learnings may reference server names, tool names, or patterns from a previous config that no longer apply. Stale references cause the execution agent to search for non-existent servers/tools, wasting turns and causing failures. Fix by updating the learning file with the correct names.
-  - Are they **repetitive**? If the same pattern appears across multiple learning files, consolidate it into the step description and delete the redundant files.
+  - Are they **repetitive**? If the same verified method appears across multiple learning files, consolidate it into the canonical shared skill/learnings and update references before removing redundant copies. Do not move procedures into the step description.
 - **Learning lifecycle by step complexity:**
   - **Simple steps** (single tool call, straightforward output): leave `learning_objective` empty (the default). Learning is opt-in; simple steps don't earn their keep with the learning-agent overhead.
   - **Medium steps** (2-5 tool calls, clear pattern): Run with write access for **2-3 successful runs**, review learnings, then change to `learnings_access="read"` when new contributions become redundant.
@@ -223,11 +225,11 @@ A step's execution mode is its plan type — `regular` is scripted, `message_seq
   - One coherent source fetched and written to its canonical tables (e.g. related API endpoints + pagination → parse/normalize → idempotent `db` upserts)
   - Deterministic data processing: iterating rows, matching columns, extracting/transforming — a tight Python loop in one shot, no per-row "thinking"
   - A focused transform that benefits from Python libraries (parsing, calculations, formatting)
-- **Agentic** (`message_sequence` type): the LLM acts each turn and no persistent script is saved. Use it for judgment, synthesis, fuzzy extraction, adaptive discovery, or action selection that genuinely varies with live evidence. A fixed API/CLI call is scripted even when it is only one call; simplicity is a reason to make the script small, not a reason to spend an LLM turn on it. Browser/UI steps should generally stay agentic unless the user explicitly wants scripted browser automation and representative evidence proves the flow stable enough. If an agentic step has leftover `learnings/{step-id}/main.py`, delete it; that file is stale mode debt and should not be patched.
+- **Agentic** (`message_sequence` type): the LLM acts each turn and no persistent script is saved. Use it for judgment, synthesis, fuzzy extraction, adaptive discovery, or action selection that genuinely varies with live evidence. A fixed API/CLI call is scripted even when it is only one call; simplicity is a reason to make the script small, not a reason to spend an LLM turn on it. Browser/UI steps should generally stay agentic unless the user explicitly wants scripted browser automation and representative evidence proves the flow stable enough. If an agentic step has leftover `<script-dir>/main.py`, delete it; that file is stale mode debt and should not be patched.
 
 **Mode-selection rule:** Create or convert deterministic API/CLI/SDK/data-fetch/parse/transform/persist work as `scripted` on Workshop's own initiative; this is architecture selection, not freezing. Treat 10+ scenario-covering successful runs (with eval/run evidence at target) as the bar only for **freezing the saved script with `lock_code`**. Keep `lock_code=false` until that evidence exists so the repair loop can fix drift. Keep judgment, adaptive discovery, and browser/UI work agentic.
 
-**There is no mode field to fill in**: the plan type is the declaration. When the user asks to make a step scripted, use `change_step_type(step_id, target_type="scripted", reason=...)`, then author and test `learnings/<step-id>/main.py`. `use_code_execution_mode` is a separate, independent toggle — a `message_sequence` can use code execution without being scripted.
+**There is no mode field to fill in**: the plan type is the declaration. When the user asks to make a step scripted, use `change_step_type(step_id, target_type="scripted", reason=...)`, then author and test `<script-dir>/main.py`. `use_code_execution_mode` is a separate, independent toggle — a `message_sequence` can use code execution without being scripted.
 
 **Workshop agent behavior for code-exec steps**: When you (the workshop agent) are asked to explore, investigate, or do manual work related to a step marked with code execution mode, you should also adopt the code-exec approach — use **execute_shell_command** to write and run Python/shell scripts that combine multiple MCP tool calls together, rather than making individual tool calls one by one. This mirrors how the step's execution agent works and helps you build reusable scripts and patterns that can inform the step's learnings.
 

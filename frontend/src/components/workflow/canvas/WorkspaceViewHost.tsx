@@ -572,7 +572,6 @@ export const WorkspaceViewHost = React.memo(forwardRef<WorkflowCanvasRef, Workfl
           <div className={gridToolbar ? 'col-start-1 row-start-1 md:col-span-2' : ''}>
             <WorkflowToolbar
               status={status}
-              hasPlan={hasPlan}
               plan={plan || undefined}
               currentPhase={currentPhase}
               workspacePath={workspacePath}

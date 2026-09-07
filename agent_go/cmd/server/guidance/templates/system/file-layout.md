@@ -1,3 +1,5 @@
+**Saved-code paths:** Read `workflow.json.code_layout_version` first. In this reference, `<script-dir>` means `code/<step-id>` for version 1, or `learnings/<step-id>` for absent/zero (legacy). Resolve the placeholder before using a path; never infer the version from folders or migrate an existing workflow implicitly. Version 1 executes and repairs canonical source directly, with shared helpers under `WORKFLOW_CODE_ROOT`; only legacy workflows copy code into runs and save it back.
+
 ## FILE LAYOUT
 
 **Shell working directory**: the absolute workspace path (e.g. `/app/workspace-docs/Workflow/<name>/`) — get the exact value from the CURRENT STATE block of your system prompt or from `AbsWorkspacePath` if available.
@@ -59,9 +61,9 @@ Use this order when debugging latency:
 ### Learnings (persistent across runs)
 | Path | Contents |
 |------|----------|
-| learnings/{step-id}/main.py | **scripted steps**: saved Python script — executed on each scripted run via fast path |
+| <script-dir>/main.py | **scripted steps**: saved Python script — executed on each scripted run via fast path |
 | learnings/_global/SKILL.md | Global prose learnings shared across all steps |
-| learnings/{step-id}/script_metadata.json | Script version, run counts, per-group stats, duration stats, recent run history (last 10 with exit codes/errors/durations), last failure details, success/failure streak |
+| <script-dir>/script_metadata.json | Script version, run counts, per-group stats, duration stats, recent run history (last 10 with exit codes/errors/durations), last failure details, success/failure streak |
 
 ### Evaluation
 | Path | Contents |
@@ -75,7 +77,7 @@ Use this order when debugging latency:
 | builder/conversation/YYYY-MM-DD/session-{id}-conversation.json | Previous builder chat sessions |
 | db/db.sqlite | Workflow state and results — one SQLite database, one table per entity (agentic steps use managed DB tools; saved scripts retain direct compatibility; upsert on the primary key) |
 | db/README.md | Per-table schema contract (DDL, primary key, upsert rule, indexes, writers, consumers) |
-| db/assets/* | Durable media/file assets referenced by db.sqlite rows, reports, or later steps. **The only folder a step can write an arbitrary file to** — the folder guard opens `db/`, `knowledgebase/notes/`, and `learnings/_global/` for step writes and nothing else; a custom folder (e.g. `downloads/`, `business-context/`) is denied. |
+| db/assets/* | Durable output media/files referenced by db rows, reports, or later steps. Source belongs in the manifest-selected script directory, not here. Version 1 unlocked steps also have workflow code-tree write access; other writes remain subject to the current Folder Guard grants. |
 | db/reports/index.html | Complete workflow-owned live report UI; it owns internal navigation and reads db/db.sqlite through window.report |
 | knowledgebase/context/context.md | User-supplied runtime business context that steps with KB read access must respect |
 | knowledgebase/notes/*.md | Per-topic narrative markdown — durable observations discovered by the workflow. Normally written by step agents in direct-write mode; post-step KB agent only when explicitly requested. |

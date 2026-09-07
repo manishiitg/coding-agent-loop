@@ -1847,7 +1847,9 @@ func (iwm *InteractiveWorkshopManager) newExecContext(launchCtx context.Context)
 // workspace API and bypass this sandbox altogether, so they don't appear here.
 func workshopWritePaths(workspacePath string) []string {
 	return []string{
+		fmt.Sprintf("%s/code", workspacePath),
 		fmt.Sprintf("%s/learnings", workspacePath),
+		fmt.Sprintf("%s/code", workspacePath),
 		fmt.Sprintf("%s/knowledgebase", workspacePath),
 		fmt.Sprintf("%s/runs", workspacePath),
 		fmt.Sprintf("%s/evaluation", workspacePath),
@@ -2292,7 +2294,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 	// Tool 1: execute_step — start step in background
 	if err := mcpAgent.RegisterCustomTool(
 		"execute_step",
-		"Start a workflow step in the background, including a normal plan step, nested route step, or plan-local orphan utility step. Returns an execution_id immediately. You will be automatically notified when it completes. Idempotent while running: if the step already has a running execution, this returns that existing execution_id instead of starting a duplicate — use send_step_message with the returned execution_id to steer its currently active agent turn. Learnings follow the step's persistent config (`learnings_access`, `learning_objective`). When learning writes are enabled, SKILL.md updates run as the step agent's direct post-completion continuation before the step is fully finalized. Workshop mode only: set fast_path_only=true to run ONLY the saved learnings/{step-id}/main.py script with no LLM fallback when testing scripted patches.",
+		"Start a workflow step in the background, including a normal plan step, nested route step, or plan-local orphan utility step. Returns an execution_id immediately. You will be automatically notified when it completes. Idempotent while running: if the step already has a running execution, this returns that existing execution_id instead of starting a duplicate — use send_step_message with the returned execution_id to steer its currently active agent turn. Learnings follow the step's persistent config (`learnings_access`, `learning_objective`). When learning writes are enabled, SKILL.md updates run as the step agent's direct post-completion continuation before the step is fully finalized. Workshop mode only: set fast_path_only=true to run ONLY the saved main.py (code/{step-id}/main.py for code_layout_version=1, otherwise learnings/{step-id}/main.py) script with no LLM fallback when testing scripted patches.",
 		map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
@@ -2323,7 +2325,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				},
 				"fast_path_only": map[string]interface{}{
 					"type":        "boolean",
-					"description": "Workshop mode only. If true, run ONLY the saved learnings/{step-id}/main.py script with no LLM fallback. Fails if no saved script exists, the step is not in scripted mode, or the current workshop mode is Run. Use this to quickly test scripted main.py patches.",
+					"description": "Workshop mode only. If true, run ONLY the saved main.py (code/{step-id}/main.py for code_layout_version=1, otherwise learnings/{step-id}/main.py) script with no LLM fallback. Fails if no saved script exists, the step is not in scripted mode, or the current workshop mode is Run. Use this to quickly test scripted main.py patches.",
 				},
 			},
 			"required": []string{"step_id"},
@@ -4121,7 +4123,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 			}
 			cleanupMessages := make([]string, 0, 1)
 			if cleanupStaleMainPy {
-				mainPyRelPath := fmt.Sprintf("learnings/%s/main.py", stepID)
+				mainPyRelPath := iwm.controller.scriptedSourceDir(stepID) + "/main.py"
 				if exists, existsErr := iwm.controller.CheckWorkspaceFileExists(ctx, mainPyRelPath); existsErr == nil && exists {
 					if deleteErr := iwm.controller.DeleteWorkspaceFile(ctx, mainPyRelPath); deleteErr != nil {
 						warnings = append(warnings, fmt.Sprintf("Declared agentic but failed to delete stale %s: %v", mainPyRelPath, deleteErr))
@@ -8207,11 +8209,11 @@ This is a **read-only review**:
 7. **Do not drift into full redesign**: You may suggest a concrete correction, but the primary task is to review and explain what is wrong with the current decision.
 8. **Check portability and secrecy**: Flag plan-visible secrets, user-specific values, absolute paths, run-folder-specific values, and brittle environment assumptions.
 9. **Check persistent-store discipline**: Stores survive across runs — `+"`"+`learnings/`+"`"+` (HOW to run), `+"`knowledgebase/context/`"+` (user-supplied runtime business context), `+"`"+`knowledgebase/notes/`+"`"+` (workflow-discovered durable narrative observations), `+"`"+`db/db.sqlite`+"`"+` (structured durable SQLite tables for cross-run state, read live by HTML reports via `+"`window.report.query`"+`), and `+"`db/assets/`"+` (durable media/file assets referenced by db rows or reports). Flag steps that confuse these stores: stashing durable facts in learnings or plan.json, stashing user-owned context in notes, writing report data only to run folders, embedding assets as blobs, or failing to declare `+"`"+`knowledgebase_contribution`+"`"+` / `+"`"+`db/README.md`+"`"+` contracts when steps produce persistent facts.
-10. **Check learning and mode discipline**: A step should write learnings only when it has reusable HOW-to-run knowledge worth capturing across runs, and it must have a concrete `+"`"+`learning_objective`+"`"+`. Deterministic API/SDK calls, CLI commands, data fetching, known pagination, stable parsing/normalization/transforms, and mechanical persistence should be `+"`"+`scripted`+"`"+` from initial design with an authored/tested `+"`learnings/{step-id}/main.py`"+`; no run-history threshold is required to choose that mode. Browser/UI work, adaptive discovery, and judgment stay agentic. The 10+ representative-run bar applies to `+"`"+`lock_code`+"`"+`, not to declaring deterministic work scripted.
+10. **Check learning and mode discipline**: A step should write learnings only when it has reusable HOW-to-run knowledge worth capturing across runs, and it must have a concrete `+"`"+`learning_objective`+"`"+`. Deterministic API/SDK calls, CLI commands, data fetching, known pagination, stable parsing/normalization/transforms, and mechanical persistence should be `+"`"+`scripted`+"`"+` from initial design with an authored/tested `+"`code/{step-id}/main.py` (code_layout_version=1; legacy: `learnings/{step-id}/main.py`)"+`; no run-history threshold is required to choose that mode. Browser/UI work, adaptive discovery, and judgment stay agentic. The 10+ representative-run bar applies to `+"`"+`lock_code`+"`"+`, not to declaring deterministic work scripted.
 11. **Check KB discipline**: KB writes require a useful `+"`"+`knowledgebase_contribution`+"`"+` and correct read/write access. `+"`knowledgebase/context/`"+` should contain user-supplied runtime context; `+"`knowledgebase/notes/`"+` should contain workflow-discovered durable narrative observations, not execution recipes, raw rows, or volatile run state. If `+"`"+`knowledgebase/notes/_index.json`+"`"+` exists, it must point to coherent topic notes.
 12. **Check db discipline**: `+"`"+`db/db.sqlite`+"`"+` should be a clean relational surface: each table documented in `+"`"+`db/README.md`+"`"+` with DDL, PRIMARY KEY, upsert rule (`+"`INSERT ... ON CONFLICT`"+`), indexes, writer ownership, group separation, report consumers (the HTML report `+"`window.report.query`"+` SQL that reads it), and correct references to durable assets under `+"`db/assets/`"+`.
 13. **Check skill discipline**: Installed skills live under `+"`skills/{folder}/SKILL.md`"+` and are reusable capability instructions shared across workflows. Review workflow-selected skills and per-step `+"`enabled_skills`"+` against the actual plan. Flag missing needed skills, selected-but-unused skills, descriptions that reference skills not enabled for the execution agent, malformed skill folders, and skills that duplicate workflow-specific learnings or contain workflow-specific secrets/paths/run state. Do not assume workflow-level selected skills automatically reach step execution; verify step-level `+"`enabled_skills`"+` when runtime requires explicit scoping.
-14. **Check access and code-lock consistency**: `+"`"+`lock_code`+"`"+` freezes scripted `+"`"+`learnings/{step-id}/main.py`+"`"+` against fix-loop rewrites; flag it without the scripted evidence gate. Learning and KB write eligibility are access decisions, not locks: review `+"`"+`learnings_access`+"`"+` + `+"`"+`learning_objective`+"`"+`, and `+"`"+`knowledgebase_access`+"`"+` + `+"`"+`knowledgebase_contribution`+"`"+`. If a step description has meaningfully changed since the last review, recommend clearing `+"`"+`description_reviewed`+"`"+` and re-reviewing before keeping a code lock or write grant.
+14. **Check access and code-lock consistency**: `+"`"+`lock_code`+"`"+` freezes scripted `+"`"+`code/{step-id}/main.py (version 1), otherwise learnings/{step-id}/main.py`+"`"+` against fix-loop rewrites; flag it without the scripted evidence gate. Learning and KB write eligibility are access decisions, not locks: review `+"`"+`learnings_access`+"`"+` + `+"`"+`learning_objective`+"`"+`, and `+"`"+`knowledgebase_access`+"`"+` + `+"`"+`knowledgebase_contribution`+"`"+`. If a step description has meaningfully changed since the last review, recommend clearing `+"`"+`description_reviewed`+"`"+` and re-reviewing before keeping a code lock or write grant.
 
 ## STEP BOUNDARY STANDARD
 
@@ -8273,7 +8275,7 @@ Review these files/directories when present. Stay read-only:
 - `+"`skills/{folder}/SKILL.md`"+`: read every skill selected at workflow level or enabled per step. Check whether the skill is actually needed, scoped to the right step(s), and not duplicating workflow-specific learnings.
 - `+"`learnings/_global/SKILL.md`"+`: check whether HOW-to-run learnings match current step descriptions and do not duplicate task instructions.
 - `+"`learnings/{step-id}/.learning_metadata.json`"+`: inspect for every step with learning writes. Check `+"`successful_runs`"+`, `+"`description_hash_runs`"+`, and latest detection history. Flag stale or unnecessary `+"`learnings_access=\"read-write\"`"+` grants that contradict the current step description/config or repeatedly produce no reusable HOW.
-- `+"`learnings/{step-id}/main.py`"+` and `+"`learnings/{step-id}/script_metadata.json`"+`: inspect for scripted steps. For `+"`agentic`"+` steps, verify `+"`learnings/{step-id}/main.py`"+` does NOT exist; if it does, flag it as a stale artifact that should be deleted because agentic never runs or maintains persistent main.py.
+- `+"`code/{step-id}/main.py` (code_layout_version=1; legacy: `learnings/{step-id}/main.py`)"+` and `+"`code/{step-id}/script_metadata.json` (legacy: `learnings/{step-id}/script_metadata.json`)"+`: inspect for scripted steps. For `+"`agentic`"+` steps, verify `+"`code/{step-id}/main.py` (code_layout_version=1; legacy: `learnings/{step-id}/main.py`)"+` does NOT exist; if it does, flag it as a stale artifact that should be deleted because agentic never runs or maintains persistent main.py.
 - `+"`knowledgebase/context/context.md`"+`: check whether user-supplied runtime context is present when steps appear to rely on chat memory, and verify maintenance-owned notes did not absorb user-owned rules/preferences that belong here.
 - `+"`knowledgebase/notes/_index.json`"+` and relevant `+"`knowledgebase/notes/*.md`"+`: check topic registry, stale/duplicated notes, and whether steps that produce domain facts have matching KB contribution contracts.
 - `+"`db/README.md`"+`, `+"`db/db.sqlite`"+`, and `+"`db/assets/`"+`: check schema/DDL documentation, table shape, primary keys, upsert rules, indexes, writer ownership, group separation, durable asset metadata/provenance, and report compatibility.
@@ -8299,7 +8301,7 @@ Review the plan through these lenses:
 1. **Decision justification** — Does each important design choice have a clear reason, or does it look accidental?
 2. **Step boundaries** — Are steps split or merged according to the durable-boundary standard above, rather than by raw action/tool-call count?
 3. **Step type choice** — Is each step using the right type for the actual job?
-4. **Execution mode choice** — Does the declared mode fit the work? Deterministic API/SDK/CLI fetchers, known pagination, stable parsing/normalization/transforms, and mechanical persistence should be scripted from initial design and own an authored/tested `+"`learnings/{step-id}/main.py`"+`; they do not need 10 prior runs just to select scripted mode. The 10+ representative-run threshold applies only before `+"`lock_code=true`"+`. Judgment, adaptive discovery, and browser/UI work should remain agentic. If an agentic step has `+"`main.py`"+`, flag stale mode debt; if an obviously deterministic fetcher is agentic, flag avoidable LLM execution.
+4. **Execution mode choice** — Does the declared mode fit the work? Deterministic API/SDK/CLI fetchers, known pagination, stable parsing/normalization/transforms, and mechanical persistence should be scripted from initial design and own an authored/tested `+"`code/{step-id}/main.py` (code_layout_version=1; legacy: `learnings/{step-id}/main.py`)"+`; they do not need 10 prior runs just to select scripted mode. The 10+ representative-run threshold applies only before `+"`lock_code=true`"+`. Judgment, adaptive discovery, and browser/UI work should remain agentic. If an agentic step has `+"`main.py`"+`, flag stale mode debt; if an obviously deterministic fetcher is agentic, flag avoidable LLM execution.
 5. **Context flow** — Are dependencies/output contracts minimal, correct, and sufficient? Are there artificial file handoffs or missing dependencies?
 6. **Validation & evaluation** — Is the workflow validating and evaluating the things that actually matter for success?
 7. **Portability & secrecy** — Does the current plan leak secrets or overfit to one user, machine, run, or folder structure?
@@ -8599,7 +8601,7 @@ This is a **read-only review** — do not modify any files.
 7. **Check MCP tool usage**: Verify that call_mcp() calls use consistent server/tool naming. Flag suspicious tool names that look guessed rather than discovered via get_api_spec.
 8. **Check browser automation quality**: For scripts using agent_browser, verify:
    - **Browser-heavy scripted is usually the wrong fit.** If a browser-enabled step has a saved `+"`main.py`"+`, flag it unless the user explicitly requested scripted browser execution AND the script uses durable selectors, state-driven waits, fresh snapshots, and has evidence of stability across runs. Browser/UI automation should generally remain `+"`agentic`"+` so the agent can adapt to live UI state, auth, dynamic selectors, pagination, and third-party page timing.
-   - **agentic must not keep main.py.** If a step is declared `+"`agentic`"+` but still has `+"`learnings/{step-id}/main.py`"+`, flag the file as stale artifact debt. Recommend deleting it and clearing `+"`lock_code`"+`; agentic does not run or maintain persistent scripts.
+   - **agentic must not keep main.py.** If a step is declared `+"`agentic`"+` but still has `+"`code/{step-id}/main.py` (code_layout_version=1; legacy: `learnings/{step-id}/main.py`)"+`, flag the file as stale artifact debt. Recommend deleting it and clearing `+"`lock_code`"+`; agentic does not run or maintain persistent scripts.
    - **Selectors are DURABLE, not refs.** Hardcoded string refs like `+"`'abc123'`"+` or `+"`'@e1'`"+` in main.py are BUGS — refs are session-local. The durable alternatives are (in priority order): data-testid / hand-written id / aria-label / role+name / get_by_label|placeholder|text. Flag any ref that appears as a literal string (not a variable parsed from a current-run snapshot).
    - Uses agent_browser `+"`snapshot`"+` before interacting — never clicks or types blindly
    - Ref-based interaction is acceptable ONLY when the ref value is parsed from a snapshot taken earlier in the SAME run (`+"`ref = extract_ref(snapshot, role=..., name=...)` then `browser('click', [ref])`"+`). Hardcoded refs in main.py must be flagged.
@@ -8859,6 +8861,7 @@ func (iwm *InteractiveWorkshopManager) runReviewPlanAgent(ctx context.Context, t
 		fmt.Sprintf("%s/runs", workspacePath),
 		fmt.Sprintf("%s/planning", workspacePath),
 		fmt.Sprintf("%s/learnings", workspacePath),
+		fmt.Sprintf("%s/code", workspacePath),
 		fmt.Sprintf("%s/knowledgebase", workspacePath),
 		fmt.Sprintf("%s/reports", workspacePath),
 		fmt.Sprintf("%s/evaluation", workspacePath),
@@ -8967,6 +8970,7 @@ func (iwm *InteractiveWorkshopManager) runReviewWorkflowTimingAgent(ctx context.
 		fmt.Sprintf("%s/runs", workspacePath),
 		fmt.Sprintf("%s/planning", workspacePath),
 		fmt.Sprintf("%s/learnings", workspacePath),
+		fmt.Sprintf("%s/code", workspacePath),
 		fmt.Sprintf("%s/evaluation", workspacePath),
 	}
 	iwm.controller.SetWorkspacePathForFolderGuard(readPaths, []string{})
@@ -9057,6 +9061,7 @@ func (iwm *InteractiveWorkshopManager) runReviewWorkflowCostsAgent(ctx context.C
 		fmt.Sprintf("%s/runs", workspacePath),
 		fmt.Sprintf("%s/planning", workspacePath),
 		fmt.Sprintf("%s/learnings", workspacePath),
+		fmt.Sprintf("%s/code", workspacePath),
 		fmt.Sprintf("%s/evaluation", workspacePath),
 		fmt.Sprintf("%s/costs", workspacePath),
 	}
@@ -9167,7 +9172,7 @@ func (iwm *InteractiveWorkshopManager) runReviewStepCodeAgent(ctx context.Contex
 		if stepID != "" && sid != stepID {
 			return
 		}
-		scriptRelPath := fmt.Sprintf("learnings/%s/main.py", sid)
+		scriptRelPath := iwm.controller.scriptedSourceDir(sid) + "/main.py"
 		scriptContent, scriptErr := iwm.controller.ReadWorkspaceFile(ctx, scriptRelPath)
 		hasSavedScript := scriptErr == nil && strings.TrimSpace(scriptContent) != ""
 		isScriptedConfig := false
@@ -9181,7 +9186,7 @@ func (iwm *InteractiveWorkshopManager) runReviewStepCodeAgent(ctx context.Contex
 
 		if !hasSavedScript && !isScriptedConfig {
 			if stepID != "" {
-				stepsToReview.WriteString(fmt.Sprintf("### %s\n- **Scope**: %s\n- **Status**: NO_SAVED_CODE — this target is not configured for saved code and no learnings/%s/main.py exists\n\n", sid, scope, sid))
+				stepsToReview.WriteString(fmt.Sprintf("### %s\n- **Scope**: %s\n- **Status**: NO_SAVED_CODE — this target is not configured for saved code and no %s exists\n\n", sid, scope, scriptRelPath))
 				reviewCount++
 			}
 			return
@@ -9213,7 +9218,7 @@ func (iwm *InteractiveWorkshopManager) runReviewStepCodeAgent(ctx context.Contex
 		} else {
 			// Run static review too
 			staticIssues := reviewMainPyScript(scriptContent)
-			stepsToReview.WriteString(fmt.Sprintf("\n**Saved Script** (`learnings/%s/main.py`):\n```python\n%s\n```\n", sid, scriptContent))
+			stepsToReview.WriteString(fmt.Sprintf("\n**Saved Script** (`%s`):\n```python\n%s\n```\n", scriptRelPath, scriptContent))
 			if !isScriptedConfig {
 				stepsToReview.WriteString("\n**Mode Fit Issue**: ⚠️ This step is not declared scripted but still has a saved main.py. For agentic steps, this file is stale artifact debt and should be deleted; agentic does not run or maintain persistent main.py.\n")
 			}
@@ -9252,6 +9257,7 @@ func (iwm *InteractiveWorkshopManager) runReviewStepCodeAgent(ctx context.Contex
 		fmt.Sprintf("%s/planning", workspacePath),
 		fmt.Sprintf("%s/evaluation", workspacePath),
 		fmt.Sprintf("%s/learnings", workspacePath),
+		fmt.Sprintf("%s/code", workspacePath),
 	}
 	iwm.controller.SetWorkspacePathForFolderGuard(readPaths, []string{})
 
@@ -9639,6 +9645,7 @@ func (iwm *InteractiveWorkshopManager) runBackgroundTaskAgentSequence(ctx contex
 		workspacePath,
 		fmt.Sprintf("%s/runs", workspacePath),
 		fmt.Sprintf("%s/learnings", workspacePath),
+		fmt.Sprintf("%s/code", workspacePath),
 		fmt.Sprintf("%s/planning", workspacePath),
 		knowledgebasePath,
 		"Chats",

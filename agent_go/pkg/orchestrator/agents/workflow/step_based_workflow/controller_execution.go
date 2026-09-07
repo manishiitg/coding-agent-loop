@@ -1477,6 +1477,11 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 		// Get execution folder path for this step. Sub-agent calls may override the
 		// artifact folder while keeping the stable step ID for configs/learnings.
 		stepExecutionPath := getExecutionFolderPath(executionWorkspacePath, artifactStepID, artifactStepPath)
+		if isScriptedMode && hcpo.usesCodeTree() {
+			if err := createFolderViaAPI(ctx, hcpo.scriptedWorkingDir(step.GetID(), stepExecutionPath)); err != nil {
+				return "", updatedContextFiles, err
+			}
+		}
 		// Ensure step execution folder exists (create if it was previously deleted)
 		if err := hcpo.ensureStepExecutionFolderExists(ctx, stepExecutionPath); err != nil {
 			// Non-blocking: log warning but continue execution (folder will be created when files are written)
@@ -1561,6 +1566,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 		}
 		kbNotesPathForPrompt := toAbsPath(filepath.Join(getKnowledgebasePath(hcpo.GetWorkspacePath()), KBNotesFolderName))
 		scriptedEnv := hcpo.snapshotWorkspaceEnv()
+		scriptedEnv = hcpo.codeRuntimeEnv(scriptedEnv)
 		if scriptedEnv == nil {
 			scriptedEnv = make(map[string]string)
 		}
@@ -1593,6 +1599,8 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 			"IsEvaluationMode":          fmt.Sprintf("%v", hcpo.isEvaluationMode),                                                             // Evaluation mode flag for eval-specific prompt guidance
 			"WorkflowRoot":              toAbsPath(workflowRoot),                                                                              // Absolute workflow root path (e.g., "/app/workspace-docs/Workflow/HRMS")
 			"IsScriptedMode":            fmt.Sprintf("%v", isScriptedMode),
+			"ScriptedWorkingDir":        toAbsPath(hcpo.scriptedWorkingDir(step.GetID(), stepExecutionPath)),
+			"DirectCodeSource":          fmt.Sprintf("%v", hcpo.usesCodeTree()),
 			"IsScriptedLocked":          fmt.Sprintf("%v", isScriptedMode && getAgentConfigs(step) != nil && getAgentConfigs(step).LockCode != nil && *getAgentConfigs(step).LockCode),
 			"IsRelearnMode":             fmt.Sprintf("%v", isScriptedMode && learnCodePriorScript != ""),
 			"ScriptedPriorScript":       learnCodePriorScript,
@@ -1712,7 +1720,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 				stepExecutionPath, executionWorkspacePath, dbAccess)
 			if fastResult.RanScript {
 				// Emit UI event for the saved-script execution attempt
-				savedScriptPath := getScriptedScriptAbsPath(GetPromptDocsRoot(), hcpo.GetWorkspacePath(), step.GetID(), hcpo.isEvaluationMode)
+				savedScriptPath := filepath.Join(GetPromptDocsRoot(), hcpo.GetWorkspacePath(), hcpo.scriptedSourceDir(step.GetID()), "main.py")
 				hcpo.emitScriptedExecutionEvent(ctx, step, stepIndex, stepPath,
 					savedScriptPath, fastResult.Success, fastResult.ExitCode, fastResult.Output, fastResult.Error, 0, true)
 				// Save execution log so debug_step and direct file inspection can see fast-path output
@@ -1780,7 +1788,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 			// On failure, point the relearn agent to script_metadata.json so it can
 			// read run history, failure patterns, per-group stats, and streaks itself.
 			if learnCodePriorError != "" {
-				metaRelPath := getScriptedDirRelPath(step.GetID(), hcpo.isEvaluationMode) + "/script_metadata.json"
+				metaRelPath := hcpo.scriptedSourceDir(step.GetID()) + "/script_metadata.json"
 				templateVars["ScriptedMetadataPath"] = metaRelPath
 			}
 
@@ -1790,7 +1798,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 				} else if fastResult.RanScript {
 					return "", updatedContextFiles, fmt.Errorf("saved main.py failed for step %q:\n%s", step.GetID(), fastResult.Error)
 				} else {
-					return "", updatedContextFiles, fmt.Errorf("no saved main.py found for scripted step %q in learnings/%s/main.py", step.GetID(), step.GetID())
+					return "", updatedContextFiles, fmt.Errorf("no saved main.py found for scripted step %q in %s/main.py", step.GetID(), hcpo.scriptedSourceDir(step.GetID()))
 				}
 			}
 		}
@@ -1920,9 +1928,9 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 				// If a saved main.py exists for this step, point to the execution/code/ copy (not learnings/)
 				// so the LLM doesn't reference or hardcode learnings paths in generated scripts.
 				stepLearningHistory := formattedLearningHistory
-				execCodeMainPyRelPath := stepExecutionPath + "/code/main.py"
+				execCodeMainPyRelPath := hcpo.scriptedWorkingDir(step.GetID(), stepExecutionPath) + "/main.py"
 				if _, mainPyReadErr := hcpo.ReadWorkspaceFile(ctx, execCodeMainPyRelPath); mainPyReadErr == nil {
-					execCodeMainPyAbsPath := filepath.Join(toAbsPath(stepExecutionPath), "code", "main.py")
+					execCodeMainPyAbsPath := filepath.Join(toAbsPath(hcpo.scriptedWorkingDir(step.GetID(), stepExecutionPath)), "main.py")
 					if stepLearningHistory != "" {
 						stepLearningHistory += "\n\n"
 					}
@@ -2033,7 +2041,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 					// Learn code mode: ensure code/ subdirectory exists (don't clean — LLM's
 					// previous fix may be there and will be overwritten only if the LLM writes a new version).
 					if isScriptedMode {
-						codeDirRelPath := stepExecutionPath + "/code"
+						codeDirRelPath := hcpo.scriptedWorkingDir(step.GetID(), stepExecutionPath)
 						if mkErr := createFolderViaAPI(ctx, codeDirRelPath); mkErr != nil {
 							hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ [scripted] Failed to pre-create code/ dir for step %d: %v", stepIndex+1, mkErr))
 						}
@@ -2153,7 +2161,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 					// declared repair_with_llm — so five hetznerssh steps carried 0 with no
 					// reasoning behind it, silently disabling script repair. lock_code
 					// remains the deliberate way to skip the fix loop.
-					codeDirAbsPath := filepath.Join(toAbsPath(stepExecutionPath), "code")
+					codeDirAbsPath := toAbsPath(hcpo.scriptedWorkingDir(step.GetID(), stepExecutionPath))
 					mainPyPath := filepath.Join(codeDirAbsPath, "main.py")
 					var lastLcResult *ScriptedFastPathResult
 					// Check if pre-validation already passes (LLM may have run main.py or produced outputs).
@@ -2164,9 +2172,9 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 						SavePreValidationLog(ctx, hcpo.BaseOrchestrator, preValLogPath, step.GetID(), stepPath, preValResults, getValidationSchema(step), hcpo.GetWorkspacePath(), hcpo.selectedRunFolder, hcpo.currentGroupName,
 							PreValidationAttempt{ExecutionMode: "scripted", ValidationPhase: "initial-check", ExecutionAttempt: retryAttempt, ValidationAttempt: 1})
 					}
-					mainPyRelPath := stepExecutionPath + "/code/main.py"
+					mainPyRelPath := hcpo.scriptedWorkingDir(step.GetID(), stepExecutionPath) + "/main.py"
 					_, mainPyExistsErr := hcpo.ReadWorkspaceFile(ctx, mainPyRelPath)
-					if preValResults != nil && preValResults.OverallPass && mainPyExistsErr == nil {
+					if !hcpo.usesCodeTree() && preValResults != nil && preValResults.OverallPass && mainPyExistsErr == nil {
 						learnCodePreValidationResultsOverride = preValResults
 						// Try to get exit code from LLM self-run detection (optional — for logging)
 						var exitCode int
@@ -2190,7 +2198,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 
 					// Track script content before each fix iteration to generate diffs
 					prevFixScript := ""
-					if s, readErr := hcpo.ReadWorkspaceFile(ctx, stepExecutionPath+"/code/main.py"); readErr == nil {
+					if s, readErr := hcpo.ReadWorkspaceFile(ctx, hcpo.scriptedWorkingDir(step.GetID(), stepExecutionPath)+"/main.py"); readErr == nil {
 						prevFixScript = s
 					}
 
@@ -2198,6 +2206,22 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 					// The LLM writes and runs main.py itself — the controller only checks if
 					// the outputs are valid. If not, feed validation errors back and let the LLM fix.
 					for fixIter := 0; fixIter <= maxFixIter && (lastLcResult == nil || !lastLcResult.Success); fixIter++ {
+						// Run canonical source after each authoring/repair turn through
+						// the same executor used by schedules and builder execute_step.
+						var canonicalResult *ScriptedFastPathResult
+						if hcpo.usesCodeTree() {
+							canonicalResult = hcpo.tryRunSavedScriptedScript(ctx, step, stepIndex, stepPath, allSteps, stepExecutionPath, executionWorkspacePath, dbAccess)
+							if canonicalResult.HarnessFailure {
+								return "", updatedContextFiles, fmt.Errorf("script runtime unavailable: %s", canonicalResult.HarnessError)
+							}
+							if canonicalResult.TerminalRefusal {
+								return "", updatedContextFiles, fmt.Errorf("script deliberately refused: %s", canonicalResult.TerminalRefusalReason)
+							}
+							if canonicalResult.Success {
+								lastLcResult = canonicalResult
+								break
+							}
+						}
 						// Check for context cancellation before each fix iteration
 						select {
 						case <-ctx.Done():
@@ -2213,10 +2237,10 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 							SavePreValidationLog(ctx, hcpo.BaseOrchestrator, preValLogPath, step.GetID(), stepPath, fixPreValResults, getValidationSchema(step), hcpo.GetWorkspacePath(), hcpo.selectedRunFolder, hcpo.currentGroupName,
 								PreValidationAttempt{ExecutionMode: "scripted", ValidationPhase: "repair-check", ExecutionAttempt: retryAttempt, ValidationAttempt: fixIter + 1})
 						}
-						mainPyRelPath := stepExecutionPath + "/code/main.py"
+						mainPyRelPath := hcpo.scriptedWorkingDir(step.GetID(), stepExecutionPath) + "/main.py"
 						_, mainPyErr := hcpo.ReadWorkspaceFile(ctx, mainPyRelPath)
 
-						if fixPreValResults != nil && fixPreValResults.OverallPass && mainPyErr == nil {
+						if !hcpo.usesCodeTree() && fixPreValResults != nil && fixPreValResults.OverallPass && mainPyErr == nil {
 							// Outputs valid + main.py exists → success
 							lastLcResult = &ScriptedFastPathResult{RanScript: true, Success: true}
 							hcpo.emitScriptedExecutionEvent(ctx, step, stepIndex, stepPath,
@@ -2227,6 +2251,10 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 						}
 
 						if fixIter == maxFixIter {
+							if canonicalResult != nil {
+								lastLcResult = canonicalResult
+								break
+							}
 							// Record the failure for the outer loop — include execution output
 							// so the next retry attempt knows what the script actually did
 							var errMsg string
@@ -2263,6 +2291,9 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 						stepDesc := templateVars["StepDescription"]
 						var sb strings.Builder
 						sb.WriteString(fmt.Sprintf("## Task\n%s\n\n", stepDesc))
+						if canonicalResult != nil {
+							sb.WriteString("\nActual runner failure:\n" + decideScriptedFastPath(canonicalResult).PriorError + "\n")
+						}
 
 						if mainPyErr != nil {
 							// main.py not written yet
@@ -2355,7 +2386,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 						}
 
 						// Capture diff between fix iterations for debugging
-						mainPyFixRelPath := stepExecutionPath + "/code/main.py"
+						mainPyFixRelPath := hcpo.scriptedWorkingDir(step.GetID(), stepExecutionPath) + "/main.py"
 						if curScript, readErr := hcpo.ReadWorkspaceFile(ctx, mainPyFixRelPath); readErr == nil && prevFixScript != "" && curScript != prevFixScript {
 							fixDiffsRelPath := stepExecutionPath + "/code/fix-diffs"
 							if mkErr := createFolderViaAPI(ctx, fixDiffsRelPath); mkErr == nil {
@@ -2380,7 +2411,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 					if isCodeLocked {
 						hcpo.GetLogger().Info(fmt.Sprintf("🔒 [scripted] Code locked for step %d — NOT saving script back to learnings", stepIndex+1))
 						learnCodeScriptNeedsSaving = false
-					} else if mainPyRelCheck := stepExecutionPath + "/code/main.py"; true {
+					} else if mainPyRelCheck := hcpo.scriptedWorkingDir(step.GetID(), stepExecutionPath) + "/main.py"; !hcpo.usesCodeTree() {
 						if scriptContent, checkErr := hcpo.ReadWorkspaceFile(ctx, mainPyRelCheck); checkErr == nil && scriptContent != "" {
 							// Quick syntax check: run python3 -c "compile(...)" to catch syntax errors
 							hasSyntaxError := false
@@ -2407,6 +2438,9 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 							errMsg = fmt.Sprintf("main.py still failing after %d fix attempts:\n%s", maxFixIter, lastLcResult.Error)
 						}
 						hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ [scripted] step %d failed after fix loop: %s", stepIndex+1, errMsg))
+						if hcpo.usesCodeTree() {
+							return "", updatedContextFiles, fmt.Errorf("canonical scripted execution failed: %s", errMsg)
+						}
 						// Fallback: disable scripted mode for remaining retries.
 						// The LLM couldn't write a working main.py — let it use tools
 						// directly in normal agentic mode to complete the task.

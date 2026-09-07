@@ -1418,7 +1418,7 @@ func getUpdateRegularStepSchema() string {
 						},
 						"description": {
 							"type": "string",
-				"description": "OPTIONAL: Replaces the deterministic execution contract implemented by learnings/<step-id>/main.py. Specify inputs, target-domain operations, persistence behavior, outputs, idempotency, error handling, and provenance/freshness requirements. Do not copy shared AgentWorks bridge/auth, Folder Guard, managed-tool, tool-discovery, or coding-session mechanics into this field. This is not an LLM prompt; conversational or judgment-heavy work belongs in update_message_sequence_step. Omit to preserve the existing description."
+				"description": "OPTIONAL: Replaces the deterministic execution contract implemented by code/<step-id>/main.py (code_layout_version=1; legacy: learnings/<step-id>/main.py). Specify inputs, target-domain operations, persistence behavior, outputs, idempotency, error handling, and provenance/freshness requirements. Do not copy shared AgentWorks bridge/auth, Folder Guard, managed-tool, tool-discovery, or coding-session mechanics into this field. This is not an LLM prompt; conversational or judgment-heavy work belongs in update_message_sequence_step. Omit to preserve the existing description."
 						},
 						"context_dependencies": {
 							"type": "array",
@@ -1486,7 +1486,7 @@ func getAddRegularStepSchema() string {
 			},
 			"description": {
 				"type": "string",
-				"description": "REQUIRED: Complete semantic execution contract for the checked-in learnings/<step-id>/main.py script. Specify inputs, target-domain operations, persistence behavior, outputs, idempotency, error handling, and provenance/freshness requirements. Do not copy shared AgentWorks bridge/auth, Folder Guard, managed-tool, tool-discovery, or coding-session mechanics into this field. This is not an LLM prompt; conversational or judgment-heavy work belongs in add_message_sequence_step."
+				"description": "REQUIRED: Complete semantic execution contract for the checked-in code/<step-id>/main.py (code_layout_version=1; legacy: learnings/<step-id>/main.py) script. Specify inputs, target-domain operations, persistence behavior, outputs, idempotency, error handling, and provenance/freshness requirements. Do not copy shared AgentWorks bridge/auth, Folder Guard, managed-tool, tool-discovery, or coding-session mechanics into this field. This is not an LLM prompt; conversational or judgment-heavy work belongs in add_message_sequence_step."
 			},
 			"context_dependencies": {
 				"type": "array",
@@ -1931,7 +1931,7 @@ func getAddHumanInputStepSchema() string {
 		"properties": {
 			"id": {
 				"type": "string",
-				"description": "REQUIRED: Stable step ID for this human input step. Generate a unique, URL-friendly ID based on the step title (e.g., 'ask-user-approval' from 'Ask User Approval')."
+				"description": "REQUIRED: Stable step ID for this human input step. Generate a unique, URL-friendly ID based on the step title (e.g., 'ask-month' from 'Ask Month')."
 			},
 			"title": {
 				"type": "string",
@@ -1943,13 +1943,13 @@ func getAddHumanInputStepSchema() string {
 			},
 			"response_type": {
 				"type": "string",
-				"enum": ["text", "yesno", "multiple_choice"],
-				"description": "OPTIONAL: Type of response expected. 'text' (default) for free-form text, 'yesno' for yes/no questions, 'multiple_choice' for selecting from options. Default: 'text'."
+				"enum": ["text"],
+				"description": "OPTIONAL: New human input steps accept text only (default), for a free-form value. For a fixed choice or approval, use add_branch_step with route_source=human. Existing legacy choice steps can still be maintained with update_human_input_step."
 			},
 			"options": {
 				"type": "array",
 				"items": { "type": "string" },
-				"description": "OPTIONAL: Array of options for multiple_choice response type. Required if response_type is 'multiple_choice'."
+				"description": "Legacy field: omit for new text steps. Use add_branch_step with route_source=human for a fixed choice; maintain existing choice steps with update_human_input_step."
 			},
 			"variable_name": {
 				"type": "string",
@@ -1965,16 +1965,16 @@ func getAddHumanInputStepSchema() string {
 			},
 			"if_yes_next_step_id": {
 				"type": "string",
-				"description": "OPTIONAL: For 'yesno' response type, the step ID to route to when user responds 'yes', or 'end' to terminate. If not specified, next_step_id will be used."
+				"description": "Legacy field: omit for new text steps. Use add_branch_step with route_source=human for a fixed choice; maintain existing choice steps with update_human_input_step."
 			},
 			"if_no_next_step_id": {
 				"type": "string",
-				"description": "OPTIONAL: For 'yesno' response type, the step ID to route to when user responds 'no', or 'end' to terminate. If not specified, next_step_id will be used."
+				"description": "Legacy field: omit for new text steps. Use add_branch_step with route_source=human for a fixed choice; maintain existing choice steps with update_human_input_step."
 			},
 			"option_routes": {
 				"type": "object",
 				"additionalProperties": { "type": "string" },
-				"description": "OPTIONAL: For 'multiple_choice' response type, maps option index (as string '0', '1', etc.) or option value to next_step_id. Example: {'0': 'step-3', '1': 'step-4', 'Option C': 'step-5'}. If not specified, next_step_id will be used for all options."
+				"description": "Legacy field: omit for new text steps. Use add_branch_step with route_source=human for a fixed choice; maintain existing choice steps with update_human_input_step."
 			},
 			"insert_after_step_id": {
 				"type": "string",
@@ -5781,7 +5781,7 @@ func createSingleStepAdder(workspacePath string, logger loggerv2.Logger, readFil
 
 		setupNotice := buildAddedStepArtifactSetupNotice(typedStep.GetID(), stepType)
 		if scriptedRegularCount > 0 {
-			setupNotice += fmt.Sprintf("\n\nConfigured %d new scripted execution boundary/boundaries (regular plan type, code execution on). Author and test each learnings/<step-id>/main.py before production use.", scriptedRegularCount)
+			setupNotice += fmt.Sprintf("\n\nConfigured %d new scripted execution boundary/boundaries (regular plan type, code execution on). Author and test each code/<step-id>/main.py (code_layout_version=1; legacy: learnings/<step-id>/main.py) before production use.", scriptedRegularCount)
 		}
 
 		logger.Info(fmt.Sprintf("✅ Added %s step '%s' (ID: %s) to plan", displayStepType, typedStep.GetTitle(), typedStep.GetID()))
@@ -5888,7 +5888,7 @@ func registerPlanModificationTools(
 	}
 	if err := mcpAgent.RegisterCustomTool(
 		"migrate_message_sequence_code_items",
-		"Product-managed workflow-version migration for issue #170. Converts only unambiguous top-level message_sequence steps containing code + prevalidation items into visible standalone scripted regular steps. It copies scripts to learnings/<step-id>/main.py, preserves durable dependencies/outputs/validation, and updates plan/config with rollback on a config-write failure. Mixed conversational/code or nested sequences are rejected without changing plan/config. Call only during the v1.0.10 workflow preflight.",
+		"Product-managed workflow-version migration for issue #170. Converts only unambiguous top-level message_sequence steps containing code + prevalidation items into visible standalone scripted regular steps. It copies scripts to code/<step-id>/main.py (code_layout_version=1; legacy: learnings/<step-id>/main.py), preserves durable dependencies/outputs/validation, and updates plan/config with rollback on a config-write failure. Mixed conversational/code or nested sequences are rejected without changing plan/config. Call only during the v1.0.10 workflow preflight.",
 		migrateSequenceCodeParams,
 		createMigrateMessageSequenceCodeItemsExecutor(workspacePath, logger, readFile, rawWriteFile),
 		"workflow",
@@ -5916,7 +5916,7 @@ func registerPlanModificationTools(
 	}
 	if err := mcpAgent.RegisterCustomTool(
 		"migrate_declared_execution_mode",
-		"Product-managed workflow-version migration for contract v1.0.38 (PLAT-287, half 1). Rewrites planning/plan.json so every step's type states its execution model explicitly: each legacy agentic regular step (no declared scripted mode) becomes the message_sequence the runtime already ran it as, and any message_sequence still declared scripted becomes regular -- same id, description, dependencies, validation, next_step_id, position. Touches only plan.json: step_config.json is read, never written, and declared_execution_mode stays in place because the current runtime still reads it. Behavior is unchanged. Idempotent. Refuses without changing anything when a step is declared scripted but has no learnings/<step-id>/main.py. Call only during the v1.0.38 workflow preflight.",
+		"Product-managed workflow-version migration for contract v1.0.38 (PLAT-287, half 1). Rewrites planning/plan.json so every step's type states its execution model explicitly: each legacy agentic regular step (no declared scripted mode) becomes the message_sequence the runtime already ran it as, and any message_sequence still declared scripted becomes regular -- same id, description, dependencies, validation, next_step_id, position. Touches only plan.json: step_config.json is read, never written, and declared_execution_mode stays in place because the current runtime still reads it. Behavior is unchanged. Idempotent. Refuses without changing anything when a step is declared scripted but has no code/<step-id>/main.py (code_layout_version=1; legacy: learnings/<step-id>/main.py). Call only during the v1.0.38 workflow preflight.",
 		migrateDeclaredModeParams,
 		createMigrateDeclaredExecutionModeExecutor(workspacePath, logger, readFile, writeFile),
 		"workflow",
@@ -5947,7 +5947,7 @@ func registerPlanModificationTools(
 	}
 	if err := mcpAgent.RegisterCustomTool(
 		"update_scripted_step",
-		"Update an existing deterministic scripted step. The internal plan type remains regular, but this tool only edits a checked-in script boundary implemented by learnings/<step-id>/main.py. Provide existing_step_id and only the contract fields to change. Use next_step_id to chain scripted steps inside a selected route and make the final script converge on a shared downstream step. Do not use it for conversational or judgment-heavy work; those steps must be message_sequence. A message_sequence step is rejected: convert it first with change_step_type(target_type=\"scripted\"), or edit it as a sequence with update_message_sequence_step. A regular step is scripted by its plan type alone (PLAT-287); a regular step still carrying the retired declared_execution_mode=\"agentic\" runs as a sequence until the v1.0.38 migration converts it, and is likewise rejected here. The plan is updated immediately. After related edits, update and test main.py and check affected validation, learnings, and downstream consumers once in the current agent; follow builder-reference/references/plan-change-impact.md. A full drift audit is reserved for Pulse or an explicit user request.",
+		"Update an existing deterministic scripted step. The internal plan type remains regular, but this tool only edits a checked-in script boundary implemented by code/<step-id>/main.py (code_layout_version=1; legacy: learnings/<step-id>/main.py). Provide existing_step_id and only the contract fields to change. Use next_step_id to chain scripted steps inside a selected route and make the final script converge on a shared downstream step. Do not use it for conversational or judgment-heavy work; those steps must be message_sequence. A message_sequence step is rejected: convert it first with change_step_type(target_type=\"scripted\"), or edit it as a sequence with update_message_sequence_step. A regular step is scripted by its plan type alone (PLAT-287); a regular step still carrying the retired declared_execution_mode=\"agentic\" runs as a sequence until the v1.0.38 migration converts it, and is likewise rejected here. The plan is updated immediately. After related edits, update and test main.py and check affected validation, learnings, and downstream consumers once in the current agent; follow builder-reference/references/plan-change-impact.md. A full drift audit is reserved for Pulse or an explicit user request.",
 		regularUpdateParams,
 		createUpdateRegularStepExecutor(workspacePath, logger, readFile, writeFile),
 		"workflow",
@@ -5961,7 +5961,7 @@ func registerPlanModificationTools(
 	}
 	if err := mcpAgent.RegisterCustomTool(
 		"change_step_type",
-		"Convert a step between the two execution models in place, keeping its id, description, dependencies, validation_schema, next_step_id and position (nested and orphan steps included). target_type=\"scripted\" turns a message_sequence into a deterministic scripted step (internal plan type regular) and declares scripted mode in step_config in the same atomic change -- its conversational items are dropped, since a scripted step's work lives in learnings/<step-id>/main.py, which you then write with update_scripted_step(code=...). target_type=\"message_sequence\" turns a scripted step into a sequence with one execute-and-verify item and clears the declared mode; refine the turns with update_message_sequence_step. Use it instead of add_scripted_step + delete_plan_steps + rewiring. Records a revertable before/after entry in planning/changelog. Only scripted <-> message_sequence; other step types have their own tools.",
+		"Convert a step between the two execution models in place, keeping its id, description, dependencies, validation_schema, next_step_id and position (nested and orphan steps included). target_type=\"scripted\" turns a message_sequence into a deterministic scripted step (internal plan type regular) and declares scripted mode in step_config in the same atomic change -- its conversational items are dropped, since a scripted step's work lives in code/<step-id>/main.py (code_layout_version=1; legacy: learnings/<step-id>/main.py), which you then write with update_scripted_step(code=...). target_type=\"message_sequence\" turns a scripted step into a sequence with one execute-and-verify item and clears the declared mode; refine the turns with update_message_sequence_step. Use it instead of add_scripted_step + delete_plan_steps + rewiring. Records a revertable before/after entry in planning/changelog. Only scripted <-> message_sequence; other step types have their own tools.",
 		changeStepTypeParams,
 		createChangeStepTypeExecutor(workspacePath, logger, readFile, writeFile),
 		"workflow",
@@ -6044,7 +6044,7 @@ func registerPlanModificationTools(
 	}
 	if err := mcpAgent.RegisterCustomTool(
 		"add_scripted_step",
-		"Add a deterministic scripted execution step. Use only for fixed API/SDK calls, CLI commands, known pagination, stable parsing/normalization/transforms, or mechanical persistence that share one source/auth/retry/output contract. The internal plan type is regular, and a regular step is by definition scripted (PLAT-287): it runs its checked-in learnings/<step-id>/main.py. Use next_step_id to chain multiple scripts within one selected route and point the final script at the shared convergence step; omit it for legacy sequential execution. This tool does not create an LLM step and does not convert prose into code: author and test learnings/<step-id>/main.py before production. Use add_message_sequence_step for every conversational or judgment-heavy task, including one-turn work. Give the script an authoritative DB or explicit file output, freshness/provenance, fail-closed errors, idempotency where relevant, and deterministic validation. The plan and step config are updated immediately.",
+		"Add a deterministic scripted execution step. Use only for fixed API/SDK calls, CLI commands, known pagination, stable parsing/normalization/transforms, or mechanical persistence that share one source/auth/retry/output contract. The internal plan type is regular, and a regular step is by definition scripted (PLAT-287): it runs its checked-in code/<step-id>/main.py (code_layout_version=1; legacy: learnings/<step-id>/main.py). Use next_step_id to chain multiple scripts within one selected route and point the final script at the shared convergence step; omit it for legacy sequential execution. This tool does not create an LLM step and does not convert prose into code: author and test code/<step-id>/main.py (code_layout_version=1; legacy: learnings/<step-id>/main.py) before production. Use add_message_sequence_step for every conversational or judgment-heavy task, including one-turn work. Give the script an authoritative DB or explicit file output, freshness/provenance, fail-closed errors, idempotency where relevant, and deterministic validation. The plan and step config are updated immediately.",
 		regularParams,
 		createAddRegularStepExecutor(workspacePath, logger, readFile, writeFile, moveFile),
 		"workflow",

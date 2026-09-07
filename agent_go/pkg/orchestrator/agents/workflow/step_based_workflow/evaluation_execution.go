@@ -18,6 +18,9 @@ func (hcpo *StepBasedWorkflowOrchestrator) ExecuteEvaluationOnly(ctx context.Con
 	// Set objective and workspace path
 	hcpo.SetObjective(objective)
 	hcpo.SetWorkspacePath(workspacePath)
+	if err := hcpo.loadCodeLayout(ctx); err != nil {
+		return "", err
+	}
 	// Fallback: resolve objective from soul/soul.md if caller passed empty. See
 	// CreateTodoList for the same pattern — keeps learning-agent CurrentObjective populated.
 	if strings.TrimSpace(hcpo.GetObjective()) == "" {

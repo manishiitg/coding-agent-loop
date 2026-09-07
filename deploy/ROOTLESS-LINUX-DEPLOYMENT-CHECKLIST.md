@@ -262,6 +262,38 @@ ssh -p <port> <user>@<host> 'tail -5 /srv/dominion/logs/agent.log'
 # expect: recent [API] request lines, not empty and not stale
 ```
 
+### 10. Python package tooling is installed for the service runtime
+
+On Ubuntu/Debian, install the runtime prerequisites during host provisioning:
+
+```bash
+sudo apt-get update
+sudo apt-get install --no-install-recommends -y python3-pip python3-venv
+sudo -u <service-user> python3 -m pip --version
+```
+
+Verify using the service identity and the same Python executable as scripted
+steps. Also create a temporary venv in a service-writable directory and verify
+its `bin/python -m pip --version`. Ubuntu's externally managed system Python
+may reject `pip install --user`; use a workflow-local venv for dependencies
+and explicitly invoke that interpreter. Do not set a host-wide
+`PIP_BREAK_SYSTEM_PACKAGES` override. Verify imports through the actual saved
+step runner: installing into a venv alone does not change its interpreter.
+
+### 11. Workflow documents and code remain on persistent disk
+
+Configure `--docs-dir` outside release directories, container writable layers and
+`/tmp`. RTS uses `/data/video-studio/docs` on its encrypted EBS root volume;
+`DeleteOnTermination=false` was verified on 2026-09-07. Keep workflow `code/`,
+`learnings/`, `db/` (including assets), run outputs, and `.sandbox-cache/` under
+this durable docs root. Release cleanup must never delete or replace it.
+
+Verify `findmnt -T <docs-dir>` and the service's configured docs path before
+deploying. Instance replacement must reattach/mount the retained volume and
+point the new service at the same docs directory. Persistence is not a backup;
+configure snapshots/backups separately. A release redeploy does not migrate or
+clear existing workflow documents or change their code-layout versions.
+
 ## Not yet automated
 
 Every item above is currently a manual, human-run checklist. The more

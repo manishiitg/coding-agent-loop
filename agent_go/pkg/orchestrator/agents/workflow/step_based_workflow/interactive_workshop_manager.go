@@ -1281,6 +1281,16 @@ func (iwm *InteractiveWorkshopManager) refreshVariablesManifest(ctx context.Cont
 	})
 	if err == nil && manifest != nil {
 		iwm.controller.variablesManifest = manifest
+		if values, groupName, ok := ResolveWorkshopVariableValues(manifest, iwm.controller.enabledGroupNames); ok {
+			iwm.controller.variableValues = values
+			iwm.controller.enabledGroupNames = []string{groupName}
+			SyncExactVariablesToWorkspaceEnv(iwm.controller.BaseOrchestrator, values)
+		} else {
+			// Do not retain values from a deleted group or from a previously
+			// unambiguous manifest after a second group makes selection necessary.
+			iwm.controller.variableValues = nil
+			SyncExactVariablesToWorkspaceEnv(iwm.controller.BaseOrchestrator, nil)
+		}
 	}
 }
 
@@ -5044,13 +5054,20 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 		"update_variable",
 		"Update, add, or delete variables in variables/variables.json. Provide action (required: 'update', 'add', or 'delete'), existing_variable_name (required for update/delete), and fields to update (name, value, description). The variables/variables.json file is updated immediately.",
 		updateVariableParams,
-		createUpdateVariableExecutor(iwm.controller.GetWorkspacePath(), logger,
-			func(ctx context.Context, path string) (string, error) {
-				return iwm.controller.ReadWorkspaceFile(ctx, path)
-			},
-			func(ctx context.Context, path string, content string) error {
-				return iwm.controller.WriteWorkspaceFile(ctx, path, content)
-			}),
+		func(ctx context.Context, args map[string]interface{}) (string, error) {
+			executor := createUpdateVariableExecutor(iwm.controller.GetWorkspacePath(), logger,
+				func(ctx context.Context, path string) (string, error) {
+					return iwm.controller.ReadWorkspaceFile(ctx, path)
+				},
+				func(ctx context.Context, path string, content string) error {
+					return iwm.controller.WriteWorkspaceFile(ctx, path, content)
+				})
+			result, execErr := executor(ctx, args)
+			if execErr == nil {
+				iwm.refreshVariablesManifest(ctx)
+			}
+			return result, execErr
+		},
 		"workflow",
 	); err != nil {
 		logger.Warn(fmt.Sprintf("⚠️ Failed to register update_variable tool: %v", err))
@@ -5116,6 +5133,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 			if err := writeVariablesToFile(ctx, workspacePath, manifest, readFile, writeFile, logger); err != nil {
 				return "", fmt.Errorf("failed to write variables: %w", err)
 			}
+			iwm.refreshVariablesManifest(ctx)
 
 			return fmt.Sprintf("Created new group: %s with %d variables", newGroup.Name, len(newGroup.Values)), nil
 		},
@@ -5220,6 +5238,11 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 			if err := writeVariablesToFile(ctx, workspacePath, manifest, readFile, writeFile, logger); err != nil {
 				return "", fmt.Errorf("failed to write variables: %w", err)
 			}
+			if newName, renamed := args["new_name"].(string); renamed && newName != "" &&
+				len(iwm.controller.enabledGroupNames) == 1 && iwm.controller.enabledGroupNames[0] == groupName {
+				iwm.controller.enabledGroupNames = []string{newName}
+			}
+			iwm.refreshVariablesManifest(ctx)
 
 			return fmt.Sprintf("Updated group %s: %s", groupName, strings.Join(changes, ", ")), nil
 		},
@@ -5274,6 +5297,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 			if err := writeVariablesToFile(ctx, workspacePath, manifest, readFile, writeFile, logger); err != nil {
 				return "", fmt.Errorf("failed to write variables: %w", err)
 			}
+			iwm.refreshVariablesManifest(ctx)
 
 			return fmt.Sprintf("Deleted group %s. Remaining groups: %d", groupName, len(manifest.Groups)), nil
 		},

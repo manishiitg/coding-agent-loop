@@ -149,6 +149,26 @@ func TestExecuteShellCommand_BlocksRawChromeCDPAccess(t *testing.T) {
 	}
 }
 
+func TestExecuteShellCommandPreservesTimedOutProcessOutput(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusRequestTimeout)
+		_, _ = w.Write([]byte(`{"error":"Command exceeded timeout of 3600 seconds","data":{"stdout":"CASE login: starting\n","stderr":"TIMEOUT: Command killed after 3600 seconds\n","exit_code":-1,"execution_time_ms":3600000}}`))
+	}))
+	defer server.Close()
+
+	result, err := NewClient(server.URL).ExecuteShellCommand(context.Background(), ExecuteShellCommandParams{Command: "python3 main.py"})
+	if err != nil {
+		t.Fatalf("structured timeout must be inspectable as a result: %v", err)
+	}
+	if !result.TimedOut || result.ExitCode != -1 {
+		t.Fatalf("timeout classification lost: %#v", result)
+	}
+	if !strings.Contains(result.Stdout, "CASE login: starting") || !strings.Contains(result.Stderr, "Command killed") {
+		t.Fatalf("partial process evidence lost: %#v", result)
+	}
+}
+
 func TestExecuteShellCommandBlocksRelativeGitBundleDestination(t *testing.T) {
 	client := NewClient("http://127.0.0.1:1")
 	_, err := client.ExecuteShellCommand(context.Background(), ExecuteShellCommandParams{

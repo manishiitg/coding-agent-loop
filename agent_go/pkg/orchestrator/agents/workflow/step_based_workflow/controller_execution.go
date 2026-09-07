@@ -1727,6 +1727,11 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 				hcpo.saveScriptedFastPathLog(ctx, stepIndex, artifactStepID, artifactStepPath, savedScriptPath, fastResult)
 			}
 			scriptedDecision := decideScriptedFastPath(fastResult)
+			if scriptedDecision.HarnessTimeout {
+				return "", updatedContextFiles, fmt.Errorf(
+					"scripted step %q started main.py but exceeded the workspace harness timeout. Its partial output was preserved, and the code-repair loop was not started because a harness kill does not prove a script defect. Timeout detail: %s",
+					step.GetID(), scriptedDecision.TimeoutError)
+			}
 			// The workspace refused to start the script, so there is nothing to
 			// validate and nothing for the LLM to repair. Fail the step rather
 			// than falling through: the relearn path would tell the agent to fix

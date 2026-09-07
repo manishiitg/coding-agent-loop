@@ -98,10 +98,8 @@ if [[ ! -x "$REPO_ROOT/frontend/node_modules/.bin/tsc" ]]; then
 fi
 (cd "$REPO_ROOT/frontend" && VITE_API_BASE_URL='' VITE_WORKSPACE_API_URL=/api/wp npm run build)
 cp -R "$REPO_ROOT/frontend/dist/." "$BUILD_DIR/frontend/"
-test -s "$BUILD_DIR/frontend/report-preview.js" || {
-  echo "Frontend build did not package report-preview.js" >&2
-  exit 1
-}
+node "$REPO_ROOT/frontend/scripts/check-release-assets.mjs" "$BUILD_DIR/frontend"
+cp "$REPO_ROOT/frontend/scripts/check-release-assets.mjs" "$BUILD_DIR/check-release-assets.mjs"
 install -m 0644 "$SCRIPT_DIR/server/runtime-config.js" "$BUILD_DIR/frontend/runtime-config.js"
 install -m 0644 "$SCRIPT_DIR/server/mcp_servers_video_studio.json" "$BUILD_DIR/configs/mcp_servers_video_studio.json"
 install -m 0755 "$SCRIPT_DIR/server/chrome-headless-wrapper.sh" "$BUILD_DIR/browser/agentworks-chrome-headless"
@@ -130,10 +128,7 @@ case "$REMOTE_BROWSER_PATH" in
 esac
 "${SSH[@]}" "test -x '$REMOTE_BROWSER_PATH'; command -v agent-browser >/dev/null"
 rsync -az -e "ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new -i $SSH_KEY_PATH" "$BUILD_DIR/" "video-studio@$HOST_IP:$REMOTE_RELEASE/"
-"${SSH[@]}" "test -s '$REMOTE_RELEASE/frontend/report-preview.js'" || {
-  echo "Uploaded release is missing frontend/report-preview.js" >&2
-  exit 1
-}
+"${SSH[@]}" "node '$REMOTE_RELEASE/check-release-assets.mjs' '$REMOTE_RELEASE/frontend'"
 rsync -az --chmod=ugo=,u=rw -e "ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new -i $SSH_KEY_PATH" "$GLOBAL_FILE" "video-studio@$HOST_IP:/var/lib/video-studio/video-studio/.globals-$RELEASE_ID"
 "${SSH[@]}" bash -s -- "$REMOTE_RELEASE" "$REMOTE_APP" "$REMOTE_TOOLS_DIR" "$RELEASE_ID" "$AGENTWORKS_PROVIDER" "$AGENTWORKS_MODEL" <<'REMOTE_PREFLIGHT'
 set -euo pipefail

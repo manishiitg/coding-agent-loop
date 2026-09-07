@@ -162,6 +162,11 @@ type StreakInfo struct {
 // reviewers that could do nothing about it.
 var ErrScriptedHarnessRejection = errors.New("workspace refused to start the script")
 
+// ErrScriptedHarnessTimeout means main.py started but the outer workspace
+// harness killed it after its command deadline. This is not a startup refusal
+// and must not enter the code-repair loop.
+var ErrScriptedHarnessTimeout = errors.New("script exceeded the workspace harness timeout")
+
 // ScriptedTerminalRefusalExitCode is the reserved exit code a scripted step's
 // main.py uses to signal a DELIBERATE, terminal refusal to proceed -- e.g. a
 // fail-closed data-safety guard that detected an unsafe write and correctly
@@ -198,6 +203,11 @@ type ScriptedFastPathResult struct {
 	// exit code, no output, and nothing for the LLM to repair.
 	HarnessFailure bool
 	HarnessError   string
+	// HarnessTimeout means the process started and may have emitted partial
+	// output, but the outer workspace deadline killed it. It is terminal for
+	// this attempt and must not be presented to the LLM as a code bug.
+	HarnessTimeout bool
+	TimeoutError   string
 	// TerminalRefusal means the script ran and exited
 	// ScriptedTerminalRefusalExitCode: a deliberate, terminal refusal, not a
 	// bug. Like HarnessFailure, this must never reach the LLM relearn path --
@@ -225,6 +235,8 @@ type ScriptedFastPathDecision struct {
 	// so neither the fast path nor the LLM fallback has anything to work with.
 	HarnessFailure bool
 	HarnessError   string
+	HarnessTimeout bool
+	TimeoutError   string
 	// TerminalRefusal aborts the step: the script deliberately exited
 	// ScriptedTerminalRefusalExitCode rather than proceed. Unlike PriorError,
 	// this must never be handed to the LLM as something to fix -- see
@@ -245,6 +257,8 @@ func decideScriptedFastPath(result *ScriptedFastPathResult) ScriptedFastPathDeci
 		return ScriptedFastPathDecision{}
 	}
 	switch {
+	case result.HarnessTimeout:
+		return ScriptedFastPathDecision{HarnessTimeout: true, TimeoutError: result.TimeoutError}
 	case result.HarnessFailure:
 		// The script never started. Handing the LLM a script and an error it did
 		// not cause is how working code gets rewritten — abort instead.
@@ -1029,6 +1043,9 @@ func (hcpo *StepBasedWorkflowOrchestrator) execScriptedScript(
 		combined += result.Stderr
 	}
 	exitCode = result.ExitCode
+	if result.TimedOut {
+		return combined, exitCode, fmt.Errorf("%w: %s", ErrScriptedHarnessTimeout, result.Error)
+	}
 	hcpo.GetLogger().Info(fmt.Sprintf(
 		"🐍 [scripted_code] Direct script shell result | exit_code=%d | api_error=%q | script=%s",
 		exitCode,
@@ -1169,6 +1186,23 @@ func (hcpo *StepBasedWorkflowOrchestrator) tryRunSavedScriptedScript(
 	// builder can spot a frozen-but-broken script via consecutive_failures / needs_review.
 	fastPathAgentCfgs := getAgentConfigs(step)
 	isLocked := fastPathAgentCfgs != nil && fastPathAgentCfgs.LockCode != nil && *fastPathAgentCfgs.LockCode
+
+	// A harness timeout is a run, but not evidence that the workflow code is
+	// faulty. Preserve its partial output and abort before validation/statistics
+	// or the LLM repair path can rewrite the script.
+	if errors.Is(execErr, ErrScriptedHarnessTimeout) {
+		hcpo.GetLogger().Error(fmt.Sprintf(
+			"⏱️ [scripted] main.py started for step %d (%s) but exceeded the workspace harness timeout",
+			stepIndex+1, stepID), execErr)
+		return &ScriptedFastPathResult{
+			RanScript:      true,
+			HarnessTimeout: true,
+			TimeoutError:   execErr.Error(),
+			ExitCode:       exitCode,
+			Output:         output,
+			ExistingScript: existingScript,
+		}
+	}
 
 	// A refused request is not a run. Return before pre-validation and before
 	// updateScriptedRunStats: recording it as a failure would inflate

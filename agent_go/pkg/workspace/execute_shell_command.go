@@ -502,6 +502,22 @@ func (c *Client) ExecuteShellCommand(ctx context.Context, params ExecuteShellCom
 	// call_sub_agent HTTP call that blocks until the sub-agent completes.
 	respBody, err := c.requestWithTimeout(ctx, "POST", path, params, 0)
 	if err != nil {
+		var statusErr *httpStatusError
+		if errors.As(err, &statusErr) && statusErr.statusCode == http.StatusRequestTimeout {
+			// The workspace returns a structured 408 only after cmd.Start
+			// succeeded and the running process exceeded its deadline. Preserve
+			// partial output so callers do not misclassify it as a startup refusal.
+			result := parseShellResponse(statusErr.body)
+			result.TimedOut = true
+			if result.ExitCode == 0 {
+				result.ExitCode = -1
+			}
+			if result.Error == "" {
+				result.Error = "command execution timed out"
+			}
+			result.Stderr += shellWorkingDirectoryHint(result, params.WorkingDirectory)
+			return result, nil
+		}
 		return ShellCommandResult{}, err
 	}
 

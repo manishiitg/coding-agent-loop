@@ -207,8 +207,8 @@ func BuildBrowserAuthoringRules() string {
 func BuildBrowserLearningRules() string {
 	var sb strings.Builder
 	sb.WriteString("## Browser automation learnings (required when this step used agent_browser)\n\n")
-	sb.WriteString("Save reusable browser HOW under `references/site-profile.md`, `references/selectors.md`, or another linked topic file. A snapshot is runtime evidence, not reusable configuration.\n\n")
-	sb.WriteString("1. **Never persist snapshot refs.** Do not store values such as `@e1`, `e68`, or a tool-generated `ref` as reusable configuration. Runtime snapshots are evidence. Save the semantic recipe that resolves a fresh ref from current page state; refresh after navigation, DOM updates, tab changes, or when freshness is uncertain.\n")
+	sb.WriteString("Save reusable browser HOW in `references/site-profile.md`, `references/selectors.md`, or a linked topic. Snapshots are runtime evidence, not configuration.\n\n")
+	sb.WriteString("1. **Never persist snapshot refs.** Do not store `@e1`, `e68`, or generated `ref` values. Save the semantic recipe that resolves a fresh ref from current page state; refresh after navigation, DOM updates, tab changes, or when freshness is uncertain.\n")
 	sb.WriteString("2. **Record the observed stable-hook inventory when useful.** Do not run a full DOM probe merely to complete learnings. Include the framework only if known and whether the inspected region exposes `data-testid`/`data-test`, hand-written `id` or `name`, `aria-label`, labels/placeholders, and stable roles/names. Explicitly list generated ID/class patterns to avoid.\n")
 	sb.WriteString("3. **Record semantic action recipes, not a raw selector dump.** For each important action save, in a compact form, the action name and purpose, page/state precondition, primary verified locator or fresh-snapshot resolution recipe, enclosing row/card scope, one or two fallbacks, expected postcondition, and timing/auth/modal quirks (e.g. `login.fill_user_id` → primary `{by: id, value: panAdhaarUserId}`, fallback `{by: placeholder, value: User ID}`, postcondition Continue enabled).\n")
 	sb.WriteString("4. **Follow the agent-browser skill selector contract:** role + accessible name or label, verified test attributes, hand-written semantic `id`/`name`, and `aria-label` are locator candidates, not guarantees of stability. Record state changes such as Like becoming Unlike. Structural CSS/XPath is a fragile last resort. Store classes only when verified hand-written and stable across runs; never store generated framework/build classes or long class chains.\n")
@@ -337,7 +337,7 @@ func BuildPythonBestPractices(varMappingLines []string, hasInputArgs bool) strin
 
 	// Error diagnostics guidance
 	sb.WriteString("### Error diagnostics (critical for fix loop)\n")
-	sb.WriteString("For deterministic Playwright scripts, import browser_session from agentworks_browser and use with browser_session(record_video=True) as (context, artifacts). The platform helper selects the deployment browser and writes screenshots, traces and flushed recordings under STEP_OUTPUT_DIR/browser/. Use context.new_page(). Preserve the sandbox-provided short TMPDIR; never hardcode browser versions or a shared /tmp profile. Validate changes through execute_step(fast_path_only=true) from the builder.\n")
+	sb.WriteString("For scripted Playwright suites, read builder-reference references/playwright-scripted.md. Use direct Python Playwright and validate with execute_step(fast_path_only=true).\n")
 	sb.WriteString("When your script fails, the **only** feedback the system sees is stdout + stderr.\n")
 	sb.WriteString("Files written to disk are **not** automatically read back. So:\n")
 	sb.WriteString("- **Always `print()` diagnostic context before raising/exiting on failure** — e.g., current page snapshot, API response body, intermediate state, what you expected vs. what you got.\n")

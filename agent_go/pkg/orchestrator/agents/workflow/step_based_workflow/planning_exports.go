@@ -784,20 +784,19 @@ func NewWorkshopChatSession(ctx context.Context, cfg *WorkshopConfig) (*Workshop
 		// Auto-set variable values from the enabled group selected in the toolbar.
 		// This ensures execute_step always uses the correct group values without
 		// requiring the agent to pass a group name on each call.
-		if len(cfg.EnabledGroupNames) > 0 {
-			groupName := cfg.EnabledGroupNames[0] // Use the first selected group
-			groupValues := existingManifest.GetVariableValues(groupName)
-			if groupValues != nil {
-				merged := MergeGroupWithDefaults(existingManifest, groupValues)
-				controller.variableValues = merged
-				SyncVariablesToWorkspaceEnv(controller.BaseOrchestrator, merged)
-				logger.Info(fmt.Sprintf("[WORKSHOP] Auto-set variable values from toolbar-selected group %q (%d vars, %d after merge with defaults)", groupName, len(groupValues), len(merged)))
-			} else {
+		if merged, groupName, ok := ResolveWorkshopVariableValues(existingManifest, cfg.EnabledGroupNames); ok {
+			controller.variableValues = merged
+			SyncExactVariablesToWorkspaceEnv(controller.BaseOrchestrator, merged)
+			controller.enabledGroupNames = []string{groupName}
+			logger.Info(fmt.Sprintf("[WORKSHOP] Loaded builder shell variables from group %q (%d resolved values)", groupName, len(merged)))
+		} else if len(cfg.EnabledGroupNames) > 0 {
+			groupName := cfg.EnabledGroupNames[0]
+			{
 				logger.Warn(fmt.Sprintf("[WORKSHOP] Toolbar-selected group %q not found in manifest — falling back to base values", groupName))
 				vals, loadErr := LoadVariableValues(ctx, controller.BaseOrchestrator, cfg.WorkspacePath, cfg.WorkspacePath)
 				if loadErr == nil && vals != nil {
 					controller.variableValues = vals
-					SyncVariablesToWorkspaceEnv(controller.BaseOrchestrator, vals)
+					SyncExactVariablesToWorkspaceEnv(controller.BaseOrchestrator, vals)
 				}
 			}
 			controller.enabledGroupNames = cfg.EnabledGroupNames

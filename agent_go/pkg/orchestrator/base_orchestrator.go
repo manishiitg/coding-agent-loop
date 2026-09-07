@@ -420,6 +420,32 @@ func (bo *BaseOrchestrator) SetWorkspaceVariables(values map[string]string) {
 	bo.workspaceEnvMu.Unlock()
 }
 
+// ReplaceWorkspaceVariables replaces the complete workflow-variable snapshot and
+// updates the live workspace shell environment atomically. Use this when a
+// variable group has been fully resolved: unlike SetWorkspaceVariables, it also
+// removes variables that were renamed or deleted so builder shells cannot see
+// stale values from an earlier manifest or group.
+func (bo *BaseOrchestrator) ReplaceWorkspaceVariables(values map[string]string) {
+	copied := make(map[string]string, len(values))
+	for name, value := range values {
+		if name != "" {
+			copied[name] = value
+		}
+	}
+
+	bo.workspaceEnvMu.Lock()
+	if bo.workspaceEnvRef != nil {
+		for name := range bo.workspaceVars {
+			delete(bo.workspaceEnvRef, "VAR_"+name)
+		}
+		for name, value := range copied {
+			bo.workspaceEnvRef["VAR_"+name] = value
+		}
+	}
+	bo.workspaceVars = copied
+	bo.workspaceEnvMu.Unlock()
+}
+
 // GetWorkspaceEnvRef returns the workspace executor env map reference.
 // Used to propagate the env ref from parent orchestrators to child orchestrators
 // so that MCP_API_URL updates flow through when the session ID changes.

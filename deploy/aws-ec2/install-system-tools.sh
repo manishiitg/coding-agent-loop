@@ -77,17 +77,22 @@ exec /usr/bin/node /usr/lib/node_modules/surge/bin/surge "$@"
 SURGE
 chmod 0755 /usr/local/bin/surge
 
-# Google Workspace CLI (gws, npm @googleworkspace/cli) for the Gmail
-# connector. The SERVER execs it (gmail_service.go) with a per-connection
-# GOOGLE_WORKSPACE_CLI_TOKEN it minted itself, so no launcher env mapping is
-# needed -- the OAuth client lives at $XDG_CONFIG_HOME/gws/client_secret.json
-# for the service user (gmail_oauth.go), never in the sandbox. Not the
-# Homebrew "gws" (a git-workspaces tool); the npm package is the real one.
-if ! test -e /usr/lib/node_modules/@googleworkspace/cli/run.js; then
-  npm install -g --silent @googleworkspace/cli >/dev/null
+# gog (github.com/openclaw/gogcli) is the Gmail connector's host CLI. Pin the
+# release and verify its published checksum so every box gets the same audited
+# binary. The application always supplies an explicit account/client or access
+# token and an explicit --home; workflow shells therefore cannot accidentally
+# send through whichever account an operator last selected.
+gog_version="0.39.1"
+gog_archive="gogcli_${gog_version}_linux_amd64.tar.gz"
+gog_sha256="438efa460b8291f023299ad2ed5610701cad7508db88392039c0891e2175e3b1"
+if ! /usr/local/bin/gog --version 2>/dev/null | grep -Fq "$gog_version"; then
+  gog_tmp="$(mktemp -d)"
+  curl -fsSL "https://github.com/openclaw/gogcli/releases/download/v${gog_version}/${gog_archive}" -o "$gog_tmp/$gog_archive"
+  echo "$gog_sha256  $gog_tmp/$gog_archive" | sha256sum -c - >/dev/null
+  tar -xzf "$gog_tmp/$gog_archive" -C "$gog_tmp" ./gog
+  install -m 0755 "$gog_tmp/gog" /usr/local/bin/gog
+  rm -rf "$gog_tmp"
 fi
-ln -sfn /usr/lib/node_modules/@googleworkspace/cli/run.js /usr/local/bin/gws
-chmod 0755 /usr/lib/node_modules/@googleworkspace/cli/run.js
 
 # AWS profile "RTS" for workflow shells. The rtslatency workflow was written
 # against a named profile on the operator's laptop; on the box the credentials
@@ -129,6 +134,7 @@ echo "git: $(git --version)"
 echo "aws: $(/usr/local/bin/aws --version)"
 echo "aws RTS profile: $(/usr/local/bin/aws --profile RTS sts get-caller-identity --query Arn --output text 2>&1 | tail -1)"
 echo "ntn: $(/usr/local/bin/ntn --version)"
+echo "gog: $(/usr/local/bin/gog --version)"
 REMOTE_SCRIPT
 
 # AWS-RunShellScript executes with sh (dash); the script is bash, so ship it

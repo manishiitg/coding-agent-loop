@@ -152,6 +152,14 @@ test -x "$remote_release/bin/video-studio-landlock-runner"
 # idempotent merge instead of trusting an older, Docker-only value.
 awk '!/^MCP_API_URL=/' "$env_file" > "$env_file.next"
 echo 'MCP_API_URL=http://127.0.0.1:8000' >> "$env_file.next"
+# gog's headless file keyring requires a stable encryption password. Generate
+# it once, keep it only in the service's mode-0600 env file, and preserve it
+# across later releases. Without this, OAuth import waits for a TTY prompt and
+# a server-connected Gmail account cannot be registered with gog.
+if ! grep -q '^GOG_KEYRING_PASSWORD=' "$env_file.next"; then
+  printf 'GOG_KEYRING_PASSWORD=%s\n' "$(openssl rand -hex 32)" >> "$env_file.next"
+fi
+grep -q '^GOG_KEYRING_BACKEND=' "$env_file.next" || echo 'GOG_KEYRING_BACKEND=file' >> "$env_file.next"
 # The AgentWorks LLM is fixed by the deploy, not by whoever last edited the
 # box: one provider/model as the default, LLM_CONFIG_LOCKED so the UI shows
 # "locked by admin" and the server ignores any other choice, and a published

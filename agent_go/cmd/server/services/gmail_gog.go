@@ -276,6 +276,22 @@ func ImportRefreshTokenIntoGog(ctx context.Context, email, clientName, refreshTo
 		return fmt.Errorf("gog binary not found on PATH: %w", err)
 	}
 
+	// A refresh token is tied to its OAuth client. Register the exact named
+	// client managed by AgentWorks before importing the token; a fresh server
+	// has an empty gog home, and `auth import --client <name>` alone otherwise
+	// creates a token bucket that cannot refresh. The file-keyring form is
+	// deliberate for headless services; GOG_KEYRING_PASSWORD protects it.
+	credentialsPath := gmailOAuthClientSecretPath(clientName)
+	credentialsArgs := gogBaseArgs(nil)
+	credentialsArgs = append(credentialsArgs, "auth", "credentials", "set", credentialsPath,
+		"--client", clientName, "--insecure", "--no-input", "--force")
+	var credentialsStderr bytes.Buffer
+	credentialsCmd := exec.CommandContext(ctx, gogPath, credentialsArgs...)
+	credentialsCmd.Stderr = &credentialsStderr
+	if err := credentialsCmd.Run(); err != nil {
+		return fmt.Errorf("gog auth credentials set: %w: %s", err, strings.TrimSpace(credentialsStderr.String()))
+	}
+
 	tmpDir, err := os.MkdirTemp("", "gmail-gog-import-*")
 	if err != nil {
 		return fmt.Errorf("create temp dir: %w", err)

@@ -95,6 +95,34 @@ GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build \
 Verify: `curl http://127.0.0.1:<workspace-port>/health` →
 `shell_sandbox.available=true`, `shell_sandbox.backend=landlock`.
 
+### 2a. The pinned `gog` CLI is installed for Gmail
+
+Gmail connections use `gog` (`github.com/openclaw/gogcli`) rather than the
+older `gws` npm CLI. Install the pinned Linux release system-wide, verify its
+published SHA-256 checksum before extraction, and ensure `gog` is visible on
+the agent service's `PATH`. On the Video Studio EC2 host this is automated by
+`deploy/aws-ec2/install-system-tools.sh`.
+
+```bash
+command -v gog
+gog --version
+# expect the version pinned in install-system-tools.sh
+```
+
+The application passes an explicit `--home` plus either an access token or a
+named account/client for every invocation. Do not configure a process-global
+default mailbox as a substitute: it could make one workflow send as another
+connection. After installation, set `use_gog_backend: true` in the Gmail
+configuration and reconnect/import any legacy account that has not yet been
+registered with `gog`. Verify status and one explicitly addressed test email
+before removing the old `gws` binary.
+
+For a headless service, also persist a strong `GOG_KEYRING_PASSWORD` in its
+mode-0600 environment file and set `GOG_KEYRING_BACKEND=file`. Generate the
+password once and preserve it across releases; rotating or losing it makes the
+stored refresh-token keyring unreadable. The EC2 deploy script enforces this
+contract automatically.
+
 ### 3. Both Downloads directories exist
 
 Two *different* directories, both required, both silent `SANDBOX_UNAVAILABLE`

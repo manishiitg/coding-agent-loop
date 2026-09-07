@@ -259,3 +259,39 @@ func TestSendRawGogPipesMIMEOnStdin(t *testing.T) {
 		t.Errorf("argv %q missing --raw-file -", argv)
 	}
 }
+
+func TestImportRefreshTokenIntoGogRegistersClientBeforeToken(t *testing.T) {
+	binDir := t.TempDir()
+	argvFile := filepath.Join(t.TempDir(), "argv.log")
+	gogPath := filepath.Join(binDir, "gog")
+	script := "#!/bin/sh\n" +
+		"printf '%s\\n' \"---\" >> " + shellQuote(argvFile) + "\n" +
+		"for a in \"$@\"; do printf '%s\\n' \"$a\" >> " + shellQuote(argvFile) + "; done\n"
+	if err := os.WriteFile(gogPath, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	clientsDir := t.TempDir()
+	t.Setenv("GMAIL_OAUTH_CLIENTS_DIR", clientsDir)
+	clientDir := filepath.Join(clientsDir, "primary")
+	if err := os.MkdirAll(clientDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	secretPath := filepath.Join(clientDir, "client_secret.json")
+	if err := os.WriteFile(secretPath, []byte(`{"installed":{"client_id":"id","client_secret":"secret"}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := ImportRefreshTokenIntoGog(context.Background(), "me@example.com", "primary", "refresh-token"); err != nil {
+		t.Fatalf("ImportRefreshTokenIntoGog: %v", err)
+	}
+	argv := strings.Join(readArgvLines(t, argvFile), " ")
+	credentials := "auth credentials set " + secretPath + " --client primary --insecure --no-input --force"
+	if !strings.Contains(argv, credentials) {
+		t.Fatalf("argv %q missing credentials registration %q", argv, credentials)
+	}
+	if !strings.Contains(argv, "auth import --email me@example.com --client primary") {
+		t.Fatalf("argv %q missing token import", argv)
+	}
+}

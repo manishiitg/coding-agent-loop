@@ -22,7 +22,42 @@ type WhatsAppServiceManager struct {
 	messageHandler BotMessageHandler
 	interaction    BotInteractionHandler
 	statusProvider BotThreadStatusFunc
+	profileRouter  ProfileRouteResolver
 	started        bool
+}
+
+// ProfileRouteResolver resolves a user's default product @token (see
+// WhatsAppService.SetProfileRouter); set by the server layer, which owns
+// profiles.
+type ProfileRouteResolver func(ctx context.Context, userID, token string) (*ProfileRoute, error)
+
+// SetProfileRouter installs the product @token resolver for every user's
+// service, present and future.
+func (m *WhatsAppServiceManager) SetProfileRouter(resolver ProfileRouteResolver) {
+	m.mu.Lock()
+	m.profileRouter = resolver
+	services := make([]*WhatsAppService, 0, len(m.services))
+	keys := make([]string, 0, len(m.services))
+	for key, svc := range m.services {
+		services = append(services, svc)
+		keys = append(keys, key)
+	}
+	m.mu.Unlock()
+	for i, svc := range services {
+		m.installProfileRouter(keys[i], svc)
+	}
+}
+
+func (m *WhatsAppServiceManager) installProfileRouter(userID string, svc *WhatsAppService) {
+	svc.SetProfileRouter(func(ctx context.Context, token string) (*ProfileRoute, error) {
+		m.mu.RLock()
+		resolver := m.profileRouter
+		m.mu.RUnlock()
+		if resolver == nil {
+			return nil, nil
+		}
+		return resolver(ctx, userID, token)
+	})
 }
 
 func NewWhatsAppServiceManager(baseDir string) *WhatsAppServiceManager {
@@ -156,6 +191,7 @@ func (m *WhatsAppServiceManager) configureService(userID string, svc *WhatsAppSe
 			handler(platform, encodedChannelID, encodedThreadTS, actionID, value, senderUserID)
 		}
 	})
+	m.installProfileRouter(userID, svc)
 	svc.SetBotThreadStatusProvider(func(threadID ThreadID) BotThreadStatus {
 		rawChannelID := threadID.ChannelID
 		encodedChannelID := encodeWhatsAppManagedChannelID(userID, rawChannelID)

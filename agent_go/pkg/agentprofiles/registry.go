@@ -15,6 +15,7 @@ type Registry struct {
 	factories       map[string]ToolFactory
 	initializers    map[string]RuntimeInitializer
 	promptVariables map[string]PromptVariablesProvider
+	channelRouters  map[string]ChannelRouter
 }
 
 func NewRegistry() *Registry {
@@ -162,6 +163,48 @@ func (r *Registry) PromptVariables(ctx context.Context, profileID string, runtim
 		return nil, nil
 	}
 	return provider(ctx, runtime)
+}
+
+// RegisterChannelRouter attaches a product's @token router to the profile
+// that fronts the product on a channel (the one a pairing names as its
+// default destination). Tokens the router does not know fall through to the
+// platform's own routing.
+func (r *Registry) RegisterChannelRouter(profileID string, router ChannelRouter) error {
+	if r == nil {
+		return fmt.Errorf("profile registry is nil")
+	}
+	profileID = strings.TrimSpace(profileID)
+	if !profileIDPattern.MatchString(profileID) {
+		return fmt.Errorf("invalid profile id %q", profileID)
+	}
+	if router == nil {
+		return fmt.Errorf("channel router %q is nil", profileID)
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.channelRouters == nil {
+		r.channelRouters = map[string]ChannelRouter{}
+	}
+	if _, exists := r.channelRouters[profileID]; exists {
+		return fmt.Errorf("channel router %q is already registered", profileID)
+	}
+	r.channelRouters[profileID] = router
+	return nil
+}
+
+// ResolveChannelRoute asks the profile's product router about a token;
+// ok=false when no router is registered or the token is not the product's.
+func (r *Registry) ResolveChannelRoute(ctx context.Context, profileID, userID, token string) (ChannelProfileRoute, bool, error) {
+	if r == nil {
+		return ChannelProfileRoute{}, false, fmt.Errorf("profile registry is nil")
+	}
+	r.mu.RLock()
+	router := r.channelRouters[strings.TrimSpace(profileID)]
+	r.mu.RUnlock()
+	if router == nil {
+		return ChannelProfileRoute{}, false, nil
+	}
+	return router(ctx, userID, strings.ToLower(strings.TrimSpace(token)))
 }
 
 func (r *Registry) RegisterInitializer(profileID string, initializer RuntimeInitializer) error {

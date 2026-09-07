@@ -73,6 +73,9 @@ type WhatsAppService struct {
 	messageHandler     BotMessageHandler
 	interactionHandler BotInteractionHandler
 	statusProvider     BotThreadStatusFunc
+	// profileRouter resolves the default product's own @tokens for this
+	// pairing's owner; consulted after the workflow slugs. nil: none.
+	profileRouter ProfileRouterFunc
 
 	routingMu sync.RWMutex
 	routing   WhatsAppRouting
@@ -1684,13 +1687,22 @@ func (w *WhatsAppService) HandleCommand(ctx context.Context, msg *whatsappbot.Me
 }
 
 // Resolve implements whatsappbot.Router: "@slug" names a configured
-// workflow route.
-func (w *WhatsAppService) Resolve(_ context.Context, _ string, token string) *whatsappbot.Route {
-	route := w.resolveSlugRoute(token)
-	if route == nil {
+// workflow route, else one of the default product's own profiles.
+func (w *WhatsAppService) Resolve(ctx context.Context, _ string, token string) *whatsappbot.Route {
+	key := strings.ToLower(strings.TrimSpace(token))
+	if route := w.resolveSlugRoute(key); route != nil {
+		return &whatsappbot.Route{Key: key, Value: route}
+	}
+	profileRoute, err := w.resolveProfileRoute(ctx, key)
+	if err != nil {
+		// RouteUnknown shows the product's reason for this token.
+		log.Printf("[WHATSAPP] @%s: %v", key, err)
 		return nil
 	}
-	return &whatsappbot.Route{Key: strings.ToLower(token), Value: route}
+	if profileRoute == nil {
+		return nil
+	}
+	return &whatsappbot.Route{Key: key, Value: profileRoute}
 }
 
 // activeSlugStore persists the active "@slug" per chat in whatsapp_meta.
@@ -1707,7 +1719,11 @@ func (w *WhatsAppService) RouteActivated(ctx context.Context, msg *whatsappbot.M
 		return
 	}
 	msg.React("👀")
-	if _, err := w.SendThreadMessage(ctx, ThreadID{Platform: "whatsapp", ChannelID: msg.Chat.String()}, fmt.Sprintf("Activated @%s for this chat. Send your next message normally. Type @%s deactivate to turn this off.", route.Key, route.Key)); err != nil {
+	ack := fmt.Sprintf("Activated @%s for this chat. Send your next message normally. Type @%s deactivate to turn this off.", route.Key, route.Key)
+	if profileRoute, ok := route.Value.(*ProfileRoute); ok && strings.TrimSpace(profileRoute.Label) != "" {
+		ack = fmt.Sprintf("Now talking to %s. Send your next message normally. Type @%s deactivate to go back.", profileRoute.Label, route.Key)
+	}
+	if _, err := w.SendThreadMessage(ctx, ThreadID{Platform: "whatsapp", ChannelID: msg.Chat.String()}, ack); err != nil {
 		log.Printf("[WHATSAPP] Failed to send activation acknowledgement for @%s: %v", route.Key, err)
 	}
 }
@@ -1724,7 +1740,13 @@ func (w *WhatsAppService) RouteDeactivated(ctx context.Context, msg *whatsappbot
 // gets the command help.
 func (w *WhatsAppService) RouteUnknown(ctx context.Context, msg *whatsappbot.Message, token string) {
 	msg.React("👀")
-	if _, err := w.SendThreadMessage(ctx, ThreadID{Platform: "whatsapp", ChannelID: msg.Chat.String()}, unknownWhatsAppWorkflowCommandMessage(token)); err != nil {
+	reply := unknownWhatsAppWorkflowCommandMessage(token)
+	// A token the default product knows but cannot serve right now (its
+	// router returned an error) gets the product's own explanation.
+	if _, err := w.resolveProfileRoute(ctx, strings.ToLower(strings.TrimSpace(token))); err != nil {
+		reply = err.Error()
+	}
+	if _, err := w.SendThreadMessage(ctx, ThreadID{Platform: "whatsapp", ChannelID: msg.Chat.String()}, reply); err != nil {
 		log.Printf("[WHATSAPP] Failed to send unknown @ command help for @%s: %v", token, err)
 	}
 }
@@ -1749,14 +1771,18 @@ func (w *WhatsAppService) HandleMessage(ctx context.Context, msg *whatsappbot.Me
 	text := msg.Text
 
 	var presetRoute *ChannelRoute
+	var presetProfile *ProfileRoute
 	routedSlug := ""
 	if msg.Route != nil {
 		presetRoute, _ = msg.Route.Value.(*ChannelRoute)
+		presetProfile, _ = msg.Route.Value.(*ProfileRoute)
 		routedSlug = msg.Route.Key
 	}
 
 	uploadFolder := whatsappWorkflowUploadFolder(presetRoute)
-	if presetRoute == nil && owner.DefaultProfileID != "" {
+	if presetProfile != nil {
+		uploadFolder = presetProfile.UploadFolder
+	} else if presetRoute == nil && owner.DefaultProfileID != "" {
 		// Unrouted messages run in the default profile's own conversation,
 		// whose sandbox can only read its own workspace: save attachments
 		// where that product asked for them, not in the per-user chat uploads.
@@ -1780,6 +1806,9 @@ func (w *WhatsAppService) HandleMessage(ctx context.Context, msg *whatsappbot.Me
 	if routedSlug != "" && presetRoute != nil {
 		log.Printf("[WHATSAPP] Incoming message from %s (%s) → user=%s, routed via @%s to workflow %s: %s",
 			info.Sender.User, chatJID, owner.UserID, routedSlug, presetRoute.WorkflowID, botTruncate(text, 80))
+	} else if routedSlug != "" && presetProfile != nil {
+		log.Printf("[WHATSAPP] Incoming message from %s (%s) → user=%s, routed via @%s to profile %s (%s): %s",
+			info.Sender.User, chatJID, owner.UserID, routedSlug, presetProfile.ProfileID, presetProfile.ConversationKey, botTruncate(text, 80))
 	} else {
 		log.Printf("[WHATSAPP] Incoming message from %s (%s) → user=%s: %s",
 			info.Sender.User, chatJID, owner.UserID, botTruncate(text, 80))
@@ -1798,6 +1827,7 @@ func (w *WhatsAppService) HandleMessage(ctx context.Context, msg *whatsappbot.Me
 		Text:            text,
 		MessageTS:       info.ID,
 		PresetWorkflow:  presetRoute,
+		PresetProfile:   presetProfile,
 		Timestamp:       info.Timestamp,
 		IsThreadReply:   false,
 		IsMention:       true, // every DM effectively addresses the bot
@@ -1946,6 +1976,29 @@ func (w *WhatsAppService) GetChannelName(ctx context.Context, channelID string) 
 
 // SetMessageHandler registers the callback invoked on every inbound text
 // message. Called once during bot manager setup.
+// ProfileRouterFunc resolves an @token to one of the default product's own
+// profiles for this pairing's owner. nil route with nil error: not the
+// product's token; an error: the product knows the token but cannot serve it
+// now (the text is shown in the chat).
+type ProfileRouterFunc func(ctx context.Context, token string) (*ProfileRoute, error)
+
+// SetProfileRouter installs the default product's @token router.
+func (w *WhatsAppService) SetProfileRouter(router ProfileRouterFunc) {
+	w.mu.Lock()
+	w.profileRouter = router
+	w.mu.Unlock()
+}
+
+func (w *WhatsAppService) resolveProfileRoute(ctx context.Context, token string) (*ProfileRoute, error) {
+	w.mu.RLock()
+	router := w.profileRouter
+	w.mu.RUnlock()
+	if router == nil {
+		return nil, nil
+	}
+	return router(ctx, token)
+}
+
 func (w *WhatsAppService) SetMessageHandler(handler BotMessageHandler) {
 	w.mu.Lock()
 	w.messageHandler = handler

@@ -2902,6 +2902,8 @@ export default function LearningApp() {
                                 <li>Open WhatsApp on your phone.</li>
                                 <li>At the top, search for your own name — the chat labelled <strong>“(You)”</strong> or <strong>“Message yourself”</strong>.</li>
                                 <li>Type anything there, like <em>“How is {childName || 'your child'} doing this week?”</em> — Quill reads it and replies right in that same chat.</li>
+                                <li>Send a photo of a worksheet or homework and Quill files it, just like the attach button here.</li>
+                                <li>Type <strong>@child</strong> to talk as {childName || 'your child'} with the tutor in the activity you last gave — the very same conversation as in the app — and <strong>@parent</strong> to come back to Quill.</li>
                               </ol>
                               <p className="fl-note" style={{ marginTop: '8px' }}>That’s it — it works just like texting. You can also send a photo of {childName || 'your child'}’s worksheet there and Quill will look at it. Quill only ever answers in your own “message yourself” chat — never in your chats with other people.</p>
                             </div>

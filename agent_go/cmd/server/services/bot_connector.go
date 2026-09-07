@@ -163,6 +163,31 @@ type BotIncomingMessage struct {
 	// workflow explicitly, since WhatsApp has no Slack-style channel IDs.
 	// Slack sets this to nil and relies on resolveChannelWorkflow instead.
 	PresetWorkflow *ChannelRoute
+	// PresetProfile, when set, sends this message to one of the default
+	// product's own profiles (an @token the product resolved, e.g. a
+	// tutor's per-activity conversation) instead of the pairing's default
+	// profile. Built into the turn by ProfileTurnFunc.
+	PresetProfile *ProfileRoute
+}
+
+// ProfileRoute is a product profile a channel message was routed to by the
+// product's own @token: the profile, its conversation key when keyed, where
+// attachments go, and a label for the activation acknowledgement.
+type ProfileRoute struct {
+	ProfileID       string
+	ConversationKey string
+	UploadFolder    string
+	Label           string
+}
+
+// botMessageRouteKey identifies the destination a message names, so a
+// thread-less platform starts a fresh conversation when it changes: a
+// workflow route, a product profile route, or "" for the default chat.
+func botMessageRouteKey(msg BotIncomingMessage) string {
+	if msg.PresetProfile != nil {
+		return "profile|" + strings.ToLower(strings.TrimSpace(msg.PresetProfile.ProfileID)) + "|" + strings.ToLower(strings.TrimSpace(msg.PresetProfile.ConversationKey))
+	}
+	return botRouteKey(msg.PresetWorkflow)
 }
 
 func botMetaFromMsg(msg BotIncomingMessage, threadID ThreadID) *chathistory.BotMetadata {
@@ -388,7 +413,10 @@ type activeBotSession struct {
 	// conversation (ProfileTurnFunc). Every later turn in it is built the
 	// same way, and none of the generic bot-runtime preambles apply.
 	profileTurn bool
-	AgentMode   string
+	// profileRoute is the product profile the thread was routed to by an
+	// @token (nil: the pairing's default profile); later turns keep it.
+	profileRoute *ProfileRoute
+	AgentMode    string
 	PresetQueryID    string
 	WorkspacePath    string
 	PhaseID          string
@@ -875,7 +903,7 @@ func (m *BotConversationManager) handleExistingSession(active *activeBotSession,
 	// boundary: continuing the same session would mix workflow files, workshop
 	// mode, and native coding-agent resume state across unrelated routes.
 	if !supportsThreads && !awaiting && !isSessionEndCommand(msg.Text, requireControlPrefix) {
-		incomingRouteKey := botRouteKey(msg.PresetWorkflow)
+		incomingRouteKey := botMessageRouteKey(msg)
 		if incomingRouteKey != oldRouteKey {
 			log.Printf("[BOT_MANAGER] Thread-less route changed for session %s (%q → %q) — starting fresh conversation",
 				oldSessionID, oldRouteKey, incomingRouteKey)
@@ -1839,7 +1867,7 @@ func (m *BotConversationManager) HandleMessageSync(ctx context.Context, msg BotI
 		ThreadID:        threadID,
 		Metadata:        botMeta,
 		sendFullDetails: sendFullDetails,
-		RouteKey:        botRouteKey(msg.PresetWorkflow),
+		RouteKey:        botMessageRouteKey(msg),
 	}
 	applyBotRequestMetadata(activeTask, queryReq)
 	m.sessions[threadID.Key()] = activeTask
@@ -1885,9 +1913,9 @@ func (m *BotConversationManager) startNewSessionDirect(msg BotIncomingMessage, t
 	if msg.PresetWorkflow == nil && m.profileTurn != nil {
 		req, profileSessionID, handled, err := m.profileTurn(context.Background(), workspaceUserID, msg, threadID)
 		if err != nil {
-			log.Printf("[BOT_MANAGER] Default profile turn failed for thread %s: %v", threadID.Key(), err)
+			log.Printf("[BOT_MANAGER] Profile turn failed for thread %s: %v", threadID.Key(), err)
 			if connector := m.GetConnector(msg.Platform); connector != nil {
-				connector.SendThreadMessage(context.Background(), threadID, fmt.Sprintf("Couldn't hand this to your default chat: %v", err))
+				connector.SendThreadMessage(context.Background(), threadID, fmt.Sprintf("Couldn't start that chat: %v", err))
 			}
 			return
 		}
@@ -1918,7 +1946,8 @@ func (m *BotConversationManager) startNewSessionDirect(msg BotIncomingMessage, t
 		LastActivity:    time.Now(),
 		sendFullDetails: sendFullDetails,
 		profileTurn:     profileTurn,
-		RouteKey:        botRouteKey(msg.PresetWorkflow),
+		profileRoute:    msg.PresetProfile,
+		RouteKey:        botMessageRouteKey(msg),
 	}
 	applyBotRequestMetadata(active, queryReq)
 	m.sessions[threadID.Key()] = active
@@ -2704,10 +2733,11 @@ func (m *BotConversationManager) turnRequestForActive(active *activeBotSession, 
 	if active != nil && m.profileTurn != nil {
 		active.mu.Lock()
 		isProfileTurn := active.profileTurn
+		profileRoute := active.profileRoute
 		sessionID := active.SessionID
 		active.mu.Unlock()
 		if isProfileTurn {
-			msg := BotIncomingMessage{Platform: platform, WorkspaceUserID: userID, ChannelID: threadID.ChannelID, ThreadTS: threadID.ThreadTS, Text: query, IsMention: true}
+			msg := BotIncomingMessage{Platform: platform, WorkspaceUserID: userID, ChannelID: threadID.ChannelID, ThreadTS: threadID.ThreadTS, Text: query, IsMention: true, PresetProfile: profileRoute}
 			req, _, handled, err := m.profileTurn(context.Background(), userID, msg, threadID)
 			if err == nil && handled {
 				return req

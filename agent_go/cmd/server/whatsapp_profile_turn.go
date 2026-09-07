@@ -25,9 +25,10 @@ func profileTakesWhatsApp(profile agentprofiles.Profile) bool {
 	return requirement != "" && requirement != string(agentprofiles.CapabilityDisabled)
 }
 
-// whatsappUploadFolderFor keeps a product's attachment folder inside its own
-// fixed workspace root, where the profile's folder guard lets it read. An
-// empty request means the platform's per-user chat uploads.
+// whatsappUploadFolderFor keeps a product's attachment folder inside the
+// profile's own workspace (its fixed root, or the projects root of a keyed
+// profile), where the profile's folder guard lets it read. An empty request
+// means the platform's per-user chat uploads.
 func whatsappUploadFolderFor(profile agentprofiles.Profile, requested string) (string, error) {
 	requested = strings.Trim(strings.TrimSpace(requested), "/")
 	if requested == "" {
@@ -35,7 +36,10 @@ func whatsappUploadFolderFor(profile agentprofiles.Profile, requested string) (s
 	}
 	root := strings.Trim(strings.TrimSpace(profile.Runtime.Workspace.Root), "/")
 	if root == "" {
-		return "", fmt.Errorf("%s has no fixed workspace root to keep WhatsApp attachments in", profile.Name)
+		root = strings.Trim(strings.TrimSpace(profile.Runtime.Workspace.ProjectsRoot), "/")
+	}
+	if root == "" {
+		return "", fmt.Errorf("%s has no workspace root to keep WhatsApp attachments in", profile.Name)
 	}
 	clean := path.Clean(requested)
 	if clean == "." || clean == ".." || strings.HasPrefix(clean, "../") || strings.HasPrefix(clean, "/") {
@@ -88,6 +92,52 @@ func whatsappEngineFor(profile agentprofiles.Profile, conversation ProductConver
 	return agentprofiles.ProviderOption{}, false
 }
 
+func whatsappWorkspaceUserID(userID string) string {
+	if !IsMultiUserMode() {
+		return GetDefaultUserID()
+	}
+	return userID
+}
+
+// whatsappProfileRouter is the connector's ProfileRouteResolver: an @token
+// that is not a workflow slug is offered to the pairing's default product,
+// whose registered router may map it to one of the product's own profiles.
+func (api *StreamingAPI) whatsappProfileRouter(ctx context.Context, userID, token string) (*services.ProfileRoute, error) {
+	if api.whatsappManager == nil || api.agentProfiles == nil {
+		return nil, nil
+	}
+	svc, err := api.whatsappManager.ServiceForUser(ctx, userID, "", "")
+	if err != nil {
+		return nil, nil
+	}
+	defaultProfileID, _ := svc.DefaultProfile()
+	if defaultProfileID == "" {
+		return nil, nil
+	}
+	workspaceUserID := whatsappWorkspaceUserID(userID)
+	route, ok, err := api.agentProfiles.ResolveChannelRoute(ctx, defaultProfileID, workspaceUserID, token)
+	if err != nil {
+		return nil, err
+	}
+	if !ok {
+		return nil, nil
+	}
+	target, err := api.agentProfiles.Resolve(strings.TrimSpace(route.ProfileID), 0, workspaceUserID)
+	if err != nil {
+		return nil, fmt.Errorf("@%s points at a chat that does not exist", token)
+	}
+	uploadFolder, err := whatsappUploadFolderFor(target, route.UploadFolder)
+	if err != nil {
+		return nil, err
+	}
+	return &services.ProfileRoute{
+		ProfileID:       target.ID,
+		ConversationKey: strings.TrimSpace(route.ConversationKey),
+		UploadFolder:    uploadFolder,
+		Label:           strings.TrimSpace(route.Label),
+	}, nil
+}
+
 // botProfileTurn is the bot manager's ProfileTurnFunc. handled is false when
 // the pairing has no default profile; an error means it has one that cannot
 // take the message, which the bot manager reports back in the chat.
@@ -107,19 +157,23 @@ func (api *StreamingAPI) botProfileTurn(ctx context.Context, userID string, msg 
 	// The pairing's owner is the request principal; durable product data
 	// belongs to the configured default owner on a single-user deployment,
 	// exactly as the app's own profile chat resolves it.
-	workspaceUserID := userID
-	if !IsMultiUserMode() {
-		workspaceUserID = GetDefaultUserID()
+	workspaceUserID := whatsappWorkspaceUserID(userID)
+	conversationKey := ""
+	if msg.PresetProfile != nil {
+		// An @token the default product resolved to one of its own profiles
+		// (a keyed one, e.g. a tutor's per-activity conversation).
+		profileID = strings.TrimSpace(msg.PresetProfile.ProfileID)
+		conversationKey = strings.TrimSpace(msg.PresetProfile.ConversationKey)
 	}
 	profile, err := api.agentProfiles.Resolve(profileID, 0, workspaceUserID)
 	if err != nil {
-		return nil, "", false, fmt.Errorf("the default chat %q is gone — unpair and pair again from the product", profileID)
+		return nil, "", false, fmt.Errorf("the chat %q is gone — unpair and pair again from the product", profileID)
 	}
-	if !profileTakesWhatsApp(profile) {
+	if msg.PresetProfile == nil && !profileTakesWhatsApp(profile) {
 		return nil, "", false, fmt.Errorf("%s no longer takes WhatsApp messages", profile.Name)
 	}
 	productInteractions.Note(ctx, workspaceUserID, profile.Product)
-	binding, err := resolveProductConversationBinding(ctx, workspaceUserID, profile, "")
+	binding, err := resolveProductConversationBinding(ctx, workspaceUserID, profile, conversationKey)
 	if err != nil {
 		return nil, "", false, fmt.Errorf("resolve %s conversation: %w", profile.Name, err)
 	}

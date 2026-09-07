@@ -466,6 +466,23 @@ type PromptContext struct {
 // one turn from trusted, server-resolved state.
 type PromptVariablesProvider func(context.Context, RuntimeContext) (map[string]string, error)
 
+// ChannelProfileRoute is where a product sends a channel (WhatsApp, …)
+// message that named one of the product's own @tokens: a profile of the
+// product, the conversation key when that profile's conversations are keyed,
+// where attachments go (a workspace path the profile can read), and a label
+// the channel shows when the route activates.
+type ChannelProfileRoute struct {
+	ProfileID       string
+	ConversationKey string
+	UploadFolder    string
+	Label           string
+}
+
+// ChannelRouter resolves a product's own @token for a user. ok=false means
+// the token is not one of the product's; an error is shown to the person who
+// typed it (a token the product knows but cannot serve right now).
+type ChannelRouter func(ctx context.Context, userID, token string) (route ChannelProfileRoute, ok bool, err error)
+
 type ToolRuntimeContext struct {
 	UserID        string
 	SessionID     string

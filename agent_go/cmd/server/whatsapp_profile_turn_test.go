@@ -65,6 +65,18 @@ func TestWhatsAppUploadFolderStaysInsideTheProfileWorkspace(t *testing.T) {
 	if _, err := whatsappUploadFolderFor(noRoot, "inbox"); err == nil {
 		t.Fatal("a profile with no fixed root accepted an upload folder, want an error")
 	}
+	// A keyed profile (one conversation per project) keeps attachments under
+	// its projects root — the activity folder a routed @child turn names.
+	keyed := whatsappTestProfile("", "")
+	keyed.Runtime.Workspace.ProjectsRoot = "Chats/SparkQuill/activities"
+	if got, err := whatsappUploadFolderFor(keyed, "Chats/SparkQuill/activities/fractions/attempts"); err != nil || got != "Chats/SparkQuill/activities/fractions/attempts" {
+		t.Fatalf("keyed profile folder = (%q, %v), want the activity's attempts folder", got, err)
+	}
+	if _, err := whatsappUploadFolderFor(keyed, "Chats/SparkQuill/inbox"); err != nil {
+		t.Fatalf("keyed profile folder outside its projects root = %v", err)
+	} else if got, _ := whatsappUploadFolderFor(keyed, "Chats/SparkQuill/inbox"); got != "Chats/SparkQuill/activities/Chats/SparkQuill/inbox" {
+		t.Fatalf("a folder outside the projects root resolved to %q, want it forced under the root", got)
+	}
 }
 
 // A WhatsApp turn runs on the engine the conversation is already bound to,

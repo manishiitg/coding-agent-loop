@@ -50,6 +50,9 @@ const (
 	ReportsFolder   = "reports"
 	ArchiveFolder   = "archive"
 	InboxFolder     = "inbox"
+	// CurrentActivityFile points at the activity the parent last gave the
+	// child ({"dir": "activities/<slug>"}); the app writes it on handoff.
+	CurrentActivityFile = "current-activity.json"
 )
 
 // keySweeps remembers the family roots whose activity folders were already
@@ -239,6 +242,29 @@ func RegisterAgentProfileRuntime(registry *agentprofiles.Registry, workspaceAPIU
 	}); err != nil {
 		return err
 	}
+	// On WhatsApp the parent's own chat reaches Quill; "@child" talks as the
+	// tutor in the activity the child currently has, "@parent" comes back.
+	if err := registry.RegisterChannelRouter(ParentProfileID, func(ctx context.Context, userID, token string) (agentprofiles.ChannelProfileRoute, bool, error) {
+		parent, err := registry.Resolve(ParentProfileID, 0, userID)
+		if err != nil {
+			return agentprofiles.ChannelProfileRoute{}, false, err
+		}
+		root := strings.Trim(strings.TrimSpace(parent.Runtime.Workspace.Root), "/")
+		familyRoot := runtimeRoot(userID, root)
+		state, err := loader.load(ctx, userID, familyRoot)
+		if err != nil {
+			return agentprofiles.ChannelProfileRoute{}, false, err
+		}
+		var pointer struct {
+			Dir string `json:"dir"`
+		}
+		if raw := loader.read(ctx, userID, path.Join(familyRoot, CurrentActivityFile)); strings.TrimSpace(raw) != "" {
+			_ = json.Unmarshal([]byte(raw), &pointer)
+		}
+		return ChannelRouteFor(token, state, root, pointer.Dir)
+	}); err != nil {
+		return err
+	}
 	return registry.RegisterPromptVariables(ChildProfileID, func(ctx context.Context, rt agentprofiles.RuntimeContext) (map[string]string, error) {
 		// The activity folder is the child conversation's workspace; the
 		// family root is its projects root's parent.
@@ -261,6 +287,42 @@ func RegisterAgentProfileRuntime(registry *agentprofiles.Registry, workspaceAPIU
 		}
 		return ChildPromptVariables(state, activityRoot, interests, manifest), nil
 	})
+}
+
+// ChannelRouteFor maps SparkQuill's own channel @tokens: "@parent" is Quill,
+// "@child" is the tutor in the child's current activity (its keyed
+// conversation, attachments into its attempts/ folder). root is the family
+// root as product.yaml declares it; currentActivityDir is the handoff
+// pointer, family-relative. Any other token is not SparkQuill's.
+func ChannelRouteFor(token string, state FamilyState, root, currentActivityDir string) (agentprofiles.ChannelProfileRoute, bool, error) {
+	switch strings.ToLower(strings.TrimSpace(token)) {
+	case "parent", "quill":
+		return agentprofiles.ChannelProfileRoute{ProfileID: ParentProfileID, Label: "Quill"}, true, nil
+	case "child":
+		name := "the child"
+		if state.Child != nil && strings.TrimSpace(state.Child.Name) != "" {
+			name = strings.TrimSpace(state.Child.Name)
+		}
+		root = strings.Trim(strings.TrimSpace(root), "/")
+		dir := strings.Trim(strings.TrimSpace(strings.ReplaceAll(currentActivityDir, "\\", "/")), "/")
+		if root != "" && strings.HasPrefix(dir, root+"/") {
+			dir = strings.TrimPrefix(dir, root+"/")
+		}
+		if dir == "" {
+			return agentprofiles.ChannelProfileRoute{}, true, fmt.Errorf("No activity has been given to %s yet — give one from SparkQuill first, then @child talks in it.", name)
+		}
+		slug := path.Base(dir)
+		if !activitySlugPattern.MatchString(slug) {
+			return agentprofiles.ChannelProfileRoute{}, true, fmt.Errorf("%s's current activity could not be found — give one from SparkQuill again.", name)
+		}
+		return agentprofiles.ChannelProfileRoute{
+			ProfileID:       ChildProfileID,
+			ConversationKey: slug,
+			UploadFolder:    path.Join(root, dir, "attempts"),
+			Label:           name + "'s tutor",
+		}, true, nil
+	}
+	return agentprofiles.ChannelProfileRoute{}, false, nil
 }
 
 // InboxNote turns the unfiled uploads into one turn-context line. The prompt

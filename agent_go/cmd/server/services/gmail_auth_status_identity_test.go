@@ -38,7 +38,7 @@ const sendOnlyAuthStatus = `{
 func TestAuthStatusTakesTheAddressFromAuthStatusWhenGetProfileIsRefused(t *testing.T) {
 	gws := fakeGws(t, sendOnlyAuthStatus, "")
 
-	st := (&GmailService{}).computeAuthStatus(context.Background(), gws, nil)
+	st := (&GmailService{}).computeAuthStatus(context.Background(), gws, false, "", nil)
 
 	if !st.GwsInstalled || !st.Authenticated || !st.HasGmailScope {
 		t.Fatalf("expected an authenticated send-capable status, got %+v", st)
@@ -53,7 +53,7 @@ func TestAuthStatusFallsBackToGetProfileWhenAuthStatusHasNoIdentity(t *testing.T
 	status := `{"encryption_valid": true, "has_refresh_token": true, "encrypted_credentials_exists": true, "scopes": ["https://www.googleapis.com/auth/gmail.modify"]}`
 	gws := fakeGws(t, status, `{"emailAddress": "profile@example.com", "messagesTotal": 1}`)
 
-	st := (&GmailService{}).computeAuthStatus(context.Background(), gws, nil)
+	st := (&GmailService{}).computeAuthStatus(context.Background(), gws, false, "", nil)
 
 	if !st.Authenticated || !st.HasGmailScope {
 		t.Fatalf("expected an authenticated status, got %+v", st)
@@ -68,7 +68,7 @@ func TestAuthStatusStaysAuthenticatedWithoutAnyIdentity(t *testing.T) {
 	status := `{"encryption_valid": true, "has_refresh_token": true, "encrypted_credentials_exists": true, "scopes": ["https://www.googleapis.com/auth/gmail.send"]}`
 	gws := fakeGws(t, status, "")
 
-	st := (&GmailService{}).computeAuthStatus(context.Background(), gws, nil)
+	st := (&GmailService{}).computeAuthStatus(context.Background(), gws, false, "", nil)
 
 	if !st.Authenticated || !st.HasGmailScope || st.Email != "" {
 		t.Fatalf("expected authenticated with an empty address, got %+v", st)

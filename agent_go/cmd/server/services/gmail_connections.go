@@ -510,6 +510,8 @@ func gmailConnectionConfig(conn GmailConnection) *GmailConfig {
 	cfg := &GmailConfig{
 		ConfigHome:      conn.ConfigHome,
 		CredentialsFile: conn.CredentialsFile,
+		gogAccountEmail: conn.Email,
+		gogClientName:   conn.ClientName,
 	}
 	if token, err := accessTokenForConnection(context.Background(), conn.ID, conn.ClientName); err == nil && token != "" {
 		cfg.Token = token

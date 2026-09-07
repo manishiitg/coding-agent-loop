@@ -245,8 +245,15 @@
 /* Left conversation/history rail */
 .fl-rail { display: flex; flex-direction: column; min-width: 0; overflow: hidden; background: var(--navy); color: #cddaf0; font-family: var(--font-ui); }
 .fl-shell[data-rail="closed"] .fl-rail { border: 0; }
-.fl-new { display: inline-flex; align-items: center; justify-content: center; gap: 8px; margin: 18px 14px 12px; min-height: 42px; border: 0; border-radius: 12px; background: var(--yellow); color: var(--heading); font: inherit; font-weight: 700; white-space: nowrap; cursor: pointer; }
+.fl-new-wrap { position: relative; margin: 18px 14px 12px; }
+.fl-new { display: inline-flex; align-items: center; justify-content: center; gap: 8px; width: 100%; min-height: 42px; border: 0; border-radius: 12px; background: var(--yellow); color: var(--heading); font: inherit; font-weight: 700; white-space: nowrap; cursor: pointer; }
 .fl-new:hover { filter: brightness(1.04); }
+.fl-new:disabled { opacity: .7; cursor: progress; }
+.fl-new-engine-backdrop { position: fixed; inset: 0; z-index: 70; }
+.fl-new-engine-popover { position: absolute; top: calc(100% + 6px); left: 0; right: 0; z-index: 71; padding: 6px; border-radius: 12px; background: #1c3363; border: 1px solid rgba(255, 255, 255, .14); box-shadow: 0 12px 30px rgba(11, 29, 66, .4); display: flex; flex-direction: column; gap: 2px; }
+.fl-new-engine-label { margin: 4px 8px 2px; color: #9fb0cc; font-size: 11px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; }
+.fl-new-engine-popover button { text-align: left; padding: 8px 9px; border: 0; border-radius: 8px; background: transparent; color: #e6ecf7; font: inherit; font-weight: 600; cursor: pointer; }
+.fl-new-engine-popover button:hover { background: rgba(255, 255, 255, .1); }
 .fl-rail-scroll { flex: 1; min-height: 0; overflow-y: auto; padding: 6px 10px 10px; }
 .fl-rail-group { margin-bottom: 16px; }
 .fl-rail-label { margin: 8px 8px 6px; color: #8ea3c6; font-size: var(--text-caption); font-weight: 700; letter-spacing: .05em; text-transform: uppercase; white-space: nowrap; }

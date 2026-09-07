@@ -2,6 +2,7 @@ package services
 
 import (
 	"context"
+	"sync"
 	"strings"
 	"testing"
 	"time"
@@ -13,6 +14,7 @@ import (
 type testBotConnector struct {
 	name            string
 	supportsThreads bool
+	mu              sync.Mutex // guards sent; every other field here is only ever touched single-threaded
 	sent            []string
 	sendStarted     chan struct{}
 	releaseSend     chan struct{}

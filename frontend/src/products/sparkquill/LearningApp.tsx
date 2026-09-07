@@ -60,7 +60,7 @@ import {
 import PlatformChat, { FAMILY_WORKSPACE, PARENT_PROFILE_ID, applyFamilyEngineToOpenTabs, startNewParentConversation, switchParentConversation, type ProductInteraction, type ProductPresentation } from './platform/PlatformChat'
 import { CHILD_PROFILE_ID, CHILD_PROFILE_VERSION } from './platform/ChildPlatformChat'
 import type { ParentChat } from './api/familyApi'
-import { loadAgentProfileCapabilityEnabled } from '../../utils/agentProfileCapabilities'
+import { loadAgentProfileCapabilityEnabled, loadAgentProfileProviderOptions, type AgentProfileProviderOption } from '../../utils/agentProfileCapabilities'
 import PulseHistoryViewer from './platform/PulseHistoryViewer'
 import type { ProductNotification } from '../../platform/notifications/useProductNotifications'
 import ChildPlatformChat, { forgetChildChat, submitToChildChat, type ChildKickoff } from './platform/ChildPlatformChat'
@@ -1393,8 +1393,22 @@ export default function LearningApp() {
       .then(() => setParentChats((cur) => cur.filter((c) => c.session_id !== chat.session_id)))
       .catch((err) => setParentChatsError(err instanceof Error ? err.message : 'Could not delete that chat.'))
   }
-  const startNewChatFromRail = () => {
-    window.dispatchEvent(new CustomEvent('agentworks:product-new-conversation', { detail: { profileId: PARENT_PROFILE_ID } }))
+  // Engine choice for a fresh chat — the composer's own NewChatControl asked
+  // this before it was removed as a duplicate of this button; a new
+  // conversation is the one moment the engine can be picked at all (locked
+  // for the rest of that chat's life), so the rail's button must still ask.
+  const [newChatEngines, setNewChatEngines] = useState<AgentProfileProviderOption[]>([])
+  useEffect(() => {
+    loadAgentProfileProviderOptions(PARENT_PROFILE_ID).then(setNewChatEngines).catch(() => undefined)
+  }, [])
+  const [newChatEnginePopoverOpen, setNewChatEnginePopoverOpen] = useState(false)
+  const startNewChatFromRail = (engine?: string) => {
+    setNewChatEnginePopoverOpen(false)
+    window.dispatchEvent(new CustomEvent('agentworks:product-new-conversation', { detail: { profileId: PARENT_PROFILE_ID, engine } }))
+  }
+  const onNewChatButtonClick = () => {
+    if (newChatEngines.length > 1) { setNewChatEnginePopoverOpen((v) => !v); return }
+    startNewChatFromRail(newChatEngines[0]?.id)
   }
   const deleteChats = (dirs: string[], confirmMessage: string) => {
     if (dirs.length === 0 || !window.confirm(confirmMessage)) return
@@ -2117,9 +2131,24 @@ export default function LearningApp() {
           style={{ ['--parent-side-w' as string]: `${Math.round(parentSideWidth)}px` }}
         >
           <aside className="fl-rail" aria-label="Chats" aria-hidden={!chatsRailOpen}>
-            <button className="fl-new" type="button" onClick={startNewChatFromRail} disabled={switchingChat}>
-              <Plus size={16} /> New chat
-            </button>
+            <div className="fl-new-wrap">
+              <button className="fl-new" type="button" onClick={onNewChatButtonClick} disabled={switchingChat}>
+                <Plus size={16} /> New chat
+              </button>
+              {newChatEnginePopoverOpen && (
+                <>
+                  <div className="fl-new-engine-backdrop" onClick={() => setNewChatEnginePopoverOpen(false)} />
+                  <div className="fl-new-engine-popover" role="menu">
+                    <p className="fl-new-engine-label">Start with</p>
+                    {newChatEngines.map((engine) => (
+                      <button key={engine.id} type="button" role="menuitem" onClick={() => startNewChatFromRail(engine.id)}>
+                        {engine.label || engine.id}
+                      </button>
+                    ))}
+                  </div>
+                </>
+              )}
+            </div>
             <div className="fl-rail-scroll">
               <div className="fl-rail-group">
                 <p className="fl-rail-label">Chats with Quill</p>
@@ -3003,7 +3032,7 @@ export default function LearningApp() {
                                 <li>Open WhatsApp on your phone.</li>
                                 <li>At the top, search for your own name — the chat labelled <strong>“(You)”</strong> or <strong>“Message yourself”</strong>.</li>
                                 <li>Type anything there, like <em>“How is {childName || 'your child'} doing this week?”</em> — Quill reads it and replies right in that same chat.</li>
-                                <li>Send a photo of a worksheet or homework and Quill files it, just like the attach button here.</li>
+                                <li>Send a photo of a worksheet or homework and Quill files it, just like the attach button here. A voice note works too — Quill reads it back to you right away so you know it heard you correctly.</li>
                                 <li>Type <strong>@child</strong> to talk as {childName || 'your child'} with the tutor in the activity you last gave — the very same conversation as in the app — and <strong>@parent</strong> to come back to Quill.</li>
                               </ol>
                               <p className="fl-note" style={{ marginTop: '8px' }}>That’s it — it works just like texting. You can also send a photo of {childName || 'your child'}’s worksheet there and Quill will look at it. Quill only ever answers in your own “message yourself” chat — never in your chats with other people.</p>

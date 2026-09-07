@@ -76,6 +76,9 @@ type WhatsAppService struct {
 	// profileRouter resolves the default product's own @tokens for this
 	// pairing's owner; consulted after the workflow slugs. nil: none.
 	profileRouter ProfileRouterFunc
+	// voiceTranscriber turns a downloaded voice note into text on-device.
+	// nil: voice notes fall back to the generic media-upload description.
+	voiceTranscriber VoiceTranscriberFunc
 
 	routingMu sync.RWMutex
 	routing   WhatsAppRouting
@@ -311,6 +314,16 @@ type whatsappDownloadedMedia struct {
 	MimeType  string
 	Caption   string
 	SizeBytes int
+	// Transcript is set only for a voice note (Kind "audio") the platform
+	// successfully transcribed on-device. When set, the message is handled
+	// as plain text — the chat, and the agent's own context, never mention
+	// audio at all; a voice note reads exactly like one that was typed.
+	Transcript string
+	// VoiceSetupNeeded is true for a voice note the platform could not
+	// transcribe because the speech model isn't installed yet (see
+	// ErrVoiceNotInstalled) — a one-time thing, so the parent gets asked to
+	// set it up rather than the note just silently arriving as a bare file.
+	VoiceSetupNeeded bool
 }
 
 // openMetaStore opens the lightweight metadata connection and ensures the
@@ -689,14 +702,73 @@ func (w *WhatsAppService) downloadIncomingMedia(ctx context.Context, msg *whatsa
 	if mimeType == "" {
 		mimeType = "application/octet-stream"
 	}
-	return &whatsappDownloadedMedia{
+	result := &whatsappDownloadedMedia{
 		Kind:      media.Kind,
 		FileName:  fileName,
 		FilePath:  filePath,
 		MimeType:  mimeType,
 		Caption:   media.Caption,
 		SizeBytes: len(media.Data),
-	}, nil
+	}
+	if media.Kind == "audio" {
+		w.mu.RLock()
+		transcriber := w.voiceTranscriber
+		w.mu.RUnlock()
+		if transcriber != nil {
+			// The just-uploaded workspace copy, not the transport's temp
+			// download — media.Data was already written to disk once for
+			// the upload; decoding needs a real path, and the workspace
+			// client doesn't hand one back for a remote store, so decode
+			// from a local temp file instead of re-fetching.
+			tmp, err := os.CreateTemp("", "wa-voice-*"+extensionForWhatsAppMedia(mimeType, media.Ext))
+			if err != nil {
+				log.Printf("[WHATSAPP] voice note temp file: %v", err)
+			} else {
+				tmpPath := tmp.Name()
+				writeErr := os.WriteFile(tmpPath, media.Data, 0o600)
+				tmp.Close()
+				if writeErr != nil {
+					log.Printf("[WHATSAPP] voice note temp write: %v", writeErr)
+				} else {
+					text, transcribeErr := transcriber(ctx, tmpPath)
+					result.Transcript, result.VoiceSetupNeeded = voiceTranscriptionOutcome(text, transcribeErr)
+					if transcribeErr != nil && !result.VoiceSetupNeeded {
+						log.Printf("[WHATSAPP] voice note transcription failed: %v", transcribeErr)
+					}
+				}
+				os.Remove(tmpPath)
+			}
+		}
+	}
+	return result, nil
+}
+
+// voiceTranscriptionOutcome turns a transcriber call's result into what
+// downloadIncomingMedia records on whatsappDownloadedMedia: a transcript
+// text can be sent immediately even if empty (a silent clip stays a
+// no-op transcript, not an error); ErrVoiceNotInstalled asks the parent to
+// set voice up; any other failure just logs and falls back to the generic
+// file description, same as before this feature existed.
+func voiceTranscriptionOutcome(text string, err error) (transcript string, setupNeeded bool) {
+	if err != nil {
+		return "", errors.Is(err, ErrVoiceNotInstalled)
+	}
+	return strings.TrimSpace(text), false
+}
+
+// whatsappMessageTextForMedia is the effective message text HandleMessage
+// hands to the agent: a transcribed voice note reads exactly like a typed
+// message (merged with anything the sender also typed above it) — the chat
+// never learns it arrived as audio. Anything else keeps the generic
+// file-attachment description.
+func whatsappMessageTextForMedia(text string, media *whatsappDownloadedMedia) string {
+	if media == nil || media.Transcript == "" {
+		return appendWhatsAppMediaContext(text, media)
+	}
+	if trimmed := strings.TrimSpace(text); trimmed != "" {
+		return trimmed + "\n\n" + media.Transcript
+	}
+	return media.Transcript
 }
 
 func appendWhatsAppMediaContext(text string, media *whatsappDownloadedMedia) string {
@@ -1797,7 +1869,19 @@ func (w *WhatsAppService) HandleMessage(ctx context.Context, msg *whatsappbot.Me
 		}
 		return
 	}
-	text = appendWhatsAppMediaContext(text, media)
+	if media != nil && media.VoiceSetupNeeded {
+		if _, err := w.SendThreadMessage(ctx, ThreadID{Platform: "whatsapp", ChannelID: chatJID}, "🎙️ Voice notes need a one-time setup first — open SparkQuill on your computer and check Settings → Voice, then send this again."); err != nil {
+			log.Printf("[WHATSAPP] Failed to send voice-setup notice: %v", err)
+		}
+	}
+	if media != nil && media.Transcript != "" {
+		// Echoed back immediately (ahead of however long the agent's own
+		// reply takes) so the parent can catch a mishearing right away.
+		if _, err := w.SendThreadMessage(ctx, ThreadID{Platform: "whatsapp", ChannelID: chatJID}, "🎧 Heard: \""+media.Transcript+"\""); err != nil {
+			log.Printf("[WHATSAPP] Failed to send voice-note echo: %v", err)
+		}
+	}
+	text = whatsappMessageTextForMedia(text, media)
 	if text == "" {
 		log.Printf("[WHATSAPP] skip: no text body or supported media (id=%s)", msg.ID)
 		return
@@ -1986,6 +2070,28 @@ type ProfileRouterFunc func(ctx context.Context, token string) (*ProfileRoute, e
 func (w *WhatsAppService) SetProfileRouter(router ProfileRouterFunc) {
 	w.mu.Lock()
 	w.profileRouter = router
+	w.mu.Unlock()
+}
+
+// VoiceTranscriberFunc transcribes a downloaded audio file on-device,
+// returning the words heard (empty if the clip was silent). Set by the
+// server layer, which owns the speech engine. It must not trigger the
+// engine's one-time model download — that can take minutes, far past what a
+// WhatsApp message handler should block on — and must return
+// ErrVoiceNotInstalled instead when the model isn't already on disk.
+type VoiceTranscriberFunc func(ctx context.Context, path string) (string, error)
+
+// ErrVoiceNotInstalled is what a VoiceTranscriberFunc returns when the
+// on-device speech model isn't installed (or the build has no speech engine
+// at all) rather than attempting the download. A voice note then gets a
+// plain setup reply instead of silently trying to transcribe nothing.
+var ErrVoiceNotInstalled = errors.New("whatsapp: voice transcription is not installed")
+
+// SetVoiceTranscriber installs the on-device transcriber for incoming voice
+// notes.
+func (w *WhatsAppService) SetVoiceTranscriber(fn VoiceTranscriberFunc) {
+	w.mu.Lock()
+	w.voiceTranscriber = fn
 	w.mu.Unlock()
 }
 

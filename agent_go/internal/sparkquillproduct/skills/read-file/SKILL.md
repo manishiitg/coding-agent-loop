@@ -42,7 +42,18 @@ file "<path>"        # what is it, really? (extension can lie)
 
 - **Archives (.zip/.tar/.gz)** — `unzip -l "<path>"` (or `tar tf`) to list, then extract and read each file inside with the rules above.
 
-- **Video / audio** — you cannot watch or listen. Record the filename and duration (`ffprobe "<path>"` if available) and ask the parent what it covers.
+- **Audio (.oga/.ogg/.m4a/.mp3/.wav)** — a WhatsApp voice note is never one of these files: the platform transcribes it itself before the message ever reaches you, so it just reads as a normal typed message (with a low-confidence transcript flagged as such, right in the text). This step is only for an audio *file* actually uploaded another way (the attach button, filed like any other inbox item) — transcribe it locally with `faster-whisper` (install on demand: `pip3 install --break-system-packages faster-whisper`), the "small" model, `beam_size=5`:
+  ```
+  python3 -c "
+  from faster_whisper import WhisperModel
+  m = WhisperModel('small')
+  segs, info = m.transcribe('<path>', beam_size=5)
+  print(' '.join(s.text.strip() for s in segs))
+  print(f'lang={info.language} p={info.language_probability:.2f}')
+  "
+  ```
+  `info.language_probability` is the confidence — below ~0.6 the transcript is often garbled (mishears a name or product as ordinary words: "Veracross" as "where across" is a real example seen in practice); say so rather than trusting a shaky transcript at face value.
+- **Video** — you cannot watch it. Record the filename and duration (`ffprobe "<path>"` if available) and ask the parent what it covers.
 
 - **Anything else, or a needed tool genuinely missing** — you are resourceful: `pip3 install --break-system-packages <pkg>` (or `uv pip install <pkg>`) on demand and run it **locally**. `liteparse` is the strong general-purpose fallback for most document formats.
 

@@ -314,6 +314,15 @@ func (f *BotEventFilter) processEvent(ctx context.Context, event BotEventData) b
 		kind := f.classifyBotNotification(event)
 		if kind == BotNotifyBuilderText {
 			msg := f.formatGenerationEnd(event)
+			// The progressive-text poller (see SendProgressiveText) may have
+			// already forwarded this exact reply straight from durable
+			// conversation history, ahead of this event; a genuinely
+			// different reply (a synthetic turn's earlier text was this
+			// generation's actual predecessor) still goes out.
+			if !f.ShouldSendSyntheticFinal(msg) {
+				log.Printf("[BOT_FILTER] llm_generation_end: already forwarded via progressive text, skipping")
+				return false
+			}
 			log.Printf("[BOT_FILTER] llm_generation_end: sending %d chars (level=%d)", len(msg), event.Data.HierarchyLevel)
 			return f.sendMainText(ctx, msg)
 		} else {
@@ -352,19 +361,23 @@ func (f *BotEventFilter) processEvent(ctx context.Context, event BotEventData) b
 			// detail still lives in workflow logs and the run folder.
 			log.Printf("[BOT_FILTER] unified_completion: skipped by policy (kind=%q mainLevel=%v workflowScoped=%v level=%d)", kind, isMain, f.isWorkflowScopedEvent(event), event.Data.HierarchyLevel)
 		} else {
-			// Main-level completion — only send if no text was already sent via llm_generation_end
-			// (avoids duplicates when the agent sends text + completion with same content)
-			f.mu.Lock()
-			alreadySent := f.mainTextSent
-			f.mu.Unlock()
-			if !alreadySent {
-				msg := f.formatUnifiedCompletion(event)
-				if msg != "" {
-					log.Printf("[BOT_FILTER] unified_completion: sending main-level result (no prior text sent)")
-					sent = f.sendMainText(ctx, msg)
-				}
+			// Main-level completion — only send if this exact text wasn't
+			// already forwarded (via llm_generation_end, or the progressive
+			// poller reading it straight from conversation history). A
+			// content check, not a one-shot flag: the poller may have sent
+			// an earlier, different reply for this same turn, and the real
+			// final text must still go out. Dedup on the raw result, not
+			// the "**Result:**\n"-wrapped message about to be sent — that
+			// wrapper alone made an otherwise-identical reply look new and
+			// sent it a second time (caught live: a normal reply, then the
+			// same thing again a second later with a "*Result:*" label).
+			uc, _ := event.Data.Data.(*events.UnifiedCompletionEvent)
+			msg := f.formatUnifiedCompletion(event)
+			if msg != "" && uc != nil && f.ShouldSendSyntheticFinal(uc.FinalResult) {
+				log.Printf("[BOT_FILTER] unified_completion: sending main-level result")
+				sent = f.sendMainText(ctx, msg)
 			} else {
-				log.Printf("[BOT_FILTER] unified_completion: skipping main-level (text already sent via generation_end)")
+				log.Printf("[BOT_FILTER] unified_completion: skipping main-level (already forwarded)")
 			}
 		}
 		// Only main-level completions signal that the session is done.
@@ -1156,6 +1169,20 @@ func (f *BotEventFilter) formatGenerationEnd(event BotEventData) string {
 	}
 
 	return content
+}
+
+// SendProgressiveText forwards one completed assistant reply, read straight
+// from durable conversation history while a turn is still running (see
+// BotConversationManager's progressive-text poller), as its own message —
+// not an edit, not a fragment of live token streaming, a genuinely finished
+// turn. content-deduped against whatever was sent last (ShouldSendSyntheticFinal)
+// so a slow poll tick and the turn's own final llm_generation_end/
+// unified_completion never both send the same reply.
+func (f *BotEventFilter) SendProgressiveText(ctx context.Context, content string) bool {
+	if strings.TrimSpace(content) == "" || !f.ShouldSendSyntheticFinal(content) {
+		return false
+	}
+	return f.sendMainText(ctx, content)
 }
 
 func (f *BotEventFilter) sendMainText(ctx context.Context, content string) bool {

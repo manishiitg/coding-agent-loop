@@ -374,6 +374,7 @@ type BotConversationManager struct {
 	followUpSession  SessionFollowUpFunc
 	loadUserSecrets  UserSecretsLoaderFunc
 	profileTurn      ProfileTurnFunc
+	chatHistory      ChatHistoryReaderFunc
 	runningWorkflows RunningWorkflowsFunc
 	resumeTarget     BotResumeTargetFunc
 	resumeList       BotResumeListFunc
@@ -525,6 +526,20 @@ func (m *BotConversationManager) SetUserSecretsLoader(fn UserSecretsLoaderFunc) 
 // product profile conversation (see ProfileTurnFunc).
 func (m *BotConversationManager) SetProfileTurnFunc(fn ProfileTurnFunc) {
 	m.profileTurn = fn
+}
+
+// ChatHistoryReaderFunc returns, in order, the text of every completed
+// assistant ("ai" role) turn in a session's durable conversation_history —
+// the exact record the UI's own chat-restore path trusts, updated
+// incrementally while the turn is still running. A turn with only a tool
+// call (no text) is omitted. Set by the server layer, which owns chat-history
+// persistence and parsing; nil disables progressive text.
+type ChatHistoryReaderFunc func(ctx context.Context, userID, sessionID string) ([]string, error)
+
+// SetChatHistoryReader installs the durable-history reader that drives
+// progressive text (see pollProgressiveText).
+func (m *BotConversationManager) SetChatHistoryReader(fn ChatHistoryReaderFunc) {
+	m.chatHistory = fn
 }
 
 // RegisterConnector registers a bot connector
@@ -2097,6 +2112,10 @@ func (m *BotConversationManager) runSession(active *activeBotSession, queryReq m
 		log.Printf("[BOT_MANAGER] WARNING: eventSubscriber is nil, event filter NOT started for session %s", sessionID)
 	}
 
+	if m.chatHistory != nil {
+		go m.pollProgressiveText(sessionCtx, active)
+	}
+
 	// Start the actual session in background — don't block on it.
 	if m.startSession != nil {
 		go func() {
@@ -2148,6 +2167,66 @@ func (m *BotConversationManager) runSession(active *activeBotSession, queryReq m
 	active.mu.Lock()
 	active.LastActivity = time.Now()
 	active.mu.Unlock()
+}
+
+// progressiveTextPollInterval is a var, not a const, so a test can shorten
+// it rather than waiting on real time.
+var progressiveTextPollInterval = 4 * time.Second
+
+// pollProgressiveText periodically reads a session's durable conversation
+// history — the exact record the app's own chat-restore path already
+// trusts, kept current while the turn runs — and forwards each newly
+// completed assistant reply to the bot channel as its own message, as soon
+// as it appears rather than waiting for the whole turn to finish. Not live
+// token streaming: only genuinely finished replies, so nothing sends more
+// often than the agent actually produces a new one. Stops when ctx (the
+// turn's own context) is canceled.
+func (m *BotConversationManager) pollProgressiveText(ctx context.Context, active *activeBotSession) {
+	active.mu.Lock()
+	sessionID := active.SessionID
+	userID := active.UserID
+	filter := active.eventFilter
+	active.mu.Unlock()
+	if filter == nil {
+		return
+	}
+	// conversation_history is the whole session's lifetime, not just this
+	// turn — a long-lived WhatsApp conversation already has every earlier
+	// turn's replies in it, already sent back then. Baseline against what's
+	// there right now (before this turn produces anything), so only turns
+	// genuinely new since this poller started go out; skipping the baseline
+	// would replay the entire past conversation as "new" on every turn.
+	sent := 0
+	if baseline, err := m.chatHistory(ctx, userID, sessionID); err == nil {
+		sent = len(baseline)
+	}
+	ticker := time.NewTicker(progressiveTextPollInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			sent = m.pollProgressiveTextOnce(ctx, filter, userID, sessionID, sent)
+		}
+	}
+}
+
+// pollProgressiveTextOnce does one poll tick's work: read the session's
+// current durable text turns, send whichever are new since `sent`, and
+// return the updated count. Split out from pollProgressiveText's ticker loop
+// so a test can drive it directly without waiting on real time.
+func (m *BotConversationManager) pollProgressiveTextOnce(ctx context.Context, filter *BotEventFilter, userID, sessionID string, sent int) int {
+	texts, err := m.chatHistory(ctx, userID, sessionID)
+	if err != nil || len(texts) <= sent {
+		return sent
+	}
+	for _, text := range texts[sent:] {
+		if filter.SendProgressiveText(ctx, text) {
+			log.Printf("[BOT_MANAGER] Progressive text sent for session %s (%d chars)", sessionID, len(text))
+		}
+	}
+	return len(texts)
 }
 
 // resetActiveForNewTurn clears state that would otherwise latch from a prior

@@ -82,6 +82,47 @@ func TestShouldSendSyntheticFinalSuppressesMarkdownEquivalentText(t *testing.T) 
 	}
 }
 
+// A normal turn's llm_generation_end and its own trailing unified_completion
+// carry the same reply — unified_completion must not re-send it just because
+// its own formatting wraps the text in "**Result:**\n" first. Caught live:
+// a genuine duplicate, the same reply twice a second apart, the second one
+// with a "*Result:*" label — formatUnifiedCompletion's wrapper made an
+// identical reply look new to the dedup check.
+func TestUnifiedCompletionDoesNotResendGenerationEndsReply(t *testing.T) {
+	const reply = "Looks like your message got cut off. What would you like me to do?"
+	connector := &testBotConnector{}
+	filter := NewBotEventFilter(connector, ThreadID{Platform: "whatsapp", ChannelID: "dm", ThreadTS: "dm"}, "session-1", "", "user-1")
+
+	if !filter.processEvent(context.Background(), BotEventData{
+		Type: "llm_generation_end",
+		Data: &events.AgentEvent{Data: &events.LLMGenerationEndEvent{Content: reply}},
+	}) {
+		t.Fatal("llm_generation_end was not sent")
+	}
+	if filter.processEvent(context.Background(), BotEventData{
+		Type: "unified_completion",
+		Data: &events.AgentEvent{Data: &events.UnifiedCompletionEvent{FinalResult: reply, Status: "completed"}},
+	}) {
+		t.Fatal("unified_completion re-sent the same reply llm_generation_end already sent")
+	}
+	if len(connector.sent) != 1 {
+		t.Fatalf("sent = %v, want exactly one message", connector.sent)
+	}
+
+	// A genuinely different final result (the progressive poller having sent
+	// an earlier, different reply for this same turn) still goes out.
+	filter2 := NewBotEventFilter(connector, ThreadID{Platform: "whatsapp", ChannelID: "dm", ThreadTS: "dm"}, "session-2", "", "user-1")
+	if !filter2.SendProgressiveText(context.Background(), "Still working on it.") {
+		t.Fatal("progressive text was not sent")
+	}
+	if !filter2.processEvent(context.Background(), BotEventData{
+		Type: "unified_completion",
+		Data: &events.AgentEvent{Data: &events.UnifiedCompletionEvent{FinalResult: reply, Status: "completed"}},
+	}) {
+		t.Fatal("a genuinely different final result was suppressed")
+	}
+}
+
 func TestSyntheticFinalSuppressedWhileMainTextSendInFlight(t *testing.T) {
 	const msg = "Daily latency report is running - pulling CloudWatch data for both prod and dev."
 	sendStarted := make(chan struct{})

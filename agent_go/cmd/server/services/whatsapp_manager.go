@@ -23,9 +23,10 @@ type WhatsAppServiceManager struct {
 	services       map[string]*WhatsAppService
 	messageHandler BotMessageHandler
 	interaction    BotInteractionHandler
-	statusProvider BotThreadStatusFunc
-	profileRouter  ProfileRouteResolver
-	started        bool
+	statusProvider   BotThreadStatusFunc
+	profileRouter    ProfileRouteResolver
+	voiceTranscriber VoiceTranscriberFunc
+	started          bool
 }
 
 // ProfileRouteResolver resolves a user's default product @token (see
@@ -47,6 +48,21 @@ func (m *WhatsAppServiceManager) SetProfileRouter(resolver ProfileRouteResolver)
 	m.mu.Unlock()
 	for i, svc := range services {
 		m.installProfileRouter(keys[i], svc)
+	}
+}
+
+// SetVoiceTranscriber installs the on-device speech transcriber for every
+// device's service, present and future.
+func (m *WhatsAppServiceManager) SetVoiceTranscriber(fn VoiceTranscriberFunc) {
+	m.mu.Lock()
+	m.voiceTranscriber = fn
+	services := make([]*WhatsAppService, 0, len(m.services))
+	for _, svc := range m.services {
+		services = append(services, svc)
+	}
+	m.mu.Unlock()
+	for _, svc := range services {
+		svc.SetVoiceTranscriber(fn)
 	}
 }
 
@@ -452,6 +468,12 @@ func (m *WhatsAppServiceManager) configureService(userID string, svc *WhatsAppSe
 		}
 	})
 	m.installProfileRouter(userID, svc)
+	m.mu.RLock()
+	transcriber := m.voiceTranscriber
+	m.mu.RUnlock()
+	if transcriber != nil {
+		svc.SetVoiceTranscriber(transcriber)
+	}
 	svc.SetBotThreadStatusProvider(func(threadID ThreadID) BotThreadStatus {
 		rawChannelID := threadID.ChannelID
 		encodedChannelID := encodeWhatsAppManagedChannelID(userID, rawChannelID)

@@ -265,10 +265,24 @@ func BeginGmailOAuth(connectionID, redirectURL string) (string, error) {
 	// makes Google re-issue one even if the user has consented before, which
 	// otherwise returns an access token only and leaves the connection unable
 	// to send once it expires.
+	//
+	// include_granted_scopes makes the consent ADDITIVE, and it is required for
+	// correctness rather than being an optimisation. gmailOAuthConfig reads the
+	// operator's own ~/.config/gws/client_secret.json, so this flow and the
+	// host's `gws` CLI are the same OAuth client, and Google keeps one
+	// authorization per (account, client). gmailOAuthScopes is three scopes;
+	// `gws auth login -s gmail` asks for roughly sixteen. Without this
+	// parameter, authorizing an account here rewrites its grant down to our
+	// three and the operator's working terminal `gws` — possibly running for
+	// months — stops authenticating, with nothing on disk changed to explain
+	// it. Reported by an operator whose host login died the moment they added
+	// a mailbox in the UI. With it, Google merges our scopes into the existing
+	// grant and leaves theirs intact.
 	return cfg.AuthCodeURL(state,
 		oauth2.AccessTypeOffline,
 		oauth2.ApprovalForce,
 		oauth2.SetAuthURLParam("prompt", "select_account consent"),
+		oauth2.SetAuthURLParam("include_granted_scopes", "true"),
 	), nil
 }
 

@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import { AlertTriangle, ChevronRight, Loader2, Mail, RotateCcw } from 'lucide-react'
 import { agentApi } from '../../../services/api'
 import { Button } from '../../ui/Button'
@@ -31,6 +32,17 @@ export function GmailNotifications({ bots }: { bots: GmailNotificationsBots }) {
     gmailNewConnectionDir, setGmailNewConnectionDir,
     runGmailConnectionAction, connectGmailAccount,
   } = bots
+
+  // Which row is asking "this will change the host's gws login, continue?".
+  //
+  // A connection with no config_home resolves to the host's default
+  // ~/.config/gws — that is the adopted host account (see AdoptHostAccount) and
+  // any legacy migrated row. Authorizing it re-consents the SAME Google account
+  // on the SAME OAuth client the operator's terminal gws uses, which changes
+  // that login. include_granted_scopes keeps the existing scopes, so this is no
+  // longer destructive, but it is still their shell session being altered from
+  // a web UI and it should be their call.
+  const [hostAuthConfirm, setHostAuthConfirm] = useState<string | null>(null)
 
   return (
     <div className="rounded-md border border-border">
@@ -122,7 +134,10 @@ export function GmailNotifications({ bots }: { bots: GmailNotificationsBots }) {
 
                         <div className="mt-2 flex flex-wrap gap-2">
                           <button
-                            onClick={() => connectGmailAccount(conn.id)}
+                            onClick={() => {
+                              if (!conn.config_home?.trim()) { setHostAuthConfirm(conn.id); return }
+                              connectGmailAccount(conn.id)
+                            }}
                             disabled={readOnly || gmailAuthPending !== null}
                             title={readOnly ? READ_ONLY_TITLE : undefined}
                             className="rounded border border-primary px-2 py-1 text-xs text-primary hover:bg-primary/10 disabled:opacity-40"
@@ -162,6 +177,35 @@ export function GmailNotifications({ bots }: { bots: GmailNotificationsBots }) {
                             Remove
                           </button>
                         </div>
+
+                        {hostAuthConfirm === conn.id && (
+                          <div className="mt-2 rounded-md border border-amber-500/40 bg-amber-50 p-2 dark:bg-amber-900/20">
+                            <p className="text-xs text-amber-900 dark:text-amber-200">
+                              This account uses the host&rsquo;s default <code>gws</code> configuration — the same one{' '}
+                              <code>gws</code> uses in a terminal on this machine. Signing in re-consents that Google
+                              account on the same OAuth client, which changes that login too. Your existing scopes are
+                              kept, so nothing you have authorized is lost, but the terminal session is affected.
+                            </p>
+                            <p className="mt-1 text-xs text-amber-900 dark:text-amber-200">
+                              To leave the host login alone, cancel and add a separate account instead — a new account
+                              gets its own config directory.
+                            </p>
+                            <div className="mt-1.5 flex gap-2">
+                              <button
+                                onClick={() => { setHostAuthConfirm(null); connectGmailAccount(conn.id) }}
+                                className="rounded border border-amber-600 px-2 py-1 text-xs text-amber-900 hover:bg-amber-100 dark:text-amber-200 dark:hover:bg-amber-900/40"
+                              >
+                                Sign in anyway
+                              </button>
+                              <button
+                                onClick={() => setHostAuthConfirm(null)}
+                                className="rounded border border-border px-2 py-1 text-xs text-muted-foreground hover:text-foreground"
+                              >
+                                Cancel
+                              </button>
+                            </div>
+                          </div>
+                        )}
 
                         {gmailAuthPending === conn.id && gmailAuthUrl && (
                           <div className="mt-2 rounded-md border border-border bg-muted/40 p-2">

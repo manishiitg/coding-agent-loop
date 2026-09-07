@@ -6,6 +6,25 @@ export type LiveInputSubmissionCoordinator = <T>(
   submit: () => Promise<T>,
 ) => Promise<T>
 
+export interface ChatInputLiveRouteDecision {
+  hasSession: boolean
+  isCodingAgentProvider: boolean
+  isWorkflowMode: boolean
+  usesStructuredTransport: boolean
+}
+
+// Only an interactive transport can accept terminal-style live delivery.
+// Structured coding-agent turns resume through the ordinary query route; trying
+// /live-input first adds a predictable 404/409 and can race another JSON turn.
+export function shouldRouteChatInputToLiveTransport({
+  hasSession,
+  isCodingAgentProvider,
+  isWorkflowMode,
+  usesStructuredTransport,
+}: ChatInputLiveRouteDecision): boolean {
+  return hasSession && !usesStructuredTransport && (isCodingAgentProvider || isWorkflowMode)
+}
+
 // A rapid Enter/double-click can invoke ChatInput twice before the first
 // /live-input response clears the draft. Share the complete submission promise
 // for that exact session + message so the HTTP mutation, optimistic event, and

@@ -24,6 +24,7 @@ type AgentProfileResponse = {
   runtime?: {
     provider?: string
     model_id?: string
+    transport?: string
     capabilities?: Record<string, unknown>
     provider_options?: AgentProfileProviderOption[]
   }
@@ -54,13 +55,14 @@ function loadAgentProfile(profileId: string, version?: number): Promise<AgentPro
 export async function loadAgentProfileRuntime(
   profileId: string,
   version?: number,
-): Promise<{ provider: string; model_id: string } | null> {
+): Promise<{ provider: string; model_id: string; transport?: string } | null> {
   if (!profileId) return null
   try {
     const profile = await loadAgentProfile(profileId, version)
     const provider = profile.runtime?.provider?.trim() || ''
     const modelId = profile.runtime?.model_id?.trim() || ''
-    return provider && modelId ? { provider, model_id: modelId } : null
+    const transport = profile.runtime?.transport?.trim() || undefined
+    return provider && modelId ? { provider, model_id: modelId, transport } : null
   } catch {
     return null
   }

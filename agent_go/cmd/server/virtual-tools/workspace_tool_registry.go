@@ -11,10 +11,11 @@ import (
 // WorkspaceToolRegistryConfig controls creation of the LLM-visible workspace
 // tools that live under the workspace_advanced category.
 type WorkspaceToolRegistryConfig struct {
-	WorkspaceAPIURL string
-	UserID          string
-	SessionID       string
-	ExtraEnvVars    map[string]string
+	WorkspaceAPIURL      string
+	UserID               string
+	SessionID            string
+	ExtraEnvVars         map[string]string
+	GenerateTextLLMTiers *WorkflowLLMTierConfig
 }
 
 // WorkspaceToolRegistry is the single assembly point for LLM-visible workspace
@@ -44,6 +45,7 @@ func CreateWorkspaceToolRegistry(cfg WorkspaceToolRegistryConfig) WorkspaceToolR
 	tools = append(tools, CreateWorkspaceImageTools()...)
 
 	advancedExecutors, env := createWorkspaceAdvancedExecutorsForRegistry(cfg, workspaceURL)
+	SetGenerateTextWorkflowTierConfig(advancedExecutors, workspaceURL, cfg.GenerateTextLLMTiers)
 	executors := make(map[string]func(ctx context.Context, args map[string]any) (string, error), len(advancedExecutors)+8)
 	for name, executor := range advancedExecutors {
 		executors[name] = executor

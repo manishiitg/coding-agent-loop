@@ -2,8 +2,12 @@
 
 Only two provider-backed workspace tools are active:
 
-- **`generate_text_llm(user_message, tier)`** runs one configured text-model
-  call. `tier` is `low`, `medium`, or `high`.
+- **`generate_text_llm(user_message, tier)`** runs one text-model call using
+  only the current workflow's `capabilities.llm_config`. `high`, `medium`, and
+  `low` map to that workflow's `tier_1`, `tier_2`, and `tier_3`. It never uses
+  a global tier configuration and fails closed when there is no current
+  workflow. Coding-CLI tiers always run as fresh structured one-shot calls;
+  they never use tmux, interactive persistence, or resume.
 - **`search_web_llm(query, provider)`** runs a live hosted-MCP web search.
   `provider` is `parallel`, `exa`, or `firecrawl`; it does not accept a
   `model_id` and never routes through a native coding-agent search tool.

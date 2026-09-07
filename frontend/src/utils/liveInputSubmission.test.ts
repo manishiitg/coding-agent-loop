@@ -2,10 +2,32 @@ import { describe, expect, it, vi } from 'vitest'
 
 import {
   createLiveInputSubmissionCoordinator,
+  shouldRouteChatInputToLiveTransport,
   shouldAppendOptimisticLiveInputMessage,
   shouldRefreshSessionEventStream,
   shouldUseRetainedLiveInput,
 } from './liveInputSubmission'
+
+describe('shouldRouteChatInputToLiveTransport', () => {
+  const base = {
+    hasSession: true,
+    isCodingAgentProvider: true,
+    isWorkflowMode: true,
+    usesStructuredTransport: false,
+  }
+
+  it('routes an interactive coding-agent chat through live input', () => {
+    expect(shouldRouteChatInputToLiveTransport(base)).toBe(true)
+  })
+
+  it('routes structured Cursor follow-ups through the normal query path', () => {
+    expect(shouldRouteChatInputToLiveTransport({ ...base, usesStructuredTransport: true })).toBe(false)
+  })
+
+  it('requires an existing backend session', () => {
+    expect(shouldRouteChatInputToLiveTransport({ ...base, hasSession: false })).toBe(false)
+  })
+})
 
 describe('createLiveInputSubmissionCoordinator', () => {
   it('executes a rapid duplicate live message exactly once', async () => {

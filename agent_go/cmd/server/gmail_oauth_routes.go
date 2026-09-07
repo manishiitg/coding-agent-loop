@@ -138,6 +138,8 @@ func gmailOAuthCallbackHandler(api *StreamingAPI) http.HandlerFunc {
 			if refreshToken, ok := services.StoredRefreshToken(connectionID); ok {
 				if err := services.ImportRefreshTokenIntoGog(r.Context(), email, updated.ClientName, refreshToken); err != nil {
 					log.Printf("[GMAIL] connected %s but could not register it with gog for direct agent use: %v", connectionID, err)
+				} else {
+					log.Printf("[GMAIL] registered %s with gog (client=%s) for direct agent use", email, updated.ClientName)
 				}
 			}
 		}

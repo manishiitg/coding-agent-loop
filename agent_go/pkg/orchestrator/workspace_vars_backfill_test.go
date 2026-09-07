@@ -73,3 +73,17 @@ func TestSecretsStillBackfilledAlongsideVariables(t *testing.T) {
 		t.Fatalf("want both secret and variable backfilled, got %v", env)
 	}
 }
+
+func TestReplaceWorkspaceVariablesRemovesRenamedAndDeletedValues(t *testing.T) {
+	bo := &BaseOrchestrator{logger: loggerv2.NewNoop()}
+	env := map[string]string{"MCP_API_URL": "http://bridge"}
+	bo.SetWorkspaceEnvRef(env)
+	bo.ReplaceWorkspaceVariables(map[string]string{"BASE_URL": "https://one", "OLD": "stale"})
+	bo.ReplaceWorkspaceVariables(map[string]string{"BASE_URL": "https://two", "NEW": "fresh"})
+	if _, exists := env["VAR_OLD"]; exists {
+		t.Fatal("VAR_OLD remained after exact refresh")
+	}
+	if env["VAR_BASE_URL"] != "https://two" || env["VAR_NEW"] != "fresh" {
+		t.Fatalf("unexpected refreshed env: %v", env)
+	}
+}

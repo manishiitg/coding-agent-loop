@@ -160,6 +160,44 @@ func SyncVariablesToWorkspaceEnv(bo *orchestrator.BaseOrchestrator, variableValu
 	bo.GetLogger().Info(fmt.Sprintf("[VARIABLES] Synced %d variable values as VAR_* env vars: %v", len(variableValues), keys))
 }
 
+// SyncExactVariablesToWorkspaceEnv publishes a fully resolved variable group to
+// builder shell tools. It deliberately replaces the previous snapshot so a
+// rename, deletion, or group change cannot leave stale VAR_* entries behind.
+func SyncExactVariablesToWorkspaceEnv(bo *orchestrator.BaseOrchestrator, variableValues map[string]string) {
+	if bo == nil {
+		return
+	}
+	bo.ReplaceWorkspaceVariables(variableValues)
+	keys := make([]string, 0, len(variableValues))
+	for name := range variableValues {
+		keys = append(keys, "VAR_"+name)
+	}
+	bo.GetLogger().Info(fmt.Sprintf("[VARIABLES] Replaced builder shell variables with %d VAR_* values: %v", len(variableValues), keys))
+}
+
+// ResolveWorkshopVariableValues selects the values that an interactive builder
+// session may safely expose to its shell tools. An explicit toolbar selection
+// wins. With no selection, a single group is unambiguous and is auto-selected;
+// multiple groups remain unset until the user chooses one.
+func ResolveWorkshopVariableValues(manifest *VariablesManifest, enabledGroupNames []string) (map[string]string, string, bool) {
+	if manifest == nil || len(manifest.Groups) == 0 {
+		return nil, "", false
+	}
+	groupName := ""
+	if len(enabledGroupNames) > 0 {
+		groupName = enabledGroupNames[0]
+	} else if len(manifest.Groups) == 1 {
+		groupName = manifest.Groups[0].Name
+	} else {
+		return nil, "", false
+	}
+	groupValues := manifest.GetVariableValues(groupName)
+	if groupValues == nil {
+		return nil, groupName, false
+	}
+	return MergeGroupWithDefaults(manifest, groupValues), groupName, true
+}
+
 // snapshotWorkspaceEnv returns a shallow copy of the workspace env map.
 // Safe to iterate without holding the lock — used when passing env to
 // pure functions that only read keys/values.

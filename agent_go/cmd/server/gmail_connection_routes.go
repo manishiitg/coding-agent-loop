@@ -32,6 +32,10 @@ type GmailConnectionResponse struct {
 	DisplayName string `json:"display_name"`
 	Email       string `json:"email,omitempty"`
 	ConfigHome  string `json:"config_home,omitempty"`
+	// ClientName is the named OAuth client (see /oauth-clients) this
+	// connection authorizes under. Empty only for a connection that
+	// predates the named-client registry and has not yet been migrated.
+	ClientName string `json:"client_name,omitempty"`
 	// HasCredentialsFile reports whether a key file is pinned, without naming
 	// it — the path is operator detail the picker does not need.
 	HasCredentialsFile bool   `json:"has_credentials_file,omitempty"`
@@ -66,7 +70,9 @@ type GmailConnectionRequest struct {
 	DisplayName     string `json:"display_name,omitempty"`
 	ConfigHome      string `json:"config_home,omitempty"`
 	CredentialsFile string `json:"credentials_file,omitempty"`
-	Enabled         *bool  `json:"enabled,omitempty"`
+	// ClientName is required on create — see services.GmailService.CreateConnection.
+	ClientName string `json:"client_name,omitempty"`
+	Enabled    *bool  `json:"enabled,omitempty"`
 }
 
 // GmailConnectionTestRequest optionally overrides the test recipient.
@@ -117,6 +123,7 @@ func projectGmailConnection(svc *services.GmailService, conn services.GmailConne
 		DisplayName:        conn.DisplayName,
 		Email:              email,
 		ConfigHome:         conn.ConfigHome,
+		ClientName:         conn.ClientName,
 		HasCredentialsFile: strings.TrimSpace(conn.CredentialsFile) != "",
 		Status:             status,
 		Enabled:            conn.Enabled,
@@ -213,6 +220,7 @@ func createGmailConnectionHandler(api *StreamingAPI) http.HandlerFunc {
 			DisplayName:     req.DisplayName,
 			ConfigHome:      req.ConfigHome,
 			CredentialsFile: req.CredentialsFile,
+			ClientName:      req.ClientName,
 			Enabled:         req.Enabled,
 		})
 		if err != nil {
@@ -244,6 +252,7 @@ func updateGmailConnectionHandler(api *StreamingAPI) http.HandlerFunc {
 			DisplayName:     req.DisplayName,
 			ConfigHome:      req.ConfigHome,
 			CredentialsFile: req.CredentialsFile,
+			ClientName:      req.ClientName,
 			Enabled:         req.Enabled,
 		})
 		if err != nil {

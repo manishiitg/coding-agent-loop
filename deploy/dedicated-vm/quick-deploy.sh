@@ -65,20 +65,25 @@ fi
 
 if [[ "$TARGET" == "all" || "$TARGET" == "frontend" ]]; then
   echo "    Building frontend..."
-  (cd "$REPO_ROOT/frontend" && VITE_API_BASE_URL="" VITE_WORKSPACE_API_URL=/api/wp npx vite build 2>&1 | tail -1) &
+  (cd "$REPO_ROOT/frontend" && VITE_API_BASE_URL="" VITE_WORKSPACE_API_URL=/api/wp npm run build) &
+  FRONTEND_BUILD_PID=$!
 fi
 
+if [[ -n "${FRONTEND_BUILD_PID:-}" ]]; then wait "$FRONTEND_BUILD_PID"; fi
 wait
 echo "==> Sync complete"
 
 # --- Sync frontend dist ---
 if [[ "$TARGET" == "all" || "$TARGET" == "frontend" ]]; then
   echo "    Syncing frontend dist..."
+  node "$REPO_ROOT/frontend/scripts/check-release-assets.mjs" "$REPO_ROOT/frontend/dist"
   # Exclude runtime-config.js — it's only for local dev (dynamic ports). In Docker
   # prod, Caddy routes /api* to the fixed agent port and the frontend uses
   # same-origin relative URLs via VITE build-time envs.
   rsync -az --delete --exclude='runtime-config.js' \
     -e "$RSYNC_SSH" "$REPO_ROOT/frontend/dist/" "root@$VM:$REMOTE/src/frontend-dist/"
+  rsync -az -e "$RSYNC_SSH" "$REPO_ROOT/frontend/scripts/check-release-assets.mjs" "root@$VM:$REMOTE/src/check-release-assets.mjs"
+  $SSH "node $REMOTE/src/check-release-assets.mjs $REMOTE/src/frontend-dist"
   # Write an empty config so index.html's <script src="/runtime-config.js"> doesn't
   # fall through nginx's try_files → /index.html (which would execute HTML as JS).
   $SSH "echo 'window.__APP_RUNTIME_CONFIG__ = {};' > $REMOTE/src/frontend-dist/runtime-config.js"

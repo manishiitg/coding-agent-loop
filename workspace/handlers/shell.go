@@ -214,6 +214,14 @@ func ExecuteShellCommand(c *gin.Context) {
 	extraEnvCount := 0
 	for k, v := range req.ExtraEnv {
 		if isAllowedShellExtraEnvKey(k) {
+			if k == "PYTHONPATH" {
+				// Keep the platform helper importable alongside workflow helpers.
+				for _, entry := range cmd.Env {
+					if strings.HasPrefix(entry, "TMPDIR=") {
+						v = strings.TrimPrefix(entry, "TMPDIR=") + string(os.PathListSeparator) + v
+					}
+				}
+			}
 			cmd.Env = append(cmd.Env, fmt.Sprintf("%s=%s", k, v))
 			extraEnvCount++
 		}

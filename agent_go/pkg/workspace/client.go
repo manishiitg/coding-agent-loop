@@ -57,6 +57,18 @@ type Client struct {
 	DefaultWorkingDir string // Default working directory for shell commands (relative to docs-dir)
 }
 
+// httpStatusError preserves a non-2xx response body for callers that can
+// interpret a structured error response (notably shell-command timeouts, which
+// contain the process's partial stdout/stderr and prove that it did start).
+type httpStatusError struct {
+	statusCode int
+	body       []byte
+}
+
+func (e *httpStatusError) Error() string {
+	return fmt.Sprintf("HTTP %d: %s", e.statusCode, string(e.body))
+}
+
 type internalContextKey string
 
 const systemManagedWritePathsKey internalContextKey = "system_managed_write_paths"
@@ -570,7 +582,7 @@ func (c *Client) doRequest(ctx context.Context, method, path string, body interf
 	}
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("HTTP %d: %s", resp.StatusCode, string(respBody))
+		return nil, &httpStatusError{statusCode: resp.StatusCode, body: respBody}
 	}
 
 	return respBody, nil

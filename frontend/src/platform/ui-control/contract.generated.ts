@@ -80,6 +80,7 @@ export const UI_CONTROL_CONTRACT = {
     {
       "id": "files",
       "label": "Files",
+      "target_kind": "workspace_file_path",
       "actions": [
         "open"
       ],

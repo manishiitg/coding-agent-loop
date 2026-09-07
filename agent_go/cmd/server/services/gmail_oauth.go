@@ -65,21 +65,36 @@ func gmailOAuthTokenPath(connectionID string) string {
 	return filepath.Join(gmailOAuthTokenDir(), connectionID+".json")
 }
 
-// gmailOAuthConfig builds the OAuth client from the same client_secret.json gws
-// uses, so a single app registration serves both paths.
-func gmailOAuthConfig(redirectURL string) (*oauth2.Config, error) {
-	clientID := strings.TrimSpace(os.Getenv("GOOGLE_WORKSPACE_CLI_CLIENT_ID"))
-	clientSecret := strings.TrimSpace(os.Getenv("GOOGLE_WORKSPACE_CLI_CLIENT_SECRET"))
+// gmailOAuthConfig builds the OAuth client for one connection.
+//
+// clientName, when set, resolves through the named OAuth client registry
+// (gmail_oauth_clients.go) — every connection created after that registry
+// existed carries one. An empty clientName falls back to the pre-registry
+// shared client_secret.json / env vars, so a connection created before this
+// migration keeps working unattended until GmailService.ImportLegacyOAuthClient
+// backfills its name.
+func gmailOAuthConfig(redirectURL, clientName string) (*oauth2.Config, error) {
+	clientName = strings.TrimSpace(clientName)
 
-	if clientID == "" || clientSecret == "" {
-		id, secret, err := readGmailClientSecretFile()
+	var clientID, clientSecret string
+	var err error
+	if clientName != "" {
+		clientID, clientSecret, err = GetOAuthClientSecret(clientName)
 		if err != nil {
 			return nil, err
 		}
-		clientID, clientSecret = id, secret
+	} else {
+		clientID = strings.TrimSpace(os.Getenv("GOOGLE_WORKSPACE_CLI_CLIENT_ID"))
+		clientSecret = strings.TrimSpace(os.Getenv("GOOGLE_WORKSPACE_CLI_CLIENT_SECRET"))
+		if clientID == "" || clientSecret == "" {
+			clientID, clientSecret, err = readGmailClientSecretFile()
+			if err != nil {
+				return nil, err
+			}
+		}
 	}
 	if clientID == "" || clientSecret == "" {
-		return nil, fmt.Errorf("no OAuth client configured: set GOOGLE_WORKSPACE_CLI_CLIENT_ID/_SECRET or create ~/.config/gws/client_secret.json")
+		return nil, fmt.Errorf("no OAuth client configured: add a named OAuth client, or set GOOGLE_WORKSPACE_CLI_CLIENT_ID/_SECRET or create ~/.config/gws/client_secret.json")
 	}
 	return &oauth2.Config{
 		ClientID:     clientID,
@@ -185,7 +200,7 @@ var (
 //
 // A refreshed token is written back, because Google may rotate the refresh
 // token, and losing that rotation would silently break the connection later.
-func accessTokenForConnection(ctx context.Context, connectionID string) (string, error) {
+func accessTokenForConnection(ctx context.Context, connectionID, clientName string) (string, error) {
 	connectionID = strings.TrimSpace(connectionID)
 	stored, ok := loadGmailOAuthToken(connectionID)
 	if !ok {
@@ -195,7 +210,7 @@ func accessTokenForConnection(ctx context.Context, connectionID string) (string,
 	gmailTokenSourceMu.Lock()
 	source, cached := gmailTokenSources[connectionID]
 	if !cached {
-		cfg, err := gmailOAuthConfig("")
+		cfg, err := gmailOAuthConfig("", clientName)
 		if err != nil {
 			gmailTokenSourceMu.Unlock()
 			return "", err
@@ -221,8 +236,12 @@ func accessTokenForConnection(ctx context.Context, connectionID string) (string,
 // rather than persist, and the window is seconds to minutes.
 type GmailOAuthPending struct {
 	ConnectionID string
-	RedirectURL  string
-	CreatedAt    time.Time
+	// ClientName is captured at the start of the flow and reused for the
+	// token exchange — the exchange must run against the exact same OAuth
+	// client the consent URL was built for, or Google rejects it.
+	ClientName  string
+	RedirectURL string
+	CreatedAt   time.Time
 }
 
 var (
@@ -237,8 +256,8 @@ const gmailOAuthPendingTTL = 15 * time.Minute
 //
 // state is random and server-held, so a callback cannot be forged to attach
 // someone else's Google account to a connection.
-func BeginGmailOAuth(connectionID, redirectURL string) (string, error) {
-	cfg, err := gmailOAuthConfig(redirectURL)
+func BeginGmailOAuth(connectionID, clientName, redirectURL string) (string, error) {
+	cfg, err := gmailOAuthConfig(redirectURL, clientName)
 	if err != nil {
 		return "", err
 	}
@@ -256,6 +275,7 @@ func BeginGmailOAuth(connectionID, redirectURL string) (string, error) {
 	}
 	gmailOAuthPending[state] = GmailOAuthPending{
 		ConnectionID: connectionID,
+		ClientName:   strings.TrimSpace(clientName),
 		RedirectURL:  redirectURL,
 		CreatedAt:    time.Now(),
 	}
@@ -287,7 +307,7 @@ func CompleteGmailOAuth(ctx context.Context, state, code string) (string, error)
 		return "", fmt.Errorf("this sign-in took too long and expired — start again from the Gmail settings")
 	}
 
-	cfg, err := gmailOAuthConfig(pending.RedirectURL)
+	cfg, err := gmailOAuthConfig(pending.RedirectURL, pending.ClientName)
 	if err != nil {
 		return "", err
 	}

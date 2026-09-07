@@ -64,6 +64,7 @@ type ShellCommandResult struct {
 	ExitCode        int     `json:"exit_code"`
 	ExecutionTimeMs float64 `json:"execution_time_ms,omitempty"`
 	Error           string  `json:"error,omitempty"`
+	TimedOut        bool    `json:"-"`
 }
 
 // CommandFailed returns true if the shell command had a non-zero exit code or error

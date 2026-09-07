@@ -24,6 +24,38 @@ apply there as-is — it's called out per item below where relevant.
 
 ## Checklist
 
+### Release gate: report preview assets (every release)
+
+Build with `npm ci && npm run build` from `frontend/`. Do not substitute
+`vite build`: it omits the report-preview runtime. The full build now runs
+`check:release-assets`, which rejects missing or empty `index.html` and
+`report-preview.js`.
+
+After assembling the release, run the shared checker against the **packaged**
+frontend directory, then copy the checker with the release and run it on the
+target host **before changing the current symlink or restarting services**:
+
+```bash
+node frontend/scripts/check-release-assets.mjs <release-directory>/frontend
+# On the target host, using the uploaded checker:
+node <release-directory>/check-release-assets.mjs <release-directory>/frontend
+```
+
+Set the agent service's `STATIC_DIR` to the same directory (for example
+`Environment=STATIC_DIR=%h/app/current/frontend`). A bundle served only by
+nginx in another container is insufficient: the agent process must be able to
+read `report-preview.js` at its own configured static root. For split-container
+deployments, copy or mount the checked assets into the agent container too,
+and execute the check there before promotion. Frontend build success alone
+does not verify that runtime mount/configuration.
+
+Reject the release on a nonzero checker exit. After activation, run a report
+preview and confirm it captures a screenshot; a generic HTTP 200 can be an
+HTML fallback and is not proof that the preview runtime loaded. This applies
+to Dominion/manual deployments as well as automated releases. The EC2 and
+dedicated-VM scripts run the packaging checks automatically; frontend Docker
+builds inherit the build gate through `npm run build`.
+
 ### 1. Claude Code CLI installed and authenticated
 
 The agent shells out to a bare `claude` on `PATH`

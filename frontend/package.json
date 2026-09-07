@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "vite",
     "dev:no-server": "VITE_API_BASE_URL=http://localhost:99999 vite",
-    "build": "tsc -b && vite build && npm run build:report-preview && npm run check:bundle-budget",
+    "build": "tsc -b && vite build && npm run build:report-preview && npm run check:release-assets && npm run check:bundle-budget",
+    "check:release-assets": "node scripts/check-release-assets.mjs",
     "build:report-preview": "vite build --config vite.report-preview.config.ts && mkdir -p ../agent_go/cmd/server/static dist && cp ../agent_go/static/report-preview.js ../agent_go/cmd/server/static/report-preview.js && cp ../agent_go/static/report-preview.js dist/report-preview.js",
     "check:bundle-budget": "node scripts/check-bundle-budget.mjs",
     "lint": "eslint .",

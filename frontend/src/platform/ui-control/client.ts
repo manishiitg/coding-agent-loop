@@ -18,7 +18,7 @@ export function supportedAction(a: UIAction): boolean {
   if (!view || !(view.actions as readonly string[]).includes(a.action)) return false
   const targetKind = 'target_kind' in view ? view.target_kind : undefined
   return a.action === 'open'
-    ? (!a.target || ((targetKind === 'plan_step_id' || targetKind === 'report_tab') && !!a.target.trim() && a.target.length <= 256))
+    ? (!a.target || ((targetKind === 'plan_step_id' || targetKind === 'report_tab' || targetKind === 'workspace_file_path') && !!a.target.trim() && a.target.length <= 1024))
     : (view.targets as readonly string[]).includes(a.target ?? '')
 }
 
@@ -83,6 +83,16 @@ export async function applyUIAction(
           .find(el => el.dataset.uiPlanStep === action.target)
         if (!panel || panel.getClientRects().length === 0) return
       }
+      if (action.view === 'files' && action.target) {
+        // Opening the Files shell is not success: wait until the requested file
+        // has actually loaded in the right-side viewer. The marker is semantic
+        // first-party state, not a caller-controlled selector.
+        const viewer = host.querySelector<HTMLElement>('[data-ui-file-path]')
+        const shownPath = viewer?.dataset.uiFilePath ?? ''
+        const requestedPath = action.target.replace(/^\/+|\/+$/g, '')
+        if (!viewer || (shownPath !== requestedPath && !shownPath.endsWith(`/${requestedPath}`))) return
+        if (viewer.dataset.uiFileReady !== 'true' || viewer.getClientRects().length === 0) return
+      }
       if (action.action === 'expand') {
         const details = Array.from(host.querySelectorAll<HTMLDetailsElement>('details[data-ui-instructions]'))
           .find(el => el.dataset.uiInstructions === action.target)
@@ -95,7 +105,7 @@ export async function applyUIAction(
     }
     const observer = new MutationObserver(check)
     const timer = setTimeout(() => finish('failed', action.target ? 'target_not_found' : 'render_failed'), Math.min(8000, expires - Date.now()))
-    observer.observe(document.body, { subtree: true, childList: true, attributes: true, attributeFilter: ['data-ui-view', 'data-ui-plan-step', 'open', 'class'] })
+    observer.observe(document.body, { subtree: true, childList: true, attributes: true, attributeFilter: ['data-ui-view', 'data-ui-plan-step', 'data-ui-file-path', 'data-ui-file-ready', 'open', 'class'] })
     signal.addEventListener('abort', aborted, { once: true })
     document.addEventListener('pointerdown', interrupted, true)
     document.addEventListener('keydown', interrupted, true)

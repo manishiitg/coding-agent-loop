@@ -1,6 +1,6 @@
 ---
 name: publish
-description: Publish a family artifact (usually the progress page) to a shareable destination — a shared folder, a static host, Google Drive, or GitHub Pages — tracking config vs status in files.
+description: Publish a family artifact (usually the progress page) to a shareable destination — a shared folder, a static host, or GitHub Pages — tracking config vs status in files.
 ---
 
 # Publish an artifact
@@ -19,7 +19,7 @@ Never write status into `publish.json`.
 
 1. **Read config.** `cat publish.json`. If it is missing, do NOT publish silently:
    tell the parent publishing isn't set up and ask where they'd like to share
-   (a shared/synced folder, a static host, Google Drive, GitHub Pages). Setting up
+   (a shared/synced folder, a static host, GitHub Pages). Setting up
    the destination is a one-time decision.
 
 2. **First publish is ATTENDED.** Never do the first (verifying) publish
@@ -27,12 +27,10 @@ Never write status into `publish.json`.
    wrong place. Only re-publish automatically once `publish/status.json` shows the
    destination is already `verified`.
 
-3. **Publish** the covered files (e.g. `reports/*.html`) using your shell. Easiest:
-   **Google Drive via the `gws` CLI** — `gws drive +upload` the report, then share
-   the link (the parent already has `gws` authenticated). Other options: copy to a
-   synced folder, or push to a Pages branch, as configured. Never publish
-   parent-only files — any `*-KEY.md`/`*-KEY.html` answer key, or `memory/` — or
-   secrets.
+3. **Publish** the covered files (e.g. `reports/*.html`) to whichever destination
+   `publish.json` configures — a synced folder, a static host, or a Pages branch.
+   Never publish parent-only files — any `*-KEY.md`/`*-KEY.html` answer key, or
+   `memory/` — or secrets.
 
 4. **Write `publish/status.json`** — `state` (`verified` / `pending` / `failed`),
    timestamps, the published location/URL per file, and any error.

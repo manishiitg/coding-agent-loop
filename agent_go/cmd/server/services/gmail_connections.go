@@ -65,6 +65,13 @@ type GmailConnection struct {
 	// CredentialsFile optionally pins a service-account or user key file.
 	CredentialsFile string `json:"credentials_file,omitempty"`
 
+	// ClientName names the OAuth app registration (gmail_oauth_clients.go)
+	// this connection authorizes under. Required for every connection
+	// created through CreateConnection; empty only on a connection that
+	// predates the named-client registry, until
+	// GmailService.ImportLegacyOAuthClient backfills it.
+	ClientName string `json:"client_name,omitempty"`
+
 	Status GmailConnectionStatus `json:"status,omitempty"`
 
 	// Enabled gates use without discarding the connection. A disabled
@@ -212,6 +219,7 @@ func normalizeGmailConnections(cfg *GmailConfig) {
 		c.Email = strings.TrimSpace(c.Email)
 		c.ConfigHome = strings.TrimSpace(c.ConfigHome)
 		c.CredentialsFile = strings.TrimSpace(c.CredentialsFile)
+		c.ClientName = strings.TrimSpace(c.ClientName)
 		out = append(out, c)
 	}
 	cfg.Connections = out
@@ -302,16 +310,32 @@ type GmailConnectionInput struct {
 	DisplayName     string
 	ConfigHome      string
 	CredentialsFile string
-	Enabled         *bool
+	// ClientName selects which named OAuth client (gmail_oauth_clients.go)
+	// this connection authorizes under. Required on create — see CreateConnection.
+	ClientName string
+	Enabled    *bool
 }
 
 // CreateConnection registers a new sending identity and provisions its private
 // config directory. The directory starts empty: authenticating it is a separate
 // step, so a fresh connection is correctly reported as needing to connect.
+//
+// ClientName is required: every connection created through this registry
+// must name which OAuth app it authorizes under, so a second Google Cloud
+// project's credentials can never silently replace the one an existing
+// connection depends on (the shared client_secret.json failure mode this
+// registry replaces).
 func (g *GmailService) CreateConnection(ctx context.Context, in GmailConnectionInput) (GmailConnection, error) {
 	name := strings.TrimSpace(in.DisplayName)
 	if name == "" {
 		return GmailConnection{}, fmt.Errorf("gmail connection: display name is required")
+	}
+	clientName := strings.TrimSpace(in.ClientName)
+	if clientName == "" {
+		return GmailConnection{}, fmt.Errorf("gmail connection: client_name is required — add an OAuth client first")
+	}
+	if !OAuthClientExists(clientName) {
+		return GmailConnection{}, fmt.Errorf("gmail connection: OAuth client %q not found", clientName)
 	}
 
 	cfg := g.GetConfig()
@@ -335,6 +359,7 @@ func (g *GmailService) CreateConnection(ctx context.Context, in GmailConnectionI
 		DisplayName:     name,
 		ConfigHome:      configHome,
 		CredentialsFile: strings.TrimSpace(in.CredentialsFile),
+		ClientName:      clientName,
 		Status:          GmailConnectionNeedsReconnect,
 		Enabled:         enabled,
 		CreatedAt:       now,
@@ -370,6 +395,12 @@ func (g *GmailService) UpdateConnection(ctx context.Context, id string, in Gmail
 	}
 	if v := strings.TrimSpace(in.CredentialsFile); v != "" {
 		conn.CredentialsFile = v
+	}
+	if v := strings.TrimSpace(in.ClientName); v != "" {
+		if !OAuthClientExists(v) {
+			return GmailConnection{}, fmt.Errorf("gmail connection: OAuth client %q not found", v)
+		}
+		conn.ClientName = v
 	}
 	if in.Enabled != nil {
 		conn.Enabled = *in.Enabled
@@ -479,8 +510,10 @@ func gmailConnectionConfig(conn GmailConnection) *GmailConfig {
 	cfg := &GmailConfig{
 		ConfigHome:      conn.ConfigHome,
 		CredentialsFile: conn.CredentialsFile,
+		gogAccountEmail: conn.Email,
+		gogClientName:   conn.ClientName,
 	}
-	if token, err := accessTokenForConnection(context.Background(), conn.ID); err == nil && token != "" {
+	if token, err := accessTokenForConnection(context.Background(), conn.ID, conn.ClientName); err == nil && token != "" {
 		cfg.Token = token
 	}
 	return cfg
@@ -490,7 +523,7 @@ func gmailConnectionConfig(conn GmailConnection) *GmailConfig {
 // same credentials. Only the auth-relevant fields count: renaming a connection
 // or toggling its default must not throw away a valid cached auth status.
 func gmailAuthKnobsEqual(a, b GmailConnection) bool {
-	return a.ConfigHome == b.ConfigHome && a.CredentialsFile == b.CredentialsFile
+	return a.ConfigHome == b.ConfigHome && a.CredentialsFile == b.CredentialsFile && a.ClientName == b.ClientName
 }
 
 // retainedGmailAuthCaches decides which cached auth statuses survive a config

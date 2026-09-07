@@ -326,8 +326,26 @@ function productionActivityForTurn(turnEvents: PollingEvent[]): ProductionActivi
   const items: ProductionActivityItem[] = []
   for (const item of toolItems) {
     const existingIndex = items.findIndex((candidate) => candidate.title === item.title && candidate.detail === item.detail)
-    if (existingIndex >= 0) items[existingIndex] = item
-    else items.push(item)
+    if (existingIndex < 0) {
+      items.push(item)
+      continue
+    }
+    const existing = items[existingIndex]
+    const existingHasDetail = Boolean(existing.arguments || existing.result)
+    const itemHasDetail = Boolean(item.arguments || item.result)
+    if (!existingHasDetail && !itemHasDetail) {
+      // Cursor emits redundant empty wrapper/provider lifecycle fragments. A
+      // single latest status is enough when neither row contains inspectable
+      // data.
+      items[existingIndex] = item
+    } else if (existing.arguments === item.arguments && existing.result === item.result) {
+      items[existingIndex] = item
+    } else {
+      // Never let an output-only fragment replace a row with its input (or a
+      // second real invocation replace the first). The developer details must
+      // stay attached to the exact correlated call.
+      items.push(item)
+    }
   }
 
   for (const event of turnEvents) {

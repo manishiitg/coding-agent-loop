@@ -85,14 +85,14 @@ func (api *StreamingAPI) registerOpenWorkspaceViewTool(registrar definitionToolR
 	for _, v := range workflowWorkspaceViews {
 		lines = append(lines, fmt.Sprintf("%s — %s (%s)", v.ID, v.Label, v.About))
 	}
-	description := "Browser-acknowledged workspace opening, using the same protocol as perform_ui_action. Only status=applied confirms success. For Plan, pass an exact step ID as target to select it and open its details. For Report, pass an exact top-level report tab label as target; the platform delivers report.focus/report:focus to the report. Other deep targets are unsupported and rejected. Open one of the workspace views on the right side of the user's screen, the same views as the toolbar above the chat. " +
+	description := "Browser-acknowledged workspace opening, using the same protocol as perform_ui_action. Only status=applied confirms success. For Plan, pass an exact step ID as target to select it and open its details. For Report, pass an exact top-level report tab label as target; the platform delivers report.focus/report:focus to the report. For Files, pass a workspace-relative file path as target to load that file in the right-side viewer. Other deep targets are unsupported and rejected. Open one of the workspace views on the right side of the user's screen, the same views as the toolbar above the chat. " +
 		"Use it when what you are talking about is on one of them: after you build or update the report, open `report`; when the user asks about spend, open `costs`; " +
 		"after adding a schedule, open `schedules`. To request a reload use refresh_workspace_view (legacy, unverified). No sends, saves, or workflow execution. Views:\n" + strings.Join(lines, "\n")
 	params := map[string]interface{}{
 		"type": "object",
 		"properties": map[string]interface{}{
 			"view":   map[string]interface{}{"type": "string", "enum": workflowWorkspaceViewIDs(), "description": "which view to open"},
-			"target": map[string]interface{}{"type": "string", "maxLength": 256, "description": "For open: exact Plan step ID with view=flow, or exact top-level report tab label with view=report; omit for other views. For legacy refresh: optional view-specific target; rendering is unverified."},
+			"target": map[string]interface{}{"type": "string", "maxLength": 1024, "description": "For open: exact Plan step ID with view=flow, exact top-level report tab label with view=report, or workspace-relative file path with view=files. For legacy refresh: optional view-specific target; rendering is unverified."},
 		},
 		"required": []string{"view"},
 	}

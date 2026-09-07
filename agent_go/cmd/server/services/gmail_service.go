@@ -62,6 +62,16 @@ type GmailConfig struct {
 	// GwsPath is the path to the gws binary. Empty means "gws" on $PATH.
 	GwsPath string `json:"gws_path,omitempty"`
 
+	// UseGogBackend switches every gws subprocess call (auth status, identity
+	// lookup, send) to the gog CLI (gmail_gog.go) instead. Defaults to false
+	// so existing deployments are unaffected until an operator explicitly
+	// verifies a real send and opts in — this is a rollback switch during the
+	// gws->gog migration, removed once every deployment has moved over
+	// (see the migration plan's Phase 5).
+	UseGogBackend bool `json:"use_gog_backend,omitempty"`
+	// GogPath is the path to the gog binary. Empty means "gog" on $PATH.
+	GogPath string `json:"gog_path,omitempty"`
+
 	// Auth knobs (all optional). When set they are exported into the gws
 	// child process environment so the server can pin a specific account
 	// without relying on the invoking user's ~/.config/gws:
@@ -83,6 +93,14 @@ type GmailConfig struct {
 	ConfigHome      string `json:"config_home,omitempty"`
 	CredentialsFile string `json:"credentials_file,omitempty"`
 	Token           string `json:"token,omitempty"`
+
+	// gog auth selectors (gmail_gog.go), populated only in-memory by
+	// gmailConnectionConfig from the resolved connection's Email/ClientName —
+	// never read from or written to disk. Used for --account/--client when
+	// Token is unset (a connection migrated to gog's own stored refresh
+	// token rather than a server-managed access token).
+	gogAccountEmail string
+	gogClientName   string
 
 	// Connections is the multi-account registry (see gmail_connections.go).
 	// The legacy auth fields above stay authoritative for delivery until the
@@ -119,6 +137,10 @@ type GmailService struct {
 	enabled   bool
 	defaultTo string
 	gwsPath   string
+	// useGog and gogPath mirror gwsPath/gws usage for the gog backend
+	// (gmail_gog.go), selected by GmailConfig.UseGogBackend.
+	useGog  bool
+	gogPath string
 
 	// Cached `gws auth status` results, keyed by connection ID. That command
 	// spawns a Node CLI and takes ~5.5s, and it is on the path of every
@@ -210,16 +232,26 @@ func (g *GmailService) ReloadConfig(ctx context.Context) error {
 	if gwsPath == "" {
 		gwsPath = "gws"
 	}
+	gogPath := strings.TrimSpace(cfg.GogPath)
+	if gogPath == "" {
+		gogPath = "gog"
+	}
 
-	// Enabled requires: the flag on and a resolvable
-	// gws binary. Without a binary every send would fail, so we report
-	// disabled rather than register a dead connector.
+	// Enabled requires: the flag on and a resolvable binary for whichever
+	// backend is active. Without a binary every send would fail, so we
+	// report disabled rather than register a dead connector.
+	activePath := gwsPath
+	if cfg.UseGogBackend {
+		activePath = gogPath
+	}
 	binaryOK := true
-	if _, lookErr := exec.LookPath(gwsPath); lookErr != nil {
+	if _, lookErr := exec.LookPath(activePath); lookErr != nil {
 		binaryOK = false
 	}
 
 	g.gwsPath = gwsPath
+	g.gogPath = gogPath
+	g.useGog = cfg.UseGogBackend
 	g.defaultTo = strings.TrimSpace(cfg.DefaultTo)
 	// Config changes can point at a different account (ConfigHome, Token,
 	// CredentialsFile), so a cached status may describe the previous one.
@@ -230,10 +262,10 @@ func (g *GmailService) ReloadConfig(ctx context.Context) error {
 	g.enabled = cfg.Enabled && binaryOK
 
 	if cfg.Enabled && !g.enabled {
-		log.Printf("[GMAIL] Service disabled: enabled=%v, hasDefaultTo=%v, gwsFound=%v",
-			cfg.Enabled, g.defaultTo != "", binaryOK)
+		log.Printf("[GMAIL] Service disabled: enabled=%v, hasDefaultTo=%v, backend=%s, binaryFound=%v",
+			cfg.Enabled, g.defaultTo != "", activePath, binaryOK)
 	} else if g.enabled {
-		log.Printf("[GMAIL] Service enabled: default_to=%s, blocked_recipients=%d, gws=%s", g.defaultTo, len(cfg.BlockedRecipients), g.gwsPath)
+		log.Printf("[GMAIL] Service enabled: default_to=%s, blocked_recipients=%d, backend=%s", g.defaultTo, len(cfg.BlockedRecipients), activePath)
 	}
 	return nil
 }
@@ -328,6 +360,7 @@ func (g *GmailService) AuthStatusForConnectionBlocking(ctx context.Context, id s
 func (g *GmailService) authStatusBlocking(ctx context.Context, key string, cfg *GmailConfig) GmailAuthStatus {
 	g.mu.RLock()
 	gwsPath := g.gwsPath
+	useGog, gogPath := g.useGog, g.gogPath
 	var cached *GmailAuthStatus
 	var cachedAt time.Time
 	if entry := g.authCaches[key]; entry != nil {
@@ -339,7 +372,7 @@ func (g *GmailService) authStatusBlocking(ctx context.Context, key string, cfg *
 		return *cached
 	}
 
-	st := g.computeAuthStatus(ctx, gwsPath, cfg)
+	st := g.computeAuthStatus(ctx, gwsPath, useGog, gogPath, cfg)
 	g.mu.Lock()
 	if g.authCaches == nil {
 		g.authCaches = map[string]*gmailAuthCacheEntry{}
@@ -354,9 +387,13 @@ func (g *GmailService) authStatusBlocking(ctx context.Context, key string, cfg *
 	return st
 }
 
-// computeAuthStatus runs `gws auth status` and interprets it. Split out so the
-// caching wrapper stores exactly one result regardless of which branch returns.
-func (g *GmailService) computeAuthStatus(ctx context.Context, gwsPath string, cfg *GmailConfig) GmailAuthStatus {
+// computeAuthStatus runs `gws auth status` and interprets it, or dispatches to
+// the gog backend (gmail_gog.go) when useGog is set. Split out so the caching
+// wrapper stores exactly one result regardless of which branch returns.
+func (g *GmailService) computeAuthStatus(ctx context.Context, gwsPath string, useGog bool, gogPath string, cfg *GmailConfig) GmailAuthStatus {
+	if useGog {
+		return g.computeAuthStatusGog(ctx, gogPath, cfg)
+	}
 	if gwsPath == "" {
 		gwsPath = "gws"
 	}
@@ -650,11 +687,16 @@ func (g *GmailService) SendUserNotification(ctx context.Context, message string,
 	return g.deliver(ctx, destGmailConnectionIDs(dest), destWorkflowName(dest), to, cc, subject, body, htmlBody, attachments)
 }
 
-// send shells out to `gws gmail +send` and returns the sent message ID.
+// send shells out to `gws gmail +send` (or gog gmail send, see gmail_gog.go)
+// and returns the sent message ID.
 func (g *GmailService) send(ctx context.Context, cfg *GmailConfig, to, subject, body string) (string, error) {
 	g.mu.RLock()
 	gwsPath := g.gwsPath
+	useGog, gogPath := g.useGog, g.gogPath
 	g.mu.RUnlock()
+	if useGog {
+		return g.sendGog(ctx, gogPath, cfg, to, subject, body)
+	}
 	if strings.TrimSpace(gwsPath) == "" {
 		gwsPath = "gws"
 	}
@@ -741,11 +783,16 @@ func senderLabel(resolvedID string) string {
 }
 
 // sendRaw builds an RFC 2822 MIME message (body + attachments) and posts it via
-// `gws gmail users messages send --json '{"raw": <base64url>}'`.
+// `gws gmail users messages send --json '{"raw": <base64url>}'` (or gog's
+// `gmail send --raw-file`, see gmail_gog.go).
 func (g *GmailService) sendRaw(ctx context.Context, cfg *GmailConfig, to string, cc []string, subject, body, htmlBody string, attachments []string) (string, error) {
 	g.mu.RLock()
 	gwsPath := g.gwsPath
+	useGog, gogPath := g.useGog, g.gogPath
 	g.mu.RUnlock()
+	if useGog {
+		return g.sendRawGog(ctx, gogPath, cfg, to, cc, subject, body, htmlBody, attachments)
+	}
 	if strings.TrimSpace(gwsPath) == "" {
 		gwsPath = "gws"
 	}
@@ -1162,6 +1209,7 @@ func (g *GmailService) AuthStatusForConnection(id string) (GmailAuthStatus, bool
 func (g *GmailService) authStatusCachedFor(key string, cfg *GmailConfig) GmailAuthStatus {
 	g.mu.RLock()
 	gwsPath := g.gwsPath
+	useGog, gogPath := g.useGog, g.gogPath
 	var cached *GmailAuthStatus
 	var cachedAt time.Time
 	var refreshing bool
@@ -1190,7 +1238,7 @@ func (g *GmailService) authStatusCachedFor(key string, cfg *GmailConfig) GmailAu
 				// Detached from the request: the caller has already returned.
 				ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 				defer cancel()
-				st := g.computeAuthStatus(ctx, gwsPath, cfg)
+				st := g.computeAuthStatus(ctx, gwsPath, useGog, gogPath, cfg)
 				g.mu.Lock()
 				if e := g.authCaches[key]; e != nil {
 					e.status, e.cachedAt, e.refreshing = &st, time.Now(), false

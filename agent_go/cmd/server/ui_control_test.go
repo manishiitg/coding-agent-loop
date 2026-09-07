@@ -114,8 +114,16 @@ func TestUIControlOnlyAdvertisesActualActions(t *testing.T) {
 		if err := validateUIAction(v.ID, "refresh", ""); err == nil {
 			t.Fatal("unverified refresh advertised")
 		}
-		if err := validateUIAction(v.ID, "open", "arbitrary target"); err == nil && v.ID != "flow" && v.ID != "report" {
+		if err := validateUIAction(v.ID, "open", "arbitrary target"); err == nil && v.ID != "flow" && v.ID != "report" && v.ID != "files" {
 			t.Fatal("ignored target")
+		}
+	}
+	if validateUIAction("files", "open", "code/shared/helpers.py") != nil {
+		t.Fatal("workspace-relative file target missing")
+	}
+	for _, invalid := range []string{"/etc/passwd", "../other/file", `code\\file.py`} {
+		if err := validateUIAction("files", "open", invalid); err == nil {
+			t.Fatalf("unsafe file target accepted: %q", invalid)
 		}
 	}
 	if validateUIAction("notify", "expand", "pulse_review") != nil {

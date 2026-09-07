@@ -140,6 +140,35 @@ func TestHarnessRejectionAbortsInsteadOfRelearning(t *testing.T) {
 	}
 }
 
+func TestHarnessTimeoutAbortsWithoutPretendingTheScriptNeverStarted(t *testing.T) {
+	d := decideScriptedFastPath(&ScriptedFastPathResult{
+		RanScript:      true,
+		HarnessTimeout: true,
+		TimeoutError:   "script exceeded the workspace harness timeout",
+		Output:         "CASE login: starting",
+		ExistingScript: "print('working code')",
+	})
+	if !d.HarnessTimeout || d.HarnessFailure {
+		t.Fatalf("timeout must remain distinct from startup refusal: %#v", d)
+	}
+	if d.PriorError != "" || d.PriorScript != "" {
+		t.Fatalf("harness timeout must not enter the LLM repair path: %#v", d)
+	}
+
+	src := readSourceFile(t, "controller_execution.go")
+	idx := strings.Index(src, "if scriptedDecision.HarnessTimeout {")
+	refusal := strings.Index(src, "if scriptedDecision.HarnessFailure {")
+	if idx < 0 || refusal < 0 || idx > refusal {
+		t.Fatal("timeout must be handled before the startup-refusal branch")
+	}
+	block := src[idx:refusal]
+	for _, want := range []string{"started main.py", "partial output was preserved", "code-repair loop was not started"} {
+		if !strings.Contains(block, want) {
+			t.Fatalf("timeout message missing %q:\n%s", want, block)
+		}
+	}
+}
+
 // The ordinary failure path must keep working: a script that genuinely ran and
 // failed is exactly what relearn exists for.
 func TestGenuineScriptFailureStillRelearns(t *testing.T) {

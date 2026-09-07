@@ -62,13 +62,14 @@ func startGmailOAuthHandler(api *StreamingAPI) http.HandlerFunc {
 		if !ok {
 			return
 		}
-		if _, found := svc.GetConnection(id); !found {
+		conn, found := svc.GetConnection(id)
+		if !found {
 			http.Error(w, fmt.Sprintf("gmail connection %q not found", id), http.StatusNotFound)
 			return
 		}
 
 		redirectURI := gmailOAuthRedirectURI(r)
-		authURL, err := services.BeginGmailOAuth(id, redirectURI)
+		authURL, err := services.BeginGmailOAuth(id, conn.ClientName, redirectURI)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return

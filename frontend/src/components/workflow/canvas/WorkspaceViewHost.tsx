@@ -21,7 +21,7 @@ import { useWorkspaceState } from '../hooks/useWorkspaceState'
 import { useWorkflowStore } from '../../../stores/useWorkflowStore'
 import { useWorkflowManifestStore } from '../../../stores/useWorkflowManifestStore'
 import { useWorkspaceStore } from '../../../stores/useWorkspaceStore'
-import { agentApi } from '../../../services/api'
+import { agentApi, workspaceApi } from '../../../services/api'
 import type {
   ExecutionOptions,
   PulseFinalCommandState,
@@ -485,6 +485,9 @@ export const WorkspaceViewHost = React.memo(forwardRef<WorkflowCanvasRef, Workfl
   const workspaceViewTarget = useWorkflowStore(state => state.workspaceViewTarget)
   const setSelectedFile = useWorkspaceStore(state => state.setSelectedFile)
   const setShowFileContent = useWorkspaceStore(state => state.setShowFileContent)
+  const setFileContent = useWorkspaceStore(state => state.setFileContent)
+  const setLoadingFileContent = useWorkspaceStore(state => state.setLoadingFileContent)
+  const setBinaryFileData = useWorkspaceStore(state => state.setBinaryFileData)
   useEffect(() => {
     if (!workspaceViewTarget) return
     const { view, target } = workspaceViewTarget
@@ -495,11 +498,53 @@ export const WorkspaceViewHost = React.memo(forwardRef<WorkflowCanvasRef, Workfl
       return () => window.cancelAnimationFrame(frame)
     }
     if (view === 'files') {
-      const path = target.replace(/^\/+/, '')
-      setSelectedFile({ name: path.split('/').filter(Boolean).pop() ?? path, path })
+      const relativePath = target.replace(/^\/+|\/+$/g, '')
+      const normalizedWorkspace = (workspacePath ?? '').replace(/^\/+|\/+$/g, '')
+      const fullPath = normalizedWorkspace && relativePath !== normalizedWorkspace && !relativePath.startsWith(`${normalizedWorkspace}/`)
+        ? `${normalizedWorkspace}/${relativePath}`
+        : relativePath
+      const fileName = fullPath.split('/').filter(Boolean).pop() ?? fullPath
+      const ext = fileName.split('.').pop()?.toLowerCase() ?? ''
+      const isViewableBinary = ['xls', 'xlsx', 'docx', 'pdf', 'webm', 'mp4', 'mov', 'mp3', 'wav', 'm4a', 'aac', 'ogg', 'oga', 'flac', 'opus'].includes(ext)
+
+      setSelectedFile({ name: fileName, path: fullPath })
+      setLoadingFileContent(true)
       setShowFileContent(true)
+      void (async () => {
+        try {
+          if (isViewableBinary) {
+            const response = await workspaceApi.get(
+              `/api/documents/${encodeURIComponent(fullPath)}`,
+              { params: { download: 'true' }, responseType: 'arraybuffer' },
+            )
+            setBinaryFileData(response.data as ArrayBuffer)
+            setFileContent('')
+            return
+          }
+          setBinaryFileData(null)
+          const response = await agentApi.getPlannerFileContent(fullPath)
+          if (!response.success || !response.data) {
+            setShowFileContent(false)
+            return
+          }
+          let content = response.data.content == null ? '' : String(response.data.content)
+          if (!response.data.is_image && !fullPath.toLowerCase().endsWith('.json')) {
+            content = content.replace(/\\n/g, '\n').replace(/\\t/g, '\t').replace(/\\r/g, '\r')
+          }
+          if (fullPath.toLowerCase().endsWith('.json')) {
+            try { content = JSON.stringify(JSON.parse(content), null, 2) } catch { /* show source unchanged */ }
+          }
+          setFileContent(content)
+        } catch {
+          // Keeping the viewer hidden prevents the UI broker from acknowledging
+          // a file it could not retrieve.
+          setShowFileContent(false)
+        } finally {
+          setLoadingFileContent(false)
+        }
+      })()
     }
-  }, [workspaceViewTarget, setSelectedFile, setShowFileContent])
+  }, [workspacePath, workspaceViewTarget, setBinaryFileData, setFileContent, setLoadingFileContent, setSelectedFile, setShowFileContent])
   const loadPlanRefresh = planData.refresh
   const refreshEvaluationPlan = evalData.refresh
   const refreshWorkspaceState = workspace.refresh

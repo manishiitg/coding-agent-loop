@@ -2,6 +2,7 @@
 set -euo pipefail
 
 : "${RELEASE_DIR:?}"
+node "$RELEASE_DIR/check-release-assets.mjs" "$RELEASE_DIR/frontend"
 : "${DOMAIN_NAME:?}"
 : "${ACCESS_PASSWORD_B64:?}"
 ACCESS_PASSWORD="$(printf %s "$ACCESS_PASSWORD_B64" | base64 --decode)"

@@ -54,6 +54,16 @@ Preferred data shape: `regular scripted fetcher(s) → message_sequence processo
 
 ## Anti-patterns
 
+For deterministic browser tests, direct Python Playwright is supported inside the saved
+script. Read `references/playwright-scripted.md` before authoring or repairing the suite.
+The suite owns its Playwright objects, case isolation, timeouts, evidence, and cleanup;
+`agent_browser` remains the conversational browser tool and is not a test-harness API.
+Use `execute_step(fast_path_only=true)` for acceptance testing; direct builder shell runs
+do not prove the selected step's permissions, variables, or output validation.
+Inspect `debug_step` for captured output and validation; use `log_offset` for more output.
+Each saved-script attempt is retained in the execution log directory as `scripted-*.json`;
+`scripted_fast_path.json` is the latest-result alias.
+
 - Cramming multiple durable outputs into one step — split at output / store /
   failure-domain boundaries.
 - Narrative branching in the description ("if X do A else B") — use a `branch` or `routing` step.

@@ -2769,6 +2769,10 @@ export interface GmailConnection {
   email?: string
   config_home?: string
   has_credentials_file?: boolean
+  /** The named OAuth client (see GmailOAuthClient) this connection
+   *  authorizes under. Empty only for a connection that predates the
+   *  named-client registry and has not yet been migrated. */
+  client_name?: string
   status?: string
   enabled: boolean
   is_default: boolean
@@ -2788,7 +2792,25 @@ export interface GmailConnectionRequest {
   display_name?: string
   config_home?: string
   credentials_file?: string
+  /** Required on create — which named OAuth client this connection
+   *  authorizes under. */
+  client_name?: string
   enabled?: boolean
+}
+
+/** One named Google Cloud OAuth app registration. Each Gmail connection
+ *  authorizes under exactly one of these — naming them prevents a second
+ *  upload from silently replacing the credentials an existing connection
+ *  depends on. The client secret itself is never returned. */
+export interface GmailOAuthClient {
+  name: string
+  client_id?: string
+  created_at?: string
+  updated_at?: string
+}
+
+export interface GmailOAuthClientsResponse {
+  clients: GmailOAuthClient[]
 }
 
 export interface WorkflowNotificationAccountChannelInfo {

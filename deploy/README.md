@@ -2,6 +2,11 @@
 
 Deployment configs and scripts for Runloop.
 
+Every frontend release must pass `node frontend/scripts/check-release-assets.mjs <packaged-static-directory>`.
+`npm run build` includes this gate. Repeat it against uploaded assets before
+activation and configure the agent's `STATIC_DIR` to the checked directory.
+See the [Linux release gate](ROOTLESS-LINUX-DEPLOYMENT-CHECKLIST.md#release-gate-report-preview-assets-every-release), including split-container requirements.
+
 | Target | Path | Description |
 |--------|------|-------------|
 | **Dedicated VM** (legacy, shared host) | [deploy/dedicated-vm/](dedicated-vm/) | Hetzner VM, hybrid Docker + bare-metal systemd, root-owned. Live at https://agents.excellencetechnologies.in |

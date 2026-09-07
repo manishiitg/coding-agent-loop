@@ -119,7 +119,12 @@ export function useWorkflowBots(workspacePath: string | null) {
   const [gmailOAuthClients, setGmailOAuthClients] = useState<GmailOAuthClient[]>([])
   const [gmailOAuthClientsBusy, setGmailOAuthClientsBusy] = useState(false)
   const [gmailOAuthClientError, setGmailOAuthClientError] = useState<string | null>(null)
-  const [gmailNewClientName, setGmailNewClientName] = useState('')
+  // The email the operator intends to sign in with this client — used to
+  // derive the client's internal name (slugified) instead of asking for an
+  // arbitrary label, since the mailbox is what an operator actually thinks
+  // in terms of. The email itself is not verified until sign-in; this is a
+  // naming hint, not a claim about which account will actually authorize.
+  const [gmailNewClientEmail, setGmailNewClientEmail] = useState('')
   const [gmailSelectedClientName, setGmailSelectedClientName] = useState('')
   // Set while a Google sign-in is in flight, so the row can say it is waiting.
   const [gmailAuthPending, setGmailAuthPending] = useState<string | null>(null)
@@ -215,14 +220,23 @@ export function useWorkflowBots(workspacePath: string | null) {
     }
   }, [])
 
-  const createGmailOAuthClient = useCallback(async (name: string, clientSecretJson: unknown) => {
+  const createGmailOAuthClient = useCallback(async (email: string, clientSecretJson: unknown) => {
+    const trimmedEmail = email.trim()
+    // Backend name pattern is lowercase letters/digits/hyphens only (it
+    // becomes a directory name) — an email's @ and . don't qualify, so
+    // derive a slug from it rather than asking the operator for a second,
+    // arbitrary label.
+    const name = trimmedEmail.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 63)
     try {
       setGmailOAuthClientsBusy(true)
       setGmailOAuthClientError(null)
       const client = await agentApi.createGmailOAuthClient(name, clientSecretJson)
       await loadGmailOAuthClients()
       setGmailSelectedClientName(client.name)
-      setGmailNewClientName('')
+      setGmailNewClientEmail('')
+      // Carries the typed email into "Add account" so it isn't retyped —
+      // never overrides a name the operator already started typing there.
+      setGmailNewConnectionName(current => current || trimmedEmail)
       return true
     } catch (error) {
       setGmailOAuthClientError(error instanceof Error ? error.message : 'Failed to register the OAuth client')
@@ -769,7 +783,7 @@ export function useWorkflowBots(workspacePath: string | null) {
     loadGmailConnections, runGmailConnectionAction, connectGmailAccount,
     // gmail OAuth clients (named Google Cloud apps connections authorize under)
     gmailOAuthClients, gmailOAuthClientsBusy, gmailOAuthClientError,
-    gmailNewClientName, setGmailNewClientName,
+    gmailNewClientEmail, setGmailNewClientEmail,
     gmailSelectedClientName, setGmailSelectedClientName,
     loadGmailOAuthClients, createGmailOAuthClient, deleteGmailOAuthClient,
   }

@@ -136,8 +136,8 @@ export function GmailSetupGuide() {
 
             <Step n={6} title="Register the client">
               <p>
-                Under <strong>OAuth clients</strong> below, give it a name and upload the downloaded JSON file
-                directly — no server filesystem access needed.
+                Under <strong>OAuth clients</strong> below, enter the mailbox you're connecting and upload the
+                downloaded JSON file directly — no server filesystem access needed.
               </p>
               <p>Verify it is the right type first — the top-level key should read <code>installed</code>, not <code>web</code>.</p>
             </Step>

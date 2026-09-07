@@ -20,7 +20,7 @@ type GmailNotificationsBots = Pick<WorkflowBots,
   | 'gmailNewConnectionDir' | 'setGmailNewConnectionDir'
   | 'runGmailConnectionAction' | 'connectGmailAccount'
   | 'gmailOAuthClients' | 'gmailOAuthClientsBusy' | 'gmailOAuthClientError'
-  | 'gmailNewClientName' | 'setGmailNewClientName'
+  | 'gmailNewClientEmail' | 'setGmailNewClientEmail'
   | 'gmailSelectedClientName' | 'setGmailSelectedClientName'
   | 'createGmailOAuthClient' | 'deleteGmailOAuthClient'
 >
@@ -75,7 +75,7 @@ export function GmailNotifications({ bots }: { bots: GmailNotificationsBots }) {
     gmailNewConnectionDir, setGmailNewConnectionDir,
     runGmailConnectionAction, connectGmailAccount,
     gmailOAuthClients, gmailOAuthClientsBusy, gmailOAuthClientError,
-    gmailNewClientName, setGmailNewClientName,
+    gmailNewClientEmail, setGmailNewClientEmail,
     gmailSelectedClientName, setGmailSelectedClientName,
     createGmailOAuthClient, deleteGmailOAuthClient,
   } = bots
@@ -92,29 +92,6 @@ export function GmailNotifications({ bots }: { bots: GmailNotificationsBots }) {
   const [newClientFile, setNewClientFile] = useState<File | null>(null)
   const [newClientParseError, setNewClientParseError] = useState<string | null>(null)
 
-  // Match the backend's slug pattern (lowercase letters/digits/hyphens).
-  const slugifyClientName = (value: string) =>
-    value.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 63)
-
-  // The downloaded JSON already names the Google Cloud project — prefill the
-  // name field from it instead of asking the user to type one, so picking
-  // the file is normally the only step. Never overrides a name they already
-  // typed, and silently leaves the field blank on a file that doesn't parse
-  // (handleAddOAuthClient reports that error on submit instead).
-  const handleClientFileChange = async (file: File | null) => {
-    setNewClientFile(file)
-    setNewClientParseError(null)
-    if (!file || gmailNewClientName.trim()) return
-    try {
-      const parsed = JSON.parse(await file.text()) as Record<string, unknown>
-      const entry = (parsed.installed ?? parsed.web) as Record<string, unknown> | undefined
-      const projectId = typeof entry?.project_id === 'string' ? entry.project_id : undefined
-      if (projectId) setGmailNewClientName(slugifyClientName(projectId))
-    } catch {
-      // Leave the name blank — the submit handler below surfaces the parse error.
-    }
-  }
-
   const handleAddOAuthClient = async () => {
     if (!newClientFile) return
     setNewClientParseError(null)
@@ -125,7 +102,10 @@ export function GmailNotifications({ bots }: { bots: GmailNotificationsBots }) {
       setNewClientParseError('That file is not valid JSON — download the client_secret.json Google Cloud gave you and upload it unmodified.')
       return
     }
-    const ok = await createGmailOAuthClient(gmailNewClientName.trim(), parsed)
+    // createGmailOAuthClient derives the internal client name from this
+    // email — asking for the mailbox directly is what an operator actually
+    // thinks in terms of, not an arbitrary label for the Google Cloud app.
+    const ok = await createGmailOAuthClient(gmailNewClientEmail.trim(), parsed)
     if (ok) setNewClientFile(null)
   }
 
@@ -194,8 +174,9 @@ export function GmailNotifications({ bots }: { bots: GmailNotificationsBots }) {
                 <div>
                   <h4 className="text-sm font-medium">OAuth clients</h4>
                   <p className="mt-0.5 text-xs text-muted-foreground">
-                    The Google Cloud app each account signs in through. Give it a name — a second upload never
-                    replaces an existing one by accident; it needs its own name.
+                    The Google Cloud app each account signs in through. Say which mailbox it's for — a second
+                    upload never replaces an existing client by accident. Other mailboxes can reuse the same
+                    client later; add another below only for a separate Google Cloud project.
                   </p>
                 </div>
                 {gmailOAuthClientError && <StatusBanner tone="error">{gmailOAuthClientError}</StatusBanner>}
@@ -220,23 +201,23 @@ export function GmailNotifications({ bots }: { bots: GmailNotificationsBots }) {
                 )}
                 <div className="flex flex-wrap items-center gap-2">
                   <input
-                    type="text"
-                    value={gmailNewClientName}
-                    onChange={event => setGmailNewClientName(event.target.value)}
+                    type="email"
+                    value={gmailNewClientEmail}
+                    onChange={event => setGmailNewClientEmail(event.target.value)}
                     disabled={readOnly}
-                    placeholder="Client name (e.g. primary)"
+                    placeholder="Mailbox this client is for (e.g. you@example.com)"
                     className="flex-1 rounded-md border border-border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary"
                   />
                   <input
                     type="file"
                     accept="application/json"
                     disabled={readOnly}
-                    onChange={event => void handleClientFileChange(event.target.files?.[0] || null)}
+                    onChange={event => setNewClientFile(event.target.files?.[0] || null)}
                     className="flex-1 text-xs text-muted-foreground file:mr-2 file:rounded file:border file:border-border file:bg-muted/40 file:px-2 file:py-1 file:text-xs"
                   />
                   <Button
                     variant="outline"
-                    disabled={readOnly || !gmailNewClientName.trim() || !newClientFile || gmailOAuthClientsBusy}
+                    disabled={readOnly || !gmailNewClientEmail.trim() || !newClientFile || gmailOAuthClientsBusy}
                     title={readOnly ? READ_ONLY_TITLE : undefined}
                     onClick={handleAddOAuthClient}
                   >

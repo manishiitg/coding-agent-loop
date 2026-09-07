@@ -314,32 +314,30 @@ export function useWorkflowBots(workspacePath: string | null) {
       // and paste the copied link across by hand, and giving up while the
       // server would still accept the callback strands them mid-sign-in.
       const startedAt = Date.now()
-      let popupClosedAt: number | null = null
+      let popupClosedNoticeShown = false
       let pollInFlight = false
       const timer = window.setInterval(async () => {
         if (pollInFlight) return
         pollInFlight = true
         const timedOut = Date.now() - startedAt > 15 * 60 * 1000
-        if (popup?.closed && popupClosedAt === null) popupClosedAt = Date.now()
+        if (popup?.closed && !popupClosedNoticeShown) {
+          popupClosedNoticeShown = true
+          // Closing the first popup often means the mailbox belongs to a
+          // different browser profile. Keep the server attempt and copyable
+          // link alive so it can be pasted there instead.
+          setGmailError('The sign-in window was closed. Use the Copy link option below to continue in another browser profile.')
+        }
 
         try {
           const data = await agentApi.listGmailConnections().catch(() => null)
           const after = data?.connections?.find(entry => entry.id === id)
           const connected = gmailOAuthAttemptCompleted(before, after)
-          // The callback page closes itself after 2.5 seconds. A three-second
-          // grace period avoids racing its final server write while still
-          // reporting a manually closed consent popup promptly.
-          const popupCancelled = popupClosedAt !== null && Date.now() - popupClosedAt >= 3000
-          if (!connected && !timedOut && !popupCancelled) return
+          if (!connected && !timedOut) return
 
           window.clearInterval(timer)
           setGmailAuthPending(null)
           setGmailAuthUrl(null)
-          if (!connected) {
-            setGmailError(popupCancelled
-              ? 'Google sign-in was closed before it completed. The existing Gmail connection was not changed.'
-              : 'Sign-in did not complete. Try connecting again.')
-          }
+          setGmailError(connected ? null : 'Sign-in did not complete before the link expired. Try connecting again.')
           await loadGmailConnections()
         } finally {
           pollInFlight = false

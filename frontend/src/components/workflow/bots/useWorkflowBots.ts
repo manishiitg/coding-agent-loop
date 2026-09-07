@@ -7,6 +7,7 @@ import type {
   SlackConfig, SlackConfigRequest, SlackTestResponse, WhatsAppRoute, WhatsAppStatus,
 } from '../../../services/api-types'
 import { routeId, type ChannelKind, type WorkflowRoute } from './types'
+import { gmailOAuthAttemptCompleted } from './gmailOAuthState'
 
 type WaRoute = WhatsAppRoute
 
@@ -278,6 +279,12 @@ export function useWorkflowBots(workspacePath: string | null) {
       setGmailError(null)
       setGmailAuthPending(id)
       setGmailAuthUrl(null)
+      // Capture server state before starting. Reconnect often begins while
+      // the old token is still healthy, so `ready === true` cannot prove the
+      // new consent flow completed.
+      const beforeData = await agentApi.listGmailConnections()
+      const before = beforeData.connections.find(entry => entry.id === id)
+      if (!before) throw new Error(`Gmail connection ${id} no longer exists.`)
       const { auth_url } = await agentApi.startGmailConnectionAuth(id)
       setGmailAuthUrl(auth_url)
 
@@ -297,7 +304,9 @@ export function useWorkflowBots(workspacePath: string | null) {
 
       // The callback lands on the server, not in this document, so there is no
       // event here to listen for — and with an external browser there is no
-      // window to watch closing either. Poll until the server reports ready.
+      // window to watch closing either. Poll until the server reports that
+      // this attempt changed the persisted connection, not merely `ready`
+      // from a credential that existed before Reconnect was clicked.
       //
       // The window matches the server's 15-minute pending-state TTL
       // (gmailOAuthPendingTTL) rather than guessing shorter: anyone whose
@@ -305,19 +314,36 @@ export function useWorkflowBots(workspacePath: string | null) {
       // and paste the copied link across by hand, and giving up while the
       // server would still accept the callback strands them mid-sign-in.
       const startedAt = Date.now()
+      let popupClosedAt: number | null = null
+      let pollInFlight = false
       const timer = window.setInterval(async () => {
+        if (pollInFlight) return
+        pollInFlight = true
         const timedOut = Date.now() - startedAt > 15 * 60 * 1000
-        if (popup && !popup.closed && !timedOut) return
+        if (popup?.closed && popupClosedAt === null) popupClosedAt = Date.now()
 
-        const data = await agentApi.listGmailConnections().catch(() => null)
-        const connected = data?.connections?.find(entry => entry.id === id)?.ready
-        if (!connected && !timedOut) return
+        try {
+          const data = await agentApi.listGmailConnections().catch(() => null)
+          const after = data?.connections?.find(entry => entry.id === id)
+          const connected = gmailOAuthAttemptCompleted(before, after)
+          // The callback page closes itself after 2.5 seconds. A three-second
+          // grace period avoids racing its final server write while still
+          // reporting a manually closed consent popup promptly.
+          const popupCancelled = popupClosedAt !== null && Date.now() - popupClosedAt >= 3000
+          if (!connected && !timedOut && !popupCancelled) return
 
-        window.clearInterval(timer)
-        setGmailAuthPending(null)
-        setGmailAuthUrl(null)
-        if (!connected) setGmailError('Sign-in did not complete. Try connecting again.')
-        await loadGmailConnections()
+          window.clearInterval(timer)
+          setGmailAuthPending(null)
+          setGmailAuthUrl(null)
+          if (!connected) {
+            setGmailError(popupCancelled
+              ? 'Google sign-in was closed before it completed. The existing Gmail connection was not changed.'
+              : 'Sign-in did not complete. Try connecting again.')
+          }
+          await loadGmailConnections()
+        } finally {
+          pollInFlight = false
+        }
       }, 1500)
     } catch (error) {
       setGmailAuthPending(null)

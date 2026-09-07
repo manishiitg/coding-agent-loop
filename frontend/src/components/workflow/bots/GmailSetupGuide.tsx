@@ -138,9 +138,11 @@ export function GmailSetupGuide() {
                 → <strong>Create Credentials</strong> → <strong>OAuth client ID</strong> → download the JSON.
               </p>
               <Gotcha>
-                Application type must be <strong>Desktop app</strong>, not Web application. A Web client rejects the
-                loopback redirect and the failure only surfaces at the very end of sign-in, as a redirect error.
+                Application type must be <strong>Web application</strong>. Under <strong>Authorized redirect URIs</strong>,
+                add the exact AgentWorks callback shown below. A Desktop client cannot authorize this hosted callback
+                and Google returns <code>400: redirect_uri_mismatch</code>.
               </Gotcha>
+              <Cmd>https://video.realtrainingsys.com/api/human-feedback/gmail/auth/callback</Cmd>
             </Step>
 
             <Step n={6} title="Register the client">
@@ -148,7 +150,7 @@ export function GmailSetupGuide() {
                 Under <strong>OAuth clients</strong> below, enter the mailbox you're connecting and upload the
                 downloaded JSON file directly — no server filesystem access needed.
               </p>
-              <p>Verify it is the right type first — the top-level key should read <code>installed</code>, not <code>web</code>.</p>
+              <p>Verify it is the right type first — the top-level key should read <code>web</code>, not <code>installed</code>.</p>
             </Step>
 
             <Step n={7} title="Give each sending mailbox access to the project">

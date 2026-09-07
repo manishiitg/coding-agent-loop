@@ -20,12 +20,14 @@ of guessed.
    may not, on a fresh family or before she's had many conversations — that's
    fine, start from empty).
 
-2. **Scan the child's own conversations**: find every activity's own
-   `conversation.json` (e.g. `find . -maxdepth 4 -name conversation.json`,
-   skipping `materials/`, `reports/`, `memory/`, `conversations/`, `archive/` —
-   an activity the parent put away was already checked while it was live, so
-   there's nothing new to find there) and read the ones you haven't checked since last
-   time, looking for genuine engagement signals — not what the PARENT said
+2. **Scan the child's own conversations**: for every live activity under
+   `activities/` (skip `archive/` — an activity the parent put away was already
+   checked while it was live, so there's nothing new to find there), read its
+   conversation with the tutor: the platform's log, found from the activity's
+   `product.json` session id as `skills/recall-conversations/SKILL.md` describes
+   (an older activity keeps a `legacy-conversation.json` inside its folder
+   instead). Read the ones that changed since you last checked (`updated_at`),
+   looking for genuine engagement signals — not what the PARENT said
    (that's preferences.md's job):
    - Clear enthusiasm about a topic (asked follow-up questions, said it was
      cool/fun/awesome, kept going on their own)

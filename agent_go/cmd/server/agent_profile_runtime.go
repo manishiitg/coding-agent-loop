@@ -496,6 +496,18 @@ func profileDisablesVirtualTool(profile *resolvedAgentProfile, toolName string) 
 // subagents, Downloads, plus the workflow read-only set) unless the
 // profile's sandbox policy names its own list. Entries are normalized to
 // the trailing-slash form the folder guard compares with.
+// agentProfileChatHistoryGrants is the account chat_history/ folder a product
+// profile's shell may read and write — the platform default, so an assistant
+// can recall earlier chats — or nothing when the profile's sandbox says
+// chat_history: none. The server's own persistence of the profile's log
+// does not go through the shell and is unaffected.
+func agentProfileChatHistoryGrants(sandbox agentprofiles.SandboxPolicy, perUserChatHistory string) []string {
+	if sandbox.ChatHistoryDenied() || strings.TrimSpace(perUserChatHistory) == "" {
+		return nil
+	}
+	return []string{perUserChatHistory}
+}
+
 func agentProfileReadOnlyFolders(sandbox agentprofiles.SandboxPolicy, workflowReadOnlyFolders []string) []string {
 	if sandbox.ReadOnly == nil {
 		return append([]string{"skills/", "subagents/", "Downloads/"}, workflowReadOnlyFolders...)

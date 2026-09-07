@@ -70,6 +70,7 @@ func WorkspaceLayout() string {
 		"- " + ReportsFolder + "/progress.html — the one living progress page: what she has, how she is doing, what to do next.",
 		"- " + ArchiveFolder + "/ — activities the parent asked you to put away: move the whole folder here when they say so, never on your own. Still real evidence for reports; never handed to her again. Nothing is ever deleted unless the parent explicitly asks.",
 		"- " + InboxFolder + "/ — uploads waiting to be filed (you are told above when there are any).",
+		"- ../../chat_history/ — the platform's log of every conversation: your earlier chats with the parent and each activity's conversation with the tutor. Read-only; skills/recall-conversations/SKILL.md says how to find the right one.",
 	}, "\n") + "\n"
 }
 

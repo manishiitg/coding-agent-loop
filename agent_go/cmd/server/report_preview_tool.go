@@ -135,7 +135,7 @@ func (api *StreamingAPI) runReportPreview(ctx context.Context, sessionID, userID
 		if err != nil {
 			return "", err
 		}
-		return unquoteBrowserEvalOutput(out), nil
+		return parseBrowserEvalOutput(out)
 	}
 	defer func() {
 		if _, closeErr := run("close"); closeErr != nil {
@@ -248,6 +248,10 @@ func reportPreviewSummary(s reportPreviewSnapshot, shots []reportPreviewScreensh
 		return "The preview page itself could not load the report (see fetch_errors)."
 	case "loading":
 		return fmt.Sprintf("The report never settled within %s: its ready()/report:data work is still pending or hangs. Check for an await that never resolves or a query that never returns.", reportPreviewSettleTimeout)
+	case "ready", "error":
+		// These are the only states for which the preview attempts screenshots.
+	default:
+		return fmt.Sprintf("The browser returned an unrecognized preview state %q; rendering was not verified.", s.PreviewState)
 	}
 	parts := []string{}
 	if s.PreviewState == "error" || len(s.Report.Errors) > 0 {
@@ -263,6 +267,41 @@ func reportPreviewSummary(s reportPreviewSnapshot, shots []reportPreviewScreensh
 		return fmt.Sprintf("Rendered cleanly: %d tab label(s), %.0fpx tall, %d screenshot(s).", len(s.Report.Tabs), s.Report.Height, len(shots))
 	}
 	return "Rendered with problems: " + strings.Join(parts, "; ") + "."
+}
+
+// parseBrowserEvalOutput unwraps agent-browser's --json envelope. Current
+// agent-browser versions return eval values as
+// {"success":true,"data":{"result":...}}, not as a bare JSON string. Treating
+// that whole envelope as the evaluated value made the preview poll for 20
+// seconds, capture no screenshots, and then fall through to "Rendered
+// cleanly." even when data.result was "failed".
+func parseBrowserEvalOutput(out string) (string, error) {
+	trimmed := strings.TrimSpace(out)
+	var envelope struct {
+		Success *bool `json:"success"`
+		Data    struct {
+			Result json.RawMessage `json:"result"`
+		} `json:"data"`
+		Error json.RawMessage `json:"error"`
+	}
+	if err := json.Unmarshal([]byte(trimmed), &envelope); err == nil && envelope.Success != nil {
+		if !*envelope.Success {
+			detail := strings.TrimSpace(string(envelope.Error))
+			if detail == "" || detail == "null" {
+				detail = "unknown error"
+			}
+			return "", fmt.Errorf("agent-browser eval failed: %s", detail)
+		}
+		if len(envelope.Data.Result) == 0 || string(envelope.Data.Result) == "null" {
+			return "", fmt.Errorf("agent-browser eval returned no result")
+		}
+		var asString string
+		if err := json.Unmarshal(envelope.Data.Result, &asString); err == nil {
+			return asString, nil
+		}
+		return strings.TrimSpace(string(envelope.Data.Result)), nil
+	}
+	return unquoteBrowserEvalOutput(trimmed), nil
 }
 
 // unquoteBrowserEvalOutput: agent-browser prints eval results as JSON, so a

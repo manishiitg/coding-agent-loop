@@ -114,7 +114,7 @@ func TestUIControlOnlyAdvertisesActualActions(t *testing.T) {
 		if err := validateUIAction(v.ID, "refresh", ""); err == nil {
 			t.Fatal("unverified refresh advertised")
 		}
-		if err := validateUIAction(v.ID, "open", "arbitrary target"); err == nil && v.ID != "flow" {
+		if err := validateUIAction(v.ID, "open", "arbitrary target"); err == nil && v.ID != "flow" && v.ID != "report" {
 			t.Fatal("ignored target")
 		}
 	}

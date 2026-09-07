@@ -6,6 +6,7 @@ export const UI_CONTROL_CONTRACT = {
     {
       "id": "report",
       "label": "Report",
+      "target_kind": "report_tab",
       "actions": [
         "open"
       ],

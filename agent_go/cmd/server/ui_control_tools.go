@@ -20,7 +20,7 @@ func (api *StreamingAPI) registerUIControlTools(registrar definitionToolRegistra
 	props := map[string]interface{}{
 		"view":                    map[string]interface{}{"type": "string", "enum": workflowWorkspaceViewIDs()},
 		"action":                  map[string]interface{}{"type": "string", "enum": []string{"open", "expand"}},
-		"target":                  map[string]interface{}{"type": "string", "maxLength": 256, "description": "For flow/open: exact plan step ID. For notify/expand: run_summary or pulse_review. Omit for other view openings."},
+		"target":                  map[string]interface{}{"type": "string", "maxLength": 256, "description": "For flow/open: exact plan step ID. For report/open: exact top-level report tab label. For notify/expand: run_summary or pulse_review. Omit for other view openings."},
 		"idempotency_key":         map[string]interface{}{"type": "string", "maxLength": 128, "description": "Reuse for a retry of this exact action; omit to generate a fresh request."},
 		"expected_state_revision": map[string]interface{}{"type": "integer", "minimum": 0},
 	}

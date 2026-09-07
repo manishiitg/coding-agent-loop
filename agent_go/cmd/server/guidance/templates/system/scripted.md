@@ -54,6 +54,22 @@ Preferred data shape: `regular scripted fetcher(s) → message_sequence processo
 
 ## Anti-patterns
 
+For deterministic Playwright tests, use the sandbox-provided Python helper:
+`from agentworks_browser import browser_session`, then
+`with browser_session(record_video=True) as (context, artifacts): ...`.
+Create pages with `context.new_page()`. The helper uses the deployment browser,
+captures screenshots/traces, and flushes recordings under `$STEP_OUTPUT_DIR/browser/`.
+Install the Python `playwright` package once in the workflow environment. For video,
+install its matching encoder with `PLAYWRIGHT_BROWSERS_PATH="$SANDBOX_PERSISTENT_DIR/ms-playwright" python3 -m playwright install ffmpeg`.
+Publish durable reporting artifacts through the reporting artifact API before run cleanup.
+Do not hardcode Chromium versions or shared `/tmp` profiles. The sandbox supplies private
+short `TMPDIR`/`TMP`/`TEMP` directories and cleans them when the command ends.
+Use `execute_step(fast_path_only=true)` for acceptance testing; direct builder shell runs
+do not prove the selected step's permissions, variables, or output validation.
+Inspect `debug_step` for captured output and validation; use `log_offset` for more output.
+Each saved-script attempt is retained in the execution log directory as `scripted-*.json`;
+`scripted_fast_path.json` is the latest-result alias.
+
 - Cramming multiple durable outputs into one step — split at output / store /
   failure-domain boundaries.
 - Narrative branching in the description ("if X do A else B") — use a `branch` or `routing` step.

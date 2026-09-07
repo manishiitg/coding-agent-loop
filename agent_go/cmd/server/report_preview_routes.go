@@ -21,8 +21,8 @@ import (
 // The Go server serves a tiny page at /report-preview/ that renders a
 // workflow's db/reports/index.html through the same host runtime the in-app
 // Report tab uses (frontend/src/report-preview, built by `npm run
-// build:report-preview` to ./static/report-preview.js next to the rest of
-// the deployed frontend -- read from disk on each request, the same way
+// build:report-preview` to the configured frontend static directory next to
+// the rest of the deployed frontend -- read from disk on each request, the same way
 // spaStaticFileHandler serves the app, NOT go:embed'd: this directory is
 // deploy-populated and not committed, so embedding it would break `go
 // build` on a fresh checkout). A headless browser loads the page with a
@@ -49,6 +49,14 @@ const reportPreviewPageHTML = `<!doctype html>
 </body>
 </html>
 `
+
+// reportPreviewRuntimePath deliberately shares the SPA's configured static
+// root. Production releases put all browser assets in current/frontend while
+// local development historically uses ./static; hard-coding the latter made a
+// correctly built production bundle look missing at runtime.
+func reportPreviewRuntimePath() string {
+	return filepath.Join(staticFrontendDir(), "report-preview.js")
+}
 
 // mintReportPreviewToken issues a token that can only read one workflow's
 // report data for a few minutes. It carries the current user's identity so
@@ -208,7 +216,7 @@ func (api *StreamingAPI) handleReportPreviewQuery(w http.ResponseWriter, r *http
 func (api *StreamingAPI) reportPreviewPageHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-store")
-	if _, err := os.Stat(filepath.Join("static", "report-preview.js")); err != nil {
+	if _, err := os.Stat(reportPreviewRuntimePath()); err != nil {
 		w.WriteHeader(http.StatusServiceUnavailable)
 		_, _ = w.Write([]byte(`<!doctype html><html data-preview-state="failed"><head><title>Report preview unavailable</title></head><body>
 <p>The report preview runtime is missing. Run npm run build:report-preview in frontend/ and retry.</p>
@@ -220,7 +228,7 @@ func (api *StreamingAPI) reportPreviewPageHandler(w http.ResponseWriter, r *http
 }
 
 func (api *StreamingAPI) reportPreviewScriptHandler(w http.ResponseWriter, r *http.Request) {
-	data, err := os.ReadFile(filepath.Join("static", "report-preview.js"))
+	data, err := os.ReadFile(reportPreviewRuntimePath())
 	if err != nil {
 		http.Error(w, "report preview runtime is not built into this server; run `npm run build:report-preview` in frontend/", http.StatusNotFound)
 		return

@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"log"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -3104,6 +3105,14 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 		map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
+				"log_offset": map[string]interface{}{
+					"type": "integer", "minimum": 0,
+					"description": "Character offset into the saved scripted execution log; use next_log_offset to read more.",
+				},
+				"iteration": map[string]interface{}{
+					"type": "string", "pattern": "^iteration-[0-9]+$",
+					"description": "Run iteration to inspect, default iteration-0.",
+				},
 				"step_id": map[string]interface{}{
 					"type":        "string",
 					"description": "The step ID from plan.json (e.g., 'step-create-report') or positional reference (e.g., '1', 'step-1')",
@@ -3129,6 +3138,12 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 			groupName, _ := args["group_name"].(string)
 
 			iteration := "iteration-0"
+			if value, ok := args["iteration"].(string); ok && value != "" {
+				if !regexp.MustCompile(`^iteration-[0-9]+$`).MatchString(value) {
+					return "iteration must be iteration-<number>", nil
+				}
+				iteration = value
+			}
 			if groupName == "" {
 				return "group_name is required (e.g., 'group-1'). Read variables/variables.json to see available groups.", nil
 			}
@@ -3203,6 +3218,15 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 			// Section 2: Validation result
 			logFolder := workshopStepLogFolder(resolvedID)
 			validationLogDir := fmt.Sprintf("runs/%s/logs/%s", runFolder, logFolder)
+			logPath := validationLogDir + "/execution/scripted_fast_path.json"
+			if content, err := iwm.controller.ReadWorkspaceFile(ctx, logPath); err == nil {
+				offset := 0
+				if value, ok := args["log_offset"].(float64); ok && value > 0 {
+					offset = int(value)
+				}
+				result.WriteString("### Scripted execution\n" + logPath + "\n")
+				result.WriteString(scriptedLogPage(content, offset))
+			}
 
 			result.WriteString("### Validation\n")
 			foundValidation := false

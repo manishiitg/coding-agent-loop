@@ -278,6 +278,26 @@ describe('buildProductionActivityItems', () => {
     }))
   })
 
+  it('keeps distinct same-named Cursor calls with their own inputs', () => {
+    const items = buildProductionActivityItems([
+      event('user', 'user_message', { content: 'Inspect both files' }),
+      event('first-start', 'tool_call_start', {
+        tool_call_id: 'call-1', tool_name: 'execute_shell_command',
+        tool_params: { arguments: '{"command":"first"}' },
+      }),
+      event('first-end', 'tool_call_end', { tool_call_id: 'call-1', tool_name: 'execute_shell_command', result: 'one' }),
+      event('second-start', 'tool_call_start', {
+        tool_call_id: 'call-2', tool_name: 'execute_shell_command',
+        tool_params: { arguments: '{"command":"second"}' },
+      }),
+      event('second-end', 'tool_call_end', { tool_call_id: 'call-2', tool_name: 'execute_shell_command', result: 'two' }),
+    ])
+
+    expect(items).toHaveLength(2)
+    expect(items.map(item => item.arguments)).toEqual(['{"command":"first"}', '{"command":"second"}'])
+    expect(items.map(item => item.result)).toEqual(['one', 'two'])
+  })
+
   it('shows the underlying Cursor MCP tool instead of its CallMcpTool wrapper', () => {
     const items = buildProductionActivityItems([
       event('user', 'user_message', { content: 'Inspect the project' }),

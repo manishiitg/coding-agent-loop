@@ -79,6 +79,7 @@
     {
       "id": "files",
       "label": "Files",
+      "target_kind": "workspace_file_path",
       "actions": [
         "open"
       ],

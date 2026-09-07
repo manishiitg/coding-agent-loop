@@ -823,6 +823,21 @@ describe('pairToolCalls — args and result surfaced on the pair', () => {
     expect(pair.result).toBe('ok')
   })
 
+  it('recovers Cursor arguments from a compound provider id and lowercase restored fields', () => {
+    const start = evt({
+      id: 'start', session_id: 's1', type: 'tool_call_start',
+      data: { data: { tool_call_id: 'fc_cursor_1', tool_name: 'execute_shell_command', tool_params: { arguments: '' } } } as never,
+    })
+    const completion = evt({
+      id: 'completion', session_id: 's1', type: 'llm_generation_end',
+      data: { data: { generation_info: { coding_provider_intermediate_messages: { messages: [{
+        parts: [{ id: 'call-platform-1\nfc_cursor_1', function_call: { name: 'mcp__api-bridge__execute_shell_command', arguments: { command: 'pwd' } } }],
+      }] } } } } as never,
+    })
+    const [pair] = pairToolCalls([start, completion])
+    expect(pair.args).toBe('{"command":"pwd"}')
+  })
+
   it('keeps direct CLI arguments and error output when the canonical fields are absent', () => {
     const start = evt({
       id: 'a', session_id: 's1', type: 'tool_call_start',

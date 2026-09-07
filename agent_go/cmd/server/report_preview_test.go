@@ -133,19 +133,14 @@ func TestReportPreviewChoices(t *testing.T) {
 }
 
 func TestReportPreviewScriptHandlerServesTheBuiltBundle(t *testing.T) {
-	// Not t.Parallel(): changes the process working directory.
+	// Production serves browser assets from current/frontend, not cwd/static.
+	// STATIC_DIR is the shared contract used by the SPA and preview handler.
 	dir := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(dir, "static"), 0o755); err != nil {
+	staticDir := filepath.Join(dir, "frontend")
+	if err := os.MkdirAll(staticDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	original, err := os.Getwd()
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = os.Chdir(original) }()
-	if err := os.Chdir(dir); err != nil {
-		t.Fatal(err)
-	}
+	t.Setenv("STATIC_DIR", staticDir)
 
 	api := &StreamingAPI{}
 	rec := httptest.NewRecorder()
@@ -159,7 +154,7 @@ func TestReportPreviewScriptHandlerServesTheBuiltBundle(t *testing.T) {
 		t.Fatalf("missing runtime must fail explicitly before polling, got %d: %s", page.Code, page.Body.String())
 	}
 
-	if err := os.WriteFile(filepath.Join(dir, "static", "report-preview.js"), []byte("console.log('preview')"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(staticDir, "report-preview.js"), []byte("console.log('preview')"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	rec = httptest.NewRecorder()

@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"path"
 	"strings"
 	"sync"
 	"time"
@@ -192,8 +193,16 @@ func validateUIAction(view, action, target string) error {
 		if action == "open" && target == "" {
 			return nil
 		}
-		if action == "open" && (v.TargetKind == "plan_step_id" || v.TargetKind == "report_tab") && strings.TrimSpace(target) != "" && len(target) <= 256 {
-			return nil
+		if action == "open" && strings.TrimSpace(target) != "" && len(target) <= 1024 {
+			switch v.TargetKind {
+			case "plan_step_id", "report_tab":
+				return nil
+			case "workspace_file_path":
+				cleaned := path.Clean(strings.TrimSpace(target))
+				if cleaned != "." && cleaned != ".." && !strings.HasPrefix(cleaned, "../") && !strings.HasPrefix(cleaned, "/") && !strings.Contains(cleaned, "\\") {
+					return nil
+				}
+			}
 		}
 		if action == "expand" {
 			for _, t := range v.Targets {

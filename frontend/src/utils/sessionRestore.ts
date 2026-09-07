@@ -217,12 +217,15 @@ function restoreToolArgumentsFromConversation(
     for (const part of message.Parts || message.parts || []) {
       if (!part || typeof part !== 'object') continue
       const record = part as Record<string, unknown>
-      const callID = typeof record.ID === 'string' ? record.ID : ''
-      const call = record.FunctionCall
-      const args = call && typeof call === 'object' && typeof (call as Record<string, unknown>).Arguments === 'string'
-        ? (call as Record<string, unknown>).Arguments as string
-        : ''
-      if (callID && args) argumentsByCallID.set(callID, args)
+      const callID = typeof record.ID === 'string' ? record.ID : typeof record.id === 'string' ? record.id : ''
+      const call = record.FunctionCall ?? record.functionCall ?? record.function_call
+      const callRecord = call && typeof call === 'object' ? call as Record<string, unknown> : undefined
+      const rawArgs = callRecord?.Arguments ?? callRecord?.arguments ?? callRecord?.args
+      const args = typeof rawArgs === 'string' ? rawArgs : rawArgs == null ? '' : JSON.stringify(rawArgs)
+      if (callID && args) {
+        argumentsByCallID.set(callID, args)
+        for (const alias of callID.split(/\s+/).filter(Boolean)) argumentsByCallID.set(alias, args)
+      }
     }
   }
   if (argumentsByCallID.size === 0) return events

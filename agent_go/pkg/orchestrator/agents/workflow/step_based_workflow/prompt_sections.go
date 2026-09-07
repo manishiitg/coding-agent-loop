@@ -337,6 +337,7 @@ func BuildPythonBestPractices(varMappingLines []string, hasInputArgs bool) strin
 
 	// Error diagnostics guidance
 	sb.WriteString("### Error diagnostics (critical for fix loop)\n")
+	sb.WriteString("For deterministic Playwright scripts, import browser_session from agentworks_browser and use with browser_session(record_video=True) as (context, artifacts). The platform helper selects the deployment browser and writes screenshots, traces and flushed recordings under STEP_OUTPUT_DIR/browser/. Use context.new_page(). Preserve the sandbox-provided short TMPDIR; never hardcode browser versions or a shared /tmp profile. Validate changes through execute_step(fast_path_only=true) from the builder.\n")
 	sb.WriteString("When your script fails, the **only** feedback the system sees is stdout + stderr.\n")
 	sb.WriteString("Files written to disk are **not** automatically read back. So:\n")
 	sb.WriteString("- **Always `print()` diagnostic context before raising/exiting on failure** — e.g., current page snapshot, API response body, intermediate state, what you expected vs. what you got.\n")

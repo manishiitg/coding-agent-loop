@@ -611,7 +611,12 @@ export function FileContentViewerBody({ variant }: { variant: 'pane' | 'overlay'
 
   return (
     <>
-      <div ref={rootRef} className="flex h-full min-h-0 flex-col bg-white dark:bg-gray-900">
+      <div
+        ref={rootRef}
+        className="flex h-full min-h-0 flex-col bg-white dark:bg-gray-900"
+        data-ui-file-path={selectedFile?.path || undefined}
+        data-ui-file-ready={showFileContent && !loadingFileContent ? 'true' : 'false'}
+      >
         {/* Fixed Header */}
         <div className={`flex items-center justify-between ${variant === 'pane' ? 'px-3' : 'px-4'} py-2 border-b border-gray-200 dark:border-gray-700 flex-shrink-0`}>
           <div className="flex items-center gap-3 min-w-0 flex-1">

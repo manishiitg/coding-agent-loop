@@ -1673,6 +1673,11 @@ func (hcpo *StepBasedWorkflowOrchestrator) saveScriptedFastPathLog(
 		"timestamp":        time.Now().Format(time.RFC3339),
 	}
 	if logJSON, err := json.MarshalIndent(logData, "", "  "); err == nil {
+		// Preserve every attempt; the legacy name remains a latest-result alias.
+		attemptPath := fmt.Sprintf("%s/scripted-%d.json", logDir, time.Now().UnixNano())
+		if err := hcpo.WriteWorkspaceFile(context.Background(), attemptPath, string(logJSON)); err != nil {
+			hcpo.GetLogger().Warn(fmt.Sprintf("Failed to preserve scripted attempt: %v", err))
+		}
 		logPath := logDir + "/scripted_fast_path.json"
 		if err := hcpo.WriteWorkspaceFile(context.Background(), logPath, string(logJSON)); err != nil {
 			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ [scripted] Failed to save fast path log: %v", err))

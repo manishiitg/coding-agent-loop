@@ -9,6 +9,9 @@ Environment=HOME=%h
 Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
 Environment=AGENT_PRODUCTS=video-studio
 Environment=MCP_BRIDGE_BINARY=%h/video-studio/current/bin/mcpbridge
+# The release packages the SPA and the report-preview runtime together here.
+# The agent's read-only preview endpoint must resolve the same static root.
+Environment=STATIC_DIR=%h/video-studio/current/frontend
 # The public origin, for URLs the server hands to third parties: the MCP
 # connector OAuth redirect (deriveOAuthRedirectURI) and login redirects.
 # Without it the agent guesses from X-Forwarded-* headers two proxies deep.

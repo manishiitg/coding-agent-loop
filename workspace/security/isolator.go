@@ -2,6 +2,7 @@ package security
 
 import (
 	"context"
+	_ "embed"
 	"fmt"
 	"os"
 	"os/exec"
@@ -46,6 +47,9 @@ type Isolator struct {
 }
 
 const defaultBaseDir = "/app/workspace-docs"
+
+//go:embed runtime/agentworks_browser.py
+var browserRuntime []byte
 
 // getBaseDir returns the configured base directory or the default
 func (iso *Isolator) getBaseDir() string {
@@ -137,13 +141,55 @@ func (iso *Isolator) sandboxAllowedPath(path string) (string, bool) {
 // namespace); macOS uses sandbox-exec.
 // Returns the command, a cleanup function, and an error
 func (iso *Isolator) ExecuteIsolated(ctx context.Context, command string, args []string) (*exec.Cmd, func(), error) {
-	if runtime.GOOS == "darwin" {
-		// macOS: Use sandbox-exec with sandbox profile
-		return iso.executeIsolatedMacOS(ctx, command, args)
+	// Keep socket paths short even when the workflow working directory is deep.
+	// Clone the policy: concurrent commands must never share or mutate grants.
+	tmp, releaseScratch, err := allocateScratch()
+	if err != nil {
+		return nil, nil, fmt.Errorf("allocate sandbox scratch: %w", err)
 	}
-
-	// Linux: Use unshare with mount namespaces
-	return iso.executeIsolatedLinux(ctx, command, args)
+	local := *iso
+	if err := os.WriteFile(filepath.Join(tmp, "agentworks_browser.py"), browserRuntime, 0600); err != nil {
+		releaseScratch()
+		return nil, nil, fmt.Errorf("prepare browser helper: %w", err)
+	}
+	local.WritePaths = append(append([]string{}, iso.WritePaths...), canonicalPath(tmp))
+	var cmd *exec.Cmd
+	var backendCleanup func()
+	if runtime.GOOS == "darwin" {
+		cmd, backendCleanup, err = local.executeIsolatedMacOS(ctx, command, args)
+	} else {
+		cmd, backendCleanup, err = local.executeIsolatedLinux(ctx, command, args)
+	}
+	cleanup := func() {
+		if backendCleanup != nil {
+			backendCleanup()
+		}
+		releaseScratch()
+	}
+	if err != nil {
+		cleanup()
+		return nil, nil, err
+	}
+	for _, key := range []string{"TMPDIR", "TMP", "TEMP"} {
+		filtered := cmd.Env[:0]
+		for _, value := range cmd.Env {
+			if !strings.HasPrefix(value, key+"=") {
+				filtered = append(filtered, value)
+			}
+		}
+		cmd.Env = append(filtered, key+"="+tmp)
+	}
+	pythonPath := tmp
+	filtered := cmd.Env[:0]
+	for _, value := range cmd.Env {
+		if strings.HasPrefix(value, "PYTHONPATH=") {
+			pythonPath += string(os.PathListSeparator) + strings.TrimPrefix(value, "PYTHONPATH=")
+		} else {
+			filtered = append(filtered, value)
+		}
+	}
+	cmd.Env = append(filtered, "PYTHONPATH="+pythonPath)
+	return cmd, cleanup, nil
 }
 
 // executeIsolatedLinux uses unshare for filesystem isolation on Linux

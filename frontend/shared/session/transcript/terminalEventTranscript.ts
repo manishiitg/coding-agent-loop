@@ -1164,16 +1164,24 @@ function recoveredCodingToolArgs(events: PollingEvent[]): Map<string, string> {
 
     for (const message of messages) {
       if (!message || typeof message !== 'object') continue
-      const parts = (message as Record<string, unknown>).Parts
+      const messageRecord = message as Record<string, unknown>
+      const parts = messageRecord.Parts ?? messageRecord.parts
       if (!Array.isArray(parts)) continue
       for (const part of parts) {
         if (!part || typeof part !== 'object') continue
         const record = part as Record<string, unknown>
-        const call = record.FunctionCall
+        const call = record.FunctionCall ?? record.functionCall ?? record.function_call
         if (!call || typeof call !== 'object') continue
-        const callID = textField(record.ID)
-        const args = textField((call as Record<string, unknown>).Arguments)
-        if (callID && args) recovered.set(callID, args)
+        const callID = textField(record.ID) || textField(record.id) || textField(record.tool_call_id)
+        const callRecord = call as Record<string, unknown>
+        const args = stringifyToolCallValue(callRecord.Arguments ?? callRecord.arguments ?? callRecord.args)
+        if (callID && args) {
+          // Cursor has emitted a compound id containing its orchestration id
+          // and provider fc_* id on separate lines. Index both aliases so a
+          // retained lifecycle event can recover its authoritative arguments.
+          recovered.set(callID, args)
+          for (const alias of callID.split(/\s+/).filter(Boolean)) recovered.set(alias, args)
+        }
       }
     }
   }

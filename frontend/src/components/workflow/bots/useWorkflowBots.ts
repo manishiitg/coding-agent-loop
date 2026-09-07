@@ -109,13 +109,10 @@ export function useWorkflowBots(workspacePath: string | null) {
   // not adopted connections, and the card then simply says so.
   const [gmailConnections, setGmailConnections] = useState<GmailConnection[]>([])
   const [gmailConnectionsBusy, setGmailConnectionsBusy] = useState<string | null>(null)
-  const [gmailNewConnectionName, setGmailNewConnectionName] = useState('')
-  // Optional: adopt a gws config directory that is ALREADY authenticated on the
-  // host, instead of signing in through the browser.
-  const [gmailNewConnectionDir, setGmailNewConnectionDir] = useState('')
   // Named OAuth clients (the Google Cloud app a connection authorizes
-  // under). Every new connection must name one, so this list backs the
-  // "Add account" form's client selector.
+  // under). Registering one also creates its first sending account
+  // (createGmailOAuthClient) — a second mailbox reusing the same client is
+  // added from that client's own row, scoped there, not from global state.
   const [gmailOAuthClients, setGmailOAuthClients] = useState<GmailOAuthClient[]>([])
   const [gmailOAuthClientsBusy, setGmailOAuthClientsBusy] = useState(false)
   const [gmailOAuthClientError, setGmailOAuthClientError] = useState<string | null>(null)
@@ -125,7 +122,6 @@ export function useWorkflowBots(workspacePath: string | null) {
   // in terms of. The email itself is not verified until sign-in; this is a
   // naming hint, not a claim about which account will actually authorize.
   const [gmailNewClientEmail, setGmailNewClientEmail] = useState('')
-  const [gmailSelectedClientName, setGmailSelectedClientName] = useState('')
   // Set while a Google sign-in is in flight, so the row can say it is waiting.
   const [gmailAuthPending, setGmailAuthPending] = useState<string | null>(null)
   // The authorize URL handed to the browser, kept so the UI can offer it as
@@ -208,18 +204,15 @@ export function useWorkflowBots(workspacePath: string | null) {
   const loadGmailOAuthClients = useCallback(async () => {
     try {
       const data = await agentApi.listGmailOAuthClients()
-      const clients = data.clients || []
-      setGmailOAuthClients(clients)
-      // A single registered client is the overwhelmingly common case (one
-      // Google Cloud project); pick it by default so "Add account" is a
-      // single click rather than an extra dropdown interaction. Never
-      // overrides a choice the operator already made.
-      setGmailSelectedClientName(current => current || (clients.length === 1 ? clients[0].name : current))
+      setGmailOAuthClients(data.clients || [])
     } catch {
       setGmailOAuthClients([])
     }
   }, [])
 
+  // Registers the OAuth client AND creates its sending account in one step —
+  // the operator already typed the email once, so a separate "Add account"
+  // form asking for a name and a client to pick would just be retyping it.
   const createGmailOAuthClient = useCallback(async (email: string, clientSecretJson: unknown) => {
     const trimmedEmail = email.trim()
     // Backend name pattern is lowercase letters/digits/hyphens only (it
@@ -231,12 +224,9 @@ export function useWorkflowBots(workspacePath: string | null) {
       setGmailOAuthClientsBusy(true)
       setGmailOAuthClientError(null)
       const client = await agentApi.createGmailOAuthClient(name, clientSecretJson)
-      await loadGmailOAuthClients()
-      setGmailSelectedClientName(client.name)
+      await agentApi.createGmailConnection({ display_name: trimmedEmail, client_name: client.name })
+      await Promise.all([loadGmailOAuthClients(), loadGmailConnections()])
       setGmailNewClientEmail('')
-      // Carries the typed email into "Add account" so it isn't retyped —
-      // never overrides a name the operator already started typing there.
-      setGmailNewConnectionName(current => current || trimmedEmail)
       return true
     } catch (error) {
       setGmailOAuthClientError(error instanceof Error ? error.message : 'Failed to register the OAuth client')
@@ -244,7 +234,7 @@ export function useWorkflowBots(workspacePath: string | null) {
     } finally {
       setGmailOAuthClientsBusy(false)
     }
-  }, [loadGmailOAuthClients])
+  }, [loadGmailOAuthClients, loadGmailConnections])
 
   const deleteGmailOAuthClient = useCallback(async (name: string) => {
     try {
@@ -252,9 +242,6 @@ export function useWorkflowBots(workspacePath: string | null) {
       setGmailOAuthClientError(null)
       await agentApi.deleteGmailOAuthClient(name)
       await loadGmailOAuthClients()
-      // Deselect it from the "Add account" form if it was chosen — the list
-      // reload above already dropped it from the dropdown's options.
-      setGmailSelectedClientName(current => (current === name ? '' : current))
     } catch (error) {
       setGmailOAuthClientError(error instanceof Error ? error.message : 'Failed to remove the OAuth client')
     } finally {
@@ -778,13 +765,10 @@ export function useWorkflowBots(workspacePath: string | null) {
     gmailBlockedDefaults, gmailDefaultIsBlocked, gmailTestPassed, gmailCanEnable, gmailHasChanges, loadGmail, saveGmail, testGmail,
     // gmail senders (multi-account)
     gmailConnections, gmailConnectionsBusy, gmailAuthPending, gmailAuthUrl,
-    gmailNewConnectionName, setGmailNewConnectionName,
-    gmailNewConnectionDir, setGmailNewConnectionDir,
     loadGmailConnections, runGmailConnectionAction, connectGmailAccount,
     // gmail OAuth clients (named Google Cloud apps connections authorize under)
     gmailOAuthClients, gmailOAuthClientsBusy, gmailOAuthClientError,
     gmailNewClientEmail, setGmailNewClientEmail,
-    gmailSelectedClientName, setGmailSelectedClientName,
     loadGmailOAuthClients, createGmailOAuthClient, deleteGmailOAuthClient,
   }
 }

@@ -15,7 +15,7 @@ type GmailNotificationsBots = Pick<WorkflowBots,
   | 'gmailOpen' | 'setGmailOpen' | 'gmailConfig' | 'setGmailConfig' | 'gmailBlockedText' | 'setGmailBlockedText'
   | 'gmailLoading' | 'gmailChecking' | 'gmailSaving' | 'gmailTesting' | 'gmailError' | 'gmailSuccess' | 'gmailTestResult'
   | 'gmailBlockedDefaults' | 'gmailDefaultIsBlocked' | 'gmailCanEnable' | 'gmailHasChanges' | 'loadGmail' | 'saveGmail' | 'testGmail'
-  | 'gmailConnections' | 'gmailConnectionsBusy' | 'gmailAuthPending'
+  | 'gmailConnections' | 'gmailConnectionsBusy' | 'gmailAuthPending' | 'gmailAuthUrl'
   | 'gmailNewConnectionName' | 'setGmailNewConnectionName'
   | 'gmailNewConnectionDir' | 'setGmailNewConnectionDir'
   | 'runGmailConnectionAction' | 'connectGmailAccount'
@@ -25,13 +25,52 @@ type GmailNotificationsBots = Pick<WorkflowBots,
   | 'createGmailOAuthClient' | 'deleteGmailOAuthClient'
 >
 
+// Shown while a sign-in is in flight, so the link can be pasted into a
+// different Chrome profile than the one the auto-opened tab landed in —
+// copying the address bar out of that tab does not work (see gmailAuthUrl's
+// comment in useWorkflowBots.ts for why).
+function SignInLinkBox({ url }: { url: string }) {
+  const [copyState, setCopyState] = useState<'idle' | 'copied' | 'failed'>('idle')
+
+  const handleCopy = async () => {
+    try {
+      await navigator.clipboard.writeText(url)
+      setCopyState('copied')
+    } catch {
+      setCopyState('failed')
+    }
+    window.setTimeout(() => setCopyState('idle'), 2000)
+  }
+
+  return (
+    <div className="mt-2 rounded-md border border-border bg-muted/40 p-2">
+      <p className="text-xs text-muted-foreground">
+        A tab opened in your default Chrome profile. If this mailbox lives in a different profile,
+        open that profile and paste this link there — copying the address bar out of the tab that
+        opened will not work, since Google ties it to the profile it started in.
+      </p>
+      <div className="mt-1.5 flex items-center gap-2">
+        <code className="flex-1 truncate rounded bg-background px-2 py-1 font-mono text-[11px] text-muted-foreground">
+          {url}
+        </code>
+        <button
+          onClick={handleCopy}
+          className="shrink-0 rounded border border-border px-2 py-1 text-xs text-muted-foreground hover:text-foreground"
+        >
+          {copyState === 'copied' ? 'Copied!' : copyState === 'failed' ? 'Copy failed' : 'Copy link'}
+        </button>
+      </div>
+    </div>
+  )
+}
+
 export function GmailNotifications({ bots }: { bots: GmailNotificationsBots }) {
   const {
     readOnly,
     gmailOpen, setGmailOpen, gmailConfig, setGmailConfig, gmailBlockedText, setGmailBlockedText,
     gmailLoading, gmailChecking, gmailSaving, gmailTesting, gmailError, gmailSuccess, gmailTestResult,
     gmailBlockedDefaults, gmailDefaultIsBlocked, gmailCanEnable, gmailHasChanges, loadGmail, saveGmail, testGmail,
-    gmailConnections, gmailConnectionsBusy, gmailAuthPending,
+    gmailConnections, gmailConnectionsBusy, gmailAuthPending, gmailAuthUrl,
     gmailNewConnectionName, setGmailNewConnectionName,
     gmailNewConnectionDir, setGmailNewConnectionDir,
     runGmailConnectionAction, connectGmailAccount,
@@ -278,6 +317,10 @@ export function GmailNotifications({ bots }: { bots: GmailNotificationsBots }) {
                             Remove
                           </button>
                         </div>
+
+                        {gmailAuthPending === conn.id && gmailAuthUrl && (
+                          <SignInLinkBox url={gmailAuthUrl} />
+                        )}
                       </li>
                     ))}
                   </ul>

@@ -170,6 +170,14 @@ export function GmailSetupGuide() {
                 on its row. Repeat steps 2&ndash;7 only if you want a mailbox on a <em>separate</em> Google Cloud
                 project — otherwise every further mailbox reuses the same registered client.
               </p>
+              <Gotcha>
+                The tab opens in whichever Chrome profile is frontmost. If the mailbox belongs to a different
+                profile, open that profile first and use <strong>Copy link</strong> on the row to paste the sign-in
+                link into it. Do not copy the URL out of the address bar of the tab that opened — by then Chrome has
+                followed Google&rsquo;s redirects, and that URL carries a token tied to the profile it started in.
+                Pasting it elsewhere fails with a bare{' '}
+                <code>400. That&rsquo;s an error. The server cannot process the request because it is malformed.</code>
+              </Gotcha>
             </Step>
           </ol>
 

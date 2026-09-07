@@ -478,17 +478,30 @@ func resolveProductProjectBindingWithStore(
 // a distinct, server-internal path for the scheduler alone, not a relaxation
 // of that check.
 func resolveIsolatedScheduleBinding(ctx context.Context, userID string, profile agentprofiles.Profile) (productConversationBinding, error) {
+	return resolveIsolatedProductBinding(ctx, userID, profile, "pulse", profile.Name+" (check-in)")
+}
+
+// resolveIsolatedProductBinding gives a singleton profile a further
+// conversation of its own under a server-chosen key — a schedule's, or a
+// second phone's — on the same workspace, apart from the profile's main
+// conversation. Server-internal: the client-facing binding keeps rejecting
+// keys for singleton profiles.
+func resolveIsolatedProductBinding(ctx context.Context, userID string, profile agentprofiles.Profile, key, title string) (productConversationBinding, error) {
 	if mode := strings.ToLower(strings.TrimSpace(profile.Runtime.Conversation.Mode)); mode != agentprofiles.ConversationModeSingleton {
-		return productConversationBinding{}, fmt.Errorf("isolated schedules are only supported for singleton-conversation profiles, got %q", mode)
+		return productConversationBinding{}, fmt.Errorf("isolated conversations are only supported for singleton-conversation profiles, got %q", mode)
+	}
+	key = strings.TrimSpace(key)
+	if key == "" || key == "main" || !productConversationKeyPattern.MatchString(key) {
+		return productConversationBinding{}, fmt.Errorf("invalid isolated conversation key %q", key)
 	}
 	workspacePath, err := cleanAgentProfileWorkspace(profile.Runtime.Workspace.Root, userID)
 	if err != nil {
 		return productConversationBinding{}, fmt.Errorf("invalid product workspace root: %w", err)
 	}
 	return productConversationBinding{
-		ConversationKey: "pulse",
+		ConversationKey: key,
 		WorkspacePath:   workspacePath,
-		Title:           profile.Name + " (check-in)",
+		Title:           firstNonEmptyTrimmed(title, profile.Name),
 	}, nil
 }
 

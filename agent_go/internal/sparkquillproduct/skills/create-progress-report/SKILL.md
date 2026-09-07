@@ -14,11 +14,15 @@ appended to; the "as of" date goes inside the content. Style per
 1. **Gather real evidence — the substance, not just filenames.**
    - `materials/` — every subject and topic the family has uploaded, with each
      file's `.meta.json` (subject, topic, type, summary).
-   - Every activity's `activity.json` (what exists per topic), its own
-     `conversation.json` (what actually happened: which problems came up, whether
+   - Every activity's `activity.json` (what exists per topic), its conversation
+     with the tutor (what actually happened: which problems came up, whether
      she got them alone or with hints, how many attempts, what tripped her up,
      celebrate moments and why) and `attempts/*.json` (what she completed). This
-     is the real signal; a list of titles and dates is not enough.
+     is the real signal; a list of titles and dates is not enough. The
+     conversation is the platform's log, found from the activity's
+     `product.json` session id — `skills/recall-conversations/SKILL.md` says
+     exactly how to find and read it (older activities keep a
+     `legacy-conversation.json` inside the folder instead).
    - For "right now" and "what next" only recent work matters; skip `archive/`.
      For the cumulative facts read everything, `archive/` included, so lifetime
      totals never shrink because the parent put something away.

@@ -344,23 +344,29 @@ export function createPlatformApi(options: PlatformApiOptions): FamilyApi {
         paired?: boolean; connected?: boolean; own_jid?: string
         qr_available?: boolean; qr_expires_at?: string
         default_profile_id?: string
+        devices?: { slot: string; paired: boolean; connected: boolean; own_jid?: string }[]
+        next_device?: { slot?: string; qr_available?: boolean; qr_expires_at?: string }
       }>('GET', '/api/whatsapp/status')
       if (s.paired && s.default_profile_id !== PARENT_PROFILE) {
         await request('PUT', '/api/whatsapp/default-profile', { profile_id: PARENT_PROFILE, upload_folder: WHATSAPP_UPLOAD_FOLDER }).catch(() => undefined)
       }
+      // Every linked phone (one per parent); the QR is always for the phone
+      // a scan would pair next, so "add another parent" needs no extra step.
+      const devices = s.devices ?? (s.paired && s.own_jid ? [{ slot: '', paired: true, connected: s.connected === true, own_jid: s.own_jid }] : [])
+      const pairing = s.next_device ?? { qr_available: s.qr_available, qr_expires_at: s.qr_expires_at }
       return {
-        accounts: s.paired && s.own_jid ? [{ jid: s.own_jid.replace(/@.*$/, ''), connected: s.connected === true }] : [],
-        pairing: { qr_available: s.qr_available === true, qr_expires_at: s.qr_expires_at },
+        accounts: devices.filter((d) => d.paired && d.own_jid).map((d) => ({ jid: (d.own_jid ?? '').replace(/@.*$/, ''), connected: d.connected })),
+        pairing: { qr_available: pairing.qr_available === true, qr_expires_at: pairing.qr_expires_at },
       }
     },
     whatsappPairImageUrl: (nonce) => {
-      const params = new URLSearchParams({ profile_id: PARENT_PROFILE, upload_folder: WHATSAPP_UPLOAD_FOLDER, size: '384', n: String(nonce) })
+      const params = new URLSearchParams({ profile_id: PARENT_PROFILE, upload_folder: WHATSAPP_UPLOAD_FOLDER, device: 'next', size: '384', n: String(nonce) })
       // An <img> cannot send a header; the platform accepts the token as a
       // query parameter, the same way rawUrl does.
       params.set('token', store.get() ?? '')
       return `${base}/api/whatsapp/pair?${params.toString()}`
     },
-    whatsappUnpair: async () => { await request('DELETE', '/api/whatsapp/session') },
+    whatsappUnpair: async (jid) => { await request('DELETE', `/api/whatsapp/session?jid=${encodeURIComponent(jid)}`) },
     // Voice notes are transcribed by the platform's own STT for every
     // channel; there is no per-product toggle to offer.
     whatsappVoice: notYet('WhatsApp voice transcription') as (enabled: boolean) => Promise<WhatsAppVoiceTranscription>,

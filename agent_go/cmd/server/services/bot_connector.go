@@ -168,6 +168,10 @@ type BotIncomingMessage struct {
 	// tutor's per-activity conversation) instead of the pairing's default
 	// profile. Built into the turn by ProfileTurnFunc.
 	PresetProfile *ProfileRoute
+	// DeviceSlot names the connector device the message arrived on when the
+	// account has linked more than one (WhatsApp: another parent's phone);
+	// "" is the account's primary device.
+	DeviceSlot string
 }
 
 // ProfileRoute is a product profile a channel message was routed to by the

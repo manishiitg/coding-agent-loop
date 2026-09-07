@@ -92,14 +92,28 @@ type SandboxPolicy struct {
 	// write, replacing the platform default of skills/, subagents/ and
 	// Downloads/. Use an explicit empty list to grant nothing extra.
 	ReadOnly []string `json:"read_only,omitempty" yaml:"read_only,omitempty"`
+	// ChatHistory: "" keeps the platform default — the account's chat_history/
+	// (every conversation's log, this profile's and others') is readable and
+	// writable from the profile's shell, so an assistant can recall earlier
+	// chats. "none" hides it: a profile whose user must see one folder only
+	// (a child's activity) never reads the rest of the family's conversations.
+	// The server keeps writing the profile's own log either way.
+	ChatHistory string `json:"chat_history,omitempty" yaml:"chat_history,omitempty"`
 }
 
 const (
-	SandboxModeFolder     = "folder"
-	SandboxModeStrict     = "strict"
-	SandboxNetworkAllowed = "allowed"
-	SandboxNetworkOff     = "disabled"
+	SandboxModeFolder      = "folder"
+	SandboxModeStrict      = "strict"
+	SandboxNetworkAllowed  = "allowed"
+	SandboxNetworkOff      = "disabled"
+	SandboxChatHistoryNone = "none"
 )
+
+// ChatHistoryDenied reports whether the profile's shell must not see the
+// account's chat_history/ folder.
+func (p SandboxPolicy) ChatHistoryDenied() bool {
+	return strings.EqualFold(strings.TrimSpace(p.ChatHistory), SandboxChatHistoryNone)
+}
 
 // IsStrict reports whether the policy asks for the deny-by-default sandbox.
 func (p SandboxPolicy) IsStrict() bool {

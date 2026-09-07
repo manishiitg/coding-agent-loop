@@ -126,17 +126,36 @@ func whatsappServiceForRequest(r *http.Request, manager *services.WhatsAppServic
 // hasn't been called yet).
 func whatsappPairHandler(manager *services.WhatsAppServiceManager, defaults WhatsAppDefaultProfileResolver) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		svc, user, err := whatsappServiceForRequest(r, manager)
+		primary, user, err := whatsappServiceForRequest(r, manager)
 		if err != nil {
 			http.Error(w, "whatsapp service unavailable: "+err.Error(), http.StatusServiceUnavailable)
 			return
 		}
-		if err := svc.ClaimOwnership(user.UserID, user.Email, user.Username); err != nil {
-			http.Error(w, err.Error(), http.StatusConflict)
+		// device: "" the primary phone; "next" whichever phone a scan would
+		// pair now (the primary until paired, then a further one — a second
+		// parent's); a slot name for that device.
+		svc := primary
+		switch device := strings.TrimSpace(r.URL.Query().Get("device")); device {
+		case "", "primary":
+		case "next":
+			svc, _, err = manager.NextPairingDevice(r.Context(), user.UserID)
+		default:
+			svc, err = manager.ServiceForDevice(r.Context(), user.UserID, device)
+		}
+		if err != nil {
+			http.Error(w, "whatsapp device unavailable: "+err.Error(), http.StatusServiceUnavailable)
 			return
 		}
+		// Every phone of the account is owned by the account; the default
+		// profile lives on the primary, whichever phone is being paired.
+		for _, owned := range []*services.WhatsAppService{primary, svc} {
+			if err := owned.ClaimOwnership(user.UserID, user.Email, user.Username); err != nil {
+				http.Error(w, err.Error(), http.StatusConflict)
+				return
+			}
+		}
 		if profileID := strings.TrimSpace(r.URL.Query().Get("profile_id")); profileID != "" {
-			if !applyWhatsAppDefaultProfile(w, r, svc, user, defaults, profileID, r.URL.Query().Get("upload_folder")) {
+			if !applyWhatsAppDefaultProfile(w, r, primary, user, defaults, profileID, r.URL.Query().Get("upload_folder")) {
 				return
 			}
 		}
@@ -176,12 +195,27 @@ func whatsappPairHandler(manager *services.WhatsAppServiceManager, defaults What
 // twice in a row is safe.
 func whatsappUnpairHandler(manager *services.WhatsAppServiceManager) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		svc, _, err := whatsappServiceForRequest(r, manager)
+		if r.Method == http.MethodOptions {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		_, user, err := whatsappServiceForRequest(r, manager)
 		if err != nil {
 			http.Error(w, "whatsapp service unavailable: "+err.Error(), http.StatusServiceUnavailable)
 			return
 		}
-		if err := svc.Unpair(r.Context()); err != nil {
+		// Which phone: ?device=<slot>, ?jid=<number> (as the status lists
+		// them), or the primary when neither is given.
+		slot := strings.TrimSpace(r.URL.Query().Get("device"))
+		if jid := strings.TrimSpace(r.URL.Query().Get("jid")); jid != "" {
+			_, found, ok := manager.DeviceByJID(r.Context(), user.UserID, jid)
+			if !ok {
+				http.Error(w, "no linked phone with that number", http.StatusNotFound)
+				return
+			}
+			slot = found
+		}
+		if err := manager.UnpairDevice(r.Context(), user.UserID, slot); err != nil {
 			http.Error(w, "unpair failed: "+err.Error(), http.StatusInternalServerError)
 			return
 		}
@@ -246,7 +280,7 @@ func whatsappPutRoutingHandler(manager *services.WhatsAppServiceManager) http.Ha
 //	                when no QR is active)
 func whatsappStatusHandler(manager *services.WhatsAppServiceManager) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		svc, _, err := whatsappServiceForRequest(r, manager)
+		svc, user, err := whatsappServiceForRequest(r, manager)
 		if err != nil {
 			http.Error(w, "whatsapp service unavailable: "+err.Error(), http.StatusServiceUnavailable)
 			return
@@ -254,6 +288,27 @@ func whatsappStatusHandler(manager *services.WhatsAppServiceManager) http.Handle
 		if svc.IsEnabled() && !svc.IsPaired() {
 			if err := svc.EnsurePairingQR(context.Background()); err != nil {
 				log.Printf("[WHATSAPP] refresh pairing QR failed: %v", err)
+			}
+		}
+		// Every phone of the account, and the one a scan would pair next
+		// (kept warm so its QR is ready; see the pair endpoint's device=next).
+		var devices []services.WhatsAppDevice
+		nextDevice := map[string]interface{}{}
+		if listed, err := manager.Devices(r.Context(), user.UserID); err == nil {
+			devices = listed
+		}
+		if nextSvc, slot, err := manager.NextPairingDevice(r.Context(), user.UserID); err == nil {
+			if nextSvc.IsEnabled() && !nextSvc.IsPaired() {
+				if err := nextSvc.EnsurePairingQR(context.Background()); err != nil {
+					log.Printf("[WHATSAPP] refresh pairing QR for device %q failed: %v", slot, err)
+				}
+			}
+			nextDevice["slot"] = slot
+			if code, expires := nextSvc.GetQR(); code != "" && !expires.IsZero() {
+				nextDevice["qr_available"] = true
+				nextDevice["qr_expires_at"] = expires.UTC().Format(time.RFC3339)
+			} else {
+				nextDevice["qr_available"] = false
 			}
 		}
 		resp := map[string]interface{}{
@@ -286,6 +341,12 @@ func whatsappStatusHandler(manager *services.WhatsAppServiceManager) http.Handle
 			resp["owner_paired_at"] = owner.PairedAt.UTC().Format(time.RFC3339)
 			resp["default_profile_id"] = owner.DefaultProfileID
 			resp["default_upload_folder"] = owner.DefaultUploadFolder
+		}
+		if devices != nil {
+			resp["devices"] = devices
+		}
+		if len(nextDevice) > 0 {
+			resp["next_device"] = nextDevice
 		}
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(resp)

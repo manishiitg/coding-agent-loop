@@ -5135,11 +5135,12 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 					profileWrite := strings.TrimSuffix(profileRoot, "/") + "/"
 					sandbox := resolvedProfile.Definition.Runtime.Sandbox
 					profileReadOnly := agentProfileReadOnlyFolders(sandbox, workflowReadOnlyFolders)
-					workspaceExecutors = wrapExecutorsWithPlanFolderGuard(workspaceExecutors, profileRoot, profileReadOnly, perUserChatHistory)
+					chatHistoryGrants := agentProfileChatHistoryGrants(sandbox, perUserChatHistory)
+					workspaceExecutors = wrapExecutorsWithPlanFolderGuard(workspaceExecutors, profileRoot, profileReadOnly, chatHistoryGrants...)
 					workspace.SetSessionWorkingDir(sessionID, profileRoot)
 					workspace.SetSessionFolderGuard(sessionID,
-						append([]string{profileWrite, perUserChatHistory}, profileReadOnly...),
-						[]string{profileWrite, perUserChatHistory},
+						append(append([]string{profileWrite}, chatHistoryGrants...), profileReadOnly...),
+						append([]string{profileWrite}, chatHistoryGrants...),
 					)
 					if sandbox.IsStrict() {
 						// The profile asked for the deny-by-default shell: only the

@@ -34,6 +34,7 @@ profile:
     - guides
     - read-file
     - process-file
+    - recall-conversations
     - teach-coding
     - discover-something-new
     - create-progress-report
@@ -262,10 +263,13 @@ profiles:
         key_type: project
       sandbox:
         # Deny-by-default: the activity folder only, no network, no secrets
-        # in the environment: the child's shell boundary.
+        # in the environment: the child's shell boundary. The family's
+        # conversation logs (the parent's chats with Quill included) stay
+        # out of reach too.
         mode: strict
         network: disabled
         read_only: [Downloads]
+        chat_history: none
     built_in: true
 
 branding:

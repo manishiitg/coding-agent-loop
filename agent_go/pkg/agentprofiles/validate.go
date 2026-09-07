@@ -175,6 +175,11 @@ func validateRuntime(runtime RuntimePolicy) error {
 	if runtime.Sandbox.NetworkDisabled() && !runtime.Sandbox.IsStrict() {
 		return fmt.Errorf("runtime sandbox.network %q requires sandbox.mode %q", SandboxNetworkOff, SandboxModeStrict)
 	}
+	switch chatHistory := strings.ToLower(strings.TrimSpace(runtime.Sandbox.ChatHistory)); chatHistory {
+	case "", SandboxChatHistoryNone:
+	default:
+		return fmt.Errorf("invalid runtime sandbox.chat_history %q (want empty or %q)", runtime.Sandbox.ChatHistory, SandboxChatHistoryNone)
+	}
 	for _, folder := range runtime.Sandbox.ReadOnly {
 		clean := strings.TrimSpace(folder)
 		if clean == "" || strings.HasPrefix(clean, "/") || strings.Contains(clean, "..") {

@@ -1,0 +1,277 @@
+package services
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"os"
+	"path/filepath"
+	"regexp"
+	"sort"
+	"strings"
+	"time"
+
+	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/fsutil"
+)
+
+// Named OAuth client registry for Gmail connections.
+//
+// Historically every Gmail connection resolved its OAuth app credentials from
+// one shared file (~/.config/gws/client_secret.json) or one pair of env vars
+// (see gmailOAuthConfig's fallback in gmail_oauth.go). Because an OAuth
+// refresh token is bound to the client_id that issued it, replacing that
+// single file to onboard a new mailbox silently invalidated every other
+// connection's token on the box at once. This registry gives each OAuth app
+// registration its own required name and its own file, so a second upload
+// can never clobber the first without an explicit, deliberate replace.
+
+// GmailOAuthClient is one named Google Cloud OAuth app registration.
+type GmailOAuthClient struct {
+	// Name is the required, operator-chosen identifier. Never guessed or
+	// defaulted — the whole point is that the operator decides whether a new
+	// upload is a new client or an explicit replacement of an existing one.
+	Name string `json:"name"`
+	// ClientID is informational only, shown in the UI so an operator can tell
+	// clients apart without re-opening the file. Never the secret.
+	ClientID  string    `json:"client_id,omitempty"`
+	CreatedAt time.Time `json:"created_at,omitempty"`
+	UpdatedAt time.Time `json:"updated_at,omitempty"`
+}
+
+var gmailOAuthClientNamePattern = regexp.MustCompile(`^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$`)
+
+// ValidateGmailOAuthClientName reports whether name is an acceptable,
+// slug-safe client name (it becomes a directory name on disk).
+func ValidateGmailOAuthClientName(name string) error {
+	if !gmailOAuthClientNamePattern.MatchString(name) {
+		return fmt.Errorf("client name must be lowercase letters, numbers, and hyphens (not leading/trailing), e.g. %q", "primary")
+	}
+	return nil
+}
+
+// gmailOAuthClientsBaseDir is where named client registrations live, one
+// subdirectory per name — an env override, else a path under the workspace
+// config directory, mirroring gmailConnectionsBaseDir.
+func gmailOAuthClientsBaseDir() string {
+	if v := strings.TrimSpace(os.Getenv("GMAIL_OAUTH_CLIENTS_DIR")); v != "" {
+		return v
+	}
+	return filepath.Join(fsutil.WorkspaceDocsRoot(), "config", "gmail-oauth-clients")
+}
+
+func gmailOAuthClientDir(name string) string {
+	return filepath.Join(gmailOAuthClientsBaseDir(), name)
+}
+
+func gmailOAuthClientSecretPath(name string) string {
+	return filepath.Join(gmailOAuthClientDir(name), "client_secret.json")
+}
+
+func gmailOAuthClientMetaPath(name string) string {
+	return filepath.Join(gmailOAuthClientDir(name), "meta.json")
+}
+
+// parseGmailClientSecretJSON extracts the client id/secret from a Desktop-app
+// (or web) OAuth client JSON — the exact shape both gws and gog accept.
+func parseGmailClientSecretJSON(raw []byte) (clientID, clientSecret string, err error) {
+	var parsed map[string]struct {
+		ClientID     string `json:"client_id"`
+		ClientSecret string `json:"client_secret"`
+	}
+	if err := json.Unmarshal(raw, &parsed); err != nil {
+		return "", "", fmt.Errorf("parse client_secret.json: %w", err)
+	}
+	for _, key := range []string{"installed", "web"} {
+		if entry, ok := parsed[key]; ok {
+			if strings.TrimSpace(entry.ClientID) == "" || strings.TrimSpace(entry.ClientSecret) == "" {
+				return "", "", fmt.Errorf("client_secret.json's %q entry is missing client_id or client_secret", key)
+			}
+			return entry.ClientID, entry.ClientSecret, nil
+		}
+	}
+	return "", "", fmt.Errorf("client_secret.json has neither an \"installed\" nor a \"web\" client")
+}
+
+func loadGmailOAuthClientMeta(name string) (GmailOAuthClient, bool) {
+	raw, err := os.ReadFile(gmailOAuthClientMetaPath(name))
+	if err != nil {
+		return GmailOAuthClient{}, false
+	}
+	var client GmailOAuthClient
+	if err := json.Unmarshal(raw, &client); err != nil {
+		return GmailOAuthClient{}, false
+	}
+	return client, true
+}
+
+func saveGmailOAuthClientMeta(client GmailOAuthClient) error {
+	blob, err := json.MarshalIndent(client, "", "  ")
+	if err != nil {
+		return fmt.Errorf("gmail oauth client: marshal metadata: %w", err)
+	}
+	return os.WriteFile(gmailOAuthClientMetaPath(client.Name), blob, 0o600)
+}
+
+// CreateOAuthClient registers a new named OAuth client from an uploaded
+// Desktop-app client_secret.json. Refuses to overwrite an existing name
+// unless replace is true — this is the actual fix for the shared-file
+// overwrite bug: a second upload needs a new name, or an explicit,
+// deliberate replace with full knowledge that every connection currently
+// using that name will need to reconnect.
+func CreateOAuthClient(ctx context.Context, name string, secretJSON []byte, replace bool) (GmailOAuthClient, error) {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return GmailOAuthClient{}, fmt.Errorf("gmail oauth client: name is required")
+	}
+	if err := ValidateGmailOAuthClientName(name); err != nil {
+		return GmailOAuthClient{}, err
+	}
+	clientID, _, err := parseGmailClientSecretJSON(secretJSON)
+	if err != nil {
+		return GmailOAuthClient{}, err
+	}
+
+	existing, hadExisting := loadGmailOAuthClientMeta(name)
+	if hadExisting && !replace {
+		return GmailOAuthClient{}, fmt.Errorf(
+			"an OAuth client named %q already exists — choose a new name, or explicitly replace it (this invalidates every connection currently using it)",
+			name,
+		)
+	}
+
+	dir := gmailOAuthClientDir(name)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return GmailOAuthClient{}, fmt.Errorf("gmail oauth client: create directory: %w", err)
+	}
+	if err := os.WriteFile(gmailOAuthClientSecretPath(name), secretJSON, 0o600); err != nil {
+		return GmailOAuthClient{}, fmt.Errorf("gmail oauth client: write client_secret.json: %w", err)
+	}
+
+	now := time.Now().UTC()
+	client := GmailOAuthClient{
+		Name:      name,
+		ClientID:  clientID,
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+	if hadExisting {
+		client.CreatedAt = existing.CreatedAt
+	}
+	if err := saveGmailOAuthClientMeta(client); err != nil {
+		return GmailOAuthClient{}, err
+	}
+	_ = ctx // reserved for a future audit-log hook; unused today
+	return client, nil
+}
+
+// ListOAuthClients returns every registered named client, sorted by name.
+func ListOAuthClients() ([]GmailOAuthClient, error) {
+	base := gmailOAuthClientsBaseDir()
+	entries, err := os.ReadDir(base)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("gmail oauth clients: list %s: %w", base, err)
+	}
+	out := make([]GmailOAuthClient, 0, len(entries))
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		if client, ok := loadGmailOAuthClientMeta(e.Name()); ok {
+			out = append(out, client)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	return out, nil
+}
+
+// OAuthClientExists reports whether a named client is registered, without
+// reading its secret — used to validate a connection's client_name at
+// create/update time.
+func OAuthClientExists(name string) bool {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return false
+	}
+	_, err := os.Stat(gmailOAuthClientSecretPath(name))
+	return err == nil
+}
+
+// GetOAuthClientSecret returns the client id/secret for a named client, for
+// building an oauth2.Config. Errors if the name is unknown.
+func GetOAuthClientSecret(name string) (clientID, clientSecret string, err error) {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return "", "", fmt.Errorf("gmail oauth client: name is required")
+	}
+	raw, err := os.ReadFile(gmailOAuthClientSecretPath(name))
+	if err != nil {
+		return "", "", fmt.Errorf("gmail oauth client %q not found: %w", name, err)
+	}
+	return parseGmailClientSecretJSON(raw)
+}
+
+// DeleteOAuthClient removes a named client's stored credentials. Does not
+// touch any connection that references it — a deleted client leaves those
+// connections needing reconnect against a different (or recreated) client,
+// same as any other broken credential.
+func DeleteOAuthClient(name string) error {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return fmt.Errorf("gmail oauth client: name is required")
+	}
+	dir := gmailOAuthClientDir(name)
+	if _, err := os.Stat(dir); err != nil {
+		if os.IsNotExist(err) {
+			return fmt.Errorf("gmail oauth client %q not found", name)
+		}
+		return err
+	}
+	return os.RemoveAll(dir)
+}
+
+// ImportLegacyOAuthClient reads the box's existing shared client credentials
+// (the pre-registry ~/.config/gws/client_secret.json, or
+// GOOGLE_WORKSPACE_CLI_CLIENT_ID/_SECRET / GMAIL_CLIENT_SECRET_FILE) and
+// registers them as a named client, then backfills ClientName on every
+// existing connection that does not already have one set.
+//
+// A one-time, operator-triggered migration: naming the client is the
+// operator's decision, so this never runs automatically on server start.
+func (g *GmailService) ImportLegacyOAuthClient(ctx context.Context, name string) (GmailOAuthClient, int, error) {
+	clientID, clientSecret, err := readGmailClientSecretFile()
+	if err != nil {
+		return GmailOAuthClient{}, 0, fmt.Errorf("no legacy client credentials found to import: %w", err)
+	}
+	secretJSON, err := json.Marshal(map[string]any{
+		"installed": map[string]string{
+			"client_id":     clientID,
+			"client_secret": clientSecret,
+		},
+	})
+	if err != nil {
+		return GmailOAuthClient{}, 0, fmt.Errorf("gmail oauth client: encode legacy credentials: %w", err)
+	}
+	client, err := CreateOAuthClient(ctx, name, secretJSON, false)
+	if err != nil {
+		return GmailOAuthClient{}, 0, err
+	}
+
+	cfg := g.GetConfig()
+	backfilled := 0
+	for i := range cfg.Connections {
+		if strings.TrimSpace(cfg.Connections[i].ClientName) == "" {
+			cfg.Connections[i].ClientName = client.Name
+			cfg.Connections[i].UpdatedAt = time.Now().UTC()
+			backfilled++
+		}
+	}
+	if backfilled > 0 {
+		if err := g.SaveConfig(ctx, cfg); err != nil {
+			return client, 0, fmt.Errorf("registered client %q but failed to backfill connections: %w", client.Name, err)
+		}
+	}
+	return client, backfilled, nil
+}

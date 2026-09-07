@@ -259,6 +259,10 @@ func agentPublicPath(path string) bool {
 		"/api/auth/login", "/api/auth/register", "/api/auth/mode", "/api/auth/start", "/api/auth/callback",
 		"/api/auth/desktop/exchange", "/api/auth/providers", "/api/health", "/api/capabilities",
 		"/api/oauth/callback",
+		// Google navigates the browser here after Gmail consent. It cannot carry
+		// the AgentWorks JWT, and the inner API validates the random, single-use
+		// OAuth state before it writes any credential.
+		"/api/human-feedback/gmail/auth/callback",
 	} {
 		if path == p {
 			return true

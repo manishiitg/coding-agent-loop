@@ -96,6 +96,15 @@ func TestUnauthenticatedAPIRequestReturnsExplicitLoginSignal(t *testing.T) {
 	}
 }
 
+func TestGmailOAuthCallbackIsPublicAtGateway(t *testing.T) {
+	if !agentPublicPath("/api/human-feedback/gmail/auth/callback") {
+		t.Fatal("Gmail OAuth callback must bypass the gateway JWT check: Google cannot send an AgentWorks bearer token")
+	}
+	if agentPublicPath("/api/human-feedback/gmail/connections/gmail_001/auth/start") {
+		t.Fatal("only the OAuth callback may be public; Gmail connection management must require authentication")
+	}
+}
+
 func TestUnauthenticatedAPIRequestIgnoresExternalReferer(t *testing.T) {
 	gateway := &gateway{secret: []byte("test-secret-that-is-long-enough")}
 	req := httptest.NewRequest(http.MethodGet, "/api/health", nil)

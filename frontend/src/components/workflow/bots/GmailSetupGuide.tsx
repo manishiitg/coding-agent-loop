@@ -119,6 +119,15 @@ export function GmailSetupGuide() {
                 sign in — anyone else gets a generic &ldquo;Access blocked&rdquo; with no explanation. Add every mailbox you plan
                 to connect, or publish the app so the list no longer applies.
               </Gotcha>
+              <Gotcha>
+                Requesting a scope in code is not enough — Google only shows a scope on the consent screen (and
+                only grants it) if it is also added under <strong>Data access</strong> (older Console: still the{' '}
+                <strong>Scopes</strong> step) on this same OAuth consent screen. A project reused from something
+                else, or one where this step was skipped, silently drops <code>gmail.send</code>/
+                <code>gmail.readonly</code> — sign-in appears to succeed, showing only &ldquo;Email address&rdquo;
+                on the consent screen, and every send afterward fails with an insufficient-scope error. Add both
+                scopes there explicitly before connecting a mailbox.
+              </Gotcha>
             </Step>
 
             <Step n={5} title="Create the OAuth client">

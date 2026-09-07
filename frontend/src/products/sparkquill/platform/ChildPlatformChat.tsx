@@ -24,7 +24,7 @@ import { toProductCommandDefinitions } from './productCommands'
 import { FAMILY_WORKSPACE, familyRuntime, type ProductPresentation } from './PlatformChat'
 
 export const CHILD_PROFILE_ID = 'sparkquill-child'
-const CHILD_PROFILE_VERSION = 1
+export const CHILD_PROFILE_VERSION = 1
 
 type ProfileDeclaration = { tools?: { presentation?: { kind?: string }; interaction?: { kind?: string; render?: string } }[] }
 

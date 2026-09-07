@@ -78,6 +78,14 @@ export type Activity = {
   persona?: string
   created_at?: string
   attempts?: ActivityItem[]
+  // session_id (product.json) is the child's conversation with the tutor in
+  // this activity — the parent can view it read-only from the chats rail.
+  session_id?: string
+  // legacy_conversation is set only for an activity migrated from the old
+  // standalone app (legacy-conversation.json): its session_id is a fresh id
+  // the migration invented with no chat_history behind it, so this frozen
+  // transcript is the only real content — read it directly instead.
+  legacy_conversation?: { messages?: StoredMsg[] } | null
 }
 
 /** One entry of the composer's quick menu: the label shown, the message sent as if typed. */

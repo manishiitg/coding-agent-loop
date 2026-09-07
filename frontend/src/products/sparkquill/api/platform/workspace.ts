@@ -2,7 +2,7 @@
 // platform's workspace API through the agent server's proxy (/api/wp).
 // Paths on this side are family-root-relative ("reports/progress.html");
 // the proxy stamps the user, and "Chats/…" resolves to that user's tree.
-import type { Activity, TreeNode } from '../../stores/types'
+import type { Activity, StoredMsg, TreeNode } from '../../stores/types'
 import type { FileContent, TreeResponse, UploadResult } from '../familyApi'
 
 export const FAMILY_ROOT = 'Chats/SparkQuill'
@@ -113,7 +113,18 @@ export class FamilyWorkspace {
 
   async activity(dir: string): Promise<Activity | null> {
     const rel = familyRelative(dir).replace(/\/+$/, '')
-    const m = await this.readJSON<{ title?: string; subject?: string; topic?: string; items?: string[]; goal?: string; persona?: string; created_at?: string }>(`${rel}/activity.json`)
+    const [m, product, legacy] = await Promise.all([
+      this.readJSON<{ title?: string; subject?: string; topic?: string; items?: string[]; goal?: string; persona?: string; created_at?: string }>(`${rel}/activity.json`),
+      // product.json makes the folder a keyed conversation (product_conversation_registry.go) — its
+      // session_id is the child's conversation with the tutor here, for the parent's read-only view.
+      this.readJSON<{ session_id?: string }>(`${rel}/product.json`),
+      // Present only for an activity migrated from the old standalone app —
+      // its product.json session_id is freshly invented by the migration
+      // with nothing behind it in chat_history; this frozen transcript is
+      // the real content. Absent (readJSON resolves null on 404) for any
+      // activity created on the platform.
+      this.readJSON<{ messages?: StoredMsg[] }>(`${rel}/legacy-conversation.json`),
+    ])
     if (!m) return null
     return {
       dir: rel,
@@ -125,6 +136,8 @@ export class FamilyWorkspace {
       persona: m.persona,
       created_at: m.created_at,
       attempts: [],
+      session_id: product?.session_id,
+      legacy_conversation: legacy,
     }
   }
 

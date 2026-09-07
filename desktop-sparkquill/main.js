@@ -242,6 +242,11 @@ function createWindow() {
   // upgraded app would otherwise keep serving the previous build's JS.
   mainWindow.loadURL(`http://127.0.0.1:${agentPort}/?v=${app.getVersion()}`)
   attachExternalNavigation(mainWindow.webContents, shell)
+  if (process.env.SPARKQUILL_LOG_CONSOLE) {
+    mainWindow.webContents.on('console-message', (_e, level, message, line, sourceId) => {
+      console.log(`[renderer] ${message} (${sourceId}:${line})`)
+    })
+  }
   // A renderer crash should recover, not strand the user on a blank window.
   mainWindow.webContents.on('render-process-gone', () => mainWindow?.webContents.reload())
   // Closing hides rather than quits: the servers keep running, so check-ins

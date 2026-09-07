@@ -57,7 +57,8 @@ import {
   type Activity,
   type VoiceStatus,
 } from './stores'
-import PlatformChat, { PARENT_PROFILE_ID, applyFamilyEngineToOpenTabs, startNewParentConversation, switchParentConversation, type ProductInteraction, type ProductPresentation } from './platform/PlatformChat'
+import PlatformChat, { FAMILY_WORKSPACE, PARENT_PROFILE_ID, applyFamilyEngineToOpenTabs, startNewParentConversation, switchParentConversation, type ProductInteraction, type ProductPresentation } from './platform/PlatformChat'
+import { CHILD_PROFILE_ID, CHILD_PROFILE_VERSION } from './platform/ChildPlatformChat'
 import type { ParentChat } from './api/familyApi'
 import { loadAgentProfileCapabilityEnabled } from '../../utils/agentProfileCapabilities'
 import PulseHistoryViewer from './platform/PulseHistoryViewer'
@@ -1081,6 +1082,13 @@ export default function LearningApp() {
   const [pulseRunning, setPulseRunning] = useState(false)
   const [pulseRunError, setPulseRunError] = useState<string | null>(null)
   const [pulseHistoryOpen, setPulseHistoryOpen] = useState(false)
+  // Read-only view of one activity's conversation with the tutor, opened
+  // from the rail. Only for a genuinely new activity, whose session lives in
+  // chat_history. One migrated from the old standalone app has a
+  // legacy-conversation.json instead — its product.json session_id is one
+  // the migration invented, with nothing in chat_history behind it, so it
+  // stays a static (non-clickable) row rather than opening to "0 events".
+  const [viewingActivityChat, setViewingActivityChat] = useState<{ sessionId: string; title: string; dir: string } | null>(null)
   const [clearingPulseHistory, setClearingPulseHistory] = useState(false)
   const [clearPulseHistoryError, setClearPulseHistoryError] = useState<string | null>(null)
   const clearPulseHistory = () => {
@@ -2166,12 +2174,33 @@ export default function LearningApp() {
                 ) : activities.length === 0 ? (
                   <p className="fl-rail-empty">No activity chats yet.</p>
                 ) : (
-                  activities.map((act) => (
+                  activities.map((act) => {
+                    // A migrated activity's product.json session_id was
+                    // invented by the migration with nothing behind it in
+                    // chat_history — legacy_conversation being set marks
+                    // that, so its row stays static rather than opening to
+                    // an empty "0 events" view.
+                    const onOpen = act.session_id && !act.legacy_conversation
+                      ? () => setViewingActivityChat({ sessionId: act.session_id!, title: act.title, dir: `${FAMILY_WORKSPACE}/${act.dir}` })
+                      : null
+                    return (
                     <div key={act.dir} className="fl-rail-row">
-                      <div className="fl-rail-item is-static">
-                        <span className="fl-rail-item-title">{act.title}</span>
-                        <span className="fl-rail-item-when">{dateTimeLabel(act.created_at) || 'Undated'}</span>
-                      </div>
+                      {onOpen ? (
+                        <button
+                          type="button"
+                          className="fl-rail-item"
+                          onClick={onOpen}
+                          title={`See ${childName || 'her'} and the tutor's conversation`}
+                        >
+                          <span className="fl-rail-item-title">{act.title}</span>
+                          <span className="fl-rail-item-when">{dateTimeLabel(act.created_at) || 'Undated'}</span>
+                        </button>
+                      ) : (
+                        <div className="fl-rail-item is-static" title={act.legacy_conversation ? 'This activity predates the conversation viewer' : undefined}>
+                          <span className="fl-rail-item-title">{act.title}</span>
+                          <span className="fl-rail-item-when">{dateTimeLabel(act.created_at) || 'Undated'}</span>
+                        </div>
+                      )}
                       <button
                         type="button"
                         className="fl-rail-delete"
@@ -2183,7 +2212,8 @@ export default function LearningApp() {
                         <Trash2 size={14} />
                       </button>
                     </div>
-                  ))
+                    )
+                  })
                 )}
               </div>
             </div>
@@ -3077,6 +3107,17 @@ export default function LearningApp() {
 
           {pulseHistoryOpen && pulseConfig?.last_session_id && (
             <PulseHistoryViewer sessionId={pulseConfig.last_session_id} onClose={() => setPulseHistoryOpen(false)} />
+          )}
+
+          {viewingActivityChat && (
+            <PulseHistoryViewer
+              sessionId={viewingActivityChat.sessionId}
+              title={viewingActivityChat.title}
+              agentProfileId={CHILD_PROFILE_ID}
+              agentProfileVersion={CHILD_PROFILE_VERSION}
+              workspacePath={viewingActivityChat.dir}
+              onClose={() => setViewingActivityChat(null)}
+            />
           )}
 
           {settingsOpen && (

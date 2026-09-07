@@ -123,9 +123,10 @@ profile:
       warm_session: preferred
       browser: preferred
       voice: preferred
-      # The parent can start a fresh chat with Quill from the toolbar; the
-      # previous one stays in history.
-      new_conversation: preferred
+      # The chats rail's own "New chat" button drives this (it dispatches the
+      # same agentworks:product-new-conversation event); disabled so the
+      # generic composer control doesn't duplicate it.
+      new_conversation: disabled
       # The parent's own WhatsApp ("message yourself") reaches Quill directly:
       # pairing from SparkQuill makes this profile the account's default
       # WhatsApp destination, so no @slug prefix is ever needed. The

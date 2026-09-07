@@ -223,6 +223,22 @@ export function useWorkflowBots(workspacePath: string | null) {
     }
   }, [loadGmailOAuthClients])
 
+  const deleteGmailOAuthClient = useCallback(async (name: string) => {
+    try {
+      setGmailOAuthClientsBusy(true)
+      setGmailOAuthClientError(null)
+      await agentApi.deleteGmailOAuthClient(name)
+      await loadGmailOAuthClients()
+      // Deselect it from the "Add account" form if it was chosen — the list
+      // reload above already dropped it from the dropdown's options.
+      setGmailSelectedClientName(current => (current === name ? '' : current))
+    } catch (error) {
+      setGmailOAuthClientError(error instanceof Error ? error.message : 'Failed to remove the OAuth client')
+    } finally {
+      setGmailOAuthClientsBusy(false)
+    }
+  }, [loadGmailOAuthClients])
+
   // Every mutation re-reads the list rather than patching local state, so the
   // server stays the single source of truth for status and which is default.
   const runGmailConnectionAction = useCallback(
@@ -735,7 +751,7 @@ export function useWorkflowBots(workspacePath: string | null) {
     gmailOAuthClients, gmailOAuthClientsBusy, gmailOAuthClientError,
     gmailNewClientName, setGmailNewClientName,
     gmailSelectedClientName, setGmailSelectedClientName,
-    loadGmailOAuthClients, createGmailOAuthClient,
+    loadGmailOAuthClients, createGmailOAuthClient, deleteGmailOAuthClient,
   }
 }
 

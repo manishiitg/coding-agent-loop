@@ -3,6 +3,7 @@ package services
 import (
 	"context"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"sort"
@@ -735,6 +736,62 @@ func (g *GmailService) MarkConnectionConnected(ctx context.Context, id, email st
 		return GmailConnection{}, err
 	}
 	return updated, nil
+}
+
+// syncConnectionScopes persists a freshly observed granted-scope list onto a
+// connection, so the "Sending accounts" UI reflects a scope change made
+// outside this app — an operator running `gws auth login -s ...` by hand, or
+// an agent extending access via `gog auth add` — without requiring any
+// explicit save action. Called after every fresh status computation
+// (authStatusBlocking, authStatusCachedFor's background refresh), so it
+// stays current on ordinary polling.
+//
+// Best-effort and silent on failure: a save error here must not turn an
+// otherwise-successful status check into a visible error, and a no-op write
+// (scopes unchanged) is skipped entirely to avoid bumping UpdatedAt on every
+// poll.
+func (g *GmailService) syncConnectionScopes(ctx context.Context, id string, scopes []string) {
+	id = strings.TrimSpace(id)
+	if id == "" || len(scopes) == 0 {
+		return
+	}
+	cfg := g.GetConfig()
+	idx := -1
+	for i, c := range cfg.Connections {
+		if c.ID == id {
+			idx = i
+			break
+		}
+	}
+	if idx < 0 {
+		return
+	}
+
+	fresh := append([]string(nil), scopes...)
+	sort.Strings(fresh)
+	current := append([]string(nil), cfg.Connections[idx].Scopes...)
+	sort.Strings(current)
+	if stringSlicesEqual(fresh, current) {
+		return
+	}
+
+	cfg.Connections[idx].Scopes = fresh
+	cfg.Connections[idx].UpdatedAt = time.Now().UTC()
+	if err := g.SaveConfig(ctx, cfg); err != nil {
+		log.Printf("[GMAIL] failed to sync scopes for connection %s: %v", id, err)
+	}
+}
+
+func stringSlicesEqual(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }
 
 // shouldAutoEnableGmail decides whether an authenticated gws is reason enough

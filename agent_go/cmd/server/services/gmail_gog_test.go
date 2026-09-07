@@ -2,11 +2,28 @@ package services
 
 import (
 	"context"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 )
+
+// stubGoogleTokenInfo points googleTokenGrantedScopes at a local server for
+// the duration of the test, instead of making a real call to Google — a live
+// network dependency in this suite would be slow and break offline/CI runs.
+func stubGoogleTokenInfo(t *testing.T, scope string) {
+	t.Helper()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprintf(w, `{"scope": %q}`, scope)
+	}))
+	t.Cleanup(server.Close)
+	original := googleTokenInfoURL
+	googleTokenInfoURL = server.URL
+	t.Cleanup(func() { googleTokenInfoURL = original })
+}
 
 func TestGogArgsForAuthPrefersAccessToken(t *testing.T) {
 	cfg := &GmailConfig{Token: "tok-123", gogAccountEmail: "ignored@example.com", gogClientName: "ignored"}
@@ -78,6 +95,7 @@ func readArgvLines(t *testing.T, argvFile string) []string {
 }
 
 func TestComputeAuthStatusGogUsesAccessTokenAndReportsEmail(t *testing.T) {
+	stubGoogleTokenInfo(t, "https://www.googleapis.com/auth/gmail.send https://www.googleapis.com/auth/gmail.readonly")
 	argvFile := filepath.Join(t.TempDir(), "argv.log")
 	gog := fakeGog(t, `{"emailAddress": "sender@example.com"}`, argvFile)
 
@@ -97,6 +115,48 @@ func TestComputeAuthStatusGogUsesAccessTokenAndReportsEmail(t *testing.T) {
 	}
 	if !strings.Contains(argv, "gmail.users.getProfile") {
 		t.Errorf("argv %q did not call gmail.users.getProfile", argv)
+	}
+}
+
+// The whole point of the tokeninfo check: report what was actually granted,
+// not what we last requested — a project's consent screen can silently drop
+// a requested scope (the "College Khabar" gotcha), and a stale hardcoded
+// Scopes value would hide that from the UI.
+func TestComputeAuthStatusGogReportsActuallyGrantedScopesNotTheRequestedConstant(t *testing.T) {
+	// Deliberately narrower than gmailOAuthScopes (which also includes
+	// userinfo.email) — proves this isn't just echoing the constant back.
+	stubGoogleTokenInfo(t, "https://www.googleapis.com/auth/gmail.readonly")
+	argvFile := filepath.Join(t.TempDir(), "argv.log")
+	gog := fakeGog(t, `{"emailAddress": "sender@example.com"}`, argvFile)
+
+	cfg := &GmailConfig{Token: "tok-abc"}
+	st := (&GmailService{}).computeAuthStatusGog(context.Background(), gog, cfg)
+
+	if len(st.Scopes) != 1 || st.Scopes[0] != "https://www.googleapis.com/auth/gmail.readonly" {
+		t.Fatalf("Scopes = %v, want exactly the narrower tokeninfo-reported set", st.Scopes)
+	}
+}
+
+func TestComputeAuthStatusGogFallsBackToRequestedScopesWhenTokenInfoFails(t *testing.T) {
+	// No stub installed: googleTokenInfoURL points at the real Google host,
+	// which this test never lets it reach — a short client timeout combined
+	// with an unroutable address makes the call fail fast instead of relying
+	// on network absence, so the fallback path is exercised deterministically.
+	original := googleTokenInfoURL
+	googleTokenInfoURL = "http://127.0.0.1:1" // nothing listens here
+	t.Cleanup(func() { googleTokenInfoURL = original })
+
+	argvFile := filepath.Join(t.TempDir(), "argv.log")
+	gog := fakeGog(t, `{"emailAddress": "sender@example.com"}`, argvFile)
+
+	cfg := &GmailConfig{Token: "tok-abc"}
+	st := (&GmailService{}).computeAuthStatusGog(context.Background(), gog, cfg)
+
+	if !st.Authenticated {
+		t.Fatalf("expected authentication to still succeed despite the scope check failing, got %+v", st)
+	}
+	if len(st.Scopes) == 0 {
+		t.Fatal("expected a fallback scope list, got none")
 	}
 }
 

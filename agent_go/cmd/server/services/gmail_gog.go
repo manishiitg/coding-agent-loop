@@ -6,10 +6,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"mime"
+	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 // gog (github.com/openclaw/gogcli) backend, selected via GmailConfig.UseGogBackend.
@@ -105,9 +108,70 @@ func (g *GmailService) computeAuthStatusGog(ctx context.Context, gogPath string,
 	}
 	st.Authenticated = true
 	st.HasGmailScope = true
-	st.Scopes = append([]string(nil), gmailOAuthScopes...)
 	st.Email = email
+
+	// Report what was actually granted, not what we last asked for — an
+	// operator (or the agent, via `gog auth add`) may have widened access
+	// since this connection was created, and the UI's Scopes display is
+	// only honest if it reflects that.
+	//
+	// Only possible for the access-token path: with an --account/--client
+	// connection there is no raw token in hand to introspect here (gog
+	// manages refresh internally and exposes no documented "print token"
+	// command), so this falls back to the base requested set, which may
+	// under-report a scope granted directly through gog outside this app.
+	if cfg != nil && strings.TrimSpace(cfg.Token) != "" {
+		if scopes, scopeErr := googleTokenGrantedScopes(ctx, cfg.Token); scopeErr == nil && len(scopes) > 0 {
+			st.Scopes = scopes
+		} else {
+			st.Scopes = append([]string(nil), gmailOAuthScopes...)
+		}
+	} else {
+		st.Scopes = append([]string(nil), gmailOAuthScopes...)
+	}
 	return st
+}
+
+// googleTokenInfoURL is a var, not a constant, so tests can point it at a
+// local httptest server instead of making a real network call to Google for
+// every status check exercised in the suite.
+var googleTokenInfoURL = "https://oauth2.googleapis.com/tokeninfo"
+
+// googleTokenGrantedScopes asks Google's tokeninfo endpoint what scopes an
+// access token actually carries — the only authoritative source, since a
+// project's OAuth consent screen can silently drop a requested-but-
+// unregistered scope (see the setup guide's Data Access gotcha).
+// googleTokenInfoClient bounds the tokeninfo call so a network partition
+// cannot hang a status check indefinitely — computeAuthStatusGog runs on
+// both a request-serving path and a detached background-refresh goroutine,
+// and neither should be able to stall on this.
+var googleTokenInfoClient = &http.Client{Timeout: 5 * time.Second}
+
+func googleTokenGrantedScopes(ctx context.Context, accessToken string) ([]string, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet,
+		googleTokenInfoURL+"?access_token="+url.QueryEscape(accessToken), nil)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := googleTokenInfoClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("tokeninfo: unexpected status %d", resp.StatusCode)
+	}
+	var body struct {
+		Scope string `json:"scope"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		return nil, err
+	}
+	scopes := strings.Fields(body.Scope)
+	if len(scopes) == 0 {
+		return nil, fmt.Errorf("tokeninfo: empty scope")
+	}
+	return scopes, nil
 }
 
 // gogFetchGmailProfileEmail calls gmail.users.getProfile through gog's
@@ -189,4 +253,50 @@ func (g *GmailService) sendRawGog(ctx context.Context, gogPath string, cfg *Gmai
 		return "", fmt.Errorf("gog gmail send --raw-file failed: %w: %s", err, detail)
 	}
 	return parseGwsMessageID(stdout.Bytes()), nil
+}
+
+// ImportRefreshTokenIntoGog registers a refresh token gog can use directly
+// (via --account/--client) under the given named client, so an agent's own
+// `gog <service> ...` shell commands work independently of this server's
+// per-call --access-token path — the whole point of teaching the agent to
+// drive gog itself for services beyond Gmail send.
+//
+// Called from the OAuth callback right after this server stores its own
+// copy of the credential (gmail_oauth.go). Best-effort and non-fatal: gog
+// not being installed, or any other failure here, must never break a sign-in
+// that already succeeded and is already usable through the normal send path.
+func ImportRefreshTokenIntoGog(ctx context.Context, email, clientName, refreshToken string) error {
+	email = strings.TrimSpace(email)
+	clientName = strings.TrimSpace(clientName)
+	if email == "" || clientName == "" || strings.TrimSpace(refreshToken) == "" {
+		return fmt.Errorf("gog import: email, client name, and refresh token are all required")
+	}
+	const gogPath = "gog"
+	if _, err := exec.LookPath(gogPath); err != nil {
+		return fmt.Errorf("gog binary not found on PATH: %w", err)
+	}
+
+	tmpDir, err := os.MkdirTemp("", "gmail-gog-import-*")
+	if err != nil {
+		return fmt.Errorf("create temp dir: %w", err)
+	}
+	defer os.RemoveAll(tmpDir)
+	refreshPath := filepath.Join(tmpDir, "refresh_token")
+	if err := os.WriteFile(refreshPath, []byte(refreshToken), 0o600); err != nil {
+		return fmt.Errorf("write refresh token: %w", err)
+	}
+
+	args := gogBaseArgs(nil)
+	args = append(args, "auth", "import",
+		"--email", email,
+		"--client", clientName,
+		"--refresh-token-file", refreshPath,
+		"--no-input")
+	cmd := exec.CommandContext(ctx, gogPath, args...)
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("gog auth import: %w: %s", err, strings.TrimSpace(stderr.String()))
+	}
+	return nil
 }

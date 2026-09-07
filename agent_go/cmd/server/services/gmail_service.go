@@ -384,6 +384,9 @@ func (g *GmailService) authStatusBlocking(ctx context.Context, key string, cfg *
 	}
 	entry.status, entry.cachedAt = &st, time.Now()
 	g.mu.Unlock()
+	if key != "" {
+		g.syncConnectionScopes(ctx, key, st.Scopes)
+	}
 	return st
 }
 
@@ -1244,6 +1247,9 @@ func (g *GmailService) authStatusCachedFor(key string, cfg *GmailConfig) GmailAu
 					e.status, e.cachedAt, e.refreshing = &st, time.Now(), false
 				}
 				g.mu.Unlock()
+				if key != "" {
+					g.syncConnectionScopes(ctx, key, st.Scopes)
+				}
 			}()
 		}
 		g.mu.Unlock()

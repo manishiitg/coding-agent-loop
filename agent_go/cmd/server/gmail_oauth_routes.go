@@ -124,8 +124,22 @@ func gmailOAuthCallbackHandler(api *StreamingAPI) http.HandlerFunc {
 		if st, found := svc.AuthStatusForConnectionBlocking(r.Context(), connectionID); found {
 			email = st.Email
 		}
-		if _, updateErr := svc.MarkConnectionConnected(r.Context(), connectionID, email); updateErr != nil {
+		updated, updateErr := svc.MarkConnectionConnected(r.Context(), connectionID, email)
+		if updateErr != nil {
 			log.Printf("[GMAIL] connected %s but could not update the connection: %v", connectionID, updateErr)
+		}
+
+		// Best-effort: also register this refresh token with gog directly
+		// under (email, client_name), so an agent's own `gog <service>...`
+		// shell commands can use this connection independently of this
+		// server's per-call --access-token path. Never blocks or fails the
+		// sign-in the user is watching — that already succeeded above.
+		if email != "" && updateErr == nil && strings.TrimSpace(updated.ClientName) != "" {
+			if refreshToken, ok := services.StoredRefreshToken(connectionID); ok {
+				if err := services.ImportRefreshTokenIntoGog(r.Context(), email, updated.ClientName, refreshToken); err != nil {
+					log.Printf("[GMAIL] connected %s but could not register it with gog for direct agent use: %v", connectionID, err)
+				}
+			}
 		}
 
 		log.Printf("[GMAIL] Connection %s authorized as %s", connectionID, email)

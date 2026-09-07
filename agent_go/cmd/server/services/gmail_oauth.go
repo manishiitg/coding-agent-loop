@@ -188,6 +188,17 @@ func HasServerManagedOAuth(connectionID string) bool {
 	return ok
 }
 
+// StoredRefreshToken returns this connection's refresh token, for the
+// best-effort ImportRefreshTokenIntoGog call the OAuth callback makes right
+// after storing it — the only other reader of the on-disk token file.
+func StoredRefreshToken(connectionID string) (string, bool) {
+	token, ok := loadGmailOAuthToken(strings.TrimSpace(connectionID))
+	if !ok || token == nil || strings.TrimSpace(token.RefreshToken) == "" {
+		return "", false
+	}
+	return token.RefreshToken, true
+}
+
 // gmailAccessTokenCache avoids a token endpoint round trip on every send. The
 // oauth2 library refreshes automatically, but only if we reuse the TokenSource.
 var (

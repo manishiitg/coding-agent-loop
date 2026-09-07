@@ -479,6 +479,11 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
   const agentProfileWorkspace = activeTab?.metadata?.agentProfileWorkspace
   const agentProfileId = activeTab?.metadata?.agentProfileId
   const agentProfileVersion = activeTab?.metadata?.agentProfileVersion
+  // SparkQuill's own composer groups controls the opposite way from every
+  // other product: attachment/commands/model on the left, mic+send on the
+  // right. Scoped to its two profiles so AgentWorks and Video Studio keep
+  // the default arrangement.
+  const sparkQuillComposerLayout = agentProfileId === 'sparkquill' || agentProfileId === 'sparkquill-child'
   // Mic control. On a product surface it is gated per-profile
   // (agentprofiles.RuntimeCapabilities.Voice) rather than hardcoded to any one
   // product — see agentProfileCapabilities.ts. AgentWorks' own composer has no
@@ -3213,6 +3218,76 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     )
   }
 
+  // Extracted so SparkQuill can place them on the opposite side of the
+  // composer from every other product (sparkQuillComposerLayout above) —
+  // one JSX definition each, rendered in whichever group applies.
+  const micEl = voiceCapabilityEnabled && (
+    <MicButton
+      ref={micRef}
+      profileId={isProductSurface ? (agentProfileId ?? '') : ''}
+      onText={handleVoiceText}
+      onStateChange={handleMicStateChange}
+      bannerHost={micBannerHost}
+      shortcutEnabled={!scopedTabId}
+      disabled={isSummarizing}
+    />
+  )
+  const sparkleEl = (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <Button
+          type="button"
+          variant="outline"
+          size="icon"
+          disabled={isSummarizing}
+          onClick={openCommandMenu}
+          className="h-7 w-7 p-0"
+          data-testid="chat-command-menu-button"
+          aria-label="Browse commands"
+        >
+          <Wand2 className="w-3.5 h-3.5" />
+        </Button>
+      </TooltipTrigger>
+      <TooltipContent>
+        <p>Browse commands</p>
+      </TooltipContent>
+    </Tooltip>
+  )
+  const attachmentEl = (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <Button
+          type="button"
+          variant="outline"
+          size="icon"
+          disabled={isSummarizing || isUploadingFiles}
+          onClick={() => {
+            const inputEl = fileUploadInputRef.current
+            if (!inputEl) {
+              console.error('[CHAT_UPLOAD] upload input ref not available')
+              addToast('Upload input not ready. Please retry.', 'error')
+              return
+            }
+            console.info('[CHAT_UPLOAD] opening file picker')
+            inputEl.click()
+          }}
+          className="h-7 w-7 p-0"
+          data-testid="chat-upload-button"
+          aria-label="Attach files"
+        >
+          {isUploadingFiles ? (
+            <Loader2 className="w-3.5 h-3.5 animate-spin" />
+          ) : (
+            <Paperclip className="w-3.5 h-3.5" />
+          )}
+        </Button>
+      </TooltipTrigger>
+      <TooltipContent>
+        <p>{isUploadingFiles ? 'Uploading files...' : isProductSurface ? 'Attach files to this project' : `Upload file(s) to ${uploadTargetFolder}`}</p>
+      </TooltipContent>
+    </Tooltip>
+  )
+
   return (
     <TooltipProvider>
       <div className={isProductSurface ? 'border-t border-border bg-background py-1.5 shadow-[0_-8px_24px_rgba(15,23,42,0.08)]' : 'space-y-1'} data-product-chat-input={isProductSurface || undefined}>
@@ -3561,17 +3636,13 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
                 {/* Server and LLM Selection — hidden in workflow phase chat (servers come from preset) */}
                 {(
                   <div data-tour="chat-input-tools" data-testid="tour-chat-input-tools" className="flex items-center gap-2">
-                      {voiceCapabilityEnabled && (
-                        <MicButton
-                          ref={micRef}
-                          profileId={isProductSurface ? (agentProfileId ?? '') : ''}
-                          onText={handleVoiceText}
-                          onStateChange={handleMicStateChange}
-                          bannerHost={micBannerHost}
-                          shortcutEnabled={!scopedTabId}
-                          disabled={isSummarizing}
-                        />
+                      {sparkQuillComposerLayout && (
+                        <>
+                          {attachmentEl}
+                          {sparkleEl}
+                        </>
                       )}
+                      {!sparkQuillComposerLayout && micEl}
                       {isProductSurface && newConversationEnabled && (
                         <NewChatControl
                           engines={engineGroups.map((g) => ({ id: g.option.id, label: g.option.label || g.option.id }))}
@@ -3964,57 +4035,9 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
                           </TooltipContent>
                         </Tooltip>
                       )}
-                      <Tooltip>
-                        <TooltipTrigger asChild>
-                          <Button
-                            type="button"
-                            variant="outline"
-                            size="icon"
-                            disabled={isSummarizing}
-                            onClick={openCommandMenu}
-                            className="h-7 w-7 p-0"
-                            data-testid="chat-command-menu-button"
-                            aria-label="Browse commands"
-                          >
-                            <Wand2 className="w-3.5 h-3.5" />
-                          </Button>
-                        </TooltipTrigger>
-                        <TooltipContent>
-                          <p>Browse commands</p>
-                        </TooltipContent>
-                      </Tooltip>
-                      <Tooltip>
-                        <TooltipTrigger asChild>
-                          <Button
-                            type="button"
-                            variant="outline"
-                            size="icon"
-                            disabled={isSummarizing || isUploadingFiles}
-                            onClick={() => {
-                              const inputEl = fileUploadInputRef.current
-                              if (!inputEl) {
-                                console.error('[CHAT_UPLOAD] upload input ref not available')
-                                addToast('Upload input not ready. Please retry.', 'error')
-                                return
-                              }
-                              console.info('[CHAT_UPLOAD] opening file picker')
-                              inputEl.click()
-                            }}
-                            className="h-7 w-7 p-0"
-                            data-testid="chat-upload-button"
-                            aria-label="Attach files"
-                          >
-                            {isUploadingFiles ? (
-                              <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                            ) : (
-                              <Paperclip className="w-3.5 h-3.5" />
-                            )}
-                          </Button>
-                        </TooltipTrigger>
-                        <TooltipContent>
-                          <p>{isUploadingFiles ? 'Uploading files...' : isProductSurface ? 'Attach files to this project' : `Upload file(s) to ${uploadTargetFolder}`}</p>
-                        </TooltipContent>
-                      </Tooltip>
+                      {!sparkQuillComposerLayout && sparkleEl}
+                      {!sparkQuillComposerLayout && attachmentEl}
+                      {sparkQuillComposerLayout && micEl}
                       {/* Sending during a running turn is supported: routeSubmit
                           queues the message and the live-delivery effect steers
                           it into the turn. Hiding the button hid that. */}

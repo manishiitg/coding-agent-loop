@@ -22,6 +22,7 @@ import type { QuickCommand } from '../stores/types'
 import { api } from '../api'
 import { toProductCommandDefinitions } from './productCommands'
 import { FAMILY_WORKSPACE, familyRuntime, type ProductPresentation } from './PlatformChat'
+import { readReminderSoundPref, playReminderChime } from '../notifySound'
 
 export const CHILD_PROFILE_ID = 'sparkquill-child'
 export const CHILD_PROFILE_VERSION = 1
@@ -93,6 +94,15 @@ function ChildConversation({ events, isStreaming, isRestoring, streamingText, st
     activeSubmit = onSubmitQuery ?? null
     return () => { if (activeSubmit === onSubmitQuery) activeSubmit = null }
   }, [onSubmitQuery])
+  // Chime when Quill's reply finishes — a true-to-false isStreaming edge,
+  // never while history is still restoring (that toggles isStreaming for
+  // reasons that are not a fresh reply landing).
+  const wasStreamingRef = useRef(false)
+  useEffect(() => {
+    if (isRestoring) { wasStreamingRef.current = isStreaming; return }
+    if (wasStreamingRef.current && !isStreaming && readReminderSoundPref()) playReminderChime()
+    wasStreamingRef.current = isStreaming
+  }, [isStreaming, isRestoring])
   const kinds = [renders.celebration, renders.scene].filter((k): k is string => Boolean(k))
   return (
     <div className="fl-platform-transcript">

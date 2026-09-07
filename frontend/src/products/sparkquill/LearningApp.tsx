@@ -66,6 +66,7 @@ import type { ProductNotification } from '../../platform/notifications/useProduc
 import ChildPlatformChat, { forgetChildChat, submitToChildChat, type ChildKickoff } from './platform/ChildPlatformChat'
 import { api } from './api'
 import { VoiceSettings } from './voice/VoiceSettings'
+import { readReminderSoundPref, persistReminderSoundPref } from './notifySound'
 import { ChatMarkdown as SharedChatMarkdown } from '../../../shared/chat/ChatRenderer'
 
 // The child/file viewer iframe is deliberately sandbox="allow-scripts" with
@@ -1039,6 +1040,15 @@ export default function LearningApp() {
   // machine's hardware (see /api/voice/status), so the UI never has to guess
   // what an Intel vs Apple Silicon Mac can actually run.
   const [voiceStatus, setVoiceStatus] = useState<VoiceStatus | null>(null)
+  // Off by default; a parent opts in here because Quill can take anywhere
+  // from a few seconds to several minutes to reply, and a child who's
+  // wandered off in the meantime has no other way to know a reply landed.
+  // Per-device (localStorage), not a family policy.
+  const [childReminderSound, setChildReminderSound] = useState(() => readReminderSoundPref())
+  const toggleChildReminderSound = (on: boolean) => {
+    setChildReminderSound(on)
+    persistReminderSoundPref(on)
+  }
   const [goalPopoverOpen, setGoalPopoverOpen] = useState(false)
   // Secrets (credentials the parent saves for Quill's tools, e.g. a school
   // portal login) — settings-form only, never through chat, so a value typed
@@ -3214,6 +3224,21 @@ export default function LearningApp() {
 
 
                   <VoiceSettings status={voiceStatus} childName={childName} onRefresh={refreshVoiceStatus} />
+
+                  <p className="fl-drawer-label" style={{ marginTop: '20px' }}>Reply sound</p>
+                  <div className="fl-wa-voice-row">
+                    <div>
+                      <p className="fl-note">Play a short chime on {childName || 'your child'}’s device when Quill’s reply is ready — Quill can take anywhere from a few seconds to several minutes, and this catches a reply that arrived while they’ve wandered off.</p>
+                    </div>
+                    <label className="fl-toggle">
+                      <input
+                        type="checkbox"
+                        checked={childReminderSound}
+                        onChange={(e) => toggleChildReminderSound(e.target.checked)}
+                      />
+                      <span className="fl-toggle-slider" />
+                    </label>
+                  </div>
 
                   <p className="fl-drawer-label" style={{ marginTop: '20px' }}>Secrets</p>
                   <p className="fl-note">Credentials Quill's tools can use — e.g. a school portal login. Saved here, never through chat, so a value you type below never appears in any saved conversation. Quill only ever sees the name, never the value.</p>

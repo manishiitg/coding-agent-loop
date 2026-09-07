@@ -141,9 +141,24 @@ func resolveProfileRuntimeModel(runtime agentprofiles.RuntimePolicy, requestedPr
 	requestedProvider = strings.TrimSpace(requestedProvider)
 	requestedModelID = strings.TrimSpace(requestedModelID)
 	for _, option := range runtime.ProviderOptions {
-		if strings.EqualFold(requestedProvider, strings.TrimSpace(option.Provider)) &&
-			strings.EqualFold(requestedModelID, strings.TrimSpace(option.ModelID)) {
+		if !strings.EqualFold(requestedProvider, strings.TrimSpace(option.Provider)) {
+			continue
+		}
+		if strings.EqualFold(requestedModelID, strings.TrimSpace(option.ModelID)) {
 			return strings.TrimSpace(option.Provider), strings.TrimSpace(option.ModelID)
+		}
+		// option.ModelID is only this engine's own default model — Models is
+		// the full curated list a turn may request within it (ProviderOption's
+		// own doc comment: "narrows ... the server's accepted model_id to
+		// exactly these ids"). Missing this fell through to the profile's
+		// unrelated default provider option below, discarding both the
+		// requested provider AND model. Caught live: switching SparkQuill's
+		// composer from Luna to Terra (both gpt-5.6, both codex-cli) silently
+		// ran the next turn on claude-code with no prior conversation context.
+		for _, id := range option.Models {
+			if strings.EqualFold(requestedModelID, strings.TrimSpace(id)) {
+				return strings.TrimSpace(option.Provider), requestedModelID
+			}
 		}
 	}
 	return provider, modelID

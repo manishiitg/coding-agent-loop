@@ -447,6 +447,39 @@ func TestResolveProfileRuntimeModelUsesOnlyYAMLProviderOptions(t *testing.T) {
 	}
 }
 
+// A provider option's ModelID is only its own default model — Models is the
+// full curated list a turn may request within it (matches SparkQuill's real
+// product.yaml: one codex-cli option with model_id gpt-6-astra and
+// models: [gpt-6-astra, gpt-5.6-sol, gpt-5.6-terra, gpt-5.6-luna]). Caught
+// live: switching the composer's model from Luna to Terra (both codex-cli)
+// only ever matched against ModelID, missed every Models entry, and fell
+// through to the profile's unrelated default provider option (claude-code)
+// — losing both the requested provider and the conversation's context.
+func TestResolveProfileRuntimeModelAcceptsCuratedModelsListEntries(t *testing.T) {
+	runtime := agentprofiles.RuntimePolicy{
+		Provider: "claude-code", ModelID: "claude-fable-5-1",
+		ProviderOptions: []agentprofiles.ProviderOption{
+			{ID: "claude-code", Label: "Claude Code", Provider: "claude-code", ModelID: "claude-fable-5-1", Default: true},
+			{
+				ID: "codex-cli", Label: "Codex", Provider: "codex-cli", ModelID: "gpt-6-astra",
+				Models: []string{"gpt-6-astra", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"},
+			},
+		},
+	}
+	for _, modelID := range []string{"gpt-5.6-luna", "gpt-5.6-terra", "gpt-5.6-sol", "gpt-6-astra"} {
+		t.Run(modelID, func(t *testing.T) {
+			if provider, model := resolveProfileRuntimeModel(runtime, "codex-cli", modelID); provider != "codex-cli" || model != modelID {
+				t.Fatalf("resolveProfileRuntimeModel(codex-cli, %q) = (%q, %q), want (codex-cli, %q)", modelID, provider, model, modelID)
+			}
+		})
+	}
+	// A model genuinely outside the curated list still falls back to the
+	// profile's default rather than being accepted.
+	if provider, model := resolveProfileRuntimeModel(runtime, "codex-cli", "gpt-7-made-up"); provider != "claude-code" || model != "claude-fable-5-1" {
+		t.Fatalf("uncurated model escaped the Models allow-list: provider=%q model=%q", provider, model)
+	}
+}
+
 // A profile turn's selected_folder becomes the agent's read/write root, and
 // agentProfileRuntimeWorkspace only re-scopes paths beginning with "Chats" --
 // anything else is passed through verbatim. Blocking "../" traversal alone

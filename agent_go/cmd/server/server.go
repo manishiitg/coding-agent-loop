@@ -652,16 +652,16 @@ func spaStaticFileHandler(root string) http.Handler {
 
 // QueryRequest represents an agent query request
 type QueryRequest struct {
-	Query           string                  `json:"query"`
-	Message         string                  `json:"message,omitempty"`           // Alias for Query (used by frontend)
-	SessionTitle    string                  `json:"session_title,omitempty"`     // Short UI label for backend-started sessions; never use the full prompt here.
-	ParentSessionID string                  `json:"parent_session_id,omitempty"` // Internal child-session ownership used by refresh recovery.
-	SessionKind     string                  `json:"session_kind,omitempty"`      // Stable runtime kind such as pulse_reviewer; never infer this from titles.
-	Servers         []string                `json:"servers,omitempty"`
-	EnabledServers  []string                `json:"enabled_servers,omitempty"`
-	SelectedTools   []string                `json:"selected_tools,omitempty"` // Array of "server:tool" strings
-	Provider        string                  `json:"provider,omitempty"`
-	ModelID         string                  `json:"model_id,omitempty"`
+	Query           string   `json:"query"`
+	Message         string   `json:"message,omitempty"`           // Alias for Query (used by frontend)
+	SessionTitle    string   `json:"session_title,omitempty"`     // Short UI label for backend-started sessions; never use the full prompt here.
+	ParentSessionID string   `json:"parent_session_id,omitempty"` // Internal child-session ownership used by refresh recovery.
+	SessionKind     string   `json:"session_kind,omitempty"`      // Stable runtime kind such as pulse_reviewer; never infer this from titles.
+	Servers         []string `json:"servers,omitempty"`
+	EnabledServers  []string `json:"enabled_servers,omitempty"`
+	SelectedTools   []string `json:"selected_tools,omitempty"` // Array of "server:tool" strings
+	Provider        string   `json:"provider,omitempty"`
+	ModelID         string   `json:"model_id,omitempty"`
 	// ReasoningEffort overrides the "reasoning_effort" key of an agent
 	// profile's provider_options[].Options for this turn only; every other
 	// key stays as declared. Ignored outside the profile query path.
@@ -9561,6 +9561,7 @@ func (api *StreamingAPI) buildWorkshopConfig(
 		}
 	}
 	cfg.SchedulerFuncs = api.buildSchedulerCallbacks()
+	cfg.ScheduleCollisionCheck = api.scheduleCollisionCheck(cfg.WorkspacePath, sessionID, req.TriggeredBy)
 	cfg.SkillFuncs = api.buildSkillCallbacks()
 	cfg.LLMToolsFuncs = api.buildLLMToolsCallbacks()
 	cfg.ListAvailableSecrets = func(ctx context.Context) ([]string, error) {

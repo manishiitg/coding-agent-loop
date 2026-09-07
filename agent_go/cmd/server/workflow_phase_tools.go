@@ -50,6 +50,9 @@ func (api *StreamingAPI) installWorkflowPhaseTools(
 	phaseMoveFile func(ctx context.Context, src, dst string) error,
 	syntheticReq QueryRequest,
 ) error {
+	if check := api.scheduleCollisionCheck(phaseWorkspacePath, sessionID, syntheticReq.TriggeredBy); check != nil {
+		definitionAgent = scheduleGuardRegistrar{definitionAgent, todo_creation_human.GuardScheduleTools(definitionAgent, check)}
+	}
 	// PLAT-262: phaseTemplateVars["WorkshopMode"] is the single gate for
 	// mutating tools, the prompt, and skills below — not WorkflowAccessLevel
 	// directly. The caller (server.go) already force-set it to "run" for a

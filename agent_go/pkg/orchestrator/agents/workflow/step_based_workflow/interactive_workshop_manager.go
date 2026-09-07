@@ -1647,6 +1647,9 @@ func registerWorkshopAgentTools(iwm *InteractiveWorkshopManager, mcpAgent Defini
 // the child task's instruction remain the authority for what a particular
 // child may safely change.
 func registerFullWorkshopAgentTools(iwm *InteractiveWorkshopManager, mcpAgent DefinitionRegistrar, workspacePath string, logger loggerv2.Logger, agentName string) error {
+	if iwm.workshopConfig != nil {
+		mcpAgent = guardScheduleRegistrar(mcpAgent, iwm.workshopConfig.ScheduleCollisionCheck)
+	}
 	if iwm.isRunModeRestricted() {
 		logger.Info("PLAT-262: skipping plan modification tools for background agent (read-only access)")
 	} else if err := RegisterPlanModificationTools(

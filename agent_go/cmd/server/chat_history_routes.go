@@ -725,6 +725,35 @@ func marshalChatHistoryProjectionOrOriginal(doc map[string]json.RawMessage, orig
 	return out
 }
 
+// botProgressiveChatHistoryReader is services.ChatHistoryReaderFunc: every
+// completed assistant ("ai" role) turn's text from a session's durable
+// conversation_history, in order — read straight from the workspace file
+// each poll, so it reflects the turn's progress exactly as far as it has
+// actually gotten, no cache to go stale. workspacePath is left empty: a bot
+// session is never workflow-scoped, so the per-user lookup by session id
+// alone is enough (see ReadChatHistoryConversation).
+func botProgressiveChatHistoryReader(_ context.Context, userID, sessionID string) ([]string, error) {
+	raw, err := ReadChatHistoryConversation(userID, sessionID, "")
+	if err != nil {
+		return nil, err
+	}
+	var doc struct {
+		ConversationHistory []json.RawMessage `json:"conversation_history"`
+	}
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		return nil, err
+	}
+	texts := make([]string, 0, len(doc.ConversationHistory))
+	for _, entry := range doc.ConversationHistory {
+		role, text := chatHistoryMessageRoleAndText(entry)
+		if role != "ai" || text == "" {
+			continue
+		}
+		texts = append(texts, text)
+	}
+	return texts, nil
+}
+
 func chatHistoryMessageRoleAndText(raw json.RawMessage) (string, string) {
 	var message struct {
 		Role      string `json:"Role"`

@@ -39,6 +39,7 @@ import (
 	agent "github.com/manishiitg/coding-agent-loop/agent_go/pkg/agentwrapper"
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/chathistory"
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/clisecurity"
+	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/voicestt"
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/costledger"
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/fsutil"
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/orchestrator"
@@ -2419,7 +2420,27 @@ func runServer(cmd *cobra.Command, args []string) {
 		// @tokens pick one of its other profiles.
 		botManager.SetProfileTurnFunc(api.botProfileTurn)
 		api.whatsappManager.SetProfileRouter(api.whatsappProfileRouter)
+		// A voice note is transcribed on-device before it ever reaches a
+		// conversation — the chat never learns it arrived as audio at all.
+		// Never triggers the engine's one-time model download (that can
+		// take minutes): a not-yet-installed model asks the parent to set
+		// it up instead of blocking the message handler on a download.
+		api.whatsappManager.SetVoiceTranscriber(func(ctx context.Context, path string) (string, error) {
+			if !voiceManager.Status().Installed {
+				return "", services.ErrVoiceNotInstalled
+			}
+			samples, err := voicestt.DecodeFile(ctx, path)
+			if err != nil {
+				return "", fmt.Errorf("decode voice note: %w", err)
+			}
+			return voiceManager.Transcribe(ctx, samples)
+		})
 	}
+	// Progressive text: while a bot turn runs, forward each completed
+	// assistant reply as its own message rather than waiting for the whole
+	// turn to finish — reads the same durable conversation_history the UI's
+	// own chat-restore path already trusts, kept current as the turn runs.
+	botManager.SetChatHistoryReader(botProgressiveChatHistoryReader)
 
 	// Set activity callback for event store to update session LastActivity when events are added
 	eventStore.SetActivityCallback(func(sessionID string) {

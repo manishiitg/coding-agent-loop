@@ -6,6 +6,7 @@ import (
 	"log"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/manishiitg/coding-agent-loop/agent_go/cmd/server/services"
@@ -13,19 +14,86 @@ import (
 	"github.com/gorilla/mux"
 )
 
+// WhatsAppDefaultProfileResolver decides whether profileID may take a user's
+// unrouted WhatsApp messages (it must declare the whatsapp runtime
+// capability) and where its attachments go: the requested folder resolved
+// inside the profile's own workspace, or "" for the per-user chat uploads.
+// nil means this server offers no default profiles.
+type WhatsAppDefaultProfileResolver func(ctx context.Context, userID, profileID, uploadFolder string) (resolvedUploadFolder string, err error)
+
 // WhatsAppRoutes wires up per-user HTTP endpoints for pairing and status of
 // the WhatsApp bot connector.
-func WhatsAppRoutes(router *mux.Router, manager *services.WhatsAppServiceManager) {
+func WhatsAppRoutes(router *mux.Router, manager *services.WhatsAppServiceManager, defaults WhatsAppDefaultProfileResolver) {
 	if manager == nil {
 		return
 	}
 	waRouter := router.PathPrefix("/api/whatsapp").Subrouter()
-	waRouter.HandleFunc("/pair", whatsappPairHandler(manager)).Methods("GET")
+	waRouter.HandleFunc("/pair", whatsappPairHandler(manager, defaults)).Methods("GET")
 	waRouter.HandleFunc("/status", whatsappStatusHandler(manager)).Methods("GET")
 	waRouter.HandleFunc("/session", whatsappUnpairHandler(manager)).Methods("DELETE", "OPTIONS")
 	waRouter.HandleFunc("/routing", whatsappGetRoutingHandler(manager)).Methods("GET")
 	waRouter.HandleFunc("/routing", whatsappPutRoutingHandler(manager)).Methods("PUT", "OPTIONS")
-	log.Printf("[WHATSAPP] Registered routes: GET /api/whatsapp/pair, GET /api/whatsapp/status, DELETE /api/whatsapp/session, GET|PUT /api/whatsapp/routing")
+	waRouter.HandleFunc("/default-profile", whatsappPutDefaultProfileHandler(manager, defaults)).Methods("PUT", "OPTIONS")
+	log.Printf("[WHATSAPP] Registered routes: GET /api/whatsapp/pair, GET /api/whatsapp/status, DELETE /api/whatsapp/session, GET|PUT /api/whatsapp/routing, PUT /api/whatsapp/default-profile")
+}
+
+// applyWhatsAppDefaultProfile makes profileID the pairing's default
+// destination for the authenticated owner. Writes the error response itself
+// and reports whether it succeeded.
+func applyWhatsAppDefaultProfile(w http.ResponseWriter, r *http.Request, svc *services.WhatsAppService, user *UserClaims, defaults WhatsAppDefaultProfileResolver, profileID, uploadFolder string) bool {
+	profileID = strings.TrimSpace(profileID)
+	resolvedFolder := ""
+	if profileID != "" {
+		if defaults == nil {
+			http.Error(w, "default profiles are not available on this server", http.StatusBadRequest)
+			return false
+		}
+		folder, err := defaults(r.Context(), user.UserID, profileID, uploadFolder)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusUnprocessableEntity)
+			return false
+		}
+		resolvedFolder = folder
+	}
+	if err := svc.SetDefaultProfile(user.UserID, profileID, resolvedFolder); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return false
+	}
+	return true
+}
+
+// whatsappPutDefaultProfileHandler sets (or, with an empty profile_id,
+// clears) the profile whose conversation takes this pairing's unrouted
+// messages. Body: {"profile_id": "...", "upload_folder": "..."}.
+func whatsappPutDefaultProfileHandler(manager *services.WhatsAppServiceManager, defaults WhatsAppDefaultProfileResolver) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodOptions {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		svc, user, err := whatsappServiceForRequest(r, manager)
+		if err != nil {
+			http.Error(w, "whatsapp service unavailable: "+err.Error(), http.StatusServiceUnavailable)
+			return
+		}
+		var body struct {
+			ProfileID    string `json:"profile_id"`
+			UploadFolder string `json:"upload_folder"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			http.Error(w, "invalid JSON body: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+		if !applyWhatsAppDefaultProfile(w, r, svc, user, defaults, body.ProfileID, body.UploadFolder) {
+			return
+		}
+		profileID, folder := svc.DefaultProfile()
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"default_profile_id":    profileID,
+			"default_upload_folder": folder,
+		})
+	}
 }
 
 func whatsappServiceForRequest(r *http.Request, manager *services.WhatsAppServiceManager) (*services.WhatsAppService, *UserClaims, error) {
@@ -41,6 +109,10 @@ func whatsappServiceForRequest(r *http.Request, manager *services.WhatsAppServic
 // Query params:
 //
 //	size — pixel dimension (default 384, clamped to [128, 1024])
+//	profile_id — also make this profile the pairing's default destination
+//	             (see WhatsAppDefaultProfileResolver); upload_folder says
+//	             where its attachments go. A product's pairing screen passes
+//	             its own profile so the scan and the routing are one step.
 //
 // Auth behavior: requesting the QR claims ownership of the pairing for the
 // authenticated user. Every incoming WhatsApp message will then route to
@@ -52,7 +124,7 @@ func whatsappServiceForRequest(r *http.Request, manager *services.WhatsAppServic
 //
 // Returns 404 when there's no active QR (paired already, or StartListening
 // hasn't been called yet).
-func whatsappPairHandler(manager *services.WhatsAppServiceManager) http.HandlerFunc {
+func whatsappPairHandler(manager *services.WhatsAppServiceManager, defaults WhatsAppDefaultProfileResolver) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		svc, user, err := whatsappServiceForRequest(r, manager)
 		if err != nil {
@@ -62,6 +134,11 @@ func whatsappPairHandler(manager *services.WhatsAppServiceManager) http.HandlerF
 		if err := svc.ClaimOwnership(user.UserID, user.Email, user.Username); err != nil {
 			http.Error(w, err.Error(), http.StatusConflict)
 			return
+		}
+		if profileID := strings.TrimSpace(r.URL.Query().Get("profile_id")); profileID != "" {
+			if !applyWhatsAppDefaultProfile(w, r, svc, user, defaults, profileID, r.URL.Query().Get("upload_folder")) {
+				return
+			}
 		}
 		if err := svc.EnsurePairingQR(context.Background()); err != nil {
 			http.Error(w, "pairing QR unavailable: "+err.Error(), http.StatusServiceUnavailable)
@@ -207,6 +284,8 @@ func whatsappStatusHandler(manager *services.WhatsAppServiceManager) http.Handle
 			resp["owner_email"] = owner.Email
 			resp["owner_username"] = owner.Username
 			resp["owner_paired_at"] = owner.PairedAt.UTC().Format(time.RFC3339)
+			resp["default_profile_id"] = owner.DefaultProfileID
+			resp["default_upload_folder"] = owner.DefaultUploadFolder
 		}
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(resp)

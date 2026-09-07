@@ -25,6 +25,9 @@ import { FamilyWorkspace, documentsURL } from './platform/workspace'
 export const PARENT_PROFILE = 'sparkquill'
 export const CHILD_PROFILE = 'sparkquill-child'
 const TOKEN_KEY = 'sparkquill.platform.token'
+// Where WhatsApp attachments land, relative to the family root: the same
+// inbox the attach button uploads to, so Quill files them the same way.
+const WHATSAPP_UPLOAD_FOLDER = 'inbox'
 
 export type PlatformApiOptions = {
   baseUrl: string
@@ -330,10 +333,37 @@ export function createPlatformApi(options: PlatformApiOptions): FamilyApi {
     },
     browserStatus: async () => ({ cli_installed: false }),
 
-    whatsappStatus: notYet('WhatsApp status') as () => Promise<WhatsAppStatus>,
-    whatsappPairImageUrl: () => '',
-    whatsappUnpair: notYet('WhatsApp'),
-    whatsappVoice: notYet('WhatsApp') as (enabled: boolean) => Promise<WhatsAppVoiceTranscription>,
+    // The platform's shared WhatsApp connector: one pairing per account, and
+    // the parent profile is its default destination, so a message in the
+    // parent's own "message yourself" chat reaches Quill with no @slug. The
+    // QR request names the profile (and where photos land — the inbox the
+    // attach button already uses, so process-file files them); the status
+    // poll repairs a pairing made before the default existed.
+    whatsappStatus: async () => {
+      const s = await request<{
+        paired?: boolean; connected?: boolean; own_jid?: string
+        qr_available?: boolean; qr_expires_at?: string
+        default_profile_id?: string
+      }>('GET', '/api/whatsapp/status')
+      if (s.paired && s.default_profile_id !== PARENT_PROFILE) {
+        await request('PUT', '/api/whatsapp/default-profile', { profile_id: PARENT_PROFILE, upload_folder: WHATSAPP_UPLOAD_FOLDER }).catch(() => undefined)
+      }
+      return {
+        accounts: s.paired && s.own_jid ? [{ jid: s.own_jid.replace(/@.*$/, ''), connected: s.connected === true }] : [],
+        pairing: { qr_available: s.qr_available === true, qr_expires_at: s.qr_expires_at },
+      }
+    },
+    whatsappPairImageUrl: (nonce) => {
+      const params = new URLSearchParams({ profile_id: PARENT_PROFILE, upload_folder: WHATSAPP_UPLOAD_FOLDER, size: '384', n: String(nonce) })
+      // An <img> cannot send a header; the platform accepts the token as a
+      // query parameter, the same way rawUrl does.
+      params.set('token', store.get() ?? '')
+      return `${base}/api/whatsapp/pair?${params.toString()}`
+    },
+    whatsappUnpair: async () => { await request('DELETE', '/api/whatsapp/session') },
+    // Voice notes are transcribed by the platform's own STT for every
+    // channel; there is no per-product toggle to offer.
+    whatsappVoice: notYet('WhatsApp voice transcription') as (enabled: boolean) => Promise<WhatsAppVoiceTranscription>,
     // The check-in is the product's `pulse` schedule, run by the platform
     // scheduler: a fixed message sequence on a cadence from the manifest.
     // The parent can switch it on or off and run it now; the cadence is the

@@ -2410,7 +2410,10 @@ func runServer(cmd *cobra.Command, args []string) {
 	// Register bot routes
 	BotRoutes(router, api)
 	if api.whatsappManager != nil {
-		WhatsAppRoutes(router, api.whatsappManager)
+		WhatsAppRoutes(router, api.whatsappManager, api.whatsappDefaultProfileResolver)
+		// Unrouted WhatsApp messages on a pairing with a default product
+		// profile run in that profile's own conversation.
+		botManager.SetProfileTurnFunc(api.botProfileTurn)
 	}
 
 	// Set activity callback for event store to update session LastActivity when events are added

@@ -249,6 +249,14 @@ type BotEventData struct {
 // It is set by the server layer to avoid import cycles.
 type SessionStartFunc func(ctx context.Context, req map[string]interface{}, sessionID string, userID string, eventCallback func(event *events.AgentEvent)) error
 
+// ProfileTurnFunc builds the turn for a message that names no workflow route
+// when the account has a default product profile for its platform: the query
+// request and the profile conversation's own session id, so the message runs
+// in the same conversation the product's app shows. handled=false means no
+// default applies and the message runs as the generic chat instead. Set by
+// the server layer, which owns profiles and their conversations.
+type ProfileTurnFunc func(ctx context.Context, userID string, msg BotIncomingMessage, threadID ThreadID) (req map[string]interface{}, sessionID string, handled bool, err error)
+
 // SessionFollowUpFunc is the function signature for injecting a follow-up message into a running session.
 // It calls handleQuery with the same session ID but does NOT block on completion.
 // The reqMap contains the full session config (servers, skills, delegation mode, API keys, etc.)
@@ -336,6 +344,7 @@ type BotConversationManager struct {
 	startSession     SessionStartFunc
 	followUpSession  SessionFollowUpFunc
 	loadUserSecrets  UserSecretsLoaderFunc
+	profileTurn      ProfileTurnFunc
 	runningWorkflows RunningWorkflowsFunc
 	resumeTarget     BotResumeTargetFunc
 	resumeList       BotResumeListFunc
@@ -375,7 +384,11 @@ type activeBotSession struct {
 	activeWorkflows  map[string]bool // wfSessionID set, for idempotent NotifyWorkflowEnded
 	queuedMessages   []BotIncomingMessage
 	sendFullDetails  bool
-	AgentMode        string
+	// profileTurn marks a session running in a product profile's own
+	// conversation (ProfileTurnFunc). Every later turn in it is built the
+	// same way, and none of the generic bot-runtime preambles apply.
+	profileTurn bool
+	AgentMode   string
 	PresetQueryID    string
 	WorkspacePath    string
 	PhaseID          string
@@ -474,6 +487,12 @@ func (m *BotConversationManager) BotThreadStatus(threadID ThreadID) BotThreadSta
 // SetUserSecretsLoader sets the function used to load decrypted user secrets for bot sessions
 func (m *BotConversationManager) SetUserSecretsLoader(fn UserSecretsLoaderFunc) {
 	m.loadUserSecrets = fn
+}
+
+// SetProfileTurnFunc sets the builder for turns in an account's default
+// product profile conversation (see ProfileTurnFunc).
+func (m *BotConversationManager) SetProfileTurnFunc(fn ProfileTurnFunc) {
+	m.profileTurn = fn
 }
 
 // RegisterConnector registers a bot connector
@@ -830,6 +849,7 @@ func (m *BotConversationManager) handleExistingSession(active *activeBotSession,
 	oldUserID := active.UserID
 	oldThreadID := active.ThreadID
 	oldRouteKey := active.RouteKey
+	profileTurn := active.profileTurn
 	active.mu.Unlock()
 
 	requireControlPrefix := !supportsThreads
@@ -877,10 +897,16 @@ func (m *BotConversationManager) handleExistingSession(active *activeBotSession,
 	if !supportsThreads && !awaiting && !isSessionEndCommand(msg.Text, requireControlPrefix) {
 		idle := time.Since(lastActivity)
 		if idle > threadlessSessionIdleLimit {
-			history := m.loadRecentChatTurns(context.Background(), oldUserID, oldSessionID, staleContextTurns)
-			msg.Text = buildStaleSessionPreamble(history, idle) + msg.Text
-			log.Printf("[BOT_MANAGER] Thread-less session %s idle %s — starting new conversation with %d context turn(s)",
-				oldSessionID, humanDuration(idle), len(history))
+			if profileTurn {
+				// The product conversation is durable and continues as itself;
+				// there is no "last time" to summarise into the message.
+				log.Printf("[BOT_MANAGER] Thread-less session %s idle %s — continuing the profile conversation", oldSessionID, humanDuration(idle))
+			} else {
+				history := m.loadRecentChatTurns(context.Background(), oldUserID, oldSessionID, staleContextTurns)
+				msg.Text = buildStaleSessionPreamble(history, idle) + msg.Text
+				log.Printf("[BOT_MANAGER] Thread-less session %s idle %s — starting new conversation with %d context turn(s)",
+					oldSessionID, humanDuration(idle), len(history))
+			}
 			// If the prior session somehow is still marked Running (hung
 			// agent, crash mid-turn), cancel it before starting fresh so
 			// its resources free up.
@@ -1165,7 +1191,7 @@ func (m *BotConversationManager) startFollowUpTurn(active *activeBotSession, msg
 		threadID := active.ThreadID
 		platform := active.Platform
 		active.mu.Unlock()
-		err := m.followUpSession(followCtx, m.buildQueryRequestForActive(active, m.withBotRuntimeState(active, msg.Text), userID, platform, threadID), sessionID, userID)
+		err := m.followUpSession(followCtx, m.turnRequestForActive(active,m.withBotRuntimeState(active, msg.Text), userID, platform, threadID), sessionID, userID)
 		if err != nil {
 			log.Printf("[BOT_MANAGER] Follow-up failed: %v", err)
 		}
@@ -1181,7 +1207,13 @@ func (m *BotConversationManager) withBotRuntimeState(active *activeBotSession, u
 	status := active.Status
 	builderDone := active.builderDone
 	pending := active.pendingWorkflows
+	profileTurn := active.profileTurn
 	active.mu.Unlock()
+	if profileTurn {
+		// A product conversation reads as the product's own chat; the
+		// workflow-runtime preamble would be noise there.
+		return userText
+	}
 
 	if pending > 0 {
 		return fmt.Sprintf("## Bot Connector Runtime State\n%d workflow/sub-agent item(s) are still pending for this bot conversation. If the user asks to wait or asks for status, answer based on this pending state.\n\n---\n\n## Current Message\n%s", pending, userText)
@@ -1263,7 +1295,7 @@ func (m *BotConversationManager) handleBlockingResponse(active *activeBotSession
 				go func() {
 					followCtx, followCancel := context.WithTimeout(context.Background(), 5*time.Minute)
 					defer followCancel()
-					err := m.followUpSession(followCtx, m.buildQueryRequestForActive(active, "Approved. Execute the plan.", uid, platform, threadID), sid, uid)
+					err := m.followUpSession(followCtx, m.turnRequestForActive(active,"Approved. Execute the plan.", uid, platform, threadID), sid, uid)
 					if err != nil {
 						log.Printf("[BOT_MANAGER] Plan approval follow-up failed: %v", err)
 					}
@@ -1281,7 +1313,7 @@ func (m *BotConversationManager) handleBlockingResponse(active *activeBotSession
 			go func() {
 				followCtx, followCancel := context.WithTimeout(context.Background(), 5*time.Minute)
 				defer followCancel()
-				err := m.followUpSession(followCtx, m.buildQueryRequestForActive(active, msg.Text, uid, platform, threadID), sid, uid)
+				err := m.followUpSession(followCtx, m.turnRequestForActive(active,msg.Text, uid, platform, threadID), sid, uid)
 				if err != nil {
 					log.Printf("[BOT_MANAGER] Plan feedback follow-up failed: %v", err)
 				}
@@ -1300,7 +1332,7 @@ func (m *BotConversationManager) handleBlockingResponse(active *activeBotSession
 			go func() {
 				followCtx, followCancel := context.WithTimeout(context.Background(), 5*time.Minute)
 				defer followCancel()
-				err := m.followUpSession(followCtx, m.buildQueryRequestForActive(active, msg.Text, uid, platform, threadID), sid, uid)
+				err := m.followUpSession(followCtx, m.turnRequestForActive(active,msg.Text, uid, platform, threadID), sid, uid)
 				if err != nil {
 					log.Printf("[BOT_MANAGER] Blocking response follow-up failed: %v", err)
 				}
@@ -1351,7 +1383,7 @@ func (m *BotConversationManager) handleBlockingResponseSync(ctx context.Context,
 			log.Printf("[BOT_MANAGER] HandleMessageSync: plan approved for session %s", sid)
 			m.clearBlockingState(active)
 			if m.followUpSession != nil {
-				err := m.followUpSession(ctx, m.buildQueryRequestForActive(active, "Approved. Execute the plan.", uid, platform, activeThreadID), sid, uid)
+				err := m.followUpSession(ctx, m.turnRequestForActive(active,"Approved. Execute the plan.", uid, platform, activeThreadID), sid, uid)
 				if err != nil {
 					return nil, fmt.Errorf("plan approval follow-up failed: %w", err)
 				}
@@ -1375,7 +1407,7 @@ func (m *BotConversationManager) handleBlockingResponseSync(ctx context.Context,
 		}
 		// Not a clear approve/reject — send as feedback
 		if m.followUpSession != nil {
-			err := m.followUpSession(ctx, m.buildQueryRequestForActive(active, msg.Text, uid, platform, activeThreadID), sid, uid)
+			err := m.followUpSession(ctx, m.turnRequestForActive(active,msg.Text, uid, platform, activeThreadID), sid, uid)
 			if err != nil {
 				return nil, fmt.Errorf("plan feedback follow-up failed: %w", err)
 			}
@@ -1401,7 +1433,7 @@ func (m *BotConversationManager) handleBlockingResponseSync(ctx context.Context,
 		log.Printf("[BOT_MANAGER] HandleMessageSync: responding to %s for session %s", blockingEvt, sid)
 		m.clearBlockingState(active)
 		if m.followUpSession != nil {
-			err := m.followUpSession(ctx, m.buildQueryRequestForActive(active, msg.Text, uid, platform, activeThreadID), sid, uid)
+			err := m.followUpSession(ctx, m.turnRequestForActive(active,msg.Text, uid, platform, activeThreadID), sid, uid)
 			if err != nil {
 				return nil, fmt.Errorf("blocking response follow-up failed: %w", err)
 			}
@@ -1765,7 +1797,7 @@ func (m *BotConversationManager) HandleMessageSync(ctx context.Context, msg BotI
 		if m.followUpSession != nil {
 			log.Printf("[BOT_MANAGER] HandleMessageSync: injecting follow-up into session %s: %s", sessionID, botTruncate(msg.Text, 80))
 			m.resetActiveForNewTurn(active)
-			err := m.followUpSession(ctx, m.buildQueryRequestForActive(active, msg.Text, uid, msg.Platform, threadID), sessionID, uid)
+			err := m.followUpSession(ctx, m.turnRequestForActive(active,msg.Text, uid, msg.Platform, threadID), sessionID, uid)
 			if err != nil {
 				return nil, fmt.Errorf("follow-up failed: %w", err)
 			}
@@ -1844,10 +1876,32 @@ func (m *BotConversationManager) startNewSessionDirect(msg BotIncomingMessage, t
 	}
 	botMeta := botMetaFromMsg(msg, threadID)
 
-	// Load thread history for context continuity (e.g., user replies after hours)
-	queryWithHistory := m.buildQueryWithThreadHistory(msg.Text, msg.Platform, threadID)
-	queryReq := m.buildQueryRequest(queryWithHistory, workspaceUserID, msg.ChannelID, msg.PresetWorkflow, msg.Platform, threadID)
-	addRestoredConversationSessionID(queryReq, restoredConversationSessionID)
+	// An unrouted message on an account with a default product profile runs
+	// in that profile's own conversation: its request and session id come
+	// from the server layer, and the generic thread-history/restore plumbing
+	// does not apply — the conversation already holds every prior turn.
+	var queryReq map[string]interface{}
+	profileTurn := false
+	if msg.PresetWorkflow == nil && m.profileTurn != nil {
+		req, profileSessionID, handled, err := m.profileTurn(context.Background(), workspaceUserID, msg, threadID)
+		if err != nil {
+			log.Printf("[BOT_MANAGER] Default profile turn failed for thread %s: %v", threadID.Key(), err)
+			if connector := m.GetConnector(msg.Platform); connector != nil {
+				connector.SendThreadMessage(context.Background(), threadID, fmt.Sprintf("Couldn't hand this to your default chat: %v", err))
+			}
+			return
+		}
+		if handled {
+			queryReq, sessionID, profileTurn = req, profileSessionID, true
+			log.Printf("[BOT_MANAGER] Thread %s runs in default profile conversation %s", threadID.Key(), sessionID)
+		}
+	}
+	if queryReq == nil {
+		// Load thread history for context continuity (e.g., user replies after hours)
+		queryWithHistory := m.buildQueryWithThreadHistory(msg.Text, msg.Platform, threadID)
+		queryReq = m.buildQueryRequest(queryWithHistory, workspaceUserID, msg.ChannelID, msg.PresetWorkflow, msg.Platform, threadID)
+		addRestoredConversationSessionID(queryReq, restoredConversationSessionID)
+	}
 	sendFullDetails := botFullDetailsFromRequest(queryReq)
 
 	// Track active session — bot sessions are in-memory only.
@@ -1863,6 +1917,7 @@ func (m *BotConversationManager) startNewSessionDirect(msg BotIncomingMessage, t
 		ackMessageTS:    msg.MessageTS,
 		LastActivity:    time.Now(),
 		sendFullDetails: sendFullDetails,
+		profileTurn:     profileTurn,
 		RouteKey:        botRouteKey(msg.PresetWorkflow),
 	}
 	applyBotRequestMetadata(active, queryReq)
@@ -2638,6 +2693,29 @@ func (m *BotConversationManager) buildQueryRequestForActive(active *activeBotSes
 		req["execution_options"] = execOpts
 	}
 	return req
+}
+
+// turnRequestForActive builds a later turn for an active session: through the
+// profile-turn builder when the session runs in a product profile's
+// conversation (so every turn carries that profile), else the generic bot
+// request. If the profile builder cannot serve the turn the generic request
+// is the fallback, logged, rather than dropping the message.
+func (m *BotConversationManager) turnRequestForActive(active *activeBotSession, query, userID, platform string, threadID ThreadID) map[string]interface{} {
+	if active != nil && m.profileTurn != nil {
+		active.mu.Lock()
+		isProfileTurn := active.profileTurn
+		sessionID := active.SessionID
+		active.mu.Unlock()
+		if isProfileTurn {
+			msg := BotIncomingMessage{Platform: platform, WorkspaceUserID: userID, ChannelID: threadID.ChannelID, ThreadTS: threadID.ThreadTS, Text: query, IsMention: true}
+			req, _, handled, err := m.profileTurn(context.Background(), userID, msg, threadID)
+			if err == nil && handled {
+				return req
+			}
+			log.Printf("[BOT_MANAGER] Profile turn unavailable for session %s (handled=%v err=%v) — using the generic request", sessionID, handled, err)
+		}
+	}
+	return m.buildQueryRequestForActive(active, query, userID, platform, threadID)
 }
 
 func applyBotRequestMetadata(active *activeBotSession, req map[string]interface{}) {

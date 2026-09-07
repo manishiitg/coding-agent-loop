@@ -96,6 +96,15 @@ type WhatsAppOwner struct {
 	Email    string    `json:"email"`
 	Username string    `json:"username,omitempty"`
 	PairedAt time.Time `json:"paired_at"`
+	// DefaultProfileID names the agent profile whose own conversation takes
+	// every message in this pairing that names no @<slug> workflow route. A
+	// product sets it when it pairs (the server checks the profile declares
+	// the whatsapp capability); it goes with the owner on unpair.
+	DefaultProfileID string `json:"default_profile_id,omitempty"`
+	// DefaultUploadFolder is where that profile wants attachments saved —
+	// workspace-relative, inside its own root, so its agent can read them.
+	// Empty keeps the per-user chat uploads folder.
+	DefaultUploadFolder string `json:"default_upload_folder,omitempty"`
 }
 
 type WhatsAppAccessState struct {
@@ -1318,12 +1327,25 @@ func (w *WhatsAppService) ClaimOwnership(userID, email, username string) error {
 	}
 	o := &WhatsAppOwner{UserID: userID, Email: email, Username: username, PairedAt: time.Now().UTC()}
 	if existing != nil {
-		// Re-claim by same user: preserve the original PairedAt.
+		// Re-claim by same user (the pairing UI polls the QR): preserve the
+		// original PairedAt and the product's default destination.
 		o.PairedAt = existing.PairedAt
+		o.DefaultProfileID = existing.DefaultProfileID
+		o.DefaultUploadFolder = existing.DefaultUploadFolder
 	}
 	w.owner = o
 	w.ownerMu.Unlock()
 
+	if err := writeWhatsAppOwnerRow(db, o); err != nil {
+		return err
+	}
+	if existing == nil {
+		log.Printf("[WHATSAPP] Claimed ownership: user=%s email=%s", userID, email)
+	}
+	return nil
+}
+
+func writeWhatsAppOwnerRow(db *sql.DB, o *WhatsAppOwner) error {
 	raw, err := json.Marshal(o)
 	if err != nil {
 		return fmt.Errorf("whatsapp: marshal owner: %w", err)
@@ -1334,10 +1356,57 @@ func (w *WhatsAppService) ClaimOwnership(userID, email, username string) error {
 	); err != nil {
 		return fmt.Errorf("whatsapp: persist owner: %w", err)
 	}
-	if existing == nil {
-		log.Printf("[WHATSAPP] Claimed ownership: user=%s email=%s", userID, email)
+	return nil
+}
+
+// SetDefaultProfile records the profile whose conversation takes this
+// pairing's unrouted messages, and where its attachments go. Only the owner
+// can set it; an empty profileID clears both. The caller has already checked
+// the profile declares the whatsapp capability — this store knows nothing
+// about profiles.
+func (w *WhatsAppService) SetDefaultProfile(userID, profileID, uploadFolder string) error {
+	userID = strings.TrimSpace(userID)
+	profileID = strings.TrimSpace(profileID)
+	uploadFolder = strings.Trim(strings.TrimSpace(uploadFolder), "/")
+	if profileID == "" {
+		uploadFolder = ""
+	}
+	w.mu.RLock()
+	db := w.metaDB
+	w.mu.RUnlock()
+	if db == nil {
+		return fmt.Errorf("whatsapp: meta store not open — StartListening has not run")
+	}
+	w.ownerMu.Lock()
+	defer w.ownerMu.Unlock()
+	if w.owner == nil || w.owner.UserID == "" || w.owner.UserID != userID {
+		return fmt.Errorf("whatsapp: pair this account first — only its owner can choose where messages go")
+	}
+	updated := *w.owner
+	updated.DefaultProfileID = profileID
+	updated.DefaultUploadFolder = uploadFolder
+	if err := writeWhatsAppOwnerRow(db, &updated); err != nil {
+		return err
+	}
+	w.owner = &updated
+	if profileID == "" {
+		log.Printf("[WHATSAPP] Default profile cleared for user=%s", userID)
+	} else {
+		log.Printf("[WHATSAPP] Default profile for user=%s: %s (attachments → %q)", userID, profileID, uploadFolder)
 	}
 	return nil
+}
+
+// DefaultProfile returns the pairing's default destination profile and its
+// attachment folder; both empty when none is set (or the pairing is
+// unclaimed).
+func (w *WhatsAppService) DefaultProfile() (profileID, uploadFolder string) {
+	w.ownerMu.RLock()
+	defer w.ownerMu.RUnlock()
+	if w.owner == nil {
+		return "", ""
+	}
+	return w.owner.DefaultProfileID, w.owner.DefaultUploadFolder
 }
 
 // clearOwner removes the owner binding. Used when the pairing is reset from
@@ -1686,7 +1755,14 @@ func (w *WhatsAppService) HandleMessage(ctx context.Context, msg *whatsappbot.Me
 		routedSlug = msg.Route.Key
 	}
 
-	media, mediaErr := w.downloadIncomingMedia(ctx, msg, owner, whatsappWorkflowUploadFolder(presetRoute))
+	uploadFolder := whatsappWorkflowUploadFolder(presetRoute)
+	if presetRoute == nil && owner.DefaultProfileID != "" {
+		// Unrouted messages run in the default profile's own conversation,
+		// whose sandbox can only read its own workspace: save attachments
+		// where that product asked for them, not in the per-user chat uploads.
+		uploadFolder = owner.DefaultUploadFolder
+	}
+	media, mediaErr := w.downloadIncomingMedia(ctx, msg, owner, uploadFolder)
 	if mediaErr != nil {
 		log.Printf("[WHATSAPP] Failed to ingest media from %s: %v", info.Sender.User, mediaErr)
 		msg.React("⚠️")

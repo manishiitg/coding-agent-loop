@@ -247,6 +247,7 @@ func validateRuntime(runtime RuntimePolicy) error {
 		{"workflow_execution", capabilities.WorkflowExecution},
 		{"browser", capabilities.Browser},
 		{"secrets", capabilities.Secrets},
+		{"whatsapp", capabilities.WhatsApp},
 	}
 	for _, item := range values {
 		if !validCapabilityRequirement(item.value) {

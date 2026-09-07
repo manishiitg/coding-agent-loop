@@ -7,8 +7,10 @@ schema_version: 2
 #
 # This manifest is SparkQuill. The standalone family server it replaced
 # (cmd/family-server, deleted September 2026) is gone; the family tools are
-# product tool factories (tools.go). Not carried over: send_whatsapp_file
-# (the WhatsApp connector) and the desktop notification channel.
+# product tool factories (tools.go). WhatsApp is the platform's shared
+# connector with this profile as the default destination (runtime
+# capability `whatsapp`), not the old dedicated bot. Not carried over:
+# send_whatsapp_file and the desktop notification channel.
 #
 # Layout under the family root (Chats/SparkQuill): activities/<slug>/ holds
 # every activity (activity.json + product.json, which makes the folder the
@@ -123,6 +125,11 @@ profile:
       # The parent can start a fresh chat with Quill from the toolbar; the
       # previous one stays in history.
       new_conversation: preferred
+      # The parent's own WhatsApp ("message yourself") reaches Quill directly:
+      # pairing from SparkQuill makes this profile the account's default
+      # WhatsApp destination, so no @slug prefix is ever needed. The
+      # connector itself is the platform's.
+      whatsapp: preferred
     workspace:
       mode: fixed
       root: Chats/SparkQuill

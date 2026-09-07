@@ -55,6 +55,7 @@ import {
   type VoiceStatus,
 } from './stores'
 import PlatformChat, { PARENT_PROFILE_ID, applyFamilyEngineToOpenTabs, startNewParentConversation, type ProductInteraction, type ProductPresentation } from './platform/PlatformChat'
+import { loadAgentProfileCapabilityEnabled } from '../../utils/agentProfileCapabilities'
 import PulseHistoryViewer from './platform/PulseHistoryViewer'
 import type { ProductNotification } from '../../platform/notifications/useProductNotifications'
 import ChildPlatformChat, { forgetChildChat, submitToChildChat, type ChildKickoff } from './platform/ChildPlatformChat'
@@ -1045,6 +1046,20 @@ export default function LearningApp() {
   const waOpen = useWhatsAppStore((s) => s.waOpen)
   const setWaOpen = useWhatsAppStore((s) => s.setWaOpen)
   const [connectorSection, setConnectorSection] = useState<'whatsapp' | 'browser'>('whatsapp')
+  // WhatsApp pairing is offered only when the parent profile declares the
+  // whatsapp capability in its product.yaml (the platform's connector then
+  // routes the parent's own chat to Quill); without it the Connectors panel
+  // is just the browser.
+  const [waEnabled, setWaEnabled] = useState(false)
+  useEffect(() => {
+    let cancelled = false
+    loadAgentProfileCapabilityEnabled(PARENT_PROFILE_ID, 'whatsapp').then((enabled) => {
+      if (cancelled) return
+      setWaEnabled(enabled)
+      if (!enabled) setConnectorSection('browser')
+    })
+    return () => { cancelled = true }
+  }, [])
   // Multiple phones can be linked (one per parent) — accounts is the list of
   // already-paired numbers; pairing reflects whichever NEW phone's QR is
   // currently being shown (there's always room to add one more).
@@ -2853,7 +2868,9 @@ export default function LearningApp() {
                 </div>
                 <div className="fl-connectors-body">
                   <nav className="fl-connectors-nav">
-                    <button type="button" className={connectorSection === 'whatsapp' ? 'is-active' : ''} onClick={() => setConnectorSection('whatsapp')}>WhatsApp</button>
+                    {waEnabled && (
+                      <button type="button" className={connectorSection === 'whatsapp' ? 'is-active' : ''} onClick={() => setConnectorSection('whatsapp')}>WhatsApp</button>
+                    )}
                     <button type="button" className={connectorSection === 'browser' ? 'is-active' : ''} onClick={() => setConnectorSection('browser')}>Browser</button>
                   </nav>
                   <div className="fl-connectors-panel">

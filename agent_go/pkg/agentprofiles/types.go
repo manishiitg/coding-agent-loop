@@ -230,6 +230,14 @@ type RuntimeCapabilities struct {
 	// to a resource (a video project, a child's activity) manages that
 	// lifecycle itself.
 	NewConversation CapabilityRequirement `json:"new_conversation,omitempty" yaml:"new_conversation,omitempty"`
+	// WhatsApp lets this profile be the account's default WhatsApp destination:
+	// a message in the paired chat that names no @<slug> workflow route runs as
+	// a turn in this profile's own conversation (the one its app shows),
+	// through the platform's shared WhatsApp connector. Products opt in by
+	// declaring a requirement; the connector, pairing and routing are the
+	// platform's. Disabled/empty means the profile can never be that
+	// destination, and its UI hides the pairing controls.
+	WhatsApp CapabilityRequirement `json:"whatsapp,omitempty" yaml:"whatsapp,omitempty"`
 }
 
 type ToolBinding struct {

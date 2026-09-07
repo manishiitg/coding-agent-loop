@@ -10,6 +10,14 @@ import { GmailSetupGuide } from './GmailSetupGuide'
 
 // ── Email notifications (account-wide, shared by every workflow) ──────────
 
+// Shortens a full OAuth scope URL to its last path segment for display (e.g.
+// "https://www.googleapis.com/auth/gmail.send" -> "gmail.send"); shows the
+// full string on hover via the caller's title attribute.
+function formatGmailScope(scope: string): string {
+  const parts = scope.split('/')
+  return parts[parts.length - 1] || scope
+}
+
 type GmailNotificationsBots = Pick<WorkflowBots,
   | 'readOnly'
   | 'gmailOpen' | 'setGmailOpen' | 'gmailConfig' | 'setGmailConfig' | 'gmailBlockedText' | 'setGmailBlockedText'
@@ -297,6 +305,15 @@ export function GmailNotifications({ bots }: { bots: GmailNotificationsBots }) {
                           {conn.email || 'Address not known yet'}
                           {conn.client_name && <span className="ml-2 text-muted-foreground/70">via {conn.client_name}</span>}
                         </p>
+                        {conn.auth?.scopes && conn.auth.scopes.length > 0 && (
+                          <p className="mt-1 flex flex-wrap gap-1">
+                            {conn.auth.scopes.map(scope => (
+                              <span key={scope} className="rounded bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground" title={scope}>
+                                {formatGmailScope(scope)}
+                              </span>
+                            ))}
+                          </p>
+                        )}
 
                         <div className="mt-2 flex flex-wrap gap-2">
                           <button

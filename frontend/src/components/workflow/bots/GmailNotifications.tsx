@@ -22,7 +22,7 @@ type GmailNotificationsBots = Pick<WorkflowBots,
   | 'gmailOAuthClients' | 'gmailOAuthClientsBusy' | 'gmailOAuthClientError'
   | 'gmailNewClientName' | 'setGmailNewClientName'
   | 'gmailSelectedClientName' | 'setGmailSelectedClientName'
-  | 'createGmailOAuthClient'
+  | 'createGmailOAuthClient' | 'deleteGmailOAuthClient'
 >
 
 export function GmailNotifications({ bots }: { bots: GmailNotificationsBots }) {
@@ -38,8 +38,17 @@ export function GmailNotifications({ bots }: { bots: GmailNotificationsBots }) {
     gmailOAuthClients, gmailOAuthClientsBusy, gmailOAuthClientError,
     gmailNewClientName, setGmailNewClientName,
     gmailSelectedClientName, setGmailSelectedClientName,
-    createGmailOAuthClient,
+    createGmailOAuthClient, deleteGmailOAuthClient,
   } = bots
+
+  const handleRemoveOAuthClient = (name: string) => {
+    const inUse = gmailConnections.filter(conn => conn.client_name === name)
+    const warning = inUse.length > 0
+      ? `${inUse.length} sending account${inUse.length === 1 ? '' : 's'} (${inUse.map(c => c.display_name).join(', ')}) use this client and will need reconnecting afterward. `
+      : ''
+    if (!window.confirm(`${warning}Remove the OAuth client "${name}"?`)) return
+    void deleteGmailOAuthClient(name)
+  }
 
   const [newClientFile, setNewClientFile] = useState<File | null>(null)
   const [newClientParseError, setNewClientParseError] = useState<string | null>(null)
@@ -158,6 +167,14 @@ export function GmailNotifications({ bots }: { bots: GmailNotificationsBots }) {
                       <li key={client.name} className="flex items-center gap-2 rounded border border-border px-2 py-1.5 text-xs">
                         <span className="font-medium">{client.name}</span>
                         {client.client_id && <span className="truncate font-mono text-muted-foreground">{client.client_id}</span>}
+                        <button
+                          onClick={() => handleRemoveOAuthClient(client.name)}
+                          disabled={readOnly || gmailOAuthClientsBusy}
+                          title={readOnly ? READ_ONLY_TITLE : undefined}
+                          className="ml-auto rounded border border-border px-2 py-0.5 text-red-600 hover:bg-red-50 disabled:opacity-40 dark:text-red-400 dark:hover:bg-red-900/20"
+                        >
+                          Remove
+                        </button>
                       </li>
                     ))}
                   </ul>

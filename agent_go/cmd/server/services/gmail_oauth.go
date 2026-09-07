@@ -105,8 +105,8 @@ func gmailOAuthConfig(redirectURL, clientName string) (*oauth2.Config, error) {
 	}, nil
 }
 
-// readGmailClientSecretFile parses a Desktop-app client_secret.json. Its
-// "installed" object carries the client id and secret; project_id is
+// readGmailClientSecretFile parses a legacy client_secret.json. Its
+// client object carries the client id and secret; project_id is
 // deliberately ignored, because sending it as a quota project requires every
 // consenting account to hold serviceusage permission on that project.
 func readGmailClientSecretFile() (string, string, error) {

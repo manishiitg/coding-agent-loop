@@ -113,7 +113,7 @@ func saveGmailOAuthClientMeta(client GmailOAuthClient) error {
 }
 
 // CreateOAuthClient registers a new named OAuth client from an uploaded
-// Desktop-app client_secret.json. Refuses to overwrite an existing name
+// Web-app client_secret.json. Refuses to overwrite an existing name
 // unless replace is true — this is the actual fix for the shared-file
 // overwrite bug: a second upload needs a new name, or an explicit,
 // deliberate replace with full knowledge that every connection currently

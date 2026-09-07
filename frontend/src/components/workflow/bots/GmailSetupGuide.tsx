@@ -153,24 +153,16 @@ export function GmailSetupGuide() {
               <p>Verify it is the right type first — the top-level key should read <code>web</code>, not <code>installed</code>.</p>
             </Step>
 
-            <Step n={7} title="Give each sending mailbox access to the project">
+            <Step n={7} title="Add each signing-in address as a test user">
               <p>
-                <code>gws</code> sends the client&rsquo;s project as a quota project, so <strong>every address you
-                connect</strong> must be allowed to use it — not just the project owner.
-              </p>
-              <p>
-                In{' '}
-                <a className={linkClass} href="https://console.cloud.google.com/iam-admin/iam" target="_blank" rel="noreferrer">
-                  IAM <ExternalLink className="h-3 w-3" />
-                </a>{' '}
-                → <strong>Grant access</strong>, add each address with the role{' '}
-                <strong>Service Usage Consumer</strong>.
+                While the app is in <strong>Testing</strong>, Google permits only the addresses listed under
+                <strong> Google Auth Platform → Audience → Test users</strong> to authorize it. Add every mailbox
+                that will sign in.
               </p>
               <Gotcha>
-                Skip this and that mailbox fails with{' '}
-                <code>403 Caller does not have required permission to use project …</code> — which reads like a
-                broken login, but the sign-in was fine. The project owner works without a grant, so this often
-                only appears when you add a <em>second</em> account.
+                <strong>Internal</strong> does not mean &ldquo;all company addresses you choose.&rdquo; It permits only
+                users in the Google Workspace organization that owns this Cloud project. If the mailbox is in a
+                different organization, choose <strong>External + Testing</strong> and add it as a test user.
               </Gotcha>
             </Step>
 

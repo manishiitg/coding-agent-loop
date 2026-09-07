@@ -1495,7 +1495,7 @@ export const agentApi = {
     return apiResponse.data
   },
 
-  // clientSecretJson is the parsed contents of the downloaded Desktop-app
+  // clientSecretJson is the parsed contents of the downloaded Web-app
   // client_secret.json. replace must be explicit — the default is refuse,
   // which is the whole point of naming clients.
   createGmailOAuthClient: async (

@@ -190,3 +190,33 @@ func TestUnquoteBrowserEvalOutput(t *testing.T) {
 		t.Fatalf("plain JSON: %q", got)
 	}
 }
+
+func TestParseBrowserEvalOutputUnwrapsStructuredResult(t *testing.T) {
+	t.Parallel()
+
+	got, err := parseBrowserEvalOutput(`{"success":true,"data":{"result":"failed"},"error":null}`)
+	if err != nil || got != "failed" {
+		t.Fatalf("structured state = %q, %v; want failed", got, err)
+	}
+
+	got, err = parseBrowserEvalOutput(`{"success":true,"data":{"result":"{\"previewState\":\"failed\"}"},"error":null}`)
+	if err != nil || got != `{"previewState":"failed"}` {
+		t.Fatalf("structured snapshot = %q, %v", got, err)
+	}
+}
+
+func TestParseBrowserEvalOutputRejectsFailedEnvelope(t *testing.T) {
+	t.Parallel()
+	if _, err := parseBrowserEvalOutput(`{"success":false,"data":{},"error":"page crashed"}`); err == nil || !strings.Contains(err.Error(), "page crashed") {
+		t.Fatalf("expected browser failure, got %v", err)
+	}
+}
+
+func TestReportPreviewSummaryNeverCallsUnknownStateClean(t *testing.T) {
+	t.Parallel()
+	snapshot := reportPreviewSnapshot{PreviewState: `{"success":true,"data":{"result":"failed"}}`}
+	got := reportPreviewSummary(snapshot, nil)
+	if strings.Contains(got, "Rendered cleanly") || !strings.Contains(got, "not verified") {
+		t.Fatalf("unknown state summary = %q", got)
+	}
+}

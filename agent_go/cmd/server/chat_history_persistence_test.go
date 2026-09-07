@@ -2265,6 +2265,12 @@ func TestDurableChatHistoryIsNotTruncatedOnWrite(t *testing.T) {
 		t.Fatalf("fallback byte limit (%d) must stay well below the persisted ceiling (%d)",
 			maxCodingAgentFallbackBytes, maxPersistedChatHistoryBytes)
 	}
+	// Production Linux limits one argv string to 128 KiB. Cursor's structured
+	// prompt also carries system instructions and the current message, so the
+	// replayed history must stay below half that ceiling.
+	if maxCodingAgentFallbackBytes >= 64*1024 {
+		t.Fatalf("fallback byte limit (%d) is unsafe for Cursor's positional prompt", maxCodingAgentFallbackBytes)
+	}
 }
 
 func TestBoundedChatHistoryTailKeepsNewestCompleteMessages(t *testing.T) {

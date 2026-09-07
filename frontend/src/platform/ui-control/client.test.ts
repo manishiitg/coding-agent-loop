@@ -9,9 +9,12 @@ describe('closed semantic UI control contract', () => {
     for (const { id } of UI_CONTROL_CONTRACT.views) {
       expect(supportedAction({ ...base, view: id, action: 'open' })).toBe(true)
       expect(supportedAction({ ...base, view: id, action: 'send' })).toBe(false)
-      expect(supportedAction({ ...base, view: id, action: 'open', target: 'guessed' })).toBe(id === 'flow')
+      expect(supportedAction({ ...base, view: id, action: 'open', target: 'guessed' })).toBe(id === 'flow' || id === 'report')
       expect(supportedAction({ ...base, view: id, action: 'refresh' })).toBe(false)
     }
+  })
+  it('allows a bounded report tab target', () => {
+    expect(supportedAction({ ...base, view: 'report', action: 'open', target: 'Suites' })).toBe(true)
   })
   it('only expands the two known notification instruction disclosures', () => {
     expect(supportedAction({ ...base, view: 'notify', action: 'expand', target: 'run_summary' })).toBe(true)

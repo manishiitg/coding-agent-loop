@@ -99,9 +99,12 @@ const (
 	maxPersistedChatHistoryMessages = 1000
 	maxPersistedChatHistoryBytes    = 4 * 1024 * 1024
 	// A provider without a native continuation handle gets only recent context.
-	// This is intentionally much smaller than the durable UI transcript.
+	// Cursor's structured CLI receives that context inside one positional argv
+	// value. Linux limits a single argument to roughly 128 KiB even when
+	// ARG_MAX is much larger, so leave ample room for the system prompt and the
+	// current user message.
 	maxCodingAgentFallbackMessages  = 48
-	maxCodingAgentFallbackBytes     = 512 * 1024
+	maxCodingAgentFallbackBytes     = 48 * 1024
 	maxChatHistoryTerminalSnapshots = 1
 	maxChatHistoryTerminalBytes     = 512 * 1024
 	maxChatHistoryTerminalLines     = 10000

@@ -5,6 +5,7 @@
     {
       "id": "report",
       "label": "Report",
+      "target_kind": "report_tab",
       "actions": [
         "open"
       ],

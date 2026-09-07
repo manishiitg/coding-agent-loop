@@ -192,7 +192,7 @@ func validateUIAction(view, action, target string) error {
 		if action == "open" && target == "" {
 			return nil
 		}
-		if action == "open" && v.TargetKind == "plan_step_id" && strings.TrimSpace(target) != "" && len(target) <= 256 {
+		if action == "open" && (v.TargetKind == "plan_step_id" || v.TargetKind == "report_tab") && strings.TrimSpace(target) != "" && len(target) <= 256 {
 			return nil
 		}
 		if action == "expand" {

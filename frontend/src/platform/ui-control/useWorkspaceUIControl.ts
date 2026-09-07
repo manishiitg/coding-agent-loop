@@ -71,8 +71,8 @@ export function useWorkspaceUIControl(session: string | undefined): void {
         const commands = await boundCall({ operation: 'sync', state: state() }) as UIAction[]
         for (const command of commands) {
           if (stopped) break
-          const result = await applyUIAction(command, binding.workspace, view => {
-            if (isWorkspaceViewId(view)) useWorkflowStore.getState().openWorkspaceView(view)
+          const result = await applyUIAction(command, binding.workspace, (view, target) => {
+            if (isWorkspaceViewId(view)) useWorkflowStore.getState().openWorkspaceView(view, target)
           }, state, controller.signal)
           if (stopped) break
           if (result.status === 'applied') revision++

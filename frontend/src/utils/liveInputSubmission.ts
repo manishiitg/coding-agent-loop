@@ -13,6 +13,27 @@ export interface ChatInputLiveRouteDecision {
   usesStructuredTransport: boolean
 }
 
+export interface ChatTransportDecision {
+  isInteractiveWorkflowBuilder: boolean
+  reportedTransport: string
+  providerUsesStructuredTransport: boolean
+}
+
+// Workflow Builder is the one deliberate exception to Cursor's normal
+// structured transport. Runtime/profile summaries describe the provider-level
+// default and can therefore still say "structured" even while the Builder's
+// real process is retained in tmux. The chat-specific contract must win.
+export function chatUsesStructuredTransport({
+  isInteractiveWorkflowBuilder,
+  reportedTransport,
+  providerUsesStructuredTransport,
+}: ChatTransportDecision): boolean {
+  if (isInteractiveWorkflowBuilder) return false
+  if (reportedTransport === 'structured') return true
+  if (reportedTransport === 'tmux') return false
+  return providerUsesStructuredTransport
+}
+
 // Only an interactive transport can accept terminal-style live delivery.
 // Structured coding-agent turns resume through the ordinary query route; trying
 // /live-input first adds a predictable 404/409 and can race another JSON turn.

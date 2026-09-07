@@ -1,12 +1,36 @@
 import { describe, expect, it, vi } from 'vitest'
 
 import {
+  chatUsesStructuredTransport,
   createLiveInputSubmissionCoordinator,
   shouldRouteChatInputToLiveTransport,
   shouldAppendOptimisticLiveInputMessage,
   shouldRefreshSessionEventStream,
   shouldUseRetainedLiveInput,
 } from './liveInputSubmission'
+
+describe('chatUsesStructuredTransport', () => {
+  it('keeps Workflow Builder on tmux even when a provider summary says structured', () => {
+    expect(chatUsesStructuredTransport({
+      isInteractiveWorkflowBuilder: true,
+      reportedTransport: 'structured',
+      providerUsesStructuredTransport: true,
+    })).toBe(false)
+  })
+
+  it('uses the reported transport for ordinary chats', () => {
+    expect(chatUsesStructuredTransport({
+      isInteractiveWorkflowBuilder: false,
+      reportedTransport: 'tmux',
+      providerUsesStructuredTransport: true,
+    })).toBe(false)
+    expect(chatUsesStructuredTransport({
+      isInteractiveWorkflowBuilder: false,
+      reportedTransport: 'structured',
+      providerUsesStructuredTransport: false,
+    })).toBe(true)
+  })
+})
 
 describe('shouldRouteChatInputToLiveTransport', () => {
   const base = {

@@ -33,7 +33,7 @@ import { hasActiveSessionWork } from '../utils/activitySessions'
 import { headerStatusLabel, statusTone } from '../utils/globalActivityMonitorStatus'
 import { shouldClearAcceptedChatDraft } from '../utils/chatSubmissionDraft'
 import { liveTerminalControlKey } from '../utils/liveTerminalKeys'
-import { shouldRouteChatInputToLiveTransport } from '../utils/liveInputSubmission'
+import { chatUsesStructuredTransport, shouldRouteChatInputToLiveTransport } from '../utils/liveInputSubmission'
 import { effectiveLLMUnderLock, effectiveProviderUnderLock } from '../utils/effectiveLLM'
 import { normalizeEventViewMode } from '../stores/useChatStore'
 import { activateTab } from '../utils/activateTab'
@@ -777,9 +777,11 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     : ['structured', 'tmux'].includes(profileReportedTransport)
       ? profileReportedTransport
       : ''
-  const currentChatUsesStructuredTransport = reportedTransport
-    ? reportedTransport === 'structured'
-    : !isInteractiveWorkflowBuilderChat && STRUCTURED_TRANSPORT_PROVIDERS.has((effectiveProviderForSteer || '').trim().toLowerCase())
+  const currentChatUsesStructuredTransport = chatUsesStructuredTransport({
+    isInteractiveWorkflowBuilder: isInteractiveWorkflowBuilderChat,
+    reportedTransport,
+    providerUsesStructuredTransport: STRUCTURED_TRANSPORT_PROVIDERS.has((effectiveProviderForSteer || '').trim().toLowerCase()),
+  })
   const liveTerminalOffered = mainTerminalAvailable && !currentChatUsesStructuredTransport
   useEffect(() => {
     if (!providerManifestLoaded) {

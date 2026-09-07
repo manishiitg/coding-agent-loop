@@ -10,8 +10,6 @@ import (
 	"sort"
 	"strings"
 	"time"
-
-	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/fsutil"
 )
 
 // Named OAuth client registry for Gmail connections.
@@ -50,13 +48,28 @@ func ValidateGmailOAuthClientName(name string) error {
 }
 
 // gmailOAuthClientsBaseDir is where named client registrations live, one
-// subdirectory per name — an env override, else a path under the workspace
-// config directory, mirroring gmailConnectionsBaseDir.
+// subdirectory per name — host-level, never the workspace.
+//
+// A client_secret.json is a real credential, shared across every account
+// authorized through it — the exact same reasoning gmailOAuthTokenDir
+// (gmail_oauth.go) already applies to refresh tokens: workspace content is
+// readable by anything that can read the workspace (an agent running a
+// workflow, a workspace backup), so a secret placed there is a standing
+// exposure. Follows the identical env-override / XDG_CONFIG_HOME / ~/.config
+// resolution as gmailOAuthTokenDir, so both land in the same place on a host
+// whose ~/.config is not writable by the service user (RTS: root-owned).
 func gmailOAuthClientsBaseDir() string {
 	if v := strings.TrimSpace(os.Getenv("GMAIL_OAUTH_CLIENTS_DIR")); v != "" {
 		return v
 	}
-	return filepath.Join(fsutil.WorkspaceDocsRoot(), "config", "gmail-oauth-clients")
+	if xdg := strings.TrimSpace(os.Getenv("XDG_CONFIG_HOME")); xdg != "" {
+		return filepath.Join(xdg, "agentworks", "gmail-oauth-clients")
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return filepath.Join(os.TempDir(), "agentworks-gmail-oauth-clients")
+	}
+	return filepath.Join(home, ".config", "agentworks", "gmail-oauth-clients")
 }
 
 func gmailOAuthClientDir(name string) string {

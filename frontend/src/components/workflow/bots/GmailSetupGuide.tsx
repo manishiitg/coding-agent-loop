@@ -144,11 +144,24 @@ export function GmailSetupGuide() {
                 → <strong>Create Credentials</strong> → <strong>OAuth client ID</strong> → download the JSON.
               </p>
               <Gotcha>
-                Application type must be <strong>Web application</strong>. Under <strong>Authorized redirect URIs</strong>,
-                add the exact AgentWorks callback shown below. A Google OAuth client created with the
-                <strong> Desktop app</strong> application type cannot authorize this callback, and Google returns
-                <code> 400: redirect_uri_mismatch</code>.
+                Which Google OAuth client type to pick depends on where <em>this AgentWorks server</em> runs, not
+                where your browser is:
               </Gotcha>
+              <p>
+                <strong>AgentWorks running on a real server</strong> (Dominion, or any hosted deployment reachable
+                at a public HTTPS address) — create a <strong>Web application</strong> client, and add the exact
+                callback below under <strong>Authorized redirect URIs</strong>. Google rejects a{' '}
+                <strong>Desktop app</strong> client here with <code>400: redirect_uri_mismatch</code>, since a
+                Desktop client can&rsquo;t register a real HTTPS redirect at all.
+              </p>
+              <p>
+                <strong>AgentWorks running locally</strong> (the callback resolves to <code>localhost</code>/
+                <code>127.0.0.1</code>) — a <strong>Desktop app</strong> client also works, with nothing to add
+                under Authorized redirect URIs: Google&rsquo;s loopback exemption matches any path on that host and
+                port. <strong>Web application</strong> works locally too, as long as you still add the exact
+                callback below as an authorized redirect URI — so when in doubt, Web application is the choice
+                that works either way.
+              </p>
               <Cmd>{callbackUrl}</Cmd>
               <p>
                 This address follows the active environment automatically: the current site origin on web, or the
@@ -161,7 +174,11 @@ export function GmailSetupGuide() {
                 Under <strong>OAuth clients</strong> below, enter the mailbox you're connecting and upload the
                 downloaded JSON file directly — no server filesystem access needed.
               </p>
-              <p>Verify it is the right type first — the top-level key should read <code>web</code>, not <code>installed</code>.</p>
+              <p>
+                Verify it is the type you meant to create — the top-level key reads <code>web</code> for a Web
+                application client, or <code>installed</code> for a Desktop app client. Either is fine locally;
+                only <code>web</code> works against a real hosted server.
+              </p>
             </Step>
 
             <Step n={7} title="Add each signing-in address as a test user">

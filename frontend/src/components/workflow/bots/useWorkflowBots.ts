@@ -111,9 +111,14 @@ export function useWorkflowBots(workspacePath: string | null) {
   const [gmailConnections, setGmailConnections] = useState<GmailConnection[]>([])
   const [gmailConnectionsBusy, setGmailConnectionsBusy] = useState<string | null>(null)
   // Named OAuth clients (the Google Cloud app a connection authorizes
-  // under). Registering one also creates its first sending account
-  // (createGmailOAuthClient) — a second mailbox reusing the same client is
-  // added from that client's own row, scoped there, not from global state.
+  // under). Treated 1:1 with a sending account in the UI: registering one
+  // creates its account and starts sign-in immediately
+  // (createGmailOAuthClient), and removing the account also removes its
+  // client (removeGmailMailboxAndClient) — upload+email is one action, not
+  // two separate entities to manage. The backend still allows a client to
+  // back more than one account (an older client created before this UI
+  // simplification might), which is why removal only cascades when the
+  // client truly has no other account left using it.
   const [gmailOAuthClients, setGmailOAuthClients] = useState<GmailOAuthClient[]>([])
   const [gmailOAuthClientsBusy, setGmailOAuthClientsBusy] = useState(false)
   const [gmailOAuthClientError, setGmailOAuthClientError] = useState<string | null>(null)
@@ -210,45 +215,6 @@ export function useWorkflowBots(workspacePath: string | null) {
       setGmailOAuthClients([])
     }
   }, [])
-
-  // Registers the OAuth client AND creates its sending account in one step —
-  // the operator already typed the email once, so a separate "Add account"
-  // form asking for a name and a client to pick would just be retyping it.
-  const createGmailOAuthClient = useCallback(async (email: string, clientSecretJson: unknown) => {
-    const trimmedEmail = email.trim()
-    // Backend name pattern is lowercase letters/digits/hyphens only (it
-    // becomes a directory name) — an email's @ and . don't qualify, so
-    // derive a slug from it rather than asking the operator for a second,
-    // arbitrary label.
-    const name = trimmedEmail.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 63)
-    try {
-      setGmailOAuthClientsBusy(true)
-      setGmailOAuthClientError(null)
-      const client = await agentApi.createGmailOAuthClient(name, clientSecretJson)
-      await agentApi.createGmailConnection({ display_name: trimmedEmail, client_name: client.name })
-      await Promise.all([loadGmailOAuthClients(), loadGmailConnections()])
-      setGmailNewClientEmail('')
-      return true
-    } catch (error) {
-      setGmailOAuthClientError(error instanceof Error ? error.message : 'Failed to register the OAuth client')
-      return false
-    } finally {
-      setGmailOAuthClientsBusy(false)
-    }
-  }, [loadGmailOAuthClients, loadGmailConnections])
-
-  const deleteGmailOAuthClient = useCallback(async (name: string) => {
-    try {
-      setGmailOAuthClientsBusy(true)
-      setGmailOAuthClientError(null)
-      await agentApi.deleteGmailOAuthClient(name)
-      await loadGmailOAuthClients()
-    } catch (error) {
-      setGmailOAuthClientError(error instanceof Error ? error.message : 'Failed to remove the OAuth client')
-    } finally {
-      setGmailOAuthClientsBusy(false)
-    }
-  }, [loadGmailOAuthClients])
 
   // Every mutation re-reads the list rather than patching local state, so the
   // server stays the single source of truth for status and which is default.
@@ -349,6 +315,61 @@ export function useWorkflowBots(workspacePath: string | null) {
       setGmailError(error instanceof Error ? error.message : 'Could not start Google sign-in')
     }
   }, [loadGmailConnections])
+
+  // Registers the OAuth client, creates its sending account, and immediately
+  // opens Google's consent screen for it — upload + email + one click is the
+  // whole flow; there's no separate "now click Sign in with Google" step to
+  // remember, since 99% of the time the mailbox being added is the same one
+  // the client's credentials are for.
+  const createGmailOAuthClient = useCallback(async (email: string, clientSecretJson: unknown) => {
+    const trimmedEmail = email.trim()
+    // Backend name pattern is lowercase letters/digits/hyphens only (it
+    // becomes a directory name) — an email's @ and . don't qualify, so
+    // derive a slug from it rather than asking the operator for a second,
+    // arbitrary label.
+    const name = trimmedEmail.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 63)
+    try {
+      setGmailOAuthClientsBusy(true)
+      setGmailOAuthClientError(null)
+      const client = await agentApi.createGmailOAuthClient(name, clientSecretJson)
+      const connection = await agentApi.createGmailConnection({ display_name: trimmedEmail, client_name: client.name })
+      await Promise.all([loadGmailOAuthClients(), loadGmailConnections()])
+      setGmailNewClientEmail('')
+      void connectGmailAccount(connection.id)
+      return true
+    } catch (error) {
+      setGmailOAuthClientError(error instanceof Error ? error.message : 'Failed to register the OAuth client')
+      return false
+    } finally {
+      setGmailOAuthClientsBusy(false)
+    }
+  }, [loadGmailOAuthClients, loadGmailConnections, connectGmailAccount])
+
+  // Removes a sending account and, when it was the last one using its OAuth
+  // client, the client too — the two were created together as one action
+  // (createGmailOAuthClient above), so removal undoes both by default rather
+  // than leaving an orphaned, unused client behind that has to be separately
+  // noticed and cleaned up. A client still backing another mailbox is left
+  // alone: only the account being removed is deleted.
+  const removeGmailMailboxAndClient = useCallback(async (connectionId: string, clientName: string) => {
+    try {
+      setGmailConnectionsBusy(connectionId)
+      setGmailError(null)
+      await agentApi.deleteGmailConnection(connectionId)
+      const stillInUse = gmailConnections.some(c => c.id !== connectionId && c.client_name === clientName)
+      if (!stillInUse && clientName) {
+        await agentApi.deleteGmailOAuthClient(clientName).catch(() => {
+          // Best-effort: the account is already gone either way, and an
+          // orphaned client can still be removed later from its own row.
+        })
+      }
+      await Promise.all([loadGmailConnections(), loadGmailOAuthClients()])
+    } catch (error) {
+      setGmailError(error instanceof Error ? error.message : 'Failed to remove the sending account')
+    } finally {
+      setGmailConnectionsBusy(null)
+    }
+  }, [gmailConnections, loadGmailConnections, loadGmailOAuthClients])
 
   const loadGmail = useCallback(async (background = false) => {
     try {
@@ -793,7 +814,7 @@ export function useWorkflowBots(workspacePath: string | null) {
     // gmail OAuth clients (named Google Cloud apps connections authorize under)
     gmailOAuthClients, gmailOAuthClientsBusy, gmailOAuthClientError,
     gmailNewClientEmail, setGmailNewClientEmail,
-    loadGmailOAuthClients, createGmailOAuthClient, deleteGmailOAuthClient,
+    loadGmailOAuthClients, createGmailOAuthClient, removeGmailMailboxAndClient,
   }
 }
 

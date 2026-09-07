@@ -6,8 +6,10 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
+	"time"
 )
 
 const whatsappUserSessionDBName = "session.db"
@@ -48,7 +50,7 @@ func (m *WhatsAppServiceManager) SetProfileRouter(resolver ProfileRouteResolver)
 	}
 }
 
-func (m *WhatsAppServiceManager) installProfileRouter(userID string, svc *WhatsAppService) {
+func (m *WhatsAppServiceManager) installProfileRouter(key string, svc *WhatsAppService) {
 	svc.SetProfileRouter(func(ctx context.Context, token string) (*ProfileRoute, error) {
 		m.mu.RLock()
 		resolver := m.profileRouter
@@ -56,8 +58,18 @@ func (m *WhatsAppServiceManager) installProfileRouter(userID string, svc *WhatsA
 		if resolver == nil {
 			return nil, nil
 		}
-		return resolver(ctx, userID, token)
+		return resolver(ctx, whatsappOwnerUserID(svc, key), token)
 	})
+}
+
+// whatsappOwnerUserID is the account a device belongs to: its owner binding,
+// or the user part of its service key before anyone has claimed it.
+func whatsappOwnerUserID(svc *WhatsAppService, key string) string {
+	if owner := svc.GetOwner(); owner != nil && strings.TrimSpace(owner.UserID) != "" {
+		return owner.UserID
+	}
+	userKey, _ := splitWhatsAppServiceKey(key)
+	return userKey
 }
 
 func NewWhatsAppServiceManager(baseDir string) *WhatsAppServiceManager {
@@ -97,13 +109,16 @@ func (m *WhatsAppServiceManager) StartListening(ctx context.Context) error {
 		if !entry.IsDir() {
 			continue
 		}
-		userID := entry.Name()
-		dbPath := filepath.Join(m.baseDir, userID, whatsappUserSessionDBName)
-		if _, err := os.Stat(dbPath); err != nil {
-			continue
+		userKey := entry.Name()
+		if _, err := os.Stat(m.devicePath(userKey, "")); err == nil {
+			if _, err := m.serviceForKey(ctx, userKey, ""); err != nil {
+				log.Printf("[WHATSAPP] Failed to start service for user %s: %v", userKey, err)
+			}
 		}
-		if _, err := m.ServiceForUser(ctx, userID, "", ""); err != nil {
-			log.Printf("[WHATSAPP] Failed to start service for user %s: %v", userID, err)
+		for _, slot := range m.deviceSlots(userKey) {
+			if _, err := m.serviceForKey(ctx, userKey, slot); err != nil {
+				log.Printf("[WHATSAPP] Failed to start device %s for user %s: %v", slot, userKey, err)
+			}
 		}
 	}
 	return nil
@@ -121,16 +136,259 @@ func (m *WhatsAppServiceManager) StopListening() {
 	}
 }
 
+// ServiceForUser is the account's primary WhatsApp device: the one the
+// account's default profile, routing and notifications live on.
 func (m *WhatsAppServiceManager) ServiceForUser(ctx context.Context, userID, email, username string) (*WhatsAppService, error) {
 	_, _ = email, username
+	userKey, err := whatsappUserKey(userID)
+	if err != nil {
+		return nil, err
+	}
+	return m.serviceForKey(ctx, userKey, "")
+}
+
+// An account can link more than one phone (a second parent's): each extra
+// device is its own whatsmeow session with its own pairing, stored under
+// <user>/devices/<slot>/ and keyed "<user>~<slot>" in the service map and in
+// managed channel ids. The primary device keeps its original key and path.
+const (
+	whatsappDeviceKeySeparator = "~"
+	whatsappDevicesDirName     = "devices"
+)
+
+// WhatsAppDevice describes one linked (or linking) phone of an account.
+type WhatsAppDevice struct {
+	Slot        string    `json:"slot"`
+	Paired      bool      `json:"paired"`
+	Connected   bool      `json:"connected"`
+	OwnJID      string    `json:"own_jid,omitempty"`
+	QRAvailable bool      `json:"qr_available"`
+	QRExpiresAt time.Time `json:"-"`
+}
+
+func whatsappUserKey(userID string) (string, error) {
 	userID = strings.TrimSpace(userID)
 	if userID == "" {
-		return nil, fmt.Errorf("whatsapp: user ID required")
+		return "", fmt.Errorf("whatsapp: user ID required")
 	}
 	key := sanitizeWhatsAppFileName(userID)
 	if key == "" {
-		return nil, fmt.Errorf("whatsapp: invalid user ID %q", userID)
+		return "", fmt.Errorf("whatsapp: invalid user ID %q", userID)
 	}
+	return key, nil
+}
+
+func whatsappServiceKey(userKey, slot string) string {
+	if slot == "" {
+		return userKey
+	}
+	return userKey + whatsappDeviceKeySeparator + slot
+}
+
+// splitWhatsAppServiceKey undoes whatsappServiceKey. The separator never
+// appears in a sanitized user key, so the split is unambiguous.
+func splitWhatsAppServiceKey(key string) (userKey, slot string) {
+	userKey, slot, _ = strings.Cut(key, whatsappDeviceKeySeparator)
+	return userKey, slot
+}
+
+func (m *WhatsAppServiceManager) devicePath(userKey, slot string) string {
+	if slot == "" {
+		return filepath.Join(m.baseDir, userKey, whatsappUserSessionDBName)
+	}
+	return filepath.Join(m.baseDir, userKey, whatsappDevicesDirName, slot, whatsappUserSessionDBName)
+}
+
+// ServiceForDevice is one linked phone of the account; slot "" is the primary.
+func (m *WhatsAppServiceManager) ServiceForDevice(ctx context.Context, userID, slot string) (*WhatsAppService, error) {
+	userKey, err := whatsappUserKey(userID)
+	if err != nil {
+		return nil, err
+	}
+	return m.serviceForKey(ctx, userKey, slot)
+}
+
+// serviceForEncodedKey resolves the service a managed channel id names.
+func (m *WhatsAppServiceManager) serviceForEncodedKey(ctx context.Context, key string) (*WhatsAppService, error) {
+	userKey, slot := splitWhatsAppServiceKey(key)
+	return m.serviceForKey(ctx, userKey, slot)
+}
+
+// deviceSlots lists the account's extra devices, on disk and in memory.
+func (m *WhatsAppServiceManager) deviceSlots(userKey string) []string {
+	slots := map[string]bool{}
+	if entries, err := os.ReadDir(filepath.Join(m.baseDir, userKey, whatsappDevicesDirName)); err == nil {
+		for _, entry := range entries {
+			if entry.IsDir() {
+				if _, err := os.Stat(filepath.Join(m.baseDir, userKey, whatsappDevicesDirName, entry.Name(), whatsappUserSessionDBName)); err == nil {
+					slots[entry.Name()] = true
+				}
+			}
+		}
+	}
+	m.mu.RLock()
+	for key := range m.services {
+		if user, slot := splitWhatsAppServiceKey(key); user == userKey && slot != "" {
+			slots[slot] = true
+		}
+	}
+	m.mu.RUnlock()
+	out := make([]string, 0, len(slots))
+	for slot := range slots {
+		out = append(out, slot)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// nextWhatsAppDeviceSlot names the next extra device: phone-2, phone-3, …
+// skipping slots already in use.
+func nextWhatsAppDeviceSlot(taken []string) string {
+	used := map[string]bool{}
+	for _, slot := range taken {
+		used[slot] = true
+	}
+	for n := 2; ; n++ {
+		if slot := fmt.Sprintf("phone-%d", n); !used[slot] {
+			return slot
+		}
+	}
+}
+
+func whatsappDeviceInfo(slot string, svc *WhatsAppService) WhatsAppDevice {
+	device := WhatsAppDevice{Slot: slot, Paired: svc.IsPaired(), Connected: svc.IsConnected()}
+	if jid := svc.OwnJID(); !jid.IsEmpty() {
+		device.OwnJID = jid.String()
+	}
+	if code, expires := svc.GetQR(); code != "" && !expires.IsZero() {
+		device.QRAvailable = true
+		device.QRExpiresAt = expires
+	}
+	return device
+}
+
+// Devices lists the account's phones, primary first.
+func (m *WhatsAppServiceManager) Devices(ctx context.Context, userID string) ([]WhatsAppDevice, error) {
+	userKey, err := whatsappUserKey(userID)
+	if err != nil {
+		return nil, err
+	}
+	primary, err := m.serviceForKey(ctx, userKey, "")
+	if err != nil {
+		return nil, err
+	}
+	devices := []WhatsAppDevice{whatsappDeviceInfo("", primary)}
+	for _, slot := range m.deviceSlots(userKey) {
+		svc, err := m.serviceForKey(ctx, userKey, slot)
+		if err != nil {
+			log.Printf("[WHATSAPP] device %s/%s unavailable: %v", userKey, slot, err)
+			continue
+		}
+		devices = append(devices, whatsappDeviceInfo(slot, svc))
+	}
+	return devices, nil
+}
+
+// NextPairingDevice is the phone a scan would pair right now: the primary
+// while it is unpaired, else an extra device still waiting for its scan,
+// else a fresh one. Idempotent, so a pairing screen can poll it.
+func (m *WhatsAppServiceManager) NextPairingDevice(ctx context.Context, userID string) (*WhatsAppService, string, error) {
+	userKey, err := whatsappUserKey(userID)
+	if err != nil {
+		return nil, "", err
+	}
+	primary, err := m.serviceForKey(ctx, userKey, "")
+	if err != nil {
+		return nil, "", err
+	}
+	if !primary.IsPaired() {
+		return primary, "", nil
+	}
+	slots := m.deviceSlots(userKey)
+	for _, slot := range slots {
+		svc, err := m.serviceForKey(ctx, userKey, slot)
+		if err != nil {
+			continue
+		}
+		if !svc.IsPaired() {
+			return svc, slot, nil
+		}
+	}
+	slot := nextWhatsAppDeviceSlot(slots)
+	svc, err := m.serviceForKey(ctx, userKey, slot)
+	if err != nil {
+		return nil, "", err
+	}
+	return svc, slot, nil
+}
+
+// DeviceByJID finds the account's phone paired as jid (full JID or the bare
+// number).
+func (m *WhatsAppServiceManager) DeviceByJID(ctx context.Context, userID, jid string) (*WhatsAppService, string, bool) {
+	jid = strings.TrimSpace(jid)
+	if jid == "" {
+		return nil, "", false
+	}
+	devices, err := m.Devices(ctx, userID)
+	if err != nil {
+		return nil, "", false
+	}
+	userKey, _ := whatsappUserKey(userID)
+	for _, device := range devices {
+		if device.OwnJID == "" {
+			continue
+		}
+		if device.OwnJID == jid || strings.TrimSuffix(strings.SplitN(device.OwnJID, "@", 2)[0], "") == jid {
+			svc, err := m.serviceForKey(ctx, userKey, device.Slot)
+			if err != nil {
+				return nil, "", false
+			}
+			return svc, device.Slot, true
+		}
+	}
+	return nil, "", false
+}
+
+// UnpairDevice forgets one phone. The primary is reset to a fresh pairing
+// (its slot stays); an extra device is removed entirely.
+func (m *WhatsAppServiceManager) UnpairDevice(ctx context.Context, userID, slot string) error {
+	userKey, err := whatsappUserKey(userID)
+	if err != nil {
+		return err
+	}
+	slot = sanitizeWhatsAppFileName(slot)
+	if slot == "" {
+		primary, err := m.serviceForKey(ctx, userKey, "")
+		if err != nil {
+			return err
+		}
+		return primary.Unpair(ctx)
+	}
+	key := whatsappServiceKey(userKey, slot)
+	m.mu.Lock()
+	svc := m.services[key]
+	delete(m.services, key)
+	m.mu.Unlock()
+	if svc != nil {
+		svc.StopListening()
+	}
+	dir := filepath.Join(m.baseDir, userKey, whatsappDevicesDirName, slot)
+	if err := os.RemoveAll(dir); err != nil {
+		return fmt.Errorf("whatsapp: remove device %s: %w", slot, err)
+	}
+	log.Printf("[WHATSAPP] Removed device %s for user %s", slot, userKey)
+	return nil
+}
+
+func (m *WhatsAppServiceManager) serviceForKey(ctx context.Context, userKey, slot string) (*WhatsAppService, error) {
+	if slot != "" {
+		clean := sanitizeWhatsAppFileName(slot)
+		if clean == "" {
+			return nil, fmt.Errorf("whatsapp: invalid device %q", slot)
+		}
+		slot = clean
+	}
+	key := whatsappServiceKey(userKey, slot)
 
 	m.mu.RLock()
 	svc := m.services[key]
@@ -144,7 +402,7 @@ func (m *WhatsAppServiceManager) ServiceForUser(ctx context.Context, userID, ema
 		return svc, nil
 	}
 
-	dbPath := filepath.Join(m.baseDir, key, whatsappUserSessionDBName)
+	dbPath := m.devicePath(userKey, slot)
 	svc = NewWhatsAppService(dbPath)
 	m.configureService(key, svc)
 
@@ -164,6 +422,7 @@ func (m *WhatsAppServiceManager) ServiceForUser(ctx context.Context, userID, ema
 }
 
 func (m *WhatsAppServiceManager) configureService(userID string, svc *WhatsAppService) {
+	_, deviceSlot := splitWhatsAppServiceKey(userID)
 	svc.SetMessageHandler(func(msg BotIncomingMessage) {
 		rawChannelID := msg.ChannelID
 		encodedChannelID := encodeWhatsAppManagedChannelID(userID, rawChannelID)
@@ -171,6 +430,7 @@ func (m *WhatsAppServiceManager) configureService(userID string, svc *WhatsAppSe
 		if msg.ThreadTS == rawChannelID {
 			msg.ThreadTS = encodedChannelID
 		}
+		msg.DeviceSlot = deviceSlot
 		m.mu.RLock()
 		handler := m.messageHandler
 		m.mu.RUnlock()
@@ -223,7 +483,7 @@ func (m *WhatsAppServiceManager) serviceForThread(ctx context.Context, threadID 
 	if !ok {
 		return nil, threadID, fmt.Errorf("whatsapp: managed channel ID missing owner")
 	}
-	svc, err := m.ServiceForUser(ctx, userID, "", "")
+	svc, err := m.serviceForEncodedKey(ctx, userID)
 	if err != nil {
 		return nil, threadID, err
 	}
@@ -263,7 +523,7 @@ func (m *WhatsAppServiceManager) AddReaction(ctx context.Context, channelID, mes
 	if !ok {
 		return nil
 	}
-	svc, err := m.ServiceForUser(ctx, userID, "", "")
+	svc, err := m.serviceForEncodedKey(ctx, userID)
 	if err != nil {
 		return err
 	}
@@ -275,7 +535,7 @@ func (m *WhatsAppServiceManager) RemoveReaction(ctx context.Context, channelID, 
 	if !ok {
 		return nil
 	}
-	svc, err := m.ServiceForUser(ctx, userID, "", "")
+	svc, err := m.serviceForEncodedKey(ctx, userID)
 	if err != nil {
 		return err
 	}
@@ -295,7 +555,7 @@ func (m *WhatsAppServiceManager) GetChannelName(ctx context.Context, channelID s
 	if !ok {
 		return ""
 	}
-	svc, err := m.ServiceForUser(ctx, userID, "", "")
+	svc, err := m.serviceForEncodedKey(ctx, userID)
 	if err != nil {
 		return ""
 	}

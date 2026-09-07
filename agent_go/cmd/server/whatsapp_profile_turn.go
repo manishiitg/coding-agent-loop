@@ -92,6 +92,20 @@ func whatsappEngineFor(profile agentprofiles.Profile, conversation ProductConver
 	return agentprofiles.ProviderOption{}, false
 }
 
+// whatsappConversationBinding picks the conversation a WhatsApp turn runs
+// in. The account's primary phone talks in a singleton profile's main
+// conversation — the one its app shows. An extra phone (another parent's)
+// gets that profile's own separate conversation, keyed by the device, so one
+// parent's replies never appear on the other's phone. A keyed profile's
+// conversation (an activity) is the same from every phone.
+func whatsappConversationBinding(ctx context.Context, userID string, profile agentprofiles.Profile, conversationKey, deviceSlot string) (productConversationBinding, error) {
+	deviceSlot = strings.TrimSpace(deviceSlot)
+	if deviceSlot != "" && strings.EqualFold(strings.TrimSpace(profile.Runtime.Conversation.Mode), agentprofiles.ConversationModeSingleton) {
+		return resolveIsolatedProductBinding(ctx, userID, profile, "whatsapp-"+deviceSlot, profile.Name+" (WhatsApp "+deviceSlot+")")
+	}
+	return resolveProductConversationBinding(ctx, userID, profile, conversationKey)
+}
+
 func whatsappWorkspaceUserID(userID string) string {
 	if !IsMultiUserMode() {
 		return GetDefaultUserID()
@@ -173,7 +187,7 @@ func (api *StreamingAPI) botProfileTurn(ctx context.Context, userID string, msg 
 		return nil, "", false, fmt.Errorf("%s no longer takes WhatsApp messages", profile.Name)
 	}
 	productInteractions.Note(ctx, workspaceUserID, profile.Product)
-	binding, err := resolveProductConversationBinding(ctx, workspaceUserID, profile, conversationKey)
+	binding, err := whatsappConversationBinding(ctx, workspaceUserID, profile, conversationKey, msg.DeviceSlot)
 	if err != nil {
 		return nil, "", false, fmt.Errorf("resolve %s conversation: %w", profile.Name, err)
 	}

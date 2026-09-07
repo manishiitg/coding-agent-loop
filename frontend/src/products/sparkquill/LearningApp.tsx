@@ -3304,7 +3304,7 @@ export default function LearningApp() {
                       <Type size={14} />
                       {childChatZoom > 1 && <span className="fl-zoom-badge">{Math.round(childChatZoom * 100)}%</span>}
                     </button>
-                    <button className="fl-parent-return" type="button" title="Parent Mode" onClick={() => { setGateValue(''); setGateError(''); setPinGate(true) }}><LockKeyhole size={16} /><span>Parent Mode</span></button>
+                    <button className="fl-parent-return" type="button" title="Parent Mode" onClick={() => { setGateValue(''); setGateError(''); setPinGate(true) }}><LockKeyhole size={13} /><span>Parent Mode</span></button>
                   </div>
                 </div>
                 {/* Its own row: the pill's title needs the header's full width to

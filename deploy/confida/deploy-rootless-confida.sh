@@ -97,7 +97,11 @@ cp "$REPO_ROOT/frontend/scripts/check-release-assets.mjs" "$BUILD_DIR/check-rele
 install -m 0644 "$LOCAL_SCRIPT_DIR/runtime-config.js" "$BUILD_DIR/frontend/runtime-config.js"
 node "$BUILD_DIR/check-release-assets.mjs" "$BUILD_DIR/frontend"
 
-echo '{"mcpServers": {}}' > "$BUILD_DIR/configs/mcp_servers_confida.json"
+# The shared public MCP catalog (Notion, Linear, Sentry, Exa, etc. via the
+# already-registered agentworkshq.com OAuth client metadata) -- confida is a
+# generic AgentWorks instance, not a locked single-purpose product profile
+# like Dominion, so it gets the same catalog Video Studio ships with.
+install -m 0644 "$LOCAL_SCRIPT_DIR/mcp_servers_confida.json" "$BUILD_DIR/configs/mcp_servers_confida.json"
 
 REMOTE_RELEASE="$REMOTE_APP/releases/$RELEASE_ID"
 echo "==> [$RELEASE_ID] Shipping release to confida@$HOST_IP:$REMOTE_RELEASE"

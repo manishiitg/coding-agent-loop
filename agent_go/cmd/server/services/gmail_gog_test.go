@@ -16,12 +16,37 @@ import (
 // network dependency in this suite would be slow and break offline/CI runs.
 func stubGoogleTokenInfo(t *testing.T, scope string) {
 	t.Helper()
+	stubGoogleTokenInfoWithEmail(t, scope, "")
+}
+
+// stubGoogleTokenInfoWithEmail also serves tokeninfo's `email` field, which
+// Google includes when the token carries userinfo.email — the identity source
+// a gmail.send-only token has, since getProfile is closed to it. An empty
+// email omits the field, matching a token granted without userinfo.email.
+func stubGoogleTokenInfoWithEmail(t *testing.T, scope, email string) {
+	t.Helper()
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		fmt.Fprintf(w, `{"scope": %q}`, scope)
+		if email == "" {
+			fmt.Fprintf(w, `{"scope": %q}`, scope)
+			return
+		}
+		fmt.Fprintf(w, `{"scope": %q, "email": %q}`, scope, email)
 	}))
 	t.Cleanup(server.Close)
 	original := googleTokenInfoURL
 	googleTokenInfoURL = server.URL
+	t.Cleanup(func() { googleTokenInfoURL = original })
+}
+
+// unreachableGoogleTokenInfo makes the tokeninfo call fail fast and
+// deterministically (unroutable address + the client's short timeout) so a
+// test exercises the "tokeninfo unavailable" fallback without touching the
+// network — and, when it wants a *getProfile* outcome, is not accidentally
+// short-circuited by a real tokeninfo success.
+func unreachableGoogleTokenInfo(t *testing.T) {
+	t.Helper()
+	original := googleTokenInfoURL
+	googleTokenInfoURL = "http://127.0.0.1:1" // nothing listens here
 	t.Cleanup(func() { googleTokenInfoURL = original })
 }
 
@@ -161,6 +186,10 @@ func TestComputeAuthStatusGogFallsBackToRequestedScopesWhenTokenInfoFails(t *tes
 }
 
 func TestComputeAuthStatusGogReportsNotAuthenticatedOnFailure(t *testing.T) {
+	// tokeninfo unavailable AND getProfile failing is the only combination
+	// that means "not authenticated": with tokeninfo reachable, Google's own
+	// verdict on the token would decide instead of the getProfile probe.
+	unreachableGoogleTokenInfo(t)
 	argvFile := filepath.Join(t.TempDir(), "argv.log")
 	gog := fakeGog(t, "", argvFile) // empty profileJSON -> the fake exits 1
 
@@ -172,6 +201,55 @@ func TestComputeAuthStatusGogReportsNotAuthenticatedOnFailure(t *testing.T) {
 	}
 	if st.Detail == "" {
 		t.Error("expected a non-empty Detail explaining the failure")
+	}
+}
+
+// The send-only default (gmailOAuthScopesFor(false)): gmail.users.getProfile
+// is closed to a gmail.send token, so if getProfile were still the liveness
+// check every default-scoped connection would read as "reconnect" and Pulse
+// would refuse to send through it. Google's tokeninfo verdict on the token,
+// plus its email, is what makes such a connection authenticated and named.
+func TestComputeAuthStatusGogSendOnlyTokenIsAuthenticatedAndNamedViaTokenInfo(t *testing.T) {
+	stubGoogleTokenInfoWithEmail(t,
+		"https://www.googleapis.com/auth/gmail.send https://www.googleapis.com/auth/userinfo.email",
+		"sender@example.com")
+	argvFile := filepath.Join(t.TempDir(), "argv.log")
+	gog := fakeGog(t, "", argvFile) // getProfile exits 1, exactly as Google does for send-only
+
+	cfg := &GmailConfig{Token: "tok-send-only"}
+	st := (&GmailService{}).computeAuthStatusGog(context.Background(), gog, cfg)
+
+	if !st.Authenticated || !st.HasGmailScope {
+		t.Fatalf("send-only token must be authenticated with a Gmail send scope, got %+v", st)
+	}
+	if st.Email != "sender@example.com" {
+		t.Fatalf("Email = %q, want the tokeninfo email (getProfile is unavailable to a send-only token)", st.Email)
+	}
+	if st.Detail != "" {
+		t.Errorf("expected no Detail on a healthy send-only connection, got %q", st.Detail)
+	}
+	if strings.Contains(strings.Join(readArgvLines(t, argvFile), " "), "gmail.users.getProfile") {
+		t.Error("getProfile must not be probed when tokeninfo already supplied the identity")
+	}
+}
+
+// A token that can only read is authenticated but cannot send, and the UI
+// must say so rather than leave a Pulse send to fail later.
+func TestComputeAuthStatusGogReadOnlyTokenIsAuthenticatedButLacksSendScope(t *testing.T) {
+	stubGoogleTokenInfoWithEmail(t, "https://www.googleapis.com/auth/gmail.readonly", "reader@example.com")
+	argvFile := filepath.Join(t.TempDir(), "argv.log")
+	gog := fakeGog(t, `{"emailAddress": "reader@example.com"}`, argvFile)
+
+	st := (&GmailService{}).computeAuthStatusGog(context.Background(), gog, &GmailConfig{Token: "tok-read"})
+
+	if !st.Authenticated {
+		t.Fatalf("a live read-only token is still authenticated, got %+v", st)
+	}
+	if st.HasGmailScope {
+		t.Fatalf("gmail.readonly alone must not count as a send scope, got %+v", st)
+	}
+	if st.Detail == "" {
+		t.Error("expected a Detail explaining the missing send scope")
 	}
 }
 

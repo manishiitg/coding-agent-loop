@@ -416,7 +416,18 @@ func (g *GmailService) computeAuthStatus(ctx context.Context, gwsPath string, us
 		st.Authenticated = true
 		st.HasGmailScope = true
 		st.Scopes = gmailOAuthScopesFor(false)
-		st.Email = fetchGmailAccountEmail(ctx, gwsPath, cfg)
+		// Same identity strategy as the gog path: tokeninfo's email works for
+		// the send-only default, where getProfile is closed. Best-effort — a
+		// tokeninfo failure changes nothing about the auth state here, since
+		// holding a working token IS the auth state for these connections.
+		if scopes, email, err := googleTokenInfo(ctx, cfg.Token); err == nil {
+			st.Scopes = scopes
+			st.HasGmailScope = scopesGrantGmailSend(scopes)
+			st.Email = email
+		}
+		if st.Email == "" {
+			st.Email = fetchGmailAccountEmail(ctx, gwsPath, cfg)
+		}
 		return st
 	}
 
@@ -443,12 +454,7 @@ func (g *GmailService) computeAuthStatus(ctx context.Context, gwsPath string, us
 	}
 	st.Authenticated = raw.EncryptedCredentialsHave && raw.EncryptionValid
 	st.Scopes = raw.Scopes
-	for _, s := range raw.Scopes {
-		if strings.Contains(s, "gmail.send") || strings.Contains(s, "gmail.modify") || strings.Contains(s, "mail.google.com") {
-			st.HasGmailScope = true
-			break
-		}
-	}
+	st.HasGmailScope = scopesGrantGmailSend(raw.Scopes)
 	if st.Authenticated && !st.HasGmailScope {
 		st.Detail = "authenticated, but the account is missing a Gmail send scope — re-run `gws auth login -s gmail`"
 	}

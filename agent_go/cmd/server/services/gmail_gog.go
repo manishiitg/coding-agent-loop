@@ -101,6 +101,46 @@ func (g *GmailService) computeAuthStatusGog(ctx context.Context, gogPath string,
 		return st
 	}
 
+	// For a server-managed token, Google's own tokeninfo verdict is the
+	// liveness check AND the identity source. It works for every scope set —
+	// crucially the send-only default (gmailOAuthScopesFor), where
+	// gmail.users.getProfile is closed (it needs a read scope): were
+	// getProfile still the probe, every default-scoped connection would read
+	// as "reconnect" and Pulse would refuse to send through it.
+	//
+	// It also reports what was actually granted, not what we last asked for —
+	// an operator (or the agent, via `gog auth add`) may have widened access
+	// since this connection was created, and the UI's Scopes display is only
+	// honest if it reflects that.
+	if cfg != nil && strings.TrimSpace(cfg.Token) != "" {
+		if scopes, tokenEmail, infoErr := googleTokenInfo(ctx, cfg.Token); infoErr == nil {
+			st.Authenticated = true
+			st.Scopes = scopes
+			st.HasGmailScope = scopesGrantGmailSend(scopes)
+			if !st.HasGmailScope {
+				st.Detail = "authenticated, but this account was not granted a Gmail send scope — reconnect it and allow sending"
+			}
+			st.Email = tokenEmail
+			if st.Email == "" {
+				// Best-effort only (a token granted without userinfo.email):
+				// a failure here leaves the address unknown, never the
+				// connection unauthenticated — it can still send.
+				if email, err := gogFetchGmailProfileEmail(ctx, gogPath, authArgs); err == nil {
+					st.Email = email
+				}
+			}
+			return st
+		}
+		// tokeninfo unreachable (network partition, not a bad token): fall
+		// through to the getProfile probe rather than reporting a healthy
+		// connection as broken.
+	}
+
+	// The --account/--client path: gog manages refresh internally and exposes
+	// no documented "print token" command, so there is no raw token to
+	// introspect. getProfile is the only probe available, which means a
+	// send-only account registered directly through gog reads as
+	// unauthenticated here — reconnect it through this app to fix that.
 	email, err := gogFetchGmailProfileEmail(ctx, gogPath, authArgs)
 	if err != nil {
 		st.Detail = "not authenticated — reconnect this account"
@@ -109,29 +149,10 @@ func (g *GmailService) computeAuthStatusGog(ctx context.Context, gogPath string,
 	st.Authenticated = true
 	st.HasGmailScope = true
 	st.Email = email
-
-	// Report what was actually granted, not what we last asked for — an
-	// operator (or the agent, via `gog auth add`) may have widened access
-	// since this connection was created, and the UI's Scopes display is
-	// only honest if it reflects that.
-	//
-	// Only possible for the access-token path: with an --account/--client
-	// connection there is no raw token in hand to introspect here (gog
-	// manages refresh internally and exposes no documented "print token"
-	// command), so this falls back to the base requested set, which may
+	// Nothing to introspect, so this is the base requested set; it assumes
+	// the common case (send-only) rather than over-reporting read, and may
 	// under-report a scope granted directly through gog outside this app.
-	// The true granted set is only known by asking Google (below); this is
-	// just the fallback default when that introspection is unavailable, so it
-	// assumes the common case (send-only) rather than over-reporting read.
-	if cfg != nil && strings.TrimSpace(cfg.Token) != "" {
-		if scopes, scopeErr := googleTokenGrantedScopes(ctx, cfg.Token); scopeErr == nil && len(scopes) > 0 {
-			st.Scopes = scopes
-		} else {
-			st.Scopes = gmailOAuthScopesFor(false)
-		}
-	} else {
-		st.Scopes = gmailOAuthScopesFor(false)
-	}
+	st.Scopes = gmailOAuthScopesFor(false)
 	return st
 }
 
@@ -151,30 +172,55 @@ var googleTokenInfoURL = "https://oauth2.googleapis.com/tokeninfo"
 var googleTokenInfoClient = &http.Client{Timeout: 5 * time.Second}
 
 func googleTokenGrantedScopes(ctx context.Context, accessToken string) ([]string, error) {
+	scopes, _, err := googleTokenInfo(ctx, accessToken)
+	return scopes, err
+}
+
+// googleTokenInfo is the full tokeninfo lookup: the granted scopes, plus the
+// token's email when the userinfo.email scope is present (every connection
+// requests it). A 200 with a non-empty scope is also the strongest possible
+// liveness check — Google itself just said the token is valid — and unlike
+// gmail.users.getProfile it works for a gmail.send-only token, which is why
+// computeAuthStatusGog tries it first (see gmailOAuthScopesFor).
+func googleTokenInfo(ctx context.Context, accessToken string) (scopes []string, email string, err error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet,
 		googleTokenInfoURL+"?access_token="+url.QueryEscape(accessToken), nil)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	resp, err := googleTokenInfoClient.Do(req)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("tokeninfo: unexpected status %d", resp.StatusCode)
+		return nil, "", fmt.Errorf("tokeninfo: unexpected status %d", resp.StatusCode)
 	}
 	var body struct {
 		Scope string `json:"scope"`
+		Email string `json:"email"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
-		return nil, err
+		return nil, "", err
 	}
-	scopes := strings.Fields(body.Scope)
+	scopes = strings.Fields(body.Scope)
 	if len(scopes) == 0 {
-		return nil, fmt.Errorf("tokeninfo: empty scope")
+		return nil, "", fmt.Errorf("tokeninfo: empty scope")
 	}
-	return scopes, nil
+	return scopes, strings.TrimSpace(body.Email), nil
+}
+
+// scopesGrantGmailSend reports whether a granted scope set can send mail:
+// gmail.send itself, or a superset (gmail.modify, full mail.google.com).
+// Shared by the gws and gog status paths so "has a Gmail send scope" means
+// one thing everywhere. gmail.readonly alone does not qualify.
+func scopesGrantGmailSend(scopes []string) bool {
+	for _, s := range scopes {
+		if strings.Contains(s, "gmail.send") || strings.Contains(s, "gmail.modify") || strings.Contains(s, "mail.google.com") {
+			return true
+		}
+	}
+	return false
 }
 
 // gogFetchGmailProfileEmail calls gmail.users.getProfile through gog's

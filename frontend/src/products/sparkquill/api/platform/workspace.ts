@@ -10,7 +10,18 @@ export const ACTIVITIES = 'activities'
 
 export type Requester = <T>(method: string, path: string, body?: unknown) => Promise<T>
 
-export type FamilyFile = { engine?: string; model?: string; child?: { name?: string; grade?: string; board?: string } | null; parent_label?: string; pin_hash?: string; watch_sites?: string[] }
+// engine (which AI provider) is family-wide by design — it corresponds to
+// which paid account the family has (Settings: "The AI behind both your
+// chat and {child}'s tutor... pick whichever account you already pay for").
+// The MODEL within that engine is not: product.yaml declares a different
+// model_id per profile (parent's codex-cli default is gpt-6-astra, child's
+// is gpt-5.6-luna) precisely so a family can run a stronger model for the
+// parent and a lighter/cheaper one for the child on the same account. A
+// single shared `model` field (now legacy, read-only going forward) let
+// whichever side picked last silently overwrite the other's — parent_model/
+// child_model are the fix. familyRuntime() falls back to each profile's own
+// product.yaml default when its role-specific field has never been set.
+export type FamilyFile = { engine?: string; model?: string; parent_model?: string; child_model?: string; child?: { name?: string; grade?: string; board?: string } | null; parent_label?: string; pin_hash?: string; watch_sites?: string[] }
 
 export async function sha256Hex(text: string): Promise<string> {
   const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text))
@@ -162,13 +173,18 @@ export class FamilyWorkspace {
     return (await this.readJSON<FamilyFile>('family.json')) ?? {}
   }
 
-  async saveEngine(engine: string, model?: string): Promise<void> {
+  // engine is shared (which paid account the family uses); the model within
+  // it is per-role (see FamilyFile's comment) — role picks which of
+  // parent_model/child_model this call's model belongs to. The legacy shared
+  // `model` field is never written here — see familyRuntime()'s fallback.
+  async saveEngine(role: 'parent' | 'child', engine: string, model?: string): Promise<void> {
     const current = await this.readFamily()
+    const modelKey = role === 'parent' ? 'parent_model' : 'child_model'
     // A model belongs to its engine: switching engine without naming a model
-    // drops the old one rather than carrying a foreign model id along.
+    // drops this role's old one rather than carrying a foreign model id along.
     const next: Record<string, unknown> = { ...current, engine: engine.trim() }
-    if (model && model.trim()) next.model = model.trim()
-    else delete next.model
+    if (model && model.trim()) next[modelKey] = model.trim()
+    else delete next[modelKey]
     await this.writeJSON('family.json', next)
   }
 

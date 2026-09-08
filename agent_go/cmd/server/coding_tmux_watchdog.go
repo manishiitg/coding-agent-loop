@@ -27,6 +27,11 @@ const (
 	// Only inspect the current tail. Rate-limit text can remain in tmux scrollback
 	// after a provider has recovered and resumed useful work.
 	codingWatchdogRateLimitTailLines = 80
+	// codingWatchdogDeadPaneTailLines caps how much of a crashed pane's
+	// captured output the log carries — enough to show the actual crash
+	// near the end without flooding the log with a long session's prior
+	// scrollback.
+	codingWatchdogDeadPaneTailLines = 120
 )
 
 var captureTmuxPanePlainForWatchdog = captureTmuxPanePlain
@@ -86,6 +91,17 @@ func (api *StreamingAPI) reapRateLimitedCodingSessionsOnce(streak map[string]cod
 			continue
 		case codingTmuxPaneDead:
 			reason := "tmux pane exited unexpectedly"
+			// Captured before the kill below destroys it — this is the only
+			// place that ever sees why a coding-CLI process actually died (a
+			// codex-cli/claude-code crash, an auth failure, a bridge error);
+			// until now that evidence was thrown away and every occurrence
+			// started the next investigation from zero. tmux keeps a dead
+			// pane's content available (its default remain-on-exit) right up
+			// until kill-session actually runs.
+			if captured := captureTmuxPanePlainForWatchdog(tmux); strings.TrimSpace(captured) != "" {
+				log.Printf("[CODING_WATCHDOG] dead pane output before cleanup | session=%s tmux=%s:\n%s",
+					sessionID, tmux, tailLines(captured, codingWatchdogDeadPaneTailLines))
+			}
 			killCtx, cancel := context.WithTimeout(context.Background(), terminalTmuxActionTimeout)
 			killErr := runTmuxKill(killCtx, tmux)
 			cancel()
@@ -240,6 +256,17 @@ func inspectCodingTmuxPaneState(tmuxSession string) codingTmuxPaneState {
 		}
 		return codingTmuxPaneUnknown
 	}
+}
+
+// tailLines returns the last n lines of s verbatim — unlike
+// codingWatchdogRateLimitEvidence, this is for a human reading the log, not
+// for evidence comparison across polls.
+func tailLines(s string, n int) string {
+	lines := strings.Split(strings.ReplaceAll(s, "\r\n", "\n"), "\n")
+	if len(lines) > n {
+		lines = lines[len(lines)-n:]
+	}
+	return strings.Join(lines, "\n")
 }
 
 func captureTmuxPanePlain(tmuxSession string) string {

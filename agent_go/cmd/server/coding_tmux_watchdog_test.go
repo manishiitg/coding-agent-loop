@@ -45,6 +45,69 @@ func TestInspectCodingTmuxPaneStateRejectsEmptySession(t *testing.T) {
 	}
 }
 
+// A dead coding-CLI pane's own output (a crash message, an auth failure, a
+// bridge error) used to be thrown away — the watchdog killed the pane before
+// anything ever looked at what it said, leaving only "tmux pane exited
+// unexpectedly" for every future investigation to start over from. This
+// confirms the capture happens for a dead pane, with the right tmux target,
+// before cleanup.
+func TestCodingTmuxWatchdogCapturesDeadPaneOutputBeforeKill(t *testing.T) {
+	oldOutput := runTerminalTmuxOutputCommand
+	oldCapture := captureTmuxPanePlainForWatchdog
+	oldKill := runTmuxKill
+	t.Cleanup(func() {
+		runTerminalTmuxOutputCommand = oldOutput
+		captureTmuxPanePlainForWatchdog = oldCapture
+		runTmuxKill = oldKill
+	})
+	runTerminalTmuxOutputCommand = func(context.Context, ...string) (string, error) { return "1\n", nil }
+	var capturedFor []string
+	captureTmuxPanePlainForWatchdog = func(tmux string) string {
+		capturedFor = append(capturedFor, tmux)
+		return "Error: codex-cli crashed on startup\nexit status 1"
+	}
+	var killedFor []string
+	runTmuxKill = func(_ context.Context, tmux string) error {
+		killedFor = append(killedFor, tmux)
+		return nil
+	}
+
+	store := terminals.NewStore()
+	sessionID := "dead-pane-session"
+	store.HandleEvent(sessionID, terminalRouteChunkEvent(sessionID, "main:"+sessionID, "mlp-codex-cli-dead", "stable pane", 1))
+	api := &StreamingAPI{terminalStore: store}
+
+	api.reapRateLimitedCodingSessionsOnce(map[string]codingWatchdogObservation{})
+
+	if len(capturedFor) != 1 || capturedFor[0] != "mlp-codex-cli-dead" {
+		t.Fatalf("captureTmuxPanePlainForWatchdog calls = %v, want exactly one call for mlp-codex-cli-dead", capturedFor)
+	}
+	if len(killedFor) != 1 || killedFor[0] != "mlp-codex-cli-dead" {
+		t.Fatalf("runTmuxKill calls = %v, want exactly one call for mlp-codex-cli-dead", killedFor)
+	}
+}
+
+func TestTailLines(t *testing.T) {
+	cases := []struct {
+		name string
+		in   string
+		n    int
+		want string
+	}{
+		{"fewer lines than n returns everything", "a\nb", 5, "a\nb"},
+		{"exact n returns everything", "a\nb\nc", 3, "a\nb\nc"},
+		{"more lines than n keeps only the tail", "a\nb\nc\nd\ne", 2, "d\ne"},
+		{"CRLF is normalized like the rest of this package", "a\r\nb\r\nc", 2, "b\nc"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := tailLines(tc.in, tc.n); got != tc.want {
+				t.Fatalf("tailLines(%q, %d) = %q, want %q", tc.in, tc.n, got, tc.want)
+			}
+		})
+	}
+}
+
 func TestCodingTmuxWatchdogReconcilesFromActualPaneState(t *testing.T) {
 	originalOutput := runTerminalTmuxOutputCommand
 	originalCapture := captureTmuxPanePlainForWatchdog

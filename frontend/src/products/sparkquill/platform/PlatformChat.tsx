@@ -22,29 +22,66 @@ import { ProductSuggestions } from '../../../platform/chat/ProductSuggestions'
 import type { QuickCommand } from '../stores/types'
 import { api } from '../api'
 import { toProductCommandDefinitions } from './productCommands'
+import { loadAgentProfileProviderOptions } from '../../../utils/agentProfileCapabilities'
 
 export const PARENT_PROFILE_ID = 'sparkquill'
 export const PARENT_PROFILE_VERSION = 1
 export const FAMILY_WORKSPACE = 'Chats/SparkQuill'
 const CHILD_PROFILE_ID = 'sparkquill-child'
+// Mirrors ChildPlatformChat.tsx's own export — duplicated rather than
+// imported to avoid a circular import (ChildPlatformChat already imports
+// from this file).
+const CHILD_PROFILE_VERSION = 1
 
-/** The family's chosen learning helper and model (family.json `engine`/`model`), undefined before onboarding picks one. */
-export async function familyRuntime(): Promise<{ engine?: string; model?: string }> {
+/**
+ * The family's chosen learning helper (family.json `engine`, shared — see
+ * FamilyFile's comment) and this role's own model. A role that has never
+ * picked a model falls back to ITS OWN profile's product.yaml default for
+ * the current engine (provider_options[].model_id) rather than the other
+ * role's pick or a shared legacy value — parent and child can genuinely
+ * differ (e.g. parent's codex-cli default is gpt-6-astra, child's is
+ * gpt-5.6-luna) without one side's choice silently overwriting the other's.
+ */
+export async function familyRuntime(role: 'parent' | 'child'): Promise<{ engine?: string; model?: string }> {
   const state = await api.setup().catch(() => null)
-  return { engine: state?.engine || undefined, model: state?.model || undefined }
+  const engine = state?.engine || undefined
+  const roleModel = (role === 'parent' ? state?.parent_model : state?.child_model) || undefined
+  if (roleModel) return { engine, model: roleModel }
+  if (engine) {
+    const profileID = role === 'parent' ? PARENT_PROFILE_ID : CHILD_PROFILE_ID
+    const profileVersion = role === 'parent' ? PARENT_PROFILE_VERSION : CHILD_PROFILE_VERSION
+    const options = await loadAgentProfileProviderOptions(profileID, profileVersion).catch(() => [])
+    const match = options.find((o) => o.id === engine || o.provider === engine)
+    if (match?.model_id) return { engine, model: match.model_id }
+  }
+  // Last resort: a pre-migration family.json with only the old shared field.
+  return { engine, model: state?.model || undefined }
 }
 
 /**
- * Keeps already-open SparkQuill tabs on the engine the parent just chose in
- * Settings, so the next turn uses it without a relaunch. Tabs are opened
- * once per page load and carry the engine in their metadata (ChatArea sends
- * it as `engine` on every profile query).
+ * Keeps already-open SparkQuill tabs on the engine/model just chosen, so the
+ * next turn uses it without a relaunch. Tabs are opened once per page load
+ * and carry the engine/model in their metadata (ChatArea sends them as
+ * `engine`/`model_id` on every profile query).
+ *
+ * engine applies to every open tab (it is shared — which paid account the
+ * family uses). model only applies to role's own tab(s): the other role's
+ * tab keeps engine in sync but has its model CLEARED rather than inheriting
+ * a model that was never chosen for it — an empty model_id on its next
+ * query makes the backend fall back to that profile's own product.yaml
+ * default for the (possibly now different) engine, exactly like a tab that
+ * was never touched at all.
  */
-export function applyFamilyEngineToOpenTabs(engine: string, model?: string): void {
+export function applyFamilyEngineToOpenTabs(role: 'parent' | 'child', engine: string, model?: string): void {
   const store = useChatStore.getState()
+  const roleProfileID = role === 'parent' ? PARENT_PROFILE_ID : CHILD_PROFILE_ID
   for (const tab of Object.values(store.chatTabs)) {
     const id = tab.metadata?.agentProfileId
-    if (id === PARENT_PROFILE_ID || id === CHILD_PROFILE_ID) store.setTabMetadata(tab.tabId, { agentProfileEngine: engine, agentProfileModelID: model ?? '' })
+    if (id !== PARENT_PROFILE_ID && id !== CHILD_PROFILE_ID) continue
+    store.setTabMetadata(tab.tabId, {
+      agentProfileEngine: engine,
+      agentProfileModelID: id === roleProfileID ? (model ?? '') : '',
+    })
   }
 }
 
@@ -187,7 +224,7 @@ export default function PlatformChat({ title, childName, theme, commands, landin
       setPresentationKinds((profile?.tools ?? []).map((t) => t.presentation?.kind).filter((k): k is string => typeof k === 'string' && k.length > 0))
       const [conversation, runtime] = await Promise.all([
         agentApi.resolveAgentProfileConversation(PARENT_PROFILE_ID, {}, existing?.sessionId ?? undefined),
-        familyRuntime(),
+        familyRuntime('parent'),
       ])
       const createdTabId = await chatStore.createChatTab(title, {
         mode: 'multi-agent',

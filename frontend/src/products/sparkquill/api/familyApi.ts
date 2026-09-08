@@ -7,7 +7,10 @@ import type { ApiEngine, Activity, QuickCommand, StoredMsg, TreeNode, VoiceStatu
 
 export type SetupState = {
   engine?: string
+  /** @deprecated legacy shared field, no longer written — see parent_model/child_model. */
   model?: string
+  parent_model?: string
+  child_model?: string
   child?: { name?: string; grade?: string; board?: string } | null
   pin_set?: boolean
   setup_complete?: boolean
@@ -65,7 +68,8 @@ export interface FamilyApi {
   setup(): Promise<SetupState>
   engines(): Promise<ApiEngine[]>
   validateEngine(provider: string): Promise<{ valid: boolean; message?: string }>
-  selectEngine(engine: string, model?: string): Promise<void>
+  /** role picks whether model is saved as this family's parent_model or child_model; engine itself is shared. */
+  selectEngine(role: 'parent' | 'child', engine: string, model?: string): Promise<void>
   saveChild(child: { name: string; grade: string; board: string }): Promise<void>
   setPin(pin: string): Promise<{ error?: string }>
   verifyPin(pin: string): Promise<{ ok?: boolean }>

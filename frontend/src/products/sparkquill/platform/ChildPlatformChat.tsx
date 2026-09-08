@@ -181,7 +181,7 @@ export default function ChildPlatformChat({ activityDir, title, childName, theme
       setPresentationKinds((profile?.tools ?? []).map((t) => t.presentation?.kind).filter((k): k is string => typeof k === 'string' && k.length > 0))
       const [conversation, runtime] = await Promise.all([
         agentApi.resolveAgentProfileConversation(CHILD_PROFILE_ID, { conversation_key: slug }, existing?.sessionId ?? undefined),
-        familyRuntime(),
+        familyRuntime('child'),
       ])
       const createdTabId = await chatStore.createChatTab(title, {
         mode: 'multi-agent',

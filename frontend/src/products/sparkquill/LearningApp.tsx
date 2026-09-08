@@ -865,13 +865,15 @@ export default function LearningApp() {
       if (detail?.profileId !== PARENT_PROFILE_ID || newChatBusyRef.current) return
       newChatBusyRef.current = true
       // The engine is chosen once, here, for the fresh conversation; no
-      // model yet, so it starts on that engine's own default. selectEngine
-      // drops any leftover model from the old engine along with it.
-      const engineChoice = detail.engine ? api.selectEngine(detail.engine).catch(() => undefined) : Promise.resolve()
+      // model yet, so it starts on the parent's own product.yaml default for
+      // it. selectEngine drops any leftover parent_model from the old
+      // engine along with it (this event only ever fires for the parent —
+      // the guard above).
+      const engineChoice = detail.engine ? api.selectEngine('parent', detail.engine).catch(() => undefined) : Promise.resolve()
       engineChoice
         .then(() => startNewParentConversation())
         .catch(() => undefined)
-        .finally(() => { if (detail.engine) applyFamilyEngineToOpenTabs(detail.engine); setParentChatEpoch((n) => n + 1); newChatBusyRef.current = false })
+        .finally(() => { if (detail.engine) applyFamilyEngineToOpenTabs('parent', detail.engine); setParentChatEpoch((n) => n + 1); newChatBusyRef.current = false })
     }
     window.addEventListener('agentworks:product-new-conversation', onNewChat)
     return () => window.removeEventListener('agentworks:product-new-conversation', onNewChat)
@@ -895,14 +897,17 @@ export default function LearningApp() {
     })
   }
   // The composer's model switcher (ChatInput, product surfaces) announces a
-  // choice; SparkQuill keeps it as the family's engine (family.json) so it
-  // holds across relaunches and reaches the child's tab too.
+  // choice; SparkQuill keeps engine as the family's shared setting
+  // (family.json) so it holds across relaunches, but the model is saved
+  // under whichever role's composer this came from — see FamilyFile's
+  // comment on why parent and child must not share one model field.
   useEffect(() => {
     const onEngine = (e: Event) => {
       const detail = (e as CustomEvent<{ profileId?: string; engine?: string; modelId?: string }>).detail
       if (!detail?.engine || (detail.profileId !== PARENT_PROFILE_ID && detail.profileId !== 'sparkquill-child')) return
       const { engine, modelId } = detail
-      api.selectEngine(engine, modelId).catch(() => undefined).finally(() => applyFamilyEngineToOpenTabs(engine, modelId))
+      const role = detail.profileId === PARENT_PROFILE_ID ? 'parent' : 'child'
+      api.selectEngine(role, engine, modelId).catch(() => undefined).finally(() => applyFamilyEngineToOpenTabs(role, engine, modelId))
     }
     window.addEventListener('agentworks:product-engine-selected', onEngine)
     return () => window.removeEventListener('agentworks:product-engine-selected', onEngine)
@@ -1972,10 +1977,10 @@ export default function LearningApp() {
   const persistEngineAndContinue = () => {
     if (!selectedEngine) return
     setSaving(true)
-    api.selectEngine(selectedEngine.id)
+    api.selectEngine('parent', selectedEngine.id)
       .then(() => api.setup())
       .then((state) => {
-        applyFamilyEngineToOpenTabs(selectedEngine.id)
+        applyFamilyEngineToOpenTabs('parent', selectedEngine.id)
         if (state.next_step === 'done') move(readHandoffSide() === 'tutor' ? 'tutor' : 'parent')
         else if (state.next_step === 'pin') move('pin')
         else move('child')
@@ -3196,7 +3201,7 @@ export default function LearningApp() {
                             onClick={() => {
                               setEngine(item.id)
                               setSavingEngine(true)
-                              api.selectEngine(item.id).finally(() => { applyFamilyEngineToOpenTabs(item.id); setSavingEngine(false) })
+                              api.selectEngine('parent', item.id).finally(() => { applyFamilyEngineToOpenTabs('parent', item.id); setSavingEngine(false) })
                             }}
                           >
                             <span className="fl-settings-engine-col">

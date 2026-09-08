@@ -174,6 +174,8 @@ export function createPlatformApi(options: PlatformApiOptions): FamilyApi {
     return {
       engine: state.engine,
       model: state.model,
+      parent_model: state.parent_model,
+      child_model: state.child_model,
       child: state.child ?? null,
       parent_label: state.parent_label,
       pin_set: pinSet,
@@ -239,8 +241,8 @@ export function createPlatformApi(options: PlatformApiOptions): FamilyApi {
     return { valid: res.valid, message: res.message ?? res.error }
   }
 
-  async function selectEngine(engineID: string, model?: string): Promise<void> {
-    await ws.saveEngine(engineID, model)
+  async function selectEngine(role: 'parent' | 'child', engineID: string, model?: string): Promise<void> {
+    await ws.saveEngine(role, engineID, model)
   }
 
   const api: FamilyApi = {

@@ -103,6 +103,31 @@ describe('FamilyWorkspace', () => {
     expect(JSON.parse(files['Chats/SparkQuill/family.json'])).toMatchObject({ pin_hash: await sha256Hex('2468'), child: { name: 'Maya', grade: '6', board: 'CBSE' } })
   })
 
+  // engine is shared (family-wide, one paid account); the model within it is
+  // per-role — product.yaml declares a different default per profile
+  // precisely so a family can run a stronger model for the parent than the
+  // child. A single shared `model` field let whichever side picked last
+  // silently overwrite the other's; parent_model/child_model fixed that.
+  it('keeps parent and child model picks independent under one shared engine', async () => {
+    const files: Record<string, string> = {}
+    const ws = new FamilyWorkspace(fakeRequester(files).request)
+
+    await ws.saveEngine('parent', 'codex-cli', 'gpt-6-astra')
+    expect(JSON.parse(files['Chats/SparkQuill/family.json'])).toEqual({ engine: 'codex-cli', parent_model: 'gpt-6-astra' })
+
+    await ws.saveEngine('child', 'codex-cli', 'gpt-5.6-luna')
+    const afterChildPick = JSON.parse(files['Chats/SparkQuill/family.json'])
+    expect(afterChildPick).toEqual({ engine: 'codex-cli', parent_model: 'gpt-6-astra', child_model: 'gpt-5.6-luna' })
+
+    // Switching the child's engine without naming a model drops only the
+    // child's old model — the parent's pick is untouched.
+    await ws.saveEngine('child', 'claude-code')
+    const afterChildEngineSwitch = JSON.parse(files['Chats/SparkQuill/family.json'])
+    expect(afterChildEngineSwitch.engine).toBe('claude-code')
+    expect(afterChildEngineSwitch.parent_model).toBe('gpt-6-astra')
+    expect(afterChildEngineSwitch.child_model).toBeUndefined()
+  })
+
   it('uploads into a folder and keeps scene state as JSON files', async () => {
     const fake = fakeRequester({})
     const ws = new FamilyWorkspace(fake.request)

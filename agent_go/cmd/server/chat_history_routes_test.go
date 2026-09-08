@@ -38,6 +38,27 @@ func TestDecorateSharedBuilderHistoryShowsAuthorAndProtectsResume(t *testing.T) 
 	}
 }
 
+func TestVisibleSharedBuilderHistoryIsOwnerWideButMemberPrivate(t *testing.T) {
+	sessions := []ChatHistorySession{
+		{SessionID: "mine", UserID: "member-1"},
+		{SessionID: "theirs", UserID: "member-2"},
+		{SessionID: "legacy", UserID: "default"},
+	}
+
+	memberView := visibleChatHistorySessions(sessions, "member-1", WorkflowAccessWrite)
+	if len(memberView) != 1 || memberView[0].SessionID != "mine" {
+		t.Fatalf("member view = %#v, want only own chat", memberView)
+	}
+	readerView := visibleChatHistorySessions(sessions, "member-2", WorkflowAccessRead)
+	if len(readerView) != 1 || readerView[0].SessionID != "theirs" {
+		t.Fatalf("reader view = %#v, want only own chat", readerView)
+	}
+	ownerView := visibleChatHistorySessions(sessions, "owner-1", WorkflowAccessOwner)
+	if len(ownerView) != len(sessions) {
+		t.Fatalf("owner view count = %d, want %d", len(ownerView), len(sessions))
+	}
+}
+
 func TestParseWorkflowBuilderHistoryUsesPersistedAuthor(t *testing.T) {
 	t.Setenv("MULTI_USER_MODE", "true")
 	withMemoryUserDirectory(t, `{"users":[{"id":"author-1","username":"yoav","can_create":true,"products":["agentworks"]}]}`)

@@ -55,6 +55,7 @@ import (
 	"github.com/manishiitg/mcpagent/llm"
 	loggerv2 "github.com/manishiitg/mcpagent/logger/v2"
 	"github.com/manishiitg/mcpagent/mcpclient"
+	"github.com/manishiitg/mcpagent/oauth"
 	"github.com/manishiitg/mcpagent/observability"
 	"github.com/manishiitg/mcpagent/toolcalllog"
 
@@ -10697,6 +10698,139 @@ func (api *StreamingAPI) registerMultiAgentMCPServerTools(registrar interface {
 			}
 
 			return sb.String(), nil
+		},
+	); err != nil {
+		return err
+	}
+
+	if err := registerTool(
+		"install_mcp_server",
+		"Platform-level install of an MCP server, from OUR CATALOG (found via search_mcp_catalog or list_mcp_servers) OR fresh from a URL (a search_mcp_catalog GitHub/Smithery hit, or any URL the user gives you) — distinct from add_mcp_server, which is for a server with no auth at all. This is tier 1 of a two-tier model: installing makes the server available account-wide; it still needs update_workflow_config(add_servers=[name]) to actually be usable in a specific workflow. For a fresh URL, this live-probes it the same way a human would evaluate any third-party integration before installing it — spec-compliant discovery (RFC 9728/8414 via a real 401), not a guess — so tell the user what was found before proceeding on anything unvetted (GitHub/Smithery hits). Outcomes: (1) no sign-in required — installs immediately. (2) needs an API key — pass api_key once the user has given you one. (3) needs OAuth with Dynamic Client Registration discoverable — starts the flow and returns an auth_url; give that URL to the user as a clickable link, the connection completes automatically once they authorize, no further tool call needed. (4) needs OAuth but no DCR was discoverable — tell the user plainly (it may still support CIMD or need a manually registered OAuth app); if they give you a client_id, pass it and call again. Cannot complete an OAuth consent screen itself — it only starts the flow and hands back the link.",
+		map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"name": map[string]interface{}{
+					"type":        "string",
+					"description": "Server name — exact catalog name from search_mcp_catalog/list_mcp_servers, or a name you choose for a fresh install from url.",
+				},
+				"url": map[string]interface{}{
+					"type":        "string",
+					"description": "Only when name is not already in our catalog: the server's URL (from a search_mcp_catalog GitHub/Smithery hit, or one the user gave you). Triggers a live auth probe before installing.",
+				},
+				"api_key": map[string]interface{}{
+					"type":        "string",
+					"description": "Optional. For a server that authenticates with a simple bearer API key rather than OAuth, once the user has provided one.",
+				},
+				"client_id": map[string]interface{}{
+					"type":        "string",
+					"description": "Optional. Only for an OAuth server with no Dynamic Client Registration support, after the user has registered their own OAuth app and given you its client_id.",
+				},
+			},
+			"required": []string{"name"},
+		},
+		func(ctx context.Context, args map[string]interface{}) (string, error) {
+			if isMCPConfigLocked() {
+				return "MCP configuration is locked by the administrator, so chat cannot install servers.", nil
+			}
+			name := strings.TrimSpace(fmt.Sprint(args["name"]))
+			if name == "" {
+				return "name is required.", nil
+			}
+			candidateURL := strings.TrimSpace(fmt.Sprint(args["url"]))
+			apiKey := strings.TrimSpace(fmt.Sprint(args["api_key"]))
+			clientID := strings.TrimSpace(fmt.Sprint(args["client_id"]))
+
+			config, err := mcpclient.LoadMergedConfig(api.mcpConfigPath, api.logger)
+			if err != nil {
+				return "", fmt.Errorf("failed to load MCP config: %w", err)
+			}
+			serverConfig, err := config.GetServer(name)
+			notInConfigYet := err != nil
+			if notInConfigYet && candidateURL == "" {
+				return fmt.Sprintf("%q is not in our catalog. Pass url to install it fresh (from a search_mcp_catalog hit or any URL), or use add_mcp_server for a wholly custom stdio/no-auth server.", name), nil
+			}
+
+			_, userConfig, err := loadUserConfig()
+			if err != nil {
+				return "", err
+			}
+			if !notInConfigYet {
+				if _, alreadyInstalled := userConfig.MCPServers[name]; alreadyInstalled {
+					return fmt.Sprintf("%q is already installed. Use update_workflow_config(add_servers=[%q]) to use it in this workflow.", name, name), nil
+				}
+			}
+
+			// Fresh install from a URL: live-probe its auth requirements before
+			// touching any config — the same scrutiny a human gives any
+			// third-party integration, automated via spec-compliant discovery
+			// rather than guessed from a search result's description text.
+			if notInConfigYet {
+				probe, probeErr := services.ProbeMCPServerAuth(ctx, candidateURL)
+				if probeErr != nil {
+					return fmt.Sprintf("Could not determine %s's auth requirements: %v. Not installing — this needs a human to verify before it's trustworthy to add.", candidateURL, probeErr), nil
+				}
+				serverConfig = mcpclient.MCPServerConfig{URL: candidateURL}
+				if probe.NoAuthRequired {
+					if apiKey != "" {
+						serverConfig.Headers = map[string]string{"Authorization": "Bearer " + apiKey}
+					}
+					if err := api.persistOAuthConfig(name, serverConfig); err != nil {
+						return "", fmt.Errorf("failed to install %q: %w", name, err)
+					}
+					api.invalidateServerDiscovery(name, "Installed — discovering tools...")
+					api.startServerDiscovery(GetUserIDFromContext(ctx), name)
+					return fmt.Sprintf("Installed %q (no sign-in required). Discovery is running now; use update_workflow_config(add_servers=[%q]) to add it to this workflow.", name, name), nil
+				}
+				// Needs OAuth. Build the config from what discovery found.
+				serverConfig.OAuth = &oauth.OAuthConfig{
+					AuthURL:              probe.Endpoints.AuthURL,
+					TokenURL:             probe.Endpoints.TokenURL,
+					RegistrationEndpoint: probe.Endpoints.RegistrationEndpoint,
+					Scopes:               probe.Endpoints.ScopesSupported,
+					Resource:             probe.Endpoints.Resource,
+					ClientID:             clientID,
+				}
+				if serverConfig.OAuth.RegistrationEndpoint == "" && clientID == "" {
+					return fmt.Sprintf("%s requires OAuth but published no Dynamic Client Registration endpoint. It may still support a Client ID Metadata Document, or need a manually registered OAuth app — tell the user this before proceeding. Auth URL: %s — Token URL: %s. If they give you a client_id, call install_mcp_server again with the same name/url and client_id set.",
+						candidateURL, probe.Endpoints.AuthURL, probe.Endpoints.TokenURL), nil
+				}
+				// Write the draft config (no token yet) so beginOAuthFlow can find it.
+				if err := api.persistOAuthConfig(name, serverConfig); err != nil {
+					return "", fmt.Errorf("failed to register %q: %w", name, err)
+				}
+			}
+
+			// No OAuth: install directly, optionally with an API key header.
+			if serverConfig.OAuth == nil {
+				if apiKey != "" {
+					if serverConfig.Headers == nil {
+						serverConfig.Headers = make(map[string]string)
+					}
+					serverConfig.Headers["Authorization"] = "Bearer " + apiKey
+				}
+				if err := api.persistOAuthConfig(name, serverConfig); err != nil {
+					return "", fmt.Errorf("failed to install %q: %w", name, err)
+				}
+				api.invalidateServerDiscovery(name, "Installed — discovering tools...")
+				api.startServerDiscovery(GetUserIDFromContext(ctx), name)
+				return fmt.Sprintf("Installed %q. Discovery is running now; use update_workflow_config(add_servers=[%q]) to add it to this workflow.", name, name), nil
+			}
+
+			// OAuth: start the flow and hand back the URL for the user to open.
+			redirectURI := deriveOAuthRedirectURIFromEnv()
+			if redirectURI == "" {
+				return fmt.Sprintf("%q requires OAuth sign-in, and this server has no PUBLIC_URL configured to build a callback URL from chat. Ask the user to connect it from the connector directory in the UI instead.", name), nil
+			}
+
+			startResp, discoveryResp, err := api.beginOAuthFlow(GetUserIDFromContext(ctx), name, redirectURI, clientID)
+			if err != nil {
+				return "", fmt.Errorf("failed to start OAuth for %q: %w", name, err)
+			}
+			if discoveryResp != nil {
+				return fmt.Sprintf("%s Auth URL: %s — Token URL: %s. Once the user gives you their OAuth app's client_id, call install_mcp_server again with client_id set.",
+					discoveryResp.Message, discoveryResp.AuthURL, discoveryResp.TokenURL), nil
+			}
+			return fmt.Sprintf("%q needs OAuth sign-in. Give the user this link to open in their browser — the connection finishes automatically once they authorize, no further action from you needed: %s", name, startResp.AuthURL), nil
 		},
 	); err != nil {
 		return err

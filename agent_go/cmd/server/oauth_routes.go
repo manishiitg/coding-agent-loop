@@ -51,6 +51,19 @@ func deriveOAuthRedirectURI(r *http.Request) string {
 	return fmt.Sprintf("%s://%s/api/oauth/callback", scheme, host)
 }
 
+// deriveOAuthRedirectURIFromEnv is deriveOAuthRedirectURI's PUBLIC_URL-only
+// half, for a caller with no *http.Request to fall back on (the
+// install_mcp_server agent tool). Empty means the caller should tell the
+// user to connect from the UI instead — the request-based fallback exists
+// specifically for local dev, which the tool path has no equivalent for.
+func deriveOAuthRedirectURIFromEnv() string {
+	publicURL := os.Getenv("PUBLIC_URL")
+	if publicURL == "" {
+		return ""
+	}
+	return fmt.Sprintf("%s/api/oauth/callback", strings.TrimRight(publicURL, "/"))
+}
+
 // OAuthLoginRequest represents a request to start OAuth flow
 type OAuthLoginRequest struct {
 	ServerName string `json:"server_name"`
@@ -252,57 +265,57 @@ func (api *StreamingAPI) handleOAuthCallback(w http.ResponseWriter, r *http.Requ
 }
 
 // handleOAuthStart handles POST /api/oauth/start - initiates OAuth flow
-func (api *StreamingAPI) handleOAuthStart(w http.ResponseWriter, r *http.Request) {
-	var req OAuthLoginRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, fmt.Sprintf("Invalid request: %v", err), http.StatusBadRequest)
-		return
-	}
+// oauthStartError carries the HTTP status handleOAuthStart historically used
+// for each failure case, so the extraction below preserves exact prior
+// response codes even though beginOAuthFlow itself is transport-agnostic.
+type oauthStartError struct {
+	status  int
+	message string
+}
 
-	if req.ServerName == "" {
-		http.Error(w, "server_name is required", http.StatusBadRequest)
-		return
-	}
+func (e *oauthStartError) Error() string { return e.message }
 
-	// Get user ID from context for per-user token storage
-	userID := GetUserIDFromContext(r.Context())
-	api.logger.Info(fmt.Sprintf("🔐 OAuth start for server %s, user %s", req.ServerName, userID))
+// beginOAuthFlow is the transport-independent core of starting an MCP OAuth
+// connection: resolve the server's OAuth config, run DCR when needed,
+// generate the authorization URL, register the pending flow, and start the
+// background goroutine that completes it on callback (handleOAuthCallback).
+// Both handleOAuthStart (HTTP, used by the connector-directory UI) and the
+// install_mcp_server agent tool call this, so the two paths cannot diverge.
+//
+// Returns exactly one of: a discovery response (the server needs a manually
+// registered client_id — no Dynamic Client Registration support), a start
+// response (authURL to open), or an error.
+func (api *StreamingAPI) beginOAuthFlow(userID, serverName, redirectURI, clientID string) (*OAuthStartResponse, *OAuthDiscoveryResponse, error) {
+	api.logger.Info(fmt.Sprintf("🔐 OAuth start for server %s, user %s", serverName, userID))
 
 	// Ensure user token directory exists
 	if _, err := ensureUserTokenDir(userID); err != nil {
 		api.logger.Error(fmt.Sprintf("Failed to create user token directory: %v", err), err)
-		http.Error(w, "Failed to create token directory", http.StatusInternalServerError)
-		return
+		return nil, nil, &oauthStartError{http.StatusInternalServerError, "Failed to create token directory"}
 	}
 
 	// Load server config
 	config, err := mcpclient.LoadMergedConfig(api.mcpConfigPath, api.logger)
 	if err != nil {
 		api.logger.Error(fmt.Sprintf("Failed to load config: %v", err), err)
-		http.Error(w, "Failed to load server config", http.StatusInternalServerError)
-		return
+		return nil, nil, &oauthStartError{http.StatusInternalServerError, "Failed to load server config"}
 	}
 
-	serverConfig, err := config.GetServer(req.ServerName)
+	serverConfig, err := config.GetServer(serverName)
 	if err != nil {
-		http.Error(w, fmt.Sprintf("Server '%s' not found", req.ServerName), http.StatusNotFound)
-		return
+		return nil, nil, &oauthStartError{http.StatusNotFound, fmt.Sprintf("Server '%s' not found", serverName)}
 	}
-
-	// Derive redirect URI from PUBLIC_URL env var (for production) or incoming request (for local)
-	redirectURI := deriveOAuthRedirectURI(r)
 
 	// Use per-user token file path
-	userTokenFile := getUserTokenFilePath(userID, req.ServerName)
+	userTokenFile := getUserTokenFilePath(userID, serverName)
 
 	// Apply user-provided client_id if present (from the "needs_client_id" flow)
-	if req.ClientID != "" {
+	if clientID != "" {
 		if serverConfig.OAuth == nil {
-			http.Error(w, fmt.Sprintf("Server '%s' has no oauth configuration; a client_id is not applicable", req.ServerName), http.StatusBadRequest)
-			return
+			return nil, nil, &oauthStartError{http.StatusBadRequest, fmt.Sprintf("Server '%s' has no oauth configuration; a client_id is not applicable", serverName)}
 		}
-		serverConfig.OAuth.ClientID = req.ClientID
-		api.logger.Info(fmt.Sprintf("Using user-provided client_id for %s: %s", req.ServerName, req.ClientID))
+		serverConfig.OAuth.ClientID = clientID
+		api.logger.Info(fmt.Sprintf("Using user-provided client_id for %s: %s", serverName, clientID))
 	}
 
 	// The oauth block is the sole authority. Its absence means the server is
@@ -310,8 +323,7 @@ func (api *StreamingAPI) handleOAuthStart(w http.ResponseWriter, r *http.Request
 	// report false positives: a well-known lookup built from scheme+host alone
 	// found the *website's* OAuth metadata for servers that have none.
 	if serverConfig.OAuth == nil {
-		http.Error(w, fmt.Sprintf("Server '%s' is not an OAuth server", req.ServerName), http.StatusBadRequest)
-		return
+		return nil, nil, &oauthStartError{http.StatusBadRequest, fmt.Sprintf("Server '%s' is not an OAuth server", serverName)}
 	}
 
 	// Always update TokenFile to user-specific path
@@ -324,41 +336,37 @@ func (api *StreamingAPI) handleOAuthStart(w http.ResponseWriter, r *http.Request
 
 	// Endpoints come from config. Fail loudly rather than falling back to a probe.
 	if serverConfig.OAuth.AuthURL == "" || serverConfig.OAuth.TokenURL == "" {
-		api.logger.Error(fmt.Sprintf("Server %s is missing auth_url or token_url in config", req.ServerName), nil)
-		http.Error(w, fmt.Sprintf("Server '%s' is missing auth_url or token_url in its oauth config. Endpoints are not discovered at runtime; copy authorization_endpoint and token_endpoint from the provider's /.well-known/oauth-authorization-server metadata into the MCP config.", req.ServerName), http.StatusInternalServerError)
-		return
+		api.logger.Error(fmt.Sprintf("Server %s is missing auth_url or token_url in config", serverName), nil)
+		return nil, nil, &oauthStartError{http.StatusInternalServerError, fmt.Sprintf("Server '%s' is missing auth_url or token_url in its oauth config. Endpoints are not discovered at runtime; copy authorization_endpoint and token_endpoint from the provider's /.well-known/oauth-authorization-server metadata into the MCP config.", serverName)}
 	}
 
 	// A server with no client_id in config either issues one through Dynamic
 	// Client Registration or needs one registered by hand. Try DCR first, so
 	// only the genuinely manual servers reach the prompt below.
 	if serverConfig.OAuth.ClientID == "" && serverConfig.OAuth.RegistrationEndpoint != "" {
-		client, regErr := api.ensureRegisteredClient(userID, req.ServerName, serverConfig.OAuth.RegistrationEndpoint, redirectURI)
+		client, regErr := api.ensureRegisteredClient(userID, serverName, serverConfig.OAuth.RegistrationEndpoint, redirectURI)
 		if regErr != nil {
 			// Fall through to the prompt: a hand-registered client_id still works.
-			api.logger.Error(fmt.Sprintf("Dynamic client registration failed for %s: %v", req.ServerName, regErr), regErr)
+			api.logger.Error(fmt.Sprintf("Dynamic client registration failed for %s: %v", serverName, regErr), regErr)
 		} else {
 			serverConfig.OAuth.ClientID = client.ClientID
 			serverConfig.OAuth.ClientSecret = client.ClientSecret
-			api.logger.Info(fmt.Sprintf("🪪 Using DCR client_id for %s: %s", req.ServerName, client.ClientID))
+			api.logger.Info(fmt.Sprintf("🪪 Using DCR client_id for %s: %s", serverName, client.ClientID))
 		}
 	}
 
 	// Instead of hard-failing, return a discovery response prompting for client_id
 	if serverConfig.OAuth.ClientID == "" {
-		api.logger.Info(fmt.Sprintf("No client_id for %s, returning needs_client_id response", req.ServerName))
-		discoveryResp := OAuthDiscoveryResponse{
+		api.logger.Info(fmt.Sprintf("No client_id for %s, returning needs_client_id response", serverName))
+		return nil, &OAuthDiscoveryResponse{
 			Status:          "needs_client_id",
-			ServerName:      req.ServerName,
+			ServerName:      serverName,
 			AuthURL:         serverConfig.OAuth.AuthURL,
 			TokenURL:        serverConfig.OAuth.TokenURL,
 			Resource:        serverConfig.OAuth.Resource,
 			ScopesSupported: serverConfig.OAuth.Scopes,
-			Message:         fmt.Sprintf("Server '%s' does not support Dynamic Client Registration. Please provide your OAuth App client_id.", req.ServerName),
-		}
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(discoveryResp)
-		return
+			Message:         fmt.Sprintf("Server '%s' does not support Dynamic Client Registration. Please provide your OAuth App client_id.", serverName),
+		}, nil
 	}
 
 	// Create OAuth manager with the fully configured OAuth settings
@@ -367,18 +375,17 @@ func (api *StreamingAPI) handleOAuthStart(w http.ResponseWriter, r *http.Request
 	// Generate state and authorization URL using the manager's helper
 	state, authURL, err := oauthMgr.GenerateAuthURL()
 	if err != nil {
-		api.logger.Error(fmt.Sprintf("Failed to generate auth URL for %s: %v", req.ServerName, err), err)
-		http.Error(w, fmt.Sprintf("Failed to generate authorization URL: %v", err), http.StatusInternalServerError)
-		return
+		api.logger.Error(fmt.Sprintf("Failed to generate auth URL for %s: %v", serverName, err), err)
+		return nil, nil, &oauthStartError{http.StatusInternalServerError, fmt.Sprintf("Failed to generate authorization URL: %v", err)}
 	}
 
 	// Log the config being stored in flow
 	api.logger.Info(fmt.Sprintf("🔐 Storing OAuth config in flow for %s: AuthURL=%s, TokenURL=%s, TokenFile=%s",
-		req.ServerName, serverConfig.OAuth.AuthURL, serverConfig.OAuth.TokenURL, serverConfig.OAuth.TokenFile))
+		serverName, serverConfig.OAuth.AuthURL, serverConfig.OAuth.TokenURL, serverConfig.OAuth.TokenFile))
 
 	// Register the OAuth flow state
 	flow := &OAuthFlowState{
-		ServerName:   req.ServerName,
+		ServerName:   serverName,
 		State:        state,
 		CodeChan:     make(chan string, 1),
 		ErrChan:      make(chan error, 1),
@@ -403,86 +410,117 @@ func (api *StreamingAPI) handleOAuthStart(w http.ResponseWriter, r *http.Request
 		// Recover from panics so the goroutine doesn't die silently
 		defer func() {
 			if r := recover(); r != nil {
-				api.logger.Error(fmt.Sprintf("🔥 PANIC in OAuth goroutine for %s: %v", req.ServerName, r), fmt.Errorf("%v", r))
+				api.logger.Error(fmt.Sprintf("🔥 PANIC in OAuth goroutine for %s: %v", serverName, r), fmt.Errorf("%v", r))
 			}
 		}()
 
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 		defer cancel()
 
-		api.logger.Info(fmt.Sprintf("⏳ Waiting for OAuth callback for %s (state: %s)", req.ServerName, state))
+		api.logger.Info(fmt.Sprintf("⏳ Waiting for OAuth callback for %s (state: %s)", serverName, state))
 
 		// Wait for authorization code from callback
 		var code string
 		select {
 		case code = <-flow.CodeChan:
-			api.logger.Info(fmt.Sprintf("📥 Received authorization code for %s (code length: %d)", req.ServerName, len(code)))
+			api.logger.Info(fmt.Sprintf("📥 Received authorization code for %s (code length: %d)", serverName, len(code)))
 		case err := <-flow.ErrChan:
-			api.logger.Error(fmt.Sprintf("OAuth flow failed for %s: %v", req.ServerName, err), err)
+			api.logger.Error(fmt.Sprintf("OAuth flow failed for %s: %v", serverName, err), err)
 			return
 		case <-ctx.Done():
-			api.logger.Error(fmt.Sprintf("OAuth flow timed out for %s", req.ServerName), ctx.Err())
+			api.logger.Error(fmt.Sprintf("OAuth flow timed out for %s", serverName), ctx.Err())
 			return
 		}
 
 		// Exchange code for token
 		api.logger.Info(fmt.Sprintf("🔄 Exchanging authorization code for token for %s (redirect_uri: %s, token_url: %s)",
-			req.ServerName, oauthMgr.GetRedirectURI(), oauthMgr.GetTokenURL()))
+			serverName, oauthMgr.GetRedirectURI(), oauthMgr.GetTokenURL()))
 		token, err := oauthMgr.ExchangeCodeForToken(ctx, code)
 		if err != nil {
-			api.logger.Error(fmt.Sprintf("❌ Failed to exchange code for token for %s: %v", req.ServerName, err), err)
+			api.logger.Error(fmt.Sprintf("❌ Failed to exchange code for token for %s: %v", serverName, err), err)
 			return
 		}
 
 		api.logger.Info(fmt.Sprintf("✅ OAuth token obtained for %s, expires: %s, has_refresh: %v",
-			req.ServerName, token.Expiry, token.RefreshToken != ""))
+			serverName, token.Expiry, token.RefreshToken != ""))
 
 		// Check if we can write to the token directory
 		tokenFile := flow.ServerConfig.OAuth.TokenFile
 		api.logger.Info(fmt.Sprintf("📁 Token file target: %s", tokenFile))
 
 		// Persist OAuth config to the user config file so MCP client uses it for future connections
-		api.logger.Info(fmt.Sprintf("💾 Persisting OAuth config for %s", req.ServerName))
-		if err := api.persistOAuthConfig(req.ServerName, flow.ServerConfig); err != nil {
-			api.logger.Error(fmt.Sprintf("Failed to persist OAuth config for %s: %v", req.ServerName, err), err)
+		api.logger.Info(fmt.Sprintf("💾 Persisting OAuth config for %s", serverName))
+		if err := api.persistOAuthConfig(serverName, flow.ServerConfig); err != nil {
+			api.logger.Error(fmt.Sprintf("Failed to persist OAuth config for %s: %v", serverName, err), err)
 		} else {
-			api.logger.Info(fmt.Sprintf("✅ OAuth config persisted for %s", req.ServerName))
+			api.logger.Info(fmt.Sprintf("✅ OAuth config persisted for %s", serverName))
 		}
 
 		// Invalidate cache for this server so tools are re-discovered with OAuth token
-		api.logger.Info(fmt.Sprintf("🔄 Invalidating cache for %s to refresh tools with OAuth", req.ServerName))
+		api.logger.Info(fmt.Sprintf("🔄 Invalidating cache for %s to refresh tools with OAuth", serverName))
 		cacheManager := mcpcache.GetCacheManager(api.logger)
-		if err := cacheManager.InvalidateByServer(api.mcpConfigPath, req.ServerName); err != nil {
-			api.logger.Warn(fmt.Sprintf("Failed to invalidate cache for %s: %v", req.ServerName, err))
+		if err := cacheManager.InvalidateByServer(api.mcpConfigPath, serverName); err != nil {
+			api.logger.Warn(fmt.Sprintf("Failed to invalidate cache for %s: %v", serverName, err))
 		} else {
-			api.logger.Info(fmt.Sprintf("✅ Cache invalidated for %s - tools will be refreshed on next request", req.ServerName))
+			api.logger.Info(fmt.Sprintf("✅ Cache invalidated for %s - tools will be refreshed on next request", serverName))
 		}
 
 		// Also invalidate the in-memory tool status cache
 		api.toolStatusMux.Lock()
-		delete(api.toolStatus, req.ServerName)
+		delete(api.toolStatus, serverName)
 		api.toolStatusMux.Unlock()
-		api.logger.Info(fmt.Sprintf("✅ In-memory tool status cleared for %s", req.ServerName))
+		api.logger.Info(fmt.Sprintf("✅ In-memory tool status cleared for %s", serverName))
 
 		// OAuth success means prior auth-related discovery failures are no
 		// longer permanent. Clear the skip marker and rediscover tools now,
 		// otherwise /api/tools returns "loading" forever and the frontend keeps
 		// polling.
-		api.clearDiscoveryFailure(req.ServerName)
-		api.appendServerLog(req.ServerName, "info", "Authentication succeeded, rediscovering tools...")
-		api.startServerDiscovery(userID, req.ServerName)
+		api.clearDiscoveryFailure(serverName)
+		api.appendServerLog(serverName, "info", "Authentication succeeded, rediscovering tools...")
+		api.startServerDiscovery(userID, serverName)
 	}()
 
-	// Return auth URL for the frontend to open
-	response := OAuthStartResponse{
-		ServerName: req.ServerName,
+	return &OAuthStartResponse{
+		ServerName: serverName,
 		AuthURL:    authURL,
 		State:      state,
 		Message:    "Please authorize in your browser",
+	}, nil, nil
+}
+
+func (api *StreamingAPI) handleOAuthStart(w http.ResponseWriter, r *http.Request) {
+	var req OAuthLoginRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, fmt.Sprintf("Invalid request: %v", err), http.StatusBadRequest)
+		return
+	}
+
+	if req.ServerName == "" {
+		http.Error(w, "server_name is required", http.StatusBadRequest)
+		return
+	}
+
+	// Get user ID from context for per-user token storage
+	userID := GetUserIDFromContext(r.Context())
+	// Derive redirect URI from PUBLIC_URL env var (for production) or incoming request (for local)
+	redirectURI := deriveOAuthRedirectURI(r)
+
+	startResp, discoveryResp, err := api.beginOAuthFlow(userID, req.ServerName, redirectURI, req.ClientID)
+	if err != nil {
+		status := http.StatusInternalServerError
+		if se, ok := err.(*oauthStartError); ok {
+			status = se.status
+		}
+		http.Error(w, err.Error(), status)
+		return
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(response)
+	if discoveryResp != nil {
+		json.NewEncoder(w).Encode(discoveryResp)
+		return
+	}
+	json.NewEncoder(w).Encode(startResp)
 }
 
 // handleOAuthStatus handles GET /api/oauth/status/:server_name - get token status

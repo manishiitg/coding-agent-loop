@@ -1,5 +1,16 @@
 # Pulse Platform-Issue Register
 
+## Gmail send-only default and Google Workspace connections — PLAT-300
+
+[PLAT-300](pulse_platform/plat-300.md) makes Gmail send-only the default (with
+an opt-in read toggle) and fixes the identity/status gap that left a
+send-only connection unable to name itself or report as authenticated. Adds
+per-service Drive/Sheets/Docs/Slides/Calendar grants (read-only default,
+opt-in write) to a connection, plus a `google_workspace_cli` agent tool that
+runs `gog` directly under the resolved connection's credential rather than a
+bespoke tool per operation. Implemented and deployed to confida; no live
+Drive/Sheets connection exercised yet.
+
 ## Streaming report video/audio evidence — PLAT-299
 
 [PLAT-299](pulse_platform/plat-299.md) adds `window.report.mediaUrl`, file-scoped

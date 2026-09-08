@@ -35,6 +35,13 @@ const (
 	SubAgentLLMContextKey subAgentContextKey = "sub_agent_llm"
 	// SubAgentMessageSequenceRestartKey is the context key for forcing a message_sequence route to start fresh.
 	SubAgentMessageSequenceRestartKey subAgentContextKey = "message_sequence_restart"
+	// SubAgentParametersKey carries typed, per-call inputs for a predefined
+	// scripted route. The controller validates these values against the route's
+	// declared script_parameters before starting the child.
+	SubAgentParametersKey subAgentContextKey = "sub_agent_parameters"
+	// ScriptedSubAgentInvocationKey distinguishes the dedicated scripted-route
+	// tool from the conversational predefined-route tool at the shared executor.
+	ScriptedSubAgentInvocationKey subAgentContextKey = "scripted_sub_agent_invocation"
 	// GenericAgentMessageSequenceKey carries optional ordered follow-up turns for
 	// call_generic_agent. The runtime reuses one agent/session for every turn.
 	GenericAgentMessageSequenceKey subAgentContextKey = "generic_agent_message_sequence"
@@ -80,6 +87,26 @@ const maxSubAgentRetryAttempts = 3
 // Injected via context by the controller
 type ExecutePredefinedSubAgentFunc func(ctx context.Context, routeID, todoID, instructions string) (string, error)
 
+// SubAgentParametersFromContext returns a defensive copy of the parameters
+// supplied to call_scripted_sub_agent. Keeping them in the call context avoids
+// changing the shared predefined-route executor signature and prevents
+// concurrent route calls from sharing mutable parameter state.
+func SubAgentParametersFromContext(ctx context.Context) map[string]interface{} {
+	params, _ := ctx.Value(SubAgentParametersKey).(map[string]interface{})
+	result := make(map[string]interface{}, len(params))
+	for key, value := range params {
+		result[key] = value
+	}
+	return result
+}
+
+// IsScriptedSubAgentInvocation reports whether the predefined route was
+// selected through call_scripted_sub_agent rather than call_sub_agent.
+func IsScriptedSubAgentInvocation(ctx context.Context) bool {
+	value, _ := ctx.Value(ScriptedSubAgentInvocationKey).(bool)
+	return value
+}
+
 // ExecuteGenericAgentFunc is the function signature for executing generic agents
 // Injected via context by the controller
 type ExecuteGenericAgentFunc func(ctx context.Context, todoID, instructions string) (string, error)
@@ -100,7 +127,7 @@ func GenericAgentMessageSequenceFromContext(ctx context.Context) []GenericAgentM
 }
 
 // CreateSubAgentTools creates the sub-agent calling virtual tools.
-// preferred_tier is always a REQUIRED parameter on both sub-agent tools — the
+// preferred_tier is always a REQUIRED parameter on all sub-agent call tools — the
 // orchestrator must explicitly reason about task difficulty on every delegation.
 // When the workflow has no tier resolver or the step pins an ExecutionLLM, the
 // tier value is informational (inherited/pinned LLM is used regardless), but the
@@ -108,7 +135,9 @@ func GenericAgentMessageSequenceFromContext(ctx context.Context) []GenericAgentM
 func CreateSubAgentTools() []llmtypes.Tool {
 	var tools []llmtypes.Tool
 
-	// call_sub_agent tool - Execute a predefined sub-agent
+	// call_sub_agent executes conversational predefined routes. Scripted routes
+	// have a separate tool so instructions and typed parameters are never an
+	// ambiguous, mutually-exclusive argument pair.
 	callSubAgentProperties := map[string]interface{}{
 		"route_id": map[string]interface{}{
 			"type":        "string",
@@ -120,7 +149,7 @@ func CreateSubAgentTools() []llmtypes.Tool {
 		},
 		"instructions": map[string]interface{}{
 			"type":        "string",
-			"description": "Detailed instructions for what the sub-agent should accomplish. Be specific about inputs, expected outputs, and any constraints.",
+			"description": "Required instructions for an agent or message_sequence route. Scripted routes use call_scripted_sub_agent instead.",
 		},
 		"preferred_tier": map[string]interface{}{
 			"type":        "integer",
@@ -137,7 +166,7 @@ func CreateSubAgentTools() []llmtypes.Tool {
 		Type: "function",
 		Function: &llmtypes.FunctionDefinition{
 			Name:        "call_sub_agent",
-			Description: "Start a predefined sub-agent for a specific task. The call returns an execution_id immediately; the workflow runtime waits outside this tool call and sends one authoritative completion batch back to this orchestrator. Launch independent calls together. For message_sequence routes, repeated calls resume the route conversation unless message_sequence_restart is true.",
+			Description: "Start a predefined agent or message_sequence route with per-call instructions. Scripted routes use call_scripted_sub_agent. The call returns an execution_id immediately; the workflow runtime waits outside this tool call and sends one authoritative completion batch back to this orchestrator. Launch independent calls together. For message_sequence routes, repeated calls resume the route conversation unless message_sequence_restart is true.",
 			Parameters: llmtypes.NewParameters(map[string]interface{}{
 				"type":       "object",
 				"properties": callSubAgentProperties,
@@ -146,6 +175,39 @@ func CreateSubAgentTools() []llmtypes.Tool {
 		},
 	}
 	tools = append(tools, callSubAgentTool)
+
+	callScriptedSubAgentTool := llmtypes.Tool{
+		Type: "function",
+		Function: &llmtypes.FunctionDefinition{
+			Name:        "call_scripted_sub_agent",
+			Description: "Start a predefined scripted route using its persisted typed parameter contract. Call get_route_description(route_id) first, then pass exactly the declared values. The runtime applies defaults and rejects unknown, missing, wrongly typed, or invalid enum values before main.py starts. This tool accepts no free-form instructions.",
+			Parameters: llmtypes.NewParameters(map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"route_id": map[string]interface{}{
+						"type":        "string",
+						"description": "Parent-side selector for the predefined scripted route. Inspect it with get_route_description before calling.",
+					},
+					"task_id": map[string]interface{}{
+						"type":        "string",
+						"description": "Stable label for this unit of scripted work (kebab-case). Used for tracking and artifact naming.",
+					},
+					"parameters": map[string]interface{}{
+						"type":                 "object",
+						"description":          "Required JSON object containing only values declared by this scripted route. Pass {} when the route declares no parameters.",
+						"additionalProperties": true,
+					},
+					"preferred_tier": map[string]interface{}{
+						"type":        "integer",
+						"description": "REQUIRED. LLM tier used only if the saved script enters its repair path: 1 = high, 2 = medium, 3 = low. The saved-script fast path itself makes no LLM call.",
+						"enum":        []int{1, 2, 3},
+					},
+				},
+				"required": []string{"route_id", "task_id", "parameters", "preferred_tier"},
+			}),
+		},
+	}
+	tools = append(tools, callScriptedSubAgentTool)
 
 	// call_generic_agent tool - Execute a generic agent for ad-hoc tasks
 	callGenericAgentProperties := map[string]interface{}{
@@ -197,7 +259,7 @@ func CreateSubAgentTools() []llmtypes.Tool {
 		Type: "function",
 		Function: &llmtypes.FunctionDefinition{
 			Name:        "query_sub_agent",
-			Description: "Read the current state of one sub-agent execution returned by call_sub_agent or call_generic_agent. This is for explicit inspection or debugging; do not poll it in a loop because the runtime automatically delivers completion results.",
+			Description: "Read the current state of one sub-agent execution returned by call_sub_agent, call_scripted_sub_agent, or call_generic_agent. This is for explicit inspection or debugging; do not poll it in a loop because the runtime automatically delivers completion results.",
 			Parameters: llmtypes.NewParameters(map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
@@ -242,7 +304,7 @@ func CreateSubAgentTools() []llmtypes.Tool {
 				"properties": map[string]interface{}{
 					"execution_id": map[string]interface{}{
 						"type":        "string",
-						"description": "Required. The exact execution_id returned by call_sub_agent or call_generic_agent.",
+						"description": "Required. The exact execution_id returned by call_sub_agent, call_scripted_sub_agent, or call_generic_agent.",
 					},
 					"from_last_x": map[string]interface{}{
 						"type":        "integer",
@@ -288,6 +350,7 @@ func CreateSubAgentToolExecutors() map[string]func(ctx context.Context, args map
 	executors := make(map[string]func(ctx context.Context, args map[string]interface{}) (string, error))
 
 	executors["call_sub_agent"] = handleCallSubAgent
+	executors["call_scripted_sub_agent"] = handleCallScriptedSubAgent
 	executors["call_generic_agent"] = handleCallGenericAgent
 	executors["query_sub_agent"] = handleQuerySubAgent
 	executors["stop_sub_agent"] = handleStopSubAgent
@@ -336,8 +399,11 @@ func handleCallSubAgent(ctx context.Context, args map[string]interface{}) (strin
 	}
 
 	instructions, ok := args["instructions"].(string)
-	if !ok || instructions == "" {
-		return "", fmt.Errorf("instructions are required")
+	if !ok || strings.TrimSpace(instructions) == "" {
+		return "", fmt.Errorf("instructions are required; scripted routes use call_scripted_sub_agent")
+	}
+	if _, supplied := args["parameters"]; supplied {
+		return "", fmt.Errorf("parameters are not accepted by call_sub_agent; use call_scripted_sub_agent for scripted routes")
 	}
 
 	tierRequired, _ := ctx.Value(TierSelectionRequiredKey).(bool)
@@ -354,6 +420,49 @@ func handleCallSubAgent(ctx context.Context, args map[string]interface{}) (strin
 		ctx = context.WithValue(ctx, SubAgentMessageSequenceRestartKey, true)
 	}
 
+	return executePredefinedSubAgentCall(ctx, routeID, todoID, instructions)
+}
+
+// handleCallScriptedSubAgent executes one predefined scripted route with typed
+// parameters and no conversational instructions.
+func handleCallScriptedSubAgent(ctx context.Context, args map[string]interface{}) (string, error) {
+	routeID, ok := args["route_id"].(string)
+	if !ok || strings.TrimSpace(routeID) == "" {
+		return "", fmt.Errorf("route_id is required")
+	}
+	todoID, ok := args["task_id"].(string)
+	if !ok || strings.TrimSpace(todoID) == "" {
+		return "", fmt.Errorf("task_id is required")
+	}
+	rawParameters, supplied := args["parameters"]
+	parameters, ok := rawParameters.(map[string]interface{})
+	if !supplied || !ok {
+		return "", fmt.Errorf("parameters is required and must be an object; pass {} when the scripted route declares no parameters")
+	}
+	if _, supplied := args["instructions"]; supplied {
+		return "", fmt.Errorf("instructions are not accepted by call_scripted_sub_agent; declare runtime variation in script_parameters")
+	}
+	copied := make(map[string]interface{}, len(parameters))
+	for key, value := range parameters {
+		copied[key] = value
+	}
+	ctx = context.WithValue(ctx, SubAgentParametersKey, copied)
+	ctx = context.WithValue(ctx, ScriptedSubAgentInvocationKey, true)
+
+	tierRequired, _ := ctx.Value(TierSelectionRequiredKey).(bool)
+	preferredTierF, hasTier := args["preferred_tier"].(float64)
+	validTier := hasTier && int(preferredTierF) >= 1 && int(preferredTierF) <= 3
+	if tierRequired && !validTier {
+		return "", fmt.Errorf("preferred_tier is required and must be 1, 2, or 3 (1=high reasoning, 2=medium, 3=low) — pick a tier for possible repair difficulty")
+	}
+	if validTier {
+		ctx = context.WithValue(ctx, PreferredTierContextKey, int(preferredTierF))
+	}
+
+	return executePredefinedSubAgentCall(ctx, routeID, todoID, "")
+}
+
+func executePredefinedSubAgentCall(ctx context.Context, routeID, todoID, instructions string) (string, error) {
 	// Get the execution function from context
 	executeFunc, ok := ctx.Value(ExecutePredefinedSubAgentKey).(ExecutePredefinedSubAgentFunc)
 	if !ok || executeFunc == nil {

@@ -1571,6 +1571,15 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 		if scriptedEnv == nil {
 			scriptedEnv = make(map[string]string)
 		}
+		// A parameterized script sees the same environment shape while being
+		// authored/repaired and while running on the fast path. A top-level test
+		// run has no orchestrator-supplied values, so expose an empty object rather
+		// than making the contract's environment variable disappear.
+		if len(scriptedParameterDefinitions(step)) > 0 {
+			if _, present := scriptedEnv[ScriptedParametersEnv]; !present {
+				scriptedEnv[ScriptedParametersEnv] = "{}"
+			}
+		}
 		_, _, _, folderEnv := appendWorkflowFolderAccess(hcpo.GetWorkspacePath(), nil, nil)
 		for key, value := range folderEnv {
 			scriptedEnv[key] = value
@@ -1607,11 +1616,15 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 			"ScriptedPriorError":        learnCodePriorError,
 			"ScriptedInputArgs":         learnCodeInputArgsForPrompt,
 			"ScriptedEnvVarNames":       buildScriptedEnvVarNamesForPrompt(isScriptedMode, scriptedEnv),
+			"ScriptedParameterSchema":   formatScriptParameterContract(scriptedParameterDefinitions(step)),
 			"ScriptedVarMapping":        buildScriptedVarMappingForPrompt(isCodeExecutionMode || isScriptedMode, hcpo.variablesManifest),
 			"GroupName":                 hcpo.currentGroupName,
 		}
 		if scriptedDelegation, ok := scriptedDelegationFromContext(ctx); ok {
 			templateVars["ScriptedDelegationInstructions"] = scriptedDelegation.Instructions
+			if payload, marshalErr := json.Marshal(scriptedDelegation.Parameters); marshalErr == nil && len(scriptedDelegation.Parameters) > 0 {
+				templateVars["ScriptedParameterValues"] = string(payload)
+			}
 		}
 
 		// In evaluation mode, inject TARGET_RUN_PATH into the prompt so the agent

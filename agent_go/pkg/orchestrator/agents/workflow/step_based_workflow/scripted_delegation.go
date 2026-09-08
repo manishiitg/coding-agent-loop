@@ -20,13 +20,19 @@ type scriptedDelegationContext struct {
 	Instructions string
 	RouteID      string
 	TodoID       string
+	Parameters   map[string]interface{}
 }
 
-func withScriptedDelegationContext(ctx context.Context, routeID, todoID, instructions string) context.Context {
+func withScriptedDelegationContext(ctx context.Context, routeID, todoID, instructions string, parameters map[string]interface{}) context.Context {
+	parameterCopy := make(map[string]interface{}, len(parameters))
+	for key, value := range parameters {
+		parameterCopy[key] = value
+	}
 	delegation := scriptedDelegationContext{
 		Instructions: strings.TrimSpace(instructions),
 		RouteID:      strings.TrimSpace(routeID),
 		TodoID:       strings.TrimSpace(todoID),
+		Parameters:   parameterCopy,
 	}
 	return context.WithValue(ctx, scriptedDelegationContextKey{}, delegation)
 }
@@ -39,7 +45,7 @@ func scriptedDelegationFromContext(ctx context.Context) (scriptedDelegationConte
 	if !ok {
 		return scriptedDelegationContext{}, false
 	}
-	return delegation, delegation.Instructions != "" || delegation.RouteID != "" || delegation.TodoID != ""
+	return delegation, delegation.Instructions != "" || delegation.RouteID != "" || delegation.TodoID != "" || len(delegation.Parameters) > 0
 }
 
 // appendScriptedDelegationEnv returns a copy so execution-local delegation
@@ -56,5 +62,5 @@ func appendScriptedDelegationEnv(ctx context.Context, env map[string]string) map
 	result[ScriptedDelegationInstructionsEnv] = delegation.Instructions
 	result[ScriptedDelegationRouteIDEnv] = delegation.RouteID
 	result[ScriptedDelegationTodoIDEnv] = delegation.TodoID
-	return result
+	return appendScriptParametersEnv(result, delegation.Parameters)
 }

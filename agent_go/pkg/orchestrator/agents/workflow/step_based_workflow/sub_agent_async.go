@@ -67,6 +67,8 @@ func copyAsyncSubAgentContextValues(base, source context.Context) context.Contex
 	for _, key := range []interface{}{
 		virtualtools.PreferredTierContextKey,
 		virtualtools.SubAgentMessageSequenceRestartKey,
+		virtualtools.SubAgentParametersKey,
+		virtualtools.ScriptedSubAgentInvocationKey,
 		virtualtools.GenericAgentMessageSequenceKey,
 	} {
 		if value := source.Value(key); value != nil {

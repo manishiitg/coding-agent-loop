@@ -22,6 +22,11 @@ share one conversation, or needs a specialist that remembers across calls, it is
 ## Anatomy
 
 - `description` — the executable instruction/prompt for the step agent, not metadata. Resolved variable values are available as `$VAR_*`.
+- `script_parameters` — the optional, typed public input contract when an orchestrator
+  calls this script as a predefined route. Each named parameter declares `type`,
+  `description`, and optionally `required`, `default`, and `enum`. These are non-secret
+  per-call values; credentials still belong in Secrets. The builder defines this contract
+  with the step, and `main.py` reads the validated object from `STEP_PARAMS_JSON`.
 - `context_dependencies` → `context_output` — forward-only context flow between steps.
 - `validation_schema` — **required**; gates the step. Checks **files** (file_checks +
   json_checks) AND/OR the **db** (`db: [{sql, min_rows, max_rows, checks}]` — read-only
@@ -41,6 +46,42 @@ share one conversation, or needs a specialist that remembers across calls, it is
 - Judgment, adaptive discovery, ambiguous live evidence, and browser/UI work use `message_sequence`.
 
 Preferred data shape: `regular scripted fetcher(s) → message_sequence processor`. Fetchers own credentials, calls, retries/rate limits, provenance, freshness, idempotency, response parsing, and authoritative DB/file output. The message sequence reads that output and owns semantic analysis, synthesis, critique, and repair.
+
+## Parameterized orchestrator routes
+
+Use parameters—not rewritten code or free-form delegation prose—when one reusable script
+needs controlled variation between orchestrator calls. The saved step is the single source
+of truth:
+
+```json
+"script_parameters": {
+  "market": {
+    "type": "string",
+    "description": "Market whose deterministic checks should run",
+    "required": true,
+    "enum": ["india", "usa", "dubai"]
+  },
+  "limit": {
+    "type": "integer",
+    "description": "Maximum rows to fetch",
+    "default": 100
+  }
+}
+```
+
+The builder must make `main.py` parse `json.loads(os.environ["STEP_PARAMS_JSON"])` and
+must not hardcode the values from an individual test run. At runtime the orchestrator first
+reads the route description, then calls `call_scripted_sub_agent` with `parameters`
+matching this contract. That tool has no `instructions` argument. The controller applies defaults and rejects unknown,
+missing, or wrongly typed values before starting Python. The same declared contract and
+current validated values are included in a repair turn, so repair must preserve the public
+interface rather than inventing a second input path. Positional arguments remain reserved
+for `context_dependencies`.
+
+The Builder tests the identical contract with
+`execute_step(step_id="...", script_parameters={...})`; never simulate it by exporting
+`STEP_PARAMS_JSON` in a generic shell. `execute_step` rejects parameters on non-scripted
+steps and rejects invalid values before registering background execution.
 
 ## When NOT to use (redirects)
 

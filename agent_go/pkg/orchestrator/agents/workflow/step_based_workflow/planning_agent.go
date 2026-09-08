@@ -466,7 +466,23 @@ type CommonStepFields struct {
 	ContextDependencies []string              `json:"context_dependencies"`
 	ContextOutput       FlexibleContextOutput `json:"context_output"`              // Use flexible type to handle string or array
 	ValidationSchema    *ValidationSchema     `json:"validation_schema,omitempty"` // Optional structured validation schema for step outputs
-	SharedWith          *StepSharing          `json:"shared_with,omitempty"`       // Optional: visibility rules for reusable orphan steps
+	// ScriptParameters is the public runtime-input contract for a scripted
+	// (regular) step. Todo-task orchestrators discover this contract from the
+	// route and pass matching values to main.py through STEP_PARAMS_JSON.
+	ScriptParameters map[string]ScriptParameterDefinition `json:"script_parameters,omitempty"`
+	SharedWith       *StepSharing                         `json:"shared_with,omitempty"` // Optional: visibility rules for reusable orphan steps
+}
+
+// ScriptParameterDefinition describes one input accepted by a scripted step.
+// It deliberately stays smaller than full JSON Schema: these values cross a
+// workflow boundary and should remain easy for builders, orchestrators, and
+// repair agents to understand identically.
+type ScriptParameterDefinition struct {
+	Type        string        `json:"type"`
+	Description string        `json:"description"`
+	Required    bool          `json:"required,omitempty"`
+	Default     interface{}   `json:"default,omitempty"`
+	Enum        []interface{} `json:"enum,omitempty"`
 }
 
 // StepSharing defines which orchestrators in the same plan may reuse an orphan step.
@@ -833,9 +849,10 @@ type OrchestratorDecision struct {
 	UseGenericAgent bool   `json:"use_generic_agent,omitempty"` // Use generic agent instead
 
 	// Delegation instructions
-	TodoIDToExecute            string `json:"todo_id_to_execute,omitempty"`             // Which todo to work on
-	InstructionsToSubAgent     string `json:"instructions_to_sub_agent,omitempty"`      // Detailed instructions
-	SuccessCriteriaForSubAgent string `json:"success_criteria_for_sub_agent,omitempty"` // Measurable criteria
+	TodoIDToExecute            string                 `json:"todo_id_to_execute,omitempty"`             // Which todo to work on
+	InstructionsToSubAgent     string                 `json:"instructions_to_sub_agent,omitempty"`      // Detailed instructions
+	ScriptParameters           map[string]interface{} `json:"script_parameters,omitempty"`              // Typed inputs for a scripted predefined route
+	SuccessCriteriaForSubAgent string                 `json:"success_criteria_for_sub_agent,omitempty"` // Measurable criteria
 
 	// Overall status
 	AllTasksComplete bool   `json:"all_tasks_complete"`          // True when all todos are completed
@@ -1128,14 +1145,15 @@ type PartialPlanStep struct {
 	BranchQuestion string `json:"branch_question,omitempty"` // Optional: Updated branch question
 	RouteSource    string `json:"route_source,omitempty"`    // Optional: "human" makes the branch ask a person when nothing was preseeded (branch only)
 	// Human input step fields
-	Question         string            `json:"question,omitempty"`            // Optional: Updated question
-	VariableName     string            `json:"variable_name,omitempty"`       // Optional: Updated variable name
-	ResponseType     string            `json:"response_type,omitempty"`       // Optional: Updated response type
-	Options          []string          `json:"options,omitempty"`             // Optional: Updated options (for multiple_choice)
-	IfYesNextStepID  string            `json:"if_yes_next_step_id,omitempty"` // Optional: Updated if_yes_next_step_id (for yesno)
-	IfNoNextStepID   string            `json:"if_no_next_step_id,omitempty"`  // Optional: Updated if_no_next_step_id (for yesno)
-	OptionRoutes     map[string]string `json:"option_routes,omitempty"`       // Optional: Updated option routes (for multiple_choice)
-	ValidationSchema *ValidationSchema `json:"validation_schema,omitempty"`   // Optional: Updated validation schema
+	Question         string                               `json:"question,omitempty"`            // Optional: Updated question
+	VariableName     string                               `json:"variable_name,omitempty"`       // Optional: Updated variable name
+	ResponseType     string                               `json:"response_type,omitempty"`       // Optional: Updated response type
+	Options          []string                             `json:"options,omitempty"`             // Optional: Updated options (for multiple_choice)
+	IfYesNextStepID  string                               `json:"if_yes_next_step_id,omitempty"` // Optional: Updated if_yes_next_step_id (for yesno)
+	IfNoNextStepID   string                               `json:"if_no_next_step_id,omitempty"`  // Optional: Updated if_no_next_step_id (for yesno)
+	OptionRoutes     map[string]string                    `json:"option_routes,omitempty"`       // Optional: Updated option routes (for multiple_choice)
+	ValidationSchema *ValidationSchema                    `json:"validation_schema,omitempty"`   // Optional: Updated validation schema
+	ScriptParameters map[string]ScriptParameterDefinition `json:"script_parameters,omitempty"`   // Optional: replace the scripted runtime parameter contract; pass {} to clear
 	// Message sequence fields
 	Items []MessageSequenceItem `json:"items,omitempty"`
 }
@@ -1416,9 +1434,14 @@ func getUpdateRegularStepSchema() string {
 							"type": "string",
 							"description": "OPTIONAL: New title for the step. Only include if you want to rename the step. If omitted, the existing title is preserved."
 						},
-						"description": {
-							"type": "string",
+			"description": {
+				"type": "string",
 				"description": "OPTIONAL: Replaces the deterministic execution contract implemented by code/<step-id>/main.py (code_layout_version=1; legacy: learnings/<step-id>/main.py). Specify inputs, target-domain operations, persistence behavior, outputs, idempotency, error handling, and provenance/freshness requirements. Do not copy shared AgentWorks bridge/auth, Folder Guard, managed-tool, tool-discovery, or coding-session mechanics into this field. This is not an LLM prompt; conversational or judgment-heavy work belongs in update_message_sequence_step. Omit to preserve the existing description."
+						},
+						"script_parameters": {
+							"type": "object",
+							"description": "OPTIONAL: Replace the named runtime-input contract for main.py. Each value is {type, description, required?, default?, enum?}; pass {} to clear.",
+							"additionalProperties": {"type": "object", "properties": {"type": {"type": "string", "enum": ["string", "number", "integer", "boolean", "array", "object"]}, "description": {"type": "string"}, "required": {"type": "boolean"}, "default": {}, "enum": {"type": "array"}}, "required": ["type", "description"]}
 						},
 						"context_dependencies": {
 							"type": "array",
@@ -1487,6 +1510,11 @@ func getAddRegularStepSchema() string {
 			"description": {
 				"type": "string",
 				"description": "REQUIRED: Complete semantic execution contract for the checked-in code/<step-id>/main.py (code_layout_version=1; legacy: learnings/<step-id>/main.py) script. Specify inputs, target-domain operations, persistence behavior, outputs, idempotency, error handling, and provenance/freshness requirements. Do not copy shared AgentWorks bridge/auth, Folder Guard, managed-tool, tool-discovery, or coding-session mechanics into this field. This is not an LLM prompt; conversational or judgment-heavy work belongs in add_message_sequence_step."
+			},
+			"script_parameters": {
+				"type": "object",
+				"description": "OPTIONAL: Named runtime inputs accepted by main.py when this scripted step is used as a todo-task route. Each key defines {type, description, required?, default?, enum?}. Supported types: string, number, integer, boolean, array, object. main.py reads the validated values from STEP_PARAMS_JSON. Use {} when the script takes no route parameters.",
+				"additionalProperties": {"type": "object", "properties": {"type": {"type": "string", "enum": ["string", "number", "integer", "boolean", "array", "object"]}, "description": {"type": "string"}, "required": {"type": "boolean"}, "default": {}, "enum": {"type": "array"}}, "required": ["type", "description"]}
 			},
 			"context_dependencies": {
 				"type": "array",
@@ -1636,8 +1664,8 @@ func getAddRoutingStepSchema() string {
 				"type": "string",
 				"description": "REQUIRED: Short, clear title for the routing step"
 			},
-			"description": {
-				"type": "string",
+						"description": {
+							"type": "string",
 				"description": "DO NOT SET for routing steps. Routing is deterministic-only and never executes an agent. If a probe/judgment is needed, add a prior message_sequence step that writes route_selection.json, then route from that file."
 			},
 			"context_dependencies": {
@@ -2056,7 +2084,8 @@ func getAddOrchestratorStepSchema() string {
 								"type": {"type": "string", "enum": ["message_sequence", "regular", "orchestrator", "todo_task"], "description": "REQUIRED: Use message_sequence for conversational work. Regular is scripted-only. Nested todo_task routes may not contain another todo_task route."},
 								"id": {"type": "string", "description": "REQUIRED: Stable step ID for the sub-agent step"},
 								"title": {"type": "string", "description": "REQUIRED: Title of the sub-agent step"},
-								"description": {"type": "string", "description": "REQUIRED: What this specialized agent does AND its standing brief. This IS EXECUTED as the agent's opening instruction (turn 0) on the first call — the orchestrator's per-call call_sub_agent instructions are added on top. Write it as an actionable brief, not throwaway metadata."},
+								"description": {"type": "string", "description": "REQUIRED: What this specialized agent does AND its standing brief. For scripted regular routes this is the stable code contract; runtime variation belongs in script_parameters. For agent routes, per-call instructions are added on top."},
+								"script_parameters": {"type": "object", "description": "For regular scripted routes: named values main.py accepts through STEP_PARAMS_JSON. Each value is {type, description, required?, default?, enum?}.", "additionalProperties": {"type": "object", "properties": {"type": {"type": "string", "enum": ["string", "number", "integer", "boolean", "array", "object"]}, "description": {"type": "string"}, "required": {"type": "boolean"}, "default": {}, "enum": {"type": "array"}}, "required": ["type", "description"]}},
 								"items": {"type": "array", "description": "REQUIRED when type='message_sequence'. Ordered user_message, prevalidation, or foreach turns.", "items": {"type": "object"}},
 								"context_dependencies": {"type": "array", "items": {"type": "string"}},
 								"context_output": {"type": "string", "description": "OPTIONAL: Context file this step creates. Omit when the step writes to the db (validate via validation_schema.db)."},
@@ -2242,7 +2271,8 @@ func getAddOrchestratorRouteSchema() string {
 							"type": {"type": "string", "enum": ["message_sequence", "regular", "orchestrator", "todo_task"], "description": "REQUIRED: message_sequence for conversational work; regular only for deterministic scripted work; todo_task for one nested orchestrator layer."},
 							"id": {"type": "string", "description": "REQUIRED: Stable step ID for the sub-agent step"},
 							"title": {"type": "string", "description": "REQUIRED: Title of the sub-agent step"},
-							"description": {"type": "string", "description": "REQUIRED: What this specialized agent does AND its standing brief. This IS EXECUTED as the agent's opening instruction (turn 0) on the first call — the orchestrator's per-call call_sub_agent instructions are added on top. Write it as an actionable brief, not throwaway metadata."},
+							"description": {"type": "string", "description": "REQUIRED: What this specialized agent does AND its standing brief. For scripted regular routes this is the stable code contract; runtime variation belongs in script_parameters. For agent routes, per-call instructions are added on top."},
+							"script_parameters": {"type": "object", "description": "For regular scripted routes: named values main.py accepts through STEP_PARAMS_JSON. Each value is {type, description, required?, default?, enum?}.", "additionalProperties": {"type": "object", "properties": {"type": {"type": "string", "enum": ["string", "number", "integer", "boolean", "array", "object"]}, "description": {"type": "string"}, "required": {"type": "boolean"}, "default": {}, "enum": {"type": "array"}}, "required": ["type", "description"]}},
 							"items": {"type": "array", "description": "REQUIRED when type='message_sequence'. Ordered user_message, prevalidation, or foreach turns.", "items": {"type": "object"}},
 							"context_dependencies": {"type": "array", "items": {"type": "string"}, "description": "Exact durable file outputs this child consumes. The runtime resolves and injects these files. Use [] when the child reads durable state from managed DB/KB tools instead."},
 							"context_output": {"type": "string", "description": "OPTIONAL: Context file this step creates. Omit when the step writes to the db (validate via validation_schema.db)."},
@@ -2299,7 +2329,8 @@ func getUpdateOrchestratorRouteSchema() string {
 					"type": {"type": "string", "enum": ["message_sequence", "regular", "orchestrator", "todo_task"]},
 					"id": {"type": "string"},
 					"title": {"type": "string"},
-					"description": {"type": "string", "description": "OPTIONAL: Replaces what this specialized agent does AND its standing brief. This IS EXECUTED as the agent's opening instruction (turn 0) on the first call — the orchestrator's per-call call_sub_agent instructions are added on top. Write it as an actionable brief, not throwaway metadata. Omit to preserve the existing description."},
+					"description": {"type": "string", "description": "OPTIONAL: Replaces the stable route contract. For scripted regular routes, runtime variation belongs in script_parameters. Omit to preserve the existing description."},
+					"script_parameters": {"type": "object", "description": "For regular scripted routes: replace the named STEP_PARAMS_JSON contract. Each value is {type, description, required?, default?, enum?}.", "additionalProperties": {"type": "object", "properties": {"type": {"type": "string", "enum": ["string", "number", "integer", "boolean", "array", "object"]}, "description": {"type": "string"}, "required": {"type": "boolean"}, "default": {}, "enum": {"type": "array"}}, "required": ["type", "description"]}},
 					"items": {"type": "array", "description": "Required when type='message_sequence'. Replaces the entire ordered queue of follow-up turns (turns 1..N; description is turn 0) — a full replacement, not a merge. Add a user_message only for evidence-based verification, critique, repair, new input, or a real phase change. Before restructuring this into anything beyond a single verify/repair turn, load references/message-sequence.md: read_skill(skills=[{\"name\":\"builder-reference\",\"path\":\"references/message-sequence.md\"}]).", "items": {"type": "object"}},
 					"context_dependencies": {"type": "array", "items": {"type": "string"}, "description": "Exact durable file outputs this child consumes. The runtime resolves and injects these files. Use [] when the child reads durable state from managed DB/KB tools instead."},
 					"context_output": {"type": "string"},
@@ -3138,6 +3169,9 @@ func mergePartialStepUpdate(existingStep PlanStepInterface, partialUpdate Partia
 		if partialUpdate.ValidationSchema != nil {
 			updated.ValidationSchema = partialUpdate.ValidationSchema
 		}
+		if partialUpdate.ScriptParameters != nil {
+			updated.ScriptParameters = partialUpdate.ScriptParameters
+		}
 		// Validation schema is LLM-generated only - no code-based auto-generation
 		return &updated
 
@@ -3499,6 +3533,16 @@ func updateSingleStep(plan *PlanningResponse, partialUpdate PartialPlanStep, fie
 			Field:    "context_output",
 			OldValue: oldOutput.String(),
 			NewValue: partialUpdate.ContextOutput,
+		})
+	}
+	if partialUpdate.ScriptParameters != nil {
+		changedFields = append(changedFields, "script_parameters")
+		oldParameters := existingStep.GetCommonFields().ScriptParameters
+		*fieldChanges = append(*fieldChanges, PlanFieldChange{
+			StepID:   partialUpdate.ExistingStepID,
+			Field:    "script_parameters",
+			OldValue: oldParameters,
+			NewValue: partialUpdate.ScriptParameters,
 		})
 	}
 	if partialUpdate.Items != nil {
@@ -3899,6 +3943,7 @@ func planStepUpdateInvalidatesDescriptionReview(fieldChanges []PlanFieldChange) 
 			field == "messages" ||
 			field == "next_step_id" ||
 			field == "validation_schema" ||
+			field == "script_parameters" ||
 			field == "routing_question" ||
 			field == "branch_question" ||
 			field == "routes" ||
@@ -4214,6 +4259,15 @@ func createUpdateRegularStepExecutor(workspacePath string, logger loggerv2.Logge
 		_, _, err = updateSingleStep(plan, partialUpdate, &fieldChanges)
 		if err != nil {
 			return "", err
+		}
+		updatedStep, _, _ := findStepByID(plan.Steps, partialUpdate.ExistingStepID)
+		if updatedStep == nil {
+			updatedStep, _, _ = findStepByID(plan.OrphanSteps, partialUpdate.ExistingStepID)
+		}
+		if scriptedStep, ok := updatedStep.(*RegularPlanStep); ok {
+			if err := validateScriptParameterDefinitions(scriptedStep.ScriptParameters); err != nil {
+				return "", fmt.Errorf("validation failed: invalid script_parameters: %w", err)
+			}
 		}
 
 		// Validate all steps after update
@@ -5402,6 +5456,10 @@ func validateOrchestratorStepFieldsTyped(step *OrchestratorPlanStep) error {
 			if err := validateOrchestratorStepFieldsTyped(subStep); err != nil {
 				return fmt.Errorf("step (title: %q, ID: %s) predefined_route[%d] (route_id: %s): %w", step.Title, step.ID, i, route.RouteID, err)
 			}
+		case *RegularPlanStep:
+			if err := validateScriptParameterDefinitions(subStep.ScriptParameters); err != nil {
+				return fmt.Errorf("step (title: %q, ID: %s) predefined_route[%d] (route_id: %s) has invalid script_parameters: %w", step.Title, step.ID, i, route.RouteID, err)
+			}
 		}
 	}
 	if err := validateOrchestratorNestingDepth(step, 0); err != nil {
@@ -5621,6 +5679,12 @@ func createSingleStepAdder(workspacePath string, logger loggerv2.Logger, readFil
 		// Validate step type-specific required fields BEFORE writing to plan
 		// This allows the agent to correct errors immediately via tool response
 		switch stepType {
+		case "regular":
+			if scriptedStep, ok := typedStep.(*RegularPlanStep); ok {
+				if err := validateScriptParameterDefinitions(scriptedStep.ScriptParameters); err != nil {
+					return "", fmt.Errorf("validation failed: invalid script_parameters: %w", err)
+				}
+			}
 		case "orchestrator", "todo_task":
 			if orchestratorStep, ok := typedStep.(*OrchestratorPlanStep); ok {
 				if err := validateOrchestratorStepFieldsTyped(orchestratorStep); err != nil {

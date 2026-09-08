@@ -35,6 +35,31 @@ func TestHandleCallSubAgentReturnsTypedFailedEnvelope(t *testing.T) {
 	}
 }
 
+func TestHandleCallScriptedSubAgentPropagatesParametersAndInvocationKind(t *testing.T) {
+	ctx := context.WithValue(context.Background(), ExecutePredefinedSubAgentKey, ExecutePredefinedSubAgentFunc(
+		func(ctx context.Context, routeID, todoID, instructions string) (string, error) {
+			params := SubAgentParametersFromContext(ctx)
+			if routeID != "script" || todoID != "dubai" || instructions != "" {
+				t.Fatalf("unexpected args: route=%q todo=%q instructions=%q", routeID, todoID, instructions)
+			}
+			if !reflect.DeepEqual(params, map[string]interface{}{"market": "dubai", "limit": float64(5)}) {
+				t.Fatalf("parameters = %#v", params)
+			}
+			if !IsScriptedSubAgentInvocation(ctx) {
+				t.Fatal("dedicated scripted invocation marker missing")
+			}
+			return "ok", nil
+		},
+	))
+	_, err := handleCallScriptedSubAgent(ctx, map[string]interface{}{
+		"route_id": "script", "task_id": "dubai", "preferred_tier": float64(2),
+		"parameters": map[string]interface{}{"market": "dubai", "limit": float64(5)},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestHandleCallGenericAgentReturnsTypedFailedEnvelope(t *testing.T) {
 	ctx := context.WithValue(context.Background(), ExecuteGenericAgentKey, ExecuteGenericAgentFunc(
 		func(context.Context, string, string) (string, error) {
@@ -111,6 +136,65 @@ func TestCallGenericAgentSchemaPublishesMessageSequence(t *testing.T) {
 		return
 	}
 	t.Fatal("call_generic_agent tool not found")
+}
+
+func TestDedicatedSubAgentSchemasSeparateInstructionsFromParameters(t *testing.T) {
+	foundAgent := false
+	foundScripted := false
+	for _, tool := range CreateSubAgentTools() {
+		if tool.Function == nil || (tool.Function.Name != "call_sub_agent" && tool.Function.Name != "call_scripted_sub_agent") {
+			continue
+		}
+		encoded, err := json.Marshal(tool.Function.Parameters)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var schema struct {
+			Properties map[string]interface{} `json:"properties"`
+			Required   []string               `json:"required"`
+		}
+		if err := json.Unmarshal(encoded, &schema); err != nil {
+			t.Fatal(err)
+		}
+		required := make(map[string]bool, len(schema.Required))
+		for _, name := range schema.Required {
+			required[name] = true
+		}
+		switch tool.Function.Name {
+		case "call_sub_agent":
+			foundAgent = true
+			if !required["instructions"] {
+				t.Fatalf("call_sub_agent must require instructions: %s", encoded)
+			}
+			if _, ok := schema.Properties["parameters"]; ok {
+				t.Fatalf("call_sub_agent must not publish parameters: %s", encoded)
+			}
+		case "call_scripted_sub_agent":
+			foundScripted = true
+			if !required["parameters"] {
+				t.Fatalf("call_scripted_sub_agent must require parameters: %s", encoded)
+			}
+			if _, ok := schema.Properties["instructions"]; ok {
+				t.Fatalf("call_scripted_sub_agent must not publish instructions: %s", encoded)
+			}
+		}
+	}
+	if !foundAgent || !foundScripted {
+		t.Fatalf("dedicated tools missing: call_sub_agent=%v call_scripted_sub_agent=%v", foundAgent, foundScripted)
+	}
+}
+
+func TestDedicatedSubAgentHandlersRejectCrossedArgumentShapes(t *testing.T) {
+	if _, err := handleCallSubAgent(context.Background(), map[string]interface{}{
+		"route_id": "agent", "task_id": "todo", "preferred_tier": float64(2),
+	}); err == nil || !strings.Contains(err.Error(), "instructions are required") {
+		t.Fatalf("call_sub_agent missing-instructions error = %v", err)
+	}
+	if _, err := handleCallScriptedSubAgent(context.Background(), map[string]interface{}{
+		"route_id": "script", "task_id": "todo", "preferred_tier": float64(2),
+	}); err == nil || !strings.Contains(err.Error(), "parameters is required") {
+		t.Fatalf("call_scripted_sub_agent missing-parameters error = %v", err)
+	}
 }
 
 func TestHandleCallSubAgentPropagatesMessageSequenceRestart(t *testing.T) {

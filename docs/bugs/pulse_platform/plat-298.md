@@ -5,8 +5,8 @@
 | Coordination | Value |
 |---|---|
 | Assigned agent | Codex |
-| Ticket state | Implemented locally — focused verification passed; production acceptance pending |
-| Last synchronized | 2026-09-07 |
+| Ticket state | Implemented, including typed scripted-route parameters, dedicated invocation tool, and Builder execute support — production acceptance pending |
+| Last synchronized | 2026-09-08 |
 | Priority | P1 reliability |
 
 ## Problem and observed evidence
@@ -45,6 +45,10 @@ simple browser tests for `Workflow/automationtesting`:
    one runner and the same resolved execution contract. Builder editing rights
    can be broader, but its test execution must use the step's permissions.
 6. Builder and repair agents must produce and maintain documented, commented code.
+7. A scripted step that needs controlled per-call variation exposes typed
+   `script_parameters`. The saved step definition is the single source of truth
+   for the builder, orchestrator, runtime and repair agent. Do not rewrite
+   `main.py` or append arbitrary prose to make one invocation behave differently.
 
 Example layout:
 
@@ -144,6 +148,63 @@ location distinct from per-run output location.
 - Render layout-specific instructions: never tell a new-layout workflow to edit
   learnings source, or a legacy workflow to use a code path it does not have.
 
+### Typed parameters for scripted orchestrator routes
+
+The saved scripted step may declare a small JSON-compatible input contract:
+
+```json
+"script_parameters": {
+  "market": {
+    "type": "string",
+    "description": "Market whose deterministic checks should run",
+    "required": true,
+    "enum": ["india", "usa", "dubai"]
+  },
+  "limit": {
+    "type": "integer",
+    "description": "Maximum rows to fetch",
+    "default": 100
+  }
+}
+```
+
+Contract rules:
+
+- Supported types are `string`, `number`, `integer`, `boolean`, `array` and
+  `object`; each parameter requires a description and may declare `required`,
+  `default` and `enum`.
+- Parameters are non-secret runtime values. Credentials remain `SECRET_*`
+  variables and must never be copied into the parameter contract.
+- The builder defines or updates the contract through the typed scripted-step
+  and nested-route schemas, and authors one reusable `main.py` that reads
+  `json.loads(os.environ["STEP_PARAMS_JSON"])`.
+- The orchestrator discovers the same persisted contract through
+  `get_route_description`, supplies only matching values, and never invents
+  parameters from the script body.
+- Before Python starts, the controller rejects unknown names, missing required
+  values, type mismatches and enum violations, and applies defaults.
+- Positional arguments remain reserved for declared `context_dependencies`.
+  Parameter values are never appended to argv.
+- Authoring and repair prompts receive the declared schema and current validated
+  values. Repair preserves the public interface and must not hardcode one call's
+  values. Top-level authoring/test runs expose `STEP_PARAMS_JSON={}` so the
+  environment shape remains stable.
+- Durable scripted logs record parameter names only, not values.
+- Existing scripted routes without `script_parameters` keep their legacy
+  instruction behavior. No workflow migration is required.
+
+The public tool design removes the ambiguous mutually exclusive argument shape:
+
+- `call_sub_agent(route_id, task_id, instructions, preferred_tier, ...)` remains
+  for agent and message-sequence routes and continues to require instructions.
+- `call_scripted_sub_agent(route_id, task_id, parameters, preferred_tier)`
+  for scripted routes. It accepts no free-form instructions.
+- Generate any help/inspection representation from `script_parameters`; do not
+  require every `main.py` to maintain a second handwritten `--help` contract.
+  A generated `--help` or describe surface may be added for shell ergonomics,
+  but it must project the persisted contract rather than become another source
+  of truth.
+
 ## Acceptance criteria
 
 - [ ] A new workflow stores and runs `code/<step-id>/main.py` directly and imports
@@ -168,6 +229,21 @@ location distinct from per-run output location.
   smoke test runs through the actual selected interpreter.
 - [ ] Both builder and repair receive the same documentation requirements and
   correct layout-specific paths. Demonstrate an initial authoring and repair run.
+- [x] Builder create/update schemas persist a typed scripted parameter contract;
+  loaded plans reject malformed contracts.
+- [x] Orchestrator route discovery exposes the contract, runtime calls validate
+  and resolve values, and the saved-script fast path receives `STEP_PARAMS_JSON`
+  without changing context-dependency argv.
+- [x] Repair receives the same schema and current values without hardcoding, and
+  durable logs avoid persisting parameter values.
+- [x] Replace the combined `call_sub_agent` parameter branch with the dedicated
+  `call_scripted_sub_agent` public tool, restore unconditional `instructions`
+  requirements on the agent tool, and add tool-boundary regression coverage.
+- [x] Builder `execute_step` accepts the same `script_parameters` object, rejects
+  invalid or non-scripted calls before registering execution, and supplies the
+  resolved values through the same execution-local `STEP_PARAMS_JSON` context.
+- [ ] Live-test one parameterized scripted route through Builder creation,
+  orchestrator discovery, default application, fast-path execution and repair.
 
 ## Implementation and verification (2026-09-07)
 
@@ -196,10 +272,45 @@ location distinct from per-run output location.
   A real Python subprocess test uses the runner command and generated import
   environment, imports a nested helper, repairs it in place, reruns successfully,
   and writes output without an execution source copy. Frontend type-check passes.
-- Production deployment and a live builder/schedule/LLM-repair acceptance run
-  are still pending. These local tests do not claim to prove every live bridge
+- A live builder/schedule/LLM-repair acceptance run is still pending. These
+  automated tests do not claim to prove every live bridge
   provider or selected-group scenario. The full workflow package also has a
   separate existing learning-prompt size-budget failure (7174 vs 7100 chars).
+
+## Typed scripted-route parameters (2026-09-08)
+
+- Added `script_parameters` to persisted common step fields and to top-level and
+  nested scripted-step builder schemas. Add, update and loaded-plan paths validate
+  the contract.
+- `get_route_description` renders the exact saved contract. The orchestrator's
+  compact route catalog advertises parameter names and tells the caller to inspect
+  the route before invoking it.
+- `call_sub_agent` again requires instructions and does not publish parameters.
+  The dedicated `call_scripted_sub_agent` requires a parameter object, publishes
+  no instructions field, and shares the same tracked asynchronous execution and
+  completion machinery. The controller resolves defaults and validates the call
+  before dispatch; non-scripted routes reject the scripted tool.
+- The child context carries a defensive parameter copy. Both the direct
+  saved-script runner and repair/authoring environment receive the same
+  `STEP_PARAMS_JSON`; current values and schema are projected into repair
+  guidance. Existing route/todo identity variables and dependency argv remain
+  unchanged.
+- Focused unit, schema, loaded-plan, prompt and exact orchestrator-route
+  saved-script regressions pass. `cmd/server` and workflow packages compile;
+  virtual-tools and guidance suites pass. The complete workflow package has one
+  unrelated pre-existing failure:
+  `TestWorkflowToolsReferenceDistinguishesLogicalFromNativeBridgeTools` expects
+  wording absent from `workflow-tools.md` at `HEAD`.
+- Async execution explicitly preserves the scripted invocation marker and
+  parameter map when it detaches the child from the tool-call context; a
+  regression test protects this real background boundary.
+- Builder `execute_step` now accepts `script_parameters`, validates the same
+  persisted contract synchronously, applies defaults, and carries resolved
+  values into both saved-script execution and repair. Builder, plan-design,
+  code-authoring, scripted, workflow-tools and orchestrator guidance describe
+  the same contract.
+- Production acceptance must exercise both the dedicated orchestrator tool and
+  Builder `execute_step` against a real parameterized script.
 
 ### Persistent storage
 

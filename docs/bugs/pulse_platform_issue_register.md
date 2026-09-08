@@ -9,14 +9,21 @@ deployment pending. Existing `fileUrl` behavior remains compatible.
 
 ## Workflow code layout and consistent scripted execution — PLAT-298
 
-[PLAT-298](pulse_platform/plat-298.md) is **implemented locally; production acceptance pending**. New workflows use a versioned
+[PLAT-298](pulse_platform/plat-298.md) is **implemented; production acceptance pending**. New workflows use a versioned
 `code/` source tree with workflow-wide step read/write access, shared helpers and
 direct execution. Existing workflows remain on their legacy layout. Builder
 tests, schedules and repair retries must share paths, environment, interpreter,
 permissions and validation. Includes documented code requirements, dependency
 provisioning, preflight and failure diagnostics. Focused tests and frontend type-check pass;
-live builder/schedule/repair acceptance and deployment are pending. Persistent RTS EBS
-workspace storage and installation checks are documented in the ticket.
+live builder/schedule/repair acceptance is pending. Persistent RTS EBS
+workspace storage and installation checks are documented in the ticket. The
+2026-09-08 extension adds one persisted `script_parameters` contract shared by
+builder, orchestrator, runtime and repair; validated values reach `main.py` as
+`STEP_PARAMS_JSON`. `call_sub_agent` remains instruction-only for agent routes;
+the implemented `call_scripted_sub_agent` is parameter-only for scripted routes
+and preserves its contract across asynchronous dispatch. Builder `execute_step`
+accepts the same validated object. Help is generated from the saved contract
+rather than handwritten per-script help.
 
 ## Codex retained-session, resume and structured-event reliability — PLAT-297
 

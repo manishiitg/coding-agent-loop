@@ -12,15 +12,17 @@ import (
 // When GroupName is set, the controller resolves the run folder and variable values
 // for that group, making each execute_step call self-contained.
 type WorkshopExecuteOptions struct {
-	GroupID                string // Deprecated: use GroupName instead. Kept for backward compat; mapped to GroupName internally.
-	GroupName              string // e.g., "production" — overrides session-level group
-	Iteration              string // e.g., "iteration-3" — combined with group folder name to form RunFolder
-	RunFolder              string // e.g., "iteration-3/xtech" — auto-calculated from Iteration + group, or set directly
-	SavedScriptOnly        bool   // If true, run only the saved learnings/{step-id}/main.py fast path with no LLM fallback
-	Instructions           string // Optional orchestrator instructions for inner steps — appended to step description as "## Orchestrator Instructions"
-	HumanInput             string // Optional human input for top-level steps — injected as critical feedback in PreviousStepsSummary
-	Tier                   int    // Optional LLM tier override (1=high, 2=medium, 3=low). 0 means no override.
-	MessageSequenceRestart bool   // If true, archive any existing message_sequence session and replay the configured item queue.
+	GroupID                string                 // Deprecated: use GroupName instead. Kept for backward compat; mapped to GroupName internally.
+	GroupName              string                 // e.g., "production" — overrides session-level group
+	Iteration              string                 // e.g., "iteration-3" — combined with group folder name to form RunFolder
+	RunFolder              string                 // e.g., "iteration-3/xtech" — auto-calculated from Iteration + group, or set directly
+	SavedScriptOnly        bool                   // If true, run only the saved learnings/{step-id}/main.py fast path with no LLM fallback
+	Instructions           string                 // Optional orchestrator instructions for inner steps — appended to step description as "## Orchestrator Instructions"
+	HumanInput             string                 // Optional human input for top-level steps — injected as critical feedback in PreviousStepsSummary
+	Tier                   int                    // Optional LLM tier override (1=high, 2=medium, 3=low). 0 means no override.
+	MessageSequenceRestart bool                   // If true, archive any existing message_sequence session and replay the configured item queue.
+	ScriptParameters       map[string]interface{} // Validated named inputs for a scripted step, exposed through STEP_PARAMS_JSON.
+	ScriptParametersSet    bool                   // Distinguishes an omitted field from an explicitly supplied empty object.
 }
 
 // cleanupWorkshopExecutionPath removes a specific workshop execution folder and archives
@@ -116,6 +118,10 @@ func (hcpo *StepBasedWorkflowOrchestrator) ExecuteStepForWorkshop(
 		}
 		hcpo.GetLogger().Warn(fmt.Sprintf("[WORKSHOP] Step %q not found. Valid IDs: %v", stepID, allIDs))
 		return "", fmt.Errorf("step with ID %q not found in plan", stepID)
+	}
+	ctx, err = applyWorkshopScriptParameters(ctx, stepInfo.Step, opts)
+	if err != nil {
+		return "", fmt.Errorf("invalid script_parameters for step %q: %w", stepID, err)
 	}
 	if opts != nil && opts.SavedScriptOnly {
 		agentCfgs := getAgentConfigs(stepInfo.Step)

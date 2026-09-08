@@ -108,6 +108,13 @@ top-level → nested-orchestrator is valid; nested-orchestrator containing
 another nested orchestrator is rejected. Break deeper hierarchies into
 sibling orphan steps or message_sequence specialists.
 
+For a `regular` route, inspect its declared `script_parameters` and invoke it with
+`call_scripted_sub_agent(route_id, task_id, parameters={...})`. The controller applies
+defaults and rejects missing, unknown, or wrongly typed values before `main.py` starts.
+Do not pass free-form instructions to a parameterized script or ask it to rewrite itself;
+scripts adapt only through their declared `STEP_PARAMS_JSON` values. Use `call_sub_agent`
+for conversational routes.
+
 ## Routes vs generic agent vs self-execution
 
 At runtime the orchestrator chooses *how* to do each unit of work — design with

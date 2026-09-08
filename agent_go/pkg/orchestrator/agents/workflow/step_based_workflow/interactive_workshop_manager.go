@@ -1415,7 +1415,7 @@ func GetToolsForWorkshopMode(mode string) []string {
 		// These must always be allowed because SetToolAllowList also gates the code
 		// execution registry (HTTP calls), which blocks execution agents from calling
 		// sub-agents even though the restriction is intended only for the phase agent LLM.
-		"call_sub_agent", "get_sub_agent_conversation", "get_route_description",
+		"call_sub_agent", "call_scripted_sub_agent", "get_sub_agent_conversation", "get_route_description",
 	}
 	// Human tools from the single source shared with registration (createCustomTools),
 	// so the allow-list and what's actually registered cannot drift apart.
@@ -2308,7 +2308,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 	// Tool 1: execute_step — start step in background
 	if err := mcpAgent.RegisterCustomTool(
 		"execute_step",
-		"Start a workflow step in the background, including a normal plan step, nested route step, or plan-local orphan utility step. Returns an execution_id immediately. You will be automatically notified when it completes. Idempotent while running: if the step already has a running execution, this returns that existing execution_id instead of starting a duplicate — use send_step_message with the returned execution_id to steer its currently active agent turn. Learnings follow the step's persistent config (`learnings_access`, `learning_objective`). When learning writes are enabled, SKILL.md updates run as the step agent's direct post-completion continuation before the step is fully finalized. Workshop mode only: set fast_path_only=true to run ONLY the saved main.py (code/{step-id}/main.py for code_layout_version=1, otherwise learnings/{step-id}/main.py) script with no LLM fallback when testing scripted patches.",
+		"Start a workflow step in the background, including a normal plan step, nested route step, or plan-local orphan utility step. Returns an execution_id immediately. You will be automatically notified when it completes. Idempotent while running: if the step already has a running execution, this returns that existing execution_id instead of starting a duplicate — use send_step_message with the returned execution_id to steer its currently active agent turn. For a scripted step that declares script_parameters, pass matching values in script_parameters; they are validated before main.py starts and exposed through STEP_PARAMS_JSON. Learnings follow the step's persistent config (`learnings_access`, `learning_objective`). When learning writes are enabled, SKILL.md updates run as the step agent's direct post-completion continuation before the step is fully finalized. Workshop mode only: set fast_path_only=true to run ONLY the saved main.py (code/{step-id}/main.py for code_layout_version=1, otherwise learnings/{step-id}/main.py) script with no LLM fallback when testing scripted patches.",
 		map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
@@ -2340,6 +2340,11 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				"fast_path_only": map[string]interface{}{
 					"type":        "boolean",
 					"description": "Workshop mode only. If true, run ONLY the saved main.py (code/{step-id}/main.py for code_layout_version=1, otherwise learnings/{step-id}/main.py) script with no LLM fallback. Fails if no saved script exists, the step is not in scripted mode, or the current workshop mode is Run. Use this to quickly test scripted main.py patches.",
+				},
+				"script_parameters": map[string]interface{}{
+					"type":                 "object",
+					"additionalProperties": true,
+					"description":          "Named runtime inputs for a scripted step. Values must match that step's declared script_parameters contract and are passed to main.py as STEP_PARAMS_JSON. Omit for non-scripted steps.",
 				},
 			},
 			"required": []string{"step_id"},
@@ -2431,6 +2436,19 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 					messageSequenceRestart = b
 				}
 			}
+			var scriptParameters map[string]interface{}
+			scriptParametersSet := false
+			if raw, present := args["script_parameters"]; present {
+				scriptParametersSet = true
+				if raw == nil {
+					return "script_parameters must be an object", nil
+				}
+				var ok bool
+				scriptParameters, ok = raw.(map[string]interface{})
+				if !ok {
+					return "script_parameters must be an object", nil
+				}
+			}
 			if err := validateWorkshopFastPathRequest(iwm.currentWorkshopModeFromConfigs(nil), fastPathOnly); err != nil {
 				return "", err
 			}
@@ -2444,6 +2462,8 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				HumanInput:             humanInput,
 				Tier:                   tierValue,
 				MessageSequenceRestart: messageSequenceRestart,
+				ScriptParameters:       scriptParameters,
+				ScriptParametersSet:    scriptParametersSet,
 			}
 
 			// Resolve flexible step ID (handles "1", "step-1", "step1" etc.)
@@ -2471,8 +2491,10 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 			// The plan type decides (PLAT-287); step_config.json is consulted
 			// only for the transitional legacy-agentic shim.
 			scriptedStep := false
+			var resolvedStep PlanStepInterface
 			if plan != nil {
 				if stepInfo := findWorkshopStepByID(plan.Steps, stepID); stepInfo != nil {
+					resolvedStep = stepInfo.Step
 					cfg := getAgentConfigs(stepInfo.Step)
 					if cfg.legacyDeclared() == "" {
 						if configs, err := iwm.controller.ReadStepConfigs(ctx); err == nil {
@@ -2483,6 +2505,16 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 					}
 					scriptedStep = isScriptedStep(stepInfo.Step, cfg)
 				}
+			}
+			if scriptParametersSet && !scriptedStep {
+				return fmt.Sprintf("step %q is not scripted; script_parameters is only supported for scripted steps", stepID), nil
+			}
+			if scriptedStep && resolvedStep != nil {
+				resolvedParameters, parameterErr := validateAndResolveScriptParameters(resolvedStep, scriptParameters)
+				if parameterErr != nil {
+					return fmt.Sprintf("invalid script_parameters for step %q: %v", stepID, parameterErr), nil
+				}
+				execOpts.ScriptParameters = resolvedParameters
 			}
 
 			execID := fmt.Sprintf("exec-%s-%d", stepID, time.Now().UnixNano())

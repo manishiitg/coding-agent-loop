@@ -16,8 +16,8 @@ import (
 
 func TestScriptedDelegationEnvIsChildScopedAndDoesNotMutateSharedEnv(t *testing.T) {
 	shared := map[string]string{"VAR_ACCOUNT": "acme"}
-	ctxA := withScriptedDelegationContext(context.Background(), "route-a", "todo-a", "inspect region A")
-	ctxB := withScriptedDelegationContext(context.Background(), "route-b", "todo-b", "inspect region B")
+	ctxA := withScriptedDelegationContext(context.Background(), "route-a", "todo-a", "inspect region A", nil)
+	ctxB := withScriptedDelegationContext(context.Background(), "route-b", "todo-b", "inspect region B", nil)
 
 	envA := appendScriptedDelegationEnv(ctxA, shared)
 	envB := appendScriptedDelegationEnv(ctxB, shared)
@@ -63,7 +63,7 @@ func TestScriptedStepInvokedAsOrchestratorRouteReceivesDelegationEndToEnd(t *tes
 		case r.URL.Path == "/api/documents" && r.Method == http.MethodGet:
 			_, _ = w.Write([]byte(`{"success":true,"message":"Folder exists but contains no files","data":[]}`))
 		case strings.HasSuffix(r.URL.Path, "/code/scripted-child/main.py") && r.Method == http.MethodGet:
-			_, _ = w.Write([]byte(`{"success":true,"data":{"filepath":"code/scripted-child/main.py","content":"import os\nprint(os.environ['STEP_DELEGATION_INSTRUCTIONS'])\n"}}`))
+			_, _ = w.Write([]byte(`{"success":true,"data":{"filepath":"code/scripted-child/main.py","content":"import json, os\nprint(json.loads(os.environ['STEP_PARAMS_JSON'])['market'])\n"}}`))
 		case strings.HasSuffix(r.URL.Path, "/execution/source/input.json") && r.Method == http.MethodGet:
 			_, _ = w.Write([]byte(`{"success":true,"data":{"filepath":"execution/source/input.json","content":"{}"}}`))
 		case strings.HasPrefix(r.URL.Path, "/api/documents/") && r.Method == http.MethodGet:
@@ -97,6 +97,9 @@ func TestScriptedStepInvokedAsOrchestratorRouteReceivesDelegationEndToEnd(t *tes
 		CommonStepFields: CommonStepFields{
 			ID:    "scripted-child",
 			Title: "Scripted child",
+			ScriptParameters: map[string]ScriptParameterDefinition{
+				"market": {Type: "string", Description: "Market to process", Required: true},
+			},
 		},
 	}
 	dependency := filepath.Join(GetPromptDocsRoot(), "Workflow/delegation-e2e/runs/iteration-1/default/execution/source/input.json")
@@ -114,9 +117,9 @@ func TestScriptedStepInvokedAsOrchestratorRouteReceivesDelegationEndToEnd(t *tes
 		}},
 	}
 	decision := &OrchestratorDecision{
-		SelectedRouteID:        "route-a",
-		TodoIDToExecute:        "todo-42",
-		InstructionsToSubAgent: "only process the Dubai market",
+		SelectedRouteID:  "route-a",
+		TodoIDToExecute:  "todo-42",
+		ScriptParameters: map[string]interface{}{"market": "dubai"},
 	}
 	output, _, err := hcpo.executePredefinedSubAgent(
 		t.Context(), parent, 0, "step-1", decision, []PlanStepInterface{parent},
@@ -125,8 +128,8 @@ func TestScriptedStepInvokedAsOrchestratorRouteReceivesDelegationEndToEnd(t *tes
 	if err != nil || !strings.Contains(output, "route complete") {
 		t.Fatalf("scripted orchestrator route result=(%q,%v)", output, err)
 	}
-	if got := received.ExtraEnv[ScriptedDelegationInstructionsEnv]; got != "only process the Dubai market" {
-		t.Fatalf("delegation instructions did not reach saved script: %q", got)
+	if got := received.ExtraEnv[ScriptedParametersEnv]; got != `{"market":"dubai"}` {
+		t.Fatalf("script parameters did not reach saved script: %q", got)
 	}
 	if received.ExtraEnv[ScriptedDelegationRouteIDEnv] != "route-a" || received.ExtraEnv[ScriptedDelegationTodoIDEnv] != "todo-42" {
 		t.Fatalf("delegation identity did not reach saved script: %#v", received.ExtraEnv)
@@ -135,25 +138,26 @@ func TestScriptedStepInvokedAsOrchestratorRouteReceivesDelegationEndToEnd(t *tes
 	if !strings.Contains(received.Command, wantInvocation) {
 		t.Fatalf("declared dependency argv changed or disappeared: command=%q, want %q", received.Command, wantInvocation)
 	}
-	if strings.Contains(received.Command, "only process the Dubai market") {
-		t.Fatalf("delegation must not be appended to positional argv: %q", received.Command)
+	if strings.Contains(received.Command, "dubai") {
+		t.Fatalf("parameters must not be appended to positional argv: %q", received.Command)
 	}
 }
 
 func TestScriptedDelegationAuthoringPromptDocumentsRuntimeContract(t *testing.T) {
 	agent := &WorkflowExecutionOnlyAgent{}
 	prompt := agent.executionOnlySystemPromptProcessor(map[string]string{
-		"IsCodeExecutionMode":            "true",
-		"IsScriptedMode":                 "true",
-		"StepExecutionPath":              "/docs/Workflow/test/runs/run/execution/child",
-		"ScriptedWorkingDir":             "/docs/Workflow/test/code/child",
-		"ScriptedEnvVarNames":            ScriptedDelegationInstructionsEnv + "\n" + ScriptedDelegationRouteIDEnv + "\n" + ScriptedDelegationTodoIDEnv,
-		"ScriptedDelegationInstructions": "only process the Dubai market",
+		"IsCodeExecutionMode":     "true",
+		"IsScriptedMode":          "true",
+		"StepExecutionPath":       "/docs/Workflow/test/runs/run/execution/child",
+		"ScriptedWorkingDir":      "/docs/Workflow/test/code/child",
+		"ScriptedEnvVarNames":     ScriptedParametersEnv + "\n" + ScriptedDelegationRouteIDEnv + "\n" + ScriptedDelegationTodoIDEnv,
+		"ScriptedParameterSchema": `{"market":{"type":"string","description":"Market to process","required":true}}`,
+		"ScriptedParameterValues": `{"market":"dubai"}`,
 	})
 	for _, want := range []string{
-		"Orchestrator delegation contract",
-		"`STEP_DELEGATION_INSTRUCTIONS`",
-		"do not hardcode the current instruction text",
+		"Script parameter contract",
+		"`STEP_PARAMS_JSON`",
+		"Do not hardcode current parameter values",
 		"Positional arguments remain reserved for declared context dependencies",
 	} {
 		if !strings.Contains(prompt, want) {

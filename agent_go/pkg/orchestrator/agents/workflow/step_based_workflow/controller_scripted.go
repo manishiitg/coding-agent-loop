@@ -986,6 +986,11 @@ func (hcpo *StepBasedWorkflowOrchestrator) execScriptedScript(
 	// contract explicitly in this child process. This is context-local and cannot
 	// leak between concurrently running todo routes.
 	extraEnv = appendScriptedDelegationEnv(ctx, extraEnv)
+	if len(scriptedParameterDefinitions(step)) > 0 {
+		if _, present := extraEnv[ScriptedParametersEnv]; !present {
+			extraEnv[ScriptedParametersEnv] = "{}"
+		}
+	}
 
 	envKeys := make([]string, 0, len(extraEnv))
 	for k := range extraEnv {
@@ -1710,6 +1715,17 @@ func (hcpo *StepBasedWorkflowOrchestrator) saveScriptedFastPathLog(
 		"validation_error": result.ValidationError,
 		"failure_reason":   result.FailureReason,
 		"timestamp":        time.Now().Format(time.RFC3339),
+	}
+	if delegation, ok := scriptedDelegationFromContext(ctx); ok && len(delegation.Parameters) > 0 {
+		// Record names for diagnosis without copying potentially sensitive runtime
+		// values into durable logs. Secrets belong in SECRET_* variables, never in
+		// script parameters, but this remains deliberately fail-safe.
+		names := make([]string, 0, len(delegation.Parameters))
+		for name := range delegation.Parameters {
+			names = append(names, name)
+		}
+		sort.Strings(names)
+		logData["script_parameter_names"] = names
 	}
 	if logJSON, err := json.MarshalIndent(logData, "", "  "); err == nil {
 		// Preserve every attempt; the legacy name remains a latest-result alias.

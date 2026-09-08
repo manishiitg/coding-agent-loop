@@ -33,7 +33,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) getOrchestratorStepExecutionPath(step
 // executeOrchestratorStep executes a todo task step by:
 //  1. The orchestrator LLM delegates to sub-agents and/or executes directly
 //  2. Processing tool calls:
-//     - call_sub_agent: Delegate to predefined sub-agents (with learning/prevalidation)
+//     - call_sub_agent / call_scripted_sub_agent: Delegate to predefined agent or scripted routes
 //     - call_generic_agent: Delegate to generic agent (no learning/prevalidation)
 //  3. Pre-validation checks output files after execution
 //  4. Retry with feedback on pre-validation failure (up to 3 attempts)
@@ -377,6 +377,9 @@ func (hcpo *StepBasedWorkflowOrchestrator) buildOrchestratorTemplateVars(
 			}
 			if isMessageSequenceStep(route.SubAgentStep) {
 				fmt.Fprintf(&routesBuilder, " | type: `%s` | repeated calls resume; `message_sequence_restart=true` starts fresh", StepTypeMessageSeq)
+			}
+			if definitions := scriptedParameterDefinitions(route.SubAgentStep); len(definitions) > 0 {
+				fmt.Fprintf(&routesBuilder, " | scripted params: `%s` (use get_route_description before calling)", strings.Join(sortedScriptParameterNames(definitions), "`, `"))
 			}
 		}
 	}
@@ -1075,6 +1078,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) executePredefinedSubAgent(
 		route.RouteID,
 		response.TodoIDToExecute,
 		response.InstructionsToSubAgent,
+		response.ScriptParameters,
 	)
 
 	// Bind this route's event identity to its own execution context. This also
@@ -1156,7 +1160,8 @@ func (hcpo *StepBasedWorkflowOrchestrator) emitOrchestratorRouteSelectedEvent(
 		}
 	}
 
-	// Extract preferred tier from context (set by call_sub_agent/call_generic_agent tools)
+	// Extract preferred tier from context (set by call_sub_agent,
+	// call_scripted_sub_agent, or call_generic_agent).
 	var preferredTier int
 	var preferredTierLabel string
 	if tier, ok := ctx.Value(virtualtools.PreferredTierContextKey).(int); ok && tier >= 1 && tier <= 3 {

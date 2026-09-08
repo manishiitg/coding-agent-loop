@@ -1452,7 +1452,7 @@ type ConversationEntry struct {
 	ToolArgs string `json:"tool_args,omitempty"`
 }
 
-// SubAgentCallRecord stores the full record of a single call_sub_agent / call_generic_agent call
+// SubAgentCallRecord stores the full record of one predefined/scripted/generic sub-agent call.
 type SubAgentCallRecord struct {
 	Index         int                 `json:"index"` // 1-based call order
 	ExecutionID   string              `json:"execution_id"`
@@ -1531,7 +1531,7 @@ type SubAgentExecutionContext struct {
 	// workflow execution, not the detached HTTP/MCP request used to invoke the
 	// custom tool, so stopping the workflow cancels its children deterministically.
 	ParentContext context.Context
-	// AsyncEnabled makes call_sub_agent/call_generic_agent return immediately and
+	// AsyncEnabled makes all sub-agent call tools return immediately and
 	// lets the controller reconcile owned children outside the provider tool call.
 	// Saved scripted fast paths remain synchronous because their scripts consume
 	// the tool result in the same process invocation.
@@ -1979,6 +1979,9 @@ func (hcpo *StepBasedWorkflowOrchestrator) wrapSubAgentToolExecutor(
 					desc += "\n\nRoute type: " + routeStepTypeSummary(route.SubAgentStep)
 					desc += "\nBehavior: " + routeStepBehaviorDetails(route.SubAgentStep)
 					desc += "\n\nDescription: " + ResolveVariables(route.SubAgentStep.GetDescription(), hcpo.variableValues)
+					if contract := formatScriptParameterContract(scriptedParameterDefinitions(route.SubAgentStep)); contract != "" {
+						desc += "\n\nScript parameters (pass these as call_scripted_sub_agent.parameters):\n" + contract
+					}
 					if sequenceRouteInfo := formatMessageSequenceRoutePromptBlock(route.SubAgentStep); sequenceRouteInfo != "" {
 						desc += "\n\n" + sequenceRouteInfo
 					}
@@ -2004,7 +2007,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) wrapSubAgentToolExecutor(
 		})
 		ctx = context.WithValue(ctx, virtualtools.GetSubAgentConversationKey, getConvFunc)
 
-		// Only emit task status updates for tools that change state (call_sub_agent, call_generic_agent),
+		// Only emit task status updates for tools that change state (sub-agent calls),
 		// Call original executor with enriched context
 		result, err := originalExecutor(ctx, args)
 
@@ -2013,7 +2016,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) wrapSubAgentToolExecutor(
 }
 
 // createExecutePredefinedSubAgentFunc creates a function that executes predefined sub-agents
-// This function is injected into context for the call_sub_agent tool to use
+// This function is injected into context for both predefined-route call tools.
 func (hcpo *StepBasedWorkflowOrchestrator) createExecutePredefinedSubAgentSyncFunc(
 	execCtx *SubAgentExecutionContext,
 ) virtualtools.ExecutePredefinedSubAgentFunc {
@@ -2027,15 +2030,37 @@ func (hcpo *StepBasedWorkflowOrchestrator) createExecutePredefinedSubAgentSyncFu
 			return "", fmt.Errorf("call_sub_agent is only available inside a todo_task step")
 		}
 		validRouteIDs := make([]string, 0, len(execCtx.OrchestratorStep.PredefinedRoutes))
-		routeExists := false
+		var selectedRoute *PlanOrchestrationRoute
 		for _, route := range execCtx.OrchestratorStep.PredefinedRoutes {
 			validRouteIDs = append(validRouteIDs, route.RouteID)
 			if route.RouteID == routeID {
-				routeExists = true
+				routeCopy := route
+				selectedRoute = &routeCopy
 			}
 		}
-		if !routeExists {
+		if selectedRoute == nil {
 			return "", fmt.Errorf("route_id %q not found in todo task step %q. Available route IDs: %v", routeID, execCtx.OrchestratorStep.GetID(), validRouteIDs)
+		}
+		parameters := virtualtools.SubAgentParametersFromContext(ctx)
+		isScriptedRoute := selectedRoute.SubAgentStep != nil && isScriptedStep(selectedRoute.SubAgentStep, getAgentConfigs(selectedRoute.SubAgentStep))
+		isScriptedCall := virtualtools.IsScriptedSubAgentInvocation(ctx)
+		if isScriptedRoute && isScriptedCall {
+			resolved, paramErr := validateAndResolveScriptParameters(selectedRoute.SubAgentStep, parameters)
+			if paramErr != nil {
+				return "", paramErr
+			}
+			parameters = resolved
+		} else if isScriptedRoute {
+			// Compatibility only: older scripted routes without a parameter contract
+			// were invoked through call_sub_agent with free-form instructions. New or
+			// parameterized routes must use the dedicated typed tool.
+			if len(scriptedParameterDefinitions(selectedRoute.SubAgentStep)) > 0 {
+				return "", fmt.Errorf("scripted route %q declares script_parameters and must be invoked with call_scripted_sub_agent", routeID)
+			}
+		} else if isScriptedCall {
+			return "", fmt.Errorf("route %q is %s, not scripted; use call_sub_agent with instructions", routeID, routeStepTypeSummary(selectedRoute.SubAgentStep))
+		} else if strings.TrimSpace(instructions) == "" {
+			return "", fmt.Errorf("instructions are required for non-scripted route %q", routeID)
 		}
 
 		// Propagate workshop correlation IDs to sub-agent context so events are tagged correctly.
@@ -2054,6 +2079,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) createExecutePredefinedSubAgentSyncFu
 			SelectedRouteID:        routeID,
 			TodoIDToExecute:        todoID,
 			InstructionsToSubAgent: instructions,
+			ScriptParameters:       parameters,
 		}
 
 		// Emit route selected event BEFORE sub-agent execution so it appears before the agent card

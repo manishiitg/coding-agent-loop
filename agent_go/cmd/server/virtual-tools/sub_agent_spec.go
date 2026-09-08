@@ -9,8 +9,9 @@ import "context"
 // an implicit, untraceable spec. One struct under one key means the full
 // contract is visible at every set/read site and testable in isolation.
 //
-// Note: call_sub_agent (the workflow-orchestrator route path) has its own
-// separate keys in sub_agent_tools.go and is not covered by this spec.
+// Note: call_sub_agent and call_scripted_sub_agent (the workflow-orchestrator
+// route paths) have their own separate keys in sub_agent_tools.go and are not
+// covered by this spec.
 type SubAgentSpec struct {
 	// Depth is the delegation depth of the agent this context belongs to
 	// (0 = root). handleDelegate refuses to go past MaxDelegationDepth.

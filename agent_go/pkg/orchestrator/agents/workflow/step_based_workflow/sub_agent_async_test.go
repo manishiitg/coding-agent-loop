@@ -27,6 +27,23 @@ func TestAsyncGenericAgentPreservesMessageSequenceContext(t *testing.T) {
 	}
 }
 
+func TestAsyncScriptedAgentPreservesInvocationAndParameterContext(t *testing.T) {
+	parameters := map[string]interface{}{"market": "dubai", "limit": float64(5)}
+	toolCtx := context.WithValue(context.Background(), virtualtools.SubAgentParametersKey, parameters)
+	toolCtx = context.WithValue(toolCtx, virtualtools.ScriptedSubAgentInvocationKey, true)
+	execCtx := &SubAgentExecutionContext{ParentContext: context.Background(), AsyncEnabled: true}
+	childCtx, call := execCtx.registerAsyncCall(toolCtx, "child-script", "dubai", "collector", "predefined")
+	defer execCtx.completeAsyncCall(call, "done", nil)
+
+	if !virtualtools.IsScriptedSubAgentInvocation(childCtx) {
+		t.Fatal("async child lost the dedicated scripted invocation marker")
+	}
+	got := virtualtools.SubAgentParametersFromContext(childCtx)
+	if got["market"] != "dubai" || got["limit"] != float64(5) {
+		t.Fatalf("async child parameters = %#v", got)
+	}
+}
+
 type subAgentAsyncTestNoopListener struct{}
 
 func (subAgentAsyncTestNoopListener) HandleEvent(context.Context, *baseevents.AgentEvent) error {

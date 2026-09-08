@@ -1,18 +1,12 @@
 # Pulse Platform-Issue Register
 
-## Shared CDP lock file can strand agent-browser with a permanent permission error across products on the same box — PLAT-302
+## Server deployments expose unusable CDP and can hit cross-user lock permissions — PLAT-302
 
-[PLAT-302](pulse_platform/plat-302.md) — `sharedCDPFileLockPath` keys its
-cross-process lock file only by port number in the system-wide temp dir,
-0600. Dominion/confida/RTS share a box and default to the same CDP port, so
-whichever product's process creates the file first permanently locks the
-others out (EACCES, no self-cleanup). Investigation reframed the fix: there
-is no standing shared-browser service for CDP mode to attach to on a
-headless server at all — the observed listener was a transient artifact of
-a headless launch, not a durable daemon. Decided direction is steering
-agents away from CDP mode on server deployments entirely, not scoping the
-lock path. Open, not yet fixed — explicitly deferred by request; tracking
-record only.
+[PLAT-302](pulse_platform/plat-302.md) — Server deployments now declare CDP
+unsupported end-to-end: runtime execution/status, Builder schema and skill,
+manifest APIs, and UI all enforce or display the same capability. This avoids
+the cross-user `sharedCDPFileLockPath` failure path on boxes that have no
+operator-owned Chrome to attach to. Implemented locally; deployment pending.
 
 ## MCP catalog name collision can strand a user's custom connector — PLAT-301
 

@@ -57,3 +57,18 @@ func TestCheckChromeCdpVersionRejectsPlainTCPHTTP(t *testing.T) {
 		t.Fatal("checkChromeCdpVersion() error = nil, want metadata error")
 	}
 }
+
+func TestCDPDeploymentCapabilityFailsClosedWhenSet(t *testing.T) {
+	t.Setenv("AGENT_BROWSER_CDP_ENABLED", "")
+	if !cdpEnabledForDeployment() {
+		t.Fatal("empty/unset-compatible capability must preserve local CDP support")
+	}
+	t.Setenv("AGENT_BROWSER_CDP_ENABLED", "false")
+	if cdpEnabledForDeployment() {
+		t.Fatal("server false value must disable CDP")
+	}
+	t.Setenv("AGENT_BROWSER_CDP_ENABLED", "invalid")
+	if cdpEnabledForDeployment() {
+		t.Fatal("invalid explicit value must fail closed")
+	}
+}

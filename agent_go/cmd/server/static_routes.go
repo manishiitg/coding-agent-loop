@@ -18,6 +18,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/browser"
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 )
 
@@ -289,6 +290,15 @@ func (api *StreamingAPI) handleCapabilities(w http.ResponseWriter, r *http.Reque
 // handleCdpCheck checks if Chrome DevTools is reachable on localhost.
 func (api *StreamingAPI) handleCdpCheck(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
+	if !browser.CDPEnabled() {
+		w.WriteHeader(http.StatusOK)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"connected": false,
+			"supported": false,
+			"error":     "CDP is disabled for this server deployment",
+		})
+		return
+	}
 
 	portStr := r.URL.Query().Get("port")
 	if portStr == "" {

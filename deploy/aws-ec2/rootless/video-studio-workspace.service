@@ -6,6 +6,7 @@ ConditionPathIsMountPoint=/data/video-studio
 EnvironmentFile=%h/video-studio/.env
 Environment=HOME=%h
 Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
+Environment=AGENT_BROWSER_CDP_ENABLED=false
 WorkingDirectory=%h/video-studio/current
 ExecStart=%h/video-studio/current/bin/video-studio-workspace server --port 8080 --docs-dir /data/video-studio/docs
 StandardOutput=append:%h/video-studio/logs/workspace.log

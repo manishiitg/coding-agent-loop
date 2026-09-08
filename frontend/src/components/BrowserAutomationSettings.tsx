@@ -18,6 +18,7 @@ import {
   chromeCdpVerifyCommand,
   chromeCdpZipUrl,
 } from '../utils/cdpSetup'
+import { isBrowserCDPEnabled } from '../utils/runtimeCapabilities'
 
 export type BrowserAutomationMode = 'none' | 'auto' | 'headless' | 'cdp'
 
@@ -85,7 +86,8 @@ const BrowserAutomationSettings: React.FC<BrowserAutomationSettingsProps> = ({
 }) => {
   const platform = typeof navigator !== 'undefined' ? navigator.platform : undefined
   const isMac = platform?.includes('Mac')
-  const usesCdp = browserMode === 'auto' || browserMode === 'cdp'
+  const cdpEnabled = isBrowserCDPEnabled()
+  const usesCdp = cdpEnabled && (browserMode === 'auto' || browserMode === 'cdp')
 
   const connectionLabel = cdpChecking
     ? 'Checking'
@@ -111,7 +113,9 @@ const BrowserAutomationSettings: React.FC<BrowserAutomationSettingsProps> = ({
             Browser Automation
           </h3>
           <p className="mt-0.5 text-xs text-gray-500 dark:text-gray-400">
-            This saves the workflow policy. Chrome availability is checked live each time the workflow runs.
+            {cdpEnabled
+              ? 'This saves the workflow policy. Chrome availability is checked live each time the workflow runs.'
+              : 'CDP is disabled on this server. Automatic and Headless use managed background Chromium.'}
           </p>
         </div>
       </div>
@@ -130,24 +134,31 @@ const BrowserAutomationSettings: React.FC<BrowserAutomationSettingsProps> = ({
               <span className="text-[10px] font-medium uppercase tracking-wide text-cyan-600 dark:text-cyan-400">Default · Recommended</span>
             </div>
             <p className="mt-1 text-xs leading-relaxed text-gray-500 dark:text-gray-400">
-              Uses visible Chrome when CDP is reachable; otherwise uses managed headless Chromium.
+              {cdpEnabled
+                ? 'Uses visible Chrome when CDP is reachable; otherwise uses managed headless Chromium.'
+                : 'Uses managed headless Chromium on this server; CDP probing is disabled.'}
             </p>
           </div>
         </label>
 
-        <label className={`flex min-h-24 cursor-pointer items-start gap-3 rounded-lg border p-3 transition-colors ${
+        <label className={`flex min-h-24 items-start gap-3 rounded-lg border p-3 transition-colors ${
+          !cdpEnabled ? 'cursor-not-allowed opacity-60 ' : 'cursor-pointer '
+        }${
           browserMode === 'cdp'
             ? 'border-emerald-500 bg-emerald-500/10'
             : 'border-gray-200 hover:bg-gray-500/5 dark:border-gray-700'
         }`}>
-          <input type="radio" name="presetBrowserMode" checked={browserMode === 'cdp'} disabled={readOnly} onChange={() => onBrowserModeChange('cdp')} className="mt-0.5 h-4 w-4 accent-emerald-500" />
+          <input type="radio" name="presetBrowserMode" checked={browserMode === 'cdp'} disabled={readOnly || !cdpEnabled} onChange={() => onBrowserModeChange('cdp')} className="mt-0.5 h-4 w-4 accent-emerald-500" />
           <div className="min-w-0">
             <div className="flex items-center gap-1.5 text-sm font-medium text-gray-900 dark:text-gray-100">
               <Monitor className="h-3.5 w-3.5 text-emerald-500" />
               Require visible Chrome
+              {!cdpEnabled && <span className="rounded bg-gray-500/15 px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-gray-500">Disabled on server</span>}
             </div>
             <p className="mt-1 text-xs leading-relaxed text-gray-500 dark:text-gray-400">
-              Requires CDP and stops with a clear error if that Chrome is unavailable.
+              {cdpEnabled
+                ? 'Requires CDP and stops with a clear error if that Chrome is unavailable.'
+                : 'Unavailable in this deployment. A workflow cannot force or configure CDP here.'}
             </p>
           </div>
         </label>
@@ -183,6 +194,12 @@ const BrowserAutomationSettings: React.FC<BrowserAutomationSettingsProps> = ({
           </div>
         </label>
       </div>
+
+      {!cdpEnabled && browserMode === 'cdp' && (
+        <p className="rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs leading-relaxed text-amber-800 dark:text-amber-200">
+          This workflow has a legacy CDP setting, but CDP is disabled on this server. Select Automatic, Headless, or No browser before saving.
+        </p>
+      )}
 
       {usesCdp && (
         <div className="overflow-hidden rounded-lg border border-gray-200 bg-gray-50 dark:border-gray-700 dark:bg-gray-900/60">

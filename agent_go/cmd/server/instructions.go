@@ -446,6 +446,7 @@ Workflow-level manifest. **Required fields**: ` + "`schema_version`" + ` (int, 1
 - ` + "`selected_secrets`" + ` — secret names the workflow needs; values resolve at runtime from workflow-scoped secrets, reusable user secrets, or GLOBAL_SECRET_* globals
 - ` + "`browser_mode`" + ` — ` + "`none`" + ` | ` + "`auto`" + ` | ` + "`headless`" + ` | ` + "`cdp`" + `
 - ` + "`cdp_ports`" + ` — optional list of up to four CDP ports for specialized multi-profile/login testing within one workflow; each port must use a distinct Chrome ` + "`--user-data-dir`" + `. Omit for normal single-browser workflow concurrency.
+- Server deployments may disable CDP. Treat the live ` + "`agent_browser status`" + ` field ` + "`cdp_supported`" + ` and the dynamic ` + "`update_workflow_config`" + ` schema as authoritative. When disabled, use ` + "`auto`" + ` (managed headless), ` + "`headless`" + `, or ` + "`none`" + ` and omit ` + "`cdp_ports`" + `.
 - ` + "`use_code_execution_mode`" + ` — ` + "`true`" + ` if steps should run scripted Python; ` + "`false`" + ` for direct tool calls
 - ` + "`llm_config`" + ` — set to ` + "`null`" + ` unless the user asked for a specific provider/model
 

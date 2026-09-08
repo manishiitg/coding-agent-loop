@@ -1,12 +1,12 @@
 [← Pulse platform index](../pulse_platform_issue_register.md)
 
-# PLAT-302 — Shared CDP lock file can strand agent-browser with a permanent permission error across products on the same box
+# PLAT-302 — Server deployments expose unusable CDP and can hit cross-user lock permissions
 
 | Coordination | Value |
 |---|---|
-| Assigned agent | Claude Code |
-| Ticket state | Open — identified live, not yet fixed (explicitly deferred by request) |
-| Last synchronized | 2026-09-08 |
+| Assigned agent | Codex |
+| Ticket state | Implemented locally — deployment pending |
+| Last synchronized | 2026-09-09 |
 | Priority | P3 — CDP mode is not a standing, supported mode on a headless server deployment; low likelihood, confusing when it hits |
 
 ## Problem
@@ -34,10 +34,10 @@ directory, with no product or user identity in the name. Dominion, confida,
 and RTS (Video Studio) all run on the same physical Hetzner host as separate
 Unix accounts, each with its own `agent-browser` invocations, and all
 default to the same CDP port. Whichever product's process creates the lock
-file first owns it at mode `0600` (owner-only); every other product's
-process that later tries to open the same path for read/write gets a
-permanent `EACCES`, and the file never self-cleans (nothing removes it when
-the owning process exits).
+file first owns the persistent inode at mode `0600` (owner-only); every other
+product's process that later tries to open the same path for read/write gets
+`EACCES`. The kernel releases the `flock` when the owning process exits, but
+the owner-only inode remains, so another Unix user still cannot open it.
 
 Live symptom reported from an agent session on the shared box:
 
@@ -47,10 +47,10 @@ Direct agent_browser: still permission denied on the shared CDP lock file
 port itself as reachable.
 ```
 
-`status` reporting the port "reachable" is a separate, unauthenticated TCP
-check unrelated to the lock file — it can report true even while the lock
-acquisition fails, which is what made this confusing to diagnose from
-inside a workflow session.
+`status` reporting the port "reachable" is a separate HTTP check of Chrome's
+`/json/version` metadata and does not acquire this lock. It can therefore
+report a valid Chrome endpoint even while this process cannot open the
+cross-user lock file.
 
 ## Reframing during investigation
 
@@ -69,51 +69,58 @@ Chrome apparently opens its own CDP port internally as an implementation
 detail of that launch, not a durable shared daemon other sessions are meant
 to attach to. It's gone by the time of a later `pgrep` check.
 
-So the real bug shape is: two products' independent headless launches can
-transiently overlap on the same default port, one leaves behind a
-permission-locked lock file when its process exits without cleanup, and a
-later session's `status` check can then misreport CDP as "reachable" (because
-something briefly answered on that port) even though nothing durable is
-there — sending a workflow down the CDP path only to hang on the stale lock.
+So the actionable bug is not how a valid shared CDP browser should coordinate:
+these server products have no operator-owned visible Chrome for CDP in the
+first place, but their configuration, tools, guidance, and UI still advertised
+the mode. That let an agent select an unsupported path and encounter the lock
+implementation as a secondary failure.
 
-## Decided direction (not implemented here)
+## Decided direction
 
 Per the box owner: **agents should not use CDP mode on a server deployment
 at all** — there is no real, standing browser for it to attach to there,
 so the durable fix is steering agent guidance/tooling away from CDP mode on
 server-side deployments (headless launch, matching `preview_report`'s own
-approach, is the correct default), not scoping the lock path. That guidance
-change is tracked separately from this ticket; this ticket is the underlying
-lock-file bug record.
+approach, is the correct default), not scoping the lock path. The deployment
+must declare this limitation once and every consumer must obey it.
+Desktop/local installations retain CDP support.
 
-## Proposed fix (not implemented)
+## Implemented fix
 
-Two independent angles, either or both:
+`AGENT_BROWSER_CDP_ENABLED=false` is now the deployment capability for remote
+servers (default remains enabled for backwards-compatible desktop/local use).
 
-1. **Stop the stale-lock false positive.** The lock file is never removed
-   when its owning process exits; a crash or abrupt exit between
-   `os.OpenFile` and `syscall.Flock`'s unlock leaves a `0600` file another
-   process can never open. At minimum, `status`'s CDP-reachability check
-   should not be satisfied by an unrelated transient listener on the port —
-   it should reflect whether *this* process can actually acquire the lock,
-   not just whether something answered a TCP dial a moment ago.
-2. **Scope the lock path if CDP mode is ever meant to be a real standing
-   mode on a shared box** (e.g. local dev machines shared by a team, or a
-   future durable shared-browser service) — include a per-user/per-product
-   discriminator (`os.Geteuid()` or similar) in
-   `sharedCDPFileLockPath`. Deferred because, per the decided direction
-   above, CDP mode is not meant to be in standing use on these server
-   deployments in the first place — fixing the lock path alone would not
-   address the deeper "agents shouldn't reach for CDP here" issue.
+1. `agent_browser status` returns `cdp_supported=false`, a deployment-policy
+   reason, and effective `headless` for workflow `auto`; it makes no CDP probe.
+2. Explicit `--cdp`, `browser_mode=cdp`, and `cdp_ports` requests are rejected
+   at execution, query, workflow-tool, and manifest-update boundaries.
+3. The Builder tool schema excludes `cdp` dynamically and explains that
+   `auto` is headless-only on this server.
+4. Browser guidance/skills tell the agent to obey `status.cdp_supported` and
+   never probe/install/configure CDP when it is false.
+5. The runtime frontend config exposes `cdpEnabled: false`; both chat Browser
+   Access and workflow Browser settings keep the CDP card visible but disabled
+   with a clear “Disabled on server” label.
+6. RTS, confida, Dominion, legacy dedicated-VM, and Kubernetes deployment paths
+   set or validate the server capability.
+
+The cross-user lock implementation is deliberately unchanged. If a future
+server product introduces a real shared-browser service, it needs a separate
+design for browser ownership and cross-product locking rather than silently
+re-enabling this desktop feature.
 
 ## Verification
 
-- [ ] Not yet reproduced as a clean repro — observed live via a real agent
-      session's error report plus a manual `pgrep` check confirming no
-      standing CDP listener, not a constructed test case.
-- [ ] No fix implemented. Explicitly deferred by request — this ticket is a
-      record, not a queued fix.
+- [x] Unit coverage proves disabled `auto` resolves to headless without any CDP
+      probe and explicit `--cdp` is rejected.
+- [x] Server request/manifest policy coverage proves CDP settings are rejected
+      and stale candidate ports are cleared.
+- [x] Guidance coverage asserts the deployment-policy instructions remain in
+      the Browser skill.
+- [x] Frontend TypeScript build passes with both UI surfaces capability-aware.
+- [ ] Deploy and smoke-test the public RTS server.
 
 ## Deployment
 
-N/A — tracking only. No code changed for this ticket.
+Pending. Deployment files are prepared; no server was changed by this local
+implementation pass.

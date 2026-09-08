@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/browser"
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/orchestrator"
 	mcpagent "github.com/manishiitg/mcpagent/agent"
 	loggerv2 "github.com/manishiitg/mcpagent/logger/v2"
@@ -99,6 +100,40 @@ func TestUpdateWorkflowConfigDoesNotExposeRetiredKnowledgebaseLock(t *testing.T)
 	}
 	if _, exists := properties["lock_knowledgebase"]; exists {
 		t.Fatal("retired workflow-wide lock_knowledgebase is still exposed to agents")
+	}
+}
+
+func TestUpdateWorkflowConfigShowsAndEnforcesDisabledServerCDP(t *testing.T) {
+	t.Setenv(browser.EnvAgentBrowserCDPEnabled, "false")
+	agent := newWorkshopDefinitionDraft()
+	workspacePath := t.TempDir()
+	base := &orchestrator.BaseOrchestrator{}
+	base.SetWorkspacePath(workspacePath)
+	session := &WorkshopChatSession{
+		controller:   &StepBasedWorkflowOrchestrator{BaseOrchestrator: base},
+		StepRegistry: NewWorkshopStepRegistry(),
+		config:       &WorkshopConfig{WorkspacePath: workspacePath},
+	}
+
+	RegisterWorkshopChatTools(agent, session, workshopToolTestLogger{})
+	tool := agent.tools["update_workflow_config"]
+	properties := tool.InputSchema["properties"].(map[string]interface{})
+	mode := properties["browser_mode"].(map[string]interface{})
+	values := mode["enum"].([]interface{})
+	for _, value := range values {
+		if value == "cdp" {
+			t.Fatalf("disabled deployment schema still exposes cdp: %v", values)
+		}
+	}
+	if !strings.Contains(mode["description"].(string), "CDP is disabled") {
+		t.Fatalf("disabled deployment description is unclear: %v", mode["description"])
+	}
+	result, err := tool.Execute(context.Background(), map[string]interface{}{"browser_mode": "cdp"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(result, "CDP is disabled") {
+		t.Fatalf("forced CDP was not rejected clearly: %q", result)
 	}
 }
 

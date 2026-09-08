@@ -100,6 +100,7 @@ HTTP URL.
   4. `update_step_config(step_id, servers=["server-name"], tools=["server:tool_name"])` to scope specific servers/tools to a step.
   5. `list_mcp_servers` shows what's actually installed/authorized vs. merely present in the catalog but never connected — use this, not `search_mcp_catalog`, to check the status of something already configured.
 - **Browser workflow**:
+  0. Call `agent_browser(command="status", ...)` when browser capability is available. If it returns `cdp_supported=false`, CDP is disabled for this deployment: do not configure `cdp`/`cdp_ports`, probe ports, or offer CDP setup. Use `auto` (managed headless here), `headless`, or `none`.
   1. Pick the workflow mode with `update_workflow_config(browser_mode="none"|"auto"|"headless"|"cdp")`. Prefer `auto` unless the workflow must require an authenticated visible Chrome (`cdp`) or must stay isolated in the background (`headless`). For the specialized case where one workflow needs independent login identities, set `cdp_ports=[9222,9333]` (maximum four) and launch each port with a distinct Chrome `--user-data-dir`; ordinary workflow concurrency uses one shared CDP browser.
   2. For `agent_browser` steps, enable `workspace_browser:agent_browser` via `update_step_config(enabled_custom_tools=[...])` and attach the matching runtime skill with `enabled_skills=["agent-browser"]`.
   3. For browser steps, attach `enabled_skills=["agent-browser"]`; the runtime provides the managed `agent_browser` tool.

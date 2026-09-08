@@ -86,7 +86,7 @@ if [[ "$TARGET" == "all" || "$TARGET" == "frontend" ]]; then
   $SSH "node $REMOTE/src/check-release-assets.mjs $REMOTE/src/frontend-dist"
   # Write an empty config so index.html's <script src="/runtime-config.js"> doesn't
   # fall through nginx's try_files → /index.html (which would execute HTML as JS).
-  $SSH "echo 'window.__APP_RUNTIME_CONFIG__ = {};' > $REMOTE/src/frontend-dist/runtime-config.js"
+  $SSH "echo 'window.__APP_RUNTIME_CONFIG__ = { cdpEnabled: false };' > $REMOTE/src/frontend-dist/runtime-config.js"
 fi
 
 # Copy run-agent.sh so the server always has the latest version

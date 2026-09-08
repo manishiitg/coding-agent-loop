@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -20,6 +21,14 @@ import (
 // This is the correct place to check because agent-browser runs inside this container.
 // GET /api/cdp-check?port=9222
 func CheckCdpConnection(c *gin.Context) {
+	if !cdpEnabledForDeployment() {
+		c.JSON(http.StatusOK, gin.H{
+			"connected": false,
+			"supported": false,
+			"error":     "CDP is disabled for this server deployment",
+		})
+		return
+	}
 	portStr := c.Query("port")
 	if portStr == "" {
 		portStr = "9222"
@@ -57,6 +66,19 @@ func CheckCdpConnection(c *gin.Context) {
 		"connected": false,
 		"error":     fmt.Sprintf("Cannot reach Chrome CDP /json/version on port %d: %v", port, lastErr),
 	})
+}
+
+func cdpEnabledForDeployment() bool {
+	raw, ok := os.LookupEnv("AGENT_BROWSER_CDP_ENABLED")
+	if !ok || strings.TrimSpace(raw) == "" {
+		return true
+	}
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "1", "true", "yes", "on", "enabled":
+		return true
+	default:
+		return false
+	}
 }
 
 func checkChromeCdpVersion(host string, port int) (gin.H, error) {

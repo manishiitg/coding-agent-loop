@@ -133,6 +133,7 @@ type RuntimeConfig = {
   apiBaseUrl?: string
   workspaceApiBaseUrl?: string
   desktopAppOnly?: boolean | string
+  cdpEnabled?: boolean | string
 }
 
 export interface CdpCheckResult {
@@ -231,7 +232,12 @@ async function refreshRuntimeConfigFromScript(): Promise<boolean> {
       const desktopAppOnly = desktopAppOnlyRaw
         ? desktopAppOnlyRaw.replace(/^["']|["']$/g, '')
         : undefined
-      if (!apiBaseUrl && !workspaceApiBaseUrl && desktopAppOnly === undefined) return false
+      const cdpEnabledMatch = text.match(/cdpEnabled:\s*(true|false|["'][^"']+["'])/)
+      const cdpEnabledRaw = cdpEnabledMatch?.[1]
+      const cdpEnabled = cdpEnabledRaw
+        ? cdpEnabledRaw.replace(/^["']|["']$/g, '')
+        : undefined
+      if (!apiBaseUrl && !workspaceApiBaseUrl && desktopAppOnly === undefined && cdpEnabled === undefined) return false
 
       const previous = getRuntimeConfig()
       const next: RuntimeConfig = {
@@ -239,11 +245,13 @@ async function refreshRuntimeConfigFromScript(): Promise<boolean> {
         ...(apiBaseUrl ? { apiBaseUrl } : {}),
         ...(workspaceApiBaseUrl ? { workspaceApiBaseUrl } : {}),
         ...(desktopAppOnly !== undefined ? { desktopAppOnly: desktopAppOnly === 'true' } : {}),
+        ...(cdpEnabled !== undefined ? { cdpEnabled: cdpEnabled === 'true' } : {}),
       }
       const changed =
         next.apiBaseUrl !== previous.apiBaseUrl ||
         next.workspaceApiBaseUrl !== previous.workspaceApiBaseUrl ||
-        next.desktopAppOnly !== previous.desktopAppOnly
+        next.desktopAppOnly !== previous.desktopAppOnly ||
+        next.cdpEnabled !== previous.cdpEnabled
 
       ;(window as AppWindow).__APP_RUNTIME_CONFIG__ = next
       if (changed) {

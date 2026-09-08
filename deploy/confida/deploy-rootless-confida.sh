@@ -43,6 +43,20 @@ for cmd in go node npm rsync ssh git; do
   command -v "$cmd" >/dev/null || { echo "Missing $cmd" >&2; exit 1; }
 done
 
+# jq is not needed by this script itself -- it's a runtime dependency of
+# agent-authored shell scripts, which the MCP bridge guidance (mcp-bridge.md)
+# explicitly tells agents to use for encoding JSON tool-call payloads. A
+# fresh confida host had no jq at all, so every such script failed. Checked
+# (not installed) here: installing it needs root, which this script does not
+# assume it has -- see the printed remedy below instead of failing the deploy.
+echo "==> Checking for jq on the remote host (required by agent shell scripts, not by this script)"
+if ssh -p "$SSH_PORT" -i "$SSH_KEY_PATH" -o ConnectTimeout=10 "confida@$HOST_IP" 'command -v jq' >/dev/null 2>&1; then
+  echo "    jq is present."
+else
+  echo "    WARNING: jq is NOT installed on $HOST_IP. Agent shell scripts that rely on it will fail." >&2
+  echo "    Install it once as root: ssh -p $SSH_PORT root@$HOST_IP 'apt-get install -y jq'" >&2
+fi
+
 SOURCE_ROOT=""
 if [[ "$DEPLOY_SOURCE_MODE" == "remote-main" ]]; then
   echo "==> Cloning $DEPLOY_BRANCH from git remotes (mcp-agent-builder-go, mcpagent, multi-llm-provider-go)"

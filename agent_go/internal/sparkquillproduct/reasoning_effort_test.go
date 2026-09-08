@@ -38,9 +38,9 @@ func TestEveryProviderOptionDeclaresAnOwnReasoningEffort(t *testing.T) {
 }
 
 // The specific defaults the family relies on: Claude Code runs both the
-// parent (Fable 5.1) and the child (Sonnet 5) at medium; Codex runs the
-// parent on the steadier model at medium and the child on a newer one at
-// high.
+// parent and the child on Sonnet 5 only (no Fable 5.1 option) — the parent
+// at high reasoning effort, the child at medium; Codex runs the parent on
+// the steadier model at medium and the child on a newer one at high.
 func TestSparkQuillDefaultModelsAndReasoningEfforts(t *testing.T) {
 	profiles := BuiltinAgentProfiles()
 	find := func(profileID, optionID string) (modelID, effort string) {
@@ -61,7 +61,7 @@ func TestSparkQuillDefaultModelsAndReasoningEfforts(t *testing.T) {
 	cases := []struct {
 		profileID, optionID, wantModel, wantEffort string
 	}{
-		{"sparkquill", "claude-code", "claude-fable-5-1", "medium"},
+		{"sparkquill", "claude-code", "claude-sonnet-5", "high"},
 		{"sparkquill", "codex-cli", "gpt-6-astra", "medium"},
 		{"sparkquill-child", "claude-code", "claude-sonnet-5", "medium"},
 		{"sparkquill-child", "codex-cli", "gpt-5.6-luna", "high"},

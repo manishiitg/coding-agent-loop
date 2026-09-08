@@ -101,11 +101,11 @@ profile:
       - id: claude-code
         label: Claude Code
         provider: claude-code
-        model_id: claude-fable-5-1
-        models: [claude-fable-5-1, claude-sonnet-5]
+        model_id: claude-sonnet-5
+        models: [claude-sonnet-5]
         reasoning_efforts: [low, medium, high]
         options:
-          reasoning_effort: medium
+          reasoning_effort: high
         default: true
       - id: codex-cli
         label: Codex
@@ -233,7 +233,7 @@ profiles:
           label: Claude Code
           provider: claude-code
           model_id: claude-sonnet-5
-          models: [claude-fable-5-1, claude-sonnet-5]
+          models: [claude-sonnet-5]
           reasoning_efforts: [low, medium, high]
           options:
             reasoning_effort: medium

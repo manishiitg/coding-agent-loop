@@ -69,7 +69,11 @@ function useReportDataApi(workspacePath: string, sendChatMessage: ReportDataApi[
     }
     const renderMarkdown = (markdown: string): string => renderReportMarkdown(markdown)
     const mediaUrl = async (allowedPath: string): Promise<string> => {
-      const response = await api.post('/workflow/report-preview/media-url', { workspace: workspacePath, path: allowedPath })
+      // `api` uses the origin itself in web deployments, so API routes must
+      // retain their `/api` prefix. Without it the SPA fallback answers with
+      // index.html (HTTP 200), leaving response.data.url undefined and every
+      // native media element pointed at `/undefined`.
+      const response = await api.post('/api/workflow/report-preview/media-url', { workspace: workspacePath, path: allowedPath })
       // Resolve against the configured API origin (also supports remote workspaces).
       return new URL(response.data.url, new URL(getApiBaseUrl(), window.location.href)).href
     }

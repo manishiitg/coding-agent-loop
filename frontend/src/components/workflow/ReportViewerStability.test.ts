@@ -20,6 +20,13 @@ describe('open report stability', () => {
     expect(canvas).not.toContain('window.dispatchEvent(new CustomEvent(WORKFLOW_REPORT_REFRESH_EVENT))')
   })
 
+  it('mints streaming media URLs through the real API route in web deployments', () => {
+    const viewer = readFileSync('src/components/workflow/ReportViewer.tsx', 'utf8')
+
+    expect(viewer).toContain("api.post('/api/workflow/report-preview/media-url'")
+    expect(viewer).not.toContain("api.post('/workflow/report-preview/media-url'")
+  })
+
   it('does not let outer polling remount the report iframe', () => {
     const viewer = readFileSync('src/components/workflow/ReportViewer.tsx', 'utf8')
     const frame = readFileSync('src/components/workflow/reportWidgets/HtmlWidgetFrame.tsx', 'utf8')

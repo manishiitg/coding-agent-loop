@@ -28,6 +28,7 @@ import { llmConfigService, type ModelMetadata } from '../services/llm-config-api
 import ModelReasoningControl from './ui/ModelReasoningControl'
 import NewChatControl from './ui/NewChatControl'
 import { MicButton, type MicButtonHandle, type MicState } from '../voice/MicButton'
+import { readVoiceAutoSendPref } from '../products/sparkquill/voiceAutoSend'
 import { useCapabilitiesStore } from '../stores/useCapabilitiesStore'
 import { hasActiveSessionWork } from '../utils/activitySessions'
 import { headerStatusLabel, statusTone } from '../utils/globalActivityMonitorStatus'
@@ -655,16 +656,17 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
   const [localInputText, setLocalInputText] = useState(storedInputText)
 
   // Voice dictation (MicButton) delivers the whole utterance ONCE, on stop —
-  // the composer appends it to whatever was typed and leaves sending to the
-  // user (deliberately no auto-send in AgentWorks, unlike SparkQuill). While
-  // recording, Enter is routed to the mic (handleKeyDown) so it stops the
-  // dictation instead of submitting a half-typed draft. The live banner
-  // renders into micBannerHost, above the composer.
+  // the composer appends it to whatever was typed. AgentWorks leaves sending
+  // to the user; SparkQuill's opt-in voice auto-send (autoSubmitOnStop
+  // below) instead submits it right away. While recording, Enter is routed
+  // to the mic (handleKeyDown) so it stops the dictation instead of
+  // submitting a half-typed draft. The live banner renders into
+  // micBannerHost, above the composer.
   const micRef = useRef<MicButtonHandle>(null)
   const micStateRef = useRef<MicState>('idle')
   const [micBannerHost, setMicBannerHost] = useState<HTMLDivElement | null>(null)
   const handleMicStateChange = useCallback((s: MicState) => { micStateRef.current = s }, [])
-  const handleVoiceText = useCallback((text: string) => {
+  const handleVoiceText = useCallback((text: string, autoSubmit: boolean) => {
     const base = localInputText
     const joined = base && !base.endsWith(' ') && !base.endsWith('\n') ? `${base} ${text}` : `${base}${text}`
     setLocalInputText(joined)
@@ -672,6 +674,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     // So Enter immediately sends — without this the composer stays unfocused
     // after dictation and Enter does nothing.
     textareaRef.current?.focus()
+    if (autoSubmit) pendingVoiceAutoSubmitRef.current = true
   }, [localInputText, activeTabId, setTabConfig])
 
   const inputText = localInputText
@@ -2569,6 +2572,19 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     }
   }, [routeLiveInputToCLI, hasSubmitTarget, activeTabId, inputText, chatPastedAttachments, effectiveProviderForSteer, onSubmit, scheduleLiveMessageDeliveryClear, clearInputState, setTabConfig, getSubmitBlockReason, addToast, canSubmitImmediately, canSubmit, isStreaming, queueStreamingMessage])
 
+  // SparkQuill's voice auto-send: handleVoiceText already merged the
+  // transcript into localInputText, but queryToSubmit (which also layers in
+  // pasted attachments) only reflects that on the NEXT render — routeSubmit
+  // here instead of there would risk racing a stale inputText closure into
+  // the live-input-delivery failure/retry path. This effect waits for that
+  // render, then fires exactly once per stop() that asked for it.
+  const pendingVoiceAutoSubmitRef = useRef(false)
+  useEffect(() => {
+    if (!pendingVoiceAutoSubmitRef.current) return
+    pendingVoiceAutoSubmitRef.current = false
+    if (queryToSubmit?.trim()) void routeSubmit(queryToSubmit)
+  }, [localInputText, queryToSubmit, routeSubmit])
+
   const handleKeyDown = useCallback((e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     // If any selection dialog is open, let it handle keyboard events
     if (showCommandDialog || showFileDialog || showWorkflowDialog || showSkillPopup || showServerPopup) {
@@ -3246,6 +3262,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
       bannerHost={micBannerHost}
       shortcutEnabled={!scopedTabId}
       disabled={isSummarizing}
+      autoSubmitOnStop={sparkQuillComposerLayout ? () => readVoiceAutoSendPref() : undefined}
     />
   )
   const sparkleEl = (

@@ -19,10 +19,11 @@ interface MicButtonProps {
   /** Product profile whose runtime.capabilities.voice gates the stream, or ''
    * from AgentWorks' own composer (gated by capabilities.voice.available). */
   profileId: string
-  /** Fired ONCE per session, on stop, with the whole utterance. It only ever
-   * lands in the composer: unlike SparkQuill, AgentWorks never sends on the
-   * user's behalf — they review and press send themselves. */
-  onText: (text: string) => void
+  /** Fired ONCE per session, on stop, with the whole utterance. `autoSubmit`
+   * is true only when autoSubmitOnStop() said so at that moment — AgentWorks
+   * never passes autoSubmitOnStop, so it's always false there and the text
+   * only ever lands in the composer for the user to review and send. */
+  onText: (text: string, autoSubmit: boolean) => void
   /** Lets the composer know when Enter should stop+send instead of send. */
   onStateChange?: (state: MicState) => void
   /** Where the full-width live banner renders (a `relative` host above the
@@ -31,6 +32,12 @@ interface MicButtonProps {
   /** Only the visible composer should own the global ⌥ / ⌘⇧M shortcuts. */
   shortcutEnabled?: boolean
   disabled?: boolean
+  /** Called at the moment a recording stops; true sends the transcript right
+   * away instead of leaving it for the user to send (SparkQuill's opt-in
+   * voice auto-send). A function, not a plain boolean, so a Settings toggle
+   * flipped mid-recording is read fresh at stop time, not from render-time
+   * props. Omit to never auto-send. */
+  autoSubmitOnStop?: () => boolean
 }
 
 type SetupPhase = 'unknown' | 'needed' | 'offer' | 'downloading' | 'ready' | 'failed'
@@ -45,8 +52,9 @@ type SetupPhase = 'unknown' | 'needed' | 'offer' | 'downloading' | 'ready' | 'fa
  *   the running transcript as the engine hears it (it may revise itself
  *   between updates, as any live captioning does);
  * - click / ⌥ tap / Enter while recording = stop; the committed text lands
- *   in the composer for the user to review and send (deliberately never
- *   auto-sent here, unlike SparkQuill's stop-and-send);
+ *   in the composer for the user to review and send. AgentWorks never
+ *   passes autoSubmitOnStop, so it is always sent by hand there; SparkQuill
+ *   passes it wired to its own opt-in Settings toggle;
  * - "Starting — getting voice ready…" covers opening the mic and a cold
  *   engine load, so an impatient re-click can't begin a second session;
  * - errors (nearly always a denied mic permission) show in place, dismiss on
@@ -66,6 +74,7 @@ export const MicButton = forwardRef(function MicButton({
   bannerHost,
   shortcutEnabled = true,
   disabled,
+  autoSubmitOnStop,
 }: MicButtonProps, ref: React.ForwardedRef<MicButtonHandle>) {
   const initialStatus = useCapabilitiesStore(state => state.capabilities?.voice)
   const [setup, setSetup] = useState<SetupPhase>(() => phaseFor(initialStatus))
@@ -160,8 +169,8 @@ export const MicButton = forwardRef(function MicButton({
 
   const finish = useCallback(async () => {
     const text = (await stop()).trim()
-    if (text) onText(text)
-  }, [stop, onText])
+    if (text) onText(text, autoSubmitOnStop?.() ?? false)
+  }, [stop, onText, autoSubmitOnStop])
 
   const begin = useCallback(async () => {
     setSetupError(null)

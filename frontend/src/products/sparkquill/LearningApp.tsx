@@ -67,6 +67,7 @@ import ChildPlatformChat, { forgetChildChat, submitToChildChat, type ChildKickof
 import { api } from './api'
 import { VoiceSettings } from './voice/VoiceSettings'
 import { readReminderSoundPref, persistReminderSoundPref } from './notifySound'
+import { readVoiceAutoSendPref, persistVoiceAutoSendPref } from './voiceAutoSend'
 import { ChatMarkdown as SharedChatMarkdown } from '../../../shared/chat/ChatRenderer'
 
 // The child/file viewer iframe is deliberately sandbox="allow-scripts" with
@@ -1048,6 +1049,14 @@ export default function LearningApp() {
   const toggleChildReminderSound = (on: boolean) => {
     setChildReminderSound(on)
     persistReminderSoundPref(on)
+  }
+  // Off by default; a parent opts in here. On, finishing a voice recording
+  // (in the child's chat) sends it right away instead of leaving it in the
+  // composer to review and send by hand.
+  const [childVoiceAutoSend, setChildVoiceAutoSend] = useState(() => readVoiceAutoSendPref())
+  const toggleChildVoiceAutoSend = (on: boolean) => {
+    setChildVoiceAutoSend(on)
+    persistVoiceAutoSendPref(on)
   }
   const [goalPopoverOpen, setGoalPopoverOpen] = useState(false)
   // Secrets (credentials the parent saves for Quill's tools, e.g. a school
@@ -3235,6 +3244,21 @@ export default function LearningApp() {
                         type="checkbox"
                         checked={childReminderSound}
                         onChange={(e) => toggleChildReminderSound(e.target.checked)}
+                      />
+                      <span className="fl-toggle-slider" />
+                    </label>
+                  </div>
+
+                  <p className="fl-drawer-label" style={{ marginTop: '20px' }}>Voice auto-send</p>
+                  <div className="fl-wa-voice-row">
+                    <div>
+                      <p className="fl-note">When {childName || 'your child'} finishes talking, send it right away instead of leaving it for them to press send themselves.</p>
+                    </div>
+                    <label className="fl-toggle">
+                      <input
+                        type="checkbox"
+                        checked={childVoiceAutoSend}
+                        onChange={(e) => toggleChildVoiceAutoSend(e.target.checked)}
                       />
                       <span className="fl-toggle-slider" />
                     </label>

@@ -60,6 +60,12 @@ type Engine struct {
 	recognizer *sherpa.OnlineRecognizer
 	punct      *sherpa.OnlinePunctuation
 	modelDir   string
+	// vadModelPath is empty when the VAD model has not been downloaded yet
+	// (an install from before it existed, or EnsureModelFiles hasn't fetched
+	// it this run) — every Stream then falls back to the recognizer's own
+	// endpoint rule alone, exactly like before VAD existed. Never blocks
+	// voice on VAD being present.
+	vadModelPath string
 }
 
 // NewEngine loads the recognizer from modelDir, downloading any missing model
@@ -95,8 +101,12 @@ func NewEngine(modelDir string) (*Engine, error) {
 			ModelType: "nemo_transducer",
 		},
 		DecodingMethod: "greedy_search",
-		// Endpoint detection lets a caller know a phrase has settled (silence
-		// after speech) without needing its own VAD.
+		// Endpoint detection lets a caller know a phrase has settled (trailing
+		// silence after speech). It is the recognizer's own internal heuristic,
+		// not a dedicated speech model — Stream.AcceptWaveform below confirms
+		// it against Silero VAD (when installed) before trusting it, since a
+		// loud non-speech sound can reset this timer without a person having
+		// said anything.
 		EnableEndpoint:          1,
 		Rule1MinTrailingSilence: 2.4,
 		Rule2MinTrailingSilence: 1.2,
@@ -107,6 +117,9 @@ func NewEngine(modelDir string) (*Engine, error) {
 		return nil, fmt.Errorf("voicestt: sherpa.NewOnlineRecognizer returned nil (check model files under %s)", modelDir)
 	}
 	e := &Engine{recognizer: recognizer, modelDir: modelDir}
+	if VADModelInstalled(modelDir) {
+		e.vadModelPath = filepath.Join(modelDir, VADModelFileName)
+	}
 	// The punctuation model is small and optional: a directory that has the
 	// speech model but not this (an install interrupted between the two)
 	// still dictates, just without punctuation, rather than failing outright.
@@ -176,13 +189,63 @@ type Result struct {
 type Stream struct {
 	engine *Engine
 	stream *sherpa.OnlineStream
+	// vad is nil when the Engine's VAD model was not installed — every
+	// AcceptWaveform call then trusts the recognizer's own endpoint signal
+	// alone, exactly like before VAD existed.
+	vad *sherpa.VoiceActivityDetector
 }
 
-// NewStream opens a fresh streaming session. Cheap: does not reload the model.
+// vadConfig is sherpa-onnx's own published reference values for Silero VAD
+// (go-api-examples/vad), not guessed: Threshold 0.5, MinSilenceDuration 0.5s,
+// MinSpeechDuration 0.25s, WindowSize 512, MaxSpeechDuration 10s. sample-based
+// window sizing is unaffected by our own 16kHz SampleRate.
+func vadConfig(modelPath string) *sherpa.VadModelConfig {
+	return &sherpa.VadModelConfig{
+		SileroVad: sherpa.SileroVadModelConfig{
+			Model:              modelPath,
+			Threshold:          0.5,
+			MinSilenceDuration: 0.5,
+			MinSpeechDuration:  0.25,
+			WindowSize:         512,
+			MaxSpeechDuration:  10,
+		},
+		SampleRate: SampleRate,
+		NumThreads: 1,
+		Provider:   "cpu",
+	}
+}
+
+// NewStream opens a fresh streaming session. Cheap: does not reload the ASR
+// model. The VAD model (629KB, when installed) is small enough that a fresh
+// per-stream instance is fine — unlike the recognizer, sherpa-onnx's VAD API
+// keeps its speech/silence buffer on the instance itself, so sharing one
+// across concurrent sessions would mix their audio together.
 func (e *Engine) NewStream() *Stream {
 	e.mu.RLock()
 	defer e.mu.RUnlock()
-	return &Stream{engine: e, stream: sherpa.NewOnlineStream(e.recognizer)}
+	s := &Stream{engine: e, stream: sherpa.NewOnlineStream(e.recognizer)}
+	if e.vadModelPath != "" {
+		s.vad = sherpa.NewVoiceActivityDetector(vadConfig(e.vadModelPath), 5)
+	}
+	return s
+}
+
+// endOfUtteranceConfirmed reports whether the recognizer's own endpoint
+// signal should be trusted as a genuine end of utterance. The recognizer's
+// endpoint heuristic is trailing-silence-duration only — a loud non-speech
+// sound (a cough, a door, background noise) can reset that timer without a
+// person having said anything, or mask the tail of what they actually said.
+// When VAD is available it must also agree no speech is currently active;
+// hasVAD is false when the model was not installed, in which case the
+// recognizer's own signal is trusted alone, exactly as before VAD existed.
+func endOfUtteranceConfirmed(recognizerEndpoint, hasVAD, vadDetectsSpeech bool) bool {
+	if !recognizerEndpoint {
+		return false
+	}
+	if !hasVAD {
+		return true
+	}
+	return !vadDetectsSpeech
 }
 
 // AcceptWaveform feeds one chunk of mono float32 PCM at voicestt.SampleRate and
@@ -197,7 +260,13 @@ func (s *Stream) AcceptWaveform(samples []float32) Result {
 		s.engine.recognizer.Decode(s.stream)
 	}
 	res := s.engine.recognizer.GetResult(s.stream)
-	isEndpoint := s.engine.recognizer.IsEndpoint(s.stream)
+	recognizerEndpoint := s.engine.recognizer.IsEndpoint(s.stream)
+	vadDetectsSpeech := false
+	if s.vad != nil {
+		s.vad.AcceptWaveform(samples)
+		vadDetectsSpeech = s.vad.IsSpeech()
+	}
+	isEndpoint := endOfUtteranceConfirmed(recognizerEndpoint, s.vad != nil, vadDetectsSpeech)
 	if isEndpoint {
 		s.engine.recognizer.Reset(s.stream)
 	}
@@ -205,7 +274,9 @@ func (s *Stream) AcceptWaveform(samples []float32) Result {
 }
 
 // Finish signals no more audio is coming and returns the final transcript for
-// whatever is still buffered. Call once, at the end of the connection.
+// whatever is still buffered. Call once, at the end of the connection. Always
+// a genuine end regardless of VAD — the caller closing the connection is not
+// an ambiguous trailing-silence judgment call.
 func (s *Stream) Finish() Result {
 	s.engine.mu.RLock()
 	defer s.engine.mu.RUnlock()
@@ -220,4 +291,7 @@ func (s *Stream) Finish() Result {
 // Close releases this stream's native state. The shared Engine is unaffected.
 func (s *Stream) Close() {
 	sherpa.DeleteOnlineStream(s.stream)
+	if s.vad != nil {
+		sherpa.DeleteVoiceActivityDetector(s.vad)
+	}
 }

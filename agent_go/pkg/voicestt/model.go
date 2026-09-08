@@ -50,9 +50,31 @@ var PunctuationFiles = []string{"model.int8.onnx", "bpe.vocab"}
 const punctuationArchiveBytes = 30667839
 
 // ModelSizeMB is the on-disk size of everything a first run downloads
-// (speech model ~662MB plus the punctuation model), for install UIs that
-// want to say what a first run costs before it starts.
-const ModelSizeMB = 690
+// (speech model ~662MB plus the punctuation model and the VAD model), for
+// install UIs that want to say what a first run costs before it starts.
+const ModelSizeMB = 691
+
+// VADModelFileName is the on-disk name of the Silero VAD model, alongside the
+// speech model files in the same directory.
+const VADModelFileName = "silero_vad.onnx"
+
+// VADModelURL is k2-fsa's own Silero VAD export (629KB) — used to confirm an
+// utterance has genuinely ended (real speech-probability, not just trailing
+// audio silence) before the engine commits a transcript as final. Deliberately
+// NOT part of DefaultModelURLs/fingerprintSources: it is independent of the
+// pinned ASR model version, and folding it into the fingerprint would send
+// every family who already has the ~630MB speech model installed into a
+// brand-new, empty directory (a full re-download) just to pick up 629KB.
+const VADModelURL = "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/silero_vad.onnx"
+
+// VADModelInstalled reports whether the VAD model file is present and
+// non-empty in dir. Independent of ModelInstalled: an install from before
+// this file existed still has a working (if less precise) speech model, and
+// EnsureModelFiles fetches this file into that same directory going forward.
+func VADModelInstalled(dir string) bool {
+	info, err := os.Stat(filepath.Join(dir, VADModelFileName))
+	return err == nil && info.Size() > 0
+}
 
 // ModelLanguages is the human label for what the pinned model understands.
 const ModelLanguages = "English"
@@ -110,6 +132,9 @@ func pendingModelDownloads(dir string) (todo []pendingModel, needPunct bool) {
 			continue
 		}
 		todo = append(todo, pendingModel{name, url, path})
+	}
+	if !VADModelInstalled(dir) {
+		todo = append(todo, pendingModel{VADModelFileName, VADModelURL, filepath.Join(dir, VADModelFileName)})
 	}
 	return todo, !punctuationInstalled(dir)
 }

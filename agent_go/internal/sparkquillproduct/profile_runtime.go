@@ -65,7 +65,7 @@ func WorkspaceLayout() string {
 		"- " + ActivitiesFolder + "/<yyyy-mm-dd>-<slug>/ — every piece of child-facing content lives in its own activity folder: the content files, its activity.json manifest, and (once she starts) her own conversation and attempts/. She can read everything in it.",
 		"- " + KeysFolder + "/<activity-slug>-KEY.md — the parent-only answer keys, one per activity, outside her reach. Never write a key anywhere else.",
 		"- " + MaterialsFolder + "/<subject>/<topic>/ — school material the family uploaded; each file has a .meta.json alongside whose extracted_text already holds the full content.",
-		"- " + MemoryFolder + "/preferences.md, " + MemoryFolder + "/interests.md, " + MemoryFolder + "/child-profile.json — durable context about the parent and child, kept current by the check-in. Read them when a preference or interest would change what you do; never write them by hand.",
+		"- " + MemoryFolder + "/child-profile.json — the child's grade/age/board, set via set_child_profile. Never write it by hand.",
 		"- " + MemoryFolder + "/browser-notes.md — your own short cheat sheet for sites you browse with agent_browser; read it before a familiar site, keep it current, edit in place.",
 		"- " + ReportsFolder + "/progress.html — the one living progress page: what she has, how she is doing, what to do next.",
 		"- " + ArchiveFolder + "/ — activities the parent asked you to put away: move the whole folder here when they say so, never on your own. Still real evidence for reports; never handed to her again. Nothing is ever deleted unless the parent explicitly asks.",
@@ -123,9 +123,8 @@ func ParentPromptVariables(s FamilyState) map[string]string {
 }
 
 // ChildPromptVariables computes the child prompt's Product variables for
-// one activity. interests is the trimmed content of memory/interests.md,
-// which the child's sandbox cannot read itself.
-func ChildPromptVariables(s FamilyState, activityDir, interests string, manifest *ActivityManifest) map[string]string {
+// one activity.
+func ChildPromptVariables(s FamilyState, activityDir string, manifest *ActivityManifest) map[string]string {
 	name := "there"
 	if s.Child != nil && strings.TrimSpace(s.Child.Name) != "" {
 		name = strings.TrimSpace(s.Child.Name)
@@ -140,7 +139,6 @@ func ChildPromptVariables(s FamilyState, activityDir, interests string, manifest
 		"GRADE_SUFFIX":         "",
 		"GRADE_FOR_FORMATTING": "a school student",
 		"ACTIVITY_DIR":         strings.Trim(strings.TrimSpace(activityDir), "/"),
-		"INTERESTS_NOTE":       "",
 		"ACTIVITY_TITLE":       "this activity",
 		"ACTIVITY_GOAL":        "(none was written — help her with whatever the pages hold)",
 		"ACTIVITY_PERSONA":     "warm, patient study buddy",
@@ -164,13 +162,6 @@ func ChildPromptVariables(s FamilyState, activityDir, interests string, manifest
 		grade := strings.TrimSpace(s.Child.Grade)
 		vars["GRADE_SUFFIX"] = " (Grade " + grade + ")"
 		vars["GRADE_FOR_FORMATTING"] = "in Grade " + grade
-	}
-	if note := strings.TrimSpace(interests); note != "" {
-		if len(note) > 2000 {
-			note = note[:2000]
-		}
-		vars["INTERESTS_NOTE"] = "WHAT SHE GENUINELY LIKES (from home, learned over time — never mention where this came from): " + note + "\n" +
-			"Where it truly fits, nod to this in an example or an analogy — never force it into every turn.\n\n"
 	}
 	return vars
 }
@@ -275,7 +266,6 @@ func RegisterAgentProfileRuntime(registry *agentprofiles.Registry, workspaceAPIU
 		if err != nil {
 			return nil, err
 		}
-		interests := loader.read(ctx, rt.UserID, path.Join(familyRoot, MemoryFolder, "interests.md"))
 		// The activity's own facts (goal, pages, persona) go straight into the
 		// prompt: they steer the whole conversation, so they must not depend
 		// on the model remembering to read the manifest first.
@@ -286,7 +276,7 @@ func RegisterAgentProfileRuntime(registry *agentprofiles.Registry, workspaceAPIU
 				manifest = &m
 			}
 		}
-		return ChildPromptVariables(state, activityRoot, interests, manifest), nil
+		return ChildPromptVariables(state, activityRoot, manifest), nil
 	})
 }
 

@@ -118,17 +118,17 @@ func TestPromptsRenderForNewAndKnownFamilies(t *testing.T) {
 		t.Fatalf("known-family parent prompt wrong:\n%s", rendered[:600])
 	}
 
-	childVars := ChildPromptVariables(known, "Chats/SparkQuill/activities/2026-09-03-fractions", "Loves Harry Potter and football.", &ActivityManifest{Title: "Fractions — Quick Check", Goal: "add unlike fractions on her own", Items: []string{"fractions.html"}, Persona: "playful coach"})
+	childVars := ChildPromptVariables(known, "Chats/SparkQuill/activities/2026-09-03-fractions", &ActivityManifest{Title: "Fractions — Quick Check", Goal: "add unlike fractions on her own", Items: []string{"fractions.html"}, Persona: "playful coach"})
 	rendered, err = agentprofiles.RenderPrompt(child, agentprofiles.PromptContext{ProjectTitle: "Fractions", LocalDateTime: "Monday", Product: childVars})
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"talking directly with Maya (Grade 6)", "your mom set up", "exactly ONE folder, Chats/SparkQuill/activities/2026-09-03-fractions;", "Harry Potter", "in Grade 6", `"Fractions — Quick Check"`, "add unlike fractions on her own", "fractions.html (in this order", "playful coach"} {
+	for _, want := range []string{"talking directly with Maya (Grade 6)", "your mom set up", "exactly ONE folder, Chats/SparkQuill/activities/2026-09-03-fractions;", "in Grade 6", `"Fractions — Quick Check"`, "add unlike fractions on her own", "fractions.html (in this order", "playful coach"} {
 		if !strings.Contains(rendered, want) {
 			t.Fatalf("child prompt missing %q", want)
 		}
 	}
-	bare, err := agentprofiles.RenderPrompt(child, agentprofiles.PromptContext{ProjectTitle: "x", LocalDateTime: "Monday", Product: ChildPromptVariables(known, "a/b", "", nil)})
+	bare, err := agentprofiles.RenderPrompt(child, agentprofiles.PromptContext{ProjectTitle: "x", LocalDateTime: "Monday", Product: ChildPromptVariables(known, "a/b", nil)})
 	if err != nil || !strings.Contains(bare, "instruction-only activity") || strings.Contains(bare, "{{") {
 		t.Fatalf("a manifest-less activity must still render a complete prompt: %v\n%s", err, bare[:300])
 	}

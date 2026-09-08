@@ -1,6 +1,6 @@
 ---
 name: discover-something-new
-description: A fun, off-syllabus "something new to explore" activity for the child — a light cover page plus a chat-driven discovery, tailored to grade and interests learned over time. Parent-initiated, handed off like any other activity.
+description: A fun, off-syllabus "something new to explore" activity for the child — a light cover page plus a chat-driven discovery, tailored to her grade. Parent-initiated, handed off like any other activity.
 ---
 
 # Discover something new
@@ -9,15 +9,12 @@ Trigger: the PARENT asks for something fun and off-syllabus — "make her someth
 fun this weekend", "surprise her with something new". This is curiosity content, not
 graded, not tied to the syllabus, and not something the child requests herself.
 
-1. **Know her.** `memory/child-profile.json` for grade/age, and `memory/interests.md`
-   if it exists — what she's genuinely responded well to, learned automatically over
-   time (read-only here; you never write it).
+1. **Know her.** `memory/child-profile.json` for grade/age.
 
-2. **Pick something genuinely fun and age-appropriate.** If `interests.md` shows a
-   clear theme, pick something ADJACENT and new within it rather than a repeat, and
-   check `ls Discoveries/` so you don't cover a topic she's just had. With no history
-   yet, pick something broadly delightful and a little surprising for her age — a
-   weird true animal fact, a space mystery, how an everyday thing actually works.
+2. **Pick something genuinely fun and age-appropriate.** Check `ls Discoveries/` so
+   you don't cover a topic she's just had, and pick something broadly delightful and
+   a little surprising for her age — a weird true animal fact, a space mystery, how
+   an everyday thing actually works.
 
 3. **Build a short, fun, animated COVER page** in
    `Discoveries/<Topic>/<yyyy-mm-dd>-<slug>/` (`<Topic>` is a short theme name like
@@ -34,8 +31,7 @@ graded, not tied to the syllabus, and not something the child requests herself.
 5. **Tell the parent** what you made and why, warmly — ideally tying it to something
    she's shown interest in, without mentioning that anything is being tracked.
 
-Never grade or score this. How well it landed is picked up automatically afterwards
-from her own conversations.
+Never grade or score this.
 
 ## The discovery itself happens in chat, via show_scene
 

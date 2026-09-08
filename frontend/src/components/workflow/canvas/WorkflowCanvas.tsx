@@ -761,7 +761,11 @@ function ReadOnlyStepDetailPanel({
   const routingQuestion = typeof data.routing_question === 'string' ? data.routing_question : undefined
 
   return (
-    <aside data-ui-plan-step={step?.id || node.id} aria-label={`Step details: ${title}`} className="flex h-full w-[380px] max-w-[42vw] shrink-0 flex-col border-l border-border bg-background shadow-xl">
+    <aside
+      data-ui-plan-step={step?.id || node.id}
+      aria-label={`Step details: ${title}`}
+      className="flex h-full w-full max-w-full shrink-0 flex-col border-l border-border bg-background shadow-xl sm:w-[80%] sm:max-w-[80%]"
+    >
       <div className="flex shrink-0 items-start gap-3 border-b border-border px-4 py-3">
         <div className="min-w-0 flex-1">
           <div className="mb-1 flex flex-wrap items-center gap-2">

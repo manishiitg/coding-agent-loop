@@ -386,6 +386,9 @@ func (hctpeoa *WorkflowExecutionOnlyAgent) executionOnlySystemPromptProcessor(te
 		hasBrowser := templateVars["HasBrowserAccess"] == "true"
 		isCodeLocked := templateVars["IsScriptedLocked"] == "true"
 		codeExecutionSection += GetScriptedModeInstructions(codeDirAbsPath, stepExecutionPath, isRelearnMode, priorScript, priorError, inputArgPaths, envVarNames, varMappingLines, validationSchemaJSON, hasBrowser, isCodeLocked, useProjectedReferenceSkills, templateVars["DirectCodeSource"] == "true")
+		if strings.TrimSpace(templateVars["ScriptedDelegationInstructions"]) != "" {
+			codeExecutionSection += "\n**Orchestrator delegation contract:** This scripted step was invoked as a todo-task route with per-call instructions. Read `STEP_DELEGATION_INSTRUCTIONS` at runtime and make the reusable script apply it; do not hardcode the current instruction text. `STEP_DELEGATION_ROUTE_ID` and `STEP_DELEGATION_TODO_ID` identify the call. Positional arguments remain reserved for declared context dependencies.\n"
+		}
 		if templateVars["DirectCodeSource"] == "true" && !isCodeLocked {
 			codeExecutionSection += "\nThis workflow uses canonical code/ source. Edit the supplied working directory and shared helpers in WORKFLOW_CODE_ROOT directly. The controller runs this code after each authoring/repair turn; do not execute main.py separately or fabricate outputs to satisfy validation. No copy-back is performed. Keep outputs at STEP_OUTPUT_DIR or db/assets.\n"
 		}

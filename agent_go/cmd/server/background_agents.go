@@ -28,6 +28,11 @@ const (
 	BGAgentCompleted BackgroundAgentStatus = "completed"
 	BGAgentFailed    BackgroundAgentStatus = "failed"
 	BGAgentCanceled  BackgroundAgentStatus = "canceled"
+
+	// A step can fail almost immediately (for example, a missing Python import).
+	// Give the builder's current turn time to receive the execute_step result and
+	// establish context before its completion is injected as an auto-notification.
+	minimumWorkflowStepAutoNotificationAge = 20 * time.Second
 )
 
 // HistoryEntry represents a single message from the sub-agent's conversation history
@@ -74,11 +79,36 @@ type BackgroundAgent struct {
 	// meant every reader had to remember to consult both. Deliberately NOT
 	// merged with startNotified or terminalNotified: those are separate axes,
 	// not stages of this one.
-	completionNotification completionNotificationState
-	terminalNotified       bool             // a terminal event (background_agent_terminated) has been emitted; prevents duplicates across OnExecutionTerminated / OnExecutionComplete
-	getHistory             HistoryFunc      // returns last N conversation entries from the running sub-agent
-	toolCalls              []ToolCallRecord // tracked tool calls with timing
-	activeToolCall         map[string]int   // toolCallID → index in toolCalls (for matching start/end)
+	completionNotification   completionNotificationState
+	completionDelayScheduled bool
+	terminalNotified         bool             // a terminal event (background_agent_terminated) has been emitted; prevents duplicates across OnExecutionTerminated / OnExecutionComplete
+	getHistory               HistoryFunc      // returns last N conversation entries from the running sub-agent
+	toolCalls                []ToolCallRecord // tracked tool calls with timing
+	activeToolCall           map[string]int   // toolCallID → index in toolCalls (for matching start/end)
+}
+
+// shouldDelayWorkflowStepAutoNotification identifies execution records whose
+// completion belongs to a workflow step. It includes the step's specific child
+// signals because those can be the authoritative notification when the parent
+// duplicate is suppressed.
+func shouldDelayWorkflowStepAutoNotification(snap BackgroundAgentSnapshot) bool {
+	kind := strings.TrimSpace(snap.Kind)
+	switch kind {
+	case "workflow_step", "message_sequence_item", "prevalidation_warning":
+		return true
+	}
+	return isWorkflowStepTrackingExecution(snap.ID, snap.Name, snap.Metadata)
+}
+
+func workflowStepAutoNotificationDelay(snap BackgroundAgentSnapshot, now time.Time) time.Duration {
+	if !shouldDelayWorkflowStepAutoNotification(snap) || snap.CreatedAt.IsZero() {
+		return 0
+	}
+	remaining := minimumWorkflowStepAutoNotificationAge - now.Sub(snap.CreatedAt)
+	if remaining <= 0 {
+		return 0
+	}
+	return remaining
 }
 
 // completionNotificationState is the lifecycle of a background agent's
@@ -397,6 +427,77 @@ func (a *BackgroundAgent) GetSnapshot() BackgroundAgentSnapshot {
 		snap.CompletedAt = &t
 	}
 	return snap
+}
+
+// scheduleMinimumCompletionDelay claims the one timer allowed for a young step
+// completion. A positive remaining duration means the caller must not dispatch
+// yet; scheduleTimer says whether this caller owns arming the timer.
+func (a *BackgroundAgent) scheduleMinimumCompletionDelay(now time.Time) (remaining time.Duration, scheduleTimer bool) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	snap := BackgroundAgentSnapshot{
+		ID:        a.ID,
+		Name:      a.Name,
+		Kind:      a.Kind,
+		CreatedAt: a.CreatedAt,
+		Metadata:  a.Metadata,
+	}
+	remaining = workflowStepAutoNotificationDelay(snap, now)
+	if remaining <= 0 {
+		return 0, false
+	}
+	if a.completionDelayScheduled {
+		return remaining, false
+	}
+	a.completionDelayScheduled = true
+	return remaining, true
+}
+
+func (a *BackgroundAgent) clearMinimumCompletionDelay() {
+	a.mu.Lock()
+	a.completionDelayScheduled = false
+	a.mu.Unlock()
+}
+
+// deferWorkflowStepAutoNotification enforces the minimum age at every
+// dispatcher entry point. This is intentionally below execution completion:
+// status and logs become available immediately while only the synthetic chat
+// turn waits.
+func (api *StreamingAPI) deferWorkflowStepAutoNotification(sessionID, agentID string) bool {
+	if api == nil || api.bgAgentRegistry == nil {
+		return false
+	}
+	agent := api.bgAgentRegistry.Get(sessionID, agentID)
+	if agent == nil {
+		return false
+	}
+	remaining, scheduleTimer := agent.scheduleMinimumCompletionDelay(time.Now())
+	if remaining <= 0 {
+		return false
+	}
+	if scheduleTimer {
+		log.Printf("[BG AGENT] Deferring step completion notification for session=%s agent=%s by %s (20s minimum from step start)",
+			sessionID, agentID, remaining.Truncate(time.Millisecond))
+		time.AfterFunc(remaining, func() {
+			agent.clearMinimumCompletionDelay()
+			if api.autoNotificationSessionUnreachable(sessionID) {
+				return
+			}
+			current := api.bgAgentRegistry.Get(sessionID, agentID)
+			if current != agent {
+				return
+			}
+			snap := agent.GetSnapshot()
+			if snap.Status != BGAgentCompleted && snap.Status != BGAgentFailed {
+				return
+			}
+			if snap.Metadata != nil && snap.Metadata["suppress_auto_notification"] == "true" {
+				return
+			}
+			api.bgAgentRegistry.NotifyCompletion(sessionID, agentID)
+		})
+	}
+	return true
 }
 
 // SetMetadata merges the given key-value pairs into the agent's existing
@@ -1513,6 +1614,9 @@ func (api *StreamingAPI) backgroundCompletionLoop(sessionID string) {
 			log.Printf("[BG AGENT] Session %s is unreachable, dropping completion for agent %s", sessionID, agentID)
 			continue
 		}
+		if api.deferWorkflowStepAutoNotification(sessionID, agentID) {
+			continue
+		}
 		if api.isSessionBusyForAutoNotification(sessionID) {
 			// Session is busy. A CLI coding agent can still receive the completion
 			// mid-turn via live steering — prefer that, since the busy session may
@@ -1714,6 +1818,17 @@ func (api *StreamingAPI) processBatchedBackgroundAgentCompletions(sessionID stri
 		log.Printf("[BG AGENT] Session %s is stopped/inactive, skipping %d batched completion(s)", sessionID, len(agentIDs))
 		return
 	}
+	readyAgentIDs := make([]string, 0, len(agentIDs))
+	for _, agentID := range agentIDs {
+		if api.deferWorkflowStepAutoNotification(sessionID, agentID) {
+			continue
+		}
+		readyAgentIDs = append(readyAgentIDs, agentID)
+	}
+	if len(readyAgentIDs) == 0 {
+		return
+	}
+	agentIDs = readyAgentIDs
 	// Never combine completions owned by different message roots. Doing so would
 	// force one synthetic continuation to belong to the wrong tree (or none),
 	// allowing one schedule message to advance before its result was processed.
@@ -1867,6 +1982,9 @@ func (api *StreamingAPI) processBackgroundAgentCompletion(sessionID, agentID str
 	agent := api.bgAgentRegistry.Get(sessionID, agentID)
 	if agent == nil {
 		log.Printf("[BG AGENT] Warning: agent %s not found for completion processing", agentID)
+		return
+	}
+	if api.deferWorkflowStepAutoNotification(sessionID, agentID) {
 		return
 	}
 
@@ -2103,6 +2221,9 @@ func (api *StreamingAPI) steerBackgroundAgentCompletion(sessionID, agentID strin
 	agent := api.bgAgentRegistry.Get(sessionID, agentID)
 	if agent == nil {
 		return false
+	}
+	if api.deferWorkflowStepAutoNotification(sessionID, agentID) {
+		return true
 	}
 
 	snap := agent.GetSnapshot()

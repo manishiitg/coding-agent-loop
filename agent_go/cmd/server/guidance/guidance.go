@@ -73,15 +73,6 @@ var allKinds = map[string]kindMeta{
 	"design-plan": {Group: "builder", Description: "Comprehensive workflow plan and dependent-artifact review with better design recommendations", Modes: []string{"workshop"}},
 
 	// Reviews — recommend, don't apply; persist their typed result through Pulse.
-	// TEMPORARY (PLAT-259): manual live-reverify diagnostic for the `branch`
-	// step type. Remove this entry, templates/review/verify-branch-step.md,
-	// and the /verify-branch-step frontend command once confirmed working.
-	"verify-branch-step": {Group: "review", Description: "TEMPORARY (PLAT-259): manually verify a real branch step persists, executes, logs, and navigates correctly", Modes: []string{"workshop"}},
-	// TEMPORARY (PLAT-259): migrates a pre-split plan's routing steps onto
-	// the new routing/branch semantics. Remove this entry, templates/review/
-	// migrate-routing-to-branch.md, and the /migrate-routing-to-branch
-	// frontend command once confirmed working.
-	"migrate-routing-to-branch": {Group: "review", Description: "TEMPORARY (PLAT-259): reclassify existing routing steps as branch where appropriate and check route best practices", Modes: []string{"workshop"}},
 	"review-artifact-drift":     {Group: "review", Description: "Manual on-demand equivalent of the scheduled plan_drift_review pass (same candidate collector, repair contract, and completion writer — including deletion-coverage audits), plus a read-only checklist for everything it doesn't cover: schedule drift, learnings, main.py, KB, db, reports, and eval wiring", Modes: []string{"workshop"}},
 	"ops-review":                {Group: "review", Description: "One-off agentic read-only review of cost, timing, tool/runtime reliability, model routing, setup, and plan-design hygiene", Modes: []string{"workshop"}},
 	"strategy-auditor":          {Group: "review", Description: "One-off read-only cross-run diagnosis of whether the current plan can achieve the goal; does not run Goal Advisor or change the plan", Modes: []string{"workshop"}},

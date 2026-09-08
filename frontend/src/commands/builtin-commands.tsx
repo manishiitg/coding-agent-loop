@@ -68,7 +68,7 @@ function submitGuidedWorkflowCommand(
 // evidence, records the usual typed receipt, and decides what it means.
 const focusedPulseReviewCommands: CommandDefinition[] = [
   { command: 'pulse-review-execution-health', description: 'Review runtime reliability and apply bounded safe fixes for confirmed issues', kind: 'engineering-review', focus: 'execution_health', icon: <Activity className="w-4 h-4" /> },
-  { command: 'plan-prompt-bloat', description: 'Pulse review and bounded repair for oversized or duplicated plan prompts', kind: 'engineering-review', focus: 'plan_orchestration_integrity', icon: <GitBranch className="w-4 h-4" /> },
+  { command: 'plan-prompt-bloat', description: 'Review prompt size, duplication, and prompt-engineering quality', kind: 'engineering-review', focus: 'plan_orchestration_integrity', icon: <GitBranch className="w-4 h-4" /> },
   { command: 'pulse-review-validation-contract', description: 'Review pre-validation and safely simplify contracts that do not protect real outcomes', kind: 'engineering-review', focus: 'validation_contract_health', icon: <CheckCircle className="w-4 h-4" /> },
   { command: 'pulse-review-report-quality', description: 'Review report truthfulness and apply bounded safe report fixes', kind: 'engineering-review', focus: 'report_quality_truth', icon: <FileText className="w-4 h-4" /> },
   { command: 'pulse-review-evaluation-quality', description: 'Review evaluation truth and apply bounded safe evaluation fixes', kind: 'engineering-review', focus: 'evaluation_quality_truth', icon: <CheckCircle className="w-4 h-4" /> },
@@ -84,11 +84,14 @@ const focusedPulseReviewCommands: CommandDefinition[] = [
   source: 'builtin',
   execute: (ctx: CommandContext) => {
     const runFolder = ctx.getWorkflowStore().selectedRunFolder
+    const forcedFocus = command === 'plan-prompt-bloat'
+      ? 'Manual Pulse review focus: plan_orchestration_integrity. Run the complete prompt-contract review: call read_skill(skills=[{"name":"builder-reference","path":"references/step-description.md"}]), call get_plan_prompt_health, and assess the authored step descriptions and validation schemas against that guide. Report semantic prompt-quality failures separately from mechanical size or exact-duplication signals; a short prompt can still be poor and a long prompt can be justified.'
+      : `Manual Pulse review focus: ${focus}. Prioritize this focus and preserve the normal lightweight safety scan.`
     submitGuidedWorkflowCommand(ctx, kind, {
       runFolder,
       background: true,
       displayName: command,
-      forcedFocus: `Manual Pulse review focus: ${focus}. Prioritize this focus and preserve the normal lightweight safety scan.`,
+      forcedFocus,
       repairAfterReview: true,
     })
   },
@@ -109,39 +112,6 @@ export const builtinCommands: CommandDefinition[] = [
       // conversation so its completion notification can resume synthesis and
       // persist the final open findings.
       submitGuidedWorkflowCommand(ctx, 'design-plan')
-    }
-  },
-  {
-    // TEMPORARY (PLAT-259): manual live-reverify diagnostic for the `branch`
-    // step type. Remove this entry, its backend guidance kind
-    // (cmd/server/guidance/guidance.go's "verify-branch-step"), and
-    // templates/review/verify-branch-step.md once confirmed working.
-    command: 'verify-branch-step',
-    description: '[TEMP] Verify a real branch step persists, executes, logs, and navigates correctly',
-    icon: <CheckCircle className="w-4 h-4" />,
-    modes: ['workflow'],
-    requiredWorkflowMode: 'plan',
-    requiredWorkshopMode: ['workshop', 'run'],
-    source: 'builtin',
-    execute: (ctx) => {
-      submitGuidedWorkflowCommand(ctx, 'verify-branch-step')
-    }
-  },
-  {
-    // TEMPORARY (PLAT-259): reclassifies pre-split routing steps onto the
-    // new routing/branch semantics. Remove this entry, its backend guidance
-    // kind (cmd/server/guidance/guidance.go's "migrate-routing-to-branch"),
-    // and templates/review/migrate-routing-to-branch.md once confirmed
-    // working.
-    command: 'migrate-routing-to-branch',
-    description: '[TEMP] Convert existing routing steps to branch where appropriate and check route best practices',
-    icon: <GitBranch className="w-4 h-4" />,
-    modes: ['workflow'],
-    requiredWorkflowMode: 'plan',
-    requiredWorkshopMode: ['workshop'],
-    source: 'builtin',
-    execute: (ctx) => {
-      submitGuidedWorkflowCommand(ctx, 'migrate-routing-to-branch')
     }
   },
   {

@@ -981,6 +981,11 @@ func (hcpo *StepBasedWorkflowOrchestrator) execScriptedScript(
 	// workspace root in that case too); scripts must treat "" as "not
 	// run-scoped," not assume a folder exists.
 	extraEnv["RUN_FOLDER"] = hcpo.selectedRunFolder
+	// Orchestrator routes may add instructions at dispatch time. The saved-script
+	// fast path never renders the cloned step description, so expose that dynamic
+	// contract explicitly in this child process. This is context-local and cannot
+	// leak between concurrently running todo routes.
+	extraEnv = appendScriptedDelegationEnv(ctx, extraEnv)
 
 	envKeys := make([]string, 0, len(extraEnv))
 	for k := range extraEnv {

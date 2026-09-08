@@ -9,6 +9,31 @@ import (
 	"time"
 )
 
+func TestWorkflowStepAutoNotificationDelay(t *testing.T) {
+	now := time.Date(2026, 9, 8, 10, 0, 0, 0, time.UTC)
+	youngStep := BackgroundAgentSnapshot{
+		ID:        "workflow-step-rds-session-timing",
+		Kind:      "workflow_step",
+		CreatedAt: now.Add(-3 * time.Second),
+	}
+	if got, want := workflowStepAutoNotificationDelay(youngStep, now), 17*time.Second; got != want {
+		t.Fatalf("young step delay = %s, want %s", got, want)
+	}
+
+	oldStep := youngStep
+	oldStep.CreatedAt = now.Add(-minimumWorkflowStepAutoNotificationAge)
+	if got := workflowStepAutoNotificationDelay(oldStep, now); got != 0 {
+		t.Fatalf("old step delay = %s, want immediate notification", got)
+	}
+
+	backgroundTask := youngStep
+	backgroundTask.ID = "generic-research"
+	backgroundTask.Kind = "generic_agent"
+	if got := workflowStepAutoNotificationDelay(backgroundTask, now); got != 0 {
+		t.Fatalf("non-step delay = %s, want immediate notification", got)
+	}
+}
+
 func TestWorkshopExecutionNotifierSuppressesRepeatedMessageSequenceParentFailure(t *testing.T) {
 	registry := NewBackgroundAgentRegistry()
 	api := &StreamingAPI{bgAgentRegistry: registry}

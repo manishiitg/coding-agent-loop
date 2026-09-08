@@ -350,6 +350,26 @@ func TestPulseReviewFixerDocsAreNamedAndLoadable(t *testing.T) {
 	}
 }
 
+func TestPromptContractReviewsRequireStepDescriptionRubric(t *testing.T) {
+	const rubricCall = `read_skill(skills=[{"name":"builder-reference","path":"references/step-description.md"}])`
+	prompts := map[string]string{
+		"pulse-review-fixer": RenderSystemDoc("pulse-review-fixer"),
+	}
+	opsReview, err := renderKind("ops-review", tmplData{})
+	if err != nil {
+		t.Fatalf("render ops-review: %v", err)
+	}
+	prompts["ops-review"] = opsReview
+	for kind, prompt := range prompts {
+		if !strings.Contains(prompt, rubricCall) {
+			t.Fatalf("%s does not require the canonical prompt-engineering rubric", kind)
+		}
+		if !strings.Contains(prompt, "short") || !strings.Contains(prompt, "semantic") {
+			t.Fatalf("%s does not distinguish semantic quality from size-only triage", kind)
+		}
+	}
+}
+
 func TestEngineeringReviewUsesTheCanonicalReviewOnlySequence(t *testing.T) {
 	raw, err := os.ReadFile("templates/improve/engineering-review.md")
 	if err != nil {

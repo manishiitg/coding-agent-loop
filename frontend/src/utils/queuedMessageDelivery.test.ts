@@ -6,18 +6,17 @@ const AUTO = '[AUTO-NOTIFICATION]'
 const running = {
   isStreaming: true,
   hasSession: true,
-  isWorkflowMode: false,
-  isTmuxCLIProvider: false,
+  canUseLiveQuery: false,
   canSteer: false,
 }
 
 describe('routeForQueuedMessage', () => {
-  it('keeps workflow messages queued while the current turn is running', () => {
-    expect(routeForQueuedMessage({ ...running, isWorkflowMode: true })).toBe('wait')
+  it('delivers a retained coding-agent message through the live query route', () => {
+    expect(routeForQueuedMessage({ ...running, canUseLiveQuery: true })).toBe('live-query')
   })
 
-  it('keeps a busy coding CLI queued even when steer is available', () => {
-    expect(routeForQueuedMessage({ ...running, isTmuxCLIProvider: true, canSteer: true })).toBe('wait')
+  it('prefers a coding CLI native transport over API steering', () => {
+    expect(routeForQueuedMessage({ ...running, canUseLiveQuery: true, canSteer: true })).toBe('live-query')
   })
 
   it('steers an API provider that has a live turn', () => {
@@ -29,11 +28,11 @@ describe('routeForQueuedMessage', () => {
   })
 
   it('waits when idle — that is the drain\'s job, not a live path', () => {
-    expect(routeForQueuedMessage({ ...running, isStreaming: false, isWorkflowMode: true })).toBe('wait')
+    expect(routeForQueuedMessage({ ...running, isStreaming: false, canUseLiveQuery: true })).toBe('wait')
   })
 
   it('waits with no session to inject into', () => {
-    expect(routeForQueuedMessage({ ...running, hasSession: false, isWorkflowMode: true })).toBe('wait')
+    expect(routeForQueuedMessage({ ...running, hasSession: false, canUseLiveQuery: true })).toBe('wait')
   })
 })
 

@@ -3,19 +3,17 @@
  *
  * There are two live-delivery mechanisms and they are not interchangeable:
  *
- * - `live-query` — POST /api/query with preferLiveInput. Kept as an explicit
- *   route type for callers that know a retained CLI is ready, but the automatic
- *   queue drain does not choose it while a turn is running. A CLI may be inside
- *   a tool transaction and unable to acknowledge injected input; treating that
- *   temporary busy state as a failed chat request produced user-visible 409s.
+ * - `live-query` — POST /api/query with preferLiveInput. Single-entry routing
+ *   for retained coding CLIs and interactive workflow chats: the backend sends
+ *   to the provider's native live-input transport and owns turn-boundary races.
  * - `steer` — agentApi.sendLiveInput, injecting into an in-flight API-provider
  *   turn. This is what the steer button on a queued chip does. Deliberately not
  *   used for coding CLIs, which route through /api/query instead.
  * - `wait` — no live path; the queue drain sends it once the turn ends.
  *
- * Messages for workflow/tmux CLI chats remain queued until the current turn is
- * idle, then the normal queue drain starts the next turn. API providers with an
- * explicit steer capability can still accept a mid-turn steer.
+ * Structured workflow-step turns are excluded by the caller because they have
+ * no retained process. API providers with an explicit steer capability use the
+ * separate steer endpoint.
  *
  * Auto-notifications are never delivered mid-turn. Interrupting a running agent
  * with step-completion noise is not worth it, and they lose nothing by waiting.
@@ -25,14 +23,13 @@ export type QueuedMessageRoute = 'live-query' | 'steer' | 'wait'
 export function routeForQueuedMessage(params: {
   isStreaming: boolean
   hasSession: boolean
-  isWorkflowMode: boolean
-  isTmuxCLIProvider: boolean
+  canUseLiveQuery: boolean
   canSteer: boolean
 }): QueuedMessageRoute {
-  const { isStreaming, hasSession, isWorkflowMode, isTmuxCLIProvider, canSteer } = params
+  const { isStreaming, hasSession, canUseLiveQuery, canSteer } = params
   // Only the mid-turn case is decided here. An idle chat is the queue drain's job.
   if (!isStreaming || !hasSession) return 'wait'
-  if (isTmuxCLIProvider || isWorkflowMode) return 'wait'
+  if (canUseLiveQuery) return 'live-query'
   if (canSteer) return 'steer'
   return 'wait'
 }

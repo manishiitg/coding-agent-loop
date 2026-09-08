@@ -98,6 +98,22 @@ Prompt-contract consolidation follows the same boundary: use
 shared policy/DB/browser/validation prose has accumulated. The reviewer first
 decides whether the text is actually extractable; a multi-step migration needs
 an approved `technical-decision-prompt-contract-consolidation-...` request.
+
+When `/plan-prompt-bloat` explicitly selects this focus, it is a full
+prompt-contract review rather than a character-count check. Call
+`read_skill(skills=[{"name":"builder-reference","path":"references/step-description.md"}])`
+and call
+`get_plan_prompt_health` once. Then assess the authored descriptions and their
+validation schemas against the guide: clear objective and success boundary;
+necessary inputs, evidence, scope, authority, and output location; WHAT in the
+description versus reusable HOW in accessible skills/learnings; output shape in
+a light, load-bearing schema; precise language without vague qualifiers or
+micromanaged procedure; no conflicting or repeated instructions; and no shared
+policy copied across steps. Report semantic guide violations separately from
+mechanical size and exact-duplicate signals. A short description can fail this
+review, while a long safety-critical or adaptive description can pass. Do not
+rewrite a prompt merely to reduce its character count.
+
 The Fixer may apply only an approved phased extraction, preserving exact step
 inputs, outputs, validation, routes, and side-effect ordering, then waits for a
 post-change producing run. It must never bulk-truncate old prompts to satisfy

@@ -1394,6 +1394,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) createExecutionOnlyAgent(ctx context.
 			dbAbsPath = filepath.Join(GetPromptDocsRoot(), hcpo.GetWorkspacePath(), DBFolderName, "db.sqlite")
 		}
 		workspaceEnv := hcpo.codeRuntimeEnv(hcpo.snapshotWorkspaceEnv())
+		workspaceEnv = appendScriptedDelegationEnv(ctx, workspaceEnv)
 		if directDBAccess && hcpo.usesCodeTree() {
 			common.SetSessionWorkingDir(config.MCPSessionID, hcpo.scriptedWorkingDir(stepID, stepExecutionPath))
 		}

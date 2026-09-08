@@ -500,6 +500,11 @@ func TestWorkflowStepStartAndCompletionNotifyMainAgent(t *testing.T) {
 	if !startNotified {
 		t.Fatal("workflow-step start should be marked handled")
 	}
+	// This test covers completion delivery rather than the separate minimum-age
+	// policy. Age the step past that threshold so delivery remains immediate.
+	started.mu.Lock()
+	started.CreatedAt = time.Now().Add(-minimumWorkflowStepAutoNotificationAge)
+	started.mu.Unlock()
 
 	notifier.OnExecutionComplete(execID, "Step -> cdp-test", "step completed", map[string]string{
 		"execution_type": "workflow-step",

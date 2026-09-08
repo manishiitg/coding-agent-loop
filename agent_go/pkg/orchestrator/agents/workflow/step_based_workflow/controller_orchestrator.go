@@ -1065,6 +1065,17 @@ func (hcpo *StepBasedWorkflowOrchestrator) executePredefinedSubAgent(
 	}
 	subAgentCtx = virtualtools.WithBackgroundAgentID(subAgentCtx, subAgentNotifID)
 	subAgentCtx = context.WithValue(subAgentCtx, events.ParentExecutionIDKey, subAgentNotifID)
+	// A saved scripted route does not consume the augmented step description:
+	// its fast path goes directly from main.py to the shell. Carry the dynamic
+	// delegation separately so both that fast path and any authoring/repair
+	// agent receive the exact per-call instructions without changing the stable
+	// positional dependency arguments.
+	subAgentCtx = withScriptedDelegationContext(
+		subAgentCtx,
+		route.RouteID,
+		response.TodoIDToExecute,
+		response.InstructionsToSubAgent,
+	)
 
 	// Bind this route's event identity to its own execution context. This also
 	// composes correctly when the route itself is a nested todo_task.

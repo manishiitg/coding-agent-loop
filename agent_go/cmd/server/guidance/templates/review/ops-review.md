@@ -188,6 +188,12 @@ Use `{{.RunFolder}}` as the primary run folder.{{end}}
 
 ### Prompt-contract health
 
+Call
+`read_skill(skills=[{"name":"builder-reference","path":"references/step-description.md"}])`
+before this check. Its
+prompt-engineering contract is the review rubric, including for short prompts;
+the size report below is only a triage signal and cannot establish quality.
+
 Before making a prompt-bloat judgment, call `get_plan_prompt_health` once.
 It reports authored description sizes and long verbatim duplicate paragraphs
 without injecting the full plan into this review. Inspect only the exact

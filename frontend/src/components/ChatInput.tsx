@@ -1720,10 +1720,10 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     const route = routeForQueuedMessage({
       isStreaming,
       hasSession: Boolean(tabSessionId),
-      // Structured workflow chats have no live process to inject into. Keep
-      // their follow-up queued until the current JSON turn reaches idle.
-      isWorkflowMode: isWorkflowMode && !currentChatUsesStructuredTransport,
-      isTmuxCLIProvider: mainAgentIsTmuxCLI && !currentChatUsesStructuredTransport,
+      // This is capability-derived and false for structured workflow steps.
+      // Interactive Claude, Codex, Cursor, Pi, and future coding CLIs all use
+      // the same backend-owned native live-input route.
+      canUseLiveQuery: routeLiveInputToCLI,
       canSteer,
     })
     if (route === 'wait') return
@@ -1749,13 +1749,11 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
   }, [
     activeTabId,
     canSteer,
-    currentChatUsesStructuredTransport,
     handleSteerQueuedMessage,
     isStreaming,
-    isWorkflowMode,
-    mainAgentIsTmuxCLI,
     onSubmit,
     queuedMessages,
+    routeLiveInputToCLI,
     setTabConfig,
     tabSessionId,
   ])
@@ -2359,12 +2357,18 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
       }, 0)
     }
 
-    // Queue-aware onSubmit. A retained coding CLI can be temporarily unable to
-    // acknowledge input while it is inside a tool transaction. Keep every
-    // follow-up in the ordered tab queue until the active turn reaches idle.
+    // Retained coding CLIs accept live follow-ups through their provider-native
+    // transport. Only non-interactive/structured turns use the local queue.
     const queueAwareOnSubmit = (query: string) => {
       const trimmed = query?.trim()
       if (!trimmed) return
+      // SINGLE-ENTRY routing: the backend resolves tmux liveness, provider input
+      // semantics, and any turn-boundary fallback. Do not duplicate that policy
+      // in the command UI.
+      if (routeLiveInputToCLI) {
+        onSubmit(trimmed, { preferLiveInput: true })
+        return
+      }
       if (isStreaming) {
         const currentQueued = tabConfig?.queuedMessages || []
         setTabConfig(activeTabId, {
@@ -2372,13 +2376,6 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
           queuedMessages: [...currentQueued, trimmed]
         })
         addToast('Builder is busy — message queued for the next turn', 'info')
-        return
-      }
-      // tmux-transport (CLI): SINGLE-ENTRY routing — always /api/query. The backend
-      // attempts the minimal live-input path first and falls back to a full
-      // resume/new turn when the retained CLI is no longer available.
-      if (routeLiveInputToCLI) {
-        onSubmit(trimmed, { preferLiveInput: true })
         return
       }
       onSubmit(trimmed)
@@ -2468,20 +2465,19 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
   // routeSubmit is the single send-routing decision shared by Enter (handleKeyDown)
   // and the Send button (handleSubmit).
   //
-  // TMUX-TRANSPORT (CLI coding agent) — idle messages use the normal single-entry
-  // backend route. While a turn is streaming, follow-ups stay in the ordered tab
-  // queue. This avoids racing Cursor while it is inside a tool transaction and
-  // prevents a temporary delivery timeout from becoming a fatal 409 in the chat.
+  // INTERACTIVE CODING CLI — every message uses the normal single-entry backend
+  // route, including while a turn is running. Claude, Codex, and interactive
+  // Cursor sessions each own their native live-vs-next-turn behavior.
   //
-  // NON-tmux (API/LLM): isStreaming-based steer-vs-queue, unchanged.
+  // STRUCTURED / NON-INTERACTIVE — keep the ordinary steer-or-queue behavior.
   const routeSubmit = useCallback(async (query: string) => {
     const trimmed = query?.trim() || ''
     if (!trimmed) return
 
-    // A follow-up must never race the active turn or be injected into an
-    // uncertain tmux/tool transaction window. Keep it durably in the tab queue;
-    // ChatArea flushes that queue in submission order once the turn is idle.
-    if (isStreaming) {
+    // A retained CLI is explicitly designed to receive input while busy, so it
+    // continues into the live-delivery branch below. Structured workflow-step
+    // turns never satisfy routeLiveInputToCLI and remain queued.
+    if (isStreaming && !routeLiveInputToCLI) {
       clearInputState()
       queueStreamingMessage(query)
       addToast('Agent is busy — message queued for the next turn', 'info')
@@ -2571,7 +2567,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
       const reason = getSubmitBlockReason()
       if (reason) addToast(reason, 'info')
     }
-  }, [routeLiveInputToCLI, hasSubmitTarget, activeTabId, effectiveProviderForSteer, onSubmit, scheduleLiveMessageDeliveryClear, clearInputState, getSubmitBlockReason, addToast, canSubmitImmediately, canSubmit, isStreaming, queueStreamingMessage])
+  }, [routeLiveInputToCLI, hasSubmitTarget, activeTabId, inputText, chatPastedAttachments, effectiveProviderForSteer, onSubmit, scheduleLiveMessageDeliveryClear, clearInputState, setTabConfig, getSubmitBlockReason, addToast, canSubmitImmediately, canSubmit, isStreaming, queueStreamingMessage])
 
   const handleKeyDown = useCallback((e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     // If any selection dialog is open, let it handle keyboard events

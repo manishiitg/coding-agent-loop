@@ -207,7 +207,7 @@ func ExecuteShellCommand(c *gin.Context) {
 	// MCP_*    — internal API URLs and tokens
 	// SECRET_* — user-provided credentials and secrets
 	// VAR_*    — workflow variables (non-secret config values like user IDs, sheet IDs)
-	// STEP_*   — per-step execution paths (STEP_OUTPUT_DIR, STEP_EXECUTION_DIR)
+	// STEP_*   — per-step execution paths and trusted route delegation context
 	// DB_PATH  — absolute path to the workflow's SQLite database
 	// SCRIPT_* — script control flags (SCRIPT_VERBOSE)
 	// This applies to both isolated and non-isolated execution paths

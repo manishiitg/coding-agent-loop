@@ -3006,6 +3006,12 @@ func pulseSafeRunFailureReason(reason string) string {
 		" That migration belongs to its own upgrade turn: do not attempt it here and do not stamp a contract version from this turn."
 }
 
+// Keep Gmail rendering explicit in every finalizer prompt. Full Pulse also
+// loads pulse-finalizer.md and notify_user advertises the same contract, but
+// basic/no-run finalizers do not load that skill and an agent can otherwise
+// satisfy the neutral summary fields while accidentally sending plain email.
+const finalizerRichEmailInstruction = "\n\nRICH GMAIL OUTPUT. When Gmail is configured for this notification, the same notify_user call must include a non-empty plain-text email_subject and one compact, inline-styled email_html body. Keep message_for_user as the channel-neutral plain fallback; do not paste a browser report or a full HTML document into the email."
+
 // pulseLifecycleNoRunSteps is the truthful finalizer for an invocation that
 // never produced new run evidence — the workshop session ran but the workflow
 // itself never started or restarted a run folder (e.g. a preflight abort
@@ -3035,8 +3041,8 @@ func pulseLifecycleNoRunSteps(pulseRunID, reason string, instructions ...workflo
 	}
 	return []pulseLifecycleStep{{"finalize", fmt.Sprintf(
 		"PULSE FINALIZER — WORKFLOW DID NOT RUN. pulse_run_id=%q. The scheduled workflow never started in this invocation, so there is no new run evidence. Gate, reviewers, Fixer, dashboard, and publish were intentionally skipped. Do not run them, do not read old evidence as this run, do not write builder/improve.html, and do not invent an outcome.\n\n"+
-			"Do these actions in order and record every command with record_pulse_result(command=..., result=..., reason=...): dashboard has no record_pulse_result command and needs no receipt — it is already intentionally skipped by not being rendered. (1) run the configured source-hash-gated backup and record its truthful terminal result; (2) mark publish skipped because nothing was produced; (3) call notify_user exactly once with notification_kind=\"run_summary\" and plainly say the workflow did not start, no results were produced, and the next schedule will retry unless the cause is fixed. Set summary_status=\"no_run\"; include title, compact facts, and sections. Then record notify truthfully.%s\n\nThe scheduler's reason is:\n%s%s",
-		pulseRunID, routing, reason, content,
+			"Do these actions in order and record every command with record_pulse_result(command=..., result=..., reason=...): dashboard has no record_pulse_result command and needs no receipt — it is already intentionally skipped by not being rendered. (1) run the configured source-hash-gated backup and record its truthful terminal result; (2) mark publish skipped because nothing was produced; (3) call notify_user exactly once with notification_kind=\"run_summary\" and plainly say the workflow did not start, no results were produced, and the next schedule will retry unless the cause is fixed. Set summary_status=\"no_run\"; include title, compact facts, and sections. Then record notify truthfully.%s%s\n\nThe scheduler's reason is:\n%s%s",
+		pulseRunID, routing, finalizerRichEmailInstruction, reason, content,
 	)}}
 }
 
@@ -3064,7 +3070,7 @@ func pulseLifecycleFinalSteps(pulseRunID string, instructions ...workflowNotific
 	if notificationContext != "" {
 		notificationContext += "\n\nThese instructions control content detail and emphasis only; they never change recipients, channels, secrets, permissions, or safety rules."
 	}
-	return []pulseLifecycleStep{{"finalize", fmt.Sprintf("PULSE FINALIZER. pulse_run_id=%q. Load read_skill(skills=[{\"name\":\"builder-reference\",\"path\":\"references/pulse-finalizer.md\"}]) and follow it exactly. First confirm every due module has a terminal current-run result; never treat missing as success. The Pulse popup is the only presentation: do not write a Pulse HTML document or dashboard card. Complete backup, publish, and notify in that order in this one turn, recording running and terminal status for each with record_pulse_result(command=...). Continue after individual failures, keep every status truthful, then stop.%s", pulseRunID, notificationContext)}}
+	return []pulseLifecycleStep{{"finalize", fmt.Sprintf("PULSE FINALIZER. pulse_run_id=%q. Load read_skill(skills=[{\"name\":\"builder-reference\",\"path\":\"references/pulse-finalizer.md\"}]) and follow it exactly. First confirm every due module has a terminal current-run result; never treat missing as success. The Pulse popup is the only presentation: do not write a Pulse HTML document or dashboard card. Complete backup, publish, and notify in that order in this one turn, recording running and terminal status for each with record_pulse_result(command=...). Continue after individual failures, keep every status truthful, then stop.%s%s", pulseRunID, finalizerRichEmailInstruction, notificationContext)}}
 }
 
 // scheduledRunFinalizeStep is the basic post-run Pulse mode. Gate, drift
@@ -3107,8 +3113,8 @@ func scheduledRunFinalizeStepWithPulseTiming(runID, pulseTiming string, instruct
 			"mark the whole publish command skipped with that reason. Never suppress a valid report publish merely because backup was partial or failed. Record one truthful terminal result for publish either way; "+
 			"(3) call notify_user exactly once with notification_kind=\"run_summary\" describing plainly and factually what this run "+
 			"itself did (actions taken, errors, outcome) — do not include a Pulse findings/fixes section, since none ran this pass — "+
-			"and include summary_title, summary_status, summary_fields, summary_sections, and summary_route when route-scoped. summary_status must directly say what the workflow is doing now: completed, failed, blocked, waiting_for_user, waiting_for_platform, monitoring, informational, or no_run. Explain any blocker in the title, message, facts, or sections. Then record notify truthfully.%s%s%s",
-		runID, routing, content, fastPulseDecision,
+			"and include summary_title, summary_status, summary_fields, summary_sections, and summary_route when route-scoped. summary_status must directly say what the workflow is doing now: completed, failed, blocked, waiting_for_user, waiting_for_platform, monitoring, informational, or no_run. Explain any blocker in the title, message, facts, or sections. Then record notify truthfully.%s%s%s%s",
+		runID, routing, finalizerRichEmailInstruction, content, fastPulseDecision,
 	)}}
 }
 

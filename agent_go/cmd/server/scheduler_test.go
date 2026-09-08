@@ -2076,6 +2076,23 @@ func TestPostRunMonitorFinalStepsIncludesSplitNotificationRouting(t *testing.T) 
 	}
 }
 
+func TestEveryRunFinalizerRequiresRichGmailWhenConfigured(t *testing.T) {
+	finalizers := map[string]string{
+		"full Pulse":  pulseStepQueryByLabel(t, pulseLifecycleFinalSteps("pulse-run-1"), "finalize"),
+		"basic Pulse": scheduledRunFinalizeStep("run-1")[0].query,
+		"no run":      pulseLifecycleNoRunSteps("pulse-run-1", "preflight failed")[0].query,
+	}
+	for name, prompt := range finalizers {
+		t.Run(name, func(t *testing.T) {
+			for _, required := range []string{"RICH GMAIL OUTPUT", "email_subject", "email_html", "message_for_user", "inline-styled"} {
+				if !strings.Contains(prompt, required) {
+					t.Fatalf("finalizer prompt missing rich Gmail requirement %q:\n%s", required, prompt)
+				}
+			}
+		})
+	}
+}
+
 // A Pulse lifecycle turn is tagged and elevated to Workshop while retaining the
 // workflow's Builder llm_config. pulse_llm is applied by the workshop to the
 // background review agents the tagged turn launches.

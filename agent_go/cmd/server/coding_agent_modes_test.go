@@ -271,6 +271,10 @@ func TestTopLevelTierModelAppliesWhenChatLLMIsMissing(t *testing.T) {
 
 func TestProviderProfileOverridesStaleExplicitChatLLM(t *testing.T) {
 	t.Setenv("WORKSPACE_API_URL", "http://127.0.0.1:9999")
+	defaults, ok := llmproviders.GetCodingAgentDefaultTierModels(llmproviders.ProviderCodexCLI)
+	if !ok {
+		t.Fatal("expected Codex CLI coding-agent defaults")
+	}
 	req := QueryRequest{
 		Provider: "openrouter",
 		ModelID:  "grok-1",
@@ -293,8 +297,8 @@ func TestProviderProfileOverridesStaleExplicitChatLLM(t *testing.T) {
 	if !applied {
 		t.Fatal("provider profile did not override the stale explicit chat LLM")
 	}
-	if gotProvider != "codex-cli" || gotModel != "gpt-5.6-sol" {
-		t.Fatalf("resolved chat LLM = %s/%s, want codex-cli/gpt-5.6-sol", gotProvider, gotModel)
+	if gotProvider != defaults.Builder.Provider || gotModel != defaults.Builder.ModelID {
+		t.Fatalf("resolved chat LLM = %s/%s, want registered Codex Builder default %s/%s", gotProvider, gotModel, defaults.Builder.Provider, defaults.Builder.ModelID)
 	}
 }
 

@@ -88,7 +88,7 @@ func (g *GmailService) computeAuthStatusGog(ctx context.Context, gogPath string,
 		gogPath = "gog"
 	}
 
-	st := GmailAuthStatus{}
+	st := GmailAuthStatus{Backend: "gog"}
 	if _, err := exec.LookPath(gogPath); err != nil {
 		st.Detail = "gog binary not found on PATH — install gogcli (brew install openclaw/tap/gogcli)"
 		return st

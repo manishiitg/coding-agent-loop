@@ -18,6 +18,13 @@ function formatGmailScope(scope: string): string {
   return parts[parts.length - 1] || scope
 }
 
+// Names the CLI backend a GmailAuthStatus was computed against, so the UI
+// never assumes gws — a deployment may be configured for gog instead.
+function gmailBackendLabel(backend: string | undefined): { name: string; install: string } {
+  if (backend === 'gog') return { name: 'gog', install: 'gogcli' }
+  return { name: 'gws', install: '@googleworkspace/cli' }
+}
+
 type GmailNotificationsBots = Pick<WorkflowBots,
   | 'readOnly'
   | 'gmailOpen' | 'setGmailOpen' | 'gmailConfig' | 'setGmailConfig' | 'gmailBlockedText' | 'setGmailBlockedText'
@@ -162,18 +169,18 @@ export function GmailNotifications({ bots }: { bots: GmailNotificationsBots }) {
                 <div className="flex items-center justify-between gap-2">
                   <div>
                     <h4 className="text-sm font-medium">Connection</h4>
-                    <p className="mt-0.5 text-xs text-muted-foreground">Google Workspace CLI on the server host.</p>
+                    <p className="mt-0.5 text-xs text-muted-foreground">{gmailBackendLabel(gmailConfig.auth.backend).name} CLI on the server host.</p>
                   </div>
                   <div className="flex items-center gap-2 text-xs">
                     {gmailChecking ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <span className={`h-2 w-2 rounded-full ${gmailConfig.auth.authenticated && gmailConfig.auth.has_gmail_scope ? 'bg-green-500' : 'bg-amber-500'}`} />}
-                    <span>{!gmailConfig.auth.gws_installed ? 'gws not installed' : !gmailConfig.auth.authenticated ? 'Not connected' : !gmailConfig.auth.has_gmail_scope ? 'Missing Gmail scope' : 'Connected'}</span>
+                    <span>{!gmailConfig.auth.gws_installed ? `${gmailBackendLabel(gmailConfig.auth.backend).name} not installed` : !gmailConfig.auth.authenticated ? 'Not connected' : !gmailConfig.auth.has_gmail_scope ? 'Missing Gmail scope' : 'Connected'}</span>
                     <button onClick={() => loadGmail(true)} disabled={gmailChecking} className="rounded p-1 text-muted-foreground hover:text-foreground" aria-label="Refresh Gmail connection"><RotateCcw className="h-3.5 w-3.5" /></button>
                   </div>
                 </div>
               </Card>
               {!(gmailConfig.auth.authenticated && gmailConfig.auth.has_gmail_scope) && gmailConnections.length === 0 && (
                 <Card className="border-amber-300 bg-amber-50 p-4 text-xs text-amber-900 dark:border-amber-700 dark:bg-amber-900/20 dark:text-amber-100">
-                  <div className="flex gap-2"><AlertTriangle className="h-4 w-4 flex-shrink-0" /><div><strong>No account connected yet.</strong> Add a sending account below and sign in with Google. <code>@googleworkspace/cli</code> must be installed on the server host.</div></div>
+                  <div className="flex gap-2"><AlertTriangle className="h-4 w-4 flex-shrink-0" /><div><strong>No account connected yet.</strong> Add a sending account below and sign in with Google. <code>{gmailBackendLabel(gmailConfig.auth.backend).install}</code> must be installed on the server host.</div></div>
                 </Card>
               )}
 

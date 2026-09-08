@@ -929,6 +929,8 @@ export interface SlackTestReplyResponse {
 // auto-detected connection status.
 export interface GmailAuthStatus {
   gws_installed: boolean
+  /** Which CLI backend this status was computed against: "gws" or "gog". */
+  backend?: string
   authenticated: boolean
   has_gmail_scope: boolean
   scopes?: string[]

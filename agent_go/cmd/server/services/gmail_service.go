@@ -313,7 +313,11 @@ func (g *GmailService) SaveConfig(ctx context.Context, cfg *GmailConfig) error {
 // the user inspecting any files: is the gws binary present, is it
 // authenticated, and does the account hold a Gmail send scope.
 type GmailAuthStatus struct {
-	GwsInstalled  bool     `json:"gws_installed"`
+	GwsInstalled bool `json:"gws_installed"`
+	// Backend names which CLI this status was computed against — "gws" or
+	// "gog" — so the UI can name the binary it actually checked for instead
+	// of assuming gws. Always set, even when GwsInstalled is false.
+	Backend       string   `json:"backend,omitempty"`
 	Authenticated bool     `json:"authenticated"`
 	HasGmailScope bool     `json:"has_gmail_scope"`
 	Scopes        []string `json:"scopes,omitempty"`
@@ -401,7 +405,7 @@ func (g *GmailService) computeAuthStatus(ctx context.Context, gwsPath string, us
 		gwsPath = "gws"
 	}
 
-	st := GmailAuthStatus{}
+	st := GmailAuthStatus{Backend: "gws"}
 	if _, err := exec.LookPath(gwsPath); err != nil {
 		st.Detail = "gws binary not found on PATH — install the Google Workspace CLI"
 		return st

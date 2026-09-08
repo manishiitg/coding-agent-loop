@@ -1413,6 +1413,11 @@ export interface ChatHistorySession {
   status?: string;
   query?: string;
   user_id?: string;
+  username?: string;
+  /** False for another collaborator's workflow Builder transcript. */
+  can_resume?: boolean;
+  /** Workflow owners may remove shared history; other users only their own. */
+  can_delete?: boolean;
   workspace_path?: string;
   conversation_path?: string;
   created_at?: string;

@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { ArrowUpRight, Bot, CalendarClock, ChevronDown, ChevronRight, Code2, Loader2, MessageSquare, Paperclip, Trash2, type LucideIcon } from 'lucide-react'
+import { ArrowUpRight, Bot, CalendarClock, ChevronDown, ChevronRight, Code2, Loader2, MessageSquare, Paperclip, Trash2, UserRound, type LucideIcon } from 'lucide-react'
 import { agentApi } from '../services/api'
 import { schedulerApi } from '../api/scheduler'
 import {
@@ -646,8 +646,12 @@ export const PreviousChatHistoryPanel: React.FC<PreviousChatHistoryPanelProps> =
   }, [expandedSessionIds, loadExpandedMessages])
 
   const handleSelect = useCallback((session: ChatHistorySession) => {
+    if (session.can_resume === false) {
+      toggleExpanded(session)
+      return
+    }
     void onSelectSession(session)
-  }, [onSelectSession])
+  }, [onSelectSession, toggleExpanded])
 
   const handleDeleteSession = useCallback(async (session: ChatHistorySession) => {
     const title = chatHistorySessionTitle(session, 80)
@@ -857,6 +861,8 @@ export const PreviousChatHistoryPanel: React.FC<PreviousChatHistoryPanelProps> =
               const hasLoadedMessages = Boolean(expandedMessagesBySession[session.session_id]?.length)
               const runtimeLabel = chatHistoryRuntimeLabel(session)
               const isDeleting = deletingSessionIds.has(session.session_id)
+              const canResume = session.can_resume !== false
+              const canDelete = session.can_delete !== false
               const timeLabel = formatChatTime(session.updated_at || session.created_at)
               const messageCountLabel = formatMessageCount(session.message_count)
 
@@ -890,6 +896,12 @@ export const PreviousChatHistoryPanel: React.FC<PreviousChatHistoryPanelProps> =
                             <span>{messageCountLabel}</span>
                           </span>
                         )}
+                        {session.username && (
+                          <span className="inline-flex min-w-0 max-w-full items-center gap-1 rounded border border-border/70 bg-muted/30 px-1.5 py-0.5">
+                            <UserRound className="h-3 w-3 shrink-0" />
+                            <span className="truncate">{session.username}</span>
+                          </span>
+                        )}
                         {runtimeLabel && (
                           <span className="inline-flex min-w-0 max-w-full items-center gap-1 rounded border border-border/70 bg-muted/30 px-1.5 py-0.5">
                             <Code2 className="h-3 w-3 shrink-0" />
@@ -900,24 +912,32 @@ export const PreviousChatHistoryPanel: React.FC<PreviousChatHistoryPanelProps> =
                     </button>
 
                     <div className="flex shrink-0 items-center gap-1">
-                      <button
-                        type="button"
-                        onClick={() => { void handleDeleteSession(session) }}
-                        disabled={isDeleting}
-                        className="inline-flex items-center gap-1 rounded border border-border bg-background px-2 py-1 text-xs font-medium text-destructive opacity-70 transition-colors hover:bg-destructive/10 group-hover:opacity-100 disabled:cursor-not-allowed disabled:opacity-50"
-                        title="Delete this chat"
-                        aria-label="Delete this chat"
-                      >
-                        {isDeleting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => handleSelect(session)}
-                        className="inline-flex items-center gap-1 rounded border border-border bg-background px-2 py-1 text-xs font-medium text-muted-foreground opacity-80 transition-colors hover:border-primary/40 hover:text-foreground group-hover:opacity-100"
-                      >
-                        <ActionIcon className="h-3.5 w-3.5" />
-                        {!compact && <span>{actionLabel}</span>}
-                      </button>
+                      {canDelete && (
+                        <button
+                          type="button"
+                          onClick={() => { void handleDeleteSession(session) }}
+                          disabled={isDeleting}
+                          className="inline-flex items-center gap-1 rounded border border-border bg-background px-2 py-1 text-xs font-medium text-destructive opacity-70 transition-colors hover:bg-destructive/10 group-hover:opacity-100 disabled:cursor-not-allowed disabled:opacity-50"
+                          title="Delete this chat"
+                          aria-label="Delete this chat"
+                        >
+                          {isDeleting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}
+                        </button>
+                      )}
+                      {canResume ? (
+                        <button
+                          type="button"
+                          onClick={() => handleSelect(session)}
+                          className="inline-flex items-center gap-1 rounded border border-border bg-background px-2 py-1 text-xs font-medium text-muted-foreground opacity-80 transition-colors hover:border-primary/40 hover:text-foreground group-hover:opacity-100"
+                        >
+                          <ActionIcon className="h-3.5 w-3.5" />
+                          {!compact && <span>{actionLabel}</span>}
+                        </button>
+                      ) : (
+                        <span className="inline-flex items-center rounded border border-border/70 bg-muted/30 px-2 py-1 text-[11px] font-medium text-muted-foreground">
+                          View only
+                        </span>
+                      )}
                     </div>
                   </div>
 

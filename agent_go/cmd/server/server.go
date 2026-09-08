@@ -6731,6 +6731,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			convData := map[string]interface{}{
 				"session_id":           persistSessionID,
 				"user_id":              currentUserID,
+				"username":             chatHistoryUsername(currentUserID, ""),
 				"phase_id":             workflowPhaseID,
 				"conversation_history": persistedHistoryForDisk,
 				"updated_at":           time.Now().Format(time.RFC3339),

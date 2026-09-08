@@ -30,6 +30,9 @@ type ChatHistorySession struct {
 	Status           string                      `json:"status"`
 	Query            string                      `json:"query,omitempty"`
 	UserID           string                      `json:"user_id"`
+	Username         string                      `json:"username,omitempty"`
+	CanResume        bool                        `json:"can_resume"`
+	CanDelete        bool                        `json:"can_delete"`
 	WorkspacePath    string                      `json:"workspace_path,omitempty"`
 	ConversationPath string                      `json:"conversation_path"`
 	CreatedAt        string                      `json:"created_at"`
@@ -156,6 +159,8 @@ func (api *StreamingAPI) persistChatConversationToPathWithTerminalSession(sessio
 	now := time.Now()
 	convData := map[string]interface{}{
 		"session_id":           sessionID,
+		"user_id":              userID,
+		"username":             chatHistoryUsername(userID, ""),
 		"agent_mode":           agentMode,
 		"conversation_history": persistedHistory,
 		"updated_at":           now.Format(time.RFC3339),
@@ -249,6 +254,7 @@ func updatePersistedChatHistoryIndex(userID, sessionID, agentMode string, histor
 			Status:           "completed",
 			Query:            query,
 			UserID:           userID,
+			Username:         chatHistoryUsername(userID, ""),
 			WorkspacePath:    chatHistoryWorkspacePathFromConversation(conversationPath),
 			ConversationPath: conversationPath,
 			CreatedAt:        createdAt,
@@ -1694,6 +1700,8 @@ func readLocalChatHistorySession(userID, workspaceRoot, workflowPath string, fil
 func parseLocalChatHistorySession(userID, workspaceRoot, workflowPath, fallbackSessionID, data string, fallbackUpdatedAt time.Time) (ChatHistorySession, bool) {
 	var raw struct {
 		SessionID string                    `json:"session_id"`
+		UserID    string                    `json:"user_id,omitempty"`
+		Username  string                    `json:"username,omitempty"`
 		AgentMode string                    `json:"agent_mode"`
 		Status    string                    `json:"status,omitempty"`
 		Runtime   *ChatHistoryAgentRuntime  `json:"runtime,omitempty"`
@@ -1731,6 +1739,19 @@ func parseLocalChatHistorySession(userID, workspaceRoot, workflowPath, fallbackS
 		query = query[:200] + "..."
 	}
 
+	ownerID := strings.TrimSpace(raw.UserID)
+	if ownerID == "" {
+		// Personal chat roots are already isolated by user, so their owner is
+		// unambiguous. Workflow-scoped legacy transcripts predate user_id and
+		// must stay marked as legacy instead of being attributed to whoever
+		// happened to list the shared folder first.
+		if strings.HasPrefix(strings.Trim(workspaceRoot, "/"), "_users/") {
+			ownerID = userID
+		} else {
+			ownerID = "default"
+		}
+	}
+
 	return ChatHistorySession{
 		SessionID:        raw.SessionID,
 		AgentMode:        raw.AgentMode,
@@ -1738,7 +1759,8 @@ func parseLocalChatHistorySession(userID, workspaceRoot, workflowPath, fallbackS
 		WorkshopMode:     raw.Mode,
 		Status:           raw.Status,
 		Query:            query,
-		UserID:           userID,
+		UserID:           ownerID,
+		Username:         chatHistoryUsername(ownerID, raw.Username),
 		WorkspacePath:    workflowPath,
 		ConversationPath: pathpkg.Join(workspaceRoot, raw.SessionID, "conversation.json"),
 		CreatedAt:        raw.CreatedAt,
@@ -1746,6 +1768,23 @@ func parseLocalChatHistorySession(userID, workspaceRoot, workflowPath, fallbackS
 		MessageCount:     len(raw.History),
 		PreviewMessages:  chatHistoryPreviewMessages(raw.History),
 	}, true
+}
+
+// chatHistoryUsername resolves a durable author id to the current account
+// name. The stored name is only a fallback for deleted/renamed accounts; it
+// keeps historical rows understandable without making it an authorization
+// input.
+func chatHistoryUsername(userID, stored string) string {
+	if rec := directoryUserFor(strings.TrimSpace(userID), "", ""); rec != nil {
+		return rec.Username
+	}
+	if stored = strings.TrimSpace(stored); stored != "" {
+		return stored
+	}
+	if strings.TrimSpace(userID) == "default" {
+		return "System / legacy"
+	}
+	return "Former user"
 }
 
 // normalizeChatHistoryWorkshopMode canonicalizes a mode string from any of

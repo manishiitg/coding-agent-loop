@@ -4,11 +4,81 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/manishiitg/coding-agent-loop/agent_go/internal/terminals"
 	mcpagent "github.com/manishiitg/mcpagent/agent"
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 )
+
+func TestDecorateSharedBuilderHistoryShowsAuthorAndProtectsResume(t *testing.T) {
+	t.Setenv("MULTI_USER_MODE", "true")
+	withMemoryUserDirectory(t, `{"users":[{"id":"owner-1","username":"manish","admin":true,"can_create":true,"products":[]},{"id":"member-1","username":"laxmi","can_create":false,"can_edit":true,"products":["agentworks"]}]}`)
+
+	sessions := []ChatHistorySession{
+		{SessionID: "mine", UserID: "member-1"},
+		{SessionID: "theirs", UserID: "owner-1"},
+		{SessionID: "legacy", UserID: "default"},
+	}
+	decorateChatHistorySessions(sessions, "member-1", WorkflowAccessWrite, true)
+
+	if sessions[0].Username != "laxmi" || !sessions[0].CanResume || !sessions[0].CanDelete {
+		t.Fatalf("own session decoration = %#v", sessions[0])
+	}
+	if sessions[1].Username != "manish" || sessions[1].CanResume || sessions[1].CanDelete {
+		t.Fatalf("other collaborator session decoration = %#v", sessions[1])
+	}
+	if sessions[2].Username != "System / legacy" || sessions[2].CanResume || sessions[2].CanDelete {
+		t.Fatalf("legacy session decoration = %#v", sessions[2])
+	}
+
+	decorateChatHistorySessions(sessions, "member-1", WorkflowAccessOwner, true)
+	if sessions[1].CanResume || !sessions[1].CanDelete || !sessions[2].CanResume {
+		t.Fatalf("workflow owner policy not applied: other=%#v legacy=%#v", sessions[1], sessions[2])
+	}
+}
+
+func TestParseWorkflowBuilderHistoryUsesPersistedAuthor(t *testing.T) {
+	t.Setenv("MULTI_USER_MODE", "true")
+	withMemoryUserDirectory(t, `{"users":[{"id":"author-1","username":"yoav","can_create":true,"products":["agentworks"]}]}`)
+
+	session, ok := parseLocalChatHistorySession(
+		"viewer-2",
+		"Workflow/demo",
+		"Workflow/demo",
+		"session-1",
+		`{"session_id":"session-1","user_id":"author-1","username":"old-name","conversation_history":[],"updated_at":"2026-09-08T10:00:00Z"}`,
+		time.Time{},
+	)
+	if !ok {
+		t.Fatal("expected workflow Builder transcript to parse")
+	}
+	if session.UserID != "author-1" || session.Username != "yoav" {
+		t.Fatalf("author = %q/%q, want author-1/yoav", session.UserID, session.Username)
+	}
+
+	legacy, ok := parseLocalChatHistorySession(
+		"viewer-2",
+		"Workflow/demo",
+		"Workflow/demo",
+		"legacy-1",
+		`{"session_id":"legacy-1","conversation_history":[],"updated_at":"2026-09-08T10:00:00Z"}`,
+		time.Time{},
+	)
+	if !ok || legacy.UserID != "default" || legacy.Username != "System / legacy" {
+		t.Fatalf("legacy author = %#v, want stable legacy attribution", legacy)
+	}
+}
+
+func TestWorkflowPathFromBuilderConversation(t *testing.T) {
+	path := "Workflow/demo/builder/conversation/2026-09-08/session-abc-conversation.json"
+	if got := workflowPathFromBuilderConversation(path); got != "Workflow/demo" {
+		t.Fatalf("workflow path = %q", got)
+	}
+	if got := workflowPathFromBuilderConversation("_users/alice/chat_history/session/conversation.json"); got != "" {
+		t.Fatalf("personal path must not resolve as shared workflow: %q", got)
+	}
+}
 
 func TestRestoredRuntimeUsesLaunchableTransportFromHandle(t *testing.T) {
 	runtime := &ChatHistoryAgentRuntime{

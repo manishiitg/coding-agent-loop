@@ -1,5 +1,17 @@
 # Pulse Platform-Issue Register
 
+## MCP catalog name collision can strand a user's custom connector — PLAT-301
+
+[PLAT-301](pulse_platform/plat-301.md) — PR #191 (merged) made the "Add via
+JSON" editor treat any overlay entry whose name matches one of the 113 base
+catalog connectors as a connection record, but the unchanged runtime merge
+(`loadMergedConfig`) still resolves a same-name collision the other way
+(overlay wins). A user whose pre-existing custom server happened to be named
+e.g. Figma, Dropbox, or Postman — all newly reserved by #191 — now has that
+entry permanently hidden and uneditable in the UI while it keeps running
+underneath, and can never reach the new official connector of the same name.
+Open, not yet fixed; identified during PR review, not reproduced live.
+
 ## Gmail send-only default and Google Workspace connections — PLAT-300
 
 [PLAT-300](pulse_platform/plat-300.md) makes Gmail send-only the default (with

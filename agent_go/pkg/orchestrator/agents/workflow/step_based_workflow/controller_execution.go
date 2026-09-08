@@ -1575,8 +1575,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 		for key, value := range folderEnv {
 			scriptedEnv[key] = value
 		}
-		scriptedDelegation, _ := scriptedDelegationFromContext(ctx)
-
 		templateVars := map[string]string{
 			"StepTitle":                 stepTitleForPrompt,
 			"StepDescription":           stepDescriptionForPrompt,
@@ -1609,9 +1607,11 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 			"ScriptedPriorError":        learnCodePriorError,
 			"ScriptedInputArgs":         learnCodeInputArgsForPrompt,
 			"ScriptedEnvVarNames":       buildScriptedEnvVarNamesForPrompt(isScriptedMode, scriptedEnv),
-			"ScriptedDelegationInstructions": scriptedDelegation.Instructions,
 			"ScriptedVarMapping":        buildScriptedVarMappingForPrompt(isCodeExecutionMode || isScriptedMode, hcpo.variablesManifest),
 			"GroupName":                 hcpo.currentGroupName,
+		}
+		if scriptedDelegation, ok := scriptedDelegationFromContext(ctx); ok {
+			templateVars["ScriptedDelegationInstructions"] = scriptedDelegation.Instructions
 		}
 
 		// In evaluation mode, inject TARGET_RUN_PATH into the prompt so the agent

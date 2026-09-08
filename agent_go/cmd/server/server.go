@@ -5006,7 +5006,11 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		// if missing). This is the one piece of grant-specific logic that doesn't fit
 		// the registry — it's an install-on-demand side effect unique to skill-creator.
 		if resolvedGrants.HasGrant("skill-creator") {
-			workspaceAPIURL := api.GetAPIURL()
+			// The workspace API, not this server. GetAPIURL points at the agent
+			// server, so the lookup could never find the skill and every turn
+			// re-imported it from GitHub — an unauthenticated API call per
+			// message, on its way to being rate limited.
+			workspaceAPIURL := getWorkspaceAPIURL()
 			_, err := skills.GetSkill(workspaceAPIURL, "skill-creator")
 			if err != nil {
 				log.Printf("[SKILL CREATOR] skill-creator not found, attempting import from GitHub...")

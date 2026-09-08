@@ -2476,7 +2476,7 @@ func runServer(cmd *cobra.Command, args []string) {
 	SchedulerRoutes(router, schedulerSvc)
 
 	// Workflow API routes
-	apiRouter.HandleFunc("/workflow/create", requireWorkflowWriteAccess(api.handleCreateWorkflow)).Methods("POST", "OPTIONS")
+	apiRouter.HandleFunc("/workflow/create", requireWorkflowCreateAccess(api.handleCreateWorkflow)).Methods("POST", "OPTIONS")
 	apiRouter.HandleFunc("/workflow/status", api.handleGetWorkflowStatus).Methods("GET")
 	apiRouter.HandleFunc("/workflow/update", api.handleUpdateWorkflow).Methods("POST", "OPTIONS")
 	apiRouter.HandleFunc("/workflow/constants", orchtypes.HandleWorkflowConstants).Methods("GET")
@@ -2538,11 +2538,11 @@ func runServer(cmd *cobra.Command, args []string) {
 	apiRouter.HandleFunc("/workflows/overview", api.handleGetWorkflowsOverview).Methods("GET", "OPTIONS")
 	apiRouter.HandleFunc("/workflows/manifests", api.handleListWorkflowManifests).Methods("GET", "OPTIONS")
 	apiRouter.HandleFunc("/workflows/manifest", api.handleGetWorkflowManifest).Methods("GET", "OPTIONS")
-	apiRouter.HandleFunc("/workflows/manifest", requireWorkflowWriteAccess(api.handleCreateWorkflowManifest)).Methods("POST", "OPTIONS")
+	apiRouter.HandleFunc("/workflows/manifest", requireWorkflowCreateAccess(api.handleCreateWorkflowManifest)).Methods("POST", "OPTIONS")
 	apiRouter.HandleFunc("/workflows/manifest", requireWorkflowWriteAccess(api.handleUpdateWorkflowManifest)).Methods("PUT", "OPTIONS")
 	apiRouter.HandleFunc("/workflows/manifest", requireWorkflowWriteAccess(api.handleDeleteWorkflowManifest)).Methods("DELETE", "OPTIONS")
 	apiRouter.HandleFunc("/workflows/folder", requireWorkflowWriteAccess(api.handleDeleteWorkflowFolder)).Methods("DELETE", "OPTIONS")
-	apiRouter.HandleFunc("/workflows/manifest/duplicate", requireWorkflowWriteAccess(api.handleDuplicateWorkflowManifest)).Methods("POST", "OPTIONS")
+	apiRouter.HandleFunc("/workflows/manifest/duplicate", requireWorkflowCreateAccess(api.handleDuplicateWorkflowManifest)).Methods("POST", "OPTIONS")
 
 	// Skills API routes (from skill_routes.go)
 	RegisterSkillRoutes(apiRouter, api)
@@ -5524,12 +5524,16 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			if isAgentWorksChat {
 				// Generic AgentWorks chat can create workflows and inspect live
 				// workflow activity. Product-owned agents opt into their own tools.
-				if err := api.registerWorkflowCreatorTool(llmAgent); err != nil {
-					logfWithContext(queryLogCtx, "[WORKFLOW CREATOR] Failed to register create_workflow tool: %v", err)
-					sendError(fmt.Sprintf("Failed to register create_workflow tool: %v", err), true)
-					return
+				if userAccessForClaims(GetUserFromContext(r.Context())).CanCreate {
+					if err := api.registerWorkflowCreatorTool(llmAgent); err != nil {
+						logfWithContext(queryLogCtx, "[WORKFLOW CREATOR] Failed to register create_workflow tool: %v", err)
+						sendError(fmt.Sprintf("Failed to register create_workflow tool: %v", err), true)
+						return
+					}
+					logfWithContext(queryLogCtx, "[WORKFLOW CREATOR] Registered create_workflow tool")
+				} else {
+					logfWithContext(queryLogCtx, "[WORKFLOW CREATOR] create_workflow omitted: account cannot create workflows")
 				}
-				logfWithContext(queryLogCtx, "[WORKFLOW CREATOR] Registered create_workflow tool")
 
 				if err := api.registerActivityStatusTool(llmAgent, currentUserID); err != nil {
 					logfWithContext(queryLogCtx, "[ACTIVITY STATUS] Failed to register get_activity_status tool: %v", err)

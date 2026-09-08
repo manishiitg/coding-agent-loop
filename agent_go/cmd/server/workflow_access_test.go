@@ -13,9 +13,10 @@ func TestWorkflowAccessResolution(t *testing.T) {
 	  {"id":"a1","username":"alice","admin":true,"can_create":true,"products":[]},
 	  {"id":"b2","username":"bob","can_create":true,"products":[]},
 	  {"id":"c3","username":"carol","can_create":false,"products":[]},
-	  {"id":"d4","username":"dan","can_create":true,"products":[]}
+	  {"id":"d4","username":"dan","can_create":true,"products":[]},
+	  {"id":"e5","username":"erin","can_create":false,"can_edit":true,"products":["agentworks"]}
 	]}`)
-	alice, bob, carol, dan := &UserClaims{UserID: "a1"}, &UserClaims{UserID: "b2"}, &UserClaims{UserID: "c3"}, &UserClaims{UserID: "d4"}
+	alice, bob, carol, dan, erin := &UserClaims{UserID: "a1"}, &UserClaims{UserID: "b2"}, &UserClaims{UserID: "c3"}, &UserClaims{UserID: "d4"}, &UserClaims{UserID: "e5"}
 
 	owned := &WorkflowManifest{ID: "w1", CreatedBy: "b2", Access: &WorkflowAccess{Owners: []string{"b2"}, Readers: []string{"c3"}}}
 	if got := workflowAccessForManifest(bob, owned); got != WorkflowAccessOwner {
@@ -29,6 +30,13 @@ func TestWorkflowAccessResolution(t *testing.T) {
 	}
 	if got := workflowAccessForManifest(alice, owned); got != WorkflowAccessOwner {
 		t.Fatalf("admin is owner of everything: %s", got)
+	}
+	contributorOwned := &WorkflowManifest{ID: "w5", Access: &WorkflowAccess{Owners: []string{"e5"}}}
+	if got := workflowAccessForManifest(erin, contributorOwned); got != WorkflowAccessOwner {
+		t.Fatalf("contributor may own an assigned workflow: %s", got)
+	}
+	if userAccessForClaims(erin).CanCreate {
+		t.Fatal("contributor must not be able to create workflows")
 	}
 
 	// created_by alone names the owner on manifests written before the access block existed.
@@ -74,6 +82,39 @@ func TestFilterAnnotatesMyAccessAndHidesUnshared(t *testing.T) {
 		if want[w.WorkspacePath] != w.MyAccess {
 			t.Fatalf("%s: my_access=%s want %s", w.WorkspacePath, w.MyAccess, want[w.WorkspacePath])
 		}
+	}
+}
+
+func TestContributorCanEditButCannotCreate(t *testing.T) {
+	t.Setenv("MULTI_USER_MODE", "true")
+	withMemoryUserDirectory(t, `{"users":[{"id":"e5","username":"erin","can_create":false,"can_edit":true,"products":["agentworks"]}]}`)
+	claims := &UserClaims{UserID: "e5", Username: "erin"}
+
+	owned := &WorkflowManifest{ID: "owned", Access: &WorkflowAccess{Owners: []string{"e5"}}}
+	if got := workflowAccessForManifest(claims, owned); got != WorkflowAccessOwner {
+		t.Fatalf("assigned contributor access = %s, want owner", got)
+	}
+
+	createCalled := false
+	handler := requireWorkflowCreateAccess(func(w http.ResponseWriter, _ *http.Request) {
+		createCalled = true
+		w.WriteHeader(http.StatusCreated)
+	})
+	rec := httptest.NewRecorder()
+	handler(rec, adminRequest(http.MethodPost, "/api/workflows/manifest", `{}`, claims, nil))
+	if createCalled || rec.Code != http.StatusForbidden || !strings.Contains(rec.Body.String(), `"required_access":"create"`) {
+		t.Fatalf("contributor create gate = code %d body %s called=%v", rec.Code, rec.Body.String(), createCalled)
+	}
+
+	writeCalled := false
+	writeHandler := requireWorkflowWriteAccess(func(w http.ResponseWriter, _ *http.Request) {
+		writeCalled = true
+		w.WriteHeader(http.StatusNoContent)
+	})
+	rec = httptest.NewRecorder()
+	writeHandler(rec, adminRequest(http.MethodPut, "/api/workflows/manifest", `{}`, claims, nil))
+	if !writeCalled || rec.Code != http.StatusNoContent {
+		t.Fatalf("contributor write gate = code %d called=%v", rec.Code, writeCalled)
 	}
 }
 

@@ -160,14 +160,17 @@ func workflowAccessForClaims(claims *UserClaims) WorkflowAccessLevel {
 
 func workflowAccessForIdentity(userID, username, email string) WorkflowAccessLevel {
 	// The user directory (config/users.json) is authoritative for anyone it
-	// knows: an admin is owner, an account that may create is write, a
-	// read-only account is read. Identities it does not know fall through
+	// knows: an admin is owner, an account that may edit is write, and a
+	// read-only account is read. Creation is intentionally separate so a
+	// contributor can own an assigned workflow without creating new ones.
+	// Identities it does not know fall through
 	// to the legacy env/file tiers below, unchanged.
 	if rec := directoryUserFor(userID, username, email); rec != nil {
+		acc := accessForRecord(rec)
 		switch {
-		case rec.Admin:
+		case acc.Admin:
 			return WorkflowAccessOwner
-		case rec.CanCreate:
+		case acc.CanEdit:
 			return WorkflowAccessWrite
 		default:
 			return WorkflowAccessRead
@@ -245,6 +248,20 @@ func workflowPermissionResponseFields(perms WorkflowPermissionInfo) map[string]i
 
 func currentUserCanWriteWorkflows(r *http.Request) bool {
 	return workflowPermissionInfoForClaims(GetUserFromContext(r.Context())).CanWriteWorkflows
+}
+
+func currentUserCanCreateWorkflows(r *http.Request) bool {
+	return userAccessForClaims(GetUserFromContext(r.Context())).CanCreate
+}
+
+func requireWorkflowCreateAccess(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == "OPTIONS" || currentUserCanCreateWorkflows(r) {
+			next(w, r)
+			return
+		}
+		writeWorkflowPermissionDenied(w, "create")
+	}
 }
 
 func currentUserCanManageWorkflowAccess(r *http.Request) bool {

@@ -33,13 +33,14 @@ import (
 // dropped from the environment.
 //
 // A record answers the two account-level questions no single workflow can:
-// may this person create things at all (CanCreate; false is the read-only
-// user), and may this person manage other accounts (Admin). Products lists
+// may this person create workflows (CanCreate), may they edit workflows that
+// explicitly grant ownership (CanEdit), and may this person manage other
+// accounts (Admin). Products lists
 // which product surfaces the account may open. Everything else — who owns
 // which workflow — lives on the workflow itself (phase 3 of the design).
 //
 // How it plugs into the existing permission machinery: workflowAccessForIdentity
-// consults the directory first and maps Admin → owner, CanCreate → write,
+// consults the directory first and maps Admin → owner, CanEdit → write,
 // otherwise → read, so every existing enforcement point (PLAT-262's runtime
 // read-only gates, requireWorkflowWriteAccess, list filtering) keys off the
 // directory with no change of its own. Identities with NO record keep
@@ -57,6 +58,11 @@ type UserRecord struct {
 	SSO          *UserSSO `json:"sso,omitempty"`
 	Admin        bool     `json:"admin"`
 	CanCreate    bool     `json:"can_create"`
+	// CanEdit is optional for backward compatibility. When absent, it follows
+	// CanCreate, preserving the original admin/member/read-only roles. An
+	// explicit true with CanCreate=false is a contributor: they may own/edit a
+	// shared workflow but cannot create another one.
+	CanEdit *bool `json:"can_edit,omitempty"`
 	// Products the account may open. Meaning depends on the account: an
 	// admin ignores it (all products), a member with an empty list gets all
 	// products, a read-only user with an empty list gets none.
@@ -321,6 +327,7 @@ type UserAccess struct {
 	Known     bool
 	Admin     bool
 	CanCreate bool
+	CanEdit   bool
 	Disabled  bool
 	// Products the identity may open when ProductsRestricted; ignored
 	// otherwise (all products).
@@ -329,7 +336,11 @@ type UserAccess struct {
 }
 
 func accessForRecord(rec *UserRecord) UserAccess {
-	acc := UserAccess{Known: true, Admin: rec.Admin, CanCreate: rec.Admin || rec.CanCreate, Disabled: rec.Disabled}
+	canEdit := rec.CanCreate
+	if rec.CanEdit != nil {
+		canEdit = *rec.CanEdit
+	}
+	acc := UserAccess{Known: true, Admin: rec.Admin, CanCreate: rec.Admin || rec.CanCreate, CanEdit: rec.Admin || canEdit, Disabled: rec.Disabled}
 	switch {
 	case rec.Admin:
 		acc.ProductsRestricted = false
@@ -355,9 +366,9 @@ func userAccessForClaims(claims *UserClaims) UserAccess {
 		return accessForRecord(rec)
 	}
 	if !IsMultiUserMode() {
-		return UserAccess{Known: false, Admin: true, CanCreate: true}
+		return UserAccess{Known: false, Admin: true, CanCreate: true, CanEdit: true}
 	}
-	return UserAccess{Known: false, CanCreate: true}
+	return UserAccess{Known: false, CanCreate: true, CanEdit: true}
 }
 
 // currentUserIsAdmin is the gate for account management. With no directory
@@ -509,6 +520,7 @@ type userAdminView struct {
 	HasPassword bool     `json:"has_password"`
 	Admin       bool     `json:"admin"`
 	CanCreate   bool     `json:"can_create"`
+	CanEdit     bool     `json:"can_edit"`
 	Products    []string `json:"products"`
 	Disabled    bool     `json:"disabled"`
 	CreatedAt   string   `json:"created_at,omitempty"`
@@ -526,7 +538,7 @@ func viewOf(rec UserRecord) userAdminView {
 	}
 	return userAdminView{
 		ID: rec.ID, Username: rec.Username, Email: rec.Email, Provider: provider,
-		HasPassword: rec.PasswordHash != "", Admin: rec.Admin, CanCreate: rec.CanCreate,
+		HasPassword: rec.PasswordHash != "", Admin: rec.Admin, CanCreate: rec.CanCreate, CanEdit: accessForRecord(&rec).CanEdit,
 		Products: products, Disabled: rec.Disabled, CreatedAt: rec.CreatedAt, UpdatedAt: rec.UpdatedAt,
 	}
 }
@@ -564,6 +576,7 @@ type userWriteRequest struct {
 	Password  *string   `json:"password"`
 	Admin     *bool     `json:"admin"`
 	CanCreate *bool     `json:"can_create"`
+	CanEdit   *bool     `json:"can_edit"`
 	Products  *[]string `json:"products"`
 	Disabled  *bool     `json:"disabled"`
 }
@@ -643,6 +656,9 @@ func (api *StreamingAPI) handleAdminCreateUser(w http.ResponseWriter, r *http.Re
 	if req.CanCreate != nil {
 		rec.CanCreate = *req.CanCreate
 	}
+	if req.CanEdit != nil {
+		rec.CanEdit = req.CanEdit
+	}
 	if req.Products != nil {
 		rec.Products = normalizeProducts(*req.Products)
 	}
@@ -705,6 +721,9 @@ func (api *StreamingAPI) handleAdminUpdateUser(w http.ResponseWriter, r *http.Re
 	}
 	if req.CanCreate != nil {
 		rec.CanCreate = *req.CanCreate
+	}
+	if req.CanEdit != nil {
+		rec.CanEdit = req.CanEdit
 	}
 	if req.Products != nil {
 		rec.Products = normalizeProducts(*req.Products)

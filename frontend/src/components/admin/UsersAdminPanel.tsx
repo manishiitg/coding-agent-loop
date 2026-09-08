@@ -11,18 +11,24 @@ interface UsersAdminPanelProps {
   embedded?: boolean
 }
 
-// Account roles as the admin sees them. Only two facts sit behind the three
-// labels (docs/design/user_accounts_and_workflow_sharing.md): may this
-// person manage accounts (admin), and may they create anything at all
-// (member). Read-only cannot create; it sees only what is shared with it.
-type Role = 'admin' | 'member' | 'readonly'
+// Account roles separate creating a new workflow from editing one explicitly
+// assigned to the account. Existing records without can_edit retain their old
+// behavior server-side (can_edit follows can_create).
+type Role = 'admin' | 'member' | 'contributor' | 'readonly'
 const ROLES: { value: Role; label: string; hint: string }[] = [
   { value: 'readonly', label: 'Read-only', hint: 'Can chat, run and watch what is shared with them. Cannot create or edit anything.' },
+  { value: 'contributor', label: 'Contributor', hint: 'Can own and edit assigned workflows, but cannot create new workflows.' },
   { value: 'member', label: 'Member', hint: 'Creates workflows and projects and owns what they create.' },
   { value: 'admin', label: 'Admin', hint: 'Member, plus manages users and product access. Can open any workflow.' },
 ]
-const roleOf = (u: { admin: boolean; can_create: boolean }): Role => (u.admin ? 'admin' : u.can_create ? 'member' : 'readonly')
-const roleFields = (r: Role): Pick<AdminUserWrite, 'admin' | 'can_create'> => ({ admin: r === 'admin', can_create: r !== 'readonly' })
+const roleOf = (u: { admin: boolean; can_create: boolean; can_edit: boolean }): Role => (
+  u.admin ? 'admin' : u.can_create ? 'member' : u.can_edit ? 'contributor' : 'readonly'
+)
+const roleFields = (r: Role): Pick<AdminUserWrite, 'admin' | 'can_create' | 'can_edit'> => ({
+  admin: r === 'admin',
+  can_create: r === 'admin' || r === 'member',
+  can_edit: r !== 'readonly',
+})
 
 const PRODUCT_LABELS: Record<string, string> = {
   agentworks: 'AgentWorks',
@@ -90,7 +96,7 @@ const UsersAdminPanel: React.FC<UsersAdminPanelProps> = ({ isOpen, onClose, embe
     <>
           <div className="px-4 pt-3 pb-2 text-xs text-muted-foreground">
             Accounts live in <code className="text-[11px] bg-muted px-1 py-0.5 rounded">config/users.json</code>. A member owns what they create;
-            a read-only account cannot create anything and only sees what is shared with it. Product boxes decide which surfaces an account may open
+            a contributor may edit assigned workflows but cannot create new ones; a read-only account only sees shared workflows. Product boxes decide which surfaces an account may open
             (a member with none ticked may open all; a read-only account with none ticked may open none).
           </div>
 

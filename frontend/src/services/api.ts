@@ -2489,9 +2489,11 @@ export interface AuthUser {
   allowed_products?: string[] | null
   allowed_workflow_ids?: string[] | null
   // Account level (docs/design/user_accounts_and_workflow_sharing.md):
-  // admins manage users and products; can_create=false is the read-only user.
+  // admins manage users/products; can_create and can_edit are independent so
+  // a contributor may own an assigned workflow without creating new ones.
   is_admin?: boolean
   can_create?: boolean
+  can_edit?: boolean
 }
 
 /** One account as the admin page sees it (never the password hash). */
@@ -2503,6 +2505,7 @@ export interface AdminUser {
   has_password: boolean
   admin: boolean
   can_create: boolean
+  can_edit: boolean
   products: string[]
   disabled: boolean
   created_at?: string
@@ -2515,6 +2518,7 @@ export interface AdminUserWrite {
   password?: string
   admin?: boolean
   can_create?: boolean
+  can_edit?: boolean
   products?: string[]
   disabled?: boolean
 }

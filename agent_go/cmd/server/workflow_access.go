@@ -85,7 +85,7 @@ func workflowAccessForManifest(claims *UserClaims, m *WorkflowManifest) Workflow
 		return account
 	}
 	if containsID(m.effectiveOwners(), claims.UserID) {
-		if account == WorkflowAccessRead {
+		if !userAccessForClaims(claims).CanEdit {
 			return WorkflowAccessRead
 		}
 		return WorkflowAccessOwner

@@ -25,9 +25,13 @@ Two places a permission can live, nothing else.
 **On the account** (AgentWorks user record):
 - `admin: true|false`. Admins manage users, set product access, and can open
   any workflow. The first admin is named in config, never inferred.
-- `can_create: true|false`. `false` is the "read-only user": cannot create
-  workflows, projects, schedules, skills or connectors, sees only what was
-  shared. `true` is a normal member: owns what they create.
+- `can_create: true|false`. Controls creation of new workflows. `true` is a
+  normal member that owns what they create.
+- `can_edit: true|false` (optional). Controls whether an account may own and
+  edit workflows explicitly assigned to it. When absent it follows
+  `can_create`, preserving existing records. `can_create: false` plus
+  `can_edit: true` is a contributor: it can own assigned workflows but cannot
+  create or duplicate workflows. Both false is read-only.
 - `products: ["agentworks", "video-studio", ...]`. Which product surfaces the
   user may open. A member with the list absent gets all products; a
   read-only user with it absent gets none.
@@ -67,6 +71,7 @@ for pulse/report data) would only earn its place with multiple replicas.
       "sso": {"provider": "cognito", "external_id": "..."},  // optional
       "admin": true,
       "can_create": true,
+      "can_edit": true,
       "products": ["agentworks", "video-studio"],
       "disabled": false,
       "created_at": "2026-09-02T12:00:00Z"
@@ -120,7 +125,7 @@ first admin's id in one step during the switch-over.
 |---|---|
 | `workflowAccessForIdentity` (env tiers) | `workflowAccessFor(userID, workflowID)`: owner if admin or in `owners`; read if in `readers`; none otherwise |
 | `currentUserIsReadOnly` in the query path (`server.go:3192`) | same flag, from the per-workflow answer |
-| `requireWorkflowWriteAccess` route wrapper | owner-of-this-workflow check, or `can_create` for creation routes |
+| `requireWorkflowWriteAccess` route wrapper | owner-of-this-workflow check through `can_edit`; creation and duplication routes use the separate `can_create` gate |
 | `requireWorkflowOwnerAccess` (4 admin routes) | `requireAdmin` |
 | `filterWorkflowManifestsForUser` / `userAllowedWorkflowID` | list = owned + readers + all if admin; open = same |
 | `config/user-product-access.json` | `products` on the user record; checked at product-profile routes and in the surface switcher |
@@ -135,10 +140,10 @@ Hardening folded in, because the new model makes these real holes:
 
 ## Admin page (frontend)
 
-Under Settings, admins only: user list (add, disable, reset password, toggle
-`admin` and `can_create`, product checkboxes), and per user the workflows
-they own or read. Members see a Share button on their own workflows. Read-only
-users see neither.
+Under Settings, admins only: user list (add, disable, reset password, choose
+Admin/Member/Contributor/Read-only, product checkboxes), and per user the
+workflows they own or read. Owners see a Share button on their own workflows.
+Read-only users see neither.
 
 ## Phases, each shippable alone
 
@@ -166,5 +171,5 @@ users see neither.
 
 ## Out of scope for now
 
-Editor tier, roles inside products, shareable Video Studio projects, teams or
+Roles inside products, shareable Video Studio projects, teams or
 organisations, multiple server replicas.

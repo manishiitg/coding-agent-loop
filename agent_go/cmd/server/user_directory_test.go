@@ -58,22 +58,25 @@ func TestPasswordHashRoundTrip(t *testing.T) {
 }
 
 func TestAccessForRecordProductSemantics(t *testing.T) {
+	canEdit := true
 	cases := []struct {
 		name       string
 		rec        UserRecord
 		restricted bool
 		products   int
 		canCreate  bool
+		canEdit    bool
 	}{
-		{"admin ignores list", UserRecord{Admin: true, Products: []string{"video-studio"}}, false, 0, true},
-		{"member no list = all", UserRecord{CanCreate: true}, false, 0, true},
-		{"member with list", UserRecord{CanCreate: true, Products: []string{"video-studio"}}, true, 1, true},
-		{"read-only no list = none", UserRecord{}, true, 0, false},
-		{"read-only with list", UserRecord{Products: []string{"agentworks"}}, true, 1, false},
+		{"admin ignores list", UserRecord{Admin: true, Products: []string{"video-studio"}}, false, 0, true, true},
+		{"member no list = all", UserRecord{CanCreate: true}, false, 0, true, true},
+		{"member with list", UserRecord{CanCreate: true, Products: []string{"video-studio"}}, true, 1, true, true},
+		{"contributor with product", UserRecord{CanEdit: &canEdit, Products: []string{"agentworks"}}, true, 1, false, true},
+		{"read-only no list = none", UserRecord{}, true, 0, false, false},
+		{"read-only with list", UserRecord{Products: []string{"agentworks"}}, true, 1, false, false},
 	}
 	for _, c := range cases {
 		acc := accessForRecord(&c.rec)
-		if acc.ProductsRestricted != c.restricted || len(acc.Products) != c.products || acc.CanCreate != c.canCreate {
+		if acc.ProductsRestricted != c.restricted || len(acc.Products) != c.products || acc.CanCreate != c.canCreate || acc.CanEdit != c.canEdit {
 			t.Fatalf("%s: got %+v", c.name, acc)
 		}
 	}
@@ -184,13 +187,13 @@ func TestAdminUserCRUDAndGuards(t *testing.T) {
 	// create
 	rec := httptest.NewRecorder()
 	requireAdmin(api.handleAdminCreateUser)(rec, adminRequest(http.MethodPost, "/api/admin/users",
-		`{"username":"dave","password":"davepass123","can_create":false,"products":["Video-Studio","video-studio"]}`, alice, nil))
+		`{"username":"dave","password":"davepass123","can_create":false,"can_edit":true,"products":["Video-Studio","video-studio"]}`, alice, nil))
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("create: %d %s", rec.Code, rec.Body.String())
 	}
 	var created userAdminView
 	_ = json.Unmarshal(rec.Body.Bytes(), &created)
-	if created.ID != userIDForUsername("dave") || created.Admin || created.CanCreate || len(created.Products) != 1 || !created.HasPassword {
+	if created.ID != userIDForUsername("dave") || created.Admin || created.CanCreate || !created.CanEdit || len(created.Products) != 1 || !created.HasPassword {
 		t.Fatalf("created view: %+v", created)
 	}
 	// duplicate

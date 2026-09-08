@@ -83,6 +83,13 @@ type GmailConnection struct {
 	// time, not after.
 	AllowReadAccess bool `json:"allow_read_access,omitempty"`
 
+	// Services lists the additional Google Workspace services (Drive, Sheets,
+	// Docs, Slides, Calendar...) this connection is authorized for, beyond
+	// Gmail. Empty means Gmail-only, the pre-existing behavior. Like
+	// AllowReadAccess, each grant is fixed at the scope consented to; adding a
+	// service or upgrading it to write access requires reconnecting.
+	Services []GoogleServiceGrant `json:"services,omitempty"`
+
 	Status GmailConnectionStatus `json:"status,omitempty"`
 
 	// Enabled gates use without discarding the connection. A disabled
@@ -101,6 +108,7 @@ type GmailConnection struct {
 func (c GmailConnection) Clone() GmailConnection {
 	out := c
 	out.Scopes = append([]string(nil), c.Scopes...)
+	out.Services = append([]GoogleServiceGrant(nil), c.Services...)
 	return out
 }
 
@@ -231,6 +239,7 @@ func normalizeGmailConnections(cfg *GmailConfig) {
 		c.ConfigHome = strings.TrimSpace(c.ConfigHome)
 		c.CredentialsFile = strings.TrimSpace(c.CredentialsFile)
 		c.ClientName = strings.TrimSpace(c.ClientName)
+		c.Services = normalizeGoogleServiceGrants(c.Services)
 		out = append(out, c)
 	}
 	cfg.Connections = out
@@ -328,7 +337,11 @@ type GmailConnectionInput struct {
 	// GmailConnection.AllowReadAccess. Defaults to false (send-only) when
 	// omitted, matching the zero value.
 	AllowReadAccess bool
-	Enabled         *bool
+	// Services requests additional Google Workspace service scopes (Drive,
+	// Sheets, Docs, Slides, Calendar...) alongside Gmail. nil/empty means
+	// Gmail-only. See GmailConnection.Services.
+	Services []GoogleServiceGrant
+	Enabled  *bool
 }
 
 // CreateConnection registers a new sending identity and provisions its private
@@ -376,6 +389,7 @@ func (g *GmailService) CreateConnection(ctx context.Context, in GmailConnectionI
 		CredentialsFile: strings.TrimSpace(in.CredentialsFile),
 		ClientName:      clientName,
 		AllowReadAccess: in.AllowReadAccess,
+		Services:        normalizeGoogleServiceGrants(in.Services),
 		Status:          GmailConnectionNeedsReconnect,
 		Enabled:         enabled,
 		CreatedAt:       now,

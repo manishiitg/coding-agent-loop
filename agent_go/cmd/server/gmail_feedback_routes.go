@@ -53,6 +53,18 @@ func GmailFeedbackRoutes(router *mux.Router, api *StreamingAPI) {
 	r.HandleFunc("/config", updateGmailConfigHandler(api)).Methods("POST", "OPTIONS")
 	r.HandleFunc("/status", getGmailStatusHandler(api)).Methods("GET")
 	r.HandleFunc("/test", testGmailConnectionHandler(api)).Methods("POST", "OPTIONS")
+	r.HandleFunc("/service-catalog", getGoogleServiceCatalogHandler(api)).Methods("GET")
+}
+
+// getGoogleServiceCatalogHandler lists the additional Google Workspace
+// services (beyond Gmail) a connection may request, so the UI's checkbox list
+// stays in sync with the backend's scope catalog rather than hardcoding a
+// second copy of it.
+func getGoogleServiceCatalogHandler(api *StreamingAPI) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(services.GoogleServiceCatalog())
+	}
 }
 
 // ensureGmailService returns the global Gmail service, initializing it lazily.

@@ -69,7 +69,8 @@ func startGmailOAuthHandler(api *StreamingAPI) http.HandlerFunc {
 		}
 
 		redirectURI := gmailOAuthRedirectURI(r)
-		authURL, err := services.BeginGmailOAuth(id, conn.ClientName, redirectURI, conn.AllowReadAccess)
+		extraScopes := services.GoogleServiceScopeURIs(conn.Services)
+		authURL, err := services.BeginGmailOAuth(id, conn.ClientName, redirectURI, conn.AllowReadAccess, extraScopes)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return

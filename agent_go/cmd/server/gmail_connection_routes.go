@@ -39,6 +39,10 @@ type GmailConnectionResponse struct {
 	// AllowReadAccess is whether this connection was authorized with
 	// gmail.readonly in addition to gmail.send. Send-only is the default.
 	AllowReadAccess bool `json:"allow_read_access"`
+	// Services lists the additional Google Workspace services (Drive,
+	// Sheets, Docs, Slides, Calendar...) this connection is authorized for,
+	// beyond Gmail. Empty means Gmail-only.
+	Services []services.GoogleServiceGrant `json:"services,omitempty"`
 	// HasCredentialsFile reports whether a key file is pinned, without naming
 	// it — the path is operator detail the picker does not need.
 	HasCredentialsFile bool   `json:"has_credentials_file,omitempty"`
@@ -78,8 +82,14 @@ type GmailConnectionRequest struct {
 	// AllowReadAccess opts the connection into gmail.readonly on top of the
 	// always-requested gmail.send. Omitted/false is send-only, the default —
 	// see services.GmailConnection.AllowReadAccess.
-	AllowReadAccess bool  `json:"allow_read_access,omitempty"`
-	Enabled         *bool `json:"enabled,omitempty"`
+	AllowReadAccess bool `json:"allow_read_access,omitempty"`
+	// Services requests additional Google Workspace service scopes (Drive,
+	// Sheets, Docs, Slides, Calendar...) on create — see
+	// services.GmailConnection.Services. Ignored on update: like
+	// AllowReadAccess, scope is fixed at consent time, so widening it means
+	// removing and re-adding the connection.
+	Services []services.GoogleServiceGrant `json:"services,omitempty"`
+	Enabled  *bool                         `json:"enabled,omitempty"`
 }
 
 // GmailConnectionTestRequest optionally overrides the test recipient.
@@ -132,6 +142,7 @@ func projectGmailConnection(svc *services.GmailService, conn services.GmailConne
 		ConfigHome:         conn.ConfigHome,
 		ClientName:         conn.ClientName,
 		AllowReadAccess:    conn.AllowReadAccess,
+		Services:           conn.Services,
 		HasCredentialsFile: strings.TrimSpace(conn.CredentialsFile) != "",
 		Status:             status,
 		Enabled:            conn.Enabled,
@@ -230,6 +241,7 @@ func createGmailConnectionHandler(api *StreamingAPI) http.HandlerFunc {
 			CredentialsFile: req.CredentialsFile,
 			ClientName:      req.ClientName,
 			AllowReadAccess: req.AllowReadAccess,
+			Services:        req.Services,
 			Enabled:         req.Enabled,
 		})
 		if err != nil {

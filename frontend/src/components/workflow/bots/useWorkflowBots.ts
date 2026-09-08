@@ -4,7 +4,7 @@ import { useWorkflowManifestStore } from '../../../stores/useWorkflowManifestSto
 import { useCanWriteWorkflow } from '../../../hooks/useCanWriteWorkflow'
 import type {
   ChannelRoute, GmailConfigRequest, GmailConfigResponse, GmailConnection, GmailOAuthClient, GmailTestResponse,
-  SlackConfig, SlackConfigRequest, SlackTestResponse, WhatsAppRoute, WhatsAppStatus,
+  GoogleServiceGrant, SlackConfig, SlackConfigRequest, SlackTestResponse, WhatsAppRoute, WhatsAppStatus,
 } from '../../../services/api-types'
 import { routeId, type ChannelKind, type WorkflowRoute } from './types'
 import { gmailOAuthAttemptCompleted } from './gmailOAuthState'
@@ -324,7 +324,14 @@ export function useWorkflowBots(workspacePath: string | null) {
   // allowReadAccess opts the new mailbox into gmail.readonly on top of
   // gmail.send. Defaults off: notifications only ever send, so the consent
   // screen asks for the minimum unless the operator deliberately widens it.
-  const createGmailOAuthClient = useCallback(async (email: string, clientSecretJson: unknown, allowReadAccess = false) => {
+  // services requests additional Google Workspace scopes (Drive, Sheets...)
+  // beyond Gmail — see GoogleServiceGrant. Also defaults to none.
+  const createGmailOAuthClient = useCallback(async (
+    email: string,
+    clientSecretJson: unknown,
+    allowReadAccess = false,
+    services: GoogleServiceGrant[] = [],
+  ) => {
     const trimmedEmail = email.trim()
     // Backend name pattern is lowercase letters/digits/hyphens only (it
     // becomes a directory name) — an email's @ and . don't qualify, so
@@ -335,7 +342,12 @@ export function useWorkflowBots(workspacePath: string | null) {
       setGmailOAuthClientsBusy(true)
       setGmailOAuthClientError(null)
       const client = await agentApi.createGmailOAuthClient(name, clientSecretJson)
-      const connection = await agentApi.createGmailConnection({ display_name: trimmedEmail, client_name: client.name, allow_read_access: allowReadAccess })
+      const connection = await agentApi.createGmailConnection({
+        display_name: trimmedEmail,
+        client_name: client.name,
+        allow_read_access: allowReadAccess,
+        services,
+      })
       await Promise.all([loadGmailOAuthClients(), loadGmailConnections()])
       setGmailNewClientEmail('')
       void connectGmailAccount(connection.id)

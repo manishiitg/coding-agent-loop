@@ -212,6 +212,7 @@ func CreateHumanTools() []llmtypes.Tool {
 		},
 	}
 	humanTools = append(humanTools, notifyUserTool)
+	humanTools = append(humanTools, createGoogleCLITool())
 
 	return humanTools
 }
@@ -411,7 +412,7 @@ func IsHumanToolCategory(category string) bool {
 // non-blocking Pulse/report question lifecycle stored in the workflow-local
 // db/db.sqlite.
 func WorkshopHumanToolNames() []string {
-	return []string{"human_feedback", "notify_user", "get_human_input_request", "list_approved_fixer_decisions", "create_human_input_request", "answer_human_input_request", "mark_human_input_consumed", "dismiss_duplicate_human_input_request"}
+	return []string{"human_feedback", "notify_user", "google_workspace_cli", "get_human_input_request", "list_approved_fixer_decisions", "create_human_input_request", "answer_human_input_request", "mark_human_input_consumed", "dismiss_duplicate_human_input_request"}
 }
 
 // HumanToolNamesForWorkshopMode narrows the registered human-tool surface for
@@ -440,6 +441,7 @@ func CreateHumanToolExecutors() map[string]func(ctx context.Context, args map[st
 
 	executors["human_feedback"] = handleHumanFeedback
 	executors["notify_user"] = handleNotifyUser
+	executors["google_workspace_cli"] = handleGoogleWorkspaceCLI
 
 	return executors
 }

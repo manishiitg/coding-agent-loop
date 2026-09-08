@@ -1,6 +1,7 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { AlertTriangle, ChevronRight, Loader2, Mail, RotateCcw } from 'lucide-react'
 import { agentApi } from '../../../services/api'
+import type { GoogleServiceGrant } from '../../../services/api-types'
 import { Button } from '../../ui/Button'
 import { Card } from '../../ui/Card'
 import { READ_ONLY_TITLE } from '../../../hooks/useCanWriteWorkflow'
@@ -98,6 +99,20 @@ export function GmailNotifications({ bots }: { bots: GmailNotificationsBots }) {
   // Off by default: notifications only ever send, so the consent screen asks
   // for gmail.send alone unless the operator deliberately widens it here.
   const [newClientAllowRead, setNewClientAllowRead] = useState(false)
+  // Additional Google Workspace services (Drive, Sheets, Docs, Slides,
+  // Calendar...) the new mailbox may also be authorized for, beyond Gmail.
+  // Keyed by service id; { write: false } means "selected, read-only" —
+  // absence means not selected at all. Read-only is the default access
+  // level for the same reason Gmail read is opt-in: the safer grant.
+  const [newClientServices, setNewClientServices] = useState<Record<string, { write: boolean }>>({})
+  const [serviceCatalog, setServiceCatalog] = useState<Record<string, string> | null>(null)
+  useEffect(() => {
+    let cancelled = false
+    agentApi.getGoogleServiceCatalog().then(catalog => { if (!cancelled) setServiceCatalog(catalog) }).catch(() => {
+      // Best-effort: the "add account" form still works Gmail-only if this fails.
+    })
+    return () => { cancelled = true }
+  }, [])
   const [newClientParseError, setNewClientParseError] = useState<string | null>(null)
   // Collapsed by default once at least one account exists — no reason to
   // keep the upload form permanently on screen once the common case (one
@@ -114,13 +129,15 @@ export function GmailNotifications({ bots }: { bots: GmailNotificationsBots }) {
       setNewClientParseError('That file is not valid JSON — download the client_secret.json Google Cloud gave you and upload it unmodified.')
       return false
     }
+    const services: GoogleServiceGrant[] = Object.entries(newClientServices).map(([service, grant]) => ({ service, write: grant.write }))
     // createGmailOAuthClient derives the internal client name from this
     // email — asking for the mailbox directly is what an operator actually
     // thinks in terms of, not an arbitrary label for the Google Cloud app.
-    const ok = await createGmailOAuthClient(gmailNewClientEmail.trim(), parsed, newClientAllowRead)
+    const ok = await createGmailOAuthClient(gmailNewClientEmail.trim(), parsed, newClientAllowRead, services)
     if (ok) {
       setNewClientFile(null)
       setNewClientAllowRead(false)
+      setNewClientServices({})
     }
     return ok
   }
@@ -215,6 +232,15 @@ export function GmailNotifications({ bots }: { bots: GmailNotificationsBots }) {
                           >
                             {conn.allow_read_access ? 'Send + read' : 'Send only'}
                           </span>
+                          {(conn.services || []).map(grant => (
+                            <span
+                              key={grant.service}
+                              className="rounded bg-muted px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-muted-foreground"
+                              title={`Authorized for ${serviceCatalog?.[grant.service] || grant.service} (${grant.write ? 'read + write' : 'read-only'}) — a workflow can use this via the google_workspace_cli tool`}
+                            >
+                              {serviceCatalog?.[grant.service] || grant.service}{grant.write ? '' : ' (ro)'}
+                            </span>
+                          ))}
                           <span className="ml-auto text-xs text-muted-foreground">
                             {conn.auth?.checking ? 'Checking…' : conn.ready ? 'Connected' : 'Not connected'}
                           </span>
@@ -327,6 +353,43 @@ export function GmailNotifications({ bots }: { bots: GmailNotificationsBots }) {
                         <span className="block text-[11px] text-muted-foreground/80">Off by default: sending is all notifications need. Turn on only if a workflow must read or search mail.</span>
                       </span>
                     </label>
+                    {serviceCatalog && Object.keys(serviceCatalog).length > 0 && (
+                      <div className="basis-full space-y-1.5 border-t border-border pt-2">
+                        <p className="text-xs text-muted-foreground">Also connect other Google Workspace services for this mailbox — a workflow can then use them directly. Read-only by default; fixed at sign-in like above.</p>
+                        {Object.entries(serviceCatalog).map(([service, label]) => {
+                          const grant = newClientServices[service]
+                          return (
+                            <div key={service} className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+                              <label className="flex items-center gap-2">
+                                <input
+                                  type="checkbox"
+                                  checked={!!grant}
+                                  disabled={readOnly}
+                                  onChange={event => setNewClientServices(prev => {
+                                    const next = { ...prev }
+                                    if (event.target.checked) next[service] = { write: false }
+                                    else delete next[service]
+                                    return next
+                                  })}
+                                />
+                                {label}
+                              </label>
+                              {grant && (
+                                <label className="flex items-center gap-1.5 pl-1 text-[11px]" title="Off (read-only) is the safer default. Turn on only if a workflow must create or edit, not just read.">
+                                  <input
+                                    type="checkbox"
+                                    checked={grant.write}
+                                    disabled={readOnly}
+                                    onChange={event => setNewClientServices(prev => ({ ...prev, [service]: { write: event.target.checked } }))}
+                                  />
+                                  allow write access
+                                </label>
+                              )}
+                            </div>
+                          )
+                        })}
+                      </div>
+                    )}
                     <Button
                       variant="outline"
                       disabled={readOnly || !gmailNewClientEmail.trim() || !newClientFile || gmailOAuthClientsBusy}

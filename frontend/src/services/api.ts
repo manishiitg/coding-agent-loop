@@ -1441,6 +1441,15 @@ export const agentApi = {
     return apiResponse.data
   },
 
+  // Additional Google Workspace services (Drive, Sheets, Docs, Slides,
+  // Calendar...) a connection may request beyond Gmail. Fetched rather than
+  // hardcoded so the UI's checkbox list stays in sync with the backend's
+  // scope catalog. Keyed by service id (e.g. "drive") to display name.
+  getGoogleServiceCatalog: async (): Promise<Record<string, string>> => {
+    const apiResponse = await api.get('/api/human-feedback/gmail/service-catalog')
+    return apiResponse.data
+  },
+
   // --- Gmail connections (multi-account senders) ---
 
   listGmailConnections: async (): Promise<GmailConnectionsResponse> => {

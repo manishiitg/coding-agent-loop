@@ -2763,6 +2763,15 @@ export interface WorkflowNotificationDestinationInfo {
   summary?: string
 }
 
+/** One additional Google Workspace service (beyond Gmail) a connection is
+ *  authorized for, and at what access level. */
+export interface GoogleServiceGrant {
+  /** Key into the service catalog fetched from /service-catalog, e.g. "drive". */
+  service: string
+  /** Mutating access. Off (read-only) is the default and the safer grant. */
+  write?: boolean
+}
+
 /** One configured Gmail sending account. Identifiers and labels only —
  *  the API never returns tokens, secrets, or credential file contents. */
 export interface GmailConnection {
@@ -2778,6 +2787,10 @@ export interface GmailConnection {
   /** Whether this connection was authorized with gmail.readonly on top of the
    *  always-requested gmail.send. Send-only is the default. */
   allow_read_access?: boolean
+  /** Additional Google Workspace services (Drive, Sheets, Docs, Slides,
+   *  Calendar...) this connection is authorized for, beyond Gmail. Empty
+   *  means Gmail-only. Fixed at consent time, like allow_read_access. */
+  services?: GoogleServiceGrant[]
   status?: string
   enabled: boolean
   is_default: boolean
@@ -2803,6 +2816,9 @@ export interface GmailConnectionRequest {
   /** Opt into gmail.readonly as well as gmail.send. Omitted = send-only,
    *  the default. Fixed at consent time: changing it means reconnecting. */
   allow_read_access?: boolean
+  /** Requests additional Google Workspace service scopes on create. Ignored
+   *  on update — see GmailConnection.services. */
+  services?: GoogleServiceGrant[]
   enabled?: boolean
 }
 

@@ -419,7 +419,7 @@ func (g *GmailService) computeAuthStatus(ctx context.Context, gwsPath string, us
 	if cfg != nil && strings.TrimSpace(cfg.Token) != "" {
 		st.Authenticated = true
 		st.HasGmailScope = true
-		st.Scopes = gmailOAuthScopesFor(false)
+		st.Scopes = gmailOAuthScopesFor(false, nil)
 		// Same identity strategy as the gog path: tokeninfo's email works for
 		// the send-only default, where getProfile is closed. Best-effort — a
 		// tokeninfo failure changes nothing about the auth state here, since

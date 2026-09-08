@@ -152,7 +152,7 @@ func (g *GmailService) computeAuthStatusGog(ctx context.Context, gogPath string,
 	// Nothing to introspect, so this is the base requested set; it assumes
 	// the common case (send-only) rather than over-reporting read, and may
 	// under-report a scope granted directly through gog outside this app.
-	st.Scopes = gmailOAuthScopesFor(false)
+	st.Scopes = gmailOAuthScopesFor(false, nil)
 	return st
 }
 

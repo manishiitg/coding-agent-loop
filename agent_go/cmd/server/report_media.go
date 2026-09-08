@@ -141,7 +141,16 @@ func (api *StreamingAPI) handleReportMediaStream(w http.ResponseWriter, r *http.
 		}
 	}
 	if resp.StatusCode == 200 || resp.StatusCode == 206 {
-		w.Header().Set("Content-Type", reportMediaType(claims.ScopeFile))
+		// ServeContent uses multipart/byteranges when a media engine asks for
+		// more than one range. Preserve its boundary-bearing Content-Type: the
+		// multipart body is not itself a video payload. Single-range and full
+		// responses still get the trusted MIME inferred from the scoped path.
+		upstreamType := resp.Header.Get("Content-Type")
+		if strings.HasPrefix(strings.ToLower(upstreamType), "multipart/byteranges;") {
+			w.Header().Set("Content-Type", upstreamType)
+		} else {
+			w.Header().Set("Content-Type", reportMediaType(claims.ScopeFile))
+		}
 		w.Header().Set("Content-Disposition", "inline")
 	}
 	w.WriteHeader(resp.StatusCode)

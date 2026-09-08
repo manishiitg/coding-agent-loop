@@ -103,4 +103,23 @@ func TestReportMediaRangeProxy(t *testing.T) {
 			t.Fatal("lost content range")
 		}
 	}
+
+	// Chromium commonly uses one range, while other embedded browser engines
+	// may combine multiple ranges. The proxy must preserve ServeContent's
+	// boundary-bearing MIME or the browser interprets the multipart body as raw
+	// WebM bytes and reports that the media is corrupt.
+	multi := httptest.NewRequest("GET", reportMediaStreamPath, nil)
+	multi.Header.Set("Range", "bytes=0-1,8-9")
+	multi = multi.WithContext(context.WithValue(multi.Context(), UserContextKey, &UserClaims{UserID: "media-reader", Scope: reportMediaScope, ScopeWorkspace: "Workflow/test", ScopeFile: "db/assets/test.webm"}))
+	multiResponse := httptest.NewRecorder()
+	api.handleReportMediaStream(multiResponse, multi)
+	if multiResponse.Code != http.StatusPartialContent {
+		t.Fatalf("multi-range status=%d body=%q", multiResponse.Code, multiResponse.Body.String())
+	}
+	if contentType := multiResponse.Header().Get("Content-Type"); !strings.HasPrefix(contentType, "multipart/byteranges;") {
+		t.Fatalf("multi-range content type=%q", contentType)
+	}
+	if !strings.HasPrefix(multiResponse.Body.String(), "--") {
+		t.Fatalf("multi-range body did not contain a MIME boundary: %q", multiResponse.Body.String())
+	}
 }

@@ -16,6 +16,7 @@ import ModalPortal from '../ui/ModalPortal'
 import { FilePreviewModal } from './reportWidgets/FilePreviewModal'
 import { HtmlReportFrame } from './reportWidgets/HtmlWidgetFrame'
 import { ReportEmbedProvider, type ReportDataApi } from './reportWidgets/reportEmbedContext'
+import { isStreamableReportMediaPath } from './reportWidgets/reportMedia'
 import { allowedReportPath, normalizeReportSource, renderReportMarkdown, reportMarkdownBasePath } from './reportWidgets/reportMarkdown'
 import { ReportHumanInputPanel } from './ReportHumanInputPanel'
 import { ReportChatPanel } from './reportWidgets/ReportChatPanel'
@@ -67,6 +68,11 @@ function useReportDataApi(workspacePath: string, sendChatMessage: ReportDataApi[
       return allowed ? readWorkspaceText(`${workspacePath}/${allowed}`) : null
     }
     const renderMarkdown = (markdown: string): string => renderReportMarkdown(markdown)
+    const mediaUrl = async (allowedPath: string): Promise<string> => {
+      const response = await api.post('/workflow/report-preview/media-url', { workspace: workspacePath, path: allowedPath })
+      // Resolve against the configured API origin (also supports remote workspaces).
+      return new URL(response.data.url, new URL(getApiBaseUrl(), window.location.href)).href
+    }
     return {
       workspacePath,
       sendChatMessage,
@@ -90,13 +96,17 @@ function useReportDataApi(workspacePath: string, sendChatMessage: ReportDataApi[
       mediaUrl: async (path: string) => {
         const allowed = allowedReportPath(path)
         if (!allowed?.startsWith('db/assets/')) return null
-        const response = await api.post('/workflow/report-preview/media-url', { workspace: workspacePath, path: allowed })
-        // Resolve against the configured API origin (also supports remote workspaces).
-        return new URL(response.data.url, new URL(getApiBaseUrl(), window.location.href)).href
+        return mediaUrl(allowed)
       },
       fileUrl: async (path: string) => {
         const allowed = allowedReportPath(path)
         if (!allowed) return null
+        // Compatibility for existing reports that used fileUrl for recordings:
+        // return a range-streaming URL instead of downloading the entire media
+        // file into a Blob before the report can render.
+        if (allowed.startsWith('db/assets/') && isStreamableReportMediaPath(allowed)) {
+          return mediaUrl(allowed)
+        }
         try {
           const response = await workspaceApi.get(`/api/documents/${encodeURIComponent(`${workspacePath}/${allowed}`)}`, {
             params: { download: 'true' }, responseType: 'blob', headers: { Accept: 'application/octet-stream' }, transformResponse: [(data) => data],

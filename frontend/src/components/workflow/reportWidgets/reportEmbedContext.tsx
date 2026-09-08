@@ -36,7 +36,9 @@ export interface ReportDataApi {
   renderMarkdown: (md: string) => string
   // File access (parity with file widgets): fileUrl returns an authenticated
   // blob URL usable in <img src> / <a href> / <iframe src> for images, PDFs,
-  // etc.; openFile opens the file in the in-report preview modal. Both scoped to
+  // etc. For backwards compatibility, db/assets video/audio paths are routed
+  // through the range-streaming media endpoint instead of becoming large Blobs.
+  // openFile opens the file in the in-report preview modal. Both are scoped to
   // db/ knowledgebase/ docs/.
   fileUrl: (path: string) => Promise<string | null>
   /** Expiring authenticated range-streaming URL for db/assets video/audio. */

@@ -12,6 +12,7 @@ import {
   ChevronDown,
   ChevronRight,
   Gauge,
+  LayoutDashboard,
 } from 'lucide-react'
 import { useWorkflowStore, type RunFolder } from '../../../stores/useWorkflowStore'
 import { PRIMARY_WORKSPACE_TOOLBAR_VIEWS, WORKSPACE_VIEWS, type WorkspaceViewId } from '../workspaceViews'
@@ -38,22 +39,23 @@ const WORKFLOW_SCHEDULE_TOOLBAR_LIMIT = 10_000
 // Product-tour / test hooks on specific toolbar buttons. Kept here rather
 // than in the view registry because they describe this toolbar's buttons,
 // not the views themselves.
-// The toolbar is three labeled groups (Views, Pulse, Setup). Each label is a
-// toggle: collapsed, the group shows only its label and current state; open,
-// its icons unfold next to it. Which groups are open is a per-browser
-// preference shared by all workflows.
+// Report is always visible. Everything used to observe or operate a workflow
+// is grouped under Pulse; configuration stays under Setup. Which expandable
+// group is open is a per-browser preference shared by all workflows.
 const TOOLBAR_OPEN_GROUPS_KEY = 'workflow-toolbar-open-groups'
-type ToolbarGroupId = 'views' | 'pulse' | 'setup'
+type ToolbarGroupId = 'pulse' | 'setup'
 const readOpenGroups = (): Record<ToolbarGroupId, boolean> => {
-  const fallback: Record<ToolbarGroupId, boolean> = { views: true, pulse: false, setup: false }
+  const fallback: Record<ToolbarGroupId, boolean> = { pulse: false, setup: false }
   try {
     const raw = localStorage.getItem(TOOLBAR_OPEN_GROUPS_KEY)
     if (!raw) return fallback
-    const stored = { ...fallback, ...JSON.parse(raw) as Partial<Record<ToolbarGroupId, boolean>> }
-    // A preference saved before "one group at a time" can name several; keep
-    // the first one so a stored value never reopens all three.
-    const first = (Object.keys(stored) as ToolbarGroupId[]).find(group => stored[group])
-    return { views: first === 'views', pulse: first === 'pulse', setup: first === 'setup' }
+    const stored = JSON.parse(raw) as Partial<Record<ToolbarGroupId | 'views', boolean>>
+    // Migrate the removed Views group into Pulse so a user's expanded toolbar
+    // stays expanded after this release. Setup wins if an older malformed
+    // preference has more than one group open.
+    if (stored.setup) return { pulse: false, setup: true }
+    if (stored.pulse || stored.views) return { pulse: true, setup: false }
+    return fallback
   } catch {
     return fallback
   }
@@ -176,7 +178,7 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
 
   // Button clusters come from the view registry, in registry order. Plan is
   // always present, including for a new workflow with no steps yet.
-  const workspaceViewDefinitions = PRIMARY_WORKSPACE_TOOLBAR_VIEWS
+  const workspaceViewDefinitions = PRIMARY_WORKSPACE_TOOLBAR_VIEWS.filter(view => view.id !== 'report')
   const capabilityViewDefinitions = useMemo(
     () => WORKSPACE_VIEWS.filter(view => view.toolbarGroup === 'capabilities'),
     [],
@@ -192,13 +194,12 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
   const [workflowScheduleStats, setWorkflowScheduleStats] = useState<WorkflowScheduleStats>(EMPTY_WORKFLOW_SCHEDULE_STATS)
   const [manualPulseStarting, setManualPulseStarting] = useState(false)
   const [openGroups, setOpenGroups] = useState<Record<ToolbarGroupId, boolean>>(() => readOpenGroups())
-  // One group open at a time: three expanded clusters of icon buttons is more
-  // toolbar than chat. Opening one closes the others; clicking the open one
-  // closes it, so all three collapsed is a valid state.
+  // One group open at a time. Opening one closes the other; clicking the open
+  // one closes it, so both collapsed is a valid state.
   const toggleGroup = useCallback((group: ToolbarGroupId) => {
     setOpenGroups(current => {
       const opening = !current[group]
-      const next = { views: false, pulse: false, setup: false } as Record<ToolbarGroupId, boolean>
+      const next = { pulse: false, setup: false } as Record<ToolbarGroupId, boolean>
       if (opening) next[group] = true
       try { localStorage.setItem(TOOLBAR_OPEN_GROUPS_KEY, JSON.stringify(next)) } catch { /* preference only */ }
       return next
@@ -510,15 +511,35 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
       {/* Right side - View controls */}
       <div data-tour="workflow-tools" data-testid="tour-workflow-tools" className="ml-auto flex shrink-0 items-center gap-1">
         <TooltipProvider delayDuration={150}>
-          {/* One continuous pill: Views | Pulse | Setup, separated by dividers. */}
+          {/* Report is the primary output and is never hidden in a menu. */}
+          {workspacePath && (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button
+                  type="button"
+                  onClick={() => openWorkspaceView('report')}
+                  className={`flex h-8 w-8 items-center justify-center rounded-lg border border-border transition-colors ${activeWorkspaceView === 'report' ? 'bg-muted text-foreground shadow-sm' : 'bg-muted/60 text-muted-foreground hover:bg-muted hover:text-foreground'}`}
+                  aria-label="Report"
+                  aria-pressed={activeWorkspaceView === 'report'}
+                >
+                  <LayoutDashboard className="h-3.5 w-3.5" />
+                </button>
+              </TooltipTrigger>
+              <TooltipContent side="bottom"><p>Report</p></TooltipContent>
+            </Tooltip>
+          )}
+
+          {/* One continuous pill: Pulse | Setup, separated by a divider. */}
           {(workspacePath || canWriteWorkflow) && (
           <div className="inline-flex h-8 items-center divide-x divide-border rounded-lg border border-border bg-muted/60 py-0.5 shadow-sm">
+          {/* Pulse is the single home for workflow structure, evidence,
+              operations, review, repair, backup, publishing and notifications. */}
           {workspacePath && (
             <ToolbarGroup
-              label="Views"
-              open={openGroups.views}
-              onToggle={() => toggleGroup('views')}
-              title={openGroups.views ? 'Hide views' : 'Show views: report, plan, costs, logs, learnings, knowledgebase, database, evaluation, schedules, files'}
+              label="Pulse"
+              open={openGroups.pulse}
+              onToggle={() => toggleGroup('pulse')}
+              title={openGroups.pulse ? 'Hide Pulse' : 'Show Pulse: plan, evidence, data, schedules, files, review and operations'}
             >
               <div className="inline-flex items-center gap-0.5">
                 {workspaceViewDefinitions.map(({ id: view, icon: Icon, label }) => {
@@ -534,22 +555,12 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
                       <Icon className="h-3.5 w-3.5" />
                     </button>
                   )
-
-                  // A clicked view button retains focus. A tooltip on that selected
-                  // button can remain over the report/plan header, where it is both
-                  // redundant and, in Electron, sometimes renders as an empty panel.
-                  // Keep discovery labels for unselected icons only.
-                  if (active) {
-                    return <React.Fragment key={view}>{viewButton}</React.Fragment>
-                  }
-
+                  if (active) return <React.Fragment key={view}>{viewButton}</React.Fragment>
                   return (
-                  <Tooltip key={view}>
-                    <TooltipTrigger asChild>
-                      {viewButton}
-                    </TooltipTrigger>
-                    <TooltipContent side="bottom"><p>{label}</p></TooltipContent>
-                  </Tooltip>
+                    <Tooltip key={view}>
+                      <TooltipTrigger asChild>{viewButton}</TooltipTrigger>
+                      <TooltipContent side="bottom"><p>{label}</p></TooltipContent>
+                    </Tooltip>
                   )
                 })}
                 <Tooltip>
@@ -582,18 +593,7 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
                   <TooltipContent side="bottom"><p>{scheduleTooltip}</p></TooltipContent>
                 </Tooltip>
               </div>
-            </ToolbarGroup>
-          )}
-
-          {/* Pulse is the operational hub for review, repair, backup,
-              publishing, and notifications. */}
-          {workspacePath && (
-            <ToolbarGroup
-              label="Pulse"
-              open={openGroups.pulse}
-              onToggle={() => toggleGroup('pulse')}
-              title={openGroups.pulse ? 'Hide Pulse tools' : 'Show Pulse tools: status, run now, backup, publish, notify'}
-            >
+              <span className="mx-0.5 h-4 w-px bg-border" aria-hidden="true" />
               <Tooltip>
                 <TooltipTrigger asChild>
                   <button

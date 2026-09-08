@@ -135,6 +135,15 @@ echo "==> Building frontend"
 cp -R "$REPO/frontend/dist/." "$RELEASE_DIR/frontend/"
 node "$REPO/frontend/scripts/check-release-assets.mjs" "$RELEASE_DIR/frontend"
 
+# frontend's build:report-preview step (part of `npm run build` above) writes
+# report-preview.js to agent_go/cmd/server/static/ in the SOURCE checkout, not
+# into the release. dominion-agent runs with WorkingDirectory=$CURRENT_LINK
+# and resolves staticFrontendDir()'s default ("./static/") against that cwd,
+# so without this copy preview_report always 503s with "Report preview
+# runtime is missing" no matter how many times the frontend gets built.
+mkdir -p "$RELEASE_DIR/static"
+cp -R "$REPO/agent_go/cmd/server/static/." "$RELEASE_DIR/static/"
+
 echo "==> Restoring the hand-maintained runtime-config.js from the current release (see lesson #2 above)"
 if [[ -f "$CURRENT_LINK/frontend/runtime-config.js" ]]; then
   cp "$CURRENT_LINK/frontend/runtime-config.js" "$RELEASE_DIR/frontend/runtime-config.js"

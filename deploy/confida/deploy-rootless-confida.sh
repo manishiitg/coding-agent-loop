@@ -125,6 +125,15 @@ echo "==> [$RELEASE_ID] Building frontend"
 (cd "$REPO_ROOT/frontend" && VITE_API_BASE_URL='' VITE_WORKSPACE_API_URL=/api/wp npm run build)
 cp -R "$REPO_ROOT/frontend/dist/." "$BUILD_DIR/frontend/"
 cp "$REPO_ROOT/frontend/scripts/check-release-assets.mjs" "$BUILD_DIR/check-release-assets.mjs"
+# frontend's build:report-preview step (part of `npm run build` above) writes
+# report-preview.js to agent_go/cmd/server/static/ in the source checkout,
+# never into the release. confida-agent, like RTS's video-studio-agent and
+# Dominion's dominion-agent, runs with WorkingDirectory=.../current and
+# resolves staticFrontendDir()'s default ("./static/") against that cwd, so
+# without this copy preview_report always 503s with "Report preview runtime
+# is missing" regardless of how many times the frontend gets built.
+mkdir -p "$BUILD_DIR/static"
+cp -R "$REPO_ROOT/agent_go/cmd/server/static/." "$BUILD_DIR/static/"
 # See runtime-config.js in this directory for why this overwrite is required.
 # Sourced from THIS script's own directory, not the cloned repo -- it is
 # deployment configuration, not application source.

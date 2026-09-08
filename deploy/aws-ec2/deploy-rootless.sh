@@ -100,6 +100,15 @@ fi
 cp -R "$REPO_ROOT/frontend/dist/." "$BUILD_DIR/frontend/"
 node "$REPO_ROOT/frontend/scripts/check-release-assets.mjs" "$BUILD_DIR/frontend"
 cp "$REPO_ROOT/frontend/scripts/check-release-assets.mjs" "$BUILD_DIR/check-release-assets.mjs"
+# frontend's build:report-preview step (part of `npm run build` above) writes
+# report-preview.js to agent_go/cmd/server/static/ in the source checkout,
+# never into the release. video-studio-agent runs with
+# WorkingDirectory=.../current and resolves staticFrontendDir()'s default
+# ("./static/") against that cwd, so without this copy preview_report always
+# 503s with "Report preview runtime is missing" regardless of how many times
+# the frontend gets built.
+mkdir -p "$BUILD_DIR/static"
+cp -R "$REPO_ROOT/agent_go/cmd/server/static/." "$BUILD_DIR/static/"
 install -m 0644 "$SCRIPT_DIR/server/runtime-config.js" "$BUILD_DIR/frontend/runtime-config.js"
 install -m 0644 "$SCRIPT_DIR/server/mcp_servers_video_studio.json" "$BUILD_DIR/configs/mcp_servers_video_studio.json"
 install -m 0755 "$SCRIPT_DIR/server/chrome-headless-wrapper.sh" "$BUILD_DIR/browser/agentworks-chrome-headless"

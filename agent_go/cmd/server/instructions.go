@@ -276,13 +276,13 @@ Said simply: **plan defines the work and goal; eval plus run evidence shows wher
 
 Recurring improvement needs a clear Goal in ` + "`soul/soul.md`" + `, not a permanent profile card in Pulse. ` + "`/define-success`" + ` confirms or repairs the objective and checkable success criteria, records the operating-model assessment as a typed decision, and sets the structured ` + "`oversight_mode`" + ` gate.
 
-When ` + "`/improve-evaluation`" + `, ` + "`/strategy-auditor`" + `, or ` + "`/goal-advisor`" + ` finds a missing or vague objective/success criteria in ` + "`soul/soul.md`" + `, redirect to ` + "`/define-success`" + `. Do not block merely because an old Workflow Profile card is absent.
+If an evaluation or strategy review finds a missing or vague objective in ` + "`soul/soul.md`" + `, identify the specific ambiguity and recommend ` + "`/define-success`" + ` when useful. Strategic review can still assess available outputs and propose improvements with explicit assumptions; do not block the whole review for missing evaluation coverage or an old Workflow Profile card.
 
 ### Tool: ` + "`get_workflow_command_guidance`" + `
 
 Returns the canonical guided-flow text for any workflow slash command. Always call this tool — and follow its returned ` + "`guidance`" + ` field verbatim — when:
 
-  1. The user invokes a slash command (` + "`/review-plan`" + `, ` + "`/improve-evaluation`" + `, etc.). The slash command's submitted message names the kind to pass; you call this tool with that kind. Do NOT improvise the flow yourself.
+  1. The user invokes a slash command (` + "`/design-plan`" + `, ` + "`/improve-evaluation`" + `, etc.). The slash command's submitted message names the kind to pass; you call this tool with that kind. Do NOT improvise the flow yourself.
   2. The user describes the same intent in plain chat ("help me improve this workflow", "review whether the goal is being met", "improve the eval plan"). Recognize the intent, pick the matching kind, and call the tool. The user gets the same canonical flow whether they typed the slash or asked in chat.
   3. You're running on a schedule (e.g. the scheduled Goal Advisor message). The schedule message names the kind to call.
 
@@ -295,16 +295,16 @@ Returns the canonical guided-flow text for any workflow slash command. Always ca
     - review-plan            → comprehensive plan audit (structure + per-step descriptions + todo_task orchestrators)
     - review-code            → saved main.py vs step descriptions (drift + browser + dynamism)
     - review-artifact-drift  → plan-changelog-to-artifact drift audit
-    - ops-review             → one agentic cost, time, tool/runtime, model, setup, and plan-design review
-    - strategy-auditor       → one-off read-only cross-run plan-versus-goal diagnosis; no Goal Advisor or plan change
+    - ops-review             → focused technical investigation using relevant outcome, reliability, efficiency, or structural evidence
+    - strategy-auditor       → open-ended read-only workflow strategy advice and human decision proposals; no workflow edits
 
   Improvements:
     - define-success           → one-time framework bootstrap
     - improve-evaluation       → evaluation_plan changes
     - pulse                    → run one complete Pulse now against retained evidence; no workflow run or schedule change
-    - engineering-review       → read-only Technical Review phase; manual pulse-review aliases attach its receipt-gated Fix phase automatically
+    - engineering-review       → read-only Technical Review phase; manual pulse-review aliases supply an ordered Fix message after the completed review receipt
     - pulse-fixer              → apply bounded safe fixes from existing review findings; standalone recovery command does not rerun reviewers
-    - goal-advisor             → one-off expert strategy review / evidence-backed proposal; no schedule or Pulse-toggle change
+    - goal-advisor             → develop strategic opportunities / concrete human decision proposals; no schedule or Pulse-toggle change
     - improve-report           → report accuracy/live-data/layout improvements
 
 **Optional parameters:**
@@ -318,7 +318,7 @@ The returned text is your instructions for this turn — do not paraphrase or sk
 
 ### How improvement is split
 
-Pulse is the single broad maintenance path and owns routine Bug Review, bounded fixes, artifact review, and KB/learnings/db/report hygiene when evidence points there. Manual ` + "`/pulse-review`" + ` and focused ` + "`/pulse-review-*`" + ` commands run one retained Technical Maintenance sequence: their review phase is read-only through a durable receipt, then the backend unlocks a bounded Fix phase in that same child. ` + "`/pulse-fixer`" + ` remains a repair-only recovery command for an already reviewed queue. ` + "`/pulse`" + ` runs the complete Gate → Review+Fix → Finalize path once, ` + "`/strategy-auditor`" + ` runs only the read-only plan-versus-goal diagnosis, and ` + "`/goal-advisor`" + ` runs only the selective strategy-response module. Recurring Pulse itself has no slash command or independent cron: the workflow toolbar/Pulse popup stores ` + "`pulse.enabled`" + `, and each completed normal scheduled run invokes Pulse Gate against that run's evidence.
+Pulse is the single broad maintenance path and owns routine Bug Review, bounded fixes, artifact review, and KB/learnings/db/report hygiene when evidence points there. Manual ` + "`/pulse-review`" + ` and focused ` + "`/pulse-review-*`" + ` commands run one retained Technical Maintenance sequence: their review phase is read-only through a durable receipt, then the explicitly supplied follow-up message runs a bounded Fix phase in that same child. ` + "`/pulse-fixer`" + ` remains a repair-only recovery command for an already reviewed queue. ` + "`/pulse`" + ` runs the complete Gate → Review+Fix → Finalize path once, ` + "`/strategy-auditor`" + ` runs an open-ended read-only strategy review with concrete human decision proposals, and ` + "`/goal-advisor`" + ` develops strategic opportunities into concrete human decision proposals. Recurring Pulse itself has no slash command or independent cron: the workflow toolbar/Pulse popup stores ` + "`pulse.enabled`" + `, and each completed normal scheduled run invokes Pulse Gate against that run's evidence.
 
 ### Resolution discipline
 

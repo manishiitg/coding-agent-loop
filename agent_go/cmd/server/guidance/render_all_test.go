@@ -134,7 +134,7 @@ func TestFocusedScheduledPulseReferencesStayComplete(t *testing.T) {
 				"exactly once", "durable evidence", "automatic-notification prose", `get_pulse_state(view="backlog", detail="compact")`,
 				"normal Workflow Builder tools", "terminal", "cannot erase or block other due work", "priority-ordered Fix queue",
 				"one reconciled `ownership_manifest`", "`kb_purity_manifest`", "`db_ownership_manifest`", "read-only access justified per step",
-				"proposal_only", "exact non-empty `next_check`", "strategy-proposal-", "final sequence message owns",
+				"proposal_only", "exact non-empty `next_check`", "strategic-proposal-", "final sequence message owns",
 			},
 		},
 		"pulse-finalizer": {
@@ -178,7 +178,7 @@ func TestManualPulseCommandsKeepRunSetupReviewAndFixBoundariesSeparate(t *testin
 			// renamed this dispatch instruction from "READ-ONLY REVIEW" to
 			// "READ-ONLY STRATEGY AUDIT".
 			"READ-ONLY STRATEGY AUDIT",
-			"one primary classification",
+			"classify individual findings",
 			// data-module="strategy_auditor" was builder/improve.html dashboard
 			// markup, retired along with the rest of that doc.
 			"Do not launch `/goal-advisor` automatically",
@@ -197,7 +197,7 @@ func TestManualPulseCommandsKeepRunSetupReviewAndFixBoundariesSeparate(t *testin
 		},
 		"pulse-fixer": {
 			"PULSE FIX PHASE",
-			"backend-unlocked later message",
+			"later Fix message",
 			"Do not rerun Technical Review",
 			"Workflow observations are evidence",
 			"bounded canonical **repair batch**",
@@ -427,7 +427,7 @@ func TestPulseGuidanceTracesStateChangesToRuntimeConsumers(t *testing.T) {
 		"control-path reachability check",
 		"wrong_store_write",
 		"shadow_store_drift",
-		"prove which persisted value it consumed",
+		"affected decision and which persisted value it consumed",
 	} {
 		if !strings.Contains(bugReview, want) {
 			t.Fatalf("pulse-bug-review missing control-path contract %q", want)
@@ -701,13 +701,30 @@ func TestPulseGuidanceRejudgesActiveExperimentCadenceFromCurrentEvidence(t *test
 	// reviews" (2026-08-08); goal-advisor no longer carries this content.
 }
 
-func TestStrategyAuditorGuidanceRequiresLongitudinalEvidenceAndReadOnlyHandoff(t *testing.T) {
+func TestStrategyAdvisorGuidanceBalancesExplorationEvidenceAndHumanDecisions(t *testing.T) {
 	auditor, err := renderFromRegistry("strategy-auditor", tmplData{}, referenceKinds)
 	if err != nil {
 		t.Fatalf("render strategy-auditor: %v", err)
 	}
 	for _, want := range []string{
 		"current plan's strategy",
+		"Workflow Strategy Advisor",
+		"Reports and actual outputs first",
+		"Plan and intent",
+		"Feedback and outcome context",
+		"Execution detail only by exception",
+		"No obligatory raw-log pass or per-step log inventory",
+		"categories are optional lenses",
+		"Deferred or unexamined areas are unassessed",
+		"An empty evaluation_plan.json is not a prerequisite failure",
+		"Successful report production or ticket reconciliation alone does not establish strategic effectiveness",
+		"strategic_opportunity",
+		"Do not force one primary classification over a mixed review",
+		"Every actionable strategic suggestion must reach Needs your decision",
+		"apply_contract",
+		"human_input_id",
+		"before declaring the review complete",
+		"A suggestion is not implementation authority",
 		"goal -> plan version -> run/group -> action -> target/cohort -> source/channel",
 		"stable target",
 		"new from repeated targets",
@@ -721,15 +738,15 @@ func TestStrategyAuditorGuidanceRequiresLongitudinalEvidenceAndReadOnlyHandoff(t
 		"insufficient_evidence",
 		"no_material_problem",
 		"Missing target/source/outcome linkage",
-		"in_plan_recommendation",
+		"insights_and_opportunities",
 		"Never edit workflow files or databases directly",
-		"independent audit conclusion before the opportunity phase",
+		"Consider alternatives in this review",
 		"does not wait for Engineering/Ops conclusions",
-		"bounded in-plan recommendation",
+		"Needs your decision",
 		"record_pulse_finding",
 		"non-trackable conclusion",
 	} {
-		if !strings.Contains(auditor, want) {
+		if !containsNormalizedText(auditor, want) {
 			t.Fatalf("strategy-auditor guidance missing %q:\n%s", want, auditor)
 		}
 	}
@@ -746,7 +763,7 @@ func TestStrategyAuditorGuidanceRequiresLongitudinalEvidenceAndReadOnlyHandoff(t
 		"Select **at most one** due module per Pulse pass",
 		"Strategic Review combines the former Strategy Auditor and Goal Advisor",
 		"Strategic Review for business usefulness or strategic headroom",
-		"opportunity phase runs only when",
+		"alternatives immediately",
 		"materially different approaches",
 	} {
 		if !strings.Contains(gate, want) {

@@ -43,11 +43,13 @@ For each actionable finding:
 5. **Preserve meaning and safety.** Never weaken a check, invent missing data,
    lower a threshold, change a destination, or reinterpret an operator decision
    merely to obtain a pass.
-6. **Exercise the real consumer path.** Prefer the actual parser, validator,
-   query, scheduler transition, or tool boundary over a look-alike check.
+6. **Use proportional immediate checks.** When a small relevant check is
+   practical, exercise the real consumer path: prefer the actual parser,
+   validator, query, scheduler transition, or tool boundary over a look-alike
+   check. Do not launch an extensive verification effort just to close a fix.
 7. **Record the honest lifecycle result.** Use `fixed_verified` only for passed
-   post-change proof. Use `changed_unverified` when a producing run or external
-   event is still required.
+   post-change proof. Otherwise use `changed_unverified` for the successfully
+   applied repair; it closes immediately without a future verification obligation.
 
 ## Bounded backlog progress contract
 
@@ -347,8 +349,9 @@ Apply this playbook to every Stores Health finding, including KB and DB purity:
 
 Immediate semantic moves may be `fixed_verified` only when source removal,
 destination exactness, references, and the current consumer are all re-checked.
-Behavioral/configuration changes that need a producing run remain
-`changed_unverified` with that exact run boundary.
+Behavioral/configuration changes without immediate runtime proof close as
+`changed_unverified`. Do not add a producing-run boundary solely to verify them;
+assume the applied fix holds unless the defect is reproduced.
 
 ## Tool, path, and permission repair
 
@@ -384,8 +387,9 @@ Stop and disposition honestly when:
 - the change alters goal meaning, policy, money, recipients, credentials, or
   external side effects without exact approval;
 - evidence cannot establish the canonical semantics;
-- only a future producing run can prove behavior;
 - the root cause is an externally owned platform or vendor defect;
 - the proposed repair would merely silence detection.
 
-Never describe these states as verified fixes.
+Never describe these states as verified fixes. If the repair was successfully
+applied and only stronger future proof is missing, that is not a stop condition
+or pending work: close it as `changed_unverified` and continue.

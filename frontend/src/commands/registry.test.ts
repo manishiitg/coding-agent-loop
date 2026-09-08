@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
-import { findCommand, getCommands } from './registry'
-import type { CommandContext } from './types'
+import { findCommand, getCommands, setUserCommands } from './registry'
+import type { CommandContext, CommandDefinition } from './types'
 
 const { runPulseMock } = vi.hoisted(() => ({ runPulseMock: vi.fn() }))
 vi.mock('../api/scheduler', () => ({ schedulerApi: { runPulse: runPulseMock } }))
@@ -48,11 +48,41 @@ describe('Pulse slash commands', () => {
     }
   })
 
-  it('keeps focused Pulse reviews discoverable from the execution-log run view', () => {
+  it('hides Builder reviews from Run and rejects direct command lookup there', () => {
     const runCommands = getCommands('workflow', 'run').map(command => command.command)
 
-    for (const command of ['pulse-review-execution-health', 'plan-prompt-bloat', 'pulse-review-validation-contract']) {
-      expect(runCommands).toContain(command)
+    for (const command of ['pulse', 'pulse-review', 'pulse-fixer', 'strategy-auditor', 'goal-advisor', 'design-plan', 'review-code', 'review-artifact-drift', 'pulse-review-execution-health', 'plan-prompt-bloat', 'pulse-review-validation-contract', 'backup', 'publish', 'notify']) {
+      expect(runCommands).not.toContain(command)
+      expect(findCommand(command, 'workflow', 'run', true)).toBeUndefined()
+      expect(findCommand(command, 'workflow', 'workshop', true)).toBeDefined()
+    }
+  })
+
+  it('enforces read-only workflow access even when a restored chat says Builder', () => {
+    for (const mode of ['run', 'workshop', undefined] as const) {
+      const commands = getCommands('workflow', mode, false).map(command => command.command)
+      for (const command of getCommands('workflow', 'workshop', true)) {
+        expect(commands).not.toContain(command.command)
+        expect(findCommand(command.command, 'workflow', mode, false)).toBeUndefined()
+      }
+    }
+  })
+
+  it('keeps commands that explicitly support Run available to readers', () => {
+    const runCommand: CommandDefinition = {
+      command: 'inspect-output', description: 'Inspect the current output', icon: null,
+      modes: ['workflow'], requiredWorkshopMode: 'run', source: 'user', execute: vi.fn(),
+    }
+    const builderCommand: CommandDefinition = {
+      ...runCommand, command: 'edit-output', requiredWorkshopMode: 'workshop',
+    }
+    setUserCommands([runCommand, builderCommand])
+    try {
+      expect(getCommands('workflow', 'run', false)).toEqual([runCommand])
+      expect(findCommand('inspect-output', 'workflow', 'run', false)).toBe(runCommand)
+      expect(findCommand('edit-output', 'workflow', 'run', false)).toBeUndefined()
+    } finally {
+      setUserCommands([])
     }
   })
 
@@ -96,6 +126,15 @@ describe('Pulse slash commands', () => {
 		expect(submitted).toContain('Do not call tools, reload state, or independently revalidate')
     expect(submitted).toContain('iteration-9/default')
     expect(submitted).toContain('prioritize failed evaluation writes')
+    const sequenceJSON = submitted.match(/, message_sequence=(\[.*?\]), completion_mode=/)?.[1]
+    expect(sequenceJSON).toBeDefined()
+    const sequence = JSON.parse(sequenceJSON!)
+    expect(sequence).toHaveLength(1)
+    expect(sequence[0].id).toBe('fix')
+    expect(sequence[0].message).toContain('kind="pulse-fixer"')
+    expect(sequence[0].message).toContain('if review failed or is incomplete')
+    expect(sequence[0].message).toContain('run_folder="iteration-9/default"')
+    expect(sequence[0].message).toContain('prioritize failed evaluation writes')
   })
 
   it('routes Pulse Fixer to a separate background agent after review', () => {
@@ -165,6 +204,9 @@ describe('Pulse slash commands', () => {
     expect(submitted).not.toContain('required_pulse_review_modules')
     expect(submitted).toContain('iteration-7/group-a')
     expect(submitted).toContain('focus on repeated targets')
+    expect(submitted).toContain('Needs your decision proposals')
+    expect(submitted).not.toContain('message_sequence=')
+    expect(submitted).not.toContain('in severity order')
   })
 
   it('routes Goal Advisor through the normal guided background review path', () => {
@@ -181,6 +223,8 @@ describe('Pulse slash commands', () => {
     expect(submitted).toContain('challenge feed concentration')
     expect(submitted).toContain('BACKGROUND task')
     expect(submitted).toContain('run_in_background')
+    expect(submitted).toContain('Needs your decision proposals')
+    expect(submitted).not.toContain('message_sequence=')
   })
 
   it('uses design-plan as the single comprehensive plan review command', () => {
@@ -188,7 +232,8 @@ describe('Pulse slash commands', () => {
     const runCommands = getCommands('workflow', 'run').map(command => command.command)
 
     expect(workshopCommands).toContain('design-plan')
-    expect(runCommands).toContain('design-plan')
+    expect(runCommands).not.toContain('design-plan')
+    expect(findCommand('design-plan', 'workflow')?.requiredWorkshopMode).toBe('workshop')
     expect(workshopCommands).not.toContain('review-plan')
     expect(runCommands).not.toContain('review-plan')
   })
@@ -206,7 +251,7 @@ describe('Pulse slash commands', () => {
     expect(submitted).not.toContain('Run the /design-plan review as a BACKGROUND task')
   })
 
-  it('does not truncate background review results to a top three', () => {
+  it('preserves Plan Drift repair authority in the background wrapper', () => {
     const command = findCommand('review-artifact-drift', 'workflow')
     let submitted = ''
 
@@ -216,8 +261,27 @@ describe('Pulse slash commands', () => {
       workshopMode: 'workshop',
     } as CommandContext)
 
-    expect(submitted).toContain('every finding and recommendation in severity order')
-    expect(submitted).toContain('Do not truncate the result to a Top 3')
+    expect(submitted).toContain('Part 1 may apply bounded safe compatibility and prompt repairs')
+    expect(submitted).toContain('Part 2 remains read-only')
+    expect(submitted).not.toContain('do not modify implementation files')
+    expect(submitted).toContain('lifecycle outcomes')
+  })
+
+  it('routes saved-code review to an existing read-only technical flow', () => {
+    let submitted = ''
+    findCommand('review-code', 'workflow')?.execute({
+      beforeSlash: 'check the report exporter',
+      onSubmit: (message: string) => { submitted = message },
+      workshopMode: 'workshop',
+      getWorkflowStore: () => ({ selectedRunFolder: 'iteration-2/dev' }),
+    } as CommandContext)
+
+    expect(submitted).toContain('kind=\\"engineering-review\\"')
+    expect(submitted).not.toContain('kind=\\"review-code\\"')
+    expect(submitted).toContain('workflow.json.code_layout_version')
+    expect(submitted).toContain('do not apply changes in this review')
+    expect(submitted).not.toContain('message_sequence=')
+    expect(submitted).toContain('check the report exporter')
   })
 
   it('keeps workflow configuration actions out of the generic chat slash menu', () => {

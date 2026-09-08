@@ -65,11 +65,6 @@ export interface CommandDefinition {
   modes?: ModeCategory[]
   requiredWorkflowMode?: 'plan' | 'eval' | 'output'
   requiredWorkshopMode?: WorkshopMode | WorkshopMode[]
-  // Show the command in every workflow view even when selecting it will switch
-  // into requiredWorkshopMode. Use this for intentional, manual entry points
-  // such as Pulse reviews; hiding them makes them impossible to discover from
-  // the execution-log view where their evidence is most visible.
-  showInAllWorkshopModes?: boolean
   validate?: (ctx: CommandContext) => string | null
   hidden?: boolean
   // 'product' commands ship with the active product (declared in its

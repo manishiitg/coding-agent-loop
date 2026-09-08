@@ -21,6 +21,7 @@ import WorkflowSelectionDialog from './WorkflowSelectionDialog'
 import { isChatCompatiblePhase } from '../utils/chatSubmitHelpers'
 import { useWorkflowStore } from '../stores/useWorkflowStore'
 import { useWorkflowManifestStore } from '../stores/useWorkflowManifestStore'
+import { useCanWriteWorkflow } from '../hooks/useCanWriteWorkflow'
 import { chromeCdpInstallCommand, chromeCdpLaunchCommand, chromeCdpVerifyCommand, chromeCdpZipUrl } from '../utils/cdpSetup'
 import { CHAT_TOOL_COMMAND_EVENT, chatToolCommandFromEvent } from '../utils/chatToolEvents'
 import { loadAgentProfileCapabilityEnabled, loadAgentProfileProviderOptions, loadAgentProfileRuntime, type AgentProfileProviderOption } from '../utils/agentProfileCapabilities'
@@ -1022,6 +1023,13 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     if (!activePresetIds.workflow) return undefined
     return useWorkflowManifestStore.getState().getWorkflowById(activePresetIds.workflow)?.workspace_path
   }, [activePresetIds.workflow, getActivePreset, selectedModeCategory])
+
+  const commandModeCategory = isWorkflowMode ? 'workflow' : selectedModeCategory
+  const commandWorkflowPath = useWorkflowManifestStore(state => {
+    const presetId = activeTab?.metadata?.presetQueryId || activeWorkflowPresetId
+    return isWorkflowMode && presetId ? state.getWorkflowById(presetId)?.workspace_path : undefined
+  }) || activeWorkflowWorkspacePath || workflowPhaseWorkspacePath || workspaceActiveFolder
+  const canWriteCommandWorkflow = useCanWriteWorkflow(commandWorkflowPath?.replace(/\/+$/, ''))
   
   // Get queued messages from tab config
   const queuedMessages = useMemo(() => tabConfig?.queuedMessages || [], [tabConfig?.queuedMessages])
@@ -2428,10 +2436,16 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     const commandArgs = (firstSpace >= 0 ? withoutSlash.slice(firstSpace + 1) : '').trim()
     if (!commandName) return false
 
-    const cmd = findCommand(commandName, selectedModeCategory)
+    const cmd = findCommand(commandName, commandModeCategory, getEffectiveWorkflowModes().workshopMode, canWriteCommandWorkflow)
     if (!cmd) {
       const modeScopedCommand = findCommandAnyMode(commandName)
-      if (modeScopedCommand && selectedModeCategory) {
+      if (modeScopedCommand && commandModeCategory) {
+        if (commandModeCategory === 'workflow' && modeScopedCommand.modes?.includes('workflow')) {
+          addToast(canWriteCommandWorkflow
+            ? `/${commandName} is unavailable in this chat mode. Open a Builder chat to use it.`
+            : `/${commandName} requires workflow write access.`, 'info')
+          return true
+        }
         const availableInWorkflow = modeScopedCommand.modes?.includes('workflow') ?? false
         const targetLabel = availableInWorkflow ? 'automation' : 'multi-agent'
         addToast(`/${commandName} is only available in ${targetLabel} chat`, 'info')
@@ -2454,7 +2468,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     clearInputState()
     cmd.execute(ctx)
     return true
-  }, [addToast, applyWorkflowCommandRequirements, buildCommandContext, clearInputState, getCommandValidationError, selectedModeCategory])
+  }, [addToast, applyWorkflowCommandRequirements, buildCommandContext, clearInputState, getCommandValidationError, commandModeCategory, getEffectiveWorkflowModes, canWriteCommandWorkflow])
 
   const getSubmitBlockReason = useCallback((): string | null => {
     if (!queryToSubmit?.trim()) return null
@@ -2712,7 +2726,11 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     clearInputState()
 
     // Look up and execute the command from the registry
-    const cmd = findCommand(command, selectedModeCategory)
+    const cmd = findCommand(command, commandModeCategory, getEffectiveWorkflowModes().workshopMode, canWriteCommandWorkflow)
+    if (!cmd && findCommandAnyMode(command)) {
+      addToast('This command is unavailable for your current mode or workflow access.', 'info')
+      return
+    }
     const validationError = cmd ? getCommandValidationError(cmd, beforeSlash) : null
     if (cmd && validationError) {
       addToast(validationError, 'info')
@@ -2764,7 +2782,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
 
     // Focus back to textarea
     setTimeout(() => textareaRef.current?.focus(), 0)
-  }, [inputText, slashPosition, commandSearchQuery, activeTabId, addToast, clearInputState, setTabConfig, applyWorkflowCommandRequirements, buildCommandContext, getCommandValidationError, selectedModeCategory])
+  }, [inputText, slashPosition, commandSearchQuery, activeTabId, addToast, clearInputState, setTabConfig, applyWorkflowCommandRequirements, buildCommandContext, getCommandValidationError, commandModeCategory, getEffectiveWorkflowModes, canWriteCommandWorkflow])
 
   // Command management callbacks
   const handleManageCommands = useCallback(() => {
@@ -4133,10 +4151,11 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
         onSelectCommand={handleCommandSelect}
         searchQuery={commandSearchQuery}
         position={commandDialogPosition}
-        modeCategory={selectedModeCategory}
-        workshopMode={selectedModeCategory === 'workflow' ? getEffectiveWorkflowModes().workshopMode : undefined}
+        modeCategory={commandModeCategory}
+        workshopMode={commandModeCategory === 'workflow' ? getEffectiveWorkflowModes().workshopMode : undefined}
+        canWriteWorkflow={canWriteCommandWorkflow}
         agentProfileId={activeTab?.metadata?.agentProfileId}
-        {...(isProductSurface ? {} : {
+        {...(isProductSurface || (isWorkflowMode && !canWriteCommandWorkflow) ? {} : {
           onManageCommands: handleManageCommands,
           onEditCommand: handleEditCommand,
           onDeleteCommand: handleDeleteCommand,

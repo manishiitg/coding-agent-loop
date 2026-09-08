@@ -4,12 +4,20 @@
 
 `plan_drift_review` is a review-**and**-fix module, the same shape as
 `technical_review`: in one retained turn it establishes ground truth per due
-step, applies safe workflow-owned repairs directly, verifies each fix, and
+step, applies safe workflow-owned repairs directly, checks the immediate edit
+proportionally, and
 only routes to a human decision or a platform-owned boundary what it
 genuinely cannot resolve itself. It does not hand routine drift off to
 `technical_review` to redo — a check this module already fixed and verified
 must never reappear as a separate `technical_review` finding for the same
 root cause.
+
+Its remit is change compatibility and step-prompt quality: does the current
+plan agree with its dependent code, configuration, validation, reports, DB
+contracts, schedules, and accessible guidance, and are its execution prompts
+clear and well formed? It is not a recurring architecture redesign. General
+normalization, step-type optimization, or new product ideas belong to Technical
+or Strategic Review unless needed to resolve a concrete changed contract.
 
 `plan_drift_review` is event-triggered, not cadenced: it becomes due whenever
 any canonical plan step has no `drift_review` record at all, or has one with
@@ -27,6 +35,16 @@ entries for this step **after** `reviewed_through_change_id` (if the step had
 no prior review, or no `reviewed_through_change_id`, treat every relevant
 changelog entry as new) to understand exactly what changed since the last
 check, rather than re-auditing the whole step from scratch.
+
+The stale flag requests an impact assessment, not a full checklist replay.
+Judge the actual change before selecting evidence. A title-only edit with no
+behavioral, reference, or prompt meaning change can receive a compact compatible
+receipt. Carry forward prior checks only after establishing their relevant
+inputs/contracts and guidance are unchanged; say what was reused and why rather
+than claiming a fresh runtime test. If prompt quality was never assessed, perform
+that bounded prompt review once for this due step. First-time steps need a
+baseline compatibility and prompt review. No whole-workflow scan merely because
+one step changed.
 
 ### 1. Read the precomputed evidence
 
@@ -82,9 +100,10 @@ Audit procedure:
    by name/id), and `learnings/_global/` notes referencing it. A route/chain
    left pointing at a deleted step is real drift — the workflow can no longer
    execute that path.
-4. Fix what is safe and workflow-owned directly (redirect a dangling
-   `next_step_id`, remove an orphaned eval step or route reference, update a
-   stale doc mention), verify each fix, and route anything you cannot safely
+4. Fix what is safe and workflow-owned directly: update a stale reference only
+   when its intended replacement or removal is unambiguous in the approved plan.
+   Do not guess a new successor, drop a needed evaluation, or redesign a route;
+   use a decision for ambiguous behavior. Confirm applied edits and route anything you cannot safely
    fix in this turn using the exact same classification scheme as step 4
    below (`step_id="__workflow_drift_review__"` on every `record_pulse_finding`
    call).
@@ -94,89 +113,72 @@ Audit procedure:
    using a `check_id` such as `deleted_step_dependent_artifact_audit` per
    deleted step ID or per distinct artifact surface checked.
 
-### 2. Fill the gaps Go could not precompute
+### 2. Check affected contracts and prompt quality
 
-For each candidate step, directly check what the deterministic pass skipped:
+Read `read_skill(skills=[{"name":"builder-reference","path":"references/step-description.md"}])`
+once per pass. This is the canonical prompt-engineering guidance; apply it rather
+than inventing a second rubric or judging prompts by character count.
 
-- **`validation_schema` file rules** — if the step declares
-  `validation_schema.files[].json_checks` or `must_exist`, read that step's
-  most recent real run output and verify those assertions still hold by hand.
-- **Orphaned tables** — once per pass, not per step: list `db.sqlite`'s
-  tables via `query_workflow_db`, cross-reference against report queries, any
-  step's DB rules/scripted queries, and `db/README.md`. A table matching none
-  of those and not a platform-reserved table is a candidate, not a certainty
-  — say so in the evidence.
+For each due step, record a **`step_prompt_quality`** check in the
+`record_plan_drift_review` checks array. Inspect the authored description and,
+for message sequences, the individual item prompts together with the schema,
+context dependencies, and guidance that execution actually receives. Assess:
 
-Then do the judgment checks a Go function cannot:
+- a clear objective, necessary inputs/evidence, scope, output location, and
+  success boundary;
+- explicit business constraints, approval boundaries, and permitted actions;
+- WHAT in the description; reusable HOW in real, accessible skills/learnings;
+- an appropriately light output contract in the schema or an authoritative
+  reference, without repeated field lists or checks on harmless variation;
+- precise wording, no conflicting/stale instructions, needless repetition,
+  copied shared policy, or micromanaged procedure without a correctness reason;
+- enough context and accessible references to execute the task without guessing.
 
-- **Step description accuracy** — does the description still match the
-  step's actual configured behavior (prompt, tools, store access)?
-- **Learnings / KB content staleness** — does `<script-dir>/main.py`
-  or its knowledgebase notes still describe what the step currently does?
-- **Learnings / KB access appropriateness** — is the step's
-  `knowledgebase_access` / learnings access mode still the
-  right choice given the step's current maturity (not just internally
-  consistent with itself)?
-- **DB schema normalization** — once per pass, not per step: informed by
-  `PRAGMA table_info` across every table, judge whether the schema stays
-  reasonably normalized, not merely whether each table's own contract holds.
+State the concrete passage/contract examined and the meaningful issue or why it
+is compatible. A short prompt can fail and a long prompt can pass. Do not force
+rewrites, arbitrary size targets, scripting, or new validation for free-form work.
+Never remove task-specific ordering, evidence, or authority constraints for brevity.
+Reuse a prior prompt-quality check only when the prompt, supplied schema/context,
+available guidance, and this prompt contract remain applicable and unchanged.
 
-For a candidate whose `step_type` is `"message_sequence"`, first load
-`read_skill(skills=[{"name":"builder-reference","path":"references/message-sequence.md"}])`
-and record one additional **`message_sequence_best_practices`** check. Compare
-the actual step description, `items[]`, validation schema, context boundaries,
-and access configuration against that reference. The evidence must explicitly
-cover whether the sequence:
+Then inspect only the dependencies the actual change could affect:
 
-- is one coherent shared-context span rather than unrelated work accumulated
-  into one conversation;
-- completes the outcome, re-opens authoritative evidence, and repairs plus
-  double-checks verified gaps (or explains why a smaller sequence is sufficient);
-- keeps deterministic API/CLI fetching, stable parsing, and mechanical
-  persistence in scripted regular steps rather than spending agent turns on it;
-- uses `prevalidation` only for a real intermediate boundary before a costly or
-  hard-to-undo later turn, never as a duplicate of the automatic final gate;
-- validates the durable output or real side effect with run-specific proof and
-  does not hide durable handoffs or retries only in conversation memory; and
-- narrows item-level write access where needed without exceeding or needlessly
-  broadening the step-level permissions.
+- **Validation file rules:** compare current rules with the intended producer and
+  consumers. A retained output may illustrate behavior only if its provenance
+  matches the current contract. An artifact created before a prompt/schema change
+  is baseline evidence, not a new failure or proof of the repair. Missing current
+  output does not prevent a static compatibility judgment or an applied fix closing.
+- **Reports, SQL, DB rules, and documentation:** use precomputed evidence within
+  its stated scope; trace the changed field/table to real readers and writers.
+  An empty rule set is not proof that an unrelated contract was checked.
+- **Deleted/replaced producers and tables:** inspect their affected references.
+  An unreferenced table may retain historical or externally consumed data; do not
+  scan every table or drop data simply because no current step references it.
+  General DB normalization and cleanup are outside this review.
+- **Descriptions, saved code, skills, and KB:** identify stale instructions or
+  inaccessible required guidance caused by the changed contract. Do not redesign
+  learning ownership merely because another access mode seems preferable.
+- **Schedules and downstream handoffs:** trace changed IDs, routes, inputs,
+  outputs, and intended order. Preserve delivery and approval boundaries.
 
-This is a judgment check, not a regex. Repair a bounded structural or prompt
-violation in this same pass when safe; otherwise file and link the exact Pulse
-finding before recording a failed check. `record_plan_drift_review` rejects a
-message-sequence review that omits this check.
+Keep the existing reference-backed check IDs for each applicable step type:
+`scripted_best_practices` (`references/scripted.md`),
+`message_sequence_best_practices` (`references/message-sequence.md`),
+`orchestrator_best_practices` (`references/orchestrator.md`),
+`routing_best_practices` (`references/routing.md`), and
+`branch_best_practices` (`references/branch.md`). Load the matching reference and
+check the current step's prompt/configuration and affected execution boundaries.
+These IDs are compatibility coverage, not a mandate to redesign a step or replay
+every design recommendation after every edit. Existing tool enforcement still
+requires the matching check; include `step_prompt_quality` separately so prompt
+quality is visible in the saved review. For the synthetic workflow-deletion
+candidate, there is no step prompt to score; review prompts only on real affected
+steps and record that scope in the deletion audit.
 
-Apply the same reference-backed pattern to the other specialized step types:
-
-- For `step_type: "regular"` (the scripted step), load
-  `references/scripted.md` and record **`scripted_best_practices`**. Confirm the
-  work is genuinely deterministic rather than judgment-heavy; declared mode,
-  `<script-dir>/main.py`, inputs, outputs, and description agree; fixed
-  API/CLI calls, parsing, persistence, retries, and errors are fail-closed and
-  idempotent where required; validation proves the real durable result; and a
-  retained recent run shows the script actually performs its stated job. If a
-  regular step is still agentic, treat that as a migration question: bounded
-  deterministic work should become scripted, while conversational judgment
-  should become `message_sequence`.
-- For `step_type: "orchestrator"` (the orchestrator), load
-  `references/orchestrator.md` and record **`orchestrator_best_practices`**. Confirm
-  runtime orchestration is genuinely dynamic or adaptive rather than a fixed
-  child list; route eligibility/conditions are distinct; inline versus shared
-  orphan ownership is valid; sub-agent context, outputs, retries, and completion
-  receipts are explicit; and the parent does not duplicate child work.
-- For `step_type: "routing"`, load `references/routing.md` and record
-  **`routing_best_practices`** in addition to the two route checks below.
-  Confirm this is a major self-contained fork, selection is deterministic and
-  fail-closed, targets exist, sibling paths cannot fall through, and every path
-  intentionally converges or ends.
-- For `step_type: "branch"`, load `references/branch.md` and record
-  **`branch_best_practices`**. Confirm this is a small in-flow decision rather
-  than a major route, selection is deterministic and fail-closed, targets
-  exist, sibling paths cannot fall through, and convergence/end behavior is
-  explicit.
-
-These are also judgment checks with same-pass repair authority. The persistence
-tool rejects a step receipt that omits its matching reference-backed check.
+A preferred alternative architecture is not itself drift. Propose material
+step-type, topology, retry, ownership, or side-effect changes through a human
+decision or Technical Review; never convert a step just to satisfy a best-practice
+preference. Make only clear, bounded repairs that preserve the intended behavior.
 
 For a candidate whose `step_type` is `"routing"` only (never `"branch"` —
 branch is deliberately the small in-flow decision, these two checks do not
@@ -196,8 +198,11 @@ judge:
   `evaluation/evaluation_plan.json` at all. If it does not, this check is
   out of scope for this step — record it `pass` with evidence saying the
   workflow has no eval plan, nothing to pair. If it does, this check is
-  about **coverage of every route this step declares, not just any one
-  eval reference** (a single eval covering 1 of this step's 5 routes must
+  about preserving the workflow's intended evaluation coverage. First establish
+  that policy from the current approved contract: an intentionally absent/empty
+  eval plan is not a reason to manufacture evaluations or restore retired criteria.
+  When every route is intended to be evaluated, check **coverage of every route
+  this step declares, not just any one eval reference** (a single eval covering 1 of this step's 5 routes must
   not pass): collect every eval step whose `applies_to_routes` names this
   routing step's ID (e.g. `applies_to_routes:
   [{"routing_step_id":"<this step's id>", "route_ids":[...]}]` — see
@@ -217,7 +222,7 @@ judge:
   worth evaluating — judge whether that's really true before treating it
   as covered.
 
-### 3. Apply safe workflow-owned fixes and verify each one
+### 3. Apply safe fixes and close them
 
 For every check that failed, fix it now if it is a bounded, safe,
 workflow-owned repair — the same standard `technical_review` applies to its
@@ -227,9 +232,9 @@ own repair batches. This is the normal path, not the exception:
   scripted `main.py` query usually means a report/schema/script still
   references a renamed or dropped column/table — update the referencing
   artifact (the report SQL, the schema rule, or the script) to match the live
-  schema. Route a genuine orphaned table through
-  `apply_workflow_db_migration` (it auto-snapshots before any destructive
-  statement) rather than a raw `DROP`.
+  schema after establishing the intended producer/consumer contract. A table
+  without a current reference is not authorization to delete it; require an
+  explicit retention/deletion decision before removing historical data.
 - A stale description, stale learnings/KB content, or a wrong learnings/KB
   access mode is a direct edit through the normal Workflow Builder tools
   (`update_step_config` and friends).
@@ -238,11 +243,17 @@ own repair batches. This is the normal path, not the exception:
   and the schema drifted — decide which side is authoritative from the
   step's actual current behavior, not merely which was easier to edit).
 
-After each fix, verify it the same way `technical_review` verifies a repair:
-re-run the specific check (re-derive the report query result, re-check the
-schema rule, re-read the file) rather than assuming the edit worked. Record
-that check `status: "fixed"` with evidence describing both what was wrong and
-what you changed and confirmed.
+For prompt repairs, reread the changed prompt together with its supplied schema
+and referenced guidance to ensure the intended task and authority are preserved.
+For other repairs, confirm the mutation succeeded and use a small relevant
+immediate check when practical. Record `status: "fixed"` once the bounded repair
+was applied, with an honest account of the change and checks actually performed.
+Close an associated issue with `changed_unverified` when no immediate runtime
+proof exists, or `fixed_verified` only when a relevant check actually passed.
+Do not require a producing run, create a verification queue, or mark a fixed
+contract `fail` just because only pre-change artifacts remain. Treat applied fixes
+as fixed unless new evidence reproduces the defect; then reopen the same issue.
+A failed mutation or immediate check reproducing the defect remains active.
 
 ### 4. Route what you cannot safely fix in this turn
 
@@ -266,12 +277,14 @@ exact step under review, not merely to exist somewhere in the backlog.
   `disposition="external_action_required"` with a `reason_code`, an
   `external_owner`, and a `reopen_condition` — those three fields belong to
   the disposition, not to `record_pulse_finding` itself.
-- **Insufficient evidence to fix safely right now** (e.g. a real fix needs a
-  future run's output to confirm): `record_pulse_finding` with `step_id`,
-  `recommended_route="evidence_wait"`, and an exact `next_check`.
+- **Insufficient evidence to choose or apply a fix safely right now** (e.g.
+  the intended source of a field is unknown and would have to be guessed;
+  no repair has been applied): `record_pulse_finding` with `step_id`,
+  `recommended_route="evidence_wait"`, and an exact `next_check`. Missing future
+  verification of an already-applied fix does not qualify for this route.
 - Only as a last resort — a fix that is real, workflow-owned, and safe in
   principle, but too large or cross-cutting for this focused pass to
-  complete and verify on its own — fall back to `record_pulse_finding` with
+  complete on its own — fall back to `record_pulse_finding` with
   `step_id` and `recommended_route="fixer_handoff"` so `technical_review`
   picks it up. Keep this rare: a `fixer_handoff` finding for something this
   module could safely have fixed itself is exactly the extra Pulse cycle
@@ -308,7 +321,8 @@ Update the run-scoped checkpoint (`runs/pulse/<run>/plan-drift-review.md`)
 with a compact per-step summary before ending. Call `record_pulse_result`
 exactly once for the terminal `plan_drift_review` module result, with a
 `finding_dispositions[]` entry for every finding filed this turn — including
-`disposition="external_action_required"` (with `reason_code`,
+`changed_unverified` for an applied fix without immediate proof (closed, not
+awaiting a run), or `disposition="external_action_required"` (with `reason_code`,
 `external_owner`, `reopen_condition`) for step 4's platform-owned findings.
 Do not render HTML, back up, publish, or notify — those belong to the
 finalizer stage.

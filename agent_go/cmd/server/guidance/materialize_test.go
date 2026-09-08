@@ -384,7 +384,7 @@ func TestEngineeringReviewUsesTheCanonicalReviewOnlySequence(t *testing.T) {
 		"record_pulse_module_due",
 		"not a scheduled Pulse Gate pass",
 		"Own the review yourself",
-		"Persist typed findings and matured verification",
+		"Persist typed findings and any reproduced failures",
 		"Do not apply repairs",
 		"same retained Review+Fix task may later",
 	} {

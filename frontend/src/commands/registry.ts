@@ -5,18 +5,20 @@ import { builtinCommands } from './builtin-commands'
 let userCommands: CommandDefinition[] = []
 let productCommands: CommandDefinition[] = []
 
-function matchesMode(cmd: CommandDefinition, mode?: ModeCategory, workshopMode?: WorkshopMode): boolean {
+function matchesMode(cmd: CommandDefinition, mode?: ModeCategory, workshopMode?: WorkshopMode, canWriteWorkflow = true): boolean {
   if (cmd.hidden) return false
   if (mode === undefined || mode === null) return true
 
   if (mode === 'workflow') {
     if (!(cmd.modes?.includes('workflow') ?? false)) return false
-    // Filter by workshop mode if set
-    if (workshopMode && cmd.requiredWorkshopMode && !cmd.showInAllWorkshopModes) {
+    // Readers remain constrained to Run even if a restored tab says Builder.
+    // A slash command must not silently escape the current chat's tool policy.
+    const permittedMode = canWriteWorkflow ? workshopMode : 'run'
+    if (permittedMode && cmd.requiredWorkshopMode) {
       const allowed = Array.isArray(cmd.requiredWorkshopMode)
         ? cmd.requiredWorkshopMode
         : [cmd.requiredWorkshopMode]
-      return allowed.includes(workshopMode)
+      return allowed.includes(permittedMode)
     }
     return true
   }
@@ -39,13 +41,13 @@ export function setProductCommands(cmds: CommandDefinition[]) {
   productCommands = cmds
 }
 
-export function getCommands(mode?: ModeCategory, workshopMode?: WorkshopMode): CommandDefinition[] {
-  return [...productCommands, ...builtinCommands, ...userCommands].filter(cmd => matchesMode(cmd, mode, workshopMode))
+export function getCommands(mode?: ModeCategory, workshopMode?: WorkshopMode, canWriteWorkflow = true): CommandDefinition[] {
+  return [...productCommands, ...builtinCommands, ...userCommands].filter(cmd => matchesMode(cmd, mode, workshopMode, canWriteWorkflow))
 }
 
-export function findCommand(name: string, mode?: ModeCategory): CommandDefinition | undefined {
+export function findCommand(name: string, mode?: ModeCategory, workshopMode?: WorkshopMode, canWriteWorkflow = true): CommandDefinition | undefined {
   return [...productCommands, ...builtinCommands, ...userCommands].find(cmd =>
-    cmd.command === name && matchesMode(cmd, mode)
+    cmd.command === name && matchesMode(cmd, mode, workshopMode, canWriteWorkflow)
   )
 }
 

@@ -24,31 +24,43 @@ function submitGuidedWorkflowCommand(
   if (options.background) {
     const isFixer = kind === 'pulse-fixer'
     const isReviewFix = kind === 'engineering-review' && options.repairAfterReview === true
+    const isPlanDrift = kind === 'review-artifact-drift'
+    const isStrategy = kind === 'strategy-auditor' || kind === 'goal-advisor'
     const taskLabel = isFixer ? 'fix pass' : isReviewFix ? 'review + fix' : 'review'
     const displayName = options.displayName || kind
     const taskIntro = options.displayName
       ? `Run /${displayName} as a BACKGROUND task so this chat stays responsive. `
       : `Run the /${kind} ${taskLabel} as a BACKGROUND task so this chat stays responsive. `
-    const completionContract = isFixer || isReviewFix
-      ? 'then present the selected repair objective, changes made, verification proof, lifecycle outcomes, and the remaining canonical queue.'
-      : 'then present a short executive summary followed by every finding and recommendation in severity order. Do not truncate the result to a Top 3.'
+    const completionContract = isStrategy
+      ? 'then present useful strategic insights and Needs your decision proposals, their expected value and tradeoffs, and evidence versus hypotheses.'
+      : isFixer || isReviewFix || isPlanDrift
+        ? 'then present the selected repair objective, changes made, immediate checks and their limits, lifecycle outcomes, and remaining actionable issues.'
+        : 'then present a concise summary of material findings and recommendations. A no-issue result is valid.'
     const outputContract = ctx.workshopMode === 'run'
       ? 'Return findings in chat only; do not write or edit any workspace file.'
-      : isFixer || isReviewFix
-        ? 'Persist repairs, proof, and lifecycle outcomes through the typed Pulse tools required by the returned guidance; do not write a separate review file.'
-        : 'Persist findings, recommendations, decisions, and verification judgments through the typed Pulse tools required by the returned guidance; do not modify implementation files or write a separate review file.'
+      : isPlanDrift
+        ? 'Follow the Plan Drift authority in the returned guidance: Part 1 may apply bounded safe compatibility and prompt repairs; Part 2 remains read-only. Persist typed review and repair outcomes; do not write a separate review file.'
+        : isFixer
+          ? 'Apply only reviewed, authorized bounded repairs and persist their typed lifecycle outcomes. Close successfully applied fixes; reopen only on reproduction. Do not create a future-run verification task.'
+          : 'Persist findings, recommendations, and decisions through the typed Pulse tools required by the returned guidance; do not modify implementation files or write a separate review file.'
     const instruction =
       `Call ${guidanceCall} and follow the returned instructions verbatim. ${outputContract} ` +
-      `Treat focus as the request context before the slash command. The tool returns the canonical guided-flow text; do not paraphrase or skip its steps.` +
+      `Treat focus as the request context, including recent user constraints. Apply conditional checks only when relevant to the selected investigation.` +
       (isReviewFix
-        ? ' This is one retained Review+Fix task. Review, apply only a bounded safe repair when warranted, proportionally verify it, then persist the terminal technical_review result before ending.'
+        ? ' This is the read-only opening of one retained Review+Fix task. Persist the completed technical_review receipt before ending this turn. The supplied follow-up message owns repair. Small recovered tool failures with correct outputs and negligible overhead do not justify an issue or deeper review.'
         : '')
+    const fixInstruction = isReviewFix
+      ? `Continue the same bounded Review+Fix task. First confirm this conversation has a completed technical_review receipt; if review failed or is incomplete, report that and do not repair. Then call get_workflow_command_guidance(kind="pulse-fixer", focus=${JSON.stringify(focus)}, run_folder=${JSON.stringify(options.runFolder || '')}) and follow its repair-only instructions. Apply only reviewed, authorized bounded fixes, perform proportional immediate checks, and close applied fixes unless the defect is reproduced. Do not rerun reviewers or create future-run verification tasks. Return the combined review and repair outcome.`
+      : ''
+    const followUp = isReviewFix
+      ? `, message_sequence=${JSON.stringify([{ id: 'fix', message: fixInstruction }])}`
+      : ''
     const backgroundFallback = isReviewFix
-      ? 'If run_in_background is not available, perform the same bounded Review+Fix inline this turn.'
-      : `If run_in_background is not available, perform the ${taskLabel} inline this turn instead.`
+      ? `If run_in_background is not available, perform the same bounded Review+Fix inline: ${instruction} After persisting the review receipt, continue inline with: ${fixInstruction}`
+      : `If run_in_background is not available, perform the ${taskLabel} inline using these same instructions: ${instruction}`
     ctx.onSubmit(
       taskIntro +
-      `If the run_in_background tool is available: call run_in_background(name=${JSON.stringify(displayName + ' ' + taskLabel)}, instruction=${JSON.stringify(instruction)}, completion_mode="present_result") and do NOT perform the ${taskLabel} yourself this turn — you'll get a presentation-only completion notification, ${completionContract} Do not call tools, reload state, or independently revalidate after that notification. ` +
+      `If the run_in_background tool is available: call run_in_background(name=${JSON.stringify(displayName + ' ' + taskLabel)}, instruction=${JSON.stringify(instruction)}${followUp}, completion_mode="present_result") and do NOT perform the ${taskLabel} yourself this turn — you'll get a presentation-only completion notification, ${completionContract} Do not call tools, reload state, or independently revalidate after that notification. ` +
       backgroundFallback
     )
     return
@@ -67,8 +79,8 @@ function submitGuidedWorkflowCommand(
 // holistic `/strategy-auditor` command: it chooses its own lens set from the
 // evidence, records the usual typed receipt, and decides what it means.
 const focusedPulseReviewCommands: CommandDefinition[] = [
-  { command: 'pulse-review-execution-health', description: 'Review runtime reliability and apply bounded safe fixes for confirmed issues', kind: 'engineering-review', focus: 'execution_health', icon: <Activity className="w-4 h-4" /> },
-  { command: 'plan-prompt-bloat', description: 'Review prompt size, duplication, and prompt-engineering quality', kind: 'engineering-review', focus: 'plan_orchestration_integrity', icon: <GitBranch className="w-4 h-4" /> },
+  { command: 'pulse-review-execution-health', description: 'Review meaningful execution problems and apply bounded safe fixes', kind: 'engineering-review', focus: 'execution_health', icon: <Activity className="w-4 h-4" /> },
+  { command: 'plan-prompt-bloat', description: 'Pulse review of prompt quality and duplication, with bounded safe fixes', kind: 'engineering-review', focus: 'plan_orchestration_integrity', icon: <GitBranch className="w-4 h-4" /> },
   { command: 'pulse-review-validation-contract', description: 'Review pre-validation and safely simplify contracts that do not protect real outcomes', kind: 'engineering-review', focus: 'validation_contract_health', icon: <CheckCircle className="w-4 h-4" /> },
   { command: 'pulse-review-report-quality', description: 'Review report truthfulness and apply bounded safe report fixes', kind: 'engineering-review', focus: 'report_quality_truth', icon: <FileText className="w-4 h-4" /> },
   { command: 'pulse-review-evaluation-quality', description: 'Review evaluation truth and apply bounded safe evaluation fixes', kind: 'engineering-review', focus: 'evaluation_quality_truth', icon: <CheckCircle className="w-4 h-4" /> },
@@ -80,7 +92,6 @@ const focusedPulseReviewCommands: CommandDefinition[] = [
   modes: ['workflow'],
   requiredWorkflowMode: 'plan',
   requiredWorkshopMode: 'workshop',
-  showInAllWorkshopModes: true,
   source: 'builtin',
   execute: (ctx: CommandContext) => {
     const runFolder = ctx.getWorkflowStore().selectedRunFolder
@@ -104,7 +115,7 @@ export const builtinCommands: CommandDefinition[] = [
     icon: <GitBranch className="w-4 h-4" />,
     modes: ['workflow'],
     requiredWorkflowMode: 'plan',
-    requiredWorkshopMode: ['workshop', 'run'],
+    requiredWorkshopMode: 'workshop',
     source: 'builtin',
     execute: (ctx) => {
       // design-plan already delegates its expensive audit to the dedicated
@@ -116,7 +127,7 @@ export const builtinCommands: CommandDefinition[] = [
   },
   {
     command: 'review-artifact-drift',
-    description: 'Check whether artifacts drifted from recent plan changes',
+    description: 'Check plan compatibility and prompt quality; apply bounded safe drift repairs',
     icon: <RefreshCw className="w-4 h-4" />,
     modes: ['workflow'],
     requiredWorkflowMode: 'plan',
@@ -248,7 +259,7 @@ export const builtinCommands: CommandDefinition[] = [
   },
   {
     command: 'strategy-auditor',
-    description: 'Diagnose whether the current plan is moving the goal using cross-run evidence',
+    description: 'Assess reports and outputs, challenge the approach, and propose useful changes for your decision',
     icon: <Target className="w-4 h-4" />,
     modes: ['workflow'],
     requiredWorkflowMode: 'plan',
@@ -261,7 +272,7 @@ export const builtinCommands: CommandDefinition[] = [
   },
   {
     command: 'pulse-review',
-    description: 'Review technical evidence, then apply and verify bounded safe fixes',
+    description: 'Investigate meaningful technical problems and apply bounded safe fixes',
     icon: <CheckCircle className="w-4 h-4" />,
     modes: ['workflow'],
     requiredWorkflowMode: 'plan',
@@ -295,7 +306,7 @@ export const builtinCommands: CommandDefinition[] = [
   ...focusedPulseReviewCommands,
   {
     command: 'goal-advisor',
-    description: 'Run a one-off strategic Goal Advisor review without changing Pulse setup',
+    description: 'Explore a strategic opportunity and develop concrete proposals for your decision',
     icon: <Bot className="w-4 h-4" />,
     modes: ['workflow'],
     requiredWorkflowMode: 'plan',
@@ -307,14 +318,26 @@ export const builtinCommands: CommandDefinition[] = [
   },
   {
     command: 'review-code',
-    description: 'Review saved scripts (main.py) against step descriptions to detect drift',
+    description: 'Review saved code and JSON parameters; propose code/ migration with focused tests',
     icon: <FileText className="w-4 h-4" />,
     modes: ['workflow'],
     requiredWorkflowMode: 'plan',
     requiredWorkshopMode: 'workshop',
     source: 'builtin',
     execute: (ctx) => {
-      submitGuidedWorkflowCommand(ctx, 'review-code', { background: true })
+      submitGuidedWorkflowCommand(ctx, 'engineering-review', {
+        runFolder: ctx.getWorkflowStore().selectedRunFolder,
+        background: true,
+        displayName: 'review-code',
+        forcedFocus: [
+          'Manual read-only Technical Review focus: plan_orchestration_integrity. Inspect saved scripts against their current step objectives, input/output contracts, and relevant retained behavior.',
+          'Load read_skill(skills=[{"name":"builder-reference","path":"references/code-authoring.md"},{"name":"builder-reference","path":"references/scripted.md"}]) as review references; their authoring and execution instructions do not grant mutation or producing-run authority in this review.',
+          'Check source-layout migration consistency: resolve canonical code paths from workflow.json.code_layout_version. Version 1 uses code/<step-id>/main.py directly and shared imports rooted at WORKFLOW_CODE_ROOT, without execution-copy or copy-back assumptions. Absent/zero uses the supported legacy learnings/<step-id>/main.py layout. Inspect relevant active code, imports, and plan references for missing canonical files or stale layout assumptions; historical retained copies and an intentionally legacy layout are not defects. Do not migrate implicitly or infer the version from folder existence.',
+          'For a legacy scripted workflow, assess and normally propose migration to code/ using the Deliberate migration to code/ section of code-authoring.md. Include the complete source/helper/metadata scope, supported manifest-switch mechanism or its absence, rollback boundary, and focused runtime tests. Treat this as a maintenance improvement, not a bug; reuse existing proposals and respect explicit deferrals. If migration and testing are already authorized, preserve that scope for the implementation handoff rather than asking again. This review remains read-only.',
+          'For parameterized scripts, compare the declared script_parameters keys, types, required values, defaults, and enums with main.py parsing of STEP_PARAMS_JSON and its actual use of those values. Inspect relevant callers: execute_step supplies script_parameters; call_scripted_sub_agent supplies parameters. Check optional-value handling, hardcoded per-call values, undeclared inputs, and conflicting CLI/free-form parameter paths. Keep context_dependencies as positional sys.argv inputs, workflow configuration in VAR_*, and secrets out of the public parameter object. Parameterization is optional; recommend it only when repeated code rewriting or duplicated scripts shows a useful need.',
+          'Use current source and relevant retained evidence; do not launch a producing run merely to complete this review. Report material code/contract drift; skip unrelated operations checks and harmless recovered tool failures. Persist findings for a later /pulse-fixer; do not apply changes in this review.',
+        ].join('\n\n'),
+      })
     }
   },
   {

@@ -10,12 +10,13 @@ a lightweight scan for critical technical evidence.{{end}}{{if .RunFolder}}
 Use `{{.RunFolder}}` as the primary retained run.{{end}}
 
 1. Load `read_skill(skills=[{"name":"builder-reference","path":"references/pulse-review-fixer.md"},{"name":"workflow-commands","path":"references/ops-review.md"}])`.
-   Treat `ops-review.md` as the canonical operations evidence and structural
-   checklist. This continuing Review command overrides only that reference's
+   Treat `ops-review.md` as the canonical guide to focused operations investigation.
+   Its diagnostic checks are conditional on the selected question, not a
+   mandatory whole-workflow checklist. This continuing Review command overrides only that reference's
    Standalone Operations Review dispatch and read-only return wrapper: do not launch its
-   standalone wrapper. Apply its checks inside this conversation,
+   standalone wrapper. Apply only its relevant checks inside this conversation,
    persist evidence-backed findings, and leave implementation changes to a
-   later Fix phase. The caller may attach that phase automatically as the next
+   later Fix phase. The caller may supply that phase as the next
    message in this retained conversation, or the operator may invoke
    `/pulse-fixer` separately; neither possibility grants mutation authority in
    this review turn.
@@ -30,12 +31,17 @@ Use `{{.RunFolder}}` as the primary retained run.{{end}}
    `technical_review`, stop and report that collision instead of retrying or
    overwriting its state. Then read
    `get_pulse_state(view="focus_agenda", module="technical_review", route_scope=<relevant route>)`, perform a
-   lightweight scan for critical regressions, matured verification, answered
+   lightweight scan for critical regressions, reproduced defects, answered
    decisions, plan routes, and retained run selectors, then choose the smallest
    sufficient route-aware technical focus set using priority plus durable
-   rotation history. Route size is evidence, not a mechanical quota. Then read the retained backlog, pending verification,
+   rotation history. Route size is evidence, not a mechanical quota. Then read the retained active backlog and newly reproduced defects,
    `get_pulse_state(view="backlog", detail="compact")` exactly once, plus the
-   latest meaningful run evidence, plan/store state, and cost/runtime evidence.
+   latest meaningful outputs and summaries. Inspect affected plan/store state
+   and cost/runtime evidence only as needed. Rank issues by impact on required
+   outcomes and useful improvements, not tool-error counts. Small recovered
+   tool failures with correct outputs and negligible overhead do not merit an
+   issue or deeper investigation. Expand only for a material concern; unrelated
+   checks may be skipped without creating follow-up work.
    **Navigate the Pulse store deliberately:** `issues` are the canonical repair
    register; work from those roots first. `closed_issues` are prior roots to
    reuse when new evidence is semantically the same. Historical `observations`
@@ -50,8 +56,9 @@ Use `{{.RunFolder}}` as the primary retained run.{{end}}
    analysis is genuinely useful; wait for its automatic completion and
    consolidate it before persistence. For every selected workflow observation,
    link it to an existing issue, promote it with evidence, or reject it as a
-   non-issue. Persist typed findings and matured verification as they are
-   established. Do not create a Markdown review report. For an exceptional
+   non-issue. Persist typed findings and any reproduced failures as they are
+   established. Applied fixes stay closed unless the defect is reproduced;
+   missing stronger proof is not a reason to review them again. Do not create a Markdown review report. For an exceptional
    repair that genuinely requires operator judgment, create or refresh one
    `create_human_input_request(source="technical_review", input_id="technical-decision-...", options=[approve,reject,defer])`
    before filing it with `recommended_route="decision_required"`, and pass the
@@ -66,5 +73,5 @@ Use `{{.RunFolder}}` as the primary retained run.{{end}}
 5. Finish with a concise summary of what was reviewed, promoted, linked,
    rejected, already verified, awaiting evidence, or blocked. State whether at
    least one safe canonical issue is actionable for the later Fix phase; do not
-   assume whether the caller attached that phase automatically or the operator
+   assume whether the caller supplied that phase or the operator
    will invoke `/pulse-fixer` separately.

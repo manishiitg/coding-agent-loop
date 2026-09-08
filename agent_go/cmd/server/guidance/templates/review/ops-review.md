@@ -14,22 +14,28 @@ Focus especially on: {{.Focus}}.{{end}}{{if .RunFolder}}
 
 Use `{{.RunFolder}}` as the primary run folder.{{end}}
 
-1. Load `read_skill(skills=[{"name":"builder-reference","path":"references/pulse-review-fixer.md"}])` and
-   `read_skill(skills=[{"name":"builder-reference","path":"references/llm-selection.md"}])`.
+1. Load `read_skill(skills=[{"name":"builder-reference","path":"references/pulse-review-fixer.md"}])`.
    Work from these references yourself. Findings are persisted through typed
    Pulse tools; do not create a Markdown or HTML review artifact.
    Read `get_pulse_state(view="focus_agenda", module="technical_review", route_scope=<relevant route>)`, perform a
-   lightweight scan for critical regressions, matured verification, answered
+   lightweight scan for critical regressions, reproduced defects, answered
    decisions, plan routes, and retained run selectors, then select the smallest
    sufficient route-aware technical focus set. A small route may need one;
    distinct large routes may justify several when each has separate evidence
    and decision value. The `/ops-review` alias suggests an operations focus,
    but a higher-priority technical signal may preempt it.
-2. Inspect the current trustworthy Goal verdict, resolved workflow/step/eval
-   LLM configuration, actual model/tier use, fallbacks, cost ledgers, token
-   usage, timing summaries, representative conversation/tool traces, retained
-   `efficiency_or_coaching` findings, workflow version, and current
-   backup/publish/notify readiness. For a recurrence, prior fix awaiting proof,
+   The checks below are conditional investigation guides, not a mandatory
+   whole-workflow checklist. Choose from them to answer the selected question;
+   skip unrelated checks without creating evidence gaps or follow-up work.
+   Expand scope when evidence points to a wider material problem. Stop when
+   you have an actionable diagnosis, a justified no-issue conclusion, or a
+   specific limitation that prevents resolving a material concern.
+2. Start with recent outputs, step/run summaries, relevant changes, and active
+   issues. Follow the strongest signals of incorrect results, missed required
+   work, or meaningful reliability, cost, or latency impact. Read only the
+   affected plan/config, ledgers, timing, or traces needed for that question.
+   A technical review may identify improvements without any tool failure.
+   For a reproduced failure
    or claimed cost/quality regression, compare the current run with up to three
    comparable retained runs (same route/group and materially equivalent
    configuration). Read compact summaries and ledgers first; open raw traces
@@ -44,7 +50,7 @@ Use `{{.RunFolder}}` as the primary run folder.{{end}}
    text and history describe the same root cause. A real
    operator decision is typed lifecycle state, not a workflow mutation: create
    it through `create_human_input_request` as described below.
-4. Require the reviewer to check all of the following agentically:
+4. Select relevant diagnostic checks from the following as evidence warrants:
    event correlation; nested JSON/MCP/shell-envelope interpretation; argument
    identity; failure-status precedence; errors hidden in nominal success; HTTP
    and path/database failures; retries and duplicate calls; measured versus
@@ -58,7 +64,18 @@ Use `{{.RunFolder}}` as the primary run folder.{{end}}
    not clean. Distinguish proven failure, review candidate, and evidence gap.
    Use judgment to decide necessity, impact, and the recommendation; do not
    assume a deterministic Go detector has already classified the trace.
-5. Reconcile raw ledgers before judging cost. For current ledgers, the
+   Judge tool failures by their effect on the workflow, not their count or
+   error label. An exploratory miss, a corrected argument, or a transient
+   failure followed by successful recovery with correct required outputs and
+   negligible overhead is normal execution noise. Do not file an issue or
+   deepen the review solely for that event. Escalate when evidence shows
+   incorrect or missing outputs, an unmet required action, data loss, a safety
+   problem, or material repeated cost, delay, or reliability degradation.
+   One severe failure can be sufficient; several harmless failures may not be.
+   A success label alone does not establish recovery, but checking recovery
+   should use the smallest relevant output/receipt, not an exhaustive audit.
+5. When investigating cost, reconcile the affected ledgers before judging it.
+   For current ledgers, the
    immutable `execution_id` (or `evaluation_id`) is the record identity;
    `date + scope + group_folder` locates its shard, while `run_folder` and
    `archived_run_folder` are display metadata only. Never merge or compare
@@ -69,15 +86,17 @@ Use `{{.RunFolder}}` as the primary run folder.{{end}}
    never add both. Report a positive remainder as unattributed/orchestrator, do
    not double-count an explicit `workflow_orchestrator` row, and report
    overflow, missing buckets, and unpriced calls instead of estimating.
-6. Inventory exact model pins in explicit workflow roles and
-   planning/evaluation step config. Call `list_provider_models` once per pinned
+6. When model choice, availability, or cost/quality fit is in scope, load
+   `read_skill(skills=[{"name":"builder-reference","path":"references/llm-selection.md"}])`.
+   Inventory exact model pins in the affected explicit workflow roles and
+   planning/evaluation step config. Call `list_provider_models` once per relevant pinned
    provider and compare against its catalog and `default_tier_models`; never
    infer recency from model names. Provider-profile defaults update automatically
    and are not stale pins.
-7. Judge structural fitness against the plan-design checklist, which names this
-   module as its owner. Load
+7. When orchestration or step structure is implicated, judge the affected
+   execution unit against the plan-design reference. Load
    `read_skill(skills=[{"name":"workflow-commands","path":"references/design-plan.md"}])`
-   and apply **PART 3 — STEP-TYPE FITNESS** to the current plan. (It lives in
+   and apply the relevant checks in **PART 3 — STEP-TYPE FITNESS**. (It lives in
    `workflow-commands`, not `builder-reference`; `builder-reference` carries the
    different, authoring-time `plan-design.md`.) That checklist's
    own contract makes this a read-only use: return findings to the parent and
@@ -92,7 +111,7 @@ Use `{{.RunFolder}}` as the primary run folder.{{end}}
      evidence, never the description alone. Judgment, synthesis, adaptive
      discovery, and browser/UI work stay agentic; do not propose scripting them
      to save cost.
-   - **Container necessity.** For every cost- or time-material `orchestrator`,
+   - **Container necessity.** For each selected cost- or time-material `orchestrator`,
      `routing`, or `message_sequence` container, inspect the parent and its
      owned children as one execution unit. Read the targeted plan definition and
      representative parent/child traces, then state the actual runtime decision
@@ -123,7 +142,7 @@ Use `{{.RunFolder}}` as the primary run folder.{{end}}
      the checklist recognises (credentials/security, independent outputs or
      retries, clean-room independence, human/routing boundaries, context
      contamination). "It is long" is not a boundary.
-   - **Schedule execution model.** Inspect enabled schedules as runtime entry
+   - **Schedule execution model.** Inspect implicated schedules as runtime entry
      points. Route-backed schedules should select planned work via group_names
      and route_selections. Direct message sequences are also valid when they
      carry `direct_messages_reason`; measure their prompt/call cost and name the
@@ -188,6 +207,11 @@ Use `{{.RunFolder}}` as the primary run folder.{{end}}
 
 ### Prompt-contract health
 
+Use this lens when prompt quality, duplicated context, or validation overhead
+is selected or implicated by evidence. Reuse applicable Plan Drift prompt
+checks when the affected prompts and guidance have not changed; do not repeat
+them merely because Technical Review also supports this lens.
+
 Call
 `read_skill(skills=[{"name":"builder-reference","path":"references/step-description.md"}])`
 before this check. Its
@@ -204,7 +228,7 @@ context.
 
 When the report crosses a triage boundary (a step over 20k characters, 30% or
 more of described steps over 5k, or 10k or more repeated description
-characters), read the flagged steps' full descriptions yourself — the tool
+characters), select the relevant flagged steps and read their full descriptions yourself — the tool
 only measures size and exact-text duplication, it has no sense of content
 quality, so this reading is where the actual judgment happens. For each
 flagged step, ask two separate questions, since either can be true without
@@ -228,13 +252,13 @@ the other:
   same precision survives a tighter rewrite, not whether it can be made
   short.
 
-Apply a third question to `validation_schema`, not only to steps that
-crossed the description-size triage boundary — a schema can be
+For the affected steps, apply a third question to `validation_schema`, even if
+they did not cross the description-size triage boundary — a schema can be
 over-specified even when its description is short, and `validation_schema`
 now renders into the executing agent's prompt on every attempt (not only on
 retry), so its size is a live prompt cost, not just an authoring artifact.
 `get_plan_prompt_health` gives no schema-size signal, so run a cheap
-`jq`-style scan of `planning/plan.json` for schemas with an unusually high
+`jq`-style scan of the affected plan steps for schemas with an unusually high
 check count relative to the step's actual output, then read only those
 schemas in full — this stays a lightweight scan, not a full-plan read:
 
@@ -249,8 +273,9 @@ schemas in full — this stays a lightweight scan, not a full-plan read:
   honest answer is "none, it's just thorough," that check is bloat and a
   source of spurious retries, not rigor.
 
-File **one canonical workflow-level finding**, not one finding per large
-step. Its evidence must name the measured totals and the exact affected
+If a material prompt-contract problem is established, consolidate related
+steps into one canonical finding per root cause. Its evidence must name the
+relevant measured totals and the exact affected
 steps, and say which of the three questions above applies to each one (they
 are not the same defect and can call for different fixes). Its
 recommendation must name the proposed fix per step: which store it should
@@ -265,15 +290,17 @@ approve/reject/defer options and the phased extraction order, preserved
 boundaries, expected benefit, risk, and verification plan. A small local
 deduplication that preserves step inputs, outputs, validation, routes, and
 side-effect order may use `fixer_handoff`. The Fixer changes one bounded
-contract at a time and requires a post-change producing run; it never bulk
-shortens prose merely to meet a numeric target.
+contract at a time, records the applied fix as closed, and reopens only on
+reproduced failure; it never bulk shortens prose merely to meet a numeric target.
+Do not create a post-change producing-run requirement solely for verification.
 
 ### Execution-health diagnosis
 
 When Gate selected `execution_health`, make this a bounded causal review,
 not a broad list of expensive calls. Read the current `planning/plan.json` and
 the smallest comparable timing/cost/trace evidence needed for the affected
-steps. Produce one compact diagnosis that names:
+steps. Prioritize the effect on required outputs and workflow usefulness;
+small recovered tool failures do not by themselves justify this lens.
 
 When a Gate `deterministic_intake.runtime` signal selected this focus, begin
 with its exact `run_folder`, `step_id`, and timing artifact. It proves only a
@@ -281,7 +308,9 @@ status fact; determine whether the failed child call was essential, recovered,
 already represented by a canonical issue, or makes the claimed result
 unreliable. Do not create a separate finding solely because the signal exists.
 
-- the one to three exact step or message-sequence IDs responsible for the
+For a material execution-efficiency problem, produce a compact diagnosis naming:
+
+- the exact affected step or message-sequence IDs responsible for the
   material delay, with measured turn time, input/context cost, tool-call count,
   retry count, or retained-result size as applicable;
 - which mechanism dominates: repeated context reconstruction, payload carried
@@ -307,8 +336,9 @@ the preserved boundary, expected benefit, alternative, risk, and measured
 evidence. File the canonical finding as `decision_required` linked to that
 request. A safe local prompt/output-size correction that preserves topology
 may use `fixer_handoff` instead.
-8. Require a compact result grouped by `cost`, `time`,
-   `tool/runtime reliability`, `quality`, and `setup`. Every recommendation
+8. Return a compact result for the questions actually investigated. Use
+   `cost`, `time`, `tool/runtime reliability`, `quality`, or `setup` labels
+   where useful; do not fill empty categories. Every recommendation
    needs current state, exact suggestion, expected benefit, risk, and evidence.
    Separate evidence gaps from true optimization opportunities. If a material goal criterion is below target,
    forbid tier/model downgrades for outcome-bearing, reasoning, diagnostic,
@@ -353,7 +383,8 @@ may use `fixer_handoff` instead.
    apply recommendations in this read-only command; creating and linking a
    durable decision is allowed.
 
-Include reflection-turn cost as a first-class cost line. Each contributing step
+When reflection overhead is part of the selected cost/time investigation,
+include reflection-turn cost as a first-class cost line. Each contributing step
 runs one post-completion reflection turn, and it is not free: a measured Social
 Media run spent **20.1% of all LLM time** there, with short steps at 30–55% of
 their own runtime. Judge yield, not just spend — `learnings/<step-id>/.learning_metadata.json`
@@ -363,7 +394,7 @@ recommend sharpening the objective or dropping the step to
 `learnings_access="read"`. A step producing real technique is working as
 intended however long it takes.
 
-Finish with a short executive summary followed by every evidence-backed
+Finish with a short executive summary followed by every material evidence-backed
 recommendation in severity order. Identify which exact changes require user
 approval before `/engineering-review` can apply them. Do not truncate the result to a
 Top 3.

@@ -16,44 +16,59 @@ applies and verifies the bounded repair directly.
 
 Act like a careful human QA engineer, but remain read-only and side-effect safe:
 
-1. Derive a concise **behavioral contract** from `soul/soul.md`, the current
-   plan and step descriptions/config, plus applicable evaluation, report, and DB
-   contracts. State what must happen, what must never happen, and the observable
+Use the following checks selectively to resolve the suspected material defect.
+They are not a mandatory test matrix or an audit of every step. Start with
+required outputs and affected step summaries; inspect deeper traces only when
+they can answer the selected question. Small tool failures that recover with
+correct outputs and negligible overhead are normal execution noise. Error
+counts, exploratory misses, or corrected arguments alone are not findings.
+Investigate unmet required actions, wrong or missing results, safety/data risks,
+or material repeated cost, delay, or reliability impact. One consequential
+failure matters even if it occurs only once. Stop when the diagnosis supports
+an actionable repair or no issue; do not invent tests to fill the checklist.
+
+1. Derive the affected **behavioral contract** from the relevant goal, plan,
+   step descriptions/config, and applicable output contracts.
+   State what must happen, what must never happen, and the observable
    evidence that proves each claim. Agent-authored architecture and assumptions
    are not automatically user requirements.
-2. Build a small risk-ranked test matrix. Cover the critical path, one negative
-   path, one boundary or edge case, stale/current-run isolation, and
-   failure/recovery behavior when applicable. Prefer high-impact counterexamples
-   over broad low-value coverage.
+2. Use an existing artifact or the smallest useful safe check to distinguish
+   the suspected defect from normal behavior. Add a negative path, boundary
+   case, stale/current-run isolation, or recovery check only when relevant to
+   that diagnosis. No fixed coverage quota or fresh test is required when
+   retained evidence already settles the question.
 3. Execute only tests proven side-effect-free. Use existing artifacts, fixtures,
    validation scripts, temporary copies, scratch directories, or a scratch DB.
    Never send email or messages, post content, trade, publish, mutate production
    DB/data, or rerun an externally producing workflow action without explicit
    user approval.
-4. For every material state/config/status change under review, perform a
+4. When evidence suggests a write did not affect its intended consumer, perform a
    **control-path reachability check**:
    - identify the exact mutation target and key/record changed;
    - find the actual runtime reader in the current step prompt, saved code,
      script, SQL, or tool trace rather than inferring it from names;
    - name the canonical store and any required mirror/translation invariant;
-   - verify the changed value reached the reader and altered the expected
-     allocation, route, guard, or output in the next applicable evidence;
+   - inspect available evidence of whether the value reached the reader and
+     affected the expected allocation, route, guard, or output;
    - flag `wrong_store_write`, `shadow_store_drift`, or `dead_configuration`
      when the write and consumer do not connect.
-   Never accept “the row changed” as sufficient verification. When safe, use a
+   Never accept “the row changed” as proof that its consumer used it. When useful and safe, use a
    copied DB/fixture and a counterfactual assertion showing that changing the
    canonical value changes the decision; otherwise return the exact missing
-   assertion as untested risk.
-5. When a path cannot be tested safely, provide an exact reproducible test case:
+   assertion as a diagnosis limitation. This does not create a future-run
+   verification requirement for an applied fix; keep it closed unless reproduced.
+5. When a material suspected defect remains unresolved and cannot be tested safely,
+   provide the smallest useful reproducible test case:
    setup, action, expected versus observed assertion, required evidence, and
    risk. Do not claim it passed.
-6. Search for counterexamples even when the latest run says success: stale
+6. When outputs or other evidence contradict claimed success, consider relevant
+   counterexamples: stale
    receipts, wrong-run rows, empty-but-valid output, partial dependencies,
    boundary thresholds, bad defaults, fallback leakage, and recovery that never
    revalidated the original failure. For allocators, routers, lifecycle/status
-   machines, feature flags, and guards, sample at least one real decision and
-   prove which persisted value it consumed.
-7. Inspect each step's **validation gate** against what the step actually
+   machines, feature flags, and guards implicated in the defect, inspect the
+   affected decision and which persisted value it consumed.
+7. When validation truth is implicated, inspect the affected step's **validation gate** against what it actually
    produces. Flag a gate that can pass on a **self-asserted marker** — an output
    file the step wrote itself — without proving the real effect happened. The
    fix depends on the step's real output, not a blanket rule: a step that writes
@@ -66,11 +81,13 @@ Act like a careful human QA engineer, but remain read-only and side-effect safe:
    deliverable really is a file and whose gate already checks meaningful proof is
    correct — not every step has a db; recommend the check that fits the step's
    real output. Record `no_issue` when the gate already proves the effect.
-8. Check `get_pulse_state(view="module")`'s `open_concerns` for `phase="prevalidation"`
+8. When validation failures suggest material output, retry-cost, or latency impact,
+   check `get_pulse_state(view="module")`'s `open_concerns` for `phase="prevalidation"`
    entries — these are filed by Go itself the moment a step's `validation_schema`
    check fails, so they exist even for a step that eventually passed after
    repair and left no other trace. A `seen_count` > 1 means the same field keeps
-   failing across separate runs, not just within one. For each, read the exact
+   failing across separate runs, not just within one; recurrence alone does not
+   establish material impact. For the selected concerns, read the exact
    failing check and the step's own description, then decide which side is
    wrong before proposing a fix:
    - the description never told the agent to produce that field → `correctness_bug`
@@ -81,12 +98,14 @@ Act like a careful human QA engineer, but remain read-only and side-effect safe:
      outcome-conditional, not push the step to keep inventing a placeholder
    - the schema caught a genuine defect in what the step produced →
      `correctness_bug` in the step's own logic, not the gate; fix the step
-   A step eventually passing does not make this `no_issue`: a guaranteed extra
-   retry every run is real cost, and a schema-forced fabricated value is a real
-   integrity defect even when the run "succeeds." If a fix needs a later run
-   for proof, record `changed_unverified`; on that later run close it through a
-   `verified_no_change` finding disposition only after the expected behavior is
-   observed. Failed proof or recurrence reopens it automatically.
+   Successful recovery does not erase material repeated overhead: assess its
+   measured impact rather than treating every retry as a defect. A
+   schema-forced fabricated value is a real
+   integrity defect even when the run "succeeds." Once the repair is applied,
+   close it immediately with `changed_unverified` if no immediate runtime proof
+   exists. Do not wait for a later run or a `verified_no_change` disposition.
+   Treat it as fixed unless new evidence reproduces the same defect; then
+   reopen the existing issue instead of creating a duplicate.
 
 #### Validation-contract health
 
@@ -126,8 +145,8 @@ guard, approval boundary, or externally visible artifact contract is
 
 #### Artifact ownership purity
 
-When Engineering Review is selected, inspect current plan descriptions and
-message-sequence messages plus the effective Learnings and KB packages for
+When selected evidence suggests artifact ownership/contract drift, inspect the
+affected plan descriptions and message-sequence messages plus relevant Learnings and KB packages for
 shared AgentWorks mechanics copied into workflow-owned prose: bridge/auth
 environment variables or curl envelopes, api-bridge routing, Folder Guard
 internals, managed workflow-DB tool syntax, `get_api_spec` workarounds, and
@@ -140,9 +159,10 @@ Consolidate all confirmed occurrences into one root-cause finding per workflow,
 with the affected locations as evidence; never file one finding per token,
 line, or file. Classify it as artifact ownership/contract drift. The bounded
 fix rewrites Plan through typed mutation tools and Learnings/KB through focused
-patches, preserving business behavior and verification. Re-run this evidence
-pack when the Plan/Learnings/KB fingerprint changed, a prior purity repair is
-awaiting verification, or the workflow has never been audited.
+patches, preserving business behavior. Reuse prior checks when the relevant
+content has not changed. Revisit on a relevant change or reproduced drift;
+an applied repair is not a pending verification task, and a never-audited
+workflow does not make this lens mandatory in an unrelated investigation.
 
 The Pulse Fixer may apply bounded fixes for confirmed `correctness_bug` findings
 and run targeted regression verification only in a temporary or otherwise
@@ -166,7 +186,7 @@ This is targeted escalation, not a mandatory audit of every conversation. Start
 from Gate evidence and open only the step/attempt needed to test the suspected
 problem. Valid triggers include:
 
-For a recurring defect or prior fix awaiting verification, compare the current
+For a material recurring defect or new evidence reproducing a prior fix, compare the current
 run with up to three comparable retained runs (same route/group and materially
 equivalent configuration). Read compact summaries and typed findings first;
 open raw traces only for the differing or suspicious step/attempt. If fewer

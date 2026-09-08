@@ -1,6 +1,10 @@
 # PULSE FIX PHASE
 
-Run only after Technical Review (`/engineering-review`) has classified current workflow evidence. This may be an explicit standalone `/pulse-fixer` command or the backend-unlocked later message in one retained Review+Fix sequence.
+Run only after Technical Review has classified current workflow evidence. This
+may be an explicit standalone `/pulse-fixer` command or the caller-supplied
+later Fix message in one retained Review+Fix sequence. For that sequence,
+confirm the completed `technical_review` receipt for this conversation first;
+if it is missing or incomplete, report the limitation and do not apply repairs.
 Do not rerun Technical Review, Strategic Review, or broad
 discovery. Do not treat raw workflow observations as repair issues.{{if .Focus}}
 
@@ -41,16 +45,19 @@ selected issue's proof boundary.{{end}}
    count. Defer a bundle that needs a different route, public action, user
    decision, broad investigation, or a new context window. Preserve every
    unselected issue unchanged.
-5. Apply and verify each selected bundle before starting the next. Use the
+5. Apply each selected bundle and perform only proportional immediate checks
+   before starting the next. Use the
    smallest complete safe repair with normal Workflow Builder tools. Record
    exact changed targets, attempts, dispositions, and proportional post-change
-   proof per bundle. Use `changed_unverified` when the real evidence boundary
-   requires a future producing run.
+   checks per bundle. A successfully applied fix closes now. Use
+   `changed_unverified` when stronger runtime proof is unavailable; do not wait
+   for a producing run, schedule verification work, or keep it in the queue.
+   A failed mutation or a check reproducing the defect remains active.
 6. Record the repair attempt and each issue disposition, but do not write or
    replace either reviewer's terminal receipt. Review completion and repair
    outcome are separate facts. If no safe canonical objective exists, preserve
    the truthful terminal module results without manufacturing a repair. When this is
-   the backend-unlocked Fix message of a combined manual Review+Fix sequence,
+   the caller-supplied Fix message of a combined manual Review+Fix sequence,
    also call `record_pulse_result` exactly once for `technical_review` with
    `pulse_run_id="current"` and the truthful repair/no-safe-repair outcome.
 7. Finish with a concise statement of the selected repair batch: bundles and

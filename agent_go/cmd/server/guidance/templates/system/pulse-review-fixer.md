@@ -1,18 +1,22 @@
 ## Pulse agent-owned review and fixing
 
-Use only after Gate. Pulse uses one sequenced Review + Fix parent turn. Technical
+Scheduled Pulse uses this after Gate. Manual commands follow their own
+module-due and review/fix instructions without running Gate. Pulse uses one
+sequenced Review + Fix parent turn. Technical
 Review and bounded repair run as ordered messages in one retained background
 executor; Strategic Review remains a separate read-only sequence when due.
-The technical executor is not allowed to repair while it is a reviewer: the
-backend exposes only evidence reads, the run checkpoint, and typed review
-persistence until it observes that exact child session's completed
-`technical_review` receipt between turns. Only then does it unlock repair tools.
+The technical executor is not authorized to repair while it is a reviewer.
+Persist its completed `technical_review` receipt before the repair phase.
+Background executors share the Builder toolset; tool availability does not
+grant repair authority. The caller supplies the follow-up Fix instruction
+when using ordered messages; the backend does not invent a missing Fix message.
 
 Read `get_pulse_state(view="module", pulse_run_id=<current Pulse run>)` before
 dispatching any child. Its `gate_mode` is the contract for this pass:
 
-- In `backlog_drain`, first verify every due `changed_unverified` issue against
-  newly available producing-run evidence, then repair retained active roots.
+- In `backlog_drain`, repair retained active roots and handle newly reproduced
+  failures. Successfully applied technical fixes are closed, including
+  `changed_unverified`; do not revisit them just to collect stronger proof.
   Do not run broad discovery. Launch the Strategic Review child only when
   retained strategic work has matured verification/disposition evidence, and
   omit its opportunity phase. A new finding is
@@ -67,12 +71,15 @@ timeline for lifecycle decisions.
 Before each due technical or strategic deep review, read
 `get_pulse_state(view="focus_agenda")` for that module and each materially relevant
 route scope. Do a lightweight safety scan for critical regressions, matured
-verification, answered unapplied decisions, plan routes, and retained run
+strategic experiment evidence, answered unapplied decisions, plan routes, and retained run
 selectors, then choose the smallest sufficient coherent focus set. Rotation is agentic:
 the compact agenda informs judgment but does not require blind round-robin.
 For `technical_review`, use `execution_health` when Gate cites a cadence-threatening
 run or evidence of incorrect execution, repeated context, payload, retries,
-tool/runtime failure, schedule recovery, or sequence overhead. The focus requires
+tool/runtime failure, schedule recovery, or sequence overhead with material
+effect on required outputs, reliability, cost, or latency. Small recovered
+tool failures with correct outputs and negligible overhead do not justify a
+deep review or a finding. The focus requires
 a causal diagnosis of exact plan items, not a generic cost summary. Use
 `validation_contract_health` when retained `phase="prevalidation"` concerns,
 automatic-validation repairs, or current-run validation records show repeated
@@ -114,9 +121,11 @@ mechanical size and exact-duplicate signals. A short description can fail this
 review, while a long safety-critical or adaptive description can pass. Do not
 rewrite a prompt merely to reduce its character count.
 
-The Fixer may apply only an approved phased extraction, preserving exact step
-inputs, outputs, validation, routes, and side-effect ordering, then waits for a
-post-change producing run. It must never bulk-truncate old prompts to satisfy
+For a shared or multi-step extraction, the Fixer needs an approved phased
+proposal. A small local prompt correction preserving behavior may use the
+normal bounded Fixer handoff. Preserve exact step
+inputs, outputs, validation, routes, and side-effect ordering, then records the applied fix as closed. Observe later normal-run recurrence;
+do not wait for a post-change producing run merely to close it. It must never bulk-truncate old prompts to satisfy
 a character threshold.
 When that module's review is complete, call `record_pulse_review_focus` once for
 every focus actually investigated, including its stable route/group/sub-workflow
@@ -128,7 +137,7 @@ evidence or could not change a decision, repair, or next check. This is durable
 coverage history for the next Pulse pass; the Markdown checkpoint remains only
 this run's notebook.
 
-1. **Prior verification + Technical Review** — an applied repair is closed
+1. **Recurrence + Technical Review** — an applied repair is closed
    immediately; a later run may rediscover and reopen the same root, but is not
    a closure gate. If no repair was applied, keep the issue active or queue it
    for Engineering with its next action; do not leave it in `awaiting_run`.
@@ -146,11 +155,13 @@ this run's notebook.
    re-check its claims against current artifacts and runtime evidence, copy no
    raw output, and carry forward only compact evidence references and reasoning
    that remain valid into the current checkpoint.
-   Closure requires the real runtime path, a post-change producing run that
-   exercised it, expected behavior, and no regression. Persist the truthful
-   verdict: `fixed_verified`, `changed_unverified` with
-   `awaiting_next_valid_run`, `reopened`, `still_active`, `blocked`, or
-   `inconclusive`.
+   Once the bounded repair was successfully applied, treat the issue as fixed
+   and close it. Use `fixed_verified` only when an immediate relevant check
+   actually passed; otherwise use `changed_unverified`, which also closes.
+   No future run, `awaiting_next_valid_run`, or separate verification task is
+   needed. Reopen the same issue only when new evidence reproduces its defect.
+   An unsuccessful mutation or a check that still reproduces the defect is
+   not a completed fix; keep that issue active and state the failure.
 2. **Stores Health lens** — only when the `technical_review` Gate evidence names
    store integrity, or the first turn finds a likely learnings/knowledgebase/DB
    ownership or contract issue. Load the learnings, knowledgebase, and database
@@ -158,7 +169,10 @@ this run's notebook.
    conversation, not a `stores_health` module or separate receipt.
 3. **Operations lens** — only when the selected technical focus needs it. Load
    `read_skill(skills=[{"name":"workflow-commands","path":"references/ops-review.md"}])`
-   and apply its evidence and structural checklist in this existing executor
+   and select only the diagnostic checks relevant to the current question.
+   They are conditional guides, not a mandatory whole-workflow checklist.
+   Expand for evidence of a wider material problem, not to complete categories.
+   Apply the relevant guidance in this existing executor
    sequence. The parent sequence overrides only the reference's standalone
    dispatch/read-only wrapper; do not launch another Operations reviewer.
 4. **Classify observations** — for every selected workflow observation, link it
@@ -177,17 +191,23 @@ works.
 
 When `strategic_review` is due, launch one separate executor sequence:
 
-1. **Focus + prior verification** — read the strategic focus agenda for the
-   relevant route scopes, do the lightweight safety/evidence scan, choose the
-   smallest sufficient focus set, verify
-   retained strategic work, then test the selected area for feedback loops, selection bias, observation
-   contamination, proxy optimization, concentration, saturation, and local
-   optima across comparable runs.
-2. **Independent opportunity discovery** — only when Gate evidence warrants
-   it; search outside the current plan for materially different strategies.
-   Omit this message in audit-only and backlog-drain passes.
-3. **Critic and conclusion** — choose exactly one of `keep`, `improve`,
-   `propose_alternative`, `experiment`, or `evidence_wait`.
+1. **Independent strategic investigation** — load `strategy-auditor` and act as
+   the Workflow Strategy Advisor. Understand the goal and people served. Start with
+   reports and actual outputs as their recipient would, then the plan, feedback,
+   and relevant prior work; execution logs are exception-only evidence for a specific
+   unresolved discrepancy. Challenge assumptions and follow promising
+   questions within or beyond the current approach. Focus history is context;
+   categories are optional labels, not the agenda or a quota. Clearly separate
+   supported observations, hypotheses, and exploratory opportunities.
+2. **Opportunity development** — deepen promising ideas and materially different
+   approaches when useful. No proven ceiling or separate Gate permission is
+   required to consider alternatives. This may be integrated in the initial
+   investigation; use a fresh message only when it adds value. Backlog-drain
+   remains scoped to retained work and does not launch broad discovery.
+3. **Critic and conclusion** — assess usefulness, constraints, tradeoffs, and how
+   to test proposals. Classify findings individually; a mixed review need not
+   choose one global result. Keep, improve, propose an alternative, experiment,
+   or wait as appropriate for each question. Never force ideas to fill a quota.
 4. **Persist** — record every investigated strategic focus with route scope, write typed strategic
    findings/decisions/impact records, then write the terminal
    `strategic_review` receipt.
@@ -238,18 +258,18 @@ that bounded index, then use `detail="full"` only for those ids. On recovery ins
 current target/runtime and verification evidence; never trust HTML or blindly
 reapply partial work. A prior run-scoped checkpoint may explain an interrupted
 review or repair, but it cannot close, reopen, or disposition an issue; reconcile
-it with typed SQLite state and current evidence first. Preserve
-`changed_unverified` until its evidence boundary.
+it with typed SQLite state and current evidence first. Preserve applied fixes
+as closed; `changed_unverified` is an honest proof label, not pending work.
 For the due module, inventory the complete active retained backlog **before**
 new discovery, then choose a bounded repair batch for this pass. Start with the
 highest-value coherent bundle, which may cover many findings when they share one
 root cause, compatible targets, and one proof boundary. Add further independent
 bundles only when each is low-risk, needs no broad rediscovery, has clear
 separate proof, and fits the current context; it must not become an instruction
-to empty every unrelated active root in one agent turn. First verify any
-`changed_unverified` issue selected by Gate whose next-check boundary arrived,
-then rank actionable roots by correctness/safety impact, recurrence, available
-proof, and owner decisions. Keep every unselected issue durable and explicitly
+to empty every unrelated active root in one agent turn. Do not select closed
+`changed_unverified` issues merely because a next-check date or new run arrived.
+Rank active roots by correctness/safety impact, reproduced failures, ability to
+apply a useful bounded repair, and owner decisions. Keep every unselected issue durable and explicitly
 checkpoint the remaining ordered queue for a future Pulse pass. Also load
 `suppressed_concerns`: an
 unchanged externally owned issue is not a new finding, while materially changed
@@ -264,8 +284,8 @@ finding limit: causal distinctness is the limit.
 
 ### Cross-run evidence rule
 
-Start from the current run. For a recurring finding, a prior repair awaiting
-verification, or a claimed cost/quality regression, compare it with up to the
+Start from the current run. For a newly reproduced failure or a claimed
+cost/quality regression, compare it with up to the
 last three **comparable** retained runs: same route/group and materially
 equivalent configuration. Read compact summaries, typed findings, metrics, and
 receipts first. Open raw conversation/tool logs only for the precise
@@ -320,9 +340,10 @@ failure is truthful evidence for that lens and cannot erase or block other due
 work.
 
 Continuously maintain canonical roots in the checkpoint, then persist findings
-and prior-fix verification through typed Pulse tools in the final sequence
+and reproduced failures through typed Pulse tools in the final sequence
 turn. Apply safe approved repairs through normal Workflow Builder tools and
-record exact proof or the future producing-run boundary. Finish by calling
+record the change and any immediate checks actually performed. Do not create
+future producing-run verification obligations for applied technical fixes. Finish by calling
 `record_pulse_result` exactly once for every due module. If no module is due,
 record the required terminal skip receipts and stop. Do not render HTML, back
 up, publish, or notify in this turn.
@@ -360,13 +381,15 @@ Load docs with
 `pulse-bug-review`; `review-artifact-drift`; matching `improve-*` health guide;
 `llm-selection` plus cost/timing evidence; and `strategy-auditor` plus
 goal/constraint/outcome, cross-run DB/run, and experiment evidence for Strategic
-Review. Its first phase audits the current strategy without inheriting the
-opportunity phase's conclusion. A report or
-evaluation that is technically correct but does not measure useful goal progress
-is its `measurement_gap`; broken implementation belongs to Engineering Review.
-Only when the audit shows a material ceiling, unexplained opportunity gap, or a
-reached strategic checkpoint should the next phase explore materially different
-theses. Reject maintenance- or instrumentation-only strategic results.
+Review. Its first phase investigates independently and may explore alternatives
+immediately; a later opportunity phase deepens ideas rather than granting permission.
+Missing scores or failed run status limit specific claims, not strategic thinking.
+Assess trustworthy outputs and plan logic; distinguish hypotheses from demonstrated
+impact. A strategic `measurement_gap` names the decision existing evidence cannot
+answer. Broken evaluation wiring belongs to Technical Review. Successful reports
+alone do not prove effectiveness. Reject maintenance- or instrumentation-only
+strategic results that omit the goal-level assessment; an honest uncertain assessment
+is valid and does not require inventing a proposal.
 Read-only child reviewers never edit, publish, notify, ask the user, write HTML, or mark state. The coordinating review sequence retains only the typed persistence and repair authority explicitly assigned to its current phase above; a read-only checklist does not inherit that authority.
 
 The **Stores Health** turn loads `improve-learnings`, `improve-knowledge`, and
@@ -413,7 +436,8 @@ reason. Classify retained findings rather than omitting them. Clean means an
 empty active issue manifest.
 A Strategic Review `measurement_gap` names the missing
 target/source/action/outcome linkage and the decision it prevents. Its
-opportunity phase is a separate message/context, not a separate Pulse module.
+optional opportunity phase is part of the same Pulse module; initial investigation
+already has authority to explore beyond the current approach.
 
 A tool refusal is not evidence that a finding is unfixable. Check the target's
 actual type before concluding anything: rtslatency recorded two collectors as
@@ -460,12 +484,17 @@ Route outputs by professional perspective. Engineering Review normally creates
 an actionable issue and repair/verification lifecycle, never a product proposal.
 LLM/Ops normally creates a safe optimization issue; ask only for a real
 quality-versus-cost, spend, or reliability tradeoff. Strategic Review creates a
-user-facing strategic conclusion. Enforce its declared route:
+user-facing strategic conclusion and concrete Needs your decision proposals.
+Every actionable strategic suggestion, including a hypothesis worth testing, gets
+an approve/reject/defer card with rationale, expected benefit, tradeoffs, exact scope,
+and an outcome test. Consolidate related ideas and reuse existing matching pending
+cards. Unknown benefit alone is not a reason to withhold a bounded experiment from
+human choice. Do not apply strategic changes during review. Enforce its declared route:
 `decision_required` must create and link one `awaiting_user` decision;
 `evidence_wait` becomes `proposal_only` only with the exact non-empty
 `next_check`; `engineering_handoff` must be attempted through the normal safe repair
 lifecycle rather than parked as a proposal. Use
-`create_human_input_request(source="strategic_review", input_id="strategy-proposal-...")`
+`create_human_input_request(source="strategic_review", input_id="strategic-proposal-...")`
 for a strategic decision so the UI preserves who asked. An actionable alternative
 must create an approve/reject/defer decision using that same source and prefix;
 only a thesis explicitly waiting on named future
@@ -518,7 +547,7 @@ auto-applied by pre-run. The custom tool is an HTTP JSON contract: send
 arrays). Fetch and follow the published tool schema instead of inventing nested
 field shapes.
 For `strategic_review`, the question source must be `strategic_review` and its
-id must start `strategy-proposal-`. The backend rejects a strategic
+id must start `strategic-proposal-`. The backend rejects a strategic
 `proposal_only` disposition with no `next_check`, so every accepted
 recommendation has a concrete route to action or evidence.
 

@@ -827,6 +827,31 @@ func openPulseModuleStateDB(ctx context.Context, workspacePath string, create bo
 	return normalized, db, nil
 }
 
+// Strategic focuses describe the investigation after reasoning; the starter
+// catalog must not prevent a useful domain-specific question from being saved.
+// Technical focus identities remain closed because they select maintenance packs.
+func validPulseReviewFocusKey(module, key string) bool {
+	if slices.Contains(pulseReviewFocusCatalog[module], key) {
+		return true
+	}
+	if module != pulseModuleStrategicReview || len(key) == 0 || len(key) > 64 || key[0] < 'a' || key[0] > 'z' || strings.HasSuffix(key, "_") || strings.Contains(key, "__") {
+		return false
+	}
+	for _, c := range key {
+		if (c < 'a' || c > 'z') && (c < '0' || c > '9') && c != '_' {
+			return false
+		}
+	}
+	return true
+}
+
+func pulseReviewFocusKeyHint(module string) string {
+	if module == pulseModuleStrategicReview {
+		return "reuse a fitting strategic focus or supply a descriptive lowercase snake_case key (maximum 64 characters)"
+	}
+	return "choose one of: " + strings.Join(pulseReviewFocusCatalog[module], ", ")
+}
+
 func recordPulseReviewFocus(ctx context.Context, workspacePath, pulseRunID, module, focusKey, routeScope, priorityClass, selectionReason, verdict, nextCheckAt, nextCheckReason string, evidence, issueIDs, deferred []string) (*PulseReviewFocus, error) {
 	pulseRunID, module, focusKey = strings.TrimSpace(pulseRunID), strings.TrimSpace(module), strings.TrimSpace(focusKey)
 	routeScope = strings.TrimSpace(routeScope)
@@ -836,13 +861,13 @@ func recordPulseReviewFocus(ctx context.Context, workspacePath, pulseRunID, modu
 	if !validPulseModules[module] {
 		return nil, fmt.Errorf("module %q is not valid; choose one of: %s", module, pulseModuleList())
 	}
-	if !slices.Contains(pulseReviewFocusCatalog[module], focusKey) {
-		return nil, fmt.Errorf("focus_key %q is not valid for %s; choose one of: %s", focusKey, module, strings.Join(pulseReviewFocusCatalog[module], ", "))
+	if !validPulseReviewFocusKey(module, focusKey) {
+		return nil, fmt.Errorf("focus_key %q is not valid for %s; %s", focusKey, module, pulseReviewFocusKeyHint(module))
 	}
 	for _, deferredKey := range deferred {
 		deferredKey = strings.TrimSpace(deferredKey)
-		if deferredKey != "" && !slices.Contains(pulseReviewFocusCatalog[module], deferredKey) {
-			return nil, fmt.Errorf("deferred focus %q is not valid for %s; choose one of: %s", deferredKey, module, strings.Join(pulseReviewFocusCatalog[module], ", "))
+		if deferredKey != "" && !validPulseReviewFocusKey(module, deferredKey) {
+			return nil, fmt.Errorf("deferred focus %q is not valid for %s; %s", deferredKey, module, pulseReviewFocusKeyHint(module))
 		}
 	}
 	normalized, db, err := openPulseModuleStateDB(ctx, workspacePath, true)
@@ -2338,16 +2363,16 @@ func createPulseWorklistTools() ([]llmtypes.Tool, map[string]interface{}, map[st
 	}}
 	recordFocusTool := llmtypes.Tool{Type: "function", Function: &llmtypes.FunctionDefinition{
 		Name:        "record_pulse_review_focus",
-		Description: "Persist one deep focus selected for this technical or strategic review. Call once for every focus actually investigated, then complete the module review. The reviewer agentically chooses the smallest sufficient set from route size, distinct evidence boundaries, unresolved risk, prior coverage, and marginal value; there is no fixed focus count. This is not a findings store and does not replace the run-scoped Markdown checkpoint.",
+		Description: "Persist one deep focus selected for this technical or strategic review. Call once for every focus actually investigated, then complete the module review. The reviewer agentically chooses the smallest sufficient set from route size, distinct evidence boundaries, unresolved risk, prior coverage, and marginal value; there is no fixed focus count. Strategic categories are optional coverage labels, not a reasoning checklist; a new strategic lens may be recorded when none fits. This is not a findings store and does not replace the run-scoped Markdown checkpoint.",
 		Parameters: llmtypes.NewParameters(map[string]interface{}{"type": "object", "additionalProperties": false, "properties": map[string]interface{}{
 			"workspace_path": reviewIdentityProperties["workspace_path"], "pulse_run_id": reviewIdentityProperties["pulse_run_id"], "module": reviewIdentityProperties["module"],
-			"focus_key":        map[string]interface{}{"type": "string", "enum": append(append([]string{}, pulseReviewFocusCatalog[pulseModuleTechnicalReview]...), pulseReviewFocusCatalog[pulseModuleStrategicReview]...), "description": "Canonical focus key belonging to the selected module."},
+			"focus_key":        map[string]interface{}{"type": "string", "maxLength": 64, "pattern": "^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$", "description": "Technical Review must use one of: " + strings.Join(pulseReviewFocusCatalog[pulseModuleTechnicalReview], ", ") + ". Strategic Review may reuse a fitting category or record a descriptive lowercase snake_case key (maximum 64 characters); explain new lenses in selection_reason and reuse them later."},
 			"route_scope":      map[string]interface{}{"type": "string", "description": "Canonical route/group/sub-workflow this focus covered. Leave empty only when the evidence and conclusion are genuinely workflow-wide."},
 			"priority_class":   map[string]interface{}{"type": "string", "enum": []string{"critical_regression", "matured_verification", "answered_decision", "new_or_changed", "overdue", "oldest_remaining"}},
 			"selection_reason": map[string]interface{}{"type": "string"}, "verdict": map[string]interface{}{"type": "string"},
 			"evidence":          map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "string"}},
 			"issue_ids":         map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "string", "pattern": "^PUL-[A-Za-z0-9]+$"}},
-			"deferred_focuses":  map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "string", "enum": append(append([]string{}, pulseReviewFocusCatalog[pulseModuleTechnicalReview]...), pulseReviewFocusCatalog[pulseModuleStrategicReview]...)}},
+			"deferred_focuses":  map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "string", "maxLength": 64, "pattern": "^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$"}},
 			"next_check_at":     map[string]interface{}{"type": "string", "description": "Optional explicit RFC3339 UTC timestamp or date; do not encode this in pulse_run_id."},
 			"next_check_reason": map[string]interface{}{"type": "string"},
 		}, "required": []string{"workspace_path", "pulse_run_id", "module", "focus_key", "priority_class", "selection_reason"}}),
@@ -2900,12 +2925,12 @@ func readPulseModuleStateView(ctx context.Context, workspacePath, pulseRunID str
 		"deterministic_intake":           map[string]interface{}{"runtime": runtimeIntake, "plan_change_dependencies": planDependencyIntake},
 		"plan_drift_candidates":          planDriftCandidates,
 		"plan_drift_candidates_error":    planDriftErrorText,
-		"plan_drift_candidates_note":     "Steps with no drift_review record, one flagged needs_review==true, or one below the contract version required for its step_type (evidence from any prior review is preserved on the step's own record in step_config.json, not duplicated here), each with Go-precomputed Check 1/2/4/9 results (report query compatibility, validation_schema db[] rules from step_config.json only, scripted-code queries, db/README.md contract). Checks 5 (validation_schema file rules) and 13 (orphaned tables) are not precomputed here; the plan_drift_review reviewer checks those directly. Each supported step type requires one reference-backed agentic check: scripted_best_practices, message_sequence_best_practices, orchestrator_best_practices (legacy orchestrator_best_practices accepted), routing_best_practices, or branch_best_practices; record_plan_drift_review rejects a step without its matching check. A failed precomputed check is still evidence, not a filed finding — the reviewer turn records the merged result via record_plan_drift_review and files a Pulse finding for anything unresolved. A candidate with step_id==\"" + step_based_workflow.WorkflowDriftReviewStepID + "\" is not a real plan step: it means one or more steps were deleted since the last workflow-level audit, and dependent-artifact fallout from that deletion needs tracing — see plan-drift-review.md's workflow-level deletion audit section; clear it the same way, via record_plan_drift_review(step_id=\"" + step_based_workflow.WorkflowDriftReviewStepID + "\", ...). A non-empty plan_drift_candidates_error means this scan itself failed (unreadable/malformed plan.json or step_config.json) — the candidate list above is empty because it is unknown, not because nothing is due; validatePlanDriftRouting requires plan_drift_review or technical_review due in that case.",
+		"plan_drift_candidates_note":     "Steps with no drift_review record, one flagged needs_review==true, or one below the contract version required for its step_type (evidence from any prior review is preserved on the step's own record in step_config.json, not duplicated here), each with Go-precomputed Check 1/2/4/9 results (report query compatibility, validation_schema db[] rules from step_config.json only, scripted-code queries, db/README.md contract). Checks 5 (validation_schema file rules) and 13 (orphaned tables) are not precomputed here; the plan_drift_review reviewer checks those directly. Each supported step type requires one reference-backed agentic check: scripted_best_practices, message_sequence_best_practices, orchestrator_best_practices (legacy orchestrator_best_practices accepted), routing_best_practices, or branch_best_practices; record_plan_drift_review rejects a step without its matching check. The reviewer also records step_prompt_quality for every due real step using step-description.md; categories describe affected compatibility and prompt contracts, not a whole-architecture audit. A small edit may reuse still-applicable prior evidence. Applied fixes close without a future-run verification queue. A failed precomputed check is still evidence, not a filed finding — the reviewer turn records the merged result via record_plan_drift_review and files a Pulse finding for anything unresolved. A candidate with step_id==\"" + step_based_workflow.WorkflowDriftReviewStepID + "\" is not a real plan step: it means one or more steps were deleted since the last workflow-level audit, and dependent-artifact fallout from that deletion needs tracing — see plan-drift-review.md's workflow-level deletion audit section; clear it the same way, via record_plan_drift_review(step_id=\"" + step_based_workflow.WorkflowDriftReviewStepID + "\", ...). A non-empty plan_drift_candidates_error means this scan itself failed (unreadable/malformed plan.json or step_config.json) — the candidate list above is empty because it is unknown, not because nothing is due; validatePlanDriftRouting requires plan_drift_review or technical_review due in that case.",
 		"deterministic_intake_note":      "Read-only typed evidence, not automatic Pulse issues or Fixer authorization. Runtime errors do not force Technical Review: Gate must assess step concerns, required outcomes, recovery, material impact, prior review dispositions, and new comparable runs since last_ran_at. A completed status alone does not prove recovery; missing concerns or incomplete coverage do not prove health. Skip with a concrete evidence/recheck boundary when another review has no useful new evidence; a new critical failure must not wait for sample accumulation. Failed plan_change_dependencies still requires Technical Review unless Plan Drift is selected. coverage_status must be verified before an empty findings list means clean.",
 		"module_review_history":          reviewHistory,
 		"review_history_note":            "What each reviewer concluded the last few times it ran, most recently run first. A module absent from this list has not run in the retained window at all. Use it to justify each skip: a module that keeps returning real findings is a poor candidate for another cooldown, and one that has come back clean repeatedly is a good one. A verdict here is the reviewer's conclusion, which is not the same as whether anything was then fixed.",
 		"review_focus_history":           focusHistory,
-		"review_focus_history_note":      "Compact durable deep-review coverage. Never-reviewed and overdue focus keys are candidates after urgent regressions, matured verification, and answered unapplied decisions. Route-specific counts prevent one sub-workflow from standing in for another. The agent chooses semantically; this is not blind round-robin.",
+		"review_focus_history_note":      "Compact durable deep-review coverage. Never-reviewed and overdue focus keys are candidates after urgent regressions, reproduced technical defects or matured strategic experiments, and answered unapplied decisions. Applied technical fixes stay closed without a verification backlog. Route-specific counts prevent one sub-workflow from standing in for another. The agent chooses semantically; this is not blind round-robin.",
 		"review_focus_selections":        focusSelections,
 		"review_focus_selections_note":   "Recent focus selections, one row per investigated focus and route scope. Multiple rows for one Pulse run are valid when the reviewer found distinct evidence and decision value; their count is agent-chosen, not a platform quota.",
 		"pending_review_recoveries":      pendingRecoveries,

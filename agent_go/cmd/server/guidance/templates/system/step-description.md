@@ -51,3 +51,5 @@ Could someone who has never seen the workflow read the description and understan
 - `references/plan-design.md` for step-type selection, context flow, and validation design.
 - `references/workflow-patterns.md` for reusable multi-step shapes.
 - The Standalone Technical Review's Prompt-contract health check (`/ops-review`) audits existing plans against these same principles after the fact. Applying them while authoring is cheaper than fixing a finding later.
+
+- Plan Drift applies this same guide to due steps and records `step_prompt_quality`. It checks prompt meaning, supplied schemas, and accessible guidance; it does not require rewriting a compatible prompt or optimizing an unrelated architecture.

@@ -73,14 +73,14 @@ do not. Never infer freshness by name or silently rewrite an exact pin.
 
 ## Decide whether Technical Review is due
 
-Technical Review is due when evidence can support useful verification, repair,
+Technical Review is due when evidence can support a useful improvement, repair,
 or a bounded new diagnosis. Examples include:
 
 - a failed or suspiciously successful production run;
 - a verified runtime signal with unresolved step impact or recovery that cannot
   be established (`run_not_completed`, `runtime_status_disagreement`, or
   `tool_success_with_structured_failure` are evidence leads, not automatic triggers);
-- matured verification for a prior repair;
+- a previously fixed defect reproduced by new evidence;
 - an answered technical decision that remains unapplied;
 - a material plan, artifact, report/evaluation, DB, knowledgebase, or learnings
   change;
@@ -109,6 +109,12 @@ run can be justified by adaptive research, browser dwell, or independent
 verification. Cite exact step/item IDs and compact evidence paths, and explain
 whether the evidence supports review now or needs a named future boundary.
 
+An applied technical fix is treated as fixed unless new evidence reproduces it.
+`changed_unverified` is closed, not a verification backlog. A later run, elapsed
+next-check date, or lack of runtime proof alone must not select Technical Review,
+reopen a fix, or generate a verification-only task. Failed application is still
+active work. Strategic experiment outcome assessment remains separate.
+
 ## Deterministic-intake boundary
 
 Treat a verified deterministic signal as a focused evidence lead, never as an
@@ -121,16 +127,25 @@ Do not keyword-scan ordinary
 output for words such as "error" and do not launch a Fixer directly from the
 signal.
 
-Runtime intake does not force Technical Review. Before choosing a reviewer,
+Runtime intake does not force Technical Review. Prioritize impact on required
+outputs and workflow usefulness, not the number of failed tool calls. Small
+exploratory misses, corrected arguments, or transient failures that recover
+with correct outputs and negligible overhead do not warrant a review slot,
+durable finding, or follow-up verification task. One severe failure can warrant
+review; recurrence alone does not establish material impact.
+Before choosing a reviewer,
 inspect the smallest affected step summary, validation/output receipt, or tool
 trace needed to answer: did the error prevent the step from doing its job?
-An errored attempt followed by a verified successful retry or fallback can be
-skipped. A `completed` status by itself is not recovery proof: check required
-outputs and side effects, and look for missing, stale, partial, or contradictory
-results. Uncertain recovery merits a focused diagnosis, not an assumption of
-health. Repeated recovery can still justify review when its cost, latency, or
+An errored attempt followed by a successful retry or fallback with adequate
+existing output evidence should normally be skipped. A `completed` status by
+itself is not recovery proof: use the smallest relevant output or side-effect
+receipt to look for missing, stale, partial, or contradictory results. Do not
+audit every recovered call or demand new verification runs. Uncertainty merits
+a focused diagnosis when it leaves a material required outcome in doubt, not
+merely because a minor error's details are incomplete.
+Repeated recovery can still justify review when its cost, latency, or
 reliability impact is material. A recurring, already-understood error without
-new impact, an available repair, or matured verification must not reserve the
+new impact, an available repair, or a reproduced defect must not reserve the
 review slot or displace eligible Strategic Review. Record the evidence for this
 judgment in the worklist reason/evidence, not a new issue per failed tool call.
 
@@ -155,8 +170,11 @@ a separate module.
 
 ## Decide whether Strategic Review is due
 
-Strategic Review needs evidence, not a free slot. Select it when accumulated
-outcomes can settle a real product/goal question, for example:
+Select Strategic Review for a useful product/goal question or grounded opportunity,
+not merely a free slot. New goals, user feedback, material plan changes, overlooked
+needs, and revisable assumptions can warrant exploration before outcome evidence
+matures. Completed evaluations and a proven strategy ceiling are not prerequisites.
+Accumulated outcomes may also warrant review, for example:
 
 - the goal metric is flat, unmeasurable, or contradicted by outcomes;
 - activity and outcomes diverge—for example activity is high but useful
@@ -168,7 +186,7 @@ outcomes can settle a real product/goal question, for example:
 - enough evidence exists to compare the current approach with materially
   different alternatives.
 
-Useful strategic focus keys include:
+Optional strategic coverage labels include (not a mandatory checklist):
 
 - `goal_measurement_validity`
 - `strategy_effectiveness`
@@ -183,9 +201,12 @@ system measuring or optimizing the wrong thing belongs to Strategic Review.
 Missing telemetry is a coverage gap, not evidence of health or zero impact.
 Never make one reviewer due merely because another reviewer was skipped.
 Strategic Review combines the former Strategy Auditor and Goal Advisor into
-one sequence: its opportunity phase runs only when the evidence supports
-Strategic Review for business usefulness or strategic headroom, including
-materially different approaches.
+one sequence. Select Strategic Review for business usefulness or strategic headroom,
+including materially different approaches. Once selected, the advisor may explore
+alternatives immediately; Gate does not prescribe its reasoning or require a separate
+opportunity permission. Reuse focus labels where they fit, or record a descriptive
+lowercase snake_case strategic key (maximum 64 characters). Existing categories
+must not exclude a useful question. No quota of proposals or category coverage.
 
 ## Focus priority and rotation
 
@@ -233,7 +254,7 @@ For each selected module, use the compact focus agenda and reason within the
 highest applicable lifecycle class:
 
 1. new critical regression, security issue, data loss, or widespread failure;
-2. matured verification;
+2. a reproduced technical defect or matured strategic experiment evidence;
 3. answered but unapplied decision;
 4. materially changed or never-reviewed focus;
 5. overdue focus;
@@ -259,7 +280,7 @@ that the module is healthy forever.
 
 Choose one mode and give a concrete `mode_reason`:
 
-- `backlog_drain`: retained active issues, matured verification, or answered
+- `backlog_drain`: retained active issues, reproduced failures, or answered
   decisions already provide the useful work. Do not add broad discovery.
 - `discovery`: materially new technical or strategic evidence may reveal a
   root cause not explained by retained work.

@@ -12,6 +12,7 @@ interface CommandSelectionDialogProps {
   position: { bottom: number; left: number }
   modeCategory?: ModeCategory
   workshopMode?: WorkshopMode
+  canWriteWorkflow?: boolean
   agentProfileId?: string
   onManageCommands?: () => void
   onEditCommand?: (command: CommandDefinition) => void
@@ -26,6 +27,7 @@ export const CommandSelectionDialog: React.FC<CommandSelectionDialogProps> = ({
   position,
   modeCategory,
   workshopMode,
+  canWriteWorkflow = true,
   agentProfileId,
   onManageCommands,
   onEditCommand,
@@ -71,7 +73,7 @@ export const CommandSelectionDialog: React.FC<CommandSelectionDialogProps> = ({
 
   // Filter commands based on search query and current mode
   useEffect(() => {
-    const allCommands = getCommands(modeCategory, workshopMode)
+    const allCommands = getCommands(modeCategory, workshopMode, canWriteWorkflow)
 
     if (!searchQuery.trim()) {
       setFilteredCommands(allCommands)
@@ -101,7 +103,7 @@ export const CommandSelectionDialog: React.FC<CommandSelectionDialogProps> = ({
 
     setFilteredCommands(filtered)
     setSelectedIndex(0) // Reset selection when filtering
-  }, [searchQuery, modeCategory, workshopMode])
+  }, [searchQuery, modeCategory, workshopMode, canWriteWorkflow])
 
   // Scroll selected item into view
   useEffect(() => {

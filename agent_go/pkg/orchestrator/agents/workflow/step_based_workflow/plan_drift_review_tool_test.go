@@ -428,3 +428,36 @@ func TestRecordPlanDriftReviewExecutorRequiresStepID(t *testing.T) {
 		t.Fatal("expected error for missing step_id")
 	}
 }
+
+// A prompt repair is a current-contract check, not a request to execute the
+// workflow again. Its evidence and closed stale flag survive persistence even
+// when no run artifacts exist.
+func TestRecordPlanDriftReviewPersistsPromptRepairWithoutProducingRun(t *testing.T) {
+	files := map[string]string{
+		"planning/plan.json":        `{"steps":[{"id":"sequence-a","type":"message_sequence"}]}`,
+		"planning/step_config.json": `{"steps":[{"id":"sequence-a","agent_configs":{"drift_review":{"needs_review":true}}}]}`,
+	}
+	executor := newPlanDriftReviewTestExecutor(files)
+	_, err := executor(context.Background(), map[string]interface{}{
+		"step_id":                    "sequence-a",
+		"reviewed_through_change_id": "change-prompt-1",
+		"checks": []interface{}{
+			map[string]interface{}{"check_id": "message_sequence_best_practices", "status": "pass", "evidence": "Current sequence preserves declared inputs, outcome, and approval ordering."},
+			map[string]interface{}{"check_id": "step_prompt_quality", "status": "fixed", "evidence": "Applied step-description.md: removed contradictory field list, retained the supplied schema and approval boundary. No producing run was performed."},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out StepConfigFile
+	if err := json.Unmarshal([]byte(files["planning/step_config.json"]), &out); err != nil {
+		t.Fatal(err)
+	}
+	dr := out.Steps[0].AgentConfigs.DriftReview
+	if dr == nil || dr.NeedsReview || dr.ReviewedThroughChangeID != "change-prompt-1" {
+		t.Fatalf("repair remained pending: %+v", dr)
+	}
+	if len(dr.Checks) != 2 || dr.Checks[1].CheckID != "step_prompt_quality" || dr.Checks[1].Status != "fixed" {
+		t.Fatalf("prompt evidence was not persisted: %+v", dr.Checks)
+	}
+}

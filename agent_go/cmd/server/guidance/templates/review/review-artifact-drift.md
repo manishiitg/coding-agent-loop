@@ -64,9 +64,20 @@ is the same due work Pulse would otherwise run on its own schedule, done now
 because the operator asked for it directly.
 
 If the array is empty, state that plainly (nothing plan_drift_review-scoped
-is currently due) and move on to Part 2 below.
+is currently due), close this manual claim with
+`record_pulse_result(module="plan_drift_review", pulse_run_id="current",
+result="done", reason="No plan drift candidates require review", ...)`,
+and move on to Part 2 below. Do not leave an empty manual pass pending.
 
-## Part 2 — the read-only checklist for everything plan_drift_review does not cover
+## Part 2 — the read-only checklist for affected dependencies
+
+Keep this compatibility review bounded to changed surfaces and their consumers.
+Do not repeat Part 1's prompt-quality or type-specific checks, audit unrelated
+architecture, or create verification work for an applied fix. A title-only edit
+with no changed meaning may need only a compact compatible result. Apply
+`builder-reference/references/step-description.md` to affected step prompts;
+Part 1 records `step_prompt_quality`, and Part 2 reuses that evidence unless
+another materially changed prompt or dependency was not covered.
 
 This checklist's job is what Part 1 does not cover: schedule
 cron/timezone/queue drift, eval/success-criteria coverage, downstream-step
@@ -80,7 +91,7 @@ through `get_pulse_state(view="review")` with `module=technical_review`, using
 the managed SQLite-backed tools and structured finding lifecycle; do not query
 SQLite directly or inspect/create Pulse presentation artifacts.
 
-For a suspected drift that recurs or a repaired dependency awaiting proof,
+For a suspected drift reproduced after a change or a material contract mismatch,
 compare the current artifact/run evidence with up to three comparable retained
 runs (same route/group and materially equivalent configuration). Read compact
 receipts first; open raw traces only for the changed or suspicious step/attempt.
@@ -128,7 +139,7 @@ Load `read_skill(skills=[{"name":"builder-reference","path":"references/assumpti
      inspect one of these surfaces directly yourself when the step was not a
      Part 1 candidate at all (already clean and current) and its evidence
      still looks insufficient for the entry under review.
-   - the workflow's schedules in `workflow.json` — for each schedule, its cron,
+   - the affected schedules in `workflow.json` — for each affected schedule, its cron,
      timezone, and the `messages` queue. The queue is what the scheduler
      actually sends, so it is a first-class contract with the plan, not
      configuration noise: read every message and resolve each to the plan step
@@ -148,10 +159,13 @@ Load `read_skill(skills=[{"name":"builder-reference","path":"references/assumpti
    - `evaluation/evaluation_plan.json`, `evaluation/step_config.json`, and matching goal/success-criteria coverage — deferral above covers whether an
      eval step's `PreValidation` SQL/JSONPath rules still resolve; coverage
      gaps (an orphaned or missing eval) stay this checklist's job
-   - one representative recent run for changed runtime behavior when evidence exists
+   - one representative recent run for changed runtime behavior when compatible
+     evidence exists; pre-change artifacts are baseline only, not a reason to
+     leave an applied fix awaiting a future run
    - for any changed status, strategy, feature flag, guard, routing rule, or
      other control value, trace the exact changed record to the current runtime
-     reader and one resulting decision/output. If similarly named tables/files
+     reader. Inspect a resulting decision/output only when matching current-contract
+     evidence exists; do not require a new run to establish static compatibility. If similarly named tables/files
      carry the same logical IDs, compare them and identify the canonical owner
      plus the required mirror rule. A clean changelog/file diff is not enough
      when the runtime reads a different store.
@@ -163,7 +177,9 @@ Load `read_skill(skills=[{"name":"builder-reference","path":"references/assumpti
    - a change updated a plausible but non-canonical store, or duplicate control
      stores disagree so the allocator/router/executor cannot observe the repair
    - report/eval checks use stale artifacts, fields, thresholds, or run identity
-   - a changed success criterion lacks eval coverage, or an eval is orphaned/duplicative
+   - a change breaks explicitly required evaluation coverage, or an eval still
+     references a retired criterion/producer; do not invent an eval requirement
+     merely because an evaluation file is empty
    - new steps lack required dependent wiring (a deleted step's own dangling
      references are Part 1's workflow-level deletion audit's job now — report
      one here only if Part 1 found no due `__workflow_drift_review__`
@@ -215,6 +231,16 @@ Return one compact review package containing:
   evidence; `blocked` and `broken` also require durable Pulse `issue_ids`
 - any blocked entry that prevented further cursor advancement
 
-The parent Pulse Fixer/workshop agent validates this package, applies only bounded approved fixes, records typed Artifact Review findings/dispositions, and calls `mark_changelog_artifact_reviewed` for only the exact verified entries with all required surface reviews. Do not edit or delete changelog JSON directly and do not create a second cursor or state file.
-
-A finding marked `user_judgment_required` needs the user's call before it is applied (never before). If this command is running as a live chat turn with the user present (a standalone `/review-artifact-drift`), ask directly in this chat and wait for the reply. If this is the unattended scheduled Pulse pass, never ask a direct question -- nobody is watching that chat and it would stall unanswered -- use `create_human_input_request` instead, which surfaces as a Needs your decision card the user answers later.
+Before returning, persist each material Part 2 finding through
+`record_pulse_finding` under `technical_review`, reusing its canonical issue.
+Create and link a typed `create_human_input_request` when the recommendation
+needs a human decision; do not block the background task with a chat question.
+This persistence does not authorize Part 2 implementation edits, changelog
+marks, or a separate Technical Review terminal receipt. The slash-command
+parent only presents your result; do not leave findings for it to persist.
+A later Pulse Fixer/workshop action can apply bounded approved repairs and
+call `mark_changelog_artifact_reviewed` for only the exact inspected entries
+with all required surface reviews. Proposed marks are not completed marks.
+That action closes applied fixes without waiting for later execution and
+reopens them only when new evidence reproduces the defect.
+Do not edit or delete changelog JSON directly or create a second cursor/state file.

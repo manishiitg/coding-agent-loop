@@ -57,6 +57,26 @@ else
   echo "    Install it once as root: ssh -p $SSH_PORT root@$HOST_IP 'apt-get install -y jq'" >&2
 fi
 
+# agent-browser is a mandatory runtime dependency: preview_report and every
+# browser-automation tool shell out to it by name with no PATH check of their
+# own, so a missing install surfaces only as an opaque "exit code 127:
+# agent-browser: not found" deep inside a tool call. Unlike jq, it needs no
+# root (a per-user npm global prefix is enough), so attempt the install here
+# rather than only warning -- non-fatal, since this script cannot know this
+# host's exact prefix/PATH convention in advance.
+echo "==> Ensuring agent-browser is installed on the remote host"
+if ssh -p "$SSH_PORT" -i "$SSH_KEY_PATH" -o ConnectTimeout=10 "confida@$HOST_IP" 'command -v agent-browser' >/dev/null 2>&1; then
+  echo "    agent-browser is present."
+elif ssh -p "$SSH_PORT" -i "$SSH_KEY_PATH" -o ConnectTimeout=10 "confida@$HOST_IP" \
+    'npm install -g agent-browser@latest >/dev/null 2>&1 && command -v agent-browser' >/dev/null 2>&1; then
+  echo "    agent-browser installed."
+else
+  echo "    WARNING: agent-browser is NOT installed on $HOST_IP and the default-prefix install failed" >&2
+  echo "    (likely a permissions error on the system npm prefix). Install it once with a writable" >&2
+  echo "    --prefix and put that prefix's bin/ on PATH: ssh -p $SSH_PORT confida@$HOST_IP" >&2
+  echo "      npm install --prefix <writable-dir> -g agent-browser@latest" >&2
+fi
+
 SOURCE_ROOT=""
 if [[ "$DEPLOY_SOURCE_MODE" == "remote-main" ]]; then
   echo "==> Cloning $DEPLOY_BRANCH from git remotes (mcp-agent-builder-go, mcpagent, multi-llm-provider-go)"

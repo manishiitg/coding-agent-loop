@@ -126,7 +126,14 @@ case "$REMOTE_BROWSER_PATH" in
   /var/lib/video-studio/.cache/hyperframes/chrome/*/chrome-headless-shell) ;;
   *) echo "Unexpected HyperFrames browser path: $REMOTE_BROWSER_PATH" >&2; exit 1 ;;
 esac
-"${SSH[@]}" "test -x '$REMOTE_BROWSER_PATH'; command -v agent-browser >/dev/null"
+"${SSH[@]}" "test -x '$REMOTE_BROWSER_PATH'"
+# agent-browser is a mandatory runtime dependency (preview_report and every
+# browser-automation tool shell out to it by name with no PATH check of their
+# own), but until now this only asserted it was already on PATH -- if it was
+# ever missing, e.g. on a fresh host that had not yet run repair-bootstrap.sh,
+# the whole deploy failed with no path to self-heal. Install it into the same
+# tool prefix as claude/cursor-agent below, then assert.
+"${SSH[@]}" "export PATH='$REMOTE_TOOLS_DIR/bin:'\$PATH; command -v agent-browser >/dev/null || npm install -g --prefix '$REMOTE_TOOLS_DIR' agent-browser@latest; command -v agent-browser >/dev/null"
 rsync -az -e "ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new -i $SSH_KEY_PATH" "$BUILD_DIR/" "video-studio@$HOST_IP:$REMOTE_RELEASE/"
 "${SSH[@]}" "node '$REMOTE_RELEASE/check-release-assets.mjs' '$REMOTE_RELEASE/frontend'"
 rsync -az --chmod=ugo=,u=rw -e "ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new -i $SSH_KEY_PATH" "$GLOBAL_FILE" "video-studio@$HOST_IP:/var/lib/video-studio/video-studio/.globals-$RELEASE_ID"

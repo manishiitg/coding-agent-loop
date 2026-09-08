@@ -11,8 +11,8 @@ import (
 	"testing"
 )
 
-// stubGoogleTokenInfo points googleTokenGrantedScopes at a local server for
-// the duration of the test, instead of making a real call to Google — a live
+// stubGoogleTokenInfo points googleTokenInfo at a local server for the
+// duration of the test, instead of making a real call to Google — a live
 // network dependency in this suite would be slow and break offline/CI runs.
 func stubGoogleTokenInfo(t *testing.T, scope string) {
 	t.Helper()

@@ -36,6 +36,9 @@ type GmailConnectionResponse struct {
 	// connection authorizes under. Empty only for a connection that
 	// predates the named-client registry and has not yet been migrated.
 	ClientName string `json:"client_name,omitempty"`
+	// AllowReadAccess is whether this connection was authorized with
+	// gmail.readonly in addition to gmail.send. Send-only is the default.
+	AllowReadAccess bool `json:"allow_read_access"`
 	// HasCredentialsFile reports whether a key file is pinned, without naming
 	// it — the path is operator detail the picker does not need.
 	HasCredentialsFile bool   `json:"has_credentials_file,omitempty"`
@@ -72,7 +75,11 @@ type GmailConnectionRequest struct {
 	CredentialsFile string `json:"credentials_file,omitempty"`
 	// ClientName is required on create — see services.GmailService.CreateConnection.
 	ClientName string `json:"client_name,omitempty"`
-	Enabled    *bool  `json:"enabled,omitempty"`
+	// AllowReadAccess opts the connection into gmail.readonly on top of the
+	// always-requested gmail.send. Omitted/false is send-only, the default —
+	// see services.GmailConnection.AllowReadAccess.
+	AllowReadAccess bool  `json:"allow_read_access,omitempty"`
+	Enabled         *bool `json:"enabled,omitempty"`
 }
 
 // GmailConnectionTestRequest optionally overrides the test recipient.
@@ -124,6 +131,7 @@ func projectGmailConnection(svc *services.GmailService, conn services.GmailConne
 		Email:              email,
 		ConfigHome:         conn.ConfigHome,
 		ClientName:         conn.ClientName,
+		AllowReadAccess:    conn.AllowReadAccess,
 		HasCredentialsFile: strings.TrimSpace(conn.CredentialsFile) != "",
 		Status:             status,
 		Enabled:            conn.Enabled,
@@ -221,6 +229,7 @@ func createGmailConnectionHandler(api *StreamingAPI) http.HandlerFunc {
 			ConfigHome:      req.ConfigHome,
 			CredentialsFile: req.CredentialsFile,
 			ClientName:      req.ClientName,
+			AllowReadAccess: req.AllowReadAccess,
 			Enabled:         req.Enabled,
 		})
 		if err != nil {

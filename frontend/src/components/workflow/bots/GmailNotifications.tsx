@@ -88,6 +88,9 @@ export function GmailNotifications({ bots }: { bots: GmailNotificationsBots }) {
   }
 
   const [newClientFile, setNewClientFile] = useState<File | null>(null)
+  // Off by default: notifications only ever send, so the consent screen asks
+  // for gmail.send alone unless the operator deliberately widens it here.
+  const [newClientAllowRead, setNewClientAllowRead] = useState(false)
   const [newClientParseError, setNewClientParseError] = useState<string | null>(null)
   // Collapsed by default once at least one account exists — no reason to
   // keep the upload form permanently on screen once the common case (one
@@ -107,8 +110,11 @@ export function GmailNotifications({ bots }: { bots: GmailNotificationsBots }) {
     // createGmailOAuthClient derives the internal client name from this
     // email — asking for the mailbox directly is what an operator actually
     // thinks in terms of, not an arbitrary label for the Google Cloud app.
-    const ok = await createGmailOAuthClient(gmailNewClientEmail.trim(), parsed)
-    if (ok) setNewClientFile(null)
+    const ok = await createGmailOAuthClient(gmailNewClientEmail.trim(), parsed, newClientAllowRead)
+    if (ok) {
+      setNewClientFile(null)
+      setNewClientAllowRead(false)
+    }
     return ok
   }
 
@@ -196,6 +202,12 @@ export function GmailNotifications({ bots }: { bots: GmailNotificationsBots }) {
                           <span className="text-sm font-medium">{conn.display_name}</span>
                           {conn.is_default && <span className="rounded bg-muted px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-muted-foreground">Default</span>}
                           {!conn.enabled && <span className="rounded bg-muted px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-muted-foreground">Disabled</span>}
+                          <span
+                            className="rounded bg-muted px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-muted-foreground"
+                            title={conn.allow_read_access ? 'Authorized to send and to read/search this mailbox' : 'Authorized to send only — cannot read this mailbox'}
+                          >
+                            {conn.allow_read_access ? 'Send + read' : 'Send only'}
+                          </span>
                           <span className="ml-auto text-xs text-muted-foreground">
                             {conn.auth?.checking ? 'Checking…' : conn.ready ? 'Connected' : 'Not connected'}
                           </span>
@@ -292,6 +304,22 @@ export function GmailNotifications({ bots }: { bots: GmailNotificationsBots }) {
                       onChange={event => setNewClientFile(event.target.files?.[0] || null)}
                       className="flex-1 text-xs text-muted-foreground file:mr-2 file:rounded file:border file:border-border file:bg-muted/40 file:px-2 file:py-1 file:text-xs"
                     />
+                    <label
+                      className="flex basis-full items-start gap-2 text-xs text-muted-foreground"
+                      title="Send-only is the default and is all notifications need. Read access lets a workflow search or read this mailbox too; it is fixed at sign-in, so changing it later means reconnecting."
+                    >
+                      <input
+                        type="checkbox"
+                        checked={newClientAllowRead}
+                        disabled={readOnly}
+                        onChange={event => setNewClientAllowRead(event.target.checked)}
+                        className="mt-0.5"
+                      />
+                      <span>
+                        Also allow <strong>reading</strong> this mailbox
+                        <span className="block text-[11px] text-muted-foreground/80">Off by default: sending is all notifications need. Turn on only if a workflow must read or search mail.</span>
+                      </span>
+                    </label>
                     <Button
                       variant="outline"
                       disabled={readOnly || !gmailNewClientEmail.trim() || !newClientFile || gmailOAuthClientsBusy}

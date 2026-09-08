@@ -415,7 +415,7 @@ func (g *GmailService) computeAuthStatus(ctx context.Context, gwsPath string, us
 	if cfg != nil && strings.TrimSpace(cfg.Token) != "" {
 		st.Authenticated = true
 		st.HasGmailScope = true
-		st.Scopes = append([]string(nil), gmailOAuthScopes...)
+		st.Scopes = gmailOAuthScopesFor(false)
 		st.Email = fetchGmailAccountEmail(ctx, gwsPath, cfg)
 		return st
 	}

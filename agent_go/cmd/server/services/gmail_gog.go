@@ -120,14 +120,17 @@ func (g *GmailService) computeAuthStatusGog(ctx context.Context, gogPath string,
 	// manages refresh internally and exposes no documented "print token"
 	// command), so this falls back to the base requested set, which may
 	// under-report a scope granted directly through gog outside this app.
+	// The true granted set is only known by asking Google (below); this is
+	// just the fallback default when that introspection is unavailable, so it
+	// assumes the common case (send-only) rather than over-reporting read.
 	if cfg != nil && strings.TrimSpace(cfg.Token) != "" {
 		if scopes, scopeErr := googleTokenGrantedScopes(ctx, cfg.Token); scopeErr == nil && len(scopes) > 0 {
 			st.Scopes = scopes
 		} else {
-			st.Scopes = append([]string(nil), gmailOAuthScopes...)
+			st.Scopes = gmailOAuthScopesFor(false)
 		}
 	} else {
-		st.Scopes = append([]string(nil), gmailOAuthScopes...)
+		st.Scopes = gmailOAuthScopesFor(false)
 	}
 	return st
 }

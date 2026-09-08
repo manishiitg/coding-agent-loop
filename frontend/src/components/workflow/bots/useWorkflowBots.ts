@@ -321,7 +321,10 @@ export function useWorkflowBots(workspacePath: string | null) {
   // whole flow; there's no separate "now click Sign in with Google" step to
   // remember, since 99% of the time the mailbox being added is the same one
   // the client's credentials are for.
-  const createGmailOAuthClient = useCallback(async (email: string, clientSecretJson: unknown) => {
+  // allowReadAccess opts the new mailbox into gmail.readonly on top of
+  // gmail.send. Defaults off: notifications only ever send, so the consent
+  // screen asks for the minimum unless the operator deliberately widens it.
+  const createGmailOAuthClient = useCallback(async (email: string, clientSecretJson: unknown, allowReadAccess = false) => {
     const trimmedEmail = email.trim()
     // Backend name pattern is lowercase letters/digits/hyphens only (it
     // becomes a directory name) — an email's @ and . don't qualify, so
@@ -332,7 +335,7 @@ export function useWorkflowBots(workspacePath: string | null) {
       setGmailOAuthClientsBusy(true)
       setGmailOAuthClientError(null)
       const client = await agentApi.createGmailOAuthClient(name, clientSecretJson)
-      const connection = await agentApi.createGmailConnection({ display_name: trimmedEmail, client_name: client.name })
+      const connection = await agentApi.createGmailConnection({ display_name: trimmedEmail, client_name: client.name, allow_read_access: allowReadAccess })
       await Promise.all([loadGmailOAuthClients(), loadGmailConnections()])
       setGmailNewClientEmail('')
       void connectGmailAccount(connection.id)

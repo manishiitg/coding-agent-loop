@@ -2773,6 +2773,9 @@ export interface GmailConnection {
    *  authorizes under. Empty only for a connection that predates the
    *  named-client registry and has not yet been migrated. */
   client_name?: string
+  /** Whether this connection was authorized with gmail.readonly on top of the
+   *  always-requested gmail.send. Send-only is the default. */
+  allow_read_access?: boolean
   status?: string
   enabled: boolean
   is_default: boolean
@@ -2795,6 +2798,9 @@ export interface GmailConnectionRequest {
   /** Required on create — which named OAuth client this connection
    *  authorizes under. */
   client_name?: string
+  /** Opt into gmail.readonly as well as gmail.send. Omitted = send-only,
+   *  the default. Fixed at consent time: changing it means reconnecting. */
+  allow_read_access?: boolean
   enabled?: boolean
 }
 

@@ -33,13 +33,29 @@ import (
 // is workspace content, readable by anything that can read the workspace, and a
 // refresh token there would be a standing grant to send as that person.
 
-// gmailOAuthScopes is the minimum that supports the send path plus identity
-// discovery. Deliberately narrower than `gws auth login -s gmail`, which
-// requests sixteen scopes including cloud-platform.
-var gmailOAuthScopes = []string{
-	"https://www.googleapis.com/auth/gmail.send",
-	"https://www.googleapis.com/auth/gmail.readonly",
-	"https://www.googleapis.com/auth/userinfo.email",
+// gmailOAuthScopesFor is the minimum that supports the send path plus
+// identity discovery, plus gmail.readonly only when the connection was
+// explicitly opted into read access. Send-only is the default because the
+// primary use (Pulse and workflow notifications) only ever sends; a
+// connection that also needs to read mail (e.g. triage, reply-context) opts
+// in per-connection via GmailConnection.AllowReadAccess. Deliberately
+// narrower than `gws auth login -s gmail`, which requests sixteen scopes
+// including cloud-platform.
+//
+// Note: gmail.send alone does NOT grant users.getProfile (Gmail API requires
+// readonly/metadata/modify/compose or mail.google.com for that call), so a
+// send-only connection's display email may come back empty from
+// fetchGmailAccountEmail/computeAuthStatusGog — a cosmetic gap, not a
+// functional one; sending itself works fine on gmail.send alone.
+func gmailOAuthScopesFor(includeRead bool) []string {
+	scopes := []string{
+		"https://www.googleapis.com/auth/gmail.send",
+		"https://www.googleapis.com/auth/userinfo.email",
+	}
+	if includeRead {
+		scopes = append(scopes, "https://www.googleapis.com/auth/gmail.readonly")
+	}
+	return scopes
 }
 
 // gmailOAuthTokenDir is where refresh tokens live — host-local, never the
@@ -73,7 +89,7 @@ func gmailOAuthTokenPath(connectionID string) string {
 // shared client_secret.json / env vars, so a connection created before this
 // migration keeps working unattended until GmailService.ImportLegacyOAuthClient
 // backfills its name.
-func gmailOAuthConfig(redirectURL, clientName string) (*oauth2.Config, error) {
+func gmailOAuthConfig(redirectURL, clientName string, includeRead bool) (*oauth2.Config, error) {
 	clientName = strings.TrimSpace(clientName)
 
 	var clientID, clientSecret string
@@ -100,7 +116,7 @@ func gmailOAuthConfig(redirectURL, clientName string) (*oauth2.Config, error) {
 		ClientID:     clientID,
 		ClientSecret: clientSecret,
 		RedirectURL:  redirectURL,
-		Scopes:       gmailOAuthScopes,
+		Scopes:       gmailOAuthScopesFor(includeRead),
 		Endpoint:     google.Endpoint,
 	}, nil
 }
@@ -221,7 +237,10 @@ func accessTokenForConnection(ctx context.Context, connectionID, clientName stri
 	gmailTokenSourceMu.Lock()
 	source, cached := gmailTokenSources[connectionID]
 	if !cached {
-		cfg, err := gmailOAuthConfig("", clientName)
+		// includeRead is irrelevant here: Google ignores the scope parameter on
+		// a refresh_token grant — the token keeps whatever scopes it was
+		// originally issued with.
+		cfg, err := gmailOAuthConfig("", clientName, false)
 		if err != nil {
 			gmailTokenSourceMu.Unlock()
 			return "", err
@@ -250,7 +269,11 @@ type GmailOAuthPending struct {
 	// ClientName is captured at the start of the flow and reused for the
 	// token exchange — the exchange must run against the exact same OAuth
 	// client the consent URL was built for, or Google rejects it.
-	ClientName  string
+	ClientName string
+	// IncludeRead is captured at the start of the flow for the same reason as
+	// ClientName: the token exchange must request the identical scope set the
+	// consent URL was built for.
+	IncludeRead bool
 	RedirectURL string
 	CreatedAt   time.Time
 }
@@ -267,8 +290,8 @@ const gmailOAuthPendingTTL = 15 * time.Minute
 //
 // state is random and server-held, so a callback cannot be forged to attach
 // someone else's Google account to a connection.
-func BeginGmailOAuth(connectionID, clientName, redirectURL string) (string, error) {
-	cfg, err := gmailOAuthConfig(redirectURL, clientName)
+func BeginGmailOAuth(connectionID, clientName, redirectURL string, includeRead bool) (string, error) {
+	cfg, err := gmailOAuthConfig(redirectURL, clientName, includeRead)
 	if err != nil {
 		return "", err
 	}
@@ -287,6 +310,7 @@ func BeginGmailOAuth(connectionID, clientName, redirectURL string) (string, erro
 	gmailOAuthPending[state] = GmailOAuthPending{
 		ConnectionID: connectionID,
 		ClientName:   strings.TrimSpace(clientName),
+		IncludeRead:  includeRead,
 		RedirectURL:  redirectURL,
 		CreatedAt:    time.Now(),
 	}
@@ -318,7 +342,7 @@ func CompleteGmailOAuth(ctx context.Context, state, code string) (string, error)
 		return "", fmt.Errorf("this sign-in took too long and expired — start again from the Gmail settings")
 	}
 
-	cfg, err := gmailOAuthConfig(pending.RedirectURL, pending.ClientName)
+	cfg, err := gmailOAuthConfig(pending.RedirectURL, pending.ClientName, pending.IncludeRead)
 	if err != nil {
 		return "", err
 	}

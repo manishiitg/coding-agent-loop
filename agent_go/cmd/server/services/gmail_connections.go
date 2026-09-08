@@ -73,6 +73,16 @@ type GmailConnection struct {
 	// GmailService.ImportLegacyOAuthClient backfills it.
 	ClientName string `json:"client_name,omitempty"`
 
+	// AllowReadAccess opts this connection into gmail.readonly alongside the
+	// always-requested gmail.send. Off by default: the primary use (Pulse and
+	// workflow notifications) only ever sends, so every connection requests
+	// the minimum until a specific use case (triage, reply-context) needs to
+	// read mail too. Fixed for the life of the connection at the scope the
+	// user consented to; changing it requires reconnecting (see
+	// gmail_oauth.go's BeginGmailOAuth), since Google scopes a token at grant
+	// time, not after.
+	AllowReadAccess bool `json:"allow_read_access,omitempty"`
+
 	Status GmailConnectionStatus `json:"status,omitempty"`
 
 	// Enabled gates use without discarding the connection. A disabled
@@ -314,7 +324,11 @@ type GmailConnectionInput struct {
 	// ClientName selects which named OAuth client (gmail_oauth_clients.go)
 	// this connection authorizes under. Required on create — see CreateConnection.
 	ClientName string
-	Enabled    *bool
+	// AllowReadAccess opts this connection into gmail.readonly — see
+	// GmailConnection.AllowReadAccess. Defaults to false (send-only) when
+	// omitted, matching the zero value.
+	AllowReadAccess bool
+	Enabled         *bool
 }
 
 // CreateConnection registers a new sending identity and provisions its private
@@ -361,6 +375,7 @@ func (g *GmailService) CreateConnection(ctx context.Context, in GmailConnectionI
 		ConfigHome:      configHome,
 		CredentialsFile: strings.TrimSpace(in.CredentialsFile),
 		ClientName:      clientName,
+		AllowReadAccess: in.AllowReadAccess,
 		Status:          GmailConnectionNeedsReconnect,
 		Enabled:         enabled,
 		CreatedAt:       now,

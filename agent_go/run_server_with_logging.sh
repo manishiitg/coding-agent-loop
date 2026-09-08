@@ -1723,9 +1723,21 @@ else
     ensure_tmux_for_claude_code
 
     # Keep the historical developer-runner behavior for the normal instance.
+    # preview_report and every browser-automation tool shell out to
+    # `agent-browser` by name with no PATH check of their own — an install
+    # failure here must not be reported as success, or the first real symptom
+    # is an opaque "exit code 127: agent-browser: not found" deep inside a
+    # tool call.
     echo "📦 Updating agent-browser to latest..."
-    npm install -g agent-browser@latest 2>&1 | tail -3
-    echo "✅ agent-browser updated: $(agent-browser --version 2>/dev/null || echo 'version unknown')"
+    if ! npm install -g agent-browser@latest 2>&1 | tail -5; then
+        echo "❌ Error: npm install -g agent-browser@latest failed"
+        exit 1
+    fi
+    if ! command -v agent-browser >/dev/null 2>&1; then
+        echo "❌ Error: agent-browser still not on PATH after install"
+        exit 1
+    fi
+    echo "✅ agent-browser updated: $(agent-browser --version 2>&1)"
 fi
 
 # Build mcpbridge binary (required for CLI provider MCP bridge)

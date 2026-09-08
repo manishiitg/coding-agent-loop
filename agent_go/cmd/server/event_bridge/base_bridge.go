@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/manishiitg/coding-agent-loop/agent_go/internal/events"
+	orchestratorevents "github.com/manishiitg/coding-agent-loop/agent_go/pkg/orchestrator/events"
 	pkgevents "github.com/manishiitg/mcpagent/events"
 	loggerv2 "github.com/manishiitg/mcpagent/logger/v2"
 )
@@ -58,10 +59,34 @@ func (b *BaseEventBridge) HandleEvent(_ context.Context, event *pkgevents.AgentE
 		Timestamp: time.Now(),
 		Data:      event,
 		SessionID: b.SessionID,
+		Error:     errorEventText(event.Data),
 	}
 	if b.SessionID == "" {
 		b.Logger.Warn("⚠️ [BaseEventBridge] SessionID is empty! Event will not be stored correctly.")
 	}
 	b.EventStore.AddEvent(b.SessionID, serverEvent)
 	return nil
+}
+
+// errorEventText surfaces the flat error string a handful of typed events
+// carry on their own Data payload, so a caller that only sees the generic
+// stored Event — scheduledTurnFailure, which classifies a scheduled run as a
+// capacity wall (PLAT-101) versus a real failure by matching text like
+// "[quota_exhausted]" — gets the actual failure detail instead of the
+// top-level Event.Error this bridge otherwise leaves blank for every event
+// type. Without this, that classification silently falls back to a generic
+// "turn ended with <type>" string with no error text to match against, and a
+// transient capacity wall gets recorded as a hard failure instead of
+// suspending and auto-resuming.
+func errorEventText(data pkgevents.EventData) string {
+	switch e := data.(type) {
+	case *orchestratorevents.OrchestratorAgentErrorEvent:
+		return e.Error
+	case *pkgevents.AgentErrorEvent:
+		return e.Error
+	case *pkgevents.ConversationErrorEvent:
+		return e.Error
+	default:
+		return ""
+	}
 }

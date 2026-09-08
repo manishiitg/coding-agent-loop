@@ -397,7 +397,7 @@ For workflow publish, read the destination's `provider`, `method`, and `site` fr
 
    | Host | Tier | Install | Log in (one-time, user) | Deploy |
    |------|------|------|------|------|
-   | Surge | **free** | `npm i -g surge` | `surge login` | `surge <dir> <site>.surge.sh` |
+   | Surge | **free** | `npm i -g surge` | `surge login --browser` | `surge <dir> <site>.surge.sh` |
    | Cloudflare Pages | **free** (unlimited bandwidth) | `npm i -g wrangler` | `wrangler login` | `wrangler pages deploy <dir> --project-name <site>` |
    | Netlify | **free** | `npm i -g netlify-cli` | `netlify login` | `netlify deploy --prod --dir <dir>` |
    | Vercel | **free** (Hobby) | `npm i -g vercel` | `vercel login` | `vercel deploy --prod --yes` |
@@ -411,7 +411,18 @@ For workflow publish, read the destination's `provider`, `method`, and `site` fr
    install + login + deploy commands; the user logs in once, you deploy.
 
    *(Headless/CI only: most CLIs also accept a token env var — `NETLIFY_AUTH_TOKEN`,
-   `VERCEL_TOKEN`, `CLOUDFLARE_API_TOKEN`, etc. — via the destination's optional `secret_name`.
+   `VERCEL_TOKEN`, `CLOUDFLARE_API_TOKEN`, `SURGE_TOKEN`, etc. — via the destination's optional
+   `secret_name`. Plain `surge login` always prompts for email/password interactively and will
+   hang piped or in a background/scheduled context — never run it bare there. Two ways around it:
+   (1) `surge login --browser` (needs a reasonably current surge — `npm i -g surge@latest` if the
+   installed one predates it) prints a URL and a short code instead of prompting; paste both into
+   chat, the user opens the URL and approves in their own browser, and the still-running command
+   polls and completes on its own once approved — no password ever passes through the agent, and
+   it works fine from a background context as long as a human is present to click the link. (2) For
+   a genuinely unattended run with no human to approve anything (a scheduled publish), that's not
+   an option — get a token once from an interactive session (`surge token`, itself requires a
+   prior login), store it as the destination's secret, then deploy with
+   `SURGE_TOKEN=<token> surge <dir> <site>.surge.sh`, no login step at all.
    For a person at the keyboard, prefer interactive `<cli> login`.)*
 2. **Git-push-to-deploy** (`method: git`) — commit the static files to the repo/branch the
    host auto-builds (Netlify/Vercel/Pages/Render watch a branch). Use the git discipline from

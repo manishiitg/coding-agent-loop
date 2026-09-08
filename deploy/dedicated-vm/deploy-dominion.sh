@@ -54,6 +54,17 @@ if [[ ! -x "$GO_BIN" ]]; then
   exit 1
 fi
 
+echo "==> Ensuring agent-browser is installed (preview_report and every browser-automation tool shell out to it by name; nothing checks it's on PATH until it fails at runtime)"
+if ! npm install -g agent-browser@latest 2>&1 | tail -5; then
+  echo "FATAL: npm install -g agent-browser@latest failed" >&2
+  exit 1
+fi
+if ! command -v agent-browser >/dev/null 2>&1; then
+  echo "FATAL: agent-browser still not on PATH after install — check npm's global bin dir is on PATH for the dominion-agent service user" >&2
+  exit 1
+fi
+echo "    agent-browser: $(agent-browser --version 2>&1)"
+
 mkdir -p "$SRC_ROOT"
 
 echo "==> Syncing source repos (all public, no credentials needed)"

@@ -30,164 +30,206 @@ type MCPConfigResponse struct {
 	Servers int    `json:"servers,omitempty"`
 }
 
-// handleGetMCPConfig handles GET requests to retrieve current MCP config (base + user additions)
+// customServers returns the overlay entries that the user actually authored:
+// everything in the user config whose name is NOT in the base catalog.
+//
+// The overlay is dual-purpose, which is the whole subtlety here. Connecting a
+// catalog connector writes that catalog server into the same file (see
+// persistOAuthConfig), because overlay membership is what "connected" means.
+// So the overlay is a mix of connection records for base servers and genuine
+// custom servers, and only the latter belong to the JSON editor.
+func (api *StreamingAPI) customServers(overlay *mcpclient.MCPConfig) map[string]mcpclient.MCPServerConfig {
+	custom := make(map[string]mcpclient.MCPServerConfig)
+	for name, server := range overlay.MCPServers {
+		if _, isBase := api.mcpConfig.MCPServers[name]; !isBase {
+			custom[name] = server
+		}
+	}
+	return custom
+}
+
+// loadOverlay reads the user config overlay, treating a missing file as empty.
+func (api *StreamingAPI) loadOverlay() *mcpclient.MCPConfig {
+	overlay, err := mcpclient.LoadConfig(api.getUserConfigPath(), api.logger)
+	if err != nil {
+		api.logger.Debug(fmt.Sprintf("No user config overlay readable: %v", err))
+		return &mcpclient.MCPConfig{MCPServers: make(map[string]mcpclient.MCPServerConfig)}
+	}
+	if overlay.MCPServers == nil {
+		overlay.MCPServers = make(map[string]mcpclient.MCPServerConfig)
+	}
+	return overlay
+}
+
+// writeJSONError replies with a JSON body, which is what the frontend parses.
+// http.Error sends text/plain, so the client's error path could never read the
+// reason and reported every failure as a JSON syntax error.
+func writeJSONError(w http.ResponseWriter, code int, message string) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(code)
+	json.NewEncoder(w).Encode(map[string]string{"error": message, "message": message})
+}
+
+// handleGetMCPConfig returns the user's OWN MCP servers -- not the catalog.
+//
+// This endpoint backs the "Add via JSON" editor, which is a full-document
+// replace: whatever comes back is what the user edits and posts. Returning the
+// merged catalog therefore handed them an editor in which the 113 built-in
+// connectors looked editable and deletable, when in fact the save path silently
+// discarded every change to them. Scoping the document to the user's own
+// servers makes what is shown and what is saved the same thing.
 func (api *StreamingAPI) handleGetMCPConfig(w http.ResponseWriter, r *http.Request) {
-	// Reload base config to get latest version
 	if err := api.mcpConfig.ReloadConfig(api.mcpConfigPath, api.logger); err != nil {
 		api.logger.Error(fmt.Sprintf("Failed to reload base MCP config: %v", err), err)
-		http.Error(w, fmt.Sprintf("Failed to reload base config: %v", err), http.StatusInternalServerError)
+		writeJSONError(w, http.StatusInternalServerError, fmt.Sprintf("Failed to reload base config: %v", err))
 		return
 	}
 
-	// Load user additions (if any)
-	userConfigPath := strings.Replace(api.mcpConfigPath, ".json", "_user.json", 1)
-	userConfig, err := mcpclient.LoadConfig(userConfigPath, api.logger)
-	if err != nil {
-		// User config doesn't exist yet, use empty config
-		userConfig = &mcpclient.MCPConfig{MCPServers: make(map[string]mcpclient.MCPServerConfig)}
-		api.logger.Debug(fmt.Sprintf("No user config found at %s, using empty user config", userConfigPath))
+	custom := api.customServers(api.loadOverlay())
+
+	names := make([]string, 0, len(custom))
+	for name := range custom {
+		names = append(names, name)
 	}
+	sort.Strings(names)
 
-	// Create ordered response with base servers first, then user servers
-	// Since Go maps don't preserve order in JSON, we'll create a custom structure
-	type OrderedMCPConfig struct {
-		MCPServers map[string]mcpclient.MCPServerConfig `json:"mcpServers"`
-	}
+	api.logger.Debug(fmt.Sprintf("Returning %d user-defined MCP servers (%d base servers withheld)",
+		len(custom), len(api.mcpConfig.MCPServers)))
 
-	// Get all server names and sort them
-	allServerNames := make([]string, 0)
-
-	// Add base server names
-	for name := range api.mcpConfig.MCPServers {
-		allServerNames = append(allServerNames, name)
-	}
-
-	// Add user server names (only new ones)
-	for name := range userConfig.MCPServers {
-		found := false
-		for _, existingName := range allServerNames {
-			if existingName == name {
-				found = true
-				break
-			}
-		}
-		if !found {
-			allServerNames = append(allServerNames, name)
-		}
-	}
-
-	// Sort all server names alphabetically
-	sort.Strings(allServerNames)
-
-	// Create the response with ordered servers
-	orderedConfig := &OrderedMCPConfig{
-		MCPServers: make(map[string]mcpclient.MCPServerConfig),
-	}
-
-	// Populate the config in sorted order
-	for _, name := range allServerNames {
-		// Check if it's a user server first (user servers override base servers)
-		if userServer, exists := userConfig.MCPServers[name]; exists {
-			orderedConfig.MCPServers[name] = userServer
-		} else if baseServer, exists := api.mcpConfig.MCPServers[name]; exists {
-			orderedConfig.MCPServers[name] = baseServer
-		}
-	}
-
-	api.logger.Debug(fmt.Sprintf("Merged config: %d base servers + %d user servers = %d total",
-		len(api.mcpConfig.MCPServers), len(userConfig.MCPServers), len(orderedConfig.MCPServers)))
-
-	locked := isMCPConfigLocked()
-
+	// Written by hand so the servers keep a stable alphabetical order; Go maps
+	// marshal in a random one, which would reshuffle the editor on every load.
 	w.Header().Set("Content-Type", "application/json")
-
-	// Write JSON manually to preserve order
-	fmt.Fprintf(w, "{\n  \"mcp_config_locked\": %v,\n  \"mcpServers\": {\n", locked)
-
-	// Write servers in the correct order
-	for i, name := range allServerNames {
-		var server mcpclient.MCPServerConfig
-		if userServer, exists := userConfig.MCPServers[name]; exists {
-			server = userServer
-		} else if baseServer, exists := api.mcpConfig.MCPServers[name]; exists {
-			server = baseServer
+	fmt.Fprintf(w, "{\n  \"mcp_config_locked\": %v,\n  \"mcpServers\": {", isMCPConfigLocked())
+	for i, name := range names {
+		serverJSON, _ := json.Marshal(custom[name])
+		if i > 0 {
+			fmt.Fprint(w, ",")
 		}
-
-		// Write server name and config
-		serverJson, _ := json.Marshal(server)
-		fmt.Fprintf(w, "    \"%s\": %s", name, string(serverJson))
-
-		// Add comma if not the last server
-		if i < len(allServerNames)-1 {
-			fmt.Fprintf(w, ",")
-		}
-		fmt.Fprintf(w, "\n")
+		fmt.Fprintf(w, "\n    %s: %s", mustMarshalString(name), string(serverJSON))
 	}
-
-	fmt.Fprintf(w, "  }\n}")
+	if len(names) > 0 {
+		fmt.Fprint(w, "\n  ")
+	}
+	fmt.Fprint(w, "}\n}")
 }
 
-// handleSaveMCPConfig handles POST requests to save user additions to MCP config
+// mustMarshalString quotes a map key the way encoding/json would, so a server
+// name containing a quote or backslash cannot break out of the document.
+func mustMarshalString(s string) string {
+	b, err := json.Marshal(s)
+	if err != nil {
+		return `""`
+	}
+	return string(b)
+}
+
+// handleSaveMCPConfig replaces the user's own MCP servers with the posted set.
+//
+// Two invariants hold here:
+//
+//  1. Base catalog servers are rejected outright rather than silently dropped.
+//     The previous code filtered them out, so editing a built-in connector
+//     looked like it worked and then did nothing. This mirrors the rule the
+//     add_mcp_server chat tool already enforces.
+//
+//  2. Overlay entries for base servers are carried over untouched. They are
+//     connection records, not configuration, and a blind overwrite here
+//     disconnected every connected catalog connector on each save.
 func (api *StreamingAPI) handleSaveMCPConfig(w http.ResponseWriter, r *http.Request) {
-	// Check if MCP config is locked
 	if isMCPConfigLocked() {
-		http.Error(w, "MCP configuration is locked by administrator", http.StatusForbidden)
+		writeJSONError(w, http.StatusForbidden, "MCP configuration is locked by administrator")
 		return
 	}
 
 	var req MCPConfigRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, fmt.Sprintf("Invalid request body: %v", err), http.StatusBadRequest)
+		writeJSONError(w, http.StatusBadRequest, fmt.Sprintf("Invalid request body: %v", err))
+		return
+	}
+	if req.Config.MCPServers == nil {
+		writeJSONError(w, http.StatusBadRequest, "mcpServers field is required")
 		return
 	}
 
-	// Validate config
-	if err := api.validateMCPConfig(&req.Config); err != nil {
-		http.Error(w, fmt.Sprintf("Config validation failed: %v", err), http.StatusBadRequest)
-		return
-	}
-
-	// Extract user additions (servers not in base config)
-	userAdditions := &mcpclient.MCPConfig{MCPServers: make(map[string]mcpclient.MCPServerConfig)}
-
-	// Reload base config to get current base servers
 	if err := api.mcpConfig.ReloadConfig(api.mcpConfigPath, api.logger); err != nil {
 		api.logger.Error(fmt.Sprintf("Failed to reload base config: %v", err), err)
-		http.Error(w, fmt.Sprintf("Failed to reload base config: %v", err), http.StatusInternalServerError)
+		writeJSONError(w, http.StatusInternalServerError, fmt.Sprintf("Failed to reload base config: %v", err))
 		return
 	}
 
-	// Find servers that are not in base config (user additions)
-	for name, server := range req.Config.MCPServers {
-		if _, exists := api.mcpConfig.MCPServers[name]; !exists {
-			userAdditions.MCPServers[name] = server
+	// Reject catalog names instead of dropping them, so the editor cannot
+	// appear to rename, retarget or delete a built-in connector.
+	reserved := make([]string, 0)
+	for name := range req.Config.MCPServers {
+		if _, isBase := api.mcpConfig.MCPServers[name]; isBase {
+			reserved = append(reserved, name)
+		}
+	}
+	if len(reserved) > 0 {
+		sort.Strings(reserved)
+		writeJSONError(w, http.StatusBadRequest, fmt.Sprintf(
+			"%s %s built-in connector%s and cannot be edited here. Connect %s from the connector directory instead.",
+			strings.Join(reserved, ", "),
+			map[bool]string{true: "is a", false: "are"}[len(reserved) == 1],
+			map[bool]string{true: "", false: "s"}[len(reserved) == 1],
+			map[bool]string{true: "it", false: "them"}[len(reserved) == 1]))
+		return
+	}
+
+	// An empty document is legitimate: it means "I removed my last custom
+	// server". Only validate the shape of servers that are actually present.
+	if len(req.Config.MCPServers) > 0 {
+		if err := api.validateMCPConfig(&req.Config); err != nil {
+			writeJSONError(w, http.StatusBadRequest, fmt.Sprintf("Config validation failed: %v", err))
+			return
 		}
 	}
 
-	// Save only user additions to user config file
-	userConfigPath := strings.Replace(api.mcpConfigPath, ".json", "_user.json", 1)
-	if err := mcpclient.SaveConfig(userConfigPath, userAdditions); err != nil {
+	// Read-modify-write: keep every base-server overlay entry (connections),
+	// replace only the custom ones.
+	overlay := api.loadOverlay()
+	merged := &mcpclient.MCPConfig{MCPServers: make(map[string]mcpclient.MCPServerConfig)}
+	keptConnections := 0
+	for name, server := range overlay.MCPServers {
+		if _, isBase := api.mcpConfig.MCPServers[name]; isBase {
+			merged.MCPServers[name] = server
+			keptConnections++
+		}
+	}
+	for name, server := range req.Config.MCPServers {
+		merged.MCPServers[name] = server
+	}
+
+	removed := make([]string, 0)
+	for name := range api.customServers(overlay) {
+		if _, stillThere := req.Config.MCPServers[name]; !stillThere {
+			removed = append(removed, name)
+		}
+	}
+
+	if err := mcpclient.SaveConfig(api.getUserConfigPath(), merged); err != nil {
 		api.logger.Error(fmt.Sprintf("Failed to save user MCP config: %v", err), err)
-		http.Error(w, fmt.Sprintf("Failed to save user config: %v", err), http.StatusInternalServerError)
+		writeJSONError(w, http.StatusInternalServerError, fmt.Sprintf("Failed to save user config: %v", err))
 		return
 	}
 
-	// Log save event for each user-added server
-	for name := range userAdditions.MCPServers {
+	for name := range req.Config.MCPServers {
 		api.appendServerLog(name, "info", "Configuration saved, triggering discovery...")
 	}
+	for _, name := range removed {
+		api.appendServerLog(name, "info", "Server removed from user configuration")
+	}
 
-	// Trigger background discovery (smart refresh - will only discover modified/new servers)
 	go api.triggerMCPDiscovery()
 
-	api.logger.Info(fmt.Sprintf("✅ User MCP config saved successfully with %d user additions", len(userAdditions.MCPServers)))
+	api.logger.Info(fmt.Sprintf("✅ Saved %d user-defined MCP server(s); %d connector connection(s) preserved, %d removed",
+		len(req.Config.MCPServers), keptConnections, len(removed)))
 
 	response := MCPConfigResponse{
 		Status:  "saved",
 		Message: "User config saved and discovery triggered",
-		Servers: len(req.Config.MCPServers), // Total servers (base + user)
+		Servers: len(req.Config.MCPServers),
 	}
-
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(response)
 }

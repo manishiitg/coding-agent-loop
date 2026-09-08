@@ -21,6 +21,7 @@ export const MCPConfigEditor: React.FC<MCPConfigEditorProps> = ({
   const [jsonError, setJsonError] = useState<string | null>(null);
   const [hasChanges, setHasChanges] = useState(false);
   const [isLocked, setIsLocked] = useState(false);
+  const [customServerCount, setCustomServerCount] = useState(0);
 
   // Load initial config
   useEffect(() => {
@@ -40,9 +41,15 @@ export const MCPConfigEditor: React.FC<MCPConfigEditorProps> = ({
       setError(null);
       
       const data = await mcpConfigApi.getConfig();
-      const jsonString = JSON.stringify(data, null, 2);
+      // The response carries mcp_config_locked alongside the servers. That is
+      // transport metadata, not something anyone should be editing, so only the
+      // mcpServers document reaches the textarea.
+      const servers =
+        (data as { mcpServers?: Record<string, unknown> })?.mcpServers ?? {};
+      const jsonString = JSON.stringify({ mcpServers: servers }, null, 2);
       setConfigJson(jsonString);
       setOriginalJson(jsonString);
+      setCustomServerCount(Object.keys(servers).length);
     } catch (error) {
       setError(error instanceof Error ? error.message : 'Failed to load config');
     } finally {
@@ -66,53 +73,54 @@ export const MCPConfigEditor: React.FC<MCPConfigEditorProps> = ({
       setError(null);
       setSuccess(null);
 
-      // Validate JSON
+      // Parsing and saving fail for different reasons, so they are caught
+      // separately. Wrapping both in one catch meant a server rejection -- a
+      // reserved connector name, say -- was reported as "Invalid JSON format".
+      let parsed: { mcpServers?: Record<string, unknown> };
       try {
-        const parsed = JSON.parse(configJson);
-        setJsonError(null);
-        
-        // Helper to normalize "official" format { "servers": { ... } } to { "mcpServers": { ... } }
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        if ((parsed as any).servers && !parsed.mcpServers) {
-           // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          parsed.mcpServers = (parsed as any).servers;
-           // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          delete (parsed as any).servers;
-          
-          // Update editor content with normalized JSON
-          const normalizedJson = JSON.stringify(parsed, null, 2);
-          setConfigJson(normalizedJson);
-        }
-        
-        const result = await mcpConfigApi.saveConfig(parsed);
-        setSuccess(`Config saved successfully! ${result.servers} servers configured.`);
-        setOriginalJson(configJson);
-        setHasChanges(false);
-        
-        // Start discovery process
-        setDiscovering(true);
-        setSuccess('Config saved! Discovering servers...');
-        
-        // Trigger discovery
-        await mcpConfigApi.discoverServers();
-        
-        // Wait a bit for discovery to process
-        await new Promise(resolve => setTimeout(resolve, 20000));
-        
-        // Reload status to show updated discovery
-        await loadStatus();
-        
-        setSuccess('Servers discovered successfully!');
-        
-        // Wait a moment to show success message
-        await new Promise(resolve => setTimeout(resolve, 1000));
-        
-        // Notify parent component
-        onConfigChange?.();
+        parsed = JSON.parse(configJson);
       } catch {
         setJsonError('Invalid JSON format');
         return;
       }
+      setJsonError(null);
+
+      // Accept the "official" { "servers": ... } shape people paste from docs.
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      if ((parsed as any).servers && !parsed.mcpServers) {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        parsed.mcpServers = (parsed as any).servers;
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        delete (parsed as any).servers;
+        setConfigJson(JSON.stringify(parsed, null, 2));
+      }
+      if (!parsed.mcpServers) {
+        setError('Missing "mcpServers" — the config must be { "mcpServers": { ... } }.');
+        return;
+      }
+
+      const count = Object.keys(parsed.mcpServers).length;
+      const result = await mcpConfigApi.saveConfig(parsed);
+      setCustomServerCount(result.servers ?? count);
+      setOriginalJson(configJson);
+      setHasChanges(false);
+
+      // Start discovery process
+      setDiscovering(true);
+      setSuccess(
+        count === 0
+          ? 'Saved. You have no custom MCP servers.'
+          : `Saved ${count} custom MCP server${count === 1 ? '' : 's'}. Discovering...`
+      );
+
+      await mcpConfigApi.discoverServers();
+      await new Promise(resolve => setTimeout(resolve, 20000));
+      await loadStatus();
+
+      setSuccess('Servers discovered successfully!');
+      await new Promise(resolve => setTimeout(resolve, 1000));
+
+      onConfigChange?.();
     } catch (error) {
       setError(error instanceof Error ? error.message : 'Failed to save config');
     } finally {
@@ -266,7 +274,8 @@ export const MCPConfigEditor: React.FC<MCPConfigEditorProps> = ({
         <div>
           <h2 className="text-xl font-semibold text-gray-900 dark:text-gray-100">MCP Server Configuration</h2>
           <p className="text-sm text-gray-600 dark:text-gray-400 mt-1">
-            Manage your MCP servers with JSON configuration
+            Add your own MCP servers as JSON. Built-in connectors are managed
+            from the connector directory.
           </p>
         </div>
         <div className="flex gap-2">
@@ -357,7 +366,9 @@ export const MCPConfigEditor: React.FC<MCPConfigEditorProps> = ({
           <div>
             <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-100">JSON Configuration</h3>
             <p className="text-sm text-gray-600 dark:text-gray-400 mt-1">
-              Edit the raw JSON configuration below
+              {customServerCount === 0
+                ? 'You have not added any custom servers yet'
+                : `Your ${customServerCount} custom server${customServerCount === 1 ? '' : 's'}`}
             </p>
           </div>
           <div className="flex gap-2">
@@ -376,15 +387,15 @@ export const MCPConfigEditor: React.FC<MCPConfigEditorProps> = ({
           <div className="flex items-start gap-2">
             <AlertTriangle className="h-4 w-4 text-blue-500 mt-0.5 flex-shrink-0" />
             <div className="text-sm text-blue-700 dark:text-blue-300">
-              {status?.base_server_names && status.base_server_names.length > 0 ? (
-                <>
-                  <strong>Base servers</strong> defined in the core configuration ({status.base_server_names.join(', ')}) cannot be removed - they're always active. You can override them by adding a server with the same name.
-                </>
-              ) : (
-                <>
-                  <strong>Base servers</strong> defined in the core configuration cannot be removed - they're always active. You can override them by adding a server with the same name.
-                </>
-              )}
+              <strong>This is your own configuration.</strong> It lists only the
+              servers you have added, and saving replaces exactly that list —
+              removing an entry here deletes that server. The{' '}
+              {status?.base_servers ?? 'built-in'} connectors in the directory
+              are not shown and cannot be edited or deleted from here; connect
+              or disconnect those from the directory instead.
+              <div className="mt-2 font-mono text-xs opacity-80">
+                {'{ "mcpServers": { "my-server": { "url": "https://example.com/mcp" } } }'}
+              </div>
             </div>
           </div>
         </div>

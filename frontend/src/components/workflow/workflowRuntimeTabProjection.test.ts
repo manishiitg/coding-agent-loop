@@ -160,6 +160,36 @@ describe('workflowRuntimeTabProjection', () => {
       scheduledJobName: 'Daily execution',
     })
   })
+
+  it('preserves Builder identity when an active-session refresh omits phase_id', () => {
+    const tab = {
+      tabId: 'builder-chat',
+      name: 'Automation Builder',
+      sessionId: 'builder-session',
+      metadata: {
+        mode: 'workflow' as const,
+        phaseId: 'workflow-builder',
+        phaseName: 'Automation Builder',
+        presetQueryId: 'workflow-social',
+      },
+    } as ChatTab
+    const projection = workflowRuntimeTabProjection(runtime({
+      session_id: 'builder-session',
+      workspace_path: 'Workflow/social-media',
+      // Retained live-input turns can be present in active sessions without
+      // phase_id/phase_name even though the existing tab owns that identity.
+    }), 'workflow-social')!
+
+    const reconciled = reconcileWorkflowRuntimeTab(tab, projection)
+
+    expect(reconciled.name).toBe('Automation Builder')
+    expect(reconciled.metadata).toMatchObject({
+      mode: 'workflow',
+      phaseId: 'workflow-builder',
+      phaseName: 'Automation Builder',
+      presetQueryId: 'workflow-social',
+    })
+  })
 })
 
 describe('workflowTabDisplayName', () => {

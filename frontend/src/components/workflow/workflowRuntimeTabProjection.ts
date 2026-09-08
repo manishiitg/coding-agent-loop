@@ -93,13 +93,29 @@ export function reconcileWorkflowRuntimeTab(
     }
   }
 
+  // Active-session summaries can omit phase_id for a retained Builder CLI
+  // turn. That summary is status information, not authority to erase the
+  // interactive tab's identity. Losing `workflow-builder` here makes Cursor
+  // fall back to its provider-level structured transport, so a second message
+  // is queued until the current turn ends instead of being steered live.
+  const preserveExistingPhase = Boolean(
+    tab.metadata?.phaseId === 'workflow-builder' &&
+    !projection.metadata.phaseId &&
+    projection.metadata.isScheduledRun !== true,
+  )
+  const metadata = {
+    ...tab.metadata,
+    ...projection.metadata,
+  }
+  if (preserveExistingPhase) {
+    metadata.phaseId = tab.metadata?.phaseId
+    metadata.phaseName = tab.metadata?.phaseName
+  }
+
   return {
     ...tab,
-    name: projection.name,
-    metadata: {
-      ...tab.metadata,
-      ...projection.metadata,
-    },
+    name: preserveExistingPhase ? tab.name : projection.name,
+    metadata,
   }
 }
 

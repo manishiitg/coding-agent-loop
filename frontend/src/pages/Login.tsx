@@ -76,6 +76,20 @@ const providerConfig: Record<string, {
   }
 }
 
+// A successful sign-in leaves the browser wherever the gateway's 401 landed
+// it (e.g. /login?next=%2F, set in gatewayAuth.ts's redirectToGatewayLogin).
+// The app re-renders as authenticated without navigating anywhere, so
+// without this the address bar keeps showing /login?next=... indefinitely.
+// Same "must be an absolute in-app path" check the gateway itself applies to
+// `next` (deploy/aws-ec2/server/auth-gateway.go's safeNext) -- an open value
+// here would let a crafted link rewrite history to an attacker's URL.
+function cleanUpLoginUrl() {
+  if (typeof window === 'undefined') return
+  const next = new URLSearchParams(window.location.search).get('next')
+  const target = next && next.startsWith('/') && !next.startsWith('//') ? next : '/'
+  window.history.replaceState(null, '', target)
+}
+
 export function Login() {
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
@@ -110,6 +124,7 @@ export function Login() {
     clearError()
     try {
       await login(username, password, selectedProvider || undefined)
+      cleanUpLoginUrl()
     } catch (err) {
       console.error('Login failed:', err)
     }
@@ -119,6 +134,7 @@ export function Login() {
     clearError()
     try {
       await loginWithOAuth(provider.name)
+      cleanUpLoginUrl()
     } catch (err) {
       console.error('OAuth login failed:', err)
     }

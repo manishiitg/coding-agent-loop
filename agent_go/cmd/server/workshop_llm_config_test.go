@@ -77,12 +77,12 @@ func TestWorkshopResolveLLMConfigExpandsCodingAgentMode(t *testing.T) {
 	if !ok {
 		t.Fatal("expected Claude Code coding-agent defaults")
 	}
-	if defaults.Builder.ModelID != "claude-fable-5-1" ||
-		defaults.High.ModelID == "claude-fable-5-1" ||
-		defaults.Medium.ModelID == "claude-fable-5-1" ||
-		defaults.Low.ModelID == "claude-fable-5-1" ||
+	if defaults.Builder.ModelID != "claude-sonnet-5" ||
+		defaults.High.ModelID != "claude-sonnet-5" ||
+		defaults.Medium.ModelID != "claude-sonnet-5" ||
+		defaults.Low.ModelID != "claude-haiku-4-5-20251001" ||
 		defaults.Pulse.ModelID != defaults.Builder.ModelID {
-		t.Fatalf("fable 5.1 should be the Claude builder default and Pulse should match Builder, got defaults: %+v", defaults)
+		t.Fatalf("Sonnet 5 should back Claude Builder/High/Medium/Pulse and Haiku should back Low, got defaults: %+v", defaults)
 	}
 
 	builder, tiered := workshopResolveLLMConfig(&workflowtypes.PresetLLMConfig{

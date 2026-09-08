@@ -285,7 +285,14 @@ func (e *oauthStartError) Error() string { return e.message }
 // Returns exactly one of: a discovery response (the server needs a manually
 // registered client_id — no Dynamic Client Registration support), a start
 // response (authURL to open), or an error.
-func (api *StreamingAPI) beginOAuthFlow(userID, serverName, redirectURI, clientID string) (*OAuthStartResponse, *OAuthDiscoveryResponse, error) {
+//
+// onInstalled, if set, runs after the credential is actually persisted —
+// i.e. once the user has completed the browser consent step, not when this
+// function returns the authURL. The connector-directory UI already refreshes
+// itself on its own button-click handler, so handleOAuthStart passes nil;
+// install_mcp_server passes a callback that nudges the mcp workspace view,
+// since chat has no other way to learn the flow finished.
+func (api *StreamingAPI) beginOAuthFlow(userID, serverName, redirectURI, clientID string, onInstalled func()) (*OAuthStartResponse, *OAuthDiscoveryResponse, error) {
 	api.logger.Info(fmt.Sprintf("🔐 OAuth start for server %s, user %s", serverName, userID))
 
 	// Ensure user token directory exists
@@ -454,6 +461,9 @@ func (api *StreamingAPI) beginOAuthFlow(userID, serverName, redirectURI, clientI
 			api.logger.Error(fmt.Sprintf("Failed to persist OAuth config for %s: %v", serverName, err), err)
 		} else {
 			api.logger.Info(fmt.Sprintf("✅ OAuth config persisted for %s", serverName))
+			if onInstalled != nil {
+				onInstalled()
+			}
 		}
 
 		// Invalidate cache for this server so tools are re-discovered with OAuth token
@@ -505,7 +515,7 @@ func (api *StreamingAPI) handleOAuthStart(w http.ResponseWriter, r *http.Request
 	// Derive redirect URI from PUBLIC_URL env var (for production) or incoming request (for local)
 	redirectURI := deriveOAuthRedirectURI(r)
 
-	startResp, discoveryResp, err := api.beginOAuthFlow(userID, req.ServerName, redirectURI, req.ClientID)
+	startResp, discoveryResp, err := api.beginOAuthFlow(userID, req.ServerName, redirectURI, req.ClientID, nil)
 	if err != nil {
 		status := http.StatusInternalServerError
 		if se, ok := err.(*oauthStartError); ok {

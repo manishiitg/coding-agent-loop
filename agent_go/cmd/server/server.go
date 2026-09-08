@@ -10740,6 +10740,22 @@ func (api *StreamingAPI) registerMultiAgentMCPServerTools(registrar interface {
 			apiKey := strings.TrimSpace(fmt.Sprint(args["api_key"]))
 			clientID := strings.TrimSpace(fmt.Sprint(args["client_id"]))
 
+			// Chat has no other way to learn an install finished — the
+			// connector-directory UI refreshes itself on its own button
+			// clicks, but a chat-driven change needs to nudge the mcp
+			// workspace view explicitly if it's open. Best-effort: a stale
+			// panel just means the user needs to reopen it, not a failure.
+			sessionID := executor.SessionIDFromContext(ctx)
+			workspacePath := api.uiBroker().scope(sessionID)
+			notifyMCPViewRefresh := func() {
+				if sessionID == "" || workspacePath == "" {
+					return
+				}
+				if event, evErr := workspaceViewAction("mcp", workspacePath, "refresh", ""); evErr == nil {
+					api.emitAgentProfileEvent(sessionID, event)
+				}
+			}
+
 			config, err := mcpclient.LoadMergedConfig(api.mcpConfigPath, api.logger)
 			if err != nil {
 				return "", fmt.Errorf("failed to load MCP config: %w", err)
@@ -10779,6 +10795,7 @@ func (api *StreamingAPI) registerMultiAgentMCPServerTools(registrar interface {
 					}
 					api.invalidateServerDiscovery(name, "Installed — discovering tools...")
 					api.startServerDiscovery(GetUserIDFromContext(ctx), name)
+					notifyMCPViewRefresh()
 					return fmt.Sprintf("Installed %q (no sign-in required). Discovery is running now; use update_workflow_config(add_servers=[%q]) to add it to this workflow.", name, name), nil
 				}
 				// Needs OAuth. Build the config from what discovery found.
@@ -10813,6 +10830,7 @@ func (api *StreamingAPI) registerMultiAgentMCPServerTools(registrar interface {
 				}
 				api.invalidateServerDiscovery(name, "Installed — discovering tools...")
 				api.startServerDiscovery(GetUserIDFromContext(ctx), name)
+				notifyMCPViewRefresh()
 				return fmt.Sprintf("Installed %q. Discovery is running now; use update_workflow_config(add_servers=[%q]) to add it to this workflow.", name, name), nil
 			}
 
@@ -10822,7 +10840,7 @@ func (api *StreamingAPI) registerMultiAgentMCPServerTools(registrar interface {
 				return fmt.Sprintf("%q requires OAuth sign-in, and this server has no PUBLIC_URL configured to build a callback URL from chat. Ask the user to connect it from the connector directory in the UI instead.", name), nil
 			}
 
-			startResp, discoveryResp, err := api.beginOAuthFlow(GetUserIDFromContext(ctx), name, redirectURI, clientID)
+			startResp, discoveryResp, err := api.beginOAuthFlow(GetUserIDFromContext(ctx), name, redirectURI, clientID, notifyMCPViewRefresh)
 			if err != nil {
 				return "", fmt.Errorf("failed to start OAuth for %q: %w", name, err)
 			}

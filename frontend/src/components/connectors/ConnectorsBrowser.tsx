@@ -82,6 +82,16 @@ export default function ConnectorsBrowser({ compact = false, selectedServers, on
     fetchServerLogs: state.fetchServerLogs,
   })))
 
+  // Refetch on mount rather than trusting whatever the store last held (app
+  // boot, or the last time some other instance of this panel called
+  // refreshTools). A chat-driven install_mcp_server call has no way to push
+  // into this store directly, so a server installed since this panel was
+  // last open would otherwise render as if it didn't exist.
+  useEffect(() => {
+    void refreshTools()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
   const [expandedLogs, setExpandedLogs] = useState<Set<string>>(new Set())
   const [loadingLogs, setLoadingLogs] = useState<Set<string>>(new Set())
   const [expandedTools, setExpandedTools] = useState<Set<string>>(new Set())

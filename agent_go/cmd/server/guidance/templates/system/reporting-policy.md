@@ -15,7 +15,7 @@ generation step.
 - Keep CSS and JavaScript inline. Do not pin body height or create a nested
   scroll container.
 - Read durable live data with `window.report.query`, `get`, `getText`,
-  `getHtml`, `renderMarkdown`, `fileUrl`, and `openFile`. Write a business
+  `getHtml`, `renderMarkdown`, `fileUrl`, `mediaUrl`, and `openFile`. Write a business
   field on an already-existing row with `window.report.updateField`/
   `updateFields` (see below). Do not bake changing run results into the
   document or add a step that regenerates it each run.
@@ -29,6 +29,18 @@ generation step.
   Both come back themed (`.report-markdown`), and links/images inside them
   that point at workspace files (`db/...`, or paths relative to the .md
   file) load and open the in-report preview. Never show markdown as raw text.
+- For audio or video under `db/assets/`, persist the workspace-relative path
+  in the database and obtain a fresh playback URL with
+  `await window.report.mediaUrl(path)` only when the user opens the media.
+  Assign that URL to a native `<audio controls preload="metadata">` or
+  `<video controls playsinline preload="metadata">` element. The platform
+  owns authentication, expiring URLs, byte ranges, and streaming: never call
+  an internal report-preview/report-media HTTP endpoint directly, persist the
+  returned URL, embed media as base64/data URLs, or eagerly load every media
+  row with `fileUrl`. `fileUrl` remains appropriate for ordinary downloadable
+  files and backward-compatible reports, but `mediaUrl` is the explicit
+  contract for new audio/video report code. Show playback errors and let a
+  retry request a fresh URL.
 - Theme off the app, not the OS: dark styles under `:root.dark` /
   `[data-theme="dark"]` (or the injected `hsl(var(--token))` palette), with
   `report:theme` for live re-styling. `prefers-color-scheme` alone follows
@@ -104,7 +116,7 @@ first line. Wrap every use of `window.report.*` in:
 
 ```js
 window.report.ready(function () {
-  // window.report.query/get/getText/getHtml/fileUrl are live here.
+  // window.report.query/get/getText/getHtml/fileUrl/mediaUrl are live here.
   // Runs once on load, and again on every later data refresh.
 });
 ```
@@ -232,7 +244,7 @@ nothing else at runtime: no error, no log line, no failed run. Verify the file
 exists at its `db/` path, not only at the path the step wrote.
 
 `validate_report_html()` checks every literal path the document references
-(`window.report.get/getText/getHtml/fileUrl/openFile('db/...')`, `src="db/..."`,
+(`window.report.get/getText/getHtml/fileUrl/mediaUrl/openFile('db/...')`, `src="db/..."`,
 `href="db/..."`) and reports the missing ones. A path assembled at runtime from
 variables is invisible to it — prefer literal paths, or verify those yourself.
 

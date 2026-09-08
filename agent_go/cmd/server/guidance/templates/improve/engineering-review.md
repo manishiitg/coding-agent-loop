@@ -20,9 +20,15 @@ Use `{{.RunFolder}}` as the primary retained run.{{end}}
    `/pulse-fixer` separately; neither possibility grants mutation authority in
    this review turn.
 2. Use `pulse_run_id="current"`, which resolves to this current Workflow Builder
-   chat. Call `record_pulse_worklist` exactly once with `mode="backlog_drain"`
-   and a concrete `mode_reason`: `technical_review` is due and
-   `strategic_review` is deferred with an explicit next-check boundary. Read
+   chat. This is a manual Technical Review, not a scheduled Pulse Gate pass:
+   call `record_pulse_module_due(workspace_path=<this workflow>,
+   pulse_run_id="current", module="technical_review", reason=<the explicit
+   command/focus that requested this review>)` exactly once. Do not call
+   `record_pulse_worklist`, do not select among Plan Drift, Technical Review,
+   and Strategic Review, and do not change another module's cadence. If the
+   due claim is refused because a scheduled Pulse pass is already reviewing
+   `technical_review`, stop and report that collision instead of retrying or
+   overwriting its state. Then read
    `get_pulse_state(view="focus_agenda", module="technical_review", route_scope=<relevant route>)`, perform a
    lightweight scan for critical regressions, matured verification, answered
    decisions, plan routes, and retained run selectors, then choose the smallest

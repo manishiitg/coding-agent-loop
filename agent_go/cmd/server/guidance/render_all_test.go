@@ -188,6 +188,8 @@ func TestManualPulseCommandsKeepRunSetupReviewAndFixBoundariesSeparate(t *testin
 			"continuing Workflow Builder conversation",
 			`"name":"workflow-commands","path":"references/ops-review.md"`,
 			"Standalone Operations Review",
+			"record_pulse_module_due",
+			"Do not call\n   `record_pulse_worklist`",
 			"Own the review yourself",
 			"link it to an existing issue, promote it with evidence, or reject it",
 			"Do not apply repairs",

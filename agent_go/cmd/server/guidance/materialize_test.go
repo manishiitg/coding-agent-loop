@@ -381,6 +381,8 @@ func TestEngineeringReviewUsesTheCanonicalReviewOnlySequence(t *testing.T) {
 		`"name":"workflow-commands","path":"references/ops-review.md"`,
 		"standalone wrapper",
 		"pulse_run_id=\"current\"",
+		"record_pulse_module_due",
+		"not a scheduled Pulse Gate pass",
 		"Own the review yourself",
 		"Persist typed findings and matured verification",
 		"Do not apply repairs",
@@ -390,7 +392,7 @@ func TestEngineeringReviewUsesTheCanonicalReviewOnlySequence(t *testing.T) {
 			t.Errorf("engineering-review prompt is missing canonical sequence contract %q", want)
 		}
 	}
-	for _, forbidden := range []string{"apply safe bounded fixes", "normal Workflow Builder tools", "one terminal module result for Engineering", `role="fixer"`} {
+	for _, forbidden := range []string{"record_pulse_worklist exactly once", "apply safe bounded fixes", "normal Workflow Builder tools", "one terminal module result for Engineering", `role="fixer"`} {
 		if strings.Contains(prompt, forbidden) {
 			t.Errorf("engineering-review retained obsolete standalone Fixer contract %q", forbidden)
 		}

@@ -91,12 +91,14 @@ HTTP URL.
 
 - **`update_variable(action, name?, value?, description?)`** — Add, update, or delete a variable.
 - **`add_group` / `update_group` / `delete_group`** — Manage variable groups.
-- **MCP servers workflow**:
+- **MCP servers workflow**: before this — if the user is asking to connect a *new* service rather than one already configured, check CLI/skill/MCP in that order first; see the `integration-discovery` reference.
+  0. Not sure whether an MCP server exists for a service at all? `search_mcp_catalog(query)` checks our own vetted catalog plus GitHub's MCP Registry and Smithery (unvetted — review those with the user before adding).
   1. `get_workflow_config` to inspect which servers are currently selected.
   2. `update_workflow_config(add_servers=["server-name"])` selects an **already-registered** server into the workflow. **Do NOT edit `workflow.json` manually.**
      - To **register a new server first** (so it can be selected), use `add_mcp_server(name, protocol="stdio"|"sse"|"http", ...)`: for a stdio server give `command` + `args` (+ optional `env`, `working_dir`) — e.g. an npx-launched server is `command="npx", args=["-y","<package>"]`; for SSE/HTTP give `url`. It registers a user-defined server and triggers discovery; then select it with `add_servers`.
   3. Optional workflow-level allowlist: `update_workflow_config(add_tools=["server:*"])` or `add_tools=["server:tool_name"]`. Tool entries must reference selected workflow servers.
   4. `update_step_config(step_id, servers=["server-name"], tools=["server:tool_name"])` to scope specific servers/tools to a step.
+  5. `list_mcp_servers` shows what's actually installed/authorized vs. merely present in the catalog but never connected — use this, not `search_mcp_catalog`, to check the status of something already configured.
 - **Browser workflow**:
   1. Pick the workflow mode with `update_workflow_config(browser_mode="none"|"auto"|"headless"|"cdp")`. Prefer `auto` unless the workflow must require an authenticated visible Chrome (`cdp`) or must stay isolated in the background (`headless`). For the specialized case where one workflow needs independent login identities, set `cdp_ports=[9222,9333]` (maximum four) and launch each port with a distinct Chrome `--user-data-dir`; ordinary workflow concurrency uses one shared CDP browser.
   2. For `agent_browser` steps, enable `workspace_browser:agent_browser` via `update_step_config(enabled_custom_tools=[...])` and attach the matching runtime skill with `enabled_skills=["agent-browser"]`.

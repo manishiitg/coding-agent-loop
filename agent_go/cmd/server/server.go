@@ -10508,7 +10508,7 @@ func (api *StreamingAPI) registerMultiAgentMCPServerTools(registrar interface {
 
 	if err := registerTool(
 		"list_mcp_servers",
-		"List configured MCP servers, including whether they come from the base config or user config and whether discovery has succeeded.",
+		"List configured MCP servers: for each, whether it's a catalog server the user has actually installed/authorized (vs. just present in the catalog and not yet connected) or a user-defined custom server, and whether discovery has succeeded. Use search_mcp_catalog instead to find servers not yet configured at all.",
 		map[string]interface{}{
 			"type":       "object",
 			"properties": map[string]interface{}{},
@@ -10552,9 +10552,21 @@ func (api *StreamingAPI) registerMultiAgentMCPServerTools(registrar interface {
 
 			for _, name := range names {
 				server := mergedConfig.MCPServers[name]
-				source := "base"
-				if _, ok := userConfig.MCPServers[name]; ok {
-					source = "user"
+				_, inOverlay := userConfig.MCPServers[name]
+				_, isBase := api.mcpConfig.MCPServers[name]
+
+				// "source" names where the definition comes from; a base
+				// catalog server also needs a separate authorized/installed
+				// signal, since being in the catalog does not mean the user
+				// ever connected it (searchable != installed).
+				source := "user-defined"
+				switch {
+				case isBase && server.OAuth == nil:
+					source = "catalog, no sign-in required"
+				case isBase && inOverlay:
+					source = "catalog, installed/authorized"
+				case isBase:
+					source = "catalog, NOT installed — needs sign-in from the connector directory"
 				}
 
 				statusLabel := "not yet discovered"
@@ -10582,6 +10594,106 @@ func (api *StreamingAPI) registerMultiAgentMCPServerTools(registrar interface {
 				if status, ok := toolStatusCopy[name]; ok && status.Error != "" {
 					sb.WriteString(fmt.Sprintf("  last error: %s\n", status.Error))
 				}
+			}
+
+			return sb.String(), nil
+		},
+	); err != nil {
+		return err
+	}
+
+	if err := registerTool(
+		"search_mcp_catalog",
+		"Search for an MCP (Model Context Protocol) server for a given service or capability — e.g. \"is there an MCP for ClickUp?\". Searches three sources: our own curated catalog (already vetted, ready to connect from the connector directory), GitHub's public MCP Registry, and Smithery's directory. Catalog hits report whether the user has already connected them; GitHub/Smithery hits are NOT vetted — do not assume they are safe to add sight-unseen, and note to the user that adding one (especially an OAuth or locally-run package one) needs the same scrutiny a human would give any third-party integration. Use add_mcp_server only for a catalog hit or a Smithery/GitHub hit the user has explicitly reviewed and asked to add.",
+		map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"query": map[string]interface{}{
+					"type":        "string",
+					"description": "Service or capability to search for, e.g. \"clickup\", \"playwright\", \"vector database\".",
+				},
+			},
+			"required": []string{"query"},
+		},
+		func(ctx context.Context, args map[string]interface{}) (string, error) {
+			query := strings.TrimSpace(fmt.Sprint(args["query"]))
+			if query == "" {
+				return "query is required.", nil
+			}
+			needle := strings.ToLower(query)
+
+			_, userConfig, err := loadUserConfig()
+			if err != nil {
+				return "", err
+			}
+
+			var sb strings.Builder
+			sb.WriteString(fmt.Sprintf("## MCP search: %q\n\n", query))
+
+			// Our own catalog first: every entry here was hand-verified (OAuth
+			// shape, live-probed), unlike the two sources below.
+			var catalogHits []string
+			for name, server := range api.mcpConfig.MCPServers {
+				if !strings.Contains(strings.ToLower(name), needle) {
+					continue
+				}
+				status := "available, no sign-in required"
+				if server.OAuth != nil {
+					if _, connected := userConfig.MCPServers[name]; connected {
+						status = "already connected"
+					} else {
+						status = "not connected yet — connect it from the connector directory"
+					}
+				}
+				catalogHits = append(catalogHits, fmt.Sprintf("- **%s** [our catalog, vetted] — %s", name, status))
+			}
+			sort.Strings(catalogHits)
+			sb.WriteString("### Our catalog\n\n")
+			if len(catalogHits) == 0 {
+				sb.WriteString("No match.\n\n")
+			} else {
+				for _, line := range catalogHits {
+					sb.WriteString(line + "\n")
+				}
+				sb.WriteString("\n")
+			}
+
+			appendExternal := func(title string, results []services.MCPRegistryResult, searchErr error) {
+				sb.WriteString(fmt.Sprintf("### %s (unvetted — review before adding)\n\n", title))
+				if searchErr != nil {
+					sb.WriteString(fmt.Sprintf("Search failed: %v\n\n", searchErr))
+					return
+				}
+				if len(results) == 0 {
+					sb.WriteString("No match.\n\n")
+					return
+				}
+				for _, r := range results {
+					kind := "requires a local package run (npm/npx, docker, etc.)"
+					if r.Remote {
+						kind = "remote HTTP server"
+					}
+					desc := r.Description
+					if desc == "" {
+						desc = "(no description provided)"
+					}
+					sb.WriteString(fmt.Sprintf("- **%s** — %s. %s", r.Name, desc, kind))
+					if r.Link != "" {
+						sb.WriteString(fmt.Sprintf(" (%s)", r.Link))
+					}
+					sb.WriteString("\n")
+				}
+				sb.WriteString("\n")
+			}
+
+			githubResults, githubErr := services.SearchGitHubMCPRegistry(ctx, query, 10)
+			appendExternal("GitHub MCP Registry", githubResults, githubErr)
+
+			if services.SmitheryConfigured() {
+				smitheryResults, smitheryErr := services.SearchSmitheryRegistry(ctx, query, 10)
+				appendExternal("Smithery", smitheryResults, smitheryErr)
+			} else {
+				sb.WriteString("### Smithery (unvetted — review before adding)\n\nSMITHERY_API_KEY is not configured on this server; skipped.\n\n")
 			}
 
 			return sb.String(), nil

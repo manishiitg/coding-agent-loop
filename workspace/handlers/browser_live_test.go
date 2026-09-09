@@ -40,3 +40,19 @@ func TestBrowserLiveUnavailableDoesNotStartBrowser(t *testing.T) {
 		t.Fatal(response.Code)
 	}
 }
+
+func TestBrowserLivePortUsesSystemdRuntimeDirectory(t *testing.T) {
+	runtimeDir := t.TempDir()
+	t.Setenv("XDG_RUNTIME_DIR", runtimeDir)
+	t.Setenv("AGENT_BROWSER_SOCKET_DIR", "")
+	dir := filepath.Join(runtimeDir, "agent-browser")
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "systemd-live-test.stream"), []byte("12346"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if port, err := browserLivePort("systemd-live-test"); err != nil || port != 12346 {
+		t.Fatalf("port=%d err=%v", port, err)
+	}
+}

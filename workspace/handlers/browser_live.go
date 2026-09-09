@@ -47,7 +47,10 @@ func browserLivePort(session string) (int, error) {
 		return 0, fmt.Errorf("invalid session")
 	}
 	home, _ := os.UserHomeDir()
-	dirs := []string{filepath.Join(home, ".agent-browser"), filepath.Join(os.TempDir(), ".agent-browser"), "/tmp/.agent-browser"}
+	dirs := []string{filepath.Join(home, ".agent-browser"), filepath.Join(os.TempDir(), "agent-browser"), filepath.Join(os.TempDir(), ".agent-browser"), "/tmp/.agent-browser"}
+	if runtimeDir := os.Getenv("XDG_RUNTIME_DIR"); runtimeDir != "" {
+		dirs = append([]string{filepath.Join(runtimeDir, "agent-browser")}, dirs...)
+	}
 	if socketDir := os.Getenv("AGENT_BROWSER_SOCKET_DIR"); socketDir != "" {
 		dirs = append([]string{socketDir}, dirs...)
 	}

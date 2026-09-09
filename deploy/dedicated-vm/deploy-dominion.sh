@@ -38,6 +38,16 @@ GO_BIN="/srv/dominion/tools/go/bin/go"
 RELEASES_ROOT="/srv/dominion/releases"
 CURRENT_LINK="/srv/dominion/current"
 
+# This script runs over a plain non-interactive `ssh host 'cmd'` exec, which
+# does not source .bashrc/.profile (those only run for interactive/login
+# shells) and never loads /srv/dominion/.env's PATH= line either -- that file
+# is only read by systemd via EnvironmentFile=. So /srv/dominion/tools/bin
+# (where claude/gog/gws/surge/agent-browser all install to) is not on PATH
+# here unless this script puts it there itself. 2026-09-09: `command -v
+# agent-browser` failed right after a successful install for exactly this
+# reason.
+export PATH="/srv/dominion/tools/bin:$PATH"
+
 REPO="$SRC_ROOT/mcp-agent-builder-go"
 MLP="$SRC_ROOT/multi-llm-provider-go"
 MCPAGENT="$SRC_ROOT/mcpagent"

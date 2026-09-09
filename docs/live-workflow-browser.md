@@ -211,3 +211,19 @@ Cookies survive while that browser context is running. Persistent profiles
 across chat sessions, cleanup and server restarts are not enabled by this
 viewer. A future remember-login option must isolate profiles per user and
 workflow; it cannot guarantee that a site's login never expires.
+
+### Recording rollout status (2026-09-09)
+
+Recording, Fill width/Fit page, click-to-take-control tab switching, and the
+launch-option consistency fix are pushed to shared `main` at `504c35a5e`.
+The focused RTS release `2e949bf9c` is staged at
+`releases/browser-recording-20260909`; activation is pending the active
+scheduled security run becoming idle. A five-minute follow-up in this task
+will activate it only after the agent drain check is idle and then notify
+the user. The earlier browser panel and view-tool/toast update are deployed.
+
+The recording release passed an isolated real Linux browser test: a playable
+WebM, expected HAR request and console message, nonempty ZIP and manifest,
+and preservation of cookies, session storage, and both existing tabs. Fake
+runtime tests also cover cross-workflow rejection and retryable partial stops.
+The new recording and tab/sizing controls still need their deployed UI check.

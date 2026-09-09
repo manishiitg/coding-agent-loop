@@ -73,12 +73,15 @@ do not. Never infer freshness by name or silently rewrite an exact pin.
 
 ## Decide whether Technical Review is due
 
-Technical Review is due when evidence can support a useful improvement, repair,
-or a bounded new diagnosis. Examples include:
+Technical Review is exception-driven. Ordinary healthy runs and the passage of
+time do not require an engineering review. Select it for a concrete unresolved
+outcome, an available repair, or new evidence that supports a bounded diagnosis
+of material impact. Do not tour every technical lens as a recurring checklist.
+Examples include:
 
 - a failed or suspiciously successful production run;
 - a verified runtime signal with unresolved step impact or recovery that cannot
-  be established (`run_not_completed`, `runtime_status_disagreement`, or
+  be established (`run_not_completed`, `completed_run_child_errors`, or
   `tool_success_with_structured_failure` are evidence leads, not automatic triggers);
 - a previously fixed defect reproduced by new evidence;
 - an answered technical decision that remains unapplied;
@@ -93,6 +96,14 @@ or a bounded new diagnosis. Examples include:
   characters, at least 30% of described steps over 5k, or at least 10k
   extractable verbatim duplicate-description characters. These are objective
   triage thresholds, not a conclusion that long work is wrong.
+
+A plan, DB, knowledgebase, or learnings edit alone is not evidence of a defect.
+Use completed builder/dependency/drift receipts when available. Outside the
+mandatory checks below, name the remaining contract mismatch or material
+uncertainty before scheduling another technical pass. If the root cause is an
+already-linked platform defect and the workflow has no safe repair available,
+retain that handoff and wait for a relevant platform change or new impact;
+do not repeat the same workflow diagnosis on every tick.
 
 The worklist reason proposes the best current technical focus. Use these stable
 focus keys when applicable:

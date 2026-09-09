@@ -3227,3 +3227,49 @@ func TestApplyLLMAndSecretsToReqMapUsesTheWorkflowModelForEverySchedule(t *testi
 		})
 	}
 }
+
+func TestPulseRepairDrainOnlyAppliesToDueTechnicalReview(t *testing.T) {
+	for _, module := range []string{pulseModuleStrategicReview, pulseModuleTechnicalReview} {
+		t.Run(module, func(t *testing.T) {
+			ctx := context.Background()
+			t.Setenv("WORKSPACE_DOCS_PATH", t.TempDir())
+			workspacePath, runID := "Workflow/completion-contract", "pulse-contract"
+			if _, err := recordPulseWorklist(ctx, workspacePath, runID, completePulseWorklistDecisions(map[string]PulseWorklistDecision{
+				module: {Due: true, Reason: "Review has new evidence."},
+			})); err != nil {
+				t.Fatal(err)
+			}
+			if err := validatePulseTechnicalRepairDrain(ctx, workspacePath, runID); err != nil {
+				t.Fatalf("empty backlog should pass: %v", err)
+			}
+			if _, err := todo_creation_human.RecordPulseReviewFinding(ctx, workspacePath, runID, "review-1", todo_creation_human.PulseReviewFindingInput{
+				Concern: "Workflow validation rejects valid data", Module: pulseModuleTechnicalReview,
+				PulseFindingDetails: todo_creation_human.PulseFindingDetails{
+					IssueKind: todo_creation_human.IssueKindWorkflow, Classification: "correctness_bug", Severity: "high",
+					Summary: "Validation rejects valid data.", Impact: "Valid runs cannot complete.",
+					Evidence: []string{"runs/iteration-1/result.json"},
+				},
+			}); err != nil {
+				t.Fatal(err)
+			}
+			if count, err := todo_creation_human.CountPulseActionableWorkflowIssues(ctx, workspacePath); err != nil || count != 1 {
+				t.Fatalf("expected one actionable issue, count=%d err=%v", count, err)
+			}
+			err := validatePulseTechnicalRepairDrain(ctx, workspacePath, runID)
+			if module == pulseModuleTechnicalReview {
+				if err == nil || !strings.Contains(err.Error(), "1 actionable") {
+					t.Fatalf("technical repair debt must fail completion: %v", err)
+				}
+			} else if err != nil {
+				t.Fatalf("strategic completion must not depend on technical debt: %v", err)
+			}
+		})
+	}
+}
+
+func TestPulseRepairDrainRequiresDurableWorklist(t *testing.T) {
+	t.Setenv("WORKSPACE_DOCS_PATH", t.TempDir())
+	if err := validatePulseTechnicalRepairDrain(context.Background(), "Workflow/missing", "missing"); err == nil {
+		t.Fatal("missing worklist must not silently bypass the completion contract")
+	}
+}

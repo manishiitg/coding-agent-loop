@@ -19,3 +19,10 @@ func (hcpo *StepBasedWorkflowOrchestrator) writeManagedPlanningFile(ctx context.
 	writeCtx := withPlanningFileMutationWriteAccess(ctx, hcpo.GetWorkspacePath(), planningRelativePath)
 	return hcpo.WriteWorkspaceFile(writeCtx, filepath.Join("planning", planningRelativePath), content)
 }
+
+// writeManagedWorkflowManifest is for typed, authorized configuration writers.
+// It grants only the manifest file for this call; raw tools keep their guard.
+func (hcpo *StepBasedWorkflowOrchestrator) writeManagedWorkflowManifest(ctx context.Context, content string) error {
+	managedPath := normalizePathForWorkspaceAPI("workflow.json", hcpo.GetWorkspacePath())
+	return hcpo.WriteWorkspaceFile(workspacepkg.WithSystemManagedWritePaths(ctx, managedPath), "workflow.json", content)
+}

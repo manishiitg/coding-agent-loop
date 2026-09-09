@@ -12,7 +12,7 @@
 |---|---|
 | Assigned agent | Codex |
 | Ticket state | `implemented` — original focus/coverage work shipped; 2026-09-05 impact-aware Gate and evidence-accumulation correction implemented and tested; rebuild/deployment and live Pulse verification remain |
-| Last synchronized | `2026-09-05` |
+| Last synchronized | `2026-09-09` |
 
 ## 2026-09-05 correction — recovered tool errors must not monopolize review selection
 
@@ -379,3 +379,25 @@ strategic work into technical themes.
 - Ordinary workflow runs do not trigger the rotation mechanism.
 - The UI can explain, without reading logs, what was reviewed, why, what was
   found, what was deferred, and what becomes due next.
+
+
+## 2026-09-09 local Pulse audit follow-up
+
+The September 1–9 local audit found 70 technical module executions versus
+6 strategic executions across six workflows. Counts include successful checks,
+repairs and failures; they are not 70 distinct platform bugs.
+
+Correction to diagnosis: the current worklist already treats runtime signals as
+advisory (the September 5 fix); there is no remaining unconditional runtime
+routing rule to remove. The detector still described any errored/canceled child
+inside a completed run as a high-severity `runtime_status_disagreement`.
+
+Implemented detector v2: emit factual `completed_run_child_errors` at medium
+severity, with required-output/recovery/material retry-cost guidance. Explicit
+non-completion and structured failures inside success-labelled tool results
+remain high severity. Outer completion does not prove recovery. Gate guidance
+now uses the new kind and explicitly rejects routine technical checklist sweeps
+or repeatedly diagnosing an unchanged platform handoff without an available fix.
+
+Protected strategic completion and the remaining independent schedule work are
+tracked in [PLAT-303](plat-303.md). Deployment/runtime verification is pending.

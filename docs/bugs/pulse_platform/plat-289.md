@@ -78,3 +78,11 @@ JSON regex validation independently checks referenced file existence: it does
 not. Current file presence was checked directly and the workflow's explicit
 readback contract remains necessary. Historical missing packets are not fabricated
 or backfilled. Learning/test changes remain uncommitted.
+
+
+## 2026-09-09 local Pulse audit follow-up
+
+The local Substack learning correction remains applied. Related contradictory
+guidance in other workflows belongs to builder/change-contract prevention under
+[PLAT-257](plat-257.md), not reopening this already-corrected Substack issue
+without a fresh reproduction.

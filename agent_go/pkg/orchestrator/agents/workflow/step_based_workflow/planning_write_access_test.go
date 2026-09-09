@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -240,5 +242,30 @@ func TestPulseChangeReferencesPreserveAttemptFindingAndHumanDecision(t *testing.
 	issues, attemptID, humanInputID := pulseChangeReferences(ctx, workspacePath, "pulse-1")
 	if len(issues) != 1 || issues[0] != "PUL-1234ABCD" || attemptID != "fix-1" || humanInputID != "technical-decision-1" {
 		t.Fatalf("references = issues=%v attempt=%q human_input=%q", issues, attemptID, humanInputID)
+	}
+}
+
+func TestManagedRetentionManifestWriteIsScoped(t *testing.T) {
+	hcpo, dir := newPreValidationConcernTestOrchestrator(t)
+	const sessionID = "retention-config-write"
+	root := hcpo.GetWorkspacePath()
+	workspacepkg.SetSessionFolderGuard(sessionID, []string{root}, []string{root + "/runs"})
+	defer workspacepkg.ClearSessionShellConfig(sessionID)
+	ctx := context.WithValue(context.Background(), common.ChatSessionIDKey, sessionID)
+	manifest := `{"run_retention_count":10,"label":"keep"}`
+	if err := hcpo.WriteWorkspaceFile(ctx, "workflow.json", manifest); err == nil {
+		t.Fatal("raw manifest write must stay denied")
+	}
+	if err := hcpo.writeManagedWorkflowManifest(ctx, manifest); err != nil {
+		t.Fatalf("managed retention write failed: %v", err)
+	}
+	data, err := os.ReadFile(filepath.Join(dir, "workflow.json"))
+	if err != nil || string(data) != manifest {
+		t.Fatalf("manifest not persisted: %s %v", data, err)
+	}
+	for _, p := range []string{"workflow.json", "soul/soul.md", "../other/workflow.json"} {
+		if err := hcpo.WriteWorkspaceFile(ctx, p, manifest); err == nil {
+			t.Fatalf("managed capability leaked to raw %s", p)
+		}
 	}
 }

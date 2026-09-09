@@ -18,7 +18,7 @@ import (
 
 const (
 	DetectorRuntime          = "runtime_artifacts"
-	RuntimeDetectorVersion   = "runtime-artifacts/v1"
+	RuntimeDetectorVersion   = "runtime-artifacts/v2"
 	CoverageVerified         = "verified"
 	CoveragePartial          = "partial"
 	CoverageNotInstrumented  = "not_instrumented"
@@ -317,9 +317,9 @@ func inspectRun(run runCandidate) ([]Finding, error) {
 		artifact = filepath.ToSlash(artifact)
 		if timing.LLM.ErroredCount > 0 || timing.LLM.CanceledCount > 0 || timing.Tools.ErroredCount > 0 {
 			findings = append(findings, Finding{
-				Kind: "runtime_status_disagreement", Severity: severityHigh, StepID: timing.StepID, RunFolder: run.rel, Artifact: artifact,
-				Subject:    "Completed run contains failed child calls",
-				Detail:     "The outer run is completed, but its timing receipt records an errored or canceled LLM/tool call.",
+				Kind: "completed_run_child_errors", Severity: severityMedium, StepID: timing.StepID, RunFolder: run.rel, Artifact: artifact,
+				Subject:    "Completed run had child-call errors",
+				Detail:     "Child-call errors are diagnostic evidence, not a terminal failure. Check required outputs, successful recovery and material retry cost before selecting Technical Review.",
 				Evidence:   fmt.Sprintf("llm.errored_count=%d; llm.canceled_count=%d; tools.errored_count=%d", timing.LLM.ErroredCount, timing.LLM.CanceledCount, timing.Tools.ErroredCount),
 				ObservedAt: observedAt,
 			})

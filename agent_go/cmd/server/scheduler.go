@@ -2559,22 +2559,11 @@ func (s *SchedulerService) runPulseLifecycle(ctx context.Context, sctx *Schedule
 					}
 				}
 			}
-			// The repair-drain completeness gate below is technical_review's Fixer
-			// contract specifically. plan_drift_review has its own review-and-fix
-			// authority and applies/verifies safe workflow-owned fixes directly in
-			// its own turn, but "every actionable issue in the whole backlog is
-			// drained" is technical_review's completeness bar, not plan_drift_review's
-			// narrower per-step scope — checked separately below.
+			// Only technical_review promises to drain workflow-owned repairs.
+			// A strategic-only review must not fail on unrelated repair debt.
 			if st.label == "review-fix" && result.outcome == pulseLifecycleStepCompleted {
-				remaining, countErr := stepworkflow.CountPulseActionableWorkflowIssues(ctx, sctx.WorkspacePath)
-				if countErr != nil {
-					result = pulseLifecycleStepRunResult{outcome: pulseLifecycleStepWaitFailed, err: fmt.Errorf("read actionable Pulse repair backlog: %w", countErr)}
-				} else if remaining > 0 {
-					// A persisted receipt proves the agent finished its turn; it does
-					// not prove it completed the workflow-owned repair objective. Keep
-					// the run partial rather than announcing a successful Pulse pass
-					// while actionable work still exists.
-					result = pulseLifecycleStepRunResult{outcome: pulseLifecycleStepWaitFailed, err: fmt.Errorf("Review+Fix left %d actionable workflow-owned Pulse issue(s); the repair drain is incomplete", remaining)}
+				if err := validatePulseTechnicalRepairDrain(ctx, sctx.WorkspacePath, pulseRunID); err != nil {
+					result = pulseLifecycleStepRunResult{outcome: pulseLifecycleStepWaitFailed, err: err}
 				}
 			}
 		}
@@ -3226,6 +3215,24 @@ func pulseWorklistModulesDue(ctx context.Context, workspacePath, pulseRunID stri
 		}
 	}
 	return false, nil
+}
+
+func validatePulseTechnicalRepairDrain(ctx context.Context, workspacePath, pulseRunID string) error {
+	due, err := pulseWorklistModulesDue(ctx, workspacePath, pulseRunID, pulseModuleTechnicalReview)
+	if err != nil {
+		return fmt.Errorf("read technical review completion contract: %w", err)
+	}
+	if !due {
+		return nil
+	}
+	remaining, err := stepworkflow.CountPulseActionableWorkflowIssues(ctx, workspacePath)
+	if err != nil {
+		return fmt.Errorf("read actionable Pulse repair backlog: %w", err)
+	}
+	if remaining > 0 {
+		return fmt.Errorf("Review+Fix left %d actionable workflow-owned Pulse issue(s); the repair drain is incomplete", remaining)
+	}
+	return nil
 }
 
 func compactScheduleMessages(messages []string) []string {

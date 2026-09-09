@@ -100,3 +100,12 @@ remain discoverable as current-run evidence.
   current run, even when such a file is deliberately placed in the tree.
 - Cover both a grouped todo-task step (Instagram `test-run`) and a grouped
   regular/message-sequence step (RTS Latency `dev`).
+
+
+## 2026-09-09 local Pulse audit follow-up
+
+Local sales/workflow evidence shows newer outputs under older failed run
+metadata. Preserve the existing open scope: attempt-specific immutable logs and
+provenance are needed before Pulse can reliably attribute a retry's outcome.
+See [PLAT-047](plat-047.md). Advisory detector wording in PLAT-163 reduces false
+severity, but does not repair contaminated history or establish recovery.

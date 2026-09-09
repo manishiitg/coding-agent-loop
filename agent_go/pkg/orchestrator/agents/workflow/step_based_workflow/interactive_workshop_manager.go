@@ -6161,7 +6161,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				if err != nil {
 					return fmt.Sprintf("Failed to marshal workflow.json: %v", err), nil
 				}
-				if err := iwm.controller.WriteWorkspaceFile(ctx, "workflow.json", string(out)); err != nil {
+				if err := iwm.controller.writeManagedWorkflowManifest(ctx, string(out)); err != nil {
 					return fmt.Sprintf("Failed to write workflow.json: %v", err), nil
 				}
 

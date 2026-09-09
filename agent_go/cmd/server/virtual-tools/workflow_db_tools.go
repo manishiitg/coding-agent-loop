@@ -599,6 +599,20 @@ func resolveWorkflowDBSession(ctx context.Context, fallbackSessionID string) (st
 	return sessionID, cfg, nil
 }
 
+// ResolveWorkflowWorkspaceFolder resolves the owning "Workflow/<name>" folder
+// for a trusted session, reusing the exact DB_PATH/read/write-path resolution
+// resolveWorkflowWorkspaceFolder already does for the workflow-database
+// tools. Exported so a sibling registry constructor in this package (see
+// code_layout_tools.go) can address workflow.json without duplicating this
+// resolution logic.
+func ResolveWorkflowWorkspaceFolder(ctx context.Context, fallbackSessionID string) (string, error) {
+	sessionID, cfg, err := resolveWorkflowDBSession(ctx, fallbackSessionID)
+	if err != nil {
+		return "", err
+	}
+	return resolveWorkflowWorkspaceFolder(sessionID, cfg)
+}
+
 func resolveWorkflowDBPathFromConfig(sessionID string, cfg *common.SessionShellConfig) (string, error) {
 	folder, err := resolveWorkflowWorkspaceFolder(sessionID, cfg)
 	if err != nil {

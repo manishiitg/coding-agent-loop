@@ -2,8 +2,7 @@
 
 The workflow Browser automation tab shows the managed headless browser for that
 workflow. It discovers sessions automatically when `agent_browser open` runs.
-Select a browser session to watch its active tab. Browser settings remain below
-the viewer. Closed, completed, or reaped sessions disappear from the list.
+Select a browser session to watch its active tab. Browser settings are behind the gear button; the viewer fills the panel. Closed, completed, or reaped sessions disappear from the list.
 
 Watch mode cannot send input or change the browser's active tab. Take control
 requires workflow write access and exclusive access to that browser session.
@@ -147,7 +146,68 @@ workspace service; do not point one deployment at another's stream ports.
 
 ## Rollout status
 
-Implemented in the shared codebase. Confida/Hetzner rollout was not performed:
-the configured Confida SSH key was unavailable locally, and other attempted
-server access was rejected. Deploy the frontend and both backend services once
-server access is restored, then verify a real workflow in each deployment.
+RTS was deployed on 2026-09-09 at `https://video.realtrainingsys.com`, using
+release `live-browser-refresh-20260909` (focused source commit `0b9593dd0`). The release
+includes the frontend, agent API, workspace service, and agent-browser 0.37.0.
+Shared CDP is disabled. Agent, workspace, and gateway services passed health
+checks after activation, and the public live-session endpoint rejects
+unauthenticated requests.
+
+Before activation, isolated real-browser smoke tests on the RTS server passed
+live frames, two tabs, mouse focus, and typing through the staged workspace
+proxy. Both Linux systemd runtime metadata and the restricted workflow
+`HOME=/tmp` environment were checked. A signed-in production workflow UI run also passed: the `rts-latency`
+workshop called `agent_browser status`, opened Google, and displayed the Google
+page in the embedded live viewer with status **Watching**.
+The previous release is retained for rollback.
+
+Dominion and Confida remain pending. Confida/Hetzner access was blocked because
+the configured SSH key was unavailable locally and other attempted access was
+rejected. Roll out the same shared implementation and verify a real workflow
+in each deployment after access is available.
+
+### Persistent chat browser settings
+
+The RTS UI check exposed a missing-tool bug when a chat started with **No
+browser** and was later changed to **Automatic**. Persistent CLI turns reused
+the original tool registration. The follow-up release keeps the workflow
+browser tool registered and reads the current manifest on each invocation.
+Disabled, missing, or unreadable configuration cannot launch a browser. The
+regression test covers enabling and disabling the same tool instance without
+creating another chat. Shared fix: `961d22b5a`.
+
+## Builder view switching
+
+Interactive Builder guidance requests `open_workspace_view(view="browser")`
+when beginning browser navigation for the user. The tool opens the full browser
+panel; the stream updates automatically, without repeated refresh requests.
+Scheduled and unattended runs do not manipulate the foreground UI. The Builder
+should respect subsequent user view changes.
+
+When a builder workspace-view action changes the visible panel, a small toast
+identifies it, for example “Builder opened Browser”. Acknowledged UI actions
+notify only after an applied result. Reopening the same visible view or
+refreshing it does not create another switch notification.
+
+## Manual recording and viewer controls
+
+Use **Start recording**, then **Stop recording** to export a capture under
+`<workflow>/browser-recordings/<timestamp-id>/`. The bundle contains
+`video.webm`, `network.har`, `console.json`, `errors.json`, `manifest.json`,
+and `capture.zip`. HAR response bodies are omitted; URLs, timings and headers
+remain. Console output is the browser runtime buffer for the capture interval.
+Video records the page active when capture starts. Stop recording before
+ending or cleaning up the browser session; abrupt browser termination may
+leave partial output. The recording runs on the server even if the viewer
+is disconnected. Start/stop requires workflow write access.
+
+Clicking an inactive tab requests exclusive control and then switches tabs.
+If the agent is busy, the viewer explains why control could not be acquired.
+**Fill width** uses the full panel width with vertical scrolling; **Fit page**
+keeps the entire viewport visible with its aspect ratio preserved.
+
+Browser sessions are isolated by chat owner/session and browser session name.
+Cookies survive while that browser context is running. Persistent profiles
+across chat sessions, cleanup and server restarts are not enabled by this
+viewer. A future remember-login option must isolate profiles per user and
+workflow; it cannot guarantee that a site's login never expires.

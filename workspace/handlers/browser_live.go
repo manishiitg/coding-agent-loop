@@ -43,8 +43,13 @@ func BrowserLiveStream(c *gin.Context) {
 }
 
 func browserLivePort(session string) (int, error) {
+	port, _, err := browserLiveEndpoint(session)
+	return port, err
+}
+
+func browserLiveEndpoint(session string) (int, string, error) {
 	if !browserLiveSessionName.MatchString(session) {
-		return 0, fmt.Errorf("invalid session")
+		return 0, "", fmt.Errorf("invalid session")
 	}
 	home, _ := os.UserHomeDir()
 	dirs := []string{filepath.Join(home, ".agent-browser"), filepath.Join(os.TempDir(), "agent-browser"), filepath.Join(os.TempDir(), ".agent-browser"), "/tmp/.agent-browser"}
@@ -61,8 +66,8 @@ func browserLivePort(session string) (int, error) {
 		}
 		port, err := strconv.Atoi(strings.TrimSpace(string(data)))
 		if err == nil && port > 0 && port <= 65535 {
-			return port, nil
+			return port, dir, nil
 		}
 	}
-	return 0, fmt.Errorf("stream metadata unavailable")
+	return 0, "", fmt.Errorf("stream metadata unavailable")
 }

@@ -7,7 +7,7 @@ import { useEffect, useRef } from 'react'
 import { useChatStore } from '../../stores/useChatStore'
 import { useWorkflowStore } from '../../stores/useWorkflowStore'
 import { usePresentationEvents } from '../../platform/presentations/usePresentationEvents'
-import { isWorkspaceViewId } from './workspaceViews'
+import { getWorkspaceView, isWorkspaceViewId } from './workspaceViews'
 import { useWorkspaceUIControl } from '../../platform/ui-control/useWorkspaceUIControl'
 
 export const WORKFLOW_VIEW_PRESENTATION_KIND = 'workflow.view'
@@ -41,6 +41,10 @@ export function useWorkflowViewPresentations(tabId: string | null | undefined): 
         // A target re-fires even on the open view: "show me this step" is a
         // real instruction, not a no-op, when the view is already up.
         openWorkspaceView(view, target)
+      }
+      if (shown !== view) {
+        const label = view === 'browser' ? 'Browser' : getWorkspaceView(view).label
+        useChatStore.getState().addToast(`Builder opened ${label}`, 'info')
       }
     }
     handed.current = { sessionId, count: presentations.length }

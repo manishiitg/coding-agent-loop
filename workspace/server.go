@@ -144,6 +144,7 @@ func runServer(cmd *cobra.Command, args []string) {
 
 		// Browser process management (list/cleanup stale chromium instances)
 		api.GET("/browser/live/:session/stream", requireWorkspaceAPIToken(), handlers.BrowserLiveStream)
+		api.POST("/browser/live/:session/recording", requireWorkspaceAPIToken(), handlers.BrowserRecording)
 		api.GET("/browser/processes", handlers.ListBrowserProcesses)
 		api.POST("/browser/cleanup", handlers.KillBrowserProcesses)
 

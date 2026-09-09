@@ -2197,6 +2197,7 @@ func runServer(cmd *cobra.Command, args []string) {
 	apiRouter.HandleFunc("/browser/sessions", api.handleGetBrowserSessions).Methods("GET")
 	apiRouter.HandleFunc("/browser/live/sessions", api.handleLiveBrowserSessions).Methods("GET")
 	apiRouter.HandleFunc("/browser/live/{session}/stream", api.handleLiveBrowserStream).Methods("GET")
+	apiRouter.HandleFunc("/browser/live/{session}/recording", api.handleBrowserRecording).Methods("POST")
 
 	// Active Session API routes (from polling.go)
 	apiRouter.HandleFunc("/sessions/active", api.handleGetActiveSessions).Methods("GET")

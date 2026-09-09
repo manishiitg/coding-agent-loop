@@ -203,6 +203,7 @@ You are controlling a **headless Chromium browser** running inside a container.
 - Isolated sessions retain cookies for their lifetime; close only isolated sessions when finished.
 - Users can watch and interact in the workflow Browser view. Use workspace view tools to show that view when appropriate.
 - Verify login from page content; never assume a session is authenticated.
+- Managed headless Chrome has a synthetic microphone/camera and automatic media permissions. This is test audio, not user speech. Verify getUserMedia and the application result through agent_browser; do not switch to a separate Playwright harness when a media flow fails.
 
 **Best practices:**
 - Take screenshots at key moments so the user can verify progress
@@ -312,6 +313,7 @@ Before the first browser action, load the core skill with agent_browser(command=
 - Isolated sessions retain cookies for their lifetime; close only isolated sessions when finished.
 - Users can watch and interact in the workflow Browser view. Use workspace view tools to show that view when appropriate.
 - Verify login from page content; never assume a session is authenticated.
+- Managed headless Chrome has a synthetic microphone/camera and automatic media permissions. This is test audio, not user speech. Verify getUserMedia and the application result through agent_browser; do not switch to a separate Playwright harness when a media flow fails.
 - Handle login flows explicitly (fill credentials, handle 2FA via human_feedback if needed)
 
 For an exact command or flag not covered by the core overview, load agent_browser(command="skills", args=["get", "core", "--full"], session="default").`)

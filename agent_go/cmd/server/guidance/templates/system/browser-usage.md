@@ -199,6 +199,16 @@ Downloads folder. Use only the host Downloads grants actually provided to
 this session; do not assume that workspace-relative `Downloads/` names the
 same directory.
 
+## Microphone and Camera in the Managed Browser
+
+Managed headless Chrome launches with synthetic microphone/camera devices and automatically accepts media permission prompts. The launch flags are configured centrally and reused by every agent_browser action, live control and recording call; do not add different launch options per command or restart the shared browser to experiment.
+
+For mic-gated flows (such as RTS learner Start Simulation), stay in agent_browser and verify that navigator.mediaDevices.getUserMedia({audio:true}) resolves to a live audio track on the target HTTPS page. Stop any temporary test tracks afterward. A successful media probe does not prove the application flow succeeded; verify the learner simulation UI itself.
+
+Synthetic audio is test audio, not the user's microphone or generated speech. It can satisfy device checks but cannot conduct a spoken conversation. Use the site's chat input when appropriate; real voice or prerecorded speech needs a separately configured audio source. Browser video capture does not promise microphone audio in its WebM.
+
+If media still fails, inspect the exact error, page permissions and secure context through managed browser commands. Report what is blocked. Do not switch to a standalone Playwright/Puppeteer harness, raw CDP, or shell-launched browser, and do not inject a fake getUserMedia implementation to claim the real media flow works. Externally managed CDP Chrome retains its own media configuration.
+
 ## Bundled Recording in Builder
 
 When the user/workflow requests recording or reproduction evidence in managed headless mode, prefer Builder's capture command. It uses the same recording service/state as the Browser view and includes video.webm, network.har (without response bodies), console.json, errors.json, manifest.json and capture.zip.

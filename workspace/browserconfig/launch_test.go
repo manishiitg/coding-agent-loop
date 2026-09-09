@@ -30,3 +30,28 @@ func TestSharedProfileLaunchIdentity(t *testing.T) {
 		}
 	}
 }
+
+func TestManagedHeadlessMediaFlags(t *testing.T) {
+	for _, profile := range []string{"", "/data/browser-profile"} {
+		t.Setenv(ProfileEnv, profile)
+		args := HeadlessArgs()
+		launch := ""
+		for i, arg := range args {
+			if arg == "--args" && i+1 < len(args) {
+				launch = args[i+1]
+			}
+		}
+		flags := strings.Split(launch, ",")
+		for _, want := range []string{"--use-fake-device-for-media-stream", "--use-fake-ui-for-media-stream"} {
+			count := 0
+			for _, flag := range flags {
+				if flag == want {
+					count++
+				}
+			}
+			if count != 1 {
+				t.Fatalf("profile %q: expected one %s in %v", profile, want, args)
+			}
+		}
+	}
+}

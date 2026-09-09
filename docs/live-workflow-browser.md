@@ -338,3 +338,27 @@ This extension belongs to Builder's handler and is documented in the tool schema
 Builder browser skill, and browser guidance. Upstream `agent-browser skills` does
 not define it. Native `record` remains video-only; external CDP currently uses
 its existing separate video/HAR/console commands instead of bundled `capture`.
+
+
+## Synthetic microphone and camera
+
+Managed headless browser launches (including the shared supervisor, tool commands,
+UI tab controls and recording) include these Chrome flags through the central
+`workspace/browserconfig.HeadlessArgs()` helper:
+
+- `--use-fake-device-for-media-stream`
+- `--use-fake-ui-for-media-stream`
+
+These provide synthetic media devices and automatic media permission handling,
+so server-side flows that require a microphone can obtain a stream. They do not
+supply the user's voice or meaningful spoken dialogue. External CDP Chrome keeps
+its own launch configuration. An already running Chrome needs one graceful
+restart to apply the flags; the persistent profile is retained, while in-memory
+page state and ongoing calls may need to be resumed.
+
+The Builder agent-browser skill explains how to verify getUserMedia and the
+application outcome without switching to an unrelated Playwright harness. A
+microphone permission success alone is not evidence that an RTS simulation started.
+
+References: [agent-browser launch options](https://agent-browser.dev/configuration),
+[Chromium media switches](https://chromium.googlesource.com/chromium/src/+/main/media/base/media_switches.cc).

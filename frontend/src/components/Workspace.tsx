@@ -196,7 +196,6 @@ export default function Workspace({
     setShowActionsDropdown,
     expandedFolders,
     setExpandedFolders,
-    expandFoldersForFile,
     expandFoldersToLevel,
     toggleFolder,
     highlightedFile,
@@ -235,7 +234,6 @@ export default function Workspace({
     setShowActionsDropdown: state.setShowActionsDropdown,
     expandedFolders: state.expandedFolders,
     setExpandedFolders: state.setExpandedFolders,
-    expandFoldersForFile: state.expandFoldersForFile,
     expandFoldersToLevel: state.expandFoldersToLevel,
     toggleFolder: state.toggleFolder,
     highlightedFile: state.highlightedFile,
@@ -682,6 +680,32 @@ export default function Workspace({
     return result
   }, [files, scopedWorkspacePath, hiddenRootFolders, effectiveWorkflowFolderPath, searchQuery, selectedModeCategory, effectiveDisplayedIteration, currentUserFolder, pruneRunsToIteration])
 
+  // Reveal search matches by opening the folders on their path, without permanently
+  // forcing every folder open: only newly-matched folders get expanded, so a folder
+  // the user explicitly collapses stays collapsed as they keep refining the query.
+  const searchAutoExpandedRef = useRef<Set<string>>(new Set())
+  useEffect(() => {
+    if (!searchQuery.trim()) {
+      searchAutoExpandedRef.current = new Set()
+      return
+    }
+    const matchedFolderPaths = new Set<string>()
+    const collectFolders = (list: PlannerFile[]) => {
+      for (const file of list) {
+        if (file.type === 'folder') {
+          matchedFolderPaths.add(file.filepath)
+          if (file.children?.length) collectFolders(file.children)
+        }
+      }
+    }
+    collectFolders(filteredFiles)
+
+    const newlyMatched = [...matchedFolderPaths].filter(path => !searchAutoExpandedRef.current.has(path))
+    matchedFolderPaths.forEach(path => searchAutoExpandedRef.current.add(path))
+    if (newlyMatched.length === 0) return
+    setExpandedFolders(new Set([...expandedFolders, ...newlyMatched]))
+  }, [searchQuery, filteredFiles, expandedFolders, setExpandedFolders])
+
   // Refresh file tree from server (re-fetch all files so local filter can find them)
   const handleRefreshAndSearch = useCallback(async () => {
     setServerSearchLoading(true)
@@ -699,25 +723,21 @@ export default function Workspace({
     }
   }, [activeFolder, fetchFiles, selectedModeCategory])
 
-  // File highlighting with auto-scroll.
-  // In workflow mode we only scroll — we do NOT call expandFoldersForFile() because it
-  // opens ALL parent folders with no depth limit, overriding the maxLevel=3 cap from
-  // the initial auto-expand. The relevant folders should already be open from the
-  // auto-expand or run-folder expansion effects.
-  // In multi-agent mode we still expand folders since there's no depth concern.
+  // File highlighting with auto-scroll only — we deliberately do NOT call
+  // expandFoldersForFile() here in any mode. It opens every ancestor folder with
+  // no depth limit, and since highlights fire repeatedly over a session (each new
+  // tool-created or updated file), that steadily accumulates into "everything is
+  // expanded" — the opposite of the first-level-only default. The relevant
+  // top-level folders are already open from the auto-expand effects; deeper ones
+  // stay collapsed until the user opens them.
   useEffect(() => {
     if (highlightedFile) {
-      if (selectedModeCategory !== 'workflow') {
-        // Multi-agent mode: expand folders to reveal the highlighted file
-        expandFoldersForFile(highlightedFile)
-      }
-
       // Auto-scroll to highlighted file after a short delay
       setTimeout(() => {
         scrollToHighlightedFile(highlightedFile)
       }, 100)
     }
-  }, [highlightedFile, expandFoldersForFile, scrollToHighlightedFile, selectedModeCategory])
+  }, [highlightedFile, scrollToHighlightedFile])
 
   // Automatically expand workspace folder when a workflow is first opened
   // Only runs once per workflow preset or mode switch to allow manual open/close afterward
@@ -2248,7 +2268,6 @@ export default function Workspace({
                 selectedFiles={selectedFiles}
                 onToggleFileSelection={toggleFileSelection}
                 onSelectFileAndEnterSelectionMode={selectFileAndEnterSelectionMode}
-                forceExpandFolders={!!searchQuery.trim()}
                 scrollContainerRef={workspaceScrollRef}
               />
 

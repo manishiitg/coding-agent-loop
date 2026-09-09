@@ -5,7 +5,7 @@ import { useQuery } from '@tanstack/react-query'
 import { useShallow } from 'zustand/react/shallow'
 
 const DBG = '[skill-popup]'
-import { Send, Wand2, Loader2, Globe, Layers, X, History, Server, Download, Paperclip, Terminal, Plus, Play } from 'lucide-react'
+import { Send, Wand2, Loader2, Globe, Layers, X, History, Server, Download, Paperclip, Terminal, Plus } from 'lucide-react'
 import { Button } from './ui/Button'
 import { Textarea } from './ui/Textarea'
 import FileContextDisplay from './FileContextDisplay'
@@ -40,8 +40,6 @@ import { chatUsesStructuredTransport, shouldRouteChatInputToLiveTransport, shoul
 import { effectiveLLMUnderLock, effectiveProviderUnderLock } from '../utils/effectiveLLM'
 import { normalizeEventViewMode, type ChatTabConfig } from '../stores/useChatStore'
 import { getComposerTrigger, replaceComposerTrigger, formatFileReference, removeFileReferences, reconcileFileReferences, isPlainPickerKey, type ComposerTrigger } from '../utils/composerReferences'
-import { activateTab } from '../utils/activateTab'
-import { isBlankWorkflowBuilderTab } from '../utils/workflowTabResolution'
 
 const removePasteMarkersFromText = (text: string, markers: string[]) => {
   return markers.reduce((next, marker) => {
@@ -461,7 +459,6 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
   })))
   const selectedModeCategory = useModeStore(state => state.selectedModeCategory)
   const storeActiveTabId = useChatStore(state => state.activeTabId)
-  const createChatTab = useChatStore(state => state.createChatTab)
   const activeTabId = scopedTabId === null ? null : (scopedTabId ?? storeActiveTabId)
   // Use the scoped tab as the mode source when ChatInput is embedded. The global
   // mode category can lag behind WorkflowLayout, which would otherwise make a
@@ -500,31 +497,6 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
   })
   // Hide extras (servers, skills, agent mode, etc.) in workflow mode but show in multi-agent
   const hideExtras = isWorkflowMode
-
-  const runChatPresetId = activeTab?.metadata?.presetQueryId || activeWorkflowPresetId
-  const showRunChatAction = !!(
-    activeTab &&
-    runChatPresetId &&
-    isBlankWorkflowBuilderTab(
-      activeTab,
-      runChatPresetId,
-      activeTab.sessionId && activeTabEvents
-        ? { [activeTab.sessionId]: activeTabEvents }
-        : {},
-    )
-  )
-  const handleStartRunChat = useCallback(async () => {
-    if (!runChatPresetId) return
-    const newTabId = await createChatTab('Run chat', {
-      mode: 'workflow',
-      phaseId: 'workflow-builder',
-      phaseName: 'Automation Run',
-      presetQueryId: runChatPresetId,
-      workshopMode: 'run',
-    })
-    activateTab(newTabId)
-    useWorkflowStore.getState().setShowChatArea(true)
-  }, [createChatTab, runChatPresetId])
 
   // Use selectors to subscribe only to specific values, reducing re-renders
   const setTabConfig = useChatStore(state => state.setTabConfig)
@@ -3841,26 +3813,6 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
                     </div>
                   ) : (
                     <div data-tour="chat-send-controls" data-testid="tour-chat-send-controls" className="flex items-center gap-1">
-                      {!isProductSurface && showRunChatAction && (
-                        <Tooltip>
-                          <TooltipTrigger asChild>
-                            <Button
-                              type="button"
-                              variant="outline"
-                              onClick={() => { void handleStartRunChat() }}
-                              className="h-7 shrink-0 gap-1.5 px-2 text-[11px] text-muted-foreground"
-                              data-testid="chat-start-run-mode-button"
-                              aria-label="Start chat in Run mode"
-                            >
-                              <Play className="h-3.5 w-3.5" />
-                              Run chat
-                            </Button>
-                          </TooltipTrigger>
-                          <TooltipContent>
-                            <p>Start a separate chat with the Run-mode prompt and permissions</p>
-                          </TooltipContent>
-                        </Tooltip>
-                      )}
                       {!sparkQuillComposerLayout && sparkleEl}
                       {!sparkQuillComposerLayout && attachmentEl}
                       {sparkQuillComposerLayout && micEl}

@@ -117,6 +117,37 @@ func GoogleServiceScopeURI(service string, write bool) (scope, displayName strin
 	return def.ReadScope, def.DisplayName, true
 }
 
+// GoogleScopesGrant recognizes the full-service scopes used by our connection
+// settings. A write grant also allows reads. Restricted grants such as
+// drive.file or gmail.metadata must not stand in for account-wide access.
+// This only describes Google's grants; stored connection/workflow write
+// restrictions are still enforced independently when tools execute.
+func GoogleScopesGrant(scopes []string, required string) bool {
+	for _, granted := range scopes {
+		if granted == required {
+			return true
+		}
+		for name, service := range googleServiceCatalog {
+			if required == service.ReadScope && granted == service.WriteScope {
+				return true
+			}
+			// Sheets, Docs and Slides also accept the broader Drive scopes.
+			if name == "sheets" || name == "docs" || name == "slides" {
+				drive := googleServiceCatalog["drive"]
+				if (required == service.ReadScope && (granted == drive.ReadScope || granted == drive.WriteScope)) ||
+					(required == service.WriteScope && granted == drive.WriteScope) {
+					return true
+				}
+			}
+		}
+		if required == "https://www.googleapis.com/auth/gmail.readonly" &&
+			(granted == "https://www.googleapis.com/auth/gmail.modify" || granted == "https://mail.google.com/") {
+			return true
+		}
+	}
+	return false
+}
+
 // GoogleServiceScopeURIs resolves a connection's extra-service grants to the
 // OAuth scopes to request alongside Gmail's own scopes. Exported for the
 // gmail_oauth_routes.go call site, which builds the scope list for a

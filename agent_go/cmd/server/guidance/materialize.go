@@ -177,11 +177,9 @@ type buildMegaSkillSpec struct {
 	Registry map[string]kindMeta
 	Name     string
 	// DescriptionIntro is a short, hand-written framing sentence. The full
-	// outer Description (what a session sees WITHOUT opening this skill --
-	// the only signal deciding whether it ever calls read_skill at all) is
-	// this sentence plus an auto-generated topic list built from every
-	// allowed kind's own Description, so it can never drift out of sync
-	// with the registry the way a fully hand-enumerated paragraph does.
+	// outer Description is this sentence plus the rendered topic names.
+	// Full topic descriptions belong in the body, keeping discovery metadata
+	// within the skill format's 1024-character limit.
 	DescriptionIntro string
 	Intro            string
 	Render           func(kind string, data tmplData) (string, error)
@@ -218,6 +216,7 @@ func buildMegaSkill(spec buildMegaSkillSpec) *llmtypes.Skill {
 	}
 
 	files := make([]llmtypes.SkillFile, 0, len(allowed))
+	topics := make([]string, 0, len(allowed))
 	var toc strings.Builder
 	for _, k := range allowed {
 		meta := spec.Registry[k]
@@ -235,19 +234,16 @@ func buildMegaSkill(spec buildMegaSkillSpec) *llmtypes.Skill {
 			RelPath: "references/" + k + ".md",
 			Content: []byte(text),
 		})
+		topics = append(topics, k)
 		fmt.Fprintf(&toc, "- `references/%s.md` — %s\n", k, meta.Description)
 	}
 
 	body := spec.Intro + "\n\n## Available references\n\n" + toc.String()
 
-	// See DescriptionIntro's doc comment: this is the fix for guidance
-	// silently going undiscoverable (add_mcp_server, browser CDP, and Gmail
-	// scope references all had this happen) -- the outer Description must
-	// enumerate every topic a session could actually need, and the only way
-	// to guarantee that stays true as kinds are added is to build it from
-	// the same per-kind descriptions used for the TOC above, not maintain a
-	// second, hand-written summary of them.
-	description := spec.DescriptionIntro + " Topics covered (read the matching file under `references/` for detail):\n" + toc.String()
+	// Generate the compact discovery list from the same references as the
+	// detailed TOC so new topics remain discoverable without duplicating the
+	// entire reference catalog into every agent's initial context.
+	description := spec.DescriptionIntro + " Topics: " + strings.Join(topics, ", ") + ". Read matching files under references/."
 
 	return &llmtypes.Skill{
 		Name:            spec.Name,

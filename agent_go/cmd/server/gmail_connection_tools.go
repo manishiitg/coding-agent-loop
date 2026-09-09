@@ -234,10 +234,6 @@ func (api *StreamingAPI) listGmailConnectionsFromTool(_ context.Context, args ma
 
 	reports := make([]gmailConnectionStatusReport, 0, len(conns))
 	for _, conn := range conns {
-		granted := make(map[string]bool, len(conn.Scopes))
-		for _, s := range conn.Scopes {
-			granted[s] = true
-		}
 		report := gmailConnectionStatusReport{
 			ID:                 conn.ID,
 			DisplayName:        conn.DisplayName,
@@ -245,7 +241,7 @@ func (api *StreamingAPI) listGmailConnectionsFromTool(_ context.Context, args ma
 			Status:             string(conn.Status),
 			Enabled:            conn.Enabled,
 			GmailReadRequested: conn.AllowReadAccess,
-			GmailReadGranted:   granted[gmailReadonlyScope],
+			GmailReadGranted:   services.GoogleScopesGrant(conn.Scopes, gmailReadonlyScope),
 			GrantedScopes:      conn.Scopes,
 		}
 		if conn.AllowReadAccess && !report.GmailReadGranted {
@@ -257,7 +253,7 @@ func (api *StreamingAPI) listGmailConnectionsFromTool(_ context.Context, args ma
 			if !ok {
 				continue
 			}
-			gs := gmailServiceGrantStatus{Service: g.Service, Write: g.Write, Scope: scope, Granted: granted[scope]}
+			gs := gmailServiceGrantStatus{Service: g.Service, Write: g.Write, Scope: scope, Granted: services.GoogleScopesGrant(conn.Scopes, scope)}
 			report.Services = append(report.Services, gs)
 			if !gs.Granted {
 				level := "read-only"

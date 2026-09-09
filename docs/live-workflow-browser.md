@@ -227,3 +227,6 @@ WebM, expected HAR request and console message, nonempty ZIP and manifest,
 and preservation of cookies, session storage, and both existing tabs. Fake
 runtime tests also cover cross-workflow rejection and retryable partial stops.
 The new recording and tab/sizing controls still need their deployed UI check.
+
+Browser is in the **Views** toolbar, alongside the other workspace views.
+Its mode and connection settings remain behind the Browser panel’s gear button.

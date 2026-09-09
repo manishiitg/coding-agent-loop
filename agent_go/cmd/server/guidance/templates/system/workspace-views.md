@@ -23,6 +23,8 @@ The right-hand pane of the workflow page shows one view at a time; the toolbar a
 | `evaluation` | Evaluation results for the selected run against `evaluation/evaluation_plan.json` | You ran or edited the evaluation, or the user asks how a run scored |
 | `schedules` | Scheduled runs: cadence, next run, last run, run history | You created or changed a schedule |
 | `files` | The workspace file browser | The user wants to open a specific file, or you wrote a file they should see |
+| `browser` | Full-panel live server browser, tabs, and Take control; settings behind the gear button | You open or navigate a page with `agent_browser`, or the user asks to watch/interact with the browser |
+
 
 ### Pulse cluster
 | View id | Shows | Open it when |
@@ -49,7 +51,6 @@ Refresh or claim an answer was applied just because it disappeared from pending.
 | `skills` | Skills attached to the workflow | You installed or attached a skill |
 | `secrets` | Secret names attached to the workflow (never values) | You set or attached a secret |
 | `mcp` | MCP servers and tool allowlists for the workflow | You added or changed a server |
-| `browser` | Full-panel live server browser, tabs, and Take control; settings behind the gear button | You open or navigate a page with `agent_browser`, or the user asks to watch/interact with the browser |
 | `llm` | The workflow's LLM configuration: tiers and per-step models | You changed which model runs what |
 | `bots` | Connected bots (Slack, WhatsApp) for this workflow | You connected or changed a channel |
 | `folders` | Folders attached to the workflow | You attached a folder |

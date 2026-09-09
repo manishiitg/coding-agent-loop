@@ -75,6 +75,19 @@ func (w familyWorkspace) read(ctx context.Context, rel string) (string, bool) {
 	return result.Content, true
 }
 
+// exists reports whether rel names a file, checked via a directory listing
+// so it works for any file type (binary images included) rather than read,
+// which decodes content as text and fails on anything that isn't.
+func (w familyWorkspace) exists(ctx context.Context, rel string) bool {
+	base := path.Base(rel)
+	for _, e := range w.list(ctx, path.Dir(rel)) {
+		if e.Type != "folder" && path.Base(e.FilePath) == base {
+			return true
+		}
+	}
+	return false
+}
+
 func (w familyWorkspace) write(ctx context.Context, rel, content string) error {
 	_, err := w.client.UpdateWorkspaceFile(ctx, workspace.UpdateWorkspaceFileParams{Filepath: w.path(rel), Content: content})
 	return err
@@ -533,10 +546,10 @@ func presentationActivity(binding *agentprofiles.PresentationBinding) *orchestra
 func openFileFactory(workspaceAPIURL string, conversationOnly bool) agentprofiles.ToolFactory {
 	return func(runtime agentprofiles.ToolRuntimeContext, _ json.RawMessage) (agentprofiles.ToolSpec, error) {
 		ws := newFamilyWorkspace(workspaceAPIURL, runtime, runtime.WorkspacePath)
-		description := "Show a workspace file to the parent on the right side of the screen. Call this right after you create or update a file the parent should see (study material, a test, the progress page). Pass the path relative to the workspace."
+		description := "Show a workspace file to the parent on the right side of the screen — a page, or any other file directly (an image, a PDF, whatever it is). Call this right after you create or update a file the parent should see (study material, a test, the progress page, a generated picture). Pass the path relative to the workspace."
 		params := map[string]interface{}{"path": map[string]interface{}{"type": "string", "description": "workspace-relative path to the file to display"}}
 		if conversationOnly {
-			description = "Show a lesson, worksheet, or one of her own saved pages on the right side of her screen. Pass the path relative to the activity folder. PASS focus WHENEVER you are talking about one specific question or section — that is what actually scrolls the page to it; omit it to keep her current position (for example right after recording an answer)."
+			description = "Show a lesson, worksheet, one of her own saved pages, or any other file directly (an image, a PDF, whatever it is) on the right side of her screen. Pass the path relative to the activity folder. PASS focus WHENEVER you are talking about one specific question or section on a page — that is what actually scrolls the page to it; omit it to keep her current position (for example right after recording an answer), and omit it entirely for a non-page file."
 			params["focus"] = map[string]interface{}{"type": "string", "description": "id of the element to scroll to — a question (\"q4\"), a section (\"s2\"), a worked example (\"s2-1\"), or a figure (\"fig1\"); see skills/guides/html-design.md. Ignored if no such id exists."}
 		}
 		return agentprofiles.ToolSpec{
@@ -551,7 +564,7 @@ func openFileFactory(workspaceAPIURL string, conversationOnly bool) agentprofile
 					return "", fmt.Errorf("invalid path")
 				}
 				rel = strings.TrimPrefix(rel, ws.root+"/")
-				if _, ok := ws.read(ctx, rel); !ok {
+				if !ws.exists(ctx, rel) {
 					return "", fmt.Errorf("no file at %q", rel)
 				}
 				focus := strings.TrimPrefix(stringArg(args, "focus"), "#")

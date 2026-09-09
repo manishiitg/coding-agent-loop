@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/agentprofiles"
+	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/skills"
 )
 
 func TestManifestDeclaresParentAndChild(t *testing.T) {
@@ -78,14 +79,14 @@ func TestProfilesRegisterOnThePlatformRegistry(t *testing.T) {
 	}
 	parent, _ := registry.Resolve(ParentProfileID, 0, "anyone")
 	for _, skill := range parent.Skills {
-		found := false
+		found := skills.IsBuiltinSkill(skill)
 		for _, n := range names {
 			if n == skill {
 				found = true
 			}
 		}
 		if !found {
-			t.Fatalf("parent declares skill %q that is not embedded", skill)
+			t.Fatalf("parent declares skill %q that is not embedded and not a platform builtin skill", skill)
 		}
 	}
 }

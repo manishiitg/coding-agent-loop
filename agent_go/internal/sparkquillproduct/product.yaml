@@ -32,6 +32,7 @@ profile:
   scope: project
   skills:
     - guides
+    - image-prompting
     - read-file
     - process-file
     - recall-conversations
@@ -93,6 +94,8 @@ profile:
       - open_activity
       - suggest_actions
       - find_image
+      - image_gen
+      - image_edit
   runtime:
     transport: auto
     provider_options:
@@ -172,6 +175,7 @@ profiles:
       variables: {}
     skills:
       - guides
+      - image-prompting
     tools:
       - id: sparkquill.open-activity-file
         presentation:
@@ -222,6 +226,8 @@ profiles:
         - celebrate
         - show_scene
         - find_image
+        - image_gen
+        - image_edit
     runtime:
       transport: auto
       provider_options:

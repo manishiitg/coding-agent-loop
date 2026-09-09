@@ -2,7 +2,6 @@ package virtualtools
 
 import (
 	"context"
-	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -15,17 +14,7 @@ import (
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 )
 
-// imageGenModelCosts maps model IDs with known fixed per-image pricing to USD.
-// Token-priced providers such as Codex CLI are intentionally omitted so they do
-// not get reported as free when no fixed per-image price is available.
-var imageGenModelCosts = map[string]float64{
-	"gemini-3.1-flash-image":      0.067, // $0.045/0.5K · $0.067/1K · $0.101/2K · $0.151/4K
-	"gemini-3-pro-image":          0.134, // $0.134/1K-2K image · $0.24/4K image
-	"gemini-3.1-flash-lite-image": 0.034, // Nano Banana 2 Lite, released 2026-06-30 — fastest/cheapest tier, $0.034/1K image
-}
-
 var imageProviderModels = map[string][]string{
-	"vertex": {"gemini-3.1-flash-image", "gemini-3-pro-image", "gemini-3.1-flash-lite-image"},
 	// codex-cli's --model only selects which model orchestrates the tool
 	// call (cost/latency); the native image_gen tool itself is the same
 	// regardless, so there is no meaningfully different "model" to offer
@@ -35,7 +24,7 @@ var imageProviderModels = map[string][]string{
 
 // ImageGenExecutorConfig holds configuration for the image generation executor
 type ImageGenExecutorConfig struct {
-	Provider        string // e.g. "vertex"
+	Provider        string // e.g. "codex-cli"
 	ModelID         string // e.g. "gemini-3.1-flash-image"
 	APIKey          string // optional; falls back to GEMINI_API_KEY env var on the server
 	WorkspaceAPIURL string // workspace API base URL for saving generated images
@@ -76,33 +65,31 @@ func GetImageGenToolDefinition() llmtypes.Tool {
 	return llmtypes.Tool{
 		Function: &llmtypes.FunctionDefinition{
 			Name:        "image_gen",
-			Description: "Generate images using AI from a text prompt. Requires a full absolute output_path under the workspace docs root so the caller decides exactly where the generated image files should be stored. Before choosing provider/model_id, call list_llm_capabilities(capability=\"generate_image\", include_models=true). If you pass model_id, also pass the matching provider from that capability result; do not pass model_id by itself. Vertex has three tiers to choose by need (see model_id): a fast/cheap tier, a balanced default, and a higher-accuracy/control tier for complex work. Supports aspect ratio, resolution, number of images, and negative prompt options.",
+			Description: "Generate images using AI from a text prompt. Requires a full absolute output_path under the workspace docs root so the caller decides exactly where the generated image files should be stored. See the image-prompting skill for how to write an effective prompt. Supports aspect ratio, resolution, number of images, and negative prompt options.",
 			Parameters: llmtypes.NewParameters(map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
 					"prompt": map[string]interface{}{
 						"type":        "string",
-						"description": "Text prompt describing the image to generate, or the edit instruction when input_image is provided.",
+						"description": "Text prompt describing the image to generate from scratch. To edit an existing image instead, use the image_edit tool.",
 					},
 					"output_path": map[string]interface{}{
 						"type":        "string",
 						"description": "Required full absolute destination path under the workspace docs root for the generated image. Example: '/Users/.../workspace-docs/_users/default/Chats/generated-images/hero.png' or '/app/workspace-docs/Workflow/my-flow/assets/hero.png'. Workspace-relative paths are rejected. If number_of_images is greater than 1, this path is used as the base name and files are saved as '-1', '-2', etc. before the extension.",
 					},
-					"provider": map[string]interface{}{
+					"quality": map[string]interface{}{
 						"type":        "string",
-						"description": "Optional provider override. Discover usable provider/model pairs with list_llm_capabilities(capability=\"generate_image\", include_models=true). Supported values: vertex or codex-cli. If specifying model_id, pass the matching provider too.",
+						"description": "Optional rendering quality hint (from GPT Image 2.5's own vocabulary). Not a guaranteed structured control — codex-cli has no real quality API parameter, so this is folded into the prompt as a plain-language instruction and honored on a best-effort basis by whatever model actually runs.",
+						"enum":        []interface{}{"auto", "low", "medium", "high", "xhigh", "max"},
 					},
-					"model_id": map[string]interface{}{
+					"size": map[string]interface{}{
 						"type":        "string",
-						"description": "Optional image model override. Use a model from list_llm_capabilities(capability=\"generate_image\", include_models=true), and pass the matching provider in the same call. Do not use LLM tier labels such as low, medium, high, or auto as image model IDs. Vertex (Gemini) image tiers, pick by need: gemini-3.1-flash-lite-image (Nano Banana 2 Lite) - fastest/cheapest, near-real-time; use for high-volume or latency-sensitive generation. gemini-3.1-flash-image (Nano Banana 2, DEFAULT) - generalist workhorse; best balance of quality, latency, and cost for most requests, use unless another tier is clearly warranted. gemini-3-pro-image (Nano Banana Pro) - most capable and highest latency/cost; use only for complex/professional work needing precise control, dense/legible text rendering, or advanced reasoning, where accuracy matters more than speed. Other example: codex-cli.",
+						"description": "Optional exact output size hint, e.g. '1024x1024', '1536x1024', '1024x1536', '2048x2048', '2048x1152', '3840x2160', '2160x3840', or 'auto'. Best-effort like quality — folded into the prompt as text, not a structured parameter; prefer aspect_ratio/resolution below when an exact size is not the point.",
 					},
-					"input_image": map[string]interface{}{
+					"background": map[string]interface{}{
 						"type":        "string",
-						"description": "Optional base64-encoded image to edit. When provided, the model modifies this image according to the prompt instead of generating from scratch.",
-					},
-					"input_image_mime_type": map[string]interface{}{
-						"type":        "string",
-						"description": "MIME type of the input image (e.g. 'image/png', 'image/jpeg'). Defaults to 'image/png'.",
+						"description": "Optional background hint. 'transparent' only makes sense for formats that support alpha (PNG/WebP) — say so in output_path's extension too. Best-effort like quality — folded into the prompt as text, not a structured parameter.",
+						"enum":        []interface{}{"auto", "opaque", "transparent"},
 					},
 					"aspect_ratio": map[string]interface{}{
 						"type":        "string",
@@ -145,13 +132,36 @@ type imageGenResult struct {
 }
 
 const (
-	defaultImageGenProvider = "vertex"
-	defaultImageGenModelID  = "gemini-3.1-flash-image"
+	defaultImageGenProvider = "codex-cli"
+	defaultImageGenModelID  = "codex-cli"
+	// defaultImageAnalysisProvider is generate_image's own default and is
+	// deliberately separate from defaultImageGenProvider above: image
+	// generation dropped Vertex, but image *analysis* (read_image) still
+	// supports it and must keep defaulting to it.
+	defaultImageAnalysisProvider = "vertex"
 )
 
-var legacyImageModelAliases = map[string]string{
-	"gemini-3.1-flash-image-preview": "gemini-3.1-flash-image",
-	"gemini-3-pro-image-preview":     "gemini-3-pro-image",
+// imageRequirementsSuffix folds quality/size/background into the prompt text
+// itself. codex-cli has no real structured API parameter for any of these,
+// so text is the only way to pass them through at all -- honored on a
+// best-effort basis by whatever model actually runs, never guaranteed.
+// "auto" on any of them means "no opinion", so it is left out rather than
+// cluttering the prompt with a no-op.
+func imageRequirementsSuffix(args map[string]interface{}) string {
+	var parts []string
+	if q, ok := args["quality"].(string); ok && q != "" && q != "auto" {
+		parts = append(parts, "quality: "+q)
+	}
+	if s, ok := args["size"].(string); ok && s != "" && s != "auto" {
+		parts = append(parts, "exact output size: "+s)
+	}
+	if b, ok := args["background"].(string); ok && b != "" && b != "auto" {
+		parts = append(parts, "background: "+b)
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return "\n\nImage requirements — " + strings.Join(parts, ", ") + "."
 }
 
 func defaultImageModelForProvider(provider string) string {
@@ -168,12 +178,6 @@ func normalizeImageModelAlias(provider, modelID string) string {
 	normalizedModelID := strings.ToLower(strings.TrimSpace(modelID))
 	if normalizedModelID == "" || normalizedModelID == provider {
 		return defaultImageModelForProvider(provider)
-	}
-	if alias, ok := legacyImageModelAliases[normalizedModelID]; ok {
-		return alias
-	}
-	if strings.HasPrefix(normalizedModelID, "imagen-") {
-		return defaultImageGenModelID
 	}
 	return strings.TrimSpace(modelID)
 }
@@ -247,7 +251,7 @@ func normalizeImageProviderAndModel(provider, modelID string) (string, string, e
 	modelID = normalizeImageModelAlias(provider, modelID)
 
 	switch provider {
-	case "vertex", "codex-cli":
+	case "codex-cli":
 		if !isSupportedImageModel(provider, modelID) {
 			return "", "", fmt.Errorf("unsupported image generation model %q for provider %q. %s", modelID, provider, imageModelsSummaryForProvider(provider))
 		}
@@ -265,7 +269,7 @@ func normalizeImageAnalysisProviderAndModel(provider, modelID string) (string, s
 		provider = inferImageAnalysisProviderFromModel(modelID)
 	}
 	if provider == "" {
-		provider = defaultImageGenProvider
+		provider = defaultImageAnalysisProvider
 	}
 	if modelID == "" {
 		modelID = defaultImageAnalysisModelForProvider(provider)
@@ -281,8 +285,6 @@ func normalizeImageAnalysisProviderAndModel(provider, modelID string) (string, s
 
 func hasImageProviderAuth(provider string, apiKeys *llm.ProviderAPIKeys) bool {
 	switch strings.ToLower(strings.TrimSpace(provider)) {
-	case "vertex":
-		return apiKeys != nil && apiKeys.Vertex != nil && strings.TrimSpace(*apiKeys.Vertex) != ""
 	case "codex-cli":
 		return apiKeys != nil && apiKeys.CodexCLI != nil && strings.TrimSpace(*apiKeys.CodexCLI) != ""
 	default:
@@ -298,13 +300,15 @@ func hasImageAnalysisProviderAuth(provider string, apiKeys *llm.ProviderAPIKeys)
 		return apiKeys != nil && apiKeys.ZAI != nil && strings.TrimSpace(*apiKeys.ZAI) != ""
 	case "kimi":
 		return apiKeys != nil && apiKeys.Kimi != nil && strings.TrimSpace(*apiKeys.Kimi) != ""
+	case "vertex":
+		return apiKeys != nil && apiKeys.Vertex != nil && strings.TrimSpace(*apiKeys.Vertex) != ""
 	default:
 		return hasImageProviderAuth(provider, apiKeys)
 	}
 }
 
 func supportedImageProviderSummary() string {
-	return "Supported image providers: vertex (gemini-3.1-flash-lite-image = fast/cheap tier, gemini-3.1-flash-image = balanced default, gemini-3-pro-image = highest-accuracy/control tier), codex-cli (codex-cli)"
+	return "Supported image provider: codex-cli"
 }
 
 func supportedImageAnalysisProviderSummary() string {
@@ -328,14 +332,11 @@ func imageModelsSummaryForProvider(provider string) string {
 	return fmt.Sprintf("Supported models for provider %q: %s", provider, strings.Join(models, ", "))
 }
 
-func imageGenerationCostMetadata(provider, modelID string) (*float64, string) {
-	if strings.EqualFold(strings.TrimSpace(provider), "codex-cli") {
-		return nil, "Token-priced via Codex CLI; fixed per-image cost is not available. This is not free."
-	}
-	if cost, ok := imageGenModelCosts[modelID]; ok {
-		return &cost, ""
-	}
-	return nil, "Fixed per-image cost is not configured for this model."
+// imageGenerationCostMetadata reports per-image cost. codex-cli is the only
+// generation provider and is token-priced, so there is no fixed per-image
+// cost to report.
+func imageGenerationCostMetadata(_, _ string) (*float64, string) {
+	return nil, "Token-priced via Codex CLI; fixed per-image cost is not available. This is not free."
 }
 
 func wrapImageGenerationSelectionError(err error) error {
@@ -343,7 +344,7 @@ func wrapImageGenerationSelectionError(err error) error {
 		return nil
 	}
 	return fmt.Errorf(
-		"image generation setup is incomplete: %w. Add workspace provider auth with set_provider_auth(provider=\"vertex\"|\"codex-cli\", api_key=\"...\") or update the workspace image generation defaults to point to a provider that has auth configured. %s",
+		"image generation setup is incomplete: %w. Add workspace provider auth with set_provider_auth(provider=\"codex-cli\", api_key=\"...\"). %s",
 		err,
 		supportedImageProviderSummary(),
 	)
@@ -356,12 +357,6 @@ func wrapImageGenerationInitializationError(provider, modelID string, err error)
 
 	provider = strings.ToLower(strings.TrimSpace(provider))
 	switch provider {
-	case "vertex":
-		return fmt.Errorf(
-			"image generation could not start for provider %q and model %q: %w. To fix this, set workspace auth with set_provider_auth(provider=\"vertex\", api_key=\"...\") or change the workspace image generation defaults to another provider with matching auth. %s",
-			provider, modelID, err,
-			imageModelsSummaryForProvider(provider),
-		)
 	case "codex-cli":
 		return fmt.Errorf(
 			"image generation could not start for provider %q and model %q: %w. To fix this, set workspace auth with set_provider_auth(provider=\"codex-cli\", api_key=\"...\") or change the workspace image generation defaults to another provider with matching auth. %s",
@@ -448,17 +443,6 @@ func validateGuardedImageOutputPath(ctx context.Context, cfg ImageGenExecutorCon
 	return nil
 }
 
-func applyImageGenToolArgs(cfg ImageGenExecutorConfig, args map[string]any) ImageGenExecutorConfig {
-	if provider, ok := args["provider"].(string); ok && strings.TrimSpace(provider) != "" {
-		cfg.Provider = strings.TrimSpace(provider)
-		cfg.ModelID = ""
-	}
-	if modelID, ok := args["model_id"].(string); ok && strings.TrimSpace(modelID) != "" {
-		cfg.ModelID = strings.TrimSpace(modelID)
-	}
-	return cfg
-}
-
 func resolveImageGenerationTarget(ctx context.Context, cfg ImageGenExecutorConfig) (string, string, *llm.ProviderAPIKeys, error) {
 	apiKeys := loadWorkspaceProviderAPIKeys(ctx, cfg.WorkspaceAPIURL)
 
@@ -522,7 +506,6 @@ func applyImageGenRuntimeOverride(ctx context.Context, cfg ImageGenExecutorConfi
 func CreateImageGenExecutor(cfg ImageGenExecutorConfig) func(ctx context.Context, args map[string]any) (string, error) {
 	return func(ctx context.Context, args map[string]any) (string, error) {
 		cfg = applyImageGenRuntimeOverride(ctx, cfg)
-		cfg = applyImageGenToolArgs(cfg, args)
 		prompt, _ := args["prompt"].(string)
 		if prompt == "" {
 			return "", fmt.Errorf("prompt is required")
@@ -553,12 +536,7 @@ func CreateImageGenExecutor(cfg ImageGenExecutorConfig) func(ctx context.Context
 			providerAPIKeys = &llm.ProviderAPIKeys{}
 		}
 		if apiKeyPtr != nil {
-			switch provider {
-			case "codex-cli":
-				providerAPIKeys.CodexCLI = apiKeyPtr
-			default:
-				providerAPIKeys.Vertex = apiKeyPtr
-			}
+			providerAPIKeys.CodexCLI = apiKeyPtr
 		}
 
 		imageGenCfg := llm.Config{
@@ -596,24 +574,12 @@ func CreateImageGenExecutor(cfg ImageGenExecutorConfig) func(ctx context.Context
 			log.Printf("[IMAGE_GEN] negative_prompt set (%d chars)", len(np))
 			opts = append(opts, llmtypes.WithNegativePrompt(np))
 		}
-		if inputImageB64, ok := args["input_image"].(string); ok && inputImageB64 != "" {
-			imgBytes, err := base64.StdEncoding.DecodeString(inputImageB64)
-			if err != nil {
-				return "", fmt.Errorf("invalid input_image base64: %w", err)
-			}
-			mimeType, _ := args["input_image_mime_type"].(string)
-			if mimeType == "" {
-				mimeType = "image/png"
-			}
-			opts = append(opts, llmtypes.WithInputImage(imgBytes, mimeType))
-			log.Printf("[IMAGE_GEN] Edit mode: input image %d bytes, mime=%s", len(imgBytes), mimeType)
+		if suffix := imageRequirementsSuffix(args); suffix != "" {
+			log.Printf("[IMAGE_GEN] requirements folded into prompt:%s", suffix)
+			prompt += suffix
 		}
 
-		mode := "generate"
-		if _, hasInput := args["input_image"]; hasInput {
-			mode = "edit"
-		}
-		log.Printf("[IMAGE_GEN] %s image: prompt=%q model=%s", mode, prompt, modelID)
+		log.Printf("[IMAGE_GEN] generate image: prompt=%q model=%s", prompt, modelID)
 		resp, err := model.GenerateImages(ctx, prompt, opts...)
 		if err != nil {
 			log.Printf("[IMAGE_GEN] GenerateImages failed: %v", err)
@@ -779,7 +745,7 @@ func GetImageEditToolDefinition() llmtypes.Tool {
 	return llmtypes.Tool{
 		Function: &llmtypes.FunctionDefinition{
 			Name:        "image_edit",
-			Description: "Edit an existing image from the workspace using a text instruction. Requires full absolute image_path and output_path values under the workspace docs root. Before choosing provider/model_id, call list_llm_capabilities(capability=\"generate_image\", include_models=true). If you pass model_id, also pass the matching provider from that capability result; do not pass model_id by itself. Displays results inline.",
+			Description: "Edit an existing image from the workspace using a text instruction. Requires full absolute image_path and output_path values under the workspace docs root. See the image-prompting skill for how to write an effective edit instruction. Displays results inline.",
 			Parameters: llmtypes.NewParameters(map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
@@ -795,14 +761,6 @@ func GetImageEditToolDefinition() llmtypes.Tool {
 						"type":        "string",
 						"description": "Instruction describing how to edit the image. Be explicit — describe the full desired result rather than relative changes.",
 					},
-					"provider": map[string]interface{}{
-						"type":        "string",
-						"description": "Optional provider override. Discover usable provider/model pairs with list_llm_capabilities(capability=\"generate_image\", include_models=true). Supported values: vertex or codex-cli. If specifying model_id, pass the matching provider too.",
-					},
-					"model_id": map[string]interface{}{
-						"type":        "string",
-						"description": "Optional image model override. Use a model from list_llm_capabilities(capability=\"generate_image\", include_models=true), and pass the matching provider in the same call. Do not use LLM tier labels such as low, medium, high, or auto as image model IDs. Vertex (Gemini) image tiers, pick by need: gemini-3.1-flash-lite-image (Nano Banana 2 Lite) - fastest/cheapest, near-real-time; use for high-volume or latency-sensitive generation. gemini-3.1-flash-image (Nano Banana 2, DEFAULT) - generalist workhorse; best balance of quality, latency, and cost for most requests, use unless another tier is clearly warranted. gemini-3-pro-image (Nano Banana Pro) - most capable and highest latency/cost; use only for complex/professional work needing precise control, dense/legible text rendering, or advanced reasoning, where accuracy matters more than speed. Other example: codex-cli.",
-					},
 					"aspect_ratio": map[string]interface{}{
 						"type":        "string",
 						"description": "Output aspect ratio. Defaults to the input image's ratio.",
@@ -813,6 +771,20 @@ func GetImageEditToolDefinition() llmtypes.Tool {
 						"description": "Output resolution. Defaults to '1K'.",
 						"enum":        []interface{}{"1K", "2K", "4K"},
 					},
+					"quality": map[string]interface{}{
+						"type":        "string",
+						"description": "Optional rendering quality hint (from GPT Image 2.5's own vocabulary). Not a guaranteed structured control — codex-cli has no real quality API parameter, so this is folded into the prompt as a plain-language instruction and honored on a best-effort basis by whatever model actually runs.",
+						"enum":        []interface{}{"auto", "low", "medium", "high", "xhigh", "max"},
+					},
+					"size": map[string]interface{}{
+						"type":        "string",
+						"description": "Optional exact output size hint, e.g. '1024x1024', '1536x1024', '1024x1536', '2048x2048', '2048x1152', '3840x2160', '2160x3840', or 'auto'. Best-effort like quality — folded into the prompt as text, not a structured parameter; prefer aspect_ratio/resolution above when an exact size is not the point.",
+					},
+					"background": map[string]interface{}{
+						"type":        "string",
+						"description": "Optional background hint. 'transparent' only makes sense for formats that support alpha (PNG/WebP) — say so in output_path's extension too. Best-effort like quality — folded into the prompt as text, not a structured parameter.",
+						"enum":        []interface{}{"auto", "opaque", "transparent"},
+					},
 				},
 				"required": []interface{}{"image_path", "output_path", "prompt"},
 			}),
@@ -821,11 +793,10 @@ func GetImageEditToolDefinition() llmtypes.Tool {
 }
 
 // CreateImageEditExecutor returns an executor that fetches an image from the workspace,
-// edits it using the Gemini image model, and saves the result back to the workspace.
+// edits it using the image model, and saves the result back to the workspace.
 func CreateImageEditExecutor(cfg ImageGenExecutorConfig) func(ctx context.Context, args map[string]any) (string, error) {
 	return func(ctx context.Context, args map[string]any) (string, error) {
 		cfg = applyImageGenRuntimeOverride(ctx, cfg)
-		cfg = applyImageGenToolArgs(cfg, args)
 		imagePath, _ := args["image_path"].(string)
 		normalizedImagePath, err := normalizeRequiredAbsoluteWorkspaceDocumentPath(imagePath, "image_path")
 		if err != nil {
@@ -845,6 +816,10 @@ func CreateImageEditExecutor(cfg ImageGenExecutorConfig) func(ctx context.Contex
 		if prompt == "" {
 			return "", fmt.Errorf("prompt is required")
 		}
+		if suffix := imageRequirementsSuffix(args); suffix != "" {
+			log.Printf("[IMAGE_EDIT] requirements folded into prompt:%s", suffix)
+			prompt += suffix
+		}
 
 		provider, modelID, workspaceAPIKeys, err := resolveImageGenerationTarget(ctx, cfg)
 		if err != nil {
@@ -862,12 +837,7 @@ func CreateImageEditExecutor(cfg ImageGenExecutorConfig) func(ctx context.Contex
 			providerAPIKeys = &llm.ProviderAPIKeys{}
 		}
 		if apiKeyPtr != nil {
-			switch provider {
-			case "codex-cli":
-				providerAPIKeys.CodexCLI = apiKeyPtr
-			default:
-				providerAPIKeys.Vertex = apiKeyPtr
-			}
+			providerAPIKeys.CodexCLI = apiKeyPtr
 		}
 
 		imageGenCfg := llm.Config{

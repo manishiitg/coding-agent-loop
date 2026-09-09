@@ -77,6 +77,7 @@ describe('Pulse workspace filter interactions', () => {
   })
 
   it('clicks all nine queues and resets both category and area', async () => {
+    await click('Clear filter')
     for (const [label, expected] of [
       ['Current', 10], ['Pulse to fix', 0], ['Queued for Pulse', 2], ['Waiting for evidence', 4],
       ['Your decisions', 0], ['Ideas', 0], ['Paused', 0], ['Platform repair pending', 4], ['Resolved', 11],
@@ -87,7 +88,7 @@ describe('Pulse workspace filter interactions', () => {
       expect(shown()).toBe(expected)
       expect(button(label).getAttribute('aria-pressed')).toBe('true')
     }
-    await click('View drift findings')
+    await click('Drift check')
     await click('Resolved')
     expect(count('Resolved')).toBe(3)
     shownCount(3)
@@ -135,11 +136,39 @@ describe('Pulse workspace filter interactions', () => {
     shownCount(4)
   })
 
+
+  it('opens drift content and resolved findings together when no current findings remain', async () => {
+    expect(container.querySelector('[aria-label="Technical review content"]')).not.toBeNull()
+    await click('Drift check')
+    expect(button('Drift check').getAttribute('aria-pressed')).toBe('true')
+    expect(container.querySelector('[aria-label="Drift check content"]')?.textContent).toContain('No current drift findings.')
+    expect(container.querySelector('[aria-label="Technical review content"]')).toBeNull()
+    expect(container.textContent).not.toContain('View drift findings')
+    expect(button('Resolved').getAttribute('aria-pressed')).toBe('true')
+    shownCount(3)
+    expect(container.textContent).toContain('PUL-R0')
+    await click('Strategic review')
+    expect(container.querySelector('[aria-label="Drift check content"]')).toBeNull()
+    expect(container.querySelector('[aria-label="Strategic review content"]')).not.toBeNull()
+    shownCount(4)
+  })
+
+  it('opens an explicit empty drift view when no findings were recorded', async () => {
+    vi.mocked(agentApi.getPulseFindings).mockResolvedValue({ success: true, findings: [] })
+    await act(async () => window.dispatchEvent(new CustomEvent(WORKFLOW_LOG_REFRESH_EVENT)))
+    await click('Drift check')
+    expect(button('Current').getAttribute('aria-pressed')).toBe('true')
+    shownCount(0)
+    expect(container.textContent).toContain('Completed drift checks and their details are shown above.')
+    expect(container.textContent).not.toContain('Nothing in this queue')
+  })
+
   it('does not carry filters into another workflow', async () => {
-    await click('View drift findings')
+    await click('Drift check')
     await click('Resolved')
     await act(async () => render('Workflow/another'))
     expect(button('Current').getAttribute('aria-pressed')).toBe('true')
-    expect(container.querySelector('[aria-label="Clear review area filter"]')).toBeNull()
+    expect(button('Technical review').getAttribute('aria-pressed')).toBe('true')
+    shownCount(5)
   })
 })

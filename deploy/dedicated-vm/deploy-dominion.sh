@@ -38,6 +38,16 @@ GO_BIN="/srv/dominion/tools/go/bin/go"
 RELEASES_ROOT="/srv/dominion/releases"
 CURRENT_LINK="/srv/dominion/current"
 
+# This script runs over a plain non-interactive `ssh host 'cmd'` exec, which
+# does not source .bashrc/.profile (those only run for interactive/login
+# shells) and never loads /srv/dominion/.env's PATH= line either -- that file
+# is only read by systemd via EnvironmentFile=. So /srv/dominion/tools/bin
+# (where claude/gog/gws/surge/agent-browser all install to) is not on PATH
+# here unless this script puts it there itself. 2026-09-09: `command -v
+# agent-browser` failed right after a successful install for exactly this
+# reason.
+export PATH="/srv/dominion/tools/bin:$PATH"
+
 REPO="$SRC_ROOT/mcp-agent-builder-go"
 MLP="$SRC_ROOT/multi-llm-provider-go"
 MCPAGENT="$SRC_ROOT/mcpagent"
@@ -55,7 +65,12 @@ if [[ ! -x "$GO_BIN" ]]; then
 fi
 
 echo "==> Ensuring agent-browser is installed (preview_report and every browser-automation tool shell out to it by name; nothing checks it's on PATH until it fails at runtime)"
-if ! npm install -g agent-browser@latest 2>&1 | tail -5; then
+# Dominion's default npm prefix is /usr (root-owned; confirmed 2026-09-08 via
+# `npm config get prefix`), which the rootless `dominion` user cannot write to
+# -- npm install -g without --prefix fails with EACCES. /srv/dominion/tools is
+# the box's established per-user tool prefix (already on PATH via .env, same
+# place claude/gog/gws/surge are symlinked from).
+if ! npm install --prefix /srv/dominion/tools -g agent-browser@latest 2>&1 | tail -5; then
   echo "FATAL: npm install -g agent-browser@latest failed" >&2
   exit 1
 fi
@@ -80,6 +95,21 @@ sync_repo() {
 }
 sync_repo "coding-agent-loop" "$REPO"
 sync_repo "multi-llm-provider-go" "$MLP"
+
+# This script's own on-disk copy at /srv/dominion/deploy-dominion.sh is what
+# actually runs -- it does NOT auto-update from the repo just synced above.
+# 2026-09-09: a real deploy silently ran a copy that predated agent-browser
+# provisioning, the static/report-preview fix, and the CDP-disable work by a
+# full day, because nothing ever re-copied it after those changes landed.
+# Bash has already read this whole file into memory, so overwriting it here
+# is safe for the rest of THIS run; it just makes the NEXT invocation current.
+SELF_SOURCE="$REPO/deploy/dedicated-vm/deploy-dominion.sh"
+SELF_TARGET="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/$(basename "${BASH_SOURCE[0]}")"
+if ! cmp -s "$SELF_SOURCE" "$SELF_TARGET"; then
+  echo "==> Updating this script's own copy at $SELF_TARGET from the repo just synced (takes effect next run)"
+  cp "$SELF_SOURCE" "$SELF_TARGET"
+  chmod +x "$SELF_TARGET"
+fi
 sync_repo "mcpagent" "$MCPAGENT"
 
 # workspace/ and mcpagent/'s own go.mod carry no `replace` directives (only
@@ -179,13 +209,30 @@ fi
 
 PREVIOUS_RELEASE="$(readlink -f "$CURRENT_LINK" 2>/dev/null || true)"
 echo ""
-echo "==> Activating: flipping $CURRENT_LINK -> $RELEASE_DIR and restarting dominion-agent"
+echo "==> Activating: flipping $CURRENT_LINK -> $RELEASE_DIR and restarting dominion-workspace, dominion-agent"
 ln -sfn "$RELEASE_DIR" "$CURRENT_LINK"
 mkdir -p "$HOME/.config/systemd/user/dominion-agent.service.d"
 printf '%s\n' '[Service]' 'Environment=AGENT_BROWSER_CDP_ENABLED=false' > "$HOME/.config/systemd/user/dominion-agent.service.d/20-disable-cdp.conf"
 mkdir -p "$HOME/.config/systemd/user/dominion-workspace.service.d"
 printf '%s\n' '[Service]' 'Environment=AGENT_BROWSER_CDP_ENABLED=false' > "$HOME/.config/systemd/user/dominion-workspace.service.d/20-disable-cdp.conf"
 systemctl --user daemon-reload
+# dominion-agent depends on dominion-workspace (After=dominion-workspace.service
+# in its unit), so restart it first -- and it must actually be restarted here:
+# until now this script only ever restarted dominion-agent, so dominion-workspace
+# kept running the PREVIOUS release's binary (and the previous env) indefinitely
+# after every deploy, CDP-disable drop-in included.
+systemctl --user restart dominion-workspace
+sleep 2
+if ! systemctl --user is-active --quiet dominion-workspace; then
+  echo "FATAL: dominion-workspace failed to start on the new release — rolling back to $PREVIOUS_RELEASE" >&2
+  if [[ -n "$PREVIOUS_RELEASE" ]]; then
+    ln -sfn "$PREVIOUS_RELEASE" "$CURRENT_LINK"
+    systemctl --user restart dominion-workspace
+    sleep 2
+    systemctl --user is-active --quiet dominion-workspace && echo "    rollback successful, dominion-workspace active again" || echo "    ROLLBACK ALSO FAILED — needs manual intervention" >&2
+  fi
+  exit 1
+fi
 systemctl --user restart dominion-agent
 sleep 3
 
@@ -195,6 +242,8 @@ else
   echo "FATAL: health check failed after restart — rolling back to $PREVIOUS_RELEASE" >&2
   if [[ -n "$PREVIOUS_RELEASE" ]]; then
     ln -sfn "$PREVIOUS_RELEASE" "$CURRENT_LINK"
+    systemctl --user restart dominion-workspace
+    sleep 2
     systemctl --user restart dominion-agent
     sleep 3
     curl -fsS -o /dev/null http://127.0.0.1:21000/api/health && echo "    rollback successful, service healthy again" || echo "    ROLLBACK ALSO FAILED — needs manual intervention" >&2

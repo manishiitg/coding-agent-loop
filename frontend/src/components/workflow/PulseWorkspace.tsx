@@ -128,7 +128,7 @@ export function PulseWorkspace({
   const [impact, setImpact] = useState<PulseImpactLedger>({ interventions: [], observations: [], assessments: [] })
   const [contextRecords, setContextRecords] = useState<PulseContextRecord[]>([])
   const [focus, setFocus] = useState<PulseFocus>('all')
-  const [moduleFilter, setModuleFilter] = useState<string | null>(null)
+  const [moduleFilter, setModuleFilter] = useState<string | null>('technical_review')
   const [expandedFinding, setExpandedFinding] = useState<string | null>(null)
   const [showCompleteBacklog, setShowCompleteBacklog] = useState(false)
   const [loading, setLoading] = useState(false)
@@ -199,7 +199,7 @@ export function PulseWorkspace({
 
   useEffect(() => {
     setFocus('all')
-    setModuleFilter(null)
+    setModuleFilter('technical_review')
     setExpandedFinding(null)
     setShowCompleteBacklog(false)
     setCoverage([])
@@ -299,8 +299,14 @@ export function PulseWorkspace({
       <ReportHumanInputPanel workspacePath={workspacePath} contentMode="all" providedImpact={impact} />
 
       <PulseReviewOverview moduleStates={moduleStates} coverage={mergePulseReviewCoverage(coverage, reviewFocuses, reviewFocusSelections)}
-        audits={audits} reports={reports} findings={findings} moduleFilter={moduleFilter}
-        onSelectModule={module => { setModuleFilter(module); setFocus('all'); setShowCompleteBacklog(false) }} />
+        audits={audits} reports={reports} findings={findings} moduleFilter={moduleFilter} reviewFocusSelections={reviewFocusSelections}
+        onSelectModule={module => {
+          const counts = pulseWorkspaceQueueCounts(findings.filter(item => pulseFindingReviewAreas(item, reviewFocusSelections).includes(module)))
+          setModuleFilter(module)
+          setFocus(module === 'plan_drift_review' && counts.all === 0 && counts.resolved > 0 ? 'resolved' : 'all')
+          setShowCompleteBacklog(false)
+          setExpandedFinding(null)
+        }} />
 
       {(error || statusError) && (
         <div className="rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-300">
@@ -318,7 +324,7 @@ export function PulseWorkspace({
                   {FOCUS_TITLES[focus]}
                   {moduleFilter && (
                     <span className="ml-1 font-normal">
-                      in {moduleSummaries.find((m) => m.id === moduleFilter)?.label || moduleFilter}
+                      in {moduleFilter === 'plan_drift_review' ? 'Drift check' : moduleSummaries.find((m) => m.id === moduleFilter)?.label || moduleFilter}
                     </span>
                   )}
                   {' · '}{FOCUS_HINTS[focus]}
@@ -332,7 +338,7 @@ export function PulseWorkspace({
                     onClick={() => { setModuleFilter(null); setShowCompleteBacklog(false) }}
                     className="flex items-center gap-1 rounded-full border border-primary/35 bg-primary/10 px-2 py-1 text-[10px] font-semibold text-primary"
                   >
-                    {moduleSummaries.find((module) => module.id === moduleFilter)?.label || readable(moduleFilter)}
+                    {moduleFilter === 'plan_drift_review' ? 'Drift check' : moduleSummaries.find((module) => module.id === moduleFilter)?.label || readable(moduleFilter)}
                     <X className="h-3 w-3" />
                   </button>
                 )}
@@ -393,9 +399,9 @@ export function PulseWorkspace({
             <div className="flex min-h-40 flex-col items-center justify-center px-6 py-8 text-center">
               <CheckCircle2 className="h-5 w-5 text-emerald-500" />
               <div className="mt-2 text-sm font-medium text-foreground">
-                {focus === 'resolved' ? 'No resolved issues yet' : 'Nothing in this queue'}
+                {moduleFilter === 'plan_drift_review' && focus === 'all' ? 'No current drift findings' : focus === 'resolved' ? 'No resolved issues yet' : 'Nothing in this queue'}
               </div>
-              <div className="mt-1 text-xs text-muted-foreground">Choose another queue{moduleFilter ? ' or clear the review area filter' : ' or inspect a review area above'}.</div>
+              <div className="mt-1 text-xs text-muted-foreground">{moduleFilter === 'plan_drift_review' && focus === 'all' ? 'Completed drift checks and their details are shown above.' : <>Choose another queue{moduleFilter ? ' or clear the review area filter' : ' or inspect a review area above'}.</>}</div>
             </div>
           ) : (
             <div className="space-y-2 p-3">

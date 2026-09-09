@@ -1,0 +1,247 @@
+package agentworksclient
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"reflect"
+	"strings"
+	"sync/atomic"
+	"testing"
+
+	"github.com/mark3labs/mcp-go/mcp"
+)
+
+func TestHTTPRoundtripAndLogin(t *testing.T) {
+	var calls int
+	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path == "/api/auth/login" {
+			if r.Header.Get("Authorization") != "" {
+				t.Error("login sent existing token")
+			}
+			var request map[string]string
+			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+				t.Error(err)
+			}
+			if request["username"] != "alice" || request["password"] != "pass" || request["provider"] != "simple" {
+				t.Errorf("login: %#v", request)
+			}
+			_, _ = w.Write([]byte(`{"token":"new-token","user":{"id":"alice"}}`))
+			return
+		}
+		if r.Header.Get("Authorization") != "Bearer secret" {
+			t.Error("missing token")
+		}
+		switch r.URL.Path {
+		case "/api/external/v1/tools":
+			if r.Method != http.MethodGet {
+				t.Error("wrong discovery method")
+			}
+			_, _ = w.Write([]byte(`{"tools":[{"name":"get_plan","description":"Read plan","inputSchema":{"type":"object","properties":{"workflow_id":{"type":"string"}},"required":["workflow_id"]}}]}`))
+		case "/api/external/v1/call":
+			calls++
+			var body struct {
+				Name      string
+				Arguments map[string]any
+			}
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Error(err)
+			}
+			if body.Name != "get_plan" || body.Arguments["workflow_id"] != "wf-1" {
+				t.Errorf("unexpected body: %#v", body)
+			}
+			_, _ = w.Write([]byte(`{"revision":"abc","plan":{"steps":[]}}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer s.Close()
+	c, err := New(s.URL, "secret")
+	if err != nil {
+		t.Fatal(err)
+	}
+	definitions, err := c.Tools(context.Background())
+	if err != nil || len(definitions) != 1 {
+		t.Fatalf("discovery: %v %v", definitions, err)
+	}
+	result, err := c.Call(context.Background(), "get_plan", map[string]any{"workflow_id": "wf-1"})
+	if err != nil || !strings.Contains(string(result), `"revision":"abc"`) || calls != 1 {
+		t.Fatalf("call: %s %v", result, err)
+	}
+	token, err := c.Login(context.Background(), "simple", "alice", "pass")
+	if err != nil || token != "new-token" {
+		t.Fatalf("login: %q %v", token, err)
+	}
+}
+
+func TestTransportSecurityAndErrors(t *testing.T) {
+	for _, raw := range []string{"http://example.com", "https://user:pass@example.com", "https://example.com/?token=x", "ftp://localhost", "https://example.com/#x", "https:///missing"} {
+		if _, err := New(raw, "secret"); err == nil {
+			t.Errorf("accepted unsafe URL %q", raw)
+		}
+	}
+	for _, raw := range []string{"https://example.com/base/", "http://localhost:8080", "http://127.0.0.1:8080", "http://[::1]:8080"} {
+		if _, err := New(raw, "secret"); err != nil {
+			t.Errorf("rejected %q: %v", raw, err)
+		}
+	}
+	var redirected atomic.Bool
+	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { redirected.Store(true) }))
+	defer target.Close()
+	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, target.URL, http.StatusTemporaryRedirect)
+	}))
+	defer origin.Close()
+	c, _ := New(origin.URL, "secret")
+	_, err := c.Call(context.Background(), "write_file", nil)
+	var apiErr *APIError
+	if !errors.As(err, &apiErr) || apiErr.Status != 307 || redirected.Load() {
+		t.Fatalf("redirect was followed or not reported: %v", err)
+	}
+	for _, tc := range []struct {
+		body    string
+		code    string
+		message string
+	}{{`{"error":{"code":"revision_conflict","message":"Read the current revision"}}`, "revision_conflict", "Read the current revision"}, {`{"error":"Invalid credentials"}`, "http_error", "Invalid credentials"}, {`<html>not JSON</html>`, "http_error", "Conflict"}} {
+		t.Run(tc.message, func(t *testing.T) {
+			s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(http.StatusConflict)
+				_, _ = w.Write([]byte(tc.body))
+			}))
+			defer s.Close()
+			client, _ := New(s.URL, "secret")
+			_, err := client.Call(context.Background(), "update_scripted_step", nil)
+			var e *APIError
+			if !errors.As(err, &e) || e.Code != tc.code || e.Message != tc.message {
+				t.Fatalf("error = %#v", err)
+			}
+		})
+	}
+}
+
+func TestMissingAuthenticationAndCancellation(t *testing.T) {
+	var requests atomic.Int32
+	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { requests.Add(1); _, _ = w.Write([]byte(`{}`)) }))
+	defer s.Close()
+	c, _ := New(s.URL, "")
+	if _, err := c.Tools(context.Background()); err == nil {
+		t.Fatal("accepted unauthenticated call")
+	}
+	c, _ = New(s.URL, "token")
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := c.Call(ctx, "get_plan", nil); !errors.Is(err, context.Canceled) {
+		t.Fatalf("expected cancellation: %v", err)
+	}
+	if requests.Load() != 0 {
+		t.Fatal("request reached server")
+	}
+}
+
+func TestNoContentCancellationSuccess(t *testing.T) {
+	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer s.Close()
+	c, _ := New(s.URL, "token")
+	result, err := c.Call(context.Background(), "builder_cancel", map[string]any{"workflow_id": "wf", "session_id": "s"})
+	if err != nil || string(result) != `{}` {
+		t.Fatalf("cancellation: %s %v", result, err)
+	}
+}
+
+func TestPrivateAtomicConfig(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "nested", "config.json")
+	cfg := Config{Server: "https://agentworks.example", Token: "first"}
+	if err := SaveConfig(path, cfg); err != nil {
+		t.Fatal(err)
+	}
+	info, _ := os.Stat(path)
+	if info.Mode().Perm() != 0600 {
+		t.Fatalf("permissions: %o", info.Mode().Perm())
+	}
+	cfg.Token = "second"
+	if err := SaveConfig(path, cfg); err != nil {
+		t.Fatal(err)
+	}
+	got, err := LoadConfig(path)
+	if err != nil || got != cfg {
+		t.Fatalf("read: %#v %v", got, err)
+	}
+	entries, _ := os.ReadDir(filepath.Dir(path))
+	if len(entries) != 1 {
+		t.Fatalf("temporary credential left behind: %#v", entries)
+	}
+	if err := os.Chmod(path, 0644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := LoadConfig(path); err == nil {
+		t.Fatal("accepted world-readable credentials")
+	}
+	link := filepath.Join(t.TempDir(), "link")
+	if err := os.Symlink(path, link); err != nil {
+		t.Fatal(err)
+	}
+	if err := SaveConfig(link, cfg); err == nil {
+		t.Fatal("replaced symbolic link")
+	}
+	if _, err := LoadConfig(link); err == nil {
+		t.Fatal("read symbolic link")
+	}
+}
+
+type fakeCaller struct {
+	definitions []Tool
+	name        string
+	arguments   map[string]any
+	err         error
+}
+
+func (f *fakeCaller) Tools(context.Context) ([]Tool, error) { return f.definitions, nil }
+func (f *fakeCaller) Call(_ context.Context, name string, args map[string]any) (json.RawMessage, error) {
+	f.name = name
+	f.arguments = args
+	return json.RawMessage(`{"saved":true}`), f.err
+}
+
+func TestMCPSchemaParityAndDispatch(t *testing.T) {
+	schema := json.RawMessage(`{"type":"object","properties":{"workflow_id":{"type":"string"},"patch":{"anyOf":[{"type":"string"},{"type":"object"}]}},"required":["workflow_id"],"additionalProperties":false}`)
+	caller := &fakeCaller{definitions: []Tool{{Name: "update_scripted_step", Description: "Native server tool", InputSchema: schema}, {Name: "get_plan", InputSchema: json.RawMessage(`{"type":"object"}`)}}}
+	bridge, err := NewMCPServer(context.Background(), caller)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tool := bridge.GetTool("update_scripted_step")
+	if tool == nil {
+		t.Fatal("missing tool")
+	}
+	encoded, err := json.Marshal(tool.Tool)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var description map[string]any
+	_ = json.Unmarshal(encoded, &description)
+	var expected any
+	_ = json.Unmarshal(schema, &expected)
+	if !reflect.DeepEqual(description["inputSchema"], expected) {
+		t.Fatalf("schema changed: %s", encoded)
+	}
+	request := mcp.CallToolRequest{Params: mcp.CallToolParams{Name: "update_scripted_step", Arguments: map[string]any{"workflow_id": "wf-1", "patch": "x"}}}
+	result, err := tool.Handler(context.Background(), request)
+	if err != nil || result.IsError || caller.name != "update_scripted_step" || caller.arguments["patch"] != "x" {
+		t.Fatalf("dispatch: %#v %v", result, err)
+	}
+	if result.StructuredContent == nil {
+		t.Fatal("MCP success lacks structured content")
+	}
+	caller.err = &APIError{Status: 409, Code: "revision_conflict", Message: "stale"}
+	result, err = tool.Handler(context.Background(), request)
+	if err != nil || !result.IsError {
+		t.Fatalf("MCP error not surfaced: %#v %v", result, err)
+	}
+}

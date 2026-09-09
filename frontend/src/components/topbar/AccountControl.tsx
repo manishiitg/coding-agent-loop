@@ -1,13 +1,14 @@
 import { useEffect, useRef, useState } from 'react'
-import { KeyRound, LogOut } from 'lucide-react'
+import { KeyRound, LogOut, Terminal } from 'lucide-react'
 import { Tooltip, TooltipContent, TooltipTrigger } from '../ui/tooltip'
 import { useAuthStore } from '../../stores/useAuthStore'
 import ChangePasswordDialog from './ChangePasswordDialog'
+import AccessTokensDialog from './AccessTokensDialog'
 
 /**
  * AccountControl - the signed-in user's avatar (their initial) which opens a
- * small account menu: who is signed in, change password, sign out. Rendered
- * only in multi-user mode with an authenticated user. Same outside-click /
+ * small account menu for hosted and local installations. Local single-user
+ * installs expose access tokens after automatic session initialization. Same outside-click /
  * Escape behaviour as IconPopover; not reusing it because the trigger here
  * is the round avatar itself rather than a padded icon button.
  */
@@ -15,6 +16,7 @@ export default function AccountControl() {
   const { user, logout, isMultiUserMode } = useAuthStore()
   const [open, setOpen] = useState(false)
   const [changingPassword, setChangingPassword] = useState(false)
+  const [managingTokens, setManagingTokens] = useState(false)
   const containerRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -33,9 +35,9 @@ export default function AccountControl() {
     }
   }, [open])
 
-  if (!isMultiUserMode || !user) return null
+  if (!user) return null
 
-  const displayName = user.username || user.email || 'User'
+  const displayName = isMultiUserMode ? (user.username || user.email || 'User') : 'Local account'
   const initial = displayName.trim().charAt(0).toUpperCase() || '?'
   const itemClass =
     'w-full flex items-center gap-2 px-2 py-1.5 rounded-md text-sm text-left text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors'
@@ -65,11 +67,11 @@ export default function AccountControl() {
         >
           <div className="px-2 py-1.5 mb-1 border-b border-gray-200 dark:border-slate-700">
             <p className="text-sm font-medium text-gray-900 dark:text-gray-100 truncate">{displayName}</p>
-            {user.email && user.username !== user.email && (
+            {isMultiUserMode && user.email && user.username !== user.email && (
               <p className="text-xs text-gray-500 dark:text-gray-400 truncate">{user.email}</p>
             )}
           </div>
-          <button
+          {isMultiUserMode && <button
             type="button"
             role="menuitem"
             className={itemClass}
@@ -80,8 +82,15 @@ export default function AccountControl() {
           >
             <KeyRound className="w-4 h-4 text-gray-500 dark:text-gray-400" />
             Change password
+          </button>}
+          <button type="button" role="menuitem" className={itemClass} onClick={() => {
+            setOpen(false)
+            setManagingTokens(true)
+          }}>
+            <Terminal className="w-4 h-4 text-gray-500 dark:text-gray-400" />
+            Access tokens
           </button>
-          <button
+          {isMultiUserMode && <button
             type="button"
             role="menuitem"
             className={`${itemClass} hover:text-red-600 dark:hover:text-red-400`}
@@ -92,10 +101,11 @@ export default function AccountControl() {
           >
             <LogOut className="w-4 h-4" />
             Sign out
-          </button>
+          </button>}
         </div>
       )}
 
+      {managingTokens && <AccessTokensDialog onClose={() => setManagingTokens(false)} />}
       <ChangePasswordDialog isOpen={changingPassword} onClose={() => setChangingPassword(false)} />
     </div>
   )

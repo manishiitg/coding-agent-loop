@@ -116,7 +116,7 @@ func runServer(cmd *cobra.Command, args []string) {
 		api.GET("/search", handlers.SearchDocuments)
 
 		// File upload route
-		api.POST("/upload", handlers.UploadFile)
+		api.POST("/upload", handlers.WorkflowDocumentLock, handlers.UploadFile)
 
 		// Shell execution route
 		api.POST("/execute", requireWorkspaceAPIToken(), handlers.ExecuteShellCommand)
@@ -155,31 +155,32 @@ func runServer(cmd *cobra.Command, args []string) {
 
 		// Version management routes (separate from wildcard routes)
 		api.GET("/versions/*filepath", handlers.GetFileVersionHistory)
-		api.POST("/restore/*filepath", handlers.RestoreFileVersion)
+		api.POST("/restore/*filepath", handlers.WorkflowDocumentLock, handlers.RestoreFileVersion)
 
 		// Folder operations
-		api.POST("/folders", handlers.CreateFolder)
-		api.POST("/folders/copy", handlers.CopyFolder)
-		api.DELETE("/folders/*folderpath", handlers.DeleteFolder)
+		api.POST("/folders", handlers.WorkflowDocumentLock, handlers.CreateFolder)
+		api.POST("/folders/copy", handlers.WorkflowDocumentLock, handlers.CopyFolder)
+		api.DELETE("/folders/*folderpath", handlers.WorkflowDocumentLock, handlers.DeleteFolder)
 
 		// Document management routes - SPECIFIC routes BEFORE wildcard
 		api.OPTIONS("/documents", func(c *gin.Context) {
 			c.Status(http.StatusNoContent)
 		})
-		api.POST("/documents", handlers.CreateDocument)
-		api.GET("/documents", handlers.ListDocuments)
+		api.POST("/workflow-files", requireConfiguredWorkspaceAPIToken(), handlers.WorkflowFiles)
+		api.POST("/documents", handlers.WorkflowDocumentLock, handlers.CreateDocument)
+		api.GET("/documents", handlers.WorkflowDocumentLock, handlers.ListDocuments)
 
 		// Glob search route (separate path to avoid wildcard conflict)
 		api.GET("/glob", handlers.GlobDocuments)
 
 		// Document operations with filepath (catch-all route - MUST BE LAST)
-		api.Any("/documents/*filepath", handlers.HandleDocumentRequest)
+		api.Any("/documents/*filepath", handlers.WorkflowDocumentLock, handlers.HandleDocumentRequest)
 
 		// Workspace backup routes
 		workspace := api.Group("/workspace")
 		{
 			workspace.POST("/export", handlers.ExportWorkspace)
-			workspace.POST("/import", handlers.ImportWorkspace)
+			workspace.POST("/import", handlers.WorkflowDocumentLock, handlers.ImportWorkspace)
 		}
 	}
 

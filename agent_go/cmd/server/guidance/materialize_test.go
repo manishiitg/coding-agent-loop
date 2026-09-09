@@ -5,11 +5,51 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 )
 
 var builderReferenceReadPattern = regexp.MustCompile(`"name":"builder-reference","path":"(references/[^"]+\.md)"`)
+
+func TestMegaSkillDiscoveryFitsFormatAndKeepsEveryTopic(t *testing.T) {
+	check := func(t *testing.T, skill *llmtypes.Skill) {
+		t.Helper()
+		if skill == nil {
+			return
+		}
+		if n := utf8.RuneCountInString(skill.Description); n == 0 || n > 1024 {
+			t.Fatalf("%s description has %d characters; skill metadata must have 1–1024", skill.Name, n)
+		}
+		if strings.ContainsAny(skill.Description, "<>") {
+			t.Fatalf("%s description contains angle brackets rejected by skill validators", skill.Name)
+		}
+		for _, file := range skill.SupportingFiles {
+			topic := strings.TrimSuffix(strings.TrimPrefix(file.RelPath, "references/"), ".md")
+			if !strings.Contains(skill.Description, topic) {
+				t.Errorf("%s is missing from %s discovery metadata", topic, skill.Name)
+			}
+			if !strings.Contains(skill.Content, file.RelPath) || len(file.Content) == 0 {
+				t.Errorf("%s must remain readable through the full reference index", file.RelPath)
+			}
+		}
+	}
+	for _, mode := range []string{"workshop", "multi-agent", "run", ""} {
+		t.Run(mode, func(t *testing.T) {
+			check(t, MaterializeReferenceSkill(mode))
+			check(t, MaterializeGuidanceSkill(mode))
+		})
+	}
+	var tools []string
+	for _, meta := range referenceKinds {
+		tools = append(tools, meta.Tools...)
+	}
+	t.Run("step with all capabilities", func(t *testing.T) {
+		check(t, MaterializeStepExecutionReferenceSkill(StepExecutionSignals{
+			ToolNames: tools, CodeExecutionMode: true, ScriptedStep: true,
+		}))
+	})
+}
 
 func TestHumanInTheLoopReferenceIsAttachedForWorkflowModes(t *testing.T) {
 	const path = "references/human-in-the-loop.md"

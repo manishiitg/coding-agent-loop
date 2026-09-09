@@ -6,6 +6,7 @@ import (
 	"net/http/httputil"
 	"net/url"
 	"os"
+	"path"
 	"strings"
 )
 
@@ -42,6 +43,11 @@ func workspaceProxyHandler() http.Handler {
 	log.Printf("[WORKSPACE PROXY] Proxying /api/wp/* → %s", wsURL)
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Internal transactions must not be reachable through the generic proxy.
+		if path.Clean("/"+workspaceProxyRelativePath(r)) == "/api/workflow-files" {
+			http.NotFound(w, r)
+			return
+		}
 		// Live browser access must go through workflow ownership and input gating.
 		if strings.HasPrefix(workspaceProxyRelativePath(r), "api/browser/live/") {
 			http.NotFound(w, r)

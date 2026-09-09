@@ -5,8 +5,8 @@
 | Coordination | Value |
 |---|---|
 | Assigned agent | Codex |
-| Ticket state | `implementation_in_progress; strategic completion isolation fixed; independent cadence remains` |
-| Last synchronized | `2026-09-09` |
+| Ticket state | `implemented protected per-module scheduling; live acceptance pending` |
+| Last synchronized | `2026-09-10` |
 
 ## Problem and evidence
 
@@ -69,3 +69,18 @@ expects removed `foreground curl` wording, and
 `improve/goal-advisor.md`, which is absent in HEAD. These are not claimed fixed.
 All remaining tests in `pkg/pulseintake`, `step_based_workflow`, and `cmd/server`
 pass with only those two named tests excluded. `git diff --check` also passes.
+
+## 2026-09-10 implementation follow-through
+
+PLAT-305 adds independent Architecture/Strategy due decisions with protected
+`next_check_at` boundaries, explicit dated deferrals, sequential module stages,
+and module-scoped receipt/recovery checks. It removes the single-review-per-pass
+restriction. It uses existing Pulse triggers rather than a new cron per reviewer.
+Decision approval/application events now update linked improvement records;
+Architecture adoption requires an outcome assessment. The earlier "remaining
+acceptance" list above is historical planning context; the current implementation
+and limits are in [PLAT-305](plat-305.md). Production workflow acceptance remains.
+
+The stale guidance tests noted above were corrected against their current
+canonical references/normalized text during this change; no named test exclusion
+is needed for the final affected-package run.

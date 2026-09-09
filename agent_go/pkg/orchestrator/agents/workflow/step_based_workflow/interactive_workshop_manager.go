@@ -2752,6 +2752,8 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 					"type":        "string",
 					"description": "Opening-turn instructions for the background agent. This is the agent's task — be specific about what it should do, inputs, expected outputs.",
 				},
+				"review_module":    map[string]interface{}{"type": "string", "enum": []string{"technical_review", "architecture_review", "strategic_review"}, "description": "Pulse review role. Architecture and Strategy retain research access but cannot edit workflow implementation."},
+				"pulse_run_id":     map[string]interface{}{"type": "string", "description": "Exact scheduler Pulse run id; required with review_module."},
 				"message_sequence": backgroundMessageSequenceSchema(),
 				"agent_type": map[string]interface{}{
 					"type":        "string",
@@ -2799,6 +2801,16 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 			if completionMode != "continue" && completionMode != "present_result" {
 				return "", fmt.Errorf("completion_mode must be continue or present_result")
 			}
+			reviewModule, _ := args["review_module"].(string)
+			reviewRunID, _ := args["pulse_run_id"].(string)
+			if reviewModule != "" {
+				if err := validateBackgroundReviewScope(reviewModule, reviewRunID); err != nil {
+					return "", err
+				}
+				if agentType != "executor" {
+					return "", fmt.Errorf("review_module requires an executor")
+				}
+			}
 			// Create slug from name for execution ID
 			nameSlug := strings.ToLower(strings.ReplaceAll(name, " ", "-"))
 			// Trim to reasonable length
@@ -2812,6 +2824,9 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				return "Session was stopped — execution skipped", nil
 			}
 
+			if reviewModule != "" {
+				execCtx = context.WithValue(execCtx, backgroundReviewScopeKey{}, backgroundReviewScope{Module: reviewModule, RunID: reviewRunID})
+			}
 			// Inject correlation IDs for sub-agent event tagging (same pattern as execute_step)
 			agentSessionID := fmt.Sprintf("workshop-bg-%s-%d", nameSlug, time.Now().UnixNano())
 			execCtx = context.WithValue(execCtx, orchestrator_events.AgentSessionIDKey, agentSessionID)
@@ -9024,6 +9039,13 @@ func (iwm *InteractiveWorkshopManager) runBackgroundTaskAgentSequence(ctx contex
 		// background sub-agent's shell/file tools.
 		writePaths = []string{}
 	}
+	reviewScope, _ := ctx.Value(backgroundReviewScopeKey{}).(backgroundReviewScope)
+	if reviewScope.researchOnly() {
+		if !iwm.isRunModeRestricted() {
+			writePaths = []string{fmt.Sprintf("%s/runs/pulse/%s", workspacePath, reviewScope.RunID)}
+		}
+		instruction += "\nRESEARCH REVIEW: use authorized workflow MCPs, browser, web search and managed DB queries to investigate. Save dated sources and hypotheses in this run's checkpoint. Do not edit workflow implementation, run business actions, send messages, publish, or change external records. Create typed decisions for proposals and reuse the improvement ledger. External tool access retains the workflow's existing authorization limits."
+	}
 	iwm.controller.SetWorkspacePathForFolderGuard(readPaths, writePaths)
 
 	// --- LLM: a background child started by a scheduler Pulse turn is a Pulse
@@ -9074,6 +9096,15 @@ func (iwm *InteractiveWorkshopManager) runBackgroundTaskAgentSequence(ctx contex
 	if err != nil {
 		return "", err
 	}
+	if reviewScope.researchOnly() {
+		filtered := workshopToolDefinitions[:0]
+		for _, tool := range workshopToolDefinitions {
+			if researchReviewToolAllowed(tool.Name) {
+				filtered = append(filtered, tool)
+			}
+		}
+		workshopToolDefinitions = filtered
+	}
 	config.DirectTools = workshopToolDefinitions
 
 	// --- Tools: inherit the parent's complete workspace tool bundle ---
@@ -9087,6 +9118,9 @@ func (iwm *InteractiveWorkshopManager) runBackgroundTaskAgentSequence(ctx contex
 	// category allow-list here.
 	toolsToRegister := iwm.controller.WorkspaceTools
 	executorsToUse := iwm.controller.WorkspaceToolExecutors
+	if reviewScope.researchOnly() {
+		toolsToRegister, executorsToUse = filterResearchReviewTools(toolsToRegister, executorsToUse)
+	}
 
 	createAgentFunc := func(cfg *agents.OrchestratorAgentConfig, log loggerv2.Logger, tracer observability.Tracer, eventBridge mcpagent.AgentEventListener) agents.OrchestratorAgent {
 		return newWorkflowBackgroundTaskAgent(cfg, log, tracer, eventBridge)
@@ -9193,6 +9227,9 @@ func (iwm *InteractiveWorkshopManager) runBackgroundTaskAgentSequence(ctx contex
 		"BrowserPrompt":    browserPrompt,
 	}
 
+	if reviewScope.researchOnly() {
+		templateVars["DBGuidance"] = BuildManagedWorkflowDBGuidance(DBAccessRead)
+	}
 	// --- Execute ---
 	logger.Info(fmt.Sprintf("🚀 Running background task agent: %q (turns=%d)", name, 1+len(messageSequence)))
 	result, err := executeBackgroundMessageSequence(ctx, agent, templateVars, instruction, messageSequence)

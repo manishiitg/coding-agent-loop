@@ -177,3 +177,27 @@ phase. A suggestion is not implementation authority. The final persistence phase
 result/receipt; earlier read-only phases return their checkpoint. Later authorized
 execution applies only the exact approved scope and consumes the decision with the
 actual outcome. Creative freedom does not change these implementation boundaries.
+
+### External investigation and reusable research
+
+Use the workflow's authorized MCP connections, browser and web search to answer
+strategic questions beyond the plan and dashboard: audience needs, feedback,
+competing approaches, channels, external benchmarks and new data sources.
+These capabilities are inherited by the background agent. Load browser-usage
+before browser work; use discovered tool schemas rather than guessing commands.
+State the research question, use a bounded sample, and save dates, source links,
+findings, uncertainty and reusable notes in the current strategic checkpoint.
+Reuse still-current research. Do not send messages, publish, purchase, change
+external records or expand access while researching. Tool availability does not
+expand the workflow's existing authorizations. When a source is unavailable,
+record the limitation and continue with the evidence actually available.
+
+Create or update the existing improvement ledger for actionable proposals,
+link the exact decision and approved apply_contract, and name an outcome
+checkpoint. Separate proposed, approved, applied/running and assessed outcomes.
+Assess approved-and-applied work against its baseline; do not call it successful
+merely because it was approved or edited. Construction improvements belong to
+Architecture; useful business alternatives remain your responsibility.
+
+For every actionable proposal, record baseline, guardrails, rollback conditions,
+and its next outcome checkpoint with the linked human_input_id.

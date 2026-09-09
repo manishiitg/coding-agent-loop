@@ -1,3 +1,15 @@
+## Module dispatch boundary
+
+The scheduler dispatches one module per blocking lifecycle step, in order:
+Drift Check, Technical QA, Architecture, Strategy. Handle ONLY the module named
+in the current dispatch. Never launch another module from its child. Architecture
+uses `architecture-review.md`; Strategy uses `strategy-auditor.md` and both use
+`run_in_background(review_module=..., pulse_run_id=...)` research scope.
+Technical Review diagnoses and repairs correctness failures. General prompt,
+learning/KB, report/DB design, scripting and orchestration optimization belong
+to Architecture. Existing correctness focus keys/history stay readable.
+A shared backlog_drain mode does not suppress a separately due research module.
+
 ## Pulse agent-owned review and fixing
 
 Scheduled Pulse uses this after Gate. Manual commands follow their own
@@ -28,8 +40,8 @@ dispatching any child. Its `gate_mode` is the contract for this pass:
   not turn it into an Engineering discovery pass.
 - In `observe`, do not launch a reviewer or fixer; record the required skipped
   receipts and wait for the named evidence boundary.
-Gate decides separately whether the canonical `technical_review` and
-`strategic_review` modules are due. Engineering correctness, Stores Health,
+Gate decides independently whether `technical_review`, `architecture_review`, and
+`strategic_review` are due. Engineering correctness, Stores Health,
 operations, cost, tool/runtime reliability, scheduling, and model-tier fitness
 are focus lenses inside `technical_review`; they are not independent modules or
 receipts. Read that durable worklist yourself. Go does not choose reviewers or

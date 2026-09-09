@@ -99,7 +99,7 @@ describe('Pulse workspace filter interactions', () => {
   })
 
   it('keeps step-reported technical issues visible and badges scoped', async () => {
-    await click('Technical review')
+    await click('Health')
     expect(count('Current')).toBe(5)
     expect(count('Queued for Pulse')).toBe(2)
     expect(count('Platform repair pending')).toBe(3)
@@ -113,7 +113,7 @@ describe('Pulse workspace filter interactions', () => {
   })
 
   it('shows evidence waits, resets category on every area switch, and removes only the area', async () => {
-    await click('Strategic review')
+    await click('Strategy')
     expect(button('Current').getAttribute('aria-pressed')).toBe('true')
     expect(count('Waiting for evidence')).toBe(4)
     expect(count('Ideas')).toBe(0)
@@ -124,10 +124,10 @@ describe('Pulse workspace filter interactions', () => {
     expect(container.textContent).toContain('After ten completed growth days')
     await click('Ideas')
     shownCount(0)
-    await click('Technical review')
+    await click('Health')
     expect(button('Current').getAttribute('aria-pressed')).toBe('true')
     shownCount(5)
-    await click('Strategic review')
+    await click('Strategy')
     await click('Platform repair pending')
     expect(count('Platform repair pending')).toBe(0)
     shownCount(0)
@@ -138,18 +138,18 @@ describe('Pulse workspace filter interactions', () => {
 
 
   it('opens drift content and resolved findings together when no current findings remain', async () => {
-    expect(container.querySelector('[aria-label="Technical review content"]')).not.toBeNull()
+    expect(container.querySelector('[aria-label="Health content"]')).not.toBeNull()
     await click('Drift check')
     expect(button('Drift check').getAttribute('aria-pressed')).toBe('true')
     expect(container.querySelector('[aria-label="Drift check content"]')?.textContent).toContain('No current drift findings.')
-    expect(container.querySelector('[aria-label="Technical review content"]')).toBeNull()
+    expect(container.querySelector('[aria-label="Health content"]')).toBeNull()
     expect(container.textContent).not.toContain('View drift findings')
     expect(button('Resolved').getAttribute('aria-pressed')).toBe('true')
     shownCount(3)
     expect(container.textContent).toContain('PUL-R0')
-    await click('Strategic review')
+    await click('Strategy')
     expect(container.querySelector('[aria-label="Drift check content"]')).toBeNull()
-    expect(container.querySelector('[aria-label="Strategic review content"]')).not.toBeNull()
+    expect(container.querySelector('[aria-label="Strategy content"]')).not.toBeNull()
     shownCount(4)
   })
 
@@ -168,7 +168,7 @@ describe('Pulse workspace filter interactions', () => {
     await click('Resolved')
     await act(async () => render('Workflow/another'))
     expect(button('Current').getAttribute('aria-pressed')).toBe('true')
-    expect(button('Technical review').getAttribute('aria-pressed')).toBe('true')
+    expect(button('Health').getAttribute('aria-pressed')).toBe('true')
     shownCount(5)
   })
 })

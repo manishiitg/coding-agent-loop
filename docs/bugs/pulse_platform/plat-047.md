@@ -120,3 +120,11 @@ or promote a later artifact into proof for an earlier execution.
 Social Media additionally lost retained evidence with retention set to 3.
 [PLAT-304](plat-304.md) fixes the authorized retention setting's write denial;
 it does not fix partial-run overwrites or reconstruct already-pruned evidence.
+
+
+## 2026-09-10 improvement-system dependency
+
+[PLAT-305](plat-305.md) implements the first review/scheduling/research/lifecycle
+release. This ticket's remaining foundation acceptance is still required and is
+not closed by adding Architecture or outcome tracking. Historical evidence and
+legacy workflow behavior remain unchanged by that release.

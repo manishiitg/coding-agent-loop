@@ -1,5 +1,15 @@
 # Pulse Platform-Issue Register
 
+## QA, Architecture, Strategy and improvement outcomes — PLAT-305
+
+[PLAT-305](pulse_platform/plat-305.md) implements the first release of independent
+review roles, sequential scheduling with protected research dates, authorized
+research access, linked decision/application/outcome tracking, and the new Pulse
+areas. [PLAT-303](pulse_platform/plat-303.md) now has implemented scheduling
+follow-through. Deployment and live workflow acceptance are pending; immutable
+partial-run evidence (PLAT-047/089) and comprehensive builder prevention
+(PLAT-257/298) remain separate unfinished foundation work.
+
 ## September 9 Pulse audit: shared fixes and remaining strategy work
 
 [PLAT-304](pulse_platform/plat-304.md) fixes authorized retention updates blocked

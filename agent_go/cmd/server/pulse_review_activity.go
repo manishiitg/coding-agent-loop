@@ -89,7 +89,7 @@ func listPulseReviewReports(workspacePath, module string) ([]PulseReviewReport, 
 	if err != nil {
 		return nil, err
 	}
-	files := map[string]string{"technical-review.md": pulseModuleTechnicalReview, "strategic-review.md": pulseModuleStrategicReview, "plan-drift-review.md": "plan_drift_review"}
+	files := map[string]string{"technical-review.md": pulseModuleTechnicalReview, "architecture-review.md": pulseModuleArchitectureReview, "strategic-review.md": pulseModuleStrategicReview, "plan-drift-review.md": "plan_drift_review"}
 	out := []PulseReviewReport{}
 	for _, run := range runs {
 		if !run.IsDir() {

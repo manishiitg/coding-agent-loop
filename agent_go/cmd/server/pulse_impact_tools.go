@@ -32,7 +32,7 @@ func createRecordPulseImpactTool() (llmtypes.Tool, func(context.Context, map[str
 		"type": "object", "additionalProperties": false,
 		"properties": map[string]interface{}{
 			"intervention_id":       map[string]interface{}{"type": "string", "description": "Stable id; omit to derive it from criterion, metric, and title."},
-			"kind":                  map[string]interface{}{"type": "string", "enum": []string{"fix_bundle", "strategy_experiment"}, "description": "Use strategy_experiment only for an approval-gated Strategic Review experiment. Omit for ordinary fix bundles."},
+			"kind":                  map[string]interface{}{"type": "string", "enum": []string{"fix_bundle", "strategy_experiment", "architecture_improvement"}, "description": "Use architecture_improvement for construction improvements and strategy_experiment for business strategy experiments. Both share proposal, decision, baseline, guardrail and outcome tracking. Omit for ordinary fix bundles."},
 			"title":                 map[string]interface{}{"type": "string"},
 			"criterion_id":          map[string]interface{}{"type": "string", "description": "Stable success-criterion id from the workflow's durable goal contract."},
 			"impact_type":           map[string]interface{}{"type": "string", "enum": []string{"direct_goal", "reliability", "measurement", "presentation_maintenance"}},

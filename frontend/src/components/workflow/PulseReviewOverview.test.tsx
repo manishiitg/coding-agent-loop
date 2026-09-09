@@ -23,12 +23,12 @@ it('keeps review history collapsed, pages older checks, and resets it when chang
   const button = (prefix: string) => [...container.querySelectorAll<HTMLButtonElement>('button')].find(node => node.textContent?.startsWith(prefix))!
   try {
     await act(async () => render('technical_review'))
-    const checks = () => container.querySelector('[aria-label="Technical review checks and results"]')!
+    const checks = () => container.querySelector('[aria-label="Health checks and results"]')!
     expect(checks().querySelectorAll('details')).toHaveLength(1)
     expect(container.querySelector('[aria-label="Review history"]')).toBeNull()
-    expect(container.querySelector('[aria-label="Technical review content"]')!.querySelectorAll('[aria-haspopup="dialog"]')).toHaveLength(1)
+    expect(container.querySelector('[aria-label="Health content"]')!.querySelectorAll('[aria-haspopup="dialog"]')).toHaveLength(1)
     await act(async () => button('View report history').click())
-    expect(container.querySelector('[aria-label="Technical review content"]')!.querySelectorAll('[aria-haspopup="dialog"]')).toHaveLength(3)
+    expect(container.querySelector('[aria-label="Health content"]')!.querySelectorAll('[aria-haspopup="dialog"]')).toHaveLength(3)
     await act(async () => button('View review history').click())
     expect(container.querySelector('[aria-label="Review history"]')!.querySelectorAll('details')).toHaveLength(10)
     await act(async () => button('Show more reviews').click())
@@ -38,7 +38,7 @@ it('keeps review history collapsed, pages older checks, and resets it when chang
     await act(async () => render('technical_review'))
     expect(container.querySelector('[aria-label="Review history"]')).toBeNull()
     expect(checks().querySelectorAll('details')).toHaveLength(1)
-    expect(container.querySelector('[aria-label="Technical review content"]')!.querySelectorAll('[aria-haspopup="dialog"]')).toHaveLength(1)
+    expect(container.querySelector('[aria-label="Health content"]')!.querySelectorAll('[aria-haspopup="dialog"]')).toHaveLength(1)
   } finally { await act(async () => root.unmount()); container.remove() }
 })
 
@@ -70,4 +70,18 @@ it('opens saved Markdown outside the workspace panel, retries errors, and closes
     await act(async () => document.querySelector('dialog')!.dispatchEvent(new Event('cancel', { cancelable: true })))
     expect(document.querySelector('dialog')).toBeNull()
   } finally { await act(async () => root.unmount()); container.remove() }
+})
+
+it('shows Architecture as its own review area with a separate drift check', async () => {
+  Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true })
+  const container = document.createElement('div'); const root = createRoot(container)
+  try {
+    await act(async () => root.render(<PulseReviewOverview moduleStates={[]} coverage={[]} findings={[]} audits={[]} reports={[]} moduleFilter="architecture_review" onSelectModule={() => {}} />))
+    const navigation = container.querySelector('[aria-label="Pulse work areas"]')!
+    expect(navigation.querySelectorAll('button')).toHaveLength(3)
+    expect(navigation.textContent).toContain('Architecture')
+    expect(navigation.textContent).not.toContain('Drift check')
+    expect(container.querySelector('[aria-label="Architecture content"]')?.textContent).toContain('Learning quality')
+    expect(container.querySelector('[aria-label="Health content"]')).toBeNull()
+  } finally { await act(async () => root.unmount()) }
 })

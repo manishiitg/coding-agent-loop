@@ -25,7 +25,8 @@ const (
 	// agent-selected lenses for correctness, stores, runtime operations,
 	// orchestration shape, model/tier fitness, cost, and execution efficiency.
 	// Engineering and Operations remain useful lens names, not separate queues.
-	pulseModuleTechnicalReview = pulsemodules.TechnicalReviewID
+	pulseModuleTechnicalReview    = pulsemodules.TechnicalReviewID
+	pulseModuleArchitectureReview = pulsemodules.ArchitectureReviewID
 	// Legacy constants remain available to migration tests and readers. Runtime
 	// worklists and new writes use pulseModuleTechnicalReview exclusively.
 	pulseModuleWorkflowReview = pulsemodules.LegacyWorkflowReviewID
@@ -48,6 +49,10 @@ var pulseModuleOrder = pulsemodules.IDs()
 // Focus catalogs define durable coverage identities, not review decisions.
 // Gate and reviewers still use evidence and judgment to choose what is due.
 var pulseReviewFocusCatalog = map[string][]string{
+	pulseModuleArchitectureReview: {
+		"prompt_design", "orchestration_design", "scripted_execution", "learning_quality",
+		"knowledgebase_design", "database_design", "report_design", "model_cost_fitness",
+	},
 	pulseModuleTechnicalReview: {
 		"execution_health", "validation_contract_health", "plan_orchestration_integrity", "store_integrity",
 		"report_quality_truth", "evaluation_quality_truth", "model_cost_fitness",
@@ -246,6 +251,7 @@ type PulseModuleState struct {
 }
 
 type PulseWorklistDecision struct {
+	DeferReason         string   `json:"defer_reason,omitempty"`
 	Module              string   `json:"module"`
 	Due                 bool     `json:"due"`
 	Reason              string   `json:"reason"`
@@ -835,7 +841,7 @@ func validPulseReviewFocusKey(module, key string) bool {
 	if slices.Contains(pulseReviewFocusCatalog[module], key) {
 		return true
 	}
-	if module != pulseModuleStrategicReview || len(key) == 0 || len(key) > 64 || key[0] < 'a' || key[0] > 'z' || strings.HasSuffix(key, "_") || strings.Contains(key, "__") {
+	if (module != pulseModuleStrategicReview && module != pulseModuleArchitectureReview) || len(key) == 0 || len(key) > 64 || key[0] < 'a' || key[0] > 'z' || strings.HasSuffix(key, "_") || strings.Contains(key, "__") {
 		return false
 	}
 	for _, c := range key {
@@ -847,8 +853,8 @@ func validPulseReviewFocusKey(module, key string) bool {
 }
 
 func pulseReviewFocusKeyHint(module string) string {
-	if module == pulseModuleStrategicReview {
-		return "reuse a fitting strategic focus or supply a descriptive lowercase snake_case key (maximum 64 characters)"
+	if module == pulseModuleStrategicReview || module == pulseModuleArchitectureReview {
+		return "reuse a fitting review focus or supply a descriptive lowercase snake_case key (maximum 64 characters)"
 	}
 	return "choose one of: " + strings.Join(pulseReviewFocusCatalog[module], ", ")
 }
@@ -978,7 +984,7 @@ func getPulseReviewFocusAgenda(ctx context.Context, workspacePath, module, route
 
 func getPulseReviewFocusStates(ctx context.Context, workspacePath string) ([]PulseReviewFocus, error) {
 	out := []PulseReviewFocus{}
-	for _, module := range []string{pulseModuleTechnicalReview, pulseModuleStrategicReview} {
+	for _, module := range []string{pulseModuleTechnicalReview, pulseModuleArchitectureReview, pulseModuleStrategicReview} {
 		focuses, err := getPulseReviewFocusAgenda(ctx, workspacePath, module, "", 50)
 		if err != nil {
 			return nil, err
@@ -1083,6 +1089,16 @@ func recordPulseWorklistWithMode(ctx context.Context, workspacePath, pulseRunID,
 		if !validPulseModules[module] {
 			return nil, fmt.Errorf("module %q is not a valid Pulse module. Must be one of: %s", decision.Module, pulseModuleList())
 		}
+		previous, previousErr := getPulseModuleStateByModule(ctx, tx, normalized, module)
+		if previousErr != nil && !errors.Is(previousErr, sql.ErrNoRows) {
+			return nil, previousErr
+		}
+		if previous != nil {
+			decision, err = preservePulseImprovementBoundary(*previous, decision, pulseRunID, time.Now().UTC())
+			if err != nil {
+				return nil, err
+			}
+		}
 		reason := strings.TrimSpace(decision.Reason)
 		if reason == "" {
 			return nil, fmt.Errorf("reason is required for module %q", module)
@@ -1142,6 +1158,55 @@ func recordPulseWorklistWithMode(ctx context.Context, workspacePath, pulseRunID,
 	return states, nil
 }
 
+// A Gate skip cannot continually move another review's promised date forward.
+// These are independent module boundaries, not new cron jobs or fixed cadences.
+func preservePulseImprovementBoundary(previous PulseModuleState, decision PulseWorklistDecision, runID string, now time.Time) (PulseWorklistDecision, error) {
+	module := normalizePulseModule(decision.Module)
+	if module != pulseModuleArchitectureReview && module != pulseModuleStrategicReview || decision.Due || previous.LastPulseRunID == runID {
+		return decision, nil
+	}
+	if strings.TrimSpace(decision.DeferReason) != "" {
+		at, err := parsePulseBoundaryTime(decision.NextCheckAt)
+		if err != nil || !at.After(now) {
+			return decision, fmt.Errorf("deferred %s requires a future next_check_at", module)
+		}
+		decision.Reason += " Deferred: " + strings.TrimSpace(decision.DeferReason)
+		return decision, nil
+	}
+	if previous.LastResult != "" {
+		return decision, nil
+	}
+	if previous.LastDecision == "due" {
+		decision.Due = true
+		decision.Reason = "Previously selected review remains pending. " + decision.Reason
+	}
+	if previous.NextCheckAt != "" {
+		at, err := parsePulseBoundaryTime(previous.NextCheckAt)
+		if err != nil {
+			return decision, err
+		}
+		if !at.After(now) {
+			decision.Due = true
+			decision.Reason = "Protected review boundary reached. Assess accumulated evidence; an honest evidence-wait result is valid. " + decision.Reason
+		} else if proposed, err := parsePulseBoundaryTime(decision.NextCheckAt); err != nil || proposed.After(at) {
+			decision.NextCheckAt = previous.NextCheckAt
+		}
+	}
+	if decision.Due {
+		decision.NextCheckAt = ""
+		decision.NextCheckAfterRunID = ""
+		decision.CooldownRuns = 0
+	}
+	return decision, nil
+}
+
+func parsePulseBoundaryTime(value string) (time.Time, error) {
+	if at, err := time.Parse(time.RFC3339Nano, value); err == nil {
+		return at, nil
+	}
+	return time.Parse("2006-01-02", value)
+}
+
 func pendingPulseReviewRecoveries(ctx context.Context, workspacePath string) ([]PulseReviewRecovery, error) {
 	normalized, db, err := openPulseModuleStateDB(ctx, workspacePath, false)
 	if err != nil || db == nil {
@@ -1173,14 +1238,6 @@ func forcePendingPulseReviewRecoveries(ctx context.Context, workspacePath string
 	recoveries, err := pendingPulseReviewRecoveries(ctx, workspacePath)
 	if err != nil || len(recoveries) == 0 {
 		return decisions, err
-	}
-	// Plan Drift is the single selected review when deterministic drift is due.
-	// Keep recovery durable and schedule it in the next eligible pass rather
-	// than running two independent review modes together.
-	for _, decision := range decisions {
-		if normalizePulseModule(decision.Module) == pulseModulePlanDriftReview && decision.Due {
-			return decisions, nil
-		}
 	}
 	forced := append([]PulseWorklistDecision(nil), decisions...)
 	for _, recovery := range recoveries {
@@ -1390,7 +1447,7 @@ func recordPulseModuleDueForManualReview(ctx context.Context, workspacePath, pul
 // cannot prove an unresolved step outcome or reserve the only review slot.
 // Gate assesses recovery, impact, prior reviews, and fresh comparable evidence.
 func validateDeterministicIntakeRouting(ctx context.Context, workspacePath string, decisions []PulseWorklistDecision) error {
-	// Pulse deliberately runs one review mode per pass. When deterministic plan
+	// Drift runs first and can inspect dependency fallout. When deterministic plan
 	// drift is already selected, retain runtime evidence for the next Gate
 	// rather than forcing a concurrent Technical Review.
 	for _, decision := range decisions {
@@ -1578,23 +1635,7 @@ func validatePulseWorklistDecisions(decisions []PulseWorklistDecision) error {
 		return fmt.Errorf("decisions is missing required module(s) %s; every Pulse module needs its own entry and the complete set is: %s",
 			strings.Join(missing, ", "), pulseModuleList())
 	}
-	var planDriftDue, technicalDue, strategicDue bool
-	for _, decision := range decisions {
-		switch normalizePulseModule(decision.Module) {
-		case pulseModulePlanDriftReview:
-			planDriftDue = decision.Due
-		case pulseModuleTechnicalReview:
-			technicalDue = decision.Due
-		case pulseModuleStrategicReview:
-			strategicDue = decision.Due
-		}
-	}
-	if planDriftDue && (technicalDue || strategicDue) {
-		return fmt.Errorf("plan_drift_review is due, so technical_review and strategic_review must both be skipped this pass; Pulse selects one review mode at a time")
-	}
-	if technicalDue && strategicDue {
-		return fmt.Errorf("technical_review and strategic_review cannot both be due in one pass; choose the single perspective with the strongest current evidence")
-	}
+
 	return nil
 }
 
@@ -2433,6 +2474,7 @@ func createPulseWorklistTools() ([]llmtypes.Tool, map[string]interface{}, map[st
 								"evidence":                map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "string"}},
 								"next_check_at":           map[string]interface{}{"type": "string", "description": "Optional RFC3339 timestamp or YYYY-MM-DD date for the next normal check."},
 								"next_check_after_run_id": map[string]interface{}{"type": "string", "description": "Optional run id/folder after which to check again."},
+								"defer_reason":            map[string]interface{}{"type": "string", "description": "Explicit reason a protected Architecture/Strategy boundary must be deferred; requires a future next_check_at. Never defer solely because another review is due."},
 								"cooldown_runs":           map[string]interface{}{"type": "integer", "minimum": 0, "description": "Optional evidence-collection wait in relevant workflow runs, not chat turns or tool calls. Explain comparable route/group scope and the baseline review in reason/evidence. Reassess progress without blindly restarting the wait at every Gate check; new materially harmful evidence can override it."},
 							},
 							"required": []string{"module", "due", "reason"},
@@ -2451,7 +2493,7 @@ func createPulseWorklistTools() ([]llmtypes.Tool, map[string]interface{}, map[st
 				"view=\"module\": per-module cadence and results so Pulse Gate can decide what is due, plus the complete active concern backlog, externally owned suppressed concerns, plan-change backlog, reviewer history, impact ledger, and read-only loop-closure facts. Read this before record_pulse_worklist. Loop-closure findings are evidence Gate may weigh; they do not mandate a module or authorize mutation. A concern with a high seen_count has been reported on that many runs and should weigh heavily.\n"+
 				"view=\"backlog\": a compact active issue/observation index plus the closed canonical issue index by default. Read it once to select or semantically reuse public PUL ids. To inspect lifecycle evidence, call again with detail=\"full\" and 1-20 exact issue_ids; broad full-history reads are rejected. Optional module filter.\n"+
 				"view=\"review\": one compact reviewer receipt as JSON with validated structured verifications. Requires the stored pulse-run receipt id and module; reviewer prose and Markdown are not stored.\n"+
-				"view=\"focus_agenda\": the compact durable deep-review coverage agenda for technical_review or strategic_review — every canonical focus, global and route-specific review counts, last verdict, due boundary, and deferred history. Requires module. Pass route_scope when reviewing one route/group/sub-workflow. Read this after view=\"module\"/\"backlog\" and before agentically choosing the smallest sufficient focus set; it is not blind round-robin.\n"+
+				"view=\"focus_agenda\": the compact durable deep-review coverage agenda for technical_review, architecture_review or strategic_review — every canonical focus, global and route-specific review counts, last verdict, due boundary, and deferred history. Requires module. Pass route_scope when reviewing one route/group/sub-workflow. Read this after view=\"module\"/\"backlog\" and before agentically choosing the smallest sufficient focus set; it is not blind round-robin.\n"+
 				"Close a real finding only through a verified finding_disposition on record_pulse_result; resolve_run_concern is limited to acknowledgment or rejection. Modules: %s.", pulseModuleList()),
 			Parameters: llmtypes.NewParameters(map[string]interface{}{
 				"type":                 "object",
@@ -3547,7 +3589,7 @@ func validateReviewerVerificationDispositions(
 // is shown.
 var pulseDecisionFields = []string{
 	"module", "due", "reason", "evidence",
-	"next_check_at", "next_check_after_run_id", "cooldown_runs",
+	"next_check_at", "next_check_after_run_id", "cooldown_runs", "defer_reason",
 }
 
 // pulseDecisionFieldAliases maps the wrong names agents actually reach for onto
@@ -3622,6 +3664,9 @@ func pulseWorklistDecisionsFromArgs(raw interface{}) ([]PulseWorklistDecision, e
 			if decision.Evidence, err = strictStringSliceToolArg(rawEvidence); err != nil {
 				return nil, fmt.Errorf("decisions[%d].evidence: %w", index, err)
 			}
+		}
+		if decision.DeferReason, err = optionalStringToolArg(m, "defer_reason", index); err != nil {
+			return nil, err
 		}
 		if decision.NextCheckAt, err = optionalStringToolArg(m, "next_check_at", index); err != nil {
 			return nil, err

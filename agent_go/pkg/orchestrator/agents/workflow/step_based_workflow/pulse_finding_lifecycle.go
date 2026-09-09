@@ -1821,7 +1821,7 @@ func RecordPulseFindingDispositionsTx(
 		if err := validateFindingDisposition(disposition); err != nil {
 			return err
 		}
-		if module == pulsemodules.StrategicReviewID &&
+		if isPulseAdvisorModule(module) &&
 			disposition.Disposition == FindingDispositionProposalOnly && disposition.NextCheck == "" {
 			return fmt.Errorf("%s finding %q cannot use proposal_only without next_check: proposal_only is reserved for a recommendation waiting on a named future evidence boundary; create a pending human decision and use awaiting_user for an actionable strategy/goal change, or route a safe technical prerequisite to the Fixer",
 				module, disposition.FindingID)
@@ -1934,8 +1934,8 @@ func RecordPulseFindingDispositionsTx(
 				return fmt.Errorf("awaiting_user finding %q references human input %q with status %q; a finding can only wait on a pending decision", findingID, disposition.HumanInputID, inputStatus)
 			}
 			expectedSource, expectedPrefix := "", ""
-			if module == pulsemodules.StrategicReviewID {
-				expectedSource, expectedPrefix = pulsemodules.StrategicReviewID, "strategic-proposal-"
+			if isPulseAdvisorModule(module) {
+				expectedSource, expectedPrefix = pulseReviewDecisionOwnership(module)
 			}
 			if expectedSource != "" {
 				if strings.TrimSpace(inputSource) != expectedSource {

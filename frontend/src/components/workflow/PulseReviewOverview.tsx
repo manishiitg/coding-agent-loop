@@ -1,11 +1,11 @@
 import { useState } from 'react'
-import { FileText, GitCompare, Lightbulb, Maximize2, Wrench } from 'lucide-react'
+import { FileText, GitCompare, Lightbulb, Maximize2, Wrench, Blocks } from 'lucide-react'
 import type { PulseFindingLifecycle, PulseModuleState, PulseReviewAudit, PulseReviewFocus, PulseReviewReport } from '../../services/api-types'
 import { normalizePulseWorkspaceModule, pulseFindingReviewAreas, pulseWorkspaceQueueCounts } from './pulseWorkspaceUtils'
-import { pulseReviewDate, reviewCoverageForArea, TECHNICAL_REVIEW_AREAS } from './pulseReviewCoverage'
+import { pulseReviewDate, reviewCoverageForArea, TECHNICAL_REVIEW_AREAS, ARCHITECTURE_REVIEW_AREAS } from './pulseReviewCoverage'
 
 import { PulseReviewReportReader } from './PulseReviewReportReader'
-const labels: Record<string, string> = { technical_review: 'Technical review', strategic_review: 'Strategic review', plan_drift_review: 'Drift check', done: 'Completed', changed: 'Changes made', timed_out: 'Timed out' }
+const labels: Record<string, string> = { technical_review: 'Health', architecture_review: 'Architecture', strategic_review: 'Strategic review', plan_drift_review: 'Drift check', done: 'Completed', changed: 'Changes made', timed_out: 'Timed out' }
 const readable = (text?: string) => labels[text || ''] || (text ? text.charAt(0).toUpperCase() + text.slice(1).replaceAll('_', ' ') : 'Recorded')
 
 function Evidence({ items, title = 'Evidence' }: { items?: string[]; title?: string }) {
@@ -63,8 +63,9 @@ export function PulseReviewOverview({ moduleStates, coverage, audits, reports, f
 }) {
   const areas = [
     { id: 'plan_drift_review', label: 'Drift check', description: 'Changes to the plan and their follow-up checks.', Icon: GitCompare },
-    { id: 'technical_review', label: 'Technical review', description: 'Execution, learnings, knowledge, and quality.', Icon: Wrench },
-    { id: 'strategic_review', label: 'Strategic review', description: 'Progress toward the goal and recommendations.', Icon: Lightbulb },
+    { id: 'technical_review', label: 'Health', description: 'Correctness, failures, and regressions.', Icon: Wrench },
+    { id: 'architecture_review', label: 'Architecture', description: 'Better prompts, orchestration, learning, knowledge, data and reports.', Icon: Blocks },
+    { id: 'strategic_review', label: 'Strategy', description: 'Progress toward the goal and recommendations.', Icon: Lightbulb },
   ]
   const selected = areas.find(area => area.id === moduleFilter)
   const latestAuditFor = (module: string) => audits.find(item => normalizePulseWorkspaceModule(item.module) === module && item.result !== 'skipped')
@@ -87,7 +88,7 @@ export function PulseReviewOverview({ moduleStates, coverage, audits, reports, f
   return <section className="space-y-4" aria-label="Pulse reviews">
     <div><h3 className="text-sm font-semibold">Work areas</h3><p className="mt-1 text-xs text-muted-foreground">Choose an area to see its review, reports, checks, and findings below.</p></div>
     <nav className="grid gap-2 md:grid-cols-3" aria-label="Pulse work areas">
-      {areas.map(area => {
+      {areas.filter(area => area.id !== 'plan_drift_review').map(area => {
         const audit = latestAuditFor(area.id)
         const lastReviewed = audit?.recorded_at || latestCoverageFor(area.id)?.last_reviewed_at
         const active = moduleFilter === area.id
@@ -98,6 +99,7 @@ export function PulseReviewOverview({ moduleStates, coverage, audits, reports, f
         </button>
       })}
     </nav>
+    <button type="button" onClick={() => onSelectModule('plan_drift_review')} aria-pressed={moduleFilter === 'plan_drift_review'} className="flex items-center gap-2 text-xs text-muted-foreground hover:text-foreground"><GitCompare className="h-3.5 w-3.5" />Drift check · {driftStatus}</button>
     {selected && <section key={selected.id} aria-label={`${selected.label} content`} className="space-y-4 rounded-xl border bg-background p-4">
       <div><h4 className="text-sm font-semibold">{selected.label}</h4><p className="mt-1 text-xs text-muted-foreground">{selected.description}</p></div>
       {selected.id === 'plan_drift_review' ? <div className="space-y-2 text-xs leading-5 text-muted-foreground">
@@ -111,9 +113,9 @@ export function PulseReviewOverview({ moduleStates, coverage, audits, reports, f
         <p className="font-medium text-foreground">{selectedAudit?.reason || latestCoverage?.last_verdict || 'No review outcome recorded yet.'}</p>
         {selectedState?.last_gate_decision === 'skipped' && <details className="mt-2"><summary className="cursor-pointer">Why no new review ran</summary><p className="mt-2">{selectedState.last_reason}</p></details>}
       </div>}
-      {selected.id === 'technical_review' && <div><h5 className="mb-2 text-xs font-semibold">Review coverage</h5><div className="divide-y rounded-lg border">
-        {TECHNICAL_REVIEW_AREAS.map(area => {
-          const items = reviewCoverageForArea(area, selectedCoverage)
+      {['technical_review', 'architecture_review'].includes(selected.id) && <div><h5 className="mb-2 text-xs font-semibold">Review coverage</h5><div className="divide-y rounded-lg border">
+        {(selected.id === 'architecture_review' ? ARCHITECTURE_REVIEW_AREAS : TECHNICAL_REVIEW_AREAS).map(area => {
+          const items = reviewCoverageForArea(area, selectedCoverage, selected.id)
           return <details key={area.key} className="px-3 py-2.5">
             <summary className="cursor-pointer text-xs"><span className="font-medium text-foreground">{area.label}</span>
               <span className={`mt-1 block pl-4 ${items[0] ? 'text-muted-foreground' : 'text-amber-600 dark:text-amber-300'}`}>
@@ -122,6 +124,7 @@ export function PulseReviewOverview({ moduleStates, coverage, audits, reports, f
           </details>
         })}
       </div></div>}
+      {selectedState?.next_check_at && <p className="text-xs text-muted-foreground">Next assessment: {pulseReviewDate(selectedState.next_check_at)}</p>}
       <div><h5 className="mb-2 text-xs font-semibold">Review reports <span className="font-normal text-muted-foreground">({selectedReports.length})</span></h5><Reports reports={selectedReports} /></div>
     </section>}
     <ReviewChecks key={`checks:${moduleFilter || 'all'}`} audits={visibleAudits} reports={reports} label={selected?.label} />

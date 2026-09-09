@@ -1,8 +1,9 @@
 import { useEffect, useRef } from 'react'
+import { useChatStore } from '../../stores/useChatStore'
 import { workflowUIControl } from '../../services/api'
 import { useWorkflowStore } from '../../stores/useWorkflowStore'
 import { usePresentationEvents } from '../presentations/usePresentationEvents'
-import { isWorkspaceViewId } from '../../components/workflow/workspaceViews'
+import { getWorkspaceView, isWorkspaceViewId } from '../../components/workflow/workspaceViews'
 import { UI_CONTROL_CONTRACT } from './contract.generated'
 import { applyUIAction, workspaceHost, type UIAction, type UISnapshot } from './client'
 
@@ -71,11 +72,19 @@ export function useWorkspaceUIControl(session: string | undefined): void {
         const commands = await boundCall({ operation: 'sync', state: state() }) as UIAction[]
         for (const command of commands) {
           if (stopped) break
+          const before = state()
           const result = await applyUIAction(command, binding.workspace, (view, target) => {
             if (isWorkspaceViewId(view)) useWorkflowStore.getState().openWorkspaceView(view, target)
           }, state, controller.signal)
           if (stopped) break
-          if (result.status === 'applied') revision++
+          if (result.status === 'applied') {
+            revision++
+            const after = state()
+            if (after.visible && (!before.visible || before.view !== after.view) && isWorkspaceViewId(after.view)) {
+              const label = after.view === 'browser' ? 'Browser' : getWorkspaceView(after.view).label
+              useChatStore.getState().addToast(`Builder opened ${label}`, 'info')
+            }
+          }
           await boundCall({ operation: 'ack', request_id: command.request_id, ...result, state: state() })
         }
       } catch (error) {

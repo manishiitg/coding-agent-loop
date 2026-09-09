@@ -6,6 +6,15 @@ log into authenticated pages. Browser configuration is declared by the
 workflow, but CDP reachability is live state. Query `agent_browser status`
 before first use instead of relying on saved conversation or prompt state.
 
+In an interactive Builder with workspace-view tools, call
+`open_workspace_view(view="browser")` when starting browser work so the user
+can watch the live server browser in the right-hand pane. Only an `applied`
+receipt confirms the UI opened. Open the view once; do not switch it back after
+every command if the user chose another view. The live stream follows navigation
+and tab changes automatically, so no workspace refresh is needed. Users can
+choose **Take control** to interact. Scheduled or unattended runs must not try
+to open the foreground UI.
+
 `status.cdp_supported` is the deployment authority. When it is `false`, CDP
 is disabled on that server: do not probe ports, install/launch CDP Chrome, or
 pass `--cdp`. Use managed headless Chromium. In that deployment, workflow
@@ -17,7 +26,7 @@ rejected. Desktop/local deployments may still report CDP as supported.
 | Mode | Browser | Visibility | Logins / cookies |
 |---|---|---|---|
 | **CDP** (`agent_browser` with `--cdp`) | The user's real Chrome via Chrome DevTools Protocol | User sees every action | Existing cookies + sessions are available — leverage them |
-| **Headless** (`agent_browser`) | Container-side Chromium | Invisible to user; take screenshots | Fresh each time, no cookies |
+| **Headless** (`agent_browser`) | Server-side Chromium | Live in the workflow Browser view; screenshots also available | Isolated session; cookies persist for its lifetime |
 
 The CDP row is unavailable whenever live status reports
 `"cdp_supported": false`; this is a deployment policy, not a transient

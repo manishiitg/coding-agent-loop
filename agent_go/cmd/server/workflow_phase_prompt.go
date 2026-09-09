@@ -29,7 +29,7 @@ func buildWorkflowPhaseSystemPrompt(phase string, vars map[string]string, ctx pr
 		return "", included, skipped, err
 	}
 	if ctx.WorkflowUIAvailable {
-		parts.parts = append(parts.parts, "## Workflow views\n\nUse open_workspace_view to show the relevant report, plan, or other view, and refresh_workspace_view after changing its content. Read builder-reference/references/workspace-views.md before choosing a view.")
+		parts.parts = append(parts.parts, "## Workflow views\n\nUse open_workspace_view to show the relevant report, plan, or other view, and refresh_workspace_view after changing its content. When using agent_browser to open or navigate a page for the user, call open_workspace_view(view=\"browser\") so they can watch the live browser in the right-hand pane. Open it once when beginning browser work; do not repeatedly switch away from a view the user chose. The Browser view streams automatically and does not need refresh_workspace_view after navigation. Only an applied receipt confirms the UI switched. Read builder-reference/references/workspace-views.md before choosing a view.")
 	}
 	for _, addition := range additions {
 		if strings.TrimSpace(addition) != "" {

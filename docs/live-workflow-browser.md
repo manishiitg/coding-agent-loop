@@ -176,3 +176,16 @@ browser tool registered and reads the current manifest on each invocation.
 Disabled, missing, or unreadable configuration cannot launch a browser. The
 regression test covers enabling and disabling the same tool instance without
 creating another chat. Shared fix: `961d22b5a`.
+
+## Builder view switching
+
+Interactive Builder guidance requests `open_workspace_view(view="browser")`
+when beginning browser navigation for the user. The tool opens the full browser
+panel; the stream updates automatically, without repeated refresh requests.
+Scheduled and unattended runs do not manipulate the foreground UI. The Builder
+should respect subsequent user view changes.
+
+When a builder workspace-view action changes the visible panel, a small toast
+identifies it, for example “Builder opened Browser”. Acknowledged UI actions
+notify only after an applied result. Reopening the same visible view or
+refreshing it does not create another switch notification.

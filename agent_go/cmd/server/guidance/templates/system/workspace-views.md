@@ -8,7 +8,7 @@ not a separate schedule skill profile. Do not ask a schedule to open or manipula
 the foreground workspace. Observing a scheduled conversation does not promote it;
 an explicit supported interactive continuation is required.
 
-The right-hand pane of the workflow page shows one view at a time; the toolbar above the chat switches between them. The legacy `open_workspace_view(view)` and `refresh_workspace_view(view)` emit unverified presentation requests. Prefer the acknowledged UI-control tools described below where supported. Request the view that holds what you are talking about instead of describing where to click, but report only what the receipt actually confirms.
+The right-hand pane of the workflow page shows one view at a time; the toolbar above the chat switches between them. `open_workspace_view(view)` uses acknowledged UI control; only an `applied` receipt confirms that the view opened. `refresh_workspace_view(view)` emits an unverified presentation request. Request the view that holds what you are talking about instead of describing where to click, but report only what the receipt actually confirms.
 
 ### Views cluster
 | View id | Shows | Open it when |
@@ -49,7 +49,7 @@ Refresh or claim an answer was applied just because it disappeared from pending.
 | `skills` | Skills attached to the workflow | You installed or attached a skill |
 | `secrets` | Secret names attached to the workflow (never values) | You set or attached a secret |
 | `mcp` | MCP servers and tool allowlists for the workflow | You added or changed a server |
-| `browser` | Browser automation settings | You changed browser mode or connections |
+| `browser` | Full-panel live server browser, tabs, and Take control; settings behind the gear button | You open or navigate a page with `agent_browser`, or the user asks to watch/interact with the browser |
 | `llm` | The workflow's LLM configuration: tiers and per-step models | You changed which model runs what |
 | `bots` | Connected bots (Slack, WhatsApp) for this workflow | You connected or changed a channel |
 | `folders` | Folders attached to the workflow | You attached a folder |
@@ -88,3 +88,5 @@ The older open/refresh tools remain for compatibility but return unverified
 requests. Do not say their contents were verified or that a refresh succeeded
 from that response alone. Presentation tools cannot send notifications, edit
 settings, run workflows, reveal secrets, or establish MCP connections.
+
+When starting browser work for the user, call `open_workspace_view(view="browser")` alongside `agent_browser status` and navigation. This opens the viewer, not a new browser session. Let the stream update naturally; do not refresh it after each browser command or repeatedly override a view the user selected. The UI shows a small “Builder opened Browser” toast when a builder action changes the visible view.

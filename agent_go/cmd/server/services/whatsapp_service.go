@@ -99,6 +99,9 @@ type WhatsAppService struct {
 	accessMu    sync.RWMutex
 	accessState WhatsAppAccessState
 
+	deviceLabelMu sync.RWMutex
+	deviceLabel   string
+
 	ownerMu sync.RWMutex
 	owner   *WhatsAppOwner
 }
@@ -177,6 +180,7 @@ func (w *WhatsAppService) StartListening(ctx context.Context) error {
 	w.loadActiveRoutes(ctx)
 	w.loadAutoRoutedWorkflows(ctx)
 	w.loadAccessState(ctx)
+	w.loadDeviceLabel(ctx)
 
 	debug := os.Getenv("WHATSAPP_DEBUG") == "true"
 	if debug {
@@ -329,6 +333,9 @@ const metaKeyAutoRoutedWorkflows = "auto_routed_workflows"
 // metaKeyAccessState holds explicit WhatsApp DM bindings. This avoids using
 // fragile phone-number/LID self-detection as the security boundary.
 const metaKeyAccessState = "access_state"
+
+// metaKeyDeviceLabel holds the user-visible name for this linked phone.
+const metaKeyDeviceLabel = "device_label"
 
 // WhatsAppRouting is the full slug → ChannelRoute map persisted to the meta
 // table. A nil / empty map means "no routing — all messages go to the
@@ -540,6 +547,55 @@ func (w *WhatsAppService) loadAccessState(ctx context.Context) {
 	w.accessMu.Unlock()
 	w.ensureLinkCode()
 	log.Printf("[WHATSAPP] Loaded %d bound DM chat(s)", len(state.BoundChats))
+}
+
+func (w *WhatsAppService) loadDeviceLabel(ctx context.Context) {
+	w.mu.RLock()
+	db := w.metaDB
+	w.mu.RUnlock()
+	if db == nil {
+		return
+	}
+	var label string
+	err := db.QueryRowContext(ctx, `SELECT value FROM whatsapp_meta WHERE key = ?`, metaKeyDeviceLabel).Scan(&label)
+	if err != nil {
+		if !errors.Is(err, sql.ErrNoRows) {
+			log.Printf("[WHATSAPP] Failed to read device label row: %v", err)
+		}
+		return
+	}
+	w.deviceLabelMu.Lock()
+	w.deviceLabel = strings.TrimSpace(label)
+	w.deviceLabelMu.Unlock()
+}
+
+func (w *WhatsAppService) DeviceLabel() string {
+	w.deviceLabelMu.RLock()
+	defer w.deviceLabelMu.RUnlock()
+	return w.deviceLabel
+}
+
+func (w *WhatsAppService) SetDeviceLabel(ctx context.Context, label string) error {
+	w.mu.RLock()
+	db := w.metaDB
+	w.mu.RUnlock()
+	if db == nil {
+		return fmt.Errorf("whatsapp: meta store not open")
+	}
+	label = strings.TrimSpace(label)
+	if len([]rune(label)) > 60 {
+		return fmt.Errorf("whatsapp: device name must be 60 characters or fewer")
+	}
+	if _, err := db.ExecContext(ctx,
+		`INSERT INTO whatsapp_meta(key, value) VALUES(?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value`,
+		metaKeyDeviceLabel, label,
+	); err != nil {
+		return fmt.Errorf("whatsapp: persist device name: %w", err)
+	}
+	w.deviceLabelMu.Lock()
+	w.deviceLabel = label
+	w.deviceLabelMu.Unlock()
+	return nil
 }
 
 func (w *WhatsAppService) persistAccessStateLocked(ctx context.Context) error {

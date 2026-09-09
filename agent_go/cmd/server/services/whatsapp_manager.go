@@ -19,10 +19,10 @@ const whatsappUserSessionDBName = "session.db"
 type WhatsAppServiceManager struct {
 	baseDir string
 
-	mu             sync.RWMutex
-	services       map[string]*WhatsAppService
-	messageHandler BotMessageHandler
-	interaction    BotInteractionHandler
+	mu               sync.RWMutex
+	services         map[string]*WhatsAppService
+	messageHandler   BotMessageHandler
+	interaction      BotInteractionHandler
 	statusProvider   BotThreadStatusFunc
 	profileRouter    ProfileRouteResolver
 	voiceTranscriber VoiceTranscriberFunc
@@ -175,6 +175,7 @@ const (
 // WhatsAppDevice describes one linked (or linking) phone of an account.
 type WhatsAppDevice struct {
 	Slot        string    `json:"slot"`
+	Label       string    `json:"label,omitempty"`
 	Paired      bool      `json:"paired"`
 	Connected   bool      `json:"connected"`
 	OwnJID      string    `json:"own_jid,omitempty"`
@@ -273,6 +274,9 @@ func nextWhatsAppDeviceSlot(taken []string) string {
 
 func whatsappDeviceInfo(slot string, svc *WhatsAppService) WhatsAppDevice {
 	device := WhatsAppDevice{Slot: slot, Paired: svc.IsPaired(), Connected: svc.IsConnected()}
+	if label := svc.DeviceLabel(); label != "" {
+		device.Label = label
+	}
 	if jid := svc.OwnJID(); !jid.IsEmpty() {
 		device.OwnJID = jid.String()
 	}
@@ -303,6 +307,14 @@ func (m *WhatsAppServiceManager) Devices(ctx context.Context, userID string) ([]
 		devices = append(devices, whatsappDeviceInfo(slot, svc))
 	}
 	return devices, nil
+}
+
+func (m *WhatsAppServiceManager) SetDeviceLabel(ctx context.Context, userID, slot, label string) error {
+	svc, err := m.ServiceForDevice(ctx, userID, slot)
+	if err != nil {
+		return err
+	}
+	return svc.SetDeviceLabel(ctx, label)
 }
 
 // NextPairingDevice is the phone a scan would pair right now: the primary

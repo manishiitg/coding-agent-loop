@@ -1549,23 +1549,26 @@ export const agentApi = {
   // ── WhatsApp bot connector ────────────────────────────────────────────────
   // Status: is the connector enabled, paired, connected? When a pairing flow
   // is active, returns the QR expiration timestamp so the UI can auto-refresh.
-  getWhatsAppStatus: async (): Promise<WhatsAppStatus> => {
-    const response = await api.get('/api/whatsapp/status')
+  getWhatsAppStatus: async (opts?: { device?: string }): Promise<WhatsAppStatus> => {
+    const params: Record<string, string> = {}
+    if (opts?.device) params.device = opts.device
+    const response = await api.get('/api/whatsapp/status', { params })
     return response.data
   },
 
   // Returns the URL to the PNG QR. Kept for callers that need a direct URL.
-  getWhatsAppPairURL: (size = 384, bust?: number): string => {
+  getWhatsAppPairURL: (size = 384, bust?: number, device?: string): string => {
     const b = bust ?? Date.now()
     const token = getAuthToken()
     const tokenParam = token ? `&token=${encodeURIComponent(token)}` : ''
-    return `${API_BASE_URL}/api/whatsapp/pair?size=${size}&_=${b}${tokenParam}`
+    const deviceParam = device ? `&device=${encodeURIComponent(device)}` : ''
+    return `${API_BASE_URL}/api/whatsapp/pair?size=${size}&_=${b}${deviceParam}${tokenParam}`
   },
 
   // Fetches the QR PNG and preserves backend error text. This avoids the
   // <img>-tag failure mode where 409/503 responses only render as a broken image.
-  getWhatsAppPairQR: async (size = 384, bust?: number): Promise<Blob> => {
-    const response = await fetch(agentApi.getWhatsAppPairURL(size, bust), {
+  getWhatsAppPairQR: async (size = 384, bust?: number, device?: string): Promise<Blob> => {
+    const response = await fetch(agentApi.getWhatsAppPairURL(size, bust, device), {
       method: 'GET',
       cache: 'no-store',
     })
@@ -1577,8 +1580,16 @@ export const agentApi = {
   },
 
   // Drops the paired account and restarts the connector with a fresh QR.
-  unpairWhatsApp: async (): Promise<{ ok: boolean }> => {
-    const response = await api.delete('/api/whatsapp/session')
+  unpairWhatsApp: async (opts?: { device?: string; jid?: string }): Promise<{ ok: boolean }> => {
+    const params: Record<string, string> = {}
+    if (opts?.device) params.device = opts.device
+    if (opts?.jid) params.jid = opts.jid
+    const response = await api.delete('/api/whatsapp/session', { params })
+    return response.data
+  },
+
+  updateWhatsAppDeviceLabel: async (slot: string, label: string): Promise<{ devices: WhatsAppStatus['devices'] }> => {
+    const response = await api.put('/api/whatsapp/device-label', { slot, label })
     return response.data
   },
 

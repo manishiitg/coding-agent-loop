@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import type { KeyboardEvent, MouseEvent, ReactNode } from 'react'
+import { CheckCircle2, Circle, Copy, FolderOpen, Loader2, Square, X } from 'lucide-react'
 import api, { getApiBaseUrl, getAuthToken } from '../../services/api'
 import { useWorkflowStore } from '../../stores/useWorkflowStore'
 import { useChatStore } from '../../stores/useChatStore'
@@ -21,6 +22,29 @@ export default function WorkflowLiveBrowser({ workspacePath, toolbar }: { worksp
   const [retry, setRetry] = useState(0)
   const [recording, setRecording] = useState<Recording>({ recording: false })
   const [recordingBusy, setRecordingBusy] = useState(false)
+  const [dismissedRecording, setDismissedRecording] = useState('')
+  const recordingNoticeKey = `browser-recording-dismissed:${workspacePath}:${session}`
+
+  useEffect(() => {
+    try { setDismissedRecording(sessionStorage.getItem(recordingNoticeKey) || '') }
+    catch { setDismissedRecording('') }
+  }, [recordingNoticeKey])
+
+  function dismissRecordingNotice() {
+    const directory = recording.directory || ''
+    setDismissedRecording(directory)
+    try { sessionStorage.setItem(recordingNoticeKey, directory) } catch { /* Dismissal still works without browser storage. */ }
+  }
+
+  async function copyRecordingPath() {
+    if (!recording.directory) return
+    try {
+      await navigator.clipboard.writeText(recording.directory)
+      useChatStore.getState().addToast('Recording path copied', 'success')
+    } catch {
+      useChatStore.getState().addToast('Unable to copy recording path', 'error')
+    }
+  }
   const [fit, setFit] = useState<'width' | 'page'>('width')
   const pendingTab = useRef('')
   const socket = useRef<WebSocket | null>(null)
@@ -181,12 +205,35 @@ export default function WorkflowLiveBrowser({ workspacePath, toolbar }: { worksp
         <div className="ml-auto flex gap-2">
           {session && !connected && <button className="rounded border border-border px-3 py-1 text-xs" onClick={() => setRetry(value => value + 1)}>Reconnect</button>}
           {connected && canControl && <button className="rounded border border-border px-3 py-1 text-xs" onClick={() => send({ type: controlling ? 'release_control' : 'take_control' })}>{controlling ? 'Return control to agent' : 'Take control'}</button>}
-          {session && canControl && <button disabled={recordingBusy} className={`rounded border px-2 py-1 text-xs disabled:opacity-50 ${recording.recording ? 'border-red-500 text-red-500' : 'border-border'}`} onClick={() => void toggleRecording()}>{recordingBusy ? 'Saving…' : recording.recording ? 'Stop recording' : 'Start recording'}</button>}
+          {session && canControl && (
+            <button type="button" disabled={recordingBusy} className={`inline-flex items-center gap-1.5 rounded-md px-2.5 py-1 text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50 ${recording.recording ? 'bg-red-500/10 text-red-600 hover:bg-red-500/15 dark:text-red-400' : 'bg-muted text-foreground hover:bg-muted/70'}`} onClick={() => void toggleRecording()}>
+              {recordingBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" /> : recording.recording ? <Square className="h-3 w-3 fill-current" aria-hidden="true" /> : <Circle className="h-3 w-3 fill-red-500 text-red-500" aria-hidden="true" />}
+              {recordingBusy ? recording.recording ? 'Saving recording…' : 'Starting recording…' : recording.recording ? 'Stop recording' : 'Start recording'}
+            </button>
+          )}
           <select aria-label="Browser sizing" value={fit} onChange={event => setFit(event.target.value as 'width' | 'page')} className="rounded border border-border bg-background px-1 text-xs"><option value="width">Fill width</option><option value="page">Fit page</option></select>
           {toolbar}
         </div>
       </div>
-      {!recording.recording && recording.directory && <div className="flex shrink-0 items-center gap-2 border-b px-3 py-1 text-xs"><span className="min-w-0 flex-1 truncate" title={recording.directory}>Saved: {recording.directory}</span><button className="shrink-0 underline" onClick={() => useWorkflowStore.getState().openWorkspaceView('files', `${recording.directory}/manifest.json`)}>Open recording files</button></div>}
+      {!recording.recording && recording.directory && recording.directory !== dismissedRecording && (
+        <div className="flex shrink-0 flex-wrap items-center gap-2 border-b border-border bg-muted/30 px-3 py-2 text-xs">
+          <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-600 dark:text-emerald-400" aria-hidden="true" />
+          <span className="min-w-0 flex-1 font-medium" title={recording.directory}>Recording saved</span>
+          <div className="ml-auto flex items-center gap-1">
+            <button type="button" className="inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" onClick={() => void copyRecordingPath()}>
+              <Copy className="h-4 w-4" aria-hidden="true" />
+              Copy path
+            </button>
+            <button type="button" className="inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" onClick={() => useWorkflowStore.getState().openWorkspaceView('files', `${recording.directory}/manifest.json`)}>
+              <FolderOpen className="h-4 w-4" aria-hidden="true" />
+              Open recording files
+            </button>
+            <button type="button" aria-label="Dismiss recording notification" title="Dismiss" className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" onClick={dismissRecordingNotice}>
+              <X className="h-4 w-4" aria-hidden="true" />
+            </button>
+          </div>
+        </div>
+      )}
       {error && <p className="p-3 text-xs text-destructive" role="alert">{error}</p>}
       {tabs.length > 0 && <div className="flex shrink-0 gap-1 overflow-x-auto border-b border-border px-2 py-1" aria-label="Browser tabs">
         {tabs.map(tab => <button key={tab.tabId} disabled={!canControl || tab.active} aria-pressed={tab.active} title={controlling ? tab.url : 'Switch tab and take control'} onClick={() => { if (controlling) send({ type: 'switch_tab', tab: tab.tabId }); else { pendingTab.current = tab.tabId; send({ type: 'take_control' }) } }} className={`max-w-52 shrink-0 truncate rounded px-3 py-1.5 text-xs ${tab.active ? 'bg-muted font-medium' : 'text-muted-foreground'} disabled:cursor-default`}>{tab.title || tab.url || tab.tabId}</button>)}

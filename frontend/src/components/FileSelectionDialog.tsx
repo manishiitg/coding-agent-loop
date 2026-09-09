@@ -1,13 +1,16 @@
-import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react'
+import React, { useState, useEffect, useRef, useCallback, useMemo, useId } from 'react'
 import { File, Folder, ChevronRight, ChevronDown } from 'lucide-react'
 import type { PlannerFile } from '../services/api-types'
 import { useWorkspaceStore } from '../stores/useWorkspaceStore'
 
-interface FileSelectionDialogProps {
+import { isPlainPickerKey } from '../utils/composerReferences'
+import { useComposerPicker, isComposerPickerEvent, type ComposerPickerProps } from '../hooks/useComposerPicker'
+
+interface FileSelectionDialogProps extends ComposerPickerProps {
   isOpen: boolean
   onClose: () => void
   onSelectFile: (file: PlannerFile) => void
-  /** When user presses → on a folder, call with folder path so parent can set search context to that folder */
+  /** When user presses Alt+→ on a folder, call with folder path so parent can set search context to that folder */
   onNavigateIntoFolder?: (folderPath: string) => void
   searchQuery: string
   position: { top: number; left: number }
@@ -22,8 +25,10 @@ export const FileSelectionDialog: React.FC<FileSelectionDialogProps> = ({
   onNavigateIntoFolder,
   searchQuery,
   position,
-  extraFiles
+  extraFiles, inputRef, listId, onActiveOptionChange
 }) => {
+  const generatedId = useId()
+  const optionListId = listId ?? generatedId
   const { files: workspaceFiles } = useWorkspaceStore()
 
   // Merge workspace files with extra files (deduplicated by filepath)
@@ -109,6 +114,7 @@ export const FileSelectionDialog: React.FC<FileSelectionDialogProps> = ({
       // Show hierarchical structure when no search, respecting expanded folders
       const flattened = flattenWithExpandedFolders(files, expandedFolders)
       setFilteredFiles(flattened)
+      setSelectedIndex(0)
       return
     }
 
@@ -181,9 +187,19 @@ export const FileSelectionDialog: React.FC<FileSelectionDialogProps> = ({
   }, [filteredFiles, displayLimit])
   const remainingCount = Math.max(0, filteredFiles.length - displayLimit)
 
+  useEffect(() => { setSelectedIndex(0) }, [isOpen])
+  useEffect(() => {
+    if (isOpen) onActiveOptionChange?.(displayedFiles[selectedIndex] ? `${optionListId}-${selectedIndex}` : undefined)
+  }, [isOpen, displayedFiles, selectedIndex, optionListId, onActiveOptionChange])
+  useComposerPicker(isOpen, dialogRef, inputRef, onClose)
+
   // Handle keyboard navigation
   const handleKeyDown = useCallback((e: KeyboardEvent) => {
-    if (!isOpen) return
+    if (!isOpen || !isComposerPickerEvent(e, inputRef) || e.isComposing || e.keyCode === 229) return
+    const folderKey = e.altKey && !e.ctrlKey && !e.metaKey && !e.shiftKey && ['ArrowLeft', 'ArrowRight'].includes(e.key)
+    if (!folderKey && !isPlainPickerKey(e)) return
+    if (['ArrowLeft', 'ArrowRight'].includes(e.key) && !folderKey) return
+    if (e.key === 'Tab') { onClose(); return }
 
     const visibleCount = displayedFiles.length
 
@@ -197,7 +213,7 @@ export const FileSelectionDialog: React.FC<FileSelectionDialogProps> = ({
       case 'ArrowUp':
         e.preventDefault()
         setSelectedIndex(prev => 
-          prev > 0 ? prev - 1 : visibleCount - 1
+          prev > 0 ? prev - 1 : Math.max(0, visibleCount - 1)
         )
         break
       case 'ArrowLeft':
@@ -237,14 +253,14 @@ export const FileSelectionDialog: React.FC<FileSelectionDialogProps> = ({
         e.preventDefault()
         if (displayedFiles[selectedIndex]) {
           onSelectFile(displayedFiles[selectedIndex])
-        }
+        } else { onClose() }
         break
       case 'Escape':
         e.preventDefault()
         onClose()
         break
     }
-  }, [isOpen, displayedFiles, selectedIndex, searchQuery, onNavigateIntoFolder, onSelectFile, onClose])
+  }, [isOpen, displayedFiles, selectedIndex, searchQuery, onNavigateIntoFolder, onSelectFile, onClose, inputRef])
 
 
   // Add keyboard event listeners
@@ -267,20 +283,6 @@ export const FileSelectionDialog: React.FC<FileSelectionDialogProps> = ({
       }
     }
   }, [selectedIndex])
-
-  // Close dialog when clicking outside
-  useEffect(() => {
-    const handleClickOutside = (event: MouseEvent) => {
-      if (dialogRef.current && !dialogRef.current.contains(event.target as Node)) {
-        onClose()
-      }
-    }
-
-    if (isOpen) {
-      document.addEventListener('mousedown', handleClickOutside)
-      return () => document.removeEventListener('mousedown', handleClickOutside)
-    }
-  }, [isOpen, onClose])
 
   if (!isOpen) return null
 
@@ -345,10 +347,12 @@ export const FileSelectionDialog: React.FC<FileSelectionDialogProps> = ({
   return (
     <div
       ref={dialogRef}
-      className="fixed z-50 bg-background border border-border rounded-lg shadow-lg min-w-[320px] max-w-xl w-full max-h-80 overflow-hidden"
+      className="fixed z-50 bg-background border border-border rounded-lg shadow-lg flex flex-col overflow-hidden"
       style={{
-        top: position.top,
-        left: position.left
+        top: Math.max(8, position.top),
+        left: Math.max(8, Math.min(position.left, window.innerWidth - Math.min(420, window.innerWidth - 16) - 8)),
+        width: 'min(420px, calc(100vw - 16px))',
+        maxHeight: `min(320px, calc(100vh - ${Math.max(8, position.top) + 8}px))`
       }}
     >
       {/* Header - compact: one line for title + filter, one for shortcuts */}
@@ -371,7 +375,7 @@ export const FileSelectionDialog: React.FC<FileSelectionDialogProps> = ({
           )}
           <span className="text-[11px] text-muted-foreground ml-auto flex items-center gap-1.5 flex-shrink-0">
             <kbd className="px-1 py-0.5 bg-muted rounded font-mono">↑</kbd><kbd className="px-1 py-0.5 bg-muted rounded font-mono">↓</kbd>
-            <kbd className="px-1 py-0.5 bg-muted rounded font-mono">→</kbd>
+            <kbd className="px-1 py-0.5 bg-muted rounded font-mono">Alt+→</kbd>
             <kbd className="px-1 py-0.5 bg-muted rounded font-mono">Enter</kbd>
             <kbd className="px-1 py-0.5 bg-muted rounded font-mono">Esc</kbd>
           </span>
@@ -381,7 +385,10 @@ export const FileSelectionDialog: React.FC<FileSelectionDialogProps> = ({
       {/* File List */}
       <div 
         ref={listRef}
-        className="overflow-y-auto max-h-72 min-h-[120px]"
+        id={optionListId}
+        role="listbox"
+        aria-label="Files and folders"
+        className="overflow-y-auto min-h-0 flex-1"
       >
         {displayedFiles.length === 0 ? (
           <div className="px-3 py-5 text-center text-muted-foreground text-sm space-y-1">
@@ -401,6 +408,10 @@ export const FileSelectionDialog: React.FC<FileSelectionDialogProps> = ({
               return (
                 <div
                   key={file.filepath}
+                  id={`${optionListId}-${index}`}
+                  role="option"
+                  aria-selected={index === selectedIndex}
+                  onMouseDown={event => event.preventDefault()}
                   title={file.filepath}
                   className={`px-3 py-2.5 cursor-pointer flex items-center gap-2 text-sm transition-colors ${
                     index === selectedIndex
@@ -454,7 +465,7 @@ export const FileSelectionDialog: React.FC<FileSelectionDialogProps> = ({
             <kbd className="px-1 py-0.5 bg-muted dark:bg-muted/80 rounded font-mono text-[11px]">↓</kbd>
             navigate
             <span className="text-border">·</span>
-            <kbd className="px-1 py-0.5 bg-muted dark:bg-muted/80 rounded font-mono text-[11px]">→</kbd>
+            <kbd className="px-1 py-0.5 bg-muted dark:bg-muted/80 rounded font-mono text-[11px]">Alt+→</kbd>
             expand
             <span className="text-border">·</span>
             <kbd className="px-1 py-0.5 bg-muted dark:bg-muted/80 rounded font-mono text-[11px]">Enter</kbd>

@@ -304,7 +304,7 @@ Returns the canonical guided-flow text for any workflow slash command. Always ca
     - pulse                    → run one complete Pulse now against retained evidence; no workflow run or schedule change
     - engineering-review       → read-only Technical Review phase; manual pulse-review aliases supply an ordered Fix message after the completed review receipt
     - pulse-fixer              → apply bounded safe fixes from existing review findings; standalone recovery command does not rerun reviewers
-    - goal-advisor             → develop strategic opportunities / concrete human decision proposals; no schedule or Pulse-toggle change
+    - goal-advisor             → compatibility alias for strategy-auditor; use the same strategic review flow
     - improve-report           → report accuracy/live-data/layout improvements
 
 **Optional parameters:**
@@ -318,7 +318,7 @@ The returned text is your instructions for this turn — do not paraphrase or sk
 
 ### How improvement is split
 
-Pulse is the single broad maintenance path and owns routine Bug Review, bounded fixes, artifact review, and KB/learnings/db/report hygiene when evidence points there. Manual ` + "`/pulse-review`" + ` and focused ` + "`/pulse-review-*`" + ` commands run one retained Technical Maintenance sequence: their review phase is read-only through a durable receipt, then the explicitly supplied follow-up message runs a bounded Fix phase in that same child. ` + "`/pulse-fixer`" + ` remains a repair-only recovery command for an already reviewed queue. ` + "`/pulse`" + ` runs the complete Gate → Review+Fix → Finalize path once, ` + "`/strategy-auditor`" + ` runs an open-ended read-only strategy review with concrete human decision proposals, and ` + "`/goal-advisor`" + ` develops strategic opportunities into concrete human decision proposals. Recurring Pulse itself has no slash command or independent cron: the workflow toolbar/Pulse popup stores ` + "`pulse.enabled`" + `, and each completed normal scheduled run invokes Pulse Gate against that run's evidence.
+Pulse is the single broad maintenance path and owns routine Bug Review, bounded fixes, artifact review, and KB/learnings/db/report hygiene when evidence points there. Manual ` + "`/pulse-review`" + ` and focused ` + "`/pulse-review-*`" + ` commands run one retained Technical Maintenance sequence: their review phase is read-only through a durable receipt, then the explicitly supplied follow-up message runs a bounded Fix phase in that same child. ` + "`/pulse-fixer`" + ` remains a repair-only recovery command for an already reviewed queue. ` + "`/pulse`" + ` runs the complete Gate → Review+Fix → Finalize path once, ` + "`/strategy-auditor`" + ` runs an open-ended read-only strategy review with concrete human decision proposals, and ` + "`/goal-advisor`" + ` is a compatibility alias for that same review. Recurring Pulse itself has no slash command or independent cron: the workflow toolbar/Pulse popup stores ` + "`pulse.enabled`" + `, and each completed normal scheduled run invokes Pulse Gate against that run's evidence.
 
 ### Resolution discipline
 

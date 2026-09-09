@@ -32,6 +32,7 @@ export type WorkshopMode = 'workshop' | 'run'
 
 export interface CommandContext {
   beforeSlash: string
+  pulseReviewFocus?: string
   // Set for a specific product's tab (e.g. 'video-studio'); unset for the
   // product-owned chat surface. Lets a command opt out of surfaces where it
   // makes no sense.
@@ -60,6 +61,10 @@ export interface CommandContext {
 
 export interface CommandDefinition {
   command: string
+  // Compatibility names resolve to this command without adding menu entries.
+  aliases?: string[]
+  // Searchable context for a command whose choices live in a picker.
+  searchTerms?: string[]
   description: string
   icon: ReactNode
   modes?: ModeCategory[]
@@ -67,6 +72,8 @@ export interface CommandDefinition {
   requiredWorkshopMode?: WorkshopMode | WorkshopMode[]
   validate?: (ctx: CommandContext) => string | null
   hidden?: boolean
+  // Retained shortcuts can execute under normal access checks without menu rows.
+  menuHidden?: boolean
   // 'product' commands ship with the active product (declared in its
   // product.yaml) rather than being hardcoded platform builtins or the
   // user's own markdown -- they are not user-editable, which the command

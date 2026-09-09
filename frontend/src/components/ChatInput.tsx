@@ -15,6 +15,7 @@ import SkillSelectionDropdown from './skills/SkillSelectionDropdown'
 import FileSelectionDialog from './FileSelectionDialog'
 import CommandSelectionDialog from './CommandSelectionDialog'
 import { CommandEditorDialog } from './commands/CommandEditorDialog'
+import { PulseReviewFocusDialog } from './commands/PulseReviewFocusDialog'
 import { findCommand, findCommandAnyMode, loadAndRegisterUserCommands, type CommandContext, type CommandDefinition } from '../commands'
 import { commandsApi } from '../api/commands'
 import WorkflowSelectionDialog from './WorkflowSelectionDialog'
@@ -37,7 +38,8 @@ import { shouldClearAcceptedChatDraft } from '../utils/chatSubmissionDraft'
 import { liveTerminalControlKey } from '../utils/liveTerminalKeys'
 import { chatUsesStructuredTransport, shouldRouteChatInputToLiveTransport, shouldShowLiveTerminalControl } from '../utils/liveInputSubmission'
 import { effectiveLLMUnderLock, effectiveProviderUnderLock } from '../utils/effectiveLLM'
-import { normalizeEventViewMode } from '../stores/useChatStore'
+import { normalizeEventViewMode, type ChatTabConfig } from '../stores/useChatStore'
+import { getComposerTrigger, replaceComposerTrigger, formatFileReference, removeFileReferences, reconcileFileReferences, isPlainPickerKey, type ComposerTrigger } from '../utils/composerReferences'
 import { activateTab } from '../utils/activateTab'
 import { isBlankWorkflowBuilderTab } from '../utils/workflowTabResolution'
 
@@ -668,22 +670,38 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
   const micStateRef = useRef<MicState>('idle')
   const [micBannerHost, setMicBannerHost] = useState<HTMLDivElement | null>(null)
   const handleMicStateChange = useCallback((s: MicState) => { micStateRef.current = s }, [])
-  const handleVoiceText = useCallback((text: string, autoSubmit: boolean) => {
-    const base = localInputText
-    const joined = base && !base.endsWith(' ') && !base.endsWith('\n') ? `${base} ${text}` : `${base}${text}`
-    setLocalInputText(joined)
-    if (activeTabId) setTabConfig(activeTabId, { inputText: joined })
-    // So Enter immediately sends — without this the composer stays unfocused
-    // after dictation and Enter does nothing.
-    textareaRef.current?.focus()
-    if (autoSubmit) pendingVoiceAutoSubmitRef.current = true
-  }, [localInputText, activeTabId, setTabConfig])
+
 
   const inputText = localInputText
   const inputOwnerTabIdRef = useRef(activeTabId)
 
   // Debounce ref for syncing to store
   const syncToStoreTimeoutRef = useRef<NodeJS.Timeout | null>(null)
+  const writeComposerText = useCallback((text: string, patch: Partial<ChatTabConfig> = {}) => {
+    if (syncToStoreTimeoutRef.current) clearTimeout(syncToStoreTimeoutRef.current)
+    syncToStoreTimeoutRef.current = null
+    setLocalInputText(text)
+    const nextFiles = patch.fileContext ?? reconcileFileReferences(inputText, text, chatFileContext)
+    const removedRestoredConversation = tabConfig?.restoredConversationPath && chatFileContext.some(file => file.path === tabConfig.restoredConversationPath) && !nextFiles.some(file => file.path === tabConfig.restoredConversationPath)
+    if (activeTabId) setTabConfig(activeTabId, {
+      ...patch, inputText: text, fileContext: nextFiles,
+      ...(removedRestoredConversation ? {
+        restoredConversationPath: undefined, restoredConversationSummary: undefined, restoredConversationTitle: undefined,
+        restoredConversationWorkshopModeLabel: undefined, restoredConversationRuntimeLabel: undefined, restoredConversationNativeResume: undefined,
+      } : {}),
+    })
+  }, [activeTabId, setTabConfig, inputText, chatFileContext, tabConfig?.restoredConversationPath])
+
+
+  const handleVoiceText = useCallback((text: string, autoSubmit: boolean) => {
+    const base = localInputText
+    const joined = base && !base.endsWith(' ') && !base.endsWith('\n') ? `${base} ${text}` : `${base}${text}`
+    writeComposerText(joined)
+    // So Enter immediately sends — without this the composer stays unfocused
+    // after dictation and Enter does nothing.
+    textareaRef.current?.focus()
+    if (autoSubmit) pendingVoiceAutoSubmitRef.current = true
+  }, [localInputText, writeComposerText])
 
   // Sync local state FROM store when store changes externally (preset sync, etc.)
   useLayoutEffect(() => {
@@ -836,24 +854,13 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
   const removeFileFromContext = useCallback((path: string) => {
     if (activeTabId && activeTab) {
       const newFileContext = chatFileContext.filter(f => f.path !== path)
-      const configUpdate = activeTab.config?.restoredConversationPath === path
-        ? {
-            fileContext: newFileContext,
-            restoredConversationPath: undefined,
-            restoredConversationSummary: undefined,
-            restoredConversationTitle: undefined,
-            restoredConversationWorkshopModeLabel: undefined,
-            restoredConversationRuntimeLabel: undefined,
-            restoredConversationNativeResume: undefined,
-          }
-        : { fileContext: newFileContext }
-      setTabConfig(activeTabId, configUpdate)
+      writeComposerText(removeFileReferences(inputText, path), { fileContext: newFileContext })
     }
-  }, [activeTabId, activeTab, chatFileContext, setTabConfig])
+  }, [activeTabId, activeTab, chatFileContext, inputText, writeComposerText])
   
   const clearFileContext = useCallback(() => {
     if (activeTabId) {
-      setTabConfig(activeTabId, {
+      writeComposerText(chatFileContext.reduce((text, file) => removeFileReferences(text, file.path), inputText), {
         fileContext: [],
         restoredConversationPath: undefined,
         restoredConversationSummary: undefined,
@@ -863,7 +870,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
         restoredConversationNativeResume: undefined,
       })
     }
-  }, [activeTabId, setTabConfig])
+  }, [activeTabId, chatFileContext, inputText, writeComposerText])
   
   const addPastedAttachment = useCallback((content: string): string | null => {
     if (!activeTabId) return null
@@ -893,7 +900,6 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     const marker = attachment?.marker
     const nextInputText = marker ? removePasteMarkersFromText(inputText, [marker]) : inputText
     setLocalInputText(nextInputText)
-    prevInputTextRef.current = nextInputText
     if (syncToStoreTimeoutRef.current) {
       clearTimeout(syncToStoreTimeoutRef.current)
       syncToStoreTimeoutRef.current = null
@@ -909,7 +915,6 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     const markers = chatPastedAttachments.map((p, index) => p.marker || `[paste${index + 1}]`)
     const nextInputText = removePasteMarkersFromText(inputText, markers)
     setLocalInputText(nextInputText)
-    prevInputTextRef.current = nextInputText
     if (syncToStoreTimeoutRef.current) {
       clearTimeout(syncToStoreTimeoutRef.current)
       syncToStoreTimeoutRef.current = null
@@ -1470,14 +1475,10 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
   const uploadFilesToChatRef = useRef<(files: File[]) => Promise<void>>(async () => {})
   const dragCounterRef = useRef(0)
   
-  // Track previous input value to distinguish user deletion from programmatic clearing
-  const prevInputTextRef = useRef<string>('')
-  
   // File selection dialog state
   const [showFileDialog, setShowFileDialog] = useState(false)
   const [fileDialogPosition, setFileDialogPosition] = useState({ top: 0, left: 0 })
   const [fileSearchQuery, setFileSearchQuery] = useState('')
-  const [atPosition, setAtPosition] = useState(-1) // Position of @ in text
   // Extra files for @ dialog (Chats/ — loaded on demand so workflow-scoped trees still show them)
   const [extraAtFiles, setExtraAtFiles] = useState<PlannerFile[]>([])
 
@@ -1485,7 +1486,16 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
   const [showCommandDialog, setShowCommandDialog] = useState(false)
   const [commandDialogPosition, setCommandDialogPosition] = useState({ bottom: 0, left: 0 })
   const [commandSearchQuery, setCommandSearchQuery] = useState('')
-  const [slashPosition, setSlashPosition] = useState(-1) // Position of / in text
+  const composerTriggerRef = useRef<ComposerTrigger | null>(null)
+  const commandPaletteRef = useRef<{ text: string; start: number; end: number } | null>(null)
+  const dismissedTriggerRef = useRef<string | null>(null)
+  const composingRef = useRef(false)
+  const [activeComposerOption, setActiveComposerOption] = useState<string | undefined>()
+  const commandListId = `commands-${activeTabId}`
+  const fileListId = `files-${activeTabId}`
+
+  const [pulseReviewPicker, setPulseReviewPicker] = useState<{ tabId: string; workspacePath: string | null | undefined; initialContext: string } | null>(null)
+  const closePulseReviewPicker = useCallback(() => setPulseReviewPicker(null), [])
 
   const restoredResumeTitle = useMemo(() => {
     if (tabConfig?.restoredConversationTitle?.trim()) return tabConfig.restoredConversationTitle.trim()
@@ -1589,11 +1599,6 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
       setTabConfig(activeTabId, { inputText: '' })
     }
   }, [activePresetIds, getActivePreset, activeTabId, setTabConfig])
-
-  // Sync ref with inputText when it changes externally (preset sync, programmatic clearing, etc.)
-  useEffect(() => {
-    prevInputTextRef.current = inputText || ''
-  }, [inputText])
 
   // Handle auto-run from tab config
   useEffect(() => {
@@ -1778,9 +1783,6 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     tabSessionId,
   ])
 
-  // Ref for debounced file removal check
-  const fileRemovalTimeoutRef = useRef<NodeJS.Timeout | null>(null)
-
   // Guard: prevent form submit from firing when Stop button click causes a button swap
   // (React re-renders Stop→Send mid-click, causing the browser to dispatch submit on the new button)
 
@@ -1869,27 +1871,67 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     const newValue = `${before}${markerText}${after}`
     const cursorPosition = before.length + markerText.length
 
-    setLocalInputText(newValue)
-    prevInputTextRef.current = newValue
-    if (syncToStoreTimeoutRef.current) {
-      clearTimeout(syncToStoreTimeoutRef.current)
-      syncToStoreTimeoutRef.current = null
-    }
-    if (activeTabId) {
-      setTabConfig(activeTabId, { inputText: newValue })
-    }
+    writeComposerText(newValue)
 
     setTimeout(() => {
       textarea.focus()
       textarea.setSelectionRange(cursorPosition, cursorPosition)
       adjustTextareaHeight()
     }, 0)
-  }, [activeTabId, addPastedAttachment, adjustTextareaHeight, inputText, setTabConfig])
+  }, [addPastedAttachment, adjustTextareaHeight, inputText, writeComposerText])
+
+  const closeComposerPickers = useCallback(() => {
+    const trigger = composerTriggerRef.current
+    commandPaletteRef.current = null
+    dismissedTriggerRef.current = trigger ? JSON.stringify(trigger) : null
+    composerTriggerRef.current = null
+    setShowFileDialog(false)
+    setShowCommandDialog(false)
+    setShowWorkflowDialog(false)
+    setShowSkillPopup(false)
+    setShowServerPopup(false)
+    setActiveComposerOption(undefined)
+  }, [])
+
+  useEffect(() => { closeComposerPickers(); dismissedTriggerRef.current = null }, [activeTabId, closeComposerPickers])
+
+  const updateComposerPicker = useCallback((textarea: HTMLTextAreaElement) => {
+    const palette = commandPaletteRef.current
+    if (palette && palette.text === textarea.value && palette.start === textarea.selectionStart && palette.end === textarea.selectionEnd) return
+    commandPaletteRef.current = null
+    let trigger = isProductSurface || composingRef.current ? null : getComposerTrigger(textarea.value, textarea.selectionStart, textarea.selectionEnd)
+    if (isWorkflowPhaseChat && (trigger?.kind === '!' || trigger?.kind === '$')) trigger = null
+    if (trigger && JSON.stringify(trigger) === dismissedTriggerRef.current) trigger = null
+    else dismissedTriggerRef.current = null
+    composerTriggerRef.current = trigger
+    setShowCommandDialog(trigger?.kind === '/')
+    setShowFileDialog(trigger?.kind === '@')
+    setShowWorkflowDialog(trigger?.kind === '#')
+    setShowSkillPopup(trigger?.kind === '!')
+    setShowServerPopup(trigger?.kind === '$')
+    if (!trigger) { setActiveComposerOption(undefined); return }
+    const rect = textarea.getBoundingClientRect()
+    const left = Math.max(8, Math.min(rect.left, window.innerWidth - Math.min(420, window.innerWidth - 16) - 8))
+    const position = { bottom: Math.max(8, Math.min(window.innerHeight - rect.top + 8, window.innerHeight - 80)), left }
+    switch (trigger.kind) {
+      case '/':
+        setCommandSearchQuery(trigger.query); setCommandDialogPosition(position); break
+      case '@':
+        setFileSearchQuery(trigger.query)
+        setFileDialogPosition({ top: Math.max(8, Math.min(rect.top - 330, window.innerHeight - 328)), left }); break
+      case '#':
+        setHashPosition(trigger.start); setWorkflowSearchQuery(trigger.query); setWorkflowDialogPosition(position); break
+      case '!':
+        setExclamationPosition(trigger.start); setSkillPopupSearchQuery(trigger.query); setSkillPopupPosition(position); break
+      case '$':
+        setDollarPosition(trigger.start); setServerPopupSearchQuery(trigger.query); setServerPopupPosition(position); break
+    }
+  }, [isProductSurface, isWorkflowPhaseChat])
 
   // Memoized handlers to prevent re-creation
   const handleTextChange = useCallback((e: React.ChangeEvent<HTMLTextAreaElement>) => {
     const newValue = e.target.value
-    const previousValue = prevInputTextRef.current
+    const previousValue = inputText
     const nextPastedAttachments = chatPastedAttachments.filter(p => !p.marker || newValue.includes(p.marker))
     const pastedAttachmentsChanged = nextPastedAttachments.length !== chatPastedAttachments.length
 
@@ -1901,8 +1943,12 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
       syncToStoreTimeoutRef.current = null
     }
 
-    if (pastedAttachmentsChanged && activeTabId) {
-      setTabConfig(activeTabId, { inputText: newValue, pastedAttachments: nextPastedAttachments })
+    const nextFiles = reconcileFileReferences(previousValue, newValue, chatFileContext)
+    const filesChanged = nextFiles.length !== chatFileContext.length
+    const workflowContext = tabConfig?.workflowContext || []
+    const nextWorkflows = workflowContext.filter(workflow => !previousValue.includes('#' + workflow.label) || newValue.includes('#' + workflow.label))
+    if ((pastedAttachmentsChanged || filesChanged || nextWorkflows.length !== workflowContext.length) && activeTabId) {
+      writeComposerText(newValue, { pastedAttachments: nextPastedAttachments, fileContext: nextFiles, workflowContext: nextWorkflows })
     } else {
       // Debounce sync to Zustand store (300ms delay)
       syncToStoreTimeoutRef.current = setTimeout(() => {
@@ -1913,345 +1959,11 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
       }, 300)
     }
 
-    // Update ref for next comparison
-    prevInputTextRef.current = newValue
-
     // Auto-resize textarea
     adjustTextareaHeight()
 
-    // Product chats intentionally do not expose AgentWorks command, workflow,
-    // skill, server, or file-reference syntax. Attachments still use the
-    // dedicated paperclip button below.
-    if (isProductSurface) {
-      setShowFileDialog(false)
-      setShowCommandDialog(false)
-      setShowWorkflowDialog(false)
-      setShowSkillPopup(false)
-      setShowServerPopup(false)
-      return
-    }
-
-    // Skip most special character triggers for workflow phase chat — but allow @, /, and #.
-    if (isWorkflowPhaseChat) {
-      // Process @, /, and # triggers in workflow phase chat
-      const cursorPos = e.target.selectionStart || 0
-      const textBefore = newValue.substring(0, cursorPos)
-      const atIdx = textBefore.lastIndexOf('@')
-      const slashIdx = textBefore.lastIndexOf('/')
-      const hashIdx = textBefore.lastIndexOf('#')
-      const slashIsPartOfAtPath = atIdx >= 0 && slashIdx > atIdx
-
-      // Determine closest trigger
-      const atDist = atIdx >= 0 ? cursorPos - atIdx : Infinity
-      const slashDist = slashIdx >= 0 ? cursorPos - slashIdx : Infinity
-      const hashDist = hashIdx >= 0 ? cursorPos - hashIdx : Infinity
-      const closestTrigger = Math.min(atDist, slashDist, hashDist)
-
-      if (atIdx >= 0 && closestTrigger === atDist) {
-        const textAfterAt = textBefore.substring(atIdx + 1)
-        const hasValidAt = textAfterAt === '' || textAfterAt.match(/^[a-zA-Z0-9/._\-\\]*$/)
-        if (hasValidAt) {
-          setAtPosition(atIdx)
-          setFileSearchQuery(textAfterAt)
-          setShowFileDialog(true)
-          setShowCommandDialog(false)
-          setShowWorkflowDialog(false)
-
-          const textarea = e.target
-          const rect = textarea.getBoundingClientRect()
-          const dialogHeight = 320
-          const spaceAbove = rect.top
-          setFileDialogPosition({
-            top: spaceAbove > dialogHeight ? rect.top - dialogHeight - 8 : rect.bottom + 8,
-            left: rect.left + window.scrollX
-          })
-        } else {
-          setShowFileDialog(false)
-          setAtPosition(-1)
-          setFileSearchQuery('')
-        }
-      } else if (!slashIsPartOfAtPath && slashIdx >= 0 && closestTrigger === slashDist) {
-        const textAfterSlash = textBefore.substring(slashIdx + 1)
-        const hasValidSlash = textAfterSlash === '' || textAfterSlash.match(/^[a-zA-Z0-9_:-]*$/)
-        if (hasValidSlash) {
-          setSlashPosition(slashIdx)
-          setCommandSearchQuery(textAfterSlash)
-          setShowCommandDialog(true)
-          setShowFileDialog(false)
-          setShowWorkflowDialog(false)
-
-          const textarea = e.target
-          const rect = textarea.getBoundingClientRect()
-          setCommandDialogPosition({
-            bottom: window.innerHeight - rect.top + 8,
-            left: rect.left + window.scrollX
-          })
-        } else {
-          setShowCommandDialog(false)
-          setSlashPosition(-1)
-          setCommandSearchQuery('')
-        }
-      } else if (hashIdx >= 0 && closestTrigger === hashDist) {
-        const textAfterHash = textBefore.substring(hashIdx + 1)
-        const hasValidHash = textAfterHash === '' || textAfterHash.match(/^[a-zA-Z0-9_-]*$/)
-        if (hasValidHash) {
-          setHashPosition(hashIdx)
-          setWorkflowSearchQuery(textAfterHash)
-          setShowWorkflowDialog(true)
-          setShowFileDialog(false)
-          setShowCommandDialog(false)
-
-          const textarea = e.target
-          const rect = textarea.getBoundingClientRect()
-          setWorkflowDialogPosition({
-            bottom: window.innerHeight - rect.top + 8,
-            left: rect.left + window.scrollX
-          })
-        } else {
-          setShowWorkflowDialog(false)
-          setHashPosition(-1)
-          setWorkflowSearchQuery('')
-        }
-      } else {
-        setShowFileDialog(false)
-        setAtPosition(-1)
-        setFileSearchQuery('')
-        setShowCommandDialog(false)
-        setSlashPosition(-1)
-        setCommandSearchQuery('')
-        setShowWorkflowDialog(false)
-        setHashPosition(-1)
-        setWorkflowSearchQuery('')
-      }
-      return
-    }
-
-    const cursorPosition = e.target.selectionStart || 0
-    const textBeforeCursor = newValue.substring(0, cursorPosition)
-
-    const lastSlashIndex = textBeforeCursor.lastIndexOf('/')
-    const lastAtIndex = textBeforeCursor.lastIndexOf('@')
-    const lastHashIndex = textBeforeCursor.lastIndexOf('#')
-    const lastExclamationIndex = textBeforeCursor.lastIndexOf('!')
-    const lastDollarIndex = textBeforeCursor.lastIndexOf('$')
-
-    // If @ appears before the current /, the / is part of a path (e.g. "@ workflow /") — stay in file dialog
-    const slashIsPartOfAtPath = lastAtIndex >= 0 && lastSlashIndex > lastAtIndex
-
-    const slashDistance = lastSlashIndex >= 0 ? cursorPosition - lastSlashIndex : Infinity
-    const atDistance = lastAtIndex >= 0 ? cursorPosition - lastAtIndex : Infinity
-    const hashDistance = lastHashIndex >= 0 ? cursorPosition - lastHashIndex : Infinity
-    const exclamationDistance = lastExclamationIndex >= 0 ? cursorPosition - lastExclamationIndex : Infinity
-    const dollarDistance = lastDollarIndex >= 0 ? cursorPosition - lastDollarIndex : Infinity
-
-    // Check if # is a markdown heading (at line start AND followed by a space) — don't trigger dialog for headings
-    // e.g. "# Heading" is a heading, but "#workflow" is a workflow trigger
-    const charAfterHash = lastHashIndex >= 0 ? newValue[lastHashIndex + 1] : undefined
-    const hashIsAtLineStart = lastHashIndex >= 0 && (lastHashIndex === 0 || textBeforeCursor[lastHashIndex - 1] === '\n')
-    const hashIsHeading = hashIsAtLineStart && charAfterHash === ' '
-
-    // Find the closest trigger to cursor
-    const closestTrigger = Math.min(slashDistance, atDistance, hashDistance, exclamationDistance, dollarDistance)
-
-    // Check for / command (only when / is not part of an @ path)
-    if (!slashIsPartOfAtPath && lastSlashIndex >= 0 && closestTrigger === slashDistance) {
-      const textAfterSlash = textBeforeCursor.substring(lastSlashIndex + 1)
-      const hasValidSlash = textAfterSlash === '' || textAfterSlash.match(/^[a-zA-Z0-9_:-]*$/)
-
-      if (hasValidSlash) {
-        setSlashPosition(lastSlashIndex)
-        setCommandSearchQuery(textAfterSlash)
-        setShowCommandDialog(true)
-        setShowFileDialog(false)
-        setShowWorkflowDialog(false)
-
-        // Calculate dialog position — anchor from bottom so it grows upward
-        const textarea = e.target
-        const rect = textarea.getBoundingClientRect()
-
-        setCommandDialogPosition({
-          bottom: window.innerHeight - rect.top + 8,
-          left: rect.left + window.scrollX
-        })
-      } else {
-        setShowCommandDialog(false)
-        setSlashPosition(-1)
-        setCommandSearchQuery('')
-      }
-    }
-    // Check for # workflow trigger (not a markdown heading, in chat/multi-agent mode)
-    else if (!hashIsHeading && lastHashIndex >= 0 && closestTrigger === hashDistance) {
-      const textAfterHash = textBeforeCursor.substring(lastHashIndex + 1)
-      const hasValidHash = textAfterHash === '' || textAfterHash.match(/^[a-zA-Z0-9_-]*$/)
-
-      if (hasValidHash) {
-        setHashPosition(lastHashIndex)
-        setWorkflowSearchQuery(textAfterHash)
-        setShowWorkflowDialog(true)
-        setShowCommandDialog(false)
-        setShowFileDialog(false)
-
-        // Calculate dialog position — anchor from bottom so it grows upward
-        const textarea = e.target
-        const rect = textarea.getBoundingClientRect()
-
-        setWorkflowDialogPosition({
-          bottom: window.innerHeight - rect.top + 8,
-          left: rect.left + window.scrollX
-        })
-      } else {
-        setShowWorkflowDialog(false)
-        setHashPosition(-1)
-        setWorkflowSearchQuery('')
-      }
-    }
-    // Check for ! skill trigger
-    else if (lastExclamationIndex >= 0 && closestTrigger === exclamationDistance) {
-      const textAfterExcl = textBeforeCursor.substring(lastExclamationIndex + 1)
-      const hasValidExcl = textAfterExcl === '' || textAfterExcl.match(/^[a-zA-Z0-9_-]*$/)
-      // console.log(DBG + ' ! trigger — textAfterExcl:', JSON.stringify(textAfterExcl), 'hasValidExcl:', hasValidExcl)
-
-      if (hasValidExcl) {
-        setExclamationPosition(lastExclamationIndex)
-        setSkillPopupSearchQuery(textAfterExcl)
-        setShowSkillPopup(true)
-        // console.log(DBG + ' ! trigger — setSkillPopupSearchQuery:', JSON.stringify(textAfterExcl))
-        setShowCommandDialog(false)
-        setShowFileDialog(false)
-        setShowWorkflowDialog(false)
-        setShowServerPopup(false)
-
-        const textarea = e.target
-        const rect = textarea.getBoundingClientRect()
-        setSkillPopupPosition({
-          bottom: window.innerHeight - rect.top + 8,
-          left: rect.left + window.scrollX
-        })
-      } else {
-        setShowSkillPopup(false)
-        setExclamationPosition(-1)
-        setSkillPopupSearchQuery('')
-      }
-    }
-    // Check for $ server trigger
-    else if (lastDollarIndex >= 0 && closestTrigger === dollarDistance) {
-      const textAfterDollar = textBeforeCursor.substring(lastDollarIndex + 1)
-      const hasValidDollar = textAfterDollar === '' || textAfterDollar.match(/^[a-zA-Z0-9_-]*$/)
-
-      if (hasValidDollar) {
-        setDollarPosition(lastDollarIndex)
-        setServerPopupSearchQuery(textAfterDollar)
-        setShowServerPopup(true)
-        setShowCommandDialog(false)
-        setShowFileDialog(false)
-        setShowWorkflowDialog(false)
-        setShowSkillPopup(false)
-
-        const textarea = e.target
-        const rect = textarea.getBoundingClientRect()
-        setServerPopupPosition({
-          bottom: window.innerHeight - rect.top + 8,
-          left: rect.left + window.scrollX
-        })
-      } else {
-        setShowServerPopup(false)
-        setDollarPosition(-1)
-        setServerPopupSearchQuery('')
-      }
-    }
-    // Check for @ symbol and update file dialog state (only if no other dialog active and workspace access is enabled)
-    else if (lastAtIndex >= 0 && !showCommandDialog && !showWorkflowDialog) {
-      const textAfterAt = textBeforeCursor.substring(lastAtIndex + 1)
-      const hasValidAt = textAfterAt === '' || textAfterAt.match(/^[a-zA-Z0-9/._\-\\]*$/)
-
-      if (hasValidAt) {
-        setAtPosition(lastAtIndex)
-        setFileSearchQuery(textAfterAt)
-        setShowFileDialog(true)
-
-        // Calculate dialog position - smart positioning to avoid overlap
-        const textarea = e.target
-        const rect = textarea.getBoundingClientRect()
-        const dialogHeight = 320 // Approximate dialog height
-        const spaceAbove = rect.top
-        const spaceBelow = window.innerHeight - rect.bottom
-
-        // Position above if there's more space above, otherwise position below
-        const shouldPositionAbove = spaceAbove > dialogHeight || spaceAbove > spaceBelow
-
-        setFileDialogPosition({
-          top: shouldPositionAbove
-            ? rect.top + window.scrollY - dialogHeight - 10 // Above with gap
-            : rect.bottom + window.scrollY + 10, // Below with gap
-          left: rect.left + window.scrollX
-        })
-      } else {
-        setShowFileDialog(false)
-        setAtPosition(-1)
-        setFileSearchQuery('')
-      }
-    } else {
-      // Close all dialogs if none is active
-      // console.log(DBG + ' no trigger matched — closing all popups. textBeforeCursor:', JSON.stringify(textBeforeCursor), 'closestTrigger:', closestTrigger)
-      setShowFileDialog(false)
-      setAtPosition(-1)
-      setFileSearchQuery('')
-      setShowCommandDialog(false)
-      setSlashPosition(-1)
-      setCommandSearchQuery('')
-      setShowWorkflowDialog(false)
-      setHashPosition(-1)
-      setWorkflowSearchQuery('')
-      setShowSkillPopup(false)
-      setExclamationPosition(-1)
-      setSkillPopupSearchQuery('')
-      setShowServerPopup(false)
-      setDollarPosition(-1)
-      setServerPopupSearchQuery('')
-    }
-
-    // Debounce file reference removal check (500ms delay)
-    // This prevents expensive iteration on every keystroke
-    if (fileRemovalTimeoutRef.current) {
-      clearTimeout(fileRemovalTimeoutRef.current)
-    }
-    fileRemovalTimeoutRef.current = setTimeout(() => {
-      // Check if any @file references were removed and remove them from context
-      // Only remove if:
-      // 1. The file reference existed in the previous input
-      // 2. The file reference is missing in the new input
-      // 3. The new input is shorter than the previous (user deleted it, not cleared programmatically)
-      if (previousValue.length > newValue.length) {
-        const removedFiles: string[] = []
-        chatFileContext.forEach((file: { path: string }) => {
-          const fileReference = '@' + file.path
-          const wasInPrevious = previousValue.includes(fileReference)
-          const isInNew = newValue.includes(fileReference)
-
-          if (wasInPrevious && !isInNew) {
-            removedFiles.push(file.path)
-          }
-        })
-        removedFiles.forEach(filePath => {
-          removeFileFromContext(filePath)
-        })
-
-        // Check if any #workflow references were removed
-        if (activeTabId) {
-          const currentWorkflowContext = useChatStore.getState().getTabConfig(activeTabId)?.workflowContext || []
-          const removedWorkflows = currentWorkflowContext.filter(w => {
-            const wRef = '#' + w.label
-            return previousValue.includes(wRef) && !newValue.includes(wRef)
-          })
-          if (removedWorkflows.length > 0) {
-            const remaining = currentWorkflowContext.filter(w => !removedWorkflows.some(r => r.presetId === w.presetId))
-            setTabConfig(activeTabId, { workflowContext: remaining })
-          }
-        }
-      }
-      fileRemovalTimeoutRef.current = null
-    }, 500)
-  }, [chatFileContext, chatPastedAttachments, removeFileFromContext, showCommandDialog, showWorkflowDialog, activeTabId, setTabConfig, adjustTextareaHeight, isProductSurface, isWorkflowPhaseChat])
+    updateComposerPicker(e.target)
+  }, [chatFileContext, chatPastedAttachments, activeTabId, setTabConfig, adjustTextareaHeight, inputText, tabConfig, updateComposerPicker, writeComposerText])
 
   // Handle manual summarization
   // If messageToSendAfter is provided, it will be sent as a user message after summarization completes
@@ -2434,6 +2146,30 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     return cmd.validate(ctx)
   }, [buildCommandContext])
 
+  const canSelectPulseReview = !isViewOnly && !!findCommand('pulse-review', commandModeCategory, getEffectiveWorkflowModes().workshopMode, canWriteCommandWorkflow)
+  useEffect(() => {
+    if (pulseReviewPicker && (!canSelectPulseReview || pulseReviewPicker.tabId !== activeTabId || pulseReviewPicker.workspacePath !== commandWorkflowPath)) {
+      setPulseReviewPicker(null)
+    }
+  }, [activeTabId, canSelectPulseReview, commandWorkflowPath, pulseReviewPicker])
+
+  const startPulseReviewFromPicker = useCallback((focusId: string, context: string) => {
+    // Recheck the target and access at submission; a picker must never carry
+    // write authority or a draft into another tab/workflow.
+    const cmd = findCommand('pulse-review', commandModeCategory, getEffectiveWorkflowModes().workshopMode, canWriteCommandWorkflow)
+    if (!cmd || isViewOnly || !pulseReviewPicker || pulseReviewPicker.tabId !== activeTabId || pulseReviewPicker.workspacePath !== commandWorkflowPath) {
+      setPulseReviewPicker(null)
+      addToast('This review is unavailable for the current chat or workflow access.', 'info')
+      return
+    }
+    const ctx = buildCommandContext(context)
+    if (!ctx) return
+    applyWorkflowCommandRequirements(cmd)
+    setPulseReviewPicker(null)
+    clearInputState()
+    cmd.execute({ ...ctx, pulseReviewFocus: focusId })
+  }, [activeTabId, addToast, applyWorkflowCommandRequirements, buildCommandContext, canWriteCommandWorkflow, clearInputState, commandModeCategory, commandWorkflowPath, getEffectiveWorkflowModes, isViewOnly, pulseReviewPicker])
+
   const executeSlashCommandFromQuery = useCallback((trimmedQuery: string) => {
     if (!trimmedQuery.startsWith('/')) return false
 
@@ -2469,6 +2205,12 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
       return true
     }
 
+    if (cmd.source === 'builtin' && cmd.command === 'pulse-review' && !commandArgs && activeTabId) {
+      setShowCommandDialog(false)
+      setPulseReviewPicker({ tabId: activeTabId, workspacePath: commandWorkflowPath, initialContext: '' })
+      return true
+    }
+
     applyWorkflowCommandRequirements(cmd)
 
     const ctx = buildCommandContext(commandArgs)
@@ -2477,7 +2219,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     clearInputState()
     cmd.execute(ctx)
     return true
-  }, [addToast, applyWorkflowCommandRequirements, buildCommandContext, clearInputState, getCommandValidationError, commandModeCategory, getEffectiveWorkflowModes, canWriteCommandWorkflow])
+  }, [activeTabId, addToast, applyWorkflowCommandRequirements, buildCommandContext, clearInputState, getCommandValidationError, commandModeCategory, commandWorkflowPath, getEffectiveWorkflowModes, canWriteCommandWorkflow])
 
   const getSubmitBlockReason = useCallback((): string | null => {
     if (!queryToSubmit?.trim()) return null
@@ -2609,13 +2351,14 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
   }, [localInputText, queryToSubmit, routeSubmit])
 
   const handleKeyDown = useCallback((e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    // If any selection dialog is open, let it handle keyboard events
-    if (showCommandDialog || showFileDialog || showWorkflowDialog || showSkillPopup || showServerPopup) {
-      // Prevent default for arrow keys, enter, escape so textarea doesn't move cursor
-      if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Enter', 'Escape'].includes(e.key)) {
-        e.preventDefault()
-        return
-      }
+    if (e.nativeEvent.isComposing || e.nativeEvent.keyCode === 229 || composingRef.current) { e.stopPropagation(); return }
+    if (showCommandDialog || showFileDialog) {
+      if (isPlainPickerKey(e.nativeEvent) && ['ArrowUp', 'ArrowDown', 'Enter', 'Escape', 'Tab'].includes(e.key)) return
+      if (showFileDialog && e.altKey && ['ArrowLeft', 'ArrowRight'].includes(e.key)) return
+      if (e.key === 'Enter') { e.stopPropagation(); closeComposerPickers() }
+    } else if (showWorkflowDialog || showSkillPopup || showServerPopup) {
+      if (!isPlainPickerKey(e.nativeEvent)) e.stopPropagation()
+      if (isPlainPickerKey(e.nativeEvent) && ['ArrowUp', 'ArrowDown', 'Enter', 'Escape'].includes(e.key)) return
     }
 
     // With an empty input, route prompt/menu keys into the coding-agent pane.
@@ -2640,7 +2383,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     }
 
     // Handle normal Enter to submit. Shift/Ctrl/Cmd+Enter insert a newline.
-    if (e.key === 'Enter' && !e.shiftKey && !e.ctrlKey && !e.metaKey) {
+    if (e.key === 'Enter' && !e.shiftKey && !e.ctrlKey && !e.metaKey && !e.altKey) {
       e.preventDefault()
 
       // Mid-dictation, Enter stops the dictation; the text lands in the
@@ -2666,14 +2409,14 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
       const end = textarea.selectionEnd
       const newValue = inputText.substring(0, start) + '\n' + inputText.substring(end)
       // Update local state immediately for fast UI
-      setLocalInputText(newValue)
+      writeComposerText(newValue)
 
       // Set cursor position after the newline
       setTimeout(() => {
         textarea.selectionStart = textarea.selectionEnd = start + 1
       }, 0)
     }
-  }, [showFileDialog, showCommandDialog, showWorkflowDialog, showSkillPopup, showServerPopup, isStreaming, onStopStreaming, queryToSubmit, executeSlashCommandFromQuery, tabSessionId, routeSubmit, supportsLiveCodingAgentInput, sendLiveCodingAgentControlKey, inputText, setLocalInputText])
+  }, [showFileDialog, showCommandDialog, showWorkflowDialog, showSkillPopup, showServerPopup, isStreaming, onStopStreaming, queryToSubmit, executeSlashCommandFromQuery, tabSessionId, routeSubmit, supportsLiveCodingAgentInput, sendLiveCodingAgentControlKey, inputText, writeComposerText, closeComposerPickers])
 
   const handleSubmit = useCallback((e: React.FormEvent) => {
     e.preventDefault()
@@ -2697,17 +2440,15 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
   }, [queryToSubmit, executeSlashCommandFromQuery, routeSubmit])
 
 
-  // Opens the same command menu a typed "/" does, for anyone who would not
-  // think to type it. slashPosition uses the current text length rather than
-  // an actual "/" character -- handleCommandSelect only reads up to that
-  // index as context, it never requires the character to be present, so this
-  // reproduces typed-slash behavior without mutating what the user wrote.
+  // The toolbar opens the palette without inserting a slash or changing the draft.
   const openCommandMenu = useCallback(() => {
     if (showCommandDialog) {
-      setShowCommandDialog(false)
+      closeComposerPickers()
       return
     }
-    setSlashPosition(inputText.length)
+    closeComposerPickers()
+    dismissedTriggerRef.current = null
+    commandPaletteRef.current = { text: inputText, start: textareaRef.current?.selectionStart ?? 0, end: textareaRef.current?.selectionEnd ?? 0 }
     setCommandSearchQuery('')
     setShowCommandDialog(true)
     setShowFileDialog(false)
@@ -2717,7 +2458,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
       setCommandDialogPosition({ bottom: window.innerHeight - rect.top + 8, left: rect.left + window.scrollX })
     }
     textareaRef.current?.focus()
-  }, [inputText, showCommandDialog])
+  }, [inputText, showCommandDialog, closeComposerPickers])
 
   // Command selection handler - executes commands directly
   const handleCommandSelect = useCallback((command: string) => {
@@ -2725,14 +2466,14 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
 
     // Close dialog first
     setShowCommandDialog(false)
-    setSlashPosition(-1)
     setCommandSearchQuery('')
 
-    // Get text before the slash command (if any)
-    const beforeSlash = slashPosition >= 0 ? inputText.substring(0, slashPosition).trim() : ''
-
-    // Clear input
-    clearInputState()
+    // Keep context on both sides of the selected command.
+    const trigger = composerTriggerRef.current
+    const beforeSlash = trigger?.kind === '/'
+      ? [inputText.slice(0, trigger.start), inputText.slice(trigger.end)].filter(Boolean).join(' ').trim()
+      : inputText.trim()
+    closeComposerPickers()
 
     // Look up and execute the command from the registry
     const cmd = findCommand(command, commandModeCategory, getEffectiveWorkflowModes().workshopMode, canWriteCommandWorkflow)
@@ -2740,29 +2481,16 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
       addToast('This command is unavailable for your current mode or workflow access.', 'info')
       return
     }
+    if (cmd?.source === 'builtin' && cmd.command === 'pulse-review') {
+      setPulseReviewPicker({ tabId: activeTabId, workspacePath: commandWorkflowPath, initialContext: beforeSlash })
+      return
+    }
     const validationError = cmd ? getCommandValidationError(cmd, beforeSlash) : null
     if (cmd && validationError) {
       addToast(validationError, 'info')
 
-      const currentStepId = useWorkflowStore.getState().currentStepId
-      const commandText = command === 'optimize-step'
-        ? `/${command} ${currentStepId || '<step-id>'}`
-        : `/${command} `
-      setLocalInputText(commandText)
-      setTabConfig(activeTabId, { inputText: commandText })
-
-      setTimeout(() => {
-        if (textareaRef.current) {
-          textareaRef.current.focus()
-          if (command === 'optimize-step' && !currentStepId) {
-            const placeholderStart = commandText.indexOf('<step-id>')
-            const placeholderEnd = placeholderStart + '<step-id>'.length
-            textareaRef.current.setSelectionRange(placeholderStart, placeholderEnd)
-          } else {
-            textareaRef.current.setSelectionRange(commandText.length, commandText.length)
-          }
-        }
-      }, 0)
+      // Keep the complete draft available for correction after validation fails.
+      setTimeout(() => textareaRef.current?.focus(), 0)
       return
     }
 
@@ -2772,34 +2500,20 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
 
     const ctx = buildCommandContext(beforeSlash)
     if (cmd && ctx) {
+      clearInputState()
       cmd.execute(ctx)
-    } else {
-      // For unknown commands, insert into text (fallback)
-      if (textareaRef.current) {
-        const afterSearch = inputText.substring((slashPosition >= 0 ? slashPosition : 0) + 1 + commandSearchQuery.length)
-        const newQuery = beforeSlash + '/' + command + ' ' + afterSearch
-        setLocalInputText(newQuery)
-        setTimeout(() => {
-          if (textareaRef.current) {
-            textareaRef.current.focus()
-            const cursorPosition = beforeSlash.length + '/'.length + command.length + ' '.length
-            textareaRef.current.setSelectionRange(cursorPosition, cursorPosition)
-          }
-        }, 0)
-      }
+    } else if (!cmd && textareaRef.current) {
+      const insertion = trigger?.kind === '/' ? trigger : { start: inputText.length, end: inputText.length }
+      const replacement = replaceComposerTrigger(inputText, insertion, `${trigger ? '' : inputText && !/\s$/.test(inputText) ? ' ' : ''}/${command} `)
+      writeComposerText(replacement.text)
+      setTimeout(() => textareaRef.current?.setSelectionRange(replacement.caret, replacement.caret), 0)
     }
 
     // Focus back to textarea
     setTimeout(() => textareaRef.current?.focus(), 0)
-  }, [inputText, slashPosition, commandSearchQuery, activeTabId, addToast, clearInputState, setTabConfig, applyWorkflowCommandRequirements, buildCommandContext, getCommandValidationError, commandModeCategory, getEffectiveWorkflowModes, canWriteCommandWorkflow])
+  }, [inputText, activeTabId, addToast, clearInputState, writeComposerText, applyWorkflowCommandRequirements, buildCommandContext, getCommandValidationError, commandModeCategory, commandWorkflowPath, getEffectiveWorkflowModes, canWriteCommandWorkflow, closeComposerPickers])
 
   // Command management callbacks
-  const handleManageCommands = useCallback(() => {
-    setShowCommandDialog(false)
-    setEditingUserCommand(null)
-    setShowCommandEditor(true)
-  }, [])
-
   const handleEditCommand = useCallback((cmd: CommandDefinition) => {
     setShowCommandDialog(false)
     // Fetch full command data from API to populate editor
@@ -2831,54 +2545,23 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
   }, [])
 
   const handleFileSelect = useCallback((file: PlannerFile) => {
-    if (!textareaRef.current || atPosition === -1 || !activeTabId) return
-
-    const beforeAt = inputText.substring(0, atPosition)
-    const afterSearch = inputText.substring(atPosition + 1 + fileSearchQuery.length)
-    const newQuery = beforeAt + '@' + file.filepath + ' ' + afterSearch
-
-    // Update local state immediately for fast UI
-    setLocalInputText(newQuery)
-    setShowFileDialog(false)
-    setAtPosition(-1)
-    setFileSearchQuery('')
-
-    // Add file/folder to context
-    const fileContextItem = {
-      name: file.filepath.split('/').pop() || file.filepath,
-      path: file.filepath,
-      type: file.type || 'file' as const
-    }
-
-    const isAlreadyInContext = chatFileContext.some((item: { path: string }) => item.path === file.filepath)
-    if (!isAlreadyInContext) {
-      addFileToContext(fileContextItem)
-      scrollToFile(file.filepath)
-    }
-
-    // Focus back to textarea and position cursor after the space
+    const trigger = composerTriggerRef.current
+    if (!textareaRef.current || trigger?.kind !== '@' || !activeTabId) return
+    const replacement = replaceComposerTrigger(inputText, trigger, formatFileReference(file.filepath) + ' ')
+    const item = { name: file.filepath.split('/').pop() || file.filepath, path: file.filepath, type: file.type || 'file' as const }
+    const remainingFiles = reconcileFileReferences(inputText, replacement.text, chatFileContext)
+    const files = remainingFiles.some(existing => existing.path === item.path) ? remainingFiles : [...remainingFiles, item]
+    writeComposerText(replacement.text, { fileContext: files })
+    closeComposerPickers()
+    scrollToFile(file.filepath)
     setTimeout(() => {
-      if (textareaRef.current) {
-        textareaRef.current.focus()
-        const cursorPosition = beforeAt.length + '@'.length + file.filepath.length + ' '.length
-        textareaRef.current.setSelectionRange(cursorPosition, cursorPosition)
-      }
+      textareaRef.current?.focus()
+      textareaRef.current?.setSelectionRange(replacement.caret, replacement.caret)
     }, 0)
-  }, [inputText, atPosition, fileSearchQuery, chatFileContext, addFileToContext, scrollToFile, activeTabId])
+  }, [inputText, chatFileContext, activeTabId, writeComposerText, closeComposerPickers, scrollToFile])
 
-  const handleCommandDialogClose = useCallback(() => {
-    setShowCommandDialog(false)
-    setSlashPosition(-1)
-    setCommandSearchQuery('')
-    textareaRef.current?.focus()
-  }, [])
-
-  const handleFileDialogClose = useCallback(() => {
-    setShowFileDialog(false)
-    setAtPosition(-1)
-    setFileSearchQuery('')
-    textareaRef.current?.focus()
-  }, [])
+  const handleCommandDialogClose = closeComposerPickers
+  const handleFileDialogClose = closeComposerPickers
 
   const handleWorkflowSelect = useCallback((workflow: { presetId: string; label: string; workspacePath: string }) => {
     if (!textareaRef.current || hashPosition === -1 || !activeTabId) return
@@ -3166,17 +2849,20 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
 
   // When user presses → on a folder in the file dialog, set search context to that folder (input after @ becomes folder path)
   const handleNavigateIntoFolder = useCallback((folderPath: string) => {
-    if (atPosition === -1 || !activeTabId) return
-    const beforeAt = inputText.substring(0, atPosition + 1)
-    const newText = beforeAt + folderPath
-    setLocalInputText(newText)
-    if (syncToStoreTimeoutRef.current) {
-      clearTimeout(syncToStoreTimeoutRef.current)
-      syncToStoreTimeoutRef.current = null
-    }
-    setTabConfig(activeTabId, { inputText: newText })
+    const trigger = composerTriggerRef.current
+    if (trigger?.kind !== '@' || !activeTabId) return
+    const reference = formatFileReference(folderPath)
+    const replacement = replaceComposerTrigger(inputText, trigger, reference)
+    writeComposerText(replacement.text)
+    composerTriggerRef.current = { ...trigger, end: replacement.caret, query: folderPath }
     setFileSearchQuery(folderPath)
-  }, [atPosition, inputText, activeTabId, setTabConfig])
+    setTimeout(() => {
+      textareaRef.current?.focus()
+      // Keep a quoted path open for further filtering.
+      const caret = reference.startsWith('@"') ? replacement.caret - 1 : replacement.caret
+      textareaRef.current?.setSelectionRange(caret, caret)
+    }, 0)
+  }, [activeTabId, inputText, writeComposerText])
 
   // Removed editing preset query functionality - not needed for multi-agent mode
 
@@ -3300,6 +2986,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
           variant="outline"
           size="icon"
           disabled={isSummarizing}
+          onMouseDown={event => { event.preventDefault(); event.stopPropagation() }}
           onClick={openCommandMenu}
           className="h-7 w-7 p-0"
           data-testid="chat-command-menu-button"
@@ -3596,7 +3283,16 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
               onChange={handleTextChange}
               onFocus={() => { void ensureMultiAgentTabReady() }}
               onKeyDown={handleKeyDown}
-              onPaste={handlePaste}
+              onSelect={event => updateComposerPicker(event.currentTarget)}
+              onCompositionStart={() => { composingRef.current = true; closeComposerPickers() }}
+              onCompositionEnd={event => { composingRef.current = false; updateComposerPicker(event.currentTarget) }}
+              role="combobox"
+              aria-label="Message"
+              aria-autocomplete="list"
+              aria-expanded={showCommandDialog || showFileDialog}
+              aria-controls={showCommandDialog ? commandListId : showFileDialog ? fileListId : undefined}
+              aria-activedescendant={showCommandDialog || showFileDialog ? activeComposerOption : undefined}
+              onPaste={event => { closeComposerPickers(); handlePaste(event) }}
               onDragEnter={handleTextareaDragEnter}
               onDragOver={handleTextareaDragOver}
               onDragLeave={handleTextareaDragLeave}
@@ -4166,6 +3862,9 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
         isOpen={showCommandDialog}
         onClose={handleCommandDialogClose}
         onSelectCommand={handleCommandSelect}
+        inputRef={textareaRef}
+        listId={commandListId}
+        onActiveOptionChange={setActiveComposerOption}
         searchQuery={commandSearchQuery}
         position={commandDialogPosition}
         modeCategory={commandModeCategory}
@@ -4173,11 +3872,15 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
         canWriteWorkflow={canWriteCommandWorkflow}
         agentProfileId={activeTab?.metadata?.agentProfileId}
         {...(isProductSurface || (isWorkflowMode && !canWriteCommandWorkflow) ? {} : {
-          onManageCommands: handleManageCommands,
           onEditCommand: handleEditCommand,
           onDeleteCommand: handleDeleteCommand,
         })}
       />
+
+      {pulseReviewPicker && canSelectPulseReview && pulseReviewPicker.tabId === activeTabId && pulseReviewPicker.workspacePath === commandWorkflowPath && (
+        <PulseReviewFocusDialog initialContext={pulseReviewPicker.initialContext}
+          onClose={closePulseReviewPicker} onStart={startPulseReviewFromPicker} />
+      )}
 
       {/* Command Editor Dialog */}
       <CommandEditorDialog
@@ -4191,6 +3894,9 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
         isOpen={showFileDialog}
         onClose={handleFileDialogClose}
         onSelectFile={handleFileSelect}
+        inputRef={textareaRef}
+        listId={fileListId}
+        onActiveOptionChange={setActiveComposerOption}
         onNavigateIntoFolder={handleNavigateIntoFolder}
         searchQuery={fileSearchQuery}
         position={fileDialogPosition}

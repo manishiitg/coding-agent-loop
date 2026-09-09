@@ -2,6 +2,18 @@ import type { ModeCategory } from '../stores/useModeStore'
 import type { CommandDefinition, WorkshopMode } from './types'
 import { builtinCommands } from './builtin-commands'
 
+let revision = 0
+const listeners = new Set<() => void>()
+export function subscribeCommands(listener: () => void) {
+  listeners.add(listener)
+  return () => { listeners.delete(listener) }
+}
+export function getCommandRevision() { return revision }
+function notifyCommandsChanged() {
+  revision++
+  listeners.forEach(listener => listener())
+}
+
 let userCommands: CommandDefinition[] = []
 let productCommands: CommandDefinition[] = []
 
@@ -32,6 +44,7 @@ function matchesMode(cmd: CommandDefinition, mode?: ModeCategory, workshopMode?:
 
 export function setUserCommands(cmds: CommandDefinition[]) {
   userCommands = cmds
+  notifyCommandsChanged()
 }
 
 // Registered when a product's profile loads. Cleared by passing an empty list
@@ -39,20 +52,25 @@ export function setUserCommands(cmds: CommandDefinition[]) {
 // menu, offering flows the current agent has no skills for.
 export function setProductCommands(cmds: CommandDefinition[]) {
   productCommands = cmds
+  notifyCommandsChanged()
 }
 
 export function getCommands(mode?: ModeCategory, workshopMode?: WorkshopMode, canWriteWorkflow = true): CommandDefinition[] {
-  return [...productCommands, ...builtinCommands, ...userCommands].filter(cmd => matchesMode(cmd, mode, workshopMode, canWriteWorkflow))
+  return [...productCommands, ...builtinCommands, ...userCommands].filter(cmd => !cmd.menuHidden && matchesMode(cmd, mode, workshopMode, canWriteWorkflow))
 }
 
 export function findCommand(name: string, mode?: ModeCategory, workshopMode?: WorkshopMode, canWriteWorkflow = true): CommandDefinition | undefined {
   return [...productCommands, ...builtinCommands, ...userCommands].find(cmd =>
-    cmd.command === name && matchesMode(cmd, mode, workshopMode, canWriteWorkflow)
+    matchesName(cmd, name) && matchesMode(cmd, mode, workshopMode, canWriteWorkflow)
   )
 }
 
+function matchesName(cmd: CommandDefinition, name: string): boolean {
+  return cmd.command === name || (cmd.aliases?.includes(name) ?? false)
+}
+
 export function findCommandAnyMode(name: string): CommandDefinition | undefined {
-  return productCommands.find(c => c.command === name)
-    ?? builtinCommands.find(c => c.command === name)
-    ?? userCommands.find(c => c.command === name)
+  return productCommands.find(c => matchesName(c, name))
+    ?? builtinCommands.find(c => matchesName(c, name))
+    ?? userCommands.find(c => matchesName(c, name))
 }

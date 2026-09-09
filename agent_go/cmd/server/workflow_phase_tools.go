@@ -78,6 +78,14 @@ func (api *StreamingAPI) installWorkflowPhaseTools(
 	}
 	switch workflowPhaseID {
 	case workflowtypes.WorkflowStatusWorkflowBuilder:
+		// Keep the definition stable across persistent CLI turns. The executor
+		// reads current workflow intent on every call, including disabled mode.
+		if phaseWorkspacePath != "" {
+			execs := workflowBrowserExecutors(sessionID, phaseWorkspacePath, ReadWorkflowManifest)
+			if err := registerCodingToolGroup(definitionAgent.RegisterCustomTool, virtualtools.CreateWorkspaceBrowserTools(), execs, func(string) string { return virtualtools.GetWorkspaceBrowserToolCategory() }, nil); err != nil {
+				return err
+			}
+		}
 		// Plan modification tools + workshop execution tools (execute_step, query_step, stop_step, etc.)
 		// Returns an error on failure: the workflow-builder system prompt advertises these tools,
 		// so a half-registered builder silently hallucinates missing tools to the LLM.

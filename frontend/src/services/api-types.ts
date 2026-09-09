@@ -2818,12 +2818,22 @@ export interface GmailConnectionRequest {
   /** Required on create — which named OAuth client this connection
    *  authorizes under. */
   client_name?: string
-  /** Opt into gmail.readonly as well as gmail.send. Omitted = send-only,
-   *  the default. Fixed at consent time: changing it means reconnecting. */
+  /** Opt into gmail.readonly as well as gmail.send. Omitted on update = leave
+   *  unchanged; omitted on create = send-only, the default. Only changes the
+   *  STORED request — Google fixes a token's scope at consent time, so this
+   *  has no effect until the connection is reconnected afterward. */
   allow_read_access?: boolean
-  /** Requests additional Google Workspace service scopes on create. Ignored
-   *  on update — see GmailConnection.services. */
+  /** Complete replacement list of additional Google Workspace service scopes
+   *  (Drive, Sheets, Docs, Slides, Calendar...) — see GmailConnection.services.
+   *  On update, services_set must also be true for this to take effect (an
+   *  omitted services and an explicit empty array must not be ambiguous with
+   *  each other); ignored on create, where services is authoritative directly.
+   *  Like allow_read_access, only the stored request changes until the
+   *  connection is reconnected. */
   services?: GoogleServiceGrant[]
+  /** Required alongside services on an update call, including to clear every
+   *  grant back to Gmail-only with services: []. See services' own comment. */
+  services_set?: boolean
   enabled?: boolean
 }
 

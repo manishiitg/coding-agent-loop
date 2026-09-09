@@ -334,14 +334,23 @@ type GmailConnectionInput struct {
 	// this connection authorizes under. Required on create — see CreateConnection.
 	ClientName string
 	// AllowReadAccess opts this connection into gmail.readonly — see
-	// GmailConnection.AllowReadAccess. Defaults to false (send-only) when
-	// omitted, matching the zero value.
-	AllowReadAccess bool
+	// GmailConnection.AllowReadAccess. A pointer so UpdateConnection can tell
+	// "leave unchanged" (nil) apart from "explicitly set to false" — the same
+	// reason Enabled below is a pointer. CreateConnection treats nil as false
+	// (send-only), the pre-existing default.
+	AllowReadAccess *bool
 	// Services requests additional Google Workspace service scopes (Drive,
-	// Sheets, Docs, Slides, Calendar...) alongside Gmail. nil/empty means
-	// Gmail-only. See GmailConnection.Services.
+	// Sheets, Docs, Slides, Calendar...) alongside Gmail. nil means "leave
+	// unchanged" on update, or "Gmail-only" on create; an explicit empty
+	// slice on update clears every extra service back to Gmail-only. See
+	// GmailConnection.Services.
 	Services []GoogleServiceGrant
-	Enabled  *bool
+	// ServicesSet distinguishes "Services was omitted, leave unchanged" (nil
+	// Services, ServicesSet false) from "Services was explicitly sent empty,
+	// clear every grant" (nil Services, ServicesSet true) on update. Ignored
+	// on create, where a nil/empty Services always means Gmail-only.
+	ServicesSet bool
+	Enabled     *bool
 }
 
 // CreateConnection registers a new sending identity and provisions its private
@@ -388,7 +397,7 @@ func (g *GmailService) CreateConnection(ctx context.Context, in GmailConnectionI
 		ConfigHome:      configHome,
 		CredentialsFile: strings.TrimSpace(in.CredentialsFile),
 		ClientName:      clientName,
-		AllowReadAccess: in.AllowReadAccess,
+		AllowReadAccess: in.AllowReadAccess != nil && *in.AllowReadAccess,
 		Services:        normalizeGoogleServiceGrants(in.Services),
 		Status:          GmailConnectionNeedsReconnect,
 		Enabled:         enabled,
@@ -434,6 +443,20 @@ func (g *GmailService) UpdateConnection(ctx context.Context, id string, in Gmail
 	}
 	if in.Enabled != nil {
 		conn.Enabled = *in.Enabled
+	}
+	// Persisting a wider AllowReadAccess/Services here changes only what the
+	// NEXT reconnect will request from Google — it does not retroactively
+	// widen (or narrow) whatever scope the current token already holds.
+	// Google fixes a token's scope at consent time; there is no API to
+	// change it after the fact. Callers must prompt the operator to
+	// reconnect once this save succeeds, or the stored config and the live
+	// grant drift apart exactly like the legacy connections that motivated
+	// this fix.
+	if in.AllowReadAccess != nil {
+		conn.AllowReadAccess = *in.AllowReadAccess
+	}
+	if in.ServicesSet {
+		conn.Services = normalizeGoogleServiceGrants(in.Services)
 	}
 	conn.UpdatedAt = time.Now().UTC()
 

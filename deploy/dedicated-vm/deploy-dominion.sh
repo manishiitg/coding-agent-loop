@@ -55,7 +55,12 @@ if [[ ! -x "$GO_BIN" ]]; then
 fi
 
 echo "==> Ensuring agent-browser is installed (preview_report and every browser-automation tool shell out to it by name; nothing checks it's on PATH until it fails at runtime)"
-if ! npm install -g agent-browser@latest 2>&1 | tail -5; then
+# Dominion's default npm prefix is /usr (root-owned; confirmed 2026-09-08 via
+# `npm config get prefix`), which the rootless `dominion` user cannot write to
+# -- npm install -g without --prefix fails with EACCES. /srv/dominion/tools is
+# the box's established per-user tool prefix (already on PATH via .env, same
+# place claude/gog/gws/surge are symlinked from).
+if ! npm install --prefix /srv/dominion/tools -g agent-browser@latest 2>&1 | tail -5; then
   echo "FATAL: npm install -g agent-browser@latest failed" >&2
   exit 1
 fi

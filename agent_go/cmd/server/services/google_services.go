@@ -100,6 +100,23 @@ func normalizeGoogleServiceGrants(in []GoogleServiceGrant) []GoogleServiceGrant 
 	return out
 }
 
+// GoogleServiceScopeURI resolves one service+level to the scope URI Google
+// would need to have granted, plus its display name. Exported for callers
+// that need to check whether one specific grant is actually reflected in a
+// connection's live scopes (see list_gmail_connections), as opposed to
+// GoogleServiceScopeURIs, which builds the full list for a (re)connect
+// request.
+func GoogleServiceScopeURI(service string, write bool) (scope, displayName string, ok bool) {
+	def, ok := googleServiceCatalog[strings.ToLower(strings.TrimSpace(service))]
+	if !ok {
+		return "", "", false
+	}
+	if write {
+		return def.WriteScope, def.DisplayName, true
+	}
+	return def.ReadScope, def.DisplayName, true
+}
+
 // GoogleServiceScopeURIs resolves a connection's extra-service grants to the
 // OAuth scopes to request alongside Gmail's own scopes. Exported for the
 // gmail_oauth_routes.go call site, which builds the scope list for a

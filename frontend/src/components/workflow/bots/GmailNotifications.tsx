@@ -538,14 +538,17 @@ export function GmailNotifications({ bots }: { bots: GmailNotificationsBots }) {
                                         {label}
                                       </label>
                                       {grant && (
-                                        <label className="flex items-center gap-1.5 pl-1 text-[11px]">
+                                        <label
+                                          className="flex items-center gap-1.5 pl-1 text-[11px]"
+                                          title="Off (read-only) is the safer default. Turn on only if a workflow must create or edit, not just read. Changing this requires Reconnect below to take effect."
+                                        >
                                           <input
                                             type="checkbox"
                                             checked={grant.write}
                                             disabled={readOnly}
                                             onChange={event => setEditServices(prev => ({ ...prev, [service]: { write: event.target.checked } }))}
                                           />
-                                          allow write access
+                                          allow write access{grant.write ? '' : ' (off = read-only)'}
                                         </label>
                                       )}
                                     </div>
@@ -651,7 +654,7 @@ export function GmailNotifications({ bots }: { bots: GmailNotificationsBots }) {
                                     disabled={readOnly}
                                     onChange={event => setNewClientServices(prev => ({ ...prev, [service]: { write: event.target.checked } }))}
                                   />
-                                  allow write access
+                                  allow write access{grant.write ? '' : ' (off = read-only)'}
                                 </label>
                               )}
                             </div>

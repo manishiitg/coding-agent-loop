@@ -26,6 +26,36 @@ badge is the truth. If you need to know what an account can currently
 actually do, read `auth.scopes` from its status (the raw granted OAuth
 scopes), not `allow_read_access`/`services`.
 
+### Always check current state first, from chat
+
+Call `list_gmail_connections` (optionally with `connection_id`) before answering
+any scope/permission question, and before every `update_gmail_connection_grants`
+call — `services` is a full replacement list, so acting without first reading
+the current one silently drops every service not repeated.
+
+It returns, per connection, both the stored request (`allow_read_access`,
+`services`) and what Google has **actually** granted (`granted_scopes`, from
+the live token — this is the one that's true, not the stored fields), plus a
+`stored_but_not_granted` list that already tells you what's wrong. Use it
+directly instead of asking the user to describe screenshots:
+
+- If `stored_but_not_granted` is empty, the connection has everything it's
+  configured for.
+- If it lists something and the user hasn't reconnected since requesting it,
+  tell them to click **Reconnect** (or call `update_gmail_connection_grants`
+  to get a fresh `reconnect_url`) and complete Google's consent screen.
+- If it lists something **and the user says they already reconnected**, this
+  is almost always because that exact scope isn't registered on this OAuth
+  client's consent screen in Google Cloud Console (**APIs & Services → OAuth
+  consent screen → Data Access**) — Google silently omits any
+  requested-but-unregistered scope from the granted token even with a forced
+  fresh consent prompt. Tell the user the precise missing scope (it's right
+  there in `stored_but_not_granted`) and that exact fix, rather than asking
+  them what they see in the UI or guessing at other causes. This applies
+  identically to every service (Drive, Sheets, Docs, Slides, Calendar) and to
+  Gmail read access — none of them have a code-side or CLI-side workaround if
+  the scope was never registered.
+
 ### Changing what a connection is authorized for, from chat
 
 Call `update_gmail_connection_grants`:
@@ -39,6 +69,23 @@ Call `update_gmail_connection_grants`:
   authorized **removes Sheets** — always include everything that should
   remain, not just what's being added. Read the connection's current
   `services` first if you don't already know them.
+
+**Every entry in `services` also needs a `write` decision — do not just omit
+it.** Omitted/`false` means read-only; this is the same trap the "Sending
+accounts" panel's checkbox UI has (a separate, easy-to-miss "allow write
+access" checkbox next to each service) — a user who says "give this workflow
+Drive access" almost always means it needs to *create or edit* files there,
+not just read them, and a silent read-only grant produces a confusing
+"permission denied" later with no obvious cause. Infer `write` from what the
+user is actually trying to accomplish, not just the literal words:
+- Verbs like save, create, upload, write, edit, update, post, send (for
+  Sheets/Docs/Slides/Calendar), or "so the workflow can output to X" → set
+  `write: true` for that service.
+- Verbs like read, check, look up, search, "so it can reference X" → leave
+  `write: false`.
+- If genuinely ambiguous, ask the user rather than guessing read-only by
+  default — silently under-granting is what causes this confusion in the
+  first place.
 
 This call only updates the **stored request** — it does not talk to Google
 and does not change what the account can do yet. It returns a

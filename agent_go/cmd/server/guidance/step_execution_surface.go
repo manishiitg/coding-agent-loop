@@ -59,12 +59,9 @@ func MaterializeStepExecutionReferenceSkill(signals StepExecutionSignals) *llmty
 	}
 
 	return buildMegaSkill(buildMegaSkillSpec{
-		Registry: referenceKinds,
-		Name:     "builder-reference",
-		Description: "Workflow execution reference docs — the contracts behind the tools this step actually holds: " +
-			"browser automation, persistent stores, human input and approval when those tools are held, provider-backed media and search tools, the MCP HTTP bridge, and " +
-			"main.py authoring for scripted steps. Match this skill before driving one of those tools, then read the " +
-			"matching file under references/.",
+		Registry:         referenceKinds,
+		Name:             "builder-reference",
+		DescriptionIntro: "Workflow execution reference docs — the contracts behind the tools this step actually holds.",
 		Intro: "This skill bundles reference documentation for the tools available to this step. It deliberately contains " +
 			"only topics you can act on here — workflow design, Pulse review, and platform administration are not part of " +
 			"this step's job and are not included. Read the single matching file under `references/`.",

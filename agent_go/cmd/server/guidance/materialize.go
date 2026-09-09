@@ -22,52 +22,49 @@ import (
 func MaterializeReferenceSkill(mode string) *llmtypes.Skill {
 	spec := referenceSkillSpecForMode(mode)
 	return buildMegaSkill(buildMegaSkillSpec{
-		Mode:        mode,
-		Registry:    referenceKinds,
-		Name:        spec.Name,
-		Description: spec.Description,
-		Intro:       spec.Intro,
-		Render:      renderReferenceKind,
+		Mode:             mode,
+		Registry:         referenceKinds,
+		Name:             spec.Name,
+		DescriptionIntro: spec.DescriptionIntro,
+		Intro:            spec.Intro,
+		Render:           renderReferenceKind,
 	})
 }
 
 type referenceSkillSpec struct {
-	Name        string
-	Description string
-	Intro       string
+	Name             string
+	DescriptionIntro string
+	Intro            string
 }
 
+// referenceSkillSpecForMode's DescriptionIntro is deliberately just a short
+// framing sentence, not an enumeration of topics -- buildMegaSkill appends
+// the full, always-current topic list itself (see its doc comment). A
+// hand-enumerated version here previously went stale as referenceKinds grew,
+// which is exactly how add_mcp_server, browser CDP, and Gmail connection
+// scope guidance all silently stopped being discoverable for their matching
+// queries.
 func referenceSkillSpecForMode(mode string) referenceSkillSpec {
 	if mode == "multi-agent" {
 		return referenceSkillSpec{
-			Name: "builder-reference",
-			Description: "Product chat reference docs — detailed contracts and rules to consult before specific actions: " +
-				"LLM/provider configuration via tools, skill management, memory, browser/media tools, " +
-				"schedule and secret management, backup, debugging, and MCP bridge usage. Match this skill when you need deep " +
-				"product chat reference material, then read the matching file under references/.",
-			Intro: "This skill bundles product chat reference documentation. Match it when you need detailed rules, patterns, or contracts for any of the topics below — especially LLM/provider configuration, which is managed through dedicated tools and not by reading or editing `config/` files. Read the single matching file under `references/`. You don't need to read more than one unless the action spans multiple topics.",
+			Name:             "builder-reference",
+			DescriptionIntro: "Product chat reference docs — detailed contracts and rules to consult before specific actions.",
+			Intro:            "This skill bundles product chat reference documentation. Match it when you need detailed rules, patterns, or contracts for any of the topics below — especially LLM/provider configuration via tools, not by reading or editing `config/` files. Read the single matching file under `references/`. You don't need to read more than one unless the action spans multiple topics.",
 		}
 	}
 
 	if mode == "run" {
 		return referenceSkillSpec{
-			Name:        "builder-reference",
-			Description: "Workflow runtime references: executing and inspecting work, current results and costs, runtime context capture, human input and approvals, live reports, and tool/bridge contracts. Read the relevant reference before acting; Run cannot edit workflow design.",
-			Intro:       "Read the reference matching this runtime request. The current mode and granted tools define authority; reading a reference does not permit design/config mutations or grant additional tools.",
+			Name:             "builder-reference",
+			DescriptionIntro: "Workflow runtime references to consult before acting. Run cannot edit workflow design.",
+			Intro:            "Read the reference matching this runtime request. The current mode and granted tools define authority; reading a reference does not permit design/config mutations or grant additional tools.",
 		}
 	}
 
 	return referenceSkillSpec{
-		Name: "builder-reference",
-		Description: "Workflow workshop reference docs — detailed contracts and rules to consult before specific actions: " +
-			"LLM/provider configuration via tools, main.py authoring, persistent stores (skill/kb/db), routing and " +
-			"message-sequence patterns, workflow composition patterns, plan-design, report-plan, reporting-policy " +
-			"(dashboard approval buttons and report-to-agent chat requests), human-in-the-loop " +
-			"(choosing human review, approval, and feedback mechanisms), evaluation-plan, " +
-			"optimizer playbook, file layout, schedule and secret " +
-			"management. Match this skill when you need deep reference material for any of those topics, then read the " +
-			"matching file under references/.",
-		Intro: "This skill bundles the workflow workshop's reference documentation. Match it when you need detailed rules, patterns, or contracts for any of the topics below — especially LLM/provider configuration, which is managed through dedicated tools and not by reading or editing `config/` files. Read the single matching file under `references/`. You don't need to read more than one unless the action spans multiple topics.",
+		Name:             "builder-reference",
+		DescriptionIntro: "Workflow workshop reference docs — detailed contracts and rules to consult before specific actions.",
+		Intro:            "This skill bundles the workflow workshop's reference documentation. Match it when you need detailed rules, patterns, or contracts for any of the topics below — especially LLM/provider configuration via tools, not by reading or editing `config/` files; connecting a new third-party service/tool, which is managed through search_mcp_catalog/search_skills/add_mcp_server and never by hand-installing a package or hand-editing a config file; browser/CDP automation; and Gmail/Google Workspace connection scope or permission issues. Read the single matching file under `references/`. You don't need to read more than one unless the action spans multiple topics.",
 	}
 }
 
@@ -82,16 +79,12 @@ func referenceSkillSpecForMode(mode string) referenceSkillSpec {
 // tool.
 func MaterializeGuidanceSkill(mode string) *llmtypes.Skill {
 	return buildMegaSkill(buildMegaSkillSpec{
-		Mode:     mode,
-		Registry: allKinds,
-		Name:     "workflow-commands",
-		Description: "Workflow workshop slash-command flows — canonical procedural guidance for design-plan, improve-evaluation, " +
-			"review-artifact-drift, ops-review, strategy-auditor, define-success, pulse, engineering-review, pulse-fixer, " +
-			"improve-knowledge, improve-learnings, improve-database, improve-report, design-reporting-ui, specialize-advisors, design-plan. Match this skill when the user " +
-			"invokes one of those slash commands or describes the same intent in chat, then read the matching file under " +
-			"references/.",
-		Intro:  "This skill bundles the workshop's canonical slash-command procedures. Match it when the user invokes one of these commands (e.g. `/design-plan`, `/improve-evaluation`) or describes the same intent in plain chat. Read the single matching file under `references/` — the prose there is your instructions for the turn, follow it verbatim.",
-		Render: renderKind,
+		Mode:             mode,
+		Registry:         allKinds,
+		Name:             "workflow-commands",
+		DescriptionIntro: "Workflow workshop slash-command flows — canonical procedural guidance for each command below.",
+		Intro:            "This skill bundles the workshop's canonical slash-command procedures. Match it when the user invokes one of these commands (e.g. `/design-plan`, `/improve-evaluation`) or describes the same intent in plain chat. Read the single matching file under `references/` — the prose there is your instructions for the turn, follow it verbatim.",
+		Render:           renderKind,
 	})
 }
 
@@ -180,12 +173,18 @@ func AttachReferenceSurface(mode string, attach func(*llmtypes.Skill) error) err
 // buildMegaSkillSpec captures the inputs for buildMegaSkill so the two
 // mega-skill constructors don't have to repeat the same plumbing.
 type buildMegaSkillSpec struct {
-	Mode        string
-	Registry    map[string]kindMeta
-	Name        string
-	Description string
-	Intro       string
-	Render      func(kind string, data tmplData) (string, error)
+	Mode     string
+	Registry map[string]kindMeta
+	Name     string
+	// DescriptionIntro is a short, hand-written framing sentence. The full
+	// outer Description (what a session sees WITHOUT opening this skill --
+	// the only signal deciding whether it ever calls read_skill at all) is
+	// this sentence plus an auto-generated topic list built from every
+	// allowed kind's own Description, so it can never drift out of sync
+	// with the registry the way a fully hand-enumerated paragraph does.
+	DescriptionIntro string
+	Intro            string
+	Render           func(kind string, data tmplData) (string, error)
 
 	// Select overrides mode filtering when non-nil. Step execution selects by
 	// the tools the agent actually holds rather than by mode — see PLAT-124 and
@@ -241,9 +240,18 @@ func buildMegaSkill(spec buildMegaSkillSpec) *llmtypes.Skill {
 
 	body := spec.Intro + "\n\n## Available references\n\n" + toc.String()
 
+	// See DescriptionIntro's doc comment: this is the fix for guidance
+	// silently going undiscoverable (add_mcp_server, browser CDP, and Gmail
+	// scope references all had this happen) -- the outer Description must
+	// enumerate every topic a session could actually need, and the only way
+	// to guarantee that stays true as kinds are added is to build it from
+	// the same per-kind descriptions used for the TOC above, not maintain a
+	// second, hand-written summary of them.
+	description := spec.DescriptionIntro + " Topics covered (read the matching file under `references/` for detail):\n" + toc.String()
+
 	return &llmtypes.Skill{
 		Name:            spec.Name,
-		Description:     spec.Description,
+		Description:     description,
 		Content:         body,
 		SupportingFiles: files,
 		Metadata: map[string]string{

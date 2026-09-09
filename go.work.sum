@@ -193,6 +193,7 @@ cloud.google.com/go/gsuiteaddons v1.7.8/go.mod h1:DBKNHH4YXAdd/rd6zVvtOGAJNGo0ek
 cloud.google.com/go/iam v1.2.0 h1:kZKMKVNk/IsSSc/udOb83K0hL/Yh/Gcqpz+oAkoIFN8=
 cloud.google.com/go/iam v1.2.0/go.mod h1:zITGuWgsLZxd8OwAlX+eMFgZDXzBm7icj1PVTYG766Q=
 cloud.google.com/go/iam v1.2.2/go.mod h1:0Ys8ccaZHdI1dEUilwzqng/6ps2YB6vRsjIe00/+6JY=
+cloud.google.com/go/iam v1.5.2/go.mod h1:SE1vg0N81zQqLzQEwxL2WI6yhetBdbNQuTvIKCSkUHE=
 cloud.google.com/go/iam v1.5.3/go.mod h1:MR3v9oLkZCTlaqljW6Eb2d3HGDGK5/bDv93jhfISFvU=
 cloud.google.com/go/iap v1.10.2/go.mod h1:cClgtI09VIfazEK6VMJr6bX8KQfuQ/D3xqX+d0wrUlI=
 cloud.google.com/go/iap v1.11.3/go.mod h1:+gXO0ClH62k2LVlfhHzrpiHQNyINlEVmGAE3+DB4ShU=
@@ -209,6 +210,7 @@ cloud.google.com/go/lifesciences v0.10.2/go.mod h1:vXDa34nz0T/ibUNoeHnhqI+Pn0Oaz
 cloud.google.com/go/lifesciences v0.10.7/go.mod h1:v3AbTki9iWttEls/Wf4ag3EqeLRHofploOcpsLnu7iY=
 cloud.google.com/go/logging v1.12.0/go.mod h1:wwYBt5HlYP1InnrtYI0wtwttpVU1rifnMT7RejksUAM=
 cloud.google.com/go/logging v1.13.1/go.mod h1:XAQkfkMBxQRjQek96WLPNze7vsOmay9H5PqfsNYDqvw=
+cloud.google.com/go/longrunning v0.5.6/go.mod h1:vUaDrWYOMKRuhiv6JBnn49YxCPz2Ayn9GqyjaBT8/mA=
 cloud.google.com/go/longrunning v0.5.12/go.mod h1:S5hMV8CDJ6r50t2ubVJSKQVv5u0rmik5//KgLO3k4lU=
 cloud.google.com/go/longrunning v0.6.0/go.mod h1:uHzSZqW89h7/pasCWNYdUpwGz3PcVWhrWupreVPYLts=
 cloud.google.com/go/longrunning v0.6.1/go.mod h1:nHISoOZpBcmlwbJmiVk5oDRz0qG/ZxPynEGs1iZ79s0=
@@ -228,6 +230,7 @@ cloud.google.com/go/memcache v1.11.7/go.mod h1:AU1jYlUqCihxapcJ1GGMtlMWDVhzjbfUW
 cloud.google.com/go/metastore v1.14.2/go.mod h1:dk4zOBhZIy3TFOQlI8sbOa+ef0FjAcCHEnd8dO2J+LE=
 cloud.google.com/go/metastore v1.14.8/go.mod h1:h1XI2LpD4ohJhQYn9TwXqKb5sVt6KSo47ft96SiFF1s=
 cloud.google.com/go/monitoring v1.21.2/go.mod h1:hS3pXvaG8KgWTSz+dAdyzPrGUYmi2Q+WFX8g2hqVEZU=
+cloud.google.com/go/monitoring v1.24.2/go.mod h1:x7yzPWcgDRnPEv3sI+jJGBkwl5qINf+6qY4eq0I9B4U=
 cloud.google.com/go/monitoring v1.24.3/go.mod h1:nYP6W0tm3N9H/bOw8am7t62YTzZY+zUeQ+Bi6+2eonI=
 cloud.google.com/go/networkconnectivity v1.15.2/go.mod h1:N1O01bEk5z9bkkWwXLKcN2T53QN49m/pSpjfUvlHDQY=
 cloud.google.com/go/networkconnectivity v1.19.1/go.mod h1:Q5v6uNNNz8BP232uuXM66XgWML9m379xhwv58Y+8Kb0=
@@ -319,6 +322,7 @@ cloud.google.com/go/tpu v1.7.2/go.mod h1:0Y7dUo2LIbDUx0yQ/vnLC6e18FK6NrDfAhYS9wZ
 cloud.google.com/go/tpu v1.8.4/go.mod h1:ul0cyWSHr6jHGZYElZe6HvQn35VY93RAlwpDiSBRnPA=
 cloud.google.com/go/trace v1.11.2/go.mod h1:bn7OwXd4pd5rFuAnTrzBuoZ4ax2XQeG3qNgYmfCy0Io=
 cloud.google.com/go/trace v1.11.7/go.mod h1:TNn9d5V3fQVf6s4SCveVMIBS2LJUqo73GACmq/Tky0s=
+cloud.google.com/go/translate v1.10.3/go.mod h1:GW0vC1qvPtd3pgtypCv4k4U8B7EdgK9/QEF2aJEUovs=
 cloud.google.com/go/translate v1.12.0/go.mod h1:4/C4shFIY5hSZ3b3g+xXWM5xhBLqcUqksSMrQ7tyFtc=
 cloud.google.com/go/translate v1.12.2/go.mod h1:jjLVf2SVH2uD+BNM40DYvRRKSsuyKxVvs3YjTW/XSWY=
 cloud.google.com/go/translate v1.12.5/go.mod h1:o/v+QG/bdtBV1d1edmtau0PwTfActvxPk/gtqdSDBi4=

@@ -2,6 +2,18 @@ import type { ModeCategory } from '../stores/useModeStore'
 import type { CommandDefinition, WorkshopMode } from './types'
 import { builtinCommands } from './builtin-commands'
 
+let revision = 0
+const listeners = new Set<() => void>()
+export function subscribeCommands(listener: () => void) {
+  listeners.add(listener)
+  return () => { listeners.delete(listener) }
+}
+export function getCommandRevision() { return revision }
+function notifyCommandsChanged() {
+  revision++
+  listeners.forEach(listener => listener())
+}
+
 let userCommands: CommandDefinition[] = []
 let productCommands: CommandDefinition[] = []
 
@@ -32,6 +44,7 @@ function matchesMode(cmd: CommandDefinition, mode?: ModeCategory, workshopMode?:
 
 export function setUserCommands(cmds: CommandDefinition[]) {
   userCommands = cmds
+  notifyCommandsChanged()
 }
 
 // Registered when a product's profile loads. Cleared by passing an empty list
@@ -39,6 +52,7 @@ export function setUserCommands(cmds: CommandDefinition[]) {
 // menu, offering flows the current agent has no skills for.
 export function setProductCommands(cmds: CommandDefinition[]) {
   productCommands = cmds
+  notifyCommandsChanged()
 }
 
 export function getCommands(mode?: ModeCategory, workshopMode?: WorkshopMode, canWriteWorkflow = true): CommandDefinition[] {

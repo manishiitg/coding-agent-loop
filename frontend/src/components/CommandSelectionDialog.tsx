@@ -1,10 +1,14 @@
-import React, { useState, useEffect, useRef } from 'react'
+import React, { useState, useEffect, useRef, useMemo, useSyncExternalStore, useId } from 'react'
 import { Terminal, Pencil, Trash2 } from 'lucide-react'
 import type { ModeCategory } from '../stores/useModeStore'
 import { findCommand, getCommands, type CommandDefinition, type WorkshopMode } from '../commands'
 import { loadAndRegisterUserCommands } from '../commands'
 
-interface CommandSelectionDialogProps {
+import { subscribeCommands, getCommandRevision } from '../commands/registry'
+import { isPlainPickerKey } from '../utils/composerReferences'
+import { useComposerPicker, isComposerPickerEvent, type ComposerPickerProps } from '../hooks/useComposerPicker'
+
+interface CommandSelectionDialogProps extends ComposerPickerProps {
   isOpen: boolean
   onClose: () => void
   onSelectCommand: (command: string) => void
@@ -29,10 +33,12 @@ export const CommandSelectionDialog: React.FC<CommandSelectionDialogProps> = ({
   canWriteWorkflow = true,
   agentProfileId,
   onEditCommand,
-  onDeleteCommand
+  onDeleteCommand, inputRef, listId, onActiveOptionChange
 }) => {
   const [selectedIndex, setSelectedIndex] = useState(0)
-  const [filteredCommands, setFilteredCommands] = useState<CommandDefinition[]>([])
+  const revision = useSyncExternalStore(subscribeCommands, getCommandRevision)
+  const generatedId = useId()
+  const optionListId = listId ?? generatedId
   const dialogRef = useRef<HTMLDivElement>(null)
   const listRef = useRef<HTMLDivElement>(null)
 
@@ -43,46 +49,12 @@ export const CommandSelectionDialog: React.FC<CommandSelectionDialogProps> = ({
     }
   }, [isOpen])
 
-  // Keyboard shortcuts
-  useEffect(() => {
-    if (!isOpen) return
-
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') {
-        event.preventDefault()
-        onClose()
-      } else if (event.key === 'Enter') {
-        event.preventDefault()
-        // Exact retained shortcuts remain directly executable even though the
-        // search results point to the consolidated command's focus picker.
-        const shortcut = findCommand(searchQuery.trim(), modeCategory, workshopMode, canWriteWorkflow)
-        if (selectedIndex === 0 && shortcut?.menuHidden) {
-          onSelectCommand(shortcut.command)
-          return
-        }
-        if (filteredCommands.length > 0 && selectedIndex >= 0 && selectedIndex < filteredCommands.length) {
-          onSelectCommand(filteredCommands[selectedIndex].command)
-        }
-      } else if (event.key === 'ArrowDown') {
-        event.preventDefault()
-        setSelectedIndex(prev => Math.min(prev + 1, filteredCommands.length - 1))
-      } else if (event.key === 'ArrowUp') {
-        event.preventDefault()
-        setSelectedIndex(prev => Math.max(prev - 1, 0))
-      }
-    }
-
-    document.addEventListener('keydown', handleKeyDown)
-    return () => document.removeEventListener('keydown', handleKeyDown)
-  }, [isOpen, onClose, onSelectCommand, filteredCommands, selectedIndex, searchQuery, modeCategory, workshopMode, canWriteWorkflow])
-
   // Filter commands based on search query and current mode
-  useEffect(() => {
+  const filteredCommands = useMemo(() => {
     const allCommands = getCommands(modeCategory, workshopMode, canWriteWorkflow)
 
     if (!searchQuery.trim()) {
-      setFilteredCommands(allCommands)
-      return
+      return allCommands
     }
 
     const query = searchQuery.toLowerCase().trim()
@@ -107,9 +79,49 @@ export const CommandSelectionDialog: React.FC<CommandSelectionDialogProps> = ({
       return a.command.localeCompare(b.command)
     })
 
-    setFilteredCommands(filtered)
-    setSelectedIndex(0) // Reset selection when filtering
-  }, [searchQuery, modeCategory, workshopMode, canWriteWorkflow])
+    return filtered
+  }, [searchQuery, modeCategory, workshopMode, canWriteWorkflow, revision])
+
+  useEffect(() => { setSelectedIndex(0) }, [searchQuery, isOpen, filteredCommands])
+  useEffect(() => {
+    if (isOpen) onActiveOptionChange?.(filteredCommands[selectedIndex] ? `${optionListId}-${selectedIndex}` : undefined)
+  }, [isOpen, filteredCommands, selectedIndex, optionListId, onActiveOptionChange])
+  useComposerPicker(isOpen, dialogRef, inputRef, onClose)
+
+  // Keyboard shortcuts
+  useEffect(() => {
+    if (!isOpen) return
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (!isComposerPickerEvent(event, inputRef) || !isPlainPickerKey(event)) return
+      if (event.key === 'Tab') { onClose(); return }
+      if (event.key === 'Escape') {
+        event.preventDefault()
+        onClose()
+      } else if (event.key === 'Enter') {
+        event.preventDefault()
+        // Exact retained shortcuts remain directly executable even though the
+        // search results point to the consolidated command's focus picker.
+        const shortcut = findCommand(searchQuery.trim(), modeCategory, workshopMode, canWriteWorkflow)
+        if (selectedIndex === 0 && shortcut?.menuHidden) {
+          onSelectCommand(shortcut.command)
+          return
+        }
+        if (filteredCommands.length > 0 && selectedIndex >= 0 && selectedIndex < filteredCommands.length) {
+          onSelectCommand(filteredCommands[selectedIndex].command)
+        } else { onClose() }
+      } else if (event.key === 'ArrowDown') {
+        event.preventDefault()
+        setSelectedIndex(prev => Math.max(0, Math.min(prev + 1, filteredCommands.length - 1)))
+      } else if (event.key === 'ArrowUp') {
+        event.preventDefault()
+        setSelectedIndex(prev => Math.max(prev - 1, 0))
+      }
+    }
+
+    document.addEventListener('keydown', handleKeyDown)
+    return () => document.removeEventListener('keydown', handleKeyDown)
+  }, [isOpen, onClose, onSelectCommand, filteredCommands, selectedIndex, searchQuery, modeCategory, workshopMode, canWriteWorkflow, inputRef])
 
   // Scroll selected item into view
   useEffect(() => {
@@ -126,10 +138,12 @@ export const CommandSelectionDialog: React.FC<CommandSelectionDialogProps> = ({
   return (
     <div
       ref={dialogRef}
-      className="fixed z-50 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg shadow-lg min-w-[420px] max-w-[640px]"
+      className="fixed z-50 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg shadow-lg flex flex-col overflow-hidden"
       style={{
-        bottom: `${position.bottom}px`,
-        left: `${position.left}px`
+        bottom: Math.max(8, Math.min(position.bottom, window.innerHeight - 80)),
+        left: Math.max(8, Math.min(position.left, window.innerWidth - Math.min(420, window.innerWidth - 16) - 8)),
+        width: 'min(420px, calc(100vw - 16px))',
+        maxHeight: `calc(100vh - ${Math.max(8, Math.min(position.bottom, window.innerHeight - 80)) + 8}px)`
       }}
     >
       {/* Header */}
@@ -143,6 +157,9 @@ export const CommandSelectionDialog: React.FC<CommandSelectionDialogProps> = ({
       {/* Command List */}
       <div
         ref={listRef}
+        id={optionListId}
+        role="listbox"
+        aria-label="Commands"
         className="overflow-y-auto max-h-96"
       >
         {filteredCommands.length === 0 ? (
@@ -153,6 +170,10 @@ export const CommandSelectionDialog: React.FC<CommandSelectionDialogProps> = ({
           filteredCommands.map((cmd, index) => (
             <div
               key={cmd.command}
+              id={`${optionListId}-${index}`}
+              role="option"
+              aria-selected={index === selectedIndex}
+              onMouseDown={event => event.preventDefault()}
               className={`group px-3 py-2 cursor-pointer flex items-center gap-2 text-sm transition-colors ${
                 index === selectedIndex
                   ? 'bg-primary/10 text-primary border-l-2 border-primary'
@@ -173,6 +194,7 @@ export const CommandSelectionDialog: React.FC<CommandSelectionDialogProps> = ({
                 <div className="hidden group-hover:flex items-center gap-1">
                   {onEditCommand && (
                     <button
+                      type="button"
                       className="p-1 hover:bg-gray-200 dark:hover:bg-gray-600 rounded"
                       onClick={(e) => { e.stopPropagation(); onEditCommand(cmd) }}
                       title="Edit command"
@@ -182,6 +204,7 @@ export const CommandSelectionDialog: React.FC<CommandSelectionDialogProps> = ({
                   )}
                   {onDeleteCommand && (
                     <button
+                      type="button"
                       className="p-1 hover:bg-red-100 dark:hover:bg-red-900/30 rounded text-red-500"
                       onClick={(e) => { e.stopPropagation(); onDeleteCommand(cmd) }}
                       title="Delete command"

@@ -60,6 +60,8 @@ export interface CommandContext {
 
 export interface CommandDefinition {
   command: string
+  // Compatibility names resolve to this command without adding menu entries.
+  aliases?: string[]
   description: string
   icon: ReactNode
   modes?: ModeCategory[]

@@ -43,6 +43,7 @@ type kindMeta struct {
 	Group       string // builder | review | improve | report | kb | learning | db
 	Description string // shown to the agent in the kind enum
 	Modes       []string
+	AliasOf     string // compatibility kind rendered from the canonical template
 
 	// Tools names the runtime tools this doc explains. It is the selection key
 	// for surfaces that choose references by capability instead of by mode —
@@ -91,7 +92,7 @@ var allKinds = map[string]kindMeta{
 	"improve-evaluation":  {Group: "improve", Description: "Read-only evaluation coverage and correctness review with fixer recommendations", Modes: []string{"workshop"}},
 	"engineering-review":  {Group: "improve", Description: "Read-only Technical Review phase: choose useful investigations, persist material findings, and leave bounded repairs to an explicitly supplied Fix phase", Modes: []string{"workshop"}},
 	"pulse-fixer":         {Group: "improve", Description: "Apply reviewed bounded repairs with proportional immediate checks; close applied fixes and reopen only on reproduction", Modes: []string{"workshop"}},
-	"goal-advisor":        {Group: "improve", Description: "Workflow Strategy Advisor opportunity development: explore useful improvements and alternatives, then create concrete human decision proposals; experiments are optional and workflow changes require approval", Modes: []string{"workshop"}},
+	"goal-advisor":        {Group: "review", AliasOf: "strategy-auditor", Description: "Compatibility alias for strategy-auditor; use strategy-auditor for strategic reviews and opportunity proposals", Modes: []string{"workshop"}},
 	"specialize-advisors": {Group: "improve", Description: "Propose owner-approved workflow-specific lenses for Strategy Auditor and Goal Advisor without changing their canonical roles", Modes: []string{"workshop"}},
 	"design-reporting-ui": {Group: "report", Description: "Design the reporting UI as one workflow-owned db/reports/index.html experience: live data, report-owned approval buttons, and user-reviewed requests to an existing or new workflow chat via window.report.sendChatMessage.", Modes: []string{"workshop"}},
 	"improve-report":      {Group: "report", Description: "Read-only report dashboard accuracy, goal tracking, live-data, layout, and responsive-design review", Modes: []string{"workshop"}},
@@ -220,6 +221,9 @@ func renderFromRegistry(kind string, data tmplData, registry map[string]kindMeta
 	meta, ok := registry[kind]
 	if !ok {
 		return "", fmt.Errorf("unknown kind %q", kind)
+	}
+	if meta.AliasOf != "" {
+		return renderFromRegistry(meta.AliasOf, data, registry)
 	}
 	rel := path.Join("templates", meta.Group, kind+".md")
 	body, err := templatesFS.ReadFile(rel)
@@ -479,7 +483,7 @@ func BuildSystemToolsSkill(mode string) *llmtypes.Skill {
 
 	configAccess := buildConfigurationAccessGuidance(mode)
 	referenceExamples := "`pulse-gate` for Pulse Gate, `pulse-review-fixer` for review/fix work, `code-authoring` before authoring `main.py`, or `llm-selection` before changing workflow models"
-	proceduralGuidance := "- `get_workflow_command_guidance(kind, focus?)` — canonical procedural flows (design-plan, improve-evaluation, goal-advisor, define-success, etc.). The returned text is your instructions for that turn; follow it verbatim.\n"
+	proceduralGuidance := "- `get_workflow_command_guidance(kind, focus?)` — canonical procedural flows (design-plan, improve-evaluation, strategy-auditor, define-success, etc.). The returned text is your instructions for that turn; follow it verbatim.\n"
 	if strings.EqualFold(strings.TrimSpace(mode), "run") {
 		referenceExamples = "`runtime-context` before answering from workflow state, `running-steps` before execution, or `human-in-the-loop` when work needs a user decision"
 		proceduralGuidance = ""

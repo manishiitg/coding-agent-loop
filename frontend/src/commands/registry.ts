@@ -47,12 +47,16 @@ export function getCommands(mode?: ModeCategory, workshopMode?: WorkshopMode, ca
 
 export function findCommand(name: string, mode?: ModeCategory, workshopMode?: WorkshopMode, canWriteWorkflow = true): CommandDefinition | undefined {
   return [...productCommands, ...builtinCommands, ...userCommands].find(cmd =>
-    cmd.command === name && matchesMode(cmd, mode, workshopMode, canWriteWorkflow)
+    matchesName(cmd, name) && matchesMode(cmd, mode, workshopMode, canWriteWorkflow)
   )
 }
 
+function matchesName(cmd: CommandDefinition, name: string): boolean {
+  return cmd.command === name || (cmd.aliases?.includes(name) ?? false)
+}
+
 export function findCommandAnyMode(name: string): CommandDefinition | undefined {
-  return productCommands.find(c => c.command === name)
-    ?? builtinCommands.find(c => c.command === name)
-    ?? userCommands.find(c => c.command === name)
+  return productCommands.find(c => matchesName(c, name))
+    ?? builtinCommands.find(c => matchesName(c, name))
+    ?? userCommands.find(c => matchesName(c, name))
 }

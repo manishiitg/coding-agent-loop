@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { findCommand, getCommands, setUserCommands } from './registry'
+import { findCommand, findCommandAnyMode, getCommands, setUserCommands } from './registry'
 import type { CommandContext, CommandDefinition } from './types'
 
 const { runPulseMock } = vi.hoisted(() => ({ runPulseMock: vi.fn() }))
@@ -36,7 +36,7 @@ describe('Pulse slash commands', () => {
     const orgCommands = getCommands('multi-agent').map(command => command.command)
 
     for (const command of [
-      'pulse', 'pulse-merge', 'pulse-review', 'pulse-fixer', 'goal-advisor',
+      'pulse', 'pulse-merge', 'pulse-review', 'pulse-fixer', 'strategy-auditor',
       'pulse-review-knowledge', 'pulse-review-learnings', 'pulse-review-database',
       'pulse-review-execution-health', 'plan-prompt-bloat', 'pulse-review-validation-contract', 'pulse-review-report-quality', 'pulse-review-evaluation-quality', 'pulse-review-model-cost',
     ]) {
@@ -209,17 +209,29 @@ describe('Pulse slash commands', () => {
     expect(submitted).not.toContain('in severity order')
   })
 
-  it('routes Goal Advisor through the normal guided background review path', () => {
-    const command = findCommand('goal-advisor', 'workflow')
+  it('keeps goal-advisor as a menu-free alias of the same strategic review', () => {
+    const command = findCommand('goal-advisor', 'workflow', 'workshop')
+    const canonical = findCommand('strategy-auditor', 'workflow', 'workshop')
+    expect(command).toBe(canonical)
+    expect(findCommandAnyMode('goal-advisor')).toBe(canonical)
+    expect(getCommands().map(cmd => cmd.command)).not.toContain('goal-advisor')
+    expect(findCommand('goal-advisor', 'multi-agent')).toBeUndefined()
+    for (const mode of ['run', 'workshop', undefined] as const) {
+      expect(findCommand('goal-advisor', 'workflow', mode, false)).toBeUndefined()
+    }
     let submitted = ''
 
     command?.execute({
       beforeSlash: 'challenge feed concentration',
       onSubmit: (message: string) => { submitted = message },
       workshopMode: 'workshop',
+      getWorkflowStore: () => ({ selectedRunFolder: 'iteration-7/group-a' }),
     } as CommandContext)
 
     expect(submitted).toContain('get_workflow_command_guidance')
+    expect(submitted).toContain('Run the /strategy-auditor review as a BACKGROUND task')
+    expect(submitted).toContain('iteration-7/group-a')
+    expect(submitted).not.toContain('goal-advisor')
     expect(submitted).toContain('challenge feed concentration')
     expect(submitted).toContain('BACKGROUND task')
     expect(submitted).toContain('run_in_background')

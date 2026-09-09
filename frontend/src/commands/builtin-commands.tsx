@@ -25,7 +25,7 @@ function submitGuidedWorkflowCommand(
     const isFixer = kind === 'pulse-fixer'
     const isReviewFix = kind === 'engineering-review' && options.repairAfterReview === true
     const isPlanDrift = kind === 'review-artifact-drift'
-    const isStrategy = kind === 'strategy-auditor' || kind === 'goal-advisor'
+    const isStrategy = kind === 'strategy-auditor'
     const taskLabel = isFixer ? 'fix pass' : isReviewFix ? 'review + fix' : 'review'
     const displayName = options.displayName || kind
     const taskIntro = options.displayName
@@ -259,6 +259,7 @@ export const builtinCommands: CommandDefinition[] = [
   },
   {
     command: 'strategy-auditor',
+    aliases: ['goal-advisor'],
     description: 'Assess reports and outputs, challenge the approach, and propose useful changes for your decision',
     icon: <Target className="w-4 h-4" />,
     modes: ['workflow'],
@@ -304,18 +305,6 @@ export const builtinCommands: CommandDefinition[] = [
     }
   },
   ...focusedPulseReviewCommands,
-  {
-    command: 'goal-advisor',
-    description: 'Explore a strategic opportunity and develop concrete proposals for your decision',
-    icon: <Bot className="w-4 h-4" />,
-    modes: ['workflow'],
-    requiredWorkflowMode: 'plan',
-    requiredWorkshopMode: 'workshop',
-    source: 'builtin',
-    execute: (ctx) => {
-      submitGuidedWorkflowCommand(ctx, 'goal-advisor', { background: true })
-    }
-  },
   {
     command: 'review-code',
     description: 'Review saved code and JSON parameters; propose code/ migration with focused tests',

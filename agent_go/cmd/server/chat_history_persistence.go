@@ -1787,6 +1787,93 @@ func chatHistoryUsername(userID, stored string) string {
 	return "Former user"
 }
 
+// repairStaleChatHistoryAttribution corrects an index entry whose user_id/
+// username were frozen as "default"/"System / legacy" at a session's first
+// save -- before the real acting user was resolved -- while every later save
+// correctly rewrote the conversation file itself (updatePersistedChatHistoryIndex
+// logs and continues on a failed index write, so a transient failure there
+// leaves the index permanently behind the file it's supposed to mirror).
+//
+// The existing "repaired on next listing" backfill (decorateChatHistorySessions
+// calling chatHistoryUsername) can never fix this on its own: it only
+// re-derives Username from the index's own (already wrong) UserID, which just
+// re-confirms the same stale fallback forever. This reads the real attribution
+// from the source conversation file and, when it disagrees, corrects both the
+// in-memory session being returned and the persisted index entry, so the
+// listing self-heals instead of staying wrong indefinitely.
+//
+// A no-op for genuinely legacy sessions (the conversation file itself also has
+// no real user_id) -- those are correctly labeled "System / legacy".
+func repairStaleChatHistoryAttribution(session *ChatHistorySession) {
+	if session == nil {
+		return
+	}
+	userID := strings.TrimSpace(session.UserID)
+	if userID != "" && userID != "default" {
+		return
+	}
+	convPath := strings.TrimSpace(session.ConversationPath)
+	if convPath == "" {
+		return
+	}
+	data, exists, err := readFileFromWorkspace(context.Background(), convPath)
+	if err != nil || !exists {
+		return
+	}
+	var attribution struct {
+		UserID   string `json:"user_id"`
+		Username string `json:"username"`
+	}
+	if err := json.Unmarshal([]byte(data), &attribution); err != nil {
+		return
+	}
+	realUserID := strings.TrimSpace(attribution.UserID)
+	if realUserID == "" || realUserID == "default" || realUserID == userID {
+		return
+	}
+
+	realUsername := chatHistoryUsername(realUserID, attribution.Username)
+	session.UserID = realUserID
+	session.Username = realUsername
+
+	indexPath := chatHistoryIndexWorkspacePath(realUserID, convPath)
+	if indexPath == "" {
+		return
+	}
+	mutex := chatHistoryIndexMutex(indexPath)
+	mutex.Lock()
+	defer mutex.Unlock()
+
+	indexData, exists, err := readFileFromWorkspace(context.Background(), indexPath)
+	if err != nil || !exists {
+		return
+	}
+	index := newChatHistoryIndex()
+	if err := json.Unmarshal([]byte(indexData), &index); err != nil {
+		return
+	}
+	index.normalize()
+	entry, ok := index.Entries[convPath]
+	if !ok || strings.TrimSpace(entry.Session.UserID) != userID {
+		// Someone else already changed this entry since we read the listing;
+		// leave it alone rather than clobber a concurrent, possibly different, update.
+		return
+	}
+	entry.Session.UserID = realUserID
+	entry.Session.Username = realUsername
+	index.Entries[convPath] = entry
+	index.UpdatedAt = time.Now().Format(time.RFC3339)
+
+	updated, err := json.MarshalIndent(index, "", "  ")
+	if err != nil {
+		return
+	}
+	if err := writeRawFileToWorkspace(context.Background(), indexPath, string(updated)); err != nil {
+		logfWithContext(newServerLogContext("", "", "", realUserID, "", session.SessionID),
+			"[CHAT_HISTORY] Failed to repair stale index attribution for %s: %v", convPath, err)
+	}
+}
+
 // normalizeChatHistoryWorkshopMode canonicalizes a mode string from any of
 // the supported input forms into one of the two backend mode names:
 // "workshop", "run", or "" (unknown / unset).

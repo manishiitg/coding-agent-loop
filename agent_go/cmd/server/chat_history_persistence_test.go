@@ -1137,6 +1137,95 @@ func TestPersistChatConversationUpdatesMetadataIndex(t *testing.T) {
 	}
 }
 
+// Reproduces the confida-login/apollo-mcp incident: a session's first save
+// wrote user_id="default" (real attribution not resolved yet), every later
+// save correctly rewrote the conversation file with the real user, but the
+// index entry stayed frozen at "default"/"System / legacy" because
+// updatePersistedChatHistoryIndex logs and continues on a failed write. The
+// old "backfill on next listing" only re-derived Username from the index's
+// own (already wrong) UserID, so it could never self-correct. This must both
+// fix the returned session in-memory and self-heal the persisted index entry.
+func TestRepairStaleChatHistoryAttributionFixesFrozenDefaultFromRealConversationFile(t *testing.T) {
+	workspace := &mockWorkspaceAPI{files: map[string]string{}}
+	server := httptest.NewServer(workspace)
+	defer server.Close()
+	t.Setenv("WORKSPACE_API_URL", server.URL)
+
+	conversationPath := "Workflow/confida-login/builder/conversation/2026-09-09/session-d5419bb4-conversation.json"
+	indexPath := "Workflow/confida-login/builder/conversation/" + chatHistoryIndexFileName
+
+	workspace.mu.Lock()
+	workspace.files[conversationPath] = `{"session_id":"d5419bb4","user_id":"e697742fc7eab8bc1cf3b7658885b8c2","username":"saurabh","conversation_history":[]}`
+	indexJSON, _ := json.Marshal(chatHistoryIndex{
+		Version: chatHistoryIndexVersion,
+		Entries: map[string]chatHistoryIndexEntry{
+			conversationPath: {
+				Session: ChatHistorySession{
+					SessionID:        "d5419bb4",
+					UserID:           "default",
+					Username:         "System / legacy",
+					ConversationPath: conversationPath,
+				},
+			},
+		},
+	})
+	workspace.files[indexPath] = string(indexJSON)
+	workspace.mu.Unlock()
+
+	session := ChatHistorySession{
+		SessionID:        "d5419bb4",
+		UserID:           "default",
+		Username:         "System / legacy",
+		ConversationPath: conversationPath,
+	}
+	repairStaleChatHistoryAttribution(&session)
+
+	if session.UserID != "e697742fc7eab8bc1cf3b7658885b8c2" || session.Username != "saurabh" {
+		t.Fatalf("in-memory session not repaired: %#v", session)
+	}
+
+	workspace.mu.Lock()
+	indexData := workspace.files[indexPath]
+	workspace.mu.Unlock()
+	var index chatHistoryIndex
+	if err := json.Unmarshal([]byte(indexData), &index); err != nil {
+		t.Fatalf("decode repaired index: %v", err)
+	}
+	entry, ok := index.Entries[conversationPath]
+	if !ok {
+		t.Fatalf("index entry disappeared after repair: %#v", index.Entries)
+	}
+	if entry.Session.UserID != "e697742fc7eab8bc1cf3b7658885b8c2" || entry.Session.Username != "saurabh" {
+		t.Fatalf("persisted index entry not repaired: %#v", entry.Session)
+	}
+}
+
+// A conversation file that also genuinely has no real user (true legacy data,
+// not a bug) must be left alone -- "System / legacy" is the correct label there.
+func TestRepairStaleChatHistoryAttributionLeavesGenuineLegacySessionsAlone(t *testing.T) {
+	workspace := &mockWorkspaceAPI{files: map[string]string{}}
+	server := httptest.NewServer(workspace)
+	defer server.Close()
+	t.Setenv("WORKSPACE_API_URL", server.URL)
+
+	conversationPath := "Workflow/old-workflow/builder/conversation/2026-01-01/session-legacy-conversation.json"
+	workspace.mu.Lock()
+	workspace.files[conversationPath] = `{"session_id":"legacy","conversation_history":[]}`
+	workspace.mu.Unlock()
+
+	session := ChatHistorySession{
+		SessionID:        "legacy",
+		UserID:           "default",
+		Username:         "System / legacy",
+		ConversationPath: conversationPath,
+	}
+	repairStaleChatHistoryAttribution(&session)
+
+	if session.UserID != "default" || session.Username != "System / legacy" {
+		t.Fatalf("genuinely legacy session should stay unchanged: %#v", session)
+	}
+}
+
 // Renamed from ...CollapsesScheduleRunsBySchedule. That test asserted every run
 // of a schedule but the newest was hidden, on the reasoning that schedule-runs.json
 // held the detail instead -- it does not (status and duration only, no error text,

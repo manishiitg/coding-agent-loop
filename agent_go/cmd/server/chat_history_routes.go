@@ -132,6 +132,7 @@ func visibleChatHistorySessions(sessions []ChatHistorySession, viewerID string, 
 func decorateChatHistorySessions(sessions []ChatHistorySession, viewerID string, access WorkflowAccessLevel, workflowScoped bool) {
 	viewerID = strings.TrimSpace(viewerID)
 	for i := range sessions {
+		repairStaleChatHistoryAttribution(&sessions[i])
 		sessions[i].Username = chatHistoryUsername(sessions[i].UserID, sessions[i].Username)
 		if !workflowScoped {
 			sessions[i].CanResume = true

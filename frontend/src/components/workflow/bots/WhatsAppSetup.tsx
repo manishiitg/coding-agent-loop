@@ -1,4 +1,5 @@
-import { AlertCircle, AlertTriangle, Loader2, Trash2 } from 'lucide-react'
+import { AlertCircle, AlertTriangle, Loader2, RotateCcw, Trash2 } from 'lucide-react'
+import { useState } from 'react'
 import { Button } from '../../ui/Button'
 import { Card } from '../../ui/Card'
 import { READ_ONLY_TITLE } from '../../../hooks/useCanWriteWorkflow'
@@ -19,6 +20,18 @@ export function WhatsAppSetup({ bots }: { bots: WhatsAppSetupBots }) {
     refreshWaQR,
     handleUnpairWhatsApp,
   } = bots
+  const [linkCopyState, setLinkCopyState] = useState<'idle' | 'copied' | 'failed'>('idle')
+
+  const handleCopyLinkCommand = async () => {
+    const cmd = `link ${waStatus?.link_code || '123456'}`
+    try {
+      await navigator.clipboard.writeText(cmd)
+      setLinkCopyState('copied')
+    } catch {
+      setLinkCopyState('failed')
+    }
+    window.setTimeout(() => setLinkCopyState('idle'), 2000)
+  }
 
   return (
     <div className="space-y-4">
@@ -45,39 +58,34 @@ export function WhatsAppSetup({ bots }: { bots: WhatsAppSetupBots }) {
       {/* Status card */}
       {waStatus && waStatus.enabled && (
         <Card className="p-4">
-          <div className="flex items-center justify-between">
+          <div className="flex items-start justify-between gap-4">
             <div>
-              <h3 className="text-sm font-medium text-foreground">Status</h3>
-              <p className="text-xs text-muted-foreground mt-0.5">
-                Uses the unofficial WhatsApp Web protocol (whatsmeow). Pair your personal number once
-                by scanning the QR below. On Android: tap the ⋮ menu → Linked Devices → Link a device.
-                On iPhone: Settings → Linked Devices → Link Device.
-              </p>
+              <h3 className="text-sm font-medium text-foreground">Connection</h3>
+              <p className="text-xs text-muted-foreground mt-0.5">Account-wide pairing shared by all workflows.</p>
+              {waStatus.own_jid && <p className="mt-2 text-[11px] text-muted-foreground font-mono">{waStatus.own_jid}</p>}
+              {(waStatus.owner_email || waStatus.owner_username || waStatus.owner_user_id) && (
+                <p className="mt-1 text-[11px] text-muted-foreground">
+                  bound to <span className="text-foreground">{waStatus.owner_email || waStatus.owner_username || waStatus.owner_user_id}</span>
+                </p>
+              )}
             </div>
-            <div className="flex flex-col items-end gap-0.5 text-xs">
-              <span className="flex items-center gap-1.5">
-                <span
-                  className={`w-1.5 h-1.5 rounded-full ${
-                    waStatus.connected ? 'bg-green-500' : waStatus.paired ? 'bg-amber-500' : 'bg-gray-400'
-                  }`}
-                />
+            <div className="flex flex-col items-end gap-1 text-xs">
+              <span className="inline-flex items-center gap-2">
+                <span className={`h-2 w-2 rounded-full ${waStatus.connected ? 'bg-green-500' : waStatus.paired ? 'bg-amber-500' : 'bg-gray-400'}`} />
                 <span className="text-foreground">
                   {waStatus.connected ? 'Connected' : waStatus.paired ? 'Paired, offline' : 'Not paired'}
                 </span>
               </span>
-              {waStatus.own_jid && (
-                <span className="text-muted-foreground font-mono text-[10px]">{waStatus.own_jid}</span>
-              )}
-              {(waStatus.owner_email || waStatus.owner_username || waStatus.owner_user_id) && (
-                <span className="text-muted-foreground text-[10px]">
-                  bound to{' '}
-                  <span className="text-foreground">
-                    {waStatus.owner_email || waStatus.owner_username || waStatus.owner_user_id}
-                  </span>
-                </span>
-              )}
+              <span className="text-[11px] text-muted-foreground">
+                {waStatus.enabled ? 'Enabled' : 'Disabled'} · {waStatus.paired ? 'Paired' : 'Unpaired'}
+              </span>
             </div>
           </div>
+          {!waStatus.paired && (
+            <p className="mt-3 text-xs text-muted-foreground">
+              Pair once via QR: <strong>Android</strong> ⋮ menu → Linked Devices → Link a device · <strong>iPhone</strong> Settings → Linked Devices → Link Device.
+            </p>
+          )}
         </Card>
       )}
 
@@ -86,10 +94,20 @@ export function WhatsAppSetup({ bots }: { bots: WhatsAppSetupBots }) {
         <Card className="p-4">
           <div className="flex flex-col items-center gap-3">
             <div className="flex w-full items-center justify-between gap-3">
-              <h3 className="text-sm font-medium text-foreground">Scan to pair</h3>
-              <Button type="button" variant="outline" size="sm" onClick={refreshWaQR} disabled={qrLoading}>
-                Refresh QR
-              </Button>
+              <div>
+                <h3 className="text-sm font-medium text-foreground">Pair device</h3>
+                <p className="mt-0.5 text-xs text-muted-foreground">Scan this QR from WhatsApp → Linked Devices.</p>
+              </div>
+              <button
+                type="button"
+                onClick={refreshWaQR}
+                disabled={qrLoading}
+                className="inline-flex items-center gap-1 rounded border border-border px-2 py-1 text-xs text-muted-foreground hover:text-foreground disabled:opacity-50"
+                aria-label="Refresh WhatsApp QR"
+              >
+                <RotateCcw className="h-3.5 w-3.5" />
+                Refresh
+              </button>
             </div>
             {waStatus.qr_available ? (
               <>
@@ -118,27 +136,20 @@ export function WhatsAppSetup({ bots }: { bots: WhatsAppSetupBots }) {
                     )}
                   </div>
                 )}
-                <p className="text-xs text-muted-foreground text-center max-w-sm">
-                  Open WhatsApp on your phone. <strong>Android</strong>: ⋮ menu → Linked Devices → Link a
-                  device. <strong>iPhone</strong>: Settings → Linked Devices → Link Device. Then scan this
-                  code. The QR rotates every few seconds; this page refreshes it automatically.
-                </p>
                 {waStatus.qr_expires_at && (
-                  <p className="text-[11px] text-muted-foreground/80 text-center">
-                    QR expires {new Date(waStatus.qr_expires_at).toLocaleString()}.
-                  </p>
+                  <p className="text-[11px] text-muted-foreground/80 text-center">QR expires {new Date(waStatus.qr_expires_at).toLocaleString()}.</p>
                 )}
                 {(waStatus.pairing_error || waStatus.pairing_message) && (
-                  <div className="w-full rounded-md border border-border bg-muted/30 p-3 text-[11px] text-muted-foreground">
-                    {waStatus.pairing_error && (
-                      <div className="text-red-700 dark:text-red-300">Pairing error: {waStatus.pairing_error}</div>
-                    )}
+                  <div className="w-full space-y-2">
+                    {waStatus.pairing_error && <StatusBanner tone="error">{waStatus.pairing_error}</StatusBanner>}
                     {waStatus.pairing_message && (
-                      <div className={waStatus.pairing_error ? 'mt-1.5' : ''}>{waStatus.pairing_message}</div>
-                    )}
-                    {waStatus.pairing_last_at && (
-                      <div className="mt-1.5 text-muted-foreground/80">
-                        Last attempt: {new Date(waStatus.pairing_last_at).toLocaleString()}
+                      <div className="rounded-md border border-border bg-muted/30 p-3 text-[11px] text-muted-foreground">
+                        {waStatus.pairing_message}
+                        {waStatus.pairing_last_at && (
+                          <div className="mt-1.5 text-muted-foreground/80">
+                            Last attempt: {new Date(waStatus.pairing_last_at).toLocaleString()}
+                          </div>
+                        )}
                       </div>
                     )}
                   </div>
@@ -158,26 +169,40 @@ export function WhatsAppSetup({ bots }: { bots: WhatsAppSetupBots }) {
       {waStatus && waStatus.enabled && waStatus.paired && (
         <Card className="p-4">
           <h3 className="text-sm font-medium text-foreground mb-1.5">How to chat</h3>
-          <div className="space-y-1.5 text-xs text-muted-foreground">
-            <p>
-              Open WhatsApp → <strong>Message Yourself</strong> chat, or DM the paired WhatsApp number
-              from another phone. First send <code>link {waStatus.link_code || '123456'}</code> from that
-              chat to bind WhatsApp's current phone/LID identity. Then send messages normally. Start a
-              message with <code>@slug</code> to route it to the workflow mapped for that slug.
-            </p>
-            {waStatus.link_code && (
-              <p className="text-muted-foreground/80">
-                Linked chats: {waStatus.bound_chat_count ?? 0}. Link code expires{' '}
-                {waStatus.link_code_expires_at
-                  ? new Date(waStatus.link_code_expires_at).toLocaleString()
-                  : 'soon'}
-                .
+          <div className="space-y-2 text-xs text-muted-foreground">
+            <div className="rounded-md border border-border bg-muted/30 p-3">
+              <div className="flex items-center justify-between gap-2">
+                <div>
+                  <div className="text-[11px] text-muted-foreground">Step 1: link a DM chat</div>
+                  <code className="mt-1 block rounded bg-background px-2 py-1 font-mono text-[11px] text-muted-foreground">
+                    link {waStatus.link_code || '123456'}
+                  </code>
+                </div>
+                <button
+                  type="button"
+                  onClick={handleCopyLinkCommand}
+                  className="shrink-0 rounded border border-border px-2 py-1 text-xs text-muted-foreground hover:text-foreground"
+                >
+                  {linkCopyState === 'copied' ? 'Copied!' : linkCopyState === 'failed' ? 'Copy failed' : 'Copy'}
+                </button>
+              </div>
+              {waStatus.link_code && (
+                <div className="mt-2 text-[11px] text-muted-foreground/80">
+                  Linked chats: {waStatus.bound_chat_count ?? 0}. Link code expires{' '}
+                  {waStatus.link_code_expires_at ? new Date(waStatus.link_code_expires_at).toLocaleString() : 'soon'}.
+                </div>
+              )}
+            </div>
+
+            <div className="rounded-md border border-border bg-muted/30 p-3">
+              <div className="text-[11px] text-muted-foreground">Step 2: route to a workflow</div>
+              <p className="mt-1 text-[11px] text-muted-foreground">
+                Start a message with <code>@slug</code> (for example <code>@invoice-processing</code>) to route it to that workflow.
               </p>
-            )}
-            <p className="text-muted-foreground/80">
-              For a proper separate-bot experience (like Slack's <code>@bot</code>), pair a dedicated
-              WhatsApp number — a second SIM, WhatsApp Business with a different number, or a virtual
-              number from Twilio. Only linked inbound DMs are handled as bot messages.
+            </div>
+
+            <p className="text-[11px] text-muted-foreground/80">
+              Tip: for a separate-bot experience, pair a dedicated WhatsApp number (WhatsApp Business on a different number also works).
             </p>
           </div>
         </Card>

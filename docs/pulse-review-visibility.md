@@ -6,6 +6,12 @@ its summary, coverage where applicable, Markdown reports, checks, and findings
 below the selector. Human decisions and finalization remain workflow-wide.
 Clearing the review-area filter makes the issue queue and checks cover all areas.
 
+Only the latest report and latest check appear by default. Older reports and
+reviews are behind separate history controls; review history loads ten entries
+at a time. Switching review areas collapses history again. Checks keep their
+evidence and test results in expandable details, while coverage dates and
+current findings remain visible.
+
 Drift findings appear directly below the Drift check content. If there are no
 current drift findings but resolved ones exist, selecting Drift check opens the
 Resolved queue. If none were recorded, an explicit empty state points to the

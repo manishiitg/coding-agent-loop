@@ -31,9 +31,9 @@ function Reports({ reports }: { reports: PulseReviewReport[] }) {
   const [all, setAll] = useState(false)
   if (!reports.length) return <p className="text-xs text-muted-foreground">No saved review reports found.</p>
   return <div className="space-y-2">
-    {(all ? reports : reports.slice(0, 3)).map(report => <ReviewReport key={report.path} report={report} />)}
-    {reports.length > 3 && <button type="button" onClick={() => setAll(value => !value)} className="text-xs font-medium text-primary hover:underline">
-      {all ? 'Show fewer reports' : `Show all ${reports.length} reports`}
+    {(all ? reports : reports.slice(0, 1)).map(report => <ReviewReport key={report.path} report={report} />)}
+    {reports.length > 1 && <button type="button" aria-expanded={all} onClick={() => setAll(value => !value)} className="text-xs font-medium text-primary hover:underline">
+      {all ? 'Hide report history' : `View report history (${reports.length - 1})`}
     </button>}
   </div>
 }
@@ -124,16 +124,33 @@ export function PulseReviewOverview({ moduleStates, coverage, audits, reports, f
       </div></div>}
       <div><h5 className="mb-2 text-xs font-semibold">Review reports <span className="font-normal text-muted-foreground">({selectedReports.length})</span></h5><Reports reports={selectedReports} /></div>
     </section>}
-    <section className="overflow-hidden rounded-xl border bg-background" aria-label={selected ? `${selected.label} checks and results` : 'All checks and results'}>
-      <div className="px-4 py-3"><h4 className="text-sm font-semibold">Checks and results</h4><p className="mt-1 text-xs text-muted-foreground">{selected ? `${selected.label} actions and outcomes.` : 'Actions and outcomes across all review areas.'} Expand an entry for tests, changed files, and evidence.</p></div>
-      <div className="divide-y">{visibleAudits.slice(0, 20).map(item => <details key={`${item.module}:${item.pulse_run_id}`} className="px-4 py-3">
-        <summary className="cursor-pointer text-xs">{readable(item.module)} · {readable(item.result)} · {pulseReviewDate(item.recorded_at)}<span className="mt-1 block pl-4 text-muted-foreground">{item.reason}</span></summary>
-        <div className="mt-3 text-xs leading-5 text-muted-foreground"><Evidence title="Recorded checks" items={item.verification} />
-          {!item.verification?.length && <p>No test results attached to this review.</p>}
-          <Evidence title="Changed files" items={item.changed_files} /><Evidence items={item.evidence} />
-          <div className="mt-3"><Reports reports={reports.filter(report => report.module === item.module && report.pulse_run_id === item.pulse_run_id)} /></div></div>
-      </details>)}
-      {!visibleAudits.length && <p className="px-4 pb-4 text-xs text-muted-foreground">No review results recorded yet.</p>}</div>
-    </section>
+    <ReviewChecks key={`checks:${moduleFilter || 'all'}`} audits={visibleAudits} reports={reports} label={selected?.label} />
+  </section>
+}
+
+
+function ReviewChecks({ audits, reports, label }: { audits: PulseReviewAudit[]; reports: PulseReviewReport[]; label?: string }) {
+  const [history, setHistory] = useState(false)
+  const [limit, setLimit] = useState(10)
+  const renderCheck = (item: PulseReviewAudit, latest: boolean) => <details key={`${item.module}:${item.pulse_run_id}`} className="px-4 py-3">
+    <summary className="cursor-pointer text-xs">{latest ? 'Latest check' : readable(item.module)} · {readable(item.result)} · {pulseReviewDate(item.recorded_at)}</summary>
+    <div className="mt-3 text-xs leading-5 text-muted-foreground">
+      <p>{item.reason}</p><Evidence title="Recorded checks" items={item.verification} />
+      {!item.verification?.length && <p className="mt-2">No test results attached to this review.</p>}
+      <Evidence title="Changed files" items={item.changed_files} /><Evidence items={item.evidence} />
+      <div className="mt-3"><Reports reports={reports.filter(report => normalizePulseWorkspaceModule(report.module) === normalizePulseWorkspaceModule(item.module) && report.pulse_run_id === item.pulse_run_id)} /></div>
+    </div>
+  </details>
+  return <section className="overflow-hidden rounded-xl border bg-background" aria-label={label ? `${label} checks and results` : 'All checks and results'}>
+    {audits.length ? renderCheck(audits[0], true) : <p className="p-4 text-xs text-muted-foreground">No review results recorded yet.</p>}
+    {audits.length > 1 && <div className="border-t">
+      <button type="button" aria-expanded={history} onClick={() => { setHistory(value => !value); setLimit(10) }} className="px-4 py-3 text-xs font-medium text-primary hover:underline">
+        {history ? 'Hide review history' : `View review history (${audits.length - 1})`}
+      </button>
+      {history && <div className="divide-y border-t" aria-label="Review history">
+        {audits.slice(1, limit + 1).map(item => renderCheck(item, false))}
+        {audits.length > limit + 1 && <button type="button" onClick={() => setLimit(value => value + 10)} className="px-4 py-3 text-xs font-medium text-primary hover:underline">Show more reviews</button>}
+      </div>}
+    </div>}
   </section>
 }

@@ -7,6 +7,41 @@ vi.mock('../ui/MarkdownRenderer', () => ({ MarkdownRenderer: ({ content }: { con
 import { agentApi } from '../../services/api'
 import { PulseReviewOverview } from './PulseReviewOverview'
 
+it('keeps review history collapsed, pages older checks, and resets it when changing areas', async () => {
+  Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true })
+  const container = document.createElement('div'); document.body.append(container)
+  const root = createRoot(container)
+  const audits = Array.from({ length: 13 }, (_, i) => ({
+    workspace_path: 'Workflow/example', module: 'technical_review', pulse_run_id: `run-${i}`,
+    result: 'done', reason: `Review outcome ${i}`, recorded_at: `2026-09-${String(20 - i).padStart(2, '0')}T09:00:00Z`,
+    verification: [`Verified check ${i}`],
+  }))
+  const reports = audits.slice(0, 3).map(audit => ({ module: audit.module, pulse_run_id: audit.pulse_run_id,
+    path: `Workflow/example/runs/pulse/${audit.pulse_run_id}/technical-review.md`, updated_at: audit.recorded_at }))
+  const render = (moduleFilter: string) => root.render(<PulseReviewOverview moduleStates={[]} coverage={[]} findings={[]}
+    audits={audits} reports={reports} moduleFilter={moduleFilter} onSelectModule={() => {}} />)
+  const button = (prefix: string) => [...container.querySelectorAll<HTMLButtonElement>('button')].find(node => node.textContent?.startsWith(prefix))!
+  try {
+    await act(async () => render('technical_review'))
+    const checks = () => container.querySelector('[aria-label="Technical review checks and results"]')!
+    expect(checks().querySelectorAll('details')).toHaveLength(1)
+    expect(container.querySelector('[aria-label="Review history"]')).toBeNull()
+    expect(container.querySelector('[aria-label="Technical review content"]')!.querySelectorAll('[aria-haspopup="dialog"]')).toHaveLength(1)
+    await act(async () => button('View report history').click())
+    expect(container.querySelector('[aria-label="Technical review content"]')!.querySelectorAll('[aria-haspopup="dialog"]')).toHaveLength(3)
+    await act(async () => button('View review history').click())
+    expect(container.querySelector('[aria-label="Review history"]')!.querySelectorAll('details')).toHaveLength(10)
+    await act(async () => button('Show more reviews').click())
+    expect(container.querySelector('[aria-label="Review history"]')!.querySelectorAll('details')).toHaveLength(12)
+    expect(checks().textContent).toContain('Verified check 12')
+    await act(async () => render('strategic_review'))
+    await act(async () => render('technical_review'))
+    expect(container.querySelector('[aria-label="Review history"]')).toBeNull()
+    expect(checks().querySelectorAll('details')).toHaveLength(1)
+    expect(container.querySelector('[aria-label="Technical review content"]')!.querySelectorAll('[aria-haspopup="dialog"]')).toHaveLength(1)
+  } finally { await act(async () => root.unmount()); container.remove() }
+})
+
 it('opens saved Markdown outside the workspace panel, retries errors, and closes the reader', async () => {
   Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true })
   const path = 'Workflow/rtslatency/runs/pulse/pulse-1/strategic-review.md'

@@ -179,13 +179,30 @@ fi
 
 PREVIOUS_RELEASE="$(readlink -f "$CURRENT_LINK" 2>/dev/null || true)"
 echo ""
-echo "==> Activating: flipping $CURRENT_LINK -> $RELEASE_DIR and restarting dominion-agent"
+echo "==> Activating: flipping $CURRENT_LINK -> $RELEASE_DIR and restarting dominion-workspace, dominion-agent"
 ln -sfn "$RELEASE_DIR" "$CURRENT_LINK"
 mkdir -p "$HOME/.config/systemd/user/dominion-agent.service.d"
 printf '%s\n' '[Service]' 'Environment=AGENT_BROWSER_CDP_ENABLED=false' > "$HOME/.config/systemd/user/dominion-agent.service.d/20-disable-cdp.conf"
 mkdir -p "$HOME/.config/systemd/user/dominion-workspace.service.d"
 printf '%s\n' '[Service]' 'Environment=AGENT_BROWSER_CDP_ENABLED=false' > "$HOME/.config/systemd/user/dominion-workspace.service.d/20-disable-cdp.conf"
 systemctl --user daemon-reload
+# dominion-agent depends on dominion-workspace (After=dominion-workspace.service
+# in its unit), so restart it first -- and it must actually be restarted here:
+# until now this script only ever restarted dominion-agent, so dominion-workspace
+# kept running the PREVIOUS release's binary (and the previous env) indefinitely
+# after every deploy, CDP-disable drop-in included.
+systemctl --user restart dominion-workspace
+sleep 2
+if ! systemctl --user is-active --quiet dominion-workspace; then
+  echo "FATAL: dominion-workspace failed to start on the new release — rolling back to $PREVIOUS_RELEASE" >&2
+  if [[ -n "$PREVIOUS_RELEASE" ]]; then
+    ln -sfn "$PREVIOUS_RELEASE" "$CURRENT_LINK"
+    systemctl --user restart dominion-workspace
+    sleep 2
+    systemctl --user is-active --quiet dominion-workspace && echo "    rollback successful, dominion-workspace active again" || echo "    ROLLBACK ALSO FAILED — needs manual intervention" >&2
+  fi
+  exit 1
+fi
 systemctl --user restart dominion-agent
 sleep 3
 
@@ -195,6 +212,8 @@ else
   echo "FATAL: health check failed after restart — rolling back to $PREVIOUS_RELEASE" >&2
   if [[ -n "$PREVIOUS_RELEASE" ]]; then
     ln -sfn "$PREVIOUS_RELEASE" "$CURRENT_LINK"
+    systemctl --user restart dominion-workspace
+    sleep 2
     systemctl --user restart dominion-agent
     sleep 3
     curl -fsS -o /dev/null http://127.0.0.1:21000/api/health && echo "    rollback successful, service healthy again" || echo "    ROLLBACK ALSO FAILED — needs manual intervention" >&2

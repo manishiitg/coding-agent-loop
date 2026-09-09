@@ -235,6 +235,10 @@ func whatsappGetRoutingHandler(manager *services.WhatsAppServiceManager) http.Ha
 			http.Error(w, "whatsapp service unavailable: "+err.Error(), http.StatusServiceUnavailable)
 			return
 		}
+		// Ensure every workflow has a default @<automation-name> route so the
+		// UI can show usable slugs immediately after pairing. Throttled
+		// internally.
+		svc.EnsureDefaultWorkflowRoutes(r.Context())
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]interface{}{
 			"routing": svc.GetRouting(),
@@ -290,6 +294,11 @@ func whatsappStatusHandler(manager *services.WhatsAppServiceManager) http.Handle
 				log.Printf("[WHATSAPP] refresh pairing QR failed: %v", err)
 			}
 		}
+		// After pairing completes, auto-provision default workflow slugs so
+		// a WhatsApp message can immediately target @<automation-name> without
+		// the operator having to open the routing screen first. Throttled
+		// internally.
+		svc.EnsureDefaultWorkflowRoutes(r.Context())
 		// Every phone of the account, and the one a scan would pair next
 		// (kept warm so its QR is ready; see the pair endpoint's device=next).
 		var devices []services.WhatsAppDevice

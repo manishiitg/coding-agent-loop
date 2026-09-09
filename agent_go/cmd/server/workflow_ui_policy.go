@@ -44,5 +44,12 @@ func (api *StreamingAPI) registerWorkflowUIForCaller(registrar definitionToolReg
 		api.uiBroker().setScope(session, "")
 		return nil
 	}
-	return api.registerOpenWorkspaceViewTool(registrar, session, workspace)
+	if err := api.registerOpenWorkspaceViewTool(registrar, session, workspace); err != nil {
+		return err
+	}
+	// Same gate as the UI tools above: widening a Gmail connection's grants
+	// must only ever be something a real interactive user in this exact
+	// workflow-builder chat asked for, never a scheduled/bot/sub-agent
+	// session silently expanding its own permissions.
+	return api.registerGmailConnectionManagementTools(registrar, session, workspace)
 }

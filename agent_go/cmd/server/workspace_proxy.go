@@ -42,6 +42,11 @@ func workspaceProxyHandler() http.Handler {
 	log.Printf("[WORKSPACE PROXY] Proxying /api/wp/* → %s", wsURL)
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Live browser access must go through workflow ownership and input gating.
+		if strings.HasPrefix(workspaceProxyRelativePath(r), "api/browser/live/") {
+			http.NotFound(w, r)
+			return
+		}
 		if isWorkflowWorkspaceProxyWrite(r) {
 			if !currentUserCanWriteWorkflows(r) {
 				writeWorkflowPermissionDenied(w, "write")

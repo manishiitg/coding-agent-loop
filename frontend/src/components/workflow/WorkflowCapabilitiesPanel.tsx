@@ -1,5 +1,6 @@
+import WorkflowLiveBrowser from './WorkflowLiveBrowser'
 import React, { useCallback, useEffect, useMemo, useState } from 'react'
-import { LoaderCircle, Save } from 'lucide-react'
+import { LoaderCircle, Save, Settings2, X } from 'lucide-react'
 import { ToolSelectionSection } from '../ToolSelectionSection'
 import SkillsManagerPanel from '../skills/SkillsManagerPanel'
 import { SecretSelectionSection } from '../secrets/SecretSelectionSection'
@@ -9,6 +10,7 @@ import WorkflowBotsPanel from './WorkflowBotsPanel'
 import ConnectorsBrowser from '../connectors/ConnectorsBrowser'
 import { agentApi, workflowManifestApi } from '../../services/api'
 import type { WorkflowCapabilities } from '../../services/api-types'
+import { AskAIButton } from './AskAIButton'
 import { useMCPStore } from '../../stores/useMCPStore'
 import { useWorkflowManifestStore } from '../../stores/useWorkflowManifestStore'
 import { useCanWriteWorkflow } from '../../hooks/useCanWriteWorkflow'
@@ -57,7 +59,7 @@ const SECTION_COPY: Record<WorkflowCapabilitySection, { title: string; descripti
   },
   browser: {
     title: 'Browser automation',
-    description: 'Control whether this workflow uses visible Chrome or managed headless browsing.',
+    description: 'Watch this workflow’s browser and configure its automation access.',
     savesViaManifest: true,
   },
   llm: {
@@ -131,6 +133,21 @@ export default function WorkflowCapabilitiesPanel({ section, workspacePath }: Wo
   }, [])
   const copy = SECTION_COPY[section]
   const view = getWorkspaceView(section)
+
+  // Each of these panels only ever shows what's already configured on this
+  // deployment or in this workflow — none of them can tell the user chat is
+  // able to go find, install, or explain something that isn't listed at
+  // all. Rendered via AskAIButton (shared with every other settings panel);
+  // each message here is a real, complete first message it delivers (not a
+  // prefilled fragment), ending by inviting the agent to ask what's needed.
+  const ASK_CHAT_MESSAGE: Partial<Record<WorkflowCapabilitySection, string>> = {
+    mcp: "I want to connect an MCP server this workflow doesn't have yet — search the catalog and the web for it, or a CLI tool if that fits better. Ask me what service or capability I need.",
+    skills: "I want a skill this workflow doesn't have yet. Ask me what it should cover, then find an existing one or write a new one.",
+    secrets: "I need to add a secret this workflow doesn't have yet. Ask me which credential it is and where it should come from.",
+    llm: "I want to change or add an LLM provider/model this workflow doesn't have configured yet. Ask me which one and what it's for.",
+    bots: "I want to connect a bot channel (Slack, WhatsApp, Gmail, etc.) this workflow doesn't have set up yet. Ask me which one and where it should notify.",
+    browser: "I need browser automation access this workflow doesn't have configured yet. Ask me what site or task it's for.",
+  }
   const SectionIcon = view.icon
 
   const load = useCallback(async () => {
@@ -192,11 +209,13 @@ export default function WorkflowCapabilitiesPanel({ section, workspacePath }: Wo
     }
   }, [workspacePath])
 
+  const [browserSettingsOpen, setBrowserSettingsOpen] = useState(false)
+
   const save = useCallback(() => persist(capabilities), [capabilities, persist])
 
   return (
     <section className="flex h-full min-h-0 w-full max-w-none flex-col bg-background">
-      <header className="flex shrink-0 items-start gap-3 border-b px-4 py-3">
+      {section !== 'browser' && <header className="flex shrink-0 items-start gap-3 border-b px-4 py-3">
         <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-muted text-muted-foreground">
           <SectionIcon className="h-4 w-4" />
         </div>
@@ -204,9 +223,12 @@ export default function WorkflowCapabilitiesPanel({ section, workspacePath }: Wo
           <h2 className="text-sm font-semibold text-foreground">{copy.title}</h2>
           <p className="mt-0.5 text-xs text-muted-foreground">{copy.description}</p>
         </div>
-      </header>
+        {ASK_CHAT_MESSAGE[section] && (
+          <AskAIButton workspacePath={workspacePath} message={ASK_CHAT_MESSAGE[section]!} className="flex shrink-0 items-center gap-1.5 self-center rounded-md border border-border px-2.5 py-1.5 text-xs font-medium text-muted-foreground transition-colors hover:border-primary/40 hover:text-primary" />
+        )}
+      </header>}
 
-      <div className={`min-h-0 flex-1 p-4 ${view.managesOwnScroll ? 'flex flex-col overflow-hidden' : 'overflow-y-auto'}`}>
+      <div className={`min-h-0 flex-1 p-4 ${section === 'browser' ? '!p-0 flex flex-col overflow-hidden relative' : view.managesOwnScroll ? 'flex flex-col overflow-hidden' : 'overflow-y-auto'}`}>
         {loading ? (
           <div className="flex items-center justify-center gap-2 py-12 text-sm text-muted-foreground">
             <LoaderCircle className="h-4 w-4 animate-spin" /> Loading workflow settings…
@@ -285,20 +307,30 @@ export default function WorkflowCapabilitiesPanel({ section, workspacePath }: Wo
               </div>
             )}
             {section === 'browser' && (
-              <BrowserAutomationSettings
-                browserMode={capabilities.browser_mode as BrowserAutomationMode}
-                onBrowserModeChange={(browser_mode) => setCapabilities(current => ({ ...current, browser_mode }))}
-                cdpPort={cdpPort}
-                onCdpPortChange={(port) => {
-                  setCdpPort(port)
-                  setCapabilities(current => ({ ...current, cdp_ports: [port] }))
-                }}
-                cdpConnected={cdpConnected}
-                cdpError={cdpError}
-                cdpChecking={cdpChecking}
-                onCheckCdpConnection={checkCdpConnection}
-                readOnly={!canWriteWorkflow}
-              />
+              <>
+                <WorkflowLiveBrowser workspacePath={workspacePath} toolbar={<>
+                  <AskAIButton workspacePath={workspacePath} message={ASK_CHAT_MESSAGE.browser!} iconOnly className="flex items-center gap-1.5 rounded p-1.5 text-muted-foreground hover:bg-muted" />
+                  <button type="button" aria-label="Browser settings" title="Browser settings" onClick={() => setBrowserSettingsOpen(value => !value)} className="rounded p-1.5 text-muted-foreground hover:bg-muted"><Settings2 className="h-4 w-4" /></button>
+                </>} />
+                {browserSettingsOpen && <div role="dialog" aria-label="Browser settings" className="absolute inset-x-2 top-12 z-10 max-h-[calc(100%-4rem)] overflow-y-auto rounded-lg border border-border bg-background p-4 shadow-xl">
+                  <div className="mb-3 flex items-center justify-between"><h3 className="text-sm font-medium">Browser settings</h3><button type="button" aria-label="Close browser settings" onClick={() => setBrowserSettingsOpen(false)} className="rounded p-1 hover:bg-muted"><X className="h-4 w-4" /></button></div>
+                <BrowserAutomationSettings
+                  browserMode={capabilities.browser_mode as BrowserAutomationMode}
+                  onBrowserModeChange={(browser_mode) => setCapabilities(current => ({ ...current, browser_mode }))}
+                  cdpPort={cdpPort}
+                  onCdpPortChange={(port) => {
+                    setCdpPort(port)
+                    setCapabilities(current => ({ ...current, cdp_ports: [port] }))
+                  }}
+                  cdpConnected={cdpConnected}
+                  cdpError={cdpError}
+                  cdpChecking={cdpChecking}
+                  onCheckCdpConnection={checkCdpConnection}
+                  readOnly={!canWriteWorkflow}
+                />
+                {canWriteWorkflow && <div className="mt-3 flex items-center justify-end gap-3 border-t pt-3">{dirty && <span className="text-xs text-muted-foreground">Unsaved changes</span>}<button type="button" disabled={!dirty || saving} onClick={() => void save()} className="rounded bg-primary px-3 py-1.5 text-xs text-primary-foreground disabled:opacity-50">{saving ? 'Saving…' : 'Save settings'}</button></div>}
+                </div>}
+              </>
             )}
             {section === 'llm' && (
               <WorkflowLLMConfigurationPanel
@@ -328,7 +360,7 @@ export default function WorkflowCapabilitiesPanel({ section, workspacePath }: Wo
           can actually persist for that account, so hide the button that
           implies otherwise rather than let it fail after the fact. Also
           hidden for sections that don't save through the manifest at all. */}
-      {!loading && canWriteWorkflow && copy.savesViaManifest && (
+      {!loading && canWriteWorkflow && copy.savesViaManifest && section !== 'browser' && (
         <footer className="flex shrink-0 items-center justify-end gap-3 border-t px-4 py-3">
           {dirty && <span className="text-xs text-muted-foreground">Unsaved changes</span>}
           <button

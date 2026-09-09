@@ -753,24 +753,6 @@ func buildLLMCapabilities(ctx context.Context, capability string, includeModels 
 		}
 	}
 
-	if capability == "generate_image" || capability == "image_generation" {
-		all["generate_image"] = map[string]interface{}{
-			"description": "Providers usable by image_gen/image_edit.",
-			"providers": buildFixedCapabilityProviders(
-				keys,
-				map[string][]string{
-					string(llm.ProviderVertex):   {"gemini-3.1-flash-image", "gemini-3-pro-image", "gemini-3.1-flash-lite-image"},
-					string(llm.ProviderCodexCLI): {"codex-cli", "gpt-5.4", "gpt-5.4-mini", "gpt-5.3-codex", "gpt-5.3-codex-spark"},
-				},
-				map[string]string{
-					string(llm.ProviderVertex):   "gemini-3.1-flash-image",
-					string(llm.ProviderCodexCLI): "gpt-5.4-mini",
-				},
-				map[string][]string{},
-			),
-		}
-	}
-
 	if capability == "generate_video" || capability == "video_generation" {
 		all["generate_video"] = map[string]interface{}{
 			"description": "Providers usable by generate_video.",

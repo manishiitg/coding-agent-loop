@@ -290,6 +290,24 @@ func TestOpenToolsRefuseMissingTargetsAndUndeclaredPresentation(t *testing.T) {
 	}
 }
 
+// open_file's existence check must work for any file, not just ones whose
+// bytes happen to be readable as text (e.g. a generated PNG from image_gen) —
+// it must behave like AgentWorks' own generic file open, not assume HTML/text.
+func TestOpenFileOpensAnyFileNotJustText(t *testing.T) {
+	fake, _, rt, url := newToolHarness(t)
+	ctx := context.Background()
+	fake.files["_users/u1/Chats/SparkQuill/image-demo/owl.png"] = "\x89PNG\r\n\x1a\nnot-real-but-not-utf8-either\xff\xfe"
+	rt.Presentation = &agentprofiles.PresentationBinding{Kind: "document.file"}
+	open := build(t, openFileFactory(url, false), rt)
+	// The fake harness doesn't implement the presentations-persist endpoint,
+	// so this can't assert full success end-to-end — only that the
+	// existence check (the part this test targets) no longer rejects a
+	// binary file as "no file at ...".
+	if _, err := open.Execute(ctx, map[string]interface{}{"path": "image-demo/owl.png"}); err != nil && strings.Contains(err.Error(), "no file") {
+		t.Fatalf("open_file's existence check must accept a binary file, not just text: %v", err)
+	}
+}
+
 func TestInboxNoteNamesTheUnfiledUploads(t *testing.T) {
 	if got := InboxNote(nil); got != "" {
 		t.Fatalf("empty inbox produced a note: %q", got)

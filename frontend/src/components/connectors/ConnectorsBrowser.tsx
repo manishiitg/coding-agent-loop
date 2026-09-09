@@ -257,6 +257,9 @@ export default function ConnectorsBrowser({ compact = false, selectedServers, on
           </button>
         )}
       </div>
+      <p className="mt-1.5 text-xs text-gray-500 dark:text-gray-400">
+        Don't see what you need? This list isn't everything that exists — ask in chat and it can search the web and connect an MCP server, CLI tool, or skill for you.
+      </p>
 
       {/* Grid */}
       <div className="min-h-0 flex-1 overflow-y-auto pt-5">
@@ -297,7 +300,7 @@ export default function ConnectorsBrowser({ compact = false, selectedServers, on
               // neither "all connected" nor "pick one" would be true.
               ? 'No connectors are configured on this server. The deployment’s MCP server config lists none.'
               : query
-                ? `No connectors match "${query}".`
+                ? `No connectors match "${query}". Ask in chat — it can search the web and connect one directly, even if it isn't in this list.`
                 : filter === 'connected'
                   ? 'No connectors yet. Pick one from Available and press Connect.'
                   : filter === 'available'

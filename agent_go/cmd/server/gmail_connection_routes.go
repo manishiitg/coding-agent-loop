@@ -80,16 +80,25 @@ type GmailConnectionRequest struct {
 	// ClientName is required on create — see services.GmailService.CreateConnection.
 	ClientName string `json:"client_name,omitempty"`
 	// AllowReadAccess opts the connection into gmail.readonly on top of the
-	// always-requested gmail.send. Omitted/false is send-only, the default —
-	// see services.GmailConnection.AllowReadAccess.
-	AllowReadAccess bool `json:"allow_read_access,omitempty"`
+	// always-requested gmail.send. Omitted/false is send-only, the default
+	// on create — see services.GmailConnection.AllowReadAccess. A pointer so
+	// an update request can tell "leave unchanged" (omitted) apart from
+	// "explicitly turn off" (false).
+	AllowReadAccess *bool `json:"allow_read_access,omitempty"`
 	// Services requests additional Google Workspace service scopes (Drive,
-	// Sheets, Docs, Slides, Calendar...) on create — see
-	// services.GmailConnection.Services. Ignored on update: like
-	// AllowReadAccess, scope is fixed at consent time, so widening it means
-	// removing and re-adding the connection.
+	// Sheets, Docs, Slides, Calendar...) — see services.GmailConnection.Services.
+	// On update, ServicesSet must also be true for this to take effect (see
+	// its own comment) — this alone changes only the STORED intent; the
+	// operator must reconnect afterward for Google to actually grant it.
 	Services []services.GoogleServiceGrant `json:"services,omitempty"`
-	Enabled  *bool                         `json:"enabled,omitempty"`
+	// ServicesSet marks that this update request means to change Services,
+	// including clearing it to empty (Gmail-only) — required because a JSON
+	// request with services omitted and one with services explicitly [] both
+	// decode to the same nil/empty Go slice, and "leave unchanged" and
+	// "clear every grant" must not be ambiguous with each other. Ignored on
+	// create, where Services is authoritative directly.
+	ServicesSet bool  `json:"services_set,omitempty"`
+	Enabled     *bool `json:"enabled,omitempty"`
 }
 
 // GmailConnectionTestRequest optionally overrides the test recipient.
@@ -242,6 +251,7 @@ func createGmailConnectionHandler(api *StreamingAPI) http.HandlerFunc {
 			ClientName:      req.ClientName,
 			AllowReadAccess: req.AllowReadAccess,
 			Services:        req.Services,
+			ServicesSet:     true,
 			Enabled:         req.Enabled,
 		})
 		if err != nil {
@@ -274,6 +284,9 @@ func updateGmailConnectionHandler(api *StreamingAPI) http.HandlerFunc {
 			ConfigHome:      req.ConfigHome,
 			CredentialsFile: req.CredentialsFile,
 			ClientName:      req.ClientName,
+			AllowReadAccess: req.AllowReadAccess,
+			Services:        req.Services,
+			ServicesSet:     req.ServicesSet,
 			Enabled:         req.Enabled,
 		})
 		if err != nil {

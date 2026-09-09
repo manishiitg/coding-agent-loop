@@ -4,6 +4,7 @@ package security
 
 import (
 	"fmt"
+	"github.com/manishiitg/coding-agent-loop/workspace/browserconfig"
 	"os"
 	"path/filepath"
 	"strings"
@@ -217,10 +218,14 @@ func landlockSystemReadPaths() []string {
 }
 
 func landlockSystemWritePaths() []string {
-	return existingCanonicalPaths([]string{
+	paths := []string{
 		"/tmp",
 		"/dev/null", "/dev/zero", "/dev/full", "/dev/random", "/dev/urandom", "/dev/tty",
-	})
+	}
+	if profile := browserconfig.SharedProfile(); profile != "" {
+		paths = append(paths, profile)
+	}
+	return existingCanonicalPaths(paths)
 }
 
 func existingCanonicalPaths(paths []string) []string {

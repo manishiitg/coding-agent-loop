@@ -138,8 +138,8 @@ Do not read or write tier-config storage with shell/file tools. Use the UI or de
 
 ## Published LLMs & Provider Auth
 Published LLM metadata and provider authentication are workspace-backed configuration surfaces. Access them through dedicated tools only; raw workspace file tools intentionally do not expose ` + "`config/`" + `.
-- To see which providers/models are supported and currently usable, use ` + "`list_llm_capabilities`" + `. It covers ` + "`chat`" + `, ` + "`search_web`" + `, ` + "`read_image`" + `, and ` + "`generate_image`" + `, including auth/runtime availability and static pricing metadata where available.
-- When choosing a concrete provider-backed model for search, image reading, or image generation/editing, call ` + "`list_llm_capabilities(capability=\"...\", include_models=true)`" + ` first and pass ` + "`provider`" + ` and ` + "`model_id`" + ` together from the same capability entry. Do not pass only ` + "`model_id`" + ` and rely on provider inference.
+- To see which providers/models are supported and currently usable, use ` + "`list_llm_capabilities`" + `. It covers ` + "`chat`" + `, ` + "`search_web`" + `, and ` + "`read_image`" + `, including auth/runtime availability and static pricing metadata where available.
+- When choosing a concrete provider-backed model for search or image reading, call ` + "`list_llm_capabilities(capability=\"...\", include_models=true)`" + ` first and pass ` + "`provider`" + ` and ` + "`model_id`" + ` together from the same capability entry. Do not pass only ` + "`model_id`" + ` and rely on provider inference. ` + "`image_gen`" + `/` + "`image_edit`" + ` have only one provider (codex-cli) and do not take provider/model_id arguments.
 - Test an LLM before publishing: use the ` + "`test_llm`" + ` tool with ` + "`provider`" + `, ` + "`model_id`" + `, and optional overrides. It uses workspace-backed provider auth by default.
 - List the frontend-known models for a provider: use the ` + "`list_provider_models`" + ` tool. It uses shared metadata for fixed providers and the same dynamic picker source as the UI for dynamic providers.
 - List published LLMs with ` + "`list_published_llms`" + `.
@@ -159,7 +159,7 @@ Image generation defaults are workspace-backed configuration. Provider authentic
 - Runtime ` + "`image_gen_config`" + ` overrides this file for the current chat session only.
 - Keep provider auth updated with the ` + "`set_provider_auth`" + ` tool; do not hand-edit encrypted auth files.
 - Do not infer image-generation support from ` + "`list_provider_models`" + ` or the normal LLM model catalog. Those lists are for chat/text models, not image models.
-- For one-off ` + "`image_gen`" + ` or ` + "`image_edit`" + ` calls, use ` + "`list_llm_capabilities(capability=\"generate_image\", include_models=true)`" + ` and pass ` + "`provider`" + ` with the matching ` + "`model_id`" + ` when overriding defaults.
+- ` + "`image_gen`" + ` and ` + "`image_edit`" + ` have only one provider (codex-cli) and do not take provider/model_id arguments; there is nothing to discover with ` + "`list_llm_capabilities`" + ` for them.
 
 ## Image Analysis Defaults
 Image understanding for the ` + "`read_image`" + ` tool can be routed via workspace-backed image analysis defaults, including through a coding-agent CLI's own native vision by passing it the local workspace image path directly (` + "`codex-cli`" + `, ` + "`cursor-cli`" + `, and ` + "`claude-code`" + ` are all supported providers for this) rather than only through a standalone vision-model API.
@@ -304,7 +304,7 @@ Returns the canonical guided-flow text for any workflow slash command. Always ca
     - pulse                    → run one complete Pulse now against retained evidence; no workflow run or schedule change
     - engineering-review       → read-only Technical Review phase; manual pulse-review aliases supply an ordered Fix message after the completed review receipt
     - pulse-fixer              → apply bounded safe fixes from existing review findings; standalone recovery command does not rerun reviewers
-    - goal-advisor             → develop strategic opportunities / concrete human decision proposals; no schedule or Pulse-toggle change
+    - goal-advisor             → compatibility alias for strategy-auditor; use the same strategic review flow
     - improve-report           → report accuracy/live-data/layout improvements
 
 **Optional parameters:**
@@ -318,7 +318,7 @@ The returned text is your instructions for this turn — do not paraphrase or sk
 
 ### How improvement is split
 
-Pulse is the single broad maintenance path and owns routine Bug Review, bounded fixes, artifact review, and KB/learnings/db/report hygiene when evidence points there. Manual ` + "`/pulse-review`" + ` and focused ` + "`/pulse-review-*`" + ` commands run one retained Technical Maintenance sequence: their review phase is read-only through a durable receipt, then the explicitly supplied follow-up message runs a bounded Fix phase in that same child. ` + "`/pulse-fixer`" + ` remains a repair-only recovery command for an already reviewed queue. ` + "`/pulse`" + ` runs the complete Gate → Review+Fix → Finalize path once, ` + "`/strategy-auditor`" + ` runs an open-ended read-only strategy review with concrete human decision proposals, and ` + "`/goal-advisor`" + ` develops strategic opportunities into concrete human decision proposals. Recurring Pulse itself has no slash command or independent cron: the workflow toolbar/Pulse popup stores ` + "`pulse.enabled`" + `, and each completed normal scheduled run invokes Pulse Gate against that run's evidence.
+Pulse is the single broad maintenance path and owns routine Bug Review, bounded fixes, artifact review, and KB/learnings/db/report hygiene when evidence points there. Manual ` + "`/pulse-review`" + ` and focused ` + "`/pulse-review-*`" + ` commands run one retained Technical Maintenance sequence: their review phase is read-only through a durable receipt, then the explicitly supplied follow-up message runs a bounded Fix phase in that same child. ` + "`/pulse-fixer`" + ` remains a repair-only recovery command for an already reviewed queue. ` + "`/pulse`" + ` runs the complete Gate → Review+Fix → Finalize path once, ` + "`/strategy-auditor`" + ` runs an open-ended read-only strategy review with concrete human decision proposals, and ` + "`/goal-advisor`" + ` is a compatibility alias for that same review. Recurring Pulse itself has no slash command or independent cron: the workflow toolbar/Pulse popup stores ` + "`pulse.enabled`" + `, and each completed normal scheduled run invokes Pulse Gate against that run's evidence.
 
 ### Resolution discipline
 

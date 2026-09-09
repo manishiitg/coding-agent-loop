@@ -158,6 +158,26 @@ func TestFocusedScheduledPulseReferencesStayComplete(t *testing.T) {
 	}
 }
 
+func TestGoalAdvisorAliasUsesCanonicalStrategyReview(t *testing.T) {
+	data := tmplData{Focus: "explore better reporting options", RunFolder: "iteration-7/group-a", WorkshopMode: "workshop"}
+	canonical, err := renderFromRegistry("strategy-auditor", data, allKinds)
+	if err != nil {
+		t.Fatal(err)
+	}
+	alias, err := renderFromRegistry("goal-advisor", data, allKinds)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if alias != canonical {
+		t.Fatal("goal-advisor must render the same strategic review, including focus and run context")
+	}
+	for _, mode := range []string{"workshop", "run", "reporting"} {
+		if modeAllowed("goal-advisor", mode) != modeAllowed("strategy-auditor", mode) {
+			t.Errorf("goal-advisor must have the same mode restrictions as strategy-auditor in %s", mode)
+		}
+	}
+}
+
 func TestManualPulseCommandsKeepRunSetupReviewAndFixBoundariesSeparate(t *testing.T) {
 	tests := map[string][]string{
 		"ops-review": {

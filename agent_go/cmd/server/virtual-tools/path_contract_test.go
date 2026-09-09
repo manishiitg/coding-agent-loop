@@ -50,14 +50,16 @@ func TestNormalizeRequiredAbsoluteWorkspaceDocumentPathRejectsOutsideWorkspaceDo
 	}
 }
 
+// image_gen and image_edit are deliberately excluded here: codex-cli is
+// their only generation provider, so they don't take provider/model_id
+// arguments and there is nothing to discover via list_llm_capabilities.
+// See TestImageGenAndImageEditHaveNoProviderOrModelIDArgs.
 func TestLLMMediaToolDefinitionsReferenceCapabilityDiscovery(t *testing.T) {
 	tests := []struct {
 		name       string
 		tool       func() llmtypes.Tool
 		capability string
 	}{
-		{name: "image_gen", tool: GetImageGenToolDefinition, capability: "generate_image"},
-		{name: "image_edit", tool: GetImageEditToolDefinition, capability: "generate_image"},
 		{name: generateVideoToolName, tool: GetGenerateVideoToolDefinition, capability: "generate_video"},
 		{name: textToSpeechToolName, tool: GetTextToSpeechToolDefinition, capability: "text_to_speech"},
 		{name: speechToTextToolName, tool: GetSpeechToTextToolDefinition, capability: "speech_to_text"},
@@ -78,6 +80,24 @@ func TestLLMMediaToolDefinitionsReferenceCapabilityDiscovery(t *testing.T) {
 				t.Fatalf("tool definition should expose both provider and model_id: %s", text)
 			}
 		})
+	}
+}
+
+func TestImageGenAndImageEditHaveNoProviderOrModelIDArgs(t *testing.T) {
+	for _, tool := range []func() llmtypes.Tool{GetImageGenToolDefinition, GetImageEditToolDefinition} {
+		encoded, err := json.Marshal(tool())
+		if err != nil {
+			t.Fatalf("marshal tool definition: %v", err)
+		}
+		text := string(encoded)
+		for _, field := range []string{`"provider"`, `"model_id"`} {
+			if strings.Contains(text, field) {
+				t.Fatalf("codex-cli is the only generation provider; tool definition should not expose %s: %s", field, text)
+			}
+		}
+		if strings.Contains(text, "list_llm_capabilities") {
+			t.Fatalf("nothing to discover with only one provider; tool definition should not mention list_llm_capabilities: %s", text)
+		}
 	}
 }
 

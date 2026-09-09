@@ -11,10 +11,10 @@ import { agentApi } from '../../services/api'
 import { OrgDashboard } from './OrgDashboard'
 
 describe('Activity route summaries', () => {
-  it('keeps a quiet blocked route visible beside a busy completed route and opens its own details', async () => {
+  it.each(['failed', 'blocked', 'waiting_for_user', 'waiting_for_platform', 'no_run'] as const)('keeps a %s route visible without flagging a pending decision', async (status) => {
     Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true })
     const quiet: OrgDashboardNotification = { id: 'old-digest', workspace_path: 'Workflow/demo', kind: 'run_summary',
-      status: 'blocked', title: 'Research needs access', message: 'No research output produced.', created_at: '2026-09-01T00:00:00Z', fields: [{ label: 'Blocker', value: 'Missing research credentials' }] }
+      status, title: 'Research needs access', message: 'No research output produced.', created_at: '2026-09-01T00:00:00Z', fields: [{ label: 'Blocker', value: 'Missing research credentials' }] }
     const busy: OrgDashboardNotification = { ...quiet, id: 'new-digest', status: 'completed', title: 'Publishing completed',
       message: 'Published three articles.', created_at: '2026-09-05T00:00:00Z' }
     vi.mocked(agentApi.listReportHumanInputsAggregate).mockResolvedValue({ success: true, inputs: [] })
@@ -29,8 +29,11 @@ describe('Activity route summaries', () => {
     const root = createRoot(container)
     try {
       await act(async () => root.render(<OrgDashboard workflows={[{ workspacePath: 'Workflow/demo', label: 'Demo' }]} onOpenWorkflow={vi.fn()} />))
-      expect(container.textContent).toContain('Needs attention 1')
-      expect(container.textContent).toContain('Needs attention')
+      expect(container.textContent).toContain('Pending decisions 0')
+      const automation = container.querySelector('[aria-label="View Demo activity"]')!
+      expect(automation.textContent).toContain('Latest update')
+      expect(automation.textContent).not.toContain('Needs attention')
+      expect(automation.textContent).not.toContain('Needs your decision')
       const research = container.querySelector('[aria-label="Demo · Research"]')!
       const publishing = container.querySelector('[aria-label="Demo · Publishing"]')!
       expect(research.textContent).toContain('Research needs access')
@@ -86,6 +89,7 @@ describe('Activity route summaries', () => {
       expect(container.querySelector('[aria-label="Research activity"]')?.textContent).toContain('Approve research access?')
       expect(container.querySelector('[aria-label="Research activity"]')?.textContent).not.toContain('Publishing ready')
       expect(container.querySelector('details')?.open).toBe(false)
+      expect(container.querySelector('[aria-label="View Research activity"]')?.textContent).toContain('Needs your decision')
 
       await act(async () => (container.querySelector('[aria-label="View Publish activity"]') as HTMLButtonElement).click())
       expect(container.querySelector('[aria-label="Publish activity"]')?.textContent).toContain('Publishing ready')
@@ -94,7 +98,7 @@ describe('Activity route summaries', () => {
       await act(async () => button('Open automation').click())
       expect(onOpen).toHaveBeenLastCalledWith('Workflow/publish')
 
-      await act(async () => button('Needs attention 1').click())
+      await act(async () => button('Pending decisions 1').click())
       expect(container.querySelector('[aria-label="View Publish activity"]')).toBeNull()
       expect(container.querySelector('[aria-label="Research activity"]')?.textContent).toContain('Approve research access?')
       await act(async () => button('All 2').click())

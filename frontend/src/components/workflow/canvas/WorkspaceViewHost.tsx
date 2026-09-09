@@ -12,6 +12,7 @@ import React, {
 import { useShallow } from 'zustand/react/shallow'
 import { ReactFlowProvider } from '@xyflow/react'
 import { FileWorkspacePane } from '../../FileWorkspacePane'
+import { AskAIButton } from '../AskAIButton'
 import { WorkflowToolbar } from './WorkflowToolbar'
 import { ReportView } from '../ReportViewer'
 import { usePlanData } from '../hooks/usePlanData'
@@ -113,6 +114,26 @@ function FilesBody() {
   return <FileWorkspacePane onClose={handleCloseFiles} />
 }
 
+// Every inspector view here only ever shows what's already set up — a
+// schedule, a backup destination, a publish target, a notification channel
+// — with no hint that chat can search for, configure, or explain something
+// that isn't there. skills/mcp/secrets/browser/llm/bots render their own
+// AskAIButton inside WorkflowCapabilitiesPanel's header already (a per-
+// section message fits better there than a generic one here), so they're
+// deliberately absent from this map to avoid a second, redundant button.
+const INSPECTOR_ASK_AI_MESSAGE: Partial<Record<InspectorViewId, string>> = {
+  schedules: "I want to set up or change a schedule for this workflow. Ask me what should run, how often, and starting when.",
+  notify: "I want to change who or where this workflow notifies (email, Slack, WhatsApp). Ask me what event and who should be notified.",
+  backup: "I want to set up or change a backup destination for this workflow. Ask me what should be backed up and where.",
+  publish: "I want to publish this workflow somewhere it isn't published yet. Ask me what the target is.",
+  folders: "I want this workflow to read or write a folder it doesn't have access to yet. Ask me which one and what for.",
+  access: "I want to change who can access or run this workflow. Ask me who and what level of access.",
+  database: "I want to inspect or change something in this workflow's database that isn't visible here. Ask me what.",
+  knowledgebase: "I want to add or find something in this workflow's knowledgebase. Ask me what topic.",
+  learnings: "I want to see or change how this workflow learned to do something. Ask me which step.",
+  costs: "I want to understand or reduce this workflow's cost. Ask me what's driving it or what to change.",
+}
+
 function InspectorBody({ workspacePath, presetQueryId }: { workspacePath: string | null; presetQueryId: string | null }) {
   const workflowWorkspaceView = useWorkflowStore(state => state.workflowWorkspaceView)
   const refreshToken = useWorkflowStore(state => state.workspaceViewRefreshToken)
@@ -212,19 +233,31 @@ function InspectorBody({ workspacePath, presetQueryId }: { workspacePath: string
   }
 
   if (!isInspectorView(workflowWorkspaceView)) return null
+  const askAIMessage = INSPECTOR_ASK_AI_MESSAGE[workflowWorkspaceView]
   return (
-    <Suspense
-      // A new token remounts the view, so it refetches whatever it shows.
-      key={`${workflowWorkspaceView}:${refreshToken}`}
-      fallback={
-        <div className="flex items-center justify-center gap-2 py-12 text-sm text-muted-foreground">
-          Loading…
-        </div>
-      }
-    >
-      {renderInspector(workflowWorkspaceView)}
-      <span hidden data-ui-view-mounted />
-    </Suspense>
+    <div className="relative h-full min-h-0">
+      {askAIMessage && (
+        <AskAIButton
+          workspacePath={workspacePath}
+          message={askAIMessage}
+          iconOnly
+          title="This view only shows what's already set up. Ask in chat to search for, configure, or explain something that isn't here."
+          className="absolute right-2 top-2 z-10 flex items-center justify-center rounded-md border border-border bg-background/90 p-1.5 text-muted-foreground shadow-sm backdrop-blur transition-colors hover:border-primary/40 hover:text-primary"
+        />
+      )}
+      <Suspense
+        // A new token remounts the view, so it refetches whatever it shows.
+        key={`${workflowWorkspaceView}:${refreshToken}`}
+        fallback={
+          <div className="flex items-center justify-center gap-2 py-12 text-sm text-muted-foreground">
+            Loading…
+          </div>
+        }
+      >
+        {renderInspector(workflowWorkspaceView)}
+        <span hidden data-ui-view-mounted />
+      </Suspense>
+    </div>
   )
 }
 

@@ -28,6 +28,7 @@ describe('primary workspace toolbar views', () => {
       'knowledgebase',
       'database',
       'files',
+      'browser',
     ])
   })
 })

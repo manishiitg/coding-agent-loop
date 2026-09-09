@@ -6,6 +6,15 @@ log into authenticated pages. Browser configuration is declared by the
 workflow, but CDP reachability is live state. Query `agent_browser status`
 before first use instead of relying on saved conversation or prompt state.
 
+In an interactive Builder with workspace-view tools, call
+`open_workspace_view(view="browser")` when starting browser work so the user
+can watch the live server browser in the right-hand pane. Only an `applied`
+receipt confirms the UI opened. Open the view once; do not switch it back after
+every command if the user chose another view. The live stream follows navigation
+and tab changes automatically, so no workspace refresh is needed. Users can
+choose **Take control** to interact. Scheduled or unattended runs must not try
+to open the foreground UI.
+
 `status.cdp_supported` is the deployment authority. When it is `false`, CDP
 is disabled on that server: do not probe ports, install/launch CDP Chrome, or
 pass `--cdp`. Use managed headless Chromium. In that deployment, workflow
@@ -17,7 +26,7 @@ rejected. Desktop/local deployments may still report CDP as supported.
 | Mode | Browser | Visibility | Logins / cookies |
 |---|---|---|---|
 | **CDP** (`agent_browser` with `--cdp`) | The user's real Chrome via Chrome DevTools Protocol | User sees every action | Existing cookies + sessions are available — leverage them |
-| **Headless** (`agent_browser`) | Container-side Chromium | Invisible to user; take screenshots | Fresh each time, no cookies |
+| **Headless** (`agent_browser`) | Server-side Chromium | Live in the workflow Browser view; screenshots also available | Isolated session; cookies persist for its lifetime |
 
 The CDP row is unavailable whenever live status reports
 `"cdp_supported": false`; this is a deployment policy, not a transient
@@ -161,9 +170,10 @@ After it is reachable, configure the workflow with that port, for example
 
 ### Headless-specific rules
 
-- Browser is **fresh** — login from scratch when sites require auth.
-- User cannot see the browser. **Take screenshots** to surface progress.
-- Free to open/close tabs/sessions; state resets between runs.
+- Call status to determine whether this deployment uses isolated sessions or a persistent shared browser.
+- In shared mode, all users and workflows see the same tabs and sign-ins. Inspect tabs before navigating; do not close/reset the browser, clear storage, or sign out unless the user explicitly asks. Users coordinate concurrent actions themselves.
+- In isolated mode, cookies last for the session lifetime; login may be needed.
+- The user can watch through the Browser workspace view.
 - Use `browser("reset")` only when the daemon is genuinely broken; otherwise
   it wastes time.
 
@@ -189,12 +199,37 @@ Downloads folder. Use only the host Downloads grants actually provided to
 this session; do not assume that workspace-relative `Downloads/` names the
 same directory.
 
+## Microphone and Camera in the Managed Browser
+
+Managed headless Chrome launches with synthetic microphone/camera devices and automatically accepts media permission prompts. The launch flags are configured centrally and reused by every agent_browser action, live control and recording call; do not add different launch options per command or restart the shared browser to experiment.
+
+For mic-gated flows (such as RTS learner Start Simulation), stay in agent_browser and verify that navigator.mediaDevices.getUserMedia({audio:true}) resolves to a live audio track on the target HTTPS page. Stop any temporary test tracks afterward. A successful media probe does not prove the application flow succeeded; verify the learner simulation UI itself.
+
+Synthetic audio is test audio, not the user's microphone or generated speech. It can satisfy device checks but cannot conduct a spoken conversation. Use the site's chat input when appropriate; real voice or prerecorded speech needs a separately configured audio source. Browser video capture does not promise microphone audio in its WebM.
+
+If media still fails, inspect the exact error, page permissions and secure context through managed browser commands. Report what is blocked. Do not switch to a standalone Playwright/Puppeteer harness, raw CDP, or shell-launched browser, and do not inject a fake getUserMedia implementation to claim the real media flow works. Externally managed CDP Chrome retains its own media configuration.
+
+## Bundled Recording in Builder
+
+When the user/workflow requests recording or reproduction evidence in managed headless mode, prefer Builder's capture command. It uses the same recording service/state as the Browser view and includes video.webm, network.har (without response bodies), console.json, errors.json, manifest.json and capture.zip.
+
+    agent_browser("capture", ["status"], session="main")
+    agent_browser("capture", ["start"], session="main")
+    # Reproduce the issue with ordinary managed browser commands.
+    agent_browser("capture", ["stop"], session="main")
+
+Open/select the intended page before starting. Keep using the same session. The workspace path is assigned automatically; do not pass a filename. Capture records the page active at start; do not promise video across tab switches. Console/errors are exported from the cleared buffers when stopped.
+
+Check status first. If recording is already active, reuse it only as requested and do not claim ownership or automatically stop it. Stop captures you started even when reproduction fails. After a timeout check status before retrying. On stop, inspect recording, errors, directory and files: partial failures can leave recording active and require another stop. Report the actual returned paths. Never mix capture with separate record/HAR start/stop commands during the same capture. Stopping recording does not close the browser or clear sign-ins. Workflow permission errors must not be bypassed through shell.
+
+This is a Builder extension, so upstream skills do not document it. CDP currently uses the separate record, network HAR, console and errors commands. The native record command remains video-only.
+
 ## Session limits
 
 - Default per-agent / per-workflow / global concurrency caps are enforced
   by the runtime — keep one browser open at a time per agent. Re-use the
   same session name across calls within one task.
-- In headless mode, parallel agents need unique session names. In shared CDP
+- In isolated headless mode, parallel agents need unique session names. Persistent shared headless mode maps all names to the same browser; preserve its tabs and sign-ins. In shared CDP
   mode, sessions are intentionally remapped to one per port; isolation comes
   from workflow-owned labeled tabs plus the per-port select-and-act lock.
 

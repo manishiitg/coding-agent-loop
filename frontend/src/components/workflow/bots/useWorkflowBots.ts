@@ -233,14 +233,16 @@ export function useWorkflowBots(workspacePath: string | null) {
   // Every mutation re-reads the list rather than patching local state, so the
   // server stays the single source of truth for status and which is default.
   const runGmailConnectionAction = useCallback(
-    async (id: string, action: () => Promise<unknown>) => {
+    async (id: string, action: () => Promise<unknown>): Promise<boolean> => {
       try {
         setGmailConnectionsBusy(id)
         setGmailError(null)
         await action()
         await loadGmailConnections()
+        return true
       } catch (error) {
         setGmailError(error instanceof Error ? error.message : 'Connection action failed')
+        return false
       } finally {
         setGmailConnectionsBusy(null)
       }

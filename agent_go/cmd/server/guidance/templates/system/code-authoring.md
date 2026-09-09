@@ -24,14 +24,20 @@ If the user already requested migration and testing for this workflow, preserve
 that authorization for the implementation phase without asking again. Otherwise
 use one Needs your decision proposal through the Technical Review contract.
 
-The current ordinary manifest writer preserves `code_layout_version`; it is
-not an editable field of a normal configuration update. Moving files alone
-does not switch the runner. A migration requires an explicit supported
-mechanism to switch the manifest after preparing its complete source tree.
-If that mechanism is unavailable, identify it as the implementation prerequisite;
-do not invent a tool, bypass protected manifest writes, or claim migration succeeded.
+The ordinary manifest writer preserves `code_layout_version`; it is not an
+editable field of a normal configuration update, and moving files alone does
+not switch the runner. `set_code_layout_version` is the one supported way to
+change it. It only validates and switches the field — it does not move, copy,
+or verify any step source itself, does not check that every step's `code/`
+entry point already exists, and does not check whether execution or repair is
+currently active. All of that is this migration's judgment call, not something
+the tool enforces; get it right before calling it, since the runtime resolves
+canonical source from the new value on the very next execution of every
+regular-type step. If a future workflow's migration needs a mechanism this
+tool does not provide, identify that as an implementation gap rather than
+bypassing a protected manifest write to work around it.
 
-For an authorized migration once that mechanism is available:
+For an authorized migration, using `set_code_layout_version`:
 
 - Capture a recoverable source/metadata/manifest snapshot and ensure execution
   and code repair are not active during the switch. The flag selects the layout

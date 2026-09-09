@@ -5,6 +5,46 @@ import (
 	"testing"
 )
 
+// Neither Vertex nor codex-cli has a real structured API parameter for
+// GPT Image 2.5's quality/size/background — imageRequirementsSuffix is the
+// only way to pass them through at all, folded into the prompt text.
+func TestImageRequirementsSuffixFoldsIntoPromptText(t *testing.T) {
+	tests := []struct {
+		name string
+		args map[string]interface{}
+		want string
+	}{
+		{"no hints at all", map[string]interface{}{}, ""},
+		{
+			"auto is a no-op, not worth cluttering the prompt",
+			map[string]interface{}{"quality": "auto", "size": "auto", "background": "auto"},
+			"",
+		},
+		{
+			"one hint",
+			map[string]interface{}{"quality": "high"},
+			"\n\nImage requirements — quality: high.",
+		},
+		{
+			"all three, in a stable order",
+			map[string]interface{}{"quality": "xhigh", "size": "2048x2048", "background": "transparent"},
+			"\n\nImage requirements — quality: xhigh, exact output size: 2048x2048, background: transparent.",
+		},
+		{
+			"non-string values are ignored rather than panicking",
+			map[string]interface{}{"quality": 5},
+			"",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := imageRequirementsSuffix(tc.args); got != tc.want {
+				t.Fatalf("imageRequirementsSuffix(%v) = %q, want %q", tc.args, got, tc.want)
+			}
+		})
+	}
+}
+
 func TestNormalizeImageProviderAndModelProviderAliasDefaultsModel(t *testing.T) {
 	tests := []struct {
 		name      string
@@ -12,12 +52,6 @@ func TestNormalizeImageProviderAndModelProviderAliasDefaultsModel(t *testing.T) 
 		modelID   string
 		wantModel string
 	}{
-		{
-			name:      "vertex alias",
-			provider:  "vertex",
-			modelID:   "vertex",
-			wantModel: "gemini-3.1-flash-image",
-		},
 		{
 			name:      "codex alias",
 			provider:  "codex-cli",
@@ -49,29 +83,16 @@ func TestNormalizeImageProviderAndModelRejectsWrongModelForProvider(t *testing.T
 	}
 }
 
-func TestNormalizeImageProviderAndModelMigratesLegacyImagen(t *testing.T) {
-	provider, modelID, err := normalizeImageProviderAndModel("vertex", "imagen-deprecated-model")
-	if err != nil {
-		t.Fatalf("normalizeImageProviderAndModel returned error: %v", err)
+// image_gen/image_edit generation dropped Vertex (see supportedImageProviderSummary);
+// codex-cli is the only generation provider now. Image *analysis* (read_image)
+// still supports Vertex — see TestNormalizeImageAnalysisProviderAndModelVertexDefault.
+func TestNormalizeImageProviderAndModelRejectsVertexAsGenerationProvider(t *testing.T) {
+	_, _, err := normalizeImageProviderAndModel("vertex", "gemini-3.1-flash-image")
+	if err == nil {
+		t.Fatal("normalizeImageProviderAndModel returned nil error for retired vertex generation provider")
 	}
-	if provider != "vertex" {
-		t.Fatalf("provider = %q, want vertex", provider)
-	}
-	if modelID != "gemini-3.1-flash-image" {
-		t.Fatalf("modelID = %q, want gemini-3.1-flash-image", modelID)
-	}
-}
-
-func TestNormalizeImageProviderAndModelMigratesPreviewGeminiImage(t *testing.T) {
-	provider, modelID, err := normalizeImageProviderAndModel("vertex", "gemini-3.1-flash-image-preview")
-	if err != nil {
-		t.Fatalf("normalizeImageProviderAndModel returned error: %v", err)
-	}
-	if provider != "vertex" {
-		t.Fatalf("provider = %q, want vertex", provider)
-	}
-	if modelID != "gemini-3.1-flash-image" {
-		t.Fatalf("modelID = %q, want gemini-3.1-flash-image", modelID)
+	if !strings.Contains(err.Error(), "unsupported image generation provider") {
+		t.Fatalf("error = %v, want unsupported provider", err)
 	}
 }
 

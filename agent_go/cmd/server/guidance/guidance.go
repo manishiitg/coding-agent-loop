@@ -43,6 +43,7 @@ type kindMeta struct {
 	Group       string // builder | review | improve | report | kb | learning | db
 	Description string // shown to the agent in the kind enum
 	Modes       []string
+	AliasOf     string // compatibility kind rendered from the canonical template
 
 	// Tools names the runtime tools this doc explains. It is the selection key
 	// for surfaces that choose references by capability instead of by mode —
@@ -91,7 +92,7 @@ var allKinds = map[string]kindMeta{
 	"improve-evaluation":  {Group: "improve", Description: "Read-only evaluation coverage and correctness review with fixer recommendations", Modes: []string{"workshop"}},
 	"engineering-review":  {Group: "improve", Description: "Read-only Technical Review phase: choose useful investigations, persist material findings, and leave bounded repairs to an explicitly supplied Fix phase", Modes: []string{"workshop"}},
 	"pulse-fixer":         {Group: "improve", Description: "Apply reviewed bounded repairs with proportional immediate checks; close applied fixes and reopen only on reproduction", Modes: []string{"workshop"}},
-	"goal-advisor":        {Group: "improve", Description: "Workflow Strategy Advisor opportunity development: explore useful improvements and alternatives, then create concrete human decision proposals; experiments are optional and workflow changes require approval", Modes: []string{"workshop"}},
+	"goal-advisor":        {Group: "review", AliasOf: "strategy-auditor", Description: "Compatibility alias for strategy-auditor; use strategy-auditor for strategic reviews and opportunity proposals", Modes: []string{"workshop"}},
 	"specialize-advisors": {Group: "improve", Description: "Propose owner-approved workflow-specific lenses for Strategy Auditor and Goal Advisor without changing their canonical roles", Modes: []string{"workshop"}},
 	"design-reporting-ui": {Group: "report", Description: "Design the reporting UI as one workflow-owned db/reports/index.html experience: live data, report-owned approval buttons, and user-reviewed requests to an existing or new workflow chat via window.report.sendChatMessage.", Modes: []string{"workshop"}},
 	"improve-report":      {Group: "report", Description: "Read-only report dashboard accuracy, goal tracking, live-data, layout, and responsive-design review", Modes: []string{"workshop"}},
@@ -165,6 +166,7 @@ var referenceKinds = map[string]kindMeta{
 	// sets up the eventual prompt-trim.
 	"html-output":           {Group: "system", Description: "High-quality self-contained HTML report guide: when to use HTML vs JSON vs Markdown, layout baseline with dark-mode styles, summary box, sticky nav, inline bar chart (no CDN), badge classes for pass/fail/warn, quality checklist. Load before writing any .html output file.", Modes: []string{"multi-agent", "workshop"}},
 	"browser-usage":         {Group: "system", Description: "Browser automation deep guide: deployment CDP capability/status, agent_browser HTTP API, CDP vs headless modes, macOS CDP installation when supported, snapshot/click/fill workflow, tab management, file uploads, session limits, common mistakes. Load before driving a browser, scraping pages, automating logins, or uploading files via a web form.", Modes: []string{"multi-agent", "workshop", "run"}, Tools: []string{"agent_browser"}},
+	"gmail-connection-scopes": {Group: "system", Description: "Managing a Gmail/Google Workspace connection's permissions: the difference between the stored request (allow_read_access/services) and what Google actually granted (they can drift — a legacy connection's \"Send only\" badge can understate real access), how to widen or narrow scope from chat with update_gmail_connection_grants, why a reconnect link is required afterward, and how a workflow's own service allowlist relates to the connection's. Load before changing, explaining, or troubleshooting a Gmail connection's Drive/Sheets/Docs/Slides/Calendar or read access.", Modes: []string{"multi-agent", "workshop"}, Tools: []string{"update_gmail_connection_grants"}},
 	"mcp-bridge":            {Group: "system", Description: "MCP HTTP bridge mechanics: $MCP_API_URL / $MCP_API_TOKEN env vars, curl pattern for calling MCP tools, response envelope, $VAR_* / $SECRET_* variable rules, single-call discipline. Load before writing scripts that call MCP tools via the bridge, or when debugging bridge errors.", Modes: []string{"multi-agent", "workshop", "run"}},
 	"workflow-tools":        {Group: "system", Description: "Full reference for workshop / workflow tools: step execution & inspection (execute_step, query_step, debug_step, run_full_workflow), step config and read-only review tools, plan modification (add/update/delete step tools, todo_task routes, versioning), Goal Advisor proposal workflow, variables & MCP server config, shell, skills, and secrets. Schedule management now lives in its own \"schedules\" reference doc. Load when you need a tool's exact signature, parameters, or when-to-use rules and the inline cheat sheet doesn't suffice.", Modes: []string{"workshop", "run"}},
 	"schedules":             {Group: "system", Description: "Full schedule management reference: list/create/update/delete/trigger_schedule and get_schedule_runs signatures and entry shape, cron vs calendar schedules (create_calendar_schedule payload, choosing between them), how workflow schedules execute (mode=\"workshop\" always, mandatory per-schedule pulse_mode and pulse_mode_reason: off, basic, or full; legacy-only inheritance and deliberate route review coverage), the backup-on-schedule requirement, and writing messages for unattended runs (route-backed vs direct-sequence mode, why messages must never require human input). Load before creating, editing, or reasoning about any schedule.", Modes: []string{"workshop"}},
@@ -220,6 +222,9 @@ func renderFromRegistry(kind string, data tmplData, registry map[string]kindMeta
 	meta, ok := registry[kind]
 	if !ok {
 		return "", fmt.Errorf("unknown kind %q", kind)
+	}
+	if meta.AliasOf != "" {
+		return renderFromRegistry(meta.AliasOf, data, registry)
 	}
 	rel := path.Join("templates", meta.Group, kind+".md")
 	body, err := templatesFS.ReadFile(rel)
@@ -479,7 +484,7 @@ func BuildSystemToolsSkill(mode string) *llmtypes.Skill {
 
 	configAccess := buildConfigurationAccessGuidance(mode)
 	referenceExamples := "`pulse-gate` for Pulse Gate, `pulse-review-fixer` for review/fix work, `code-authoring` before authoring `main.py`, or `llm-selection` before changing workflow models"
-	proceduralGuidance := "- `get_workflow_command_guidance(kind, focus?)` — canonical procedural flows (design-plan, improve-evaluation, goal-advisor, define-success, etc.). The returned text is your instructions for that turn; follow it verbatim.\n"
+	proceduralGuidance := "- `get_workflow_command_guidance(kind, focus?)` — canonical procedural flows (design-plan, improve-evaluation, strategy-auditor, define-success, etc.). The returned text is your instructions for that turn; follow it verbatim.\n"
 	if strings.EqualFold(strings.TrimSpace(mode), "run") {
 		referenceExamples = "`runtime-context` before answering from workflow state, `running-steps` before execution, or `human-in-the-loop` when work needs a user decision"
 		proceduralGuidance = ""

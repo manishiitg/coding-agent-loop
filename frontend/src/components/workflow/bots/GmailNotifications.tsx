@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { AlertTriangle, ChevronRight, Loader2, Mail, RotateCcw } from 'lucide-react'
 import { agentApi } from '../../../services/api'
-import type { GoogleServiceGrant } from '../../../services/api-types'
+import type { GmailConnection, GoogleServiceGrant } from '../../../services/api-types'
 import { Button } from '../../ui/Button'
 import { Card } from '../../ui/Card'
 import { READ_ONLY_TITLE } from '../../../hooks/useCanWriteWorkflow'
@@ -11,12 +11,141 @@ import { GmailSetupGuide } from './GmailSetupGuide'
 
 // ── Email notifications (account-wide, shared by every workflow) ──────────
 
-// Shortens a full OAuth scope URL to its last path segment for display (e.g.
-// "https://www.googleapis.com/auth/gmail.send" -> "gmail.send"); shows the
-// full string on hover via the caller's title attribute.
-function formatGmailScope(scope: string): string {
+// Maps a raw OAuth scope to what it actually grants, so the connection card
+// reads as "Gmail: send + read" instead of an unlabeled "gmail.modify" chip
+// nobody can place. Keyed on both the full scope URL and Google's bare OIDC
+// literals (some tokens carry "email"/"openid" as-is, others carry the
+// equivalent https://www.googleapis.com/auth/userinfo.email long form —
+// Google can return either depending on how a given consent was originally
+// requested, so both keys map to the same label).
+//
+// gmail.modify (full read/write/organize) and the legacy default "tasks"
+// scope predate this connector's current send-only-by-default design and its
+// opt-in Drive/Sheets/Docs/Slides/Calendar catalog (google_services.go) --
+// they show up here on connections authorized before that shipped, not
+// something the current "+ Add account" flow can request. Reconnecting an
+// existing connection re-requests exactly its current allow_read_access +
+// services, which drops any such legacy scope the stored config no longer
+// asks for.
+const GMAIL_SCOPE_LABELS: Record<string, { label: string; detail: string }> = {
+  'openid': { label: 'Sign-in', detail: 'OpenID sign-in — identifies which Google account this is' },
+  'email': { label: 'Email address', detail: 'Read the account’s email address (identity only, not mailbox content)' },
+  'profile': { label: 'Basic profile', detail: 'Read the account’s basic Google profile (name, picture)' },
+  'https://www.googleapis.com/auth/userinfo.email': { label: 'Email address', detail: 'Read the account’s email address (identity only, not mailbox content)' },
+  'https://www.googleapis.com/auth/userinfo.profile': { label: 'Basic profile', detail: 'Read the account’s basic Google profile (name, picture)' },
+  'https://www.googleapis.com/auth/gmail.send': { label: 'Gmail: send', detail: 'Send email as this account. Cannot read or search the mailbox.' },
+  'https://www.googleapis.com/auth/gmail.readonly': { label: 'Gmail: read', detail: 'Read and search this mailbox. Cannot send.' },
+  'https://www.googleapis.com/auth/gmail.modify': { label: 'Gmail: full (legacy)', detail: 'Full mailbox access — read, send, and organize. Broader than this connector currently requests; carried over from an older connection.' },
+  'https://www.googleapis.com/auth/drive.readonly': { label: 'Drive: read', detail: 'Read files in Google Drive. Cannot create or modify them.' },
+  'https://www.googleapis.com/auth/drive': { label: 'Drive: read+write', detail: 'Read and modify files in Google Drive.' },
+  'https://www.googleapis.com/auth/spreadsheets.readonly': { label: 'Sheets: read', detail: 'Read Google Sheets spreadsheets. Cannot modify them.' },
+  'https://www.googleapis.com/auth/spreadsheets': { label: 'Sheets: read+write', detail: 'Read and modify Google Sheets spreadsheets.' },
+  'https://www.googleapis.com/auth/documents.readonly': { label: 'Docs: read', detail: 'Read Google Docs documents. Cannot modify them.' },
+  'https://www.googleapis.com/auth/documents': { label: 'Docs: read+write', detail: 'Read and modify Google Docs documents.' },
+  'https://www.googleapis.com/auth/presentations.readonly': { label: 'Slides: read', detail: 'Read Google Slides presentations. Cannot modify them.' },
+  'https://www.googleapis.com/auth/presentations': { label: 'Slides: read+write', detail: 'Read and modify Google Slides presentations.' },
+  'https://www.googleapis.com/auth/calendar.readonly': { label: 'Calendar: read', detail: 'Read Google Calendar events. Cannot create or modify them.' },
+  'https://www.googleapis.com/auth/calendar': { label: 'Calendar: read+write', detail: 'Read and modify Google Calendar events.' },
+  'https://www.googleapis.com/auth/tasks.readonly': { label: 'Tasks: read (legacy)', detail: 'Read Google Tasks. Not requestable from this connector’s current Add account flow; carried over from an older connection.' },
+  'https://www.googleapis.com/auth/tasks': { label: 'Tasks: read+write (legacy)', detail: 'Read and modify Google Tasks. Not requestable from this connector’s current Add account flow; carried over from an older connection.' },
+}
+
+// Falls back to the old last-path-segment shorthand for any scope this
+// account was granted that isn't in the lookup above, so an unrecognized
+// scope still shows something rather than disappearing silently.
+function formatGmailScope(scope: string): { label: string; title: string } {
+  const known = GMAIL_SCOPE_LABELS[scope.trim()]
+  if (known) return { label: known.label, title: `${known.detail}\n\n(${scope})` }
   const parts = scope.split('/')
-  return parts[parts.length - 1] || scope
+  return { label: parts[parts.length - 1] || scope, title: scope }
+}
+
+type GmailCapabilityState = 'none' | 'read' | 'write'
+
+interface GmailCapabilityRow {
+  label: string
+  state: GmailCapabilityState
+  detail: string
+}
+
+// One full read+send+organize scope can stand in for a narrower one this
+// connector would otherwise request separately (gmail.modify implies both
+// gmail.readonly and gmail.send) — checked here so a legacy connection's
+// broader grant still shows the capability as present instead of "not
+// authorized" just because the exact narrower scope string isn't in the list.
+function gmailScopesGrant(scopes: string[], ...anyOf: string[]): boolean {
+  return anyOf.some(scope => scopes.includes(scope))
+}
+
+// Builds the full permission matrix — every capability this connector can
+// request, PLUS any legacy scope this specific account still carries — each
+// marked by what's actually granted right now (from conn.auth.scopes, the
+// live truth from Google) rather than the stored allow_read_access/services
+// config, which can go stale for a connection authorized before that config
+// existed (see GMAIL_SCOPE_LABELS' gmail.modify/tasks comment).
+function gmailCapabilityMatrix(scopes: string[]): GmailCapabilityRow[] {
+  const has = (...anyOf: string[]) => gmailScopesGrant(scopes, ...anyOf)
+  const rows: GmailCapabilityRow[] = [
+    {
+      label: 'Gmail: Send',
+      state: has('https://www.googleapis.com/auth/gmail.send', 'https://www.googleapis.com/auth/gmail.modify') ? 'write' : 'none',
+      detail: 'Send email as this account.',
+    },
+    {
+      label: 'Gmail: Read',
+      state: has('https://www.googleapis.com/auth/gmail.readonly', 'https://www.googleapis.com/auth/gmail.modify') ? 'read' : 'none',
+      detail: 'Read and search this mailbox.',
+    },
+    {
+      label: 'Drive',
+      state: has('https://www.googleapis.com/auth/drive') ? 'write' : has('https://www.googleapis.com/auth/drive.readonly') ? 'read' : 'none',
+      detail: 'Google Drive files.',
+    },
+    {
+      label: 'Sheets',
+      state: has('https://www.googleapis.com/auth/spreadsheets') ? 'write' : has('https://www.googleapis.com/auth/spreadsheets.readonly') ? 'read' : 'none',
+      detail: 'Google Sheets spreadsheets.',
+    },
+    {
+      label: 'Docs',
+      state: has('https://www.googleapis.com/auth/documents') ? 'write' : has('https://www.googleapis.com/auth/documents.readonly') ? 'read' : 'none',
+      detail: 'Google Docs documents.',
+    },
+    {
+      label: 'Slides',
+      state: has('https://www.googleapis.com/auth/presentations') ? 'write' : has('https://www.googleapis.com/auth/presentations.readonly') ? 'read' : 'none',
+      detail: 'Google Slides presentations.',
+    },
+    {
+      label: 'Calendar',
+      state: has('https://www.googleapis.com/auth/calendar') ? 'write' : has('https://www.googleapis.com/auth/calendar.readonly') ? 'read' : 'none',
+      detail: 'Google Calendar events.',
+    },
+  ]
+  // Tasks isn't offered by the current Add-account flow at all, so it only
+  // ever shows up here (green) on a connection that already carries it from
+  // before that flow existed — never as a "not authorized" gray row, since
+  // there both would be nothing to reconnect toward and nothing to grant it.
+  if (has('https://www.googleapis.com/auth/tasks', 'https://www.googleapis.com/auth/tasks.readonly')) {
+    rows.push({
+      label: 'Tasks (legacy)',
+      state: has('https://www.googleapis.com/auth/tasks') ? 'write' : 'read',
+      detail: 'Google Tasks — carried over from before this connector had a Drive/Sheets/Docs/Slides/Calendar picker; not requestable from Add account today.',
+    })
+  }
+  return rows
+}
+
+const GMAIL_CAPABILITY_STATE_STYLE: Record<GmailCapabilityState, string> = {
+  write: 'border-green-600/40 bg-green-500/15 text-green-700 dark:border-green-500/40 dark:bg-green-500/10 dark:text-green-400',
+  read: 'border-amber-600/40 bg-amber-500/15 text-amber-700 dark:border-amber-500/40 dark:bg-amber-500/10 dark:text-amber-400',
+  none: 'border-border bg-transparent text-muted-foreground/50',
+}
+
+const GMAIL_CAPABILITY_STATE_LABEL: Record<GmailCapabilityState, string> = {
+  write: 'read + write',
+  read: 'read-only',
+  none: 'not authorized',
 }
 
 // Names the CLI backend a GmailAuthStatus was computed against, so the UI
@@ -106,6 +235,42 @@ export function GmailNotifications({ bots }: { bots: GmailNotificationsBots }) {
   // level for the same reason Gmail read is opt-in: the safer grant.
   const [newClientServices, setNewClientServices] = useState<Record<string, { write: boolean }>>({})
   const [serviceCatalog, setServiceCatalog] = useState<Record<string, string> | null>(null)
+
+  // Edit-access panel for an EXISTING connection — same shape as the
+  // newClient* state above (reused deliberately, same checkbox UI), but this
+  // only ever edits one connection at a time and seeds from that
+  // connection's current stored values when opened. Saving only changes the
+  // STORED request (see gmail_connections.go's UpdateConnection comment) —
+  // it never talks to Google, so the panel always ends with a prompt to
+  // reconnect rather than claiming the new access is already live.
+  const [editingGrantsConnId, setEditingGrantsConnId] = useState<string | null>(null)
+  const [editAllowRead, setEditAllowRead] = useState(false)
+  const [editServices, setEditServices] = useState<Record<string, { write: boolean }>>({})
+  const [editGrantsSavedConnId, setEditGrantsSavedConnId] = useState<string | null>(null)
+
+  const openEditGrants = (conn: GmailConnection) => {
+    setEditingGrantsConnId(conn.id)
+    setEditGrantsSavedConnId(null)
+    setEditAllowRead(conn.allow_read_access ?? false)
+    const seeded: Record<string, { write: boolean }> = {}
+    for (const grant of conn.services || []) {
+      seeded[grant.service] = { write: grant.write ?? false }
+    }
+    setEditServices(seeded)
+  }
+
+  const saveEditGrants = async (conn: GmailConnection) => {
+    const services: GoogleServiceGrant[] = Object.entries(editServices).map(([service, grant]) => ({ service, write: grant.write }))
+    const ok = await runGmailConnectionAction(conn.id, () => agentApi.updateGmailConnection(conn.id, {
+      allow_read_access: editAllowRead,
+      services,
+      services_set: true,
+    }))
+    if (ok) {
+      setEditingGrantsConnId(null)
+      setEditGrantsSavedConnId(conn.id)
+    }
+  }
   useEffect(() => {
     let cancelled = false
     agentApi.getGoogleServiceCatalog().then(catalog => { if (!cancelled) setServiceCatalog(catalog) }).catch(() => {
@@ -250,13 +415,37 @@ export function GmailNotifications({ bots }: { bots: GmailNotificationsBots }) {
                           {conn.client_name && <span className="ml-2 text-muted-foreground/70">via {conn.client_name}</span>}
                         </p>
                         {conn.auth?.scopes && conn.auth.scopes.length > 0 && (
-                          <p className="mt-1 flex flex-wrap gap-1">
-                            {conn.auth.scopes.map(scope => (
-                              <span key={scope} className="rounded bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground" title={scope}>
-                                {formatGmailScope(scope)}
-                              </span>
-                            ))}
-                          </p>
+                          <div className="mt-1.5">
+                            <p className="text-[10px] uppercase tracking-wide text-muted-foreground/70">
+                              Currently authorized (green = read+write, amber = read-only, gray = not granted)
+                            </p>
+                            <p className="mt-1 flex flex-wrap gap-1">
+                              {gmailCapabilityMatrix(conn.auth.scopes).map(row => (
+                                <span
+                                  key={row.label}
+                                  className={`rounded border px-1.5 py-0.5 text-[10px] ${GMAIL_CAPABILITY_STATE_STYLE[row.state]}`}
+                                  title={`${row.detail} Currently: ${GMAIL_CAPABILITY_STATE_LABEL[row.state]}.`}
+                                >
+                                  {row.label}
+                                </span>
+                              ))}
+                            </p>
+                            <details className="mt-1">
+                              <summary className="cursor-pointer text-[10px] text-muted-foreground/70 hover:text-muted-foreground">
+                                Raw granted scopes ({conn.auth.scopes.length})
+                              </summary>
+                              <p className="mt-1 flex flex-wrap gap-1">
+                                {conn.auth.scopes.map(scope => {
+                                  const formatted = formatGmailScope(scope)
+                                  return (
+                                    <span key={scope} className="rounded bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground" title={formatted.title}>
+                                      {formatted.label}
+                                    </span>
+                                  )
+                                })}
+                              </p>
+                            </details>
+                          </div>
                         )}
 
                         <div className="mt-2 flex flex-wrap gap-2">
@@ -293,6 +482,14 @@ export function GmailNotifications({ bots }: { bots: GmailNotificationsBots }) {
                             {conn.enabled ? 'Disable' : 'Enable'}
                           </button>
                           <button
+                            onClick={() => editingGrantsConnId === conn.id ? setEditingGrantsConnId(null) : openEditGrants(conn)}
+                            disabled={readOnly || gmailConnectionsBusy === conn.id}
+                            title={readOnly ? READ_ONLY_TITLE : 'Change what this connection is authorized for. Saving only updates the request — Google requires a fresh Reconnect afterward for it to take effect.'}
+                            className="rounded border border-border px-2 py-1 text-xs text-muted-foreground hover:text-foreground disabled:opacity-40"
+                          >
+                            {editingGrantsConnId === conn.id ? 'Cancel edit' : 'Edit access'}
+                          </button>
+                          <button
                             onClick={() => handleRemoveMailbox(conn)}
                             disabled={readOnly || gmailConnectionsBusy === conn.id}
                             title={readOnly ? READ_ONLY_TITLE : undefined}
@@ -301,6 +498,78 @@ export function GmailNotifications({ bots }: { bots: GmailNotificationsBots }) {
                             Remove
                           </button>
                         </div>
+
+                        {editGrantsSavedConnId === conn.id && (
+                          <StatusBanner tone="success">
+                            Saved. This only changed the stored request — click <strong>Reconnect</strong> above and complete Google's consent screen for it to actually take effect.
+                          </StatusBanner>
+                        )}
+
+                        {editingGrantsConnId === conn.id && (
+                          <div className="mt-2 space-y-1.5 rounded-md border border-border bg-muted/20 p-2">
+                            <label className="flex items-start gap-2 text-xs text-muted-foreground">
+                              <input
+                                type="checkbox"
+                                checked={editAllowRead}
+                                disabled={readOnly}
+                                onChange={event => setEditAllowRead(event.target.checked)}
+                                className="mt-0.5"
+                              />
+                              <span>Also allow <strong>reading</strong> this mailbox</span>
+                            </label>
+                            {serviceCatalog && Object.keys(serviceCatalog).length > 0 && (
+                              <div className="space-y-1.5 border-t border-border pt-1.5">
+                                {Object.entries(serviceCatalog).map(([service, label]) => {
+                                  const grant = editServices[service]
+                                  return (
+                                    <div key={service} className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+                                      <label className="flex items-center gap-2">
+                                        <input
+                                          type="checkbox"
+                                          checked={!!grant}
+                                          disabled={readOnly}
+                                          onChange={event => setEditServices(prev => {
+                                            const next = { ...prev }
+                                            if (event.target.checked) next[service] = { write: false }
+                                            else delete next[service]
+                                            return next
+                                          })}
+                                        />
+                                        {label}
+                                      </label>
+                                      {grant && (
+                                        <label className="flex items-center gap-1.5 pl-1 text-[11px]">
+                                          <input
+                                            type="checkbox"
+                                            checked={grant.write}
+                                            disabled={readOnly}
+                                            onChange={event => setEditServices(prev => ({ ...prev, [service]: { write: event.target.checked } }))}
+                                          />
+                                          allow write access
+                                        </label>
+                                      )}
+                                    </div>
+                                  )
+                                })}
+                              </div>
+                            )}
+                            <div className="flex gap-2 pt-1">
+                              <Button
+                                onClick={() => saveEditGrants(conn)}
+                                disabled={readOnly || gmailConnectionsBusy === conn.id}
+                                title={readOnly ? READ_ONLY_TITLE : undefined}
+                              >
+                                {gmailConnectionsBusy === conn.id ? <><Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />Saving…</> : 'Save request'}
+                              </Button>
+                              <button
+                                onClick={() => setEditingGrantsConnId(null)}
+                                className="rounded border border-border px-2 py-1 text-xs text-muted-foreground hover:text-foreground"
+                              >
+                                Cancel
+                              </button>
+                            </div>
+                          </div>
+                        )}
 
                         {gmailAuthPending === conn.id && gmailAuthUrl && (
                           <SignInLinkBox url={gmailAuthUrl} />

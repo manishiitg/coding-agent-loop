@@ -80,6 +80,21 @@ sync_repo() {
 }
 sync_repo "coding-agent-loop" "$REPO"
 sync_repo "multi-llm-provider-go" "$MLP"
+
+# This script's own on-disk copy at /srv/dominion/deploy-dominion.sh is what
+# actually runs -- it does NOT auto-update from the repo just synced above.
+# 2026-09-09: a real deploy silently ran a copy that predated agent-browser
+# provisioning, the static/report-preview fix, and the CDP-disable work by a
+# full day, because nothing ever re-copied it after those changes landed.
+# Bash has already read this whole file into memory, so overwriting it here
+# is safe for the rest of THIS run; it just makes the NEXT invocation current.
+SELF_SOURCE="$REPO/deploy/dedicated-vm/deploy-dominion.sh"
+SELF_TARGET="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/$(basename "${BASH_SOURCE[0]}")"
+if ! cmp -s "$SELF_SOURCE" "$SELF_TARGET"; then
+  echo "==> Updating this script's own copy at $SELF_TARGET from the repo just synced (takes effect next run)"
+  cp "$SELF_SOURCE" "$SELF_TARGET"
+  chmod +x "$SELF_TARGET"
+fi
 sync_repo "mcpagent" "$MCPAGENT"
 
 # workspace/ and mcpagent/'s own go.mod carry no `replace` directives (only

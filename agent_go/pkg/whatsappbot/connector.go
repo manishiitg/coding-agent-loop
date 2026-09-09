@@ -453,21 +453,30 @@ func (c *Connector) GetQRImagePNG(size int) ([]byte, error) {
 
 // Unpair logs out and forgets one linked phone.
 func (c *Connector) Unpair(ctx context.Context, phone string) error {
-	c.mu.Lock()
+	c.mu.RLock()
 	acct, ok := c.accounts[phone]
 	st := c.store
-	if ok {
-		delete(c.accounts, phone)
-		if c.single == acct {
-			c.single = nil
-		}
-	}
-	c.mu.Unlock()
+	c.mu.RUnlock()
 	if !ok {
 		return fmt.Errorf("no linked account for %q", phone)
 	}
-	_ = acct.Logout(ctx)
+	if !acct.IsConnected() {
+		if err := acct.Connect(); err != nil {
+			return fmt.Errorf("whatsapp: connect for logout: %w", err)
+		}
+	}
+	if err := acct.Logout(ctx); err != nil {
+		return fmt.Errorf("whatsapp: logout device: %w", err)
+	}
 	acct.Disconnect()
+	c.mu.Lock()
+	if c.accounts[phone] == acct {
+		delete(c.accounts, phone)
+	}
+	if c.single == acct {
+		c.single = nil
+	}
+	c.mu.Unlock()
 	if st != nil && acct.Device() != nil {
 		if err := st.DeleteDevice(ctx, acct.Device()); err != nil {
 			return fmt.Errorf("whatsapp: delete device: %w", err)

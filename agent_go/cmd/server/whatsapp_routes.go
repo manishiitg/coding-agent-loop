@@ -264,7 +264,9 @@ func whatsappUnpairHandler(manager *services.WhatsAppServiceManager) http.Handle
 			}
 			slot = found
 		}
-		if err := manager.UnpairDevice(r.Context(), user.UserID, slot); err != nil {
+		ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
+		defer cancel()
+		if err := manager.UnpairDevice(ctx, user.UserID, slot); err != nil {
 			http.Error(w, "unpair failed: "+err.Error(), http.StatusInternalServerError)
 			return
 		}

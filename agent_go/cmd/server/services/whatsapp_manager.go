@@ -393,13 +393,16 @@ func (m *WhatsAppServiceManager) UnpairDevice(ctx context.Context, userID, slot 
 		return primary.Unpair(ctx)
 	}
 	key := whatsappServiceKey(userKey, slot)
+	svc, err := m.serviceForKey(ctx, userKey, slot)
+	if err != nil {
+		return err
+	}
+	if err := svc.LogoutAndRemove(ctx); err != nil {
+		return err
+	}
 	m.mu.Lock()
-	svc := m.services[key]
 	delete(m.services, key)
 	m.mu.Unlock()
-	if svc != nil {
-		svc.StopListening()
-	}
 	dir := filepath.Join(m.baseDir, userKey, whatsappDevicesDirName, slot)
 	if err := os.RemoveAll(dir); err != nil {
 		return fmt.Errorf("whatsapp: remove device %s: %w", slot, err)

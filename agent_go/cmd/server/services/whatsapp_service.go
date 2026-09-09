@@ -229,21 +229,40 @@ func (w *WhatsAppService) StopListening() {
 	w.closeMetaStore()
 }
 
-// Unpair disconnects the client, drops the session DB, and re-initializes a
-// fresh empty store so the next pairing attempt starts with a clean slate.
-// After Unpair returns, the service is back in "unpaired" state — the next
-// pairing QR will be generated on the next reconnect.
-func (w *WhatsAppService) Unpair(ctx context.Context) error {
-	w.StopListening()
-	w.clearOwner()
-
-	// Delete the session DB (and WAL/SHM sidecars) so the next start is a
-	// clean pairing with no leftover device rows or owner binding.
+// removeSessionFiles drops the session DB and WAL/SHM sidecars after the
+// remote WhatsApp logout has succeeded.
+func (w *WhatsAppService) removeSessionFiles() error {
 	for _, suffix := range []string{"", "-wal", "-shm"} {
 		path := w.dbPath + suffix
 		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
 			return fmt.Errorf("whatsapp: remove %s: %w", path, err)
 		}
+	}
+	return nil
+}
+
+// LogoutAndRemove logs the linked device out of WhatsApp, then deletes local
+// session state. It intentionally fails before local deletion when the remote
+// logout fails, so the user can retry instead of leaving a linked device
+// stranded in WhatsApp.
+func (w *WhatsAppService) LogoutAndRemove(ctx context.Context) error {
+	if conn := w.connector(); conn != nil {
+		if err := conn.UnpairAll(ctx); err != nil {
+			return err
+		}
+	}
+	w.StopListening()
+	w.clearOwner()
+	return w.removeSessionFiles()
+}
+
+// Unpair disconnects the client, drops the session DB, and re-initializes a
+// fresh empty store so the next pairing attempt starts with a clean slate.
+// After Unpair returns, the service is back in "unpaired" state — the next
+// pairing QR will be generated on the next reconnect.
+func (w *WhatsAppService) Unpair(ctx context.Context) error {
+	if err := w.LogoutAndRemove(ctx); err != nil {
+		return err
 	}
 	return w.StartListening(ctx)
 }

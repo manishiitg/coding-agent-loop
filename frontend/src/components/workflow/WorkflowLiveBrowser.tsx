@@ -64,8 +64,9 @@ export default function WorkflowLiveBrowser({ workspacePath, toolbar }: { worksp
           params: { workspace_path: workspacePath }, signal: controller.signal, timeout: 5000,
         })
         if (cancelled) return
-        setSessions(data.sessions)
-        setSession(current => data.sessions.some(item => item.browser_session === current) ? current : data.sessions[0]?.browser_session || '')
+        const nextSessions = data.sessions ?? []
+        setSessions(nextSessions)
+        setSession(current => nextSessions.some(item => item.browser_session === current) ? current : nextSessions[0]?.browser_session || '')
       } catch {
         if (!cancelled) setError('Unable to load workflow browser sessions.')
       }

@@ -1,5 +1,5 @@
 import type { ReportHumanInput } from '../services/api-types'
-import type { ChatTab } from '../stores/useChatStore'
+import type { ChatTab, EventViewMode } from '../stores/useChatStore'
 import { useChatStore } from '../stores/useChatStore'
 import { useGlobalPresetStore } from '../stores/useGlobalPresetStore'
 import { useWorkflowStore } from '../stores/useWorkflowStore'
@@ -159,11 +159,17 @@ export async function sendWorkflowMessageToChat({
   workspacePath,
   message,
   newChat = false,
+  viewMode = 'terminal',
 }: {
   workspacePath: string
   message: string
   /** Explicit user choice; otherwise reuse the usual Ask in chat lane. */
   newChat?: boolean
+  /** Pulse's original "Ask in chat" wants the raw terminal visible (the
+   *  underlying coding-agent CLI working live is the point) — that's the
+   *  default. A caller whose message is a normal conversational ask, not
+   *  something to watch execute, should pass 'formatted' instead. */
+  viewMode?: EventViewMode
 }): Promise<ReportHumanInputChatResult> {
   if (!message.trim()) throw new Error('Write a message before opening chat.')
   let targetTab: ChatTab | undefined
@@ -205,7 +211,7 @@ export async function sendWorkflowMessageToChat({
     // An external report request must not erase an unsent draft in this chat.
     queuedMessages: [...existingQueue, message],
   })
-  finalChatStore.setTabViewMode(tabId, 'terminal')
+  finalChatStore.setTabViewMode(tabId, viewMode)
   finalChatStore.setAutoScroll(true)
   activateTab(tabId)
 

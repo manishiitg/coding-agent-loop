@@ -37,6 +37,21 @@ Use ` + "`agent_browser(\"skills\", [\"get\", \"core\", \"--full\"])`" + ` only 
 
 Treat upstream shell examples as logical agent-browser commands. Translate ` + "`agent-browser <command> <args...>`" + ` into ` + "`agent_browser(\"<command>\", [\"<args>\", ...])`" + `; never copy those examples into ` + "`execute_shell_command`" + `.
 
+## Bundled Recording in Builder
+
+When the user/workflow requests recording or reproduction evidence in managed headless mode, prefer Builder's capture command. It uses the same recording service/state as the Browser view and includes video.webm, network.har (without response bodies), console.json, errors.json, manifest.json and capture.zip.
+
+    agent_browser("capture", ["status"], session="main")
+    agent_browser("capture", ["start"], session="main")
+    # Reproduce the issue with ordinary managed browser commands.
+    agent_browser("capture", ["stop"], session="main")
+
+Open/select the intended page before starting. Keep using the same session. The workspace path is assigned automatically; do not pass a filename. Capture records the page active at start; do not promise video across tab switches. Console/errors are exported from the cleared buffers when stopped.
+
+Check status first. If recording is already active, reuse it only as requested and do not claim ownership or automatically stop it. Stop captures you started even when reproduction fails. After a timeout check status before retrying. On stop, inspect recording, errors, directory and files: partial failures can leave recording active and require another stop. Report the actual returned paths. Never mix capture with separate record/HAR start/stop commands during the same capture. Stopping recording does not close the browser or clear sign-ins. Workflow permission errors must not be bypassed through shell.
+
+This is a Builder extension, so upstream skills do not document it. CDP currently uses the separate record, network HAR, console and errors commands. The native record command remains video-only.
+
 ## Recording Context Handoff
 
 In CDP mode, upstream ` + "`record start`" + ` creates a fresh temporary browser context/page because video cannot be enabled retroactively on the existing context. Builder detects that page and returns an ` + "`AGENTWORKS_RECORDING_CONTEXT`" + ` notice with its real tab id. Discard all refs from the original tab and call ` + "`snapshot`" + ` immediately. Builder blocks interactions until that snapshot succeeds and automatically routes subsequent page actions to the recorded context even if a stale original tab id was supplied. Do not select or create another tab while recording. On ` + "`record stop`" + `, Builder closes the temporary page, restores the original tab, and requires normal snapshot-before-interaction discipline again.
@@ -166,9 +181,11 @@ HAR files and videos can capture credentials or other visible secrets. Create th
 
 ## Headless Rules
 
-Headless mode uses an isolated container browser. It usually has no user cookies or saved login state. Use it for unattended automation when user-authenticated Chrome is not needed.
-
-Use a descriptive session name for parallel work and close headless sessions when done to free browser slots.
+- Query live status before acting. Headless mode may use isolated sessions or a persistent shared browser.
+- Shared mode preserves tabs and sign-ins across workflows and users. Inspect existing tabs first; do not close/reset the browser, clear storage, or sign out unless explicitly requested. Users coordinate concurrent actions themselves.
+- Isolated sessions retain cookies for their lifetime; close only isolated sessions when finished.
+- Users can watch and interact in the workflow Browser view. Use workspace view tools to show that view when appropriate.
+- Verify login from page content; never assume a session is authenticated.
 
 ## Workflow Downloads
 

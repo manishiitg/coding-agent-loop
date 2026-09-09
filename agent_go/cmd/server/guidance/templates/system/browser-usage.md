@@ -199,12 +199,27 @@ Downloads folder. Use only the host Downloads grants actually provided to
 this session; do not assume that workspace-relative `Downloads/` names the
 same directory.
 
+## Bundled Recording in Builder
+
+When the user/workflow requests recording or reproduction evidence in managed headless mode, prefer Builder's capture command. It uses the same recording service/state as the Browser view and includes video.webm, network.har (without response bodies), console.json, errors.json, manifest.json and capture.zip.
+
+    agent_browser("capture", ["status"], session="main")
+    agent_browser("capture", ["start"], session="main")
+    # Reproduce the issue with ordinary managed browser commands.
+    agent_browser("capture", ["stop"], session="main")
+
+Open/select the intended page before starting. Keep using the same session. The workspace path is assigned automatically; do not pass a filename. Capture records the page active at start; do not promise video across tab switches. Console/errors are exported from the cleared buffers when stopped.
+
+Check status first. If recording is already active, reuse it only as requested and do not claim ownership or automatically stop it. Stop captures you started even when reproduction fails. After a timeout check status before retrying. On stop, inspect recording, errors, directory and files: partial failures can leave recording active and require another stop. Report the actual returned paths. Never mix capture with separate record/HAR start/stop commands during the same capture. Stopping recording does not close the browser or clear sign-ins. Workflow permission errors must not be bypassed through shell.
+
+This is a Builder extension, so upstream skills do not document it. CDP currently uses the separate record, network HAR, console and errors commands. The native record command remains video-only.
+
 ## Session limits
 
 - Default per-agent / per-workflow / global concurrency caps are enforced
   by the runtime — keep one browser open at a time per agent. Re-use the
   same session name across calls within one task.
-- In headless mode, parallel agents need unique session names. In shared CDP
+- In isolated headless mode, parallel agents need unique session names. Persistent shared headless mode maps all names to the same browser; preserve its tabs and sign-ins. In shared CDP
   mode, sessions are intentionally remapped to one per port; isolation comes
   from workflow-owned labeled tabs plus the per-port select-and-act lock.
 

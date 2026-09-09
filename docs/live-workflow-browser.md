@@ -293,3 +293,48 @@ preserved cookies, session storage and both tabs. A separate real Chrome
 restart retained a persistent cookie and local storage. Observed identity:
 Linux HeadlessChrome 152.0.7928.2, en-US, UTC, 1280x720. Other deployments keep
 isolated behavior until explicitly configured with a shared profile.
+
+
+## Recording through chat
+
+The existing `workspace_browser.agent_browser` tool supports Builder's bundled
+`capture` command in managed headless mode (isolated or persistent shared):
+
+```json
+{"command":"capture","args":["status"],"session":"main"}
+{"command":"capture","args":["start"],"session":"main"}
+{"command":"capture","args":["stop"],"session":"main"}
+```
+
+Ask the agent, for example: “Record the browser, network and console while you
+reproduce this issue, then save the recording.” The browser must already be
+running with the intended page selected. The agent uses the same workspace
+recording endpoint as the UI, so the Browser view's existing status polling
+reflects chat start/stop operations. No new tool or CLI binary is needed.
+
+The managed handler derives the owning workflow from trusted session settings
+and sends its current folder permissions to the workspace service. Output normally
+lands in `Workflow/<name>/browser-recordings/<capture-id>/`; a step with narrower
+write access uses its authorized working directory's `browser-recordings/`.
+The response supplies the actual directory and files. Read-only sessions may
+inspect authorized recording status but cannot start or stop a capture. Another
+workflow cannot stop an active recording or retrieve its paths. A completed
+recording does not prevent another workflow from starting a new capture.
+
+Start begins video and HAR capture and clears console/error buffers. Stop exports
+`video.webm`, `network.har`, `console.json`, `errors.json`, `manifest.json`, and
+`capture.zip`. HAR response bodies are excluded. Video captures the page active
+at start; this does not promise recording all tabs. Console/error output is a
+buffer export, not an unlimited log stream.
+
+Start/stop are idempotent. After a timeout, query status before retrying. A partial
+stop returns errors and may leave `recording=true`; inspect the result and retry
+stop when necessary. Stop captures started for the task even if reproduction
+fails, but do not automatically stop a recording that was already running. Never
+mix a bundled capture with separate native `record`/HAR start/stop commands.
+Stopping capture preserves the browser and sign-ins.
+
+This extension belongs to Builder's handler and is documented in the tool schema,
+Builder browser skill, and browser guidance. Upstream `agent-browser skills` does
+not define it. Native `record` remains video-only; external CDP currently uses
+its existing separate video/HAR/console commands instead of bundled `capture`.

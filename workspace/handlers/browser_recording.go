@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/manishiitg/coding-agent-loop/workspace/browserconfig"
+	"github.com/manishiitg/coding-agent-loop/workspace/models"
+	"github.com/manishiitg/coding-agent-loop/workspace/security"
 	"io"
 	"os"
 	"os/exec"
@@ -35,8 +37,10 @@ var browserCaptureLock sync.Mutex
 // Internal route: the agent API verifies session ownership and workflow write access.
 func BrowserRecording(c *gin.Context) {
 	var req struct {
-		Workspace string `json:"workspace_path"`
-		Action    string `json:"action"`
+		Workspace        string                    `json:"workspace_path"`
+		Action           string                    `json:"action"`
+		WorkingDirectory string                    `json:"working_directory"`
+		FolderGuard      *models.FolderGuardConfig `json:"folder_guard"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(400, gin.H{"error": "Invalid recording request"})
@@ -67,8 +71,43 @@ func BrowserRecording(c *gin.Context) {
 	marker := filepath.Join(socketDir, session+".capture.json")
 	capture := browserCapture{}
 	if data, readErr := os.ReadFile(marker); readErr == nil {
-		if json.Unmarshal(data, &capture) != nil || capture.Workspace != req.Workspace {
+		if json.Unmarshal(data, &capture) != nil {
+			c.JSON(409, gin.H{"error": "Recording state is unreadable"})
+			return
+		}
+		if capture.Workspace != req.Workspace && (req.Action == "start" || req.Action == "status") && !capture.Recording {
+			capture = browserCapture{}
+		} else if capture.Workspace != req.Workspace {
 			c.JSON(409, gin.H{"error": "Recording belongs to a different workflow"})
+			return
+		}
+	}
+	base := filepath.Join(workspace, "browser-recordings")
+	// UI requests have already passed workflow authorization in the agent API.
+	// Tool requests additionally carry the invoking session's current guard.
+	if guard := req.FolderGuard; guard != nil {
+		allowed := append(append([]string{}, guard.ReadPaths...), guard.WritePaths...)
+		blocked := append([]string{}, guard.BlockedPaths...)
+		if req.Action != "status" {
+			allowed = guard.WritePaths
+			blocked = append(blocked, guard.BlockedWritePaths...)
+		}
+		target := base
+		if capture.Directory != "" && (req.Action != "start" || capture.Recording) {
+			target = filepath.Join(root, capture.Directory)
+		}
+		err := security.AuthorizeBrowserCaptureDirectory(target, root, allowed, blocked)
+		// Workflow steps may only write their run/step output directory. Keep
+		// their evidence there while retaining workflow ownership of the capture.
+		if err != nil && req.Action == "start" && !capture.Recording && req.WorkingDirectory != "" {
+			candidate := filepath.Join(root, req.WorkingDirectory, "browser-recordings")
+			if capturePathWithin(workspace, candidate) {
+				err = security.AuthorizeBrowserCaptureDirectory(candidate, root, allowed, blocked)
+				base = candidate
+			}
+		}
+		if !guard.Enabled || err != nil {
+			c.JSON(403, gin.H{"error": "Capture requires access to its workspace recording directory"})
 			return
 		}
 	}
@@ -88,7 +127,6 @@ func BrowserRecording(c *gin.Context) {
 	defer cancel()
 	run := func(args ...string) ([]byte, error) { return runCaptureCommand(ctx, socketDir, session, args...) }
 	if req.Action == "start" {
-		base := filepath.Join(workspace, "browser-recordings")
 		if err := os.MkdirAll(base, 0700); err != nil {
 			c.JSON(500, gin.H{"error": "Cannot create recording folder"})
 			return

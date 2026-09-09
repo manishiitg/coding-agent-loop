@@ -70,7 +70,7 @@ func BuildBrowserInstructions(cfg BrowserConfig) string {
 		return ""
 	}
 
-	result := ""
+	result := "\n## Bundled Browser Recording\nWhen requested, use agent_browser(command=\"capture\", args=[\"start\"], session=\"main\") in managed headless mode after opening/selecting the page. This Builder command starts video, HAR, console and error capture through the same backend as the Browser view. Use args=[\"status\"] before starting and after uncertain responses. Stop with args=[\"stop\"] and report the returned directory, files and errors. Stop a capture you started even when reproduction fails; never stop someone else's active recording. Do not mix capture with separate record/HAR commands or close/reset the browser. The output path is assigned from current workflow permissions. CDP uses the separate native recording commands.\n"
 
 	// Use Mode as primary decision, fall back to legacy CdpPort/Has* flags.
 	if cfg.Mode == "auto" {
@@ -86,13 +86,13 @@ func BuildBrowserInstructions(cfg BrowserConfig) string {
 	}
 
 	// Add session limits — applies to all browser types
-	closeRule := "- Always **close the browser** when done (agent_browser command=\"close\") to free the session slot."
+	closeRule := "- Close only isolated headless sessions when done. In persistent shared headless mode, never close/reset the browser or clear sign-ins unless explicitly requested."
 	if isCdp {
 		// CDP connects to the user's real browser. Workflow-owned labeled tabs
 		// are retained for review and closed by the backend after one hour.
 		closeRule = "- Never call top-level **close** in CDP mode. Leave workflow-created labeled tabs open at normal completion; the backend closes only those owned tabs after one hour and preserves pre-existing user tabs."
 	} else if cfg.Mode == "auto" {
-		closeRule = "- Follow live status: in CDP mode never call top-level close and let the backend clean up workflow-owned tabs after one hour; in headless mode close the session when done."
+		closeRule = "- Follow live status: in CDP mode never call top-level close and let the backend clean up workflow-owned tabs after one hour; in headless mode close only isolated sessions; preserve the persistent shared browser and its sign-ins."
 	}
 	result += fmt.Sprintf("\n\n## Browser Session Limits\n"+
 		"- **Per agent:** max %d concurrent browser session(s). Do NOT open multiple browsers — use one at a time.\n"+
@@ -198,10 +198,11 @@ func GetHeadlessModeInstructions() string {
 You are controlling a **headless Chromium browser** running inside a container.
 
 **Key behaviors:**
-- The browser is **fresh** — no existing cookies, sessions, or tabs. You must login from scratch if needed.
-- The user **cannot see** the browser — take **screenshots** to show them what's happening
-- You can freely **open and close** tabs/sessions without affecting the user
-- Browser state is **ephemeral** — it resets between sessions
+- Query live status before acting. Headless mode may use isolated sessions or a persistent shared browser.
+- Shared mode preserves tabs and sign-ins across workflows and users. Inspect existing tabs first; do not close/reset the browser, clear storage, or sign out unless explicitly requested. Users coordinate concurrent actions themselves.
+- Isolated sessions retain cookies for their lifetime; close only isolated sessions when finished.
+- Users can watch and interact in the workflow Browser view. Use workspace view tools to show that view when appropriate.
+- Verify login from page content; never assume a session is authenticated.
 
 **Best practices:**
 - Take screenshots at key moments so the user can verify progress
@@ -217,7 +218,7 @@ func GetAgentBrowserQuickStartInstructions() string {
 
 Call agent_browser via HTTP API:
 
-` + "```python\nimport requests, os\nBROWSER = os.environ[\"MCP_API_URL\"] + \"/tools/mcp/workspace_browser/agent_browser\"\nHEADERS = {\"Authorization\": f\"Bearer {os.environ['MCP_API_TOKEN']}\", \"Content-Type\": \"application/json\"}\n\ndef browser(command, args=None, session=\"default\"):\n    resp = requests.post(BROWSER, json={\"command\": command, \"args\": args or [], \"session\": session}, headers=HEADERS, timeout=120)\n    resp.raise_for_status()\n    return resp.json().get(\"result\", \"\")\n\n# Basic workflow\nbrowser(\"open\", [\"https://example.com\"])\nsnap = browser(\"snapshot\", [\"-i\"])   # see interactive elements with refs like @e1\n# Example only: use the ref for the intended control in the actual snapshot.\nbrowser(\"click\", [\"@e1\"])\nsnap = browser(\"snapshot\", [\"-i\"])   # refresh after page changes\n# Verify the expected result and resolve the next target from this fresh snapshot.\nbrowser(\"screenshot\", [\"page.png\"])\n\n# If the browser daemon is genuinely broken, reset and retry:\nbrowser(\"reset\")                      # force-kills daemon, clears session state\nbrowser(\"open\", [\"https://example.com\"])  # fresh start\n```" + `
+` + "```python\nimport requests, os\nBROWSER = os.environ[\"MCP_API_URL\"] + \"/tools/mcp/workspace_browser/agent_browser\"\nHEADERS = {\"Authorization\": f\"Bearer {os.environ['MCP_API_TOKEN']}\", \"Content-Type\": \"application/json\"}\n\ndef browser(command, args=None, session=\"default\"):\n    resp = requests.post(BROWSER, json={\"command\": command, \"args\": args or [], \"session\": session}, headers=HEADERS, timeout=120)\n    resp.raise_for_status()\n    return resp.json().get(\"result\", \"\")\n\n# Basic workflow\nbrowser(\"open\", [\"https://example.com\"])\nsnap = browser(\"snapshot\", [\"-i\"])   # see interactive elements with refs like @e1\n# Example only: use the ref for the intended control in the actual snapshot.\nbrowser(\"click\", [\"@e1\"])\nsnap = browser(\"snapshot\", [\"-i\"])   # refresh after page changes\n# Verify the expected result and resolve the next target from this fresh snapshot.\nbrowser(\"screenshot\", [\"page.png\"])\n\n# Only for a broken ISOLATED session; never reset shared Chrome without an explicit request:\nbrowser(\"reset\")                      # force-kills daemon, clears session state\nbrowser(\"open\", [\"https://example.com\"])  # fresh start\n```" + `
 
 Key commands: skills (version-matched docs), open, snapshot, click, fill, type, press, screenshot, wait, get, scroll, select, hover, upload, download, close, eval, back, forward, reload, reset.
 
@@ -299,17 +300,18 @@ You have the ` + "`agent_browser`" + ` tool controlling a **headless Chromium br
 
 Call agent_browser via HTTP API:
 
-` + "```python\nimport requests, os\nBROWSER = os.environ[\"MCP_API_URL\"] + \"/tools/mcp/workspace_browser/agent_browser\"\nHEADERS = {\"Authorization\": f\"Bearer {os.environ['MCP_API_TOKEN']}\", \"Content-Type\": \"application/json\"}\n\ndef browser(command, args=None, session=\"default\"):\n    resp = requests.post(BROWSER, json={\"command\": command, \"args\": args or [], \"session\": session}, headers=HEADERS, timeout=120)\n    resp.raise_for_status()\n    return resp.json().get(\"result\", \"\")\n\nbrowser(\"open\", [\"https://example.com\"])\nsnap = browser(\"snapshot\", [\"-i\"])   # see interactive elements with refs like @e1\n# Example only: use the ref for the intended control in the actual snapshot.\nbrowser(\"click\", [\"@e1\"])\nsnap = browser(\"snapshot\", [\"-i\"])   # refresh after page changes\n# Verify the expected result and resolve the next target from this fresh snapshot.\n\n# If the headless browser daemon is genuinely broken, reset and retry:\nbrowser(\"reset\")                      # force-kills daemon, clears headless state\nbrowser(\"open\", [\"https://example.com\"])  # fresh start\n```" + `
+` + "```python\nimport requests, os\nBROWSER = os.environ[\"MCP_API_URL\"] + \"/tools/mcp/workspace_browser/agent_browser\"\nHEADERS = {\"Authorization\": f\"Bearer {os.environ['MCP_API_TOKEN']}\", \"Content-Type\": \"application/json\"}\n\ndef browser(command, args=None, session=\"default\"):\n    resp = requests.post(BROWSER, json={\"command\": command, \"args\": args or [], \"session\": session}, headers=HEADERS, timeout=120)\n    resp.raise_for_status()\n    return resp.json().get(\"result\", \"\")\n\nbrowser(\"open\", [\"https://example.com\"])\nsnap = browser(\"snapshot\", [\"-i\"])   # see interactive elements with refs like @e1\n# Example only: use the ref for the intended control in the actual snapshot.\nbrowser(\"click\", [\"@e1\"])\nsnap = browser(\"snapshot\", [\"-i\"])   # refresh after page changes\n# Verify the expected result and resolve the next target from this fresh snapshot.\n\n# Only for a broken ISOLATED session; never reset shared Chrome without an explicit request:\nbrowser(\"reset\")                      # force-kills daemon, clears headless state\nbrowser(\"open\", [\"https://example.com\"])  # fresh start\n```" + `
 
 Key commands: skills (version-matched docs), open, snapshot, click, fill, type, press, screenshot, wait, get, scroll, select, hover, upload, download, close, eval, back, forward, reload, reset.
 
 Before the first browser action, load the core skill with agent_browser(command="skills", args=["get", "core"], session="default"). Use args=["list"] to discover specialized skills and load only those relevant to the task (for example dogfood for exploratory QA).
 
 ### Headless-Specific Behaviors
-- The browser is **fresh** — no existing cookies, sessions, or tabs. You must login from scratch if needed.
-- The user **cannot see** the browser — take **screenshots** to show them what's happening
-- You can freely **open and close** tabs/sessions without affecting the user
-- Browser state is **ephemeral** — it resets between sessions
+- Query live status before acting. Headless mode may use isolated sessions or a persistent shared browser.
+- Shared mode preserves tabs and sign-ins across workflows and users. Inspect existing tabs first; do not close/reset the browser, clear storage, or sign out unless explicitly requested. Users coordinate concurrent actions themselves.
+- Isolated sessions retain cookies for their lifetime; close only isolated sessions when finished.
+- Users can watch and interact in the workflow Browser view. Use workspace view tools to show that view when appropriate.
+- Verify login from page content; never assume a session is authenticated.
 - Handle login flows explicitly (fill credentials, handle 2FA via human_feedback if needed)
 
 For an exact command or flag not covered by the core overview, load agent_browser(command="skills", args=["get", "core", "--full"], session="default").`)

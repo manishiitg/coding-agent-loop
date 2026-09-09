@@ -7,9 +7,11 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/gin-gonic/gin"
+	"github.com/manishiitg/coding-agent-loop/workspace/models"
 	"github.com/spf13/viper"
 )
 
@@ -95,4 +97,48 @@ printf '{"success":true,"data":{"messages":["test console"]}}'
 	if again.Directory != stopped.Directory {
 		t.Fatal("stop must be idempotent")
 	}
+	// A finished capture must not reserve the global browser for its workflow.
+	if code, state := call("status", "Workflow/two"); code != 200 || state.Recording || state.Directory != "" {
+		t.Fatalf("finished foreign capture status: %d %+v", code, state)
+	}
+	if code, _ := call("start", "Workflow/two"); code != 200 {
+		t.Fatalf("finished capture blocked next workflow: %d", code)
+	}
+	call("stop", "Workflow/two")
+	guarded := func(action string, guard *models.FolderGuardConfig) (int, browserCapture) {
+		payload, _ := json.Marshal(map[string]interface{}{"action": action, "workspace_path": "Workflow/one", "working_directory": "Workflow/one/runs/step", "folder_guard": guard})
+		req := httptest.NewRequest("POST", "/capture-test", bytes.NewReader(payload))
+		req.Header.Set("Content-Type", "application/json")
+		response := httptest.NewRecorder()
+		router.ServeHTTP(response, req)
+		var state browserCapture
+		json.Unmarshal(response.Body.Bytes(), &state)
+		return response.Code, state
+	}
+	for _, guard := range []*models.FolderGuardConfig{
+		{Enabled: true, ReadPaths: []string{"Workflow/one"}},
+		{Enabled: true, WritePaths: []string{"Workflow/two"}},
+		{Enabled: false, WritePaths: []string{"Workflow/one"}},
+		{Enabled: true, WritePaths: []string{"Workflow/one"}, BlockedWritePaths: []string{"Workflow/one"}},
+	} {
+		if code, _ := guarded("start", guard); code != 403 {
+			t.Fatalf("guard bypass: %d for %+v", code, guard)
+		}
+	}
+	os.MkdirAll(filepath.Join(root, "Workflow/one/runs/step"), 0700)
+	stepGuard := &models.FolderGuardConfig{Enabled: true, ReadPaths: []string{"Workflow/one"}, WritePaths: []string{"Workflow/one/runs/step"}}
+	code, stepCapture := guarded("start", stepGuard)
+	if code != 200 || !strings.HasPrefix(stepCapture.Directory, "Workflow/one/runs/step/browser-recordings/") {
+		t.Fatalf("step capture: %d %+v", code, stepCapture)
+	}
+	if code, _ := guarded("stop", &models.FolderGuardConfig{Enabled: true, ReadPaths: []string{"Workflow/one"}}); code != 403 {
+		t.Fatalf("read-only stop: %d", code)
+	}
+	if code, state := guarded("status", &models.FolderGuardConfig{Enabled: true, ReadPaths: []string{"Workflow/one"}}); code != 200 || !state.Recording {
+		t.Fatalf("read-only status: %d %+v", code, state)
+	}
+	if code, state := guarded("stop", stepGuard); code != 200 || state.Recording {
+		t.Fatalf("step stop: %d %+v", code, state)
+	}
+
 }

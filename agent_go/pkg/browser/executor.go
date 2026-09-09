@@ -485,6 +485,9 @@ func (e *Executor) HandleAgentBrowser(ctx context.Context, args map[string]inter
 		return "", cdpResolveErr
 	}
 	isCdpMode := cdpPort > 0
+	if command == "capture" && isCdpMode {
+		return "", fmt.Errorf("CAPTURE_UNSUPPORTED: bundled capture requires the managed headless browser; CDP supports the separate record, network HAR, console and errors commands")
+	}
 	if !isCdpMode {
 		cmdArgs = append(cmdArgs, HeadlessLaunchArgs()...)
 	}
@@ -762,6 +765,9 @@ func (e *Executor) HandleAgentBrowser(ctx context.Context, args map[string]inter
 		Timeout:          timeout,
 		FolderGuard:      folderGuard,
 		WorkingDirectory: workingDir,
+	}
+	if command == "capture" {
+		return e.handleCapture(ctx, session, argsWithoutCDP, sessionCfg, folderGuard)
 	}
 
 	// A persistent agent-browser daemon can outlive the sandbox that launched

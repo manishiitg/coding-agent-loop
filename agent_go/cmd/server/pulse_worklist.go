@@ -283,6 +283,7 @@ type PulseReviewFocus struct {
 	RouteReviewCount    int      `json:"route_review_count,omitempty"`
 	DeferredFocuses     []string `json:"deferred_focuses,omitempty"`
 	IssueIDs            []string `json:"issue_ids,omitempty"`
+	Evidence            []string `json:"evidence,omitempty"`
 }
 
 type PulseModuleAudit struct {
@@ -2106,7 +2107,17 @@ func (api *StreamingAPI) handleGetPulseReviews(w http.ResponseWriter, r *http.Re
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	_ = json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "reviews": receipts, "total": len(receipts)})
+	coverage, audits, err := loadPulseReviewActivity(r.Context(), workspacePath, module)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	reports, err := listPulseReviewReports(workspacePath, module)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	_ = json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "reviews": receipts, "total": len(receipts), "coverage": coverage, "audits": audits, "reports": reports})
 }
 
 func (api *StreamingAPI) handleGetPulseAgentMetrics(w http.ResponseWriter, r *http.Request) {

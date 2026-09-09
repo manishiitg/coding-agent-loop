@@ -1,10 +1,7 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   CheckCircle2,
-  GitCompare,
-  Lightbulb,
   Loader2,
-  Wrench,
   X,
 } from 'lucide-react'
 import { agentApi } from '../../services/api'
@@ -16,9 +13,13 @@ import type {
   PulseModuleState,
   PulseReviewRecord,
   PulseReviewFocus,
+  PulseReviewAudit,
+  PulseReviewReport,
 } from '../../services/api-types'
 import { ReportHumanInputPanel } from './ReportHumanInputPanel'
 import { WORKFLOW_LOG_REFRESH_EVENT } from './workflowEvents'
+import { mergePulseReviewCoverage } from './pulseReviewCoverage'
+import { PulseReviewOverview } from './PulseReviewOverview'
 import { SoulViewer } from './SoulViewer'
 import { PulseFindingCard } from './PulseFindingCard'
 import { pulseFindingPresentation, type PulseFindingQueue } from './pulseFindingPresentation'
@@ -47,17 +48,6 @@ function formatDate(value?: string): string {
         hour: '2-digit',
         minute: '2-digit',
       })
-}
-
-function formatCheckBoundary(value?: string): string {
-  if (!value) return ''
-  if (/^\d{4}-\d{2}-\d{2}$/.test(value)) {
-    const date = new Date(`${value}T00:00:00`)
-    return Number.isNaN(date.getTime())
-      ? value
-      : date.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' })
-  }
-  return formatDate(value)
 }
 
 function readable(value?: string): string {
@@ -129,8 +119,12 @@ export function PulseWorkspace({
   reviewFocusSelections: PulseReviewFocus[]
   statusError: string | null
 }) {
+  const loadVersion = useRef(0)
   const [findings, setFindings] = useState<PulseFindingLifecycle[]>([])
   const [reviews, setReviews] = useState<PulseReviewRecord[]>([])
+  const [coverage, setCoverage] = useState<PulseReviewFocus[]>([])
+  const [audits, setAudits] = useState<PulseReviewAudit[]>([])
+  const [reports, setReports] = useState<PulseReviewReport[]>([])
   const [impact, setImpact] = useState<PulseImpactLedger>({ interventions: [], observations: [], assessments: [] })
   const [contextRecords, setContextRecords] = useState<PulseContextRecord[]>([])
   const [focus, setFocus] = useState<PulseFocus>('all')
@@ -142,6 +136,7 @@ export function PulseWorkspace({
 
   const load = useCallback(async (showLoading = true) => {
     if (!workspacePath) return
+    const version = ++loadVersion.current
     if (showLoading) setLoading(true)
     if (showLoading) setError(null)
     const [findingResult, reviewResult, impactResult, contextResult] = await Promise.allSettled([
@@ -150,6 +145,7 @@ export function PulseWorkspace({
       agentApi.getPulseImpact(workspacePath),
       agentApi.getPulseContext(workspacePath),
     ])
+    if (version !== loadVersion.current) return
     const errors: string[] = []
     if (findingResult.status === 'fulfilled' && findingResult.value.success) {
       setFindings(findingResult.value.findings || [])
@@ -163,8 +159,14 @@ export function PulseWorkspace({
     }
     if (reviewResult.status === 'fulfilled' && reviewResult.value.success) {
       setReviews(reviewResult.value.reviews || [])
+      setCoverage(reviewResult.value.coverage || [])
+      setAudits(reviewResult.value.audits || [])
+      setReports(reviewResult.value.reports || [])
     } else {
       setReviews([])
+      setCoverage([])
+      setAudits([])
+      setReports([])
       errors.push(
         reviewResult.status === 'rejected'
           ? (reviewResult.reason instanceof Error ? reviewResult.reason.message : 'Could not load reviews.')
@@ -200,6 +202,9 @@ export function PulseWorkspace({
     setModuleFilter(null)
     setExpandedFinding(null)
     setShowCompleteBacklog(false)
+    setCoverage([])
+    setAudits([])
+    setReports([])
     setFindings([])
     setReviews([])
     setImpact({ interventions: [], observations: [], assessments: [] })
@@ -293,197 +298,9 @@ export function PulseWorkspace({
 
       <ReportHumanInputPanel workspacePath={workspacePath} contentMode="all" providedImpact={impact} />
 
-      <section className="overflow-hidden rounded-xl border bg-background">
-        <div className="border-b px-4 py-3">
-          <h3 className="text-sm font-semibold text-foreground">Work areas</h3>
-          <p className="mt-0.5 text-[11px] text-muted-foreground">
-            What Pulse found, who owns the next move, and the latest judgment
-          </p>
-        </div>
-        <div className="grid gap-px bg-border lg:grid-cols-3">
-          {[
-            {
-              id: 'technical_review',
-              title: 'Technical review',
-              icon: Wrench,
-              description: 'Execution health, plan integrity, stores, reports, evaluation, and model/cost fitness',
-              tone: 'text-sky-600 dark:text-sky-300',
-            },
-            {
-              id: 'strategic_review',
-              title: 'Strategic review',
-              icon: Lightbulb,
-              description: 'Hidden strategic mechanisms and materially different opportunities for the goal',
-              tone: 'text-amber-600 dark:text-amber-300',
-            },
-            {
-              id: 'plan_drift_review',
-              title: 'Plan drift review',
-              icon: GitCompare,
-              description: 'Steps flagged by a plan edit, checked for DB, report, learnings, KB, and validation_schema drift',
-              tone: 'text-violet-600 dark:text-violet-300',
-            },
-          ].map((area) => {
-            const areaModules = moduleSummaries.filter((module) => module.id === area.id)
-            const decisions = areaModules.reduce((sum, module) => sum + module.awaitingUser, 0)
-            const proposals = areaModules.reduce((sum, module) => sum + module.proposals, 0)
-            const strategic = area.id === 'strategic_review'
-            const actionable = strategic
-              ? decisions + proposals
-              : areaModules.reduce((sum, module) => sum + module.active + module.fixing, 0)
-            const queued = areaModules.reduce((sum, module) => sum + module.queuedForEngineering, 0)
-            const waiting = areaModules.reduce((sum, module) => (
-              sum + module.awaitingVerification + module.awaitingRun
-            ), 0)
-            const blocked = areaModules.reduce((sum, module) => sum + module.blocked, 0)
-            const external = areaModules.reduce((sum, module) => sum + module.externalAction, 0)
-            const latest = [...areaModules]
-              .sort((a, b) => (b.latestReview?.recorded_at || '').localeCompare(a.latestReview?.recorded_at || ''))[0]
-              ?.latestReview
-            const reviewedFocuses = reviewFocusSelections
-              .filter((item) => normalizePulseWorkspaceModule(item.module) === area.id && item.last_reviewed_at)
-              .sort((a, b) => (b.last_reviewed_at || '').localeCompare(a.last_reviewed_at || ''))
-            const latestFocus = reviewedFocuses[0]
-            const latestFocuses = latestFocus?.last_pulse_run_id
-              ? reviewedFocuses.filter((item) => item.last_pulse_run_id === latestFocus.last_pulse_run_id)
-              : latestFocus ? [latestFocus] : []
-            const latestFocusKeys = new Set(latestFocuses.map((item) => item.focus_key))
-            const upcomingFocuses = reviewFocuses
-              .filter((item) => (
-                normalizePulseWorkspaceModule(item.module) === area.id
-                && !latestFocusKeys.has(item.focus_key)
-              ))
-              .slice(0, 3)
-            const deferredFocuses = latestFocuses.flatMap((item) => item.deferred_focuses || [])
-            const nextFocusKeys = deferredFocuses.length
-              ? [...new Set(deferredFocuses)].slice(0, 3)
-              : upcomingFocuses.map((item) => item.focus_key)
-            const moduleID = area.id
-            const moduleState = moduleStates.find((state) => (
-              normalizePulseWorkspaceModule(state.module) === area.id
-            ))
-            const gateDecision = (moduleState?.last_gate_decision || '').trim().toLowerCase()
-            const currentRunFocuses = moduleState?.last_pulse_run_id
-              ? reviewedFocuses.filter((item) => item.last_pulse_run_id === moduleState.last_pulse_run_id)
-              : []
-            return (
-              <button
-                key={area.id}
-                type="button"
-                aria-pressed={moduleFilter === moduleID}
-                onClick={() => {
-                  setModuleFilter(moduleID)
-                  setFocus('all')
-                  setShowCompleteBacklog(false)
-                }}
-                className="min-w-0 bg-background p-4 text-left transition-colors hover:bg-muted/35 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary/40"
-              >
-                <div className="flex items-start justify-between gap-3">
-                  <div className="flex min-w-0 items-start gap-2.5">
-                    <area.icon className={`mt-0.5 h-4 w-4 shrink-0 ${area.tone}`} />
-                    <div className="min-w-0">
-                      <h4 className="text-xs font-semibold text-foreground">{area.title}</h4>
-                      <p className="mt-1 line-clamp-2 text-[10px] leading-4 text-muted-foreground">{area.description}</p>
-                    </div>
-                  </div>
-                  <div className="flex shrink-0 flex-col items-end gap-1">
-                    {gateDecision && (
-                      <span className={`rounded-full border px-2 py-0.5 text-[9px] font-semibold ${gateDecision === 'due'
-                        ? 'border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-300'
-                        : 'border-border bg-muted text-muted-foreground'
-                      }`}>
-                        {gateDecision === 'due' ? 'Due this run' : readable(gateDecision)}
-                      </span>
-                    )}
-                    {actionable > 0 && (
-                      <span className="rounded-full border border-red-500/25 bg-red-500/5 px-2 py-0.5 text-[9px] font-semibold text-red-700 dark:text-red-300">
-                        {actionable} {strategic ? 'recommendations' : 'to fix'}
-                      </span>
-                    )}
-                  </div>
-                </div>
-                <div className="mt-3 flex flex-wrap gap-x-3 gap-y-1 text-[10px] text-muted-foreground">
-                  {strategic ? (
-                    <>
-                      <span><span className="font-semibold text-foreground">{proposals}</span> ideas</span>
-                      <span><span className="font-semibold text-foreground">{decisions}</span> decisions</span>
-                    </>
-                  ) : (
-                    <>
-                      <span><span className="font-semibold text-foreground">{actionable}</span> Pulse to fix</span>
-                      {decisions > 0 && <span><span className="font-semibold text-foreground">{decisions}</span> decisions</span>}
-                      {blocked > 0 && <span><span className="font-semibold text-foreground">{blocked}</span> blocked</span>}
-                      {external > 0 && <span><span className="font-semibold text-foreground">{external}</span> platform</span>}
-                      {proposals > 0 && <span><span className="font-semibold text-foreground">{proposals}</span> ideas</span>}
-                    </>
-                  )}
-                  <span><span className="font-semibold text-foreground">{waiting}</span> waiting for evidence</span>
-                  {queued > 0 && <span><span className="font-semibold text-foreground">{queued}</span> queued for Pulse</span>}
-                </div>
-                {moduleState && (gateDecision || moduleState.last_reason) && (
-                  <div className="mt-3 rounded-md border bg-muted/25 px-2.5 py-2 text-[10px] leading-4 text-muted-foreground">
-                    <div>
-                      <span className="font-medium text-foreground">Gate decision:</span>{' '}
-                      {gateDecision ? readable(gateDecision) : 'Recorded'}
-                      {moduleState.next_check_at && (
-                        <span> · Next check {formatCheckBoundary(moduleState.next_check_at)}</span>
-                      )}
-                      {!moduleState.next_check_at && moduleState.next_check_after_run_id && (
-                        <span> · Recheck after the named workflow run</span>
-                      )}
-                    </div>
-                    {moduleState.last_reason && (
-                      <p className="mt-0.5 line-clamp-3">{moduleState.last_reason}</p>
-                    )}
-                    {area.id !== 'plan_drift_review' && (
-                      <div className="mt-1">
-                        <span className="font-medium text-foreground">
-                          {gateDecision === 'skipped' ? 'Subcategories:' : 'Selected this run:'}
-                        </span>{' '}
-                        {gateDecision === 'skipped'
-                          ? 'None — the review module was skipped.'
-                          : currentRunFocuses.length > 0
-                            ? currentRunFocuses.map((item) => readable(item.focus_key)).join(', ')
-                            : 'Focus selection pending.'}
-                      </div>
-                    )}
-                  </div>
-                )}
-                <div className="mt-3 border-t pt-2 text-[10px] leading-4 text-muted-foreground">
-                  <span className="font-medium text-foreground">Latest:</span>{' '}
-                  <span className="line-clamp-2">
-                    {latest ? latest.verdict || 'Review recorded' : 'No stored review yet'}
-                  </span>
-                  {latestFocuses.length > 0 ? (
-                    <div className="mt-1.5 text-[10px] text-muted-foreground">
-                      <span className="font-medium text-foreground">Last {latestFocuses.length === 1 ? 'focus' : 'focuses'}:</span>{' '}
-                      {latestFocuses.map((item) => (
-                        `${readable(item.focus_key)}${item.route_scope ? ` · ${readable(item.route_scope)}` : ''}`
-                      )).join(', ')} · {formatDate(latestFocuses[0].last_reviewed_at)}
-                      {latestFocuses.length === 1 && (latestFocuses[0].review_count || 0) > 0 && (
-                        <span> · reviewed {latestFocuses[0].review_count} {latestFocuses[0].review_count === 1 ? 'time' : 'times'}</span>
-                      )}
-                      {latestFocuses[0].last_selection_reason && (
-                        <span className="mt-0.5 block line-clamp-2">{latestFocuses[0].last_selection_reason}</span>
-                      )}
-                      {nextFocusKeys.length > 0 && (
-                        <span className="mt-0.5 block line-clamp-2">
-                          Next focus candidates: {nextFocusKeys.map(readable).join(', ')}
-                        </span>
-                      )}
-                    </div>
-                  ) : upcomingFocuses.length > 0 ? (
-                    <div className="mt-1.5 text-[10px] text-muted-foreground">
-                      <span className="font-medium text-foreground">Next focus candidates:</span>{' '}
-                      {upcomingFocuses.map((item) => readable(item.focus_key)).join(', ')}
-                    </div>
-                  ) : null}
-                </div>
-              </button>
-            )
-          })}
-        </div>
-      </section>
+      <PulseReviewOverview moduleStates={moduleStates} coverage={mergePulseReviewCoverage(coverage, reviewFocuses, reviewFocusSelections)}
+        audits={audits} reports={reports} findings={findings} moduleFilter={moduleFilter}
+        onSelectModule={module => { setModuleFilter(module); setFocus('all'); setShowCompleteBacklog(false) }} />
 
       {(error || statusError) && (
         <div className="rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-300">

@@ -484,6 +484,7 @@ export interface PulseReviewFocus {
   route_review_count?: number
   deferred_focuses?: string[]
   issue_ids?: string[]
+  evidence?: string[]
 }
 
 export interface PulseLoopClosureFinding {
@@ -806,7 +807,31 @@ export interface PulseReviewsResponse {
   success: boolean
   total?: number
   reviews: PulseReviewRecord[]
+  coverage?: PulseReviewFocus[]
+  audits?: PulseReviewAudit[]
+  reports?: PulseReviewReport[]
   error?: string
+}
+
+export interface PulseReviewAudit {
+  workspace_path: string
+  module: string
+  pulse_run_id: string
+  result: string
+  reason: string
+  recorded_at: string
+  evidence?: string[]
+  changed_files?: string[]
+  verification?: string[]
+  before_refs?: string[]
+  after_refs?: string[]
+}
+
+export interface PulseReviewReport {
+  module: string
+  pulse_run_id: string
+  path: string
+  updated_at: string
 }
 
 export interface PulseAgentMetricsResponse {

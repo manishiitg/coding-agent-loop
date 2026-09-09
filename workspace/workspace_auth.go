@@ -37,3 +37,15 @@ func requireWorkspaceAPIToken() gin.HandlerFunc {
 		c.Next()
 	}
 }
+
+// New managed-file operations never inherit legacy unauthenticated mode.
+func requireConfiguredWorkspaceAPIToken() gin.HandlerFunc {
+	authenticate := requireWorkspaceAPIToken()
+	return func(c *gin.Context) {
+		if strings.TrimSpace(os.Getenv(workspaceAPITokenEnv)) == "" {
+			c.AbortWithStatusJSON(http.StatusServiceUnavailable, gin.H{"error": "Configure WORKSPACE_API_TOKEN on both AgentWorks and the workspace service to enable external file operations"})
+			return
+		}
+		authenticate(c)
+	}
+}

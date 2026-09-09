@@ -2564,7 +2564,35 @@ export interface DesktopConnectResponse {
   expires_at: string
 }
 
+export interface PersonalAccessToken {
+  id: string
+  name: string
+  scopes: string[]
+  workflow_ids: string[] | null
+  all_workflows: boolean
+  created_at: string
+  expires_at: string
+  last_used_at: string | null
+  revoked_at: string | null
+}
+export interface CreateAccessTokenInput {
+  name: string
+  scopes: string[]
+  workflow_ids: string[]
+  all_workflows: boolean
+  expires_in_days: number
+}
+
 export const authApi = {
+  listAccessTokens: async (): Promise<{ tokens: PersonalAccessToken[] }> => {
+    return (await api.get('/api/auth/access-tokens')).data
+  },
+  createAccessToken: async (input: CreateAccessTokenInput): Promise<{ token: string; access_token: PersonalAccessToken }> => {
+    return (await api.post('/api/auth/access-tokens', input)).data
+  },
+  revokeAccessToken: async (id: string): Promise<void> => {
+    await api.delete(`/api/auth/access-tokens/${encodeURIComponent(id)}`)
+  },
   // Get authentication mode and available providers
   getAuthMode: async (): Promise<AuthModeResponse> => {
     const response = await api.get('/api/auth/mode')

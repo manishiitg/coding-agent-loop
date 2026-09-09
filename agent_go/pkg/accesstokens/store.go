@@ -1,0 +1,247 @@
+// Package accesstokens stores revocable, hashed personal access tokens.
+package accesstokens
+
+import (
+	"context"
+	"crypto/rand"
+	"crypto/sha256"
+	"database/sql"
+	"encoding/hex"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
+	"slices"
+	"strings"
+	"time"
+
+	"github.com/manishiitg/coding-agent-loop/workspace/sqliteopen"
+	_ "modernc.org/sqlite"
+)
+
+const Prefix = "aw_pat_"
+
+var ErrInvalid = errors.New("access token is invalid, expired, or revoked")
+var Scopes = []string{"workflows:read", "files:read", "files:write", "plan:write", "builder:chat"}
+
+type Token struct {
+	ID           string     `json:"id"`
+	Name         string     `json:"name"`
+	UserID       string     `json:"-"`
+	Username     string     `json:"-"`
+	Email        string     `json:"-"`
+	Provider     string     `json:"-"`
+	Scopes       []string   `json:"scopes"`
+	WorkflowIDs  []string   `json:"workflow_ids"`
+	AllWorkflows bool       `json:"all_workflows"`
+	CreatedAt    time.Time  `json:"created_at"`
+	ExpiresAt    time.Time  `json:"expires_at"`
+	LastUsedAt   *time.Time `json:"last_used_at"`
+	RevokedAt    *time.Time `json:"revoked_at"`
+}
+
+func (t Token) Allows(scope string) bool { return slices.Contains(t.Scopes, scope) }
+func (t Token) AllowsWorkflow(id string) bool {
+	return t.AllWorkflows || slices.Contains(t.WorkflowIDs, id)
+}
+func (t Token) FullBuilderAccess() bool {
+	if !t.AllWorkflows {
+		return false
+	}
+	for _, s := range Scopes {
+		if !t.Allows(s) {
+			return false
+		}
+	}
+	return true
+}
+func Validate(t Token, now time.Time) error {
+	if strings.TrimSpace(t.Name) == "" || len(t.Name) > 80 || t.UserID == "" {
+		return errors.New("a token name (1–80 characters) and user are required")
+	}
+	if !t.ExpiresAt.After(now) || t.ExpiresAt.After(now.Add(90*24*time.Hour)) {
+		return errors.New("expiry must be within 90 days")
+	}
+	if len(t.Scopes) == 0 || len(t.Scopes) > len(Scopes) {
+		return errors.New("select at least one permission")
+	}
+	seen := map[string]bool{}
+	for _, s := range t.Scopes {
+		if !slices.Contains(Scopes, s) || seen[s] {
+			return errors.New("invalid or duplicate permission")
+		}
+		seen[s] = true
+	}
+	if t.AllWorkflows && len(t.WorkflowIDs) > 0 || !t.AllWorkflows && len(t.WorkflowIDs) == 0 || len(t.WorkflowIDs) > 200 {
+		return errors.New("choose all accessible workflows or specific workflow IDs")
+	}
+	if t.Allows("builder:chat") && !t.FullBuilderAccess() {
+		return errors.New("Builder chat requires all permissions and all accessible workflows because its runtime can execute tools and shell commands")
+	}
+	return nil
+}
+
+type Store struct{ db *sql.DB }
+
+func Open(path string) (*Store, error) {
+	if !filepath.IsAbs(path) {
+		return nil, errors.New("access token database path must be absolute")
+	}
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		return nil, err
+	}
+	// The configured state root is trusted server configuration. Reject links
+	// for the private auth directory and database while allowing OS aliases
+	// such as macOS /var -> /private/var in ancestors.
+	for _, p := range []string{dir, path} {
+		info, err := os.Lstat(p)
+		if err != nil && !os.IsNotExist(err) {
+			return nil, err
+		}
+		if err == nil && info.Mode()&os.ModeSymlink != 0 {
+			return nil, errors.New("access token storage must not use symbolic links")
+		}
+	}
+	if err := os.Chmod(dir, 0700); err != nil {
+		return nil, err
+	}
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0600)
+	if err != nil {
+		return nil, err
+	}
+	f.Close()
+	if err = os.Chmod(path, 0600); err != nil {
+		return nil, err
+	}
+	db, err := sql.Open("sqlite", sqliteopen.DSN(path))
+	if err != nil {
+		return nil, err
+	}
+	db.SetMaxOpenConns(1)
+	_, err = db.Exec(`CREATE TABLE IF NOT EXISTS access_tokens (
+ id TEXT PRIMARY KEY, hash TEXT NOT NULL UNIQUE, user_id TEXT NOT NULL,
+ username TEXT NOT NULL, email TEXT NOT NULL, provider TEXT NOT NULL,
+ name TEXT NOT NULL, scopes TEXT NOT NULL, workflow_ids TEXT NOT NULL, all_workflows INTEGER NOT NULL,
+ created_at INTEGER NOT NULL, expires_at INTEGER NOT NULL, last_used_at INTEGER, revoked_at INTEGER)`)
+	if err != nil {
+		db.Close()
+		return nil, err
+	}
+	return &Store{db}, nil
+}
+func (s *Store) Close() error { return s.db.Close() }
+func hash(raw string) string  { b := sha256.Sum256([]byte(raw)); return hex.EncodeToString(b[:]) }
+func (s *Store) Issue(ctx context.Context, t Token, now time.Time) (Token, string, error) {
+	if err := Validate(t, now); err != nil {
+		return Token{}, "", err
+	}
+	entropy := make([]byte, 32)
+	if _, err := rand.Read(entropy); err != nil {
+		return Token{}, "", err
+	}
+	raw := Prefix + hex.EncodeToString(entropy)
+	t.ID = hex.EncodeToString(entropy[:8])
+	t.CreatedAt = now.UTC()
+	t.Name = strings.TrimSpace(t.Name)
+	scopes, _ := json.Marshal(t.Scopes)
+	ids, _ := json.Marshal(t.WorkflowIDs)
+	// Cap issuance in the same statement, including concurrent requests.
+	result, err := s.db.ExecContext(ctx, `INSERT INTO access_tokens (id,hash,user_id,username,email,provider,name,scopes,workflow_ids,all_workflows,created_at,expires_at)
+ SELECT ?,?,?,?,?,?,?,?,?,?,?,? WHERE (SELECT COUNT(*) FROM access_tokens WHERE user_id=? AND revoked_at IS NULL AND expires_at>?)<100`, t.ID, hash(raw), t.UserID, t.Username, t.Email, t.Provider, t.Name, string(scopes), string(ids), t.AllWorkflows, now.Unix(), t.ExpiresAt.Unix(), t.UserID, now.Unix())
+	if err != nil {
+		return Token{}, "", err
+	}
+	n, _ := result.RowsAffected()
+	if n != 1 {
+		return Token{}, "", errors.New("maximum 100 active tokens; revoke an existing token first")
+	}
+	return t, raw, nil
+}
+
+const columns = `id,user_id,username,email,provider,name,scopes,workflow_ids,all_workflows,created_at,expires_at,last_used_at,revoked_at`
+
+func scan(row interface{ Scan(...any) error }) (Token, error) {
+	var t Token
+	var scopes, ids string
+	var created, expires int64
+	var used, revoked sql.NullInt64
+	err := row.Scan(&t.ID, &t.UserID, &t.Username, &t.Email, &t.Provider, &t.Name, &scopes, &ids, &t.AllWorkflows, &created, &expires, &used, &revoked)
+	if err != nil {
+		return t, err
+	}
+	if err = json.Unmarshal([]byte(scopes), &t.Scopes); err != nil {
+		return t, err
+	}
+	if err = json.Unmarshal([]byte(ids), &t.WorkflowIDs); err != nil {
+		return t, err
+	}
+	t.CreatedAt = time.Unix(created, 0).UTC()
+	t.ExpiresAt = time.Unix(expires, 0).UTC()
+	if used.Valid {
+		v := time.Unix(used.Int64, 0).UTC()
+		t.LastUsedAt = &v
+	}
+	if revoked.Valid {
+		v := time.Unix(revoked.Int64, 0).UTC()
+		t.RevokedAt = &v
+	}
+	return t, nil
+}
+func (s *Store) Authenticate(ctx context.Context, raw string, now time.Time) (Token, error) {
+	if !strings.HasPrefix(raw, Prefix) || len(raw) != len(Prefix)+64 {
+		return Token{}, ErrInvalid
+	}
+	t, err := scan(s.db.QueryRowContext(ctx, `SELECT `+columns+` FROM access_tokens WHERE hash=? AND revoked_at IS NULL AND expires_at>?`, hash(raw), now.Unix()))
+	if errors.Is(err, sql.ErrNoRows) {
+		return t, ErrInvalid
+	}
+	if err != nil {
+		return t, err
+	}
+	// A conditional update cannot resurrect a token revoked between read and touch.
+	result, err := s.db.ExecContext(ctx, `UPDATE access_tokens SET last_used_at=? WHERE id=? AND revoked_at IS NULL AND expires_at>?`, now.Unix(), t.ID, now.Unix())
+	if err != nil {
+		return t, err
+	}
+	n, _ := result.RowsAffected()
+	if n != 1 {
+		return t, ErrInvalid
+	}
+	return t, nil
+}
+func (s *Store) Active(ctx context.Context, id string, now time.Time) (Token, error) {
+	t, err := scan(s.db.QueryRowContext(ctx, `SELECT `+columns+` FROM access_tokens WHERE id=? AND revoked_at IS NULL AND expires_at>?`, id, now.Unix()))
+	if errors.Is(err, sql.ErrNoRows) {
+		return t, ErrInvalid
+	}
+	return t, err
+}
+func (s *Store) List(ctx context.Context, userID string) ([]Token, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT `+columns+` FROM access_tokens WHERE user_id=? ORDER BY (revoked_at IS NULL AND expires_at>?) DESC, created_at DESC LIMIT 500`, userID, time.Now().Unix())
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []Token{}
+	for rows.Next() {
+		t, err := scan(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, t)
+	}
+	return out, rows.Err()
+}
+func (s *Store) Revoke(ctx context.Context, id, userID string, now time.Time) error {
+	r, err := s.db.ExecContext(ctx, `UPDATE access_tokens SET revoked_at=COALESCE(revoked_at,?) WHERE id=? AND user_id=?`, now.Unix(), id, userID)
+	if err != nil {
+		return err
+	}
+	n, _ := r.RowsAffected()
+	if n == 0 {
+		return fmt.Errorf("%w", ErrInvalid)
+	}
+	return nil
+}

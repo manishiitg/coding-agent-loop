@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
+	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/accesstokens"
 )
 
 // ContextKey type for context values
@@ -25,10 +26,11 @@ const deprecatedDefaultAuthSecret = "dev-secret-change-in-production"
 
 // UserClaims represents the JWT claims for authenticated users
 type UserClaims struct {
-	UserID   string `json:"user_id"`
-	Username string `json:"username"`
-	Email    string `json:"email,omitempty"`
-	Provider string `json:"provider,omitempty"` // Auth provider: "simple", "cognito", "supabase"
+	AccessToken *accesstokens.Token `json:"-"` // Server-validated PAT restrictions; never read from JWT claims.
+	UserID      string              `json:"user_id"`
+	Username    string              `json:"username"`
+	Email       string              `json:"email,omitempty"`
+	Provider    string              `json:"provider,omitempty"` // Auth provider: "simple", "cognito", "supabase"
 	// Scope, when set, narrows a token to one purpose: the middleware admits it
 	// only to the paths scopeAllowsPath names for that scope. A normal session
 	// token has no scope. Today's only scope is "report-preview" (a headless
@@ -187,6 +189,14 @@ func AuthMiddleware(next http.Handler) http.Handler {
 		}
 
 		tokenString := strings.TrimPrefix(authHeader, "Bearer ")
+		if strings.HasPrefix(tokenString, accesstokens.Prefix) {
+			claims, ok := authenticateAccessToken(w, r, tokenString)
+			if !ok {
+				return
+			}
+			next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), UserContextKey, claims)))
+			return
+		}
 		claims := &UserClaims{}
 
 		token, err := jwt.ParseWithClaims(tokenString, claims, func(t *jwt.Token) (interface{}, error) {

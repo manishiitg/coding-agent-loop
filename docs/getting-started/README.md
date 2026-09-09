@@ -38,3 +38,7 @@ Follow [Build Your First Workflow](first-workflow.md) to create an automation, d
 - [Configure browser sessions](../core/browser.md)
 - [Manage global and workflow secrets](../core/secrets.md)
 - [Connect Slack, WhatsApp, and other channels](../core/bot_connector_system.md)
+
+## 6. Use AgentWorks from Another Agent or Terminal
+
+- [Connect the hosted CLI and MCP server](agentworks-cli-mcp.md)

@@ -335,12 +335,13 @@ type ActiveSessionInfo struct {
 
 // StreamingAPI represents the streaming API server
 type StreamingAPI struct {
-	uiControlOnce    sync.Once
-	uiControl        *uiControlBroker
-	config           ServerConfig
-	cliSecurityStore *clisecurity.Store
-	agentProfiles    *agentprofiles.Registry
-	productSchedules *ProductScheduleService
+	accessTokenSessions accessTokenSessionRegistry
+	uiControlOnce       sync.Once
+	uiControl           *uiControlBroker
+	config              ServerConfig
+	cliSecurityStore    *clisecurity.Store
+	agentProfiles       *agentprofiles.Registry
+	productSchedules    *ProductScheduleService
 
 	// internalQueryHandler is a narrow test seam for server-owned follow-up
 	// turns. Production dispatch falls back to handleQuery.
@@ -2002,6 +2003,8 @@ func runServer(cmd *cobra.Command, args []string) {
 	// Account management (docs/design/user_accounts_and_workflow_sharing.md):
 	// the user directory in config/users.json; admins only.
 	apiRouter.HandleFunc("/auth/password", api.handleChangeOwnPassword).Methods("POST", "OPTIONS")
+	apiRouter.HandleFunc("/auth/access-tokens", api.handleAccessTokens).Methods("GET", "POST")
+	apiRouter.HandleFunc("/auth/access-tokens/{id}", api.handleAccessTokens).Methods("DELETE")
 	// Per-workflow ownership and sharing (workflow_access.go).
 	apiRouter.HandleFunc("/workflow/access", api.handleGetWorkflowAccess).Methods("GET", "OPTIONS")
 	apiRouter.HandleFunc("/workflow/access", api.handleSetWorkflowAccess).Methods("PUT", "POST")
@@ -2534,6 +2537,8 @@ func runServer(cmd *cobra.Command, args []string) {
 	apiRouter.HandleFunc("/workflow/framework-health", api.handleGetFrameworkHealth).Methods("GET", "OPTIONS")
 
 	// Plan and Step Config API routes
+	apiRouter.HandleFunc("/external/v1/tools", api.handleExternalTools).Methods("GET")
+	apiRouter.HandleFunc("/external/v1/call", api.handleExternalCall).Methods("POST")
 	apiRouter.HandleFunc("/workflow/plan/update-step", requireWorkflowWriteAccess(api.handleUpdatePlanStep)).Methods("POST", "OPTIONS")
 	apiRouter.HandleFunc("/workflow/plan/update-step-config", requireWorkflowWriteAccess(api.handleUpdateStepConfig)).Methods("POST", "OPTIONS")
 	apiRouter.HandleFunc("/workflow/plan/batch-update-steps", requireWorkflowWriteAccess(api.handleBatchUpdateSteps)).Methods("POST", "OPTIONS")

@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react'
 import { Terminal, Plus, Pencil, Trash2 } from 'lucide-react'
 import type { ModeCategory } from '../stores/useModeStore'
-import { getCommands, type CommandDefinition, type WorkshopMode } from '../commands'
+import { findCommand, getCommands, type CommandDefinition, type WorkshopMode } from '../commands'
 import { loadAndRegisterUserCommands } from '../commands'
 
 interface CommandSelectionDialogProps {
@@ -55,6 +55,13 @@ export const CommandSelectionDialog: React.FC<CommandSelectionDialogProps> = ({
         onClose()
       } else if (event.key === 'Enter') {
         event.preventDefault()
+        // Exact retained shortcuts remain directly executable even though the
+        // search results point to the consolidated command's focus picker.
+        const shortcut = findCommand(searchQuery.trim(), modeCategory, workshopMode, canWriteWorkflow)
+        if (selectedIndex === 0 && shortcut?.menuHidden) {
+          onSelectCommand(shortcut.command)
+          return
+        }
         if (filteredCommands.length > 0 && selectedIndex >= 0 && selectedIndex < filteredCommands.length) {
           onSelectCommand(filteredCommands[selectedIndex].command)
         }
@@ -69,7 +76,7 @@ export const CommandSelectionDialog: React.FC<CommandSelectionDialogProps> = ({
 
     document.addEventListener('keydown', handleKeyDown)
     return () => document.removeEventListener('keydown', handleKeyDown)
-  }, [isOpen, onClose, onSelectCommand, filteredCommands, selectedIndex])
+  }, [isOpen, onClose, onSelectCommand, filteredCommands, selectedIndex, searchQuery, modeCategory, workshopMode, canWriteWorkflow])
 
   // Filter commands based on search query and current mode
   useEffect(() => {
@@ -83,7 +90,8 @@ export const CommandSelectionDialog: React.FC<CommandSelectionDialogProps> = ({
     const query = searchQuery.toLowerCase().trim()
     const filtered = allCommands.filter(cmd =>
       cmd.command.toLowerCase().includes(query) ||
-      cmd.description.toLowerCase().includes(query)
+      cmd.description.toLowerCase().includes(query) ||
+      cmd.searchTerms?.some(term => term.toLowerCase().includes(query))
     )
 
     // Sort by relevance: exact match first, then partial match

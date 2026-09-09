@@ -15,6 +15,7 @@ import SkillSelectionDropdown from './skills/SkillSelectionDropdown'
 import FileSelectionDialog from './FileSelectionDialog'
 import CommandSelectionDialog from './CommandSelectionDialog'
 import { CommandEditorDialog } from './commands/CommandEditorDialog'
+import { PulseReviewFocusDialog } from './commands/PulseReviewFocusDialog'
 import { findCommand, findCommandAnyMode, loadAndRegisterUserCommands, type CommandContext, type CommandDefinition } from '../commands'
 import { commandsApi } from '../api/commands'
 import WorkflowSelectionDialog from './WorkflowSelectionDialog'
@@ -1486,6 +1487,8 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
   const [commandDialogPosition, setCommandDialogPosition] = useState({ bottom: 0, left: 0 })
   const [commandSearchQuery, setCommandSearchQuery] = useState('')
   const [slashPosition, setSlashPosition] = useState(-1) // Position of / in text
+  const [pulseReviewPicker, setPulseReviewPicker] = useState<{ tabId: string; workspacePath: string | null | undefined; initialContext: string } | null>(null)
+  const closePulseReviewPicker = useCallback(() => setPulseReviewPicker(null), [])
 
   const restoredResumeTitle = useMemo(() => {
     if (tabConfig?.restoredConversationTitle?.trim()) return tabConfig.restoredConversationTitle.trim()
@@ -2434,6 +2437,30 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     return cmd.validate(ctx)
   }, [buildCommandContext])
 
+  const canSelectPulseReview = !isViewOnly && !!findCommand('pulse-review', commandModeCategory, getEffectiveWorkflowModes().workshopMode, canWriteCommandWorkflow)
+  useEffect(() => {
+    if (pulseReviewPicker && (!canSelectPulseReview || pulseReviewPicker.tabId !== activeTabId || pulseReviewPicker.workspacePath !== commandWorkflowPath)) {
+      setPulseReviewPicker(null)
+    }
+  }, [activeTabId, canSelectPulseReview, commandWorkflowPath, pulseReviewPicker])
+
+  const startPulseReviewFromPicker = useCallback((focusId: string, context: string) => {
+    // Recheck the target and access at submission; a picker must never carry
+    // write authority or a draft into another tab/workflow.
+    const cmd = findCommand('pulse-review', commandModeCategory, getEffectiveWorkflowModes().workshopMode, canWriteCommandWorkflow)
+    if (!cmd || isViewOnly || !pulseReviewPicker || pulseReviewPicker.tabId !== activeTabId || pulseReviewPicker.workspacePath !== commandWorkflowPath) {
+      setPulseReviewPicker(null)
+      addToast('This review is unavailable for the current chat or workflow access.', 'info')
+      return
+    }
+    const ctx = buildCommandContext(context)
+    if (!ctx) return
+    applyWorkflowCommandRequirements(cmd)
+    setPulseReviewPicker(null)
+    clearInputState()
+    cmd.execute({ ...ctx, pulseReviewFocus: focusId })
+  }, [activeTabId, addToast, applyWorkflowCommandRequirements, buildCommandContext, canWriteCommandWorkflow, clearInputState, commandModeCategory, commandWorkflowPath, getEffectiveWorkflowModes, isViewOnly, pulseReviewPicker])
+
   const executeSlashCommandFromQuery = useCallback((trimmedQuery: string) => {
     if (!trimmedQuery.startsWith('/')) return false
 
@@ -2469,6 +2496,12 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
       return true
     }
 
+    if (cmd.source === 'builtin' && cmd.command === 'pulse-review' && !commandArgs && activeTabId) {
+      setShowCommandDialog(false)
+      setPulseReviewPicker({ tabId: activeTabId, workspacePath: commandWorkflowPath, initialContext: '' })
+      return true
+    }
+
     applyWorkflowCommandRequirements(cmd)
 
     const ctx = buildCommandContext(commandArgs)
@@ -2477,7 +2510,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     clearInputState()
     cmd.execute(ctx)
     return true
-  }, [addToast, applyWorkflowCommandRequirements, buildCommandContext, clearInputState, getCommandValidationError, commandModeCategory, getEffectiveWorkflowModes, canWriteCommandWorkflow])
+  }, [activeTabId, addToast, applyWorkflowCommandRequirements, buildCommandContext, clearInputState, getCommandValidationError, commandModeCategory, commandWorkflowPath, getEffectiveWorkflowModes, canWriteCommandWorkflow])
 
   const getSubmitBlockReason = useCallback((): string | null => {
     if (!queryToSubmit?.trim()) return null
@@ -2731,15 +2764,18 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     // Get text before the slash command (if any)
     const beforeSlash = slashPosition >= 0 ? inputText.substring(0, slashPosition).trim() : ''
 
-    // Clear input
-    clearInputState()
-
     // Look up and execute the command from the registry
     const cmd = findCommand(command, commandModeCategory, getEffectiveWorkflowModes().workshopMode, canWriteCommandWorkflow)
     if (!cmd && findCommandAnyMode(command)) {
       addToast('This command is unavailable for your current mode or workflow access.', 'info')
       return
     }
+    if (cmd?.source === 'builtin' && cmd.command === 'pulse-review') {
+      setPulseReviewPicker({ tabId: activeTabId, workspacePath: commandWorkflowPath, initialContext: beforeSlash })
+      return
+    }
+    // Preserve the original draft until a focus picker is submitted.
+    clearInputState()
     const validationError = cmd ? getCommandValidationError(cmd, beforeSlash) : null
     if (cmd && validationError) {
       addToast(validationError, 'info')
@@ -2791,7 +2827,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
 
     // Focus back to textarea
     setTimeout(() => textareaRef.current?.focus(), 0)
-  }, [inputText, slashPosition, commandSearchQuery, activeTabId, addToast, clearInputState, setTabConfig, applyWorkflowCommandRequirements, buildCommandContext, getCommandValidationError, commandModeCategory, getEffectiveWorkflowModes, canWriteCommandWorkflow])
+  }, [inputText, slashPosition, commandSearchQuery, activeTabId, addToast, clearInputState, setTabConfig, applyWorkflowCommandRequirements, buildCommandContext, getCommandValidationError, commandModeCategory, commandWorkflowPath, getEffectiveWorkflowModes, canWriteCommandWorkflow])
 
   // Command management callbacks
   const handleManageCommands = useCallback(() => {
@@ -4178,6 +4214,11 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
           onDeleteCommand: handleDeleteCommand,
         })}
       />
+
+      {pulseReviewPicker && canSelectPulseReview && pulseReviewPicker.tabId === activeTabId && pulseReviewPicker.workspacePath === commandWorkflowPath && (
+        <PulseReviewFocusDialog initialContext={pulseReviewPicker.initialContext}
+          onClose={closePulseReviewPicker} onStart={startPulseReviewFromPicker} />
+      )}
 
       {/* Command Editor Dialog */}
       <CommandEditorDialog

@@ -42,7 +42,7 @@ export function setProductCommands(cmds: CommandDefinition[]) {
 }
 
 export function getCommands(mode?: ModeCategory, workshopMode?: WorkshopMode, canWriteWorkflow = true): CommandDefinition[] {
-  return [...productCommands, ...builtinCommands, ...userCommands].filter(cmd => matchesMode(cmd, mode, workshopMode, canWriteWorkflow))
+  return [...productCommands, ...builtinCommands, ...userCommands].filter(cmd => !cmd.menuHidden && matchesMode(cmd, mode, workshopMode, canWriteWorkflow))
 }
 
 export function findCommand(name: string, mode?: ModeCategory, workshopMode?: WorkshopMode, canWriteWorkflow = true): CommandDefinition | undefined {

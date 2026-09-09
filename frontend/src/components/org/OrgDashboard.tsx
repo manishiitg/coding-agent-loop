@@ -57,10 +57,6 @@ function absoluteTime(iso: string): string {
   return date.toLocaleString(undefined, { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
 }
 
-function summaryNeedsAttention(summary: OrgDashboardNotification | null): boolean {
-	return !!summary && ['failed', 'blocked', 'waiting_for_user', 'waiting_for_platform', 'no_run'].includes(summary.status)
-}
-
 function summaryScopes(entry: WorkflowDashEntry) {
   const routes = entry.byRoute.map(route => ({
     key: JSON.stringify([route.legacy ? 'legacy' : 'route', route.routing_step_id, route.route_id]),
@@ -84,9 +80,8 @@ function summaryScopes(entry: WorkflowDashEntry) {
   ]
 }
 
-function needsAttention(entry: WorkflowDashEntry): boolean {
-  return entry.failed || entry.pendingInputs.length > 0 || summaryScopes(entry)
-    .some(scope => [scope.runSummary, scope.pulseSummary].some(summaryNeedsAttention))
+function hasPendingDecisions(entry: WorkflowDashEntry): boolean {
+  return entry.pendingInputs.length > 0
 }
 
 function latestSummary(entry: WorkflowDashEntry): OrgDashboardNotification | undefined {
@@ -158,7 +153,7 @@ export const OrgDashboard: React.FC<OrgDashboardProps> = ({ workflows, onOpenWor
   const [error, setError] = useState<string | null>(null)
   const [selectedPath, setSelectedPath] = useState<string | null>(null)
   const [search, setSearch] = useState('')
-  const [attentionOnly, setAttentionOnly] = useState(false)
+  const [decisionsOnly, setDecisionsOnly] = useState(false)
 
   const load = useCallback(async () => {
     setLoading(true); setError(null)
@@ -192,14 +187,14 @@ export const OrgDashboard: React.FC<OrgDashboardProps> = ({ workflows, onOpenWor
 
 
   const sortedEntries = useMemo(() => [...entries].sort((a, b) =>
-    Number(needsAttention(b)) - Number(needsAttention(a)) ||
+    Number(hasPendingDecisions(b)) - Number(hasPendingDecisions(a)) ||
     b.pendingInputs.length - a.pendingInputs.length ||
     (Date.parse(latestSummary(b)?.created_at || '') || 0) - (Date.parse(latestSummary(a)?.created_at || '') || 0) ||
     a.label.localeCompare(b.label)), [entries])
   const visibleEntries = sortedEntries.filter(entry =>
-    (!attentionOnly || needsAttention(entry)) && entry.label.toLowerCase().includes(search.trim().toLowerCase()))
+    (!decisionsOnly || hasPendingDecisions(entry)) && entry.label.toLowerCase().includes(search.trim().toLowerCase()))
   const selected = visibleEntries.find(entry => entry.workspacePath === selectedPath) || visibleEntries[0]
-  const attentionCount = entries.filter(needsAttention).length
+  const decisionAutomationCount = entries.filter(hasPendingDecisions).length
   const decisionCount = entries.reduce((count, entry) => count + entry.pendingInputs.length, 0)
   const selectedScopes = selected ? summaryScopes(selected) : []
   const selectedLatest = selected ? latestSummary(selected) : undefined
@@ -224,7 +219,7 @@ export const OrgDashboard: React.FC<OrgDashboardProps> = ({ workflows, onOpenWor
           <div className="flex items-center justify-between gap-2"><h3 className="text-sm font-semibold">Automations</h3><span className="text-xs text-muted-foreground">{entries.length}</span></div>
           <label className="flex items-center gap-2 rounded-md border border-border bg-background px-2.5 py-2 focus-within:ring-2 focus-within:ring-primary/50"><Search className="h-3.5 w-3.5 shrink-0 text-muted-foreground" /><input aria-label="Search automations" value={search} onChange={event => setSearch(event.target.value)} placeholder="Find an automation" className="w-full min-w-0 bg-transparent text-xs outline-none" /></label>
           <div className="flex flex-wrap gap-1" aria-label="Activity filters">
-            {([{ label: `All ${entries.length}`, value: false }, { label: `Needs attention ${attentionCount}`, value: true }]).map(filter => <button key={filter.label} type="button" aria-pressed={attentionOnly === filter.value} onClick={() => setAttentionOnly(filter.value)} className={`rounded-md px-2 py-1.5 text-xs font-medium transition-colors ${attentionOnly === filter.value ? 'bg-primary/10 text-primary' : 'text-muted-foreground hover:bg-muted'}`}>{filter.label}</button>)}
+            {([{ label: `All ${entries.length}`, value: false }, { label: `Pending decisions ${decisionAutomationCount}`, value: true }]).map(filter => <button key={filter.label} type="button" aria-pressed={decisionsOnly === filter.value} onClick={() => setDecisionsOnly(filter.value)} className={`rounded-md px-2 py-1.5 text-xs font-medium transition-colors ${decisionsOnly === filter.value ? 'bg-primary/10 text-primary' : 'text-muted-foreground hover:bg-muted'}`}>{filter.label}</button>)}
           </div>
           <p className="text-xs text-muted-foreground">{decisionCount} pending decision{decisionCount !== 1 ? 's' : ''} across your automations</p>
         </div>
@@ -232,14 +227,11 @@ export const OrgDashboard: React.FC<OrgDashboardProps> = ({ workflows, onOpenWor
           {visibleEntries.map(entry => {
             const latest = latestSummary(entry)
             const active = selected?.workspacePath === entry.workspacePath
-            const attention = needsAttention(entry)
-            const decision = entry.pendingInputs.length > 0 || summaryScopes(entry)
-              .some(scope => [scope.runSummary, scope.pulseSummary].some(summary => summary?.status === 'waiting_for_user'))
-            const statusColor = entry.failed ? 'text-amber-600 dark:text-amber-300'
-              : decision ? 'text-violet-600 dark:text-violet-300'
-              : attention ? 'text-amber-600 dark:text-amber-300' : 'text-muted-foreground'
-            const statusLabel = entry.failed ? 'Data unavailable' : decision ? 'Needs your decision'
-              : attention ? 'Needs attention' : latest ? STATUS_PILL[latest.status]?.label || 'Update' : 'No activity yet'
+            const decision = hasPendingDecisions(entry)
+            const statusColor = decision ? 'text-violet-600 dark:text-violet-300'
+              : entry.failed ? 'text-amber-600 dark:text-amber-300' : 'text-muted-foreground'
+            const statusLabel = decision ? 'Needs your decision' : entry.failed ? 'Data unavailable'
+              : latest ? 'Latest update' : 'No activity yet'
             return <button key={entry.workspacePath} type="button" aria-pressed={active} aria-label={`View ${entry.label} activity`} onClick={() => setSelectedPath(entry.workspacePath)} className={`mb-1 w-full rounded-lg border px-3 py-3 text-left transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary ${active ? 'border-primary/30 bg-primary/[0.08]' : 'border-transparent hover:bg-muted/60'}`}>
               <div className="flex items-center gap-2"><span className="min-w-0 flex-1 truncate text-sm font-semibold text-foreground" title={entry.label}>{entry.label}</span>{!!entry.pendingInputs.length && <span className="flex shrink-0 items-center gap-1 rounded-full bg-violet-500/10 px-1.5 py-0.5 text-xs text-violet-600 dark:text-violet-300" aria-label={`${entry.pendingInputs.length} decisions`}><CircleHelp className="h-3 w-3" />{entry.pendingInputs.length}</span>}<ChevronRight className={`h-3.5 w-3.5 shrink-0 ${active ? 'text-primary' : 'text-muted-foreground/50'}`} /></div>
               <div className="mt-1.5 flex items-center justify-between gap-2 text-[11px]"><span className={statusColor}>{statusLabel}</span>{latest && <span className="shrink-0 text-muted-foreground" title={absoluteTime(latest.created_at)}>{relativeTime(latest.created_at)}</span>}</div>
@@ -271,7 +263,7 @@ export const OrgDashboard: React.FC<OrgDashboardProps> = ({ workflows, onOpenWor
           <summary className="flex cursor-pointer list-none items-center gap-2 rounded-md py-2 text-sm font-medium text-muted-foreground hover:text-foreground [&::-webkit-details-marker]:hidden"><ChevronRight className="h-4 w-4 transition-transform group-open:rotate-90" />Activity history<span className="ml-auto text-xs font-normal">{selectedHistory.length} retained updates</span></summary>
           <div className="mt-3 space-y-2">{selectedHistory.map(summary => <WorkflowSummaryRow key={summary.id} label={summary.kind === 'pulse_summary' ? 'Pulse' : 'Run'} summary={summary} />)}</div>
         </details>}
-      </section> : <div className="flex items-center justify-center p-6 text-sm text-muted-foreground">{attentionOnly && !search ? 'No automations need attention.' : 'No automations match your search.'}</div>}
+      </section> : <div className="flex items-center justify-center p-6 text-sm text-muted-foreground">{decisionsOnly && !search ? 'No automations have pending decisions.' : 'No automations match your search.'}</div>}
     </div>
   </div>
 }

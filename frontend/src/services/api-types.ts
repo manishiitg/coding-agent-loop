@@ -876,6 +876,11 @@ export interface WhatsAppStatus {
   own_jid: string
   qr_available: boolean
   qr_expires_at?: string
+  pairing_active?: boolean
+  pairing_started_at?: string
+  pairing_error?: string
+  pairing_message?: string
+  pairing_last_at?: string
   link_code?: string
   link_code_expires_at?: string
   bound_chat_count?: number

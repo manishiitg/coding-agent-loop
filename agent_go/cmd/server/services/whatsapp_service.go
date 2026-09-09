@@ -197,7 +197,12 @@ func (w *WhatsAppService) StartListening(ctx context.Context) error {
 	w.mu.Lock()
 	w.conn = conn
 	w.mu.Unlock()
-	if err := conn.Start(ctx); err != nil {
+	// IMPORTANT: do not tie the connector's background context to an HTTP
+	// request context. The manager lazily starts services inside request
+	// handlers; if we pass r.Context() through, it gets cancelled as soon as
+	// the response is written, which immediately kills pairing/reconnect loops
+	// (you'll see "Context is done" from whatsmeow's QR emitter).
+	if err := conn.Start(context.Background()); err != nil {
 		w.mu.Lock()
 		w.conn = nil
 		w.mu.Unlock()
@@ -247,6 +252,15 @@ func (w *WhatsAppService) GetQR() (code string, expires time.Time) {
 		return conn.GetQR()
 	}
 	return "", time.Time{}
+}
+
+// PairingInfo provides diagnostics for the current or most recent pairing
+// attempt (used by the UI to show why scanning didn't stick).
+func (w *WhatsAppService) PairingInfo() (active bool, started time.Time, lastErr string, lastMsg string, lastAt time.Time) {
+	if conn := w.connector(); conn != nil {
+		return conn.PairingInfo()
+	}
+	return false, time.Time{}, "", "", time.Time{}
 }
 
 func (w *WhatsAppService) connector() *whatsappbot.Connector {
@@ -344,7 +358,7 @@ type whatsappDownloadedMedia struct {
 // whatsapp_meta table exists. Called from StartListening after sqlstore has
 // been set up, so the underlying SQLite file is already initialized.
 func (w *WhatsAppService) openMetaStore(ctx context.Context) error {
-	dsn := fmt.Sprintf("file:%s?_pragma=foreign_keys(1)&_pragma=journal_mode(WAL)", w.dbPath)
+	dsn := fmt.Sprintf("file:%s?_pragma=foreign_keys(1)&_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)", w.dbPath)
 	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return fmt.Errorf("whatsapp: open meta db: %w", err)

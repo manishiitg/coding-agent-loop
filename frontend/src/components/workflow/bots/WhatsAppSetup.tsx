@@ -9,12 +9,14 @@ import { StatusBanner } from './StatusBanner'
 
 type WhatsAppSetupBots = Pick<WorkflowBots,
   | 'readOnly' | 'waStatus' | 'waError' | 'qrImageURL' | 'qrLoading' | 'qrError' | 'unpairConfirm' | 'unpairing' | 'handleUnpairWhatsApp'
+  | 'refreshWaQR'
 >
 
 export function WhatsAppSetup({ bots }: { bots: WhatsAppSetupBots }) {
   const {
     readOnly,
     waStatus, waError, qrImageURL, qrLoading, qrError, unpairConfirm, unpairing,
+    refreshWaQR,
     handleUnpairWhatsApp,
   } = bots
 
@@ -83,7 +85,12 @@ export function WhatsAppSetup({ bots }: { bots: WhatsAppSetupBots }) {
       {waStatus && waStatus.enabled && !waStatus.paired && (
         <Card className="p-4">
           <div className="flex flex-col items-center gap-3">
-            <h3 className="text-sm font-medium text-foreground">Scan to pair</h3>
+            <div className="flex w-full items-center justify-between gap-3">
+              <h3 className="text-sm font-medium text-foreground">Scan to pair</h3>
+              <Button type="button" variant="outline" size="sm" onClick={refreshWaQR} disabled={qrLoading}>
+                Refresh QR
+              </Button>
+            </div>
             {waStatus.qr_available ? (
               <>
                 {qrImageURL ? (
@@ -116,6 +123,26 @@ export function WhatsAppSetup({ bots }: { bots: WhatsAppSetupBots }) {
                   device. <strong>iPhone</strong>: Settings → Linked Devices → Link Device. Then scan this
                   code. The QR rotates every few seconds; this page refreshes it automatically.
                 </p>
+                {waStatus.qr_expires_at && (
+                  <p className="text-[11px] text-muted-foreground/80 text-center">
+                    QR expires {new Date(waStatus.qr_expires_at).toLocaleString()}.
+                  </p>
+                )}
+                {(waStatus.pairing_error || waStatus.pairing_message) && (
+                  <div className="w-full rounded-md border border-border bg-muted/30 p-3 text-[11px] text-muted-foreground">
+                    {waStatus.pairing_error && (
+                      <div className="text-red-700 dark:text-red-300">Pairing error: {waStatus.pairing_error}</div>
+                    )}
+                    {waStatus.pairing_message && (
+                      <div className={waStatus.pairing_error ? 'mt-1.5' : ''}>{waStatus.pairing_message}</div>
+                    )}
+                    {waStatus.pairing_last_at && (
+                      <div className="mt-1.5 text-muted-foreground/80">
+                        Last attempt: {new Date(waStatus.pairing_last_at).toLocaleString()}
+                      </div>
+                    )}
+                  </div>
+                )}
               </>
             ) : (
               <div className="flex items-center gap-2 text-sm text-muted-foreground py-8">

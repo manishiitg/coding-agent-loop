@@ -186,6 +186,10 @@ export function useWorkflowBots(workspacePath: string | null) {
     }
   }, [])
 
+  const refreshWaQR = useCallback(() => {
+    setQrBust(Date.now())
+  }, [])
+
   const loadGmailConnections = useCallback(async (attempt = 0) => {
     try {
       const data = await agentApi.listGmailConnections()
@@ -815,7 +819,7 @@ export function useWorkflowBots(workspacePath: string | null) {
     allowedEmails, setAllowedEmails, emailsDirty, setEmailsDirty, emailsSaving, emailsSaved, setEmailsSaved,
     handleEmailsSave, handleSlackSave, handleSlackTest, slackHasChanges, slackReady, slackStatusLabel,
     // whatsapp
-    waStatus, waError, waRoutingError, qrImageURL, qrLoading, qrError, unpairConfirm, unpairing,
+    waStatus, waError, waRoutingError, qrImageURL, qrLoading, qrError, unpairConfirm, unpairing, refreshWaQR,
     handleUnpairWhatsApp, waReady, waStatusLabel,
     // routes
     myRoutes, removeRoute, updateRoute, addSlackRoute, addWaRoute,

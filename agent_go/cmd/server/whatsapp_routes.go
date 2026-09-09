@@ -326,6 +326,21 @@ func whatsappStatusHandler(manager *services.WhatsAppServiceManager) http.Handle
 			"connected": svc.IsConnected(),
 			"own_jid":   svc.OwnJID().String(),
 		}
+		if active, started, lastErr, lastMsg, lastAt := svc.PairingInfo(); true {
+			resp["pairing_active"] = active
+			if !started.IsZero() {
+				resp["pairing_started_at"] = started.UTC().Format(time.RFC3339)
+			}
+			if lastErr != "" {
+				resp["pairing_error"] = lastErr
+			}
+			if lastMsg != "" {
+				resp["pairing_message"] = lastMsg
+			}
+			if !lastAt.IsZero() {
+				resp["pairing_last_at"] = lastAt.UTC().Format(time.RFC3339)
+			}
+		}
 		access := svc.GetAccessState()
 		resp["link_code"] = access.LinkCode
 		if !access.LinkCodeExpires.IsZero() {

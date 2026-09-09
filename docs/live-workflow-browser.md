@@ -216,17 +216,28 @@ workflow; it cannot guarantee that a site's login never expires.
 
 Recording, Fill width/Fit page, click-to-take-control tab switching, and the
 launch-option consistency fix are pushed to shared `main` at `504c35a5e`.
-The focused RTS release `2e949bf9c` is staged at
-`releases/browser-recording-20260909`; activation is pending the active
-scheduled security run becoming idle. A five-minute follow-up in this task
-will activate it only after the agent drain check is idle and then notify
-the user. The earlier browser panel and view-tool/toast update are deployed.
+The focused RTS release `2e949bf9c`, with toolbar/guidance overlay
+`34a9b1d17`, was activated at 07:23 UTC (12:53 IST) on 2026-09-09 at
+`releases/browser-recording-20260909`, after the scheduled security run
+finished and the agent reported idle with zero active sessions/requests.
+An initial 07:17 UTC activation was rolled back after the UI recording test
+revealed the custom user-agent was missing from viewer commands. The corrected
+recording and tab-switch paths now match both the core handler's user-agent and
+Chromium arguments. The smoke fixture uses those full settings too.
+Agent and workspace health checks passed, the gateway serves the new UI,
+and shared CDP remains disabled. The previous release is retained for rollback.
 
 The recording release passed an isolated real Linux browser test: a playable
 WebM, expected HAR request and console message, nonempty ZIP and manifest,
 and preservation of cookies, session storage, and both existing tabs. Fake
 runtime tests also cover cross-workflow rejection and retryable partial stops.
-The new recording and tab/sizing controls still need their deployed UI check.
+The deployed UI check passed on an actual workflow-tool-created session:
+Start/Stop recording, click-to-control tab switching, returning control, and
+Fill width/Fit page all worked while retaining both existing tabs. The capture
+was saved to `Workflow/rtslatency/browser-recordings/20260909T072455Z-2105749843`
+and its manifest opened through the Files button. Builder view actions returned
+`applied`; the brief switch toast was not captured visually during this check.
 
-Browser is in the **Views** toolbar, alongside the other workspace views.
+Browser is alongside the other workspace views (the current toolbar labels
+this group **Pulse**), and is removed from **Setup**.
 Its mode and connection settings remain behind the Browser panel’s gear button.

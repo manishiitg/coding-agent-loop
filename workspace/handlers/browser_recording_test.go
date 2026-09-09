@@ -26,7 +26,9 @@ func TestBrowserRecordingBundleAndIsolation(t *testing.T) {
 	os.MkdirAll(filepath.Join(root, "Workflow", "two"), 0700)
 	os.WriteFile(filepath.Join(socket, "capture-test.stream"), []byte("12345"), 0600)
 	script := `#!/bin/sh
-shift 4
+[ "$3" = "--user-agent" ] || exit 1
+[ "$5" = "--args" ] || exit 1
+shift 6
 if [ "$1 $2" = "record stop" ] && [ -f "$AGENT_BROWSER_SOCKET_DIR/fail-stop" ]; then echo stop-failed; exit 1; fi
 case "$1 $2 $3" in
  "record start "*) printf video > "$3" ;;

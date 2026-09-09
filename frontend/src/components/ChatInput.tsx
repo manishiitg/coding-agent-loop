@@ -2830,12 +2830,6 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
   }, [inputText, slashPosition, commandSearchQuery, activeTabId, addToast, clearInputState, setTabConfig, applyWorkflowCommandRequirements, buildCommandContext, getCommandValidationError, commandModeCategory, commandWorkflowPath, getEffectiveWorkflowModes, canWriteCommandWorkflow])
 
   // Command management callbacks
-  const handleManageCommands = useCallback(() => {
-    setShowCommandDialog(false)
-    setEditingUserCommand(null)
-    setShowCommandEditor(true)
-  }, [])
-
   const handleEditCommand = useCallback((cmd: CommandDefinition) => {
     setShowCommandDialog(false)
     // Fetch full command data from API to populate editor
@@ -4209,7 +4203,6 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
         canWriteWorkflow={canWriteCommandWorkflow}
         agentProfileId={activeTab?.metadata?.agentProfileId}
         {...(isProductSurface || (isWorkflowMode && !canWriteCommandWorkflow) ? {} : {
-          onManageCommands: handleManageCommands,
           onEditCommand: handleEditCommand,
           onDeleteCommand: handleDeleteCommand,
         })}

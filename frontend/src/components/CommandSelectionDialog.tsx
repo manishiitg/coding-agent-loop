@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react'
-import { Terminal, Plus, Pencil, Trash2 } from 'lucide-react'
+import { Terminal, Pencil, Trash2 } from 'lucide-react'
 import type { ModeCategory } from '../stores/useModeStore'
 import { findCommand, getCommands, type CommandDefinition, type WorkshopMode } from '../commands'
 import { loadAndRegisterUserCommands } from '../commands'
@@ -14,7 +14,6 @@ interface CommandSelectionDialogProps {
   workshopMode?: WorkshopMode
   canWriteWorkflow?: boolean
   agentProfileId?: string
-  onManageCommands?: () => void
   onEditCommand?: (command: CommandDefinition) => void
   onDeleteCommand?: (command: CommandDefinition) => void
 }
@@ -29,7 +28,6 @@ export const CommandSelectionDialog: React.FC<CommandSelectionDialogProps> = ({
   workshopMode,
   canWriteWorkflow = true,
   agentProfileId,
-  onManageCommands,
   onEditCommand,
   onDeleteCommand
 }) => {
@@ -202,19 +200,7 @@ export const CommandSelectionDialog: React.FC<CommandSelectionDialogProps> = ({
       <div className="px-3 py-2 border-t border-border bg-secondary text-xs text-muted-foreground">
         <div className="flex items-center justify-between">
           <span>↑↓ to navigate</span>
-          <div className="flex items-center gap-2">
-            <span>Enter to select</span>
-            {onManageCommands && (
-              <button
-                className="flex items-center gap-1 hover:text-primary transition-colors"
-                onClick={(e) => { e.stopPropagation(); onManageCommands() }}
-                title="Create custom command"
-              >
-                <Plus className="w-3 h-3" />
-                <span>New</span>
-              </button>
-            )}
-          </div>
+          <span>Enter to select</span>
         </div>
       </div>
     </div>

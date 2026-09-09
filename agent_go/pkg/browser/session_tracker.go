@@ -88,7 +88,7 @@ func reapIdleSessions(idleTimeout time.Duration) {
 	tracker.mu.Lock()
 	var stale []string
 	for name, s := range tracker.sessions {
-		if time.Since(s.lastUsed) > idleTimeout {
+		if time.Since(s.lastUsed) > idleTimeout && !(SharedBrowserEnabled() && name == SharedSessionName) {
 			stale = append(stale, name)
 		}
 	}
@@ -367,6 +367,9 @@ func (t *SessionTracker) CloseAllForWorkflow(workflowSessionID string, client *C
 
 	log.Printf("[BROWSER_CLEANUP] Closing %d browser session(s) for workflow %q: %v", len(sessions), workflowSessionID, sessions)
 	for _, session := range sessions {
+		if SharedBrowserEnabled() && session == SharedSessionName {
+			continue
+		}
 		if client != nil {
 			closeArgs := []string{
 				"--user-agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",

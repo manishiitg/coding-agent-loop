@@ -100,7 +100,7 @@ const VIEWS = [
   { id: 'skills', kind: 'capability', label: 'Workflow skills', icon: Puzzle, toolbarGroup: 'capabilities', pane: true, managesOwnScroll: true },
   { id: 'secrets', kind: 'capability', label: 'Workflow secrets', icon: KeyRound, toolbarGroup: 'capabilities', pane: true },
   { id: 'mcp', kind: 'capability', label: 'Workflow MCP servers', icon: Server, toolbarGroup: 'capabilities', pane: true, managesOwnScroll: true },
-  { id: 'browser', kind: 'capability', label: 'Browser automation', icon: Monitor, toolbarGroup: 'capabilities', pane: true },
+  { id: 'browser', kind: 'capability', label: 'Browser', icon: Monitor, toolbarGroup: 'views', pane: true },
   { id: 'llm', kind: 'capability', label: 'Workflow LLM configuration', icon: BrainCircuit, toolbarGroup: 'capabilities', pane: true },
   { id: 'bots', kind: 'capability', label: 'Workflow bots', icon: Bot, toolbarGroup: 'capabilities', pane: true },
   { id: 'folders', kind: 'inspector', label: 'Attached folders', icon: FolderOpen, toolbarGroup: 'capabilities', pane: true },

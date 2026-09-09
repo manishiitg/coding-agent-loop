@@ -101,6 +101,7 @@ else
   bash "$SCRIPT_DIR/build/build-linux-agent.sh" "$BUILD_DIR" "$BUILDER_REPO_ROOT/agent_go" "$WORKSPACE_ROOT"
 fi
 (cd "$WORKSPACE_ROOT" && GOWORK="$DEPLOY_GOWORK" GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o "$BUILD_DIR/bin/video-studio-workspace" "$BUILDER_REPO_ROOT/workspace")
+(cd "$WORKSPACE_ROOT" && GOWORK="$DEPLOY_GOWORK" GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o "$BUILD_DIR/bin/video-studio-browser" "$BUILDER_REPO_ROOT/workspace/cmd/shared-browser")
 (cd "$WORKSPACE_ROOT" && GOWORK="$DEPLOY_GOWORK" GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o "$BUILD_DIR/bin/video-studio-landlock-runner" "$BUILDER_REPO_ROOT/workspace/cmd/landlock-runner")
 (cd "$WORKSPACE_ROOT" && GOWORK="$DEPLOY_GOWORK" GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go test -c -o "$BUILD_DIR/bin/workspace-security.test" "$BUILDER_REPO_ROOT/workspace/security")
 (cd "$WORKSPACE_ROOT" && GOWORK="$DEPLOY_GOWORK" GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o "$BUILD_DIR/bin/mcpbridge" ./mcpagent/cmd/mcpbridge)

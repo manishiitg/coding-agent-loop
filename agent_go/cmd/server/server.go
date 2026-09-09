@@ -2195,6 +2195,9 @@ func runServer(cmd *cobra.Command, args []string) {
 
 	// Browser session tracking API
 	apiRouter.HandleFunc("/browser/sessions", api.handleGetBrowserSessions).Methods("GET")
+	apiRouter.HandleFunc("/browser/live/sessions", api.handleLiveBrowserSessions).Methods("GET")
+	apiRouter.HandleFunc("/browser/live/{session}/stream", api.handleLiveBrowserStream).Methods("GET")
+	apiRouter.HandleFunc("/browser/live/{session}/recording", api.handleBrowserRecording).Methods("POST")
 
 	// Active Session API routes (from polling.go)
 	apiRouter.HandleFunc("/sessions/active", api.handleGetActiveSessions).Methods("GET")
@@ -6009,41 +6012,6 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 									workflowPhaseID, configuredBrowserMode, phaseConfiguredCDPPorts)
 							}
 
-							// Register agent_browser tool on the chat agent for headless/CDP modes.
-							// Without this, the MCP bridge can't find agent_browser and the LLM
-							// falls back to calling agent-browser via execute_shell_command (which bypasses CDP resolution).
-							if phaseBrowserCfg.HasAgentBrowser {
-								phaseBrowserRuntime := browser.NewBrowserRuntimeConfig(configuredBrowserMode, phaseConfiguredCDPPorts)
-								phaseBrowserTools := virtualtools.CreateWorkspaceBrowserTools()
-								phaseBrowserExecutors := virtualtools.CreateWorkspaceBrowserToolExecutorsWithRuntime(sessionID, phaseBrowserRuntime)
-								phaseBrowserCategory := virtualtools.GetWorkspaceBrowserToolCategory()
-								for _, tool := range phaseBrowserTools {
-									if tool.Function == nil {
-										continue
-									}
-									if executor, exists := phaseBrowserExecutors[tool.Function.Name]; exists {
-										var params map[string]interface{}
-										if tool.Function.Parameters != nil {
-											paramsBytes, _ := json.Marshal(tool.Function.Parameters)
-											json.Unmarshal(paramsBytes, &params)
-										}
-										if params != nil {
-											if err := llmAgent.RegisterCustomTool(
-												tool.Function.Name,
-												tool.Function.Description,
-												params,
-												executor,
-												phaseBrowserCategory,
-											); err != nil {
-												log.Printf("[WORKFLOW_PHASE] Warning: Failed to register browser tool %s: %v", tool.Function.Name, err)
-											} else {
-												log.Printf("[WORKFLOW_PHASE] Registered browser tool: %s (category: %s, configured_mode=%s, candidate_cdp_ports=%v)", tool.Function.Name, phaseBrowserCategory, configuredBrowserMode, phaseConfiguredCDPPorts)
-											}
-										}
-									}
-								}
-							}
-
 						}
 					}
 				}
@@ -9472,10 +9440,10 @@ func (api *StreamingAPI) buildWorkshopConfig(
 			if configuredBrowserMode != "" {
 				common.SetSessionBrowserMode(sessionID, configuredBrowserMode)
 			}
-			if configuredBrowserMode == "auto" || configuredBrowserMode == "headless" || configuredBrowserMode == "cdp" {
+			if workspacePath != "" {
 				browserCategory := virtualtools.GetWorkspaceBrowserToolCategory()
 				browserTools := virtualtools.CreateWorkspaceBrowserTools()
-				browserExecutors := virtualtools.CreateWorkspaceBrowserToolExecutorsWithRuntime(sessionID, cfg.BrowserRuntime)
+				browserExecutors := workflowBrowserExecutors(sessionID, workspacePath, ReadWorkflowManifest)
 				allTools = append(allTools, browserTools...)
 				for name, executor := range browserExecutors {
 					allExecutors[name] = executor

@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/manishiitg/coding-agent-loop/workspace/browserconfig"
 	"io"
 	"os"
 	"os/exec"
@@ -204,15 +205,19 @@ func capturePathWithin(root, path string) bool {
 	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) && !filepath.IsAbs(rel)
 }
 func runCaptureCommand(ctx context.Context, socketDir, session string, args ...string) ([]byte, error) {
-	argv := append([]string{"--session", session, "--user-agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36", "--args", "--no-sandbox,--disable-gpu,--disable-blink-features=AutomationControlled"}, args...)
+	argv := append([]string{"--session", session}, browserconfig.HeadlessArgs()...)
+	argv = append(argv, args...)
 	argv = append(argv, "--json")
 	cmd := exec.CommandContext(ctx, "agent-browser", argv...)
 	for _, env := range os.Environ() {
-		if !strings.HasPrefix(env, "AGENT_BROWSER_SOCKET_DIR=") {
+		if !strings.HasPrefix(env, "AGENT_BROWSER_SOCKET_DIR=") && !(browserconfig.SharedEnabled() && strings.HasPrefix(env, "TZ=")) {
 			cmd.Env = append(cmd.Env, env)
 		}
 	}
 	cmd.Env = append(cmd.Env, "AGENT_BROWSER_SOCKET_DIR="+socketDir)
+	if browserconfig.SharedEnabled() {
+		cmd.Env = append(cmd.Env, "TZ=UTC")
+	}
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		return output, fmt.Errorf("%s failed: %s", args[0], strings.TrimSpace(string(output)))

@@ -8,7 +8,7 @@ import { useCanWriteWorkflow } from '../../hooks/useCanWriteWorkflow'
 
 type Recording = { recording: boolean; directory?: string; errors?: string[] }
 
-type BrowserSession = { browser_session: string; workflow_session: string }
+type BrowserSession = { browser_session: string; workflow_session: string; label?: string }
 type BrowserTab = { tabId: string; title: string; url: string; active: boolean }
 
 export default function WorkflowLiveBrowser({ workspacePath, toolbar }: { workspacePath: string | null; toolbar?: ReactNode }) {
@@ -200,7 +200,7 @@ export default function WorkflowLiveBrowser({ workspacePath, toolbar }: { worksp
         <h3 className="text-sm font-medium">Browser</h3>
         <span className="text-xs text-muted-foreground" role="status">{controlling ? 'You have control' : connected ? 'Watching' : 'Not connected'}</span>
         {sessions.length > 0 && <select className="min-w-0 max-w-64 rounded border border-border bg-background p-1 text-xs" aria-label="Browser session" value={session} onChange={event => setSession(event.target.value)}>
-          {sessions.map((item, index) => <option key={item.browser_session} value={item.browser_session}>Browser {index + 1} · {item.workflow_session.slice(0, 8)}</option>)}
+          {sessions.map((item, index) => <option key={item.browser_session} value={item.browser_session}>{item.label || `Browser ${index + 1} · ${item.workflow_session.slice(0, 8)}`}</option>)}
         </select>}
         <div className="ml-auto flex gap-2">
           {session && !connected && <button className="rounded border border-border px-3 py-1 text-xs" onClick={() => setRetry(value => value + 1)}>Reconnect</button>}
@@ -241,7 +241,7 @@ export default function WorkflowLiveBrowser({ workspacePath, toolbar }: { worksp
       {frame ? <div className="relative min-h-0 flex-1 bg-muted/20"><div className={`absolute inset-0 ${fit === 'width' ? 'overflow-auto' : 'flex items-center justify-center'}`}>
         <img ref={screen} src={frame} alt="Live server browser viewport" draggable={false} tabIndex={controlling ? 0 : -1} className={`block h-auto select-none outline-none focus:ring-2 focus:ring-inset focus:ring-ring ${fit === 'width' ? 'w-full max-w-none' : 'max-h-full w-auto max-w-full'}`} onMouseDown={event => mouse(event, 'mousePressed')} onMouseUp={event => mouse(event, 'mouseReleased')} onMouseMove={event => mouse(event, 'mouseMoved')} onContextMenu={event => event.preventDefault()} onKeyDown={event => keyboard(event, 'keyDown')} onKeyUp={event => keyboard(event, 'keyUp')} />
       </div></div> : <div className="flex min-h-0 flex-1 items-center justify-center px-6 py-12 text-center text-sm text-muted-foreground">{session ? 'Waiting for the browser’s live view…' : 'When this workflow opens a managed browser, its live view will appear here.'}</div>}
-      <p className="shrink-0 border-t border-border px-3 py-1 text-[11px] text-muted-foreground">{controlling ? 'Browser automation is paused while you interact. Return control or press Escape to let it continue.' : 'Live server browser · Take control to interact.'}</p>
+      <p className="shrink-0 border-t border-border px-3 py-1 text-[11px] text-muted-foreground">{session === 'shared-browser' ? 'Shared browser · everyone uses the same tabs and sign-ins. Coordinate before making changes.' : controlling ? 'Browser automation is paused while you interact. Return control or press Escape to let it continue.' : 'Live server browser · Take control to interact.'}</p>
     </section>
   )
 }

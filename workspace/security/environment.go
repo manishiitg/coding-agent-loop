@@ -1,6 +1,7 @@
 package security
 
 import (
+	"github.com/manishiitg/coding-agent-loop/workspace/browserconfig"
 	"os"
 	"path/filepath"
 	"strings"
@@ -11,10 +12,22 @@ import (
 // In native mode, it inherits the host environment but strips known secrets,
 // so host-installed tools (aws, node, python, etc.) and their config remain accessible.
 func BuildSafeEnvironment() []string {
+	var env []string
 	if os.Getenv("NATIVE_WORKSPACE") == "true" {
-		return buildNativeEnvironment()
+		env = buildNativeEnvironment()
+	} else {
+		env = buildDockerEnvironment()
 	}
-	return buildDockerEnvironment()
+	if browserconfig.SharedEnabled() {
+		clean := make([]string, 0, len(env)+3)
+		for _, entry := range env {
+			if !strings.HasPrefix(entry, "TZ=") && !strings.HasPrefix(entry, "AGENT_BROWSER_SOCKET_DIR=") && !strings.HasPrefix(entry, browserconfig.ProfileEnv+"=") {
+				clean = append(clean, entry)
+			}
+		}
+		env = append(clean, browserconfig.ProfileEnv+"="+browserconfig.SharedProfile(), "AGENT_BROWSER_SOCKET_DIR=/tmp/.agent-browser", "TZ=UTC")
+	}
+	return env
 }
 
 // buildDockerEnvironment returns a strict whitelist for Docker containers.

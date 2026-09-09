@@ -1,0 +1,18 @@
+[Unit]
+Description=Shared persistent workflow browser
+After=network-online.target
+ConditionPathIsMountPoint=/data/video-studio
+
+[Service]
+Type=simple
+EnvironmentFile=%h/video-studio/.env
+Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
+WorkingDirectory=%h/video-studio/current
+ExecStart=%h/video-studio/current/bin/video-studio-browser
+KillMode=mixed
+TimeoutStopSec=30
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target

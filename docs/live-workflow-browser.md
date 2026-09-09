@@ -241,3 +241,41 @@ and its manifest opened through the Files button. Builder view actions returned
 Browser is alongside the other workspace views (the current toolbar labels
 this group **Pulse**), and is removed from **Setup**.
 Its mode and connection settings remain behind the Browser panel’s gear button.
+
+
+## Shared persistent Chrome (opt-in)
+
+Set `AGENT_BROWSER_SHARED_PROFILE` to an absolute dedicated directory outside
+release folders, for example `/data/video-studio/browser-profile`. Unset it to
+retain isolated sessions. A filesystem root or relative path is rejected.
+
+In shared headless mode, all agent session names map to `shared-browser`.
+All signed-in users with access to a browser-enabled workflow can see the same
+browser; write access is still required for input and recording. Everyone can
+access the browser's logged-in accounts. There is no extra control locking;
+users coordinate concurrent actions themselves. Workflow completion and idle
+cleanup do not close the shared browser. An explicit browser close still closes
+it for everyone, so agents should inspect existing tabs and avoid reset/close
+or clearing storage without a user request.
+
+The shared launch settings are defined once in `workspace/browserconfig` and
+used by automation, viewer tab controls, recording, and the browser supervisor.
+Shared mode keeps Chrome's native Linux/version user agent, `en-US`, a default
+1280x720 viewport, and UTC timezone. It retains the existing AutomationControlled
+flag. No third-party stealth plugin is installed; detection avoidance is not
+guaranteed. Browser upgrades may change the fingerprint. Existing isolated
+profiles are not merged into the new shared profile.
+
+Install the user unit `deploy/aws-ec2/server/video-studio-browser.service` and
+run `video-studio-browser` from the release's `bin` directory. It supervises
+Chrome separately from the agent/workspace services and gracefully closes it
+on service stop. Enable the unit for the user's default target to restart it
+on boot. The rootless release build includes the supervisor binary.
+The profile directory must remain on persistent storage across deployments.
+Cookies and local storage were verified across a real Chrome restart; sites
+can still expire sessions or require MFA. This is login-session persistence,
+not a separately configured password manager.
+
+Recordings are still saved under the workflow that starts them. A capture
+started from another workflow must be stopped from its originating workflow;
+this avoids exposing its workspace files through the shared-browser viewer.

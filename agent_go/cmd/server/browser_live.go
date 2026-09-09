@@ -25,6 +25,13 @@ func (api *StreamingAPI) liveBrowserSessions(r *http.Request) []map[string]strin
 	if workspace == "" {
 		return result
 	}
+	if browser.SharedBrowserEnabled() {
+		level, manifest := workflowAccessForWorkspacePath(r.Context(), GetUserFromContext(r.Context()), workspace)
+		if manifest == nil || level == WorkflowAccessNone || (manifest.Capabilities.BrowserMode != "auto" && manifest.Capabilities.BrowserMode != "headless") {
+			return result
+		}
+		return []map[string]string{{"browser_session": browser.SharedSessionName, "workflow_session": "shared", "label": "Shared browser · all users"}}
+	}
 	for _, item := range browser.GetSessionTracker().ActiveSessions() {
 		id := item["workflow_session"]
 		api.activeSessionsMux.RLock()
@@ -200,7 +207,7 @@ func (api *StreamingAPI) handleLiveBrowserStream(w http.ResponseWriter, r *http.
 			if releaseControl == nil || !liveBrowserTabRef.MatchString(message.Tab) {
 				continue
 			}
-			_, err := browser.NewClient(workspaceURL).ExecuteCommand(ctx, []string{"--session", session, "--user-agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36", "--args", "--no-sandbox,--disable-gpu,--disable-blink-features=AutomationControlled", "tab", message.Tab, "--json"}, &browser.ExecuteOptions{Timeout: 10 * time.Second})
+			_, err := browser.NewClient(workspaceURL).ExecuteCommand(ctx, append(browser.HeadlessLaunchArgs(), "--session", session, "tab", message.Tab, "--json"), &browser.ExecuteOptions{Timeout: 10 * time.Second})
 			if err != nil {
 				sendError("Unable to switch browser tab.")
 			}

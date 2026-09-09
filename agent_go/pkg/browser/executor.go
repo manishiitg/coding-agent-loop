@@ -275,6 +275,9 @@ func (e *Executor) liveBrowserStatus(ctx context.Context) browserRuntimeStatus {
 		status.EffectiveMode = mode
 		status.Instruction = "Browser configuration is invalid; update the workflow browser_mode."
 	}
+	if status.EffectiveMode == "headless" && SharedBrowserEnabled() {
+		status.Instruction += " This deployment uses one persistent shared browser for ALL users and workflows. Session names map to shared-browser. Existing tabs and sign-ins are shared; inspect tabs first, do not close/reset the browser or clear storage unless explicitly requested. Users coordinate concurrent actions themselves."
+	}
 	return status
 }
 
@@ -483,12 +486,7 @@ func (e *Executor) HandleAgentBrowser(ctx context.Context, args map[string]inter
 	}
 	isCdpMode := cdpPort > 0
 	if !isCdpMode {
-		cmdArgs = append(cmdArgs, "--user-agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
-		// --no-sandbox removes the sandbox broker process (~100MB saved)
-		// --disable-gpu removes the GPU compositor process (~80MB saved)
-		// Together these cut Chrome's launch footprint roughly in half, which matters
-		// on memory-constrained hosts where Chrome is otherwise OOM-killed on startup.
-		cmdArgs = append(cmdArgs, "--args", "--no-sandbox,--disable-gpu,--disable-blink-features=AutomationControlled")
+		cmdArgs = append(cmdArgs, HeadlessLaunchArgs()...)
 	}
 	log.Printf("[BROWSER] mode=%s command=%s session=%s", map[bool]string{true: "cdp", false: "headless"}[isCdpMode], command, args["session"])
 
@@ -531,6 +529,8 @@ func (e *Executor) HandleAgentBrowser(ctx context.Context, args map[string]inter
 			log.Printf("[BROWSER] CDP: remapped session %q -> %q for shared browser port %d", session, sharedSession, cdpPort)
 			session = sharedSession
 		}
+	} else if SharedBrowserEnabled() {
+		session = SharedSessionName
 	} else {
 		resolvedSession := common.ResolveBrowserSessionID(agentSessionID, session)
 		if resolvedSession != "" && resolvedSession != session {
@@ -555,7 +555,7 @@ func (e *Executor) HandleAgentBrowser(ctx context.Context, args map[string]inter
 	isHeadless := !isCdpMode
 	tracker := GetSessionTracker()
 
-	if isHeadless {
+	if isHeadless && !SharedBrowserEnabled() {
 		isOpenCommand := isBrowserOpenCommand(command) || (command == "tab" && len(argsWithoutCDP) > 0 && argsWithoutCDP[0] == "new")
 
 		if isOpenCommand {
@@ -1698,6 +1698,9 @@ func killChromePID(chromePID int, session string) {
 //     orphan (PPID=1), and (b) graceful close returning success even when the
 //     daemon is dead, which means we cannot trust its return code.
 func killSessionRuntime(session string) {
+	if SharedBrowserEnabled() && session == SharedSessionName {
+		return
+	}
 	// Step 1: ask the daemon to close gracefully — kills Chrome and exits cleanly
 	// when the daemon is alive. NOTE: agent-browser close returns success even
 	// when the daemon is already dead, so we cannot rely on this alone.
@@ -1878,6 +1881,9 @@ func runCommand(name string, args ...string) (string, error) {
 // so the next command starts a fresh runtime + Chrome instead of connecting to a
 // dead one. Call killSessionRuntime first to stop the daemon before removing its files.
 func removeSessionFiles(session string) {
+	if SharedBrowserEnabled() && session == SharedSessionName {
+		return
+	}
 	for _, dir := range sessionDirs() {
 		removed := false
 		for _, ext := range []string{".pid", ".chrome-pid", ".sock", ".stream", ".engine", ".version"} {

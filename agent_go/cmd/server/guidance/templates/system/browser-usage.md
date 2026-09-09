@@ -170,9 +170,10 @@ After it is reachable, configure the workflow with that port, for example
 
 ### Headless-specific rules
 
-- Browser is **fresh** — login from scratch when sites require auth.
-- User cannot see the browser. **Take screenshots** to surface progress.
-- Free to open/close tabs/sessions; state resets between runs.
+- Call status to determine whether this deployment uses isolated sessions or a persistent shared browser.
+- In shared mode, all users and workflows see the same tabs and sign-ins. Inspect tabs before navigating; do not close/reset the browser, clear storage, or sign out unless the user explicitly asks. Users coordinate concurrent actions themselves.
+- In isolated mode, cookies last for the session lifetime; login may be needed.
+- The user can watch through the Browser workspace view.
 - Use `browser("reset")` only when the daemon is genuinely broken; otherwise
   it wastes time.
 

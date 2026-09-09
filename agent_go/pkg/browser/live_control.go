@@ -39,6 +39,9 @@ func retainLiveGate(session string) (*liveGate, func()) {
 }
 
 func AcquireBrowserAutomation(ctx context.Context, session string) (func(), error) {
+	if SharedBrowserEnabled() && session == SharedSessionName {
+		return func() {}, nil
+	}
 	gate, drop := retainLiveGate(session)
 	select {
 	case <-ctx.Done():
@@ -51,6 +54,9 @@ func AcquireBrowserAutomation(ctx context.Context, session string) (func(), erro
 }
 
 func TryTakeBrowserControl(session string) (func(), bool) {
+	if SharedBrowserEnabled() && session == SharedSessionName {
+		return func() {}, true
+	}
 	gate, drop := retainLiveGate(session)
 	select {
 	case <-gate.token:

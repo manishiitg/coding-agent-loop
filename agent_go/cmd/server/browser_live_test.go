@@ -221,3 +221,33 @@ func TestLiveBrowserRealHeadless(t *testing.T) {
 		time.Sleep(50 * time.Millisecond)
 	}
 }
+
+func TestSharedBrowserDiscoveryHonorsWorkflowAccess(t *testing.T) {
+	t.Setenv("AGENT_BROWSER_SHARED_PROFILE", "/data/browser-profile")
+	t.Setenv("MULTI_USER_MODE", "true")
+	withMemoryUserDirectory(t, `{"users":[{"id":"alice","username":"alice","can_create":true,"products":[]},{"id":"bob","username":"bob","can_create":true,"products":[]},{"id":"outsider","username":"outsider","can_create":true,"products":[]}]}`)
+	workspace := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != "GET" {
+			json.NewEncoder(w).Encode(map[string]interface{}{"success": true})
+			return
+		}
+		json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "data": map[string]string{"content": `{"version":"1","id":"shared-view-check","label":"Shared check","capabilities":{"browser_mode":"auto"},"access":{"owners":["alice"],"readers":["bob"]}}`}})
+	}))
+	defer workspace.Close()
+	t.Setenv("WORKSPACE_API_URL", workspace.URL)
+	api := &StreamingAPI{}
+	for _, user := range []string{"alice", "bob", "outsider"} {
+		r := httptest.NewRequest("GET", "/?workspace_path=Workflow/shared-view-check", nil)
+		r = r.WithContext(context.WithValue(r.Context(), UserContextKey, &UserClaims{UserID: user}))
+		items := api.liveBrowserSessions(r)
+		if user == "outsider" {
+			if len(items) != 0 {
+				t.Fatal("inaccessible workflow exposed browser")
+			}
+			continue
+		}
+		if len(items) != 1 || items[0]["browser_session"] != browser.SharedSessionName {
+			t.Fatalf("%s: %v", user, items)
+		}
+	}
+}

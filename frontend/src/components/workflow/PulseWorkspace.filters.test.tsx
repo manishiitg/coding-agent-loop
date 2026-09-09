@@ -87,7 +87,7 @@ describe('Pulse workspace filter interactions', () => {
       expect(shown()).toBe(expected)
       expect(button(label).getAttribute('aria-pressed')).toBe('true')
     }
-    await click('Plan drift review')
+    await click('View drift findings')
     await click('Resolved')
     expect(count('Resolved')).toBe(3)
     shownCount(3)
@@ -136,7 +136,7 @@ describe('Pulse workspace filter interactions', () => {
   })
 
   it('does not carry filters into another workflow', async () => {
-    await click('Plan drift review')
+    await click('View drift findings')
     await click('Resolved')
     await act(async () => render('Workflow/another'))
     expect(button('Current').getAttribute('aria-pressed')).toBe('true')

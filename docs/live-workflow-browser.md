@@ -279,3 +279,17 @@ not a separately configured password manager.
 Recordings are still saved under the workflow that starts them. A capture
 started from another workflow must be stopped from its originating workflow;
 this avoids exposing its workspace files through the shared-browser viewer.
+
+
+### RTS shared-profile rollout (2026-09-09)
+
+Enabled on RTS in `releases/shared-browser-20260909` with shared changes
+`66c9a7e07`. Profile: `/data/video-studio/browser-profile`. The separate
+`video-studio-browser` user service is enabled for the default target; agent,
+workspace, gateway, and browser service health checks passed. The UI displays
+**Shared browser · all users** and live frames without requiring a workflow
+run to create the browser first. Shared-mode Linux recording/streaming tests
+preserved cookies, session storage and both tabs. A separate real Chrome
+restart retained a persistent cookie and local storage. Observed identity:
+Linux HeadlessChrome 152.0.7928.2, en-US, UTC, 1280x720. Other deployments keep
+isolated behavior until explicitly configured with a shared profile.

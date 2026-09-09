@@ -148,7 +148,7 @@ workspace service; do not point one deployment at another's stream ports.
 ## Rollout status
 
 RTS was deployed on 2026-09-09 at `https://video.realtrainingsys.com`, using
-release `live-browser-20260909` (focused source commit `35e685ddb`). The release
+release `live-browser-refresh-20260909` (focused source commit `0b9593dd0`). The release
 includes the frontend, agent API, workspace service, and agent-browser 0.37.0.
 Shared CDP is disabled. Agent, workspace, and gateway services passed health
 checks after activation, and the public live-session endpoint rejects
@@ -157,11 +157,22 @@ unauthenticated requests.
 Before activation, isolated real-browser smoke tests on the RTS server passed
 live frames, two tabs, mouse focus, and typing through the staged workspace
 proxy. Both Linux systemd runtime metadata and the restricted workflow
-`HOME=/tmp` environment were checked. A signed-in production workflow UI run
-remains a follow-up verification; the server smoke used isolated test sessions.
+`HOME=/tmp` environment were checked. A signed-in production workflow UI run also passed: the `rts-latency`
+workshop called `agent_browser status`, opened Google, and displayed the Google
+page in the embedded live viewer with status **Watching**.
 The previous release is retained for rollback.
 
 Dominion and Confida remain pending. Confida/Hetzner access was blocked because
 the configured SSH key was unavailable locally and other attempted access was
 rejected. Roll out the same shared implementation and verify a real workflow
 in each deployment after access is available.
+
+### Persistent chat browser settings
+
+The RTS UI check exposed a missing-tool bug when a chat started with **No
+browser** and was later changed to **Automatic**. Persistent CLI turns reused
+the original tool registration. The follow-up release keeps the workflow
+browser tool registered and reads the current manifest on each invocation.
+Disabled, missing, or unreadable configuration cannot launch a browser. The
+regression test covers enabling and disabling the same tool instance without
+creating another chat. Shared fix: `961d22b5a`.

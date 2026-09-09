@@ -1,3 +1,4 @@
+import WorkflowLiveBrowser from './WorkflowLiveBrowser'
 import React, { useCallback, useEffect, useMemo, useState } from 'react'
 import { LoaderCircle, Save } from 'lucide-react'
 import { ToolSelectionSection } from '../ToolSelectionSection'
@@ -57,7 +58,7 @@ const SECTION_COPY: Record<WorkflowCapabilitySection, { title: string; descripti
   },
   browser: {
     title: 'Browser automation',
-    description: 'Control whether this workflow uses visible Chrome or managed headless browsing.',
+    description: 'Watch this workflow’s browser and configure its automation access.',
     savesViaManifest: true,
   },
   llm: {
@@ -285,20 +286,23 @@ export default function WorkflowCapabilitiesPanel({ section, workspacePath }: Wo
               </div>
             )}
             {section === 'browser' && (
-              <BrowserAutomationSettings
-                browserMode={capabilities.browser_mode as BrowserAutomationMode}
-                onBrowserModeChange={(browser_mode) => setCapabilities(current => ({ ...current, browser_mode }))}
-                cdpPort={cdpPort}
-                onCdpPortChange={(port) => {
-                  setCdpPort(port)
-                  setCapabilities(current => ({ ...current, cdp_ports: [port] }))
-                }}
-                cdpConnected={cdpConnected}
-                cdpError={cdpError}
-                cdpChecking={cdpChecking}
-                onCheckCdpConnection={checkCdpConnection}
-                readOnly={!canWriteWorkflow}
-              />
+              <>
+                <WorkflowLiveBrowser workspacePath={workspacePath} />
+                <BrowserAutomationSettings
+                  browserMode={capabilities.browser_mode as BrowserAutomationMode}
+                  onBrowserModeChange={(browser_mode) => setCapabilities(current => ({ ...current, browser_mode }))}
+                  cdpPort={cdpPort}
+                  onCdpPortChange={(port) => {
+                    setCdpPort(port)
+                    setCapabilities(current => ({ ...current, cdp_ports: [port] }))
+                  }}
+                  cdpConnected={cdpConnected}
+                  cdpError={cdpError}
+                  cdpChecking={cdpChecking}
+                  onCheckCdpConnection={checkCdpConnection}
+                  readOnly={!canWriteWorkflow}
+                />
+              </>
             )}
             {section === 'llm' && (
               <WorkflowLLMConfigurationPanel

@@ -6,12 +6,22 @@ log into authenticated pages. Browser configuration is declared by the
 workflow, but CDP reachability is live state. Query `agent_browser status`
 before first use instead of relying on saved conversation or prompt state.
 
-## Two modes
+`status.cdp_supported` is the deployment authority. When it is `false`, CDP
+is disabled on that server: do not probe ports, install/launch CDP Chrome, or
+pass `--cdp`. Use managed headless Chromium. In that deployment, workflow
+`auto` mode is intentionally headless-only and `cdp`/`cdp_ports` updates are
+rejected. Desktop/local deployments may still report CDP as supported.
+
+## Runtime modes
 
 | Mode | Browser | Visibility | Logins / cookies |
 |---|---|---|---|
 | **CDP** (`agent_browser` with `--cdp`) | The user's real Chrome via Chrome DevTools Protocol | User sees every action | Existing cookies + sessions are available — leverage them |
 | **Headless** (`agent_browser`) | Container-side Chromium | Invisible to user; take screenshots | Fresh each time, no cookies |
+
+The CDP row is unavailable whenever live status reports
+`"cdp_supported": false`; this is a deployment policy, not a transient
+connection failure.
 
 ## Version-matched agent-browser skills
 

@@ -60,6 +60,8 @@ data:
   # Web UI gate. When true, authenticated browser users see only the Mac app
   # download/connect screen instead of the full in-browser application UI.
   DESKTOP_APP_ONLY_UI: "true"
+  # CDP requires a user-owned visible Chrome and is unavailable in server pods.
+  AGENT_BROWSER_CDP_ENABLED: "false"
 
   # Bot manager emails — comma-separated emails that can see Human Feedback Connectors in the sidebar.
   # If empty/unset, all users can see them (backwards compatible).

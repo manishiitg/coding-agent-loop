@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/browser"
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/common"
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/workflowtypes"
 )
@@ -96,6 +97,20 @@ type CreateWorkflowManifestRequest struct {
 	HumanVerificationRequired bool                       `json:"human_verification_required"`
 }
 
+func enforceDeploymentBrowserCapability(capabilities *WorkflowCapabilities) error {
+	if capabilities == nil || browser.CDPEnabled() {
+		return nil
+	}
+	if strings.EqualFold(strings.TrimSpace(capabilities.BrowserMode), "cdp") {
+		return fmt.Errorf("CDP is disabled for this server deployment; use browser_mode auto, headless, or none")
+	}
+	// CDP ports have no meaning on a deployment that cannot use CDP. Clearing
+	// legacy candidates lets a user move an old workflow to auto/headless in a
+	// single save instead of being trapped by stale configuration.
+	capabilities.CDPPorts = nil
+	return nil
+}
+
 func (api *StreamingAPI) handleCreateWorkflowManifest(w http.ResponseWriter, r *http.Request) {
 	setCORS(w)
 	if r.Method == "OPTIONS" {
@@ -115,6 +130,10 @@ func (api *StreamingAPI) handleCreateWorkflowManifest(w http.ResponseWriter, r *
 	}
 	if req.WorkspacePath == "" {
 		http.Error(w, "workspace_path is required", http.StatusBadRequest)
+		return
+	}
+	if err := enforceDeploymentBrowserCapability(req.Capabilities); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 
@@ -260,6 +279,10 @@ func (api *StreamingAPI) handleUpdateWorkflowManifest(w http.ResponseWriter, r *
 
 	if req.WorkspacePath == "" {
 		http.Error(w, "workspace_path is required", http.StatusBadRequest)
+		return
+	}
+	if err := enforceDeploymentBrowserCapability(req.Capabilities); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 

@@ -46,6 +46,7 @@ export AGENT_MODEL="${AGENT_MODEL:-gpt-5.2}"
 
 # Chromium for browser tools
 export AGENT_BROWSER_EXECUTABLE_PATH="/usr/bin/chromium-browser"
+export AGENT_BROWSER_CDP_ENABLED="false"
 
 # Create required dirs
 mkdir -p "$AGENT_DIR/logs" "$AGENT_DIR/cache" "$AGENT_DIR/generated/agents" \

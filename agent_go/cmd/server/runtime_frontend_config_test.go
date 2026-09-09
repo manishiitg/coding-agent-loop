@@ -6,19 +6,21 @@ import (
 )
 
 func TestRuntimeFrontendConfigJSOmitsUnsetKeys(t *testing.T) {
+	t.Setenv("AGENT_BROWSER_CDP_ENABLED", "true")
 	t.Setenv("AGENTWORKS_ENABLED_PRODUCT_SURFACES", "")
 	t.Setenv("AGENTWORKS_DEFAULT_PRODUCT_SURFACE", "")
 	t.Setenv("AGENTWORKS_APP_NAME", "")
 	t.Setenv("AGENTWORKS_FAVICON_URL", "")
 
 	got := runtimeFrontendConfigJS(45678, "http://localhost:45679")
-	want := "window.__APP_RUNTIME_CONFIG__ = {\n  apiBaseUrl: \"http://localhost:45678\",\n  workspaceApiBaseUrl: \"http://localhost:45679\"\n};\n"
+	want := "window.__APP_RUNTIME_CONFIG__ = {\n  apiBaseUrl: \"http://localhost:45678\",\n  workspaceApiBaseUrl: \"http://localhost:45679\",\n  cdpEnabled: true\n};\n"
 	if got != want {
 		t.Fatalf("a plain AgentWorks deployment must emit byte-identical output to before product-surface keys existed\ngot:  %q\nwant: %q", got, want)
 	}
 }
 
 func TestRuntimeFrontendConfigJSEmitsProductSurfaceAndBrandingKeys(t *testing.T) {
+	t.Setenv("AGENT_BROWSER_CDP_ENABLED", "false")
 	t.Setenv("AGENTWORKS_ENABLED_PRODUCT_SURFACES", " sparkquill , sparkquill ")
 	t.Setenv("AGENTWORKS_DEFAULT_PRODUCT_SURFACE", "sparkquill")
 	t.Setenv("AGENTWORKS_APP_NAME", "SparkQuill")
@@ -26,6 +28,7 @@ func TestRuntimeFrontendConfigJSEmitsProductSurfaceAndBrandingKeys(t *testing.T)
 
 	got := runtimeFrontendConfigJS(45778, "http://localhost:45779")
 	for _, want := range []string{
+		`cdpEnabled: false`,
 		`enabledProductSurfaces: ["sparkquill", "sparkquill"]`,
 		`defaultProductSurface: "sparkquill"`,
 		`appName: "SparkQuill"`,

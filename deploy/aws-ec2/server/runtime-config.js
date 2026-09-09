@@ -3,6 +3,7 @@
 window.__APP_RUNTIME_CONFIG__ = {
   apiBaseUrl: "",
   workspaceApiBaseUrl: "/api/wp",
+  cdpEnabled: false,
   defaultProductSurface: "video-studio",
   enabledProductSurfaces: ["agentworks", "video-studio"],
   appName: "Video Studio",

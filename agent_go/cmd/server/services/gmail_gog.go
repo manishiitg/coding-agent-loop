@@ -161,20 +161,11 @@ func (g *GmailService) computeAuthStatusGog(ctx context.Context, gogPath string,
 // every status check exercised in the suite.
 var googleTokenInfoURL = "https://oauth2.googleapis.com/tokeninfo"
 
-// googleTokenGrantedScopes asks Google's tokeninfo endpoint what scopes an
-// access token actually carries — the only authoritative source, since a
-// project's OAuth consent screen can silently drop a requested-but-
-// unregistered scope (see the setup guide's Data Access gotcha).
 // googleTokenInfoClient bounds the tokeninfo call so a network partition
 // cannot hang a status check indefinitely — computeAuthStatusGog runs on
 // both a request-serving path and a detached background-refresh goroutine,
 // and neither should be able to stall on this.
 var googleTokenInfoClient = &http.Client{Timeout: 5 * time.Second}
-
-func googleTokenGrantedScopes(ctx context.Context, accessToken string) ([]string, error) {
-	scopes, _, err := googleTokenInfo(ctx, accessToken)
-	return scopes, err
-}
 
 // googleTokenInfo is the full tokeninfo lookup: the granted scopes, plus the
 // token's email when the userinfo.email scope is present (every connection

@@ -95,6 +95,10 @@ cp "$REPO_ROOT/frontend/scripts/check-release-assets.mjs" "$BUILD_DIR/check-rele
 # Sourced from THIS script's own directory, not the cloned repo -- it is
 # deployment configuration, not application source.
 install -m 0644 "$LOCAL_SCRIPT_DIR/runtime-config.js" "$BUILD_DIR/frontend/runtime-config.js"
+grep -Fq 'cdpEnabled: false' "$BUILD_DIR/frontend/runtime-config.js" || {
+  echo "confida runtime config must display CDP as disabled" >&2
+  exit 1
+}
 node "$BUILD_DIR/check-release-assets.mjs" "$BUILD_DIR/frontend"
 
 # The shared public MCP catalog (Notion, Linear, Sentry, Exa, etc. via the
@@ -120,6 +124,10 @@ ln -sfn "$remote_app/logs" "$remote_release/logs"
 ln -sfn "$remote_release" "$remote_app/current"
 
 export XDG_RUNTIME_DIR="/run/user/$(id -u)"
+mkdir -p "$HOME/.config/systemd/user/confida-agent.service.d"
+printf '%s\n' '[Service]' 'Environment=AGENT_BROWSER_CDP_ENABLED=false' > "$HOME/.config/systemd/user/confida-agent.service.d/20-disable-cdp.conf"
+mkdir -p "$HOME/.config/systemd/user/confida-workspace.service.d"
+printf '%s\n' '[Service]' 'Environment=AGENT_BROWSER_CDP_ENABLED=false' > "$HOME/.config/systemd/user/confida-workspace.service.d/20-disable-cdp.conf"
 systemctl --user daemon-reload
 systemctl --user restart confida-workspace
 sleep 2

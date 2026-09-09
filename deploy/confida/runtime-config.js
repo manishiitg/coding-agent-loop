@@ -10,6 +10,7 @@
 window.__APP_RUNTIME_CONFIG__ = {
   apiBaseUrl: "",
   workspaceApiBaseUrl: "/api/wp",
+  cdpEnabled: false,
   appName: "AgentWorks",
   faviconUrl: "/logo.svg"
 };

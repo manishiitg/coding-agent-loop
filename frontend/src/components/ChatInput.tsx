@@ -126,6 +126,7 @@ import { useCommandDialogStore } from '../stores/useCommandDialogStore'
 import { usePresetApplication, useGlobalPresetStore } from '../stores/useGlobalPresetStore'
 import { useModeStore } from '../stores/useModeStore'
 import { agentApi } from '../services/api'
+import { isBrowserCDPEnabled } from '../utils/runtimeCapabilities'
 import { skillsApi } from '../api/skills'
 import type { Skill } from '../types/skills'
 import { getClipboardImageFiles } from './clipboardImages'
@@ -818,6 +819,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     [currentChatUsesStructuredTransport, effectiveProviderForSteer, selectedProviderManifestEntry]
   )
   const canShowSteer = useMemo(() => canSteer && !isCLIProvider, [canSteer, isCLIProvider])
+  const cdpEnabled = useMemo(() => isBrowserCDPEnabled(), [])
   const browserMode = useMemo(() => tabConfig?.browserMode ?? 'auto', [tabConfig?.browserMode])
   const cdpPort = useMemo(() => tabConfig?.cdpPort ?? 9222, [tabConfig?.cdpPort])
   const workspaceActiveFolder = useWorkspaceStore(state => state.activeFolder)
@@ -827,7 +829,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
   const [showCdpPopup, setShowCdpPopup] = useState(false)
   const [isUploadingFiles, setIsUploadingFiles] = useState(false)
   const [isDraggingFiles, setIsDraggingFiles] = useState(false)
-  const isCdpDisconnected = browserMode === 'cdp' && cdpConnected === false
+  const isCdpDisconnected = browserMode === 'cdp' && (!cdpEnabled || cdpConnected === false)
 
   // File context operations (always update tab config)
   const removeFileFromContext = useCallback((path: string) => {
@@ -938,6 +940,8 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
   const setBrowserMode = useCallback((mode: 'none' | 'auto' | 'headless' | 'cdp') => {
     if (!activeTabId) return
 
+    if (mode === 'cdp' && !cdpEnabled) return
+
     if (mode === 'auto' || mode === 'headless' || mode === 'cdp') {
       setTabConfig(activeTabId, {
         browserMode: mode,
@@ -952,7 +956,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
         useCdp: false,
       })
     }
-  }, [activeTabId, setTabConfig, setWorkspaceMinimized, showCdpPopup])
+  }, [activeTabId, cdpEnabled, setTabConfig, setWorkspaceMinimized, showCdpPopup])
 
   const setCdpPort = useCallback((port: number) => {
     if (activeTabId) {
@@ -961,6 +965,11 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
   }, [activeTabId, setTabConfig])
 
   const checkCdpConnection = useCallback(async (port: number) => {
+    if (!cdpEnabled) {
+      setCdpConnected(false)
+      setCdpError('CDP is disabled on this server deployment.')
+      return
+    }
     setCdpChecking(true)
     setCdpConnected(null)
     setCdpError(null)
@@ -974,13 +983,13 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     } finally {
       setCdpChecking(false)
     }
-  }, [])
+  }, [cdpEnabled])
 
   // Auto-check CDP connection when automatic/CDP mode is active or port changes.
   // In automatic mode this is informational: an unavailable CDP browser falls
   // back to headless at runtime instead of blocking the chat.
   useEffect(() => {
-    if (browserMode !== 'auto' && browserMode !== 'cdp') {
+    if (!cdpEnabled || (browserMode !== 'auto' && browserMode !== 'cdp')) {
       setCdpConnected(null)
       setCdpError(null)
       return
@@ -989,7 +998,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
       checkCdpConnection(cdpPort)
     }, 500)
     return () => clearTimeout(timer)
-  }, [browserMode, cdpPort, checkCdpConnection])
+  }, [browserMode, cdpEnabled, cdpPort, checkCdpConnection])
 
   useEffect(() => {
     const handleChatToolCommand = (event: Event) => {
@@ -3823,11 +3832,13 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
                               <div className="text-sm font-medium">Automatic</div>
                             </div>
                             <div className="text-xs leading-5 text-muted-foreground">
-                              Uses Local Chrome through CDP when reachable; otherwise uses headless agent-browser.
+                              {cdpEnabled
+                                ? 'Uses Local Chrome through CDP when reachable; otherwise uses headless agent-browser.'
+                                : 'Uses managed headless Chromium on this server. CDP is disabled.'}
                             </div>
                             <div className={`mt-auto inline-flex w-fit items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium ${cdpChecking || cdpConnected === null ? 'bg-amber-500/10 text-amber-300' : cdpConnected ? 'bg-emerald-500/10 text-emerald-300' : 'bg-blue-500/10 text-blue-300'}`}>
                               <span className={`h-1.5 w-1.5 rounded-full ${cdpConnected ? 'bg-emerald-400' : cdpChecking || cdpConnected === null ? 'bg-amber-400' : 'bg-blue-400'}`} />
-                              {cdpChecking || cdpConnected === null ? 'Checking CDP' : cdpConnected ? 'Will use CDP' : 'Will use headless'}
+                              {!cdpEnabled ? 'CDP disabled · Headless' : cdpChecking || cdpConnected === null ? 'Checking CDP' : cdpConnected ? 'Will use CDP' : 'Will use headless'}
                             </div>
                           </label>
 
@@ -3864,7 +3875,9 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
                           </label>
 
                           {/* CDP */}
-                          <label className={`flex min-h-[132px] cursor-pointer flex-col gap-3 rounded-lg border p-3 transition-colors ${
+                          <label className={`flex min-h-[132px] flex-col gap-3 rounded-lg border p-3 transition-colors ${
+                            !cdpEnabled ? 'cursor-not-allowed opacity-60 ' : 'cursor-pointer '
+                          }${
                             browserMode === 'cdp'
                               ? 'border-emerald-500 bg-emerald-500/10 ring-1 ring-emerald-500/20'
                               : 'border-border bg-card/40 hover:bg-muted/50'
@@ -3873,15 +3886,19 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
                               type="radio"
                               name="browserMode"
                               checked={browserMode === 'cdp'}
+                              disabled={!cdpEnabled}
                               onChange={() => setBrowserMode('cdp')}
                               className="sr-only"
                             />
                             <div className="flex items-center gap-2">
                               <span className={`h-3 w-3 rounded-full border ${browserMode === 'cdp' ? 'border-emerald-400 bg-emerald-400 ring-4 ring-emerald-400/20' : 'border-muted-foreground/50'}`} />
                               <div className="text-sm font-medium">Local Chrome</div>
+                              {!cdpEnabled && <span className="rounded bg-muted px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-muted-foreground">Disabled on server</span>}
                             </div>
                             <div className="text-xs leading-5 text-muted-foreground">
-                              Connects to your real Chrome browser through CDP. Useful when login state matters.
+                              {cdpEnabled
+                                ? 'Connects to your real Chrome browser through CDP. Useful when login state matters.'
+                                : 'Unavailable in this deployment. Browser work runs in managed headless Chromium.'}
                             </div>
                             {browserMode === 'cdp' && (
                               <div className={`mt-auto inline-flex w-fit items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium ${
@@ -3901,7 +3918,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
 
                         {/* Context panel */}
                         <div className="rounded-lg border border-border bg-muted/25 p-4">
-                          {browserMode === 'cdp' && (
+                          {browserMode === 'cdp' && cdpEnabled && (
                             <div className="space-y-4">
                               <div className="flex flex-wrap items-center justify-between gap-3">
                                 <div>

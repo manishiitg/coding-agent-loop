@@ -55,6 +55,18 @@ grep -Fq 'Environment=AGENT_PRODUCTS=video-studio' "$SCRIPT_DIR/rootless/video-s
   echo "Video Studio deployment must load only the video-studio product backend" >&2
   exit 1
 }
+grep -Fq 'Environment=AGENT_BROWSER_CDP_ENABLED=false' "$SCRIPT_DIR/rootless/video-studio-agent.service" || {
+  echo "Video Studio server deployment must disable CDP in the agent service" >&2
+  exit 1
+}
+grep -Fq 'Environment=AGENT_BROWSER_CDP_ENABLED=false' "$SCRIPT_DIR/rootless/video-studio-workspace.service" || {
+  echo "Video Studio server deployment must disable CDP in the workspace service" >&2
+  exit 1
+}
+grep -Fq 'cdpEnabled: false' "$SCRIPT_DIR/server/runtime-config.js" || {
+  echo "Video Studio runtime config must display CDP as disabled" >&2
+  exit 1
+}
 
 aws_rts() { aws --profile "$AWS_PROFILE_NAME" --region "$AWS_REGION" "$@"; }
 

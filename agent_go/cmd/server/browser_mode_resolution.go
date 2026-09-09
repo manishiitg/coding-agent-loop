@@ -2,6 +2,8 @@ package server
 
 import (
 	"strings"
+
+	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/browser"
 )
 
 const defaultCDPPort = 9222
@@ -29,6 +31,9 @@ func configuredCDPPortsForMode(mode string, primary *int, additional []int) []in
 // Resolve that boundary once so normal and restored coding-agent sessions use
 // the same read-only grant.
 func hostDownloadsBrowserMode(req QueryRequest) string {
+	if !browser.CDPEnabled() {
+		return "headless"
+	}
 	mode := getBrowserMode(req)
 	if mode == "auto" && len(configuredCDPPortsForMode(mode, req.CdpPort, req.CdpPorts)) > 0 {
 		return "cdp"

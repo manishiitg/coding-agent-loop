@@ -5749,6 +5749,14 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 
 	// === Tool: update_workflow_config ===
 	// Tool: update_workflow_config — add/remove MCP servers, skills, secrets, and workflow-level knobs
+	browserModeValues := []interface{}{"none", "auto", "headless", "cdp"}
+	browserModeDescription := "Workflow-level browser automation mode. 'none' disables browser capability; 'auto' uses the operator's shared Chrome through CDP when reachable and otherwise headless agent_browser; 'headless' forces isolated agent_browser; 'cdp' requires the operator's shared Chrome. For steps that actually drive the browser, also set update_step_config(enabled_custom_tools=[...]) and enabled_skills=['agent-browser']."
+	cdpPortsDescription := "Optional specialized CDP browser ports (maximum 4). Use multiple ports only when one workflow needs independent Chrome profiles/login identities, such as testing two accounts on the same site. Each port must be launched with a distinct --user-data-dir. Normal concurrent workflows should share the default single CDP browser."
+	if !browser.CDPEnabled() {
+		browserModeValues = []interface{}{"none", "auto", "headless"}
+		browserModeDescription = "Workflow-level browser automation mode for this server deployment. CDP is disabled: 'auto' and 'headless' both use managed headless Chromium; 'none' disables browser capability. The 'cdp' mode is unavailable and cannot be forced."
+		cdpPortsDescription = "Unavailable on this server deployment because CDP is disabled. Omit this field."
+	}
 	if iwm.isRunModeRestricted() {
 		// PLAT-262: skip update_workflow_config registration for read-only access
 	} else if err := mcpAgent.RegisterCustomTool(
@@ -5863,15 +5871,15 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				},
 				"browser_mode": map[string]interface{}{
 					"type":        "string",
-					"enum":        []interface{}{"none", "auto", "headless", "cdp"},
-					"description": "Workflow-level browser automation mode. 'none' disables browser capability; 'auto' uses the operator's shared Chrome through CDP when reachable and otherwise headless agent_browser; 'headless' forces isolated agent_browser; 'cdp' requires the operator's shared Chrome. For steps that actually drive the browser, also set update_step_config(enabled_custom_tools=[...]) and enabled_skills=['agent-browser'].",
+					"enum":        browserModeValues,
+					"description": browserModeDescription,
 				},
 				"cdp_ports": map[string]interface{}{
 					"type":        "array",
 					"items":       map[string]interface{}{"type": "integer", "minimum": 1, "maximum": 65535},
 					"maxItems":    maxCDPPortsPerWorkflow,
 					"uniqueItems": true,
-					"description": "Optional specialized CDP browser ports (maximum 4). Use multiple ports only when one workflow needs independent Chrome profiles/login identities, such as testing two accounts on the same site. Each port must be launched with a distinct --user-data-dir. Normal concurrent workflows should share the default single CDP browser.",
+					"description": cdpPortsDescription,
 				},
 				"run_retention_count": map[string]interface{}{
 					"type":        "integer",
@@ -6790,6 +6798,9 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 			if raw, ok := args["browser_mode"]; ok && raw != nil {
 				mode, _ := raw.(string)
 				mode = strings.ToLower(strings.TrimSpace(mode))
+				if mode == "cdp" && !browser.CDPEnabled() {
+					return "Error: CDP is disabled for this server deployment. Use browser_mode='auto', 'headless', or 'none'.", nil
+				}
 				validModes := map[string]bool{"none": true, "auto": true, "headless": true, "cdp": true}
 				if !validModes[mode] {
 					return "Error: browser_mode must be one of: none, auto, headless, cdp.", nil
@@ -6805,6 +6816,9 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 
 			// --- Specialized multi-profile CDP ports ---
 			if raw, ok := args["cdp_ports"]; ok && raw != nil {
+				if !browser.CDPEnabled() {
+					return "Error: cdp_ports is unavailable because CDP is disabled for this server deployment.", nil
+				}
 				arr, ok := raw.([]interface{})
 				if !ok {
 					return "Error: cdp_ports must be an array of integer ports.", nil

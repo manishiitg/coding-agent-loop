@@ -131,6 +131,15 @@ if [[ -f "$CURRENT_LINK/frontend/runtime-config.js" ]]; then
 else
   echo "WARNING: no existing runtime-config.js found at $CURRENT_LINK — this release ships whatever npm run build produced. Verify it by hand before activating." >&2
 fi
+if grep -q 'cdpEnabled:' "$RELEASE_DIR/frontend/runtime-config.js"; then
+  sed -i -E 's/cdpEnabled:[[:space:]]*(true|false)/cdpEnabled: false/' "$RELEASE_DIR/frontend/runtime-config.js"
+else
+  sed -i '/window.__APP_RUNTIME_CONFIG__ = {/a\  cdpEnabled: false,' "$RELEASE_DIR/frontend/runtime-config.js"
+fi
+grep -Fq 'cdpEnabled: false' "$RELEASE_DIR/frontend/runtime-config.js" || {
+  echo "FATAL: Dominion runtime config does not display CDP as disabled" >&2
+  exit 1
+}
 
 echo "==> Copying configs/ unchanged from the current release"
 if [[ -d "$CURRENT_LINK/configs" ]]; then
@@ -152,6 +161,11 @@ PREVIOUS_RELEASE="$(readlink -f "$CURRENT_LINK" 2>/dev/null || true)"
 echo ""
 echo "==> Activating: flipping $CURRENT_LINK -> $RELEASE_DIR and restarting dominion-agent"
 ln -sfn "$RELEASE_DIR" "$CURRENT_LINK"
+mkdir -p "$HOME/.config/systemd/user/dominion-agent.service.d"
+printf '%s\n' '[Service]' 'Environment=AGENT_BROWSER_CDP_ENABLED=false' > "$HOME/.config/systemd/user/dominion-agent.service.d/20-disable-cdp.conf"
+mkdir -p "$HOME/.config/systemd/user/dominion-workspace.service.d"
+printf '%s\n' '[Service]' 'Environment=AGENT_BROWSER_CDP_ENABLED=false' > "$HOME/.config/systemd/user/dominion-workspace.service.d/20-disable-cdp.conf"
+systemctl --user daemon-reload
 systemctl --user restart dominion-agent
 sleep 3
 

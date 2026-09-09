@@ -21,6 +21,7 @@ export PORT="8080"
 export DOCS_DIR="/data/docs"
 export DB_PATH="/data/workspace-db/workspace.db"
 export ENABLE_SEMANTIC_SEARCH="${ENABLE_SEMANTIC_SEARCH:-false}"
+export AGENT_BROWSER_CDP_ENABLED="false"
 
 # Create required dirs
 mkdir -p /data/docs /data/workspace-db /data/logs \

@@ -19,6 +19,28 @@ import (
 
 const cdpTabListTimeout = 15 * time.Second
 
+// EnvAgentBrowserCDPEnabled controls whether this deployment permits agents to
+// connect to an operator-owned Chrome instance over CDP. It defaults to true
+// for backwards compatibility with desktop/local installations. Public and
+// remote server deployments set it to false explicitly.
+const EnvAgentBrowserCDPEnabled = "AGENT_BROWSER_CDP_ENABLED"
+
+// CDPEnabled reports the deployment-level CDP capability. Workflow settings
+// can narrow browser access further, but cannot override a disabled deployment
+// capability.
+func CDPEnabled() bool {
+	raw, ok := os.LookupEnv(EnvAgentBrowserCDPEnabled)
+	if !ok || strings.TrimSpace(raw) == "" {
+		return true
+	}
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "1", "true", "yes", "on", "enabled":
+		return true
+	default:
+		return false
+	}
+}
+
 // A coding CLI can accept much less than mcpagent's own bridge result limit.
 // Snapshot output above this threshold must fail explicitly rather than being
 // silently narrowed or truncated: the agent, not the runtime, chooses which
@@ -148,6 +170,8 @@ func (e *Executor) configuredBrowserMode() string {
 type browserRuntimeStatus struct {
 	ConfiguredMode      string         `json:"configured_mode"`
 	EffectiveMode       string         `json:"effective_mode"`
+	CDPSupported        bool           `json:"cdp_supported"`
+	CDPDisabledReason   string         `json:"cdp_disabled_reason,omitempty"`
 	ConfiguredCDPPorts  []int          `json:"configured_cdp_ports,omitempty"`
 	ReachableCDPPorts   []int          `json:"reachable_cdp_ports,omitempty"`
 	AuthorizedEndpoints []string       `json:"authorized_endpoints,omitempty"`
@@ -159,14 +183,22 @@ type browserRuntimeStatus struct {
 func (e *Executor) liveBrowserStatus(ctx context.Context) browserRuntimeStatus {
 	mode := strings.ToLower(strings.TrimSpace(e.configuredBrowserMode()))
 	ports := e.configuredCDPPorts()
+	cdpEnabled := CDPEnabled()
 	status := browserRuntimeStatus{
 		ConfiguredMode:     mode,
 		ConfiguredCDPPorts: append([]int(nil), ports...),
 		HeadlessAvailable:  mode == "auto" || mode == "headless",
+		CDPSupported:       cdpEnabled,
+	}
+	if !cdpEnabled {
+		status.CDPDisabledReason = "CDP is disabled for this server deployment; managed headless Chromium remains available."
 	}
 
 	switch mode {
 	case "auto", "cdp":
+		if !cdpEnabled {
+			break
+		}
 		status.CheckErrors = make(map[int]string)
 		type result struct {
 			index     int
@@ -205,6 +237,11 @@ func (e *Executor) liveBrowserStatus(ctx context.Context) browserRuntimeStatus {
 
 	switch mode {
 	case "auto":
+		if !cdpEnabled {
+			status.EffectiveMode = "headless"
+			status.Instruction = "CDP is disabled for this server deployment. Call agent_browser without --cdp; Automatic mode uses managed headless Chromium here."
+			break
+		}
 		if len(status.ReachableCDPPorts) > 0 {
 			status.EffectiveMode = "cdp"
 			status.AuthorizedEndpoints = ConfiguredCDPEndpoints(status.ReachableCDPPorts)
@@ -214,6 +251,11 @@ func (e *Executor) liveBrowserStatus(ctx context.Context) browserRuntimeStatus {
 			status.Instruction = "CDP is not currently reachable; call agent_browser without --cdp. Call status again if Chrome becomes available."
 		}
 	case "cdp":
+		if !cdpEnabled {
+			status.EffectiveMode = "unavailable"
+			status.Instruction = "CDP is disabled for this server deployment. Change browser_mode to auto, headless, or none; --cdp cannot override this policy."
+			break
+		}
 		if len(status.ReachableCDPPorts) > 0 {
 			status.EffectiveMode = "cdp"
 			status.AuthorizedEndpoints = ConfiguredCDPEndpoints(status.ReachableCDPPorts)
@@ -414,7 +456,17 @@ func (e *Executor) HandleAgentBrowser(ctx context.Context, args map[string]inter
 	if configuredMode == "none" {
 		return "", fmt.Errorf("BROWSER_DISABLED: browser access is disabled for this run")
 	}
-	if configuredMode == "auto" {
+	if !CDPEnabled() {
+		if configuredMode == "cdp" || cdpArg.found {
+			return "", fmt.Errorf("CDP_DISABLED: CDP is disabled for this server deployment; use browser_mode=auto or headless and call agent_browser without --cdp")
+		}
+		// On server deployments Automatic is deliberately headless-only. Do not
+		// probe configured ports or accidentally grant host-browser access.
+		if configuredMode == "auto" {
+			configuredPorts = nil
+		}
+	}
+	if configuredMode == "auto" && CDPEnabled() {
 		status := e.liveBrowserStatus(ctx)
 		if status.EffectiveMode == "cdp" {
 			configuredPorts = status.ReachableCDPPorts
@@ -488,6 +540,14 @@ func (e *Executor) HandleAgentBrowser(ctx context.Context, args map[string]inter
 	}
 
 	log.Printf("[BROWSER] session=%q agent=%q workflow=%q command=%q", session, agentSessionID, workflowSessionID, command)
+
+	if !isCdpMode {
+		release, err := AcquireBrowserAutomation(ctx, session)
+		if err != nil {
+			return "", err
+		}
+		defer release()
+	}
 
 	// Track headless browser sessions to prevent unbounded growth.
 	// CDP mode connects to the user's real browser, so it is tracked separately

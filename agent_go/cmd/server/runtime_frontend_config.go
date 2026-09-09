@@ -4,14 +4,15 @@ import (
 	"fmt"
 	"os"
 	"strings"
+
+	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/browser"
 )
 
 // runtimeFrontendConfigJS builds the window.__APP_RUNTIME_CONFIG__ bootstrap
 // script every frontend page loads before anything else (runtime-config.js,
 // registered in runServer). apiBaseUrl/workspaceApiBaseUrl are always
-// present (unchanged from before this file existed); the product-surface and
-// branding keys are opt-in via env, so a plain AgentWorks deployment (none of
-// them set) emits byte-identical output to before — see
+// present; cdpEnabled advertises the deployment-level browser capability; the
+// product-surface and branding keys are opt-in via env — see
 // docs/design/sparkquill_desktop_on_platform_plan.md P0. A desktop shell
 // running a single product (e.g. SparkQuill) sets
 // AGENTWORKS_ENABLED_PRODUCT_SURFACES/AGENTWORKS_DEFAULT_PRODUCT_SURFACE so
@@ -20,6 +21,7 @@ import (
 func runtimeFrontendConfigJS(actualPort int, workspaceURL string) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "window.__APP_RUNTIME_CONFIG__ = {\n  apiBaseUrl: \"http://localhost:%d\",\n  workspaceApiBaseUrl: %q", actualPort, workspaceURL)
+	fmt.Fprintf(&b, ",\n  cdpEnabled: %t", browser.CDPEnabled())
 	if surfaces := splitAndTrimCommaList(os.Getenv("AGENTWORKS_ENABLED_PRODUCT_SURFACES")); len(surfaces) > 0 {
 		fmt.Fprintf(&b, ",\n  enabledProductSurfaces: %s", jsStringArrayLiteral(surfaces))
 	}

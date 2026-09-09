@@ -1012,6 +1012,9 @@ const maxCDPPortsPerRun = 4
 // this run. Multiple ports are reserved for separate Chrome profiles/login
 // identities inside one workflow; ordinary concurrent workflows share one.
 func getCdpPorts(req QueryRequest) []int {
+	if !browser.CDPEnabled() {
+		return nil
+	}
 	mode := strings.ToLower(strings.TrimSpace(req.BrowserMode))
 	if mode == "none" || mode == "headless" {
 		return nil
@@ -1040,6 +1043,12 @@ func getCdpPorts(req QueryRequest) []int {
 }
 
 func validateRequestedCDPPorts(req QueryRequest) error {
+	if !browser.CDPEnabled() {
+		if strings.EqualFold(strings.TrimSpace(req.BrowserMode), "cdp") || req.CdpPort != nil || len(req.CdpPorts) > 0 {
+			return fmt.Errorf("CDP is disabled for this server deployment; use browser_mode auto, headless, or none without CDP ports")
+		}
+		return nil
+	}
 	candidates := append([]int{}, req.CdpPorts...)
 	if req.CdpPort != nil {
 		candidates = append([]int{*req.CdpPort}, candidates...)
@@ -2186,6 +2195,8 @@ func runServer(cmd *cobra.Command, args []string) {
 
 	// Browser session tracking API
 	apiRouter.HandleFunc("/browser/sessions", api.handleGetBrowserSessions).Methods("GET")
+	apiRouter.HandleFunc("/browser/live/sessions", api.handleLiveBrowserSessions).Methods("GET")
+	apiRouter.HandleFunc("/browser/live/{session}/stream", api.handleLiveBrowserStream).Methods("GET")
 
 	// Active Session API routes (from polling.go)
 	apiRouter.HandleFunc("/sessions/active", api.handleGetActiveSessions).Methods("GET")

@@ -541,6 +541,14 @@ func (e *Executor) HandleAgentBrowser(ctx context.Context, args map[string]inter
 
 	log.Printf("[BROWSER] session=%q agent=%q workflow=%q command=%q", session, agentSessionID, workflowSessionID, command)
 
+	if !isCdpMode {
+		release, err := AcquireBrowserAutomation(ctx, session)
+		if err != nil {
+			return "", err
+		}
+		defer release()
+	}
+
 	// Track headless browser sessions to prevent unbounded growth.
 	// CDP mode connects to the user's real browser, so it is tracked separately
 	// via the per-port owner registry (cdp_registry.go) instead of this tracker.

@@ -1,8 +1,15 @@
 # Pulse review visibility
 
-The Pulse workspace presents drift as a compact status check. Technical Review
-and Strategic Review remain the main review areas, alongside existing human
-decisions and the issue queue.
+The Pulse workspace has three selectable areas: Drift check, Technical Review,
+and Strategic Review. Technical Review opens by default. Each selection shows
+its summary, coverage where applicable, Markdown reports, checks, and findings
+below the selector. Human decisions and finalization remain workflow-wide.
+Clearing the review-area filter makes the issue queue and checks cover all areas.
+
+Drift findings appear directly below the Drift check content. If there are no
+current drift findings but resolved ones exist, selecting Drift check opens the
+Resolved queue. If none were recorded, an explicit empty state points to the
+completed-check history above. There is no separate “View drift findings” link.
 
 Technical Review shows each maintenance category and its last recorded review.
 Learnings and knowledge-base coverage are shown separately when a

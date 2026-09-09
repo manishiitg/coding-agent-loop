@@ -14,7 +14,7 @@ it('opens saved Markdown in Pulse, shows failures, retries, and closes it', asyn
   const container = document.createElement('div'); document.body.append(container)
   const root = createRoot(container)
   try {
-    await act(async () => root.render(<PulseReviewOverview moduleStates={[]} coverage={[]} audits={[]} findings={[]} moduleFilter={null} onSelectModule={() => {}}
+    await act(async () => root.render(<PulseReviewOverview moduleStates={[]} coverage={[]} audits={[]} findings={[]} moduleFilter="strategic_review" onSelectModule={() => {}}
       reports={[{ path, module: 'strategic_review', pulse_run_id: 'pulse-1', updated_at: '2026-09-09T09:00:00Z' }]} />))
     expect(agentApi.getPlannerFileContent).not.toHaveBeenCalled()
     const report = [...container.querySelectorAll('details')].find(node => node.querySelector('summary')?.textContent?.includes('Read report'))!

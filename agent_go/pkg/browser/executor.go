@@ -556,7 +556,7 @@ func (e *Executor) HandleAgentBrowser(ctx context.Context, args map[string]inter
 	tracker := GetSessionTracker()
 
 	if isHeadless {
-		isOpenCommand := isBrowserOpenCommand(command)
+		isOpenCommand := isBrowserOpenCommand(command) || (command == "tab" && len(argsWithoutCDP) > 0 && argsWithoutCDP[0] == "new")
 
 		if isOpenCommand {
 			// Auto-evict helper: kills runtime + removes files + unregisters from tracker.
@@ -963,7 +963,7 @@ func (e *Executor) HandleAgentBrowser(ctx context.Context, args map[string]inter
 
 	// After a successful open/navigate, record Chrome's PID so killSessionRuntime can
 	// kill it reliably even if Chrome has been reparented (daemon auto-relaunch race).
-	isOpenCommand := isBrowserOpenCommand(command)
+	isOpenCommand := isBrowserOpenCommand(command) || (command == "tab" && len(argsWithoutCDP) > 0 && argsWithoutCDP[0] == "new")
 	if err == nil && isOpenCommand {
 		captureChromePID(session)
 	}

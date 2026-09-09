@@ -200,7 +200,7 @@ func (api *StreamingAPI) handleLiveBrowserStream(w http.ResponseWriter, r *http.
 			if releaseControl == nil || !liveBrowserTabRef.MatchString(message.Tab) {
 				continue
 			}
-			_, err := browser.NewClient(workspaceURL).ExecuteCommand(ctx, []string{"--session", session, "tab", message.Tab, "--json"}, &browser.ExecuteOptions{Timeout: 10 * time.Second})
+			_, err := browser.NewClient(workspaceURL).ExecuteCommand(ctx, []string{"--session", session, "--args", "--no-sandbox,--disable-gpu,--disable-blink-features=AutomationControlled", "tab", message.Tab, "--json"}, &browser.ExecuteOptions{Timeout: 10 * time.Second})
 			if err != nil {
 				sendError("Unable to switch browser tab.")
 			}

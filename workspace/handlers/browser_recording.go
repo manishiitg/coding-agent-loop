@@ -204,7 +204,7 @@ func capturePathWithin(root, path string) bool {
 	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) && !filepath.IsAbs(rel)
 }
 func runCaptureCommand(ctx context.Context, socketDir, session string, args ...string) ([]byte, error) {
-	argv := append([]string{"--session", session}, args...)
+	argv := append([]string{"--session", session, "--args", "--no-sandbox,--disable-gpu,--disable-blink-features=AutomationControlled"}, args...)
 	argv = append(argv, "--json")
 	cmd := exec.CommandContext(ctx, "agent-browser", argv...)
 	for _, env := range os.Environ() {

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/gorilla/mux"
+	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/browser"
 )
 
 func (api *StreamingAPI) handleBrowserRecording(w http.ResponseWriter, r *http.Request) {
@@ -60,5 +61,12 @@ func (api *StreamingAPI) handleBrowserRecording(w http.ResponseWriter, r *http.R
 	defer response.Body.Close()
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(response.StatusCode)
-	_, _ = io.Copy(w, io.LimitReader(response.Body, 1<<20))
+	body, _ := io.ReadAll(io.LimitReader(response.Body, 1<<20))
+	var state struct {
+		Recording bool `json:"recording"`
+	}
+	if response.StatusCode == http.StatusOK && json.Unmarshal(body, &state) == nil && state.Recording {
+		browser.GetSessionTracker().TouchExisting(session)
+	}
+	_, _ = w.Write(body)
 }

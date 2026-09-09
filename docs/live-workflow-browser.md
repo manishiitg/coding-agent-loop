@@ -2,8 +2,7 @@
 
 The workflow Browser automation tab shows the managed headless browser for that
 workflow. It discovers sessions automatically when `agent_browser open` runs.
-Select a browser session to watch its active tab. Browser settings remain below
-the viewer. Closed, completed, or reaped sessions disappear from the list.
+Select a browser session to watch its active tab. Browser settings are behind the gear button; the viewer fills the panel. Closed, completed, or reaped sessions disappear from the list.
 
 Watch mode cannot send input or change the browser's active tab. Take control
 requires workflow write access and exclusive access to that browser session.
@@ -189,3 +188,26 @@ When a builder workspace-view action changes the visible panel, a small toast
 identifies it, for example “Builder opened Browser”. Acknowledged UI actions
 notify only after an applied result. Reopening the same visible view or
 refreshing it does not create another switch notification.
+
+## Manual recording and viewer controls
+
+Use **Start recording**, then **Stop recording** to export a capture under
+`<workflow>/browser-recordings/<timestamp-id>/`. The bundle contains
+`video.webm`, `network.har`, `console.json`, `errors.json`, `manifest.json`,
+and `capture.zip`. HAR response bodies are omitted; URLs, timings and headers
+remain. Console output is the browser runtime buffer for the capture interval.
+Video records the page active when capture starts. Stop recording before
+ending or cleaning up the browser session; abrupt browser termination may
+leave partial output. The recording runs on the server even if the viewer
+is disconnected. Start/stop requires workflow write access.
+
+Clicking an inactive tab requests exclusive control and then switches tabs.
+If the agent is busy, the viewer explains why control could not be acquired.
+**Fill width** uses the full panel width with vertical scrolling; **Fit page**
+keeps the entire viewport visible with its aspect ratio preserved.
+
+Browser sessions are isolated by chat owner/session and browser session name.
+Cookies survive while that browser context is running. Persistent profiles
+across chat sessions, cleanup and server restarts are not enabled by this
+viewer. A future remember-login option must isolate profiles per user and
+workflow; it cannot guarantee that a site's login never expires.

@@ -1,7 +1,11 @@
 import { useEffect, useRef, useState } from 'react'
 import type { KeyboardEvent, MouseEvent, ReactNode } from 'react'
 import api, { getApiBaseUrl, getAuthToken } from '../../services/api'
+import { useWorkflowStore } from '../../stores/useWorkflowStore'
+import { useChatStore } from '../../stores/useChatStore'
 import { useCanWriteWorkflow } from '../../hooks/useCanWriteWorkflow'
+
+type Recording = { recording: boolean; directory?: string; errors?: string[] }
 
 type BrowserSession = { browser_session: string; workflow_session: string }
 type BrowserTab = { tabId: string; title: string; url: string; active: boolean }
@@ -15,6 +19,10 @@ export default function WorkflowLiveBrowser({ workspacePath, toolbar }: { worksp
   const [controlling, setControlling] = useState(false)
   const [error, setError] = useState('')
   const [retry, setRetry] = useState(0)
+  const [recording, setRecording] = useState<Recording>({ recording: false })
+  const [recordingBusy, setRecordingBusy] = useState(false)
+  const [fit, setFit] = useState<'width' | 'page'>('width')
+  const pendingTab = useRef('')
   const socket = useRef<WebSocket | null>(null)
   const viewport = useRef({ width: 1280, height: 720 })
   const screen = useRef<HTMLImageElement>(null)
@@ -44,6 +52,7 @@ export default function WorkflowLiveBrowser({ workspacePath, toolbar }: { worksp
   }, [workspacePath])
 
   useEffect(() => {
+    pendingTab.current = ''
     setFrame(''); setTabs([]); setConnected(false); setControlling(false); setError('')
     if (!session || !workspacePath) return
     const url = new URL(`${getApiBaseUrl() || window.location.origin}/api/browser/live/${encodeURIComponent(session)}/stream`)
@@ -69,9 +78,13 @@ export default function WorkflowLiveBrowser({ workspacePath, toolbar }: { worksp
         } else if (message.type === 'viewer_control') {
           setControlling(message.controlling === true)
           setError('')
-          if (message.controlling) screen.current?.focus()
+          if (message.controlling) {
+            screen.current?.focus()
+            if (pendingTab.current) { ws.send(JSON.stringify({ type: 'switch_tab', tab: pendingTab.current })); pendingTab.current = '' }
+          }
           else screen.current?.blur()
         } else if (message.type === 'viewer_error') {
+          pendingTab.current = ''
           setError(message.message)
         }
       } catch { /* Ignore unsupported runtime messages. */ }
@@ -84,6 +97,35 @@ export default function WorkflowLiveBrowser({ workspacePath, toolbar }: { worksp
     }, 10000)
     return () => { disposed = true; window.clearInterval(heartbeat); ws.close(); if (socket.current === ws) socket.current = null }
   }, [session, workspacePath, retry])
+
+  useEffect(() => {
+    setRecording({ recording: false })
+    if (!session || !workspacePath) return
+    let cancelled = false
+    const poll = async () => {
+      try {
+        const { data } = await api.post<Recording>(`/api/browser/live/${encodeURIComponent(session)}/recording`, { action: 'status' }, { params: { workspace_path: workspacePath }, timeout: 10000 })
+        if (!cancelled) setRecording(data)
+      } catch { /* Keep the stream usable when recording status is unavailable. */ }
+    }
+    void poll()
+    const timer = window.setInterval(() => { void poll() }, 10000)
+    return () => { cancelled = true; window.clearInterval(timer) }
+  }, [session, workspacePath])
+
+  async function toggleRecording() {
+    if (recordingBusy) return
+    setRecordingBusy(true); setError('')
+    try {
+      const { data } = await api.post<Recording>(`/api/browser/live/${encodeURIComponent(session)}/recording`, { action: recording.recording ? 'stop' : 'start' }, { params: { workspace_path: workspacePath }, timeout: 105000 })
+      setRecording(data)
+      if (data.errors?.length) setError(`Recording saved with issues: ${data.errors.join('; ')}`)
+      else if (!data.recording && data.directory) useChatStore.getState().addToast(`Recording saved to ${data.directory}`, 'success')
+    } catch (cause) {
+      const response = (cause as { response?: { data?: { error?: string } } }).response
+      setError(response?.data?.error || 'Recording request failed. Check its status before retrying.')
+    } finally { setRecordingBusy(false) }
+  }
 
   const hasFrame = Boolean(frame)
   useEffect(() => {
@@ -139,15 +181,18 @@ export default function WorkflowLiveBrowser({ workspacePath, toolbar }: { worksp
         <div className="ml-auto flex gap-2">
           {session && !connected && <button className="rounded border border-border px-3 py-1 text-xs" onClick={() => setRetry(value => value + 1)}>Reconnect</button>}
           {connected && canControl && <button className="rounded border border-border px-3 py-1 text-xs" onClick={() => send({ type: controlling ? 'release_control' : 'take_control' })}>{controlling ? 'Return control to agent' : 'Take control'}</button>}
+          {session && canControl && <button disabled={recordingBusy} className={`rounded border px-2 py-1 text-xs disabled:opacity-50 ${recording.recording ? 'border-red-500 text-red-500' : 'border-border'}`} onClick={() => void toggleRecording()}>{recordingBusy ? 'Saving…' : recording.recording ? 'Stop recording' : 'Start recording'}</button>}
+          <select aria-label="Browser sizing" value={fit} onChange={event => setFit(event.target.value as 'width' | 'page')} className="rounded border border-border bg-background px-1 text-xs"><option value="width">Fill width</option><option value="page">Fit page</option></select>
           {toolbar}
         </div>
       </div>
+      {!recording.recording && recording.directory && <div className="flex shrink-0 items-center gap-2 border-b px-3 py-1 text-xs"><span className="min-w-0 flex-1 truncate" title={recording.directory}>Saved: {recording.directory}</span><button className="shrink-0 underline" onClick={() => useWorkflowStore.getState().openWorkspaceView('files', `${recording.directory}/manifest.json`)}>Open recording files</button></div>}
       {error && <p className="p-3 text-xs text-destructive" role="alert">{error}</p>}
       {tabs.length > 0 && <div className="flex shrink-0 gap-1 overflow-x-auto border-b border-border px-2 py-1" aria-label="Browser tabs">
-        {tabs.map(tab => <button key={tab.tabId} disabled={!controlling || tab.active} aria-pressed={tab.active} title={controlling ? tab.url : 'Take control to switch tabs. Watch mode follows the agent.'} onClick={() => send({ type: 'switch_tab', tab: tab.tabId })} className={`max-w-52 shrink-0 truncate rounded px-3 py-1.5 text-xs ${tab.active ? 'bg-muted font-medium' : 'text-muted-foreground'} disabled:cursor-default`}>{tab.title || tab.url || tab.tabId}</button>)}
+        {tabs.map(tab => <button key={tab.tabId} disabled={!canControl || tab.active} aria-pressed={tab.active} title={controlling ? tab.url : 'Switch tab and take control'} onClick={() => { if (controlling) send({ type: 'switch_tab', tab: tab.tabId }); else { pendingTab.current = tab.tabId; send({ type: 'take_control' }) } }} className={`max-w-52 shrink-0 truncate rounded px-3 py-1.5 text-xs ${tab.active ? 'bg-muted font-medium' : 'text-muted-foreground'} disabled:cursor-default`}>{tab.title || tab.url || tab.tabId}</button>)}
       </div>}
-      {frame ? <div className="relative min-h-0 flex-1 bg-muted/20"><div className="absolute inset-0 flex items-center justify-center">
-        <img ref={screen} src={frame} alt="Live server browser viewport" draggable={false} tabIndex={controlling ? 0 : -1} className="block h-auto max-h-full w-auto max-w-full select-none outline-none focus:ring-2 focus:ring-inset focus:ring-ring" onMouseDown={event => mouse(event, 'mousePressed')} onMouseUp={event => mouse(event, 'mouseReleased')} onMouseMove={event => mouse(event, 'mouseMoved')} onContextMenu={event => event.preventDefault()} onKeyDown={event => keyboard(event, 'keyDown')} onKeyUp={event => keyboard(event, 'keyUp')} />
+      {frame ? <div className="relative min-h-0 flex-1 bg-muted/20"><div className={`absolute inset-0 ${fit === 'width' ? 'overflow-auto' : 'flex items-center justify-center'}`}>
+        <img ref={screen} src={frame} alt="Live server browser viewport" draggable={false} tabIndex={controlling ? 0 : -1} className={`block h-auto select-none outline-none focus:ring-2 focus:ring-inset focus:ring-ring ${fit === 'width' ? 'w-full max-w-none' : 'max-h-full w-auto max-w-full'}`} onMouseDown={event => mouse(event, 'mousePressed')} onMouseUp={event => mouse(event, 'mouseReleased')} onMouseMove={event => mouse(event, 'mouseMoved')} onContextMenu={event => event.preventDefault()} onKeyDown={event => keyboard(event, 'keyDown')} onKeyUp={event => keyboard(event, 'keyUp')} />
       </div></div> : <div className="flex min-h-0 flex-1 items-center justify-center px-6 py-12 text-center text-sm text-muted-foreground">{session ? 'Waiting for the browser’s live view…' : 'When this workflow opens a managed browser, its live view will appear here.'}</div>}
       <p className="shrink-0 border-t border-border px-3 py-1 text-[11px] text-muted-foreground">{controlling ? 'Browser automation is paused while you interact. Return control or press Escape to let it continue.' : 'Live server browser · Take control to interact.'}</p>
     </section>

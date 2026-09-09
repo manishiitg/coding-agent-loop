@@ -8,11 +8,12 @@ tests, and anything else) shares this look so they feel like one product. Build 
 **complete standalone document** — inline the CSS, no web fonts, no hotlinked
 images, no network calls at load time.
 
-The one thing that may live beside the page rather than inside it is a picture
-saved by `find_image` (see "Real pictures" below). It sits in the same folder and
-is referenced with a plain relative `<img src="filename.png">`; the app resolves
-that when it displays the page. Never reference a URL on the internet directly —
-that breaks the moment the page is printed or opened offline.
+The one thing that may live beside the page rather than inside it is a picture —
+fetched by `find_image` or made with `image_gen`/`image_edit` (see "Real pictures"
+and "AI-generated pictures" below). It sits in the same folder and is referenced
+with a plain relative `<img src="filename.png">`; the app resolves that when it
+displays the page. Never reference a URL on the internet directly — that breaks
+the moment the page is printed or opened offline.
 
 ## Rules
 
@@ -38,7 +39,7 @@ that breaks the moment the page is printed or opened offline.
   mid-explanation. One scheme, applied consistently in document order:
   - Each major section (a `.card`): `id="s1"`, `id="s2"`, ...
   - A sub-section inside one (a sub-heading, a worked example): `id="s2-1"`, `id="s2-2"`, ...
-  - Each figure (a `.fig`, including a `find_image` picture): `id="fig1"`, `id="fig2"`, ...
+  - Each figure (a `.fig`, including a `find_image` or `image_gen` picture): `id="fig1"`, `id="fig2"`, ...
   - GOOD: `<div class="card" id="s2"><h2>Worked examples</h2><div id="s2-1">...</div></div>`
   You wrote these ids, so you know them — reference them later without re-reading the
   file. A turn that's clearly ABOUT one section or figure and doesn't pass focus is a
@@ -236,6 +237,40 @@ Add this to the CSS when a page uses pictures:
 .fig img{max-width:100%;height:auto;border-radius:12px;border:1px solid var(--line)}
 .fig figcaption{margin-top:6px;color:var(--muted);font-size:12px}
 ```
+
+## AI-generated pictures
+
+Some things are best shown with an illustration that doesn't exist anywhere to
+photograph or fetch: a friendly custom scene for a story activity, a character
+reacting to what she just got right, a stylised diagram that needs an artistic
+touch beyond what CSS or JSXGraph can give it. `image_gen` makes one from a text
+description and saves it to a file; `image_edit` revises an existing one — hers,
+yours, or one it just made. Both need a full absolute output path under the
+activity's own folder, not a workspace-relative one — `pwd` (from
+`execute_shell_command`) plus `/generated-images/<name>.png` gets you there.
+
+- **Use it where the image needs to be MADE, not found or drawn precisely.** A
+  whimsical scene, a friendly mascot, an illustration for a story beat, a
+  stylised cover image — the same instinct as `find_image`'s "seeing the thing
+  is the teaching," but for things that only exist as an illustration.
+- **Not for geometry, graphs, real places or things, or anything precision
+  matters for.** A generated figure can't be trusted to place points, labels or
+  proportions correctly — JSXGraph (`diagrams.md`) or `find_image` are still the
+  right tool for those, exactly as above.
+- **Keep it in the page's own warm, friendly style** — bright, uncluttered,
+  age-appropriate, nothing scary or that reads like stock-photo art clashing
+  with the rest of a handwritten-notebook-feeling page.
+- **Embed it the same way as a fetched picture** — same `<figure class="fig">`
+  wrapper and real alt text; no caption/credit needed, unlike a fetched photo,
+  since there's nothing to attribute:
+  ```html
+  <figure class="fig" id="fig2">
+    <img src="generated-images/moon-rock-lab.png" alt="A friendly cartoon Moon rock glowing faintly on a lab table">
+  </figure>
+  ```
+- **One generation per idea, not a retry loop chasing perfection.** If the
+  first result is usable, use it — a study guide's job is the learning, not a
+  flawless illustration.
 
 ## Showing data
 

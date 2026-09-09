@@ -281,6 +281,19 @@ func createCustomTools(workflowMode bool, sessionInfo ...string) ([]llmtypes.Too
 			toolCategories[name] = category
 		}
 
+		// PLAT-298. The one supported way to switch this workflow's
+		// code_layout_version -- see workflow_manifest.go's
+		// SetWorkflowCodeLayoutVersion and code-authoring.md's "Deliberate
+		// migration to code/".
+		codeLayoutRegistry := virtualtools.CreateCodeLayoutToolRegistry(sessionID, SetWorkflowCodeLayoutVersion)
+		allTools = append(allTools, codeLayoutRegistry.Tools...)
+		for name, executor := range codeLayoutRegistry.Executors {
+			allExecutors[name] = executor
+		}
+		for name, category := range codeLayoutRegistry.Categories {
+			toolCategories[name] = category
+		}
+
 		// PLAT-184. This workflow's own per-workspace cost ledger, readable
 		// through its normal folder-guard-scoped tools -- unlike the global
 		// human-facing Cost Analysis ledger, which sits outside every

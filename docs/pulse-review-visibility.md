@@ -31,5 +31,7 @@ Missing evidence is shown as “No specific review recorded.”
   are labelled “Updated,” distinct from completed-review timestamps.
 
 Reports load through the existing authenticated workspace document API and
-render inline in Pulse. They can be collapsed and failed reads can be retried.
+open in a full-window reader outside the chat/workspace split. The reader has
+a fixed Close control, supports Escape, and retries failed reads. Closing it
+returns to the selected Pulse area.
 The report directory is supplied as the Markdown base path for relative links.

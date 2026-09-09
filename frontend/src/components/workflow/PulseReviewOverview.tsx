@@ -1,11 +1,10 @@
-import { lazy, Suspense, useEffect, useState } from 'react'
-import { FileText, GitCompare, Lightbulb, Loader2, Wrench } from 'lucide-react'
-import { agentApi } from '../../services/api'
+import { useState } from 'react'
+import { FileText, GitCompare, Lightbulb, Maximize2, Wrench } from 'lucide-react'
 import type { PulseFindingLifecycle, PulseModuleState, PulseReviewAudit, PulseReviewFocus, PulseReviewReport } from '../../services/api-types'
 import { normalizePulseWorkspaceModule, pulseFindingReviewAreas, pulseWorkspaceQueueCounts } from './pulseWorkspaceUtils'
 import { pulseReviewDate, reviewCoverageForArea, TECHNICAL_REVIEW_AREAS } from './pulseReviewCoverage'
 
-const MarkdownRenderer = lazy(() => import('../ui/MarkdownRenderer').then(module => ({ default: module.MarkdownRenderer })))
+import { PulseReviewReportReader } from './PulseReviewReportReader'
 const labels: Record<string, string> = { technical_review: 'Technical review', strategic_review: 'Strategic review', plan_drift_review: 'Drift check', done: 'Completed', changed: 'Changes made', timed_out: 'Timed out' }
 const readable = (text?: string) => labels[text || ''] || (text ? text.charAt(0).toUpperCase() + text.slice(1).replaceAll('_', ' ') : 'Recorded')
 
@@ -18,31 +17,14 @@ function Evidence({ items, title = 'Evidence' }: { items?: string[]; title?: str
 
 function ReviewReport({ report }: { report: PulseReviewReport }) {
   const [open, setOpen] = useState(false)
-  const [content, setContent] = useState<string | null>(null)
-  const [error, setError] = useState('')
-  const [retry, setRetry] = useState(0)
-  useEffect(() => {
-    if (!open) return
-    let current = true
-    setError(''); setContent(null)
-    void agentApi.getPlannerFileContent(report.path).then(result => {
-      if (!current) return
-      if (!result.success || result.data?.content == null) throw new Error('This report could not be read.')
-      setContent(result.data.content)
-    }).catch(err => { if (current) setError(err instanceof Error ? err.message : 'This report could not be read.') })
-    return () => { current = false }
-  }, [open, report.path, retry])
-  return <details className="rounded-lg border bg-background" onToggle={event => setOpen(event.currentTarget.open)}>
-    <summary className="cursor-pointer px-3 py-2 text-xs text-foreground">
-      <span className="inline-flex items-center gap-2"><FileText className="h-3.5 w-3.5" />Read report</span>
-      <span className="ml-2 text-muted-foreground">Updated {pulseReviewDate(report.updated_at)}</span>
-    </summary>
-    {open && <div className="border-t p-3"><p className="mb-3 break-all text-[11px] text-muted-foreground">{report.path}</p>
-      {error ? <p className="text-xs text-red-600">{error} <button className="underline" onClick={() => setRetry(value => value + 1)}>Retry</button></p>
-        : content === null ? <p className="text-xs text-muted-foreground">Loading report…</p>
-          : <div className="max-h-[65vh] overflow-auto"><Suspense fallback={<Loader2 className="h-4 w-4 animate-spin" />}><MarkdownRenderer content={content} basePath={report.path.substring(0, report.path.lastIndexOf('/'))} /></Suspense></div>}
-    </div>}
-  </details>
+  return <>
+    <button type="button" aria-haspopup="dialog" onClick={() => setOpen(true)} className="flex w-full items-center justify-between gap-3 rounded-lg border bg-background px-3 py-3 text-left text-xs hover:bg-muted/30">
+      <span><span className="inline-flex items-center gap-2 font-medium"><FileText className="h-3.5 w-3.5" />Read report</span>
+        <span className="mt-1 block text-muted-foreground">Updated {pulseReviewDate(report.updated_at)}</span></span>
+      <Maximize2 className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+    </button>
+    {open && <PulseReviewReportReader report={report} title={`${readable(report.module)} report`} onClose={() => setOpen(false)} />}
+  </>
 }
 
 function Reports({ reports }: { reports: PulseReviewReport[] }) {

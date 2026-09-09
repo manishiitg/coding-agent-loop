@@ -387,6 +387,55 @@ const QueuedAutoNotificationGroup: React.FC<{
   )
 }
 
+// Isolated from ChatInputComponent's render cadence on purpose: the active
+// tab is selected there as one whole object (state.chatTabs[activeTabId]),
+// and during streaming that object gets a new reference on every appended
+// token -- so ChatInputComponent (and anything computed inline in its body,
+// including mainAgentRuntimeStatus) re-renders at token-arrival frequency,
+// live-measured at 1000+ times/sec on a fast response, even though this
+// indicator's own state/label/activityLabel stay identical the whole time.
+// React.memo here means this subtree -- including the animated Loader2 --
+// only actually re-renders when one of those three values genuinely
+// changes, decoupling the spinner's visual stability from how often the
+// surrounding composer re-renders for unrelated reasons (PLAT spinner
+// flicker report, reproduced live 2026-09-09: composer spinner glitching
+// during active generation, same symptom independently reported for both
+// pi-cli and claude-code sessions -- confirming the cause is this shared
+// frontend layer, not any provider-specific backend behavior).
+const MainAgentRuntimeStatusIndicator = React.memo(function MainAgentRuntimeStatusIndicator({
+  state,
+  label,
+  activityLabel,
+}: {
+  state: 'running' | 'waiting' | 'ready'
+  label: string
+  activityLabel: string
+}) {
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <div
+          className="flex h-7 max-w-[205px] items-center gap-1.5 px-1 font-mono text-[11px] text-muted-foreground"
+          role="status"
+          aria-label={`${label} — ${state}`}
+        >
+          {state === 'running' ? (
+            <Loader2 className="h-3 w-3 shrink-0 animate-spin text-lime-300" aria-hidden="true" />
+          ) : state === 'waiting' ? (
+            <span className="h-2 w-2 shrink-0 rounded-full bg-amber-400" aria-hidden="true" />
+          ) : (
+            <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-lime-300" aria-hidden="true" />
+          )}
+          <span className="truncate">{label}</span>
+        </div>
+      </TooltipTrigger>
+      <TooltipContent side="top">
+        <p>{label} — {activityLabel}</p>
+      </TooltipContent>
+    </Tooltip>
+  )
+})
+
 // Completely isolated input component that doesn't re-render when events change
 const ChatInputComponent: React.FC<ChatInputProps> = ({
   onSubmit,
@@ -1447,6 +1496,31 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     llmConfigLocked,
     publishedLLMs,
   ])
+
+  // TEMP DEBUG (spinner flicker investigation) - remove after diagnosis.
+  // Logs only on an actual state transition (not every recompute), with the
+  // raw inputs behind it, so the real running<->ready<->waiting sequence is
+  // visible instead of buried in render-frequency noise.
+  const lastSpinnerDebugStateRef = useRef<string | undefined>(undefined)
+  useEffect(() => {
+    const nextState = mainAgentRuntimeStatus?.state
+    if (lastSpinnerDebugStateRef.current === nextState) return
+    // eslint-disable-next-line no-console
+    console.log('[SPINNER_DEBUG] state transition', {
+      t: Date.now(),
+      from: lastSpinnerDebugStateRef.current,
+      to: nextState,
+      isTurnInFlight,
+      isCompleted: activeTab?.isCompleted,
+      sessionStatus: activeSession?.status,
+      phase: activeSession?.runtime_state?.phase,
+      waitingForUser: activeSession?.runtime_state?.waiting_for_user,
+      backgroundLive: activeSession?.runtime_state?.background_live,
+      hasRunningBg: activeSession?.has_running_background_agents,
+      needsUserInput: activeSession?.needs_user_input,
+    })
+    lastSpinnerDebugStateRef.current = nextState
+  }, [mainAgentRuntimeStatus?.state, isTurnInFlight, activeTab?.isCompleted, activeSession])
 
   // mainAgentRuntimeStatus reads activeSession from activeSessionsCache, a
   // 30s-TTL cache that nothing polls on a timer inside the workflow-builder
@@ -3328,27 +3402,11 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
                   </Button>
                 ) : null}
                 {!hideRuntimeStatus && mainAgentRuntimeStatus && (
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <div
-                        className="flex h-7 max-w-[205px] items-center gap-1.5 px-1 font-mono text-[11px] text-muted-foreground"
-                        role="status"
-                        aria-label={`${mainAgentRuntimeStatus.label} — ${mainAgentRuntimeStatus.state}`}
-                      >
-                        {mainAgentRuntimeStatus.state === 'running' ? (
-                          <Loader2 className="h-3 w-3 shrink-0 animate-spin text-lime-300" aria-hidden="true" />
-                        ) : mainAgentRuntimeStatus.state === 'waiting' ? (
-                          <span className="h-2 w-2 shrink-0 rounded-full bg-amber-400" aria-hidden="true" />
-                        ) : (
-                          <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-lime-300" aria-hidden="true" />
-                        )}
-                        <span className="truncate">{mainAgentRuntimeStatus.label}</span>
-                      </div>
-                    </TooltipTrigger>
-                    <TooltipContent side="top">
-                      <p>{mainAgentRuntimeStatus.label} — {mainAgentRuntimeStatus.activityLabel}</p>
-                    </TooltipContent>
-                  </Tooltip>
+                  <MainAgentRuntimeStatusIndicator
+                    state={mainAgentRuntimeStatus.state}
+                    label={mainAgentRuntimeStatus.label}
+                    activityLabel={mainAgentRuntimeStatus.activityLabel}
+                  />
                 )}
                 {chatInputStatusLine && (
                   <Tooltip>

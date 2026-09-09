@@ -40,6 +40,23 @@ import { autoNotificationDedupKey } from '../utils/internalChatEvents'
 const ACTIVE_SESSIONS_CACHE_TTL = 30000
 const STALE_STREAMING_GRACE_MS = 10000
 
+// getActiveSessions(true) is called from many independent places (composer
+// busy-transition effect, GlobalActivityMonitor's 5s tick, several ChatArea
+// turn-lifecycle points) with no coordination between them. Without this
+// guard, two calls close together fire two independent HTTP requests that
+// can resolve out of order -- and since each resolution unconditionally
+// re-runs reconcileSessionTabStreamingState against whatever payload IT got,
+// a response that started later but arrives first, followed shortly by one
+// that started earlier but arrives second, flips isStreaming back and forth
+// on every such pair. Confirmed live: the composer spinner's state genuinely
+// oscillating true/false within single-digit milliseconds, not merely
+// re-rendering, with paired "cleared stale streaming state" / "marked ...
+// streaming to match a backend-active session" log lines from opposite
+// reconciliation branches firing back-to-back for the same tab. Sharing one
+// in-flight promise across concurrent callers makes at most one request (and
+// therefore one reconciliation pass) outstanding at a time.
+let pendingActiveSessionsFetch: Promise<ActiveSessionInfo[]> | null = null
+
 // This gate must exist before Zustand creates the persisted store. Browser
 // localStorage hydration can finish synchronously during create(), so the
 // callback cannot safely touch useChatStore or module bindings declared later.
@@ -3037,33 +3054,50 @@ export const useChatStore = create<ChatState>()(
       getActiveSessions: async (forceRefresh = false): Promise<ActiveSessionInfo[]> => {
         const state = get()
         const now = Date.now()
-        
+
         // Return cached data if it's still fresh and not forcing refresh
-        if (!forceRefresh && 
-            state.activeSessionsCacheTimestamp !== null && 
+        if (!forceRefresh &&
+            state.activeSessionsCacheTimestamp !== null &&
             (now - state.activeSessionsCacheTimestamp) < ACTIVE_SESSIONS_CACHE_TTL) {
           return state.activeSessionsCache
         }
-        
+
+        // Share one in-flight request across concurrent callers instead of
+        // firing a fresh HTTP request (and a fresh reconciliation pass) per
+        // caller -- see pendingActiveSessionsFetch's own comment for why
+        // overlapping, out-of-order responses here directly caused the
+        // composer's isStreaming state to oscillate.
+        if (pendingActiveSessionsFetch) {
+          return pendingActiveSessionsFetch
+        }
+
         // Fetch fresh data. Combined endpoint: also carries the workflow
         // schedule header counts, so ModePresetBar no longer needs its own poll.
-        try {
-          const response = await agentApi.getHeaderSummary()
-          const activeSessions = response.active_sessions || []
+        const fetchPromise = (async (): Promise<ActiveSessionInfo[]> => {
+          try {
+            const response = await agentApi.getHeaderSummary()
+            const activeSessions = response.active_sessions || []
+            const resolvedAt = Date.now()
 
-          set((currentState) => ({
-            activeSessionsCache: activeSessions,
-            activeSessionsCacheTimestamp: now,
-            workflowScheduleSummary: response.schedule_summary ?? null,
-            ...reconcileSessionTabStreamingState(currentState, activeSessions, now),
-          }))
+            set((currentState) => ({
+              activeSessionsCache: activeSessions,
+              activeSessionsCacheTimestamp: resolvedAt,
+              workflowScheduleSummary: response.schedule_summary ?? null,
+              ...reconcileSessionTabStreamingState(currentState, activeSessions, resolvedAt),
+            }))
 
-          return activeSessions
-        } catch (error) {
-          logger.error('SessionStore', 'Failed to fetch active sessions:', error)
-          // Return cached data even if stale on error
-          return state.activeSessionsCache
-        }
+            return activeSessions
+          } catch (error) {
+            logger.error('SessionStore', 'Failed to fetch active sessions:', error)
+            // Return cached data even if stale on error
+            return get().activeSessionsCache
+          } finally {
+            pendingActiveSessionsFetch = null
+          }
+        })()
+
+        pendingActiveSessionsFetch = fetchPromise
+        return fetchPromise
       },
       
       getActiveSessionIds: (): Set<string> => {

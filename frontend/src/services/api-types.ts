@@ -828,6 +828,9 @@ export interface PulseReviewAudit {
 }
 
 export interface PulseReviewReport {
+  source?: 'review_note'
+  content?: string
+  result?: string
   module: string
   pulse_run_id: string
   path: string

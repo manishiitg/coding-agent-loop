@@ -2849,14 +2849,13 @@ func pulseReviewBacklogFolderLine(folder RunFolderInfo) string {
 // guarantees the ordering; reordering text within one shared prompt would
 // not, since same-step dispatches still run concurrently with each other.
 func pulseLifecyclePlanDriftReviewStep(pulseRunID string) pulseLifecycleStep {
-	planDriftCheckpoint := fmt.Sprintf("runs/pulse/%s/plan-drift-review.md", pulseRunID)
 	return pulseLifecycleStep{
 		label: "plan-drift-review",
 		query: fmt.Sprintf(`PULSE PLAN DRIFT REVIEW DISPATCH. pulse_run_id=%q. Read the durable Gate worklist via get_pulse_state(view="module", pulse_run_id=<this id>). If plan_drift_review is not due, do nothing and end this turn immediately.
 
-		When plan_drift_review is due, launch exactly one executor with run_in_background. Its instruction must name exact pulse_run_id=%q and checkpoint %q, and tell it to load read_skill(skills=[{"name":"builder-reference","path":"references/plan-drift-review.md"}]) and follow it exactly. In that one retained turn it establishes ground truth per due step, applies and verifies safe workflow-owned fixes directly, and only routes what it cannot safely fix itself — a genuine human decision, a platform-owned boundary, or (rarely, as a last resort) a fixer_handoff for technical_review to pick up.
+		When plan_drift_review is due, launch exactly one executor with run_in_background. Its instruction must name exact pulse_run_id=%q, and tell it to load read_skill(skills=[{"name":"builder-reference","path":"references/plan-drift-review.md"}]) and follow it exactly. In that one retained turn it establishes ground truth per due step, applies and verifies safe workflow-owned fixes directly, and only routes what it cannot safely fix itself — a genuine human decision, a platform-owned boundary, or (rarely, as a last resort) a fixer_handoff for technical_review to pick up.
 
-		After dispatch, end this parent turn immediately; the runtime waits for the registered child, and this step does not return until it completes — that is the point: technical_review's own dispatch in the next lifecycle step must only ever see a Pulse backlog that already reflects this run's plan_drift_review findings, never a race with them. Do not do review or repair in this parent, render a dashboard, back up, publish, or notify.`, pulseRunID, pulseRunID, planDriftCheckpoint),
+		After dispatch, end this parent turn immediately; the runtime waits for the registered child, and this step does not return until it completes — that is the point: technical_review's own dispatch in the next lifecycle step must only ever see a Pulse backlog that already reflects this run's plan_drift_review findings, never a race with them. Do not do review or repair in this parent, render a dashboard, back up, publish, or notify.`, pulseRunID, pulseRunID),
 	}
 }
 
@@ -2870,17 +2869,16 @@ func pulseLifecycleModuleReviewStep(pulseRunID, module string) pulseLifecycleSte
 	case pulseModuleStrategicReview:
 		label, reference, contract = "strategic-review", "strategy-auditor", "Investigate the goal and strategy using workflow evidence, authorized MCP data, browser and external research. Do not mutate implementation or perform business actions."
 	}
-	checkpoint := fmt.Sprintf("runs/pulse/%s/%s.md", pulseRunID, label)
 	return pulseLifecycleStep{label: label, query: fmt.Sprintf(`PULSE MODULE REVIEW DISPATCH. pulse_run_id=%q. This step owns ONLY module=%q. Earlier lifecycle steps have finished; later modules must not be dispatched here.
-Read the durable Gate worklist. If this module is not due or already has a terminal result, stop. Otherwise launch exactly one run_in_background executor with review_module=%q, pulse_run_id=%q, and an instruction naming checkpoint %q. Load read_skill(skills=[{"name":"builder-reference","path":"references/%s.md"}]). %s
-Continue any pending recovery from its persisted checkpoint instead of rediscovering findings. Persist selected focus coverage, typed findings/decisions, improvement lifecycle and one terminal result for this module. An improvement proposal must identify expected benefit, baseline, guardrails and next outcome checkpoint. Reuse existing records. Applied is not evidence of improved outcomes. The shared pass mode must not suppress another module's research.
-After dispatch end this parent turn. The runtime waits for the child before proceeding to the next module. Do not render a dashboard, back up, publish or notify here.`, pulseRunID, module, module, pulseRunID, checkpoint, reference, contract)}
+Read the durable Gate worklist. If this module is not due or already has a terminal result, stop. Otherwise launch exactly one run_in_background executor with review_module=%q, pulse_run_id=%q, and an instruction to read get_pulse_state(view="review_notes", module=%q) once for relevant prior reasoning. Load read_skill(skills=[{"name":"builder-reference","path":"references/%s.md"}]). %s
+Use saved notes and typed records for interrupted work; read an old Markdown file only if a specific historical record points to it. Do not create or maintain mandatory Markdown checkpoints. Persist selected focus coverage, typed findings/decisions, improvement lifecycle and one terminal result for this module. An improvement proposal must identify expected benefit, baseline, guardrails and next outcome checkpoint. Finish with one record_pulse_result using reason and optional review_note for new reasoning, limitations and next steps. No separate reporting turn or repeated history scan. Reuse existing records. Applied is not evidence of improved outcomes. The shared pass mode must not suppress another module's research.
+After dispatch end this parent turn. The runtime waits for the child before proceeding to the next module. Do not render a dashboard, back up, publish or notify here.`, pulseRunID, module, module, pulseRunID, module, reference, contract)}
 }
 
 func pulseLifecycleReviewFixContinuationStep(pulseRunID string, receiptErr error) pulseLifecycleStep {
 	return pulseLifecycleStep{
 		label: "review-fix-continuation",
-		query: fmt.Sprintf(`PULSE REVIEW + FIX RECEIPT CHECK. pulse_run_id=%q. Continue after all registered background sequences completed. The prior stage is missing receipts: %s. Load the Gate worklist, typed Pulse state, child status, and the two run-scoped checkpoints. Do not reconstruct findings or fixes from truncated automatic-notification prose, and do not add a consolidation pass. Validate the receipts already persisted by each sequence. Resolve only a genuine cross-module ownership conflict using the checkpoints and typed rows. If a child ended before its final persistence turn, do not infer or invent its findings, restart it automatically, or mutate workflow artifacts. The scheduler records durable recovery for any module still missing its terminal result after this step. Keep the response compact, then stop.`, pulseRunID, receiptErr),
+		query: fmt.Sprintf(`PULSE REVIEW + FIX RECEIPT CHECK. pulse_run_id=%q. Continue after all registered background sequences completed. The prior stage is missing receipts: %s. Load the Gate worklist, typed Pulse state, child status, and saved SQLite review notes. Do not reconstruct findings or fixes from truncated automatic-notification prose, and do not add a consolidation pass. Validate the receipts already persisted by each sequence. Resolve only a genuine cross-module ownership conflict using saved notes and typed rows. If a child ended before its final persistence turn, do not infer or invent its findings, restart it automatically, or mutate workflow artifacts. The scheduler records durable recovery for any module still missing its terminal result after this step. Keep the response compact, then stop.`, pulseRunID, receiptErr),
 	}
 }
 
@@ -2901,13 +2899,9 @@ func recordIncompletePulseReviewRecoveries(ctx context.Context, workspacePath, p
 	} else if stepResult.outcome != pulseLifecycleStepCompleted {
 		reason += fmt.Sprintf(" (outcome=%s)", stepResult.outcome)
 	}
-	checkpoints := map[string]string{
-		pulseModuleTechnicalReview:    fmt.Sprintf("runs/pulse/%s/technical-review.md", pulseRunID),
-		pulseModuleArchitectureReview: fmt.Sprintf("runs/pulse/%s/architecture-review.md", pulseRunID),
-		pulseModuleStrategicReview:    fmt.Sprintf("runs/pulse/%s/strategic-review.md", pulseRunID),
-	}
+	reviewModules := []string{pulseModuleTechnicalReview, pulseModuleArchitectureReview, pulseModuleStrategicReview}
 	var recovered []string
-	for module, checkpoint := range checkpoints {
+	for _, module := range reviewModules {
 		if len(modules) > 0 && !slices.Contains(modules, module) {
 			continue
 		}
@@ -2915,7 +2909,7 @@ func recordIncompletePulseReviewRecoveries(ctx context.Context, workspacePath, p
 		if !exists || !strings.EqualFold(strings.TrimSpace(state.LastDecision), "due") || strings.TrimSpace(state.LastResult) != "" {
 			continue
 		}
-		if err := markPulseReviewRecovery(ctx, workspacePath, module, pulseRunID, checkpoint, reason); err != nil {
+		if err := markPulseReviewRecovery(ctx, workspacePath, module, pulseRunID, "", reason); err != nil {
 			return recovered, err
 		}
 		recovered = append(recovered, module)
@@ -2931,12 +2925,8 @@ func beginDuePulseReviewRecoveries(ctx context.Context, workspacePath, pulseRunI
 		}
 		return fmt.Errorf("Pulse worklist %q is missing", pulseRunID)
 	}
-	checkpoints := map[string]string{
-		pulseModuleTechnicalReview:    fmt.Sprintf("runs/pulse/%s/technical-review.md", pulseRunID),
-		pulseModuleArchitectureReview: fmt.Sprintf("runs/pulse/%s/architecture-review.md", pulseRunID),
-		pulseModuleStrategicReview:    fmt.Sprintf("runs/pulse/%s/strategic-review.md", pulseRunID),
-	}
-	for module, checkpoint := range checkpoints {
+	reviewModules := []string{pulseModuleTechnicalReview, pulseModuleArchitectureReview, pulseModuleStrategicReview}
+	for _, module := range reviewModules {
 		if len(modules) > 0 && !slices.Contains(modules, module) {
 			continue
 		}
@@ -2944,7 +2934,7 @@ func beginDuePulseReviewRecoveries(ctx context.Context, workspacePath, pulseRunI
 		if !exists || !strings.EqualFold(strings.TrimSpace(state.LastDecision), "due") || strings.TrimSpace(state.LastResult) != "" {
 			continue
 		}
-		if err := beginPulseReviewRecovery(ctx, workspacePath, module, pulseRunID, checkpoint); err != nil {
+		if err := beginPulseReviewRecovery(ctx, workspacePath, module, pulseRunID, ""); err != nil {
 			return err
 		}
 	}

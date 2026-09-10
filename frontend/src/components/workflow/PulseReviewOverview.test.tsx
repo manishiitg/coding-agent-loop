@@ -85,3 +85,24 @@ it('shows Architecture as its own review area with a separate drift check', asyn
     expect(container.querySelector('[aria-label="Health content"]')).toBeNull()
   } finally { await act(async () => root.unmount()) }
 })
+
+it('reads an incomplete SQLite note without a file fetch and preserves its incomplete status', async () => {
+  Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true })
+  vi.mocked(agentApi.getPlannerFileContent).mockClear()
+  const container = document.createElement('div'); document.body.append(container)
+  const root = createRoot(container)
+  try {
+    await act(async () => root.render(<PulseReviewOverview moduleStates={[]} coverage={[]} audits={[]} findings={[]} moduleFilter="architecture_review" onSelectModule={() => {}}
+      reports={[{ path: '', source: 'review_note', content: 'Rejected caching until freshness can be measured.', result: 'incomplete', module: 'architecture_review', pulse_run_id: 'pulse-note', updated_at: '2026-09-10T09:00:00Z' }]} />))
+    expect(container.textContent).toContain('No completion recorded')
+    await act(async () => container.querySelector<HTMLButtonElement>('[aria-haspopup="dialog"]')!.click())
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 10)) })
+    const dialog = document.querySelector('dialog')!
+    expect(dialog.textContent).toContain('Rejected caching until freshness can be measured.')
+    expect(dialog.textContent).toContain('No completion recorded')
+    expect(dialog.textContent).not.toContain('Report file')
+    expect(agentApi.getPlannerFileContent).not.toHaveBeenCalled()
+    await act(async () => dialog.querySelector<HTMLButtonElement>('[aria-label="Close report"]')!.click())
+    expect(document.querySelector('dialog')).toBeNull()
+  } finally { await act(async () => root.unmount()); container.remove() }
+})

@@ -18,7 +18,7 @@ describe('PulseWorkspace information hierarchy', () => {
     expect(html).not.toContain('Plan drift review')
     expect(html).not.toContain('Gate decision:')
     expect(html).not.toContain('Selected this run:')
-    for (const label of ['Health', 'Strategy', 'Learnings', 'Knowledge base', 'Report accuracy', 'Models, cost and efficiency', 'No review results recorded yet', 'Review reports']) expect(html).toContain(label)
+    for (const label of ['Health', 'Strategy', 'Learnings', 'Knowledge base', 'Report accuracy', 'Models, cost and efficiency', 'No review results recorded yet', 'Review notes and reports']) expect(html).toContain(label)
     expect(html).toContain('Last reviewed Aug 31, 2026')
     expect(html).toContain('Consolidated learnings and verified references.')
     expect(html).toContain('No specific review recorded')

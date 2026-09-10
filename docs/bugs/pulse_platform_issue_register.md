@@ -1,5 +1,13 @@
 # Pulse Platform-Issue Register
 
+## Minimal review recording — PLAT-306
+
+[PLAT-306](pulse_platform/plat-306.md) replaces mandatory review Markdown
+bookkeeping with an optional concise SQLite note on the existing result call.
+The same note serves future reviews and the UI; old reports remain readable.
+Runtime interruption tracking remains independent of agent-authored notes.
+Deployment and measured live reporting overhead are pending.
+
 ## QA, Architecture, Strategy and improvement outcomes — PLAT-305
 
 [PLAT-305](pulse_platform/plat-305.md) implements the first release of independent

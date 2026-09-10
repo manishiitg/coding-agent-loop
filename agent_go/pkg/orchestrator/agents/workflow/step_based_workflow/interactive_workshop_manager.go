@@ -9044,7 +9044,7 @@ func (iwm *InteractiveWorkshopManager) runBackgroundTaskAgentSequence(ctx contex
 		if !iwm.isRunModeRestricted() {
 			writePaths = []string{fmt.Sprintf("%s/runs/pulse/%s", workspacePath, reviewScope.RunID)}
 		}
-		instruction += "\nRESEARCH REVIEW: use authorized workflow MCPs, browser, web search and managed DB queries to investigate. Save dated sources and hypotheses in this run's checkpoint. Do not edit workflow implementation, run business actions, send messages, publish, or change external records. Create typed decisions for proposals and reuse the improvement ledger. External tool access retains the workflow's existing authorization limits."
+		instruction += "\nRESEARCH REVIEW: use authorized workflow MCPs, browser, web search and managed DB queries to investigate. Save new reasoning and dated source references in optional review_note on record_pulse_result. No mandatory Markdown checkpoint or reporting-only turn; optional research files remain allowed. Do not edit workflow implementation, run business actions, send messages, publish, or change external records. Create typed decisions for proposals and reuse the improvement ledger. External tool access retains the workflow's existing authorization limits."
 	}
 	iwm.controller.SetWorkspacePathForFolderGuard(readPaths, writePaths)
 

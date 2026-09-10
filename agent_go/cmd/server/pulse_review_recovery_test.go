@@ -46,7 +46,7 @@ func TestIncompleteReviewIsForcedDueAndClearedByTerminalResult(t *testing.T) {
 	}
 }
 
-func TestReviewFixMissingReceiptCreatesRecoveryWithCheckpoint(t *testing.T) {
+func TestReviewFixMissingReceiptCreatesRecoveryWithoutMandatoryFile(t *testing.T) {
 	ctx := context.Background()
 	t.Setenv("WORKSPACE_DOCS_PATH", t.TempDir())
 	workspacePath := "Workflow/recovery"
@@ -67,7 +67,7 @@ func TestReviewFixMissingReceiptCreatesRecoveryWithCheckpoint(t *testing.T) {
 	if err != nil || len(recoveries) != 1 {
 		t.Fatalf("recoveries = %#v err=%v, want one", recoveries, err)
 	}
-	if got := recoveries[0].CheckpointPath; got != "runs/pulse/pulse-interrupted/strategic-review.md" {
+	if got := recoveries[0].CheckpointPath; got != "" {
 		t.Fatalf("checkpoint = %q", got)
 	}
 }

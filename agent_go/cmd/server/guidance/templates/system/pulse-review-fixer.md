@@ -69,16 +69,14 @@ authorization.
 The parent turn is a launcher, not a long-running parent review or Fixer.
 Use `run_in_background` for every selected child. When `technical_review` is
 due, use one `agent_type="executor"` child. Put the exact parent `pulse_run_id`
-and run-scoped checkpoint path in its instruction. The retained child reviews
-and repairs in the same task; use `message_sequence` only when a later reasoning
-turn is genuinely needed, never as a review-permission gate.
-Every turn reads that checkpoint first and updates it before ending, so context
-compaction cannot erase evidence or decisions. SQLite is still authoritative;
-the checkpoint is compact working memory, not a second issue database.
-At the top of each checkpoint, keep the exact `pulse_run_id` and an explicit
-UTC `checkpoint_updated_at` timestamp. The opaque run-id suffix is not the
-authoritative clock; durable SQLite `recorded_at` values remain the final
-timeline for lifecycle decisions.
+in its instruction. The retained child reviews and repairs in the same task;
+use message_sequence only for genuinely useful reasoning, never bookkeeping.
+Read get_pulse_state(view="review_notes", module=<owned module>) once alongside
+relevant typed records. Finish with one record_pulse_result; reason is the short
+conclusion and optional review_note contains only new reasoning and next steps.
+No mandatory Markdown checkpoint, per-turn notebook updates, or reporting-only
+turn. Optional note_only=true with result=running preserves working context only
+when a long investigation needs it. Runtime owns timestamps and interruption state.
 
 Before each due technical or strategic deep review, read
 `get_pulse_state(view="focus_agenda")` for that module and each materially relevant
@@ -146,8 +144,7 @@ class, selection reason, compact evidence references, and deferred focus keys.
 There is no mechanical focus quota: a small route may justify one, while
 distinct large routes may justify several. Stop when another focus would repeat
 evidence or could not change a decision, repair, or next check. This is durable
-coverage history for the next Pulse pass; the Markdown checkpoint remains only
-this run's notebook.
+coverage history for the next Pulse pass; do not copy it into a separate report.
 
 1. **Recurrence + Technical Review** — an applied repair is closed
    immediately; a later run may rediscover and reopen the same root, but is not
@@ -155,18 +152,9 @@ this run's notebook.
    for Engineering with its next action; do not leave it in `awaiting_run`.
    Then inspect runtime correctness,
    plan/artifact drift, and report/evaluation implementation selected by Gate.
-   Start from typed SQLite backlog/attempt state, then read the current run's
-   checkpoint if it already exists. Do not rediscover prior analysis merely
-   because this is a new Pulse run: read the newest relevant earlier
-   `runs/pulse/*/technical-review.md` checkpoint (or legacy
-   `engineering-review.md`) only when the preceding
-   review was interrupted or missed its terminal receipt, an active finding
-   points to reasoning/evidence held there, or the current evidence suggests a
-   recurrence whose earlier repair context is not recoverable from SQLite.
-   Treat that prior checkpoint as an investigation pointer, never authority:
-   re-check its claims against current artifacts and runtime evidence, copy no
-   raw output, and carry forward only compact evidence references and reasoning
-   that remain valid into the current checkpoint.
+   Start from compact typed backlog/attempt state and relevant saved review notes.
+   Consult a legacy Markdown report only if a specific finding references reasoning
+   unavailable in SQLite. Revalidate historical claims against current evidence.
    Once the bounded repair was successfully applied, treat the issue as fixed
    and close it. Use `fixed_verified` only when an immediate relevant check
    actually passed; otherwise use `changed_unverified`, which also closes.
@@ -189,17 +177,9 @@ this run's notebook.
    dispatch/read-only wrapper; do not launch another Operations reviewer.
 4. **Classify observations** — for every selected workflow observation, link it
    to an existing issue, promote it with evidence, or reject it as non-issue.
-5. **Persist review state and stop the turn** — write typed findings and verification evidence,
-   record every selected route-aware focus, and write exactly one terminal
-   `technical_review` receipt. Do not modify implementation files or continue
-   into repair in this same turn. The runtime checks the saved receipt after
-   the turn returns; only a later message in this same retained sequence can
-   receive mutation tools. Repair outcome remains separate from review
-   completion and never rewrites the receipt.
-
-Do not add a consolidation turn. Every later message continuously updates the
-checkpoint's canonical root causes and merges semantic duplicates while it
-works.
+5. **Finish** — record findings as the work happens and selected focus coverage.
+   After bounded repairs and checks, save one terminal result with the brief
+   conclusion and optional new reasoning. Do not add a consolidation or reporting turn.
 
 When `strategic_review` is due, launch one separate executor sequence:
 
@@ -220,20 +200,17 @@ When `strategic_review` is due, launch one separate executor sequence:
    to test proposals. Classify findings individually; a mixed review need not
    choose one global result. Keep, improve, propose an alternative, experiment,
    or wait as appropriate for each question. Never force ideas to fill a quota.
-4. **Persist** — record every investigated strategic focus with route scope, write typed strategic
-   findings/decisions/impact records, then write the terminal
-   `strategic_review` receipt.
+4. **Finish in the same turn** — record investigated focus coverage and the terminal
+   `strategic_review` result with optional review_note. Findings, decisions and impact
+   records are saved as work happens; this is not a separate reporting message.
 
-The Strategic sequence also receives one run-scoped checkpoint. Strategic
-Review is one product/business sequence, run as a separate ordered sequence
-with fresh phase contexts; its final sequence message owns typed strategic
-writes and the terminal receipt without inheriting the technical executor's
-repair authority. An experiment is optional. Multiple running/measuring experiments may coexist only when
+Strategic Review owns its typed writes and terminal result in the same task;
+reasoning phases need separate messages only when useful, not for persistence.
+It does not inherit technical repair authority. An experiment is optional. Multiple running/measuring experiments may coexist only when
 their declared interference domains do not overlap; proposed or approved but
 not started experiments do not consume an active slot.
 
-Give each child the Pulse run ID, selected lens, Gate evidence, checkpoint
-path, and clear authority. The Technical Maintenance task owns its typed review
+Give each child the Pulse run ID, selected lens, Gate evidence and clear authority. The Technical Maintenance task owns its typed review
 writes, bounded repair, proportional verification, terminal result, and
 completed receipt before it ends. Strategic Review may write its own terminal
 receipt because it never mutates implementation.
@@ -246,7 +223,7 @@ persistence, record that module as incomplete instead of inventing findings.
 ## Same-task bounded repair
 
 After reviewing the Gate worklist, canonical issues, saved reviewer records,
-and Technical Review checkpoint, select a repair only when it is bounded and
+and saved Technical Review notes, select a repair only when it is bounded and
 safe.
 Workflow observations are evidence, not repair work. Select a bounded repair
 batch from canonical issues. Start with the highest-value coherent bundle;
@@ -257,8 +234,7 @@ fits the retained context plus targeted evidence. Do not batch different
 public-action risk, user-decision, route-context, or unresolved-design work.
 
 Do not launch a fresh Fixer. The same retained executor may modify safe owned
-targets, record exact attempts and dispositions, run proportional proof, update
-the compact checkpoint, then persist its terminal `technical_review` receipt.
+targets, record exact attempts and dispositions, run proportional proof, then persist its terminal `technical_review` receipt.
 The receipt and repair outcome remain separate facts, but the receipt is no
 longer a permission switch. Unselected issues remain durable. If no safe
 canonical objective exists, record a truthful terminal technical module result
@@ -282,7 +258,7 @@ to empty every unrelated active root in one agent turn. Do not select closed
 `changed_unverified` issues merely because a next-check date or new run arrived.
 Rank active roots by correctness/safety impact, reproduced failures, ability to
 apply a useful bounded repair, and owner decisions. Keep every unselected issue durable and explicitly
-checkpoint the remaining ordered queue for a future Pulse pass. Also load
+retain the remaining issues in the existing queue for a future Pulse pass. Also load
 `suppressed_concerns`: an
 unchanged externally owned issue is not a new finding, while materially changed
 evidence/target identity is a reopen candidate. A new finding is justified only
@@ -351,9 +327,8 @@ parent consolidation, not permission to omit its final receipt. Reviewer
 failure is truthful evidence for that lens and cannot erase or block other due
 work.
 
-Continuously maintain canonical roots in the checkpoint, then persist findings
-and reproduced failures through typed Pulse tools in the final sequence
-turn. Apply safe approved repairs through normal Workflow Builder tools and
+Update existing canonical roots through typed tools as evidence arrives; persist findings
+and reproduced failures through typed Pulse tools as they arise. Apply safe approved repairs through normal Workflow Builder tools and
 record the change and any immediate checks actually performed. Do not create
 future producing-run verification obligations for applied technical fixes. Finish by calling
 `record_pulse_result` exactly once for every due module. If no module is due,
@@ -387,7 +362,7 @@ separate reviewer identities. LLM/Ops evaluates correct execution for cost,
 latency, model, tool, retry, and runtime fitness. The shared operational reviewer
 executes only selected perspectives in canonical order, reuses shared evidence,
 and consolidates the same root cause before returning. Strategic Review remains
-a separate ordered sequence with fresh phase contexts joined by one checkpoint.
+a separate ordered sequence with retained context and optional SQLite review notes.
 Load docs with
 `read_skill(skills=[{"name":"builder-reference","path":"references/<name>.md"}])`:
 `pulse-bug-review`; `review-artifact-drift`; matching `improve-*` health guide;
@@ -590,7 +565,7 @@ separate. Different public-action risks, user decisions, route contexts, and
 unresolved design investigations stay separate. Waiting-on-run, waiting-on-user,
 proposal-only, and externally owned findings stay visible but do not enter the
 actionable queue. Coherence, impact, and available proof choose the batch—not an
-arbitrary top-N issue count. No finding may disappear: checkpoint the exact
+arbitrary top-N issue count. No finding may disappear: retain in the existing queue the exact
 unselected queue with defer reasons, but do not re-file or manufacture a
 current-pass disposition for issues the executor did not investigate. Process
 and disposition each selected bundle before the next; the backend opens the

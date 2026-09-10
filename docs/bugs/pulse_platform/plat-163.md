@@ -2,6 +2,11 @@
 
 # PLAT-163 — Pulse technical and strategic reviews need durable focus rotation, one canonical technical identity, and visible coverage history
 
+> **2026-09-10 update:** [PLAT-306](plat-306.md) supersedes mandatory Markdown
+> checkpoint/report maintenance with optional SQLite review notes on the existing
+> result tool. Typed lifecycle records remain authoritative; historical design
+> discussion below is retained. No reporting-only turn is required.
+
 > **2026-08-28 sequencing update:** PLAT-199 replaces the fresh independent
 > Technical Fixer with a later receipt-gated message in the retained technical
 > sequence. Focus selection and the terminal review receipt remain reviewer

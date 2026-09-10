@@ -87,8 +87,8 @@ context window.
    finding links, but no finding may disappear inside a bundle.
 4. **Maintain an explicit remaining list.** Prepare a lifecycle disposition for
    every issue linked to every selected bundle and remove only those exact IDs
-   from the working queue. Preserve all other IDs, in priority order, in the
-   run-scoped checkpoint. Untouched findings retain their existing lifecycle;
+   from the working queue. Leave all other IDs in the existing durable issue queue; do not copy that queue
+   into review_note. Untouched findings retain their existing lifecycle;
    do not generate no-op attempts or current-pass dispositions for them.
 5. **Check waiting boundaries rather than re-mutating.** An existing waiting
    state is accounted for only after checking whether its named run, answer,
@@ -98,7 +98,7 @@ context window.
 6. **Reconcile before completion.** Re-read
    `get_pulse_state(view="backlog", detail="compact")` only after a lifecycle
    mutation that could have changed the manifest, then compare it with the
-   starting manifest, selected issue IDs, dispositions, and checkpointed
+   starting manifest, selected issue IDs, dispositions, and saved
    remaining queue. Do not reload an unchanged backlog merely to filter or
    restate it. Every selected issue must have a current-pass disposition.
    Every unselected starting issue must still be durable or have an independently

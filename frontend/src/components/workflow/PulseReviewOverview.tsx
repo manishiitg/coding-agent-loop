@@ -19,8 +19,8 @@ function ReviewReport({ report }: { report: PulseReviewReport }) {
   const [open, setOpen] = useState(false)
   return <>
     <button type="button" aria-haspopup="dialog" onClick={() => setOpen(true)} className="flex w-full items-center justify-between gap-3 rounded-lg border bg-background px-3 py-3 text-left text-xs hover:bg-muted/30">
-      <span><span className="inline-flex items-center gap-2 font-medium"><FileText className="h-3.5 w-3.5" />Read report</span>
-        <span className="mt-1 block text-muted-foreground">Updated {pulseReviewDate(report.updated_at)}</span></span>
+      <span><span className="inline-flex items-center gap-2 font-medium"><FileText className="h-3.5 w-3.5" />{report.source === 'review_note' ? 'Read review' : 'Read report'}</span>
+        <span className="mt-1 block text-muted-foreground">Updated {pulseReviewDate(report.updated_at)}{report.result === 'incomplete' && ' · No completion recorded'}</span></span>
       <Maximize2 className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden="true" />
     </button>
     {open && <PulseReviewReportReader report={report} title={`${readable(report.module)} report`} onClose={() => setOpen(false)} />}
@@ -29,9 +29,9 @@ function ReviewReport({ report }: { report: PulseReviewReport }) {
 
 function Reports({ reports }: { reports: PulseReviewReport[] }) {
   const [all, setAll] = useState(false)
-  if (!reports.length) return <p className="text-xs text-muted-foreground">No saved review reports found.</p>
+  if (!reports.length) return <p className="text-xs text-muted-foreground">No saved review notes or reports found.</p>
   return <div className="space-y-2">
-    {(all ? reports : reports.slice(0, 1)).map(report => <ReviewReport key={report.path} report={report} />)}
+    {(all ? reports : reports.slice(0, 1)).map(report => <ReviewReport key={`${report.source || 'file'}:${report.module}:${report.pulse_run_id}:${report.path}`} report={report} />)}
     {reports.length > 1 && <button type="button" aria-expanded={all} onClick={() => setAll(value => !value)} className="text-xs font-medium text-primary hover:underline">
       {all ? 'Hide report history' : `View report history (${reports.length - 1})`}
     </button>}
@@ -125,7 +125,7 @@ export function PulseReviewOverview({ moduleStates, coverage, audits, reports, f
         })}
       </div></div>}
       {selectedState?.next_check_at && <p className="text-xs text-muted-foreground">Next assessment: {pulseReviewDate(selectedState.next_check_at)}</p>}
-      <div><h5 className="mb-2 text-xs font-semibold">Review reports <span className="font-normal text-muted-foreground">({selectedReports.length})</span></h5><Reports reports={selectedReports} /></div>
+      <div><h5 className="mb-2 text-xs font-semibold">Review notes and reports <span className="font-normal text-muted-foreground">({selectedReports.length})</span></h5><Reports reports={selectedReports} /></div>
     </section>}
     <ReviewChecks key={`checks:${moduleFilter || 'all'}`} audits={visibleAudits} reports={reports} label={selected?.label} />
   </section>

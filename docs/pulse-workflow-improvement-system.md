@@ -53,9 +53,9 @@ preserves existing authorization checks. Browser interaction still uses the
 workflow's shared profile and existing browser policies.
 
 Research starts with a question, saves dated sources and distinguishes observed
-facts from hypotheses. Reports are stored in `runs/pulse/<run>/architecture-review.md`
-or `strategic-review.md` and appear in the Pulse report reader. Recovery reads
-prior checkpoints and writes the continuation under the new run. Reuse current
+facts from hypotheses. Concise reasoning is saved through review_note in SQLite and appears directly
+in the Pulse report reader. Runtime interruption tracking references the source
+run and saved notes; legacy Markdown files are optional historical evidence. Reuse current
 research instead of automatically repeating it.
 
 ## One improvement lifecycle
@@ -110,3 +110,23 @@ it is not a claim that business outcomes have improved.
   automatic learning/KB contradiction prevention are not added by this release.
 - Continue measuring proposal application and outcomes on real workflows rather
   than treating the number of reports or ideas as success.
+
+## Minimal review recording — PLAT-306
+
+Reviewers save information once. `record_pulse_result` already records the short
+`reason`, evidence and actual outcomes; optional `review_note` adds only reasoning,
+limitations and next questions that are not in the existing records. It is stored
+in SQLite atomically with completion and shown directly in the report reader.
+There is no mandatory Markdown file, fixed template or separate reporting turn.
+
+At review start, `get_pulse_state(view="review_notes", module=...)` returns the
+latest three notes/conclusions; optional `pulse_run_id` selects an exact prior
+run. Missing older notes are normal, not a request to reconstruct history.
+
+Only when a long investigation needs working context saved, the same result tool
+accepts `note_only=true, result="running", reason=..., review_note=...` with the
+normal workspace/module/run identity. This does not mark completion or change
+findings. The next completion can replace that note; omitting review_note preserves
+it. Runtime interruption state remains separate. Legacy Markdown reports remain
+readable; no files are deleted or bulk-converted. See the ticket for validation
+and the remaining live overhead measurement.

@@ -2,6 +2,11 @@
 
 # PLAT-137 — Strategy Auditor and Goal Advisor split one strategic reasoning lifecycle and constrain it to one globally active experiment
 
+> **2026-09-10 update:** [PLAT-306](plat-306.md) supersedes mandatory Markdown
+> checkpoint/report maintenance with optional SQLite review notes on the existing
+> result tool. Typed lifecycle records remain authoritative; historical design
+> discussion below is retained. No reporting-only turn is required.
+
 | Coordination | Value |
 |---|---|
 | Assigned agent | Codex |

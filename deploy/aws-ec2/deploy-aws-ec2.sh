@@ -85,6 +85,7 @@ GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o "$BUILD_DIR/bin/video-studio-g
 cp -R "$REPO_ROOT/frontend/dist/." "$BUILD_DIR/frontend/"
 node "$REPO_ROOT/frontend/scripts/check-release-assets.mjs" "$BUILD_DIR/frontend"
 cp "$REPO_ROOT/frontend/scripts/check-release-assets.mjs" "$BUILD_DIR/check-release-assets.mjs"
+cp "$REPO_ROOT/deploy/common/prune-releases.py" "$BUILD_DIR/prune-releases.py"
 # The shared public runtime-config.js is rewritten by local AgentWorks dev
 # sessions. Replace it after every build so this browser deployment always
 # uses Caddy's same-origin routes rather than a visitor's localhost ports.

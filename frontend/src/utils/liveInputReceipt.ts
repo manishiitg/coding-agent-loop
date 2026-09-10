@@ -12,8 +12,8 @@ export function withLiveInputReceipt(event: PollingEvent, status: string, provid
 export function liveInputReceiptText(metadata: Record<string, unknown> | undefined): string {
   switch (metadata?.delivery_status) {
     case 'sending': return 'Submitting…'
-    case 'sent_to_cli': return 'Submitted to agent · may be queued'
-    case 'queued_for_injection': return 'Queued for next turn'
+    case 'sent_to_cli':
+    case 'queued_for_injection': return 'Queued'
     case 'next_turn_started': return 'Follow-up started'
     default: return ''
   }

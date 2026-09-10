@@ -1,10 +1,16 @@
 ## Browser Automation
 
-Read this skill when you need to drive a real browser — open pages, click,
+Read this skill for interactive managed browsing when you need to drive a real browser — open pages, click,
 fill forms, take screenshots, upload files, scrape interactive sites, or
 log into authenticated pages. Browser configuration is declared by the
 workflow, but CDP reachability is live state. Query `agent_browser status`
 before first use instead of relying on saved conversation or prompt state.
+
+For repeatable browser tests, read `references/playwright-scripted.md` from
+`builder-reference`. Use `@agentworks/playwright` for JS/TS or `agentworks-playwright` for Python
+when available. Its live test sessions share this panel but are watch-only; the
+managed commands, CDP policies, media defaults, and capture rules below apply to
+agent-browser sessions. Do not apply them to a test runner's private Chromium.
 
 In an interactive Builder with workspace-view tools, call
 `open_workspace_view(view="browser")` when starting browser work so the user

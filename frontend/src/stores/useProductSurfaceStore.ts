@@ -1,7 +1,7 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 
-export type ProductSurface = 'agentworks' | 'video-studio' | 'finance' | 'dominion' | 'sparkquill'
+export type ProductSurface = 'agentworks' | 'video-studio' | 'dominion' | 'sparkquill'
 
 interface ProductSurfaceState {
   productSurface: ProductSurface
@@ -26,7 +26,6 @@ export const useProductSurfaceStore = create<ProductSurfaceState>()(
         const surface = state?.productSurface
         const validSurface = surface === 'agentworks' ||
           surface === 'video-studio' ||
-          surface === 'finance' ||
           surface === 'dominion' ||
           surface === 'sparkquill'
         return {

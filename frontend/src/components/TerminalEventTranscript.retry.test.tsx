@@ -39,7 +39,7 @@ describe('shared transcript failure retry', () => {
     const host = await mount([event('user', 'user_message', {
       content: 'Check the browser', metadata: { delivery_status: 'sent_to_cli' },
     })])
-    expect(host.textContent).toContain('Submitted to agent · may be queued')
+    expect(host.textContent).toContain('Queued')
     expect(host.textContent).not.toContain('Message sent')
   })
 

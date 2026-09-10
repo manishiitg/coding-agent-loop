@@ -162,6 +162,16 @@ p0_test_regex pi-cli pkg/adapters/picli >/dev/null
 run_required_go_tests go -C "$MCPAGENT_DIR" test -json ./agent \
   -run '^TestP0CanonicalTurnContract$' -count=1
 
+# Deterministic reproductions accompany the live proof: force the late-commit
+# steering boundary and completion-flush races rather than relying on timing.
+run_required_go_tests go -C "$MULTI_LLM_DIR" test -json ./pkg/adapters/cursorcli \
+  -run '^(TestRetainedProgressKeepsNarrationAcrossSteerAndNormalStream|TestCursorRetainedControlsSteerQueuedFollowups|TestCursorStreamNarrationRejectsPartialStreams|TestCursorStreamNarrationAllowsSchemaDiscovery)$' -count=1
+run_required_go_tests go -C "$MCPAGENT_DIR" test -json ./agent \
+  -run '^(TestRetainedProgressStreamsWhileFinalIsPending|TestRetainedCompletionFlushesProgressCommittedAfterPoll)$' -count=1
+run_required_go_tests go -C "$ROOT_DIR/agent_go" test -json ./cmd/testing \
+  -run '^TestProgressP0' -count=1
+npm --prefix "$ROOT_DIR/frontend" test -- src/utils/transcriptChunkUpdates.test.ts
+
 IFS=',' read -r -a provider_list <<< "$PROVIDERS"
 for raw_provider in "${provider_list[@]}"; do
   provider="$(printf '%s' "$raw_provider" | tr '[:upper:]' '[:lower:]' | xargs)"
@@ -213,10 +223,11 @@ for raw_provider in "${provider_list[@]}"; do
   # follow-up uses the durable Session, returns one authoritative tool receipt
   # (arguments/result/duration), persists exactly one final response, avoids
   # Agent reconstruction, requires stable same-turn IDs plus the canonical
-  # completion marker, and leaves the tmux reusable.
+  # completion marker, and leaves the tmux reusable. Cursor also requires
+  # every retained narration over the chat SSE stream, including a busy steer.
   go -C "$ROOT_DIR/agent_go" run . test coding-agent-chat-e2e \
     --server-url "$SERVER_URL" --provider "$provider" \
-    --selected-folder "_users/default/Chats" \
+    --selected-folder "_users/default/Chats" --workspace-docs "$WORKSPACE_DOCS" \
     --retained-window-p0-only --timeout 8m
 done
 

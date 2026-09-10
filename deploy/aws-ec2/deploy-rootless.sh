@@ -21,7 +21,7 @@ DEPLOY_SOURCE_MODE="${DEPLOY_SOURCE_MODE:-remote-main}"
 DEPLOY_BRANCH="${DEPLOY_BRANCH:-main}"
 SOURCE_ROOT=""
 
-for command in aws git go npm jq rsync ssh docker; do command -v "$command" >/dev/null || { echo "Missing $command" >&2; exit 1; }; done
+for command in aws git go npm jq rsync ssh docker python3; do command -v "$command" >/dev/null || { echo "Missing $command" >&2; exit 1; }; done
 
 # Production deploys build only committed source from clean, fresh clones of
 # all three repositories. This prevents an untracked file or a dirty sibling
@@ -74,8 +74,16 @@ HOST_IP="$(aws_rts cloudformation describe-stacks --stack-name "$STACK_NAME" --q
 RELEASE_ID="$(git -C "$REPO_ROOT" rev-parse --short HEAD)-$(date +%Y%m%d%H%M%S)"
 BUILD_DIR="$(mktemp -d)"
 GLOBAL_FILE="$(mktemp)"
-trap 'rm -rf "$BUILD_DIR" "$GLOBAL_FILE"; if [[ -n "${SOURCE_ROOT:-}" ]]; then rm -rf "$SOURCE_ROOT"; fi' EXIT
+cleanup_build() {
+  if [[ -n "${REMOTE_RELEASE:-}" ]]; then
+    "${SSH[@]}" "rm -f '$REMOTE_RELEASE/.deploying'" >/dev/null 2>&1 || true
+  fi
+  rm -rf "$BUILD_DIR" "$GLOBAL_FILE"
+  if [[ -n "${SOURCE_ROOT:-}" ]]; then rm -rf "$SOURCE_ROOT"; fi
+}
+trap cleanup_build EXIT
 mkdir -p "$BUILD_DIR/bin" "$BUILD_DIR/frontend" "$BUILD_DIR/configs" "$BUILD_DIR/systemd" "$BUILD_DIR/claude-skills" "$BUILD_DIR/browser"
+python3 "$REPO_ROOT/scripts/build-playwright-packages.py" "$BUILD_DIR/packages"
 # Build exactly the requested checkout while resolving the shared sibling
 # modules from the declared workspace root. The checked-in go.work may point
 # at a primary checkout instead of this worktree.
@@ -113,7 +121,7 @@ fi
 cp -R "$REPO_ROOT/frontend/dist/." "$BUILD_DIR/frontend/"
 node "$REPO_ROOT/frontend/scripts/check-release-assets.mjs" "$BUILD_DIR/frontend"
 cp "$REPO_ROOT/frontend/scripts/check-release-assets.mjs" "$BUILD_DIR/check-release-assets.mjs"
-cp "$SCRIPT_DIR/prune-releases.py" "$BUILD_DIR/prune-releases.py"
+cp "$REPO_ROOT/deploy/common/prune-releases.py" "$BUILD_DIR/prune-releases.py"
 # frontend's build:report-preview step (part of `npm run build` above) writes
 # report-preview.js to agent_go/cmd/server/static/ in the source checkout,
 # never into the release. video-studio-agent runs with
@@ -144,6 +152,7 @@ SSH=(ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new -i "$SSH_KEY_PATH"
 REMOTE_APP="/var/lib/video-studio/video-studio"
 REMOTE_RELEASE="$REMOTE_APP/releases/$RELEASE_ID"
 REMOTE_TOOLS_DIR="/var/lib/video-studio/.local"
+"${SSH[@]}" "command -v python3 >/dev/null"
 REMOTE_BROWSER_PATH="$("${SSH[@]}" "set -e; export HOME=/var/lib/video-studio; npx --yes 'hyperframes@$HYPERFRAMES_VERSION' browser ensure >/dev/null; npx --yes 'hyperframes@$HYPERFRAMES_VERSION' browser path | tail -n 1")"
 case "$REMOTE_BROWSER_PATH" in
   /var/lib/video-studio/.cache/hyperframes/chrome/*/chrome-headless-shell) ;;
@@ -276,13 +285,13 @@ REMOTE_PREFLIGHT
 # new turns can still start during the wait, so this is best-effort, and an
 # agent without the field (older release) drains immediately.
 DRAIN_TIMEOUT_SECONDS="${DRAIN_TIMEOUT_SECONDS:-300}"
-"${SSH[@]}" "deadline=\$((\$(date +%s) + $DRAIN_TIMEOUT_SECONDS)); while :; do h=\$(curl -s --max-time 5 http://127.0.0.1:8080/health || true); idle=\$(printf '%s' \"\$h\" | jq -r 'if .drain.idle == false then \"false\" else \"true\" end' 2>/dev/null || true); [ \"\$idle\" = false ] || idle=true; if [ \"\$idle\" = true ]; then echo 'drain: agent idle, swapping'; break; fi; if [ \$(date +%s) -ge \$deadline ]; then echo \"drain: still busy after ${DRAIN_TIMEOUT_SECONDS}s (\$(printf '%s' \"\$h\" | jq -c .drain)); swapping anyway\"; break; fi; echo \"drain: waiting for in-flight turns (\$(printf '%s' \"\$h\" | jq -c .drain))\"; sleep 5; done"
+"${SSH[@]}" "deadline=\$((\$(date +%s) + $DRAIN_TIMEOUT_SECONDS)); while :; do h=\$(curl -s --max-time 5 http://127.0.0.1:8000/api/health || true); idle=\$(printf '%s' \"\$h\" | jq -r 'if .drain.idle == false then \"false\" else \"true\" end' 2>/dev/null || true); [ \"\$idle\" = false ] || idle=true; if [ \"\$idle\" = true ]; then echo 'drain: agent idle, swapping'; break; fi; if [ \$(date +%s) -ge \$deadline ]; then echo \"drain: still busy after ${DRAIN_TIMEOUT_SECONDS}s (\$(printf '%s' \"\$h\" | jq -c .drain)); swapping anyway\"; break; fi; echo \"drain: waiting for in-flight turns (\$(printf '%s' \"\$h\" | jq -c .drain))\"; sleep 5; done"
 "${SSH[@]}" "set -e; browser_dir='$(dirname "$REMOTE_BROWSER_PATH")'; browser_wrapper=\"\$browser_dir/agentworks-chrome-headless\"; install -m 0755 '$REMOTE_RELEASE/browser/agentworks-chrome-headless' \"\$browser_wrapper\"; env_file='$REMOTE_APP/.env'; global_file='$REMOTE_APP/.globals-$RELEASE_ID'; awk '!/^GLOBAL_SECRET_|^CLAUDE_CODE_OAUTH_TOKEN=|^CURSOR_API_KEY=|^AGENT_BROWSER_EXECUTABLE_PATH=/' \"\$env_file\" > \"\$env_file.next\"; echo \"AGENT_BROWSER_EXECUTABLE_PATH=\$browser_wrapper\" >> \"\$env_file.next\"; grep -q '^MCP_API_URL=' \"\$env_file.next\" || echo 'MCP_API_URL=http://127.0.0.1:8000' >> \"\$env_file.next\"; cat \"\$global_file\" >> \"\$env_file.next\"; chmod 600 \"\$env_file.next\"; mv \"\$env_file.next\" \"\$env_file\"; rm -f \"\$global_file\"; find /data/video-studio/docs/_users -type d -path '*/Chats/Video Studio/projects' -print0 | while IFS= read -r -d '' projects_root; do find \"\$projects_root\" -mindepth 1 -maxdepth 1 -type d -print0 | while IFS= read -r -d '' project; do install -d -m 0755 \"\$project/.claude/skills\"; rsync -a --delete '$REMOTE_RELEASE/claude-skills/' \"\$project/.claude/skills/\"; rm -rf \"\$project/skills/video-studio\"; done; done; install -d -m 0755 \"\$HOME/.config/systemd/user\"; install -m 0644 '$REMOTE_RELEASE/systemd/video-studio-workspace.service' \"\$HOME/.config/systemd/user/video-studio-workspace.service\"; install -m 0644 '$REMOTE_RELEASE/systemd/video-studio-agent.service' \"\$HOME/.config/systemd/user/video-studio-agent.service\"; install -m 0644 '$REMOTE_RELEASE/systemd/video-studio-gateway.service' \"\$HOME/.config/systemd/user/video-studio-gateway.service\"; install -m 0644 '$REMOTE_RELEASE/systemd/video-studio-cli-update.service' \"\$HOME/.config/systemd/user/video-studio-cli-update.service\"; install -m 0644 '$REMOTE_RELEASE/systemd/video-studio-cli-update.timer' \"\$HOME/.config/systemd/user/video-studio-cli-update.timer\"; systemctl --user daemon-reload; systemctl --user disable --now video-studio-cli-update.timer || true; ln -sfn '$REMOTE_RELEASE' '$REMOTE_APP/current'; systemctl --user restart video-studio-workspace video-studio-agent video-studio-gateway; systemctl --user is-active video-studio-agent video-studio-workspace video-studio-gateway; grep -Fq 'apiBaseUrl: \"\",' '$REMOTE_APP/current/frontend/runtime-config.js'; grep -Fq 'workspaceApiBaseUrl: \"/api/wp\",' '$REMOTE_APP/current/frontend/runtime-config.js'"
 
 "${SSH[@]}" "set -e; test -s '$REMOTE_APP/logs/agent.log'; tail -n 5 '$REMOTE_APP/logs/agent.log'"
 
 # Keep the active release and any older files still used by retained sessions.
 # No rollback archive is retained after a healthy deployment.
-"${SSH[@]}" "set -e; ready=false; for attempt in \$(seq 1 30); do if curl -fsS --max-time 5 http://127.0.0.1:8000/health >/dev/null; then ready=true; break; fi; sleep 1; done; [ \"\$ready\" = true ]; rm -f '$REMOTE_RELEASE/.deploying'; python3 '$REMOTE_RELEASE/prune-releases.py' '$REMOTE_APP' --apply"
+"${SSH[@]}" "set -e; rm -f '$REMOTE_RELEASE/.deploying'; python3 '$REMOTE_RELEASE/prune-releases.py' '$REMOTE_APP' --apply --health-url http://127.0.0.1:8000/api/health --health-url http://127.0.0.1:8080/health"
 
 echo "Rootless Video Studio release deployed: https://video.realtrainingsys.com"

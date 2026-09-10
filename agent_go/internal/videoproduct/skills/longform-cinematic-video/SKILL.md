@@ -13,6 +13,12 @@ editorial grammar.
 
 ## Define the cinematic contract
 
+The user chooses the visual style: photoreal, hand-drawn, 2D/3D animation,
+motion graphics, documentary, slideshow, or mixed media. Cinematic means
+coherent storytelling and intentional picture/sound direction, not realism.
+A photoreal host may have illustrated historical cutaways. Do not refuse or
+convert those inserts to photoreal. Realistic characters are not required.
+
 Before scripting, lock the film's dramatic question, audience, runtime,
 format, emotional arc, point of view, visual language, camera grammar, color
 journey, sound world, and continuity priorities. State what must remain exact
@@ -21,8 +27,9 @@ screen direction, eyelines, lighting motivation, and recurring audio motifs.
 
 Choose a small visual vocabulary and repeat it intentionally. A cinematic
 film does not need a new style, lens, camera move, or transition for every
-beat. Video Studio uses MiniMax H3 throughout one continuous arc; vary camera
-grammar deliberately while preserving the approved H3 reference pack.
+beat. Use the user-approved medium for each sequence; a film may combine generated
+footage, supplied media, and deterministic animation. H3 reference and
+continuation rules apply to generated-video shots, not every visual sequence.
 
 ## Plan sequences before shots
 

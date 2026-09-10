@@ -9,8 +9,8 @@ dependencies:
     - id: hyperframes-skills
       installer: skills-cli
       source: heygen-com/hyperframes
-      # Keep HyperFrames as a cinematic production technique for exact UI,
-      # titles, diagrams, overlays, transitions, and compositing.
+      # HyperFrames supports complete animated sequences, illustrated inserts,
+      # exact UI, titles, diagrams, overlays, transitions, and compositing.
       install:
         - hyperframes
         - hyperframes-core
@@ -315,7 +315,7 @@ ui:
   streaming: structured
 
 workflows:
-  enabled: [shortform, longform, quality]
+  enabled: [longform, shortform, quality]
   selected_skills:
     - video-look-sound
     - cinematic-visual-development

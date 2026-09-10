@@ -16,7 +16,7 @@ sandboxing or Caddy config, since this deployment shares that code.
 - URL: `https://video.realtrainingsys.com`
 - Region: `us-west-2`
 - Stack: `video-studio-prod`
-- Deploy method: local build → `rsync` over restricted SSH → user-level systemd restart
+- Deploy method: server clones all three `main` branches → native Linux build → user-level systemd restart
 - Infrastructure: CloudFormation
 
 The deployer uses the `RTS` AWS profile and an SSH key. SSH ingress is limited
@@ -36,6 +36,16 @@ bash deploy/aws-ec2/deploy-rootless.sh
 This release path connects as `video-studio`, writes only its own application
 directory, and restarts only its user services. It neither runs `sudo` nor
 touches infrastructure, the shared login password, or unrelated services.
+
+The Mac sends only small deployment instructions and secret configuration. The
+server clones `main` from `mcp-agent-builder-go`, `mcpagent`, and
+`multi-llm-provider-go`, and records their exact SHAs in `SOURCE_REVISIONS`.
+`bootstrap-build.sh` installs Go 1.27.1 with checksum verification when needed.
+Builds run under a deployment lock, with a 6 GB memory ceiling and two CPU cores.
+Failed builds leave the current release active; an active agent is allowed to drain
+before activation (timeout aborts rather than interrupting it). Temporary checkouts
+are removed after the build. The host retains Go/npm dependency caches for reuse.
+The three configured GitHub repositories must be readable by the server.
 
 ## Per-user accounts (since 2026-09-02)
 
@@ -63,8 +73,8 @@ own user id. Each user then gets their own projects tree; the admin adds
 users and ticks `video-studio` for them. `ACCESS_PASSWORD` must still be
 present (the gateway refuses to start without it) but is no longer asked for.
 
-The agent binary is built with cgo inside Docker (`build/build-linux-agent.sh`,
-image `video-studio-linux-amd64-builder`, created on first use). Video Studio's
+The agent binary is built natively with cgo and GCC on the Linux server
+(`build/build-linux-agent.sh`). Video Studio's
 microphone dictation (`agent_go/pkg/voicestt`, `voice: preferred` in its
 `product.yaml`) links sherpa-onnx's native Linux libraries, which a plain
 `CGO_ENABLED=0` cross-build replaces with a stub that answers the mic with
@@ -72,7 +82,7 @@ microphone dictation (`agent_go/pkg/voicestt`, `voice: preferred` in its
 the first mic click offers a one-time ~690MB download (NVIDIA's Nemotron
 English streaming model plus a punctuation model) into
 `~/.agentworks/voice-models/`, with progress shown in the composer; pre-place
-the files there to skip it. Docker Desktop must be running on the deployer's machine.
+the files there to skip it. No Docker or Go installation is required on the deployer's Mac.
 
 `deploy-aws-ec2.sh` is retained only as the original bootstrap installer; do
 not use it for normal releases.

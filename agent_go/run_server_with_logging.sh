@@ -447,6 +447,7 @@ if [ "$ONLY_FRONTEND" = true ]; then
 window.__APP_RUNTIME_CONFIG__ = {
   apiBaseUrl: "${MCP_AGENT_SERVER_URL}",
   workspaceApiBaseUrl: "${WORKSPACE_API_URL}",
+  cdpEnabled: true,
   appName: "${RUNTIME_APP_NAME}",
   faviconUrl: "${RUNTIME_FAVICON_URL}"
 };
@@ -1019,6 +1020,7 @@ write_frontend_runtime_config() {
 window.__APP_RUNTIME_CONFIG__ = {
   apiBaseUrl: "${MCP_AGENT_SERVER_URL}",
   workspaceApiBaseUrl: "${WORKSPACE_API_URL:-${LOCALHOST_BASE_URL}:${WORKSPACE_PORT}}",
+  cdpEnabled: true,
   appName: "${runtime_app_name}",
   faviconUrl: "${runtime_favicon_url}"
 };

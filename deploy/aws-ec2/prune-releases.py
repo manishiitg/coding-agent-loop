@@ -66,4 +66,4 @@ if __name__ == '__main__':
     parser.add_argument('app', type=Path)
     parser.add_argument('--apply', action='store_true')
     args = parser.parse_args()
-    print('release copies removed:', len(prune(args.app, args.apply)))
+    print('release copies removed:' if args.apply else 'unused release copies:', len(prune(args.app, args.apply)))

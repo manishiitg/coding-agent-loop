@@ -8,6 +8,12 @@ Write the description as an execution prompt focused on the step's objective: wh
 
 Put reusable execution methods in the step's skills and learnings: tool usage, selectors, API/authentication sequences, troubleshooting, and techniques verified in prior runs. Reference the relevant guidance and configure the step's skill/learning access so it can actually read it. Do not assume a skill exists or that a new step has already learned a procedure; provide needed guidance there, or let the execution agent choose a method within the task's constraints and retain verified reusable know-how through the configured learning flow.
 
+For browser-test steps, describe the test outcome and any required live visibility.
+Keep library imports, setup, and lifecycle in the accessible
+`builder-reference/references/playwright-scripted.md` guidance. Verify that the
+selected runtime can provide the requested visibility; do not promise it merely
+because a step says “Playwright.” Preserve the user's language and runner choices.
+
 Keep the output structure and automated checks in `validation_schema`. Descriptions, skills/learnings, and schemas should complement one another without repeating the same content.
 
 ### Earn every word

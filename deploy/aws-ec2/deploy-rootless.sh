@@ -21,7 +21,7 @@ DEPLOY_SOURCE_MODE="${DEPLOY_SOURCE_MODE:-remote-main}"
 DEPLOY_BRANCH="${DEPLOY_BRANCH:-main}"
 SOURCE_ROOT=""
 
-for command in aws git go npm jq rsync ssh docker; do command -v "$command" >/dev/null || { echo "Missing $command" >&2; exit 1; }; done
+for command in aws git go npm jq rsync ssh docker python3; do command -v "$command" >/dev/null || { echo "Missing $command" >&2; exit 1; }; done
 
 # Production deploys build only committed source from clean, fresh clones of
 # all three repositories. This prevents an untracked file or a dirty sibling
@@ -83,6 +83,7 @@ cleanup_build() {
 }
 trap cleanup_build EXIT
 mkdir -p "$BUILD_DIR/bin" "$BUILD_DIR/frontend" "$BUILD_DIR/configs" "$BUILD_DIR/systemd" "$BUILD_DIR/claude-skills" "$BUILD_DIR/browser"
+python3 "$REPO_ROOT/scripts/build-playwright-packages.py" "$BUILD_DIR/packages"
 # Build exactly the requested checkout while resolving the shared sibling
 # modules from the declared workspace root. The checked-in go.work may point
 # at a primary checkout instead of this worktree.

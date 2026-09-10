@@ -362,3 +362,31 @@ microphone permission success alone is not evidence that an RTS simulation start
 
 References: [agent-browser launch options](https://agent-browser.dev/configuration),
 [Chromium media switches](https://chromium.googlesource.com/chromium/src/+/main/media/base/media_switches.cc).
+
+## Playwright test browsers
+
+JavaScript/TypeScript tests can import `test` and `expect` from the local
+`@agentworks/playwright` package instead of `@playwright/test`. See
+[fixture installation and usage](../packages/playwright/README.md). Existing
+custom fixtures can call `attachLiveBrowser(context)` explicitly. Ordinary
+Playwright tests do not register themselves. Python sync/async and pytest suites use
+[the Python fixture/helper](../packages/playwright-python/README.md). Both packages
+are distributed from the release through authenticated session package endpoints.
+
+The fixture connects to `/s/{session_id}/tools/browser/live` using the runner's
+existing MCP bearer credentials. The agent API derives user/workflow ownership
+from that server-owned active session and allocates a separate `pw-` session for
+each test context. The producer sends Chromium JPEG frames and page metadata,
+with no browser command channel and no public CDP port. Producer disconnect or
+45 seconds without heartbeat removes its discovery entry and closes viewers.
+
+The existing authenticated session-list/viewer endpoints include these sessions
+alongside agent-browser, including deployments using shared Chrome. Viewers see
+only their own workflow's test sessions. Control and agent-browser recording
+routes are rejected for these sessions on the server; the frontend also hides
+those controls. Playwright owns isolated contexts, teardown, and video artifacts
+in its test report. No automatic upload into a custom dashboard is performed.
+
+Validation: `AGENTWORKS_PLAYWRIGHT_LIVE_TEST=1 go -C agent_go test ./cmd/server
+-run '^TestPlaywrightFixtureLive$' -count=1` runs a real Chromium test against an
+isolated local publisher/viewer server.

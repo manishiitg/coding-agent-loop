@@ -178,6 +178,13 @@ Then inspect only the dependencies the actual change could affect:
 - **Descriptions, saved code, skills, and KB:** identify stale instructions or
   inaccessible required guidance caused by the changed contract. Do not redesign
   learning ownership merely because another access mode seems preferable.
+  When an affected step uses browser tests or promises live visibility, read
+  `references/playwright-scripted.md`. Check the step description, accessible skill
+  bundle, actual test import/custom fixture, and installed runtime together. A plain
+  Playwright/Python test is not evidence of panel registration; stale guidance must
+  not promise it or apply managed agent-browser control/capture to a test session.
+  Keep method details in that reference and preserve explicit language/runner choices;
+  do not migrate an unaffected suite or deploy missing support as a drift repair.
 - **Schedules and downstream handoffs:** trace changed IDs, routes, inputs,
   outputs, and intended order. Preserve delivery and approval boundaries.
 

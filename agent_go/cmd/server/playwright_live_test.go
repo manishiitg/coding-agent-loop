@@ -1,0 +1,329 @@
+package server
+
+import (
+	"bytes"
+	"context"
+	"encoding/base64"
+	"encoding/json"
+	"image"
+	"image/jpeg"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/gorilla/mux"
+	"github.com/gorilla/websocket"
+	"github.com/manishiitg/mcpagent/executor"
+)
+
+func playwrightTestServer(t *testing.T) (*StreamingAPI, *httptest.Server) {
+	t.Helper()
+	api := &StreamingAPI{activeSessions: map[string]*ActiveSessionInfo{"run": {UserID: "alice", WorkspacePath: "Workflow/test"}}}
+	router := mux.NewRouter()
+	tool := router.PathPrefix("/s/{session_id}/tools").Subrouter()
+	tool.Use(executor.AuthMiddleware("producer-secret"))
+	tool.HandleFunc("/browser/live", api.handlePlaywrightPublisher)
+	tool.HandleFunc("/browser/packages/{package}", api.handlePlaywrightPackage)
+	router.HandleFunc("/api/browser/live/sessions", api.handleLiveBrowserSessions)
+	router.HandleFunc("/api/browser/live/{session}/stream", api.handleLiveBrowserStream)
+	router.HandleFunc("/api/browser/live/{session}/recording", api.handleBrowserRecording)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		user := r.Header.Get("X-Test-User")
+		router.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), UserContextKey, &UserClaims{UserID: user})))
+	}))
+	t.Cleanup(server.Close)
+	return api, server
+}
+
+func readPlaywrightType(t *testing.T, c *websocket.Conn, kind string) map[string]interface{} {
+	t.Helper()
+	_ = c.SetReadDeadline(time.Now().Add(10 * time.Second))
+	for {
+		var m map[string]interface{}
+		if err := c.ReadJSON(&m); err != nil {
+			t.Fatal(err)
+		}
+		if m["type"] == kind {
+			return m
+		}
+	}
+}
+
+func TestPlaywrightLiveOwnerScopeWatchOnlyAndCleanup(t *testing.T) {
+	t.Setenv("AGENT_BROWSER_SHARED_PROFILE", "")
+	api, server := playwrightTestServer(t)
+	url := strings.Replace(server.URL, "http", "ws", 1)
+	for _, path := range []string{"/s/run/tools/browser/live", "/s/missing/tools/browser/live"} {
+		headers := http.Header{}
+		if strings.Contains(path, "missing") {
+			headers.Set("Authorization", "Bearer producer-secret")
+		}
+		c, response, err := websocket.DefaultDialer.Dial(url+path, headers)
+		if c != nil {
+			c.Close()
+		}
+		if response != nil {
+			response.Body.Close()
+		}
+		if err == nil {
+			t.Fatal("unauthenticated or unknown run registered")
+		}
+	}
+	producer, _, err := websocket.DefaultDialer.Dial(url+"/s/run/tools/browser/live?label=Checkout", http.Header{"Authorization": []string{"Bearer producer-secret"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer producer.Close()
+	id := readPlaywrightType(t, producer, "registered")["browser_session"].(string)
+	for _, scope := range []struct {
+		user, workspace string
+		want            int
+	}{{"alice", "Workflow/test", 1}, {"bob", "Workflow/test", 0}, {"alice", "Workflow/other", 0}, {"", "Workflow/test", 0}} {
+		req := httptest.NewRequest("GET", "/?workspace_path="+scope.workspace, nil)
+		req = req.WithContext(context.WithValue(req.Context(), UserContextKey, &UserClaims{UserID: scope.user}))
+		if got := len(api.liveBrowserSessions(req)); got != scope.want {
+			t.Fatalf("scope %+v got %d", scope, got)
+		}
+	}
+	for _, scope := range []struct{ user, workspace string }{{"bob", "Workflow/test"}, {"alice", "Workflow/other"}, {"", "Workflow/test"}} {
+		c, response, err := websocket.DefaultDialer.Dial(url+"/api/browser/live/"+id+"/stream?workspace_path="+scope.workspace, http.Header{"X-Test-User": []string{scope.user}})
+		if c != nil {
+			c.Close()
+		}
+		if response != nil {
+			response.Body.Close()
+		}
+		if err == nil {
+			t.Fatalf("viewer crossed ownership boundary: %+v", scope)
+		}
+	}
+	viewer, _, err := websocket.DefaultDialer.Dial(url+"/api/browser/live/"+id+"/stream?workspace_path=Workflow/test", http.Header{"X-Test-User": []string{"alice"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer viewer.Close()
+	if readPlaywrightType(t, viewer, "viewer_control")["read_only"] != true {
+		t.Fatal("not read-only")
+	}
+	for _, kind := range []string{"take_control", "input_mouse", "switch_tab"} {
+		_ = viewer.WriteJSON(map[string]string{"type": kind})
+		if readPlaywrightType(t, viewer, "viewer_error")["message"] != "Playwright tests are watch-only." {
+			t.Fatal("control accepted")
+		}
+	}
+	// Only viewport fields survive the relay; unrelated producer payload is dropped.
+	_ = producer.WriteJSON(map[string]interface{}{"type": "frame", "data": "/9j/", "metadata": map[string]int{"deviceWidth": 640, "deviceHeight": 480}, "secret": "must-not-forward"})
+	frame := readPlaywrightType(t, viewer, "frame")
+	if frame["data"] != "/9j/" || frame["secret"] != nil {
+		t.Fatalf("invalid relay: %v", frame)
+	}
+	req, _ := http.NewRequest("POST", server.URL+"/api/browser/live/"+id+"/recording?workspace_path=Workflow/test", strings.NewReader(`{"action":"start"}`))
+	req.Header.Set("X-Test-User", "alice")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != 405 {
+		t.Fatalf("recording spawned browser: %d", resp.StatusCode)
+	}
+	producer.Close()
+	_ = viewer.SetReadDeadline(time.Now().Add(5 * time.Second))
+	if _, _, err := viewer.ReadMessage(); err == nil {
+		t.Fatal("viewer survived producer cleanup")
+	}
+	if got := api.playwrightSessions("alice", "Workflow/test"); len(got) != 0 {
+		t.Fatalf("stale browser: %v", got)
+	}
+}
+
+func TestPlaywrightLiveRejectsMalformedFrames(t *testing.T) {
+	_, server := playwrightTestServer(t)
+	for _, data := range []string{"not-base64", "aGVsbG8="} {
+		c, _, err := websocket.DefaultDialer.Dial(strings.Replace(server.URL, "http", "ws", 1)+"/s/run/tools/browser/live", http.Header{"Authorization": []string{"Bearer producer-secret"}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		readPlaywrightType(t, c, "registered")
+		payload, _ := json.Marshal(map[string]interface{}{"type": "frame", "data": data, "metadata": map[string]int{"deviceWidth": 640, "deviceHeight": 480}})
+		_ = c.WriteMessage(websocket.TextMessage, payload)
+		_ = c.SetReadDeadline(time.Now().Add(5 * time.Second))
+		if _, _, err := c.ReadMessage(); err == nil {
+			t.Fatal("malformed image accepted")
+		}
+		c.Close()
+	}
+}
+
+// Opt-in integration: real user-style Playwright test, fixture, JPEG relay and
+// video attachment. All services are in-process and use test-only credentials.
+func TestPlaywrightFixtureLive(t *testing.T) {
+	if os.Getenv("AGENTWORKS_PLAYWRIGHT_LIVE_TEST") != "1" {
+		t.Skip("set AGENTWORKS_PLAYWRIGHT_LIVE_TEST=1 after installing the fixture dependencies and Chromium")
+	}
+	testPlaywrightFixtureLive(t, "node")
+}
+
+func TestPythonPlaywrightFixtureLive(t *testing.T) {
+	if os.Getenv("AGENTWORKS_PLAYWRIGHT_LIVE_TEST") != "1" {
+		t.Skip("opt-in real Chromium integration")
+	}
+	for _, runtime := range []string{"sync", "async", "pytest", "pytest-failure"} {
+		t.Run(runtime, func(t *testing.T) { testPlaywrightFixtureLive(t, runtime) })
+	}
+}
+
+func testPlaywrightFixtureLive(t *testing.T, runtime string) {
+	t.Setenv("AGENT_BROWSER_SHARED_PROFILE", "")
+	api, server := playwrightTestServer(t)
+	pkg, err := filepath.Abs("../../../packages/playwright")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	output := t.TempDir()
+	cmd := exec.CommandContext(ctx, "node", filepath.Join(pkg, "node_modules/@playwright/test/cli.js"), "test", "--config", filepath.Join(pkg, "test/playwright.config.mjs"))
+	if runtime != "node" {
+		pkg, err = filepath.Abs("../../../packages/playwright-python")
+		if err != nil {
+			t.Fatal(err)
+		}
+		python := filepath.Join(pkg, ".venv/bin/python")
+		if configured := os.Getenv("AGENTWORKS_TEST_PYTHON"); configured != "" {
+			python = configured
+		}
+		if strings.HasPrefix(runtime, "pytest") {
+			cmd = exec.CommandContext(ctx, python, "-m", "pytest", filepath.Join(pkg, "tests/live_pytest.py"), "--video=on", "--output="+output, "-q")
+		} else {
+			cmd = exec.CommandContext(ctx, python, filepath.Join(pkg, "tests/live_demo.py"), runtime)
+		}
+	}
+	cmd.Dir = pkg
+	cmd.Env = append(os.Environ(), "MCP_API_URL="+server.URL+"/s/run", "MCP_API_TOKEN=producer-secret", "AGENTWORKS_TEST_OUTPUT="+output, "AGENTWORKS_LIVE_VIEW=on")
+	if runtime == "pytest-failure" {
+		cmd.Env = append(cmd.Env, "AGENTWORKS_TEST_FAILURE=1")
+	}
+	var log bytes.Buffer
+	cmd.Stdout = &log
+	cmd.Stderr = &log
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	finished := make(chan error, 1)
+	go func() { finished <- cmd.Wait(); close(finished) }()
+	defer func() { cancel(); <-finished }()
+	var id string
+	deadline := time.Now().Add(30 * time.Second)
+	for time.Now().Before(deadline) {
+		sessions := api.playwrightSessions("alice", "Workflow/test")
+		if len(sessions) > 0 {
+			id = sessions[0]["browser_session"]
+			break
+		}
+		select {
+		case err := <-finished:
+			t.Fatalf("fixture exited before registering: %v\n%s", err, log.String())
+		case <-time.After(20 * time.Millisecond):
+		}
+	}
+	if id == "" {
+		cancel()
+		<-finished
+		t.Fatalf("no fixture session: %s", log.String())
+	}
+	viewer, _, err := websocket.DefaultDialer.Dial(strings.Replace(server.URL, "http", "ws", 1)+"/api/browser/live/"+id+"/stream?workspace_path=Workflow/test", http.Header{"X-Test-User": []string{"alice"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer viewer.Close()
+	// Observe interaction, a new tab, then the original tab after it closes.
+	wantColors := []string{"blue", "green", "yellow", "green"}
+	observed := 0
+	var config image.Config
+	for observed < len(wantColors) {
+		frame := readPlaywrightType(t, viewer, "frame")
+		jpegData, err := base64.StdEncoding.DecodeString(frame["data"].(string))
+		if err != nil {
+			t.Fatal(err)
+		}
+		config, err = jpeg.DecodeConfig(bytes.NewReader(jpegData))
+		if err != nil || config.Width != 640 || config.Height != 480 {
+			t.Fatalf("not a real viewport JPEG: %+v %v", config, err)
+		}
+		picture, err := jpeg.Decode(bytes.NewReader(jpegData))
+		if err != nil {
+			t.Fatal(err)
+		}
+		r, g, b, _ := picture.At(10, 450).RGBA()
+		color := ""
+		switch {
+		case r>>8 < 30 && g>>8 > 40 && b>>8 > 70:
+			color = "blue"
+		case r>>8 > 150 && g>>8 > 120 && b>>8 < 60:
+			color = "yellow"
+		case r>>8 > 30 && g>>8 > 70 && b>>8 < 65:
+			color = "green"
+		}
+		if color == wantColors[observed] {
+			observed++
+		}
+	}
+	if err := <-finished; (err != nil) != (runtime == "pytest-failure") {
+		t.Fatalf("Playwright unexpected exit: %v\n%s", err, log.String())
+	}
+	t.Log(log.String())
+	deadline = time.Now().Add(3 * time.Second)
+	for len(api.playwrightSessions("alice", "Workflow/test")) > 0 && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if len(api.playwrightSessions("alice", "Workflow/test")) != 0 {
+		t.Fatal("finished test left stale browser")
+	}
+	videos, _ := filepath.Glob(filepath.Join(output, "*", "*.webm"))
+	if len(videos) == 0 {
+		t.Fatalf("Playwright did not save the test recording under %s", output)
+	}
+	info, err := os.Stat(videos[0])
+	if err != nil || info.Size() == 0 {
+		t.Fatal("empty recording")
+	}
+	t.Logf("Observed Chromium %dx%d JPEG through viewer and saved %d-byte recording", config.Width, config.Height, info.Size())
+}
+
+func TestPlaywrightPackagesUseAuthenticatedSessionAndFixedFiles(t *testing.T) {
+	_, server := playwrightTestServer(t)
+	directory := t.TempDir()
+	t.Setenv("AGENTWORKS_PLAYWRIGHT_PACKAGES_DIR", directory)
+	if err := os.WriteFile(filepath.Join(directory, "agentworks-playwright-python.zip"), []byte("fixture archive"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		run, name, token string
+		status           int
+	}{
+		{"run", "python", "producer-secret", 200},
+		{"run", "python", "", 401},
+		{"missing", "python", "producer-secret", 404},
+		{"run", "unknown", "producer-secret", 404},
+		{"run", "node", "producer-secret", 404},
+	} {
+		req, _ := http.NewRequest("GET", server.URL+"/s/"+tc.run+"/tools/browser/packages/"+tc.name, nil)
+		if tc.token != "" {
+			req.Header.Set("Authorization", "Bearer "+tc.token)
+		}
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		if resp.StatusCode != tc.status {
+			t.Fatalf("%+v: got %d", tc, resp.StatusCode)
+		}
+	}
+}

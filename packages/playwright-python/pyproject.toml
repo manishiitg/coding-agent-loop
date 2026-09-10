@@ -1,0 +1,16 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "agentworks-playwright"
+version = "0.1.0"
+description = "Watch Python Playwright tests in the AgentWorks Browser panel"
+requires-python = ">=3.10"
+dependencies = ["playwright>=1.51,<2", "websocket-client>=1.8,<2"]
+
+[project.optional-dependencies]
+pytest = ["pytest>=8", "pytest-playwright>=0.7"]
+
+[tool.setuptools.packages.find]
+include = ["agentworks_playwright*"]

@@ -335,6 +335,7 @@ type ActiveSessionInfo struct {
 
 // StreamingAPI represents the streaming API server
 type StreamingAPI struct {
+	playwrightLive      playwrightLiveRegistry
 	accessTokenSessions accessTokenSessionRegistry
 	uiControlOnce       sync.Once
 	uiControl           *uiControlBroker
@@ -2118,6 +2119,8 @@ func runServer(cmd *cobra.Command, args []string) {
 	// which the per-tool handler reads as a fallback when body session_id is empty.
 	sessionToolsRouter := router.PathPrefix("/s/{session_id}/tools").Subrouter()
 	sessionToolsRouter.Use(executor.AuthMiddleware(api.apiToken))
+	sessionToolsRouter.HandleFunc("/browser/packages/{package}", api.handlePlaywrightPackage).Methods("GET")
+	sessionToolsRouter.HandleFunc("/browser/live", api.handlePlaywrightPublisher).Methods("GET")
 	sessionToolsRouter.HandleFunc("/mcp/{server}/{tool}", func(w http.ResponseWriter, r *http.Request) {
 		vars := mux.Vars(r)
 		sid := vars["session_id"]

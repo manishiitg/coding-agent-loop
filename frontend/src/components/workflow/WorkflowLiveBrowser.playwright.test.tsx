@@ -65,7 +65,7 @@ async function mountBrowser() {
   const root = createRoot(host)
   cleanups.push(() => { act(() => root.unmount()); host.remove() })
   await act(async () => { root.render(<WorkflowLiveBrowser workspacePath="Workflow/test" />) })
-  return { host, selector: host.querySelector('select[aria-label="Browser session"]') as HTMLSelectElement }
+  return { root, host, selector: host.querySelector('select[aria-label="Browser session"]') as HTMLSelectElement }
 }
 async function pollBrowsers(sessions: unknown[]) {
   api.get.mockResolvedValue({ data: { sessions } })
@@ -82,11 +82,16 @@ it('follows new Playwright cases instead of staying on the default shared blank 
   expect(host.querySelector('img')?.src).toBe('data:image/jpeg;base64,/9j/')
   await pollBrowsers([shared])
   expect(selector.value).toBe('playwright-tests')
-  expect(host.textContent).toContain('Waiting for a Playwright test')
-  expect(host.querySelector('img')).toBeNull()
+  expect(host.textContent).toContain('Completed')
+  expect(host.querySelector('img')?.src).toBe('data:image/jpeg;base64,/9j/')
+  expect(host.querySelector('img')?.alt).toBe('Last Playwright test frame')
   await pollBrowsers([shared, testBrowser('pw-two')])
   expect(selector.value).toBe('playwright-tests')
   expect(String(FakeSocket.instances.at(-1)?.url)).toContain('/pw-two/stream')
+  expect(host.querySelector('img')).toBeNull()
+  expect(host.textContent).not.toContain('Completed')
+  await act(async () => { FakeSocket.instances.at(-1)?.onmessage?.({ data: JSON.stringify({ type: 'frame', data: '/9j/new' }) }) })
+  expect(host.querySelector('img')?.src).toBe('data:image/jpeg;base64,/9j/new')
 })
 it('offers a separate Playwright browser before a test starts and remembers that choice', async () => {
   api.get.mockResolvedValue({ data: { sessions: [shared] } })
@@ -109,4 +114,42 @@ it('respects an explicit shared-browser choice while tests are running', async (
   await pollBrowsers([shared, testBrowser('pw-two')])
   expect(selector.value).toBe('shared-browser')
   expect(String(FakeSocket.instances.at(-1)?.url)).toContain('/shared-browser/stream')
+})
+
+it('keeps the last frame on disconnect without claiming completion until the source disappears', async () => {
+  api.get.mockResolvedValue({ data: { sessions: [shared, testBrowser('pw-one')] } })
+  const { host } = await mountBrowser()
+  const source = FakeSocket.instances.at(-1)!
+  await act(async () => {
+    source.onmessage?.({ data: JSON.stringify({ type: 'frame', data: '/9j/old' }) })
+    source.onmessage?.({ data: JSON.stringify({ type: 'frame', data: '/9j/latest' }) })
+    source.onclose?.()
+  })
+  expect(host.querySelector('img')?.src).toBe('data:image/jpeg;base64,/9j/latest')
+  expect(host.textContent).toContain('Disconnected · Last frame')
+  expect(host.textContent).not.toContain('Completed')
+  await pollBrowsers([shared])
+  expect(host.textContent).toContain('Completed · Last frame')
+  expect(host.querySelector('img')?.src).toBe('data:image/jpeg;base64,/9j/latest')
+})
+it('clears retained frames when the workflow changes and ignores late messages from the old source', async () => {
+  api.get.mockResolvedValue({ data: { sessions: [testBrowser('pw-one')] } })
+  const { root, host } = await mountBrowser()
+  const source = FakeSocket.instances.at(-1)!
+  await act(async () => { source.onmessage?.({ data: JSON.stringify({ type: 'frame', data: '/9j/private' }) }) })
+  await pollBrowsers([])
+  expect(host.textContent).toContain('Completed')
+  await act(async () => { root.render(<WorkflowLiveBrowser workspacePath="Workflow/other" />) })
+  await act(async () => { source.onmessage?.({ data: JSON.stringify({ type: 'frame', data: '/9j/late' }) }) })
+  expect(host.querySelector('img')).toBeNull()
+  expect(host.textContent).not.toContain('Completed')
+})
+it('does not show a retained test frame when the shared browser is selected', async () => {
+  api.get.mockResolvedValue({ data: { sessions: [shared, testBrowser('pw-one')] } })
+  const { host, selector } = await mountBrowser()
+  await act(async () => { FakeSocket.instances.at(-1)?.onmessage?.({ data: JSON.stringify({ type: 'frame', data: '/9j/test' }) }) })
+  await pollBrowsers([shared])
+  await act(async () => { selector.value = 'shared-browser'; selector.dispatchEvent(new Event('change', { bubbles: true })) })
+  expect(host.querySelector('img')).toBeNull()
+  expect(host.textContent).not.toContain('Completed')
 })

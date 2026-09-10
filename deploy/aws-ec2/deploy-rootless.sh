@@ -74,7 +74,14 @@ HOST_IP="$(aws_rts cloudformation describe-stacks --stack-name "$STACK_NAME" --q
 RELEASE_ID="$(git -C "$REPO_ROOT" rev-parse --short HEAD)-$(date +%Y%m%d%H%M%S)"
 BUILD_DIR="$(mktemp -d)"
 GLOBAL_FILE="$(mktemp)"
-trap 'rm -rf "$BUILD_DIR" "$GLOBAL_FILE"; if [[ -n "${SOURCE_ROOT:-}" ]]; then rm -rf "$SOURCE_ROOT"; fi' EXIT
+cleanup_build() {
+  if [[ -n "${REMOTE_RELEASE:-}" ]]; then
+    "${SSH[@]}" "rm -f '$REMOTE_RELEASE/.deploying'" >/dev/null 2>&1 || true
+  fi
+  rm -rf "$BUILD_DIR" "$GLOBAL_FILE"
+  if [[ -n "${SOURCE_ROOT:-}" ]]; then rm -rf "$SOURCE_ROOT"; fi
+}
+trap cleanup_build EXIT
 mkdir -p "$BUILD_DIR/bin" "$BUILD_DIR/frontend" "$BUILD_DIR/configs" "$BUILD_DIR/systemd" "$BUILD_DIR/claude-skills" "$BUILD_DIR/browser"
 # Build exactly the requested checkout while resolving the shared sibling
 # modules from the declared workspace root. The checked-in go.work may point
@@ -113,7 +120,7 @@ fi
 cp -R "$REPO_ROOT/frontend/dist/." "$BUILD_DIR/frontend/"
 node "$REPO_ROOT/frontend/scripts/check-release-assets.mjs" "$BUILD_DIR/frontend"
 cp "$REPO_ROOT/frontend/scripts/check-release-assets.mjs" "$BUILD_DIR/check-release-assets.mjs"
-cp "$SCRIPT_DIR/prune-releases.py" "$BUILD_DIR/prune-releases.py"
+cp "$REPO_ROOT/deploy/common/prune-releases.py" "$BUILD_DIR/prune-releases.py"
 # frontend's build:report-preview step (part of `npm run build` above) writes
 # report-preview.js to agent_go/cmd/server/static/ in the source checkout,
 # never into the release. video-studio-agent runs with
@@ -144,6 +151,7 @@ SSH=(ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new -i "$SSH_KEY_PATH"
 REMOTE_APP="/var/lib/video-studio/video-studio"
 REMOTE_RELEASE="$REMOTE_APP/releases/$RELEASE_ID"
 REMOTE_TOOLS_DIR="/var/lib/video-studio/.local"
+"${SSH[@]}" "command -v python3 >/dev/null"
 REMOTE_BROWSER_PATH="$("${SSH[@]}" "set -e; export HOME=/var/lib/video-studio; npx --yes 'hyperframes@$HYPERFRAMES_VERSION' browser ensure >/dev/null; npx --yes 'hyperframes@$HYPERFRAMES_VERSION' browser path | tail -n 1")"
 case "$REMOTE_BROWSER_PATH" in
   /var/lib/video-studio/.cache/hyperframes/chrome/*/chrome-headless-shell) ;;
@@ -283,6 +291,6 @@ DRAIN_TIMEOUT_SECONDS="${DRAIN_TIMEOUT_SECONDS:-300}"
 
 # Keep the active release and any older files still used by retained sessions.
 # No rollback archive is retained after a healthy deployment.
-"${SSH[@]}" "set -e; ready=false; for attempt in \$(seq 1 30); do if curl -fsS --max-time 5 http://127.0.0.1:8000/api/health >/dev/null; then ready=true; break; fi; sleep 1; done; [ \"\$ready\" = true ]; rm -f '$REMOTE_RELEASE/.deploying'; python3 '$REMOTE_RELEASE/prune-releases.py' '$REMOTE_APP' --apply"
+"${SSH[@]}" "set -e; rm -f '$REMOTE_RELEASE/.deploying'; python3 '$REMOTE_RELEASE/prune-releases.py' '$REMOTE_APP' --apply --health-url http://127.0.0.1:8000/api/health --health-url http://127.0.0.1:8080/health"
 
 echo "Rootless Video Studio release deployed: https://video.realtrainingsys.com"

@@ -98,7 +98,13 @@ test -f "$WORKSPACE_ROOT/mcpagent/cmd/mcpbridge/main.go" || { echo "Expected sib
 
 RELEASE_ID="confida-$(git -C "$REPO_ROOT" rev-parse --short HEAD 2>/dev/null || echo local)-$(date +%Y%m%d%H%M%S)"
 BUILD_DIR="$(mktemp -d)"
-trap 'rm -rf "$BUILD_DIR" "${SOURCE_ROOT:-}"' EXIT
+cleanup_build() {
+  if [[ -n "${REMOTE_RELEASE:-}" ]]; then
+    "${SSH[@]}" "rm -f '$REMOTE_RELEASE/.deploying'" >/dev/null 2>&1 || true
+  fi
+  rm -rf "$BUILD_DIR" "${SOURCE_ROOT:-}"
+}
+trap cleanup_build EXIT
 mkdir -p "$BUILD_DIR/bin" "$BUILD_DIR/frontend" "$BUILD_DIR/configs"
 
 # Build exactly the requested checkout while resolving the shared sibling
@@ -110,6 +116,7 @@ DEPLOY_GOWORK="$BUILD_DIR/go.work"
 SSH_OPTS=(-p "$SSH_PORT" -i "$SSH_KEY_PATH" -o BatchMode=yes -o StrictHostKeyChecking=accept-new)
 SSH=(ssh "${SSH_OPTS[@]}" "confida@$HOST_IP")
 RSYNC_SSH="ssh ${SSH_OPTS[*]}"
+"${SSH[@]}" "command -v python3 >/dev/null"
 
 echo "==> [$RELEASE_ID] Building binaries (linux/amd64)"
 (cd "$WORKSPACE_ROOT" && GOWORK="$DEPLOY_GOWORK" GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o "$BUILD_DIR/bin/confida-agent" "$REPO_ROOT/agent_go")
@@ -125,6 +132,7 @@ echo "==> [$RELEASE_ID] Building frontend"
 (cd "$REPO_ROOT/frontend" && VITE_API_BASE_URL='' VITE_WORKSPACE_API_URL=/api/wp npm run build)
 cp -R "$REPO_ROOT/frontend/dist/." "$BUILD_DIR/frontend/"
 cp "$REPO_ROOT/frontend/scripts/check-release-assets.mjs" "$BUILD_DIR/check-release-assets.mjs"
+cp "$REPO_ROOT/deploy/common/prune-releases.py" "$BUILD_DIR/prune-releases.py"
 # frontend's build:report-preview step (part of `npm run build` above) writes
 # report-preview.js to agent_go/cmd/server/static/ in the source checkout,
 # never into the release. confida-agent, like RTS's video-studio-agent and
@@ -152,7 +160,7 @@ install -m 0644 "$LOCAL_SCRIPT_DIR/mcp_servers_confida.json" "$BUILD_DIR/configs
 
 REMOTE_RELEASE="$REMOTE_APP/releases/$RELEASE_ID"
 echo "==> [$RELEASE_ID] Shipping release to confida@$HOST_IP:$REMOTE_RELEASE"
-"${SSH[@]}" "mkdir -p '$REMOTE_RELEASE'"
+"${SSH[@]}" "mkdir -p '$REMOTE_RELEASE'; touch '$REMOTE_RELEASE/.deploying'"
 rsync -az -e "$RSYNC_SSH" "$BUILD_DIR/" "confida@$HOST_IP:$REMOTE_RELEASE/"
 "${SSH[@]}" "node '$REMOTE_RELEASE/check-release-assets.mjs' '$REMOTE_RELEASE/frontend'"
 
@@ -183,9 +191,12 @@ REMOTE_ACTIVATE
 
 echo "==> [$RELEASE_ID] Verifying"
 "${SSH[@]}" '
+  set -e
   curl -fsS -o /dev/null -w "agent  /api/health: %{http_code}\n" http://127.0.0.1:22000/api/health
   curl -fsS http://127.0.0.1:22001/health; echo
 '
 curl -fsSI "https://confida.agentworkshq.com/login" | head -1
+
+"${SSH[@]}" "set -e; rm -f '$REMOTE_RELEASE/.deploying'; python3 '$REMOTE_RELEASE/prune-releases.py' '$REMOTE_APP' --apply --health-url http://127.0.0.1:22000/api/health --health-url http://127.0.0.1:22001/health"
 
 echo "==> Done. Release $RELEASE_ID is live at https://confida.agentworkshq.com"

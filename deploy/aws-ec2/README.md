@@ -80,6 +80,8 @@ not use it for normal releases.
 After the agent passes its health check, normal deployments remove older release
 copies. Only the current release, releases referenced by running processes, and
 uploads marked `.deploying` are protected. No rollback archive is retained.
+The helper is shared by the other Linux release deployments; see
+[`../common/README.md`](../common/README.md).
 `python3 prune-releases.py /var/lib/video-studio/video-studio` previews cleanup;
 add `--apply` to remove the listed unused copies. Application data and logs live
 outside `releases` and are not touched. A failed upload can leave a `.deploying`

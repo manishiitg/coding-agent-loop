@@ -135,9 +135,10 @@ import { shouldUsePastedTextAttachment } from '../utils/chatPasteBehavior'
 import { isMainAgentTerminal } from '../utils/terminalIdentity'
 
 const AUTO_NOTIFICATION_PREFIX = '[AUTO-NOTIFICATION]'
-const FALLBACK_CODING_AGENT_PROVIDERS = new Set(['claude-code', 'codex-cli', 'cursor-cli', 'pi-cli'])
+const FALLBACK_CODING_AGENT_PROVIDERS = new Set(['claude-code', 'codex-cli', 'cursor-cli', 'pi-cli', 'muse-cli'])
 // Providers whose chat turns never have a tmux pane (server: codingAgentUsesStructuredTransport).
-const STRUCTURED_TRANSPORT_PROVIDERS = new Set(['cursor-cli'])
+// Muse is exec-lane only until its tmux lane lands.
+const STRUCTURED_TRANSPORT_PROVIDERS = new Set(['cursor-cli', 'muse-cli'])
 const FALLBACK_LIVE_INPUT_PROVIDERS = new Set(['claude-code', 'codex-cli', 'cursor-cli', 'pi-cli'])
 
 interface ChatInputProps {

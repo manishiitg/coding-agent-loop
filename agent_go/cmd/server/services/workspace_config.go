@@ -41,7 +41,7 @@ type PublishedLLM struct {
 func isPublishedLLMProviderAllowed(provider string) bool {
 	switch strings.ToLower(strings.TrimSpace(provider)) {
 	case "bedrock", "openai", "vertex", "anthropic", "azure",
-		"claude-code", "codex-cli", "cursor-cli", "pi-cli":
+		"claude-code", "codex-cli", "cursor-cli", "pi-cli", "muse-cli":
 		return true
 	default:
 		return false

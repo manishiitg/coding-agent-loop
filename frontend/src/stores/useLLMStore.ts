@@ -41,6 +41,7 @@ const SUPPORTED_PROVIDERS_FALLBACK: LLMProvider[] = [
   'codex-cli',
   'cursor-cli',
   'pi-cli',
+  'muse-cli',
 ]
 
 function isFrontendDeprecatedProvider(provider?: string): boolean {

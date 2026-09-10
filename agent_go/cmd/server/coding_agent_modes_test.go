@@ -138,6 +138,11 @@ func TestCodingAgentUsesStructuredTransport(t *testing.T) {
 	if codingAgentUsesStructuredTransport(string(llm.ProviderClaudeCode)) {
 		t.Fatal("Claude Code must retain its configured transport")
 	}
+	// Muse is exec-lane only until its tmux lane lands: structured even
+	// though the provider contract declares tmux.
+	if !codingAgentUsesStructuredTransport(string(llm.ProviderMuseCLI)) {
+		t.Fatal("Muse must use structured transport while exec-only")
+	}
 }
 
 func TestCodingAgentUsesStructuredTransportForPolicy(t *testing.T) {

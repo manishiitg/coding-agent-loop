@@ -50,8 +50,17 @@ func codingAgentUsesStructuredTransportForChat(provider, policy string, isIntera
 // providers whose native CLI JSON protocol is more reliable than terminal UI
 // automation. Cursor conversations retain continuity with the provider's
 // native --resume session ID; they do not use a persistent tmux pane.
+//
+// Muse is structured unconditionally for now: its adapter runs the exec
+// --json lane only (GenerateContent never opens a tmux pane; the interactive
+// adapter is a later step), even though the provider contract declares the
+// tmux transport. Treating it as tmux would steer live input into a pane
+// that does not exist and wait on terminals that never come. Revisit when
+// the tmux lane lands.
 func codingAgentUsesStructuredTransport(provider string) bool {
-	return strings.EqualFold(strings.TrimSpace(provider), string(llm.ProviderCursorCLI))
+	normalized := strings.ToLower(strings.TrimSpace(provider))
+	return normalized == strings.ToLower(string(llm.ProviderCursorCLI)) ||
+		normalized == strings.ToLower(string(llm.ProviderMuseCLI))
 }
 
 // codingAgentUsesStructuredTransportForPolicy resolves the product/profile

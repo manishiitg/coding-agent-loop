@@ -243,6 +243,56 @@ func TestBuildLLMDiscoveryHidesMissingAPIProvider(t *testing.T) {
 	}
 }
 
+func TestMuseCLIIsPublishedAsCodingAgent(t *testing.T) {
+	t.Setenv("WORKSPACE_DOCS_PATH", t.TempDir())
+	t.Setenv("SUPPORTED_LLM_PROVIDERS", "muse-cli")
+	t.Setenv("PATH", t.TempDir())
+	t.Setenv("META_API_KEY", "")
+
+	if !isPublishedLLMProviderAllowed("muse-cli") {
+		t.Fatal("muse-cli should be allowed in published provider lists")
+	}
+	foundSupported := false
+	for _, provider := range getSupportedProviders() {
+		if provider == "muse-cli" {
+			foundSupported = true
+		}
+	}
+	if !foundSupported {
+		t.Fatalf("supported providers missing muse-cli: %v", getSupportedProviders())
+	}
+
+	response := buildLLMDiscovery(context.Background())
+	if len(response.Candidates) != 1 {
+		t.Fatalf("candidate count = %d, want 1: %+v", len(response.Candidates), response.Candidates)
+	}
+	candidate := response.Candidates[0]
+	if candidate.Provider != "muse-cli" {
+		t.Fatalf("provider = %q, want muse-cli", candidate.Provider)
+	}
+	if candidate.RuntimeCommand != "muse" {
+		t.Fatalf("runtime_command = %q, want muse", candidate.RuntimeCommand)
+	}
+	if candidate.RuntimeAvailable == nil || *candidate.RuntimeAvailable {
+		t.Fatalf("runtime_available = %v, want false for missing muse runtime", candidate.RuntimeAvailable)
+	}
+	if candidate.Usable {
+		t.Fatal("usable = true, want false when muse runtime and auth are missing")
+	}
+	if len(candidate.Options) != 1 || candidate.Options[0] != "muse-spark-1.3-contributor" {
+		t.Fatalf("options = %v, want [muse-spark-1.3-contributor]", candidate.Options)
+	}
+	if got := providerDisplayLabel("muse-cli"); got != "Muse" {
+		t.Fatalf("display label = %q, want Muse", got)
+	}
+	if got := discoverySetupHint("muse-cli", true); !strings.Contains(got, "muse") {
+		t.Fatalf("install hint = %q, want muse mention", got)
+	}
+	if got := discoverySetupHint("muse-cli", false); !strings.Contains(got, "META_API_KEY") {
+		t.Fatalf("auth hint = %q, want META_API_KEY mention", got)
+	}
+}
+
 func TestPiCLIIsPublishedAsCodingAgent(t *testing.T) {
 	t.Setenv("WORKSPACE_DOCS_PATH", t.TempDir())
 	t.Setenv("SUPPORTED_LLM_PROVIDERS", "pi-cli")
@@ -303,7 +353,7 @@ func TestPiCLIIsPublishedAsCodingAgent(t *testing.T) {
 func TestIsPublishedLLMProviderAllowedDerivesFromRegistry(t *testing.T) {
 	for _, provider := range []string{
 		"bedrock", "openai", "vertex", "anthropic", "azure",
-		"claude-code", "codex-cli", "cursor-cli", "pi-cli",
+		"claude-code", "codex-cli", "cursor-cli", "pi-cli", "muse-cli",
 		"openrouter", "z-ai", "kimi", "minimax", "minimax-coding-plan",
 	} {
 		if !isPublishedLLMProviderAllowed(provider) {

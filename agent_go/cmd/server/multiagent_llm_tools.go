@@ -411,6 +411,8 @@ func providerRuntime(provider string) string {
 		return "cursor-agent"
 	case string(llm.ProviderPiCLI):
 		return "pi"
+	case string(llm.ProviderMuseCLI):
+		return "muse"
 	}
 	return ""
 }
@@ -445,6 +447,12 @@ func providerAuthConfigured(provider string, keys *llm.ProviderAPIKeys) (bool, s
 		return configured, "Cursor CLI login or CURSOR_API_KEY/workspace provider auth"
 	case string(llm.ProviderPiCLI):
 		return piProviderAuthConfigured(keys), "Provider-specific Pi API key or workspace provider auth"
+	case string(llm.ProviderMuseCLI):
+		if keys.MuseCLI != nil && strings.TrimSpace(*keys.MuseCLI) != "" {
+			return true, "META_API_KEY or workspace provider auth"
+		}
+		configured, _ := museCLILocalAuthState()
+		return configured, "Muse CLI login or META_API_KEY/workspace provider auth"
 	case string(llm.ProviderBedrock):
 		return keys.Bedrock != nil && strings.TrimSpace(keys.Bedrock.Region) != "", "BEDROCK_REGION or workspace provider auth"
 	case string(llm.ProviderAzure):
@@ -500,6 +508,26 @@ func cursorCLILocalAuthState() (authenticated, conclusive bool) {
 	cursorCLIAuthProbeCache.authenticated = authenticated
 	cursorCLIAuthProbeCache.conclusive = conclusive
 	return authenticated, conclusive
+}
+
+// museCLILocalAuthState probes stored `muse login` state: `muse auth status`
+// exits 0 when logged in (observed exit 2 when logged out, 2026-09-10). The
+// logged-in exit code is the command's natural contract, not yet observed
+// live — treat non-zero as logged-out, never as proof either way beyond that.
+func museCLILocalAuthState() (authenticated, conclusive bool) {
+	if _, err := exec.LookPath("muse"); err != nil {
+		return false, false
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "muse", "auth", "status")
+	if err := cmd.Run(); err != nil {
+		if ctx.Err() == context.DeadlineExceeded {
+			return false, false
+		}
+		return false, true
+	}
+	return true, true
 }
 
 func cursorCLIAuthStatus(out []byte) (authenticated, conclusive bool) {

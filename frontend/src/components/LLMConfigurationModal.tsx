@@ -41,7 +41,7 @@ const HIDDEN_CHAT_PROVIDER_TABS = new Set<string>([
   'openrouter', 'z-ai', 'kimi', 'minimax', 'minimax-coding-plan', 'elevenlabs', 'deepgram'
 ])
 const API_KEY_PROVIDER_IDS = new Set<string>(['bedrock', 'openai', 'vertex', 'anthropic', 'azure'])
-const CODING_AGENT_PROVIDER_ORDER = ['claude-code', 'codex-cli', 'cursor-cli', 'pi-cli']
+const CODING_AGENT_PROVIDER_ORDER = ['claude-code', 'codex-cli', 'cursor-cli', 'pi-cli', 'muse-cli']
 const CODING_AGENT_PROVIDER_RANK = new Map<string, number>(
   CODING_AGENT_PROVIDER_ORDER.map((provider, index) => [provider, index])
 )

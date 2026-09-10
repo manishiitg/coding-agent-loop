@@ -289,6 +289,7 @@ func whatsappGetRoutingHandler(manager *services.WhatsAppServiceManager) http.Ha
 		// Ensure every workflow has a default @<automation-name> route so the
 		// UI can show usable slugs immediately after pairing. Throttled
 		// internally.
+		unlockRouting := manager.LockAccountRouting(user.UserID)
 		before := svc.GetRouting()
 		svc.EnsureDefaultWorkflowRoutes(r.Context())
 		after := svc.GetRouting()
@@ -308,6 +309,7 @@ func whatsappGetRoutingHandler(manager *services.WhatsAppServiceManager) http.Ha
 				}
 			}
 		}
+		unlockRouting()
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]interface{}{
 			"routing": after,
@@ -334,7 +336,12 @@ func whatsappPutRoutingHandler(manager *services.WhatsAppServiceManager) http.Ha
 		}
 		// Validate on primary first (gives a crisp 400 on invalid slugs), then
 		// fan the same routing out to every linked phone so all numbers share
-		// the same @<slug> workflow names.
+		// the same @<slug> workflow names. Held for the whole sequence, not
+		// just this write, so a concurrent request (another PUT, or the
+		// throttled GET-time default-route sync) can't interleave its own
+		// per-device writes with this one and leave devices divergent.
+		unlockRouting := manager.LockAccountRouting(user.UserID)
+		defer unlockRouting()
 		if err := svc.SetRouting(body.Routing); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
@@ -360,6 +367,39 @@ func whatsappPutRoutingHandler(manager *services.WhatsAppServiceManager) http.Ha
 			"routing": svc.GetRouting(),
 		})
 	}
+}
+
+// shouldPrepareNextPairingDevice decides whether GET /api/whatsapp/status
+// should call NextPairingDevice (which creates an unpaired slot on disk if
+// none exists) versus only advertising an already-existing one.
+//
+// True when the caller explicitly asked (?device=next), or when the primary
+// is already paired and there's no unpaired extra slot yet -- that combination
+// is exactly the "add another number" moment. A paired primary with no
+// pending extra slot polling this endpoint is never "still working through
+// its own first pairing", so creating one here can't produce the phantom
+// phone-N this gate originally existed to prevent.
+//
+// Without the paired-primary branch, an account whose only entry point to
+// "add another number" is a status poll with no query param (SparkQuill's
+// whatsappStatus, which renders its pairing <img src> -- the only thing that
+// ever sends device=next -- only once next_device.qr_available is already
+// true) can never bootstrap: the image needs the slot to exist to render,
+// and the slot only gets created by that same image's own device=next
+// request. See PLAT-194-followup (WhatsApp PR #194 review).
+func shouldPrepareNextPairingDevice(deviceQueryParam string, primaryPaired bool, devices []services.WhatsAppDevice) bool {
+	if strings.TrimSpace(deviceQueryParam) == "next" {
+		return true
+	}
+	if !primaryPaired {
+		return false
+	}
+	for _, device := range devices {
+		if device.Slot != "" && !device.Paired {
+			return false // an unpaired extra slot already exists; advertise it, don't create another
+		}
+	}
+	return true
 }
 
 // whatsappStatusHandler reports connector lifecycle state as JSON:
@@ -407,11 +447,7 @@ func whatsappStatusHandler(manager *services.WhatsAppServiceManager) http.Handle
 				_ = other.SetRouting(afterRouting)
 			}
 		}
-		// Only prepare a fresh "next" phone slot on demand; otherwise calling
-		// NextPairingDevice here would create an unpaired phone-N and make it
-		// show up (and reappear after deletion) even when the user isn't adding
-		// another number.
-		if strings.TrimSpace(r.URL.Query().Get("device")) == "next" {
+		if shouldPrepareNextPairingDevice(r.URL.Query().Get("device"), svc.IsPaired(), devices) {
 			if nextSvc, slot, err := manager.NextPairingDevice(r.Context(), user.UserID); err == nil {
 				if nextSvc.IsEnabled() && !nextSvc.IsPaired() {
 					if err := nextSvc.EnsurePairingQR(context.Background()); err != nil {

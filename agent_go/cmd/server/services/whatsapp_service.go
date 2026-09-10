@@ -594,6 +594,26 @@ func (w *WhatsAppService) DeviceLabel() string {
 	return w.deviceLabel
 }
 
+// SetDeviceLabelOffline persists a device's display name without connecting
+// to WhatsApp: opens just the lightweight local metadata store (a plain
+// sqlite file, no network) long enough to write the label, then closes it.
+// Used by WhatsAppServiceManager.SetDeviceLabel for a device that isn't
+// already resident in memory, so saving a name never requires the real
+// WhatsApp handshake that a full StartListening would trigger.
+func (w *WhatsAppService) SetDeviceLabelOffline(ctx context.Context, label string) error {
+	if w.dbPath == "" {
+		return fmt.Errorf("whatsapp: session DB path not configured")
+	}
+	if err := os.MkdirAll(filepath.Dir(w.dbPath), 0o700); err != nil {
+		return fmt.Errorf("whatsapp: mkdir session dir: %w", err)
+	}
+	if err := w.openMetaStore(ctx); err != nil {
+		return err
+	}
+	defer w.closeMetaStore()
+	return w.SetDeviceLabel(ctx, label)
+}
+
 func (w *WhatsAppService) SetDeviceLabel(ctx context.Context, label string) error {
 	w.mu.RLock()
 	db := w.metaDB

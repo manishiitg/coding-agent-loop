@@ -4,8 +4,10 @@ Use this reference when authoring or repairing repeatable browser tests, or conn
 user-written Playwright tests to the workflow Browser panel. For interactive browsing,
 use the managed `agent_browser` tool and `references/browser-usage.md`.
 
-To watch a suite, open the workflow Browser panel and select **Playwright tests**.
-This separate entry stays available between cases and waits for the next test;
+To watch a suite, open the workflow Browser panel and select **Follow latest test**.
+While following, that option shows the fixture-provided test name, a short run ID,
+Live/Replay, and Auto. Each run also has its own named option; selecting it pins
+that live browser or replay. The follow option stays available between cases;
 the shared agent-browser remains a separate choice. Each test still owns its
 browser/context. A `pw-` registration confirms the stream source, not that the
 user's panel selected it or displayed frames. Verify the selected test and a

@@ -11,6 +11,13 @@ const PLAYWRIGHT_BROWSER = 'playwright-tests'
 type Recording = { recording: boolean; directory?: string; errors?: string[] }
 
 type BrowserSession = { browser_session: string; workflow_session: string; label?: string; kind?: string; read_only?: string; state?: string; recording_state?: string; recording_error?: string }
+function testBrowserLabel(browser: BrowserSession): string {
+  const name = browser.label?.trim() || 'Test browser'
+  const run = browser.browser_session.replace(/^pw-/, '').slice(0, 8)
+  const state = browser.state === 'completed' ? 'Replay' : 'Live'
+  return `${name} · ${run} · ${state}`
+}
+
 type BrowserTab = { tabId: string; title: string; url: string; active: boolean }
 
 export default function WorkflowLiveBrowser({ workspacePath, toolbar }: { workspacePath: string | null; toolbar?: ReactNode }) {
@@ -60,6 +67,7 @@ export default function WorkflowLiveBrowser({ workspacePath, toolbar }: { worksp
   const canWrite = useCanWriteWorkflow(workspacePath)
   const followingPlaywright = selection === PLAYWRIGHT_BROWSER
   const currentBrowser = sessions.find(item => item.browser_session === session)
+  const followLabel = currentBrowser?.kind === 'playwright' ? `${testBrowserLabel(currentBrowser)} · Auto` : 'Follow latest test'
   const readOnly = followingPlaywright || currentBrowser?.read_only === 'true'
   const canControl = canWrite && !readOnly
   const retainedFrame = !connected && lastPlaywrightFrame?.workspace === workspacePath
@@ -277,12 +285,11 @@ export default function WorkflowLiveBrowser({ workspacePath, toolbar }: { worksp
       <div className="flex shrink-0 flex-wrap items-center gap-2 border-b border-border px-3 py-2">
         <h3 className="text-sm font-medium">Browser</h3>
         <span className="text-xs text-muted-foreground" role="status">{controlling ? 'You have control' : connected ? 'Watching' : completed ? 'Completed' : retainedFrame ? 'Disconnected' : 'Not connected'}</span>
-        <select className="min-w-0 max-w-64 rounded border border-border bg-background p-1 text-xs" aria-label="Browser session" value={selection || session} onChange={event => chooseBrowser(event.target.value)}>
+        <select className="min-w-0 max-w-96 rounded border border-border bg-background p-1 text-xs" aria-label="Browser session" title={followingPlaywright ? followLabel : currentBrowser?.kind === 'playwright' ? testBrowserLabel(currentBrowser) : currentBrowser?.label} value={selection || session} onChange={event => chooseBrowser(event.target.value)}>
           {!selection && !session && <option value="" disabled>No managed browser</option>}
-          <option value={PLAYWRIGHT_BROWSER}>Playwright tests</option>
-          {sessions.map((item, index) => <option key={item.browser_session} value={item.browser_session}>{item.label || `Browser ${index + 1} · ${item.workflow_session.slice(0, 8)}`}</option>)}
+          <option value={PLAYWRIGHT_BROWSER}>{followingPlaywright ? followLabel : 'Follow latest test'}</option>
+          {sessions.map((item, index) => <option key={item.browser_session} value={item.browser_session}>{item.kind === 'playwright' ? testBrowserLabel(item) : item.label || `Browser ${index + 1} · ${item.workflow_session.slice(0, 8)}`}</option>)}
         </select>
-        {followingPlaywright && currentBrowser?.label && <span className="max-w-64 truncate text-xs text-muted-foreground" title={currentBrowser.label}>{currentBrowser.label}</span>}
         <div className="ml-auto flex gap-2">
           {session && !connected && !sourceCompleted && <button className="rounded border border-border px-3 py-1 text-xs" onClick={() => setRetry(value => value + 1)}>Reconnect</button>}
           {connected && canControl && <button className="rounded border border-border px-3 py-1 text-xs" onClick={() => send({ type: controlling ? 'release_control' : 'take_control' })}>{controlling ? 'Return control to agent' : 'Take control'}</button>}

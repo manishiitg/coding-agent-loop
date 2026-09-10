@@ -96,7 +96,7 @@ it('follows new Playwright cases instead of staying on the default shared blank 
 it('offers a separate Playwright browser before a test starts and remembers that choice', async () => {
   api.get.mockResolvedValue({ data: { sessions: [shared] } })
   const { host, selector } = await mountBrowser()
-  expect([...selector.options].map(option => option.textContent)).toContain('Playwright tests')
+  expect([...selector.options].map(option => option.textContent)).toContain('Follow latest test')
   await act(async () => { selector.value = 'playwright-tests'; selector.dispatchEvent(new Event('change', { bubbles: true })) })
   expect(host.textContent).toContain('Waiting for a Playwright test')
   expect(sessionStorage.getItem('browser-selection:Workflow/test')).toBe('playwright-tests')
@@ -178,4 +178,19 @@ it('continues following live tests when an older completed replay remains', asyn
   await pollBrowsers([{ ...testBrowser('pw-first'), state: 'completed', recording_state: 'saving' }, testBrowser('pw-next')])
   expect(selector.value).toBe('playwright-tests')
   expect(String(FakeSocket.instances.at(-1)?.url)).toContain('/pw-next/stream')
+})
+
+
+it('distinguishes repeated fixture names by run and keeps the same name for replay', async () => {
+  const first = { ...testBrowser('pw-11111111-first'), label: 'auth_login_gate' }
+  const second = { ...testBrowser('pw-22222222-second'), label: 'auth_login_gate' }
+  api.get.mockResolvedValue({ data: { sessions: [first, second] } })
+  const { selector } = await mountBrowser()
+  expect(selector.selectedOptions[0].textContent).toBe('auth_login_gate · 11111111 · Live · Auto')
+  expect([...selector.options].map(option => option.textContent)).toContain('auth_login_gate · 22222222 · Live')
+  await act(async () => { selector.value = first.browser_session; selector.dispatchEvent(new Event('change', { bubbles: true })) })
+  await pollBrowsers([{ ...first, state: 'completed', recording_state: 'saving' }, second])
+  expect(selector.value).toBe(first.browser_session)
+  expect(selector.selectedOptions[0].textContent).toBe('auth_login_gate · 11111111 · Replay')
+  expect(selector.title).toBe('auth_login_gate · 11111111 · Replay')
 })

@@ -1601,6 +1601,7 @@ export interface CostAggregate {
 export interface CostDateAggregate extends CostAggregate {
   by_model?: Record<string, CostAggregate>
   by_scope?: Record<string, CostScopeAggregate>
+  by_source_platform?: Record<string, CostAggregate>
   workflow_run_count?: number
 }
 
@@ -1624,6 +1625,7 @@ export interface CostSummary {
   by_date: Record<string, CostDateAggregate>
   by_model: Record<string, CostAggregate>
   by_scope?: Record<string, CostScopeAggregate>
+  by_source_platform?: Record<string, CostAggregate>
 }
 
 export interface WorkflowActivityTimingAggregate {

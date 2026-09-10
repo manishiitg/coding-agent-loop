@@ -31,6 +31,7 @@ CREATE TABLE IF NOT EXISTS cost_events (
     run_id TEXT NOT NULL DEFAULT '',
     execution_id TEXT NOT NULL DEFAULT '',
     scope TEXT NOT NULL DEFAULT 'unknown',
+    source_platform TEXT NOT NULL DEFAULT '',
     phase TEXT NOT NULL DEFAULT '',
     agent_mode TEXT NOT NULL DEFAULT '',
     component TEXT NOT NULL DEFAULT '',
@@ -115,6 +116,10 @@ func NewSQLiteLedger(dbPath string) (*Ledger, error) {
 		db.Close()
 		return nil, fmt.Errorf("costledger: migrate phase column: %w", err)
 	}
+	if err := ensureCostEventColumn(db, "source_platform", "TEXT NOT NULL DEFAULT ''"); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("costledger: migrate source_platform column: %w", err)
+	}
 	return &Ledger{db: &sqliteLedger{db: db}}, nil
 }
 
@@ -153,15 +158,15 @@ func (s *sqliteLedger) append(e Entry) error {
 	const insertEvent = `
 INSERT OR IGNORE INTO cost_events (
     event_id, idempotency_key, occurred_at, user_id, workflow_id, session_id,
-    run_id, execution_id, scope, phase, agent_mode, component, correlation_id,
+    run_id, execution_id, scope, source_platform, phase, agent_mode, component, correlation_id,
     requested_provider, requested_model_id, effective_provider, effective_model_id,
     turn_count, llm_call_count, llm_generation_duration_ms, prompt_tokens, completion_tokens, reasoning_tokens,
     cache_read_tokens, cache_write_tokens, total_cost_usd, currency, billing_basis,
     pricing_source, pricing_version, tool_name, operation_metadata_json
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 	args := []interface{}{
 		e.EventID, e.IdempotencyKey, e.Timestamp.UTC().Format(time.RFC3339Nano),
-		e.UserID, e.WorkflowID, e.SessionID, e.RunID, e.ExecutionID, e.Scope, e.Phase,
+		e.UserID, e.WorkflowID, e.SessionID, e.RunID, e.ExecutionID, e.Scope, e.SourcePlatform, e.Phase,
 		e.AgentMode, e.Component, e.CorrelationID, e.Provider, e.ModelID,
 		e.EffectiveProvider, e.EffectiveModelID, e.TurnCount, e.LLMCallCount, e.LLMGenerationDurationMS,
 		e.PromptTokens, e.CompletionTokens, e.ReasoningTokens, e.CacheReadTokens,
@@ -215,10 +220,11 @@ func (s *sqliteLedger) summarizeWorkflowOverview(from, to, workflowID string) (*
 
 func (s *sqliteLedger) summarizeWorkflowTotals(workflowID string) (*Summary, error) {
 	summary := &Summary{
-		ByDate:   make(map[string]*DateAggregate),
-		ByModel:  make(map[string]*Aggregate),
-		ByScope:  make(map[string]*ScopeAggregate),
-		Coverage: Coverage{Source: "sqlite"},
+		ByDate:           make(map[string]*DateAggregate),
+		ByModel:          make(map[string]*Aggregate),
+		ByScope:          make(map[string]*ScopeAggregate),
+		BySourcePlatform: make(map[string]*Aggregate),
+		Coverage:         Coverage{Source: "sqlite"},
 	}
 	const query = `
 SELECT scope,
@@ -297,12 +303,13 @@ func (s *sqliteLedger) summarizeWindow(fromInclusive, toExclusive, executionID, 
 	summary := &Summary{
 		From: fromInclusive, To: toExclusive,
 		ByDate: make(map[string]*DateAggregate), ByModel: make(map[string]*Aggregate),
-		ByScope:  make(map[string]*ScopeAggregate),
-		Coverage: Coverage{Source: "sqlite"},
+		ByScope:          make(map[string]*ScopeAggregate),
+		BySourcePlatform: make(map[string]*Aggregate),
+		Coverage:         Coverage{Source: "sqlite"},
 	}
 	query := `
 SELECT event_id, idempotency_key, occurred_at, user_id, workflow_id, session_id,
-       run_id, execution_id, scope, phase, agent_mode, component, correlation_id,
+       run_id, execution_id, scope, source_platform, phase, agent_mode, component, correlation_id,
        requested_provider, requested_model_id, effective_provider, effective_model_id,
        turn_count, llm_call_count, llm_generation_duration_ms, prompt_tokens, completion_tokens, reasoning_tokens,
        cache_read_tokens, cache_write_tokens, total_cost_usd, currency, billing_basis,
@@ -344,7 +351,7 @@ FROM cost_events`
 		var occurredAt, metadataJSON string
 		if err := rows.Scan(
 			&e.EventID, &e.IdempotencyKey, &occurredAt, &e.UserID, &e.WorkflowID,
-			&e.SessionID, &e.RunID, &e.ExecutionID, &e.Scope, &e.Phase, &e.AgentMode,
+			&e.SessionID, &e.RunID, &e.ExecutionID, &e.Scope, &e.SourcePlatform, &e.Phase, &e.AgentMode,
 			&e.Component, &e.CorrelationID, &e.Provider, &e.ModelID,
 			&e.EffectiveProvider, &e.EffectiveModelID, &e.TurnCount, &e.LLMCallCount, &e.LLMGenerationDurationMS,
 			&e.PromptTokens, &e.CompletionTokens, &e.ReasoningTokens,
@@ -461,14 +468,14 @@ func (s *sqliteLedger) migrateLegacyJSONL(path string) (MigrationReport, error) 
 		result, err := tx.Exec(`
 INSERT OR IGNORE INTO cost_events (
     event_id, idempotency_key, occurred_at, user_id, workflow_id, session_id,
-    run_id, execution_id, scope, phase, agent_mode, component, correlation_id,
+    run_id, execution_id, scope, source_platform, phase, agent_mode, component, correlation_id,
     requested_provider, requested_model_id, effective_provider, effective_model_id,
     turn_count, llm_call_count, llm_generation_duration_ms, prompt_tokens, completion_tokens, reasoning_tokens,
     cache_read_tokens, cache_write_tokens, total_cost_usd, currency, billing_basis,
     pricing_source, pricing_version, tool_name, operation_metadata_json
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 			e.EventID, e.IdempotencyKey, e.Timestamp.UTC().Format(time.RFC3339Nano),
-			e.UserID, e.WorkflowID, e.SessionID, e.RunID, e.ExecutionID, e.Scope, e.Phase,
+			e.UserID, e.WorkflowID, e.SessionID, e.RunID, e.ExecutionID, e.Scope, e.SourcePlatform, e.Phase,
 			e.AgentMode, e.Component, e.CorrelationID, e.Provider, e.ModelID,
 			e.EffectiveProvider, e.EffectiveModelID, e.TurnCount, e.LLMCallCount, e.LLMGenerationDurationMS,
 			e.PromptTokens, e.CompletionTokens, e.ReasoningTokens, e.CacheReadTokens,
@@ -509,6 +516,10 @@ func normalizeEntry(e *Entry) {
 	if e.Scope == "" {
 		e.Scope = scopeUnknown
 	}
+	e.SourcePlatform = normalizeSourcePlatform(e.SourcePlatform)
+	if e.SourcePlatform == "" {
+		e.SourcePlatform = sourcePlatformFromSessionID(e.SessionID)
+	}
 	if e.BillingBasis == "" {
 		switch e.CostUSDSource {
 		case "provider":
@@ -537,4 +548,26 @@ func normalizeEntry(e *Entry) {
 	if e.EventID == "" {
 		e.EventID = e.IdempotencyKey
 	}
+}
+
+func normalizeSourcePlatform(platform string) string {
+	platform = strings.ToLower(strings.TrimSpace(platform))
+	switch platform {
+	case "slack", "whatsapp":
+		return platform
+	default:
+		return platform
+	}
+}
+
+func sourcePlatformFromSessionID(sessionID string) string {
+	rest := strings.TrimPrefix(strings.TrimSpace(sessionID), "bot-")
+	if rest == sessionID {
+		return ""
+	}
+	platform, _, ok := strings.Cut(rest, "--")
+	if !ok {
+		return ""
+	}
+	return normalizeSourcePlatform(platform)
 }

@@ -34,6 +34,17 @@ function AggregateRow({ label, agg }: { label: string; agg: CostAggregate }) {
   )
 }
 
+function sourcePlatformLabel(platform: string): string {
+  switch (platform) {
+    case 'slack':
+      return 'Slack bot'
+    case 'whatsapp':
+      return 'WhatsApp bot'
+    default:
+      return `${platform.charAt(0).toUpperCase()}${platform.slice(1)} bot`
+  }
+}
+
 // DateRow renders one date with an expandable per-model breakdown.
 // When `by_model` is present and non-empty, clicking the +/− toggle
 // shows one nested row per model that contributed on that date,
@@ -128,6 +139,13 @@ export default function CostDashboard({ isOpen, onClose }: CostDashboardProps) {
         (a, b) => summary.by_model[b].total_cost_usd - summary.by_model[a].total_cost_usd,
       )
     : []
+  const sortedSourcePlatforms = summary
+    ? Object.keys(summary.by_source_platform ?? {}).sort(
+        (a, b) =>
+          (summary.by_source_platform?.[b]?.total_cost_usd ?? 0) -
+          (summary.by_source_platform?.[a]?.total_cost_usd ?? 0),
+      )
+    : []
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={onClose}>
@@ -199,6 +217,33 @@ export default function CostDashboard({ isOpen, onClose }: CostDashboardProps) {
                   </div>
                 </div>
               </div>
+
+              <section>
+                <h3 className="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-2">By bot</h3>
+                {sortedSourcePlatforms.length === 0 ? (
+                  <p className="text-sm text-gray-500 dark:text-gray-400">No bot usage recorded yet.</p>
+                ) : (
+                  <table className="w-full">
+                    <thead className="text-xs text-gray-500 dark:text-gray-400 uppercase tracking-wide border-b border-gray-200 dark:border-gray-700">
+                      <tr>
+                        <th className="px-3 py-2 text-left">Bot</th>
+                        <th className="px-3 py-2 text-right">Calls</th>
+                        <th className="px-3 py-2 text-right">Input</th>
+                        <th className="px-3 py-2 text-right">Output</th>
+                        <th className="px-3 py-2 text-right">Cost</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {sortedSourcePlatforms.map((platform) => {
+                        const agg = summary.by_source_platform?.[platform]
+                        return agg ? (
+                          <AggregateRow key={platform} label={sourcePlatformLabel(platform)} agg={agg} />
+                        ) : null
+                      })}
+                    </tbody>
+                  </table>
+                )}
+              </section>
 
               <section>
                 <h3 className="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-2">By model</h3>

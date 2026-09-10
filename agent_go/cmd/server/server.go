@@ -6123,6 +6123,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				workflowPhaseRunFolder,
 				queryID,
 			),
+			withCostSourcePlatform(req.BotPlatform),
 		)
 		if err := llmAgent.AddObserver(eventObserver); err != nil {
 			sendError(fmt.Sprintf("Failed to attach event observer: %v", err), true)

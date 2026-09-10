@@ -2,11 +2,50 @@ package services
 
 import (
 	"context"
+	"path/filepath"
 	"testing"
 	"time"
 
 	"go.mau.fi/whatsmeow/types"
 )
+
+// PLAT (SetDeviceLabel network bootstrap): the label must persist to disk
+// through the meta-store-only path, durably (read back with a fresh
+// instance, not just held in the writer's memory), and without ever
+// starting the whatsmeow connector.
+func TestSetDeviceLabelOfflinePersistsWithoutStartingConnector(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "device.db")
+	svc := NewWhatsAppService(dbPath)
+
+	if err := svc.SetDeviceLabelOffline(context.Background(), "Mom's Phone"); err != nil {
+		t.Fatalf("SetDeviceLabelOffline failed: %v", err)
+	}
+	if svc.IsEnabled() {
+		t.Fatal("SetDeviceLabelOffline must not start the whatsmeow connector")
+	}
+
+	reader := NewWhatsAppService(dbPath)
+	if err := reader.openMetaStore(context.Background()); err != nil {
+		t.Fatalf("openMetaStore failed: %v", err)
+	}
+	defer reader.closeMetaStore()
+	reader.loadDeviceLabel(context.Background())
+	if got := reader.DeviceLabel(); got != "Mom's Phone" {
+		t.Fatalf("DeviceLabel() after fresh reload = %q, want %q", got, "Mom's Phone")
+	}
+}
+
+func TestSetDeviceLabelOfflineRejectsOverlongLabel(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "device.db")
+	svc := NewWhatsAppService(dbPath)
+	overlong := make([]rune, 61)
+	for i := range overlong {
+		overlong[i] = 'a'
+	}
+	if err := svc.SetDeviceLabelOffline(context.Background(), string(overlong)); err == nil {
+		t.Fatal("expected an error for a label over 60 characters")
+	}
+}
 
 func TestWhatsAppUserNotificationSkipsWhenUnpaired(t *testing.T) {
 	svc := &WhatsAppService{}

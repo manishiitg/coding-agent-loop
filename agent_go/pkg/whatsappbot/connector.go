@@ -451,7 +451,10 @@ func (c *Connector) GetQRImagePNG(size int) ([]byte, error) {
 	return qrcode.Encode(code, qrcode.Medium, size)
 }
 
-// Unpair logs out and forgets one linked phone.
+// Unpair logs out and forgets one linked phone. The remote logout is
+// best-effort: a device whose remote session is already dead (removed from
+// the phone, or otherwise invalidated) must still be unpairable locally, or
+// the service stays registered forever with no way to regenerate a QR.
 func (c *Connector) Unpair(ctx context.Context, phone string) error {
 	c.mu.RLock()
 	acct, ok := c.accounts[phone]
@@ -461,12 +464,28 @@ func (c *Connector) Unpair(ctx context.Context, phone string) error {
 		return fmt.Errorf("no linked account for %q", phone)
 	}
 	if !acct.IsConnected() {
-		if err := acct.Connect(); err != nil {
-			return fmt.Errorf("whatsapp: connect for logout: %w", err)
+		// Account.Connect() (whatsmeow's own client.Connect()) takes no
+		// context and isn't cancellable, so a caller-supplied timeout can't
+		// actually bound it directly -- racing it against ctx here at least
+		// bounds how long THIS call waits. The goroutine can outlive that
+		// wait if whatsmeow itself hasn't given up yet; that's an accepted
+		// tradeoff since local cleanup below proceeds either way once we stop
+		// waiting, and IsConnected() being false skips the Logout attempt.
+		connectDone := make(chan error, 1)
+		go func() { connectDone <- acct.Connect() }()
+		select {
+		case err := <-connectDone:
+			if err != nil {
+				log.Printf("[WHATSAPP] Unpair %s: remote connect failed, forcing local cleanup: %v", phone, err)
+			}
+		case <-ctx.Done():
+			log.Printf("[WHATSAPP] Unpair %s: remote connect exceeded the caller's timeout (%v); forcing local cleanup without waiting further", phone, ctx.Err())
 		}
 	}
-	if err := acct.Logout(ctx); err != nil {
-		return fmt.Errorf("whatsapp: logout device: %w", err)
+	if acct.IsConnected() {
+		if err := acct.Logout(ctx); err != nil {
+			log.Printf("[WHATSAPP] Unpair %s: remote logout failed, forcing local cleanup: %v", phone, err)
+		}
 	}
 	acct.Disconnect()
 	c.mu.Lock()

@@ -1,11 +1,12 @@
-package financeproduct
+package agentworksproduct
 
 import "github.com/manishiitg/coding-agent-loop/agent_go/pkg/agentprofiles"
 
-// BuiltinAgentProfile returns the finance profile. Brand new, so only one
-// version is registered.
+// BuiltinAgentProfile returns the agentworks profile. Brand new, so only
+// one version is ever registered -- same reasoning as every other product's
+// own BuiltinAgentProfile.
 func BuiltinAgentProfile() agentprofiles.Profile {
-	manifest := mustFinanceManifest()
+	manifest := mustAgentWorksManifest()
 	profile := manifest.Profile
 	profile.SystemPromptTemplate = renderProductPrompt()
 	return profile
@@ -16,10 +17,9 @@ func BuiltinAgentProfiles() []agentprofiles.Profile {
 }
 
 // RegisterProductSkills is a no-op today -- this profile declares no
-// skills in product.yaml (its one tool's instructions live entirely in the
-// system prompt). Kept as a real function, not omitted, so server.go's
-// registration call shape matches every other product and adding a skill
-// later needs no server.go change.
+// skills or bespoke tools in product.yaml. Kept as a real function, not
+// omitted, so server.go's registration call shape matches every other
+// product and adding a skill later needs no server.go change.
 func RegisterProductSkills() error {
 	return nil
 }

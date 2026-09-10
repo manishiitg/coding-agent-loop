@@ -2,7 +2,6 @@ import { useEffect, useRef, useState, type ComponentType } from 'react'
 import { Check, ChevronDown } from 'lucide-react'
 import { RunloopMark } from './branding/RunloopLogo'
 import { VideoStudioMark } from '../products/video-studio/VideoStudioMark'
-import { FinanceMark } from '../products/finance/FinanceMark'
 import { DominionMark } from '../products/dominion/DominionMark'
 import { SparkQuillMark } from '../products/sparkquill/SparkQuillMark'
 import { useProductSurfaceStore, type ProductSurface } from '../stores/useProductSurfaceStore'
@@ -28,7 +27,6 @@ const products: Array<{
 }> = [
   { id: 'agentworks', label: 'AgentWorks', description: 'Automation and workflows', icon: RunloopMark },
   { id: 'video-studio', label: 'Video Studio', description: 'Projects and video production', icon: VideoStudioMark },
-  { id: 'finance', label: 'Finance', description: 'Consolidated bank, investment, and tax view', icon: FinanceMark },
   { id: 'dominion', label: 'Dominion', description: 'Paper-trading watchlist and portfolio', icon: DominionMark },
   { id: 'sparkquill', label: 'SparkQuill', description: 'Family learning with Quill', icon: SparkQuillMark },
 ]

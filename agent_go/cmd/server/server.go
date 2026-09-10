@@ -27,10 +27,10 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 
+	"github.com/manishiitg/coding-agent-loop/agent_go/internal/agentworksproduct"
 	"github.com/manishiitg/coding-agent-loop/agent_go/internal/cliupdate"
 	"github.com/manishiitg/coding-agent-loop/agent_go/internal/dominionproduct"
 	"github.com/manishiitg/coding-agent-loop/agent_go/internal/events"
-	"github.com/manishiitg/coding-agent-loop/agent_go/internal/financeproduct"
 	"github.com/manishiitg/coding-agent-loop/agent_go/internal/inspector"
 	"github.com/manishiitg/coding-agent-loop/agent_go/internal/platformtools"
 	"github.com/manishiitg/coding-agent-loop/agent_go/internal/sparkquillproduct"
@@ -134,7 +134,7 @@ func productEnabled(product string) bool {
 }
 
 // isSingleProductServerDeployment reports whether this server instance is
-// dedicated to exactly one product surface (Video Studio, Dominion, Finance)
+// dedicated to exactly one product surface (Video Studio, Dominion, SparkQuill)
 // via AGENT_PRODUCTS, as opposed to the shared desktop/multi-product server
 // where AGENT_PRODUCTS is unset. Only a genuinely dedicated deployment is
 // eligible for the missing-Claude-Code-token refusal in handleQuery: on the
@@ -1782,21 +1782,6 @@ func runServer(cmd *cobra.Command, args []string) {
 			log.Fatalf("Failed to register Video Studio agent profile runtime: %v", err)
 		}
 	}
-	if productEnabled("finance") {
-		if err := financeproduct.RegisterProductSkills(); err != nil {
-			log.Fatalf("Failed to register Finance skills: %v", err)
-		}
-		for _, profile := range financeproduct.BuiltinAgentProfiles() {
-			profile.Product = "finance"
-			if err := profileRegistry.RegisterProfile(profile); err != nil {
-				log.Fatalf("Failed to register Finance agent profile: %v", err)
-			}
-		}
-		if err := financeproduct.RegisterAgentProfileRuntime(profileRegistry, getWorkspaceAPIURL()); err != nil {
-			log.Fatalf("Failed to register Finance agent profile runtime: %v", err)
-		}
-	}
-
 	if productEnabled("sparkquill") {
 		if err := sparkquillproduct.RegisterProductSkills(); err != nil {
 			log.Fatalf("Failed to register SparkQuill skills: %v", err)
@@ -1824,6 +1809,21 @@ func runServer(cmd *cobra.Command, args []string) {
 		}
 		if err := dominionproduct.RegisterAgentProfileRuntime(profileRegistry, getWorkspaceAPIURL()); err != nil {
 			log.Fatalf("Failed to register Dominion agent profile runtime: %v", err)
+		}
+	}
+	if productEnabled("agentworks") {
+		// Scaffolding only: no bespoke tools yet, so no
+		// RegisterAgentProfileRuntime call -- see product.yaml's own comment
+		// for why this registration is inert until something explicitly
+		// requests AgentProfileID="agentworks".
+		if err := agentworksproduct.RegisterProductSkills(); err != nil {
+			log.Fatalf("Failed to register AgentWorks skills: %v", err)
+		}
+		for _, profile := range agentworksproduct.BuiltinAgentProfiles() {
+			profile.Product = "agentworks"
+			if err := profileRegistry.RegisterProfile(profile); err != nil {
+				log.Fatalf("Failed to register AgentWorks agent profile: %v", err)
+			}
 		}
 	}
 
@@ -3665,7 +3665,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// A dedicated single-product server deployment (Video Studio, Dominion,
-	// Finance) resolving to the claude-code provider with no configured
+	// SparkQuill) resolving to the claude-code provider with no configured
 	// token must refuse loudly here, before the CLI process is ever spawned.
 	// Left unchecked, provider initialization falls back to "the CLI's own
 	// saved login": on a fresh HOME that hangs on an unattended interactive
@@ -5687,7 +5687,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			// already the authoritative source of what tools exist. The generic
 			// text predates per-product custom tools: it names platform tools an
 			// allowlist filters out and never mentions the product's own tool at
-			// all, so a CLI-provider product chat (e.g. Finance, Dominion) can
+			// all, so a CLI-provider product chat (e.g. SparkQuill, Dominion) can
 			// correctly run its one allowlisted tool and then, in the very same
 			// turn, tell the user it has no working tool because this stale text
 			// contradicted what actually happened.

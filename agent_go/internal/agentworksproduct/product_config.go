@@ -1,4 +1,4 @@
-package financeproduct
+package agentworksproduct
 
 import (
 	"embed"
@@ -20,16 +20,16 @@ var (
 	productManifestErr  error
 )
 
-// FinanceManifest loads and validates product.yaml once.
-func FinanceManifest() (ProductManifest, error) {
+// AgentWorksManifest loads and validates product.yaml once.
+func AgentWorksManifest() (ProductManifest, error) {
 	productManifestOnce.Do(func() {
 		manifest, err := agentprofiles.LoadProductManifest(productConfigFiles, "product.yaml")
 		if err != nil {
-			productManifestErr = fmt.Errorf("Finance %w", err)
+			productManifestErr = fmt.Errorf("AgentWorks %w", err)
 			return
 		}
-		if manifest.Profile.ID != "finance" || manifest.Profile.Scope != agentprofiles.ProfileScopeProject || manifest.UI.Surface != "finance" {
-			productManifestErr = fmt.Errorf("invalid Finance product manifest")
+		if manifest.Profile.ID != "agentworks" || manifest.Profile.Scope != agentprofiles.ProfileScopeGlobal {
+			productManifestErr = fmt.Errorf("invalid AgentWorks product manifest")
 			return
 		}
 		productManifest = manifest
@@ -38,16 +38,16 @@ func FinanceManifest() (ProductManifest, error) {
 }
 
 func renderProductPrompt() string {
-	manifest := mustFinanceManifest()
+	manifest := mustAgentWorksManifest()
 	prompt, err := manifest.RenderPrompt(productConfigFiles, manifest.Profile, nil)
 	if err != nil {
-		panic(fmt.Errorf("render Finance prompt: %w", err))
+		panic(fmt.Errorf("render AgentWorks prompt: %w", err))
 	}
 	return prompt
 }
 
-func mustFinanceManifest() ProductManifest {
-	manifest, err := FinanceManifest()
+func mustAgentWorksManifest() ProductManifest {
+	manifest, err := AgentWorksManifest()
 	if err != nil {
 		panic(err)
 	}

@@ -13,7 +13,7 @@ afterEach(() => {
 
 describe('product surface deployment configuration', () => {
   it('keeps the complete product suite when no deployment allowlist is configured', () => {
-    expect(enabledProductSurfaces()).toEqual(['agentworks', 'video-studio', 'finance', 'dominion', 'sparkquill'])
+    expect(enabledProductSurfaces()).toEqual(['agentworks', 'video-studio', 'dominion', 'sparkquill'])
     expect(deploymentDefaultProductSurface()).toBe('agentworks')
     expect(isSingleProductDeployment()).toBe(false)
   })
@@ -29,7 +29,6 @@ describe('product surface deployment configuration', () => {
     expect(enabledProductSurfaces()).toEqual(['agentworks', 'video-studio'])
     expect(deploymentDefaultProductSurface()).toBe('video-studio')
     expect(isEnabledProductSurface('agentworks')).toBe(true)
-    expect(isEnabledProductSurface('finance')).toBe(false)
     expect(isEnabledProductSurface('dominion')).toBe(false)
     expect(isSingleProductDeployment()).toBe(false)
   })

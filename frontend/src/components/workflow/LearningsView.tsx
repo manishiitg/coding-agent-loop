@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useState, useCallback, type ReactNode } from 'react'
 import { X, BookOpen, Loader2, AlertCircle, ChevronDown, ChevronRight, Code, FileText, Trash2, Search, Globe, Check, Copy, ArrowLeft } from 'lucide-react'
 import { agentApi } from '../../services/api'
 import type { PlanningResponse, PlanStep } from '../../utils/stepConfigMatching'
@@ -10,6 +10,7 @@ import ConfirmationDialog from '../ui/ConfirmationDialog'
 interface LearningsViewProps {
   workspacePath: string | null
   plan: PlanningResponse | null
+  headerAction?: ReactNode
 }
 
 // LearningMetadata — fields read from learnings/{stepId}/.learning_metadata.json,
@@ -164,7 +165,7 @@ function formatFreshnessDate(timestamp: string): string {
   return `Fresh ${date.toLocaleDateString([], { month: 'short', day: 'numeric' })}`
 }
 
-export default function LearningsView({ workspacePath, plan }: LearningsViewProps) {
+export default function LearningsView({ workspacePath, plan, headerAction }: LearningsViewProps) {
   const [learnings, setLearnings] = useState<Record<string, LearningMetadata | null>>({})
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -749,6 +750,7 @@ export default function LearningsView({ workspacePath, plan }: LearningsViewProp
             <BookOpen className="w-5 h-5 text-primary" />
             <h2 className="truncate text-lg font-semibold">Automation Learnings</h2>
           </div>
+          {headerAction}
         </div>
 
         {/* Content */}

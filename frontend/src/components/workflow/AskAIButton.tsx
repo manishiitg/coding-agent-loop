@@ -1,6 +1,7 @@
 import { MessageCircle } from 'lucide-react'
 import { useChatStore } from '../../stores/useChatStore'
 import { sendWorkflowMessageToChat } from '../../utils/reportHumanInputChat'
+import { Tooltip, TooltipContent, TooltipTrigger } from '../ui/tooltip'
 
 /**
  * Every settings/config panel in the workflow builder (MCP, skills, secrets,
@@ -22,14 +23,12 @@ export function AskAIButton({
   workspacePath,
   message,
   label = 'Ask AI',
-  title = "This only shows what's already set up. Ask in chat to search for, install, or explain something that isn't here.",
   className = 'flex shrink-0 items-center gap-1.5 rounded-md border border-border px-2.5 py-1.5 text-xs font-medium text-muted-foreground transition-colors hover:border-primary/40 hover:text-primary',
   iconOnly = false,
 }: {
   workspacePath: string | null
   message: string
   label?: string
-  title?: string
   className?: string
   /** Renders just the icon (for a tight icon-toolbar spot) instead of icon+label. */
   iconOnly?: boolean
@@ -42,9 +41,18 @@ export function AskAIButton({
   }
 
   return (
-    <button type="button" onClick={handleClick} title={title} aria-label={iconOnly ? label : undefined} className={className} disabled={!workspacePath}>
-      <MessageCircle className="h-3.5 w-3.5" />
-      {!iconOnly && label}
-    </button>
+    // A native `title` attribute is unreliable here: this button is disabled
+    // when there's no workspacePath, and several browsers suppress the title
+    // tooltip on disabled elements entirely. The app-wide Tooltip component
+    // (backed by the TooltipProvider in App.tsx) doesn't have that problem.
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <button type="button" onClick={handleClick} aria-label={iconOnly ? label : undefined} className={className} disabled={!workspacePath}>
+          <MessageCircle className="h-3.5 w-3.5" />
+          {!iconOnly && label}
+        </button>
+      </TooltipTrigger>
+      <TooltipContent side="bottom">{label}</TooltipContent>
+    </Tooltip>
   )
 }

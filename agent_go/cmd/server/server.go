@@ -10660,7 +10660,11 @@ func (api *StreamingAPI) registerMultiAgentMCPServerTools(registrar interface {
 					if desc == "" {
 						desc = "(no description provided)"
 					}
-					sb.WriteString(fmt.Sprintf("- **%s** — %s. %s", r.Name, desc, kind))
+					sb.WriteString(fmt.Sprintf("- **%s**", r.Name))
+					if r.Identifier != "" {
+						sb.WriteString(fmt.Sprintf(" (`%s` — pass this as qualified_name to inspect_mcp_server for its full tool list)", r.Identifier))
+					}
+					sb.WriteString(fmt.Sprintf(" — %s. %s", desc, kind))
 					if r.Link != "" {
 						sb.WriteString(fmt.Sprintf(" (%s)", r.Link))
 					}
@@ -10679,6 +10683,60 @@ func (api *StreamingAPI) registerMultiAgentMCPServerTools(registrar interface {
 				sb.WriteString("### Smithery (unvetted — review before adding)\n\nSMITHERY_API_KEY is not configured on this server; skipped.\n\n")
 			}
 
+			return sb.String(), nil
+		},
+	); err != nil {
+		return err
+	}
+
+	if err := registerTool(
+		"inspect_mcp_server",
+		"Get the full tool list (names, descriptions, input schemas) for an unvetted MCP server found via search_mcp_catalog, before deciding whether to install it. Smithery hits only — pass the `qualified_name` shown next to that hit in search_mcp_catalog's results. GitHub MCP Registry hits have no equivalent: those servers only advertise their tools via the live MCP protocol handshake once actually running, so there is nothing to inspect ahead of time — review their repo/README instead.",
+		map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"qualified_name": map[string]interface{}{
+					"type":        "string",
+					"description": "The Smithery qualified name from a search_mcp_catalog hit, e.g. \"github\" or \"node2flow/notion\".",
+				},
+			},
+			"required": []string{"qualified_name"},
+		},
+		func(ctx context.Context, args map[string]interface{}) (string, error) {
+			qualifiedName := strings.TrimSpace(fmt.Sprint(args["qualified_name"]))
+			if qualifiedName == "" {
+				return "qualified_name is required.", nil
+			}
+
+			detail, err := services.InspectSmitheryServer(ctx, qualifiedName)
+			if err != nil {
+				return fmt.Sprintf("Could not inspect %q: %v", qualifiedName, err), nil
+			}
+
+			displayName := detail.DisplayName
+			if displayName == "" {
+				displayName = detail.QualifiedName
+			}
+			var sb strings.Builder
+			sb.WriteString(fmt.Sprintf("## %s (`%s`) — unvetted, review before adding\n\n", displayName, detail.QualifiedName))
+			if detail.Description != "" {
+				sb.WriteString(detail.Description + "\n\n")
+			}
+			if detail.DeploymentURL != "" {
+				sb.WriteString(fmt.Sprintf("Deployment URL: %s\n\n", detail.DeploymentURL))
+			}
+			if len(detail.Tools) == 0 {
+				sb.WriteString("No tools reported.\n")
+				return sb.String(), nil
+			}
+			sb.WriteString(fmt.Sprintf("### Tools (%d)\n\n", len(detail.Tools)))
+			for _, t := range detail.Tools {
+				sb.WriteString(fmt.Sprintf("- **%s**", t.Name))
+				if t.Description != "" {
+					sb.WriteString(" — " + strings.SplitN(t.Description, "\n", 2)[0])
+				}
+				sb.WriteString("\n")
+			}
 			return sb.String(), nil
 		},
 	); err != nil {

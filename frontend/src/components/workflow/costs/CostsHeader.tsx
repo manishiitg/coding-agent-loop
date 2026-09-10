@@ -6,6 +6,7 @@ import type { CostsData } from './useCostsData'
 
 type CostsHeaderProps = Pick<CostsData, 'overallSummary' | 'aggregateSummary' | 'phaseCostSummary' | 'loading' | 'loadAllCosts'> & {
   startedAt?: string | null
+  headerAction?: React.ReactNode
 }
 
 // Header content only; InspectorShell owns the row wrapper and the close X.
@@ -16,6 +17,7 @@ const CostsHeader: React.FC<CostsHeaderProps> = ({
   phaseCostSummary,
   loading,
   loadAllCosts,
+  headerAction,
 }) => (
           <div className="flex-1 min-w-0">
             <h2 className="text-lg font-semibold text-foreground flex items-center gap-2">
@@ -61,6 +63,7 @@ const CostsHeader: React.FC<CostsHeaderProps> = ({
               >
                 <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
               </button>
+              {headerAction}
             </div>
           </div>
 )

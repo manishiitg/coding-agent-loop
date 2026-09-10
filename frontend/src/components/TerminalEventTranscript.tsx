@@ -216,10 +216,14 @@ const UserTranscriptMessage: React.FC<{ content: string; timestamp: string; comp
 
   if (!collapsible) {
     return (
-      <div className={`ml-auto mt-4 max-w-[84%] text-right ${compactBottom ? 'mb-1' : 'mb-4'}`}>
-        <div className="whitespace-pre-wrap break-words text-[length:calc(14px*var(--chat-scale,1))] leading-[calc(24px*var(--chat-scale,1))] text-foreground">{shown}</div>
-        {receipt && <div className="mt-1 text-[11px] text-muted-foreground">{receipt}</div>}
-        {timestamp && <div className="mt-1 text-[10px] tabular-nums text-muted-foreground">{timestamp}</div>}
+      <div className={`ml-auto mt-2 max-w-[84%] text-right ${compactBottom ? 'mb-1' : 'mb-2'}`}>
+        <div className="whitespace-pre-wrap break-words text-[length:calc(14px*var(--chat-scale,1))] leading-[calc(20px*var(--chat-scale,1))] text-foreground">{shown}</div>
+        {(receipt || timestamp) && (
+          <div className="mt-0.5 flex items-center justify-end gap-2 text-[10px] leading-4 text-muted-foreground">
+            {receipt && <span>{receipt}</span>}
+            {timestamp && <span className="tabular-nums">{timestamp}</span>}
+          </div>
+        )}
       </div>
     )
   }
@@ -227,8 +231,7 @@ const UserTranscriptMessage: React.FC<{ content: string; timestamp: string; comp
   return (
     <article className={`ml-auto mt-4 w-[min(92%,52rem)] rounded-lg border border-border bg-muted/30 px-4 py-3 text-left ${compactBottom ? 'mb-1' : 'mb-4'}`}>
       <div className="whitespace-pre-wrap break-words text-[length:calc(13px*var(--chat-scale,1))] leading-[calc(24px*var(--chat-scale,1))] text-foreground/90">{shown}</div>
-      {receipt && <div className="mt-1 text-[11px] text-muted-foreground">{receipt}</div>}
-      <div className="mt-2 flex items-center gap-3">
+      <div className="mt-1 flex items-center gap-2">
         <button
           type="button"
           onClick={() => setExpanded(value => !value)}
@@ -236,7 +239,10 @@ const UserTranscriptMessage: React.FC<{ content: string; timestamp: string; comp
         >
           {expanded ? 'Show less' : 'Show full message'}
         </button>
-        {timestamp && <span className="ml-auto text-[10px] tabular-nums text-muted-foreground">{timestamp}</span>}
+        <div className="ml-auto flex items-center gap-2 text-[10px] leading-4 text-muted-foreground">
+          {receipt && <span>{receipt}</span>}
+          {timestamp && <span className="tabular-nums">{timestamp}</span>}
+        </div>
       </div>
     </article>
   )

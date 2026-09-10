@@ -28,6 +28,8 @@ interface MarkdownRendererProps {
   compactImages?: boolean
   basePath?: string
   onLinkClick?: (filepath: string) => void
+  onWorkspaceLinkResolve?: (filepath: string, displayPath: string) => { filepath: string; displayPath: string } | null | undefined
+  onWorkspaceLinkClick?: (filepath: string, displayPath: string) => boolean | void
   // When provided, a ```report-widget fenced block whose body is a widget JSON
   // spec is replaced by a live, db-bound report widget. Supplied by the report
   // viewer (MarkdownWidget / FileWidget) so a generated .md document can embed
@@ -583,6 +585,8 @@ const MarkdownRendererImpl: React.FC<MarkdownRendererProps> = ({
   compactImages = false,
   basePath,
   onLinkClick,
+  onWorkspaceLinkResolve,
+  onWorkspaceLinkClick,
   renderEmbeddedWidget
 }) => {
   const containerClasses = `prose prose-sm max-w-none dark:prose-invert ${className}`
@@ -793,6 +797,18 @@ const MarkdownRendererImpl: React.FC<MarkdownRendererProps> = ({
     onLinkClick,
   ])
 
+  const resolveWorkspaceTargetForView = useCallback((href?: string | null): { filepath: string; displayPath: string } | null => {
+    const workspaceTarget = resolveWorkspaceHref(href)
+    if (!workspaceTarget) return null
+    return onWorkspaceLinkResolve?.(workspaceTarget.filepath, workspaceTarget.displayPath) || workspaceTarget
+  }, [onWorkspaceLinkResolve, resolveWorkspaceHref])
+
+  const openResolvedWorkspaceTarget = useCallback((workspaceTarget: { filepath: string; displayPath: string }) => {
+    const handled = onWorkspaceLinkClick?.(workspaceTarget.filepath, workspaceTarget.displayPath)
+    if (handled === true) return
+    handleWorkspaceLink(workspaceTarget.filepath, workspaceTarget.displayPath)
+  }, [handleWorkspaceLink, onWorkspaceLinkClick])
+
   const handleMarkdownClickCapture = useCallback((event: React.MouseEvent<HTMLDivElement>) => {
     const target = event.target
     if (!(target instanceof Element)) return
@@ -801,13 +817,13 @@ const MarkdownRendererImpl: React.FC<MarkdownRendererProps> = ({
     if (!anchor) return
 
     const href = anchor.getAttribute('href') || anchor.href
-    const workspaceTarget = resolveWorkspaceHref(href)
+    const workspaceTarget = resolveWorkspaceTargetForView(href)
     if (!workspaceTarget) return
 
     event.preventDefault()
     event.stopPropagation()
-    handleWorkspaceLink(workspaceTarget.filepath, workspaceTarget.displayPath)
-  }, [handleWorkspaceLink, resolveWorkspaceHref])
+    openResolvedWorkspaceTarget(workspaceTarget)
+  }, [openResolvedWorkspaceTarget, resolveWorkspaceTargetForView])
 
   const processedContent = React.useMemo(() => {
     if (!content) return ""
@@ -1183,17 +1199,17 @@ const MarkdownRendererImpl: React.FC<MarkdownRendererProps> = ({
           strong: ({ children }) => <strong className="font-semibold break-words overflow-wrap-anywhere text-gray-900 dark:text-gray-100">{children}</strong>,
           em: ({ children }) => <em className="italic break-words overflow-wrap-anywhere">{children}</em>,
           a: ({ href, children }) => {
-            const workspaceTarget = resolveWorkspaceHref(href)
+            const workspaceTarget = resolveWorkspaceTargetForView(href)
             const externalHref = resolveSafeExternalHref(href)
 
             if (workspaceTarget) {
               return (
                 <a
-                  href={href}
+                  href={`#workspace/${encodeURIComponent(workspaceTarget.displayPath)}`}
                   onClick={(e) => {
                     e.preventDefault()
                     e.stopPropagation()
-                    handleWorkspaceLink(workspaceTarget.filepath, workspaceTarget.displayPath)
+                    openResolvedWorkspaceTarget(workspaceTarget)
                   }}
                   style={{ pointerEvents: 'auto', cursor: 'pointer' }}
                   className="text-purple-600 dark:text-purple-400 hover:text-purple-800 dark:hover:text-purple-300 underline cursor-pointer break-words overflow-wrap-anywhere font-medium transition-colors"

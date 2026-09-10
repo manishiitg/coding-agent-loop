@@ -187,16 +187,17 @@ export default function LearningsView({ workspacePath, plan }: LearningsViewProp
   // Search state
   const [searchTerm, setSearchTerm] = useState('')
 
-  // Global skill state: SKILL.md content + the full file tree under _global/.
+  // Global skill state: SKILL.md content + the shared learning package tree.
   // Displayed as a featured card at the top (global skill is the primary artifact
   // under the current architecture — per-step learnings are secondary).
   const [globalSkillContent, setGlobalSkillContent] = useState<string>('')
-  // globalFiles holds EVERY file under _global/ (references/, scripts/, assets/,
-  // root-level markdown, etc.) except the already-rendered SKILL.md. Each entry is
+  // globalFiles holds shared files under learnings/ (root markdown plus
+  // references/, scripts/, assets/, and _global/) except the already-rendered SKILL.md. Each entry is
   // keyed by its relative path (e.g. "references/selectors.md") so grouping by dir
   // is trivial.
   const [globalFiles, setGlobalFiles] = useState<Array<{ name: string; relPath: string; absPath: string; dir: string }>>([])
   const [globalFileFreshness, setGlobalFileFreshness] = useState<Record<string, LearningFileFreshness>>({})
+  const [globalSkillBasePath, setGlobalSkillBasePath] = useState<string>('')
   const [globalLoading, setGlobalLoading] = useState(false)
   const [globalError, setGlobalError] = useState<string | null>(null)
   const [globalExpanded, setGlobalExpanded] = useState(true)
@@ -261,8 +262,8 @@ export default function LearningsView({ workspacePath, plan }: LearningsViewProp
       })
   }, [workspacePath])
 
-  // Fetch everything under _global/ on mount: SKILL.md content + the full file
-  // tree (references/, scripts/, assets/, any other artifacts the learning agent
+  // Fetch the shared learning package on mount: SKILL.md content + the file
+  // tree (root markdown, references/, scripts/, assets/, and _global/)
   // decided to write). Per-file content is lazy-loaded on click.
   useEffect(() => {
     if (!workspacePath) return
@@ -270,30 +271,40 @@ export default function LearningsView({ workspacePath, plan }: LearningsViewProp
     setGlobalLoading(true)
     setGlobalError(null)
     setGlobalSkillContent('')
+    setGlobalSkillBasePath('')
     setGlobalFiles([])
     setGlobalFileFreshness({})
     setFileContentCache({})
     setExpandedFilePaths(new Set())
 
-    const globalPath = `${workspacePath}/learnings/_global`
-    const resolveAbs = (raw: string): string => {
+    const learningsPath = `${workspacePath}/learnings`
+    const resolveAbs = (raw: string, relPath?: string): string => {
       const clean = raw.replace(/^\/+/, '')
       if (raw.startsWith(workspacePath) || clean.startsWith(workspacePath)) return clean
       if (clean.includes('/learnings/_global/')) return clean
       if (clean.startsWith('learnings/_global/')) return `${workspacePath}/${clean}`
-      return `${globalPath}/${clean}`
+      if (clean.includes('/learnings/')) return clean
+      if (clean.startsWith('learnings/')) return `${workspacePath}/${clean}`
+      return `${learningsPath}/${relPath || clean}`
     }
-    const relFromGlobal = (absOrRel: string): string => {
-      // Strip everything up to and including "/_global/" so the display key is stable.
-      const idx = absOrRel.indexOf('/_global/')
-      if (idx !== -1) return absOrRel.slice(idx + '/_global/'.length)
-      // Already relative
-      return absOrRel.replace(/^\/+/, '')
+    const relFromLearnings = (absOrRel: string): string => {
+      const normalized = absOrRel.replace(/\\/g, '/')
+      const marker = '/learnings/'
+      const idx = normalized.indexOf(marker)
+      if (idx !== -1) return normalized.slice(idx + marker.length)
+      if (normalized.startsWith('learnings/')) return normalized.slice('learnings/'.length)
+      return normalized.replace(/^\/+/, '')
+    }
+    const isGlobalLearningPackageFile = (relPath: string): boolean => {
+      if (!relPath || relPath.endsWith('/')) return false
+      if (relPath === 'SKILL.md') return true
+      if (/^[^/]+\.(md|markdown)$/i.test(relPath)) return true
+      return /^(?:_global|references|scripts|assets)\//.test(relPath)
     }
 
     ;(async () => {
       try {
-        const filesResponse = await agentApi.getPlannerFiles(globalPath, 500)
+        const filesResponse = await agentApi.getPlannerFiles(learningsPath, 500, 3)
         const files: PlannerFile[] = Array.isArray(filesResponse)
           ? filesResponse as PlannerFile[]
           : (filesResponse?.data && Array.isArray(filesResponse.data) ? filesResponse.data as PlannerFile[] : [])
@@ -317,11 +328,12 @@ export default function LearningsView({ workspacePath, plan }: LearningsViewProp
 
         // Pull SKILL.md first for the featured markdown view.
         const skill = flatFiles.find(f => {
-          const rel = relFromGlobal(f.filepath || '')
-          return rel === 'SKILL.md'
+          const rel = normalizeGlobalSkillRelPath(relFromLearnings(f.filepath || ''))
+          return rel === '_global/SKILL.md' || rel === 'SKILL.md'
         })
         if (skill) {
-          const skillPath = resolveAbs(skill.filepath || '')
+          const skillRelPath = normalizeGlobalSkillRelPath(relFromLearnings(skill.filepath || ''))
+          const skillPath = resolveAbs(skill.filepath || '', skillRelPath)
           const contentResp = await agentApi.getPlannerFileContent(skillPath)
           if (!cancelled && contentResp.success && contentResp.data?.content) {
             let text = contentResp.data.content
@@ -330,42 +342,34 @@ export default function LearningsView({ workspacePath, plan }: LearningsViewProp
               if (endIdx !== -1) text = text.slice(endIdx + 4).trim()
             }
             setGlobalSkillContent(text)
+            setGlobalSkillBasePath(skillPath)
           }
         }
 
-        const freshnessFile = flatFiles.find(f => relFromGlobal(f.filepath || '') === '_freshness.json')
+        const freshnessFile = flatFiles.find(f => normalizeGlobalSkillRelPath(relFromLearnings(f.filepath || '')) === '_global/_freshness.json')
         if (freshnessFile) {
-          const freshnessPath = resolveAbs(freshnessFile.filepath || '')
+          const freshnessPath = resolveAbs(freshnessFile.filepath || '', '_global/_freshness.json')
           const freshnessResp = await agentApi.getPlannerFileContent(freshnessPath)
           if (!cancelled && freshnessResp.success && freshnessResp.data?.content) {
             setGlobalFileFreshness(parseGlobalFileFreshness(freshnessResp.data.content))
           }
         }
 
-        // Every other file (excluding SKILL.md + .learning_metadata.json + anything
-        // that somehow resolved outside _global/). Grouped by directory for display;
+        // Every other file in the global learning package (excluding SKILL.md +
+        // .learning_metadata.json). Grouped by directory for display;
         // content fetched on demand.
         const dedupedByRelPath = new Map<string, { relPath: string; rawPath: string }>()
         for (const file of flatFiles) {
           const rawPath = file.filepath || ''
-          const relPath = normalizeGlobalSkillRelPath(relFromGlobal(rawPath))
+          const relPath = normalizeGlobalSkillRelPath(relFromLearnings(rawPath))
 
-          if (!relPath || relPath === 'SKILL.md') continue
+          if (!relPath || relPath === 'SKILL.md' || relPath === '_global/SKILL.md') continue
           // Freshness is display metadata for the files below, not a learning
           // artifact users need to open on its own.
           if (relPath === '_freshness.json') continue
           if (relPath.endsWith('.learning_metadata.json')) continue
           if (isPatchArtifactPath(relPath)) continue
-          if (relPath.endsWith('/')) continue
-          // Safety: only include files we can place under _global/. If relFromGlobal
-          // didn't strip a /_global/ prefix AND the raw path doesn't look relative
-          // (e.g. it's a sibling workflow folder), skip it — the listing probably
-          // included a parent's content because _global/ is empty.
-          if (!rawPath.includes('/_global/') && rawPath.includes('/') && !rawPath.startsWith('references/') && !rawPath.startsWith('scripts/') && !rawPath.startsWith('assets/')) {
-            // Raw path has directory separators but none of them are under _global.
-            // Likely outside the target folder. Exclude to avoid confusing UI rows.
-            continue
-          }
+          if (!isGlobalLearningPackageFile(relPath)) continue
 
           // The workspace documents API can include a file both as a top-level entry
           // and nested under its parent folder's children. Keep one row per path.
@@ -378,7 +382,7 @@ export default function LearningsView({ workspacePath, plan }: LearningsViewProp
           .map(({ relPath, rawPath }) => {
             const name = relPath.split('/').pop() || relPath
             const dirPath = relPath.includes('/') ? relPath.slice(0, relPath.lastIndexOf('/')) : ''
-            return { name, relPath, absPath: resolveAbs(rawPath), dir: dirPath }
+            return { name, relPath, absPath: resolveAbs(rawPath, relPath), dir: dirPath }
           })
           .sort((a, b) => {
             if (a.dir === b.dir) return a.name.localeCompare(b.name)
@@ -402,6 +406,114 @@ export default function LearningsView({ workspacePath, plan }: LearningsViewProp
     return () => { cancelled = true }
   }, [workspacePath])
 
+  const loadGlobalFileContent = useCallback((relPath: string, absPath: string) => {
+    if (fileContentCache[relPath] !== undefined) return
+    agentApi.getPlannerFileContent(absPath).then(resp => {
+      if (resp.success && resp.data?.content !== undefined) {
+        setFileContentCache(prevC => ({ ...prevC, [relPath]: resp.data.content }))
+      } else {
+        setFileContentCache(prevC => ({ ...prevC, [relPath]: '_(empty or unreadable)_' }))
+      }
+    }).catch(() => {
+      setFileContentCache(prevC => ({ ...prevC, [relPath]: '_(failed to load)_' }))
+    })
+  }, [fileContentCache])
+
+  const relPathFromGlobalLink = useCallback((filepath: string, displayPath?: string): string | null => {
+    const normalized = filepath.replace(/\\/g, '/')
+    const candidates = [normalized, displayPath?.replace(/\\/g, '/')].filter((value): value is string => Boolean(value))
+    const slashMarker = '/learnings/'
+    for (const candidate of candidates) {
+      const slashIndex = candidate.indexOf(slashMarker)
+      if (slashIndex !== -1) {
+        const relPath = normalizeGlobalSkillRelPath(candidate.slice(slashIndex + slashMarker.length))
+        return relPath.split('/').includes('..') ? null : relPath
+      }
+    }
+
+    const marker = 'learnings/'
+    for (const candidate of candidates) {
+      const markerIndex = candidate.indexOf(marker)
+      if (markerIndex !== -1) {
+        const relPath = normalizeGlobalSkillRelPath(candidate.slice(markerIndex + marker.length))
+        return relPath.split('/').includes('..') ? null : relPath
+      }
+    }
+
+    for (const candidate of candidates) {
+      const relPath = normalizeGlobalSkillRelPath(candidate)
+      if (!relPath || relPath.split('/').includes('..')) continue
+      if (globalFiles.some(file => file.relPath === relPath)) {
+        return relPath
+      }
+    }
+
+    const relPath = normalizeGlobalSkillRelPath(normalized)
+    if (relPath && /^[^/]+\.(md|markdown)$/i.test(relPath)) {
+      return relPath.split('/').includes('..') ? null : relPath
+    }
+
+    return null
+  }, [globalFiles])
+
+  const resolveGlobalFileLink = useCallback((filepath: string, displayPath?: string): { relPath: string; absPath: string } | null => {
+    if (!workspacePath) return null
+
+    let relPath = relPathFromGlobalLink(filepath, displayPath)
+    if (!relPath || relPath === 'SKILL.md') return null
+
+    if (!globalFiles.some(file => file.relPath === relPath) && relPath.includes('/')) {
+      const basename = relPath.split('/').pop() || ''
+      const rootMatch = globalFiles.find(file => file.relPath === basename)
+      if (rootMatch) relPath = rootMatch.relPath
+    }
+
+    const existing = globalFiles.find(file => file.relPath === relPath)
+    const absPath = existing?.absPath || `${workspacePath}/learnings/${relPath}`
+    return { relPath, absPath }
+  }, [globalFiles, relPathFromGlobalLink, workspacePath])
+
+  const getGlobalLinkDisplayPath = useCallback((absPath: string): string => {
+    const normalized = absPath.replace(/\\/g, '/')
+    const marker = '/workspace-docs/'
+    const markerIndex = normalized.indexOf(marker)
+    if (markerIndex !== -1) return normalized.slice(markerIndex + marker.length)
+    return normalized
+  }, [])
+
+  const resolveGlobalFileForMarkdown = useCallback((filepath: string, displayPath: string): { filepath: string; displayPath: string } | null => {
+    const resolved = resolveGlobalFileLink(filepath, displayPath)
+    if (!resolved) return null
+    return { filepath: resolved.absPath, displayPath: getGlobalLinkDisplayPath(resolved.absPath) }
+  }, [getGlobalLinkDisplayPath, resolveGlobalFileLink])
+
+  const openGlobalFileFromLink = useCallback((filepath: string, displayPath?: string): boolean => {
+    const resolved = resolveGlobalFileLink(filepath, displayPath)
+    if (!resolved) return false
+
+    const { relPath, absPath } = resolved
+    const existing = globalFiles.find(file => file.relPath === relPath)
+
+    if (!existing) {
+      setGlobalFiles(prev => {
+        if (prev.some(file => file.relPath === relPath)) return prev
+        const name = relPath.split('/').pop() || relPath
+        const dir = relPath.includes('/') ? relPath.slice(0, relPath.lastIndexOf('/')) : ''
+        return [...prev, { name, relPath, absPath, dir }].sort((a, b) => {
+          if (a.dir === b.dir) return a.name.localeCompare(b.name)
+          if (a.dir === '') return -1
+          if (b.dir === '') return 1
+          return a.dir.localeCompare(b.dir)
+        })
+      })
+    }
+
+    setGlobalExpanded(true)
+    setExpandedFilePaths(prev => new Set(prev).add(relPath))
+    loadGlobalFileContent(relPath, absPath)
+    return true
+  }, [globalFiles, loadGlobalFileContent, resolveGlobalFileLink])
+
   // Lazy-load a single file under _global/ when its row is expanded.
   const toggleGlobalFile = async (relPath: string, absPath: string) => {
     setExpandedFilePaths(prev => {
@@ -410,17 +522,7 @@ export default function LearningsView({ workspacePath, plan }: LearningsViewProp
         next.delete(relPath)
       } else {
         next.add(relPath)
-        if (!fileContentCache[relPath]) {
-          agentApi.getPlannerFileContent(absPath).then(resp => {
-            if (resp.success && resp.data?.content !== undefined) {
-              setFileContentCache(prevC => ({ ...prevC, [relPath]: resp.data.content }))
-            } else {
-              setFileContentCache(prevC => ({ ...prevC, [relPath]: '_(empty or unreadable)_' }))
-            }
-          }).catch(() => {
-            setFileContentCache(prevC => ({ ...prevC, [relPath]: '_(failed to load)_' }))
-          })
-        }
+        loadGlobalFileContent(relPath, absPath)
       }
       return next
     })
@@ -780,7 +882,7 @@ export default function LearningsView({ workspacePath, plan }: LearningsViewProp
                     <div className="flex items-center gap-2 flex-wrap">
                       <h3 className="font-medium text-sm">Global Automation Skill</h3>
                       <span className="text-[10px] px-1.5 py-0.5 rounded bg-muted text-muted-foreground font-mono">
-                        learnings/_global/
+                        learnings/
                       </span>
                       {globalFiles.length > 0 && (
                         <span className="text-[10px] text-muted-foreground">
@@ -825,7 +927,9 @@ export default function LearningsView({ workspacePath, plan }: LearningsViewProp
                     <div className="prose prose-sm max-w-none dark:prose-invert mb-3">
                       <MarkdownRenderer
                         content={globalSkillContent}
-                        basePath={`${workspacePath}/learnings/_global/SKILL.md`}
+                        basePath={globalSkillBasePath || `${workspacePath}/learnings/_global/SKILL.md`}
+                        onWorkspaceLinkResolve={resolveGlobalFileForMarkdown}
+                        onWorkspaceLinkClick={openGlobalFileFromLink}
                         maxHeight="500px"
                         showScrollbar={true}
                       />
@@ -862,7 +966,7 @@ export default function LearningsView({ workspacePath, plan }: LearningsViewProp
                               <div className="space-y-1">
                                 {entries.map(file => {
                                   const isExpanded = expandedFilePaths.has(file.relPath)
-                                  const isMarkdown = file.name.endsWith('.md')
+                                  const isMarkdown = /\.(md|markdown)$/i.test(file.name)
                                   const cached = fileContentCache[file.relPath]
                                   const freshness = globalFileFreshness[file.relPath]
                                   return (
@@ -903,7 +1007,14 @@ export default function LearningsView({ workspacePath, plan }: LearningsViewProp
                                             </div>
                                           ) : isMarkdown ? (
                                             <div className="prose prose-sm max-w-none dark:prose-invert">
-                                              <MarkdownRenderer content={cached} basePath={`${workspacePath}/learnings/_global/${file.relPath}`} maxHeight="300px" showScrollbar={true} />
+                                              <MarkdownRenderer
+                                                content={cached}
+                                                basePath={file.absPath}
+                                                onWorkspaceLinkResolve={resolveGlobalFileForMarkdown}
+                                                onWorkspaceLinkClick={openGlobalFileFromLink}
+                                                maxHeight="300px"
+                                                showScrollbar={true}
+                                              />
                                             </div>
                                           ) : (
                                             <div className="relative rounded bg-slate-900 dark:bg-slate-950 overflow-hidden">

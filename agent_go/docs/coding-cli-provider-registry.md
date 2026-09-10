@@ -28,9 +28,14 @@ Never copy a provider string list into `agent_go`.
 
 ## In Progress
 
-- [ ] Muse (`muse-cli`) step-1 stub: apply `/tmp/muse-stub/*.patch` per
-  `/tmp/muse-stub/APPLY.md`, then work the P0 failure list (tmux smoke
-  first). Recon doc staged at `/tmp/MUSE_CLI_CODING_AGENT_CONTRACT.md`.
+- [ ] Muse (`muse-cli`) step-1 stub: provider-repo half APPLIED
+  (uncommitted working tree: contract entry, init, `musecli` adapter stub;
+  P0 gate red as designed — see below). `mcpagent` re-export DEFERRED:
+  it pins the published provider version, so the one-liner
+  (`/tmp/muse-stub/mcpagent.patch`) lands only with the provider version
+  bump, else `llm` breaks. Next: `fresh_launch` tmux smoke, then work the
+  P0 failure list. Recon doc staged at
+  `/tmp/MUSE_CLI_CODING_AGENT_CONTRACT.md`.
 - [ ] Muse (`muse-cli`) recon (done, see staged doc above) — see staged
   `MUSE_CLI_CODING_AGENT_CONTRACT.md` (to be moved to
   `multi-llm-provider-go/docs/`). Verified: `exec --json` event shape,

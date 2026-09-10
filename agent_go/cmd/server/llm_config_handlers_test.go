@@ -296,6 +296,30 @@ func TestPiCLIIsPublishedAsCodingAgent(t *testing.T) {
 	}
 }
 
+// TestIsPublishedLLMProviderAllowedDerivesFromRegistry pins the registry
+// migration: the gate must accept exactly the shared ValidateProvider set
+// (so new coding CLIs validate without an agent_go edit) while still
+// rejecting retired media providers, empty, and unknown names.
+func TestIsPublishedLLMProviderAllowedDerivesFromRegistry(t *testing.T) {
+	for _, provider := range []string{
+		"bedrock", "openai", "vertex", "anthropic", "azure",
+		"claude-code", "codex-cli", "cursor-cli", "pi-cli",
+		"openrouter", "z-ai", "kimi", "minimax", "minimax-coding-plan",
+	} {
+		if !isPublishedLLMProviderAllowed(provider) {
+			t.Errorf("%q should be allowed (shared registry provider)", provider)
+		}
+	}
+	for _, provider := range []string{"", "  ", "nope", "elevenlabs", "deepgram"} {
+		if isPublishedLLMProviderAllowed(provider) {
+			t.Errorf("%q should be rejected", provider)
+		}
+	}
+	if !isPublishedLLMProviderAllowed("  Claude-Code ") {
+		t.Error("provider matching should be case- and whitespace-insensitive")
+	}
+}
+
 // TestProviderManifestMarksDeprecatedAPIModelProviders is the regression for
 // the 2026-08-20 direct-API-transport deprecation
 // (docs/design/api_transport_vs_pi_tradeoff.md). Uses the real HTTP handler,

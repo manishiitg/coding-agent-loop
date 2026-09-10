@@ -68,14 +68,16 @@ func providerReplacementProvider(provider string) string {
 	return "pi-cli"
 }
 
+// isPublishedLLMProviderAllowed reports whether provider names a real
+// provider in the shared registry (multi-llm-provider-go ValidateProvider,
+// via mcpagent/llm). The allowed set is derived, not listed here, so new
+// coding CLIs validate automatically once their contract lands upstream.
+// Product offering/visibility stays governed by supportedLLMProviders (and
+// the SUPPORTED_LLM_PROVIDERS env override); deprecated API transports are
+// filtered separately by isDeprecatedLLMProvider.
 func isPublishedLLMProviderAllowed(provider string) bool {
-	switch strings.ToLower(strings.TrimSpace(provider)) {
-	case "bedrock", "openai", "vertex", "anthropic", "azure",
-		"claude-code", "codex-cli", "cursor-cli", "pi-cli":
-		return true
-	default:
-		return false
-	}
+	_, err := llm.ValidateProvider(strings.ToLower(strings.TrimSpace(provider)))
+	return err == nil
 }
 
 func fallbackPublishedLLMProviderAndModel() (string, string) {

@@ -606,3 +606,33 @@ func codingAgentTmuxStatusLineEvent(timestamp time.Time, sessionID, tmuxSession,
 		},
 	}
 }
+
+// TestIsCodingAgentTmuxSessionNameRecognizesEveryRegisteredProvider is the
+// completeness check that was missing: muse-cli was added as a 5th coding
+// CLI provider without this function (or gracefulCloseCodingCLITmuxByName,
+// or closeAllCodingCLIInteractiveSessionsForOwner) being updated to include
+// it, so its tmux sessions were invisible to orphan-session recovery.
+// Table-driven so adding a 6th provider without a row here is an obvious
+// gap on review, not a silent one.
+func TestIsCodingAgentTmuxSessionNameRecognizesEveryRegisteredProvider(t *testing.T) {
+	cases := []struct {
+		provider string
+		tmuxName string
+	}{
+		{"claude-code", "mlp-claude-code-abc123"},
+		{"codex-cli", "mlp-codex-cli-abc123"},
+		{"cursor-cli", "mlp-cursor-cli-abc123"},
+		{"pi-cli", "mlp-pi-cli-abc123"},
+		{"muse-cli", "mlp-muse-abc123"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.provider, func(t *testing.T) {
+			if !isCodingAgentTmuxSessionName(tc.tmuxName) {
+				t.Errorf("isCodingAgentTmuxSessionName(%q) = false, want true for registered provider %s", tc.tmuxName, tc.provider)
+			}
+		})
+	}
+	if isCodingAgentTmuxSessionName("some-unrelated-tmux-session") {
+		t.Error("expected an unrelated tmux session name to not be recognized as a coding-agent session")
+	}
+}

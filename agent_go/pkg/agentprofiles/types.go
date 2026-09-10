@@ -361,7 +361,7 @@ type Profile struct {
 	BuiltIn    bool             `json:"built_in" yaml:"built_in"`
 	OwnerID    string           `json:"owner_id,omitempty" yaml:"owner_id,omitempty"`
 	// Product names which product surface this builtin profile belongs to
-	// (e.g. "dominion", "video-studio", "finance") -- set by each product's
+	// (e.g. "dominion", "video-studio", "sparkquill") -- set by each product's
 	// registration call in server.go, never by the product package itself.
 	// Empty for non-builtin profiles and for the generic, profile-less
 	// AgentWorks chat path. Used only to key per-user product access checks;

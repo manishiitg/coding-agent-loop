@@ -75,10 +75,10 @@ func TestSystemPromptMatchesTheProductItDescribes(t *testing.T) {
 		!strings.Contains(text, "exist only through the MCP bridge") {
 		t.Fatal("the system prompt must require the bridge-only browser tool surface")
 	}
-	if !strings.Contains(strings.ToLower(text), "only creative product") || !strings.Contains(text, "longform-cinematic-video") {
+	if !strings.Contains(strings.ToLower(text), "long-form video") || !strings.Contains(text, "longform-cinematic-video") {
 		t.Fatal("the system prompt no longer defaults fresh productions to cinematic direction")
 	}
-	if strings.Contains(text, "The available stage plans are `infographic`") || !strings.Contains(text, "optional technique inside a cinematic production") {
+	if strings.Contains(text, "The available stage plans are `infographic`") || !strings.Contains(text, "complete animated or motion-graphics sequences") {
 		t.Fatal("the system prompt must keep HyperFrames inside cinematic production rather than exposing an infographic product")
 	}
 	for _, skill := range manifest.Profile.Skills {
@@ -111,7 +111,7 @@ func TestSystemPromptMatchesTheProductItDescribes(t *testing.T) {
 			t.Fatalf("the system prompt no longer requires skill-led direct chat: missing %q", contract)
 		}
 	}
-	for _, tool := range []string{"read_image", "search_web_llm", "photoreal cinematic video", "Instagram/Reel brief"} {
+	for _, tool := range []string{"read_image", "search_web_llm", "hand-drawn illustration", "Instagram/Reel brief"} {
 		if !strings.Contains(text, tool) {
 			t.Fatalf("the system prompt lost Video Studio's cinematic research contract: missing %q", tool)
 		}

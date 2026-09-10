@@ -9,8 +9,8 @@ flock -n 9 || { echo 'Another deployment is already running.' >&2; exit 1; }
 trap 'rm -rf "$JOB"' EXIT
 if ! command -v go >/dev/null; then
   echo 'Installing the pinned Go toolchain on the server'
-  curl --fail --silent --show-error https://go.dev/dl/go1.27.1.linux-amd64.tar.gz -o "$JOB/go.tar.gz"
-  curl --fail --silent --show-error 'https://go.dev/dl/?mode=json&include=all' -o "$JOB/go-releases.json"
+  curl --fail --location --silent --show-error https://go.dev/dl/go1.27.1.linux-amd64.tar.gz -o "$JOB/go.tar.gz"
+  curl --fail --location --silent --show-error 'https://go.dev/dl/?mode=json&include=all' -o "$JOB/go-releases.json"
   python3 - "$JOB" <<'PY'
 import hashlib,json,pathlib,sys
 p=pathlib.Path(sys.argv[1])

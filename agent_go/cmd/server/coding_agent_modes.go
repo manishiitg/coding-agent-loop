@@ -9,39 +9,45 @@ import (
 	"github.com/manishiitg/mcpagent/llm"
 )
 
-func codingAgentPersistentInteractiveFlags(provider string, allowPersistentInteractive, usesStructuredTransport bool) (claudeCode bool, codexCLI bool, cursorCLI bool, piCLI bool) {
+func codingAgentPersistentInteractiveFlags(provider string, allowPersistentInteractive, usesStructuredTransport bool) (claudeCode bool, codexCLI bool, cursorCLI bool, piCLI bool, museCLI bool) {
 	normalizedProvider := strings.ToLower(strings.TrimSpace(provider))
 	if usesStructuredTransport {
-		return false, false, false, false
+		return false, false, false, false, false
 	}
 	if !allowPersistentInteractive ||
 		!llm.IsTmuxCodingAgentProvider(llm.Provider(normalizedProvider), "") {
-		return false, false, false, false
+		return false, false, false, false, false
 	}
 
 	switch normalizedProvider {
 	case strings.ToLower(string(llm.ProviderClaudeCode)):
-		return true, false, false, false
+		return true, false, false, false, false
 	case strings.ToLower(string(llm.ProviderCodexCLI)):
-		return false, true, false, false
+		return false, true, false, false, false
 	case strings.ToLower(string(llm.ProviderCursorCLI)):
-		return false, false, true, false
+		return false, false, true, false, false
 	case strings.ToLower(string(llm.ProviderPiCLI)):
-		return false, false, false, true
+		return false, false, false, true, false
+	case strings.ToLower(string(llm.ProviderMuseCLI)):
+		return false, false, false, false, true
 	default:
-		return false, false, false, false
+		return false, false, false, false, false
 	}
 }
 
 // codingAgentUsesStructuredTransportForChat resolves the transport for a
-// user-facing chat. Cursor normally prefers its structured JSON protocol, but
-// the interactive Workflow Builder deliberately uses retained tmux so a user
-// can inspect the terminal and steer the active turn. Workflow execution does
-// not use this helper: steps and background execution remain force-structured
-// in applyWorkflowTransportToAgentConfig.
+// user-facing chat. Cursor and Muse normally prefer their structured JSON
+// protocols, but the interactive Workflow Builder deliberately uses retained
+// tmux so a user can inspect the terminal and steer the active turn.
+// Workflow execution does not use this helper: steps and background execution
+// remain force-structured in applyWorkflowTransportToAgentConfig.
 func codingAgentUsesStructuredTransportForChat(provider, policy string, isInteractiveWorkflowBuilder bool) bool {
-	if isInteractiveWorkflowBuilder && strings.EqualFold(strings.TrimSpace(provider), string(llm.ProviderCursorCLI)) {
-		return false
+	if isInteractiveWorkflowBuilder {
+		trimmed := strings.TrimSpace(provider)
+		if strings.EqualFold(trimmed, string(llm.ProviderCursorCLI)) ||
+			strings.EqualFold(trimmed, string(llm.ProviderMuseCLI)) {
+			return false
+		}
 	}
 	return codingAgentUsesStructuredTransportForPolicy(provider, policy)
 }
@@ -51,12 +57,11 @@ func codingAgentUsesStructuredTransportForChat(provider, policy string, isIntera
 // automation. Cursor conversations retain continuity with the provider's
 // native --resume session ID; they do not use a persistent tmux pane.
 //
-// Muse is structured unconditionally for now: its adapter runs the exec
-// --json lane only (GenerateContent never opens a tmux pane; the interactive
-// adapter is a later step), even though the provider contract declares the
-// tmux transport. Treating it as tmux would steer live input into a pane
-// that does not exist and wait on terminals that never come. Revisit when
-// the tmux lane lands.
+// Muse keeps the structured default outside the interactive builder: its
+// exec --json lane is the reliable one-shot path for workflows and
+// background execution. Interactive builder chats opt into the tmux lane via
+// codingAgentUsesStructuredTransportForChat above, where the adapter's
+// persistent pool owns a live pane the user can inspect and steer.
 func codingAgentUsesStructuredTransport(provider string) bool {
 	normalized := strings.ToLower(strings.TrimSpace(provider))
 	return normalized == strings.ToLower(string(llm.ProviderCursorCLI)) ||

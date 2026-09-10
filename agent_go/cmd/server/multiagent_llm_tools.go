@@ -593,6 +593,7 @@ func buildChatLLMCapabilities(keys *llm.ProviderAPIKeys, includeModels bool) []l
 		string(llm.ProviderCodexCLI),
 		string(llm.ProviderCursorCLI),
 		string(llm.ProviderPiCLI),
+		string(llm.ProviderMuseCLI),
 		string(llm.ProviderClaudeCode),
 		string(llm.ProviderOpenAI),
 		string(llm.ProviderAnthropic),

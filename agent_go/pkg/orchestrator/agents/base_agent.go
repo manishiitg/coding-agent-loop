@@ -259,6 +259,7 @@ func NewBaseAgent(
 		Coding: mcpagent.CodingRuntimeConfig{
 			PersistentClaudeCode: codingAgentKeepAlive, PersistentCodex: codingAgentKeepAlive,
 			PersistentCursor: codingAgentKeepAlive, PersistentPi: codingAgentKeepAlive,
+			PersistentMuse: codingAgentKeepAlive,
 			CLISecurityPolicy: cliSecurityPolicy,
 		},
 		MCP: mcpagent.MCPRuntimeConfig{SessionID: mcpSessionID, RuntimeOverrides: runtimeOverrides},

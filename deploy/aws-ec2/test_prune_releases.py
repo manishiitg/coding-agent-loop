@@ -34,6 +34,19 @@ class ReleaseCleanupTest(unittest.TestCase):
             self.assertTrue((releases / 'user-data').is_dir())
             self.assertTrue(all((releases / name).is_dir() for name in names[:4]))
 
+    def test_legacy_named_releases_and_running_scripts(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            app = Path(tmp).resolve()
+            for name in ('current-build', 'old-theme-fix', 'live-browser-panel'):
+                (app / 'releases' / name / 'frontend').mkdir(parents=True)
+                (app / 'releases' / name / 'frontend/index.html').touch()
+            (app / 'current').symlink_to(app / 'releases/current-build')
+            proc = app / 'proc'
+            (proc / '1').mkdir(parents=True)
+            (proc / '1/maps').write_text(f'000 000 000 {app}/releases/live-browser-panel/lib/browser.so')
+            self.assertEqual(module.prune(app, apply=True, proc=proc), ['old-theme-fix'])
+            self.assertTrue((app / 'releases/live-browser-panel').is_dir())
+
     def test_invalid_current_aborts_cleanup(self):
         with tempfile.TemporaryDirectory() as tmp:
             app = Path(tmp)

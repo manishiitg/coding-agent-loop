@@ -12,7 +12,7 @@ RELEASE_NAME = re.compile(r"[0-9a-f]{7,40}-[0-9]{14}\Z")
 
 def active_releases(releases, proc=Path('/proc')):
     referenced = set()
-    pattern = re.compile(re.escape(str(releases)) + r'/([0-9a-f]{7,40}-[0-9]{14})(?:/|\s|\x00|$)')
+    pattern = re.compile(re.escape(str(releases)) + r'''/([^/\s\x00"']+)(?:/|\s|\x00|$)''')
     for process in proc.iterdir():
         if not process.name.isdigit():
             continue
@@ -40,7 +40,13 @@ def prune(app, apply=False, proc=Path('/proc')):
         fcntl.flock(lock, fcntl.LOCK_EX)
         protected = active_releases(releases, proc) | {current.name}
         for release in sorted(releases.iterdir()):
-            if release.is_symlink() or not release.is_dir() or not RELEASE_NAME.fullmatch(release.name):
+            if release.is_symlink() or not release.is_dir():
+                continue
+            # Older manual deployments used descriptive names. Require an
+            # actual application artifact before treating those as releases.
+            if not (RELEASE_NAME.fullmatch(release.name) or
+                    (release / 'bin/video-studio-agent').is_file() or
+                    (release / 'frontend/index.html').is_file()):
                 continue
             if release.name in protected or (release / '.deploying').exists():
                 print('keep', release.name)

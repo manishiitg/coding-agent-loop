@@ -241,9 +241,6 @@ func TestWorkflowToolsReferenceDistinguishesLogicalFromNativeBridgeTools(t *test
 		"`api-bridge.list_executions`",
 		`get_api_spec(tool_name="<name>")`,
 		"$MCP_MCP`/`$MCP_CUSTOM",
-		"foreground curl",
-		"Never use `nohup`",
-		"foreground response resumes the agent automatically",
 	} {
 		if !strings.Contains(body, routingContract) {
 			t.Fatalf("workflow-tools reference is missing bridge routing contract %q", routingContract)

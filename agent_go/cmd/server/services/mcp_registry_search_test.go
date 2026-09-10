@@ -58,27 +58,55 @@ func TestSearchGitHubMCPRegistryPropagatesHTTPErrors(t *testing.T) {
 	}
 }
 
-func TestSmitheryConfiguredReflectsEnvVar(t *testing.T) {
+func TestSmitheryConfiguredIsAlwaysTrueViaDefaultFallback(t *testing.T) {
 	original := os.Getenv(smitheryAPIKeyEnv)
 	defer os.Setenv(smitheryAPIKeyEnv, original)
 
 	os.Unsetenv(smitheryAPIKeyEnv)
-	if SmitheryConfigured() {
-		t.Error("expected SmitheryConfigured() to be false when unset")
+	if !SmitheryConfigured() {
+		t.Error("expected SmitheryConfigured() to be true even when env var unset, via smitheryDefaultAPIKey fallback")
 	}
 	os.Setenv(smitheryAPIKeyEnv, "test-key")
 	if !SmitheryConfigured() {
-		t.Error("expected SmitheryConfigured() to be true when set")
+		t.Error("expected SmitheryConfigured() to be true when env var set")
 	}
 }
 
-func TestSearchSmitheryRegistryRequiresAPIKey(t *testing.T) {
+func TestSmitheryAPIKeyPrefersEnvVarOverDefault(t *testing.T) {
+	original := os.Getenv(smitheryAPIKeyEnv)
+	defer os.Setenv(smitheryAPIKeyEnv, original)
+
+	os.Unsetenv(smitheryAPIKeyEnv)
+	if got := smitheryAPIKey(); got != smitheryDefaultAPIKey {
+		t.Errorf("smitheryAPIKey() = %q, want default %q when env unset", got, smitheryDefaultAPIKey)
+	}
+
+	os.Setenv(smitheryAPIKeyEnv, "test-key")
+	if got := smitheryAPIKey(); got != "test-key" {
+		t.Errorf("smitheryAPIKey() = %q, want env override %q", got, "test-key")
+	}
+}
+
+func TestSearchSmitheryRegistryUsesDefaultKeyWhenEnvUnset(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get("Authorization"); got != "Bearer "+smitheryDefaultAPIKey {
+			t.Errorf("Authorization header = %q, want Bearer %s", got, smitheryDefaultAPIKey)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"servers":[]}`))
+	}))
+	defer server.Close()
+
+	originalURL := smitheryRegistryBaseURL
+	smitheryRegistryBaseURL = server.URL
+	defer func() { smitheryRegistryBaseURL = originalURL }()
+
 	original := os.Getenv(smitheryAPIKeyEnv)
 	os.Unsetenv(smitheryAPIKeyEnv)
 	defer os.Setenv(smitheryAPIKeyEnv, original)
 
-	if _, err := SearchSmitheryRegistry(context.Background(), "clickup", 5); err == nil {
-		t.Fatal("expected an error when SMITHERY_API_KEY is unset, got nil")
+	if _, err := SearchSmitheryRegistry(context.Background(), "clickup", 5); err != nil {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }
 
@@ -109,5 +137,65 @@ func TestSearchSmitheryRegistrySendsBearerTokenAndParsesResults(t *testing.T) {
 	}
 	if len(results) != 1 || results[0].Name != "ClickUp" || results[0].Source != "smithery" || !results[0].Remote {
 		t.Fatalf("unexpected results: %+v", results)
+	}
+	if results[0].Identifier != "clickup" {
+		t.Errorf("Identifier = %q, want qualifiedName %q", results[0].Identifier, "clickup")
+	}
+}
+
+func TestInspectSmitheryServerParsesToolsAndEscapesNamespacedName(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got, want := r.URL.Path, "/servers/node2flow/notion"; got != want {
+			t.Errorf("request path = %q, want %q", got, want)
+		}
+		if got := r.Header.Get("Authorization"); got != "Bearer test-key" {
+			t.Errorf("Authorization header = %q, want Bearer test-key", got)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{
+			"qualifiedName": "node2flow/notion",
+			"displayName": "Notion",
+			"description": "Notion integration",
+			"remote": true,
+			"deploymentUrl": "https://node2flow-notion.run.tools",
+			"tools": [
+				{"name": "search_pages", "description": "Search Notion pages.\nSupports filters.", "inputSchema": {"type": "object"}}
+			]
+		}`))
+	}))
+	defer server.Close()
+
+	originalURL := smitheryRegistryBaseURL
+	smitheryRegistryBaseURL = server.URL
+	defer func() { smitheryRegistryBaseURL = originalURL }()
+
+	originalKey := os.Getenv(smitheryAPIKeyEnv)
+	os.Setenv(smitheryAPIKeyEnv, "test-key")
+	defer os.Setenv(smitheryAPIKeyEnv, originalKey)
+
+	detail, err := InspectSmitheryServer(context.Background(), "node2flow/notion")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if detail.QualifiedName != "node2flow/notion" || detail.DisplayName != "Notion" || detail.DeploymentURL != "https://node2flow-notion.run.tools" {
+		t.Fatalf("unexpected detail: %+v", detail)
+	}
+	if len(detail.Tools) != 1 || detail.Tools[0].Name != "search_pages" {
+		t.Fatalf("unexpected tools: %+v", detail.Tools)
+	}
+}
+
+func TestInspectSmitheryServerPropagatesNotFound(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer server.Close()
+
+	originalURL := smitheryRegistryBaseURL
+	smitheryRegistryBaseURL = server.URL
+	defer func() { smitheryRegistryBaseURL = originalURL }()
+
+	if _, err := InspectSmitheryServer(context.Background(), "does-not-exist"); err == nil {
+		t.Fatal("expected an error for a 404 response, got nil")
 	}
 }

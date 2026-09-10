@@ -231,11 +231,41 @@ var (
 	pulseImpactVerdictValues        = []string{"improved", "unchanged", "regressed", "inconclusive", "confounded"}
 	pulseFixBundleStatusValues      = []string{"awaiting_evidence", "measuring", "assessed", "retired"}
 	pulseStrategyExperimentStatuses = []string{"proposed", "deferred", "approved", "running", "measuring", "blocked", "adopted", "rejected", "retired"}
-	pulseInterventionKindValues     = []string{"fix_bundle", "strategy_experiment"}
+	pulseInterventionKindValues     = []string{"fix_bundle", "strategy_experiment", "architecture_improvement"}
 	pulseImpactSourceTypeValues     = []string{"attempt", "experiment", "finding", "review"}
 	pulseExpectedDirectionValues    = []string{"increase", "decrease", "maintain"}
 	pulseAssessmentConfidenceValues = []string{"low", "medium", "high"}
 )
+
+// SyncPulseImprovementDecisionTx advances linked proposals in the same transaction
+// as the real user decision/application receipt. Approval alone never means applied.
+func SyncPulseImprovementDecisionTx(ctx context.Context, tx *sql.Tx, inputID, selected string, consumed bool, outcome, now string) error {
+	var exists int
+	if err := tx.QueryRowContext(ctx, "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='pulse_interventions'").Scan(&exists); err != nil || exists == 0 {
+		return err
+	}
+	status := ""
+	switch selected {
+	case "approve":
+		status = "approved"
+	case "reject":
+		status = "rejected"
+	case "defer":
+		status = "deferred"
+	}
+	if status == "" {
+		return nil
+	}
+	if consumed && selected == "approve" {
+		status = "running"
+	}
+	_, err := tx.ExecContext(ctx, `UPDATE pulse_interventions SET status=?,
+		provenance=CASE WHEN ? THEN CASE WHEN provenance='' THEN ? ELSE provenance || char(10) || ? END ELSE provenance END,
+		terminal_outcome=CASE WHEN ?='rejected' THEN 'User rejected proposal' ELSE terminal_outcome END,
+		updated_at=? WHERE human_input_id=? AND kind IN ('architecture_improvement','strategy_experiment')
+		AND status IN ('proposed','deferred','approved','blocked')`, status, consumed && selected == "approve", outcome, outcome, status, now, inputID)
+	return err
+}
 
 func validPulseImpactType(value string) bool {
 	return pulseValueAllowed(value, pulseImpactTypeValues)
@@ -245,8 +275,12 @@ func validPulseImpactVerdict(value string) bool {
 	return pulseValueAllowed(value, pulseImpactVerdictValues)
 }
 
+func isPlannedPulseImprovement(kind string) bool {
+	return kind == "strategy_experiment" || kind == "architecture_improvement"
+}
+
 func validPulseInterventionStatus(kind, value string) bool {
-	if kind == "strategy_experiment" {
+	if isPlannedPulseImprovement(kind) {
 		return pulseValueAllowed(value, pulseStrategyExperimentStatuses)
 	}
 	return pulseValueAllowed(value, pulseFixBundleStatusValues)
@@ -318,7 +352,7 @@ func RecordPulseImpactUpdate(ctx context.Context, workspacePath string, update P
 			intervention.MinimumEvidenceRuns = 1
 		}
 		if strings.TrimSpace(intervention.Status) == "" {
-			if intervention.Kind == "strategy_experiment" {
+			if isPlannedPulseImprovement(intervention.Kind) {
 				intervention.Status = "proposed"
 			} else {
 				intervention.Status = "awaiting_evidence"
@@ -326,12 +360,12 @@ func RecordPulseImpactUpdate(ctx context.Context, workspacePath string, update P
 		}
 		if !validPulseInterventionStatus(intervention.Kind, intervention.Status) {
 			allowed := pulseFixBundleStatusValues
-			if intervention.Kind == "strategy_experiment" {
+			if isPlannedPulseImprovement(intervention.Kind) {
 				allowed = pulseStrategyExperimentStatuses
 			}
 			return nil, fmt.Errorf("interventions[%d] has invalid status %q for %s. Must be one of: %s", index, intervention.Status, intervention.Kind, pulseAllowed(allowed))
 		}
-		if intervention.Kind == "strategy_experiment" {
+		if isPlannedPulseImprovement(intervention.Kind) {
 			intervention.InterferenceDomains = normalizedLifecycleStrings(intervention.InterferenceDomains)
 			if intervention.BaselineWindow == "" || intervention.Checkpoint == "" || len(normalizedLifecycleStrings(intervention.Guardrails)) == 0 || intervention.RollbackCondition == "" {
 				return nil, fmt.Errorf("strategy experiment interventions[%d] require baseline_window, checkpoint, at least one guardrail, and rollback_condition", index)
@@ -341,7 +375,7 @@ func RecordPulseImpactUpdate(ctx context.Context, workspacePath string, update P
 					return nil, fmt.Errorf("running strategy experiment interventions[%d] requires interference_domains so concurrent experiments can be checked for contamination", index)
 				}
 				rows, err := tx.QueryContext(ctx, `SELECT intervention_id, interference_domains_json FROM pulse_interventions
-					WHERE kind='strategy_experiment' AND intervention_id<>? AND status IN ('running', 'measuring')`, intervention.InterventionID)
+					WHERE kind IN ('strategy_experiment', 'architecture_improvement') AND intervention_id<>? AND status IN ('running', 'measuring')`, intervention.InterventionID)
 				if err != nil {
 					return nil, err
 				}
@@ -366,6 +400,30 @@ func RecordPulseImpactUpdate(ctx context.Context, workspacePath string, update P
 			}
 			if (intervention.Status == "adopted" || intervention.Status == "rejected" || intervention.Status == "retired") && intervention.TerminalOutcome == "" {
 				return nil, fmt.Errorf("strategy experiment interventions[%d] in terminal status %q require terminal_outcome", index, intervention.Status)
+			}
+		}
+		if isPlannedPulseImprovement(intervention.Kind) {
+			var previousStatus string
+			readErr := tx.QueryRowContext(ctx, "SELECT status FROM pulse_interventions WHERE intervention_id=?", intervention.InterventionID).Scan(&previousStatus)
+			if readErr != nil && readErr != sql.ErrNoRows {
+				return nil, readErr
+			}
+			if (previousStatus == "running" || previousStatus == "measuring" || previousStatus == "adopted") && (intervention.Status == "proposed" || intervention.Status == "approved" || intervention.Status == "deferred") {
+				return nil, fmt.Errorf("an applied improvement cannot be reset to %s; assess, block or retire it with evidence", intervention.Status)
+			}
+		}
+		if intervention.Kind == "architecture_improvement" {
+			if intervention.Status == "running" || intervention.Status == "measuring" || intervention.Status == "adopted" {
+				var status, selected string
+				if err := tx.QueryRowContext(ctx, "SELECT status, selected_option_id FROM report_human_inputs WHERE id=?", intervention.HumanInputID).Scan(&status, &selected); err != nil || status != "consumed" || selected != "approve" {
+					return nil, fmt.Errorf("architecture improvement requires a consumed approval/application receipt before %s", intervention.Status)
+				}
+			}
+			if intervention.Status == "adopted" {
+				var verdict string
+				if err := tx.QueryRowContext(ctx, "SELECT verdict FROM pulse_impact_assessments WHERE intervention_id=? ORDER BY assessed_at DESC, rowid DESC LIMIT 1", intervention.InterventionID).Scan(&verdict); err != nil || (verdict != "improved" && verdict != "unchanged") {
+					return nil, fmt.Errorf("architecture improvement adoption requires an outcome assessment")
+				}
 			}
 		}
 		if _, err := tx.ExecContext(ctx, `INSERT INTO pulse_interventions
@@ -499,7 +557,7 @@ func RecordPulseImpactUpdate(ctx context.Context, workspacePath string, update P
 		}
 		if _, err := tx.ExecContext(ctx, `UPDATE pulse_interventions
 			SET status=CASE
-				WHEN kind='strategy_experiment' AND status IN ('proposed', 'approved', 'running', 'measuring', 'blocked') THEN 'measuring'
+				WHEN kind IN ('strategy_experiment', 'architecture_improvement') AND status IN ('running', 'measuring') THEN 'measuring'
 				WHEN kind='fix_bundle' AND status!='retired' THEN 'assessed'
 				ELSE status
 			END, updated_at=?

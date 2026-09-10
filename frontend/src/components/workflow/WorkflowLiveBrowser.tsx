@@ -6,16 +6,21 @@ import { useWorkflowStore } from '../../stores/useWorkflowStore'
 import { useChatStore } from '../../stores/useChatStore'
 import { useCanWriteWorkflow } from '../../hooks/useCanWriteWorkflow'
 
+const PLAYWRIGHT_BROWSER = 'playwright-tests'
+
 type Recording = { recording: boolean; directory?: string; errors?: string[] }
 
-type BrowserSession = { browser_session: string; workflow_session: string; label?: string }
+type BrowserSession = { browser_session: string; workflow_session: string; label?: string; kind?: string; read_only?: string }
 type BrowserTab = { tabId: string; title: string; url: string; active: boolean }
 
 export default function WorkflowLiveBrowser({ workspacePath, toolbar }: { workspacePath: string | null; toolbar?: ReactNode }) {
   const [sessions, setSessions] = useState<BrowserSession[]>([])
   const [session, setSession] = useState('')
+  const [selection, setSelection] = useState('')
+  const selectedBrowser = useRef('')
   const [tabs, setTabs] = useState<BrowserTab[]>([])
   const [frame, setFrame] = useState('')
+  const [lastPlaywrightFrame, setLastPlaywrightFrame] = useState<{ workspace: string; session: string; frame: string } | null>(null)
   const [connected, setConnected] = useState(false)
   const [controlling, setControlling] = useState(false)
   const [error, setError] = useState('')
@@ -50,15 +55,30 @@ export default function WorkflowLiveBrowser({ workspacePath, toolbar }: { worksp
   const socket = useRef<WebSocket | null>(null)
   const viewport = useRef({ width: 1280, height: 720 })
   const screen = useRef<HTMLImageElement>(null)
-  const canControl = useCanWriteWorkflow(workspacePath)
+  const canWrite = useCanWriteWorkflow(workspacePath)
+  const followingPlaywright = selection === PLAYWRIGHT_BROWSER
+  const currentBrowser = sessions.find(item => item.browser_session === session)
+  const readOnly = followingPlaywright || currentBrowser?.read_only === 'true'
+  const canControl = canWrite && !readOnly
+  const retainedFrame = !connected && lastPlaywrightFrame?.workspace === workspacePath
+    && (followingPlaywright || session.startsWith('pw-'))
+    && (!session || session === lastPlaywrightFrame.session) ? lastPlaywrightFrame.frame : ''
+  const displayFrame = frame || retainedFrame
+  const completed = Boolean(retainedFrame && !session)
 
   useEffect(() => {
     let cancelled = false
     const controller = new AbortController()
     setSessions([])
     setSession('')
+    setLastPlaywrightFrame(null)
+    try { selectedBrowser.current = sessionStorage.getItem(`browser-selection:${workspacePath}`) || '' }
+    catch { selectedBrowser.current = '' }
+    setSelection(selectedBrowser.current)
+    let polling = false
     const poll = async () => {
-      if (!workspacePath) return
+      if (!workspacePath || polling) return
+      polling = true
       try {
         const { data } = await api.get<{ sessions: BrowserSession[] }>('/api/browser/live/sessions', {
           params: { workspace_path: workspacePath }, signal: controller.signal, timeout: 5000,
@@ -66,13 +86,25 @@ export default function WorkflowLiveBrowser({ workspacePath, toolbar }: { worksp
         if (cancelled) return
         const nextSessions = data.sessions ?? []
         setSessions(nextSessions)
-        setSession(current => nextSessions.some(item => item.browser_session === current) ? current : nextSessions[0]?.browser_session || '')
+        const tests = nextSessions.filter(item => item.kind === 'playwright')
+        let choice = selectedBrowser.current
+        if (choice && choice !== PLAYWRIGHT_BROWSER && !nextSessions.some(item => item.browser_session === choice)) {
+          choice = choice.startsWith('pw-') ? PLAYWRIGHT_BROWSER : ''
+        }
+        // Follow tests as they start, including when the always-present shared
+        // browser was selected by default. An explicit browser choice wins.
+        if (!choice && tests.length) choice = PLAYWRIGHT_BROWSER
+        selectedBrowser.current = choice
+        setSelection(choice)
+        setSession(current => choice === PLAYWRIGHT_BROWSER
+          ? tests.find(item => item.browser_session === current)?.browser_session || tests[0]?.browser_session || ''
+          : choice || nextSessions[0]?.browser_session || '')
       } catch {
         if (!cancelled) setError('Unable to load workflow browser sessions.')
-      }
+      } finally { polling = false }
     }
     void poll()
-    const timer = window.setInterval(() => { void poll() }, 5000)
+    const timer = window.setInterval(() => { void poll() }, 1000)
     return () => { cancelled = true; controller.abort(); window.clearInterval(timer) }
   }, [workspacePath])
 
@@ -80,6 +112,7 @@ export default function WorkflowLiveBrowser({ workspacePath, toolbar }: { worksp
     pendingTab.current = ''
     setFrame(''); setTabs([]); setConnected(false); setControlling(false); setError('')
     if (!session || !workspacePath) return
+    setLastPlaywrightFrame(previous => previous?.workspace === workspacePath && previous.session === session ? previous : null)
     const url = new URL(`${getApiBaseUrl() || window.location.origin}/api/browser/live/${encodeURIComponent(session)}/stream`)
     url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:'
     url.searchParams.set('workspace_path', workspacePath)
@@ -88,13 +121,17 @@ export default function WorkflowLiveBrowser({ workspacePath, toolbar }: { worksp
     const ws = new WebSocket(url)
     socket.current = ws
     let disposed = false
+    let receivedFrame = false
     ws.onopen = () => { if (!disposed) setConnected(true) }
     ws.onmessage = event => {
       if (disposed) return
       try {
         const message = JSON.parse(event.data)
         if (message.type === 'frame' && typeof message.data === 'string') {
-          setFrame(`data:image/${message.data.startsWith('iVBOR') ? 'png' : 'jpeg'};base64,${message.data}`)
+          const nextFrame = `data:image/${message.data.startsWith('iVBOR') ? 'png' : 'jpeg'};base64,${message.data}`
+          receivedFrame = true
+          setFrame(nextFrame)
+          if (session.startsWith('pw-')) setLastPlaywrightFrame({ workspace: workspacePath, session, frame: nextFrame })
           if (message.metadata?.deviceWidth > 0 && message.metadata?.deviceHeight > 0) {
             viewport.current = { width: message.metadata.deviceWidth, height: message.metadata.deviceHeight }
           }
@@ -115,7 +152,7 @@ export default function WorkflowLiveBrowser({ workspacePath, toolbar }: { worksp
       } catch { /* Ignore unsupported runtime messages. */ }
     }
     ws.onclose = () => {
-      if (!disposed) { setConnected(false); setControlling(false); setFrame(''); setError('Live view disconnected. Reconnect to continue watching. If it persists, check that the server has a streaming-capable agent-browser version.') }
+      if (!disposed) { setConnected(false); setControlling(false); setFrame(''); setError(session.startsWith('pw-') && receivedFrame ? '' : session.startsWith('pw-') ? 'Playwright test browser disconnected or finished. Running test browsers appear automatically.' : 'Live view disconnected. Reconnect to continue watching. If it persists, check that the server has a streaming-capable agent-browser version.') }
     }
     const heartbeat = window.setInterval(() => {
       if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'ping' }))
@@ -125,7 +162,7 @@ export default function WorkflowLiveBrowser({ workspacePath, toolbar }: { worksp
 
   useEffect(() => {
     setRecording({ recording: false })
-    if (!session || !workspacePath) return
+    if (!session || !workspacePath || readOnly) return
     let cancelled = false
     const poll = async () => {
       try {
@@ -136,7 +173,14 @@ export default function WorkflowLiveBrowser({ workspacePath, toolbar }: { worksp
     void poll()
     const timer = window.setInterval(() => { void poll() }, 10000)
     return () => { cancelled = true; window.clearInterval(timer) }
-  }, [session, workspacePath])
+  }, [session, workspacePath, readOnly])
+
+  function chooseBrowser(choice: string) {
+    selectedBrowser.current = choice
+    setSelection(choice)
+    try { sessionStorage.setItem(`browser-selection:${workspacePath}`, choice) } catch { /* Selection still works in memory. */ }
+    setSession(choice === PLAYWRIGHT_BROWSER ? sessions.find(item => item.kind === 'playwright')?.browser_session || '' : choice)
+  }
 
   async function toggleRecording() {
     if (recordingBusy) return
@@ -152,7 +196,7 @@ export default function WorkflowLiveBrowser({ workspacePath, toolbar }: { worksp
     } finally { setRecordingBusy(false) }
   }
 
-  const hasFrame = Boolean(frame)
+  const hasFrame = Boolean(displayFrame)
   useEffect(() => {
     const image = screen.current
     if (!image || !controlling) return
@@ -173,6 +217,7 @@ export default function WorkflowLiveBrowser({ workspacePath, toolbar }: { worksp
   }, [controlling, hasFrame])
 
   function send(message: Record<string, unknown>) {
+    if (message.type === 'take_control') chooseBrowser(session)
     if (socket.current?.readyState === WebSocket.OPEN) socket.current.send(JSON.stringify(message))
   }
   function point(clientX: number, clientY: number) {
@@ -199,10 +244,13 @@ export default function WorkflowLiveBrowser({ workspacePath, toolbar }: { worksp
     <section className="flex min-h-0 flex-1 flex-col overflow-hidden bg-background" aria-label="Live workflow browser">
       <div className="flex shrink-0 flex-wrap items-center gap-2 border-b border-border px-3 py-2">
         <h3 className="text-sm font-medium">Browser</h3>
-        <span className="text-xs text-muted-foreground" role="status">{controlling ? 'You have control' : connected ? 'Watching' : 'Not connected'}</span>
-        {sessions.length > 0 && <select className="min-w-0 max-w-64 rounded border border-border bg-background p-1 text-xs" aria-label="Browser session" value={session} onChange={event => setSession(event.target.value)}>
+        <span className="text-xs text-muted-foreground" role="status">{controlling ? 'You have control' : connected ? 'Watching' : completed ? 'Completed' : retainedFrame ? 'Disconnected' : 'Not connected'}</span>
+        <select className="min-w-0 max-w-64 rounded border border-border bg-background p-1 text-xs" aria-label="Browser session" value={selection || session} onChange={event => chooseBrowser(event.target.value)}>
+          {!selection && !session && <option value="" disabled>No managed browser</option>}
+          <option value={PLAYWRIGHT_BROWSER}>Playwright tests</option>
           {sessions.map((item, index) => <option key={item.browser_session} value={item.browser_session}>{item.label || `Browser ${index + 1} · ${item.workflow_session.slice(0, 8)}`}</option>)}
-        </select>}
+        </select>
+        {followingPlaywright && currentBrowser?.label && <span className="max-w-64 truncate text-xs text-muted-foreground" title={currentBrowser.label}>{currentBrowser.label}</span>}
         <div className="ml-auto flex gap-2">
           {session && !connected && <button className="rounded border border-border px-3 py-1 text-xs" onClick={() => setRetry(value => value + 1)}>Reconnect</button>}
           {connected && canControl && <button className="rounded border border-border px-3 py-1 text-xs" onClick={() => send({ type: controlling ? 'release_control' : 'take_control' })}>{controlling ? 'Return control to agent' : 'Take control'}</button>}
@@ -239,10 +287,10 @@ export default function WorkflowLiveBrowser({ workspacePath, toolbar }: { worksp
       {tabs.length > 0 && <div className="flex shrink-0 gap-1 overflow-x-auto border-b border-border px-2 py-1" aria-label="Browser tabs">
         {tabs.map(tab => <button key={tab.tabId} disabled={!canControl || tab.active} aria-pressed={tab.active} title={controlling ? tab.url : 'Switch tab and take control'} onClick={() => { if (controlling) send({ type: 'switch_tab', tab: tab.tabId }); else { pendingTab.current = tab.tabId; send({ type: 'take_control' }) } }} className={`max-w-52 shrink-0 truncate rounded px-3 py-1.5 text-xs ${tab.active ? 'bg-muted font-medium' : 'text-muted-foreground'} disabled:cursor-default`}>{tab.title || tab.url || tab.tabId}</button>)}
       </div>}
-      {frame ? <div className="relative min-h-0 flex-1 bg-muted/20"><div className={`absolute inset-0 ${fit === 'width' ? 'overflow-auto' : 'flex items-center justify-center'}`}>
-        <img ref={screen} src={frame} alt="Live server browser viewport" draggable={false} tabIndex={controlling ? 0 : -1} className={`block h-auto select-none outline-none focus:ring-2 focus:ring-inset focus:ring-ring ${fit === 'width' ? 'w-full max-w-none' : 'max-h-full w-auto max-w-full'}`} onMouseDown={event => mouse(event, 'mousePressed')} onMouseUp={event => mouse(event, 'mouseReleased')} onMouseMove={event => mouse(event, 'mouseMoved')} onContextMenu={event => event.preventDefault()} onKeyDown={event => keyboard(event, 'keyDown')} onKeyUp={event => keyboard(event, 'keyUp')} />
-      </div></div> : <div className="flex min-h-0 flex-1 items-center justify-center px-6 py-12 text-center text-sm text-muted-foreground">{session ? 'Waiting for the browser’s live view…' : 'When this workflow opens a managed browser, its live view will appear here.'}</div>}
-      <p className="shrink-0 border-t border-border px-3 py-1 text-[11px] text-muted-foreground">{session === 'shared-browser' ? 'Shared browser · everyone uses the same tabs and sign-ins. Coordinate before making changes.' : controlling ? 'Browser automation is paused while you interact. Return control or press Escape to let it continue.' : 'Live server browser · Take control to interact.'}</p>
+      {displayFrame ? <div className="relative min-h-0 flex-1 bg-muted/20"><div className={`absolute inset-0 ${fit === 'width' ? 'overflow-auto' : 'flex items-center justify-center'}`}>
+        <img ref={screen} src={displayFrame} alt={retainedFrame ? "Last Playwright test frame" : "Live server browser viewport"} draggable={false} tabIndex={controlling ? 0 : -1} className={`block h-auto select-none outline-none focus:ring-2 focus:ring-inset focus:ring-ring ${fit === 'width' ? 'w-full max-w-none' : 'max-h-full w-auto max-w-full'}`} onMouseDown={event => mouse(event, 'mousePressed')} onMouseUp={event => mouse(event, 'mouseReleased')} onMouseMove={event => mouse(event, 'mouseMoved')} onContextMenu={event => event.preventDefault()} onKeyDown={event => keyboard(event, 'keyDown')} onKeyUp={event => keyboard(event, 'keyUp')} />
+      </div>{retainedFrame && <span className="pointer-events-none absolute bottom-3 right-3 rounded bg-background/90 px-3 py-1 text-xs shadow">{completed ? 'Completed' : 'Disconnected'} · Last frame</span>}</div> : <div className="flex min-h-0 flex-1 items-center justify-center px-6 py-12 text-center text-sm text-muted-foreground">{session ? 'Waiting for the browser’s live view…' : followingPlaywright ? 'Waiting for a Playwright test. Tests using the AgentWorks fixture will appear here automatically.' : 'When this workflow opens a managed browser, its live view will appear here.'}</div>}
+      <p className="shrink-0 border-t border-border px-3 py-1 text-[11px] text-muted-foreground">{readOnly ? 'Playwright test · Watch-only. Recordings are saved by the test runner.' : session === 'shared-browser' ? 'Shared browser · everyone uses the same tabs and sign-ins. Coordinate before making changes.' : controlling ? 'Browser automation is paused while you interact. Return control or press Escape to let it continue.' : 'Live server browser · Take control to interact.'}</p>
     </section>
   )
 }

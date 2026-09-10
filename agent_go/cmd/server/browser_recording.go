@@ -26,6 +26,10 @@ func (api *StreamingAPI) handleBrowserRecording(w http.ResponseWriter, r *http.R
 		http.Error(w, "Browser session not found", 404)
 		return
 	}
+	if strings.HasPrefix(session, "pw-") {
+		http.Error(w, "Playwright recordings are managed by the test runner", http.StatusMethodNotAllowed)
+		return
+	}
 	var request struct {
 		Action string `json:"action"`
 	}

@@ -1,6 +1,6 @@
 import WorkflowLiveBrowser from './WorkflowLiveBrowser'
 import React, { useCallback, useEffect, useMemo, useState } from 'react'
-import { LoaderCircle, Save, Settings2, X } from 'lucide-react'
+import { LoaderCircle, RefreshCw, Save, Settings2, X } from 'lucide-react'
 import { ToolSelectionSection } from '../ToolSelectionSection'
 import SkillsManagerPanel from '../skills/SkillsManagerPanel'
 import { SecretSelectionSection } from '../secrets/SecretSelectionSection'
@@ -109,6 +109,20 @@ export default function WorkflowCapabilitiesPanel({ section, workspacePath }: Wo
   const [cdpError, setCdpError] = useState<string | null>(null)
   const [cdpChecking, setCdpChecking] = useState(false)
   const toolList = useMCPStore(state => state.toolList)
+  const refreshTools = useMCPStore(state => state.refreshTools)
+  const [refreshingServers, setRefreshingServers] = useState(false)
+  // A server installed from chat (install_mcp_server) has no way to push into
+  // this store directly -- ConnectorsBrowser only refetches on its own mount,
+  // so a panel left open through such an install would show it as missing
+  // until reopened. Lets the user force that same refetch without leaving.
+  const handleRefreshServers = useCallback(async () => {
+    setRefreshingServers(true)
+    try {
+      await refreshTools()
+    } finally {
+      setRefreshingServers(false)
+    }
+  }, [refreshTools])
   // "Available to select for this workflow" means connected -- you can't
   // meaningfully pick tools from a server nobody has authenticated yet. A
   // not-yet-connected server only belongs in the "Connect a new MCP server"
@@ -223,6 +237,18 @@ export default function WorkflowCapabilitiesPanel({ section, workspacePath }: Wo
           <h2 className="text-sm font-semibold text-foreground">{copy.title}</h2>
           <p className="mt-0.5 text-xs text-muted-foreground">{copy.description}</p>
         </div>
+        {section === 'mcp' && (
+          <button
+            type="button"
+            onClick={handleRefreshServers}
+            disabled={refreshingServers}
+            aria-label="Refresh connected MCP servers"
+            title="Refresh connected MCP servers"
+            className="flex shrink-0 items-center self-center rounded-md border border-border p-1.5 text-muted-foreground transition-colors hover:border-primary/40 hover:text-primary disabled:opacity-60"
+          >
+            <RefreshCw className={`h-3.5 w-3.5 ${refreshingServers ? 'animate-spin' : ''}`} />
+          </button>
+        )}
         {ASK_CHAT_MESSAGE[section] && (
           <AskAIButton workspacePath={workspacePath} message={ASK_CHAT_MESSAGE[section]!} className="flex shrink-0 items-center gap-1.5 self-center rounded-md border border-border px-2.5 py-1.5 text-xs font-medium text-muted-foreground transition-colors hover:border-primary/40 hover:text-primary" />
         )}

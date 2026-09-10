@@ -6,10 +6,14 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"time"
 )
 
 type PulseReviewReport struct {
+	Source     string `json:"source,omitempty"`
+	Content    string `json:"content,omitempty"`
+	Result     string `json:"result,omitempty"`
 	Module     string `json:"module"`
 	PulseRunID string `json:"pulse_run_id"`
 	Path       string `json:"path"`
@@ -89,7 +93,7 @@ func listPulseReviewReports(workspacePath, module string) ([]PulseReviewReport, 
 	if err != nil {
 		return nil, err
 	}
-	files := map[string]string{"technical-review.md": pulseModuleTechnicalReview, "strategic-review.md": pulseModuleStrategicReview, "plan-drift-review.md": "plan_drift_review"}
+	files := map[string]string{"technical-review.md": pulseModuleTechnicalReview, "architecture-review.md": pulseModuleArchitectureReview, "strategic-review.md": pulseModuleStrategicReview, "plan-drift-review.md": "plan_drift_review"}
 	out := []PulseReviewReport{}
 	for _, run := range runs {
 		if !run.IsDir() {
@@ -119,4 +123,25 @@ func listPulseReviewReports(workspacePath, module string) ([]PulseReviewReport, 
 		return out[i].UpdatedAt > out[j].UpdatedAt
 	})
 	return out, nil
+}
+
+// Display the same durable notes the next reviewer reads; no second report write.
+func pulseReportsWithNotes(reports []PulseReviewReport, notes []PulseReviewNote) []PulseReviewReport {
+	for _, note := range notes {
+		content := note.Conclusion
+		if note.Content != "" && note.Content != note.Conclusion {
+			content += "\n\n" + note.Content
+		}
+		if len(note.Evidence) > 0 {
+			content += "\n\n### Evidence\n\n- " + strings.Join(note.Evidence, "\n- ")
+		}
+		reports = append(reports, PulseReviewReport{Module: note.Module, PulseRunID: note.PulseRunID, UpdatedAt: note.UpdatedAt, Source: "review_note", Content: strings.TrimSpace(content), Result: note.Result})
+	}
+	sort.SliceStable(reports, func(i, j int) bool {
+		if reports[i].UpdatedAt == reports[j].UpdatedAt {
+			return reports[i].Source == "review_note" && reports[j].Source != "review_note"
+		}
+		return reports[i].UpdatedAt > reports[j].UpdatedAt
+	})
+	return reports
 }

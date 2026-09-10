@@ -3,7 +3,7 @@
 // existing workspace file API (same path as ReportViewer). All mutations happen
 // via the workshop builder's reorganize_knowledgebase tool — this popup never writes.
 
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
 import {
   ArrowLeft,
   Database,
@@ -20,6 +20,7 @@ import { MarkdownRenderer } from '../ui/MarkdownRenderer'
 
 interface KnowledgebaseViewProps {
   workspacePath: string | null
+  headerAction?: ReactNode
 }
 
 interface KBNotesTopic {
@@ -187,7 +188,7 @@ function formatFreshnessDate(timestamp: string): string {
   return `Fresh ${date.toLocaleDateString([], { month: 'short', day: 'numeric' })}`
 }
 
-export default function KnowledgebaseView({ workspacePath }: KnowledgebaseViewProps) {
+export default function KnowledgebaseView({ workspacePath, headerAction }: KnowledgebaseViewProps) {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [notesIndex, setNotesIndex] = useState<KBNotesIndex | null>(null)
@@ -279,6 +280,7 @@ export default function KnowledgebaseView({ workspacePath }: KnowledgebaseViewPr
             >
               <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
             </button>
+            {headerAction}
           </div>
         </div>
 

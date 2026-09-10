@@ -5,8 +5,8 @@
 | Coordination | Value |
 |---|---|
 | Assigned agent | Claude Code |
-| Ticket state | `implemented; adjacent wildcard predicates fixed; wildcard value_type=array fixed; runtime reverify` |
-| Last synchronized | `2026-08-29` |
+| Ticket state | `implemented; adjacent wildcard predicates fixed; wildcard value_type=array and empty-parent contracts fixed; runtime reverify` |
+| Last synchronized | `2026-09-09` |
 
 - **Priority:** P2 in the audit queue, but `severity: high` on the finding
   itself — a shared correctness bug in message-sequence/step pre-validation,
@@ -156,3 +156,23 @@ path's own array value is unaffected — still checked directly, not per-element
 (reports the failing index), passes when every match is an array, and a
 definite-path control case confirming single-value array checks are
 untouched. Full suite passes.
+
+
+## 2026-09-09 local Pulse audit follow-up
+
+Substack `PUL-F219BEE9` reproduced an adjacent shared validator defect:
+`engagements=[]` is valid under the parent array's `min_length=0`, but seven
+required `$.engagements[*].field` checks failed and caused three repair attempts.
+Removing per-item checks from successive workflow steps is not the platform fix.
+
+Implemented: expand an explicit array wildcard before JSONPath flattens matches.
+Every existing item must satisfy the nested contract, including `must_exist`;
+a present empty array has no items to violate it. An explicit parent
+`min_length=1` still rejects emptiness. Missing/wrong parent values and missing
+fields in populated arrays still fail required checks. Definite-path values,
+per-item array typing and all-match predicates retain their checks.
+
+Regression coverage: empty no-action outputs, parent cardinality, missing
+parents/fields, and a valid first item followed by a malformed item. Local tests
+pass; deployed workflow acceptance remains pending. Historical workflow schemas
+that removed checks are not silently rewritten by this platform change.

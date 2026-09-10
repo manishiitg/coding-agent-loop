@@ -2,6 +2,13 @@
 set -euo pipefail
 
 : "${RELEASE_DIR:?}"
+command -v python3 >/dev/null
+touch "$RELEASE_DIR/.deploying"
+cleanup_install() {
+  rm -f "$RELEASE_DIR/.deploying"
+  if [[ -n "${global_secrets_tmp:-}" ]]; then rm -f "$global_secrets_tmp"; fi
+}
+trap cleanup_install EXIT
 node "$RELEASE_DIR/check-release-assets.mjs" "$RELEASE_DIR/frontend"
 : "${DOMAIN_NAME:?}"
 : "${ACCESS_PASSWORD_B64:?}"
@@ -41,7 +48,6 @@ fi
 # explicitly supplies a replacement file. This file never enters a release
 # directory or app-readable path; it is merged only into root-owned .env.
 global_secrets_tmp="$(mktemp)"
-trap 'rm -f "$global_secrets_tmp"' EXIT
 if [ -n "${GLOBAL_SECRETS_FILE:-}" ]; then
   test -r "$GLOBAL_SECRETS_FILE"
   if grep -Ev '^[[:space:]]*(#|$)|^GLOBAL_SECRET_[A-Z0-9_]+=.+$' "$GLOBAL_SECRETS_FILE" | grep -q .; then
@@ -84,3 +90,7 @@ docker compose up -d --force-recreate
 systemctl daemon-reload
 systemctl enable video-studio-workspace video-studio-agent video-studio-gateway
 systemctl restart video-studio-workspace video-studio-agent video-studio-gateway
+systemctl is-active --quiet video-studio-workspace video-studio-agent video-studio-gateway
+rm -f "$RELEASE_DIR/.deploying"
+python3 "$RELEASE_DIR/prune-releases.py" /opt/video-studio --apply \
+  --health-url http://127.0.0.1:8000/api/health --health-url http://127.0.0.1:8080/health

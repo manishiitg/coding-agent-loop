@@ -6,6 +6,7 @@ import PublishPopupBody from '../backup-publish/PublishPopupBody'
 interface WorkflowPublishViewProps {
   workspacePath: string | null
   onStateLoaded?: (state: string) => void
+  headerAction?: React.ReactNode
 }
 
 const FALLBACK_SUPPORTED: WorkflowPublishStrategyInfo[] = [

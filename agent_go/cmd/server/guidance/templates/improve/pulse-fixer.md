@@ -31,9 +31,9 @@ selected issue's proof boundary.{{end}}
    was an approved candidate, it is the first repair bundle. Otherwise select a
    bounded repair batch from this index, then request `detail="full"` only for
    its exact issue IDs. Read their typed review records, attempts, verification,
-   and the current Technical Review checkpoint when this run has one. Manual
+   and the relevant SQLite review notes when this run has one. Manual
    slash-command sequences may have only typed review state and no Markdown
-   checkpoint; do not treat that absence as missing review. The compact backlog's `issues` feed
+   review note; do not treat that absence as missing review. The compact backlog's `issues` feed
    is the ordinary repair queue. Workflow observations are evidence
    from reviewers and must not be repaired unless a reviewer already promoted them.
 4. Select a bounded canonical **repair batch**. Start with the highest-value

@@ -9,8 +9,8 @@ dependencies:
     - id: hyperframes-skills
       installer: skills-cli
       source: heygen-com/hyperframes
-      # Keep HyperFrames as a cinematic production technique for exact UI,
-      # titles, diagrams, overlays, transitions, and compositing.
+      # HyperFrames supports complete animated sequences, illustrated inserts,
+      # exact UI, titles, diagrams, overlays, transitions, and compositing.
       install:
         - hyperframes
         - hyperframes-core
@@ -275,9 +275,9 @@ profile:
       mode: keyed
       key_type: project
     capabilities:
-      # Structured turns are one-shot processes. Follow-ups queue at a safe
-      # boundary; they are never typed into a live terminal prompt.
-      live_input: disabled
+      # Use the shared live-input path when the resolved provider supports it.
+      # Structured providers retain the shared queued-message fallback.
+      live_input: preferred
       raw_terminal: disabled
       warm_session: preferred
       workflow_execution: required
@@ -315,7 +315,7 @@ ui:
   streaming: structured
 
 workflows:
-  enabled: [shortform, longform, quality]
+  enabled: [longform, shortform, quality]
   selected_skills:
     - video-look-sound
     - cinematic-visual-development

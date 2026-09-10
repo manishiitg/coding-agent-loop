@@ -2,6 +2,11 @@
 
 # PLAT-217 — the all-or-nothing review-persist failure mode described in the finding no longer exists; the current architecture is structurally per-finding
 
+> **2026-09-10 update:** [PLAT-306](plat-306.md) supersedes mandatory Markdown
+> checkpoint/report maintenance with optional SQLite review notes on the existing
+> result tool. Typed lifecycle records remain authoritative; historical design
+> discussion below is retained. No reporting-only turn is required.
+
 | Coordination | Value |
 |---|---|
 | Assigned agent | unassigned |

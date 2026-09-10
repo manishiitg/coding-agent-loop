@@ -1,4 +1,24 @@
 **Saved-code paths:** Read `workflow.json.code_layout_version` first. In this reference, `<script-dir>` means `code/<step-id>` for version 1, or `learnings/<step-id>` for absent/zero (legacy). Resolve the placeholder before using a path; never infer the version from folders or migrate an existing workflow implicitly. Version 1 executes and repairs canonical source directly, with shared helpers under `WORKFLOW_CODE_ROOT`; only legacy workflows copy code into runs and save it back.
+## Minimal recording
+
+Spend the review on investigation and useful action. Read
+`get_pulse_state(view="review_notes", module="plan_drift_review")` once for relevant
+recent reasoning (default latest 3); use pulse_run_id only for a specific run.
+Read compact findings and fetch detail only for relevant IDs. Do not repeatedly
+scan history. Existing decisions, findings and impact records remain authoritative.
+Record those as the work happens; do not defer all findings to a final report.
+Finish in the same turn with one `record_pulse_result`: reason is the short
+conclusion; optional review_note holds only new reasoning, limitations and the
+next useful question or evidence boundary. Evidence and existing records need
+not be copied into the note. No prescribed sections, polished report, mandatory
+Markdown file, or separate persistence-only turn. A no-change conclusion is valid.
+For a long investigation only, `record_pulse_result(note_only=true, result="running",
+reason="Brief progress", review_note="Context worth retaining", module="plan_drift_review")`
+can save working context without completing the review. This is optional, not
+per-phase bookkeeping. The runtime owns timestamps and interruption tracking.
+Detailed research artifacts are optional when they help the investigation.
+Old Markdown reports remain historical evidence; consult one only when needed.
+
 
 ## Plan drift review
 
@@ -158,6 +178,13 @@ Then inspect only the dependencies the actual change could affect:
 - **Descriptions, saved code, skills, and KB:** identify stale instructions or
   inaccessible required guidance caused by the changed contract. Do not redesign
   learning ownership merely because another access mode seems preferable.
+  When an affected step uses browser tests or promises live visibility, read
+  `references/playwright-scripted.md`. Check the step description, accessible skill
+  bundle, actual test import/custom fixture, and installed runtime together. A plain
+  Playwright/Python test is not evidence of panel registration; stale guidance must
+  not promise it or apply managed agent-browser control/capture to a test session.
+  Keep method details in that reference and preserve explicit language/runner choices;
+  do not migrate an unaffected suite or deploy missing support as a drift repair.
 - **Schedules and downstream handoffs:** trace changed IDs, routes, inputs,
   outputs, and intended order. Preserve delivery and approval boundaries.
 
@@ -317,15 +344,13 @@ partial update.
 
 ### 6. Close out
 
-Update the run-scoped checkpoint (`runs/pulse/<run>/plan-drift-review.md`)
-with a compact per-step summary before ending. Call `record_pulse_result`
-exactly once for the terminal `plan_drift_review` module result, with a
-`finding_dispositions[]` entry for every finding filed this turn — including
+Finish with one `record_pulse_result(module="plan_drift_review")`; use reason for the conclusion and optional review_note only for new reasoning or limitations. Do not duplicate the per-step checks or maintain a Markdown checkpoint.
+Include a `finding_dispositions[]` entry for every finding filed this turn:
 `changed_unverified` for an applied fix without immediate proof (closed, not
-awaiting a run), or `disposition="external_action_required"` (with `reason_code`,
-`external_owner`, `reopen_condition`) for step 4's platform-owned findings.
-Do not render HTML, back up, publish, or notify — those belong to the
-finalizer stage.
+awaiting a run), or `external_action_required` with reason_code, external_owner
+and reopen_condition for platform-owned findings. Keep the existing repair-proof
+requirements. Do not render HTML, back up, publish or notify; the finalizer owns those.
+
 
 A child still running without a checkpoint or receipt is not a failed review.
 Wait for its terminal result before judging it. If a premature failure was

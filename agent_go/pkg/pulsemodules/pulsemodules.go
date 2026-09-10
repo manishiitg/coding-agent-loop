@@ -39,9 +39,10 @@ type Module struct {
 // Canonical module IDs. Consumers that need compile-time constants must alias
 // these values rather than restating their string literals.
 const (
-	TechnicalReviewID = "technical_review"
-	StrategicReviewID = "strategic_review"
-	PlanDriftReviewID = "plan_drift_review"
+	TechnicalReviewID    = "technical_review"
+	ArchitectureReviewID = "architecture_review"
+	StrategicReviewID    = "strategic_review"
+	PlanDriftReviewID    = "plan_drift_review"
 
 	// Legacy review IDs are accepted only at persistence/read boundaries so
 	// existing workflow databases can be migrated into the canonical review
@@ -74,6 +75,12 @@ var All = []Module{
 			"correctness_review", "ops", "operations",
 			LegacyWorkflowReviewID, LegacyLLMOpsReviewID,
 		},
+	},
+	{
+		ID:        ArchitectureReviewID,
+		Label:     "Architecture review",
+		StepLabel: "architecture-review",
+		Aliases:   []string{"architecture", "workflow_improvement"},
 	},
 	{
 		// Strategic Review owns both causal criticism of the current strategy

@@ -67,6 +67,11 @@ func MaterializeStepExecutionReferenceSkill(signals StepExecutionSignals) *llmty
 			"this step's job and are not included. Read the single matching file under `references/`.",
 		Render: renderReferenceKind,
 		Select: func(kind string, meta kindMeta) bool {
+			// Saved Python harnesses also need the compatibility/lifecycle contract,
+			// even when the agent invokes them through the scripted runner.
+			if kind == "playwright-scripted" && signals.ScriptedStep {
+				return true
+			}
 			if qualifies, ok := stepExecutionSignalKinds[kind]; ok {
 				return qualifies(signals)
 			}

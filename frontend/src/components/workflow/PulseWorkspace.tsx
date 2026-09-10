@@ -1,3 +1,4 @@
+import { PulseImprovements } from './PulseImprovements'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   CheckCircle2,
@@ -297,6 +298,7 @@ export function PulseWorkspace({
       <SoulViewer workspacePath={workspacePath} pulseSummary />
 
       <ReportHumanInputPanel workspacePath={workspacePath} contentMode="all" providedImpact={impact} />
+      <PulseImprovements impact={impact} />
 
       <PulseReviewOverview moduleStates={moduleStates} coverage={mergePulseReviewCoverage(coverage, reviewFocuses, reviewFocusSelections)}
         audits={audits} reports={reports} findings={findings} moduleFilter={moduleFilter} reviewFocusSelections={reviewFocusSelections}

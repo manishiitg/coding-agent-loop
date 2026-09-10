@@ -1,3 +1,4 @@
+import { buildTranscriptItems } from '../../shared/session/transcript/terminalEventTranscript'
 import { describe, expect, it } from 'vitest'
 import { intermediateUpdateFromTranscriptChunk } from './transcriptChunkUpdates'
 import type { PollingEvent } from '../../shared/session/types'
@@ -36,4 +37,16 @@ describe('intermediateUpdateFromTranscriptChunk', () => {
     expect(intermediateUpdateFromTranscriptChunk(chunk({ content: '   ', source: 'transcript', is_delta: false }))).toBeNull()
     expect(intermediateUpdateFromTranscriptChunk(chunk({ content: 'hi' }))).toBeNull()
   })
+})
+
+// The shared renderer is used by both AgentWorks and product chat surfaces.
+it('keeps both SSE narration rows across a follow-up and final completion', () => {
+  const first = intermediateUpdateFromTranscriptChunk(chunk({ content: 'Checking which Simulator checks we cover.', source: 'transcript' }, 'first'))!
+  const second = intermediateUpdateFromTranscriptChunk(chunk({ content: 'Checking the remaining Simulator points.', source: 'transcript' }, 'second'))!
+  const followup = { id: 'steer', type: 'user_message', data: { data: { content: 'all 20 points' } } } as PollingEvent
+  const final = { id: 'done', type: 'unified_completion', data: { data: { final_result: 'Here is the Simulator coverage.', status: 'completed' } } } as PollingEvent
+  const visible = (events: PollingEvent[]) => buildTranscriptItems(events).flatMap(item => item.kind === 'event' ? [item.event.id] : [])
+  expect(visible([first])).toContain('first-update')
+  expect(visible([first, followup, second])).toEqual(['first-update', 'steer', 'second-update'])
+  expect(visible([first, followup, second, final])).toEqual(['first-update', 'steer', 'second-update', 'done'])
 })

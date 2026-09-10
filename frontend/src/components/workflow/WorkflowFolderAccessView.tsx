@@ -7,6 +7,7 @@ import { READ_ONLY_TITLE, useCanWriteWorkflow } from '../../hooks/useCanWriteWor
 
 interface WorkflowFolderAccessViewProps {
   workspacePath: string | null
+  headerAction?: React.ReactNode
 }
 
 function aliasFromPath(path: string): string {
@@ -36,7 +37,7 @@ function requestReasonFor(request: WorkflowFolderAccessRequest): string {
   return legacyFolderRequest(request)?.reason || request.reason
 }
 
-export default function WorkflowFolderAccessView({ workspacePath }: WorkflowFolderAccessViewProps) {
+export default function WorkflowFolderAccessView({ workspacePath, headerAction }: WorkflowFolderAccessViewProps) {
   const canWriteWorkflow = useCanWriteWorkflow(workspacePath)
   const [grants, setGrants] = useState<WorkflowFolderGrant[]>([])
   const [requests, setRequests] = useState<WorkflowFolderAccessRequest[]>([])
@@ -170,7 +171,10 @@ export default function WorkflowFolderAccessView({ workspacePath }: WorkflowFold
               <h2 className="text-base font-semibold text-foreground">Attached folders</h2>
               <p className="mt-1 text-xs text-muted-foreground">Give this workflow explicit access to a folder outside workspace-docs.</p>
             </div>
-            {!canWriteWorkflow && <span className="shrink-0 rounded-full border border-amber-500/30 bg-amber-500/10 px-2 py-1 text-[11px] font-medium text-amber-700 dark:text-amber-300">Read-only</span>}
+            <div className="flex shrink-0 items-center gap-2">
+              {!canWriteWorkflow && <span className="rounded-full border border-amber-500/30 bg-amber-500/10 px-2 py-1 text-[11px] font-medium text-amber-700 dark:text-amber-300">Read-only</span>}
+              {headerAction}
+            </div>
           </div>
 
           <div className="min-h-0 flex-1 space-y-5 overflow-y-auto p-5">

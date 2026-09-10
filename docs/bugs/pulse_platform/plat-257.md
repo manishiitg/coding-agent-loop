@@ -60,3 +60,29 @@ both stores.
 
 Runtime reverify: after deployment, inspect one ordinary step, one todo or
 message-sequence step, and one evaluation run's effective Folder Guard.
+
+
+## 2026-09-09 local Pulse audit follow-up
+
+Retain explicit builder acceptance cases for generated guidance coherence:
+DB guidance must name accessible managed tools/read surfaces; reusable learnings
+must not contradict plan execution environment or variable names. Sales Outreach
+had a `GOG_HOME` fallback forbidden by its plan plus `$GOG_HOME` versus
+`$VAR_GOG_HOME` confusion; its workflow repair was subsequently verified across
+three normal runs (`PUL-93DC16E9`). That repair is not proof that the builder now
+prevents every equivalent contradiction. Validate knowledgebase/learnings against
+the executable contract at authoring/change time, not on every healthy Pulse tick.
+
+LinkedIn `PUL-D3AD004C` is another acceptance case: a verifier deleted a successfully
+posted comment's DB receipt after relying on an earlier failed snapshot. Require
+same-execution side-effect evidence before destructive reconciliation. This is
+not yet reduced to a shared deterministic platform-code reproduction; do not
+mark that prevention complete from the workflow-level prompt repair alone.
+
+
+## 2026-09-10 improvement-system dependency
+
+[PLAT-305](plat-305.md) implements the first review/scheduling/research/lifecycle
+release. This ticket's remaining foundation acceptance is still required and is
+not closed by adding Architecture or outcome tracking. Historical evidence and
+legacy workflow behavior remain unchanged by that release.

@@ -109,7 +109,7 @@ func TestShortformStagesPutDirectionAndMeasuredNarrationBeforeShots(t *testing.T
 	}
 	anchor := shortformPipeline.Stages[index["shortform-anchor-shot"]].Description
 	next := shortformPipeline.Stages[index["shortform-next-shot"]].Description
-	for _, required := range []string{"exactly one approved anchor clip", "Do not batch the remaining shots", "HyperFrames insert", "photoreal footage"} {
+	for _, required := range []string{"exactly one approved anchor clip", "Do not batch the remaining shots", "HyperFrames insert", "user-approved visual style"} {
 		if !strings.Contains(anchor, required) {
 			t.Fatalf("short-form anchor generation is missing rule %q", required)
 		}
@@ -343,7 +343,7 @@ func TestShotCreationUsesAnchorAndReusableNextShotRecipes(t *testing.T) {
 // Both cinematic pipelines retain real footage generation while permitting
 // HyperFrames only in the planning, creation, assembly, and QA steps where an
 // explicitly planned deterministic insert can be made and verified.
-func TestCinematicPipelinesScopeHyperFramesToPlannedInserts(t *testing.T) {
+func TestProductionPipelinesSupportApprovedAnimatedSequences(t *testing.T) {
 	generationSkills := map[string]bool{}
 	for _, name := range []string{"fal-ai", "google-ai", "seeddance-api", "longform-cinematic-video", "video-model-selection", "video-cinematography", "video-storytelling"} {
 		generationSkills[name] = true
@@ -377,7 +377,7 @@ func TestCinematicPipelinesScopeHyperFramesToPlannedInserts(t *testing.T) {
 				shotlist = stage.Description
 			}
 		}
-		for _, marker := range []string{"HyperFrames insert", "never use it"} {
+		for _, marker := range []string{"HyperFrames insert", "approved illustrated or animated sequences", "Real people and realistic characters are not required"} {
 			if !strings.Contains(shotlist, marker) {
 				t.Fatalf("%s shot list is missing %q", pipeline.ID, marker)
 			}
@@ -474,9 +474,8 @@ func TestNarrationIsNotLockedToOneProvider(t *testing.T) {
 	}
 }
 
-// Video Studio exposes cinematic production only. Short-form is the default;
-// HyperFrames is a technique inside it, never a separate route.
-func TestCinematicPipelinesAreTheOnlyCreativeRoutes(t *testing.T) {
+// Long-form is the default; visual styles share the same production routes.
+func TestLongformIsTheDefaultProductionRoute(t *testing.T) {
 	plan := planForAll(pipelineRegistry)
 	steps := plan["steps"].([]map[string]interface{})
 	if len(steps) == 0 || steps[0]["type"] != "routing" {
@@ -499,10 +498,10 @@ func TestCinematicPipelinesAreTheOnlyCreativeRoutes(t *testing.T) {
 	if routed["infographic"] != "" {
 		t.Fatalf("product infographic remains exposed as a route: %+v", routed)
 	}
-	if got := steps[0]["default_route_id"]; got != "shortform" {
-		t.Fatalf("default route = %v, want shortform", got)
+	if got := steps[0]["default_route_id"]; got != "longform" {
+		t.Fatalf("default route = %v, want longform", got)
 	}
-	if DefaultPipeline().ID != "shortform" {
-		t.Fatalf("DefaultPipeline() = %s, want shortform", DefaultPipeline().ID)
+	if DefaultPipeline().ID != "longform" {
+		t.Fatalf("DefaultPipeline() = %s, want longform", DefaultPipeline().ID)
 	}
 }

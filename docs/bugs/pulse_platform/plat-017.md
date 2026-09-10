@@ -157,6 +157,10 @@ Extend acceptance with a fixture that completes the provider/workflow turn,
 fails the final workspace projection, restarts the server, and proves every
 projection converges on the original terminal result and completion time.
 
+> **2026-09-10:** [PLAT-306](plat-306.md) removes mandatory checkpoint files.
+> Runtime still tracks incomplete runs, using source run identity and saved SQLite
+> notes; legacy checkpoint paths remain optional historical references.
+
 ## Interrupted review recovery — 2026-09-04 (RTS Latency)
 
 RTS Latency exposed a related but distinct receipt-loss path. Its Strategic

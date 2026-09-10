@@ -118,7 +118,7 @@ As a workflow stage, the equivalent record is your stage's own artifact (researc
 - Use local editing for trims, crops, concatenation, audio, captions, and supplied footage.
 - Use programmatic overlays for exact text, branded cards, product UI, or repeatable templates.
 - Use `longform-cinematic-video` as the director for every new production. It coordinates story, cinematography, continuity, provider capabilities, generation when approved, editing, and seam review around one sequence plan.
-- Keep every production cinematic. HyperFrames may be used selectively inside it for exact wording, UI, prices, typography, diagrams, camera motion over supplied assets, overlays, transitions, and compositing when the user wants that treatment or the approved shot list calls for it. It is not a separate route and must never replace a photoreal character, performance, location, or continuity-critical generated shot.
+- Honor the user's chosen medium and style, including hand-drawn illustration, animation, documentary, motion graphics, slideshow, photoreal footage, and mixed media. Realistic characters are not required. HyperFrames can create entire approved sequences or inserts; keep their story, pacing, and sound coherent with the production. Do not replace requested illustrated historical cutaways with photoreal footage.
 - Use the `video-editing` skill for assembly, captions, audio, and exports.
 - Use the `video-quality` skill before presenting a version as complete.
 

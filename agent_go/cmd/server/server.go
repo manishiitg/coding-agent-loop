@@ -27,10 +27,10 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 
+	"github.com/manishiitg/coding-agent-loop/agent_go/internal/agentworksproduct"
 	"github.com/manishiitg/coding-agent-loop/agent_go/internal/cliupdate"
 	"github.com/manishiitg/coding-agent-loop/agent_go/internal/dominionproduct"
 	"github.com/manishiitg/coding-agent-loop/agent_go/internal/events"
-	"github.com/manishiitg/coding-agent-loop/agent_go/internal/financeproduct"
 	"github.com/manishiitg/coding-agent-loop/agent_go/internal/inspector"
 	"github.com/manishiitg/coding-agent-loop/agent_go/internal/platformtools"
 	"github.com/manishiitg/coding-agent-loop/agent_go/internal/sparkquillproduct"
@@ -134,7 +134,7 @@ func productEnabled(product string) bool {
 }
 
 // isSingleProductServerDeployment reports whether this server instance is
-// dedicated to exactly one product surface (Video Studio, Dominion, Finance)
+// dedicated to exactly one product surface (Video Studio, Dominion, SparkQuill)
 // via AGENT_PRODUCTS, as opposed to the shared desktop/multi-product server
 // where AGENT_PRODUCTS is unset. Only a genuinely dedicated deployment is
 // eligible for the missing-Claude-Code-token refusal in handleQuery: on the
@@ -335,6 +335,7 @@ type ActiveSessionInfo struct {
 
 // StreamingAPI represents the streaming API server
 type StreamingAPI struct {
+	playwrightLive      playwrightLiveRegistry
 	accessTokenSessions accessTokenSessionRegistry
 	uiControlOnce       sync.Once
 	uiControl           *uiControlBroker
@@ -1782,21 +1783,6 @@ func runServer(cmd *cobra.Command, args []string) {
 			log.Fatalf("Failed to register Video Studio agent profile runtime: %v", err)
 		}
 	}
-	if productEnabled("finance") {
-		if err := financeproduct.RegisterProductSkills(); err != nil {
-			log.Fatalf("Failed to register Finance skills: %v", err)
-		}
-		for _, profile := range financeproduct.BuiltinAgentProfiles() {
-			profile.Product = "finance"
-			if err := profileRegistry.RegisterProfile(profile); err != nil {
-				log.Fatalf("Failed to register Finance agent profile: %v", err)
-			}
-		}
-		if err := financeproduct.RegisterAgentProfileRuntime(profileRegistry, getWorkspaceAPIURL()); err != nil {
-			log.Fatalf("Failed to register Finance agent profile runtime: %v", err)
-		}
-	}
-
 	if productEnabled("sparkquill") {
 		if err := sparkquillproduct.RegisterProductSkills(); err != nil {
 			log.Fatalf("Failed to register SparkQuill skills: %v", err)
@@ -1824,6 +1810,21 @@ func runServer(cmd *cobra.Command, args []string) {
 		}
 		if err := dominionproduct.RegisterAgentProfileRuntime(profileRegistry, getWorkspaceAPIURL()); err != nil {
 			log.Fatalf("Failed to register Dominion agent profile runtime: %v", err)
+		}
+	}
+	if productEnabled("agentworks") {
+		// Scaffolding only: no bespoke tools yet, so no
+		// RegisterAgentProfileRuntime call -- see product.yaml's own comment
+		// for why this registration is inert until something explicitly
+		// requests AgentProfileID="agentworks".
+		if err := agentworksproduct.RegisterProductSkills(); err != nil {
+			log.Fatalf("Failed to register AgentWorks skills: %v", err)
+		}
+		for _, profile := range agentworksproduct.BuiltinAgentProfiles() {
+			profile.Product = "agentworks"
+			if err := profileRegistry.RegisterProfile(profile); err != nil {
+				log.Fatalf("Failed to register AgentWorks agent profile: %v", err)
+			}
 		}
 	}
 
@@ -2118,6 +2119,8 @@ func runServer(cmd *cobra.Command, args []string) {
 	// which the per-tool handler reads as a fallback when body session_id is empty.
 	sessionToolsRouter := router.PathPrefix("/s/{session_id}/tools").Subrouter()
 	sessionToolsRouter.Use(executor.AuthMiddleware(api.apiToken))
+	sessionToolsRouter.HandleFunc("/browser/packages/{package}", api.handlePlaywrightPackage).Methods("GET")
+	sessionToolsRouter.HandleFunc("/browser/live", api.handlePlaywrightPublisher).Methods("GET")
 	sessionToolsRouter.HandleFunc("/mcp/{server}/{tool}", func(w http.ResponseWriter, r *http.Request) {
 		vars := mux.Vars(r)
 		sid := vars["session_id"]
@@ -3665,7 +3668,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// A dedicated single-product server deployment (Video Studio, Dominion,
-	// Finance) resolving to the claude-code provider with no configured
+	// SparkQuill) resolving to the claude-code provider with no configured
 	// token must refuse loudly here, before the CLI process is ever spawned.
 	// Left unchecked, provider initialization falls back to "the CLI's own
 	// saved login": on a fresh HOME that hangs on an unattended interactive
@@ -5687,7 +5690,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			// already the authoritative source of what tools exist. The generic
 			// text predates per-product custom tools: it names platform tools an
 			// allowlist filters out and never mentions the product's own tool at
-			// all, so a CLI-provider product chat (e.g. Finance, Dominion) can
+			// all, so a CLI-provider product chat (e.g. SparkQuill, Dominion) can
 			// correctly run its one allowlisted tool and then, in the very same
 			// turn, tell the user it has no working tool because this stale text
 			// contradicted what actually happened.
@@ -10660,7 +10663,11 @@ func (api *StreamingAPI) registerMultiAgentMCPServerTools(registrar interface {
 					if desc == "" {
 						desc = "(no description provided)"
 					}
-					sb.WriteString(fmt.Sprintf("- **%s** — %s. %s", r.Name, desc, kind))
+					sb.WriteString(fmt.Sprintf("- **%s**", r.Name))
+					if r.Identifier != "" {
+						sb.WriteString(fmt.Sprintf(" (`%s` — pass this as qualified_name to inspect_mcp_server for its full tool list)", r.Identifier))
+					}
+					sb.WriteString(fmt.Sprintf(" — %s. %s", desc, kind))
 					if r.Link != "" {
 						sb.WriteString(fmt.Sprintf(" (%s)", r.Link))
 					}
@@ -10679,6 +10686,60 @@ func (api *StreamingAPI) registerMultiAgentMCPServerTools(registrar interface {
 				sb.WriteString("### Smithery (unvetted — review before adding)\n\nSMITHERY_API_KEY is not configured on this server; skipped.\n\n")
 			}
 
+			return sb.String(), nil
+		},
+	); err != nil {
+		return err
+	}
+
+	if err := registerTool(
+		"inspect_mcp_server",
+		"Get the full tool list (names, descriptions, input schemas) for an unvetted MCP server found via search_mcp_catalog, before deciding whether to install it. Smithery hits only — pass the `qualified_name` shown next to that hit in search_mcp_catalog's results. GitHub MCP Registry hits have no equivalent: those servers only advertise their tools via the live MCP protocol handshake once actually running, so there is nothing to inspect ahead of time — review their repo/README instead.",
+		map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"qualified_name": map[string]interface{}{
+					"type":        "string",
+					"description": "The Smithery qualified name from a search_mcp_catalog hit, e.g. \"github\" or \"node2flow/notion\".",
+				},
+			},
+			"required": []string{"qualified_name"},
+		},
+		func(ctx context.Context, args map[string]interface{}) (string, error) {
+			qualifiedName := strings.TrimSpace(fmt.Sprint(args["qualified_name"]))
+			if qualifiedName == "" {
+				return "qualified_name is required.", nil
+			}
+
+			detail, err := services.InspectSmitheryServer(ctx, qualifiedName)
+			if err != nil {
+				return fmt.Sprintf("Could not inspect %q: %v", qualifiedName, err), nil
+			}
+
+			displayName := detail.DisplayName
+			if displayName == "" {
+				displayName = detail.QualifiedName
+			}
+			var sb strings.Builder
+			sb.WriteString(fmt.Sprintf("## %s (`%s`) — unvetted, review before adding\n\n", displayName, detail.QualifiedName))
+			if detail.Description != "" {
+				sb.WriteString(detail.Description + "\n\n")
+			}
+			if detail.DeploymentURL != "" {
+				sb.WriteString(fmt.Sprintf("Deployment URL: %s\n\n", detail.DeploymentURL))
+			}
+			if len(detail.Tools) == 0 {
+				sb.WriteString("No tools reported.\n")
+				return sb.String(), nil
+			}
+			sb.WriteString(fmt.Sprintf("### Tools (%d)\n\n", len(detail.Tools)))
+			for _, t := range detail.Tools {
+				sb.WriteString(fmt.Sprintf("- **%s**", t.Name))
+				if t.Description != "" {
+					sb.WriteString(" — " + strings.SplitN(t.Description, "\n", 2)[0])
+				}
+				sb.WriteString("\n")
+			}
 			return sb.String(), nil
 		},
 	); err != nil {

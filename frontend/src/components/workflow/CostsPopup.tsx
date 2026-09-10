@@ -21,6 +21,7 @@ interface CostsPopupProps {
   selectedRunFolder: string | null // Currently selected run folder
   startedAt?: string | null
   embedded?: boolean
+  headerAction?: React.ReactNode
 }
 
 const CostsPopup: React.FC<CostsPopupProps> = ({
@@ -30,6 +31,7 @@ const CostsPopup: React.FC<CostsPopupProps> = ({
   selectedRunFolder,
   startedAt,
   embedded = false,
+  headerAction,
 }) => {
   const data = useCostsData({ active: embedded || isOpen, workspacePath, selectedRunFolder })
   const {
@@ -76,6 +78,7 @@ const CostsPopup: React.FC<CostsPopupProps> = ({
           phaseCostSummary={phaseCostSummary}
           loading={loading}
           loadAllCosts={loadAllCosts}
+          headerAction={headerAction}
         />
       }
     >

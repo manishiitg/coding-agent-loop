@@ -23,7 +23,7 @@ The right-hand pane of the workflow page shows one view at a time; the toolbar a
 | `evaluation` | Evaluation results for the selected run against `evaluation/evaluation_plan.json` | You ran or edited the evaluation, or the user asks how a run scored |
 | `schedules` | Scheduled runs: cadence, next run, last run, run history | You created or changed a schedule |
 | `files` | The workspace file browser | The user wants to open a specific file, or you wrote a file they should see |
-| `browser` | Full-panel live server browser, tabs, and Take control; settings behind the gear button | You open or navigate a page with `agent_browser`, or the user asks to watch/interact with the browser |
+| `browser` | Live agent-browser with Take control, or watch-only Playwright test sessions; settings behind the gear button | You browse with `agent_browser`, start tests using `@agentworks/playwright`, or the user asks to watch a browser |
 
 
 ### Pulse cluster
@@ -90,4 +90,4 @@ requests. Do not say their contents were verified or that a refresh succeeded
 from that response alone. Presentation tools cannot send notifications, edit
 settings, run workflows, reveal secrets, or establish MCP connections.
 
-When starting browser work for the user, call `open_workspace_view(view="browser")` alongside `agent_browser status` and navigation. This opens the viewer, not a new browser session. Let the stream update naturally; do not refresh it after each browser command or repeatedly override a view the user selected. The UI shows a small “Builder opened Browser” toast when a builder action changes the visible view.
+When starting managed browser work for the user, call `open_workspace_view(view="browser")` alongside `agent_browser status` and navigation. Also open this view once when starting live tests through `@agentworks/playwright`; see `references/playwright-scripted.md` for supported runtime and fixture setup. Playwright sessions are watch-only and use runner-owned recordings. This opens the viewer, not a new browser session. Let the stream update naturally; do not refresh it after each browser command or repeatedly override a view the user selected. The UI shows a small “Builder opened Browser” toast when a builder action changes the visible view.

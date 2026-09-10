@@ -617,6 +617,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
   // profile contract existed. The running session still wins below so a real
   // server-selected fallback remains visible while it is active.
   const [agentProfileRuntime, setAgentProfileRuntime] = useState<{ provider: string; model_id: string; transport?: string } | null>(null)
+  const llmConfigSource = agentProfileRuntime ? 'agent_profile' as const : undefined
   useEffect(() => {
     if (!isProductSurface || !agentProfileId) {
       setAgentProfileRuntime(null)
@@ -791,10 +792,9 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
   ])
 
   const effectiveProviderForSteer = useMemo(() => {
-    // The saved/preset provider is only a preference: under a locked
-    // deployment the turn runs on the published default (same rule as the
-    // status chip and the server's resolveLockedLLM), so every label derived
-    // from this value must reflect the lock too.
+    // Apply the same lock rule as the server and status chip. Product-profile
+    // bindings win under the lock; treating them as a saved preference can
+    // misclassify Claude as structured Cursor and queue live follow-ups.
     const saved = (() => {
       if (isWorkflowPhaseChat) {
         return manifestBuilderLLM?.provider
@@ -806,9 +806,10 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
       if (multiAgentEffectiveLLMConfig?.provider) return multiAgentEffectiveLLMConfig.provider
       return tabConfig?.llmConfig?.provider ?? null
     })()
-    return effectiveProviderUnderLock(saved, llmConfigLocked, publishedLLMs)
+    return effectiveProviderUnderLock(saved, llmConfigLocked, publishedLLMs, llmConfigSource)
   }, [
     isWorkflowPhaseChat,
+    llmConfigSource,
     llmConfigLocked,
     manifestBuilderLLM?.provider,
     multiAgentEffectiveLLMConfig?.provider,
@@ -1420,9 +1421,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
   // keeping its process alive must never make this spinner claim the agent is
   // still working.
   const mainAgentRuntimeStatus = useMemo(() => {
-    // Under a locked deployment the next turn runs on the published default
-    // whatever this workflow saved or a past session reported, so that is
-    // what the composer shows (server: resolveLockedLLM).
+    // Match resolveLockedLLM, including the product-profile binding exception.
     const effective = effectiveLLMUnderLock(
       {
         provider: activeSession?.runtime?.provider?.trim() || primaryLLM?.provider?.trim() || '',
@@ -1430,6 +1429,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
       },
       llmConfigLocked,
       publishedLLMs,
+      llmConfigSource,
     )
     const provider = effective?.provider || ''
     const model = effective?.model_id || ''
@@ -1468,6 +1468,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     primaryLLM?.provider,
     llmConfigLocked,
     publishedLLMs,
+    llmConfigSource,
   ])
 
   // TEMP DEBUG (spinner flicker investigation) - remove after diagnosis.
@@ -1946,7 +1947,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     const palette = commandPaletteRef.current
     if (palette && palette.text === textarea.value && palette.start === textarea.selectionStart && palette.end === textarea.selectionEnd) return
     commandPaletteRef.current = null
-    let trigger = isProductSurface || composingRef.current ? null : getComposerTrigger(textarea.value, textarea.selectionStart, textarea.selectionEnd)
+    let trigger = composingRef.current ? null : getComposerTrigger(textarea.value, textarea.selectionStart, textarea.selectionEnd)
     if (isWorkflowPhaseChat && (trigger?.kind === '!' || trigger?.kind === '$')) trigger = null
     if (trigger && JSON.stringify(trigger) === dismissedTriggerRef.current) trigger = null
     else dismissedTriggerRef.current = null
@@ -1973,7 +1974,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
       case '$':
         setDollarPosition(trigger.start); setServerPopupSearchQuery(trigger.query); setServerPopupPosition(position); break
     }
-  }, [isProductSurface, isWorkflowPhaseChat])
+  }, [isWorkflowPhaseChat])
 
   // Memoized handlers to prevent re-creation
   const handleTextChange = useCallback((e: React.ChangeEvent<HTMLTextAreaElement>) => {
@@ -2939,7 +2940,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     ? liveMessageDelivery.status === 'sending'
       ? isProductSurface ? 'Sending message…' : `Sending to ${liveDeliveryProviderLabel}...`
       : liveMessageDelivery.status === 'sent_to_cli'
-        ? isProductSurface ? 'Message sent' : `Sent to ${liveDeliveryProviderLabel}`
+        ? isProductSurface ? 'Message submitted' : `Submitted to ${liveDeliveryProviderLabel}`
       : liveMessageDelivery.status === 'queued_for_injection'
           ? isProductSurface ? 'Message queued' : 'Queued for next model turn'
         : liveMessageDelivery.status === 'next_turn_started'
@@ -3295,7 +3296,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
                         key={`auto-group-${item.items[0]?.index ?? index}`}
                         items={item.items}
                         onDelete={removeQueuedMessageAtIndex}
-                        onSteer={!isProductSurface && canShowSteer && tabSessionId ? handleSteerQueuedMessage : undefined}
+                        onSteer={canShowSteer && tabSessionId ? handleSteerQueuedMessage : undefined}
                         steeringIndex={steeringIndex}
                       />
                     )
@@ -3311,7 +3312,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
                       preview={preview}
                       isLong={isLong}
                       onDelete={() => removeQueuedMessageAtIndex(item.index)}
-                      onSteer={!isProductSurface && canShowSteer && tabSessionId ? () => handleSteerQueuedMessage(item.index, item.msg) : undefined}
+                      onSteer={canShowSteer && tabSessionId ? () => handleSteerQueuedMessage(item.index, item.msg) : undefined}
                       isSteering={steeringIndex === item.index}
                     />
                   )

@@ -13,8 +13,19 @@ export const TECHNICAL_REVIEW_AREAS = [
   { key: 'model_cost_fitness', label: 'Models, cost and efficiency' },
 ]
 
-export function reviewCoverageForArea(area: typeof TECHNICAL_REVIEW_AREAS[number], coverage: PulseReviewFocus[]) {
-  return coverage.filter(item => normalizePulseWorkspaceModule(item.module) === 'technical_review'
+export const ARCHITECTURE_REVIEW_AREAS: typeof TECHNICAL_REVIEW_AREAS = [
+  { key: 'prompt_design', label: 'Prompts' },
+  { key: 'orchestration_design', label: 'Orchestration' },
+  { key: 'scripted_execution', label: 'Scripts and repeatable work' },
+  { key: 'learning_quality', label: 'Learning quality' },
+  { key: 'knowledgebase_design', label: 'Knowledge base' },
+  { key: 'database_design', label: 'Data design' },
+  { key: 'report_design', label: 'Reports' },
+  { key: 'model_cost_fitness', label: 'Cost and efficiency' },
+]
+
+export function reviewCoverageForArea(area: typeof TECHNICAL_REVIEW_AREAS[number], coverage: PulseReviewFocus[], module = 'technical_review') {
+  return coverage.filter(item => normalizePulseWorkspaceModule(item.module) === module
     && !!item.last_reviewed_at
     && (area.scope
       // A generic store review is not evidence that learnings or KB were checked.

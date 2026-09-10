@@ -1,5 +1,39 @@
 # Pulse Platform-Issue Register
 
+## Minimal review recording — PLAT-306
+
+[PLAT-306](pulse_platform/plat-306.md) replaces mandatory review Markdown
+bookkeeping with an optional concise SQLite note on the existing result call.
+The same note serves future reviews and the UI; old reports remain readable.
+Runtime interruption tracking remains independent of agent-authored notes.
+Deployment and measured live reporting overhead are pending.
+
+## QA, Architecture, Strategy and improvement outcomes — PLAT-305
+
+[PLAT-305](pulse_platform/plat-305.md) implements the first release of independent
+review roles, sequential scheduling with protected research dates, authorized
+research access, linked decision/application/outcome tracking, and the new Pulse
+areas. [PLAT-303](pulse_platform/plat-303.md) now has implemented scheduling
+follow-through. Deployment and live workflow acceptance are pending; immutable
+partial-run evidence (PLAT-047/089) and comprehensive builder prevention
+(PLAT-257/298) remain separate unfinished foundation work.
+
+## September 9 Pulse audit: shared fixes and remaining strategy work
+
+[PLAT-304](pulse_platform/plat-304.md) fixes authorized retention updates blocked
+by the raw manifest guard. [PLAT-303](pulse_platform/plat-303.md) fixes strategic
+completion being failed by unrelated technical repair debt and records the
+remaining independent strategic schedule/outcome follow-through work. Gate
+guidance is exception-driven; independent cadence is not yet implemented.
+
+[PLAT-229](pulse_platform/plat-229.md) now covers valid empty-array per-item
+contracts. [PLAT-163](pulse_platform/plat-163.md) makes completed-run child errors
+factual advisory signals. [PLAT-056](pulse_platform/plat-056.md) was stale: its
+automatic recorder was already removed and current tests confirm that.
+PLAT-047/089 evidence immutability and PLAT-257 generated-contract acceptance
+remain open in their existing tickets. These changes require deployment and
+live verification.
+
 ## Server deployments expose unusable CDP and can hit cross-user lock permissions — PLAT-302
 
 [PLAT-302](pulse_platform/plat-302.md) — Server deployments now declare CDP
@@ -467,7 +501,7 @@ Rules:
 | [PLAT-053-A](pulse_platform/plat-053.md) | Give background workshop children the complete parent tool surface | Codex | `runtime_reverify` | background-agent construction and direct tool definitions |
 | [PLAT-054-A](pulse_platform/plat-054.md) | Never expire a scheduler turn whose child work is still running | Claude Code | `runtime_reverify` | scheduler idle/turn-completion waits |
 | [PLAT-055-A](pulse_platform/plat-055.md) | Give the reflection turn every store it must route to | Claude Code | `runtime_reverify` | step post-completion turns, learnings/KB contribution contract |
-| [PLAT-056](pulse_platform/plat-056.md) | Stop the repair-loop recorder from filing durable concerns for same-attempt superseded iterations | unassigned | `open` | prevalidation / `__automatic_final_validation__` repair loop |
+| [PLAT-056](pulse_platform/plat-056.md) | Stop the repair-loop recorder from filing durable concerns for same-attempt superseded iterations | Codex | `implemented; existing recorder removal verified locally` | prevalidation / `__automatic_final_validation__` repair loop |
 | [PLAT-057](pulse_platform/plat-057.md) | A harness_issue must not be parked in the workflow's own engineering queue | Claude Code | `runtime_reverify` | finding disposition/status coherence |
 | [PLAT-058](pulse_platform/plat-058.md) | Keep learnings one topic-organised workflow skill, not per-step files | Claude Code | `runtime_reverify` | step reflection turn learnings target |
 | [PLAT-059](pulse_platform/plat-059.md) | A learnings lock must state why | Claude Code | `superseded by PLAT-263` | legacy contract; access-only migration replaces the lock |
@@ -791,7 +825,7 @@ directory, tool-registration, or media-tool failure but predates
 | PLAT-052 Scheduled turns visibly close/reopen Claude Code | P1 | Upwork | **implemented 2026-08-07: known consecutive scheduler turns retain their native CLI; restart and schedule lifecycle reverify remain** |
 | PLAT-054 Idle watchdog kills live child work | P0 | Social Media, Tectonicus, Upwork, LinkedIn, Instagram, RTS Latency, Substack, Build-in-public | **implemented 2026-08-09: both wait paths consult a shared liveness predicate before expiring a turn, bounded by a 3 h ceiling; `pulse_review_log` added to the startup sweep. Runtime reverify is the gate for the ~40 other reverify entries** |
 | PLAT-055 Reflection turn can only write learnings | P1 | Social Media, RTS Latency, Upwork, LinkedIn | **implemented 2026-08-09: KB and learnings merged into one reflection turn (regular and message_sequence paths) with `knowledgebase/notes` write, `db/` read and a structured `record_run_concern`; prompt now carries a routing rule, the workflow's real table names, per-step file ownership, a measured size signal and a compaction rule. Behavioural reverify required** |
-| PLAT-056 Repair-loop recorder files durable concerns for self-healed iterations | P2 | Instagram (11 findings, one root cause) | **open — found via `scripts/pulse_health.py`; Pulse already correctly dispositioned all 11 as not-a-defect on 2026-08-04, only the recorder fix and closure remain** |
+| PLAT-056 Repair-loop recorder files durable concerns for self-healed iterations | P2 | Instagram (11 findings, one root cause) | **implemented — September 9 code/tests confirm automatic concern recording was already removed; historical evidence is retained** |
 | PLAT-059 A learnings lock could be set with no stated reason | P2 | LinkedIn (6 of 6 steps locked, none justified) | **superseded by PLAT-263: the redundant lock and reason were removed; `learnings_access="read"` is the single consume-without-writing state** |
 | PLAT-060 Ops config changes carried no reason into the config | P2 | cross-workflow | **implemented 2026-08-09: `execution_tier` / `execution_llm` / `declared_execution_mode` each require a paired reason at write time, each rejection naming its hidden consequence AND `create_human_input_request` as the escape hatch so the field cannot induce confabulation. UI tier setter removed. Objectives deliberately NOT gated — they get a yield loop instead. Reverify deferred: llm_ops_review is disabled at the Gate** |
 | PLAT-062 Scripted prompt named a forbidden write target | P2 | hetznerssh | **implemented 2026-08-09: the MODE NOTE told the agent to save to `learnings/{step-id}/main.py`, which `setupExecutionFolderGuard` never opens for writes, while the same prompt's Code Execution section correctly said `code/main.py`. The step obeyed the wrong one, was denied, and filed a concern that persistence had failed — it had not, the platform saved it back 42 s later byte-identical. Surfaced only because PLAT-061 removed the `learn_code_max_fix_iterations: 0` artifact that had stopped these steps ever attempting a repair** |

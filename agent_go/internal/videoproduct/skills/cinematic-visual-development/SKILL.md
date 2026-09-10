@@ -40,6 +40,11 @@ non-secret input, source references, and approved output in the manifest.
 
 ## Classify the recurring subject
 
+Match every reference to the approved style, including illustrated or animated
+characters, locations, and objects. Realistic skin, anatomy, lighting, or
+materials are criteria only for a requested realistic treatment. For stylized
+subjects, preserve the approved shapes, linework, palette, and identity.
+
 Give every recurring subject one explicit type, then build the appropriate
 reference pack. A subject can be a person, but it does not have to be.
 

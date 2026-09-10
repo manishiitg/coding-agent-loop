@@ -134,7 +134,7 @@ func TestFocusedScheduledPulseReferencesStayComplete(t *testing.T) {
 				"exactly once", "durable evidence", "automatic-notification prose", `get_pulse_state(view="backlog", detail="compact")`,
 				"normal Workflow Builder tools", "terminal", "cannot erase or block other due work", "priority-ordered Fix queue",
 				"one reconciled `ownership_manifest`", "`kb_purity_manifest`", "`db_ownership_manifest`", "read-only access justified per step",
-				"proposal_only", "exact non-empty `next_check`", "strategic-proposal-", "final sequence message owns",
+				"proposal_only", "exact non-empty `next_check`", "strategic-proposal-", "No mandatory Markdown checkpoint",
 			},
 		},
 		"pulse-finalizer": {
@@ -758,7 +758,7 @@ func TestStrategyAdvisorGuidanceBalancesExplorationEvidenceAndHumanDecisions(t *
 		"insufficient_evidence",
 		"no_material_problem",
 		"Missing target/source/outcome linkage",
-		"insights_and_opportunities",
+		"Keep only new reasoning in review_note",
 		"Never edit workflow files or databases directly",
 		"Consider alternatives in this review",
 		"does not wait for Engineering/Ops conclusions",
@@ -780,7 +780,7 @@ func TestStrategyAdvisorGuidanceBalancesExplorationEvidenceAndHumanDecisions(t *
 		"activity and outcomes diverge",
 		"Missing telemetry is",
 		"Never make one reviewer due merely because another reviewer",
-		"Select **at most one** due module per Pulse pass",
+		"Select each module independently",
 		"Strategic Review combines the former Strategy Auditor and Goal Advisor",
 		"Strategic Review for business usefulness or strategic headroom",
 		"alternatives immediately",
@@ -797,9 +797,9 @@ func TestStrategyAdvisorGuidanceBalancesExplorationEvidenceAndHumanDecisions(t *
 	}
 	for _, want := range []string{
 		"Strategic Review is one product/business sequence",
-		"separate ordered sequence with fresh phase contexts",
-		"final sequence message owns typed",
-		"without inheriting the",
+		"reasoning phases need separate messages only when useful",
+		"Strategic Review owns its typed writes and terminal result in the same task",
+		"It does not inherit technical repair authority",
 		"materially different",
 	} {
 		if !strings.Contains(reviewer, want) {
@@ -1606,3 +1606,22 @@ func TestNoTemplateNamesARemovedPulseTool(t *testing.T) {
 // (Pulse's own DB-backed findings and the SQLite Pulse popup replaced it);
 // there is no HTML journal left for any of this to describe. Removed
 // 2026-08-17 rather than kept green against a doc that no longer exists.
+
+func TestPulseReviewsUseOneOptionalSQLiteNoteWithoutReportingTurns(t *testing.T) {
+	for _, kind := range []string{"technical-review", "architecture-review", "strategy-auditor", "plan-drift-review"} {
+		rendered, err := renderFromRegistry(kind, tmplData{}, referenceKinds)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, want := range []string{`view="review_notes"`, "optional review_note", "No prescribed sections", "note_only=true", "A no-change conclusion is valid"} {
+			if !containsNormalizedText(rendered, want) {
+				t.Fatalf("%s missing minimal recording contract %q", kind, want)
+			}
+		}
+		for _, forbidden := range []string{"Update the run-scoped checkpoint", "Preserve checkpoint", "final persistence phase owns", "Keep a compact checkpoint:"} {
+			if containsNormalizedText(rendered, forbidden) {
+				t.Fatalf("%s retains mandatory bookkeeping %q", kind, forbidden)
+			}
+		}
+	}
+}

@@ -410,3 +410,41 @@ func TestRunPreValidationAllowsBinaryFileWhenOnlyMustExist(t *testing.T) {
 		t.Fatalf("binary must-exist validation should not add JSON/text read checks: %#v", result.FilesChecked)
 	}
 }
+
+// PLAT-229: empty optional collections are legitimate no-action outcomes.
+func TestEmptyWildcardChecksRespectExistenceAndParentConstraints(t *testing.T) {
+	minLength := 1
+	minValue := 0.0
+	for _, check := range []JSONValidationCheck{
+		{Path: "$.engagements[*].text", ValueType: "string"},
+		{Path: "$.engagements[*].count", ValueType: "number", MinValue: &minValue},
+		{Path: "$.engagements[*].text", Pattern: "^valid", MinLength: &minLength},
+	} {
+		data := parseJSONForCheck(t, `{"engagements":[]}`)
+		if got := validateJSONCheck(context.Background(), check, data); !got.Passed {
+			t.Fatalf("optional empty collection failed: %+v", got)
+		}
+		check.MustExist = true
+		if got := validateJSONCheck(context.Background(), check, data); !got.Passed {
+			t.Fatalf("per-item requirement rejected an empty parent: %+v", got)
+		}
+	}
+	for _, raw := range []string{`{"engagements":[]}`, `{"engagements":[{"text":"valid"},{"text":42}]}`} {
+		check := JSONValidationCheck{Path: "$.engagements", ValueType: "array", MinLength: &minLength}
+		if raw != `{"engagements":[]}` {
+			check = JSONValidationCheck{Path: "$.engagements[*].text", ValueType: "string"}
+		}
+		if got := validateJSONCheck(context.Background(), check, parseJSONForCheck(t, raw)); got.Passed {
+			t.Fatalf("invalid populated value or required cardinality passed: %s", raw)
+		}
+	}
+}
+
+func TestWildcardRequiresFieldsInEveryExistingItem(t *testing.T) {
+	for _, raw := range []string{`{}`, `{"items":null}`, `{"items":42}`, `{"items":{}}`, `{"items":[{}]}`, `{"items":[{"name":"ok"},{}]}`, `{"items":[{"name":"ok"},{"name":42}]}`} {
+		check := JSONValidationCheck{Path: "$.items[*].name", MustExist: true, ValueType: "string"}
+		if got := validateJSONCheck(context.Background(), check, parseJSONForCheck(t, raw)); got.Passed {
+			t.Fatalf("missing/invalid required item accepted: %s", raw)
+		}
+	}
+}

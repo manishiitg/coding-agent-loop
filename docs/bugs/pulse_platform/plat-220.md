@@ -2,6 +2,11 @@
 
 # PLAT-220 — consolidated two more Pulse tool pairs: focus agenda folded into `get_pulse_state`, the two migration-reconciliation tools merged into one scoped tool
 
+> **2026-09-10 update:** [PLAT-306](plat-306.md) supersedes mandatory Markdown
+> checkpoint/report maintenance with optional SQLite review notes on the existing
+> result tool. Typed lifecycle records remain authoritative; historical design
+> discussion below is retained. No reporting-only turn is required.
+
 | Coordination | Value |
 |---|---|
 | Assigned agent | unassigned |

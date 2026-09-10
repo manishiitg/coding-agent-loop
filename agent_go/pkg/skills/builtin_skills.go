@@ -28,7 +28,7 @@ func init() {
 		// also served by read_skill. Naming the tool is the stable
 		// answer, since the projected directory differs per provider
 		// (.agents/ vs .claude/) while the tool call does not.
-		Description: "Use agent-browser through Builder's managed tool. Load version-matched core/specialized skills from the installed CLI, then call read_skill(skills=[{\"name\":\"builder-reference\",\"path\":\"references/browser-usage.md\"}]) for Builder-specific CDP tab ownership, locking, file, and safety rules. Do not guess a path for it under learnings/.",
+		Description: "Interactive browsing through Builder's managed agent-browser tool. For repeatable tests use @agentworks/playwright for JS/TS or agentworks-playwright for Python when available and read builder-reference/references/playwright-scripted.md. Load version-matched core/specialized skills from the installed CLI, then call read_skill(skills=[{\"name\":\"builder-reference\",\"path\":\"references/browser-usage.md\"}]) for Builder-specific CDP tab ownership, locking, file, and safety rules. Do not guess a path for it under learnings/.",
 		Content:     agentBrowserSkillContent,
 		Source:      llmtypes.SkillSource{Origin: "builtin"},
 	})

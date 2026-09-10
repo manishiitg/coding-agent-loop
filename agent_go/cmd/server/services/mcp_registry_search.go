@@ -30,6 +30,10 @@ type MCPRegistryResult struct {
 	// (npm/npx, docker, etc.).
 	Remote bool   `json:"remote"`
 	Link   string `json:"link,omitempty"`
+	// Identifier is the machine-usable ID needed to look this hit up again,
+	// e.g. via InspectSmitheryServer. Empty when the source has no such ID
+	// (GitHub registry hits are identified by Link instead).
+	Identifier string `json:"identifier,omitempty"`
 }
 
 var mcpRegistryHTTPClient = &http.Client{Timeout: 8 * time.Second}
@@ -103,20 +107,34 @@ func SearchGitHubMCPRegistry(ctx context.Context, query string, limit int) ([]MC
 }
 
 // smitheryAPIKeyEnv is the environment variable holding the Smithery API
-// bearer token. Never hardcode the key itself here — it lives in .env
-// (gitignored) locally and in the server's own .env in each deployment.
+// bearer token, overriding smitheryDefaultAPIKey below.
 const smitheryAPIKeyEnv = "SMITHERY_API_KEY"
 
-// SmitheryConfigured reports whether a Smithery search can run at all, so
-// callers can skip it cleanly instead of surfacing a confusing auth error.
+// smitheryDefaultAPIKey is a free-tier Smithery key checked in so
+// search_mcp_catalog works out of the box for anyone who clones this repo,
+// without requiring per-deployment setup. Smithery's free tier has no
+// sensitive scope (search only, rate-limited); set SMITHERY_API_KEY in the
+// environment to override it with a different key.
+const smitheryDefaultAPIKey = "989c2d5a-8e01-4a72-9033-081cb08a8a4d"
+
+func smitheryAPIKey() string {
+	if key := strings.TrimSpace(os.Getenv(smitheryAPIKeyEnv)); key != "" {
+		return key
+	}
+	return smitheryDefaultAPIKey
+}
+
+// SmitheryConfigured reports whether a Smithery search can run at all. Always
+// true now that smitheryDefaultAPIKey provides a fallback; kept as a function
+// so callers don't need to change if that ever stops being the case.
 func SmitheryConfigured() bool {
-	return strings.TrimSpace(os.Getenv(smitheryAPIKeyEnv)) != ""
+	return smitheryAPIKey() != ""
 }
 
 // SearchSmitheryRegistry queries Smithery's server directory
 // (api.smithery.ai), which requires a bearer API key.
 func SearchSmitheryRegistry(ctx context.Context, query string, pageSize int) ([]MCPRegistryResult, error) {
-	apiKey := strings.TrimSpace(os.Getenv(smitheryAPIKeyEnv))
+	apiKey := smitheryAPIKey()
 	if apiKey == "" {
 		return nil, fmt.Errorf("%s is not configured on this server", smitheryAPIKeyEnv)
 	}
@@ -166,7 +184,102 @@ func SearchSmitheryRegistry(ctx context.Context, query string, pageSize int) ([]
 			Description: strings.TrimSpace(s.Description),
 			Remote:      s.Remote,
 			Link:        s.Homepage,
+			Identifier:  s.QualifiedName,
 		})
 	}
 	return out, nil
+}
+
+// MCPToolInfo is one tool a server exposes, as reported by Smithery's server
+// detail endpoint.
+type MCPToolInfo struct {
+	Name        string          `json:"name"`
+	Description string          `json:"description,omitempty"`
+	InputSchema json.RawMessage `json:"input_schema,omitempty"`
+}
+
+// MCPServerDetail is the full inspection result for one Smithery server:
+// its connection shape plus every tool it exposes, so an agent can review
+// what a server actually does before installing it.
+type MCPServerDetail struct {
+	QualifiedName string        `json:"qualified_name"`
+	DisplayName   string        `json:"display_name,omitempty"`
+	Description   string        `json:"description,omitempty"`
+	Remote        bool          `json:"remote"`
+	DeploymentURL string        `json:"deployment_url,omitempty"`
+	Tools         []MCPToolInfo `json:"tools"`
+}
+
+// InspectSmitheryServer fetches full detail for one Smithery server —
+// notably its complete tool list with descriptions and input schemas — via
+// Smithery's per-server detail endpoint (api.smithery.ai/servers/{qualifiedName}).
+// This is the one piece search_mcp_catalog can't show: what a candidate
+// server actually does, before deciding whether to install it.
+//
+// GitHub's MCP Registry has no equivalent endpoint — those servers only
+// advertise their tools via the live MCP protocol handshake once running,
+// so there is nothing to inspect ahead of time for a GitHub hit.
+func InspectSmitheryServer(ctx context.Context, qualifiedName string) (*MCPServerDetail, error) {
+	qualifiedName = strings.TrimSpace(qualifiedName)
+	if qualifiedName == "" {
+		return nil, fmt.Errorf("qualifiedName is required")
+	}
+
+	segments := strings.Split(qualifiedName, "/")
+	for i, seg := range segments {
+		segments[i] = url.PathEscape(seg)
+	}
+	endpoint := fmt.Sprintf("%s/servers/%s", smitheryRegistryBaseURL, strings.Join(segments, "/"))
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Authorization", "Bearer "+smitheryAPIKey())
+	req.Header.Set("Accept", "application/json")
+
+	resp, err := mcpRegistryHTTPClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("smithery: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusNotFound {
+		return nil, fmt.Errorf("smithery: no server found for qualified name %q", qualifiedName)
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("smithery: unexpected status %d", resp.StatusCode)
+	}
+
+	var raw struct {
+		QualifiedName string `json:"qualifiedName"`
+		DisplayName   string `json:"displayName"`
+		Description   string `json:"description"`
+		Remote        bool   `json:"remote"`
+		DeploymentURL string `json:"deploymentUrl"`
+		Tools         []struct {
+			Name        string          `json:"name"`
+			Description string          `json:"description"`
+			InputSchema json.RawMessage `json:"inputSchema"`
+		} `json:"tools"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&raw); err != nil {
+		return nil, fmt.Errorf("smithery: parse response: %w", err)
+	}
+
+	detail := &MCPServerDetail{
+		QualifiedName: raw.QualifiedName,
+		DisplayName:   strings.TrimSpace(raw.DisplayName),
+		Description:   strings.TrimSpace(raw.Description),
+		Remote:        raw.Remote,
+		DeploymentURL: raw.DeploymentURL,
+		Tools:         make([]MCPToolInfo, 0, len(raw.Tools)),
+	}
+	for _, t := range raw.Tools {
+		detail.Tools = append(detail.Tools, MCPToolInfo{
+			Name:        t.Name,
+			Description: strings.TrimSpace(t.Description),
+			InputSchema: t.InputSchema,
+		})
+	}
+	return detail, nil
 }

@@ -95,8 +95,10 @@ steps and rejects invalid values before registering background execution.
 
 ## Anti-patterns
 
-For deterministic browser tests, direct Python Playwright is supported inside the saved
-script. Read `references/playwright-scripted.md` before authoring or repairing the suite.
+For saved `main.py` browser tests, existing Python Playwright harnesses remain supported.
+Attach Python contexts with `agentworks-playwright` for live viewing. JS/TS suites
+use `@agentworks/playwright`;
+they use the Playwright runner and do not replace the saved Python entry point. Read `references/playwright-scripted.md` before authoring or repairing the suite.
 The suite owns its Playwright objects, case isolation, timeouts, evidence, and cleanup;
 `agent_browser` remains the conversational browser tool and is not a test-harness API.
 Use `execute_step(fast_path_only=true)` for acceptance testing; direct builder shell runs

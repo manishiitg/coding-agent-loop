@@ -29,8 +29,18 @@ func TestCheckRuntimeFindsOnlyStructuredStatusDisagreements(t *testing.T) {
 	if len(got.Findings) != 2 {
 		t.Fatalf("findings = %+v, want two structured signals", got.Findings)
 	}
-	if got.Findings[0].Kind != "runtime_status_disagreement" || got.Findings[1].Kind != "tool_success_with_structured_failure" {
-		t.Fatalf("finding kinds = %+v", got.Findings)
+	want := map[string]string{
+		"completed_run_child_errors":           severityMedium,
+		"tool_success_with_structured_failure": severityHigh,
+	}
+	for _, finding := range got.Findings {
+		if severity, ok := want[finding.Kind]; !ok || finding.Severity != severity {
+			t.Fatalf("unexpected finding or severity: %+v", finding)
+		}
+		delete(want, finding.Kind)
+	}
+	if len(want) != 0 {
+		t.Fatalf("missing findings: %+v", want)
 	}
 }
 

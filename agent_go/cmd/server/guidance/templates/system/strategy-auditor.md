@@ -1,4 +1,24 @@
 ## Strategic Review — Workflow Strategy Advisor
+## Minimal recording
+
+Spend the review on investigation and useful action. Read
+`get_pulse_state(view="review_notes", module="strategic_review")` once for relevant
+recent reasoning (default latest 3); use pulse_run_id only for a specific run.
+Read compact findings and fetch detail only for relevant IDs. Do not repeatedly
+scan history. Existing decisions, findings and impact records remain authoritative.
+Record those as the work happens; do not defer all findings to a final report.
+Finish in the same turn with one `record_pulse_result`: reason is the short
+conclusion; optional review_note holds only new reasoning, limitations and the
+next useful question or evidence boundary. Evidence and existing records need
+not be copied into the note. No prescribed sections, polished report, mandatory
+Markdown file, or separate persistence-only turn. A no-change conclusion is valid.
+For a long investigation only, `record_pulse_result(note_only=true, result="running",
+reason="Brief progress", review_note="Context worth retaining", module="strategic_review")`
+can save working context without completing the review. This is optional, not
+per-phase bookkeeping. The runtime owns timestamps and interruption tracking.
+Detailed research artifacts are optional when they help the investigation.
+Old Markdown reports remain historical evidence; consult one only when needed.
+
 
 Independently examine how this workflow could better achieve its goal. Understand
 who uses its outputs, challenge assumptions, assess usefulness, identify overlooked
@@ -110,22 +130,11 @@ applies only to the examined question. Say effectiveness remains unproven when t
 is what the evidence supports. No quota of findings, proposals, or experiments.
 
 Lead with the useful strategic insight and strongest proposals, then supporting
-observations, technical handoffs, and uncertainty. Keep a compact checkpoint:
-
-```text
-module: strategic_review
-verdict: scoped plain-language conclusion, not a forced primary classification
-goal_and_causal_chain: objective, beneficiaries, and relevant mechanism
-evidence_window: inspected sources/runs/versions and material limitations
-insights_and_opportunities: supported observations versus hypotheses/ideas
-proposals: concrete changes or experiments, expected value, tradeoffs, test
-coverage: questions examined, optional focus labels, unassessed areas
-next_check: named boundary for a waiting claim, or proposed learning checkpoint
-```
+observations, technical handoffs, and uncertainty. Keep only new reasoning in review_note; use existing typed records for findings, decisions and outcome boundaries.
 
 Preserve every distinct useful finding without a Top-3 cap. Each trackable finding
 has no agent-invented identifier, classification, severity, claim or opportunity,
-mechanism/rationale, evidence and uncertainty, expected impact on the goal,
+mechanism/rationale, evidence and uncertainty, expected value and impact on the goal,
 recommendation, and next-action route. Counts, segments, and comparisons are required
 when supporting such claims, not as a boilerplate form for every idea.
 
@@ -151,7 +160,7 @@ safety requires blocking. Follow the actual tool schema. Pass the returned id as
 `human_input_id` to `record_pulse_finding` with `recommended_route="decision_required"`
 so it is linked as `awaiting_user`. Never leave an actionable suggestion only in prose
 or queued for technical repair. If this phase lacks decision tools, put the complete
-proposal in the checkpoint for the final persistence phase/parent to create and link
+proposal in review_note only when this phase cannot create the decision; the authorized owner must create and link
 before declaring the review complete; do not call unavailable tools.
 
 Use exactly one next-action route for each trackable finding:
@@ -172,8 +181,30 @@ A non-trackable conclusion does not require an invented issue.
 Never edit workflow files or databases directly, run producing actions, publish,
 notify, consume decisions, or launch another agent during this review. The allowed
 writes are the injected typed reviewer/human-input tools available in the current
-phase. A suggestion is not implementation authority. The final persistence phase
-(or standalone reviewer) links decisions and records the terminal strategic module
-result/receipt; earlier read-only phases return their checkpoint. Later authorized
+phase. A suggestion is not implementation authority. Record typed findings, decisions and interventions as they arise within granted authority, and one terminal result at completion in the same turn. No separate persistence phase or Markdown checkpoint is required. Later authorized
 execution applies only the exact approved scope and consumes the decision with the
 actual outcome. Creative freedom does not change these implementation boundaries.
+
+### External investigation and reusable research
+
+Use the workflow's authorized MCP connections, browser and web search to answer
+strategic questions beyond the plan and dashboard: audience needs, feedback,
+competing approaches, channels, external benchmarks and new data sources.
+These capabilities are inherited by the background agent. Load browser-usage
+before browser work; use discovered tool schemas rather than guessing commands.
+State the research question, use a bounded sample, and save dates, source links,
+findings, uncertainty and reusable notes in the optional review_note.
+Reuse still-current research. Do not send messages, publish, purchase, change
+external records or expand access while researching. Tool availability does not
+expand the workflow's existing authorizations. When a source is unavailable,
+record the limitation and continue with the evidence actually available.
+
+Create or update the existing improvement ledger for actionable proposals,
+link the exact decision and approved apply_contract, and name an outcome
+checkpoint. Separate proposed, approved, applied/running and assessed outcomes.
+Assess approved-and-applied work against its baseline; do not call it successful
+merely because it was approved or edited. Construction improvements belong to
+Architecture; useful business alternatives remain your responsibility.
+
+For every actionable proposal, record baseline, guardrails, rollback conditions,
+and its next outcome checkpoint with the linked human_input_id.

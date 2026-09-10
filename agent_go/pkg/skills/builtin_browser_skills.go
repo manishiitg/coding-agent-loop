@@ -2,6 +2,13 @@ package skills
 
 const agentBrowserSkillContent = `# Agent Browser In Builder
 
+This skill covers interactive managed browsing. For repeatable test suites, call
+read_skill(skills=[{"name":"builder-reference","path":"references/playwright-scripted.md"}]).
+Use @agentworks/playwright for JS/TS or agentworks-playwright for Python when available;
+that reference owns installation, custom fixtures, visibility, and Python compatibility.
+Its test sessions use the same Browser panel in watch-only mode. The managed browser
+commands, CDP policies, media defaults, and capture rules below apply to agent-browser.
+
 Use the Builder MCP tool ` + "`workspace_browser.agent_browser`" + `. Do not run the ` + "`agent-browser`" + ` CLI directly through shell. Builder's tool owns CDP validation, shared-tab locking, session isolation, and workspace file guards.
 
 ## Query Live Mode First

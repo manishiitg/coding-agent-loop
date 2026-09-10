@@ -77,6 +77,14 @@ the files there to skip it. Docker Desktop must be running on the deployer's mac
 `deploy-aws-ec2.sh` is retained only as the original bootstrap installer; do
 not use it for normal releases.
 
+After the agent passes its health check, normal deployments remove older release
+copies. Only the current release, releases referenced by running processes, and
+uploads marked `.deploying` are protected. No rollback archive is retained.
+`python3 prune-releases.py /var/lib/video-studio/video-studio` previews cleanup;
+add `--apply` to remove the listed unused copies. Application data and logs live
+outside `releases` and are not touched. A failed upload can leave a `.deploying`
+marker; remove that marker after confirming the deployment has stopped.
+
 ## Runtime security model
 
 Normal releases run with no `sudo`. A one-time bootstrap/migration uses

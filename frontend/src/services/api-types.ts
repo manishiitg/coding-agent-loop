@@ -904,6 +904,15 @@ export interface WhatsAppStatus {
   own_jid: string
   qr_available: boolean
   qr_expires_at?: string
+  /** Linked phones/numbers for this Runloop account. slot "" is the primary. */
+  devices?: WhatsAppDevice[]
+  /** Which device a scan would pair right now (primary until paired, else the next extra). */
+  next_device?: WhatsAppNextDevice
+  pairing_active?: boolean
+  pairing_started_at?: string
+  pairing_error?: string
+  pairing_message?: string
+  pairing_last_at?: string
   link_code?: string
   link_code_expires_at?: string
   bound_chat_count?: number
@@ -911,6 +920,27 @@ export interface WhatsAppStatus {
   owner_email?: string
   owner_username?: string
   owner_paired_at?: string
+  default_profile_id?: string
+  default_upload_folder?: string
+}
+
+export interface WhatsAppDevice {
+  /** Device slot; "" is the primary. */
+  slot: string
+  /** User-visible name for this WhatsApp person/number. */
+  label?: string
+  paired: boolean
+  connected: boolean
+  own_jid?: string
+  qr_available: boolean
+}
+
+export interface WhatsAppNextDevice {
+  /** Slot name for the device that will be paired next. */
+  slot: string
+  label?: string
+  qr_available: boolean
+  qr_expires_at?: string
 }
 
 export interface SlackConfig {
@@ -1574,6 +1604,7 @@ export interface CostAggregate {
 export interface CostDateAggregate extends CostAggregate {
   by_model?: Record<string, CostAggregate>
   by_scope?: Record<string, CostScopeAggregate>
+  by_source_platform?: Record<string, CostAggregate>
   workflow_run_count?: number
 }
 
@@ -1597,6 +1628,7 @@ export interface CostSummary {
   by_date: Record<string, CostDateAggregate>
   by_model: Record<string, CostAggregate>
   by_scope?: Record<string, CostScopeAggregate>
+  by_source_platform?: Record<string, CostAggregate>
 }
 
 export interface WorkflowActivityTimingAggregate {

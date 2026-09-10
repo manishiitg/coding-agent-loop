@@ -78,6 +78,9 @@ type Connector struct {
 	pairingActive  bool
 	pairingStarted time.Time
 	pairingCancel  context.CancelFunc
+	lastPairingAt  time.Time
+	lastPairingErr string
+	lastPairingMsg string
 
 	qrMu      sync.RWMutex
 	lastQR    string
@@ -323,6 +326,8 @@ func (c *Connector) EnsureConnecting(_ context.Context) {
 	c.pairingActive = true
 	c.pairingStarted = time.Now()
 	c.pairingCancel = cancel
+	c.lastPairingErr = ""
+	c.lastPairingMsg = ""
 	go func() {
 		defer func() {
 			cancel()
@@ -352,22 +357,38 @@ func (c *Connector) runPairing(ctx context.Context) {
 	c.mu.Unlock()
 	c.clearQR()
 	c.logf("starting a new pairing attempt")
+	sawQR := false
 	paired, err := acct.Pair(ctx, c.cfg.PairingTimeout, func(u whatsapptransport.QRUpdate) {
 		c.qrMu.Lock()
 		c.lastQR, c.qrExpires = u.Code, u.Expires
 		c.qrMu.Unlock()
 		if u.Code != "" {
+			sawQR = true
 			c.logf("QR ready (expires %s)", u.Expires.Format(time.Kitchen))
 		}
 	})
 	c.clearQR()
 	if err != nil {
+		c.pairingMu.Lock()
+		c.lastPairingAt = time.Now()
+		c.lastPairingErr = err.Error()
+		c.lastPairingMsg = "Pairing failed"
+		c.pairingMu.Unlock()
 		if ctx.Err() == nil {
 			c.logf("pairing attempt failed: %v", err)
 		}
 		return
 	}
 	if !paired {
+		c.pairingMu.Lock()
+		c.lastPairingAt = time.Now()
+		c.lastPairingErr = ""
+		if sawQR {
+			c.lastPairingMsg = "QR was shown, but pairing did not complete (scan rejected or timed out)"
+		} else {
+			c.lastPairingMsg = "QR was not issued before the pairing attempt timed out"
+		}
+		c.pairingMu.Unlock()
 		if !c.cfg.MultiAccount {
 			// Keep the unpaired device for the next attempt but make sure it
 			// is offline until then.
@@ -377,6 +398,11 @@ func (c *Connector) runPairing(ctx context.Context) {
 	}
 	own := acct.OwnJID()
 	c.logf("paired successfully as %s", own.String())
+	c.pairingMu.Lock()
+	c.lastPairingAt = time.Now()
+	c.lastPairingErr = ""
+	c.lastPairingMsg = ""
+	c.pairingMu.Unlock()
 	if own.IsEmpty() {
 		return
 	}
@@ -401,6 +427,18 @@ func (c *Connector) GetQR() (code string, expires time.Time) {
 	return c.lastQR, c.qrExpires
 }
 
+// PairingInfo reports high-level pairing status for diagnostics and UI
+// messaging: whether a pairing attempt is running, when it started, and the
+// last failure reason (if any).
+func (c *Connector) PairingInfo() (active bool, started time.Time, lastErr string, lastMsg string, lastAt time.Time) {
+	if c == nil {
+		return false, time.Time{}, "", "", time.Time{}
+	}
+	c.pairingMu.Lock()
+	defer c.pairingMu.Unlock()
+	return c.pairingActive, c.pairingStarted, c.lastPairingErr, c.lastPairingMsg, c.lastPairingAt
+}
+
 // GetQRImagePNG renders the current QR as PNG; nil when none is live.
 func (c *Connector) GetQRImagePNG(size int) ([]byte, error) {
 	code, _ := c.GetQR()
@@ -415,21 +453,30 @@ func (c *Connector) GetQRImagePNG(size int) ([]byte, error) {
 
 // Unpair logs out and forgets one linked phone.
 func (c *Connector) Unpair(ctx context.Context, phone string) error {
-	c.mu.Lock()
+	c.mu.RLock()
 	acct, ok := c.accounts[phone]
 	st := c.store
-	if ok {
-		delete(c.accounts, phone)
-		if c.single == acct {
-			c.single = nil
-		}
-	}
-	c.mu.Unlock()
+	c.mu.RUnlock()
 	if !ok {
 		return fmt.Errorf("no linked account for %q", phone)
 	}
-	_ = acct.Logout(ctx)
+	if !acct.IsConnected() {
+		if err := acct.Connect(); err != nil {
+			return fmt.Errorf("whatsapp: connect for logout: %w", err)
+		}
+	}
+	if err := acct.Logout(ctx); err != nil {
+		return fmt.Errorf("whatsapp: logout device: %w", err)
+	}
 	acct.Disconnect()
+	c.mu.Lock()
+	if c.accounts[phone] == acct {
+		delete(c.accounts, phone)
+	}
+	if c.single == acct {
+		c.single = nil
+	}
+	c.mu.Unlock()
 	if st != nil && acct.Device() != nil {
 		if err := st.DeleteDevice(ctx, acct.Device()); err != nil {
 			return fmt.Errorf("whatsapp: delete device: %w", err)

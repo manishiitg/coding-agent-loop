@@ -2939,7 +2939,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     ? liveMessageDelivery.status === 'sending'
       ? isProductSurface ? 'Sending message…' : `Sending to ${liveDeliveryProviderLabel}...`
       : liveMessageDelivery.status === 'sent_to_cli'
-        ? isProductSurface ? 'Message sent' : `Sent to ${liveDeliveryProviderLabel}`
+        ? isProductSurface ? 'Message submitted' : `Submitted to ${liveDeliveryProviderLabel}`
       : liveMessageDelivery.status === 'queued_for_injection'
           ? isProductSurface ? 'Message queued' : 'Queued for next model turn'
         : liveMessageDelivery.status === 'next_turn_started'

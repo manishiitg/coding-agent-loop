@@ -35,6 +35,14 @@ async function mount(events: PollingEvent[], retry?: () => Promise<void>) {
 }
 
 describe('shared transcript failure retry', () => {
+  it('distinguishes terminal delivery from processing the message', async () => {
+    const host = await mount([event('user', 'user_message', {
+      content: 'Check the browser', metadata: { delivery_status: 'sent_to_cli' },
+    })])
+    expect(host.textContent).toContain('Submitted to agent · may be queued')
+    expect(host.textContent).not.toContain('Message sent')
+  })
+
   it('retries the latest failed turn once while acknowledgement is pending', async () => {
     let finish!: () => void
     const retry = vi.fn(() => new Promise<void>(resolve => { finish = resolve }))

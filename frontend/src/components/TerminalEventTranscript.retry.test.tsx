@@ -35,12 +35,11 @@ async function mount(events: PollingEvent[], retry?: () => Promise<void>) {
 }
 
 describe('shared transcript failure retry', () => {
-  it('distinguishes terminal delivery from processing the message', async () => {
+  it.each(['sending', 'sent_to_cli', 'queued_for_injection', 'next_turn_started'])('shows only the timestamp for delivery status %s', async (status) => {
     const host = await mount([event('user', 'user_message', {
-      content: 'Check the browser', metadata: { delivery_status: 'sent_to_cli' },
+      content: 'Check the browser', metadata: { delivery_status: status },
     })])
-    expect(host.textContent).toContain('Queued')
-    expect(host.textContent).not.toContain('Message sent')
+    expect(host.textContent).toBe(`Check the browser${new Date('2026-09-10T00:00:00Z').toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`)
   })
 
   it('retries the latest failed turn once while acknowledgement is pending', async () => {

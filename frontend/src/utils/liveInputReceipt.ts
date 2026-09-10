@@ -8,13 +8,3 @@ export function withLiveInputReceipt(event: PollingEvent, status: string, provid
     source: 'coding_agent_live_input', delivery_status: status, provider,
   } } } as PollingEvent['data'] }
 }
-
-export function liveInputReceiptText(metadata: Record<string, unknown> | undefined): string {
-  switch (metadata?.delivery_status) {
-    case 'sending': return 'Submitting…'
-    case 'sent_to_cli':
-    case 'queued_for_injection': return 'Queued'
-    case 'next_turn_started': return 'Follow-up started'
-    default: return ''
-  }
-}

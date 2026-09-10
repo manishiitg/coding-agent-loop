@@ -5,7 +5,6 @@ import { CheckCircle2, ChevronDown, ChevronRight, CircleDashed, XCircle } from '
 import { EventDispatcher } from './events/EventDispatcher'
 import { ConversationMarkdownRenderer } from './ui/MarkdownRenderer'
 import { normalizeProductChatFailure } from '../platform/chat/productChatFailure'
-import { liveInputReceiptText } from '../utils/liveInputReceipt'
 import {
   buildTranscriptItems,
   collapseTurnFailures,
@@ -202,12 +201,12 @@ const TranscriptEvent: React.FC<{
     return <EventDispatcher event={event} onSendMessage={onSendMessage} compact hideOrchestratorContext />
   }
 
-  return <UserTranscriptMessage content={content || 'Message'} timestamp={timestamp} compactBottom={compactUserBottom} receipt={liveInputReceiptText(payload.metadata as Record<string, unknown> | undefined)} />
+  return <UserTranscriptMessage content={content || 'Message'} timestamp={timestamp} compactBottom={compactUserBottom} />
 }
 
 const USER_MESSAGE_PREVIEW_LIMIT = 480
 
-const UserTranscriptMessage: React.FC<{ content: string; timestamp: string; compactBottom?: boolean; receipt?: string }> = ({ content, timestamp, compactBottom = false, receipt }) => {
+const UserTranscriptMessage: React.FC<{ content: string; timestamp: string; compactBottom?: boolean }> = ({ content, timestamp, compactBottom = false }) => {
   const collapsible = shouldCollapseTranscriptUserMessage(content)
   const [expanded, setExpanded] = useState(false)
   const shown = collapsible && !expanded
@@ -218,9 +217,8 @@ const UserTranscriptMessage: React.FC<{ content: string; timestamp: string; comp
     return (
       <div className={`ml-auto mt-2 max-w-[84%] text-right ${compactBottom ? 'mb-1' : 'mb-2'}`}>
         <div className="whitespace-pre-wrap break-words text-[length:calc(14px*var(--chat-scale,1))] leading-[calc(20px*var(--chat-scale,1))] text-foreground">{shown}</div>
-        {(receipt || timestamp) && (
+        {timestamp && (
           <div className="mt-0.5 flex items-center justify-end gap-2 text-[10px] leading-4 text-muted-foreground">
-            {receipt && <span>{receipt}</span>}
             {timestamp && <span className="tabular-nums">{timestamp}</span>}
           </div>
         )}
@@ -240,7 +238,6 @@ const UserTranscriptMessage: React.FC<{ content: string; timestamp: string; comp
           {expanded ? 'Show less' : 'Show full message'}
         </button>
         <div className="ml-auto flex items-center gap-2 text-[10px] leading-4 text-muted-foreground">
-          {receipt && <span>{receipt}</span>}
           {timestamp && <span className="tabular-nums">{timestamp}</span>}
         </div>
       </div>

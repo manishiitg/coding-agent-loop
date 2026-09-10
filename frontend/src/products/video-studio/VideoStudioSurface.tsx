@@ -963,7 +963,6 @@ function ProjectWorkspace({ project, onBack }: { project: VideoProject; onBack: 
                 contentRenderer={VideoStudioConversation}
                 inputVariant="product"
                 fullTurnStreaming
-                hideRuntimeStatus
                 showNewChatAction
               />
             ) : <div className="grid h-full place-items-center text-xs text-slate-400"><Loader2 className="mr-2 inline h-4 w-4 animate-spin" />Connecting project agent…</div>}

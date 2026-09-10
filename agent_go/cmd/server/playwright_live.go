@@ -15,6 +15,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/gorilla/mux"
 	"github.com/gorilla/websocket"
+	virtualtools "github.com/manishiitg/coding-agent-loop/agent_go/cmd/server/virtual-tools"
 )
 
 type playwrightLiveSession struct {
@@ -54,17 +55,31 @@ func (s *playwrightLiveSession) publish(kind string, data []byte) {
 	}
 }
 
+// Saved steps use an MCP group session rather than the visible chat ID. Resolve
+// only the server-owned parent mapping, then verify its active owner and workflow.
+// Never infer ownership from a session-name prefix or producer-supplied fields.
+func (api *StreamingAPI) playwrightWorkflowOwner(run string) (string, string) {
+	parent := virtualtools.GetParentChat(run)
+	api.activeSessionsMux.RLock()
+	defer api.activeSessionsMux.RUnlock()
+	owner := api.activeSessions[run]
+	if owner == nil && parent != nil {
+		owner = api.activeSessions[parent.SessionID]
+		if owner == nil || strings.TrimRight(parent.WorkflowPath, "/") != strings.TrimRight(owner.WorkspacePath, "/") || (parent.UserID != "" && parent.UserID != owner.UserID) {
+			return "", ""
+		}
+	}
+	if owner == nil {
+		return "", ""
+	}
+	return owner.UserID, strings.TrimRight(owner.WorkspacePath, "/")
+}
+
 // Mounted under sessionToolsRouter, behind the same bearer authentication as
 // execute_shell_command. Identity is taken from the server's run, never a body.
 func (api *StreamingAPI) handlePlaywrightPublisher(w http.ResponseWriter, r *http.Request) {
 	run := mux.Vars(r)["session_id"]
-	api.activeSessionsMux.RLock()
-	owner := api.activeSessions[run]
-	user, workspace := "", ""
-	if owner != nil {
-		user, workspace = owner.UserID, strings.TrimRight(owner.WorkspacePath, "/")
-	}
-	api.activeSessionsMux.RUnlock()
+	user, workspace := api.playwrightWorkflowOwner(run)
 	if user == "" || !strings.HasPrefix(workspace, "Workflow/") {
 		http.Error(w, "An active workflow session is required", http.StatusNotFound)
 		return
@@ -236,10 +251,8 @@ func (api *StreamingAPI) handlePlaywrightViewer(w http.ResponseWriter, r *http.R
 // Distribute the exact fixture sources shipped with this server release through
 // the authenticated session bridge, so sandboxed tests need no host-path grants.
 func (api *StreamingAPI) handlePlaywrightPackage(w http.ResponseWriter, r *http.Request) {
-	api.activeSessionsMux.RLock()
-	session := api.activeSessions[mux.Vars(r)["session_id"]]
-	allowed := session != nil && session.UserID != "" && strings.HasPrefix(session.WorkspacePath, "Workflow/")
-	api.activeSessionsMux.RUnlock()
+	user, workspace := api.playwrightWorkflowOwner(mux.Vars(r)["session_id"])
+	allowed := user != "" && strings.HasPrefix(workspace, "Workflow/")
 	if !allowed {
 		http.NotFound(w, r)
 		return

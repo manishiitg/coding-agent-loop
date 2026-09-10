@@ -18,6 +18,7 @@ import (
 
 	"github.com/gorilla/mux"
 	"github.com/gorilla/websocket"
+	virtualtools "github.com/manishiitg/coding-agent-loop/agent_go/cmd/server/virtual-tools"
 	"github.com/manishiitg/mcpagent/executor"
 )
 
@@ -325,5 +326,73 @@ func TestPlaywrightPackagesUseAuthenticatedSessionAndFixedFiles(t *testing.T) {
 		if resp.StatusCode != tc.status {
 			t.Fatalf("%+v: got %d", tc, resp.StatusCode)
 		}
+	}
+}
+
+func TestPlaywrightSavedStepSessionResolvesActiveParent(t *testing.T) {
+	api, server := playwrightTestServer(t)
+	dir := t.TempDir()
+	t.Setenv("AGENTWORKS_PLAYWRIGHT_PACKAGES_DIR", dir)
+	if err := os.WriteFile(filepath.Join(dir, "agentworks-playwright-python.zip"), []byte("fixture"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name, parent, user, workspace string
+		allowed                       bool
+	}{
+		{"registered-child", "run", "", "Workflow/test", true},
+		{"matching-user", "run", "alice", "Workflow/test/", true},
+		{"wrong-user", "run", "bob", "Workflow/test", false},
+		{"wrong-workflow", "run", "", "Workflow/other", false},
+		{"missing-workflow", "run", "", "", false},
+		{"ended-parent", "missing", "alice", "Workflow/test", false},
+		{"unregistered", "", "", "", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			child := "session-group-" + tc.name
+			virtualtools.RegisterParentChat(child, &virtualtools.ParentChatContext{SessionID: tc.parent, UserID: tc.user, WorkflowPath: tc.workspace})
+			defer virtualtools.UnregisterParentChat(child)
+			req, _ := http.NewRequest("GET", server.URL+"/s/"+child+"/tools/browser/packages/python", nil)
+			req.Header.Set("Authorization", "Bearer producer-secret")
+			resp, err := http.DefaultClient.Do(req)
+			if err != nil {
+				t.Fatal(err)
+			}
+			resp.Body.Close()
+			want := http.StatusNotFound
+			if tc.allowed {
+				want = http.StatusOK
+			}
+			if resp.StatusCode != want {
+				t.Fatalf("package status=%d want=%d", resp.StatusCode, want)
+			}
+			conn, resp, err := websocket.DefaultDialer.Dial(strings.Replace(server.URL, "http", "ws", 1)+"/s/"+child+"/tools/browser/live", http.Header{"Authorization": []string{"Bearer producer-secret"}})
+			if resp != nil {
+				resp.Body.Close()
+			}
+			if !tc.allowed {
+				if conn != nil {
+					conn.Close()
+				}
+				if err == nil {
+					t.Fatal("unauthorized child registered")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer conn.Close()
+			id := readPlaywrightType(t, conn, "registered")["browser_session"]
+			found := false
+			for _, item := range api.playwrightSessions("alice", "Workflow/test") {
+				if item["browser_session"] == id && item["workflow_session"] == child {
+					found = true
+				}
+			}
+			if !found || len(api.playwrightSessions("bob", "Workflow/test")) != 0 {
+				t.Fatal("child browser lost owner/workflow isolation")
+			}
+		})
 	}
 }

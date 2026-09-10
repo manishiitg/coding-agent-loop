@@ -28,7 +28,9 @@ For JS/TS, verify the project resolves `@agentworks/playwright` and `@playwright
 for Python, verify `agentworks_playwright`, `playwright`, and `websocket` import in
 the actual suite interpreter. Verify Chromium is installed and the workflow supplies
 `MCP_API_URL` and `MCP_API_TOKEN`. Use the session-scoped API URL or `MCP_SESSION_ID`;
-never print credentials or put them in source. A successful fixture registration
+never print credentials or put them in source. Saved steps may receive a child workflow
+session URL; use it unchanged. The server resolves its registered parent owner for
+both package downloads and live streaming. A successful fixture registration
 confirms server support; installed source or a planned release does not.
 
 Both packages ship with the deployed release and are not published on npm/PyPI.

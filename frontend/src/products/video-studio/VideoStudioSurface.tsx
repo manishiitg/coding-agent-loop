@@ -250,6 +250,9 @@ function VideoStudioConversation({
   historyError,
   onLoadOlder,
   landingContent,
+  isStreaming,
+  onRetryLastMessage,
+  onSubmitQuery,
 }: ChatContentRendererProps) {
   if (!isRestoring && events.length === 0 && !streamingText.trim() && !streamingStatus?.trim()) {
     return <>{landingContent}</>
@@ -267,6 +270,8 @@ function VideoStudioConversation({
       error={historyError}
       onLoadOlder={onLoadOlder}
       onRetry={onLoadOlder}
+      onRetryLastMessage={isStreaming ? undefined : onRetryLastMessage}
+      onSendMessage={onSubmitQuery}
       surfaceClassName="bg-gradient-to-b from-slate-950 via-slate-950 to-violet-950/35"
     />
   )

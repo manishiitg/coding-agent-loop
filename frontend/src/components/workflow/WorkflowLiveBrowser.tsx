@@ -10,7 +10,7 @@ const PLAYWRIGHT_BROWSER = 'playwright-tests'
 
 type Recording = { recording: boolean; directory?: string; errors?: string[] }
 
-type BrowserSession = { browser_session: string; workflow_session: string; label?: string; kind?: string; read_only?: string }
+type BrowserSession = { browser_session: string; workflow_session: string; label?: string; kind?: string; read_only?: string; state?: string; recording_state?: string; recording_error?: string }
 type BrowserTab = { tabId: string; title: string; url: string; active: boolean }
 
 export default function WorkflowLiveBrowser({ workspacePath, toolbar }: { workspacePath: string | null; toolbar?: ReactNode }) {
@@ -21,6 +21,8 @@ export default function WorkflowLiveBrowser({ workspacePath, toolbar }: { worksp
   const [tabs, setTabs] = useState<BrowserTab[]>([])
   const [frame, setFrame] = useState('')
   const [lastPlaywrightFrame, setLastPlaywrightFrame] = useState<{ workspace: string; session: string; frame: string } | null>(null)
+  const [replayURL, setReplayURL] = useState('')
+  const replayScope = useRef<{ workspace: string; ids: Set<string>; cleanup?: ReturnType<typeof setTimeout> } | null>(null)
   const [connected, setConnected] = useState(false)
   const [controlling, setControlling] = useState(false)
   const [error, setError] = useState('')
@@ -64,7 +66,35 @@ export default function WorkflowLiveBrowser({ workspacePath, toolbar }: { worksp
     && (followingPlaywright || session.startsWith('pw-'))
     && (!session || session === lastPlaywrightFrame.session) ? lastPlaywrightFrame.frame : ''
   const displayFrame = frame || retainedFrame
-  const completed = Boolean(retainedFrame && !session)
+  const sourceCompleted = currentBrowser?.state === 'completed'
+  const completed = sourceCompleted || Boolean(retainedFrame && !session)
+  const recordingState = currentBrowser?.recording_state
+
+  useEffect(() => {
+    if (!workspacePath) return
+    const previous = replayScope.current
+    if (previous?.workspace === workspacePath && previous.cleanup) clearTimeout(previous.cleanup)
+    const scope = previous?.workspace === workspacePath ? previous : { workspace: workspacePath, ids: new Set<string>() }
+    replayScope.current = scope
+    return () => {
+      // Defer past React's effect replay; only actual panel disposal deletes files.
+      scope.cleanup = setTimeout(() => {
+        for (const id of scope.ids) void api.post(`/api/browser/live/${encodeURIComponent(id)}/recording`, { action: 'delete' }, { params: { workspace_path: scope.workspace } }).catch(() => { useChatStore.getState().addToast('Could not delete a recording. It will expire automatically within 1 hour.', 'error') })
+      }, 0)
+    }
+  }, [workspacePath])
+
+  useEffect(() => {
+    setReplayURL('')
+    if (!sourceCompleted || recordingState !== 'ready' || !workspacePath) return
+    const controller = new AbortController()
+    let objectURL = ''
+    void api.get<Blob>(`/api/browser/live/${encodeURIComponent(session)}/recording`, { params: { workspace_path: workspacePath }, responseType: 'blob', signal: controller.signal }).then(({ data }) => {
+      if (controller.signal.aborted) return
+      objectURL = URL.createObjectURL(data); setReplayURL(objectURL)
+    }).catch(() => { if (!controller.signal.aborted) setError('Unable to load recording. It may have been deleted in another panel.') })
+    return () => { controller.abort(); if (objectURL) URL.revokeObjectURL(objectURL) }
+  }, [session, workspacePath, sourceCompleted, recordingState])
 
   useEffect(() => {
     let cancelled = false
@@ -87,6 +117,8 @@ export default function WorkflowLiveBrowser({ workspacePath, toolbar }: { worksp
         const nextSessions = data.sessions ?? []
         setSessions(nextSessions)
         const tests = nextSessions.filter(item => item.kind === 'playwright')
+        for (const item of tests) if (item.recording_state && replayScope.current?.workspace === workspacePath) replayScope.current.ids.add(item.browser_session)
+        const activeTests = tests.filter(item => item.state !== 'completed')
         let choice = selectedBrowser.current
         if (choice && choice !== PLAYWRIGHT_BROWSER && !nextSessions.some(item => item.browser_session === choice)) {
           choice = choice.startsWith('pw-') ? PLAYWRIGHT_BROWSER : ''
@@ -97,7 +129,7 @@ export default function WorkflowLiveBrowser({ workspacePath, toolbar }: { worksp
         selectedBrowser.current = choice
         setSelection(choice)
         setSession(current => choice === PLAYWRIGHT_BROWSER
-          ? tests.find(item => item.browser_session === current)?.browser_session || tests[0]?.browser_session || ''
+          ? activeTests.find(item => item.browser_session === current)?.browser_session || activeTests[0]?.browser_session || tests.find(item => item.browser_session === current)?.browser_session || tests[0]?.browser_session || ''
           : choice || nextSessions[0]?.browser_session || '')
       } catch {
         if (!cancelled) setError('Unable to load workflow browser sessions.')
@@ -111,7 +143,7 @@ export default function WorkflowLiveBrowser({ workspacePath, toolbar }: { worksp
   useEffect(() => {
     pendingTab.current = ''
     setFrame(''); setTabs([]); setConnected(false); setControlling(false); setError('')
-    if (!session || !workspacePath) return
+    if (!session || !workspacePath || sourceCompleted) return
     setLastPlaywrightFrame(previous => previous?.workspace === workspacePath && previous.session === session ? previous : null)
     const url = new URL(`${getApiBaseUrl() || window.location.origin}/api/browser/live/${encodeURIComponent(session)}/stream`)
     url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:'
@@ -158,7 +190,7 @@ export default function WorkflowLiveBrowser({ workspacePath, toolbar }: { worksp
       if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'ping' }))
     }, 10000)
     return () => { disposed = true; window.clearInterval(heartbeat); ws.close(); if (socket.current === ws) socket.current = null }
-  }, [session, workspacePath, retry])
+  }, [session, workspacePath, retry, sourceCompleted])
 
   useEffect(() => {
     setRecording({ recording: false })
@@ -252,7 +284,7 @@ export default function WorkflowLiveBrowser({ workspacePath, toolbar }: { worksp
         </select>
         {followingPlaywright && currentBrowser?.label && <span className="max-w-64 truncate text-xs text-muted-foreground" title={currentBrowser.label}>{currentBrowser.label}</span>}
         <div className="ml-auto flex gap-2">
-          {session && !connected && <button className="rounded border border-border px-3 py-1 text-xs" onClick={() => setRetry(value => value + 1)}>Reconnect</button>}
+          {session && !connected && !sourceCompleted && <button className="rounded border border-border px-3 py-1 text-xs" onClick={() => setRetry(value => value + 1)}>Reconnect</button>}
           {connected && canControl && <button className="rounded border border-border px-3 py-1 text-xs" onClick={() => send({ type: controlling ? 'release_control' : 'take_control' })}>{controlling ? 'Return control to agent' : 'Take control'}</button>}
           {session && canControl && (
             <button type="button" disabled={recordingBusy} className={`inline-flex items-center gap-1.5 rounded-md px-2.5 py-1 text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50 ${recording.recording ? 'bg-red-500/10 text-red-600 hover:bg-red-500/15 dark:text-red-400' : 'bg-muted text-foreground hover:bg-muted/70'}`} onClick={() => void toggleRecording()}>
@@ -261,6 +293,7 @@ export default function WorkflowLiveBrowser({ workspacePath, toolbar }: { worksp
             </button>
           )}
           <select aria-label="Browser sizing" value={fit} onChange={event => setFit(event.target.value as 'width' | 'page')} className="rounded border border-border bg-background px-1 text-xs"><option value="width">Fill width</option><option value="page">Fit page</option></select>
+          {replayURL && <a href={replayURL} download="playwright-replay.mp4" className="rounded border border-border px-3 py-1 text-xs">Download video</a>}
           {toolbar}
         </div>
       </div>
@@ -283,14 +316,17 @@ export default function WorkflowLiveBrowser({ workspacePath, toolbar }: { worksp
           </div>
         </div>
       )}
+      {(readOnly || sessions.some(item => item.recording_state)) && <p className="shrink-0 border-b border-border bg-muted/30 px-3 py-2 text-xs">Closing this panel deletes its Playwright recordings. Download any videos you want to keep. Temporary recordings expire after 1 hour.</p>}
+      {currentBrowser?.recording_error && <p className="px-3 py-2 text-xs text-destructive" role="alert">{currentBrowser.recording_error}</p>}
+      {sourceCompleted && recordingState === 'saving' && <p className="px-3 py-2 text-xs">Preparing video replay…</p>}
       {error && <p className="p-3 text-xs text-destructive" role="alert">{error}</p>}
       {tabs.length > 0 && <div className="flex shrink-0 gap-1 overflow-x-auto border-b border-border px-2 py-1" aria-label="Browser tabs">
         {tabs.map(tab => <button key={tab.tabId} disabled={!canControl || tab.active} aria-pressed={tab.active} title={controlling ? tab.url : 'Switch tab and take control'} onClick={() => { if (controlling) send({ type: 'switch_tab', tab: tab.tabId }); else { pendingTab.current = tab.tabId; send({ type: 'take_control' }) } }} className={`max-w-52 shrink-0 truncate rounded px-3 py-1.5 text-xs ${tab.active ? 'bg-muted font-medium' : 'text-muted-foreground'} disabled:cursor-default`}>{tab.title || tab.url || tab.tabId}</button>)}
       </div>}
-      {displayFrame ? <div className="relative min-h-0 flex-1 bg-muted/20"><div className={`absolute inset-0 ${fit === 'width' ? 'overflow-auto' : 'flex items-center justify-center'}`}>
+      {replayURL ? <video controls preload="metadata" src={replayURL} aria-label="Playwright test recording" className="min-h-0 flex-1 bg-black object-contain" /> : displayFrame ? <div className="relative min-h-0 flex-1 bg-muted/20"><div className={`absolute inset-0 ${fit === 'width' ? 'overflow-auto' : 'flex items-center justify-center'}`}>
         <img ref={screen} src={displayFrame} alt={retainedFrame ? "Last Playwright test frame" : "Live server browser viewport"} draggable={false} tabIndex={controlling ? 0 : -1} className={`block h-auto select-none outline-none focus:ring-2 focus:ring-inset focus:ring-ring ${fit === 'width' ? 'w-full max-w-none' : 'max-h-full w-auto max-w-full'}`} onMouseDown={event => mouse(event, 'mousePressed')} onMouseUp={event => mouse(event, 'mouseReleased')} onMouseMove={event => mouse(event, 'mouseMoved')} onContextMenu={event => event.preventDefault()} onKeyDown={event => keyboard(event, 'keyDown')} onKeyUp={event => keyboard(event, 'keyUp')} />
       </div>{retainedFrame && <span className="pointer-events-none absolute bottom-3 right-3 rounded bg-background/90 px-3 py-1 text-xs shadow">{completed ? 'Completed' : 'Disconnected'} · Last frame</span>}</div> : <div className="flex min-h-0 flex-1 items-center justify-center px-6 py-12 text-center text-sm text-muted-foreground">{session ? 'Waiting for the browser’s live view…' : followingPlaywright ? 'Waiting for a Playwright test. Tests using the AgentWorks fixture will appear here automatically.' : 'When this workflow opens a managed browser, its live view will appear here.'}</div>}
-      <p className="shrink-0 border-t border-border px-3 py-1 text-[11px] text-muted-foreground">{readOnly ? 'Playwright test · Watch-only. Recordings are saved by the test runner.' : session === 'shared-browser' ? 'Shared browser · everyone uses the same tabs and sign-ins. Coordinate before making changes.' : controlling ? 'Browser automation is paused while you interact. Return control or press Escape to let it continue.' : 'Live server browser · Take control to interact.'}</p>
+      <p className="shrink-0 border-t border-border px-3 py-1 text-[11px] text-muted-foreground">{readOnly ? 'Playwright test · Watch-only. Video replay is recorded automatically.' : session === 'shared-browser' ? 'Shared browser · everyone uses the same tabs and sign-ins. Coordinate before making changes.' : controlling ? 'Browser automation is paused while you interact. Return control or press Escape to let it continue.' : 'Live server browser · Take control to interact.'}</p>
     </section>
   )
 }

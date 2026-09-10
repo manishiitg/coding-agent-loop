@@ -153,3 +153,29 @@ it('does not show a retained test frame when the shared browser is selected', as
   expect(host.querySelector('img')).toBeNull()
   expect(host.textContent).not.toContain('Completed')
 })
+
+it('plays completed tests, offers download, and deletes the replay when the panel closes', async () => {
+  const create = vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:replay')
+  const revoke = vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {})
+  const completed = { ...testBrowser('pw-replay'), state: 'completed', recording_state: 'ready' }
+  api.get.mockImplementation(async (url: string) => ({ data: url.endsWith('/recording') ? new Blob(['video'], { type: 'video/mp4' }) : { sessions: [shared, completed] } }))
+  const { root, host } = await mountBrowser()
+  expect(host.querySelector('video')?.getAttribute('src')).toBe('blob:replay')
+  expect(host.querySelector('video')?.controls).toBe(true)
+  expect(host.querySelector('a[download]')?.getAttribute('href')).toBe('blob:replay')
+  expect(host.textContent).toContain('Closing this panel deletes')
+  expect(FakeSocket.instances).toHaveLength(0)
+  expect(api.post).not.toHaveBeenCalledWith(expect.anything(), { action: 'delete' }, expect.anything())
+  await act(async () => { root.unmount(); await new Promise(resolve => setTimeout(resolve, 5)) })
+  expect(api.post).toHaveBeenCalledWith('/api/browser/live/pw-replay/recording', { action: 'delete' }, { params: { workspace_path: 'Workflow/test' } })
+  expect(revoke).toHaveBeenCalledWith('blob:replay')
+  create.mockRestore(); revoke.mockRestore()
+})
+
+it('continues following live tests when an older completed replay remains', async () => {
+  api.get.mockResolvedValue({ data: { sessions: [testBrowser('pw-first')] } })
+  const { selector } = await mountBrowser()
+  await pollBrowsers([{ ...testBrowser('pw-first'), state: 'completed', recording_state: 'saving' }, testBrowser('pw-next')])
+  expect(selector.value).toBe('playwright-tests')
+  expect(String(FakeSocket.instances.at(-1)?.url)).toContain('/pw-next/stream')
+})

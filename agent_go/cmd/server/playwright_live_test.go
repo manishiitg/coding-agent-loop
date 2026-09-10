@@ -37,7 +37,18 @@ func playwrightTestServer(t *testing.T) (*StreamingAPI, *httptest.Server) {
 		user := r.Header.Get("X-Test-User")
 		router.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), UserContextKey, &UserClaims{UserID: user})))
 	}))
-	t.Cleanup(server.Close)
+	t.Cleanup(func() {
+		server.Close()
+		api.playwrightLive.Lock()
+		records := []*playwrightRecording{}
+		for _, r := range api.playwrightLive.recordings {
+			records = append(records, r)
+		}
+		api.playwrightLive.Unlock()
+		for _, r := range records {
+			api.deletePlaywrightRecording(r)
+		}
+	})
 	return api, server
 }
 
@@ -130,7 +141,7 @@ func TestPlaywrightLiveOwnerScopeWatchOnlyAndCleanup(t *testing.T) {
 		t.Fatal(err)
 	}
 	resp.Body.Close()
-	if resp.StatusCode != 405 {
+	if resp.StatusCode != 400 {
 		t.Fatalf("recording spawned browser: %d", resp.StatusCode)
 	}
 	producer.Close()
@@ -138,8 +149,8 @@ func TestPlaywrightLiveOwnerScopeWatchOnlyAndCleanup(t *testing.T) {
 	if _, _, err := viewer.ReadMessage(); err == nil {
 		t.Fatal("viewer survived producer cleanup")
 	}
-	if got := api.playwrightSessions("alice", "Workflow/test"); len(got) != 0 {
-		t.Fatalf("stale browser: %v", got)
+	if got := api.playwrightSessions("alice", "Workflow/test"); len(got) != 1 || got[0]["state"] != "completed" {
+		t.Fatalf("completed replay missing: %v", got)
 	}
 }
 
@@ -279,12 +290,22 @@ func testPlaywrightFixtureLive(t *testing.T, runtime string) {
 		t.Fatalf("Playwright unexpected exit: %v\n%s", err, log.String())
 	}
 	t.Log(log.String())
-	deadline = time.Now().Add(3 * time.Second)
-	for len(api.playwrightSessions("alice", "Workflow/test")) > 0 && time.Now().Before(deadline) {
-		time.Sleep(10 * time.Millisecond)
+	deadline = time.Now().Add(15 * time.Second)
+	for {
+		sessions := api.playwrightSessions("alice", "Workflow/test")
+		if len(sessions) == 1 && sessions[0]["state"] == "completed" && sessions[0]["recording_state"] == "ready" {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("finished test replay not ready: %v", sessions)
+		}
+		time.Sleep(20 * time.Millisecond)
 	}
-	if len(api.playwrightSessions("alice", "Workflow/test")) != 0 {
-		t.Fatal("finished test left stale browser")
+	api.playwrightLive.Lock()
+	replay := api.playwrightLive.recordings[id]
+	api.playwrightLive.Unlock()
+	if info, err := os.Stat(filepath.Join(replay.dir, "replay.mp4")); err != nil || info.Size() == 0 {
+		t.Fatalf("missing temporary replay: %v", err)
 	}
 	videos, _ := filepath.Glob(filepath.Join(output, "*", "*.webm"))
 	if len(videos) == 0 {

@@ -142,3 +142,14 @@ end-to-end before the ticket returns to `implemented`.
   was an unnecessary dependency between one agent's review and repair. Remove
   the phase contract and keep the durable receipt as a required end-of-task
   record instead.
+
+
+## 2026-09-09 local Pulse audit follow-up
+
+The local audit found repetitive technical attention and sparse strategic
+execution. Keep observations separate from accepted issues; a platform-owned
+handoff with no available workflow repair must not become a new workflow repair
+on every tick. [PLAT-303](plat-303.md) tracks exception-driven technical selection,
+protected strategic completion, and remaining schedule independence. Existing
+lifecycle/retained-task implementation is not proof that this broader policy is
+fully implemented.

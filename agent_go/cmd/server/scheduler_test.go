@@ -1053,513 +1053,24 @@ func TestCreateAndUpdatePulseReviewOnlyScheduleSkipsGroupNamesRequirement(t *tes
 
 func TestPostRunMonitorUsesDynamicModulesAndSingleFinalizer(t *testing.T) {
 	steps := pulseLifecycleSteps()
-	if got := len(steps); got != 4 {
-		t.Fatalf("postRunMonitorSteps() length = %d, want 4", got)
+	want := []string{"gate", "plan-drift-review", "technical-review", "architecture-review", "strategic-review", "finalize"}
+	if len(steps) != len(want) {
+		t.Fatalf("stages=%d, want %d", len(steps), len(want))
 	}
-	// plan-drift-review is sequenced strictly before review-fix — it must run
-	// and fully complete before technical_review's own dispatch, so that a
-	// drift finding it files is already in the backlog technical_review reads.
-	for i, want := range []string{"gate", "plan-drift-review", "review-fix", "finalize"} {
-		if got := steps[i].label; got != want {
-			t.Fatalf("postRunMonitorSteps()[%d].label = %q, want %q", i, got, want)
+	for i, label := range want {
+		if steps[i].label != label {
+			t.Fatalf("stage %d=%q, want %q", i, steps[i].label, label)
 		}
 	}
-	planDrift := steps[1].query
-	for _, want := range []string{
-		"PULSE PLAN DRIFT REVIEW DISPATCH",
-		"Read the durable Gate worklist",
-		"If plan_drift_review is not due",
-		"run_in_background",
-		"plan-drift-review.md",
-		"applies and verifies safe workflow-owned fixes directly",
-		"the runtime waits for the registered child",
-	} {
-		if !strings.Contains(planDrift, want) {
-			t.Fatalf("plan drift review prompt missing %q:\n%s", want, planDrift)
+	for _, stage := range steps[2:5] {
+		for _, contract := range []string{"run_in_background", "review_module=", "runtime waits for the child", "one terminal result", "Do not render a dashboard"} {
+			if !strings.Contains(stage.query, contract) {
+				t.Fatalf("%s missing %s", stage.label, contract)
+			}
 		}
 	}
-	review := steps[2].query
-	for _, want := range []string{
-		"Read the durable Gate worklist",
-		"PULSE SEQUENCED REVIEW + FIX DISPATCH",
-		"run_in_background",
-		"single retained task instruction",
-		"terminal technical_review module result",
-		"drain every actionable workflow-owned canonical repair root",
-		"Platform-owned findings, human decisions, and evidence waits are durable but are not workflow repair debt",
-		"Do not stop after merely the highest-value bundle",
-		"Do not split review and repair into artificial sequence turns",
-		"never launch a fresh Fixer",
-		"one separate read-only executor",
-		"the runtime waits for registered children",
-	} {
-		if !strings.Contains(review, want) {
-			t.Fatalf("review prompt missing %q:\n%s", want, review)
-		}
-	}
-	if strings.Contains(review, "PULSE PLAN DRIFT REVIEW DISPATCH") || strings.Contains(review, `"plan_drift_review is due, launch`) {
-		t.Fatal("review-fix must not also dispatch plan_drift_review — that is plan-drift-review's own step now")
-	}
-	if !strings.Contains(steps[3].query, "PULSE FINALIZER") || strings.Contains(steps[3].query, "PULSE DASHBOARD") {
-		t.Fatal("only the finalizer must remain after sequenced Review + Fix")
-	}
-	return
-
-	var gate string
-	var bugReview string
-	var artifact string
-	var reportHealth string
-	var evalHealth string
-	var storesHealth string
-	var llmOps string
-	var strategyAuditor string
-	var goalAdvisor string
-	var dashboard string
-	var finalizer string
-	for _, step := range steps {
-		if step.label == "gate" {
-			gate = step.query
-		}
-		if step.label == "bug-review" {
-			bugReview = step.query
-		}
-		if step.label == "artifact" {
-			artifact = step.query
-		}
-		if step.label == "report-health" {
-			reportHealth = step.query
-		}
-		if step.label == "eval-health" {
-			evalHealth = step.query
-		}
-		if step.label == "stores-health" {
-			storesHealth = step.query
-		}
-		if step.label == "llm-ops-review" {
-			llmOps = step.query
-		}
-		if step.label == "strategy-auditor" {
-			strategyAuditor = step.query
-		}
-		if step.label == "goal-advisor" {
-			goalAdvisor = step.query
-		}
-		if step.label == "dashboard" {
-			dashboard = step.query
-		}
-		if step.label == "finalize" {
-			finalizer = step.query
-		}
-	}
-	if gate == "" {
-		t.Fatal("gate step not found")
-	}
-	if bugReview == "" {
-		t.Fatal("bug-review step not found")
-	}
-	if artifact == "" {
-		t.Fatal("artifact step not found")
-	}
-	if reportHealth == "" {
-		t.Fatal("report-health step not found")
-	}
-	if evalHealth == "" {
-		t.Fatal("eval-health step not found")
-	}
-	if storesHealth == "" {
-		t.Fatal("stores-health step not found")
-	}
-	if llmOps == "" {
-		t.Fatal("llm-ops-review step not found")
-	}
-	if strategyAuditor == "" {
-		t.Fatal("strategy-auditor step not found")
-	}
-	if goalAdvisor == "" {
-		t.Fatal("goal-advisor step not found")
-	}
-	if dashboard == "" {
-		t.Fatal("dashboard step not found")
-	}
-	if finalizer == "" {
-		t.Fatal("finalizer step not found")
-	}
-	// Detailed contracts live in focused/reference guidance. Scheduler messages
-	// intentionally carry only identifiers and the exact reference to load.
-	repoRoot := findRepoRoot(t)
-	readContract := func(rel string) string {
-		t.Helper()
-		raw, err := os.ReadFile(filepath.Join(repoRoot, rel))
-		if err != nil {
-			t.Fatalf("read %s: %v", rel, err)
-		}
-		return string(raw)
-	}
-	gatePrompt := gate
-	gate = gate + "\n" + readContract("agent_go/cmd/server/guidance/templates/system/pulse-gate.md") +
-		"\n" + readContract("docs/design/pulse-post-run-monitor-spec.md")
-	dashboardPrompt := dashboard
-	dashboard = dashboard + "\n" + readContract("agent_go/cmd/server/guidance/templates/system/review-improve-log.md") +
-		"\n" + readContract("docs/design/pulse-post-run-monitor-spec.md")
-	finalizerPrompt := finalizer
-	finalizerContract := readContract("agent_go/cmd/server/guidance/templates/system/pulse-finalizer.md")
-	finalizer = finalizer + "\n" + finalizerContract +
-		"\n" + readContract("docs/design/pulse-post-run-monitor-spec.md")
-	for _, pair := range []struct{ prompt, ref string }{
-		{gatePrompt, `read_skill(skills=[{"name":"builder-reference","path":"references/pulse-gate.md"}])`},
-		{dashboardPrompt, `read_skill(skills=[{"name":"builder-reference","path":"references/review-improve-log.md"}])`},
-		{finalizerPrompt, `read_skill(skills=[{"name":"builder-reference","path":"references/pulse-finalizer.md"}])`},
-	} {
-		if !strings.Contains(pair.prompt, pair.ref) {
-			t.Fatalf("compact stage prompt missing focused reference %q: %s", pair.ref, pair.prompt)
-		}
-	}
-	for _, want := range []string{
-		"exploratory QA review",
-		"behavioral contract",
-		"risk-ranked exploratory QA matrix",
-		"critical path",
-		"negative path",
-		"boundary or edge case",
-		"stale/current-run isolation",
-		"side-effect-free",
-		"Never send email/messages, post content, trade, publish",
-		"expected versus observed",
-		"QA coverage",
-		"untested risk",
-		"semantic execution defects as Bugs too",
-		"Observable execution-trace review",
-		"*-conversation.json",
-		"wrong tool/source",
-		"ignored or misinterpreted tool results",
-		"unsupported conclusions",
-		"Do not request or infer hidden chain-of-thought",
-		"correctness_bug",
-		"efficiency_or_coaching",
-		"insufficient_evidence",
-		"future LLM/Ops pass",
-	} {
-		if !strings.Contains(bugReview, want) {
-			t.Fatalf("bug-review step missing observable trace contract %q:\n%s", want, bugReview)
-		}
-	}
-	for _, want := range []string{
-		"progressive evidence scan",
-		"Successful execution is never proof that behavior was",
-		"Missing baseline means",
-		"wrong tool/source/route/decision evidence",
-		"off-track material goal",
-		"bounded adaptive cadence",
-	} {
-		if !strings.Contains(gate, want) {
-			t.Fatalf("gate step missing semantic trace trigger %q:\n%s", want, gate)
-		}
-	}
-	for _, want := range []string{
-		"OFF-TRACK GOAL QA",
-		"material goal is below target, declining, or stalled",
-		"distinguish a correctness bug from a strategy limitation",
-		"Do not equate successful execution with correct or goal-effective behavior",
-	} {
-		if !strings.Contains(bugReview, want) {
-			t.Fatalf("bug-review step missing off-track QA contract %q:\n%s", want, bugReview)
-		}
-	}
-	for _, want := range []string{
-		"efficiency_or_coaching findings",
-		"nested JSON/MCP/shell-envelope interpretation",
-		"hidden errors in successful envelopes",
-		"whether tool results were actually interpreted and used correctly",
-		"material goal criterion is below target",
-		"quality-equivalent evidence",
-		"do not rely on a deterministic Go detector",
-	} {
-		if !strings.Contains(llmOps, want) {
-			t.Fatalf("llm-ops step missing trace coaching handoff %q:\n%s", want, llmOps)
-		}
-	}
-	if strings.Contains(gate, "call harden_workflow(") || strings.Contains(gate, "call improve_learnings(") {
-		t.Fatalf("gate step should not run selected modules directly:\n%s", gate)
-	}
-	for _, want := range []string{
-		"PULSE GATE / WORKLIST",
-		`get_pulse_state(view="module")`,
-		"record_pulse_worklist exactly once",
-		"Gate owns the durable worklist and the cheap per-run goal observation checkpoint",
-		"record_pulse_impact",
-		"Do not write `builder/improve.html`",
-		"suppress a measured miss",
-		"Never make one reviewer due, skipped, or delayed because another reviewer",
-		"Workflow Review frequently",
-		"Strategy Auditor more frequently than Goal Advisor",
-		"Goal Advisor selectively",
-		"independent blank-sheet",
-		"For the supplied run folder, inspect every executed step/item's compact final",
-		"CONCERNS:",
-		"execution-final-summary.json",
-		"execution-attempt-*.json",
-		"session.json",
-		"not automatic run failure",
-		"execution health",
-		"execution_health",
-		"cadence-threatening run",
-	} {
-		if !strings.Contains(gate, want) {
-			t.Fatalf("gate step missing %q:\n%s", want, gate)
-		}
-	}
-	for _, want := range []string{
-		"bug_review",
-		"artifact_review",
-		"report_health",
-		"eval_health",
-		"stores_health",
-		"technical_review",
-		"strategy_auditor",
-		"goal_advisor",
-		"do not launch reviewers",
-		"Operational correctness stays Bug/Eval work",
-	} {
-		if !strings.Contains(gate, want) {
-			t.Fatalf("gate step missing module/gating text %q:\n%s", want, gate)
-		}
-	}
-	if !strings.Contains(bugReview, "PULSE MODULE — BUG REVIEW") {
-		t.Fatalf("bug-review step should be the Bug Review module:\n%s", bugReview)
-	}
-	for _, want := range []string{
-		"read-only reliability and exploratory QA review",
-		"Pulse Fixer",
-		"applies safe fixes sequentially",
-		"Bug fix",
-		`module="bug_review"`,
-		"record_pulse_result",
-	} {
-		if !strings.Contains(bugReview, want) {
-			t.Fatalf("bug-review step missing %q:\n%s", want, bugReview)
-		}
-	}
-	if strings.Contains(bugReview, "harden_workflow") {
-		t.Fatalf("bug-review step should not expose the removed harden tool:\n%s", bugReview)
-	}
-	for _, want := range []string{
-		"PULSE MODULE — ARTIFACT REVIEW",
-		`get_workflow_command_guidance(kind="review-artifact-drift"`,
-		"read-only review separate from Bug Review",
-		"mark_changelog_artifact_reviewed",
-		"artifact drift",
-		"record_pulse_result",
-	} {
-		if !strings.Contains(artifact, want) {
-			t.Fatalf("artifact step missing %q:\n%s", want, artifact)
-		}
-	}
-	for _, want := range []string{
-		"PULSE MODULE — REPORT HEALTH",
-		"improve-report checklist",
-		"generic READ-ONLY REVIEW agent",
-		"must not edit files",
-		"parent Pulse Fixer applies and verifies",
-		"Report fix",
-		"record_pulse_result",
-	} {
-		if !strings.Contains(reportHealth, want) {
-			t.Fatalf("report health step missing %q:\n%s", want, reportHealth)
-		}
-	}
-	for _, want := range []string{
-		"PULSE MODULE — EVAL HEALTH",
-		"improve-evaluation checklist",
-		"generic READ-ONLY REVIEW agent",
-		"TARGET_RUN_PATH",
-		"must not edit files",
-		"correctness-preserving",
-		"stale-evidence rejection",
-		"existing human-input flow before changing goal meaning",
-		"Eval fix",
-		"record_pulse_result",
-	} {
-		if !strings.Contains(evalHealth, want) {
-			t.Fatalf("eval health step missing %q:\n%s", want, evalHealth)
-		}
-	}
-	for _, want := range []string{
-		"PULSE MODULE — STORES HEALTH",
-		"generic READ-ONLY REVIEW agent",
-		"improve-learnings",
-		"improve-knowledge",
-		"improve-database",
-		"lock/unlock recommendations",
-		"every content-bearing Markdown file",
-		"complete purity manifest",
-		"learning-objective audit",
-		"one semantic item, one authoritative owner",
-		"kb_purity_manifest",
-		"db_ownership_manifest",
-		"ownership_manifest",
-		"content-bearing TEXT/JSON column",
-		"per-step metadata and run evidence",
-		"references are part of the skill",
-		"re-reading the complete package",
-		"never rewrite knowledgebase/context",
-		"db/README.md",
-		"parent Pulse Fixer",
-		"safely routes content to its authoritative owner",
-		"record_pulse_result",
-		`module="stores_health"`,
-	} {
-		if !strings.Contains(storesHealth, want) {
-			t.Fatalf("stores health step missing %q:\n%s", want, storesHealth)
-		}
-	}
-	for _, removed := range []string{"improve_learnings", "improve_kb", "improve_db"} {
-		if strings.Contains(storesHealth, removed) {
-			t.Fatalf("Pulse module prompts must not reference removed dedicated tool %q", removed)
-		}
-	}
-	for _, want := range []string{
-		"PULSE MODULE — OPS REVIEW",
-		"read_skill(skills=[{\"name\":\"builder-reference\",\"path\":\"references/llm-selection.md\"}])",
-		"agentic READ-ONLY REVIEW",
-		"raw execution/evaluation/Pulse cost ledgers",
-		"representative conversation/tool traces",
-		"event correlation",
-		"failure-status precedence",
-		"HTTP and path failures",
-		"retries and duplicate calls",
-		"timing measurement and timeout risk",
-		"serial versus parallel execution opportunities",
-		"cost attribution without double-counting",
-		"missing/unpriced evidence",
-		"semantically correct",
-		"Zero duration is unmeasured, not instant",
-		"zero exit code containing explicit error evidence is suspicious",
-		"proven failure, review candidate, and evidence gap",
-		"do not rely on a deterministic Go detector",
-		"Inventory exact model pins",
-		"list_provider_models",
-		"default_tier_models",
-		"Do not edit configuration/files",
-		"processes existing answered `llm-ops-` requests",
-		"at most two material decision requests",
-		"module=\"llm_ops_review\"",
-		`get_workflow_command_guidance(kind="design-plan")`,
-		"judge engineering fitness, never tactic quality",
-	} {
-		if !strings.Contains(llmOps, want) {
-			t.Fatalf("LLM/Ops review step missing %q:\n%s", want, llmOps)
-		}
-	}
-	for _, want := range []string{
-		"PULSE MODULE — STRATEGY AUDITOR",
-		`read_skill(skills=[{"name":"builder-reference","path":"references/strategy-auditor.md"}])`,
-		"retained cross-run evidence",
-		"goal-to-action-to-target/source-to-outcome causal chain",
-		"repetition, concentration, saturation, exploration gaps",
-		"strategy_flaw, execution_bug, measurement_gap, insufficient_evidence, or no_material_problem",
-		"Missing target/source/outcome linkage is measurement_gap",
-		"do not edit files or DB",
-		"bounded missing pieces or corrections within the current strategy",
-		"Do not wait for or consume Bug Review, Artifact Review, or Goal Advisor conclusions",
-		`module="strategy_auditor"`,
-		"record_pulse_result",
-	} {
-		if !strings.Contains(strategyAuditor, want) {
-			t.Fatalf("strategy auditor step missing %q:\n%s", want, strategyAuditor)
-		}
-	}
-	for _, want := range []string{
-		"PULSE MODULE — GOAL ADVISOR",
-		"blank-sheet lens",
-		"Generate materially different approaches before comparing them with the current plan",
-		"Do not wait for, consume, or require Strategy Auditor, Bug Review, or Artifact Review conclusions",
-		"read-only strategy advisor",
-		"separate read-only critic",
-		"healthy 10x/headroom",
-		"simplify, restructure, or a bounded experiment",
-		"not a structural-hygiene fix",
-		"at most two credible alternatives",
-		"migration/rollback",
-		"Instrumentation-only tracking is not an active strategy experiment",
-		"must challenge whether the recommendation is materially better",
-		"at most one active strategy experiment",
-		"why incremental repair is insufficient",
-		"never turns a maintenance handoff into the Goal Advisor outcome",
-		"Operational correctness issues such as",
-		"are handoffs to Bug Review, Eval Health, Report Health",
-		// Consolidated Fixer wording, asserted verbatim: the runtime replacer
-		// that used to rewrite this into per-module language is gone, so the
-		// prompt the reviewer receives is the one written in the source.
-		"The parent Pulse Fixer consolidates advisor and critic results",
-		"record_pulse_result",
-	} {
-		if !strings.Contains(goalAdvisor, want) {
-			t.Fatalf("goal advisor step missing %q:\n%s", want, goalAdvisor)
-		}
-	}
-	for _, want := range []string{
-		"PULSE DASHBOARD",
-		"This stage alone owns Pulse render",
-		`read_skill(skills=[{"name":"builder-reference","path":"references/review-improve-log.md"}])`,
-		"SQLite-backed Pulse lifecycle state",
-		"builder/improve.html",
-		"builder/card.health.html",
-		"Visible HTML contains only the two verdicts",
-		"exactly 3 Latest Pulse cells",
-		"Use editorial judgment: retain important active history",
-		"Never omit or fail the dashboard just to hit an item count",
-		"Do not render reviewer coverage",
-		`data-pulse-schema="5"`,
-		"no duplicated operational-detail sections",
-		"#pulse-agent-handoff[data-pulse-run-id]",
-		`command="dashboard"`,
-		// The prompt used to say "mark command=dashboard done" without naming a
-		// tool. On 2026-08-04 the dashboard stage rendered correctly, then
-		// reached for mutate_workflow_db to write pulse_final_command_state
-		// directly — a reasonable guess, and the wrong one, since that table is
-		// framework-owned and the session has no db_access=read-write grant. The
-		// stage never called the sanctioned command API, and
-		// reconcilePulseDashboardCommand then marked the whole stage failed even
-		// though the render was correct. The finalize step below already names
-		// record_pulse_result explicitly; this closes the same gap here.
-		`record_pulse_result(command="dashboard"`,
-		"never mutate_workflow_db or direct SQL for it",
-	} {
-		if !strings.Contains(dashboard, want) {
-			t.Fatalf("dashboard step missing %q:\n%s", want, dashboard)
-		}
-	}
-	for _, want := range []string{
-		"PULSE FINALIZER",
-		"confirm every due module",
-		"never treat missing as success",
-		"in that order in this one turn",
-		"record_pulse_result(command=...)",
-		"dedicated Dashboard stage",
-		"do not rewrite them",
-		"Backup",
-		"Publish",
-		"Notify",
-		"Backup risk: local only",
-		"off-device destination",
-		"live URL",
-		"notify_user",
-		"Issues found this pass",
-		"Fixed by Pulse",
-		"Still pending",
-		"exact active count",
-		"`fixed_verified`",
-		"`changed_unverified`",
-	} {
-		if !strings.Contains(finalizer, want) {
-			t.Fatalf("finalizer step missing %q:\n%s", want, finalizer)
-		}
-	}
-	for _, forbidden := range []string{"Dashboard + questions", "Refresh `builder/card.health.html`", "create_human_input_request"} {
-		finalizerFocusedContract := finalizerPrompt + "\n" + finalizerContract
-		if strings.Contains(finalizerFocusedContract, forbidden) {
-			t.Fatalf("finalizer still owns dashboard work %q:\n%s", forbidden, finalizerFocusedContract)
-		}
+	if !strings.Contains(steps[5].query, "PULSE FINALIZER") {
+		t.Fatal("missing finalization")
 	}
 }
 
@@ -1590,13 +1101,9 @@ func TestPulseEvalGuidanceSeparatesCorrectnessRepairsFromSemanticApproval(t *tes
 		t.Fatal("improve-evaluation guidance still contains blanket approval gate")
 	}
 
-	advisorGuidance := read("agent_go/cmd/server/guidance/templates/improve/goal-advisor.md")
+	advisorGuidance := read("agent_go/cmd/server/guidance/templates/system/strategy-auditor.md")
 	for _, want := range []string{
-		"strategy-first",
-		"Multiple experiments may be `running` or `measuring`",
-		"interference domains do not overlap",
-		"record_pulse_impact(interventions=[...])",
-		"human_input_id whenever",
+		"expected value", "hypotheses", "guardrails", "human_input_id",
 	} {
 		if !strings.Contains(advisorGuidance, want) {
 			t.Fatalf("goal-advisor guidance missing %q", want)
@@ -2848,7 +2355,7 @@ func TestPostRunMonitorModuleStepsReserveHTMLForDashboard(t *testing.T) {
 	steps := pulseLifecycleSteps()
 	checked := 0
 	for _, step := range steps {
-		if step.label != "review-fix" {
+		if step.label != "technical-review" && step.label != "architecture-review" && step.label != "strategic-review" {
 			continue
 		}
 		checked++
@@ -2861,8 +2368,8 @@ func TestPostRunMonitorModuleStepsReserveHTMLForDashboard(t *testing.T) {
 			t.Fatalf("module step %q still loads the presentation contract:\n%s", step.label, step.query)
 		}
 	}
-	if checked != 1 {
-		t.Fatalf("checked %d sequenced Review/Fix steps, want 1", checked)
+	if checked != 3 {
+		t.Fatalf("checked %d independent review steps, want 3", checked)
 	}
 }
 
@@ -3225,5 +2732,51 @@ func TestApplyLLMAndSecretsToReqMapUsesTheWorkflowModelForEverySchedule(t *testi
 				t.Fatalf("llm_config_source was set: %#v — no schedule overrides the model any more", reqMap["llm_config_source"])
 			}
 		})
+	}
+}
+
+func TestPulseRepairDrainOnlyAppliesToDueTechnicalReview(t *testing.T) {
+	for _, module := range []string{pulseModuleStrategicReview, pulseModuleTechnicalReview} {
+		t.Run(module, func(t *testing.T) {
+			ctx := context.Background()
+			t.Setenv("WORKSPACE_DOCS_PATH", t.TempDir())
+			workspacePath, runID := "Workflow/completion-contract", "pulse-contract"
+			if _, err := recordPulseWorklist(ctx, workspacePath, runID, completePulseWorklistDecisions(map[string]PulseWorklistDecision{
+				module: {Due: true, Reason: "Review has new evidence."},
+			})); err != nil {
+				t.Fatal(err)
+			}
+			if err := validatePulseTechnicalRepairDrain(ctx, workspacePath, runID); err != nil {
+				t.Fatalf("empty backlog should pass: %v", err)
+			}
+			if _, err := todo_creation_human.RecordPulseReviewFinding(ctx, workspacePath, runID, "review-1", todo_creation_human.PulseReviewFindingInput{
+				Concern: "Workflow validation rejects valid data", Module: pulseModuleTechnicalReview,
+				PulseFindingDetails: todo_creation_human.PulseFindingDetails{
+					IssueKind: todo_creation_human.IssueKindWorkflow, Classification: "correctness_bug", Severity: "high",
+					Summary: "Validation rejects valid data.", Impact: "Valid runs cannot complete.",
+					Evidence: []string{"runs/iteration-1/result.json"},
+				},
+			}); err != nil {
+				t.Fatal(err)
+			}
+			if count, err := todo_creation_human.CountPulseActionableWorkflowIssues(ctx, workspacePath); err != nil || count != 1 {
+				t.Fatalf("expected one actionable issue, count=%d err=%v", count, err)
+			}
+			err := validatePulseTechnicalRepairDrain(ctx, workspacePath, runID)
+			if module == pulseModuleTechnicalReview {
+				if err == nil || !strings.Contains(err.Error(), "1 actionable") {
+					t.Fatalf("technical repair debt must fail completion: %v", err)
+				}
+			} else if err != nil {
+				t.Fatalf("strategic completion must not depend on technical debt: %v", err)
+			}
+		})
+	}
+}
+
+func TestPulseRepairDrainRequiresDurableWorklist(t *testing.T) {
+	t.Setenv("WORKSPACE_DOCS_PATH", t.TempDir())
+	if err := validatePulseTechnicalRepairDrain(context.Background(), "Workflow/missing", "missing"); err == nil {
+		t.Fatal("missing worklist must not silently bypass the completion contract")
 	}
 }

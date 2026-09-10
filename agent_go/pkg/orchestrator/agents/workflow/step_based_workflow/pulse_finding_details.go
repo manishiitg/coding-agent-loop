@@ -322,6 +322,8 @@ func pulseReviewDecisionOwnership(module string) (source, prefix string) {
 		return "technical_review", "technical-decision-"
 	case pulsemodules.StrategicReviewID:
 		return "strategic_review", "strategic-proposal-"
+	case pulsemodules.ArchitectureReviewID:
+		return "architecture_review", "architecture-proposal-"
 	default:
 		return "pulse", "pulse-decision-"
 	}
@@ -398,7 +400,7 @@ const (
 
 func isPulseAdvisorModule(module string) bool {
 	module = pulsemodules.Normalize(module)
-	return module == pulsemodules.StrategicReviewID
+	return module == pulsemodules.StrategicReviewID || module == pulsemodules.ArchitectureReviewID
 }
 
 // validatePulseAdvisorFindingRoutes makes the advisor-to-lifecycle handoff a

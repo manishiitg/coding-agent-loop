@@ -4,9 +4,9 @@
 
 | Coordination | Value |
 |---|---|
-| Assigned agent | unassigned |
-| Ticket state | `open` |
-| Last synchronized | `2026-08-09` |
+| Assigned agent | Codex |
+| Ticket state | `implemented; current code and regression tests verified locally` |
+| Last synchronized | `2026-09-09` |
 
 > Claim this ticket in this file before implementation. During active work,
 > update this fragment rather than the shared index; synchronize the index
@@ -102,3 +102,13 @@ same pattern, and that the 11 existing rows can be safely closed once the
 recorder stops filing pre-repair iterations as durable concerns (they are
 already correctly dispositioned by Pulse — no re-diagnosis needed, only the
 platform fix and closure).
+
+
+## 2026-09-09 local Pulse audit follow-up
+
+This ticket's open status was stale. `SavePreValidationLog` already persists
+validation evidence without calling the concern recorder. Existing
+`pre_validation_concern_test.go` tests cover failed validation logs and confirm
+that no durable concern is filed automatically. No duplicate recorder change
+was made; the obsolete source comment was corrected. Historic concern cleanup
+and review disposition are separate from whether the recorder exists today.

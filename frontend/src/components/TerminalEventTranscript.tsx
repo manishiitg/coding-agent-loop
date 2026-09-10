@@ -5,6 +5,7 @@ import { CheckCircle2, ChevronDown, ChevronRight, CircleDashed, XCircle } from '
 import { EventDispatcher } from './events/EventDispatcher'
 import { ConversationMarkdownRenderer } from './ui/MarkdownRenderer'
 import { normalizeProductChatFailure } from '../platform/chat/productChatFailure'
+import { liveInputReceiptText } from '../utils/liveInputReceipt'
 import {
   buildTranscriptItems,
   collapseTurnFailures,
@@ -145,6 +146,7 @@ function isAgentResponseEvent(event: PollingEvent): boolean {
 const TranscriptEvent: React.FC<{
   event: PollingEvent
   onSendMessage?: (msg: string) => void
+  onRetryLastMessage?: () => void | Promise<void>
   compactUserBottom?: boolean
   /** Rendered inside a turn block that already draws the border and header. */
   inTurn?: boolean
@@ -153,7 +155,7 @@ const TranscriptEvent: React.FC<{
   assistantIcon?: React.ReactNode
   /** The turn's clock is shown elsewhere or not at all; draw no time on this row. */
   hideTimestamp?: boolean
-}> = ({ event, onSendMessage, compactUserBottom = false, inTurn = false, renderInteraction, assistantLabel, assistantIcon, hideTimestamp = false }) => {
+}> = ({ event, onSendMessage, onRetryLastMessage, compactUserBottom = false, inTurn = false, renderInteraction, assistantLabel, assistantIcon, hideTimestamp = false }) => {
   if (event.type === 'product_interaction') {
     const interaction = parseProductInteraction(event)
     return interaction && renderInteraction ? <>{renderInteraction(interaction, event)}</> : null
@@ -170,7 +172,7 @@ const TranscriptEvent: React.FC<{
   // failure events to the last one.
   const failureText = turnFailureText(event)
   if (failureText) {
-    return <TurnFailureMessage failure={normalizeProductChatFailure(failureText, failureHints(payload))} timestamp={timestamp} />
+    return <TurnFailureMessage failure={normalizeProductChatFailure(failureText, failureHints(payload))} timestamp={timestamp} onRetry={onRetryLastMessage} />
   }
 
   const presentation = presentationActivity(event)
@@ -200,12 +202,12 @@ const TranscriptEvent: React.FC<{
     return <EventDispatcher event={event} onSendMessage={onSendMessage} compact hideOrchestratorContext />
   }
 
-  return <UserTranscriptMessage content={content || 'Message sent'} timestamp={timestamp} compactBottom={compactUserBottom} />
+  return <UserTranscriptMessage content={content || 'Message'} timestamp={timestamp} compactBottom={compactUserBottom} receipt={liveInputReceiptText(payload.metadata as Record<string, unknown> | undefined)} />
 }
 
 const USER_MESSAGE_PREVIEW_LIMIT = 480
 
-const UserTranscriptMessage: React.FC<{ content: string; timestamp: string; compactBottom?: boolean }> = ({ content, timestamp, compactBottom = false }) => {
+const UserTranscriptMessage: React.FC<{ content: string; timestamp: string; compactBottom?: boolean; receipt?: string }> = ({ content, timestamp, compactBottom = false, receipt }) => {
   const collapsible = shouldCollapseTranscriptUserMessage(content)
   const [expanded, setExpanded] = useState(false)
   const shown = collapsible && !expanded
@@ -216,6 +218,7 @@ const UserTranscriptMessage: React.FC<{ content: string; timestamp: string; comp
     return (
       <div className={`ml-auto mt-4 max-w-[84%] text-right ${compactBottom ? 'mb-1' : 'mb-4'}`}>
         <div className="whitespace-pre-wrap break-words text-[length:calc(14px*var(--chat-scale,1))] leading-[calc(24px*var(--chat-scale,1))] text-foreground">{shown}</div>
+        {receipt && <div className="mt-1 text-[11px] text-muted-foreground">{receipt}</div>}
         {timestamp && <div className="mt-1 text-[10px] tabular-nums text-muted-foreground">{timestamp}</div>}
       </div>
     )
@@ -224,6 +227,7 @@ const UserTranscriptMessage: React.FC<{ content: string; timestamp: string; comp
   return (
     <article className={`ml-auto mt-4 w-[min(92%,52rem)] rounded-lg border border-border bg-muted/30 px-4 py-3 text-left ${compactBottom ? 'mb-1' : 'mb-4'}`}>
       <div className="whitespace-pre-wrap break-words text-[length:calc(13px*var(--chat-scale,1))] leading-[calc(24px*var(--chat-scale,1))] text-foreground/90">{shown}</div>
+      {receipt && <div className="mt-1 text-[11px] text-muted-foreground">{receipt}</div>}
       <div className="mt-2 flex items-center gap-3">
         <button
           type="button"
@@ -360,8 +364,9 @@ function failureHints(payload: Record<string, unknown>): { code?: unknown; provi
   }
 }
 
-const TurnFailureMessage: React.FC<{ failure: ReturnType<typeof normalizeProductChatFailure>; timestamp: string }> = ({ failure, timestamp }) => {
+const TurnFailureMessage: React.FC<{ failure: ReturnType<typeof normalizeProductChatFailure>; timestamp: string; onRetry?: () => void | Promise<void> }> = ({ failure, timestamp, onRetry }) => {
   const [open, setOpen] = useState(false)
+  const [retrying, setRetrying] = useState(false)
   return (
     <article data-testid="terminal-clear-turn-failure" className="my-3 rounded-xl border border-destructive/30 bg-destructive/5 px-4 py-3">
       <div className="flex items-start gap-2">
@@ -372,6 +377,19 @@ const TurnFailureMessage: React.FC<{ failure: ReturnType<typeof normalizeProduct
             {timestamp && <span className="ml-auto shrink-0 text-[11px] tabular-nums text-muted-foreground">{timestamp}</span>}
           </div>
           <p className="mt-1 text-[length:calc(13px*var(--chat-scale,1))] leading-relaxed text-muted-foreground">{failure.message}</p>
+          {failure.retryable && onRetry && (
+            <button
+              type="button"
+              disabled={retrying}
+              className="mt-2 rounded-md border border-border px-2 py-1 text-xs hover:bg-muted disabled:opacity-50"
+              onClick={async () => {
+                setRetrying(true)
+                try { await onRetry() } finally { setRetrying(false) }
+              }}
+            >
+              {retrying ? 'Retrying…' : 'Retry message'}
+            </button>
+          )}
           {failure.technicalDetails && (
             <>
               <button
@@ -644,6 +662,7 @@ interface TerminalEventTranscriptProps {
   // terminal's own scoping does not need it.
   siblingTerminals?: TerminalSnapshot[]
   onSendMessage?: (msg: string) => void
+  onRetryLastMessage?: () => void | Promise<void>
   loading?: boolean
   loadingOlder?: boolean
   hasOlder?: boolean
@@ -672,6 +691,7 @@ const TerminalEventTranscriptInner: React.FC<TerminalEventTranscriptProps & { re
   terminal,
   siblingTerminals,
   onSendMessage,
+  onRetryLastMessage,
   loading = false,
   loadingOlder = false,
   hasOlder = false,
@@ -698,6 +718,11 @@ const TerminalEventTranscriptInner: React.FC<TerminalEventTranscriptProps & { re
     () => removeAdjacentDuplicateAssistantResponses(collapseTurnFailures(buildTranscriptItems(scoped))),
     [scoped],
   )
+  // Retry belongs to the latest human turn, never an older failed message
+  // after the user has continued the conversation.
+  const retryItem = useMemo(() => [...items].reverse().find(item =>
+    item.kind === 'event' && (item.event.type === 'user_message' || isAgentResponseEvent(item.event) || turnFailureText(item.event)),
+  ), [items])
   // Do not reserve a permanent header for history. The user reaches this
   // control at the oldest currently-loaded item; it only exists when another
   // page can actually be fetched from the backend. A short restored transcript
@@ -878,6 +903,7 @@ const TerminalEventTranscriptInner: React.FC<TerminalEventTranscriptProps & { re
                 <TranscriptEvent
                   event={item.event}
                   onSendMessage={onSendMessage}
+                  onRetryLastMessage={item === retryItem ? onRetryLastMessage : undefined}
                   compactUserBottom={listData[index + 1]?.kind === 'tools'}
                   inTurn={Boolean(slot?.agent)}
                   renderInteraction={renderInteraction}

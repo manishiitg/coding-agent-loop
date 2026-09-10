@@ -347,3 +347,11 @@ Direct source execution is the agreed initial design. Concurrent edits to shared
 helpers may affect overlapping executions; this ticket does not introduce
 snapshots, new scheduling restrictions or a concurrency redesign. Do not silently
 add snapshot execution while implementing these requirements.
+
+
+## 2026-09-10 improvement-system dependency
+
+[PLAT-305](plat-305.md) implements the first review/scheduling/research/lifecycle
+release. This ticket's remaining foundation acceptance is still required and is
+not closed by adding Architecture or outcome tracking. Historical evidence and
+legacy workflow behavior remain unchanged by that release.

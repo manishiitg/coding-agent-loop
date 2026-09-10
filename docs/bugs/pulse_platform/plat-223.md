@@ -74,3 +74,13 @@ since the change. Reverify by re-running a step whose Folder Guard grant
 does not include `db/README.md` (e.g. a future `profile-skill-harvest`-style
 run) and confirming it now follows the fallback instruction instead of
 attempting an unreadable file.
+
+
+## 2026-09-09 local Pulse audit follow-up
+
+Build-in-public `PUL-69B66D52` still surfaced instructions requiring a DB README
+outside the agent's available `db/assets` surface. The managed guidance fallback
+is already implemented; this recurrence does not justify granting arbitrary raw
+DB access. Acceptance must exercise the actual reviewer/step capability context
+and reconcile stale workflow instructions with the canonical managed DB tools.
+The separate root-manifest retention denial is now [PLAT-304](plat-304.md).

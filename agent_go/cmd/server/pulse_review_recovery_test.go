@@ -46,7 +46,7 @@ func TestIncompleteReviewIsForcedDueAndClearedByTerminalResult(t *testing.T) {
 	}
 }
 
-func TestReviewFixMissingReceiptCreatesRecoveryWithCheckpoint(t *testing.T) {
+func TestReviewFixMissingReceiptCreatesRecoveryWithoutMandatoryFile(t *testing.T) {
 	ctx := context.Background()
 	t.Setenv("WORKSPACE_DOCS_PATH", t.TempDir())
 	workspacePath := "Workflow/recovery"
@@ -67,7 +67,7 @@ func TestReviewFixMissingReceiptCreatesRecoveryWithCheckpoint(t *testing.T) {
 	if err != nil || len(recoveries) != 1 {
 		t.Fatalf("recoveries = %#v err=%v, want one", recoveries, err)
 	}
-	if got := recoveries[0].CheckpointPath; got != "runs/pulse/pulse-interrupted/strategic-review.md" {
+	if got := recoveries[0].CheckpointPath; got != "" {
 		t.Fatalf("checkpoint = %q", got)
 	}
 }
@@ -92,7 +92,7 @@ func TestRunningReviewAttemptSurvivesRestartAsRecovery(t *testing.T) {
 	}
 }
 
-func TestPlanDriftIsExclusiveAndDefersReviewRecovery(t *testing.T) {
+func TestPlanDriftDoesNotSuppressIndependentReviewRecovery(t *testing.T) {
 	ctx := context.Background()
 	t.Setenv("WORKSPACE_DOCS_PATH", t.TempDir())
 	workspacePath := "Workflow/recovery"
@@ -108,12 +108,12 @@ func TestPlanDriftIsExclusiveAndDefersReviewRecovery(t *testing.T) {
 		t.Fatalf("force recovery: %v", err)
 	}
 	for _, decision := range forced {
-		if normalizePulseModule(decision.Module) == pulseModuleStrategicReview && decision.Due {
-			t.Fatalf("strategic recovery must wait while plan drift is due: %#v", decision)
+		if normalizePulseModule(decision.Module) == pulseModuleStrategicReview && !decision.Due {
+			t.Fatalf("strategic recovery must remain due after the preceding drift step: %#v", decision)
 		}
 	}
 	if err := validatePulseWorklistDecisions(forced); err != nil {
-		t.Fatalf("plan drift only should be valid: %v", err)
+		t.Fatalf("independently due modules should be valid: %v", err)
 	}
 	for index := range decisions {
 		if normalizePulseModule(decisions[index].Module) == pulseModuleTechnicalReview {
@@ -121,7 +121,7 @@ func TestPlanDriftIsExclusiveAndDefersReviewRecovery(t *testing.T) {
 			decisions[index].Reason = "Incorrect concurrent technical review."
 		}
 	}
-	if err := validatePulseWorklistDecisions(decisions); err == nil || !strings.Contains(err.Error(), "plan_drift_review is due") {
+	if err := validatePulseWorklistDecisions(decisions); err != nil {
 		t.Fatalf("concurrent plan/technical worklist error = %v", err)
 	}
 }

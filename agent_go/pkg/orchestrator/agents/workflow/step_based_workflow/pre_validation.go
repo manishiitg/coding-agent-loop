@@ -160,15 +160,9 @@ type PreValidationAttempt struct {
 // SavePreValidationLog writes pre-validation results to the step's log folder.
 // Path: logs/{stepID}/pre_validation.json. That compatibility pointer is
 // overwritten with the latest result, while every invocation is also retained
-// at logs/{stepID}/pre_validation_<phase>_execution_N_attempt_M.json. A failing
-// result is additionally filed as a durable, cross-run,
-// deduplicated concern via RecordRunConcerns (db/db.sqlite, not this file):
-// unlike the log file, that record survives past this run, aggregates
-// (seen_count) across every run where the same field keeps failing, and
-// automatically routes bug_review due on Pulse's next Gate pass. workspaceRoot,
-// runFolder, and groupName address that db row; validationWorkspacePath
-// addresses this run's own log file and is typically workspaceRoot +
-// "/runs/" + runFolder.
+// at logs/{stepID}/pre_validation_<phase>_execution_N_attempt_M.json. Failures
+// remain evidence, not automatic durable Pulse issues: a later repair may
+// succeed in the same attempt. Reviewers classify unresolved terminal failures.
 func SavePreValidationLog(
 	ctx context.Context,
 	bo *orchestrator.BaseOrchestrator,
@@ -528,6 +522,28 @@ func validateJSONCheck(
 		Actual:    nil,
 		ErrorMsg:  "",
 	}
+	// An array wildcard expresses a per-item contract. Expand it before the
+	// JSONPath library flattens results: otherwise an empty parent and a
+	// populated parent whose items lack a required field become indistinguishable.
+	if index := strings.Index(check.Path, "[*]"); index >= 0 && !jsonPathHasMultipleMatches(check.Path[:index]) {
+		parent, parentErr := jsonpath.Get(check.Path[:index], jsonData)
+		if items, ok := parent.([]interface{}); parentErr == nil && ok {
+			result.Passed = true
+			result.CheckType = "per_item"
+			for i, item := range items {
+				itemCheck := check
+				itemCheck.Path = "$" + check.Path[index+3:]
+				got := validateJSONCheck(ctx, itemCheck, item)
+				got.Path = check.Path
+				if !got.Passed {
+					got.ErrorMsg = fmt.Sprintf("match %d of %d: %s", i, len(items), got.ErrorMsg)
+					return got
+				}
+				result = got
+			}
+			return result
+		}
+	}
 
 	// Evaluate JSONPath
 	values, err := jsonpath.Get(check.Path, jsonData)
@@ -577,8 +593,19 @@ func validateJSONCheck(
 		if len(valuesSlice) > 0 {
 			value = valuesSlice[0]
 		} else {
-			// Empty slice - use as is (will fail validation if expected type is not array)
-			value = valuesSlice
+			// A wildcard with no matches has no values to type/range/pattern check.
+			// Existence is a separate contract; require a nonempty parent array with
+			// min_length when the workflow must produce at least one item.
+			result.CheckType = "must_exist"
+			result.Expected = "at least one matching value"
+			result.Actual = 0
+			result.Passed = !check.MustExist
+			if check.MustExist {
+				result.ErrorMsg = fmt.Sprintf("Path %s must exist but matched no values", check.Path)
+			} else {
+				result.CheckType = "no_matches"
+			}
+			return result
 		}
 	} else {
 		value = values

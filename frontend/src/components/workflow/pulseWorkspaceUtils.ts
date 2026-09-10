@@ -46,7 +46,7 @@ export function pulseFindingReviewAreas(
   const areas = new Set<string>()
   const add = (value?: string) => {
     const area = normalizePulseWorkspaceModule(value)
-    if (['technical_review', 'strategic_review', 'plan_drift_review'].includes(area)) areas.add(area)
+    if (['technical_review', 'architecture_review', 'strategic_review', 'plan_drift_review'].includes(area)) areas.add(area)
   }
   add(finding.module)
   add(finding.issue?.module)

@@ -488,7 +488,7 @@ func TestPulseWorklistRequiresTechnicalReviewForFailedPlanDependencyIntake(t *te
 
 func TestPulseWorklistRuntimeSignalsDoNotReserveReviewSlot(t *testing.T) {
 	for _, fixture := range []struct{ name, status, timing, kind string }{
-		{"child_error", "completed", `{"step_id":"step-a","tools":{"errored_count":1}}`, "runtime_status_disagreement"},
+		{"child_error", "completed", `{"step_id":"step-a","tools":{"errored_count":1}}`, "completed_run_child_errors"},
 		{"structured_failure", "completed", `{"step_id":"step-a","tools":{"calls":[{"tool_name":"shell","status":"success","result":{"exit_code":1}}]}}`, "tool_success_with_structured_failure"},
 		{"known_failed_run", "failed", `{}`, "run_not_completed"},
 	} {

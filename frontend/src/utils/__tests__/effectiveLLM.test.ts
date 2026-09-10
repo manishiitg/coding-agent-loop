@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { SavedLLM } from '../../services/api-types'
 import { effectiveLLMUnderLock, effectiveProviderUnderLock } from '../effectiveLLM'
+import { chatUsesStructuredTransport, shouldRouteChatInputToLiveTransport } from '../liveInputSubmission'
 
 const published = [{ provider: 'cursor-cli', model_id: 'cursor-cli' }] as unknown as SavedLLM[]
 
@@ -22,5 +23,34 @@ describe('effectiveProviderUnderLock', () => {
   it('agrees with the full provider+model rule', () => {
     const full = effectiveLLMUnderLock({ provider: 'claude-code', model_id: 'claude-sonnet-5' }, true, published)
     expect(full?.provider).toBe(effectiveProviderUnderLock('claude-code', true, published))
+  })
+
+  it('keeps a product profile binding under a Cursor-only deployment lock', () => {
+    const choice = { provider: 'claude-code', model_id: 'claude-sonnet-5' }
+    expect(effectiveLLMUnderLock(choice, true, published, 'agent_profile')).toEqual({
+      ...choice,
+      forcedByLock: false,
+    })
+    expect(effectiveProviderUnderLock(choice.provider, true, published, 'agent_profile')).toBe(choice.provider)
+  })
+
+  it('delivers product follow-ups live before the session reports its transport', () => {
+    const provider = effectiveProviderUnderLock('claude-code', true, published, 'agent_profile')
+    const usesStructuredTransport = chatUsesStructuredTransport({
+      isInteractiveWorkflowBuilder: false,
+      reportedTransport: '',
+      providerUsesStructuredTransport: provider === 'cursor-cli',
+    })
+    expect(shouldRouteChatInputToLiveTransport({
+      hasSession: true,
+      isCodingAgentProvider: true,
+      isWorkflowMode: false,
+      usesStructuredTransport,
+    })).toBe(true)
+  })
+
+  it('still falls back when a product has no resolved binding', () => {
+    expect(effectiveLLMUnderLock(null, true, published, 'agent_profile')?.provider).toBe('cursor-cli')
+    expect(effectiveProviderUnderLock(null, true, published, 'agent_profile')).toBe('cursor-cli')
   })
 })

@@ -18,7 +18,7 @@ func TestReportingPolicyUsesManagedLazyMediaURLs(t *testing.T) {
 		"never",
 		"persist the workspace-relative path",
 	} {
-		if !strings.Contains(rendered, want) {
+		if !strings.Contains(strings.Join(strings.Fields(rendered), " "), want) {
 			t.Fatalf("reporting policy missing managed media guidance %q", want)
 		}
 	}

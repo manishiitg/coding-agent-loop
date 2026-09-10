@@ -684,6 +684,9 @@ func answerReportHumanInput(ctx context.Context, workspacePath, inputID string, 
 	} else if affected == 0 {
 		return nil, fmt.Errorf("input_id %q was consumed, dismissed, or claimed by another writer before this answer could be saved", inputID)
 	}
+	if err := step_based_workflow.SyncPulseImprovementDecisionTx(ctx, tx, input.ID, selected, false, "", now); err != nil {
+		return nil, err
+	}
 	// The current row already owns the answer. The append-only audit trail keeps
 	// provenance, not a second permanent copy of potentially sensitive free text.
 	details, _ := json.Marshal(map[string]interface{}{
@@ -809,6 +812,9 @@ func consumeReportHumanInput(ctx context.Context, workspacePath, inputID string,
 	} else if affected == 0 {
 		return nil, fmt.Errorf("input_id %q was not in 'answered' or 'claimed' state when this consumption was applied (concurrent writer): current status=%q", inputID, input.Status)
 	}
+	if err := step_based_workflow.SyncPulseImprovementDecisionTx(ctx, tx, input.ID, input.SelectedOptionID, true, outcome, now); err != nil {
+		return nil, err
+	}
 	if err := writeReportHumanInputEvent(ctx, tx, normalized, reportHumanInputEvent{
 		InputID: input.ID, EventType: "consumed", Status: "consumed", ActorID: req.ConsumedBy,
 		ActorKind: req.ConsumedByKind, Channel: req.ConsumedVia, SessionID: req.SessionID,
@@ -875,7 +881,7 @@ func createReportHumanInputTools() ([]llmtypes.Tool, map[string]interface{}, map
 				"properties": map[string]interface{}{
 					"workspace_path": map[string]interface{}{"type": "string", "description": "Workflow-relative path, for example Workflow/social-media. Required; requests are stored in that workflow's db/db.sqlite."},
 					"input_id":       map[string]interface{}{"type": "string", "description": "Optional stable id. Reuse this for the same still-open question so Pulse refreshes it instead of duplicating it."},
-					"source":         map[string]interface{}{"type": "string", "enum": []string{"pulse", "technical_review", "strategic_review"}, "description": "Who is asking. Use the canonical reviewer identity; defaults to pulse only for generic Pulse coordination."},
+					"source":         map[string]interface{}{"type": "string", "enum": []string{"pulse", "technical_review", "architecture_review", "strategic_review"}, "description": "Who is asking. Use the canonical reviewer identity; defaults to pulse only for generic Pulse coordination."},
 					"priority":       map[string]interface{}{"type": "string", "enum": []string{"low", "medium", "high"}, "description": "How important the answer is. Defaults to medium."},
 					"question":       map[string]interface{}{"type": "string", "description": "The exact user-facing question in ONE short plain sentence -- the kind a busy operator reads in three seconds, not an analyst's framing of the problem."},
 					"context":        map[string]interface{}{"type": "string", "description": "Short explanation of why this matters and what will happen next, for a non-technical operator, not a technical report. One to three short sentences PER SECTION, plain language, no jargon, no walked-through derivation -- state the single number or fact that matters and the conclusion, not how you got there; the full analysis belongs in the reviewer's findings file, not this question. For plan-change proposals, use newline-separated labeled sections exactly like: Proposal:\n...\nExact intended edits if approved:\n(1) ...\n(2) ...\nRationale:\n...\nExpected impact:\n...\nRisk:\n... -- each section still capped at one to three short sentences. Keep evidence paths in the separate evidence field, never inline citations or file paths in context."},
@@ -1361,6 +1367,8 @@ func normalizeReportHumanInputSource(source string) string {
 		return "technical_review"
 	case "ops_review", "ops-review", "ops review", "operations_review", "operations-review", "operations review":
 		return "technical_review"
+	case "architecture_review", "architecture-review", "architecture review":
+		return "architecture_review"
 	case "technical_review", "technical-review", "technical review":
 		return "technical_review"
 	case "strategic_review", "strategic-review", "strategic review",

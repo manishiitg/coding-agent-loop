@@ -12,6 +12,18 @@ workflows can download the release archive from
 it as `agentworks-playwright.tgz`, and install that local archive. Python suites use
 the sibling `agentworks-playwright` Python package and the same Browser panel.
 
+The local backend launcher (`agent_go/run_server_with_logging.sh`) builds both
+fixture archives automatically, as does the server release build. To repair an
+already running local backend, run this from the repository root (no restart is
+needed when the backend uses its default `agent_go/packages` directory):
+
+```sh
+python3 scripts/build-playwright-packages.py agent_go/packages
+```
+
+`AGENTWORKS_PLAYWRIGHT_PACKAGES_DIR` can point to an existing directory containing
+both archives. The launcher validates that override without rebuilding its files.
+
 ```js
 import { test, expect } from '@agentworks/playwright'
 

@@ -1,6 +1,7 @@
 # Outcome goals and measurable progress
 
-Pulse starts with outcome goals, then one primary metric and supporting metrics.
+Pulse starts with primary and optional secondary outcome goals, then one primary
+metric and supporting metrics. Goal priority and metric role are independent.
 Acceptance conditions and explicit user boundaries remain available as expandable
 sections. The current soul document stays canonical for intent; SQLite owns metric
 definitions and observations. There is no extra reviewer-authored report.
@@ -98,3 +99,51 @@ and isolated from the report's CSS. It works in both the app and `preview_report
 refreshes through the standard `ready` lifecycle, and never replaces missing or
 failed measurements with invented values. Legacy workflows show a setup message.
 Report field edits cannot modify these managed measurement tables.
+
+## Outcome priorities
+
+`/setup-goals` groups confirmed outcome bullets in the canonical `soul/soul.md`:
+
+```markdown
+## Objective
+### Primary goals
+- Make learner conversations feel immediate and natural.
+### Secondary goals
+- Make the learner experience ready to use quickly.
+```
+
+Primary goals express the main desired outcomes; secondary goals express additional
+outcomes. Multiple primary goals are allowed when equally important to the user.
+Secondary goals are optional. These are structured Markdown sections, not another
+SQLite copy of the goal. Runtime agents and reviewers receive both groups through
+the existing Objective reader. Pulse displays primary goals first and secondary
+goals below, with acceptance conditions and constraints still available.
+
+Goal priority is independent of the metric's primary/supporting role. For example,
+conversation latency can be the primary metric while Hebrew and English latency
+are supporting metrics measuring the same primary goal. Page load time might
+measure a secondary goal. A supporting metric is not itself a secondary goal.
+
+Existing ungrouped goals remain visible without an invented priority. Setup
+proposes a grouping, preserves commitments and explicit priorities, and asks about
+ambiguous tradeoffs. Reviewers must not sacrifice a primary goal or constraint to
+improve a secondary goal without the user's agreement. No live workflow is rewritten
+until its setup flow runs.
+
+## Strategic reviews and measurement improvement
+
+Both scheduled Strategic Review and `/strategy-auditor` read configured metrics
+early and connect recommendations to the primary/secondary outcomes, current
+evidence, expected metric movement and a later outcome check. They assess whether
+the metrics answer the real goal, rather than optimizing activity or a misleading
+proxy. Unknown and stale measurements remain explicit; reviews can still explore
+promising strategies while evidence is incomplete.
+
+A material missing or inadequate measurement becomes a concrete proposal: what to
+measure, its definition/source, collection needed, one verified observation and
+the next useful evidence checkpoint. New or changed metric meaning goes through
+the existing decision flow and `/setup-goals`; broken collection under an agreed
+definition can go to the fixer. Legitimate outcome lag is an evidence wait.
+The reviewer preserves definitions, targets and workflow implementation while
+proposing changes. Existing findings and pending decisions are reused; there is
+no new report, scorecard, database contract or recording turn to maintain.

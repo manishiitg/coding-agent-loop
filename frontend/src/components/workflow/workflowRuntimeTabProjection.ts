@@ -11,7 +11,7 @@ export interface WorkflowRuntimeTabProjection {
 /** Normalize current and persisted legacy names for the interactive workflow
  * conversation. Runtime/schedule lanes keep their own explicit names.
  *
- * `isBlank` marks the workflow's fixed, never-closed "Builder" tab (no
+ * `isBlank` marks the workflow's fixed, never-closed "Workshop" tab (no
  * conversation in it; shows the Recent/Schedules/Bots landing view).
  * Builder-phase tabs that hold a conversation are "Chat". */
 export function workflowTabDisplayName(
@@ -31,7 +31,7 @@ export function workflowTabDisplayName(
     tab.metadata?.phaseId === 'workflow-builder' &&
     (tab.name === 'Automation Builder' || tab.name === 'Workflow Builder')
   ) {
-    return isBlank ? 'Builder' : 'Chat'
+    return isBlank ? 'Workshop' : 'Chat'
   }
   return tab.name
 }

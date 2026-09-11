@@ -15,7 +15,10 @@ import (
 //	# <Workflow display name>
 //
 //	## Objective
-//	<outcome bullets describing what the workflow should achieve>
+//	### Primary goals
+//	<outcome bullets describing the main results the workflow should achieve>
+//	### Secondary goals (optional)
+//	<additional desired outcomes, separate from supporting metrics>
 //
 //	## Success Criteria
 //	<bullet list or paragraph describing when the workflow is "done right">
@@ -44,7 +47,7 @@ const (
 	soulDefaultScaffoldTemplate = `# %s
 
 ## Objective
-<TODO: outcome bullets describing what this workflow should achieve.>
+<TODO: outcome bullets grouped under Primary goals and optional Secondary goals, describing what this workflow should achieve.>
 
 ## Success Criteria
 <TODO: bullet list or paragraph describing when the workflow is "done right".>

@@ -41,6 +41,9 @@ writing findings or proposals. Do not run Gate or change another module's cadenc
    Follow the shared reference's output-first evidence order. Use bounded read-only
    aggregates/samples from `db/db.sqlite` for specific unanswered questions.
    Execution logs are exception-only evidence, not a required deep dive.
+   Call `get_goal_metrics` early. Follow the shared reference's measurement
+   guidance: connect improvement proposals to goal metrics and outcome checks;
+   propose missing or inadequate measurements instead of only pointing to setup.
 3. Judge the trustworthiness of the selected output evidence directly without waiting for or consuming
    Bug Review, Artifact Review, or Goal Advisor conclusions. If evidence is
    unreliable, limit the affected claim and continue with trustworthy outputs,
@@ -87,4 +90,6 @@ and evidence boundaries. Deferred areas are unassessed, not clean. Do not trunca
 the result to a Top 3.
 
 ## Goal progress context
-Use get_goal_metrics to read the primary and supporting metric definitions and comparable observations. Inspect outcome movement before selecting improvements; distinguish activity, quality boundaries and actual outcomes. Unknown/stale data does not prove no growth or success. Never change targets or metric definitions in a scheduled review. When measurement is not set up, surface /setup-goals as the setup path without filing repeated platform defects. Reviewers interpret measurements; producing runs/collectors own record_goal_observations.
+Read the canonical Objective in soul/soul.md, including Primary goals and Secondary goals when configured. Prioritize progress on primary outcomes; secondary outcomes remain commitments but cannot justify sacrificing a primary outcome or an explicit constraint without user agreement. Goal priorities are separate from primary/supporting metric roles. Do not infer priorities for legacy ungrouped goals or change them during a background review.
+
+Use the shared reference's "Improve outcomes through trustworthy measurements" guidance for this manual review too. Inspect outcome movement, test the usefulness of the metrics, and propose concrete measurement additions or repairs when needed. Reuse existing findings and decisions; keep strategy exploration moving while evidence is incomplete. Never change targets, metric definitions or collection directly in the review.

@@ -44,7 +44,9 @@ SSH_PORT="${SSH_PORT:-2299}"
 SSH_KEY_PATH="${SSH_KEY_PATH:-$HOME/.ssh/confida_deploy}"
 REMOTE_APP="/srv/confida"
 REMOTE_TOOLS="$REMOTE_APP/tools"
-REMOTE_RUNTIME_PATH="$REMOTE_TOOLS/bin:$REMOTE_APP/home/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+REMOTE_NODE_VERSION="24.21.0"
+REMOTE_NODE_SHA256="fd8e59d5a511510f6a298afb548f18c7d2b1be404d8b4a27d94fbe49f56cb2d6"
+REMOTE_RUNTIME_PATH="$REMOTE_TOOLS/node/bin:$REMOTE_TOOLS/bin:$REMOTE_APP/home/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 DEPLOY_SOURCE_MODE="${DEPLOY_SOURCE_MODE:-remote-main}"
 DEPLOY_BRANCH="${DEPLOY_BRANCH:-main}"
 
@@ -83,6 +85,30 @@ else
   echo "    Install it once as root: ssh -p $SSH_PORT root@$HOST_IP 'apt-get install -y jq'" >&2
 fi
 
+# Confida owns its Node runtime instead of inheriting the host-wide version.
+# Keep the exact archive and checksum pinned so deployments are reproducible
+# and never mutate the Node installations used by Dominion or RTS.
+echo "==> Ensuring Confida Node $REMOTE_NODE_VERSION is installed"
+"${SSH[@]}" "set -e
+  install -d -m 0755 '$REMOTE_TOOLS'
+  node_release='node-v$REMOTE_NODE_VERSION-linux-x64'
+  node_dir='$REMOTE_TOOLS/node-v$REMOTE_NODE_VERSION'
+  if [ ! -x \"\$node_dir/bin/node\" ]; then
+    node_stage=\$(mktemp -d '$REMOTE_TOOLS/.node24-install.XXXXXX')
+    trap 'rm -rf \"\$node_stage\"' EXIT
+    curl -fsSL \"https://nodejs.org/dist/v$REMOTE_NODE_VERSION/\$node_release.tar.xz\" -o \"\$node_stage/\$node_release.tar.xz\"
+    printf '%s  %s\\n' '$REMOTE_NODE_SHA256' \"\$node_stage/\$node_release.tar.xz\" | sha256sum -c -
+    tar -xJf \"\$node_stage/\$node_release.tar.xz\" -C \"\$node_stage\"
+    mv \"\$node_stage/\$node_release\" \"\$node_dir\"
+    rm -f \"\$node_stage/\$node_release.tar.xz\"
+    rmdir \"\$node_stage\"
+    trap - EXIT
+  fi
+  ln -sfn \"\$node_dir\" '$REMOTE_TOOLS/node'
+  export PATH='$REMOTE_RUNTIME_PATH'
+  test \"\$(node --version)\" = 'v$REMOTE_NODE_VERSION'
+  npm --version"
+
 # agent-browser is a mandatory runtime dependency: preview_report and every
 # browser-automation tool shell out to it by name with no PATH check of their
 # own, so a missing install surfaces only as an opaque "exit code 127:
@@ -95,9 +121,10 @@ fi
 echo "==> Ensuring agent-browser is installed on the remote host"
 "${SSH[@]}" "set -e
   install -d -m 0755 '$REMOTE_TOOLS'
+  export PATH='$REMOTE_RUNTIME_PATH'
   npm install -g --prefix '$REMOTE_TOOLS' agent-browser@latest >/dev/null
-  export PATH='$REMOTE_TOOLS/bin':\"\$PATH\"
   command -v agent-browser >/dev/null
+  test \"\$(node --version)\" = 'v$REMOTE_NODE_VERSION'
   agent-browser --version"
 
 JOB="confida-deploy-$(date +%Y%m%d%H%M%S)-$$"
@@ -159,6 +186,7 @@ echo "==> Verifying"
 curl -fsSI "https://confida.agentworkshq.com/login" | head -1
 "${SSH[@]}" "set -e
   export PATH='$REMOTE_RUNTIME_PATH'
+  test \"\$(node --version)\" = 'v$REMOTE_NODE_VERSION'
   command -v agent-browser >/dev/null
   for unit in confida-agent confida-workspace; do
     pid=\$(systemctl --user show \"\$unit\" -p MainPID --value)

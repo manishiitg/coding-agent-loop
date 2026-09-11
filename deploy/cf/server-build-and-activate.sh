@@ -15,6 +15,7 @@ REPO_ROOT="$WORKSPACE_ROOT/mcp-agent-builder-go"
 SCRIPT_DIR="$REPO_ROOT/deploy/cf"
 REMOTE_APP="/srv/confida"
 export GOMAXPROCS=4 GOFLAGS=-p=4 NODE_OPTIONS=--max-old-space-size=2048
+export PATH="/srv/confida/tools/node/bin:/srv/confida/tools/bin:$PATH"
 
 for command in git go gcc npm rsync python3; do command -v "$command" >/dev/null || { echo "Missing $command" >&2; exit 1; }; done
 
@@ -113,7 +114,7 @@ fi
 ln -sfn "$BUILD_DIR" "$REMOTE_APP/current"
 
 export XDG_RUNTIME_DIR="/run/user/$(id -u)"
-runtime_path="$REMOTE_APP/tools/bin:$REMOTE_APP/home/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+runtime_path="$REMOTE_APP/tools/node/bin:$REMOTE_APP/tools/bin:$REMOTE_APP/home/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 # EnvironmentFile values are applied after Environment= and therefore win for
 # duplicate variables. Existing Confida hosts carry PATH in /srv/confida/.env,
 # so updating only a systemd drop-in looks correct in `systemctl show` while
@@ -165,6 +166,7 @@ for unit in confida-agent confida-workspace; do
   tr '\0' '\n' < "/proc/$pid/environ" | grep -Fqx 'AGENTWORKS_BROWSER_SESSION_PREFIX=confida'
   tr '\0' '\n' < "/proc/$pid/environ" | grep -Fqx 'AGENTWORKS_BROWSER_STAGING_NAMESPACE=confida'
 done
+[[ "$(node --version)" == v24.* ]]
 
 echo "==> [$RELEASE_ID] Verifying"
 curl -fsS -o /dev/null -w "agent  /api/health: %{http_code}\n" http://127.0.0.1:22000/api/health

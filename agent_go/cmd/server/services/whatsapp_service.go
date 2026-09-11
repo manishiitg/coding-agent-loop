@@ -96,6 +96,9 @@ type WhatsAppService struct {
 
 	activeRouteHints map[string]time.Time
 
+	sessionBindingsMu sync.RWMutex
+	sessionBindings   map[string]whatsAppSessionBinding
+
 	accessMu    sync.RWMutex
 	accessState WhatsAppAccessState
 
@@ -178,6 +181,7 @@ func (w *WhatsAppService) StartListening(ctx context.Context) error {
 	w.loadOwner(ctx)
 	w.loadRouting(ctx)
 	w.loadActiveRoutes(ctx)
+	w.loadSessionBindings(ctx)
 	w.loadAutoRoutedWorkflows(ctx)
 	w.loadAccessState(ctx)
 	w.loadDeviceLabel(ctx)
@@ -344,6 +348,11 @@ const metaKeyRouting = "routing"
 // metaKeyActiveRouting holds the JSON map of WhatsApp chat JID → active slug.
 const metaKeyActiveRouting = "active_routing"
 
+// metaKeySessionBindings holds the durable chat → AgentWorks conversation
+// pointers. Each WhatsAppService has its own SQLite file, so the surrounding
+// account and device are already part of the storage boundary.
+const metaKeySessionBindings = "session_bindings"
+
 // metaKeyAutoRoutedWorkflows holds the JSON array of workflow IDs that have
 // already been handed a default @<automation-name> route, so provisioning
 // never resurrects a route the operator deliberately removed.
@@ -360,6 +369,12 @@ const metaKeyDeviceLabel = "device_label"
 // table. A nil / empty map means "no routing — all messages go to the
 // default multi-agent chat flow".
 type WhatsAppRouting map[string]ChannelRoute
+
+type whatsAppSessionBinding struct {
+	SessionID string    `json:"session_id"`
+	RouteKey  string    `json:"route_key"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
 
 type whatsappDownloadedMedia struct {
 	Kind      string
@@ -503,6 +518,35 @@ func (w *WhatsAppService) loadActiveRoutes(ctx context.Context) {
 	w.activeRoutes = m
 	w.activeRoutesMu.Unlock()
 	log.Printf("[WHATSAPP] Loaded %d active workflow route(s)", len(m))
+}
+
+// loadSessionBindings restores the current AgentWorks conversation for each
+// WhatsApp chat. Missing data is normal for pairings created before durable
+// resume support was added.
+func (w *WhatsAppService) loadSessionBindings(ctx context.Context) {
+	w.mu.RLock()
+	db := w.metaDB
+	w.mu.RUnlock()
+	if db == nil {
+		return
+	}
+	var raw string
+	err := db.QueryRowContext(ctx, `SELECT value FROM whatsapp_meta WHERE key = ?`, metaKeySessionBindings).Scan(&raw)
+	if err != nil {
+		if !errors.Is(err, sql.ErrNoRows) {
+			log.Printf("[WHATSAPP] Failed to read session bindings: %v", err)
+		}
+		return
+	}
+	var bindings map[string]whatsAppSessionBinding
+	if err := json.Unmarshal([]byte(raw), &bindings); err != nil {
+		log.Printf("[WHATSAPP] Failed to parse session bindings: %v (ignoring)", err)
+		return
+	}
+	w.sessionBindingsMu.Lock()
+	w.sessionBindings = bindings
+	w.sessionBindingsMu.Unlock()
+	log.Printf("[WHATSAPP] Loaded %d durable conversation binding(s)", len(bindings))
 }
 
 // loadAutoRoutedWorkflows pulls the set of workflow IDs that already got
@@ -675,6 +719,82 @@ func (w *WhatsAppService) persistActiveRoutesLocked(ctx context.Context) error {
 		return fmt.Errorf("whatsapp: persist active routing: %w", err)
 	}
 	return nil
+}
+
+func (w *WhatsAppService) persistSessionBindingsLocked(ctx context.Context) error {
+	w.mu.RLock()
+	db := w.metaDB
+	w.mu.RUnlock()
+	if db == nil {
+		return fmt.Errorf("whatsapp: meta store not open")
+	}
+	raw, err := json.Marshal(w.sessionBindings)
+	if err != nil {
+		return fmt.Errorf("whatsapp: marshal session bindings: %w", err)
+	}
+	if _, err := db.ExecContext(ctx,
+		`INSERT INTO whatsapp_meta(key, value) VALUES(?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value`,
+		metaKeySessionBindings, string(raw),
+	); err != nil {
+		return fmt.Errorf("whatsapp: persist session bindings: %w", err)
+	}
+	return nil
+}
+
+func (w *WhatsAppService) loadBotSessionBinding(chatJID, routeKey string) (BotSessionBinding, bool) {
+	chatJID = strings.TrimSpace(chatJID)
+	routeKey = strings.TrimSpace(routeKey)
+	if chatJID == "" {
+		return BotSessionBinding{}, false
+	}
+	w.sessionBindingsMu.RLock()
+	binding, ok := w.sessionBindings[chatJID]
+	w.sessionBindingsMu.RUnlock()
+	if !ok || strings.TrimSpace(binding.SessionID) == "" || binding.RouteKey != routeKey {
+		return BotSessionBinding{}, false
+	}
+	return BotSessionBinding{
+		SessionID: binding.SessionID,
+		RouteKey:  binding.RouteKey,
+		UpdatedAt: binding.UpdatedAt,
+	}, true
+}
+
+func (w *WhatsAppService) saveBotSessionBinding(ctx context.Context, chatJID string, binding BotSessionBinding) error {
+	chatJID = strings.TrimSpace(chatJID)
+	binding.SessionID = strings.TrimSpace(binding.SessionID)
+	if chatJID == "" || binding.SessionID == "" {
+		return fmt.Errorf("whatsapp: chat and session IDs are required")
+	}
+	if binding.UpdatedAt.IsZero() {
+		binding.UpdatedAt = time.Now()
+	}
+	w.sessionBindingsMu.Lock()
+	if w.sessionBindings == nil {
+		w.sessionBindings = make(map[string]whatsAppSessionBinding)
+	}
+	w.sessionBindings[chatJID] = whatsAppSessionBinding{
+		SessionID: binding.SessionID,
+		RouteKey:  binding.RouteKey,
+		UpdatedAt: binding.UpdatedAt,
+	}
+	err := w.persistSessionBindingsLocked(ctx)
+	w.sessionBindingsMu.Unlock()
+	return err
+}
+
+func (w *WhatsAppService) clearBotSessionBinding(ctx context.Context, chatJID string) error {
+	chatJID = strings.TrimSpace(chatJID)
+	if chatJID == "" {
+		return nil
+	}
+	w.sessionBindingsMu.Lock()
+	if w.sessionBindings != nil {
+		delete(w.sessionBindings, chatJID)
+	}
+	err := w.persistSessionBindingsLocked(ctx)
+	w.sessionBindingsMu.Unlock()
+	return err
 }
 
 // GetRouting returns a copy of the slug → workflow map. Safe for UI display.

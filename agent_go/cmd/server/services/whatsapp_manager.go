@@ -690,6 +690,36 @@ func (m *WhatsAppServiceManager) GetChannelName(ctx context.Context, channelID s
 	return svc.GetChannelName(ctx, chatJID)
 }
 
+// LoadBotSessionBinding implements botSessionBindingStore. serviceForThread
+// decodes the managed channel ID, so the lookup lands in exactly one
+// account/device SQLite file before using the raw WhatsApp chat JID.
+func (m *WhatsAppServiceManager) LoadBotSessionBinding(ctx context.Context, threadID ThreadID, routeKey string) (BotSessionBinding, bool, error) {
+	svc, rawThreadID, err := m.serviceForThread(ctx, threadID)
+	if err != nil {
+		return BotSessionBinding{}, false, err
+	}
+	binding, ok := svc.loadBotSessionBinding(rawThreadID.ChannelID, routeKey)
+	return binding, ok, nil
+}
+
+// SaveBotSessionBinding implements botSessionBindingStore.
+func (m *WhatsAppServiceManager) SaveBotSessionBinding(ctx context.Context, threadID ThreadID, binding BotSessionBinding) error {
+	svc, rawThreadID, err := m.serviceForThread(ctx, threadID)
+	if err != nil {
+		return err
+	}
+	return svc.saveBotSessionBinding(ctx, rawThreadID.ChannelID, binding)
+}
+
+// ClearBotSessionBinding implements botSessionBindingStore.
+func (m *WhatsAppServiceManager) ClearBotSessionBinding(ctx context.Context, threadID ThreadID) error {
+	svc, rawThreadID, err := m.serviceForThread(ctx, threadID)
+	if err != nil {
+		return err
+	}
+	return svc.clearBotSessionBinding(ctx, rawThreadID.ChannelID)
+}
+
 func (m *WhatsAppServiceManager) SetMessageHandler(handler BotMessageHandler) {
 	m.mu.Lock()
 	m.messageHandler = handler

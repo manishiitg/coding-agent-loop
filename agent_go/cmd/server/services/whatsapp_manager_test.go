@@ -2,6 +2,8 @@ package services
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -43,6 +45,54 @@ func TestWhatsAppManagerNamespacesIncomingMessage(t *testing.T) {
 	}
 	if got.ThreadTS != got.ChannelID {
 		t.Fatalf("expected thread TS to follow namespaced channel ID, got %q", got.ThreadTS)
+	}
+}
+
+func TestWhatsAppManagerSessionBindingsAreIsolatedPerAccountAndDevice(t *testing.T) {
+	baseDir := t.TempDir()
+	manager := NewWhatsAppServiceManager(baseDir)
+	keys := []string{"user-a", "user-b", whatsappServiceKey("user-a", "phone-2")}
+	for _, key := range keys {
+		userKey, slot := splitWhatsAppServiceKey(key)
+		dbPath := manager.devicePath(userKey, slot)
+		if err := os.MkdirAll(filepath.Dir(dbPath), 0o700); err != nil {
+			t.Fatalf("create device directory for %s: %v", key, err)
+		}
+		svc := NewWhatsAppService(dbPath)
+		if err := svc.openMetaStore(context.Background()); err != nil {
+			t.Fatalf("open meta store for %s: %v", key, err)
+		}
+		defer svc.closeMetaStore()
+		manager.mu.Lock()
+		manager.services[key] = svc
+		manager.mu.Unlock()
+	}
+
+	chatJID := "15551234567@s.whatsapp.net"
+	bindings := map[string]string{
+		"user-a":                                "session-user-a-primary",
+		"user-b":                                "session-user-b-primary",
+		whatsappServiceKey("user-a", "phone-2"): "session-user-a-phone-2",
+	}
+	for key, sessionID := range bindings {
+		threadID := ThreadID{Platform: "whatsapp", ChannelID: encodeWhatsAppManagedChannelID(key, chatJID)}
+		if err := manager.SaveBotSessionBinding(context.Background(), threadID, BotSessionBinding{
+			SessionID: sessionID,
+			RouteKey:  "wf|workspace|run",
+			UpdatedAt: time.Now(),
+		}); err != nil {
+			t.Fatalf("save binding for %s: %v", key, err)
+		}
+	}
+	for key, wantSessionID := range bindings {
+		threadID := ThreadID{Platform: "whatsapp", ChannelID: encodeWhatsAppManagedChannelID(key, chatJID)}
+		got, ok, err := manager.LoadBotSessionBinding(context.Background(), threadID, "wf|workspace|run")
+		if err != nil {
+			t.Fatalf("load binding for %s: %v", key, err)
+		}
+		if !ok || got.SessionID != wantSessionID {
+			t.Fatalf("binding for %s = (%+v, %v), want %s", key, got, ok, wantSessionID)
+		}
 	}
 }
 

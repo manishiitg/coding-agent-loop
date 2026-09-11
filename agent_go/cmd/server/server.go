@@ -319,6 +319,7 @@ type ActiveSessionInfo struct {
 	LLMGuidance                 string           `json:"llm_guidance,omitempty"` // LLM guidance message for this session
 	ChatsFolder                 string           `json:"chats_folder,omitempty"` // Per-user Chats folder (default: _users/<userID>/Chats)
 	UserID                      string           `json:"-"`                      // User ID for session isolation (not exposed in JSON)
+	Username                    string           `json:"-"`                      // Human-readable owner for logs only (not authorization)
 	IsSyntheticTurn             bool             `json:"is_synthetic_turn"`      // True when running an auto-notification turn (not user-initiated)
 	HasRunningBackgroundAgents  bool             `json:"has_running_background_agents,omitempty"`
 	RunningBackgroundAgentCount int              `json:"running_background_agent_count,omitempty"`
@@ -1469,6 +1470,11 @@ func init() {
 }
 
 func runServer(cmd *cobra.Command, args []string) {
+	// Standard-library logs are emitted from many downstream packages that do
+	// not accept a logger. Enforce stable username/workflow keys at the process
+	// boundary and enrich session-tagged lines from the request registry.
+	installDefaultServerLogContextWriter()
+
 	// Load configuration
 	config := ServerConfig{
 		Port:          viper.GetInt("port"),
@@ -3202,7 +3208,7 @@ func (api *StreamingAPI) apiRequestLogMiddleware(next http.Handler) http.Handler
 		var inFlight int64
 		if traceRequest {
 			inFlight = atomic.AddInt64(&apiRequestsInFlight, 1)
-			log.Printf("[API] --> %s %s in_flight=%d", r.Method, requestLogPath(r), inFlight)
+			logfWithContext(api.httpRequestLogContext(r), "[API] --> %s %s in_flight=%d", r.Method, requestLogPath(r), inFlight)
 		}
 
 		defer func() {
@@ -3212,7 +3218,7 @@ func (api *StreamingAPI) apiRequestLogMiddleware(next http.Handler) http.Handler
 			}
 			if traceRequest {
 				remaining := atomic.AddInt64(&apiRequestsInFlight, -1)
-				log.Printf("[API] <-- %s %s status=%d bytes=%d duration=%s in_flight=%d",
+				logfWithContext(api.httpRequestLogContext(r), "[API] <-- %s %s status=%d bytes=%d duration=%s in_flight=%d",
 					r.Method,
 					requestLogPath(r),
 					status,
@@ -3223,7 +3229,7 @@ func (api *StreamingAPI) apiRequestLogMiddleware(next http.Handler) http.Handler
 			} else if status >= http.StatusBadRequest {
 				// Background reads are quiet when they succeed, but failures remain
 				// actionable in the normal server log.
-				log.Printf("[API] <-- %s %s status=%d bytes=%d duration=%s",
+				logfWithContext(api.httpRequestLogContext(r), "[API] <-- %s %s status=%d bytes=%d duration=%s",
 					r.Method,
 					requestLogPath(r),
 					status,
@@ -3326,7 +3332,6 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 
 	// Record start time for duration calculation
 	startTime := time.Now()
-	log.Printf("[LATENCY_DEBUG] T+0ms | Request received | query_preview=%q", truncateForLog(req.Query, 80))
 
 	// Generate query ID
 	queryID := fmt.Sprintf("query_%d", time.Now().UnixNano())
@@ -3342,11 +3347,17 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 	if traceName == "agent-conversation: " {
 		traceName = fmt.Sprintf("agent-conversation: %s", queryID)
 	}
+	traceUsername := ""
+	if traceUser := GetUserFromContext(r.Context()); traceUser != nil {
+		traceUsername = traceUser.Username
+	}
 	traceID := tracer.StartTrace(traceName, map[string]interface{}{
 		"method":     r.Method,
 		"url":        r.URL.String(),
 		"user_agent": r.Header.Get("User-Agent"),
 		"session_id": r.Header.Get("X-Session-ID"),
+		"username":   logContextValue(traceUsername),
+		"workflow":   logContextValue(workflowLogName(req.SelectedFolder)),
 		"query":      req.Query,
 		"query_id":   queryID,
 	})
@@ -3372,6 +3383,9 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 	// Get current user ID for session isolation
 	currentUserID := GetUserIDFromContext(r.Context())
 	queryLogCtx := requestLogContext(r.Context(), req, sessionID)
+	registerServerLogContext(queryLogCtx, sessionID, queryID)
+	queryLogger := queryLogCtx.Logger(api.logger)
+	logfWithContext(queryLogCtx, "[LATENCY_DEBUG] T+0ms | Request received | query_preview=%q", truncateForLog(req.Query, 80))
 	logfWithContext(queryLogCtx, "[USER_ID_DEBUGGING] HTTP handler: currentUserID=%q (from auth context)", currentUserID)
 
 	// PLAT-262: resolved fresh from this request's own live auth claims, not
@@ -3576,6 +3590,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 	}
 	api.activeSessionsMux.Lock()
 	if sess, ok := api.activeSessions[sessionID]; ok {
+		sess.Username = queryLogCtx.Username
 		if strings.TrimSpace(req.PresetQueryID) != "" {
 			sess.PresetQueryID = strings.TrimSpace(req.PresetQueryID)
 		}
@@ -3759,6 +3774,9 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		if resolvedWPath != "" {
+			queryLogCtx = queryLogCtx.WithWorkflow(resolvedWPath)
+			registerServerLogContext(queryLogCtx, sessionID, queryID)
+			queryLogger = queryLogCtx.Logger(api.logger)
 			api.activeSessionsMux.Lock()
 			if sess, ok := api.activeSessions[sessionID]; ok {
 				// PLAT-159: WorkflowLabel/PresetName used to get the raw folder
@@ -3877,7 +3895,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			BaseEventBridge: &eventbridge.BaseEventBridge{
 				EventStore: api.eventStore,
 				SessionID:  sessionID,
-				Logger:     api.logger,
+				Logger:     queryLogger,
 				BridgeName: "workflow",
 			},
 		}
@@ -3907,6 +3925,10 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		if manifestWorkspacePath != "" {
+			queryLogCtx = queryLogCtx.WithWorkflow(manifestWorkspacePath)
+			registerServerLogContext(queryLogCtx, sessionID, queryID)
+			queryLogger = queryLogCtx.Logger(api.logger)
+			workflowEventBridge.BaseEventBridge.Logger = queryLogger
 			caps, found, mErr := LoadManifestForExecution(context.Background(), manifestWorkspacePath)
 			if mErr != nil {
 				log.Printf("[MANIFEST] Error loading manifest from %s: %v (falling back to defaults)", manifestWorkspacePath, mErr)
@@ -4058,7 +4080,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			api.mcpConfigPath,    // mcpConfigPath
 			api.temperature,      // temperature
 			"workflow",           // agentMode
-			api.logger,           // logger
+			queryLogger,          // logger
 			workflowEventBridge,  // eventBridge
 			tracer,               // tracer
 			selectedServers,      // selectedServers
@@ -4154,6 +4176,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			workflowBaseCtx = r.Context()
 		}
 		workflowCtx, workflowCancel := context.WithCancel(workflowBaseCtx)
+		workflowCtx = queryLogCtx.Context(workflowCtx)
 
 		// Inject user ID into the workflow context
 		workflowCtx = context.WithValue(workflowCtx, common.UserIDKey, currentUserID)
@@ -4749,6 +4772,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		// Create a detached context for the entire streaming operation.
 		// Execution is stopped by explicit cancellation, not by a wall-clock timeout.
 		streamCtx, cancel := context.WithCancel(context.Background())
+		streamCtx = queryLogCtx.Context(streamCtx)
 		defer cancel()
 
 		// Load selected tools and code execution mode from preset if available (for simple/ReAct agents)
@@ -4996,7 +5020,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		log.Printf("[AGENT DEBUG] Creating agent with mode: %s, servers: %s", agentConfig.AgentMode, serverList)
 		logfWithContext(queryLogCtx, "[LATENCY_DEBUG] T+%dms | Agent config built, creating agent wrapper | provider=%s model=%s", time.Since(startTime).Milliseconds(), finalProvider, finalModelID)
 		// Create LLM agent wrapper with trace using streamCtx
-		llmAgent, err := agent.NewLLMAgentWrapperWithTrace(streamCtx, agentConfig, tracer, traceID, api.logger)
+		llmAgent, err := agent.NewLLMAgentWrapperWithTrace(streamCtx, agentConfig, tracer, traceID, queryLogger)
 		if err != nil {
 			logfWithContext(queryLogCtx, "[AGENT DEBUG] Failed to create LLM agent wrapper: %v", err)
 			sendError(fmt.Sprintf("Failed to create agent: %v", err), true)
@@ -6127,7 +6151,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 
 		// Observers are runtime construction inputs, so attach them to the draft
 		// before finalization instead of mutating the live agent afterward.
-		eventObserver := events.NewEventObserverWithLogger(api.eventStore, sessionID, api.logger)
+		eventObserver := events.NewEventObserverWithLogger(api.eventStore, sessionID, queryLogger)
 		// Scope resolution, in priority order (PLAT-088):
 		//  1. The scheduler's explicit pulse_lifecycle_turn flag, with the older
 		//     llm_config_source marker retained as compatibility. Pulse may use
@@ -6358,6 +6382,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		// Create a cancellable context for agent execution using background context
 		// This prevents the agent from being canceled when the HTTP request ends
 		agentCtx, agentCancel := context.WithCancel(context.Background())
+		agentCtx = queryLogCtx.Context(agentCtx)
 		agentCtx = withConversationTurnExecutionID(agentCtx, queryID)
 
 		// Inject user ID into the agent context

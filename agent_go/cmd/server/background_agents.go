@@ -2463,6 +2463,9 @@ func (api *StreamingAPI) executeSyntheticTurn(sessionID, syntheticMsg string, pa
 
 	// Create cancellable context for this synthetic turn
 	agentCtx, agentCancel := context.WithCancel(context.Background())
+	if logCtx, ok := lookupServerLogContext(sessionID); ok {
+		agentCtx = logCtx.Context(agentCtx)
+	}
 	agentCtx = withConversationTurnExecutionID(agentCtx, syntheticExecutionID)
 
 	// Inject user ID into context

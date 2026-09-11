@@ -30,7 +30,9 @@ func getScheduleLogger() *log.Logger {
 			return
 		}
 
-		scheduleLogger = log.New(file, "", log.LstdFlags)
+		// Scheduled work has its own file logger, so wrap it separately from the
+		// process-wide standard logger while sharing the same session registry.
+		scheduleLogger = log.New(newServerLogContextWriter(file), "", log.LstdFlags)
 	})
 
 	if scheduleLogger == nil {

@@ -46,7 +46,7 @@ func TestMCPManagementRegistrationFollowsChatPolicy(t *testing.T) {
 			}
 			if tc.want {
 				// Exercise the real handler without making a network request.
-				result, err := reg.tools["install_mcp_server"].exec(context.Background(), map[string]interface{}{})
+				result, err := reg.tools["install_mcp_server"].exec(context.WithValue(context.Background(), UserContextKey, &UserClaims{UserID: "policy-test-user"}), map[string]interface{}{})
 				if err != nil || !strings.Contains(result, "name is required") {
 					t.Fatalf("missing required name: %q %v", result, err)
 				}

@@ -312,10 +312,12 @@ func (api *StreamingAPI) beginOAuthFlow(userID, sessionID, serverName, redirectU
 		return nil, nil, &oauthStartError{http.StatusInternalServerError, "Failed to load server config"}
 	}
 
-	serverConfig, err := config.GetServer(serverName)
+	canonicalName, serverConfig, err := config.ResolveServer(serverName)
 	if err != nil {
 		return nil, nil, &oauthStartError{http.StatusNotFound, fmt.Sprintf("Server '%s' not found", serverName)}
 	}
+
+	serverName = canonicalName
 
 	// Use per-user token file path
 	userTokenFile := getUserTokenFilePath(userID, serverName)
@@ -473,6 +475,10 @@ func (api *StreamingAPI) beginOAuthFlow(userID, sessionID, serverName, redirectU
 			}
 		}
 
+		// Reauthorization must replace this account's retained connection so its
+		// OAuth manager uses the newly saved token/config on the next live call.
+		mcpclient.GetSessionRegistry().CloseSessionServer("mcp-user:"+userID, serverName)
+
 		// Invalidate cache for this server so tools are re-discovered with OAuth token
 		api.logger.Info(fmt.Sprintf("🔄 Invalidating cache for %s to refresh tools with OAuth", serverName))
 		cacheManager := mcpcache.GetCacheManager(api.logger)
@@ -518,7 +524,7 @@ func (api *StreamingAPI) notifyOAuthFlowOutcome(sessionID, serverName string, su
 		return
 	}
 	status := "completed"
-	message := fmt.Sprintf("The OAuth connection to MCP server %q finished successfully and its tools have been discovered. Tell the user it's connected and ready — remind them it still needs update_workflow_config(add_servers=[%q]) to be usable in a specific workflow.", serverName, serverName)
+	message := fmt.Sprintf("The OAuth connection to MCP server %q finished successfully and the token was saved. Tool discovery is running; verify discovery or a live tool call before saying it is ready. It still needs update_workflow_config(add_servers=[%q]) to be usable in a specific workflow.", serverName, serverName)
 	if !success {
 		status = "failed"
 		message = fmt.Sprintf("The OAuth connection to MCP server %q did not complete: %s. Tell the user and offer to retry (they can ask you to start the connection again).", serverName, detail)

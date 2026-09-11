@@ -472,3 +472,18 @@ func TestPulseFixerPracticesRequireBoundedAgenticProgress(t *testing.T) {
 		}
 	}
 }
+
+func TestMCPReferenceFollowsCapabilityAdmission(t *testing.T) {
+	for _, allowed := range []bool{false, true} {
+		skill := materializeReferenceSkillWithMCP("workshop", allowed)
+		found := false
+		for _, file := range skill.SupportingFiles {
+			if file.RelPath == "references/integration-discovery.md" {
+				found = true
+			}
+		}
+		if found != allowed {
+			t.Fatalf("integration reference present=%v permission=%v", found, allowed)
+		}
+	}
+}

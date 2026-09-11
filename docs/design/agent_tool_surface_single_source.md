@@ -10,6 +10,26 @@ below; 2 and 3 remain open.
 **Supersedes:** [product_tool_registration_and_visibility.md](product_tool_registration_and_visibility.md)
 **Related:** [canonical_agent_definition_construction.md](../refactor/canonical_agent_definition_construction.md)
 
+## 2026-09-11 implementation update
+
+AgentWorks now declares host chat capability admission in
+`agent_go/internal/agentworksproduct/product.yaml` under `chat_policy`.
+`workflow_chat_policy.go` resolves mode, origin and read-only access before
+registration. The MCP installer bug and tests are tracked in
+[PLAT-307](../bugs/pulse_platform/plat-307.md).
+
+Builder and Run are modes. Scheduled execution is an origin, not a third chat
+mode. Pulse maintenance and child agents retain explicit improvement-role
+boundaries; neither gets host MCP management. Product-specific tool allowlists
+and typed reviewer/fixer executor checks remain authoritative. This does not
+replace every workflow tool implementation with YAML: YAML owns host capability
+admission, and registered tools continue to supply the catalog/API schemas.
+
+Capabilities/config changes reconnect retained native sessions through the
+existing durable transcript replay path. There is no second per-turn catalog
+filter. The earlier status/header and historical gate descriptions below record
+the original design and should not be treated as a current code inventory.
+
 ## Problem
 
 "What tools does this agent have?" is answered in five places today, in three

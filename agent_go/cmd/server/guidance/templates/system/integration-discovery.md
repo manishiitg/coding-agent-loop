@@ -24,3 +24,24 @@ State plainly which avenue you're recommending and why (e.g. "ClickUp has an off
 
 - `skill-management` — the full skill find/install/attach/remove lifecycle once you've decided a skill is the right avenue.
 - `workflow-tools` (Variables & Config section) — how to register (`add_mcp_server`) and select (`update_workflow_config add_servers`) an MCP server for a specific workflow once you've decided MCP is the right avenue.
+
+### Builder installation and availability
+
+MCP installation is a writable, interactive Builder capability, declared in the
+AgentWorks product manifest. Run, scheduled execution, Pulse maintenance and
+child agents cannot configure host integrations. Reading this reference does
+not grant those tools. If an interactive writable Builder lacks
+`search_mcp_catalog` / `install_mcp_server`, report the missing tool registration;
+do not claim that server deployments inherently require an operator or manually
+edit a host config to work around the missing tool.
+
+After installation, wait for discovery and select the exact configured server
+name with `update_workflow_config(add_servers=[name])`. Check actual discovery
+status/logs before claiming the connection works. Installation does not require
+a server restart. A retained coding-agent catalog refreshes on the next chat
+turn when configuration changes, preserving the durable conversation. If a new
+integration is not yet callable in the current turn, state that distinction.
+
+A full-run missing-dependency error only checks configured names, not auth,
+connectivity, or tool counts. Repair the missing integration instead of removing
+a required server to make validation pass.

@@ -18,9 +18,18 @@ import (
 // differs per profile is the prompt, tools, skills, commands and runtime
 // policy (including the sandbox), which is exactly what a parent and a
 // child profile of one product need.
+// ChatCapabilityPolicy declares host capabilities by chat mode and caller origin.
+// Effective capabilities are their intersection, further restricted for read-only users.
+type ChatCapabilityPolicy struct {
+	Modes    map[string][]string `yaml:"modes"`
+	Origins  map[string][]string `yaml:"origins"`
+	ReadOnly []string            `yaml:"read_only"`
+}
+
 type ProductManifest struct {
-	SchemaVersion int                  `yaml:"schema_version"`
-	Dependencies  productdeps.Manifest `yaml:"dependencies"`
+	ChatPolicy    *ChatCapabilityPolicy `yaml:"chat_policy,omitempty"`
+	SchemaVersion int                   `yaml:"schema_version"`
+	Dependencies  productdeps.Manifest  `yaml:"dependencies"`
 	// Prompt is the primary profile's prompt source.
 	Prompt PromptSource `yaml:"prompt"`
 	// Profile is the primary profile (the one the product surface opens).

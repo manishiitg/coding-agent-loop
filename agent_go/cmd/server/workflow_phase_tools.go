@@ -49,17 +49,20 @@ func (api *StreamingAPI) installWorkflowPhaseTools(
 	phaseWriteFile func(ctx context.Context, p, content string) error,
 	phaseMoveFile func(ctx context.Context, src, dst string) error,
 	syntheticReq QueryRequest,
+	readOnly bool,
 ) error {
 	if check := api.scheduleCollisionCheck(phaseWorkspacePath, sessionID, syntheticReq.TriggeredBy); check != nil {
 		definitionAgent = scheduleGuardRegistrar{definitionAgent, todo_creation_human.GuardScheduleTools(definitionAgent, check)}
 	}
-	// PLAT-262: phaseTemplateVars["WorkshopMode"] is the single gate for
-	// mutating tools, the prompt, and skills below — not WorkflowAccessLevel
-	// directly. The caller (server.go) already force-set it to "run" for a
-	// read-only identity, on every turn, before calling this function. Anyone
-	// else genuinely in "run" mode (Bot Connector routes, scheduled runs, the
-	// agent-profile runtime) gets the exact same reduced tool set on purpose —
-	// see RCA #2 in docs/bugs/pulse_platform/plat-262.md.
+	active, _ := api.getActiveSession(sessionID)
+	policy := resolveWorkflowChatPolicy(phaseTemplateVars["WorkshopMode"], sessionID, syntheticReq, active, readOnly)
+	log.Printf("[CHAT_POLICY] session=%s mode=%s origin=%s capabilities=%v", sessionID, policy.Mode, policy.Origin, policy.Capabilities)
+	mcpManagement := policy.allows("mcp_management") && workflowPhaseID == workflowtypes.WorkflowStatusWorkflowBuilder && syntheticReq.AgentProfileID == ""
+	if mcpManagement {
+		if err := api.registerMCPToolsForChat(definitionAgent, policy, nil); err != nil {
+			return err
+		}
+	}
 
 	// Register phase-appropriate tools
 	// PHASE_TOOL_RACE_DIAGNOSTIC: these are the registrations that
@@ -73,7 +76,7 @@ func (api *StreamingAPI) installWorkflowPhaseTools(
 	phaseRegisterStart := time.Now()
 	// Only an interactive Builder has a UI to control. Schedules share this
 	// phase, so decide by origin/ownership, not WorkshopMode or write access.
-	if err := api.registerWorkflowUIForCaller(definitionAgent, workflowPhaseID, sessionID, phaseWorkspacePath, syntheticReq); err != nil {
+	if err := api.registerWorkflowUIForCaller(definitionAgent, workflowPhaseID, sessionID, phaseWorkspacePath, syntheticReq, readOnly); err != nil {
 		return fmt.Errorf("register open_workspace_view: %w", err)
 	}
 	switch workflowPhaseID {
@@ -98,7 +101,7 @@ func (api *StreamingAPI) installWorkflowPhaseTools(
 		// a per-tool gate — matches the doc-approved "authority, decided once
 		// per distinct-caller registration" pattern (prepareReadOnlyBackgroundAgentTools),
 		// not the deleted per-turn workshop-mode catalog filter.
-		if phaseTemplateVars["WorkshopMode"] == "run" {
+		if !policy.allows("plan_authoring") {
 			log.Printf("[WORKFLOW_PHASE] Run mode — skipping plan modification tool registration for %s", workflowPhaseID)
 		} else if err := todo_creation_human.RegisterPlanModificationTools(
 			definitionAgent,
@@ -303,7 +306,7 @@ func (api *StreamingAPI) installWorkflowPhaseTools(
 				}
 				return builderSession.DetachSecretFromWorkflow(ctx, name)
 			}
-			if err := api.registerSecretManagementTools(definitionAgent, userID, phaseWorkspacePath, "secret_tools", phaseTemplateVars["WorkshopMode"] == "run", afterUpsert, afterDelete); err != nil {
+			if err := api.registerSecretManagementTools(definitionAgent, userID, phaseWorkspacePath, "secret_tools", !policy.allows("secret_management"), afterUpsert, afterDelete); err != nil {
 				log.Printf("[WORKFLOW_PHASE] Warning: Failed to register secret tools in %s: %v", workflowPhaseID, err)
 			} else {
 				log.Printf("[WORKFLOW_PHASE] Registered secret tools in %s (list_secrets, set_workflow_secret, delete_workflow_secret, set_user_secret, delete_user_secret) with workflow auto-detach", workflowPhaseID)
@@ -329,7 +332,7 @@ func (api *StreamingAPI) installWorkflowPhaseTools(
 		// normalizes every legacy value before this point. Comparing against
 		// the retired names asserted they still occur, which cost real
 		// debugging time while diagnosing PLAT-125.
-		if phaseTemplateVars["WorkshopMode"] == "workshop" {
+		if policy.allows("report_authoring") {
 			// The HTML report is loaded directly from db/reports/index.html. The
 			// builder edits those files with normal workspace tools and validates
 			// each page; there is no report-plan JSON registry or widget layer.
@@ -444,7 +447,7 @@ func (api *StreamingAPI) installWorkflowPhaseTools(
 		if workshopSession != nil {
 			todo_creation_human.RegisterRunFullWorkflowTool(definitionAgent, workshopSession, api.logger)
 			log.Printf("[WORKFLOW_PHASE] Registered run_full_workflow in %s", workflowPhaseID)
-			if phaseTemplateVars["WorkshopMode"] == "run" {
+			if !policy.allows("knowledgebase_maintenance") {
 				log.Printf("[WORKFLOW_PHASE] PLAT-262: skipping reorganize_knowledgebase/consolidate_knowledgebase in %s (run mode)", workflowPhaseID)
 			} else {
 				todo_creation_human.RegisterReorganizeKnowledgebaseTool(definitionAgent, workshopSession, api.logger)
@@ -458,15 +461,12 @@ func (api *StreamingAPI) installWorkflowPhaseTools(
 			// confirmation. Legacy "optimizer" is also accepted for
 			// backward compat with persisted sessions that pre-date the
 			// merge.
-			switch phaseTemplateVars["WorkshopMode"] {
-			case "workshop":
+			if policy.allows("improvement_proposals") {
 				RegisterAutoImprovementProposerTools(definitionAgent, phaseWorkspacePath, "pulse-fixer", api.logger)
 				log.Printf("[WORKFLOW_PHASE] Registered auto-improvement proposer tools in %s (mode=%s)", workflowPhaseID, phaseTemplateVars["WorkshopMode"])
-			case "run":
+			} else {
 				RegisterCaptureContextTool(definitionAgent, phaseWorkspacePath, api.logger)
 				log.Printf("[WORKFLOW_PHASE] Registered capture_context in %s (mode=%s)", workflowPhaseID, phaseTemplateVars["WorkshopMode"])
-			default:
-				log.Printf("[WORKFLOW_PHASE] Skipped auto-improvement proposer tools in %s (mode=%s)", workflowPhaseID, phaseTemplateVars["WorkshopMode"])
 			}
 			// Guided-flow text for every workflow slash command, returned via
 			// get_workflow_command_guidance(kind=...). Available across modes;
@@ -491,7 +491,7 @@ func (api *StreamingAPI) installWorkflowPhaseTools(
 		// plausible-looking pass instead. Tools may legitimately be unavailable;
 		// the procedure describing how to behave must not vanish with them.
 		workshopMode := phaseTemplateVars["WorkshopMode"]
-		if err := guidance.AttachReferenceSurface(workshopMode, func(skill *llmtypes.Skill) error {
+		if err := guidance.AttachReferenceSurfaceWithMCP(workshopMode, mcpManagement, func(skill *llmtypes.Skill) error {
 			return definitionAgent.AttachSkill(skill)
 		}); err != nil {
 			log.Printf("[WORKFLOW_PHASE] Failed to attach reference surface in %s (mode=%s): %v", workflowPhaseID, workshopMode, err)
@@ -500,7 +500,7 @@ func (api *StreamingAPI) installWorkflowPhaseTools(
 		// planning: plan modification tools
 		// Returns an error on failure — see workflow-builder case above for rationale.
 		// PLAT-262: same run-mode gate as the workflow-builder case above.
-		if phaseTemplateVars["WorkshopMode"] == "run" {
+		if !policy.allows("plan_authoring") {
 			log.Printf("[WORKFLOW_PHASE] Run mode — skipping plan modification tool registration for phase=%s", workflowPhaseID)
 		} else if err := todo_creation_human.RegisterPlanModificationTools(
 			definitionAgent,

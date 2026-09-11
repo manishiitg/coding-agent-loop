@@ -376,3 +376,25 @@ manifest parses. They do not prove the chat works. Verify live:
       test provider). Confirm the spinner stops, the product shows actionable
       copy, raw provider output is collapsed under **Technical details**, and
       **Retry** resubmits the last human message when the failure is retryable.
+
+## AgentWorks chat capabilities
+
+AgentWorks declares `chat_policy.modes` (`builder`, `run`), `origins`
+(`interactive`, `scheduled`, `pulse`, `child`, `bot`, `notification`) and
+`read_only` in its embedded product manifest. Capabilities are intersected; an
+unknown role grants nothing. The current named host groups are MCP management,
+plan authoring, report authoring, secret management, KB maintenance, improvement
+proposals and workspace UI. Adding a capability requires manifest validation,
+a registrar consumer and tests for allowed and denied callers.
+
+Scheduled ordinary execution resolves to Run. Pulse maintenance is a specialized
+origin with existing typed reviewer/fixer restrictions, not an interactive
+Builder. Client-visible mode alone is never sufficient evidence for installer
+admission. Existing non-AgentWorks products keep their own tool allowlists.
+
+Service deployments should set `AGENTWORKS_MCP_STATE_DIR` to a private durable
+state directory, outside release/workspace folders. Startup refreshes the shipped
+base catalog there and preserves its user overlay. When migrating an existing
+release layout, copy the old current overlay before switching releases (as RTS
+deployment does). Local startup can keep its existing config path by leaving the
+variable unset. Neither secrets nor user server entries belong in product.yaml.

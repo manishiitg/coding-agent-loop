@@ -4,10 +4,64 @@
 
 | Coordination | Value |
 |---|---|
-| Assigned agent | Claude |
+| Assigned agent | Claude (original), Codex (Builder follow-up) |
 | Ticket state | Implemented, regression-tested locally — deployment pending |
-| Last synchronized | 2026-09-10 |
-| Priority | P2 — unattended runtime capability creep, not a live incident; no evidence of it being exploited or triggered |
+| Last synchronized | 2026-09-11 |
+| Priority | P1 — Builder integration configuration unavailable on RTS; no evidence of unauthorized MCP installation |
+
+## 2026-09-11 — Builder admission and durable MCP configuration
+
+The original fix correctly excluded manual execution but also codified an older
+bug: interactive Builder uses `workflow_phase` too, so its MCP management tools
+were never registered. The RTS incident (Jam selected but absent from config)
+confirmed this on release `2ffcd10-20260911090730`; MCP configuration was unlocked.
+
+Implemented locally; server deployment and a live authenticated Jam run remain
+unverified. This section supersedes the older registration-gate design below.
+
+- AgentWorks `product.yaml` now declares `chat_policy`: Builder/Run capability
+  sets, caller origins, and a read-only ceiling. Unknown capability names and
+  missing policy roles fail validation. Tool implementations stay in Go.
+- A shared resolver distinguishes interactive chat, scheduled execution, Pulse
+  maintenance, children, bots, and notifications, retaining stored provenance on
+  resumed turns. Explicitly promoted schedules can become interactive; children
+  cannot use that promotion to obtain installer tools.
+- Interactive writable Builders receive the actual MCP management registrar.
+  Run, schedules, Pulse, children, notifications and read-only users do not.
+  Other product manifests still apply their own tool policy.
+- Host plan/report/secret/KB/improvement/UI admission uses the resolved policy.
+  Legacy workshop procedures receive the corresponding effective mode; typed
+  Pulse reviewer/fixer executor restrictions remain intact. Pulse maintenance
+  explicitly retains improvement authority and never receives MCP management.
+- Integration guidance follows MCP admission. A retained native chat reconnects
+  on capability/config changes using the existing durable-conversation replay
+  path; config contents and credentials are never put in its identity/logs.
+- `AGENTWORKS_MCP_STATE_DIR` keeps the base/overlay pair outside releases. The
+  service refreshes the shipped base catalog, migrates a legacy overlay once,
+  and preserves existing user entries. RTS rootless/rootful service definitions
+  and Dominion/Confida deployments configure it. Local checkouts keep existing paths
+  unless this environment variable is set.
+- Preflight now accurately reports missing configured names, without claiming
+  authentication/connectivity/tool-count validation or requiring a host restart.
+- Installer optional strings no longer stringify omitted values as `<nil>`.
+  Custom additions trigger per-server discovery rather than a metadata-only refresh.
+
+Validation: the full server, shared manifest, AgentWorks policy and guidance
+package suites pass, plus focused workflow mode/read-only/Pulse tests. Deployment
+scripts pass `bash -n`; `git diff --check` is clean.
+
+Critical follow-up review found and corrected two additional boundaries:
+retained native sessions persist a capability/config fingerprint so compatible
+sessions survive server restart, while fresh/API chats keep normal history;
+and workspace presentation no longer grants Gmail connection-editing tools to
+read-only users. Legacy MCP overlays are published atomically without replacing
+an existing durable file. Tests cover these boundaries explicitly.
+
+Regression coverage includes real MCP registration/handler invocation, origin
+and read-only admission, Pulse preservation, guidance admission, manifest
+validation, config-driven session refresh and release-replacement persistence.
+
+Related design: [single tool surface](../../design/agent_tool_surface_single_source.md).
 
 ## Problem
 

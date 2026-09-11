@@ -796,24 +796,3 @@ func workflowsReferencingMCPServer(ctx context.Context, serverName string) []str
 	}
 	return affected
 }
-
-// mcpServerToolsEligible decides whether the full MCP server management
-// toolset (search_mcp_catalog, inspect_mcp_server, install/add/edit/remove
-// _mcp_server, get_mcp_server_logs, trigger_mcp_discovery) should be
-// registered for this request.
-//
-// PLAT-307: isToolBackedChat (the general "not the workflow builder chat"
-// flag) only excludes agent_mode=="workflow_phase". A manual workflow run
-// (agent_mode=="workflow" -- see frontend useWorkflowExecution.ts's "Execute
-// workflow"/"Execute step" requests) is NOT "workflow_phase", so it fell
-// through as tool-backed and got the ability to search external registries,
-// install new servers, or delete existing ones, live during an unattended
-// run. Scheduled/cron runs already avoid this: buildWorkshopRequest
-// (scheduler.go) sets agent_mode=="workflow_phase" for them. This function is
-// the single, testable exception for the one path that wasn't excluded --
-// deliberately narrower than isToolBackedChat itself, which also gates
-// LLM/skill/secret tools whose run-mode eligibility is a separate question
-// this fix isn't making a call on.
-func mcpServerToolsEligible(isToolBackedChat bool, agentMode string) bool {
-	return isToolBackedChat && strings.TrimSpace(agentMode) != "workflow"
-}

@@ -147,7 +147,7 @@ func formatMissingDependencies(workflowID string, missing []MissingDependency, m
 	for _, m := range missing {
 		b.WriteString(fmt.Sprintf("  • %s %q (required by: %s)\n", m.Kind, m.Name, strings.Join(m.RequiredBy, ", ")))
 	}
-	b.WriteString("\nFix: add the missing entry/entries to your MCP config and restart the orchestrator.\n")
-	b.WriteString("On this codebase the user-extensible MCP config lives at agent_go/configs/mcp_servers_clean_user.json — it is merged into the base config at load time.\n")
+	b.WriteString("\nFix: open an interactive Workflow Builder with write access. Use search_mcp_catalog and install_mcp_server (or add_mcp_server for a custom no-auth server), then select the exact configured name with update_workflow_config.\n")
+	b.WriteString("This check validates configuration names only; it does not test authentication, connectivity, or tool counts. Installation refreshes discovery without a server restart. Wait for discovery, then retry; do not remove a required integration just to bypass this check.\n")
 	return b.String()
 }

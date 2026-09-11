@@ -20,7 +20,14 @@ import (
 // Returns nil if no kinds are allowed in the given mode (so callers can skip
 // attaching without an extra check).
 func MaterializeReferenceSkill(mode string) *llmtypes.Skill {
+	return materializeReferenceSkillWithMCP(mode, true)
+}
+
+func materializeReferenceSkillWithMCP(mode string, mcpManagement bool) *llmtypes.Skill {
 	spec := referenceSkillSpecForMode(mode)
+	if !mcpManagement {
+		spec.Intro = "Read the matching reference before acting. This session cannot install or configure MCP integrations; an interactive Builder with write access can do that. Reading documentation does not grant tools."
+	}
 	return buildMegaSkill(buildMegaSkillSpec{
 		Mode:             mode,
 		Registry:         referenceKinds,
@@ -28,6 +35,9 @@ func MaterializeReferenceSkill(mode string) *llmtypes.Skill {
 		DescriptionIntro: spec.DescriptionIntro,
 		Intro:            spec.Intro,
 		Render:           renderReferenceKind,
+		Select: func(kind string, meta kindMeta) bool {
+			return (mcpManagement || kind != "integration-discovery") && (mode == "" || modeAllowedIn(kind, mode, referenceKinds))
+		},
 	})
 }
 
@@ -149,15 +159,22 @@ func MaterializeReferenceKindsAsSkills(mode string, names []string) ([]*llmtypes
 }
 
 func AttachReferenceSurface(mode string, attach func(*llmtypes.Skill) error) error {
+	return AttachReferenceSurfaceWithMCP(mode, true, attach)
+}
+
+func AttachReferenceSurfaceWithMCP(mode string, mcpManagement bool, attach func(*llmtypes.Skill) error) error {
 	if attach == nil {
 		return fmt.Errorf("attach reference surface: nil attach function")
 	}
-	if meta := BuildSystemToolsSkill(mode); meta != nil {
+	if meta := buildSystemToolsSkillWithMCP(mode, mcpManagement); meta != nil {
+		if !mcpManagement {
+			meta.Content += "\nMCP management is unavailable in this session. Do not attempt integration installation or manual host config edits; ask an interactive Builder with write access to configure it.\n"
+		}
 		if err := attach(meta); err != nil {
 			return fmt.Errorf("attach %s: %w", meta.Name, err)
 		}
 	}
-	if refs := MaterializeReferenceSkill(mode); refs != nil {
+	if refs := materializeReferenceSkillWithMCP(mode, mcpManagement); refs != nil {
 		if err := attach(refs); err != nil {
 			return fmt.Errorf("attach %s: %w", refs.Name, err)
 		}

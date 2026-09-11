@@ -1,19 +1,7 @@
 schema_version: 2
 
-# AgentWorks is the platform's own generic, workflows-only product -- unlike
-# Video Studio/SparkQuill/Dominion/Finance, it has no fixed single-purpose
-# prompt, no bespoke tools, and no one project workspace to bind to. This
-# manifest is a deliberate first, minimal step: it exists so AgentWorks has
-# a real, resolvable agent profile ID in the same registry every other
-# product uses, WITHOUT moving any of AgentWorks' actual tool/routing logic
-# here yet (that logic is Go-code-driven today -- see
-# cmd/server/workflow_ui_policy.go, workflow_view_tool.go -- and stays
-# there). Nothing currently sets AgentProfileID="agentworks" anywhere in the
-# codebase, so registering this profile is inert on its own: it does not
-# change any existing request's behavior. It only becomes load-bearing once
-# something is deliberately wired to request it (e.g. a WhatsApp pairing's
-# default_profile_id, or a future explicit agent-profile route) -- that is a
-# separate, later decision, not part of this step.
+# AgentWorks chat capability admission is owned here. Tool implementations stay
+# in Go; registration, guidance and native-session identity use the resolved policy.
 dependencies: {}
 
 prompt:
@@ -31,10 +19,6 @@ profile:
   # "one fixed prompt/workspace" model, which every other product.yaml
   # today uses on purpose, is the wrong shape for AgentWorks specifically.
   scope: global
-  # No tools/tool_policy/skills declared yet -- deliberately. This step is
-  # scaffolding only; AgentWorks' existing tool surface (workflow tools, UI
-  # control tools, etc.) stays exactly as Go-registered today. Moving any of
-  # that here is a separate, later decision.
   built_in: true
 
 branding:
@@ -52,3 +36,26 @@ workflows:
   enabled: []
   selected_skills: []
   browser_mode: ""
+
+# Mode is distinct from origin. Scheduled execution resolves to run; specialized
+# children retain their existing role-specific authority checks as well.
+chat_policy:
+  modes:
+    builder: &builder_capabilities
+      - mcp_management
+      - plan_authoring
+      - report_authoring
+      - secret_management
+      - knowledgebase_maintenance
+      - improvement_proposals
+      - workspace_ui
+    run: [workspace_ui]
+  origins:
+    interactive: *builder_capabilities
+    scheduled: []
+    # Pulse coordinates approved improvements through its existing typed roles.
+    pulse: [plan_authoring, report_authoring, secret_management, knowledgebase_maintenance, improvement_proposals]
+    child: [plan_authoring, report_authoring, secret_management, knowledgebase_maintenance, improvement_proposals]
+    bot: [plan_authoring, report_authoring, secret_management, knowledgebase_maintenance, improvement_proposals]
+    notification: []
+  read_only: [workspace_ui]

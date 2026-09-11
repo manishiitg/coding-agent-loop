@@ -101,6 +101,15 @@ fi
 echo "==> [$RELEASE_ID] Activating release and restarting services"
 chmod +x "$BUILD_DIR"/bin/*
 ln -sfn "$REMOTE_APP/logs" "$BUILD_DIR/logs"
+# User-installed integrations survive release replacement. Migrate the old
+# overlay before changing current; existing durable entries always win.
+mcp_state="$REMOTE_APP/state/mcp"
+install -d -m 0700 "$mcp_state"
+legacy_mcp="$REMOTE_APP/current/configs/mcp_servers_confida_user.json"
+if [[ -f "$legacy_mcp" && ! -e "$mcp_state/mcp_servers_confida_user.json" ]]; then
+  cp -n "$legacy_mcp" "$mcp_state/mcp_servers_confida_user.json"
+  chmod 600 "$mcp_state/mcp_servers_confida_user.json"
+fi
 ln -sfn "$BUILD_DIR" "$REMOTE_APP/current"
 
 export XDG_RUNTIME_DIR="/run/user/$(id -u)"
@@ -124,6 +133,7 @@ mkdir -p "$HOME/.config/systemd/user/confida-agent.service.d"
 # Keep this drop-in lexically after the legacy muse.conf on existing hosts;
 # PATH is a scalar systemd environment assignment, so the last drop-in wins.
 printf '%s\n' '[Service]' "Environment=PATH=$runtime_path" > "$HOME/.config/systemd/user/confida-agent.service.d/zz-runtime-tools.conf"
+printf '%s\n' '[Service]' 'Environment=AGENTWORKS_MCP_STATE_DIR=/srv/confida/state/mcp' > "$HOME/.config/systemd/user/confida-agent.service.d/30-durable-mcp.conf"
 printf '%s\n' '[Service]' 'Environment=AGENT_BROWSER_CDP_ENABLED=false' > "$HOME/.config/systemd/user/confida-agent.service.d/20-disable-cdp.conf"
 mkdir -p "$HOME/.config/systemd/user/confida-workspace.service.d"
 printf '%s\n' '[Service]' "Environment=PATH=$runtime_path" > "$HOME/.config/systemd/user/confida-workspace.service.d/zz-runtime-tools.conf"

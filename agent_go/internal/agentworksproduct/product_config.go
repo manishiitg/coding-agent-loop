@@ -32,6 +32,10 @@ func AgentWorksManifest() (ProductManifest, error) {
 			productManifestErr = fmt.Errorf("invalid AgentWorks product manifest")
 			return
 		}
+		if err := validateChatPolicy(manifest); err != nil {
+			productManifestErr = err
+			return
+		}
 		productManifest = manifest
 	})
 	return productManifest, productManifestErr

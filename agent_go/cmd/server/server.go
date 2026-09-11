@@ -565,6 +565,7 @@ type StreamingAPI struct {
 	// the next CLI invocation) and the conversation history is replaced with a
 	// synthetic recap so the new agent sees just enough context to continue.
 	lastWorkshopModeBySession map[string]string
+	lastChatPolicyBySession   map[string]string
 
 	// Interactive workshop chat sessions — per-session controller + step registry
 	// Key: sessionID, Value: *todo_creation_human.WorkshopChatSession
@@ -1611,6 +1612,15 @@ func runServer(cmd *cobra.Command, args []string) {
 	// Create streaming API server
 	configPath := config.MCPConfigPath
 
+	// Resolve a release-independent catalog/overlay pair when running as a service.
+	if stateDir := os.Getenv("AGENTWORKS_MCP_STATE_DIR"); strings.TrimSpace(stateDir) != "" {
+		runtimePath, err := prepareMCPRuntimeConfig(configPath, stateDir)
+		if err != nil {
+			log.Fatalf("Failed to prepare durable MCP config: %v", err)
+		}
+		configPath = runtimePath
+	}
+
 	// Check if config file exists
 	if _, err := os.Stat(configPath); os.IsNotExist(err) {
 		log.Printf("⚠️  MCP config file not found at %s, initializing empty config...", configPath)
@@ -1890,6 +1900,7 @@ func runServer(cmd *cobra.Command, args []string) {
 		sessionInputLanes:                      make(map[string]*sessionInputLane),
 		completionLoopStarted:                  make(map[string]bool),
 		lastWorkshopModeBySession:              make(map[string]string),
+		lastChatPolicyBySession:                make(map[string]string),
 		stoppedSessions:                        make(map[string]bool),
 		interruptedTurns:                       make(map[string]bool),
 	}
@@ -5529,15 +5540,21 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				}
 				logfWithContext(queryLogCtx, "[LLM TOOLS] Registered workflow LLM discovery tools")
 			}
-			if mcpServerToolsEligible(isToolBackedChat, req.AgentMode) {
-				if err := api.registerMultiAgentMCPServerTools(llmAgent, func(toolName string) bool {
+			if isToolBackedChat {
+				activeForMCP, _ := api.getActiveSession(sessionID)
+				chatMode := "workshop"
+				if req.ExecutionOptions != nil && req.ExecutionOptions.WorkshopMode != "" {
+					chatMode = req.ExecutionOptions.WorkshopMode
+				}
+				mcpPolicy := resolveWorkflowChatPolicy(chatMode, sessionID, req, activeForMCP, currentUserIsReadOnly)
+				if err := api.registerMCPToolsForChat(llmAgent, mcpPolicy, func(toolName string) bool {
 					return profileDisablesVirtualTool(resolvedProfile, toolName)
 				}); err != nil {
 					logfWithContext(queryLogCtx, "[MCP SERVER TOOLS] Failed to register multi-agent MCP server tools: %v", err)
 					sendError(fmt.Sprintf("Failed to register multi-agent MCP server tools: %v", err), true)
 					return
 				}
-				logfWithContext(queryLogCtx, "[MCP SERVER TOOLS] Registered multi-agent MCP server tools")
+				logfWithContext(queryLogCtx, "[CHAT_POLICY] MCP management admission: mode=%s origin=%s allowed=%v", mcpPolicy.Mode, mcpPolicy.Origin, mcpPolicy.allows("mcp_management"))
 			}
 			if isToolBackedChat {
 				secretWorkflowPath := ""
@@ -5961,6 +5978,11 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				if currentUserIsReadOnly {
 					phaseTemplateVars["WorkshopMode"] = "run"
 				}
+				activeForCapabilities, _ := api.getActiveSession(sessionID)
+				phasePolicy := resolveWorkflowChatPolicy(phaseTemplateVars["WorkshopMode"], sessionID, req, activeForCapabilities, currentUserIsReadOnly)
+				if !phasePolicy.allows("plan_authoring") {
+					phaseTemplateVars["WorkshopMode"] = "run"
+				}
 
 				// Read variable names from workspace (if any)
 				variableNames := todo_creation_human.ReadVariablesFromWorkspace(setupCtx, phaseWorkspacePath, phaseReadFile)
@@ -6081,7 +6103,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 					workflowPhaseID, phaseWorkspacePath, phaseRunFolder,
 					phaseTemplateVars, selectedServers, mergedAPIKeys,
 					phaseReadFile, phaseWriteFile, phaseMoveFile,
-					syntheticReq,
+					syntheticReq, currentUserIsReadOnly,
 				); err != nil {
 					// Preserve the original Fatal semantics for the /api/query
 					// caller: the workflow-builder system prompt advertises the
@@ -6197,9 +6219,30 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		// This snapshot is merged with the new turn's exchange at save time below.
 		var preModeChangeSnapshot []llmtypes.MessageContent
 		if newWorkshopMode != "" {
+			activeForPolicy, _ := api.getActiveSession(sessionID)
+			policyKey := api.chatPolicySessionKey(resolveWorkflowChatPolicy(newWorkshopMode, sessionID, req, activeForPolicy, currentUserIsReadOnly))
+			codingProvider := common.IsCLIProvider(finalProvider)
+			api.conversationMux.RLock()
+			_, knownInMemory := api.lastChatPolicyBySession[sessionID]
+			api.conversationMux.RUnlock()
+			var savedRuntime *ChatHistoryAgentRuntime
+			if codingProvider && !knownInMemory {
+				var readErr error
+				savedRuntime, _, readErr = ReadChatHistoryRuntimeForSession(currentUserID, sessionID, workflowPhaseFolder)
+				if readErr != nil {
+					logfWithContext(queryLogCtx, "[CHAT_POLICY] Could not read saved session policy: %v", readErr)
+				}
+			}
 			api.conversationMux.Lock()
+			if api.lastChatPolicyBySession == nil {
+				api.lastChatPolicyBySession = make(map[string]string)
+			}
+			previousPolicy, knownPolicy := api.lastChatPolicyBySession[sessionID]
+			api.lastChatPolicyBySession[sessionID] = policyKey
 			prevMode, hadPrev := api.lastWorkshopModeBySession[sessionID]
-			if hadPrev && prevMode != "" && prevMode != newWorkshopMode {
+			// Keep native continuation when its persisted admission still matches.
+			// Fresh chats and API providers must not lose normal history replay.
+			if chatPolicyRequiresReconnect(codingProvider, previousPolicy, policyKey, knownPolicy, savedRuntime) || hadPrev && prevMode != "" && prevMode != newWorkshopMode {
 				modeChangedThisTurn = true
 				modeChangePrevMode = prevMode
 				log.Printf("[WORKSHOP_MODE] Mode changed %q -> %q for session %s; starting a fresh native coding-agent session and replaying conversation file pointer", prevMode, newWorkshopMode, sessionID)
@@ -7165,6 +7208,9 @@ func (api *StreamingAPI) captureChatHistoryAgentRuntime(sessionID, provider, mod
 		runtime.ServerName = strings.TrimSpace(runtimeInfo.ConfiguredServerName)
 		runtime.SelectedTools = runtimeInfo.SelectedTools
 	}
+	api.conversationMux.RLock()
+	runtime.ChatPolicyKey = api.lastChatPolicyBySession[sessionID]
+	api.conversationMux.RUnlock()
 	normalizeChatHistoryRuntime(runtime)
 
 	return runtime
@@ -10785,13 +10831,17 @@ func (api *StreamingAPI) registerMultiAgentMCPServerTools(registrar interface {
 			if isMCPConfigLocked() {
 				return "MCP configuration is locked by the administrator, so chat cannot install servers.", nil
 			}
-			name := strings.TrimSpace(fmt.Sprint(args["name"]))
+			name, _ := args["name"].(string)
+			name = strings.TrimSpace(name)
 			if name == "" {
 				return "name is required.", nil
 			}
-			candidateURL := strings.TrimSpace(fmt.Sprint(args["url"]))
-			apiKey := strings.TrimSpace(fmt.Sprint(args["api_key"]))
-			clientID := strings.TrimSpace(fmt.Sprint(args["client_id"]))
+			candidateURL, _ := args["url"].(string)
+			candidateURL = strings.TrimSpace(candidateURL)
+			apiKey, _ := args["api_key"].(string)
+			apiKey = strings.TrimSpace(apiKey)
+			clientID, _ := args["client_id"].(string)
+			clientID = strings.TrimSpace(clientID)
 
 			// Chat has no other way to learn an install finished — the
 			// connector-directory UI refreshes itself on its own button
@@ -10995,10 +11045,10 @@ func (api *StreamingAPI) registerMultiAgentMCPServerTools(registrar interface {
 				return "", fmt.Errorf("failed to save user MCP config: %w", err)
 			}
 
-			api.appendServerLog(name, "info", "Server configuration saved from multi-agent chat, triggering discovery...")
-			go api.triggerMCPDiscovery()
+			api.invalidateServerDiscovery(name, "Configuration saved — discovering tools...")
+			api.startServerDiscovery(GetUserIDFromContext(ctx), name)
 
-			return fmt.Sprintf("Saved user MCP server %q and started discovery. It will be available to future chats and sessions after discovery completes.", name), nil
+			return fmt.Sprintf("Saved user MCP server %q and started discovery. After discovery completes, select it with update_workflow_config(add_servers=[name]). The chat catalog refreshes on the next turn; no server restart is needed.", name), nil
 		},
 	); err != nil {
 		return err

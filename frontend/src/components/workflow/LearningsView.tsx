@@ -187,7 +187,7 @@ export default function LearningsView({ workspacePath, headerAction }: Learnings
           if (!relPath || relPath === 'SKILL.md' || relPath === '_global/SKILL.md') continue
           // Freshness is display metadata for the files below, not a learning
           // artifact users need to open on its own.
-          if (relPath === '_freshness.json') continue
+          if (relPath === '_freshness.json' || relPath === '_global/_freshness.json') continue
           if (relPath.endsWith('.learning_metadata.json')) continue
           if (isPatchArtifactPath(relPath)) continue
           if (!isGlobalLearningPackageFile(relPath)) continue

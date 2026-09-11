@@ -105,13 +105,9 @@ func gmailOAuthConfig(redirectURL, clientName string, includeRead bool, extraSco
 			return nil, err
 		}
 	} else {
-		clientID = strings.TrimSpace(os.Getenv("GOOGLE_WORKSPACE_CLI_CLIENT_ID"))
-		clientSecret = strings.TrimSpace(os.Getenv("GOOGLE_WORKSPACE_CLI_CLIENT_SECRET"))
-		if clientID == "" || clientSecret == "" {
-			clientID, clientSecret, err = readGmailClientSecretFile()
-			if err != nil {
-				return nil, err
-			}
+		clientID, clientSecret, err = legacyGmailOAuthClientSecret()
+		if err != nil {
+			return nil, err
 		}
 	}
 	if clientID == "" || clientSecret == "" {
@@ -124,6 +120,17 @@ func gmailOAuthConfig(redirectURL, clientName string, includeRead bool, extraSco
 		Scopes:       gmailOAuthScopesFor(includeRead, extraScopes),
 		Endpoint:     google.Endpoint,
 	}, nil
+}
+
+// legacyGmailOAuthClientSecret resolves the unnamed/shared client exactly once
+// so OAuth construction and shared-grant detection cannot drift apart.
+func legacyGmailOAuthClientSecret() (string, string, error) {
+	clientID := strings.TrimSpace(os.Getenv("GOOGLE_WORKSPACE_CLI_CLIENT_ID"))
+	clientSecret := strings.TrimSpace(os.Getenv("GOOGLE_WORKSPACE_CLI_CLIENT_SECRET"))
+	if clientID != "" && clientSecret != "" {
+		return clientID, clientSecret, nil
+	}
+	return readGmailClientSecretFile()
 }
 
 // readGmailClientSecretFile parses a legacy client_secret.json. Its
@@ -325,10 +332,10 @@ func BeginGmailOAuth(connectionID, clientName, redirectURL string, includeRead b
 	}
 	gmailOAuthPendingMu.Unlock()
 
-	return cfg.AuthCodeURL(state, gmailOAuthAuthCodeOptions(clientName)...), nil
+	return cfg.AuthCodeURL(state, gmailOAuthAuthCodeOptions(OAuthClientSharesHostGrant(clientName))...), nil
 }
 
-func gmailOAuthAuthCodeOptions(clientName string) []oauth2.AuthCodeOption {
+func gmailOAuthAuthCodeOptions(preserveExistingScopes bool) []oauth2.AuthCodeOption {
 	// AccessTypeOffline is what yields a refresh token at all; ApprovalForce
 	// makes Google re-issue one even if the user has consented before, which
 	// otherwise returns an access token only and leaves the connection unable
@@ -339,11 +346,11 @@ func gmailOAuthAuthCodeOptions(clientName string) []oauth2.AuthCodeOption {
 		oauth2.SetAuthURLParam("prompt", "select_account consent"),
 	}
 
-	// The unnamed legacy client is also used by the host's gws login. Preserve
-	// its broader grant when AgentWorks reconnects that account. Named clients
-	// are isolated per account and intentionally omit this option so removing a
-	// permission in the UI takes effect on the next reconnect.
-	if strings.TrimSpace(clientName) == "" {
+	// A client shared with the host's gws login must preserve its broader grant
+	// when AgentWorks reconnects that account. Isolated clients intentionally
+	// omit this option so removing a permission in the UI takes effect on the
+	// next reconnect.
+	if preserveExistingScopes {
 		options = append(options, oauth2.SetAuthURLParam("include_granted_scopes", "true"))
 	}
 	return options

@@ -226,6 +226,32 @@ func GetOAuthClientSecret(name string) (clientID, clientSecret string, err error
 	return parseGmailClientSecretJSON(raw)
 }
 
+// OAuthClientSharesHostGrant reports whether a connection's OAuth client is
+// the same Google OAuth client used by the host's legacy gws login. Google
+// grants consent per (account, client_id), so a named copy produced by
+// ImportLegacyOAuthClient still shares the host grant even though it now has a
+// registry name and its own copy of client_secret.json.
+//
+// An unnamed client is the legacy/shared path by definition. For a named
+// client, compare client IDs rather than names or paths: importing or manually
+// copying the same credential under a new name does not make the Google-side
+// grant independent.
+func OAuthClientSharesHostGrant(name string) bool {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return true
+	}
+	namedClientID, _, err := GetOAuthClientSecret(name)
+	if err != nil {
+		return false
+	}
+	hostClientID, _, err := legacyGmailOAuthClientSecret()
+	if err != nil {
+		return false
+	}
+	return strings.TrimSpace(namedClientID) != "" && strings.TrimSpace(namedClientID) == strings.TrimSpace(hostClientID)
+}
+
 // DeleteOAuthClient removes a named client's stored credentials. Does not
 // touch any connection that references it — a deleted client leaves those
 // connections needing reconnect against a different (or recreated) client,
@@ -254,7 +280,7 @@ func DeleteOAuthClient(name string) error {
 // A one-time, operator-triggered migration: naming the client is the
 // operator's decision, so this never runs automatically on server start.
 func (g *GmailService) ImportLegacyOAuthClient(ctx context.Context, name string) (GmailOAuthClient, int, error) {
-	clientID, clientSecret, err := readGmailClientSecretFile()
+	clientID, clientSecret, err := legacyGmailOAuthClientSecret()
 	if err != nil {
 		return GmailOAuthClient{}, 0, fmt.Errorf("no legacy client credentials found to import: %w", err)
 	}

@@ -511,10 +511,10 @@ export function GmailNotifications({ bots }: { bots: GmailNotificationsBots }) {
                         {sharedClientConfirm === conn.id && (
                           <div className="mt-2 rounded-md border border-amber-500/40 bg-amber-50 p-2 dark:bg-amber-900/20">
                             <p className="text-xs text-amber-900 dark:text-amber-200">
-                              This older account uses the host&rsquo;s shared Google OAuth client, which may also back
-                              the <code>gws</code> login in its terminal. Reconnecting updates that shared Google
-                              authorization. Existing permissions are preserved, but the authorization is not isolated
-                              to this account row.
+                              This account uses the same Google OAuth client as the host&rsquo;s <code>gws</code> login.
+                              Reconnecting preserves that shared Google authorization so the terminal login is not
+                              downgraded. Google may therefore return permissions already granted to the shared client,
+                              beyond the access selected on this row.
                             </p>
                             <p className="mt-1 text-xs text-amber-900 dark:text-amber-200">
                               To keep the host login separate, cancel and add the mailbox with its own OAuth client.
@@ -542,6 +542,7 @@ export function GmailNotifications({ bots }: { bots: GmailNotificationsBots }) {
                         {editGrantsSavedConnId === conn.id && (
                           <StatusBanner tone="success">
                             Saved. This only changed the stored request — click <strong>Reconnect</strong> above and complete Google's consent screen for it to actually take effect.
+                            {gmailConnectionUsesSharedOAuthClient(conn) && <> Because this account shares the host OAuth client, reconnecting can add access but preserves permissions already granted to that shared client. Add the mailbox with its own OAuth client to remove access precisely.</>}
                           </StatusBanner>
                         )}
 

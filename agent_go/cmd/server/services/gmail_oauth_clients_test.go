@@ -172,3 +172,48 @@ func TestImportLegacyOAuthClientWithNoConnectionsToBackfill(t *testing.T) {
 		t.Error("expected the imported client to be registered")
 	}
 }
+
+func TestImportLegacyOAuthClientFromEnvironment(t *testing.T) {
+	t.Setenv("GMAIL_CLIENT_SECRET_FILE", filepath.Join(t.TempDir(), "does-not-exist.json"))
+	t.Setenv("GOOGLE_WORKSPACE_CLI_CLIENT_ID", "environment-id")
+	t.Setenv("GOOGLE_WORKSPACE_CLI_CLIENT_SECRET", "environment-secret")
+	t.Setenv("GMAIL_OAUTH_CLIENTS_DIR", t.TempDir())
+
+	g := &GmailService{}
+	client, backfilled, err := g.ImportLegacyOAuthClient(context.Background(), "environment")
+	if err != nil {
+		t.Fatalf("ImportLegacyOAuthClient: %v", err)
+	}
+	if client.ClientID != "environment-id" || backfilled != 0 {
+		t.Fatalf("unexpected import result: client=%+v backfilled=%d", client, backfilled)
+	}
+}
+
+func TestOAuthClientSharesHostGrantUsesClientIdentityNotRegistryName(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", "")
+	t.Setenv("GMAIL_CLIENT_SECRET_FILE", filepath.Join(home, ".config", "gws", "client_secret.json"))
+	t.Setenv("GOOGLE_WORKSPACE_CLI_CLIENT_ID", "")
+	t.Setenv("GOOGLE_WORKSPACE_CLI_CLIENT_SECRET", "")
+	t.Setenv("GMAIL_OAUTH_CLIENTS_DIR", t.TempDir())
+	writeClientSecretFile(t, filepath.Join(home, ".config", "gws", "client_secret.json"), "host-id", "host-secret")
+
+	ctx := context.Background()
+	if _, err := CreateOAuthClient(ctx, "legacy-import", gmailOAuthClientJSON(t, "host-id", "copied-secret"), false); err != nil {
+		t.Fatalf("create imported copy: %v", err)
+	}
+	if _, err := CreateOAuthClient(ctx, "isolated", gmailOAuthClientJSON(t, "isolated-id", "isolated-secret"), false); err != nil {
+		t.Fatalf("create isolated client: %v", err)
+	}
+
+	if !OAuthClientSharesHostGrant("") {
+		t.Error("unnamed legacy client must be treated as shared")
+	}
+	if !OAuthClientSharesHostGrant("legacy-import") {
+		t.Error("named copy with the host client_id must remain shared")
+	}
+	if OAuthClientSharesHostGrant("isolated") {
+		t.Error("different client_id must be treated as isolated")
+	}
+}

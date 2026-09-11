@@ -36,6 +36,10 @@ type GmailConnectionResponse struct {
 	// connection authorizes under. Empty only for a connection that
 	// predates the named-client registry and has not yet been migrated.
 	ClientName string `json:"client_name,omitempty"`
+	// SharesHostOAuthClient means this row authorizes under the same Google
+	// OAuth client_id as the host's legacy gws login. Reconnecting must preserve
+	// that shared grant and therefore cannot be used to remove existing scopes.
+	SharesHostOAuthClient bool `json:"shares_host_oauth_client"`
 	// AllowReadAccess is whether this connection was authorized with
 	// gmail.readonly in addition to gmail.send. Send-only is the default.
 	AllowReadAccess bool `json:"allow_read_access"`
@@ -145,19 +149,20 @@ func projectGmailConnection(svc *services.GmailService, conn services.GmailConne
 	}
 
 	out := GmailConnectionResponse{
-		ID:                 conn.ID,
-		DisplayName:        conn.DisplayName,
-		Email:              email,
-		ConfigHome:         conn.ConfigHome,
-		ClientName:         conn.ClientName,
-		AllowReadAccess:    conn.AllowReadAccess,
-		Services:           conn.Services,
-		HasCredentialsFile: strings.TrimSpace(conn.CredentialsFile) != "",
-		Status:             status,
-		Enabled:            conn.Enabled,
-		IsDefault:          conn.ID == defaultID,
-		Auth:               auth,
-		Ready:              conn.Enabled && auth.Authenticated && auth.HasGmailScope,
+		ID:                    conn.ID,
+		DisplayName:           conn.DisplayName,
+		Email:                 email,
+		ConfigHome:            conn.ConfigHome,
+		ClientName:            conn.ClientName,
+		SharesHostOAuthClient: services.OAuthClientSharesHostGrant(conn.ClientName),
+		AllowReadAccess:       conn.AllowReadAccess,
+		Services:              conn.Services,
+		HasCredentialsFile:    strings.TrimSpace(conn.CredentialsFile) != "",
+		Status:                status,
+		Enabled:               conn.Enabled,
+		IsDefault:             conn.ID == defaultID,
+		Auth:                  auth,
+		Ready:                 conn.Enabled && auth.Authenticated && auth.HasGmailScope,
 	}
 	if !conn.CreatedAt.IsZero() {
 		out.CreatedAt = conn.CreatedAt.UTC().Format("2006-01-02T15:04:05Z")

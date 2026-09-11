@@ -7,7 +7,7 @@ import (
 	"golang.org/x/oauth2"
 )
 
-func gmailOAuthOptionQuery(t *testing.T, clientName string) url.Values {
+func gmailOAuthOptionQuery(t *testing.T, preserveExistingScopes bool) url.Values {
 	t.Helper()
 	cfg := oauth2.Config{
 		ClientID:    "client-id",
@@ -16,7 +16,7 @@ func gmailOAuthOptionQuery(t *testing.T, clientName string) url.Values {
 			AuthURL: "https://accounts.example.test/authorize",
 		},
 	}
-	parsed, err := url.Parse(cfg.AuthCodeURL("state", gmailOAuthAuthCodeOptions(clientName)...))
+	parsed, err := url.Parse(cfg.AuthCodeURL("state", gmailOAuthAuthCodeOptions(preserveExistingScopes)...))
 	if err != nil {
 		t.Fatalf("parse authorization URL: %v", err)
 	}
@@ -24,14 +24,14 @@ func gmailOAuthOptionQuery(t *testing.T, clientName string) url.Values {
 }
 
 func TestGmailOAuthSharedClientPreservesExistingScopes(t *testing.T) {
-	query := gmailOAuthOptionQuery(t, "")
+	query := gmailOAuthOptionQuery(t, true)
 	if got := query.Get("include_granted_scopes"); got != "true" {
 		t.Fatalf("include_granted_scopes = %q, want true", got)
 	}
 }
 
 func TestGmailOAuthNamedClientCanRemoveScopes(t *testing.T) {
-	query := gmailOAuthOptionQuery(t, "mailbox-client")
+	query := gmailOAuthOptionQuery(t, false)
 	if _, ok := query["include_granted_scopes"]; ok {
 		t.Fatalf("named client unexpectedly preserves previously granted scopes")
 	}

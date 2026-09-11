@@ -7,7 +7,8 @@ describe('gmailConnectionUsesSharedOAuthClient', () => {
     expect(gmailConnectionUsesSharedOAuthClient({ client_name: '  ' })).toBe(true)
   })
 
-  it('does not interrupt isolated named-client connections', () => {
-    expect(gmailConnectionUsesSharedOAuthClient({ client_name: 'ops-mailbox' })).toBe(false)
+  it('uses the server verdict for named imports and isolated clients', () => {
+    expect(gmailConnectionUsesSharedOAuthClient({ client_name: 'legacy-import', shares_host_oauth_client: true })).toBe(true)
+    expect(gmailConnectionUsesSharedOAuthClient({ client_name: 'ops-mailbox', shares_host_oauth_client: false })).toBe(false)
   })
 })

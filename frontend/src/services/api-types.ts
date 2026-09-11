@@ -2869,6 +2869,10 @@ export interface GmailConnection {
    *  authorizes under. Empty only for a connection that predates the
    *  named-client registry and has not yet been migrated. */
   client_name?: string
+  /** True when this row uses the same Google OAuth client as the host's legacy
+   *  gws login. Reconnecting preserves that shared grant instead of narrowing
+   *  it to only the permissions selected on this row. */
+  shares_host_oauth_client?: boolean
   /** Whether this connection was authorized with gmail.readonly on top of the
    *  always-requested gmail.send. Send-only is the default. */
   allow_read_access?: boolean

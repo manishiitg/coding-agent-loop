@@ -328,7 +328,7 @@ export default function ConnectorsBrowser({ compact = false, workspacePath }: Co
                     </p>
                   </div>
 
-                  <div className="flex shrink-0 items-center gap-1 self-center">
+                  <div className="flex shrink-0 flex-col items-center gap-1 self-center">
                     <AskAIButton
                       workspacePath={readOnly ? null : workspacePath ?? null}
                       iconOnly

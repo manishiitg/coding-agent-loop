@@ -1,5 +1,6 @@
 import WorkflowLiveBrowser from './WorkflowLiveBrowser'
-import React, { useCallback, useEffect, useMemo, useState } from 'react'
+import { capabilitiesEqual, mergeRemoteCapabilities } from './workflowCapabilitiesSync'
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { LoaderCircle, RefreshCw, Save, Settings2, X } from 'lucide-react'
 import { ToolSelectionSection } from '../ToolSelectionSection'
 import SkillsManagerPanel from '../skills/SkillsManagerPanel'
@@ -76,24 +77,6 @@ const SECTION_COPY: Record<WorkflowCapabilitySection, { title: string; descripti
   },
 }
 
-// Structural equality for the manifest capabilities: a flat object of
-// primitives, string arrays, and one nested plain-JSON `llm_config`.
-function capabilitiesEqual(a: unknown, b: unknown): boolean {
-  if (a === b) return true
-  if (typeof a !== typeof b || a === null || b === null || typeof a !== 'object') return false
-  if (Array.isArray(a) !== Array.isArray(b)) return false
-  if (Array.isArray(a) && Array.isArray(b)) {
-    return a.length === b.length && a.every((item, index) => capabilitiesEqual(item, b[index]))
-  }
-  const left = a as Record<string, unknown>
-  const right = b as Record<string, unknown>
-  const keys = new Set([...Object.keys(left), ...Object.keys(right)])
-  for (const key of keys) {
-    if (!capabilitiesEqual(left[key], right[key])) return false
-  }
-  return true
-}
-
 export default function WorkflowCapabilitiesPanel({ section, workspacePath }: WorkflowCapabilitiesPanelProps) {
   const canWriteWorkflow = useCanWriteWorkflow(workspacePath)
   const [capabilities, setCapabilities] = useState<WorkflowCapabilities>(EMPTY_CAPABILITIES)
@@ -110,18 +93,6 @@ export default function WorkflowCapabilitiesPanel({ section, workspacePath }: Wo
   const toolList = useMCPStore(state => state.toolList)
   const refreshTools = useMCPStore(state => state.refreshTools)
   const [refreshingServers, setRefreshingServers] = useState(false)
-  // A server installed from chat (install_mcp_server) has no way to push into
-  // this store directly -- ConnectorsBrowser only refetches on its own mount,
-  // so a panel left open through such an install would show it as missing
-  // until reopened. Lets the user force that same refetch without leaving.
-  const handleRefreshServers = useCallback(async () => {
-    setRefreshingServers(true)
-    try {
-      await refreshTools()
-    } finally {
-      setRefreshingServers(false)
-    }
-  }, [refreshTools])
   // "Available to select for this workflow" means connected -- you can't
   // meaningfully pick tools from a server nobody has authenticated yet. A
   // not-yet-connected server only belongs in the "Connect a new MCP server"
@@ -153,26 +124,64 @@ export default function WorkflowCapabilitiesPanel({ section, workspacePath }: Wo
   }
   const SectionIcon = view.icon
 
-  const load = useCallback(async () => {
+  const latest = useRef({ workspacePath, capabilities, loaded, saving })
+  latest.current = { workspacePath, capabilities, loaded, saving }
+  const loadVersion = useRef(0)
+
+  const load = useCallback(async (background = false) => {
     if (!workspacePath) {
       setError('This panel needs an active workflow folder.')
       setLoading(false)
       return
     }
-    setLoading(true)
+    const version = ++loadVersion.current
+    if (!background) setLoading(true)
     setError(null)
     try {
       const response = await workflowManifestApi.getWorkflowManifest(workspacePath)
+      if (latest.current.workspacePath !== workspacePath || version !== loadVersion.current || latest.current.saving) return
       const next = { ...EMPTY_CAPABILITIES, ...response.manifest.capabilities }
-      setCapabilities(next)
+      setCapabilities(background ? mergeRemoteCapabilities(latest.current.capabilities, latest.current.loaded, next) : next)
       setLoaded(next)
       setCdpPort(response.manifest.capabilities.cdp_ports?.[0] || 9222)
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : 'Unable to load workflow capabilities')
+      if (latest.current.workspacePath === workspacePath && version === loadVersion.current) {
+        setError(cause instanceof Error ? cause.message : 'Unable to load workflow capabilities')
+      }
     } finally {
-      setLoading(false)
+      if (latest.current.workspacePath === workspacePath && version === loadVersion.current) setLoading(false)
     }
   }, [workspacePath])
+
+  const handleRefreshServers = useCallback(async () => {
+    if (latest.current.saving) return
+    setRefreshingServers(true)
+    try {
+      await Promise.all([refreshTools(), load(true)])
+    } finally {
+      setRefreshingServers(false)
+    }
+  }, [refreshTools, load])
+
+  // Agent tools (and shell edits) can change this configuration while the panel
+  // stays open. Refresh both sources, only for the visible MCP panel.
+  useEffect(() => {
+    if (section !== 'mcp' || !workspacePath) return
+    let refreshing = false
+    const refresh = async () => {
+      if (document.hidden || refreshing || latest.current.saving) return
+      refreshing = true
+      try { await handleRefreshServers() } finally { refreshing = false }
+    }
+    const onFocus = () => { void refresh() }
+    const timer = window.setInterval(onFocus, 15000)
+    window.addEventListener('focus', onFocus)
+    return () => {
+      window.clearInterval(timer)
+      window.removeEventListener('focus', onFocus)
+      ++loadVersion.current
+    }
+  }, [section, workspacePath, handleRefreshServers])
 
   useEffect(() => {
     void load()
@@ -199,6 +208,7 @@ export default function WorkflowCapabilitiesPanel({ section, workspacePath }: Wo
       setError('This panel needs an active workflow folder before it can save.')
       return
     }
+    ++loadVersion.current
     setSaving(true)
     setError(null)
     try {

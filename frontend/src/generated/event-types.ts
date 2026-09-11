@@ -65,8 +65,7 @@ import type {
   LargeToolOutputFileWriteErrorEvent,
   LargeToolOutputServerUnavailableEvent,
   ModelChangeEvent,
-  FallbackModelUsedEvent,
-  FallbackAttemptEvent,
+  RetryAttemptEvent,
   ThrottlingDetectedEvent,
   TokenLimitExceededEvent,
   CacheEvent,
@@ -220,8 +219,7 @@ export type EventTypeString =
   | 'large_tool_output_file_write_error'
   | 'large_tool_output_server_unavailable'
   | 'model_change'
-  | 'fallback_model_used'
-  | 'fallback_attempt'
+  | 'retry_attempt'
   | 'broken_pipe'
   | 'throttling_detected'
   | 'token_limit_exceeded'
@@ -347,8 +345,7 @@ export interface EventTypeToDataMap {
   'large_tool_output_file_write_error': LargeToolOutputFileWriteErrorEvent;
   'large_tool_output_server_unavailable': LargeToolOutputServerUnavailableEvent;
   'model_change': ModelChangeEvent;
-  'fallback_model_used': FallbackModelUsedEvent;
-  'fallback_attempt': FallbackAttemptEvent;
+  'retry_attempt': RetryAttemptEvent;
   'throttling_detected': ThrottlingDetectedEvent;
   'token_limit_exceeded': TokenLimitExceededEvent;
   'cache_event': CacheEvent;
@@ -770,8 +767,7 @@ export type {
   LargeToolOutputFileWriteErrorEvent,
   LargeToolOutputServerUnavailableEvent,
   ModelChangeEvent,
-  FallbackModelUsedEvent,
-  FallbackAttemptEvent,
+  RetryAttemptEvent,
   ThrottlingDetectedEvent,
   TokenLimitExceededEvent,
   CacheEvent,

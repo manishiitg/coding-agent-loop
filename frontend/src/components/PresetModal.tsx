@@ -1,3 +1,4 @@
+import { stripRetiredLLMFallbacks } from '../utils/retiredLLMFallbacks'
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { Button } from './ui/Button';
 import { Input } from './ui/Input';
@@ -9,7 +10,7 @@ import { ToolSelectionSection } from './ToolSelectionSection';
 
 import ConfirmationDialog from './ui/ConfirmationDialog';
 import type { CustomPreset } from '../types/preset';
-import type { PlannerFile, PresetLLMConfig, AgentLLMConfig, AgentLLMFallback } from '../services/api-types';
+import type { PlannerFile, PresetLLMConfig, AgentLLMConfig } from '../services/api-types';
 import { useLLMStore } from '../stores/useLLMStore';
 import { useModeStore } from '../stores/useModeStore';
 
@@ -74,9 +75,6 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
   const [tier1LLM, setTier1LLM] = useState<AgentLLMConfig | null>(null);
   const [tier2LLM, setTier2LLM] = useState<AgentLLMConfig | null>(null);
   const [tier3LLM, setTier3LLM] = useState<AgentLLMConfig | null>(null);
-  const [tier1Fallbacks, setTier1Fallbacks] = useState<AgentLLMFallback[]>([]);
-  const [tier2Fallbacks, setTier2Fallbacks] = useState<AgentLLMFallback[]>([]);
-  const [tier3Fallbacks, setTier3Fallbacks] = useState<AgentLLMFallback[]>([]);
   const [showWorkflowLLMAdvanced, setShowWorkflowLLMAdvanced] = useState(false);
   // Each credential field owns its own entry/saved state; the parent only needs
   // to know whether one still holds unsaved text, so it can block its submit.
@@ -205,11 +203,6 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
   // Clears any half-typed credential when the modal opens or switches
   // automations, so one workflow's entry can never be submitted against another.
 
-  // Whether any resolved role or fallback runs on a given coding-CLI provider.
-  // A provider reached only through a fallback still needs its credential, so
-  // the fallback lists are part of the check.
-
-
   const hasAdvancedWorkflowLLMConfig = useCallback((presetLLM?: PresetLLMConfig | null) => {
     return presetLLM?.mode === 'explicit';
   }, []);
@@ -256,9 +249,6 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
       setTier1LLM(presetLLM.tiered_config?.tier_1 || null);
       setTier2LLM(presetLLM.tiered_config?.tier_2 || null);
       setTier3LLM(presetLLM.tiered_config?.tier_3 || null);
-      setTier1Fallbacks(presetLLM.tiered_config?.tier_1?.fallbacks || []);
-      setTier2Fallbacks(presetLLM.tiered_config?.tier_2?.fallbacks || []);
-      setTier3Fallbacks(presetLLM.tiered_config?.tier_3?.fallbacks || []);
       setShowWorkflowLLMAdvanced(hasAdvancedWorkflowLLMConfig(presetLLM));
     } else {
       setLabel('');
@@ -290,9 +280,6 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
       setTier1LLM(null);
       setTier2LLM(null);
       setTier3LLM(null);
-      setTier1Fallbacks([]);
-      setTier2Fallbacks([]);
-      setTier3Fallbacks([]);
       setShowWorkflowLLMAdvanced(false);
     }
   }, [editingPreset, fixedAgentMode, primaryConfig, selectedModeCategory, getAgentModeFromCategory, makeWorkflowFolder, sanitizeWorkflowFolderName, hasAdvancedWorkflowLLMConfig]);
@@ -369,19 +356,15 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
       
       // Build LLM config with workflow-level defaults
       // execution_llm is step-only and is not persisted at the workflow level.
-      let finalLLMConfig: PresetLLMConfig | undefined = llmConfig || undefined;
+      let finalLLMConfig: PresetLLMConfig | undefined = stripRetiredLLMFallbacks(llmConfig || undefined);
       if (effectiveAgentMode === 'workflow') {
-        const workflowBaseLLMConfig = { ...((llmConfig || {}) as PresetLLMConfig & { execution_llm?: unknown; learning_llm?: unknown }) };
+        const workflowBaseLLMConfig = { ...(stripRetiredLLMFallbacks(llmConfig || {}) as PresetLLMConfig & { execution_llm?: unknown; learning_llm?: unknown }) };
         delete workflowBaseLLMConfig.execution_llm;
         delete workflowBaseLLMConfig.learning_llm;
-        const withFallbacks = (llm: AgentLLMConfig, fallbacks: AgentLLMFallback[]): AgentLLMConfig => ({
-          ...llm,
-          ...(fallbacks.length > 0 ? { fallbacks } : {}),
-        });
         const explicitTieredConfig = effectiveTier1LLM && effectiveTier2LLM && effectiveTier3LLM ? {
-          tier_1: withFallbacks(effectiveTier1LLM, tier1Fallbacks),
-          tier_2: withFallbacks(effectiveTier2LLM, tier2Fallbacks),
-          tier_3: withFallbacks(effectiveTier3LLM, tier3Fallbacks),
+          tier_1: stripRetiredLLMFallbacks(effectiveTier1LLM),
+          tier_2: stripRetiredLLMFallbacks(effectiveTier2LLM),
+          tier_3: stripRetiredLLMFallbacks(effectiveTier3LLM),
         } : undefined;
 
         if (!showWorkflowLLMAdvanced) {
@@ -439,7 +422,7 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
         selectedSkills, // Skill folder names for workflow
         effectiveAgentMode,
         selectedFolder || undefined,
-        finalLLMConfig,
+        stripRetiredLLMFallbacks(finalLLMConfig),
         false, // useCodeExecutionMode — backend determines mode from browser selection
         selectedSecrets, // Secret names for workflow injection
         selectedGlobalSecrets, // Per-preset global secret selection (null=all)
@@ -463,7 +446,7 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
     } finally {
       setIsSavingPreset(false);
     }
-  }, [label, query, effectiveAgentMode, selectedFolder, selectedServers, selectedTools, selectedSkills, selectedSecrets, selectedGlobalSecrets, llmConfig, builderLLM, effectiveBuilderLLM, maintenanceLLM, effectiveMaintenanceLLM, pulseLLM, effectivePulseLLM, browserMode, cdpPort, editingPreset, tier1Fallbacks, tier2Fallbacks, tier3Fallbacks, onSave, onClose, defaultAgentLLM, effectiveTier1LLM, effectiveTier2LLM, effectiveTier3LLM, showWorkflowLLMAdvanced, unsavedCredentialProvider]);
+  }, [label, query, effectiveAgentMode, selectedFolder, selectedServers, selectedTools, selectedSkills, selectedSecrets, selectedGlobalSecrets, llmConfig, builderLLM, effectiveBuilderLLM, maintenanceLLM, effectiveMaintenanceLLM, pulseLLM, effectivePulseLLM, browserMode, cdpPort, editingPreset, onSave, onClose, defaultAgentLLM, effectiveTier1LLM, effectiveTier2LLM, effectiveTier3LLM, showWorkflowLLMAdvanced, unsavedCredentialProvider]);
 
   // Close modal on escape key
   useEffect(() => {

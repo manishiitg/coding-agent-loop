@@ -25,7 +25,7 @@ export type LLMProvider =
   | 'elevenlabs'
   | 'deepgram'
 
-// New LLM Configuration types (Tiered Fallback System)
+// New LLM Configuration types (Tiered Model Selection)
 export interface LLMModel {
   provider: LLMProvider
   model_id: string
@@ -58,9 +58,6 @@ export interface SavedLLM extends LLMModel {
 export interface AgentLLMConfiguration {
   // Primary LLM
   primary: LLMModel
-
-  // Fallback LLMs (ordered array - fallback in this exact order)
-  fallbacks: LLMModel[]
 }
 
 // Legacy LLM Configuration types (kept for backward compatibility)
@@ -69,11 +66,6 @@ export interface LLMConfiguration {
   provider: LLMProvider
   model_id: string
   options?: Record<string, unknown>
-  fallback_models: string[]
-  cross_provider_fallback?: {
-    provider: 'openai' | 'bedrock' | 'vertex' | 'anthropic' | 'azure' | 'claude-code' | 'codex-cli' | 'cursor-cli' | 'agy-cli' | 'pi-cli'
-    models: string[]
-  }
   // API keys for each provider
   api_keys?: {
     openrouter?: string
@@ -193,7 +185,6 @@ export interface TierModel {
   provider: string
   model_id: string
   options?: Record<string, unknown>
-  fallbacks?: AgentLLMFallback[]
 }
 
 export interface CustomTierModel {
@@ -1349,11 +1340,6 @@ export interface ChatSessionConfig {
   llm_config?: {
     provider?: string;
     model_id?: string;
-    fallback_models?: string[];
-    cross_provider_fallback?: {
-      provider: string;
-      models: string[];
-    };
   };
   file_context?: Array<{
     name: string;
@@ -1664,19 +1650,12 @@ export interface WorkflowActivityTimingSummary {
 }
 
 // Preset LLM Configuration types
-export interface AgentLLMFallback {
-  published_llm_id?: string
-  provider: string
-  model_id: string
-  options?: Record<string, unknown>
-}
 
 export interface AgentLLMConfig {
   published_llm_id?: string
   provider: LLMProvider
   model_id: string
   options?: Record<string, unknown>
-  fallbacks?: AgentLLMFallback[]
 }
 
 export interface PresetLLMConfig {

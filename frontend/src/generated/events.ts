@@ -24,8 +24,6 @@ export interface UnifiedEventsComplete {
   conversation_error?: ConversationErrorEvent;
   conversation_start?: ConversationStartEvent;
   conversation_turn?: ConversationTurnEvent;
-  fallback_attempt?: FallbackAttemptEvent;
-  fallback_model_used?: FallbackModelUsedEvent;
   independent_steps_selected?: IndependentStepsSelectedEvent;
   large_tool_output_detected?: LargeToolOutputDetectedEvent;
   large_tool_output_file_write_error?: LargeToolOutputFileWriteErrorEvent;
@@ -52,6 +50,7 @@ export interface UnifiedEventsComplete {
   presentation_updated?: PresentationUpdatedEvent;
   product_interaction?: ProductInteractionEvent;
   request_human_feedback?: RequestHumanFeedbackEvent;
+  retry_attempt?: RetryAttemptEvent;
   step_progress_updated?: StepProgressUpdatedEvent;
   step_token_usage?: StepTokenUsageEvent;
   synthetic_turn_ready?: SyntheticTurnReadyEvent;
@@ -490,51 +489,6 @@ export interface ToolInfo {
   name?: string;
   server?: string;
 }
-export interface FallbackAttemptEvent {
-  attempt_index?: number;
-  component?: string;
-  correlation_id?: string;
-  duration?: string;
-  error?: string;
-  event_id?: string;
-  hierarchy_level?: number;
-  is_end_event?: boolean;
-  metadata?: {
-    [k: string]: unknown;
-  };
-  model_id?: string;
-  parent_id?: string;
-  phase?: string;
-  provider?: string;
-  session_id?: string;
-  span_id?: string;
-  success?: boolean;
-  timestamp?: string;
-  total_attempts?: number;
-  trace_id?: string;
-  turn?: number;
-}
-export interface FallbackModelUsedEvent {
-  component?: string;
-  correlation_id?: string;
-  duration?: string;
-  event_id?: string;
-  fallback_model?: string;
-  hierarchy_level?: number;
-  is_end_event?: boolean;
-  metadata?: {
-    [k: string]: unknown;
-  };
-  original_model?: string;
-  parent_id?: string;
-  provider?: string;
-  reason?: string;
-  session_id?: string;
-  span_id?: string;
-  timestamp?: string;
-  trace_id?: string;
-  turn?: number;
-}
 export interface IndependentStepsSelectedEvent {
   component?: string;
   correlation_id?: string;
@@ -733,7 +687,6 @@ export interface LLMGenerationStartEvent {
 export interface LLMGenerationWithRetryEvent {
   component?: string;
   correlation_id?: string;
-  cross_provider_fallbacks?: string[];
   current_llm?: string;
   event_id?: string;
   final_error?: string;
@@ -747,7 +700,6 @@ export interface LLMGenerationWithRetryEvent {
   parent_id?: string;
   primary_model?: string;
   provider?: string;
-  same_provider_fallbacks?: string[];
   session_id?: string;
   span_id?: string;
   status?: string;
@@ -1168,6 +1120,30 @@ export interface RequestHumanFeedbackEvent {
   trace_id?: string;
   verification_type?: string;
   workflow_id?: string;
+}
+export interface RetryAttemptEvent {
+  attempt_index?: number;
+  component?: string;
+  correlation_id?: string;
+  duration?: string;
+  error?: string;
+  event_id?: string;
+  hierarchy_level?: number;
+  is_end_event?: boolean;
+  metadata?: {
+    [k: string]: unknown;
+  };
+  model_id?: string;
+  parent_id?: string;
+  phase?: string;
+  provider?: string;
+  session_id?: string;
+  span_id?: string;
+  success?: boolean;
+  timestamp?: string;
+  total_attempts?: number;
+  trace_id?: string;
+  turn?: number;
 }
 export interface StepProgressUpdatedEvent {
   component?: string;

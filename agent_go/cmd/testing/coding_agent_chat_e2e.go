@@ -414,7 +414,6 @@ func (c *codingAgentChatE2EClient) startQueryWithResponse(ctx context.Context, s
 				"provider": provider,
 				"model_id": model,
 			},
-			"fallbacks": []interface{}{},
 		},
 		"agent_mode":      coalesceE2EString(c.agentMode, "simple"),
 		"enabled_servers": splitCSVOrDefault(c.enabledServers, []string{"api-bridge"}),

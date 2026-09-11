@@ -1232,16 +1232,7 @@ func queryLLMConfigFromPreset(preset *workflowtypes.PresetLLMConfig) *orchestrat
 			Options:  primary.Options,
 		},
 	}
-	for _, fallback := range primary.Fallbacks {
-		if strings.TrimSpace(fallback.Provider) == "" || strings.TrimSpace(fallback.ModelID) == "" {
-			continue
-		}
-		cfg.Fallbacks = append(cfg.Fallbacks, orchestrator.LLMModel{
-			Provider: fallback.Provider,
-			ModelID:  fallback.ModelID,
-			Options:  fallback.Options,
-		})
-	}
+
 	return cfg
 }
 
@@ -1271,12 +1262,6 @@ func presetPrimaryLLMForChat(preset *workflowtypes.PresetLLMConfig) *workflowtyp
 		return builder
 	}
 	return nil
-}
-
-// CrossProviderFallback represents cross-provider fallback configuration
-type CrossProviderFallback struct {
-	Provider string   `json:"provider"`
-	Models   []string `json:"models"`
 }
 
 // QueryResponse represents an agent query response
@@ -1557,14 +1542,6 @@ func runServer(cmd *cobra.Command, args []string) {
 	if agentModel != "" && (os.Getenv("AGENT_MODEL") != "" || os.Getenv("BEDROCK_PRIMARY_MODEL") != "") {
 		config.ModelID = agentModel
 	}
-	// Show cross-provider fallback configuration
-	bedrockOpenAIFallback := os.Getenv("BEDROCK_OPENAI_FALLBACK_MODELS")
-	if bedrockOpenAIFallback != "" {
-		fmt.Printf("🔄 Cross-Provider Fallback: Bedrock → OpenAI (%s)\n", bedrockOpenAIFallback)
-	} else {
-		fmt.Printf("⚠️  Cross-Provider Fallback: Not configured (set BEDROCK_OPENAI_FALLBACK_MODELS)\n")
-	}
-
 	// Validate provider
 	llmProvider, err := llm.ValidateProvider(config.Provider)
 	if err != nil {
@@ -3650,7 +3627,6 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 	// Use LLM configuration from request if provided, otherwise use request defaults
 	var finalProvider string
 	var finalModelID string
-	var fallbacks []agent.FallbackModel
 
 	if isGlobalLLMConfigLocked() {
 		// Locked mode: use server env for API keys; the request's choice only
@@ -3672,7 +3648,6 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				finalModelID = llm.GetDefaultModel(llm.Provider(finalProvider))
 			}
 		}
-		fallbacks = nil
 	} else if req.LLMConfig != nil {
 		// Use LLM configuration from frontend (new unified structure)
 		finalProvider = req.LLMConfig.Primary.Provider
@@ -3686,13 +3661,6 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			finalModelID = req.ModelID
 		}
 
-		// Convert Fallbacks to agent.FallbackModel slice
-		for _, fallback := range req.LLMConfig.Fallbacks {
-			fallbacks = append(fallbacks, agent.FallbackModel{
-				Provider: fallback.Provider,
-				ModelID:  fallback.ModelID,
-			})
-		}
 	} else {
 		// Fall back to request defaults
 		finalProvider = req.Provider
@@ -4750,21 +4718,10 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			providerToValidate = req.Provider
 		}
 		if !isPublishedLLMProviderAllowed(providerToValidate) {
-			fallbackProvider, fallbackModelID := fallbackPublishedLLMProviderAndModel()
-			logfWithContext(queryLogCtx, "[LLM_CONFIG] Provider %q is no longer supported for chat; using %s/%s", providerToValidate, fallbackProvider, fallbackModelID)
-			finalProvider = fallbackProvider
-			finalModelID = fallbackModelID
-			providerToValidate = fallbackProvider
+			sendError(fmt.Sprintf("Selected provider %q is not supported; select an available provider", providerToValidate), true)
+			return
 		}
-		if len(fallbacks) > 0 {
-			filteredFallbacks := make([]agent.FallbackModel, 0, len(fallbacks))
-			for _, fallback := range fallbacks {
-				if isPublishedLLMProviderAllowed(fallback.Provider) {
-					filteredFallbacks = append(filteredFallbacks, fallback)
-				}
-			}
-			fallbacks = filteredFallbacks
-		}
+
 		llmProvider, err := llm.ValidateProvider(providerToValidate)
 		if err != nil {
 			sendError(fmt.Sprintf("Invalid provider: %v", err), true)
@@ -4833,9 +4790,8 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			resolvedPrimaryOptions = workflowPhasePrimaryOptions
 		}
 		if !isPublishedLLMProviderAllowed(finalProvider) {
-			finalProvider, finalModelID = fallbackPublishedLLMProviderAndModel()
-			fallbacks = nil
-			log.Printf("[LLM_CONFIG] Tier/default provider was deprecated; using %s/%s", finalProvider, finalModelID)
+			sendError(fmt.Sprintf("Selected provider %q is not supported; select an available provider", finalProvider), true)
+			return
 		}
 
 		// Create new agent with streamCtx instead of r.Context()
@@ -4979,7 +4935,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			AdditionalBridgeTools: platformBridgeTools,
 
 			// Detailed LLM configuration from frontend (unified fallback structure)
-			Fallbacks: fallbacks,
+
 			// Code execution mode: When enabled, only virtual tools are added to LLM
 			// MCP tools are accessed through generated scripts using the on-demand HTTP API specification.
 			UseCodeExecutionMode:                   useCodeExecutionMode,
@@ -5178,7 +5134,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			logfWithContext(queryLogCtx, "[USER_ID_DEBUGGING] Main agent workspace executors: created with explicit userID=%q sessionID=%q", currentUserID, sessionID)
 			// Inject LLM config fallback for read_image HTTP calls (e.g., from claude CLI subprocess)
 			if underlying := llmAgent.GetUnderlyingAgent(); underlying != nil {
-				virtualtools.SetReadImageFallbackLLMConfig(workspaceExecutors, mcpagent.ReadAgentRuntimeInfo(underlying).LLMConfig)
+				virtualtools.SetReadImageLLMConfig(workspaceExecutors, mcpagent.ReadAgentRuntimeInfo(underlying).LLMConfig)
 			}
 
 			// Merge @context file paths into additional folder-guard write access.
@@ -8225,54 +8181,12 @@ func sanitizeTierModel(model *virtualtools.TierModel) *virtualtools.TierModel {
 		return nil
 	}
 	sanitized := &virtualtools.TierModel{
-		Provider:  strings.TrimSpace(model.Provider),
-		ModelID:   strings.TrimSpace(model.ModelID),
-		Options:   model.Options,
-		Fallbacks: nil,
+		Provider: strings.TrimSpace(model.Provider),
+		ModelID:  strings.TrimSpace(model.ModelID),
+		Options:  model.Options,
 	}
-	if len(model.Fallbacks) > 0 {
-		for _, fb := range model.Fallbacks {
-			modelID := strings.TrimSpace(fb.ModelID)
-			if modelID == "" {
-				continue
-			}
-			sanitized.Fallbacks = append(sanitized.Fallbacks, virtualtools.TierModelFallback{
-				Provider: strings.TrimSpace(fb.Provider),
-				ModelID:  modelID,
-				Options:  fb.Options,
-			})
-		}
-		if len(sanitized.Fallbacks) == 0 {
-			sanitized.Fallbacks = nil
-		}
-	}
-	return sanitized
-}
 
-func convertTierFallbacksToAgentFallbacks(fallbacks []virtualtools.TierModelFallback, defaultProvider string) []agent.FallbackModel {
-	if len(fallbacks) == 0 {
-		return nil
-	}
-	out := make([]agent.FallbackModel, 0, len(fallbacks))
-	for _, fb := range fallbacks {
-		modelID := strings.TrimSpace(fb.ModelID)
-		if modelID == "" {
-			continue
-		}
-		provider := strings.TrimSpace(fb.Provider)
-		if provider == "" {
-			provider = defaultProvider
-		}
-		out = append(out, agent.FallbackModel{
-			Provider: provider,
-			ModelID:  modelID,
-			Options:  fb.Options,
-		})
-	}
-	if len(out) == 0 {
-		return nil
-	}
-	return out
+	return sanitized
 }
 
 func queryRequestHasExplicitLLMSelection(req QueryRequest) bool {
@@ -8284,26 +8198,26 @@ func queryRequestHasExplicitLLMSelection(req QueryRequest) bool {
 	return strings.TrimSpace(req.Provider) != "" || strings.TrimSpace(req.ModelID) != ""
 }
 
-func applyTopLevelDelegationModel(ctx context.Context, req QueryRequest, finalProvider, finalModelID string, fallbacks []agent.FallbackModel) (string, string, []agent.FallbackModel, bool) {
+func applyTopLevelDelegationModel(ctx context.Context, req QueryRequest, finalProvider, finalModelID string) (string, string, bool) {
 	// A provider profile is itself the user's explicit selection. It must win
 	// over stale tab-level provider/model fields sent by an older frontend state.
 	providerProfileSelected := req.DelegationTierConfig != nil &&
 		strings.EqualFold(strings.TrimSpace(req.DelegationTierConfig.Mode), "provider_profile") &&
 		strings.TrimSpace(req.DelegationTierConfig.Provider) != ""
 	if queryRequestHasExplicitLLMSelection(req) && !providerProfileSelected {
-		return finalProvider, finalModelID, fallbacks, false
+		return finalProvider, finalModelID, false
 	}
 	tierConfig := LoadAndResolveTierConfig(ctx, req.DelegationTierConfig)
 	if tierConfig == nil {
-		return finalProvider, finalModelID, fallbacks, false
+		return finalProvider, finalModelID, false
 	}
 	if tierConfig.Main != nil && tierConfig.Main.Provider != "" && tierConfig.Main.ModelID != "" {
-		return tierConfig.Main.Provider, tierConfig.Main.ModelID, convertTierFallbacksToAgentFallbacks(tierConfig.Main.Fallbacks, tierConfig.Main.Provider), true
+		return tierConfig.Main.Provider, tierConfig.Main.ModelID, true
 	}
 	if tierConfig.High != nil && tierConfig.High.Provider != "" && tierConfig.High.ModelID != "" {
-		return tierConfig.High.Provider, tierConfig.High.ModelID, convertTierFallbacksToAgentFallbacks(tierConfig.High.Fallbacks, tierConfig.High.Provider), true
+		return tierConfig.High.Provider, tierConfig.High.ModelID, true
 	}
-	return finalProvider, finalModelID, fallbacks, false
+	return finalProvider, finalModelID, false
 }
 
 // resolveDelegationTierConfig builds a DelegationTierConfig by merging:
@@ -11558,7 +11472,6 @@ func workshopConvertAgentLLMConfig(config *workflowtypes.AgentLLMConfig) *todo_c
 		Provider:       config.Provider,
 		ModelID:        config.ModelID,
 		Options:        config.Options,
-		Fallbacks:      workshopConvertFallbacks(config.Fallbacks),
 	}
 }
 
@@ -11651,21 +11564,4 @@ func workshopFormatAgentLLM(config *todo_creation_human.AgentLLMConfig) string {
 		return "<empty>"
 	}
 	return fmt.Sprintf("%s/%s", config.Provider, config.ModelID)
-}
-
-// workshopConvertFallbacks converts database fallbacks to step_based_workflow fallbacks.
-func workshopConvertFallbacks(fallbacks []workflowtypes.AgentLLMFallback) []todo_creation_human.AgentLLMFallback {
-	if len(fallbacks) == 0 {
-		return nil
-	}
-	result := make([]todo_creation_human.AgentLLMFallback, len(fallbacks))
-	for i, fb := range fallbacks {
-		result[i] = todo_creation_human.AgentLLMFallback{
-			PublishedLLMID: fb.PublishedLLMID,
-			Provider:       fb.Provider,
-			ModelID:        fb.ModelID,
-			Options:        fb.Options,
-		}
-	}
-	return result
 }

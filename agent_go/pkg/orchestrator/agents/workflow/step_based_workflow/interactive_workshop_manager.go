@@ -1347,22 +1347,18 @@ func NewInteractiveWorkshopManager(
 	}
 }
 
-func workflowAgentLLMConfig(agentConfig *AgentLLMConfig, defaultFallbacks []orchestrator.LLMModel, apiKeys *orchestrator.APIKeys) *orchestrator.LLMConfig {
+func workflowAgentLLMConfig(agentConfig *AgentLLMConfig, apiKeys *orchestrator.APIKeys) *orchestrator.LLMConfig {
 	if agentConfig == nil || agentConfig.Provider == "" || agentConfig.ModelID == "" {
 		return nil
 	}
-	fallbacks := convertAgentFallbacks(agentConfig.Fallbacks)
-	if len(fallbacks) == 0 {
-		fallbacks = defaultFallbacks
-	}
+
 	return &orchestrator.LLMConfig{
 		Primary: orchestrator.LLMModel{
 			Provider: agentConfig.Provider,
 			ModelID:  agentConfig.ModelID,
 			Options:  agentConfig.Options,
 		},
-		Fallbacks: fallbacks,
-		APIKeys:   apiKeys,
+		APIKeys: apiKeys,
 	}
 }
 
@@ -4543,7 +4539,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 	// Tool: get_workflow_config — read-only view of workflow-level settings (MCP servers, skills, secrets, LLM config)
 	if err := mcpAgent.RegisterCustomTool(
 		"get_workflow_config",
-		"Show current workflow configuration: selected workflow MCP servers, selected workflow skills, secrets (names only, no values), approved external folder access, workflow-scoped notification content instructions and one-way destinations, active owner-approved advisor specialization, run retention, LLM config (tiered allocation with fallbacks, preset defaults), and schedules.",
+		"Show current workflow configuration: selected workflow MCP servers, selected workflow skills, secrets (names only, no values), approved external folder access, workflow-scoped notification content instructions and one-way destinations, active owner-approved advisor specialization, run retention, LLM config (tiered allocation, preset defaults), and schedules.",
 		map[string]interface{}{
 			"type":       "object",
 			"properties": map[string]interface{}{},
@@ -4788,13 +4784,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 						return
 					}
 					sb.WriteString(fmt.Sprintf("- **%s**: %s/%s", label, cfg.Provider, cfg.ModelID))
-					if len(cfg.Fallbacks) > 0 {
-						fallbackStrs := make([]string, len(cfg.Fallbacks))
-						for i, fb := range cfg.Fallbacks {
-							fallbackStrs[i] = fmt.Sprintf("%s/%s", fb.Provider, fb.ModelID)
-						}
-						sb.WriteString(fmt.Sprintf(" → fallbacks: %s", strings.Join(fallbackStrs, ", ")))
-					}
+
 					sb.WriteString("\n")
 				}
 				writeTierEntry("Tier 1 (high)", tc.Tier1)
@@ -4848,13 +4838,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 			writeLLMDefault := func(label string, llm *AgentLLMConfig) {
 				if llm != nil {
 					sb.WriteString(fmt.Sprintf("- **%s**: %s/%s", label, llm.Provider, llm.ModelID))
-					if len(llm.Fallbacks) > 0 {
-						fallbackStrs := make([]string, len(llm.Fallbacks))
-						for i, fb := range llm.Fallbacks {
-							fallbackStrs[i] = fmt.Sprintf("%s/%s", fb.Provider, fb.ModelID)
-						}
-						sb.WriteString(fmt.Sprintf(" → fallbacks: %s", strings.Join(fallbackStrs, ", ")))
-					}
+
 					sb.WriteString("\n")
 				} else {
 					sb.WriteString(fmt.Sprintf("- **%s**: (not set — uses LLM config default)\n", label))
@@ -5053,24 +5037,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 					"items":       map[string]interface{}{"type": "string"},
 					"description": "Email addresses the Pulse review summary is sent TO, stored in workflow.json capabilities.notifications.pulse_summary_recipients and applied automatically to every pulse_summary send. Use when Pulse findings should reach different people than the run outcome. Omit to leave unchanged; pass an empty array to clear it and fall back to the account default recipient. Denylists still apply on top.",
 				},
-				"update_tier_fallbacks": map[string]interface{}{
-					"type":        "object",
-					"description": "Persist fallback LLMs for explicit-mode tiered allocation in workflow.json. Provider-profile mode is rejected; use set_workflow_llm_config for an approved routing-mode change. Keys: 'tier_1', 'tier_2', 'tier_3'. Value: array of {provider, model_id, optional published_llm_id, optional options}; [] clears that tier's fallbacks. Use get_workflow_config or get_llm_config to see current config.",
-					"properties": map[string]interface{}{
-						"tier_1": map[string]interface{}{
-							"type":  "array",
-							"items": map[string]interface{}{"type": "object", "properties": map[string]interface{}{"published_llm_id": map[string]interface{}{"type": "string"}, "provider": map[string]interface{}{"type": "string"}, "model_id": map[string]interface{}{"type": "string"}, "options": map[string]interface{}{"type": "object", "additionalProperties": true}}, "required": []string{"provider", "model_id"}},
-						},
-						"tier_2": map[string]interface{}{
-							"type":  "array",
-							"items": map[string]interface{}{"type": "object", "properties": map[string]interface{}{"published_llm_id": map[string]interface{}{"type": "string"}, "provider": map[string]interface{}{"type": "string"}, "model_id": map[string]interface{}{"type": "string"}, "options": map[string]interface{}{"type": "object", "additionalProperties": true}}, "required": []string{"provider", "model_id"}},
-						},
-						"tier_3": map[string]interface{}{
-							"type":  "array",
-							"items": map[string]interface{}{"type": "object", "properties": map[string]interface{}{"published_llm_id": map[string]interface{}{"type": "string"}, "provider": map[string]interface{}{"type": "string"}, "model_id": map[string]interface{}{"type": "string"}, "options": map[string]interface{}{"type": "object", "additionalProperties": true}}, "required": []string{"provider", "model_id"}},
-						},
-					},
-				},
+
 				"browser_mode": map[string]interface{}{
 					"type":        "string",
 					"enum":        browserModeValues,
@@ -5982,20 +5949,6 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				logger.Info(fmt.Sprintf("Updated per-summary Slack webhooks: run=%d pulse=%d", len(runWebhookNames), len(pulseWebhookNames)))
 			}
 
-			// --- Tier Fallbacks ---
-			if raw, ok := args["update_tier_fallbacks"]; ok && raw != nil {
-				if iwm.controller.tierResolver == nil {
-					return "", fmt.Errorf("tier allocation is unavailable; configure explicit LLM routing before updating tier fallbacks")
-				}
-				updated, err := persistTierFallbackUpdate(ctx, raw, iwm.controller.ReadWorkspaceFile, iwm.controller.WriteWorkspaceFile, iwm.controller.tierResolver.config)
-				if err != nil {
-					return "", err
-				}
-				iwm.controller.tierResolver.config = updated
-				anyChanged = true
-				sb.WriteString("\n### Tier Fallbacks (persisted)\nUpdated workflow.json and the current tier configuration.\n")
-			}
-
 			// --- Browser mode ---
 			if raw, ok := args["browser_mode"]; ok && raw != nil {
 				mode, _ := raw.(string)
@@ -6224,7 +6177,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 			}
 
 			if !anyChanged {
-				return "No changes applied. Provide at least one of: add_servers, remove_servers, add_tools, remove_tools, add_skills, remove_skills, add_secrets, remove_secrets, run_notification_instructions, pulse_notification_instructions, run_notification_channels, pulse_notification_channels, slack_webhook_secret_name, update_tier_fallbacks, browser_mode, cdp_ports, run_retention_count, advisor_specialization_approval_input_id.", nil
+				return "No changes applied. Provide at least one of: add_servers, remove_servers, add_tools, remove_tools, add_skills, remove_skills, add_secrets, remove_secrets, run_notification_instructions, pulse_notification_instructions, run_notification_channels, pulse_notification_channels, slack_webhook_secret_name, browser_mode, cdp_ports, run_retention_count, advisor_specialization_approval_input_id.", nil
 			}
 
 			// Persist config changes to workflow.json manifest (file-backed)
@@ -7288,7 +7241,7 @@ func registerWorkshopLLMTools(iwm *InteractiveWorkshopManager, mcpAgent Definiti
 		logger.Warn(fmt.Sprintf("⚠️ Failed to register test_llm tool: %v", err))
 	}
 
-	llmEntrySchema := func(description string, fallbackDescription string) map[string]interface{} {
+	llmEntrySchema := func(description string) map[string]interface{} {
 		return map[string]interface{}{
 			"type":        "object",
 			"description": description,
@@ -7297,19 +7250,6 @@ func registerWorkshopLLMTools(iwm *InteractiveWorkshopManager, mcpAgent Definiti
 				"provider":         map[string]interface{}{"type": "string", "description": "Provider id."},
 				"model_id":         map[string]interface{}{"type": "string", "description": "Model id."},
 				"options":          map[string]interface{}{"type": "object", "description": "Provider-specific runtime options copied from the published LLM, such as reasoning_effort.", "additionalProperties": true},
-				"fallbacks": map[string]interface{}{
-					"type":        "array",
-					"description": fallbackDescription,
-					"items": map[string]interface{}{
-						"type": "object",
-						"properties": map[string]interface{}{
-							"published_llm_id": map[string]interface{}{"type": "string"},
-							"provider":         map[string]interface{}{"type": "string"},
-							"model_id":         map[string]interface{}{"type": "string"},
-							"options":          map[string]interface{}{"type": "object", "additionalProperties": true},
-						},
-					},
-				},
 			},
 		}
 	}
@@ -7320,7 +7260,7 @@ func registerWorkshopLLMTools(iwm *InteractiveWorkshopManager, mcpAgent Definiti
 		// PLAT-262: skip set_workflow_llm_config registration for read-only access
 	} else if err := mcpAgent.RegisterCustomTool(
 		"set_workflow_llm_config",
-		"Save the workflow's LLM configuration to workflow.json capabilities.llm_config. Requires read_skill(skills=[{\"name\":\"builder-reference\",\"path\":\"references/llm-selection.md\"}]) first. In provider_profile mode, provide one coding-agent provider and its current Builder, execution-tier, and Pulse defaults resolve at runtime. In explicit mode, provide builder_llm, pulse_llm, and all three execution tiers; each entry directly pins provider, model_id, options, and optional fallbacks. Saved model-library entries are optional reusable shortcuts, not a prerequisite.",
+		"Save the workflow's LLM configuration to workflow.json capabilities.llm_config. Requires read_skill(skills=[{\"name\":\"builder-reference\",\"path\":\"references/llm-selection.md\"}]) first. In provider_profile mode, provide one coding-agent provider and its current Builder, execution-tier, and Pulse defaults resolve at runtime. In explicit mode, provide builder_llm, pulse_llm, and all three execution tiers; each entry directly pins provider, model_id, and options. Saved model-library entries are optional reusable shortcuts, not a prerequisite.",
 		map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
@@ -7330,11 +7270,11 @@ func registerWorkshopLLMTools(iwm *InteractiveWorkshopManager, mcpAgent Definiti
 					"description": "provider_profile follows the coding-agent provider defaults; explicit pins every workflow role.",
 				},
 				"provider":    map[string]interface{}{"type": "string", "description": "Coding-agent provider id. Required only in provider_profile mode."},
-				"builder_llm": llmEntrySchema("Builder model for planning, eval design, debugging, and normal workflow-builder chat.", "Ordered fallback models tried if the Builder model fails."),
-				"tier_1":      llmEntrySchema("High-reasoning execution tier: first-time or difficult work.", "Ordered fallback models tried if the primary fails."),
-				"tier_2":      llmEntrySchema("Medium-reasoning execution tier: established work with useful context.", "Ordered fallback models tried if the primary fails."),
-				"tier_3":      llmEntrySchema("Low-reasoning execution tier: validation and mature routine work.", "Ordered fallback models tried if the primary fails."),
-				"pulse_llm":   llmEntrySchema("Pulse coordinator model for gate, worklist, reporting, and notification turns.", "Ordered fallback models tried if the Pulse model fails."),
+				"builder_llm": llmEntrySchema("Builder model for planning, eval design, debugging, and normal workflow-builder chat."),
+				"tier_1":      llmEntrySchema("High-reasoning execution tier: first-time or difficult work."),
+				"tier_2":      llmEntrySchema("Medium-reasoning execution tier: established work with useful context."),
+				"tier_3":      llmEntrySchema("Low-reasoning execution tier: validation and mature routine work."),
+				"pulse_llm":   llmEntrySchema("Pulse coordinator model for gate, worklist, reporting, and notification turns."),
 			},
 			"required": []string{"mode"},
 		},
@@ -7390,31 +7330,6 @@ func registerWorkshopLLMTools(iwm *InteractiveWorkshopManager, mcpAgent Definiti
 				}
 				if options, _ := m["options"].(map[string]interface{}); len(options) > 0 {
 					entry["options"] = options
-				}
-				if fbs, ok := m["fallbacks"].([]interface{}); ok && len(fbs) > 0 {
-					fallbacks := make([]interface{}, 0, len(fbs))
-					for _, fbRaw := range fbs {
-						fbMap, ok := fbRaw.(map[string]interface{})
-						if !ok {
-							continue
-						}
-						fbProvider, _ := fbMap["provider"].(string)
-						fbModelID, _ := fbMap["model_id"].(string)
-						if fbProvider == "" || fbModelID == "" {
-							continue
-						}
-						fallback := map[string]interface{}{"provider": fbProvider, "model_id": fbModelID}
-						if publishedLLMID, _ := fbMap["published_llm_id"].(string); publishedLLMID != "" {
-							fallback["published_llm_id"] = publishedLLMID
-						}
-						if options, _ := fbMap["options"].(map[string]interface{}); len(options) > 0 {
-							fallback["options"] = options
-						}
-						fallbacks = append(fallbacks, fallback)
-					}
-					if len(fallbacks) > 0 {
-						entry["fallbacks"] = fallbacks
-					}
 				}
 				return entry
 			}
@@ -8977,7 +8892,7 @@ func (iwm *InteractiveWorkshopManager) runBackgroundTaskAgentSequence(ctx contex
 	}
 	llmConfigToUse := iwm.controller.selectBackgroundTaskLLM(pulseTurn, purpose)
 	if llmConfigToUse == nil && iwm.presetLLM != nil && iwm.presetLLM.Provider != "" && iwm.presetLLM.ModelID != "" {
-		llmConfigToUse = workflowAgentLLMConfig(iwm.presetLLM, iwm.controller.GetFallbacks(), iwm.controller.GetAPIKeys())
+		llmConfigToUse = workflowAgentLLMConfig(iwm.presetLLM, iwm.controller.GetAPIKeys())
 	}
 	if llmConfigToUse == nil {
 		return "", fmt.Errorf("no valid LLM configuration found for background task agent")
@@ -9166,9 +9081,7 @@ func closeBackgroundMessageSequenceAgent(agent agents.OrchestratorAgent, config 
 	mcpagent.RemoveIsolatedSessionWorkspace(config.MCPSessionID)
 }
 
-// stepLLMConfigForValidation flattens a primary override and its fallbacks so both
-// get the same structural checks — a broken fallback is only discovered when the
-// primary has already failed, which is the worst moment to learn about it.
+// stepLLMConfigForValidation carries the selected override for structural validation.
 type stepLLMConfigForValidation struct {
 	label       string
 	publishedID string
@@ -9186,14 +9099,7 @@ func collectStepLLMConfigsForValidation(cfg *AgentLLMConfig) []stepLLMConfigForV
 		provider:    cfg.Provider,
 		modelID:     cfg.ModelID,
 	}}
-	for i, fb := range cfg.Fallbacks {
-		out = append(out, stepLLMConfigForValidation{
-			label:       fmt.Sprintf("execution_llm.fallbacks[%d]", i),
-			publishedID: fb.PublishedLLMID,
-			provider:    fb.Provider,
-			modelID:     fb.ModelID,
-		})
-	}
+
 	return out
 }
 

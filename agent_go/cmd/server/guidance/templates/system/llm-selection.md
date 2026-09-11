@@ -22,7 +22,12 @@ A workflow always resolves these roles:
 The config has two modes:
 
 - **`provider_profile` (simple)** stores only a coding-agent `provider`. The provider package supplies current defaults for every role at runtime, so an app update can improve those defaults without rewriting the workflow.
-- **`explicit` (advanced)** pins `builder_llm`, `pulse_llm`, and all three entries under `tiered_config`. Every entry has a direct `provider` + `model_id`, optional provider `options` such as `reasoning_effort`, and optional ordered `fallbacks`.
+- **`explicit` (advanced)** pins `builder_llm`, `pulse_llm`, and all three entries under `tiered_config`. Every entry has a direct `provider` + `model_id`, optional provider `options` such as `reasoning_effort`.
+
+Each call uses one selected model and coding-agent provider. Transient errors may
+retry that same model; failures never trigger automatic model/provider switching.
+Pulse reviews actual failures and must not recommend backup chains or flag their
+absence as a configuration issue.
 
 Saved configurations are reusable shortcuts for exact provider/model/options combinations. They are not required before a provider or model can be selected.
 
@@ -47,7 +52,7 @@ load `architecture-review` for the evidence and decision contract.
 Set via `update_step_config(step_id, ...)`:
 
 - **`execution_tier`** (`"high"` | `"medium"` | `"low"`) — a *persistent* tier override for one step in tiered mode. Use **high** for subjective/ambiguous judgment, **medium** for normal checks, **low** for deterministic/file-shape checks. Prefer this over pinning an exact model when the intent is just "this step can usually run cheaper/faster".
-- **`execution_llm`** (`{provider, model_id, fallbacks?}`) — pins an *exact* model for one step. Use only when a specific model is genuinely required (a capability only that model has).
+- **`execution_llm`** (`{provider, model_id}`) — pins an *exact* model for one step. Use only when a specific model is genuinely required (a capability only that model has).
 - **`validation_llm`** — same shape, overrides the model used for that step's validation. Learning model selection is handled by tiered allocation; there is no separate `learning_llm` setting.
 
 **Precedence (highest wins):**
@@ -71,7 +76,7 @@ Set via `update_step_config(step_id, ...)`:
   current role/tier default, or current. Do not infer "latest" by sorting model
   names or version strings.
 - A different default is a candidate for review, not automatic proof of better
-  quality. Compare supported reasoning options, capabilities, cost, fallbacks,
+  quality. Compare supported reasoning options, capabilities, cost,
   and the step's real purpose.
 - Never silently replace an exact pin. Propose clearing the pin to inherit its
   tier when no model-specific capability is required, or propose one exact

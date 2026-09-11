@@ -40,16 +40,6 @@ func TestWorkshopConvertAgentLLMConfigPreservesPublishedOptions(t *testing.T) {
 		Options: map[string]interface{}{
 			"reasoning_effort": "low",
 		},
-		Fallbacks: []workflowtypes.AgentLLMFallback{
-			{
-				PublishedLLMID: "claude-medium",
-				Provider:       "claude-code",
-				ModelID:        "sonnet",
-				Options: map[string]interface{}{
-					"reasoning_effort": "medium",
-				},
-			},
-		},
 	})
 
 	if converted == nil {
@@ -61,15 +51,7 @@ func TestWorkshopConvertAgentLLMConfigPreservesPublishedOptions(t *testing.T) {
 	if got := converted.Options["reasoning_effort"]; got != "low" {
 		t.Fatalf("expected primary reasoning_effort=low, got %v", got)
 	}
-	if len(converted.Fallbacks) != 1 {
-		t.Fatalf("expected one fallback, got %d", len(converted.Fallbacks))
-	}
-	if converted.Fallbacks[0].PublishedLLMID != "claude-medium" {
-		t.Fatalf("expected fallback published id to be preserved, got %q", converted.Fallbacks[0].PublishedLLMID)
-	}
-	if got := converted.Fallbacks[0].Options["reasoning_effort"]; got != "medium" {
-		t.Fatalf("expected fallback reasoning_effort=medium, got %v", got)
-	}
+
 }
 
 func TestWorkshopResolveLLMConfigExpandsCodingAgentMode(t *testing.T) {

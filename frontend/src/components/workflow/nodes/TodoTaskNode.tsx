@@ -267,7 +267,7 @@ export const TodoTaskNode = memo(({ data, selected }: TodoTaskNodeProps) => {
           {enable_generic_agent && (
             <div className="mt-1.5 flex items-center gap-1.5 text-[10px] text-gray-500 dark:text-gray-400">
               <Bot className="w-3 h-3" />
-              <span>Fallback agent</span>
+              <span>Generic agent enabled</span>
             </div>
           )}
 

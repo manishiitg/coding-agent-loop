@@ -74,21 +74,7 @@ func multiAgentChatLLMConfigForRequest(preset *workflowtypes.PresetLLMConfig) ma
 			"model_id": primary.ModelID,
 		},
 	}
-	if len(primary.Fallbacks) > 0 {
-		fallbacks := make([]map[string]interface{}, 0, len(primary.Fallbacks))
-		for _, fallback := range primary.Fallbacks {
-			if strings.TrimSpace(fallback.Provider) == "" || strings.TrimSpace(fallback.ModelID) == "" {
-				continue
-			}
-			fallbacks = append(fallbacks, map[string]interface{}{
-				"provider": fallback.Provider,
-				"model_id": fallback.ModelID,
-			})
-		}
-		if len(fallbacks) > 0 {
-			result["fallbacks"] = fallbacks
-		}
-	}
+
 	return result
 }
 
@@ -439,12 +425,12 @@ type activeBotSession struct {
 	profileTurn bool
 	// profileRoute is the product profile the thread was routed to by an
 	// @token (nil: the pairing's default profile); later turns keep it.
-	profileRoute *ProfileRoute
-	AgentMode    string
-	PresetQueryID    string
-	WorkspacePath    string
-	PhaseID          string
-	WorkshopMode     string
+	profileRoute  *ProfileRoute
+	AgentMode     string
+	PresetQueryID string
+	WorkspacePath string
+	PhaseID       string
+	WorkshopMode  string
 }
 
 // NewBotConversationManager creates a new manager.
@@ -1324,7 +1310,7 @@ func (m *BotConversationManager) startFollowUpTurn(active *activeBotSession, msg
 		threadID := active.ThreadID
 		platform := active.Platform
 		active.mu.Unlock()
-		err := m.followUpSession(followCtx, m.turnRequestForActive(active,m.withBotRuntimeState(active, msg.Text), userID, platform, threadID), sessionID, userID)
+		err := m.followUpSession(followCtx, m.turnRequestForActive(active, m.withBotRuntimeState(active, msg.Text), userID, platform, threadID), sessionID, userID)
 		if err != nil {
 			log.Printf("[BOT_MANAGER] Follow-up failed: %v", err)
 		}
@@ -1428,7 +1414,7 @@ func (m *BotConversationManager) handleBlockingResponse(active *activeBotSession
 				go func() {
 					followCtx, followCancel := context.WithTimeout(context.Background(), 5*time.Minute)
 					defer followCancel()
-					err := m.followUpSession(followCtx, m.turnRequestForActive(active,"Approved. Execute the plan.", uid, platform, threadID), sid, uid)
+					err := m.followUpSession(followCtx, m.turnRequestForActive(active, "Approved. Execute the plan.", uid, platform, threadID), sid, uid)
 					if err != nil {
 						log.Printf("[BOT_MANAGER] Plan approval follow-up failed: %v", err)
 					}
@@ -1446,7 +1432,7 @@ func (m *BotConversationManager) handleBlockingResponse(active *activeBotSession
 			go func() {
 				followCtx, followCancel := context.WithTimeout(context.Background(), 5*time.Minute)
 				defer followCancel()
-				err := m.followUpSession(followCtx, m.turnRequestForActive(active,msg.Text, uid, platform, threadID), sid, uid)
+				err := m.followUpSession(followCtx, m.turnRequestForActive(active, msg.Text, uid, platform, threadID), sid, uid)
 				if err != nil {
 					log.Printf("[BOT_MANAGER] Plan feedback follow-up failed: %v", err)
 				}
@@ -1465,7 +1451,7 @@ func (m *BotConversationManager) handleBlockingResponse(active *activeBotSession
 			go func() {
 				followCtx, followCancel := context.WithTimeout(context.Background(), 5*time.Minute)
 				defer followCancel()
-				err := m.followUpSession(followCtx, m.turnRequestForActive(active,msg.Text, uid, platform, threadID), sid, uid)
+				err := m.followUpSession(followCtx, m.turnRequestForActive(active, msg.Text, uid, platform, threadID), sid, uid)
 				if err != nil {
 					log.Printf("[BOT_MANAGER] Blocking response follow-up failed: %v", err)
 				}
@@ -1516,7 +1502,7 @@ func (m *BotConversationManager) handleBlockingResponseSync(ctx context.Context,
 			log.Printf("[BOT_MANAGER] HandleMessageSync: plan approved for session %s", sid)
 			m.clearBlockingState(active)
 			if m.followUpSession != nil {
-				err := m.followUpSession(ctx, m.turnRequestForActive(active,"Approved. Execute the plan.", uid, platform, activeThreadID), sid, uid)
+				err := m.followUpSession(ctx, m.turnRequestForActive(active, "Approved. Execute the plan.", uid, platform, activeThreadID), sid, uid)
 				if err != nil {
 					return nil, fmt.Errorf("plan approval follow-up failed: %w", err)
 				}
@@ -1540,7 +1526,7 @@ func (m *BotConversationManager) handleBlockingResponseSync(ctx context.Context,
 		}
 		// Not a clear approve/reject — send as feedback
 		if m.followUpSession != nil {
-			err := m.followUpSession(ctx, m.turnRequestForActive(active,msg.Text, uid, platform, activeThreadID), sid, uid)
+			err := m.followUpSession(ctx, m.turnRequestForActive(active, msg.Text, uid, platform, activeThreadID), sid, uid)
 			if err != nil {
 				return nil, fmt.Errorf("plan feedback follow-up failed: %w", err)
 			}
@@ -1566,7 +1552,7 @@ func (m *BotConversationManager) handleBlockingResponseSync(ctx context.Context,
 		log.Printf("[BOT_MANAGER] HandleMessageSync: responding to %s for session %s", blockingEvt, sid)
 		m.clearBlockingState(active)
 		if m.followUpSession != nil {
-			err := m.followUpSession(ctx, m.turnRequestForActive(active,msg.Text, uid, platform, activeThreadID), sid, uid)
+			err := m.followUpSession(ctx, m.turnRequestForActive(active, msg.Text, uid, platform, activeThreadID), sid, uid)
 			if err != nil {
 				return nil, fmt.Errorf("blocking response follow-up failed: %w", err)
 			}
@@ -1930,7 +1916,7 @@ func (m *BotConversationManager) HandleMessageSync(ctx context.Context, msg BotI
 		if m.followUpSession != nil {
 			log.Printf("[BOT_MANAGER] HandleMessageSync: injecting follow-up into session %s: %s", sessionID, botTruncate(msg.Text, 80))
 			m.resetActiveForNewTurn(active)
-			err := m.followUpSession(ctx, m.turnRequestForActive(active,msg.Text, uid, msg.Platform, threadID), sessionID, uid)
+			err := m.followUpSession(ctx, m.turnRequestForActive(active, msg.Text, uid, msg.Platform, threadID), sessionID, uid)
 			if err != nil {
 				return nil, fmt.Errorf("follow-up failed: %w", err)
 			}

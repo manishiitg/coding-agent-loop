@@ -15,7 +15,7 @@ export const ModelChangeEventDisplay: React.FC<ModelChangeEventDisplayProps> = (
 
   const getStatusIcon = (reason?: string) => {
     if (!reason) return 'Model Change';
-    if (reason.includes('success') || reason.includes('fallback_success')) return 'Success';
+    if (reason.includes('success')) return 'Success';
     if (reason.includes('error') || reason.includes('failed')) return 'Error';
     return 'Model Change';
   };

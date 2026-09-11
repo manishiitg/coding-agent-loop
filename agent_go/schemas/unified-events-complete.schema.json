@@ -1135,131 +1135,6 @@
       },
       "type": "object"
     },
-    "FallbackAttemptEvent": {
-      "additionalProperties": false,
-      "properties": {
-        "attempt_index": {
-          "type": "integer"
-        },
-        "component": {
-          "type": "string"
-        },
-        "correlation_id": {
-          "type": "string"
-        },
-        "duration": {
-          "type": "string"
-        },
-        "error": {
-          "type": "string"
-        },
-        "event_id": {
-          "type": "string"
-        },
-        "hierarchy_level": {
-          "type": "integer"
-        },
-        "is_end_event": {
-          "type": "boolean"
-        },
-        "metadata": {
-          "type": "object"
-        },
-        "model_id": {
-          "type": "string"
-        },
-        "parent_id": {
-          "type": "string"
-        },
-        "phase": {
-          "type": "string"
-        },
-        "provider": {
-          "type": "string"
-        },
-        "session_id": {
-          "type": "string"
-        },
-        "span_id": {
-          "type": "string"
-        },
-        "success": {
-          "type": "boolean"
-        },
-        "timestamp": {
-          "format": "date-time",
-          "type": "string"
-        },
-        "total_attempts": {
-          "type": "integer"
-        },
-        "trace_id": {
-          "type": "string"
-        },
-        "turn": {
-          "type": "integer"
-        }
-      },
-      "type": "object"
-    },
-    "FallbackModelUsedEvent": {
-      "additionalProperties": false,
-      "properties": {
-        "component": {
-          "type": "string"
-        },
-        "correlation_id": {
-          "type": "string"
-        },
-        "duration": {
-          "type": "string"
-        },
-        "event_id": {
-          "type": "string"
-        },
-        "fallback_model": {
-          "type": "string"
-        },
-        "hierarchy_level": {
-          "type": "integer"
-        },
-        "is_end_event": {
-          "type": "boolean"
-        },
-        "metadata": {
-          "type": "object"
-        },
-        "original_model": {
-          "type": "string"
-        },
-        "parent_id": {
-          "type": "string"
-        },
-        "provider": {
-          "type": "string"
-        },
-        "reason": {
-          "type": "string"
-        },
-        "session_id": {
-          "type": "string"
-        },
-        "span_id": {
-          "type": "string"
-        },
-        "timestamp": {
-          "format": "date-time",
-          "type": "string"
-        },
-        "trace_id": {
-          "type": "string"
-        },
-        "turn": {
-          "type": "integer"
-        }
-      },
-      "type": "object"
-    },
     "FileCheckResultForEvent": {
       "additionalProperties": false,
       "properties": {
@@ -1528,12 +1403,6 @@
         "correlation_id": {
           "type": "string"
         },
-        "cross_provider_fallbacks": {
-          "items": {
-            "type": "string"
-          },
-          "type": "array"
-        },
         "current_llm": {
           "type": "string"
         },
@@ -1566,12 +1435,6 @@
         },
         "provider": {
           "type": "string"
-        },
-        "same_provider_fallbacks": {
-          "items": {
-            "type": "string"
-          },
-          "type": "array"
         },
         "session_id": {
           "type": "string"
@@ -2853,6 +2716,73 @@
         },
         "workflow_id": {
           "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "RetryAttemptEvent": {
+      "additionalProperties": false,
+      "properties": {
+        "attempt_index": {
+          "type": "integer"
+        },
+        "component": {
+          "type": "string"
+        },
+        "correlation_id": {
+          "type": "string"
+        },
+        "duration": {
+          "type": "string"
+        },
+        "error": {
+          "type": "string"
+        },
+        "event_id": {
+          "type": "string"
+        },
+        "hierarchy_level": {
+          "type": "integer"
+        },
+        "is_end_event": {
+          "type": "boolean"
+        },
+        "metadata": {
+          "type": "object"
+        },
+        "model_id": {
+          "type": "string"
+        },
+        "parent_id": {
+          "type": "string"
+        },
+        "phase": {
+          "type": "string"
+        },
+        "provider": {
+          "type": "string"
+        },
+        "session_id": {
+          "type": "string"
+        },
+        "span_id": {
+          "type": "string"
+        },
+        "success": {
+          "type": "boolean"
+        },
+        "timestamp": {
+          "format": "date-time",
+          "type": "string"
+        },
+        "total_attempts": {
+          "type": "integer"
+        },
+        "trace_id": {
+          "type": "string"
+        },
+        "turn": {
+          "type": "integer"
         }
       },
       "type": "object"
@@ -4235,12 +4165,6 @@
     "conversation_turn": {
       "$ref": "#/$defs/ConversationTurnEvent"
     },
-    "fallback_attempt": {
-      "$ref": "#/$defs/FallbackAttemptEvent"
-    },
-    "fallback_model_used": {
-      "$ref": "#/$defs/FallbackModelUsedEvent"
-    },
     "independent_steps_selected": {
       "$ref": "#/$defs/IndependentStepsSelectedEvent"
     },
@@ -4318,6 +4242,9 @@
     },
     "request_human_feedback": {
       "$ref": "#/$defs/RequestHumanFeedbackEvent"
+    },
+    "retry_attempt": {
+      "$ref": "#/$defs/RetryAttemptEvent"
     },
     "step_progress_updated": {
       "$ref": "#/$defs/StepProgressUpdatedEvent"

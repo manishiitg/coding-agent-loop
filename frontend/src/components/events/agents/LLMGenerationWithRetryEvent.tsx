@@ -10,7 +10,6 @@ export const LLMGenerationWithRetryEventDisplay: React.FC<LLMGenerationWithRetry
   event,
   mode = 'compact'
 }) => {
-  const [isFallbacksExpanded, setIsFallbacksExpanded] = useState(false)
   const [isUsageExpanded, setIsUsageExpanded] = useState(false)
 
   if (mode === 'compact') {
@@ -40,60 +39,6 @@ export const LLMGenerationWithRetryEventDisplay: React.FC<LLMGenerationWithRetry
               {event.provider && <span>• {event.provider}</span>}
               {event.max_retries && <span>• max {event.max_retries} retries</span>}
             </div>
-
-            {/* Fallback models with expand functionality */}
-            {(event.same_provider_fallbacks?.length || event.cross_provider_fallbacks?.length) && (
-              <div className="mt-0.5">
-                <div className="flex items-center gap-1.5 mb-0.5">
-                  <span className="text-blue-600 dark:text-blue-400 dark-plus:text-blue-400 opacity-75">Fallbacks:</span>
-                  <button
-                    onClick={() => setIsFallbacksExpanded(!isFallbacksExpanded)}
-                    className="text-blue-500 dark:text-blue-400 dark-plus:text-blue-400 hover:opacity-80 text-xs"
-                  >
-                    {isFallbacksExpanded ? '↑' : '↓'}
-                  </button>
-                </div>
-                <div className="text-blue-600 dark:text-blue-400 dark-plus:text-blue-400 opacity-75">
-                  <span className="text-xs">
-                    {[
-                      ...(event.same_provider_fallbacks || []),
-                      ...(event.cross_provider_fallbacks || [])
-                    ].slice(0, 3).join(', ')}
-                    {((event.same_provider_fallbacks?.length || 0) + (event.cross_provider_fallbacks?.length || 0)) > 3 && '...'}
-                  </span>
-                </div>
-                {isFallbacksExpanded && (
-                  <div className="mt-1 bg-white dark:bg-gray-800 dark-plus:bg-gray-800 border border-gray-200 dark:border-gray-700 dark-plus:border-gray-700 rounded p-1.5 max-h-32 overflow-y-auto">
-                    <div className="space-y-1">
-                      {event.same_provider_fallbacks && event.same_provider_fallbacks.length > 0 && (
-                        <div>
-                          <div className="text-xs font-medium text-gray-700 dark:text-gray-300 dark-plus:text-gray-300 mb-1">Same Provider:</div>
-                          <div className="flex flex-wrap gap-1">
-                            {event.same_provider_fallbacks.map((model, index) => (
-                              <span key={index} className="px-1.5 py-0.5 bg-yellow-100 dark:bg-yellow-800 dark-plus:bg-yellow-800 text-yellow-700 dark:text-yellow-300 dark-plus:text-yellow-300 text-xs rounded">
-                                {model}
-                              </span>
-                            ))}
-                          </div>
-                        </div>
-                      )}
-                      {event.cross_provider_fallbacks && event.cross_provider_fallbacks.length > 0 && (
-                        <div>
-                          <div className="text-xs font-medium text-gray-700 dark:text-gray-300 dark-plus:text-gray-300 mb-1">Cross Provider:</div>
-                          <div className="flex flex-wrap gap-1">
-                            {event.cross_provider_fallbacks.map((model, index) => (
-                              <span key={index} className="px-1.5 py-0.5 bg-purple-100 dark:bg-purple-800 dark-plus:bg-purple-800 text-purple-700 dark:text-purple-300 dark-plus:text-purple-300 text-xs rounded">
-                                {model}
-                              </span>
-                            ))}
-                          </div>
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                )}
-              </div>
-            )}
 
             {/* Final error - compact */}
             {event.final_error && (
@@ -180,33 +125,6 @@ export const LLMGenerationWithRetryEventDisplay: React.FC<LLMGenerationWithRetry
             {event.max_retries && <span>• max {event.max_retries} retries</span>}
             {event.turn !== undefined && <span>• turn {event.turn}</span>}
           </div>
-
-          {/* Fallback models */}
-          {event.same_provider_fallbacks && event.same_provider_fallbacks.length > 0 && (
-            <div className="mb-2">
-              <div className="text-xs font-medium text-blue-700 dark:text-blue-300 dark-plus:text-blue-300 mb-1">Same Provider Fallbacks:</div>
-              <div className="flex flex-wrap gap-1">
-                {event.same_provider_fallbacks.map((model, index) => (
-                  <span key={index} className="px-2 py-1 bg-blue-100 dark:bg-blue-800 dark-plus:bg-blue-800 text-blue-700 dark:text-blue-300 dark-plus:text-blue-300 text-xs rounded">
-                    {model}
-                  </span>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {event.cross_provider_fallbacks && event.cross_provider_fallbacks.length > 0 && (
-            <div className="mb-2">
-              <div className="text-xs font-medium text-blue-700 dark:text-blue-300 dark-plus:text-blue-300 mb-1">Cross Provider Fallbacks:</div>
-              <div className="flex flex-wrap gap-1">
-                {event.cross_provider_fallbacks.map((model, index) => (
-                  <span key={index} className="px-2 py-1 bg-purple-100 dark:bg-purple-800 dark-plus:bg-purple-800 text-purple-700 dark:text-purple-300 dark-plus:text-purple-300 text-xs rounded">
-                    {model}
-                  </span>
-                ))}
-              </div>
-            </div>
-          )}
 
           {/* Final error */}
           {event.final_error && (

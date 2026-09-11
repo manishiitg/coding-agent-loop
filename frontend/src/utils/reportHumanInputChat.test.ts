@@ -25,7 +25,7 @@ function tab(tabId: string, overrides: Partial<ChatTab> = {}): ChatTab {
       selectedServers: [],
       selectedSkills: [],
       selectedSecrets: [],
-      llmConfig: { provider: 'codex-cli', model_id: 'gpt-5.6-sol', fallback_models: [] },
+      llmConfig: { provider: 'codex-cli', model_id: 'gpt-5.6-sol' },
       fileContext: [],
       workflowContext: [],
       queuedMessages: [],

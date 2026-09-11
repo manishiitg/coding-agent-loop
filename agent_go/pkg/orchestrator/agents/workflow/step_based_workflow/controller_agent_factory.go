@@ -112,11 +112,7 @@ func workflowAgentConfigUsesClaudeCode(config *agents.OrchestratorAgentConfig) b
 	if config.LLMConfig.Primary.Provider == string(mcpllm.ProviderClaudeCode) {
 		return true
 	}
-	for _, fallback := range config.LLMConfig.Fallbacks {
-		if fallback.Provider == string(mcpllm.ProviderClaudeCode) {
-			return true
-		}
-	}
+
 	return false
 }
 
@@ -624,7 +620,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) resolveStepID(stepPath, stepIDOverrid
 	return stepPath
 }
 
-// selectExecutionLLM selects the LLM config with cascading fallback logic
+// selectExecutionLLM resolves the configured execution model before generation.
 //
 // Priority for main step execution:
 //  1. step config ExecutionLLM   — explicit per-step override; always wins when set
@@ -632,7 +628,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) resolveStepID(stepPath, stepIDOverrid
 //     has an ExecutionLLM set; when present, tier selection is skipped entirely
 //  3. tiered mode                — workshop override, persistent step execution_tier,
 //     preferred_tier from context, or the default tier
-//  4. orchestrator main LLM      — final fallback
+//  4. orchestrator main LLM      — inherited default
 func (hcpo *StepBasedWorkflowOrchestrator) selectExecutionLLM(
 	ctx context.Context,
 	stepConfig *AgentConfigs,
@@ -655,8 +651,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) selectExecutionLLM(
 				ModelID:  stepConfig.ExecutionLLM.ModelID,
 				Options:  stepConfig.ExecutionLLM.Options,
 			},
-			Fallbacks: convertAgentFallbacks(stepConfig.ExecutionLLM.Fallbacks),
-			APIKeys:   orchestratorLLMConfig.APIKeys,
+			APIKeys: orchestratorLLMConfig.APIKeys,
 		}
 	}
 
@@ -674,8 +669,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) selectExecutionLLM(
 				ModelID:  subAgentLLM.ModelID,
 				Options:  subAgentLLM.Options,
 			},
-			Fallbacks: convertAgentFallbacks(subAgentLLM.Fallbacks),
-			APIKeys:   hcpo.GetAPIKeys(),
+			APIKeys: hcpo.GetAPIKeys(),
 		}
 	}
 
@@ -1037,8 +1031,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) selectPhaseLLM(agentPurpose string) *
 			ModelID:  hcpo.presetPhaseLLM.ModelID,
 			Options:  hcpo.presetPhaseLLM.Options,
 		},
-		Fallbacks: convertAgentFallbacks(hcpo.presetPhaseLLM.Fallbacks),
-		APIKeys:   hcpo.GetAPIKeys(),
+		APIKeys: hcpo.GetAPIKeys(),
 	}
 }
 
@@ -1054,8 +1047,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) selectPulseLLM(agentPurpose string) *
 			ModelID:  hcpo.presetPulseLLM.ModelID,
 			Options:  hcpo.presetPulseLLM.Options,
 		},
-		Fallbacks: convertAgentFallbacks(hcpo.presetPulseLLM.Fallbacks),
-		APIKeys:   hcpo.GetAPIKeys(),
+		APIKeys: hcpo.GetAPIKeys(),
 	}
 }
 
@@ -1614,8 +1606,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) createOrchestratorAgent(ctx context.C
 				ModelID:  orchestratorStepLLMConfig.Primary.ModelID,
 				Options:  orchestratorStepLLMConfig.Primary.Options,
 			},
-			Fallbacks: orchestratorStepLLMConfig.Fallbacks,
-			APIKeys:   apiKeys, // Preserve API keys from orchestrator (may be nil)
+			APIKeys: apiKeys, // Preserve API keys from orchestrator (may be nil)
 		}
 		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using step-specific todo task orchestrator LLM: %s/%s", orchestratorStepLLMConfig.Primary.Provider, orchestratorStepLLMConfig.Primary.ModelID))
 	} else if hcpo.tierResolver != nil {
@@ -1633,8 +1624,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) createOrchestratorAgent(ctx context.C
 				ModelID:  hcpo.presetPhaseLLM.ModelID,
 				Options:  hcpo.presetPhaseLLM.Options,
 			},
-			Fallbacks: convertAgentFallbacks(hcpo.presetPhaseLLM.Fallbacks),
-			APIKeys:   orchestratorLLMConfig.APIKeys, // Preserve API keys from orchestrator
+			APIKeys: orchestratorLLMConfig.APIKeys, // Preserve API keys from orchestrator
 		}
 		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using preset phase LLM for todo task orchestrator: %s/%s", hcpo.presetPhaseLLM.Provider, hcpo.presetPhaseLLM.ModelID))
 	}

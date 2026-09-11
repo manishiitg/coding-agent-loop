@@ -240,7 +240,7 @@ type TodoVerificationResponse struct {
 }
 
 // convertDBAgentLLMConfig converts a workflowtypes.AgentLLMConfig to step_based_workflow.AgentLLMConfig,
-// including fallback models.
+// preserving the selected model.
 func convertDBAgentLLMConfig(dbConfig *workflowtypes.AgentLLMConfig) *step_based_workflow.AgentLLMConfig {
 	if dbConfig == nil {
 		return nil
@@ -251,17 +251,7 @@ func convertDBAgentLLMConfig(dbConfig *workflowtypes.AgentLLMConfig) *step_based
 		ModelID:        dbConfig.ModelID,
 		Options:        dbConfig.Options,
 	}
-	if len(dbConfig.Fallbacks) > 0 {
-		cfg.Fallbacks = make([]step_based_workflow.AgentLLMFallback, len(dbConfig.Fallbacks))
-		for i, fb := range dbConfig.Fallbacks {
-			cfg.Fallbacks[i] = step_based_workflow.AgentLLMFallback{
-				PublishedLLMID: fb.PublishedLLMID,
-				Provider:       fb.Provider,
-				ModelID:        fb.ModelID,
-				Options:        fb.Options,
-			}
-		}
-	}
+
 	return cfg
 }
 
@@ -353,10 +343,10 @@ func NewWorkflowOrchestrator(
 		} else {
 			log.Printf("[TIERED_LLM] WARNING: No Builder model configured - builder agents will fail")
 		}
-		log.Printf("[TIERED_LLM] Tiered mode enabled - Tier1: %s/%s (fallbacks: %d), Tier2: %s/%s (fallbacks: %d), Tier3: %s/%s (fallbacks: %d)",
-			tieredConfig.Tier1.Provider, tieredConfig.Tier1.ModelID, len(tieredConfig.Tier1.Fallbacks),
-			tieredConfig.Tier2.Provider, tieredConfig.Tier2.ModelID, len(tieredConfig.Tier2.Fallbacks),
-			tieredConfig.Tier3.Provider, tieredConfig.Tier3.ModelID, len(tieredConfig.Tier3.Fallbacks))
+		log.Printf("[TIERED_LLM] Tiered mode enabled - Tier1: %s/%s, Tier2: %s/%s, Tier3: %s/%s",
+			tieredConfig.Tier1.Provider, tieredConfig.Tier1.ModelID,
+			tieredConfig.Tier2.Provider, tieredConfig.Tier2.ModelID,
+			tieredConfig.Tier3.Provider, tieredConfig.Tier3.ModelID)
 	}
 
 	// Extract feature toggles from preset config

@@ -30,6 +30,10 @@ Do not emit retired module names such as `workflow_review`, `llm_ops_review`,
 `strategy_auditor`, or `goal_advisor`. Historical rows using those names are
 migration inputs only.
 
+LLM calls stay on the selected model and coding-agent provider. Transient errors
+may retry that same model. Missing backup model/provider chains are not defects
+and must not create a finding, review slot, or configuration recommendation.
+
 ## Progressive evidence scan
 
 Read `soul/soul.md`, compact schedules from `workflow.json`,
@@ -150,7 +154,7 @@ review; recurrence alone does not establish material impact.
 Before choosing a reviewer,
 inspect the smallest affected step summary, validation/output receipt, or tool
 trace needed to answer: did the error prevent the step from doing its job?
-An errored attempt followed by a successful retry or fallback with adequate
+An errored attempt followed by a successful retry or workflow recovery with adequate
 existing output evidence should normally be skipped. A `completed` status by
 itself is not recovery proof: use the smallest relevant output or side-effect
 receipt to look for missing, stale, partial, or contradictory results. Do not

@@ -77,17 +77,7 @@ func runtimeBool(value bool) *bool { return &value }
 
 func runtimeConfigForLLMAgent(config LLMAgentConfig, model llmtypes.Model, tracer observability.Tracer, traceID observability.TraceID, logger loggerv2.Logger) mcpagent.RuntimeConfig {
 	llmConfig := mcpagent.AgentLLMConfiguration{
-		Primary:   mcpagent.LLMModel{Provider: string(config.Provider), ModelID: config.ModelID, Options: config.Options},
-		Fallbacks: make([]mcpagent.LLMModel, 0, len(config.Fallbacks)),
-	}
-	for _, fallback := range config.Fallbacks {
-		provider := strings.TrimSpace(fallback.Provider)
-		if provider == "" {
-			provider = string(config.Provider)
-		}
-		if modelID := strings.TrimSpace(fallback.ModelID); modelID != "" {
-			llmConfig.Fallbacks = append(llmConfig.Fallbacks, mcpagent.LLMModel{Provider: provider, ModelID: modelID, Options: fallback.Options})
-		}
+		Primary: mcpagent.LLMModel{Provider: string(config.Provider), ModelID: config.ModelID, Options: config.Options},
 	}
 
 	runtime := mcpagent.RuntimeConfig{
@@ -317,8 +307,6 @@ type LLMAgentConfig struct {
 	// must not call back into the wrapper.
 	AdmitTool func(name string) bool
 
-	// Unified fallback configuration (replaces FallbackModels and CrossProviderFallback)
-	Fallbacks []FallbackModel // Fallback models with optional provider override
 	// Code execution mode: When enabled, only virtual tools are added to LLM
 	// MCP tools are accessed through generated scripts using the on-demand HTTP API specification.
 	UseCodeExecutionMode                   bool
@@ -382,14 +370,6 @@ type LLMAgentConfig struct {
 	// RuntimeOverrides allows runtime modification of MCP server configuration per-agent.
 	// Used to dynamically configure stateful MCP server runtimes.
 	RuntimeOverrides mcpclient.RuntimeOverrides
-}
-
-// FallbackModel represents a fallback model configuration
-// If Provider is empty, it uses the same provider as the primary model
-type FallbackModel struct {
-	Provider string                 `json:"provider,omitempty"` // Optional: override provider for cross-provider fallback
-	ModelID  string                 `json:"model_id"`
-	Options  map[string]interface{} `json:"options,omitempty"`
 }
 
 // agentMetricsImpl is the concrete implementation of AgentMetrics interface
@@ -988,29 +968,6 @@ func initializeLLMWithConfig(ctx context.Context, config LLMAgentConfig, logger 
 	}
 	runtimeModelID := resolveRuntimeModelID(config.Provider, config.ModelID)
 
-	// Build fallback models list from unified Fallbacks structure
-	var fallbackModels []string
-
-	// Add custom fallback models from config if provided
-	if len(config.Fallbacks) > 0 {
-		for _, fb := range config.Fallbacks {
-			// Format: provider/model for cross-provider fallbacks, or just model for same-provider
-			if fb.Provider != "" && fb.Provider != string(config.Provider) {
-				fallbackModels = append(fallbackModels, fmt.Sprintf("%s/%s", fb.Provider, fb.ModelID))
-			} else {
-				fallbackModels = append(fallbackModels, fb.ModelID)
-			}
-		}
-		logger.Info(fmt.Sprintf("Using custom fallback models from config: %v", fallbackModels))
-	} else {
-		// Use default fallback models for the provider
-		fallbackModels = append(fallbackModels, llm.GetDefaultFallbackModelsForModel(llmProvider, runtimeModelID)...)
-		// Also add default cross-provider fallbacks
-		crossProviderFallbacks := llm.GetCrossProviderFallbackModels(llmProvider)
-		fallbackModels = append(fallbackModels, crossProviderFallbacks...)
-		logger.Info(fmt.Sprintf("Using default fallback models for provider %s: %v", config.Provider, fallbackModels))
-	}
-
 	// Create a separate LLM logger that writes to llm_debug.log
 	// This separates LLM logs (including [GEMINI] logs from multi-llm-provider-go) from server logs
 	var v2LoggerForLLM loggerv2.Logger
@@ -1026,20 +983,20 @@ func initializeLLMWithConfig(ctx context.Context, config LLMAgentConfig, logger 
 		v2LoggerForLLM = llmLogger
 	}
 
-	// Use the existing LLM provider system with detailed fallback models
+	// Use the existing LLM provider system with the selected model
 	llmConfig := llm.Config{
-		Provider:            llmProvider,
-		ModelID:             runtimeModelID,
-		Temperature:         config.Temperature,
-		TraceID:             traceID, // Pass the trace ID for proper span hierarchy
-		FallbackModels:      fallbackModels,
+		Provider:    llmProvider,
+		ModelID:     runtimeModelID,
+		Temperature: config.Temperature,
+		TraceID:     traceID, // Pass the trace ID for proper span hierarchy
+
 		MaxRetries:          3,
 		Logger:              v2LoggerForLLM,
 		APIKeys:             config.APIKeys, // Use API keys directly from config
 		ClaudeCodeTransport: config.ClaudeCodeTransport,
 	}
 
-	// Initialize the LLM using the factory with detailed fallback support
+	// Initialize the LLM using the factory with the selected model
 	return llm.InitializeLLM(llmConfig)
 }
 

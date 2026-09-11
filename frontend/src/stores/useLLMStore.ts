@@ -1,3 +1,4 @@
+import { stripRetiredLLMFallbacks } from '../utils/retiredLLMFallbacks'
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import type { LLMConfiguration, ExtendedLLMConfiguration, APIKeyValidationRequest, AgentLLMConfiguration, SavedLLM, LLMModel, DelegationTierConfig, LLMProvider } from '../services/api-types'
@@ -66,8 +67,6 @@ function defaultLLMConfiguration(): LLMConfiguration {
   return {
     provider: DEFAULT_CHAT_PROVIDER,
     model_id: DEFAULT_CHAT_MODEL,
-    fallback_models: [],
-    cross_provider_fallback: undefined,
   }
 }
 
@@ -76,13 +75,11 @@ function normalizePrimaryConfig(config?: LLMConfiguration): LLMConfiguration {
     return defaultLLMConfiguration()
   }
   return {
-    ...config,
-    fallback_models: config.fallback_models || [],
-    cross_provider_fallback: config.cross_provider_fallback &&
-      !isFrontendDeprecatedProvider(config.cross_provider_fallback.provider) &&
-      config.cross_provider_fallback.models?.length
-      ? config.cross_provider_fallback
-      : undefined,
+    published_llm_id: config.published_llm_id,
+    provider: config.provider,
+    model_id: config.model_id,
+    options: config.options,
+    api_keys: config.api_keys,
   }
 }
 
@@ -134,12 +131,11 @@ function sanitizeAgentConfig(config: AgentLLMConfiguration | null): AgentLLMConf
   if (!config) return null
   return {
     primary: normalizeLLMModel(config.primary),
-    fallbacks: config.fallbacks.filter(hasUsableLLMIdentity).map(sanitizeLLMModel),
   }
 }
 
 function sanitizeProviderConfigForPersistence(config: ExtendedLLMConfiguration): ExtendedLLMConfiguration {
-  const sanitized = { ...config } as ExtendedLLMConfiguration & { temperature?: number }
+  const sanitized = stripRetiredLLMFallbacks({ ...config }) as ExtendedLLMConfiguration & { temperature?: number }
   delete sanitized.api_key
   delete sanitized.endpoint
   delete sanitized.temperature
@@ -218,7 +214,7 @@ interface LLMState extends StoreActions {
   // LEGACY: kept for backward compatibility, use mode-specific configs instead
   primaryConfig: LLMConfiguration
 
-  // New unified configuration (Tiered Fallback System)
+  // New unified configuration (Tiered Model Selection)
   // LEGACY: kept for backward compatibility, use mode-specific configs instead
   agentConfig: AgentLLMConfiguration | null
 
@@ -334,8 +330,6 @@ interface LLMState extends StoreActions {
   // Legacy actions (for backward compatibility)
   updateProvider: (provider: 'bedrock' | 'openai' | 'vertex' | 'anthropic' | 'azure') => void
   updateModel: (modelId: string) => void
-  updateFallbacks: (fallbacks: string[]) => void
-  updateCrossProviderFallback: (fallback: LLMConfiguration['cross_provider_fallback']) => void
   refreshAvailableLLMs: () => Promise<void>
   
   // API key management
@@ -369,58 +363,42 @@ export const useLLMStore = create<LLMState>()(
         openrouterConfig: {
           provider: 'openrouter',
           model_id: '',
-          fallback_models: [],
-          cross_provider_fallback: undefined,
           api_key: ''
         },
         bedrockConfig: {
           provider: 'bedrock',
           model_id: '',
-          fallback_models: [],
-          cross_provider_fallback: undefined,
           region: 'us-east-1'
         },
         openaiConfig: {
           provider: 'openai',
           model_id: '',
-          fallback_models: [],
-          cross_provider_fallback: undefined,
           api_key: ''
         },
         vertexConfig: {
           provider: 'vertex',
           model_id: '',
-          fallback_models: [],
-          cross_provider_fallback: undefined,
           api_key: ''
         },
         anthropicConfig: {
           provider: 'anthropic',
           model_id: '',
-          fallback_models: [],
-          cross_provider_fallback: undefined,
           api_key: ''
         },
         azureConfig: {
           provider: 'azure',
           model_id: '',
-          fallback_models: [],
-          cross_provider_fallback: undefined,
           api_key: '',
           endpoint: ''
         },
         zaiConfig: {
           provider: 'z-ai',
           model_id: '',
-          fallback_models: [],
-          cross_provider_fallback: undefined,
           api_key: ''
         },
         kimiConfig: {
           provider: 'kimi',
           model_id: '',
-          fallback_models: [],
-          cross_provider_fallback: undefined,
           api_key: ''
         },
         // Custom models for each provider
@@ -503,28 +481,28 @@ export const useLLMStore = create<LLMState>()(
 
         // Actions
         setPrimaryConfig: (config) => {
-          set({ primaryConfig: config, error: null })
+          set({ primaryConfig: stripRetiredLLMFallbacks(config), error: null })
         },
 
         setAgentConfig: (config) => {
-          set({ agentConfig: config, error: null })
+          set({ agentConfig: stripRetiredLLMFallbacks(config), error: null })
         },
 
         // Mode-specific config actions
         setChatPrimaryConfig: (config) => {
-          set({ chatPrimaryConfig: config, error: null })
+          set({ chatPrimaryConfig: stripRetiredLLMFallbacks(config), error: null })
         },
 
         setChatAgentConfig: (config) => {
-          set({ chatAgentConfig: config, error: null })
+          set({ chatAgentConfig: stripRetiredLLMFallbacks(config), error: null })
         },
 
         setWorkflowPrimaryConfig: (config) => {
-          set({ workflowPrimaryConfig: config, error: null })
+          set({ workflowPrimaryConfig: stripRetiredLLMFallbacks(config), error: null })
         },
 
         setWorkflowAgentConfig: (config) => {
-          set({ workflowAgentConfig: config, error: null })
+          set({ workflowAgentConfig: stripRetiredLLMFallbacks(config), error: null })
         },
 
         getConfigForMode: (mode) => {
@@ -771,17 +749,12 @@ export const useLLMStore = create<LLMState>()(
               // Use saved config as base, only fill in missing fields from defaults
               // Check if savedConfig has meaningful values (not just initial empty state)
               const hasSavedModel = savedConfig?.model_id && savedConfig.model_id.trim() !== ''
-              const hasSavedFallbacks = savedConfig?.fallback_models && savedConfig.fallback_models.length > 0
 
               return {
                 provider: savedConfig?.provider || defaultConfig?.provider || DEFAULT_CHAT_PROVIDER,
                 // Preserve model_id from saved config (including custom models) if it exists
                 // Otherwise use default
                 model_id: hasSavedModel ? savedConfig.model_id : (defaultConfig?.model_id || ''),
-                // Preserve fallback_models from saved config if they exist
-                fallback_models: hasSavedFallbacks ? savedConfig.fallback_models : (defaultConfig?.fallback_models || []),
-                // Preserve cross_provider_fallback from saved config if it exists
-                cross_provider_fallback: savedConfig?.cross_provider_fallback || defaultConfig?.cross_provider_fallback,
                 // Preserve API key if it exists in saved config
                 api_key: savedConfig?.api_key || defaultConfig?.api_key || '',
                 // Preserve region for Bedrock and Azure
@@ -874,8 +847,6 @@ export const useLLMStore = create<LLMState>()(
               defaults.vertex_config || {
                 provider: 'vertex',
                 model_id: '',
-                fallback_models: [],
-                cross_provider_fallback: undefined,
                 api_key: ''
               }
             )
@@ -884,8 +855,6 @@ export const useLLMStore = create<LLMState>()(
               defaults.anthropic_config || {
                 provider: 'anthropic',
                 model_id: '',
-                fallback_models: [],
-                cross_provider_fallback: undefined,
                 api_key: ''
               }
             )
@@ -894,8 +863,6 @@ export const useLLMStore = create<LLMState>()(
               defaults.azure_config || {
                 provider: 'azure',
                 model_id: '',
-                fallback_models: [],
-                cross_provider_fallback: undefined,
                 api_key: '',
                 endpoint: ''
               }
@@ -905,8 +872,6 @@ export const useLLMStore = create<LLMState>()(
               defaults.zai_config || {
                 provider: 'z-ai',
                 model_id: '',
-                fallback_models: [],
-                cross_provider_fallback: undefined,
                 api_key: ''
               }
             )
@@ -915,8 +880,6 @@ export const useLLMStore = create<LLMState>()(
               defaults.kimi_config || {
                 provider: 'kimi',
                 model_id: '',
-                fallback_models: [],
-                cross_provider_fallback: undefined,
                 api_key: ''
               }
             )
@@ -944,8 +907,6 @@ export const useLLMStore = create<LLMState>()(
               newPrimaryConfig = {
                 provider: first.provider,
                 model_id: first.model_id,
-                fallback_models: [],
-                cross_provider_fallback: undefined
               }
             }
 
@@ -988,9 +949,9 @@ export const useLLMStore = create<LLMState>()(
 
             if (locked && defaultList.length > 0) {
               const first = defaultList[0]
-              get().setChatPrimaryConfig({ provider: first.provider, model_id: first.model_id, fallback_models: [], cross_provider_fallback: undefined })
-              get().setWorkflowPrimaryConfig({ provider: first.provider, model_id: first.model_id, fallback_models: [], cross_provider_fallback: undefined })
-              get().setAgentConfig({ primary: first, fallbacks: [] })
+              get().setChatPrimaryConfig({ provider: first.provider, model_id: first.model_id })
+              get().setWorkflowPrimaryConfig({ provider: first.provider, model_id: first.model_id })
+              get().setAgentConfig({ primary: first })
             }
 
             // Load provider manifest in parallel (non-blocking)
@@ -1077,14 +1038,12 @@ export const useLLMStore = create<LLMState>()(
               break;
           }
           
-          // Set appropriate fallback models based on provider
+          // Set the first model for the explicitly selected provider
           set({
             primaryConfig: {
               ...state.primaryConfig,
               provider,
               model_id: availableModels[0] || '',
-              fallback_models: [],
-              cross_provider_fallback: undefined
             },
             error: null
           })
@@ -1095,26 +1054,6 @@ export const useLLMStore = create<LLMState>()(
             primaryConfig: {
               ...state.primaryConfig,
               model_id: modelId
-            },
-            error: null
-          }))
-        },
-
-        updateFallbacks: (fallbacks) => {
-          set((state) => ({
-            primaryConfig: {
-              ...state.primaryConfig,
-              fallback_models: fallbacks
-            },
-            error: null
-          }))
-        },
-
-        updateCrossProviderFallback: (fallback) => {
-          set((state) => ({
-            primaryConfig: {
-              ...state.primaryConfig,
-              cross_provider_fallback: fallback
             },
             error: null
           }))
@@ -1246,51 +1185,37 @@ export const useLLMStore = create<LLMState>()(
             openrouterConfig: {
               provider: 'openrouter',
               model_id: '',
-              fallback_models: [],
-              cross_provider_fallback: undefined,
               api_key: ''
             },
             bedrockConfig: {
               provider: 'bedrock',
               model_id: '',
-              fallback_models: [],
-              cross_provider_fallback: undefined,
               region: 'us-east-1'
             },
             openaiConfig: {
               provider: 'openai',
               model_id: '',
-              fallback_models: [],
-              cross_provider_fallback: undefined,
               api_key: ''
             },
             vertexConfig: {
               provider: 'vertex',
               model_id: '',
-              fallback_models: [],
-              cross_provider_fallback: undefined,
               api_key: ''
             },
             azureConfig: {
               provider: 'azure',
               model_id: '',
-              fallback_models: [],
-              cross_provider_fallback: undefined,
               api_key: '',
               endpoint: ''
             },
             zaiConfig: {
               provider: 'z-ai',
               model_id: '',
-              fallback_models: [],
-              cross_provider_fallback: undefined,
               api_key: ''
             },
             kimiConfig: {
               provider: 'kimi',
               model_id: '',
-              fallback_models: [],
-              cross_provider_fallback: undefined,
               api_key: ''
             },
             savedLLMs: [],
@@ -1316,12 +1241,12 @@ export const useLLMStore = create<LLMState>()(
           // Persist user configurations and custom models, but keep secrets/workspace-backed
           // LLM library data out of localStorage.
           // Legacy configs (kept for backward compatibility)
-          primaryConfig: state.primaryConfig,
+          primaryConfig: stripRetiredLLMFallbacks(state.primaryConfig),
           agentConfig: sanitizeAgentConfig(state.agentConfig),
           // Mode-specific configs
-          chatPrimaryConfig: state.chatPrimaryConfig,
+          chatPrimaryConfig: stripRetiredLLMFallbacks(state.chatPrimaryConfig),
           chatAgentConfig: sanitizeAgentConfig(state.chatAgentConfig),
-          workflowPrimaryConfig: state.workflowPrimaryConfig,
+          workflowPrimaryConfig: stripRetiredLLMFallbacks(state.workflowPrimaryConfig),
           workflowAgentConfig: sanitizeAgentConfig(state.workflowAgentConfig),
           // Other persisted state
           bedrockConfig: sanitizeProviderConfigForPersistence(state.bedrockConfig),
@@ -1336,7 +1261,7 @@ export const useLLMStore = create<LLMState>()(
           customVertexModels: state.customVertexModels,
           customAzureModels: state.customAzureModels,
           showLLMModal: state.showLLMModal,
-          delegationTierConfig: state.delegationTierConfig,
+          delegationTierConfig: stripRetiredLLMFallbacks(state.delegationTierConfig),
           // DO NOT persist availableBedrockModels, availableOpenRouterModels, availableOpenAIModels
           // These should always be loaded fresh from backend
           // DO NOT persist defaultsLoaded - this should be reset on each app load
@@ -1344,6 +1269,7 @@ export const useLLMStore = create<LLMState>()(
         // Migration: copy legacy config to mode-specific configs on first load
         onRehydrateStorage: () => (state) => {
           if (state) {
+            state.delegationTierConfig = stripRetiredLLMFallbacks(state.delegationTierConfig)
             state.primaryConfig = normalizePrimaryConfig(state.primaryConfig)
             state.chatPrimaryConfig = normalizePrimaryConfig(state.chatPrimaryConfig)
             state.workflowPrimaryConfig = normalizePrimaryConfig(state.workflowPrimaryConfig)

@@ -52,7 +52,7 @@ const (
 	TodoPlannerLearningDetectionAgentType   AgentType = "todo_planner_learning_detection"   // Detects if new learnings were generated after learning phase
 	ConditionalAgentType                    AgentType = "conditional"                       // Conditional decision agent for evaluating step conditions
 	EvaluationScoringAgentType              AgentType = "evaluation_scoring"                // Calculates scores for evaluation steps based on success criteria
-	OrchestratorAgentType           AgentType = "todo_task_orchestrator"            // Orchestrator orchestrator agent that manages todo lists and delegates to sub-agents
+	OrchestratorAgentType                   AgentType = "todo_task_orchestrator"            // Orchestrator orchestrator agent that manages todo lists and delegates to sub-agents
 	GenericExecutionAgentType               AgentType = "generic_execution"                 // Generic execution agent for todo task steps (no learning, no prevalidation)
 	TodoPlannerInteractiveWorkshopAgentType AgentType = "todo_planner_interactive_workshop" // Interactive workshop: execute steps, edit plan, update step config in one session
 )
@@ -183,17 +183,8 @@ func NewBaseAgent(
 				Region:   llmConfig.Primary.Region,
 				Options:  llmConfig.Primary.Options,
 			},
-			Fallbacks: make([]mcpagent.LLMModel, len(llmConfig.Fallbacks)),
 		}
-		for i, fb := range llmConfig.Fallbacks {
-			generation.LLM.Fallbacks[i] = mcpagent.LLMModel{
-				Provider: fb.Provider,
-				ModelID:  fb.ModelID,
-				APIKey:   fb.APIKey,
-				Region:   fb.Region,
-				Options:  fb.Options,
-			}
-		}
+
 	}
 
 	if mcpSessionID != "" {
@@ -273,7 +264,7 @@ func NewBaseAgent(
 		Coding: mcpagent.CodingRuntimeConfig{
 			PersistentClaudeCode: codingAgentKeepAlive, PersistentCodex: codingAgentKeepAlive,
 			PersistentCursor: codingAgentKeepAlive, PersistentPi: codingAgentKeepAlive,
-			PersistentMuse: codingAgentKeepAlive,
+			PersistentMuse:    codingAgentKeepAlive,
 			CLISecurityPolicy: cliSecurityPolicy,
 		},
 		MCP: mcpagent.MCPRuntimeConfig{SessionID: mcpSessionID, RuntimeOverrides: runtimeOverrides},

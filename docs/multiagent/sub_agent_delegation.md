@@ -50,7 +50,7 @@ Spawns a background sub-agent and returns immediately. The sub-agent runs async 
 
 **Required fields** (enforced by `handleDelegate` in `delegation_tools.go`):
 - `name`, `instruction`, and `reasoning_level` are required in Multi Agent Chat mode.
-- `reasoning_level` must be one of the configured tier names; invalid values are silently ignored and the parent model is used as a fallback.
+- `reasoning_level` must be one of the configured tier names; invalid values return an error before a sub-agent is started.
 
 ### `query_agent`, `terminate_agent`, `list_agents`
 
@@ -118,7 +118,7 @@ Sub-agents inherit most configuration from the parent request:
 | `low` | Simple tasks, formatting, lookups |
 | `<custom>` | User-defined tiers in the tier config |
 
-**Priority order for tier config**: Frontend request (`delegation_tier_config`) > environment variables (`DELEGATION_HIGH_PROVIDER`, `DELEGATION_HIGH_MODEL`, etc.) > parent model (fallback).
+**Priority order for tier config**: Frontend request (`delegation_tier_config`) > environment variables (`DELEGATION_HIGH_PROVIDER`, `DELEGATION_HIGH_MODEL`, etc.) > inherited parent model when no tier is configured.
 
 Frontend configuration lives in the tier-config chip in the chat input and the **Delegation Models** section in the left sidebar. It's sent as `delegation_tier_config` in the chat request.
 

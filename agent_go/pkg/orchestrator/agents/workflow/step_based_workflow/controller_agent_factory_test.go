@@ -1141,9 +1141,6 @@ func TestSelectExecutionLLM_PrefersStepExecutionLLMOverSubAgentAndTiered(t *test
 		ExecutionLLM: &AgentLLMConfig{
 			Provider: "openai",
 			ModelID:  "step-override",
-			Fallbacks: []AgentLLMFallback{
-				{Provider: "openai", ModelID: "step-fallback"},
-			},
 		},
 	}
 
@@ -1154,9 +1151,7 @@ func TestSelectExecutionLLM_PrefersStepExecutionLLMOverSubAgentAndTiered(t *test
 	if llm.Primary.ModelID != "step-override" {
 		t.Fatalf("expected step override model, got %q", llm.Primary.ModelID)
 	}
-	if len(llm.Fallbacks) != 1 || llm.Fallbacks[0].ModelID != "step-fallback" {
-		t.Fatalf("expected step fallback to be preserved, got %+v", llm.Fallbacks)
-	}
+
 }
 
 func TestSelectExecutionLLM_UsesTierResolverWhenStepExecutionLLMIsUnset(t *testing.T) {

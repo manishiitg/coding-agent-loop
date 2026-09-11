@@ -81,7 +81,7 @@ func isPublishedLLMProviderAllowed(provider string) bool {
 	return err == nil
 }
 
-func fallbackPublishedLLMProviderAndModel() (string, string) {
+func defaultPublishedLLMProviderAndModel() (string, string) {
 	for _, provider := range []string{
 		"codex-cli",
 		"cursor-cli",
@@ -310,30 +310,24 @@ func buildProviderCapabilities(ctx context.Context) map[string][]string {
 // getPrimaryProviderAndModelFromDefaults extracts provider and model_id from llm.GetLLMDefaults().PrimaryConfig.
 func getPrimaryProviderAndModelFromDefaults() (provider, modelID string) {
 	defaults := llm.GetLLMDefaults()
-	fallbackProvider, fallbackModelID := fallbackPublishedLLMProviderAndModel()
+	defaultProvider, defaultModelID := defaultPublishedLLMProviderAndModel()
 	bytes, err := json.Marshal(defaults.PrimaryConfig)
 	if err != nil {
-		return fallbackProvider, fallbackModelID
+		return defaultProvider, defaultModelID
 	}
 	var m map[string]interface{}
 	if err := json.Unmarshal(bytes, &m); err != nil {
-		return fallbackProvider, fallbackModelID
+		return defaultProvider, defaultModelID
 	}
 	if p, _ := m["provider"].(string); p != "" {
 		provider = p
 	} else {
-		provider = fallbackProvider
-	}
-	if !isPublishedLLMProviderAllowed(provider) {
-		return fallbackProvider, fallbackModelID
+		provider = defaultProvider
 	}
 	if mid, _ := m["model_id"].(string); mid != "" {
 		modelID = mid
 	} else {
 		modelID = llm.GetDefaultModel(llm.Provider(provider))
-	}
-	if strings.TrimSpace(modelID) == "" {
-		return fallbackProvider, fallbackModelID
 	}
 	return provider, modelID
 }
@@ -796,16 +790,16 @@ func getDefaultPublishedLLMs(locked bool, primaryConfig interface{}) []map[strin
 		}
 	}
 	if !isPublishedLLMProviderAllowed(provider) {
-		provider, modelID = fallbackPublishedLLMProviderAndModel()
+		provider, modelID = defaultPublishedLLMProviderAndModel()
 	}
 	if provider == "" {
-		provider, modelID = fallbackPublishedLLMProviderAndModel()
+		provider, modelID = defaultPublishedLLMProviderAndModel()
 	}
 	if modelID == "" {
 		modelID = llm.GetDefaultModel(llm.Provider(provider))
 	}
 	if strings.TrimSpace(modelID) == "" {
-		provider, modelID = fallbackPublishedLLMProviderAndModel()
+		provider, modelID = defaultPublishedLLMProviderAndModel()
 	}
 	entry := map[string]interface{}{
 		"id":       "default-" + provider + "-" + strings.ReplaceAll(modelID, "/", "-"),
@@ -872,9 +866,8 @@ func (api *StreamingAPI) handleGetLLMDefaults(w http.ResponseWriter, r *http.Req
 	lockedProviders := getLockedProviders()
 	primaryProvider, primaryModelID := getPrimaryProviderAndModelFromDefaults()
 	primaryConfig := map[string]interface{}{
-		"provider":        primaryProvider,
-		"model_id":        primaryModelID,
-		"fallback_models": []string{},
+		"provider": primaryProvider,
+		"model_id": primaryModelID,
 	}
 
 	// Build response (same shape as before)
@@ -1561,8 +1554,8 @@ func (api *StreamingAPI) handleGetAzureDeployedModels(w http.ResponseWriter, r *
 // lockedPresetLLMConfig is a workflow's saved LLM config as it actually runs
 // under LLM_CONFIG_LOCKED with an explicitly published list: every role --
 // Builder, Pulse and the three execution tiers -- runs the published default
-// unless the saved role is itself on the published list, and fallbacks are
-// dropped. Without the lock (or without a published list) the config is
+// unless the saved role is itself on the published list.
+// Without the lock (or without a published list) the config is
 // returned untouched. The result is runtime-only; nothing writes it back to
 // workflow.json, so lifting the lock restores the workflow's own choices.
 //
@@ -1608,7 +1601,7 @@ func lockedPresetLLMConfig(cfg *workflowtypes.PresetLLMConfig) *workflowtypes.Pr
 	role := func(saved *workflowtypes.AgentLLMConfig) *workflowtypes.AgentLLMConfig {
 		if saved != nil && publishedLLMListContains(strings.TrimSpace(saved.Provider), strings.TrimSpace(saved.ModelID), defaults.PrimaryConfig) {
 			kept := *saved
-			kept.Fallbacks = nil
+
 			return &kept
 		}
 		return &workflowtypes.AgentLLMConfig{Provider: defProvider, ModelID: defModel}

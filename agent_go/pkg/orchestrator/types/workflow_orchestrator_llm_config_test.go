@@ -14,16 +14,6 @@ func TestConvertDBAgentLLMConfigPreservesPublishedOptions(t *testing.T) {
 		Options: map[string]interface{}{
 			"reasoning_effort": "low",
 		},
-		Fallbacks: []workflowtypes.AgentLLMFallback{
-			{
-				PublishedLLMID: "claude-high",
-				Provider:       "claude-code",
-				ModelID:        "opus",
-				Options: map[string]interface{}{
-					"reasoning_effort": "high",
-				},
-			},
-		},
 	})
 
 	if converted == nil {
@@ -35,13 +25,5 @@ func TestConvertDBAgentLLMConfigPreservesPublishedOptions(t *testing.T) {
 	if got := converted.Options["reasoning_effort"]; got != "low" {
 		t.Fatalf("expected primary reasoning_effort=low, got %v", got)
 	}
-	if len(converted.Fallbacks) != 1 {
-		t.Fatalf("expected one fallback, got %d", len(converted.Fallbacks))
-	}
-	if converted.Fallbacks[0].PublishedLLMID != "claude-high" {
-		t.Fatalf("expected fallback published id to be preserved, got %q", converted.Fallbacks[0].PublishedLLMID)
-	}
-	if got := converted.Fallbacks[0].Options["reasoning_effort"]; got != "high" {
-		t.Fatalf("expected fallback reasoning_effort=high, got %v", got)
-	}
+
 }

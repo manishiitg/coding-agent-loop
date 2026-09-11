@@ -1,3 +1,4 @@
+import { stripRetiredLLMFallbacks } from '../../utils/retiredLLMFallbacks'
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
 import { useShallow } from 'zustand/react/shallow'
 import { AlertCircle, ArrowLeft, CheckCircle, ChevronDown, ChevronRight, Loader2, Lock, RefreshCw, Search, X } from 'lucide-react'
@@ -7,7 +8,7 @@ import { WorkflowProviderCredentialField } from '../WorkflowProviderCredentialFi
 import { CodingAgentSection } from '../llm/CodingAgentSection'
 import { APIProviderSection } from '../llm/APIProviderSection'
 import { providerStatus } from '../llm/providerStatus'
-import type { AgentLLMConfig, AgentLLMFallback, LLMProvider, PresetLLMConfig } from '../../services/api-types'
+import type { AgentLLMConfig, LLMProvider, PresetLLMConfig } from '../../services/api-types'
 import { llmConfigService, type DynamicModelEntry, type ModelMetadata, type ProviderManifestEntry } from '../../services/llm-config-api'
 import { useLLMStore } from '../../stores/useLLMStore'
 import { READ_ONLY_TITLE, useCanWriteWorkflow } from '../../hooks/useCanWriteWorkflow'
@@ -100,16 +101,6 @@ function toAgentLLMConfig(llm: LLMOption): AgentLLMConfig {
     provider: llm.provider as LLMProvider,
     model_id: llm.model,
     ...(hasOptions(llm.options) ? { options: llm.options } : {}),
-  }
-}
-
-function toFallback(llm: LLMOption): AgentLLMFallback {
-  const config = toAgentLLMConfig(llm)
-  return {
-    ...(config.published_llm_id ? { published_llm_id: config.published_llm_id } : {}),
-    provider: config.provider,
-    model_id: config.model_id,
-    ...(hasOptions(config.options) ? { options: config.options } : {}),
   }
 }
 
@@ -496,7 +487,7 @@ export default function WorkflowLLMConfigurationPanel({ workspacePath, llmConfig
   const selectRow = (row: ProviderRow) => {
     const config = configForRow(row)
     if (!config) return
-    onChange(config)
+    onChange(stripRetiredLLMFallbacks(config))
   }
 
   // "Use in this workflow": select the provider and persist right away. Used
@@ -506,7 +497,7 @@ export default function WorkflowLLMConfigurationPanel({ workspacePath, llmConfig
     if (!config) return
     setRowUsing(row.id)
     try {
-      onChange(config)
+      onChange(stripRetiredLLMFallbacks(config))
       if (onUseProvider) await onUseProvider(config)
       setChanging(false)
     } finally {
@@ -556,14 +547,9 @@ export default function WorkflowLLMConfigurationPanel({ workspacePath, llmConfig
   // bailed out entirely while still on a provider profile (silent no-op:
   // the very first edit did not save) and, even past that, only wrote the
   // single touched role.
-  const updateRole = (key: RoleKey, next: AgentLLMConfig, preserveFallbacks = true) => {
-    const current = roleConfig(llmConfig, key)
-    const withFallbacks: AgentLLMConfig = {
-      ...next,
-      ...(preserveFallbacks && current?.fallbacks?.length ? { fallbacks: current.fallbacks } : {}),
-    }
+  const updateRole = (key: RoleKey, next: AgentLLMConfig) => {
     const seed = (roleKey: RoleKey): AgentLLMConfig | undefined =>
-      key === roleKey ? withFallbacks : (roleConfig(llmConfig, roleKey) ?? defaultForRole(roleKey))
+      key === roleKey ? next : (roleConfig(llmConfig, roleKey) ?? defaultForRole(roleKey))
     const nextConfig: PresetLLMConfig = {
       ...llmConfig,
       schema_version: 2,
@@ -571,12 +557,12 @@ export default function WorkflowLLMConfigurationPanel({ workspacePath, llmConfig
       builder_llm: seed('builder_llm'),
       pulse_llm: seed('pulse_llm'),
       tiered_config: {
-        tier_1: seed('tier_1') ?? withFallbacks,
-        tier_2: seed('tier_2') ?? withFallbacks,
-        tier_3: seed('tier_3') ?? withFallbacks,
+        tier_1: seed('tier_1') ?? next,
+        tier_2: seed('tier_2') ?? next,
+        tier_3: seed('tier_3') ?? next,
       },
     }
-    onChange(nextConfig)
+    onChange(stripRetiredLLMFallbacks(nextConfig))
   }
 
   const defaultForRole = (key: RoleKey): AgentLLMConfig | undefined => {
@@ -591,16 +577,7 @@ export default function WorkflowLLMConfigurationPanel({ workspacePath, llmConfig
   const resetRole = (key: RoleKey) => {
     const defaultValue = defaultForRole(key)
     if (!advanced || !defaultValue) return
-    updateRole(key, defaultValue, false)
-  }
-
-  const updateFallbacks = (key: RoleKey, fallbacks: AgentLLMFallback[]) => {
-    const current = roleConfig(llmConfig, key)
-    if (!current) return
-    const next = { ...current }
-    if (fallbacks.length) next.fallbacks = fallbacks
-    else delete next.fallbacks
-    updateRole(key, next, false)
+    updateRole(key, defaultValue)
   }
 
   const handleRefresh = async () => {
@@ -1065,9 +1042,8 @@ export default function WorkflowLLMConfigurationPanel({ workspacePath, llmConfig
   // there is no separate "pin models" step.
   const renderRole = (row: RoleRow) => {
     const value = roleConfig(llmConfig, row.key) ?? defaultForRole(row.key)
-    const fallbackList = value?.fallbacks ?? []
     const defaultValue = defaultForRole(row.key)
-    const isCustomized = advanced && (configKey(value ?? {}) !== configKey(defaultValue ?? {}) || fallbackList.length > 0)
+    const isCustomized = advanced && (configKey(value ?? {}) !== configKey(defaultValue ?? {}))
 
     return (
       <div key={row.key} className="flex flex-col gap-2 border-t border-border px-3 py-2.5 first:border-t-0 sm:flex-row sm:items-center sm:gap-3">
@@ -1082,7 +1058,7 @@ export default function WorkflowLLMConfigurationPanel({ workspacePath, llmConfig
         </div>
         <div className="min-w-0 flex-1 space-y-1.5">
           {value ? (
-            <LLMRoleSelector availableLLMs={workflowOptions} value={value} onLLMSelect={llm => updateRole(row.key, toAgentLLMConfig(llm), true)} disabled={readOnly} />
+            <LLMRoleSelector availableLLMs={workflowOptions} value={value} onLLMSelect={llm => updateRole(row.key, toAgentLLMConfig(llm))} disabled={readOnly} />
           ) : (
             <span className="text-xs text-muted-foreground">Select a provider first.</span>
           )}
@@ -1092,30 +1068,7 @@ export default function WorkflowLLMConfigurationPanel({ workspacePath, llmConfig
                 Reset to provider default
               </button>
             )}
-            {value && (
-              <details className="text-[11px]">
-                <summary className="cursor-pointer text-muted-foreground hover:text-foreground">Fallbacks{fallbackList.length ? ` (${fallbackList.length})` : ''}</summary>
-                <div className="mt-1.5 space-y-1.5">
-                  {fallbackList.map((fallback, index) => (
-                    <span key={`${row.key}-${configKey(fallback)}-${index}`} className="mr-1 inline-flex items-center gap-1 rounded-full bg-muted px-2 py-0.5 text-xs text-foreground">
-                      {fallback.provider}/{fallback.model_id.split('/').pop()}
-                      <button type="button" onClick={() => updateFallbacks(row.key, fallbackList.filter((_, itemIndex) => itemIndex !== index))} disabled={readOnly} title={readOnly ? disabledTitle : undefined} className="text-muted-foreground hover:text-destructive disabled:cursor-not-allowed disabled:opacity-50" aria-label={`Remove ${row.label} fallback`}>
-                        <X className="h-3 w-3" />
-                      </button>
-                    </span>
-                  ))}
-                  <LLMSelectionDropdown
-                    inModal
-                    availableLLMs={workflowOptions.filter(option => optionKey(option) !== configKey(value) && !fallbackList.some(fallback => configKey(fallback) === optionKey(option)))}
-                    selectedLLM={null}
-                    onLLMSelect={llm => updateFallbacks(row.key, [...fallbackList, toFallback(llm)])}
-                    onRefresh={loadDefaultsFromBackend}
-                    placeholder="+ Add fallback"
-                    disabled={readOnly}
-                  />
-                </div>
-              </details>
-            )}
+
           </div>
         </div>
       </div>

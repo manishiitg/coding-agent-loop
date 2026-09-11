@@ -117,8 +117,8 @@ For steps in scripted mode, the saved Python script at `<script-dir>/main.py` is
 - If diagnosis revealed the fix (e.g., a selector changed), apply it directly. If the issue is complex, use your live MCP access to prototype the fix interactively before patching.
 
 **3. Test** — Run the patched script:
-- Use `execute_step(step_id, group_name, fast_path_only=true)` to test the fix directly — this runs ONLY the saved script with no LLM fallback, so you see exactly what your patch does
-- Or use `execute_step(step_id, group_name)` to run with normal LLM fallback if the script fails
+- Use `execute_step(step_id, group_name, fast_path_only=true)` to test the fix directly — this runs ONLY the saved script without invoking the step agent, so you see exactly what your patch does
+- Or use `execute_step(step_id, group_name)` to let the selected step agent handle a script failure
 - After running, use `agent_browser(command="snapshot", args=["-i"])` to confirm the expected page state, or read output files to check correctness
 - Check the output files and logs to confirm the fix
 

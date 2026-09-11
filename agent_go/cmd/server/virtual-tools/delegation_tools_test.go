@@ -394,3 +394,12 @@ func TestCLIToolEnvironmentPromptClaimsNativeToolsAreDisabled(t *testing.T) {
 		}
 	}
 }
+
+func TestDelegateRejectsUnknownReasoningTier(t *testing.T) {
+	_, err := handleDelegate(context.Background(), map[string]interface{}{
+		"instruction": "Do the task", "reasoning_level": "missing-tier",
+	})
+	if err == nil || !strings.Contains(err.Error(), "invalid reasoning_level") {
+		t.Fatalf("unknown tier must fail before inheriting another model: %v", err)
+	}
+}

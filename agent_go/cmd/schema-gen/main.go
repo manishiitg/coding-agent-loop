@@ -119,8 +119,7 @@ type EventDataUnion struct {
 
 	// Fallback & Resilience Events
 	ModelChange        *events.ModelChangeEvent        `json:"model_change,omitempty"`
-	FallbackModelUsed  *events.FallbackModelUsedEvent  `json:"fallback_model_used,omitempty"`
-	FallbackAttempt    *events.FallbackAttemptEvent    `json:"fallback_attempt,omitempty"`
+	RetryAttempt       *events.RetryAttemptEvent       `json:"retry_attempt,omitempty"`
 	ThrottlingDetected *events.ThrottlingDetectedEvent `json:"throttling_detected,omitempty"`
 	TokenLimitExceeded *events.TokenLimitExceededEvent `json:"token_limit_exceeded,omitempty"`
 
@@ -274,8 +273,7 @@ var EventRegistry = map[events.EventType]string{
 
 	// Fallback & Resilience Events
 	events.ModelChange:        "model_change",
-	events.FallbackModelUsed:  "fallback_model_used",
-	events.FallbackAttempt:    "fallback_attempt",
+	events.RetryAttempt:       "retry_attempt",
 	events.ThrottlingDetected: "throttling_detected",
 	events.TokenLimitExceeded: "token_limit_exceeded",
 
@@ -551,7 +549,6 @@ type UnifiedEvent struct {
 
 	LargeToolOutputDetectedEvent    events.LargeToolOutputDetectedEvent    `json:"large_tool_output_detected"`
 	LargeToolOutputFileWrittenEvent events.LargeToolOutputFileWrittenEvent `json:"large_tool_output_file_written"`
-	FallbackModelUsedEvent          events.FallbackModelUsedEvent          `json:"fallback_model_used"`
 	ThrottlingDetectedEvent         events.ThrottlingDetectedEvent         `json:"throttling_detected"`
 	TokenLimitExceededEvent         events.TokenLimitExceededEvent         `json:"token_limit_exceeded"`
 	TokenUsageEvent                 events.TokenUsageEvent                 `json:"token_usage"`
@@ -572,7 +569,7 @@ type UnifiedEvent struct {
 	ToolResponseEvent events.ToolResponseEvent `json:"tool_response"`
 
 	ModelChangeEvent            events.ModelChangeEvent            `json:"model_change"`
-	FallbackAttemptEvent        events.FallbackAttemptEvent        `json:"fallback_attempt"`
+	RetryAttemptEvent           events.RetryAttemptEvent           `json:"retry_attempt"`
 	CacheEvent                  events.CacheEvent                  `json:"cache_event"`
 	ComprehensiveCacheEvent     mcpcache.ComprehensiveCacheEvent   `json:"comprehensive_cache_event"`
 	ToolExecutionEvent          events.ToolExecutionEvent          `json:"tool_execution"`

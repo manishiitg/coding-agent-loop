@@ -27,7 +27,6 @@ When the server handles a **query** (chat or workflow), the source of provider, 
 
 - **Provider and model:** From `getPrimaryProviderAndModelFromDefaults()` — reads env, ignores frontend request.
 - **API keys:** From `buildProviderAPIKeysFromEnv()` — reads `os.Getenv()` directly, ignores frontend request.
-- **Fallbacks:** Disabled (`nil`).
 - The frontend receives no API keys in `/api/llm-config/defaults` (stripped by `stripSecretsFromMap()`).
 
 See [How API Keys Flow in Locked Mode](#how-api-keys-flow-in-locked-mode) for the detailed flow diagram.
@@ -202,7 +201,6 @@ When `LLM_CONFIG_LOCKED=true`, API keys **never touch the frontend**. They flow 
 if isLLMConfigLocked() {
     // Ignore request LLM config; use server env only
     finalProvider, finalModelID = getPrimaryProviderAndModelFromDefaults()
-    fallbacks = nil
 }
 ```
 
@@ -239,7 +237,6 @@ When `LLM_CONFIG_LOCKED=true`, the server **ignores** client-sent LLM config ent
 
 - **Provider and model:** Taken from `getPrimaryProviderAndModelFromDefaults()` (reads env), restricted to `SUPPORTED_LLM_PROVIDERS`.
 - **API keys:** Built by `buildProviderAPIKeysFromEnv()` which reads `os.Getenv()` for each provider.
-- **Fallbacks:** Cleared (`fallbacks = nil`) — only the primary from env is used.
 - **Result:** Lock is enforced on the server. Crafted HTTP requests or edited localStorage cannot override provider or keys.
 
 ### 4. Example: Gemini-only deployment

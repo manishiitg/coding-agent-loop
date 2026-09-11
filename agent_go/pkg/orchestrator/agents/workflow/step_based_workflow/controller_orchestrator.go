@@ -574,8 +574,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) selectOrchestratorLLM(
 				ModelID:  stepConfig.ExecutionLLM.ModelID,
 				Options:  stepConfig.ExecutionLLM.Options,
 			},
-			Fallbacks: convertAgentFallbacks(stepConfig.ExecutionLLM.Fallbacks),
-			APIKeys:   hcpo.GetAPIKeys(),
+			APIKeys: hcpo.GetAPIKeys(),
 		}
 	}
 

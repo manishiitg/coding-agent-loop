@@ -83,7 +83,7 @@ func createLLMLogger() loggerv2.Logger {
 }
 
 // CreateLLMInstance creates an LLM instance with standard configuration
-// Uses config.LLMConfig as the source of truth for provider/model/fallbacks
+// Uses config.LLMConfig as the source of truth for provider/model
 func CreateLLMInstance(
 	config *agents.OrchestratorAgentConfig,
 	logger loggerv2.Logger,
@@ -100,27 +100,6 @@ func CreateLLMInstance(
 	// Get primary LLM config from unified LLMConfig
 	primaryProvider := config.LLMConfig.Primary.Provider
 	primaryModel := config.LLMConfig.Primary.ModelID
-
-	// Build fallback models list from LLMConfig.Fallbacks
-	var fallbackModels []string
-	if len(config.LLMConfig.Fallbacks) > 0 {
-		for _, fallback := range config.LLMConfig.Fallbacks {
-			// Format: provider/model for cross-provider fallbacks, or just model for same-provider
-			if fallback.Provider != "" && fallback.Provider != primaryProvider {
-				fallbackModels = append(fallbackModels, fmt.Sprintf("%s/%s", fallback.Provider, fallback.ModelID))
-			} else {
-				fallbackModels = append(fallbackModels, fallback.ModelID)
-			}
-		}
-		logger.Info(fmt.Sprintf("🔧 Using configured fallback models for %s LLM: %v", llmType, fallbackModels))
-	} else {
-		// Use default fallback models for the provider if no fallbacks configured
-		fallbackModels = append(fallbackModels, llm.GetDefaultFallbackModels(llm.Provider(primaryProvider))...)
-		// Also add default cross-provider fallbacks
-		crossProviderFallbacks := llm.GetCrossProviderFallbackModels(llm.Provider(primaryProvider))
-		fallbackModels = append(fallbackModels, crossProviderFallbacks...)
-		logger.Info(fmt.Sprintf("🔧 Using default fallback models for %s LLM provider: %s", llmType, primaryProvider))
-	}
 
 	// Clone API keys — same underlying type, so Clone() avoids field-by-field copy.
 	// Priority: per-model APIKey > global APIKeys
@@ -149,15 +128,14 @@ func CreateLLMInstance(
 
 	// Create LLM configuration using unified LLMConfig
 	llmConfig := llm.Config{
-		Provider:       llm.Provider(primaryProvider),
-		ModelID:        primaryModel,
-		Temperature:    config.Temperature,
-		Tracers:        nil, // Tracers will be set later if needed
-		TraceID:        traceID,
-		FallbackModels: fallbackModels,
-		MaxRetries:     config.MaxRetries,
-		Logger:         llmLogger, // Use separate LLM logger for multi-llm-provider-go logs
-		APIKeys:        llmAPIKeys,
+		Provider:    llm.Provider(primaryProvider),
+		ModelID:     primaryModel,
+		Temperature: config.Temperature,
+		Tracers:     nil, // Tracers will be set later if needed
+		TraceID:     traceID,
+		MaxRetries:  config.MaxRetries,
+		Logger:      llmLogger, // Use separate LLM logger for multi-llm-provider-go logs
+		APIKeys:     llmAPIKeys,
 	}
 
 	// Initialize LLM using the existing factory

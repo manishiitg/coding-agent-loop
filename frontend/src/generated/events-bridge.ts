@@ -138,8 +138,7 @@ export interface EventDataUnion {
   large_tool_output_file_write_error?: LargeToolOutputFileWriteErrorEvent;
   large_tool_output_server_unavailable?: LargeToolOutputServerUnavailableEvent;
   model_change?: ModelChangeEvent;
-  fallback_model_used?: FallbackModelUsedEvent;
-  fallback_attempt?: FallbackAttemptEvent;
+  retry_attempt?: RetryAttemptEvent;
   throttling_detected?: ThrottlingDetectedEvent;
   token_limit_exceeded?: TokenLimitExceededEvent;
   cache_event?: CacheEvent;
@@ -441,8 +440,6 @@ export interface LLMGenerationWithRetryEvent {
   max_retries?: number;
   primary_model?: string;
   current_llm?: string;
-  same_provider_fallbacks?: string[];
-  cross_provider_fallbacks?: string[];
   provider?: string;
   operation?: string;
   final_error?: string;
@@ -1019,28 +1016,7 @@ export interface ModelChangeEvent {
   provider?: string;
   duration?: string;
 }
-export interface FallbackModelUsedEvent {
-  timestamp?: string;
-  trace_id?: string;
-  span_id?: string;
-  event_id?: string;
-  parent_id?: string;
-  is_end_event?: boolean;
-  correlation_id?: string;
-  hierarchy_level?: number;
-  session_id?: string;
-  component?: string;
-  metadata?: {
-    [k: string]: unknown;
-  };
-  turn?: number;
-  original_model?: string;
-  fallback_model?: string;
-  provider?: string;
-  reason?: string;
-  duration?: string;
-}
-export interface FallbackAttemptEvent {
+export interface RetryAttemptEvent {
   timestamp?: string;
   trace_id?: string;
   span_id?: string;
@@ -2158,6 +2134,7 @@ export interface ConversationThinkingEvent {
   };
   thinking?: string;
   turn?: number;
+  is_delta?: boolean;
 }
 export interface LLMMessagesEvent {
   timestamp?: string;

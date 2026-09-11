@@ -138,15 +138,6 @@ type AgentLLMConfig struct {
 	Provider       string                 `json:"provider,omitempty"`         // e.g., "openai", "bedrock", "openrouter", "vertex"
 	ModelID        string                 `json:"model_id,omitempty"`         // e.g., "gpt-4o", "claude-3-5-sonnet-20241022"
 	Options        map[string]interface{} `json:"options,omitempty"`          // Provider-specific runtime options
-	Fallbacks      []AgentLLMFallback     `json:"fallbacks,omitempty"`        // Optional fallback models for retry on failure
-}
-
-// AgentLLMFallback represents a fallback LLM model
-type AgentLLMFallback struct {
-	PublishedLLMID string                 `json:"published_llm_id,omitempty"`
-	Provider       string                 `json:"provider"`
-	ModelID        string                 `json:"model_id"`
-	Options        map[string]interface{} `json:"options,omitempty"`
 }
 
 // ValidationSchema represents structured validation rules for step outputs

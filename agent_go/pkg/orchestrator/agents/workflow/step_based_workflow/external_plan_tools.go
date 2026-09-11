@@ -119,19 +119,6 @@ func getUpdateStepConfigParameters() map[string]interface{} {
 					"provider":         map[string]interface{}{"type": "string", "description": "LLM provider (e.g., 'openai', 'anthropic', 'bedrock', 'openrouter', 'vertex', 'azure')"},
 					"model_id":         map[string]interface{}{"type": "string", "description": "Model ID (e.g., 'gpt-4o', 'claude-sonnet-4-20250514')"},
 					"options":          map[string]interface{}{"type": "object", "description": "Provider-specific runtime options copied from the published LLM, such as reasoning_effort.", "additionalProperties": true},
-					"fallbacks": map[string]interface{}{
-						"type":        "array",
-						"description": "Optional ordered fallback models.",
-						"items": map[string]interface{}{
-							"type": "object",
-							"properties": map[string]interface{}{
-								"published_llm_id": map[string]interface{}{"type": "string"},
-								"provider":         map[string]interface{}{"type": "string"},
-								"model_id":         map[string]interface{}{"type": "string"},
-								"options":          map[string]interface{}{"type": "object", "additionalProperties": true},
-							},
-						},
-					},
 				},
 			},
 			"execution_tier": map[string]interface{}{
@@ -381,33 +368,7 @@ func createUpdateStepConfigExecutor(runtime stepConfigToolRuntime, logger logger
 		}
 
 		// Parse LLM override fields
-		parseLLMFallbacks := func(raw interface{}) []AgentLLMFallback {
-			arr, ok := raw.([]interface{})
-			if !ok {
-				return nil
-			}
-			fallbacks := make([]AgentLLMFallback, 0, len(arr))
-			for _, item := range arr {
-				m, ok := item.(map[string]interface{})
-				if !ok {
-					continue
-				}
-				provider, _ := m["provider"].(string)
-				modelID, _ := m["model_id"].(string)
-				if provider == "" || modelID == "" {
-					continue
-				}
-				publishedLLMID, _ := m["published_llm_id"].(string)
-				options, _ := m["options"].(map[string]interface{})
-				fallbacks = append(fallbacks, AgentLLMFallback{
-					PublishedLLMID: publishedLLMID,
-					Provider:       provider,
-					ModelID:        modelID,
-					Options:        options,
-				})
-			}
-			return fallbacks
-		}
+
 		llmFields := []struct {
 			key    string
 			target **AgentLLMConfig
@@ -430,7 +391,6 @@ func createUpdateStepConfigExecutor(runtime stepConfigToolRuntime, logger logger
 							Provider:       provider,
 							ModelID:        modelID,
 							Options:        options,
-							Fallbacks:      parseLLMFallbacks(llmMap["fallbacks"]),
 						}
 					}
 				}

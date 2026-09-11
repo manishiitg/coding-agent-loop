@@ -64,7 +64,7 @@ an actionable repair or no issue; do not invent tests to fill the checklist.
 6. When outputs or other evidence contradict claimed success, consider relevant
    counterexamples: stale
    receipts, wrong-run rows, empty-but-valid output, partial dependencies,
-   boundary thresholds, bad defaults, fallback leakage, and recovery that never
+   boundary thresholds, bad defaults, workflow recovery leakage, and recovery that never
    revalidated the original failure. For allocators, routers, lifecycle/status
    machines, feature flags, and guards implicated in the defect, inspect the
    affected decision and which persisted value it consumed.
@@ -196,8 +196,8 @@ comparable runs remain, state that limitation rather than inferring recurrence.
   step's claimed success
 - the final result is empty, unsupported, stale, from the wrong run/group, or
   inconsistent with a dependency
-- a `CONCERNS:` marker names a tool, source, route, fallback, or decision problem
-- a route/fallback choice is inconsistent with its configured condition
+- a `CONCERNS:` marker names a tool, source, route, recovery, or decision problem
+- a route/recovery choice is inconsistent with its configured condition
 - a producing step changed behavior after a plan/config/tool/model change
 - repeated retries, surprising tool usage, or an implausibly low-evidence
   conclusion may have affected correctness
@@ -211,16 +211,16 @@ selected trace, check whether the agent:
 - used current dependency artifacts instead of stale or unrelated evidence
 - interpreted tool results correctly rather than ignoring, contradicting, or
   inventing facts beyond them
-- followed configured routing, fallback, retry, validation, and stop conditions
+- followed configured routing, workflow recovery, retry, validation, and stop conditions
 - gathered enough evidence before stopping or claiming success
-- verified a recovery/fallback actually repaired the original problem
+- verified a recovery actually repaired the original problem
 - grounded its final conclusion and produced artifacts in the observable results
 
 Return each trace finding with: `classification`, step/item id, attempt, the
 observable decision/tool call, exact result/evidence, impact, bounded fix, and
 verification. Use exactly these classifications:
 
-- `correctness_bug` — wrong tool/source/arguments/route/interpretation/fallback,
+- `correctness_bug` — wrong tool/source/arguments/route/interpretation/recovery,
   stale evidence, unsupported conclusion, or wrong side effect that can change
   the workflow outcome
 - `efficiency_or_coaching` — outcome remains correct, but tool choice, retries,

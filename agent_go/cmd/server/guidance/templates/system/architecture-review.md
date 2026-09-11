@@ -37,6 +37,10 @@ research instead of repeating it. External actions retain existing authorization
 
 ### Execution tier and model ownership
 
+LLM calls stay on the selected model and coding-agent provider, including retries.
+Do not recommend backup model/provider chains or treat their absence as an
+architecture gap. Deliberate model/tier changes follow the approval contract below.
+
 You own persistent execution tier recommendations (`execution_tier`) and justified
 model pins (`execution_llm`). Runtime does not promote or demote tiers from learning
 content, run counts or failures. Unconfigured execution steps default to High;

@@ -488,8 +488,6 @@ const getDefaultTabConfig = (mode: 'workflow' | 'multi-agent' = 'multi-agent'): 
     llmConfig: llmConfig || {
       provider: 'codex-cli',
       model_id: 'codex-cli',
-      fallback_models: [],
-      cross_provider_fallback: undefined
     },
     // CRITICAL: Don't copy global chatFileContext - chat tabs should have independent file context
     // Workflow mode uses global chatFileContext, but chat mode uses tab-specific fileContext

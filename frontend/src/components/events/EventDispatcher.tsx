@@ -84,8 +84,7 @@ import {
 import {
   TokenUsageEventDisplay,
   ThrottlingDetectedEventDisplay,
-  FallbackModelUsedEventDisplay,
-  FallbackAttemptEventDisplay,
+  RetryAttemptEventDisplay,
   BrokenPipeEventDisplay,
   TokenLimitExceededEventDisplay,
   LargeToolOutputDetectedEventDisplay,
@@ -751,11 +750,8 @@ export const EventDispatcher: React.FC<EventDispatcherProps> = React.memo(({
   if (isEventType(event, 'throttling_detected')) {
     return <CompactWrapper compact={compact}><ThrottlingDetectedEventDisplay event={getEventData(event)} /></CompactWrapper>
   }
-  if (isEventType(event, 'fallback_model_used')) {
-    return <CompactWrapper compact={compact}><FallbackModelUsedEventDisplay event={getEventData(event)} /></CompactWrapper>
-  }
-  if (isEventType(event, 'fallback_attempt')) {
-    return <CompactWrapper compact={compact}><FallbackAttemptEventDisplay event={getEventData(event)} /></CompactWrapper>
+  if (isEventType(event, 'retry_attempt')) {
+    return <CompactWrapper compact={compact}><RetryAttemptEventDisplay event={getEventData(event)} /></CompactWrapper>
   }
   if (isEventType(event, 'broken_pipe')) {
     return <CompactWrapper compact={compact}><BrokenPipeEventDisplay event={getEventData(event)} /></CompactWrapper>

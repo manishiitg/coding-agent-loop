@@ -1903,6 +1903,9 @@
         },
         "turn": {
           "type": "integer"
+        },
+        "is_delta": {
+          "type": "boolean"
         }
       },
       "additionalProperties": false,
@@ -2201,11 +2204,8 @@
         "model_change": {
           "$ref": "#/$defs/ModelChangeEvent"
         },
-        "fallback_model_used": {
-          "$ref": "#/$defs/FallbackModelUsedEvent"
-        },
-        "fallback_attempt": {
-          "$ref": "#/$defs/FallbackAttemptEvent"
+        "retry_attempt": {
+          "$ref": "#/$defs/RetryAttemptEvent"
         },
         "throttling_detected": {
           "$ref": "#/$defs/ThrottlingDetectedEvent"
@@ -2422,8 +2422,6 @@
         "conversation_turn",
         "debug",
         "error_detail",
-        "fallback_attempt",
-        "fallback_model_used",
         "human_verification_response",
         "independent_steps_selected",
         "json_validation_end",
@@ -2458,6 +2456,7 @@
         "presentation_updated",
         "product_interaction",
         "request_human_feedback",
+        "retry_attempt",
         "routing_evaluated",
         "step_progress_updated",
         "step_token_usage",
@@ -2484,131 +2483,6 @@
         "user_message",
         "variables_extracted"
       ]
-    },
-    "FallbackAttemptEvent": {
-      "properties": {
-        "timestamp": {
-          "type": "string",
-          "format": "date-time"
-        },
-        "trace_id": {
-          "type": "string"
-        },
-        "span_id": {
-          "type": "string"
-        },
-        "event_id": {
-          "type": "string"
-        },
-        "parent_id": {
-          "type": "string"
-        },
-        "is_end_event": {
-          "type": "boolean"
-        },
-        "correlation_id": {
-          "type": "string"
-        },
-        "hierarchy_level": {
-          "type": "integer"
-        },
-        "session_id": {
-          "type": "string"
-        },
-        "component": {
-          "type": "string"
-        },
-        "metadata": {
-          "type": "object"
-        },
-        "turn": {
-          "type": "integer"
-        },
-        "attempt_index": {
-          "type": "integer"
-        },
-        "total_attempts": {
-          "type": "integer"
-        },
-        "model_id": {
-          "type": "string"
-        },
-        "provider": {
-          "type": "string"
-        },
-        "phase": {
-          "type": "string"
-        },
-        "error": {
-          "type": "string"
-        },
-        "success": {
-          "type": "boolean"
-        },
-        "duration": {
-          "type": "string"
-        }
-      },
-      "additionalProperties": false,
-      "type": "object"
-    },
-    "FallbackModelUsedEvent": {
-      "properties": {
-        "timestamp": {
-          "type": "string",
-          "format": "date-time"
-        },
-        "trace_id": {
-          "type": "string"
-        },
-        "span_id": {
-          "type": "string"
-        },
-        "event_id": {
-          "type": "string"
-        },
-        "parent_id": {
-          "type": "string"
-        },
-        "is_end_event": {
-          "type": "boolean"
-        },
-        "correlation_id": {
-          "type": "string"
-        },
-        "hierarchy_level": {
-          "type": "integer"
-        },
-        "session_id": {
-          "type": "string"
-        },
-        "component": {
-          "type": "string"
-        },
-        "metadata": {
-          "type": "object"
-        },
-        "turn": {
-          "type": "integer"
-        },
-        "original_model": {
-          "type": "string"
-        },
-        "fallback_model": {
-          "type": "string"
-        },
-        "provider": {
-          "type": "string"
-        },
-        "reason": {
-          "type": "string"
-        },
-        "duration": {
-          "type": "string"
-        }
-      },
-      "additionalProperties": false,
-      "type": "object"
     },
     "FileCheckResultForEvent": {
       "properties": {
@@ -3069,18 +2943,6 @@
         },
         "current_llm": {
           "type": "string"
-        },
-        "same_provider_fallbacks": {
-          "items": {
-            "type": "string"
-          },
-          "type": "array"
-        },
-        "cross_provider_fallbacks": {
-          "items": {
-            "type": "string"
-          },
-          "type": "array"
         },
         "provider": {
           "type": "string"
@@ -4699,6 +4561,73 @@
           "type": "string"
         },
         "action_description": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
+    },
+    "RetryAttemptEvent": {
+      "properties": {
+        "timestamp": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "trace_id": {
+          "type": "string"
+        },
+        "span_id": {
+          "type": "string"
+        },
+        "event_id": {
+          "type": "string"
+        },
+        "parent_id": {
+          "type": "string"
+        },
+        "is_end_event": {
+          "type": "boolean"
+        },
+        "correlation_id": {
+          "type": "string"
+        },
+        "hierarchy_level": {
+          "type": "integer"
+        },
+        "session_id": {
+          "type": "string"
+        },
+        "component": {
+          "type": "string"
+        },
+        "metadata": {
+          "type": "object"
+        },
+        "turn": {
+          "type": "integer"
+        },
+        "attempt_index": {
+          "type": "integer"
+        },
+        "total_attempts": {
+          "type": "integer"
+        },
+        "model_id": {
+          "type": "string"
+        },
+        "provider": {
+          "type": "string"
+        },
+        "phase": {
+          "type": "string"
+        },
+        "error": {
+          "type": "string"
+        },
+        "success": {
+          "type": "boolean"
+        },
+        "duration": {
           "type": "string"
         }
       },

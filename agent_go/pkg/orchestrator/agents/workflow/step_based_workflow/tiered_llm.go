@@ -82,6 +82,9 @@ func NewTierResolver(config *TieredLLMConfig, apiKeys *orchestrator.APIKeys) *Ti
 
 // ResolveTier returns the LLMConfig for a specific tier level
 func (tr *TierResolver) ResolveTier(tier TierLevel) *orchestrator.LLMConfig {
+	if tr == nil || tr.config == nil {
+		return nil
+	}
 	var agentConfig *AgentLLMConfig
 	switch tier {
 	case TierHigh:
@@ -91,7 +94,7 @@ func (tr *TierResolver) ResolveTier(tier TierLevel) *orchestrator.LLMConfig {
 	case TierLow:
 		agentConfig = tr.config.Tier3
 	default:
-		agentConfig = tr.config.Tier1 // fallback to highest tier
+		return nil
 	}
 
 	if agentConfig == nil || agentConfig.Provider == "" || agentConfig.ModelID == "" {
@@ -104,27 +107,10 @@ func (tr *TierResolver) ResolveTier(tier TierLevel) *orchestrator.LLMConfig {
 			ModelID:  agentConfig.ModelID,
 			Options:  agentConfig.Options,
 		},
-		Fallbacks: convertAgentFallbacks(agentConfig.Fallbacks),
-		APIKeys:   tr.apiKeys,
+		APIKeys: tr.apiKeys,
 	}
 
 	return config
-}
-
-// convertAgentFallbacks converts AgentLLMFallback slice to orchestrator.LLMModel slice.
-func convertAgentFallbacks(fallbacks []AgentLLMFallback) []orchestrator.LLMModel {
-	if len(fallbacks) == 0 {
-		return nil
-	}
-	models := make([]orchestrator.LLMModel, len(fallbacks))
-	for i, fb := range fallbacks {
-		models[i] = orchestrator.LLMModel{
-			Provider: fb.Provider,
-			ModelID:  fb.ModelID,
-			Options:  fb.Options,
-		}
-	}
-	return models
 }
 
 // ResolveForExecution returns the default LLM tier for execution agents (Tier 1 / High).

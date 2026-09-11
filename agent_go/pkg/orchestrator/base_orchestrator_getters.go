@@ -189,14 +189,7 @@ func (bo *BaseOrchestrator) GetAPIKeys() *APIKeys {
 	return bo.llmConfig.APIKeys
 }
 
-// GetFallbacks safely returns the fallback LLMs from the LLM configuration
 // Returns nil if llmConfig is nil (prevents nil pointer dereference)
-func (bo *BaseOrchestrator) GetFallbacks() []LLMModel {
-	if bo.llmConfig == nil {
-		return nil
-	}
-	return bo.llmConfig.Fallbacks
-}
 
 // GetTracer returns the tracer (not implemented - orchestrator doesn't have its own tracer)
 func (bo *BaseOrchestrator) GetTracer() observability.Tracer {

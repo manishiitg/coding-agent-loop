@@ -386,7 +386,7 @@ func (boa *BaseOrchestratorAgent) emitAgentEndEvent(ctx context.Context, templat
 }
 
 // createLLM creates an LLM instance based on the agent configuration
-// Uses the unified LLMConfig (Primary + Fallbacks) as the source of truth
+// Uses the unified LLMConfig (selected model) as the source of truth
 func (boa *BaseOrchestratorAgent) createLLM() (llmtypes.Model, error) {
 	if boa.config != nil && boa.config.LLMFactory != nil {
 		return boa.config.LLMFactory()
@@ -395,35 +395,16 @@ func (boa *BaseOrchestratorAgent) createLLM() (llmtypes.Model, error) {
 	// Generate trace ID for this agent session
 	traceID := observability.TraceID(fmt.Sprintf("%s-agent-%d", boa.agentType, time.Now().UnixNano()))
 
+	if boa.config == nil {
+		return nil, fmt.Errorf("selected LLM configuration is required")
+	}
+
 	// Get primary LLM config
 	primaryProvider := boa.config.LLMConfig.Primary.Provider
 	primaryModel := boa.config.LLMConfig.Primary.ModelID
 
-	// Safety fallback for empty provider/model
-	if primaryProvider == "" {
-		primaryProvider = "bedrock" // Orchestrator default fallback
-	}
-	if primaryModel == "" {
-		primaryModel = "global.anthropic.claude-sonnet-4-5-v1:0" // Default model fallback
-	}
-
-	// Build fallback models list from LLMConfig.Fallbacks
-	var fallbackModels []string
-	if len(boa.config.LLMConfig.Fallbacks) > 0 {
-		for _, fallback := range boa.config.LLMConfig.Fallbacks {
-			// Format: provider/model for cross-provider fallbacks, or just model for same-provider
-			if fallback.Provider != "" && fallback.Provider != primaryProvider {
-				fallbackModels = append(fallbackModels, fmt.Sprintf("%s/%s", fallback.Provider, fallback.ModelID))
-			} else {
-				fallbackModels = append(fallbackModels, fallback.ModelID)
-			}
-		}
-	} else {
-		// Use default fallback models for the provider if no fallbacks configured
-		fallbackModels = append(fallbackModels, llm.GetDefaultFallbackModels(llm.Provider(primaryProvider))...)
-		// Also add default cross-provider fallbacks
-		crossProviderFallbacks := llm.GetCrossProviderFallbackModels(llm.Provider(primaryProvider))
-		fallbackModels = append(fallbackModels, crossProviderFallbacks...)
+	if strings.TrimSpace(primaryProvider) == "" || strings.TrimSpace(primaryModel) == "" {
+		return nil, fmt.Errorf("selected LLM provider and model are required")
 	}
 
 	// Direct assignment — AgentAPIKeys is an alias for llm.ProviderAPIKeys,
@@ -455,7 +436,6 @@ func (boa *BaseOrchestratorAgent) createLLM() (llmtypes.Model, error) {
 		Temperature:         boa.config.Temperature,
 		Tracers:             nil, // Tracers will be set later if needed
 		TraceID:             traceID,
-		FallbackModels:      fallbackModels,
 		MaxRetries:          boa.config.MaxRetries,
 		Logger:              llmLogger, // Use separate LLM logger for multi-llm-provider-go logs
 		APIKeys:             llmAPIKeys,

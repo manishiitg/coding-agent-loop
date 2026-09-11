@@ -462,7 +462,6 @@ func resolveImageGenerationTarget(ctx context.Context, cfg ImageGenExecutorConfi
 			if imageCfg.Primary != nil {
 				candidates = append(candidates, *imageCfg.Primary)
 			}
-			candidates = append(candidates, imageCfg.Fallbacks...)
 
 			var sawCandidate bool
 			for _, candidate := range candidates {

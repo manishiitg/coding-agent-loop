@@ -261,7 +261,7 @@ func TestTopLevelTierModelDoesNotOverrideExplicitChatLLM(t *testing.T) {
 		},
 	}
 
-	gotProvider, gotModel, _, applied := applyTopLevelDelegationModel(context.Background(), req, "codex-cli", "high", nil)
+	gotProvider, gotModel, applied := applyTopLevelDelegationModel(context.Background(), req, "codex-cli", "high")
 	if applied {
 		t.Fatal("tier model was applied despite an explicit chat LLM selection")
 	}
@@ -281,7 +281,7 @@ func TestTopLevelTierModelAppliesWhenChatLLMIsMissing(t *testing.T) {
 		},
 	}
 
-	gotProvider, gotModel, _, applied := applyTopLevelDelegationModel(context.Background(), req, "", "", nil)
+	gotProvider, gotModel, applied := applyTopLevelDelegationModel(context.Background(), req, "", "")
 	if !applied {
 		t.Fatal("tier model was not applied for a request with no chat LLM selection")
 	}
@@ -312,8 +312,8 @@ func TestProviderProfileOverridesStaleExplicitChatLLM(t *testing.T) {
 		},
 	}
 
-	gotProvider, gotModel, _, applied := applyTopLevelDelegationModel(
-		context.Background(), req, "openrouter", "grok-1", nil,
+	gotProvider, gotModel, applied := applyTopLevelDelegationModel(
+		context.Background(), req, "openrouter", "grok-1",
 	)
 	if !applied {
 		t.Fatal("provider profile did not override the stale explicit chat LLM")

@@ -7,7 +7,7 @@ than dispatching another reviewer. The review is read-only with respect to
 workflow artifacts and configuration, while typed Pulse finding, verification,
 and one terminal module result are required. It owns cost,
 timing, LLM selection, tool calling, runtime operations, setup, and plan-design
-hygiene. Do not change models, tiers, fallbacks, schedules, notification
+hygiene. Do not change models, tiers, schedules, notification
 recipients, backup, publish, or credentials in this command.{{if .Focus}}
 
 Focus especially on: {{.Focus}}.{{end}}{{if .RunFolder}}

@@ -745,6 +745,7 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
   const activePhase = useWorkflowStore(state => state.activePhase)
   const showChatArea = useWorkflowStore(state => state.showChatArea)
   const showWorkspacePane = useWorkflowStore(state => state.showWorkspacePane)
+  const focusedPane = useWorkflowStore(state => state.focusedPane)
   const setShowChatArea = useWorkflowStore(state => state.setShowChatArea)
   const setShowWorkspacePane = useWorkflowStore(state => state.setShowWorkspacePane)
   const setFocusedPane = useWorkflowStore(state => state.setFocusedPane)
@@ -1052,8 +1053,11 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
   // is unchanged.
   const shouldUseMobileReportPane = previewPaneTier === 'mobile'
   const isWorkspaceViewActive = isWorkspacePaneView(workflowWorkspaceView)
+  // A narrow workflow viewport is a single-pane surface. The shared toolbar
+  // remains above it and focusedPane decides whether chat or workspace owns
+  // the content row. At md+ both panes remain visible as the normal split.
   const chatPaneVisibilityClass =
-    workspacePaneVisible && isWorkspaceViewActive
+    workspacePaneVisible && focusedPane === 'preview'
       ? 'hidden md:flex'
       : 'flex'
   // The report preview preference drives the outer pane width:
@@ -1064,9 +1068,9 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
   // The divider sits between chat and the workspace. Each device preview keeps
   // its own saved ratio, so Mobile, Tablet, and Laptop can be switched without
   // one mode inheriting another mode's layout.
-  const splitLayoutClassName = !showChatArea || !workspacePaneVisible
+  const splitLayoutClassName = !showChatArea
     ? 'flex-1 min-h-0 flex flex-col'
-    : 'flex-1 min-h-0 flex flex-col md:grid md:grid-rows-[auto_minmax(0,1fr)] md:[grid-template-columns:var(--workflow-split-columns)] md:transition-[grid-template-columns] md:duration-150 md:ease-out'
+    : 'flex-1 min-h-0 grid grid-cols-1 grid-rows-[auto_minmax(0,1fr)] md:[grid-template-columns:var(--workflow-split-columns)] md:transition-[grid-template-columns] md:duration-150 md:ease-out'
   const splitLayoutStyle = showChatArea && workspacePaneVisible
     ? ({ '--workflow-split-columns': `minmax(240px, ${workspaceSplitRatio}fr) minmax(240px, ${1 - workspaceSplitRatio}fr)` } as React.CSSProperties)
     : undefined
@@ -1074,7 +1078,7 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
     ? 'flex-1 min-h-0 min-w-0'
     : !workspacePaneVisible
       ? 'hidden'
-      : `min-h-0 min-w-0 w-full md:w-auto md:col-start-2 md:row-start-2 ${isWorkspaceViewActive ? 'border-l border-border' : ''}`
+      : `min-h-0 min-w-0 w-full col-start-1 row-start-2 md:w-auto md:col-start-2 md:row-start-2 ${focusedPane === 'chat' ? 'hidden md:block' : ''} ${isWorkspaceViewActive ? 'md:border-l md:border-border' : ''}`
 
   // Load execution_defaults from workflow.json when workspace changes
   useEffect(() => {
@@ -2113,7 +2117,10 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
       onCreatePlan={onCreatePlan || handleCreatePlan}
       showChatArea={showChatArea}
       toolbarOnly={!workspacePaneVisible && showChatArea}
-      sharedToolbar={showChatArea}
+      // When the workspace pane is collapsed, keep the toolbar as a normal
+      // first grid item. Spanning a non-existent second column would otherwise
+      // leave the full-width chat occupying only half of a desktop viewport.
+      sharedToolbar={showChatArea && workspacePaneVisible}
       chatTabsSlot={showChatArea ? <WorkflowChatTabs embedded /> : undefined}
       paneClassName={canvasPaneClassName}
       onToggleChatArea={handleToggleChatArea}
@@ -2168,7 +2175,7 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
             data-tour="workflow-chat-pane"
             data-testid="tour-workflow-chat-pane"
             onMouseDownCapture={() => setFocusedPane('chat')}
-            className={`${chatPaneVisibilityClass} min-h-0 min-w-0 overflow-hidden flex-col bg-background transition-all duration-300 ${
+            className={`${chatPaneVisibilityClass} col-start-1 row-start-2 min-h-0 min-w-0 overflow-hidden flex-col bg-background transition-all duration-300 ${
             workspacePaneVisible
               ? `border-b border-border md:col-start-1 md:row-start-2 md:border-b-0 md:border-r ${shouldUseMobileReportPane ? 'flex-1 md:flex-[1.35]' : 'flex-1 basis-1/2'}`
               : 'flex-1'

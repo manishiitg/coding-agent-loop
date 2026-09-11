@@ -19,6 +19,7 @@ export type LLMProvider =
   | 'cursor-cli'
   | 'agy-cli'
   | 'pi-cli'
+  | 'muse-cli'
   | 'minimax'
   | 'minimax-coding-plan'
   | 'elevenlabs'

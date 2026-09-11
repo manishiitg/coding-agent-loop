@@ -163,25 +163,44 @@ func AttachReferenceSurface(mode string, attach func(*llmtypes.Skill) error) err
 }
 
 func AttachReferenceSurfaceWithMCP(mode string, mcpManagement bool, attach func(*llmtypes.Skill) error) error {
+	return AttachConfiguredReferenceSurface(mode, mcpManagement, []string{"system-tools", "builder-reference", "workflow-commands"}, attach)
+}
+
+// AttachConfiguredReferenceSurface honors the product's ordered bundle list.
+// Mode and MCP admission still filter the contents; a YAML entry grants no tools.
+func AttachConfiguredReferenceSurface(mode string, mcpManagement bool, names []string, attach func(*llmtypes.Skill) error) error {
 	if attach == nil {
 		return fmt.Errorf("attach reference surface: nil attach function")
 	}
-	if meta := buildSystemToolsSkillWithMCP(mode, mcpManagement); meta != nil {
-		if !mcpManagement {
-			meta.Content += "\nMCP management is unavailable in this session. Do not attempt integration installation or manual host config edits; ask an interactive Builder with write access to configure it.\n"
+	seen := map[string]bool{}
+	for _, name := range names {
+		if seen[name] {
+			return fmt.Errorf("duplicate reference skill %q", name)
 		}
-		if err := attach(meta); err != nil {
-			return fmt.Errorf("attach %s: %w", meta.Name, err)
+		seen[name] = true
+		switch name {
+		case "system-tools", "builder-reference", "workflow-commands":
+		default:
+			return fmt.Errorf("unknown reference skill %q", name)
 		}
 	}
-	if refs := materializeReferenceSkillWithMCP(mode, mcpManagement); refs != nil {
-		if err := attach(refs); err != nil {
-			return fmt.Errorf("attach %s: %w", refs.Name, err)
+	for _, name := range names {
+		var skill *llmtypes.Skill
+		switch name {
+		case "system-tools":
+			skill = buildSystemToolsSkillWithMCP(mode, mcpManagement)
+			if skill != nil && !mcpManagement {
+				skill.Content += "\nMCP management is unavailable in this session. Do not attempt integration installation or manual host config edits; ask an interactive Builder with write access to configure it.\n"
+			}
+		case "builder-reference":
+			skill = materializeReferenceSkillWithMCP(mode, mcpManagement)
+		case "workflow-commands":
+			skill = MaterializeGuidanceSkill(mode)
 		}
-	}
-	if cmds := MaterializeGuidanceSkill(mode); cmds != nil {
-		if err := attach(cmds); err != nil {
-			return fmt.Errorf("attach %s: %w", cmds.Name, err)
+		if skill != nil {
+			if err := attach(skill); err != nil {
+				return fmt.Errorf("attach %s: %w", name, err)
+			}
 		}
 	}
 	return nil

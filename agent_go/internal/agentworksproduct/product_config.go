@@ -8,7 +8,7 @@ import (
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/agentprofiles"
 )
 
-//go:embed product.yaml prompts/system-prompt.md
+//go:embed product.yaml prompts/*.md
 var productConfigFiles embed.FS
 
 // ProductManifest is the shared product.yaml shape (pkg/agentprofiles).
@@ -33,6 +33,10 @@ func AgentWorksManifest() (ProductManifest, error) {
 			return
 		}
 		if err := validateChatPolicy(manifest); err != nil {
+			productManifestErr = err
+			return
+		}
+		if err := validateChatDefinitions(productConfigFiles, manifest); err != nil {
 			productManifestErr = err
 			return
 		}

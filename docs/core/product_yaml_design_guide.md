@@ -398,3 +398,49 @@ base catalog there and preserves its user overlay. When migrating an existing
 release layout, copy the old current overlay before switching releases (as RTS
 deployment does). Local startup can keep its existing config path by leaving the
 variable unset. Neither secrets nor user server entries belong in product.yaml.
+
+### AgentWorks prompt files and skill lists
+
+`chat.builder` and `chat.run` are the live workflow-chat definitions. They are
+separate from the top-level `prompt`, which belongs to the general AgentWorks
+profile and does not supply the Builder/Run prompt.
+
+```yaml
+chat:
+  builder:
+    prompt:
+      file: prompts/builder.md
+      includes: [prompts/workflow-shared.md]
+    skills: [system-tools, builder-reference, workflow-commands]
+  run:
+    prompt:
+      file: prompts/run.md
+      includes: [prompts/workflow-shared.md]
+    skills: [system-tools, builder-reference]
+```
+
+Files are relative to the embedded product root. The entry files choose a named
+shared template and define their mode instructions; includes contain named Go
+template definitions only. Large instructions stay in Markdown, not YAML. The
+server supplies workflow paths, current state and tool-transport values at render
+time. Other runtime sections (granted capabilities, notifications, secret names,
+browser configuration and workspace context) continue through the server's prompt
+composer. Runtime/user strings are data, never parsed as template source.
+
+The manifest loader rejects missing/empty/unsafe paths, invalid template syntax
+and undefined named templates. AgentWorks also requires both modes and rejects
+unknown or duplicate core skill names; `workflow-commands` is Builder-only.
+Selected workflow skills remain additive. Skill content is still filtered by
+mode and MCP admission, so configuration cannot grant a tool or bypass origin and
+read-only restrictions. API and coding-CLI transports share the attached bundles;
+CLI projection is supplied by the existing adapter.
+
+A changed prompt file, shared include, or configured skill list changes the native
+session definition fingerprint. Existing coding-CLI sessions use the established
+conversation replay path to receive updated instructions on their next turn.
+Unchanged definitions retain compatible sessions. Files ship in the Go binary:
+editing them requires a rebuild/deployment, not a runtime YAML hot reload.
+
+Validation lives in `pkg/agentprofiles/chat_prompt_test.go`,
+`internal/agentworksproduct/chat_definition_test.go`, the configured reference
+surface tests and the complete server prompt/role regression suites.

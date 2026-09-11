@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/manishiitg/coding-agent-loop/agent_go/cmd/server/guidance"
+	"github.com/manishiitg/coding-agent-loop/agent_go/internal/agentworksproduct"
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/common"
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/orchestrator"
 	todo_creation_human "github.com/manishiitg/coding-agent-loop/agent_go/pkg/orchestrator/agents/workflow/step_based_workflow"
@@ -491,10 +492,10 @@ func (api *StreamingAPI) installWorkflowPhaseTools(
 		// plausible-looking pass instead. Tools may legitimately be unavailable;
 		// the procedure describing how to behave must not vanish with them.
 		workshopMode := phaseTemplateVars["WorkshopMode"]
-		if err := guidance.AttachReferenceSurfaceWithMCP(workshopMode, mcpManagement, func(skill *llmtypes.Skill) error {
+		if err := guidance.AttachConfiguredReferenceSurface(workshopMode, mcpManagement, agentworksproduct.ChatSkills(policy.Mode), func(skill *llmtypes.Skill) error {
 			return definitionAgent.AttachSkill(skill)
 		}); err != nil {
-			log.Printf("[WORKFLOW_PHASE] Failed to attach reference surface in %s (mode=%s): %v", workflowPhaseID, workshopMode, err)
+			return fmt.Errorf("attach reference surface in %s (mode=%s): %w", workflowPhaseID, workshopMode, err)
 		}
 	default:
 		// planning: plan modification tools

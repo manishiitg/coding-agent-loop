@@ -1,9 +1,11 @@
 ## Builder MCP installation admission and persistence — PLAT-307 follow-up
 
-Implemented locally on 2026-09-11: AgentWorks `product.yaml` chat capability
+Deployed to RTS as `009b0d6c1`: AgentWorks `product.yaml` chat capability
 policy, interactive Builder MCP registration, explicit execution/Pulse/read-only
 boundaries, native catalog refresh and durable MCP config across releases.
-Deployment pending. See [PLAT-307](pulse_platform/plat-307.md) for scope and tests.
+The follow-up selecting Builder/Run Markdown prompts and core skills from YAML
+is implemented and tested locally; deployment is pending for that follow-up.
+See [PLAT-307](pulse_platform/plat-307.md) for scope and tests.
 
 # Pulse Platform-Issue Register
 

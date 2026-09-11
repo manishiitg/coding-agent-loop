@@ -9,7 +9,11 @@ import (
 
 func executeInteractiveWorkshopPromptForMode(t *testing.T, mode string) string {
 	t.Helper()
-	prompt, err := ExecuteTemplate("interactiveWorkshopSystem", map[string]string{
+	name := "interactiveWorkshopSystem"
+	if mode != "workshop" {
+		name = "interactiveRunSystem"
+	}
+	prompt, err := ExecuteTemplate(name, map[string]string{
 		"AbsDocsRoot":                       "/app/workspace-docs",
 		"AbsWorkspacePath":                  "/app/workspace-docs/Workflow/example",
 		"AvailableGroups":                   "group-1",

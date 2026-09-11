@@ -16,10 +16,9 @@ func BuiltinAgentProfiles() []agentprofiles.Profile {
 	return []agentprofiles.Profile{BuiltinAgentProfile()}
 }
 
-// RegisterProductSkills is a no-op today -- this profile declares no
-// skills or bespoke tools in product.yaml. Kept as a real function, not
-// omitted, so server.go's registration call shape matches every other
-// product and adding a skill later needs no server.go change.
+// RegisterProductSkills does not register profile-specific skills. Builder/Run
+// core bundles are selected by chat.<mode>.skills and materialized per session
+// with capability and mode filtering in the workflow-phase setup path.
 func RegisterProductSkills() error {
 	return nil
 }

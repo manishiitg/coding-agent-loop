@@ -59,3 +59,17 @@ chat_policy:
     bot: [plan_authoring, report_authoring, secret_management, knowledgebase_maintenance, improvement_proposals]
     notification: []
   read_only: [workspace_ui]
+
+# Prompt text stays in Markdown. Includes contain named Go-template definitions;
+# the entry file chooses which definitions to render. Runtime values stay in Go.
+chat:
+  builder:
+    prompt:
+      file: prompts/builder.md
+      includes: [prompts/workflow-shared.md]
+    skills: [system-tools, builder-reference, workflow-commands]
+  run:
+    prompt:
+      file: prompts/run.md
+      includes: [prompts/workflow-shared.md]
+    skills: [system-tools, builder-reference]

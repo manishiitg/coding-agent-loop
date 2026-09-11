@@ -58,6 +58,7 @@ func (p workflowChatPolicy) sessionKey() string {
 func (api *StreamingAPI) chatPolicySessionKey(p workflowChatPolicy) string {
 	h := sha256.New()
 	h.Write([]byte(p.sessionKey()))
+	h.Write([]byte(agentworksproduct.ChatDefinitionKey(p.Mode)))
 	// Never log config contents or secret values. A changed install/auth/config
 	// causes the existing durable-history reconnect path on the next user turn.
 	for _, path := range []string{api.mcpConfigPath, api.getUserConfigPath()} {

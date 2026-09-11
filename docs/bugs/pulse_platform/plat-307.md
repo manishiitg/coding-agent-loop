@@ -5,9 +5,23 @@
 | Coordination | Value |
 |---|---|
 | Assigned agent | Claude (original), Codex (Builder follow-up) |
-| Ticket state | Implemented, regression-tested locally — deployment pending |
+| Ticket state | MCP admission deployed to RTS (`009b0d6c1`); prompt/skill configuration follow-up implemented locally |
 | Last synchronized | 2026-09-11 |
 | Priority | P1 — Builder integration configuration unavailable on RTS; no evidence of unauthorized MCP installation |
+
+## 2026-09-11 — Explicit Builder/Run prompts and skills
+
+`chat.builder` and `chat.run` now select real Markdown prompt entry files and
+ordered core skill lists in AgentWorks `product.yaml`. Shared workflow rules are
+included once; the existing dynamic context composer and capability policy stay
+in force. Run declares only its two existing runtime bundles. Workflow-selected
+skills remain additive, and MCP documentation stays admission-filtered.
+
+Configuration is validated before use; prompt/shared-file/skill-list changes
+invalidate retained native instruction identity. API sessions keep their normal
+prompt delivery. This follow-up is implemented locally and is not yet deployed.
+The extracted prompts matched the previous rendered output for all eight mode,
+projection and code-execution combinations in a migration comparison.
 
 ## 2026-09-11 — Builder admission and durable MCP configuration
 
@@ -16,8 +30,9 @@ bug: interactive Builder uses `workflow_phase` too, so its MCP management tools
 were never registered. The RTS incident (Jam selected but absent from config)
 confirmed this on release `2ffcd10-20260911090730`; MCP configuration was unlocked.
 
-Implemented locally; server deployment and a live authenticated Jam run remain
-unverified. This section supersedes the older registration-gate design below.
+Deployed to RTS as `009b0d6c1`: service health and durable MCP storage verified.
+An authenticated Jam run remains unverified. This section supersedes the older
+registration-gate design below.
 
 - AgentWorks `product.yaml` now declares `chat_policy`: Builder/Run capability
   sets, caller origins, and a read-only ceiling. Unknown capability names and

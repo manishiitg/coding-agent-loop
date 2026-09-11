@@ -57,22 +57,22 @@ vi.mock('../ui/MarkdownRenderer', () => ({
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true })
 
 const plannerFiles = [
-  {
-    name: '_global',
-    filepath: 'Workflow/demo/learnings/_global',
-    type: 'folder',
-    children: [
-      { name: 'SKILL.md', filepath: 'Workflow/demo/learnings/_global/SKILL.md', type: 'file' },
-      { name: 'guide.md', filepath: 'Workflow/demo/learnings/_global/guide.md', type: 'file' },
-      { name: '_freshness.json', filepath: 'Workflow/demo/learnings/_global/_freshness.json', type: 'file' },
-    ],
-  },
+  { name: 'SKILL.md', filepath: 'Workflow/demo/learnings/_global/SKILL.md', type: 'file' },
+  { name: 'guide.md', filepath: 'Workflow/demo/learnings/_global/guide.md', type: 'file' },
+  { name: '_freshness.json', filepath: 'Workflow/demo/learnings/_global/_freshness.json', type: 'file' },
   {
     name: 'references',
-    filepath: 'Workflow/demo/learnings/references',
+    filepath: 'Workflow/demo/learnings/_global/references',
     type: 'folder',
     children: [
-      { name: 'details.md', filepath: 'Workflow/demo/learnings/references/details.md', type: 'file' },
+      {
+        name: 'provider',
+        filepath: 'Workflow/demo/learnings/_global/references/provider',
+        type: 'folder',
+        children: [
+          { name: 'auth.md', filepath: 'Workflow/demo/learnings/_global/references/provider/auth.md', type: 'file' },
+        ],
+      },
     ],
   },
 ]
@@ -86,7 +86,7 @@ beforeEach(() => {
       content: filepath.endsWith('SKILL.md')
         ? 'Global skill'
         : filepath.endsWith('_freshness.json')
-          ? '{"items":{}}'
+          ? '{"items":{"guide.md":{"last_confirmed_at":"2026-09-10T10:06:12Z","last_action":"updated"},"references/provider/auth.md":{"last_confirmed_at":"2026-09-11T09:56:15Z","last_action":"verified"}}}'
           : `Content for ${filepath}`,
     },
   }) as never)
@@ -97,9 +97,13 @@ it('keeps freshness metadata out of the visible learning files', async () => {
   const root = createRoot(container)
   try {
     await act(async () => root.render(<LearningsView workspacePath="Workflow/demo" plan={null} />))
+    expect(agentApi.getPlannerFiles).toHaveBeenCalledWith('Workflow/demo/learnings/_global', -1)
     expect(container.textContent).toContain('Additional files (2)')
     expect(container.textContent).toContain('guide.md')
-    expect(container.textContent).toContain('details.md')
+    expect(container.textContent).toContain('references/provider')
+    expect(container.textContent).toContain('auth.md')
+    expect(container.textContent).toContain('Fresh Sep 10')
+    expect(container.textContent).toContain('Fresh Sep 11')
     expect(container.textContent).not.toContain('_freshness.json')
   } finally {
     await act(async () => root.unmount())
@@ -118,7 +122,7 @@ it('opens root and nested learning links inline', async () => {
 
     const nestedLink = container.querySelector<HTMLButtonElement>('[data-testid="open-nested-link"]')
     await act(async () => nestedLink?.click())
-    expect(container.textContent).toContain('Content for Workflow/demo/learnings/references/details.md')
+    expect(container.textContent).toContain('Content for Workflow/demo/learnings/_global/references/details.md')
   } finally {
     await act(async () => root.unmount())
   }

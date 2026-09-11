@@ -292,32 +292,36 @@ export function ReportHumanInputPanel({
   }
 
   const renderHistoryRows = () => (
-    <div className="grid gap-1.5">
+    <div className="grid min-w-0 grid-cols-1 gap-1.5">
       {history.map(input => {
         const expanded = expandedHistoryIds[input.id] ?? historyMode === 'expanded'
         const answer = selectedOptionTitle(input)
         const impact = reportHumanInputImpact(input, providedImpact)
         const assessment = impact?.latestAssessment
         return (
-          <div key={input.id} className="rounded-md bg-background/50 text-xs">
+          <div key={input.id} className="min-w-0 rounded-md bg-background/50 text-xs">
             <button
               type="button"
               onClick={() => setExpandedHistoryIds(prev => ({ ...prev, [input.id]: !expanded }))}
               aria-expanded={expanded}
-              className="flex w-full min-w-0 items-center gap-2 px-2 py-1.5 text-left hover:bg-muted/40"
+              className="flex w-full min-w-0 items-start gap-2 px-2 py-2 text-left hover:bg-muted/40"
             >
-              {expanded ? <ChevronDown className="h-3.5 w-3.5 shrink-0 text-muted-foreground" /> : <ChevronRight className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />}
+              {expanded ? <ChevronDown className="mt-0.5 h-3.5 w-3.5 shrink-0 text-muted-foreground" /> : <ChevronRight className="mt-0.5 h-3.5 w-3.5 shrink-0 text-muted-foreground" />}
               {input.status === 'consumed'
-                ? <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-emerald-300" />
+                ? <CheckCircle2 className="mt-0.5 h-3.5 w-3.5 shrink-0 text-emerald-300" />
 				: input.status === 'answered' || input.status === 'claimed'
-                  ? <Clock3 className="h-3.5 w-3.5 shrink-0 text-amber-200" />
+                  ? <Clock3 className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-200" />
                   : null}
-              <span className={`shrink-0 font-medium ${statusTone(input)}`}>{reportHumanInputStatusLabel(input)}</span>
-              <span className="shrink-0 text-muted-foreground">{inputTime(input.consumed_at || input.answered_at || input.dismissed_at || input.updated_at)}</span>
-              <span className={`min-w-0 flex-1 ${expanded ? 'whitespace-normal break-words leading-5 text-foreground' : 'truncate text-muted-foreground'}`}>{input.question}</span>
+              <span className="min-w-0 flex-1">
+                <span className="flex min-w-0 flex-wrap items-baseline gap-x-2 gap-y-0.5">
+                  <span className={`min-w-0 font-medium ${statusTone(input)}`}>{reportHumanInputStatusLabel(input)}</span>
+                  <span className="text-muted-foreground">{inputTime(input.consumed_at || input.answered_at || input.dismissed_at || input.updated_at)}</span>
+                </span>
+                <span className={`mt-0.5 block min-w-0 ${expanded ? 'whitespace-normal leading-5 text-foreground' : 'truncate text-muted-foreground'}`}>{input.question}</span>
+              </span>
             </button>
             {expanded && (
-              <div className="space-y-1.5 border-t border-border/50 px-3 py-2 text-muted-foreground">
+              <div className="min-w-0 space-y-1.5 border-t border-border/50 px-3 py-2 text-muted-foreground">
                 {answer && (
                   <div>
                     <span className="font-medium text-foreground">You answered: </span>
@@ -388,7 +392,7 @@ export function ReportHumanInputPanel({
       ? latest.outcome_summary
       : latest?.question
     return (
-      <section ref={panelRef} className={`rounded-lg border border-cyan-500/20 bg-cyan-500/[0.045] px-3 py-2 shadow-sm ${className}`}>
+      <section ref={panelRef} className={`min-w-0 max-w-full rounded-lg border border-cyan-500/20 bg-cyan-500/[0.045] px-3 py-2 shadow-sm [overflow-wrap:anywhere] ${className}`}>
         <div className="flex min-w-0 flex-wrap items-center justify-between gap-2">
           <button
             type="button"
@@ -431,7 +435,7 @@ export function ReportHumanInputPanel({
   }
 
   return (
-    <section ref={panelRef} className={`rounded-lg border border-cyan-500/25 bg-cyan-500/[0.06] p-3 shadow-sm ${className}`}>
+    <section ref={panelRef} className={`min-w-0 max-w-full rounded-lg border border-cyan-500/25 bg-cyan-500/[0.06] p-3 shadow-sm [overflow-wrap:anywhere] ${className}`}>
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="flex min-w-0 items-center gap-2">
           <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-cyan-400/30 bg-cyan-400/10 text-cyan-200">
@@ -460,7 +464,7 @@ export function ReportHumanInputPanel({
         </button>
       </div>
 		{visibleError && <div className="mt-2 rounded-md border border-destructive/30 bg-destructive/10 px-2 py-1.5 text-xs text-destructive">{visibleError}</div>}
-      <div className="mt-3 flex flex-col gap-2">
+      <div className="mt-3 flex min-w-0 flex-col gap-2">
         {pending.map(input => {
           const draft = drafts[input.id] || { selectedOptionId: '', note: '' }
           const submitting = Boolean(draft.submitting)
@@ -468,7 +472,7 @@ export function ReportHumanInputPanel({
           const delegating = Boolean(draft.delegating)
           const busy = submitting || askingInChat || delegating
           return (
-            <article key={input.id} className="rounded-md border border-border/70 bg-background/75 p-3">
+            <article key={input.id} className="min-w-0 rounded-md border border-border/70 bg-background/75 p-3">
               <div className="flex flex-wrap items-center gap-2 text-[11px]">
                 <span className={`rounded-full border px-2 py-0.5 font-semibold uppercase tracking-[0.08em] ${priorityTone(input.priority)}`}>
                   {input.priority || 'medium'}

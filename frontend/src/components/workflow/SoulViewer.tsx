@@ -101,7 +101,13 @@ export function SoulViewer({ workspacePath, embedded = false, pulseSummary = fal
     return (
       <section className="rounded-xl border bg-background p-4 sm:p-5" aria-label="Workflow goal">
         <h2 className="mb-3 flex items-center gap-2 text-sm font-semibold"><Target className="h-4 w-4 text-sky-500" />What we’re working toward</h2>
-        <MarkdownRenderer content={summary.goal || 'No outcome goals defined yet. Use /setup-goals.'} disablePathLinking />
+        {summary.primaryGoals || summary.secondaryGoals ? (
+          <div className="space-y-4">
+            {summary.primaryGoals && <div><h3 className="mb-2 text-sm font-semibold text-sky-700 dark:text-sky-300">Primary goals</h3><MarkdownRenderer content={summary.primaryGoals} disablePathLinking /></div>}
+            {summary.secondaryGoals && <div className={summary.primaryGoals ? 'border-t pt-4' : ''}><h3 className="mb-2 text-sm font-semibold">Secondary goals</h3><MarkdownRenderer content={summary.secondaryGoals} disablePathLinking /></div>}
+            {summary.otherGoals && <div className="border-t pt-4"><h3 className="mb-2 text-sm font-medium text-muted-foreground">Additional goal context</h3><MarkdownRenderer content={summary.otherGoals} disablePathLinking /></div>}
+          </div>
+        ) : <MarkdownRenderer content={summary.goal || 'No outcome goals defined yet. Use /setup-goals.'} disablePathLinking />}
         {summary.acceptance && <details className="mt-4 border-t pt-3 text-xs"><summary className="cursor-pointer font-medium text-muted-foreground">Acceptance conditions</summary><div className="mt-3"><MarkdownRenderer content={summary.acceptance} disablePathLinking /></div></details>}
         {summary.boundaries && <details className="mt-3 border-t pt-3 text-xs"><summary className="cursor-pointer font-medium text-muted-foreground">What must stay true</summary><div className="mt-3"><MarkdownRenderer content={summary.boundaries} disablePathLinking /></div></details>}
       </section>

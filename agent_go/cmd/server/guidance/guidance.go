@@ -88,8 +88,8 @@ var allKinds = map[string]kindMeta{
 	"improve-database": {Group: "db", Description: "Read-only db/db.sqlite contract, schema, integrity, and report-compatibility review", Modes: []string{"workshop"}},
 
 	// Improvements — evidence-driven reliability and strategy flows
-	"setup-goals":         {Group: "improve", AliasOf: "define-success", Description: "Set up outcome goals, primary and supporting metrics, collection and targets for new or existing workflows", Modes: []string{"workshop"}},
-	"define-success":      {Group: "improve", Description: "Set up outcome goals and measurable progress; also available as setup-goals", Modes: []string{"workshop"}},
+	"setup-goals":         {Group: "improve", AliasOf: "define-success", Description: "Set up primary and secondary outcome goals, primary and supporting metrics, collection and targets for new or existing workflows", Modes: []string{"workshop"}},
+	"define-success":      {Group: "improve", Description: "Set up primary and secondary outcome goals and measurable progress; also available as setup-goals", Modes: []string{"workshop"}},
 	"improve-evaluation":  {Group: "improve", Description: "Read-only evaluation coverage and correctness review with fixer recommendations", Modes: []string{"workshop"}},
 	"engineering-review":  {Group: "improve", Description: "Read-only Technical Review phase: choose useful investigations, persist material findings, and leave bounded repairs to an explicitly supplied Fix phase", Modes: []string{"workshop"}},
 	"pulse-fixer":         {Group: "improve", Description: "Apply reviewed bounded repairs with proportional immediate checks; close applied fixes and reopen only on reproduction", Modes: []string{"workshop"}},

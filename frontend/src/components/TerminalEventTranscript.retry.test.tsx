@@ -35,6 +35,14 @@ async function mount(events: PollingEvent[], retry?: () => Promise<void>) {
 }
 
 describe('shared transcript failure retry', () => {
+  it('renders Muse progress as an assistant response without a Thinking disclosure', async () => {
+    const host = await mount([event('muse-update', 'conversation_thinking', {
+      thinking: 'Checking the supplied files.', metadata: { presentation: 'assistant_update' },
+    })])
+    expect(host.querySelector('[data-testid="terminal-assistant-update"]')?.textContent).toBe('Checking the supplied files.')
+    expect(host.querySelector('[data-testid="terminal-clear-thinking-batch-toggle"]')).toBeNull()
+  })
+
   it.each(['sending', 'sent_to_cli', 'queued_for_injection', 'next_turn_started'])('shows only the timestamp for delivery status %s', async (status) => {
     const host = await mount([event('user', 'user_message', {
       content: 'Check the browser', metadata: { delivery_status: status },

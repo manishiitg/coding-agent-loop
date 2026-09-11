@@ -597,6 +597,14 @@ const ToolCallField: React.FC<{ label: string; value: string }> = ({ label, valu
 const ThinkingBatch: React.FC<{ item: Extract<TranscriptItem, { kind: 'thinking' }>; live: boolean }> = ({ item, live }) => {
   const [expanded, toggle] = useDisclosure(`thinking:${item.key}`, true)
 
+  if (item.assistantUpdate) {
+    return (
+      <div data-testid="terminal-assistant-update" className="my-2 text-foreground">
+        <ConversationMarkdownRenderer content={item.text} framed={false} maxHeight="none" />
+      </div>
+    )
+  }
+
   return (
     <div data-testid="terminal-clear-thinking-batch" className="my-1">
       <button

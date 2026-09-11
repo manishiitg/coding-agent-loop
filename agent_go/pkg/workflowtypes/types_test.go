@@ -97,13 +97,23 @@ func TestNormalizePresetLLMConfigRemovesRetiredWorkflowKBLock(t *testing.T) {
 	}
 }
 
+// Claude Code's expected model/effort here must track
+// multi-llm-provider-go's GetCodingAgentDefaultTierModels for
+// ProviderClaudeCode. Fixed 2026-09-11: this test still expected
+// claude-fable-5-1/claude-opus-5 after multi-llm-provider-go's 3fc07b8
+// ("Revert Claude Code Builder tier back to Sonnet 5 / high") reverted
+// Builder/High/Pulse to claude-sonnet-5 -- a cross-repo staleness (the
+// replace directive always builds against whatever's checked out at
+// ../../multi-llm-provider-go), not something wrong with the model choice
+// itself; verify against that package before changing these expectations
+// again.
 func TestResolveProviderProfileConfigUsesBuilderDefaults(t *testing.T) {
 	tests := []struct {
 		provider string
 		model    string
 		effort   string
 	}{
-		{provider: "claude-code", model: "claude-fable-5-1", effort: "medium"},
+		{provider: "claude-code", model: "claude-sonnet-5", effort: "high"},
 		{provider: "codex-cli", model: "gpt-6-astra", effort: "medium"},
 	}
 	for _, tt := range tests {
@@ -124,14 +134,14 @@ func TestResolveProviderProfileConfigUsesBuilderDefaults(t *testing.T) {
 
 func TestResolveProviderProfilePulseConfigUsesProviderDefault(t *testing.T) {
 	got, ok := ResolveProviderProfilePulseConfig(providerProfile("claude-code"))
-	if !ok || got.Provider != "claude-code" || got.ModelID != "claude-opus-5" || got.Options["reasoning_effort"] != "high" {
+	if !ok || got.Provider != "claude-code" || got.ModelID != "claude-sonnet-5" || got.Options["reasoning_effort"] != "high" {
 		t.Fatalf("ResolveProviderProfilePulseConfig() = %+v, %v", got, ok)
 	}
 }
 
 func TestResolveCodingAgentMemoryConfigUsesPulseDefault(t *testing.T) {
 	got, ok := ResolveCodingAgentMemoryConfig(providerProfile("claude-code"))
-	if !ok || got.Provider != "claude-code" || got.ModelID != "claude-opus-5" || got.Options["reasoning_effort"] != "high" {
+	if !ok || got.Provider != "claude-code" || got.ModelID != "claude-sonnet-5" || got.Options["reasoning_effort"] != "high" {
 		t.Fatalf("ResolveCodingAgentMemoryConfig() = %+v, %v", got, ok)
 	}
 }

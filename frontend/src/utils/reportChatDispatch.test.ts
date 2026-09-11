@@ -50,12 +50,18 @@ describe('shared Ask in chat dispatch for reports', () => {
     expect(mocks.activate).toHaveBeenCalledWith('running')
   })
 
-  it('starts a new chat when explicitly selected despite an existing running chat', async () => {
-    mocks.chat.chatTabs.running = chat('running', { isStreaming: true })
-    const result = await sendWorkflowMessageToChat({ workspacePath: 'Workflow/one', message: 'Apply finding 42', newChat: true })
+  it('reuses an idle interactive chat rather than opening another', async () => {
+    mocks.chat.chatTabs.existing = chat('existing')
+    const result = await sendWorkflowMessageToChat({ workspacePath: 'Workflow/one', message: 'Run visual QA' })
+    expect(result).toEqual({ tabId: 'existing', reused: true, queuedBehindRunningTurn: false })
+    expect(mocks.chat.createChatTab).not.toHaveBeenCalled()
+    expect(mocks.chat.setTabConfig).toHaveBeenCalledWith('existing', { queuedMessages: ['earlier request', 'Run visual QA'] })
+  })
+
+  it('creates a chat when this automation has none', async () => {
+    const result = await sendWorkflowMessageToChat({ workspacePath: 'Workflow/one', message: 'Run visual QA' })
     expect(result).toEqual({ tabId: 'fresh', reused: false, queuedBehindRunningTurn: false })
-    expect(mocks.chat.createChatTab).toHaveBeenCalledWith('Automation Builder', expect.objectContaining({ presetQueryId: 'one', phaseId: 'workflow-builder' }))
-    expect(mocks.chat.setTabConfig.mock.calls[0][0]).toBe('fresh')
+    expect(mocks.chat.createChatTab).toHaveBeenCalledExactlyOnceWith('Automation Builder', expect.objectContaining({ presetQueryId: 'one', phaseId: 'workflow-builder' }))
   })
 
   it('creates a chat when only a view-only schedule exists', async () => {

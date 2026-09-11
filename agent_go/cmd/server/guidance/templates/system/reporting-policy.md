@@ -20,8 +20,8 @@ generation step.
   `updateFields` (see below). Do not bake changing run results into the
   document or add a step that regenerates it each run.
 - A user action button can offer a contextual workflow-agent request through
-  `window.report.sendChatMessage`. The app reviews/sends it to an existing or
-  new chat. For report-owned approvals, save first and then offer the request;
+  `window.report.sendChatMessage`. The app sends it directly to an existing automation chat,
+  creating one only if none exists. For report-owned approvals, save first and then offer the request;
   see "Sending a report request to the workflow agent" below.
 - A markdown file under `db/` renders inline with
   `el.innerHTML = await window.report.getHtml('db/notes/brief.md')`; a
@@ -40,7 +40,11 @@ generation step.
   row with `fileUrl`. `fileUrl` remains appropriate for ordinary downloadable
   files and backward-compatible reports, but `mediaUrl` is the explicit
   contract for new audio/video report code. Show playback errors and let a
-  retry request a fresh URL.
+  retry request a fresh URL. Preserve the existing media element and its source
+  during data refresh when the recording has not changed. Compare the workspace
+  path plus a run/version identifier, not the expiring signed URL; repeated
+  `innerHTML` replacement or `src` assignment resets playback. Initialize the
+  player once after data is ready, and ignore stale asynchronous media responses.
 - Theme off the app, not the OS: dark styles under `:root.dark` /
   `[data-theme="dark"]` (or the injected `hsl(var(--token))` palette), with
   `report:theme` for live re-styling. `prefers-color-scheme` alone follows
@@ -175,10 +179,10 @@ checkpoint, and an agent request, read
 `read_skill(skills=[{"name":"builder-reference","path":"references/human-in-the-loop.md"}])`.
 The API details below implement the report-to-chat pattern.
 
-`await window.report.sendChatMessage(message, { requestId })` opens the app's
-**Send to agent** panel. The user reviews/edits the message and chooses whether
-to **Start a new chat**. On Send, the app uses the same workflow-scoped chat
-queue as the human-decision panel's **Ask in chat**: reuse an interactive chat,
+`await window.report.sendChatMessage(message, { requestId })` sends directly
+from the report action, without a second popup or chat-choice step. The app
+uses the same workflow-scoped chat queue as the human-decision panel's
+**Ask in chat**: reuse an interactive chat,
 queue behind its running foreground turn, or create a chat if none exists.
 Scheduled/view-only/bot tabs are excluded. This sends a conversational request;
 it does not directly execute a route or trigger the scheduler.
@@ -198,31 +202,29 @@ message when it would repeat collection/audit or another approval gate.
 ```js
 // In a user click handler, with the button disabled until finally.
 await window.report.updateField('audit_findings', row.id, 'status', 'approved');
-showStatus('Approval saved. Review the action request to send it.');
+showStatus('Approval saved. Sending action request…');
 const result = await window.report.sendChatMessage(
   `Apply only approved audit_findings row ${row.id}, proposal version ${row.proposal_version}. ` +
   `Re-read its current approval and proposed fix from the database; skip it if already applied. ` +
   `Use the existing remediation route for this item, then verify and refresh the report.`,
   { requestId: `finding:${row.id}:${row.proposal_version}:apply` }
 );
-showStatus(result.status === 'cancelled'
-  ? 'Approval saved; no action request sent.'
-  : result.queuedBehindRunningTurn
-    ? 'Request queued behind the current chat turn.'
-    : 'Request queued in chat.');
+showStatus(result.queuedBehindRunningTurn
+  ? 'Request queued behind the current chat turn.'
+  : 'Request queued in chat.');
 ```
 
 Use real schema fields/versions and actual route or step IDs, never copy
-placeholder names into a workflow that lacks them. The result is either
-`{ status: 'cancelled' }` or `{ status: 'queued', tabId, reused,
+placeholder names into a workflow that lacks them. The successful result is
+`{ status: 'queued', tabId, reused,
 queuedBehindRunningTurn }`. Queued is not proof that work started or completed;
 show applied/verified outcomes only from fresh execution evidence.
 
-The approval write and chat enqueue are separate operations. Cancelling the
-send panel does not undo the saved approval (a later scheduled consumer can
-still read it). On failure, keep that approval visible and offer **Send action
-request** again without rewriting it. Catch errors locally and re-enable the
-button in `finally`. Repeated clicks while reviewing/sending share one request;
+The approval write and chat enqueue are separate operations. A failed enqueue
+does not undo the saved approval (a later scheduled consumer can still read it).
+On failure, keep that approval visible and offer **Send action request** again
+without rewriting it. Catch errors locally and re-enable the
+button in `finally`. Repeated clicks while sending share one request;
 an optional stable `requestId` (max 200 characters) reuses a successful receipt
 for the same message in the current report view (up to 100 receipts). Reloads,
 different views, and later sessions still require the consumer's durable

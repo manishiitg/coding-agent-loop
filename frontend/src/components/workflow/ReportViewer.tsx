@@ -18,7 +18,6 @@ import { HtmlReportFrame } from './reportWidgets/HtmlWidgetFrame'
 import { ReportEmbedProvider, type ReportDataApi } from './reportWidgets/reportEmbedContext'
 import { isStreamableReportMediaPath } from './reportWidgets/reportMedia'
 import { allowedReportPath, normalizeReportSource, renderReportMarkdown, reportMarkdownBasePath } from './reportWidgets/reportMarkdown'
-import { ReportChatPanel } from './reportWidgets/ReportChatPanel'
 import { useReportChat } from './reportWidgets/useReportChat'
 
 import { WORKFLOW_REPORT_REFRESH_EVENT } from './reportRefreshEvent'
@@ -231,7 +230,6 @@ function ReportViewComponent({ workspacePath, onClose, focusTier }: ReportViewPr
           </div>
         </div>
         <FilePreviewModal />
-        <ReportChatPanel controller={reportChat} />
       </div>
     </ReportEmbedProvider>
   )

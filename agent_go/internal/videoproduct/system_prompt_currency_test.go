@@ -100,7 +100,7 @@ func TestSystemPromptMatchesTheProductItDescribes(t *testing.T) {
 		"build the shot list around the measured audio",
 		"without its promised audio",
 		"cinematic-visual-development",
-		"text-only location, wardrobe, or subject description is not an approved reference",
+		"Text direction is valid for wardrobe",
 	} {
 		if !strings.Contains(text, audioContract) {
 			t.Fatalf("the system prompt lost the direct-chat look/sound contract: missing %q", audioContract)

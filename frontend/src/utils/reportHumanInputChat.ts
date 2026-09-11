@@ -159,13 +159,10 @@ async function findWorkflowPreset(workspacePath: string) {
 export async function sendWorkflowMessageToChat({
   workspacePath,
   message,
-  newChat = false,
   viewMode = 'terminal',
 }: {
   workspacePath: string
   message: string
-  /** Explicit user choice; otherwise reuse the usual Ask in chat lane. */
-  newChat?: boolean
   /** Pulse's original "Ask in chat" wants the raw terminal visible (the
    *  underlying coding-agent CLI working live is the point) — that's the
    *  default. A caller whose message is a normal conversational ask, not
@@ -183,7 +180,7 @@ export async function sendWorkflowMessageToChat({
   if (!selectWorkflowPreset(preset)) throw new Error('Failed to open the automation.')
 
   const latestChatStore = useChatStore.getState()
-  targetTab = newChat ? undefined : selectReportDiscussionTab(
+  targetTab = selectReportDiscussionTab(
     latestChatStore.chatTabs,
     { mode: 'workflow', presetId: preset.id },
     latestChatStore.activeTabId,

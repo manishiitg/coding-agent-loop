@@ -231,12 +231,15 @@ subject**, not after an inconsistency is already noticed:
    identity across independent generations -- each generation is evaluated
    cold, as if it had never seen the earlier one. Do not let the
    description drift by paraphrasing it differently per shot.
-2. **A generated character-sheet reference image.** Use `fal-ai`, or
-   `google-ai` only for optional still-image work, to generate one strong
-   reference image of the character/subject from the spec, saved alongside its spec as
-   `characters/<character-name>.png`. Text descriptions alone drift across
-   independent generations even with an identical prompt; a shared image
-   reference does not.
+2. **The minimum sufficient approved identity reference.** Reuse a supplied or
+   approved image before generating anything new. For a recurring human,
+   prefer a face-only reference if face identity is what must persist;
+   describe wardrobe, setting, action and framing in text. Other subjects may
+   need markings, geometry or an exact costume visible in their reference.
+   Follow `cinematic-visual-development` for local crops, conditional FLUX.2
+   Max imagery and one representative complete-scene test. A reference is an
+   identity target, not a guarantee; verify the resulting footage. Save the chosen
+   reference as `characters/<character-name>.png` beside its spec.
 
 Both live at `work/productions/<slug>/characters/`, namespaced per production
 because one project can hold several. Keep the spec and its reference image
@@ -249,18 +252,18 @@ so an unapproved face propagates through the whole piece and can only be
 undone by regenerating all of it -- this is the cheapest moment in the
 production to be told the character is wrong.
 
-Once both exist, every subsequent shot of that subject conditions on the
-same reference image and repeats the same spec phrase verbatim -- this is
-reference-image conditioning, the most reliable of the techniques below, and
-it only works if the reference was made first and reused deliberately, not
-regenerated per shot.
+Reuse the approved identity consistently through reference-image conditioning.
+Keep identity descriptors stable while allowing the planned outfit, pose,
+setting and camera changes. Do not pass a full posed image when a face crop
+provides the needed identity with fewer competing composition cues.
 
 ## Keep the whole character arc on H3
 
 Generate every video shot of a recurring subject through MiniMax H3's
 Reference-to-Video route on fal.ai. Use the same approved character image and
-canonical spec on every request, then add the accepted predecessor as Video 1
-for normal continuations. Do not switch video providers or models mid-arc.
+canonical identity spec; add an accepted predecessor tail as Video 1 only
+when the shot needs its motion or composition. New shots can use identity
+alone with text-directed changes. Do not switch video providers or models mid-arc.
 
 ## Other consistency techniques
 
@@ -273,18 +276,18 @@ default above:
   reference image, never use it as a substitute for one. Lock a seed once a
   shot's composition reads well, and reuse it for controlled variations of
   that same shot.
-- **Shot-to-shot anchoring.** For an H3 continuation, add the accepted
-  predecessor as Video 1 alongside the approved character image. Write the
+- **Shot-to-shot anchoring.** When an H3 continuation needs prior motion or composition, add an accepted
+  predecessor tail as Video 1 alongside the approved identity reference. Write the
   two adjoining prompts so the final described moment of clip N matches the
   first described moment of clip N+1. Use an extracted stable boundary frame
   to inspect a failed direct cut and correct the Reference-to-Video successor
   prompt; do not use it to generate a third bridge clip.
 
-**When none of the above holds well enough**, treat that as a real
-constraint to report, not a defect to hide: tell the user H3 cannot reliably
-hold the character/subject consistent across this many shots, and offer the
-tradeoff (fewer shots of that subject, or accepting visible variation). Do not
-offer a model or provider switch as a casual equal option.
+**When consistency still fails**, inspect input conditioning conflicts and
+record the observed failure before proposing another paid retry. Do not call
+it a model-wide limitation from repeated attempts using the same conflicting
+references. If the approved retry allowance is exhausted, report the remaining
+issue and offer a concrete revision rather than hiding it in assembly.
 
 ## Prompt iteration strategy
 

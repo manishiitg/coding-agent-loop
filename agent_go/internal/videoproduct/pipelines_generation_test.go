@@ -102,7 +102,7 @@ func TestShortformStagesPutDirectionAndMeasuredNarrationBeforeShots(t *testing.T
 		}
 	}
 	characters := shortformPipeline.Stages[index["shortform-characters"]].Description
-	for _, required := range []string{"budget", "recommended", "premium", "explicitly approved", "separately from video-per-second cost", "NEVER silently select it", "selected provider/model"} {
+	for _, required := range []string{"minimum sufficient approved identity reference", "face-only", "representative complete-scene test", "separately from video cost", "FLUX.2 Max", "human input approves spending on those images", "explicitly approved"} {
 		if !strings.Contains(characters, required) {
 			t.Fatalf("short-form character step is missing %q", required)
 		}
@@ -141,7 +141,7 @@ func TestShortformStagesPutDirectionAndMeasuredNarrationBeforeShots(t *testing.T
 		}
 	}
 	visualDevelopment := shortformPipeline.Stages[index["shortform-visual-development"]]
-	for _, required := range []string{"real approved reference pack", "show_reference", "start reference", "exit/end-state reference", "shortform-reference-manifest.json"} {
+	for _, required := range []string{"minimum sufficient references", "show_reference", "start reference", "exit/end-state reference", "shortform-reference-manifest.json"} {
 		if !strings.Contains(visualDevelopment.Description, required) {
 			t.Fatalf("short-form visual-development step is missing %q", required)
 		}
@@ -172,7 +172,7 @@ func TestShortformStagesPutDirectionAndMeasuredNarrationBeforeShots(t *testing.T
 	}
 }
 
-func TestCharacterModelIsUserSelectedBeforeAnyReferenceSpend(t *testing.T) {
+func TestCharacterReferencesUseProductPolicyAndRequireSpendApproval(t *testing.T) {
 	for _, pipeline := range []*Pipeline{longformPipeline, shortformPipeline} {
 		var characters, shotlist string
 		for _, stage := range pipeline.Stages {
@@ -184,10 +184,10 @@ func TestCharacterModelIsUserSelectedBeforeAnyReferenceSpend(t *testing.T) {
 			}
 		}
 		for _, required := range []string{
-			"live-verified viable character-model choices",
-			"NEVER silently select it",
-			"selected provider/model",
-			"explicit approval to spend",
+			"Reuse approved source imagery or reviewed local crops",
+			"FLUX.2 Max",
+			"Do not substitute another model without explicit approval",
+			"human input approves spending on those images",
 			"show_character",
 		} {
 			if !strings.Contains(characters, required) {
@@ -266,7 +266,7 @@ func TestLongformStagesKeepTheirLoadBearingOrder(t *testing.T) {
 		}
 	}
 	visualDevelopment := longformPipeline.Stages[index["longform-visual-development"]]
-	for _, required := range []string{"actual visual evidence", "show_reference", "start reference", "exit/end-state reference", "longform-reference-manifest.json"} {
+	for _, required := range []string{"minimum sufficient references", "show_reference", "start reference", "exit/end-state reference", "longform-reference-manifest.json"} {
 		if !strings.Contains(visualDevelopment.Description, required) {
 			t.Fatalf("long-form visual-development step is missing %q", required)
 		}

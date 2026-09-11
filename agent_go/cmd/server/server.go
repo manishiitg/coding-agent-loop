@@ -2077,6 +2077,7 @@ func runServer(cmd *cobra.Command, args []string) {
 	// Tool execution APIs - handlers provided by mcpagent/executor library
 	// Pass server logger for proper debugging of session registry usage
 	executorHandlers := executor.NewExecutorHandlers(api.mcpConfigPath, api.logger)
+ executorHandlers.SetMCPServerResolver(api.resolveWorkshopMCPServer)
 
 	apiRouter.HandleFunc("/mcp/execute", executorHandlers.HandleMCPExecute).Methods("POST", "OPTIONS")
 	apiRouter.HandleFunc("/custom/execute", executorHandlers.HandleCustomExecute).Methods("POST", "OPTIONS")

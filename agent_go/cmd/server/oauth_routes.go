@@ -887,6 +887,8 @@ func (api *StreamingAPI) handleDisconnectServer(w http.ResponseWriter, r *http.R
 		return
 	}
 
+	// Drop the account-scoped chat connection as well as the saved token.
+	mcpclient.GetSessionRegistry().CloseSessionServer("mcp-user:"+userID, req.ServerName)
 	api.invalidateServerDiscovery(req.ServerName, "Disconnected — rediscovering tools...")
 
 	w.Header().Set("Content-Type", "application/json")

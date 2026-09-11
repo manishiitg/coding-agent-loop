@@ -14,7 +14,6 @@ import { AskAIButton } from './AskAIButton'
 import { useMCPStore } from '../../stores/useMCPStore'
 import { useWorkflowManifestStore } from '../../stores/useWorkflowManifestStore'
 import { useCanWriteWorkflow } from '../../hooks/useCanWriteWorkflow'
-import { toggleServerSelection } from '../../utils/mcpServerAlias'
 import { getWorkspaceView, type CapabilityViewId } from './workspaceViews'
 
 // Which sections exist is decided by the registry in workspaceViews.ts; this
@@ -135,16 +134,6 @@ export default function WorkflowCapabilitiesPanel({ section, workspacePath }: Wo
       .map(tool => tool.server as string)
     return [...new Set([...connected, ...capabilities.selected_servers])]
   }, [toolList, capabilities.selected_servers])
-  // Lets the "Connect a new MCP server" browser add/remove an already-connected
-  // server from this workflow's selection directly, without needing the main
-  // (now selected-only) list above -- same alias-safe logic ToolSelectionSection
-  // itself uses for its own checkbox, via the shared toggleServerSelection util.
-  const handleToggleServerForWorkflow = useCallback((serverName: string) => {
-    setCapabilities(current => {
-      const { servers, tools } = toggleServerSelection(serverName, current.selected_servers, current.selected_tools)
-      return { ...current, selected_servers: servers, selected_tools: tools }
-    })
-  }, [])
   const copy = SECTION_COPY[section]
   const view = getWorkspaceView(section)
 
@@ -300,8 +289,6 @@ export default function WorkflowCapabilitiesPanel({ section, workspacePath }: Wo
                     <ConnectorsBrowser
                       compact
                       workspacePath={workspacePath}
-                      selectedServers={capabilities.selected_servers}
-                      onToggleServer={handleToggleServerForWorkflow}
                     />
                   </div>
                 </div>

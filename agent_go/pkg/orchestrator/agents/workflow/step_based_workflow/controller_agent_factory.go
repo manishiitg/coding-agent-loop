@@ -714,11 +714,8 @@ func (hcpo *StepBasedWorkflowOrchestrator) selectExecutionLLM(
 			}
 			return llmConfig
 		}
-		// PLAT-061 removed disable_tier_optimization, which pinned this to Tier 1.
-		// It was a second, un-settable and un-reasoned path to the same outcome as
-		// pinning execution_tier — which PLAT-060 made an Ops-owned decision that
-		// must state its justification. Use execution_tier="high" (with its
-		// required reason) to hold a step on high reasoning.
+		// No automatic history-based tier promotion. Architecture review proposes
+		// explicit configuration changes; an unconfigured execution step stays High.
 
 		// Evaluation mode defaults to medium tier — eval steps are verification checks
 		// that don't need the most powerful model. Step config can still override via ExecutionLLM (step 3).
@@ -870,7 +867,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) prepareCustomTools(stepConfig *AgentC
 	// DB and cost access come from capabilities, not from whether an explicit
 	// tool list was supplied. Filtering against the actual workspace pool below
 	// cannot introduce a tool withheld by the owning profile.
-	enabledTools = append(enabledTools, "workflow_db:query_workflow_db", "workflow_costs:query_workflow_costs")
+	enabledTools = append(enabledTools, "workflow_db:query_workflow_db", "workflow_costs:query_workflow_costs", "workflow:get_goal_metrics", "workflow:record_goal_observations")
 	if resolveDBAccess(stepConfig) == DBAccessReadWrite {
 		enabledTools = append(enabledTools, "workflow_db:mutate_workflow_db", "workflow_db:apply_workflow_db_migration")
 	}

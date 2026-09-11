@@ -208,3 +208,32 @@ func TestUpdateReportFieldRejectsUnknownTableColumnAndRow(t *testing.T) {
 		}
 	}
 }
+
+func TestReportCannotEditManagedGoalData(t *testing.T) {
+	for _, table := range []string{"workflow_goal_metrics", "pulse_goal_observations"} {
+		t.Run(table, func(t *testing.T) {
+			rel, abs, router := setupReportFieldUpdateTest(t)
+			db, err := sql.Open("sqlite", abs)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer db.Close()
+			if _, err := db.Exec(`CREATE TABLE ` + table + ` (id INTEGER PRIMARY KEY, value REAL); INSERT INTO ` + table + ` VALUES (1, 42)`); err != nil {
+				t.Fatal(err)
+			}
+			recorder := postWorkflowDBTest(t, router, "/api/report-field", models.ReportFieldUpdateRequest{
+				DBPath: rel, Table: table, RowID: float64(1), Fields: map[string]interface{}{"value": float64(99)},
+			})
+			if recorder.Code != http.StatusBadRequest {
+				t.Fatalf("expected rejection, got %d: %s", recorder.Code, recorder.Body.String())
+			}
+			var value float64
+			if err := db.QueryRow(`SELECT value FROM ` + table + ` WHERE id=1`).Scan(&value); err != nil {
+				t.Fatal(err)
+			}
+			if value != 42 {
+				t.Fatalf("managed value changed to %v", value)
+			}
+		})
+	}
+}

@@ -1,10 +1,25 @@
 package browser
 
 import (
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 )
+
+func TestBrowserStagingDirectoriesAreDeploymentNamespaced(t *testing.T) {
+	t.Setenv(browserStagingNamespaceEnv, "Confida Production")
+	t.Cleanup(func() {
+		_ = os.RemoveAll(browserArtifactStagingDir())
+		_ = os.RemoveAll(browserUploadStagingDir())
+	})
+	if got := browserArtifactStagingDir(); got != "/tmp/agentworks-browser-artifacts-confida-production" {
+		t.Fatalf("artifact staging directory = %q", got)
+	}
+	if got := browserUploadStagingDir(); got != "/tmp/agentworks-browser-uploads-confida-production" {
+		t.Fatalf("upload staging directory = %q", got)
+	}
+}
 
 func TestPrepareBrowserArtifactRewritesNamedScreenshot(t *testing.T) {
 	plan, err := prepareBrowserArtifact("screenshot", []string{"@e1", "Workflow/demo/evidence/login.png", "--full-page"}, "owner", "session")

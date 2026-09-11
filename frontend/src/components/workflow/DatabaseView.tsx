@@ -2,7 +2,7 @@
 // Report widgets query these tables via SQL, so this gives users a direct way
 // to inspect the data behind the live report without opening the file tree.
 
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
 import {
   AlertCircle,
   ArrowLeft,
@@ -20,6 +20,7 @@ import type { PlannerFile } from '../../services/api-types'
 
 interface DatabaseViewProps {
   workspacePath: string | null
+  headerAction?: ReactNode
 }
 
 type FileSummary = {
@@ -350,7 +351,7 @@ async function readText(filepath: string): Promise<string | null> {
   }
 }
 
-export default function DatabaseView({ workspacePath }: DatabaseViewProps) {
+export default function DatabaseView({ workspacePath, headerAction }: DatabaseViewProps) {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [files, setFiles] = useState<PlannerFile[]>([])
@@ -491,6 +492,7 @@ export default function DatabaseView({ workspacePath }: DatabaseViewProps) {
               >
                 <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
               </button>
+              {headerAction}
             </div>
           </div>
 

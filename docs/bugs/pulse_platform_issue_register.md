@@ -1,4 +1,24 @@
+## Builder MCP installation admission and persistence — PLAT-307 follow-up
+
+Deployed to RTS as `009b0d6c1`: AgentWorks `product.yaml` chat capability
+policy, interactive Builder MCP registration, explicit execution/Pulse/read-only
+boundaries, native catalog refresh and durable MCP config across releases.
+The follow-up selecting Builder/Run Markdown prompts and core skills from YAML
+is implemented and tested locally; deployment is pending for that follow-up.
+See [PLAT-307](pulse_platform/plat-307.md) for scope and tests.
+
 # Pulse Platform-Issue Register
+
+## Manual workflow runs could manage MCP servers — PLAT-307
+
+[PLAT-307](pulse_platform/plat-307.md) fixes a manual Run-button execution
+(`agent_mode: "workflow"`) getting the full MCP server management toolset
+(search/inspect/install/add/edit/remove/logs/discovery) that only the workflow
+builder chat and regular chat are meant to have — scheduled/cron runs were
+already correctly excluded via a different `agent_mode` value. Also makes
+`remove_mcp_server` scan and warn about workflows left with a dangling
+reference after an account-wide removal. Implemented and regression-tested
+locally; deployment pending.
 
 ## Minimal review recording — PLAT-306
 

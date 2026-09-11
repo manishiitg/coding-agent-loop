@@ -13,6 +13,8 @@ import { useShallow } from 'zustand/react/shallow'
 import { ReactFlowProvider } from '@xyflow/react'
 import { FileWorkspacePane } from '../../FileWorkspacePane'
 import { AskAIButton } from '../AskAIButton'
+import { sendWorkflowMessageToChat } from '../../../utils/reportHumanInputChat'
+import { useChatStore } from '../../../stores/useChatStore'
 import { WorkflowToolbar } from './WorkflowToolbar'
 import { ReportView } from '../ReportViewer'
 import { usePlanData } from '../hooks/usePlanData'
@@ -145,6 +147,21 @@ function InspectorBody({ workspacePath, presetQueryId }: { workspacePath: string
     useWorkflowStore.getState().setShowWorkspacePane(false)
   }, [])
 
+  const askAIMessage = isInspectorView(workflowWorkspaceView) ? INSPECTOR_ASK_AI_MESSAGE[workflowWorkspaceView] : undefined
+  // Rendered inside each view's OWN header row (as `headerAction`), never as
+  // an overlay on top of it: several inspector views (database, knowledgebase,
+  // notify, schedules, costs, access) already put their own refresh/tabs
+  // control in that same top-right corner, and a floating overlay used to sit
+  // directly on top of it, visually merging the two into one unreadable icon.
+  const askAIHeaderAction = askAIMessage ? (
+    <AskAIButton
+      workspacePath={workspacePath}
+      message={askAIMessage}
+      iconOnly
+      className="flex items-center justify-center rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-muted hover:text-primary"
+    />
+  ) : undefined
+
   // One explicit branch per inspector view. The `default` is a compile-time
   // exhaustiveness check: a view added to the registry without a branch here
   // is a type error, not a silent fallthrough into some other view.
@@ -159,6 +176,7 @@ function InspectorBody({ workspacePath, presetQueryId }: { workspacePath: string
             workspacePath={workspacePath}
             runFolders={runFolderNames}
             selectedRunFolder={selectedRunFolder}
+            headerAction={askAIHeaderAction}
           />
         )
       case 'execution-logs':
@@ -174,11 +192,11 @@ function InspectorBody({ workspacePath, presetQueryId }: { workspacePath: string
           />
         )
       case 'learnings':
-        return <LearningsView workspacePath={workspacePath} plan={plan} />
+        return <LearningsView workspacePath={workspacePath} plan={plan} headerAction={askAIHeaderAction} />
       case 'knowledgebase':
-        return <KnowledgebaseView workspacePath={workspacePath} />
+        return <KnowledgebaseView workspacePath={workspacePath} headerAction={askAIHeaderAction} />
       case 'database':
-        return <DatabaseView workspacePath={workspacePath} />
+        return <DatabaseView workspacePath={workspacePath} headerAction={askAIHeaderAction} />
       case 'evaluation':
         return (
           <div className="h-full overflow-y-auto">
@@ -191,10 +209,11 @@ function InspectorBody({ workspacePath, presetQueryId }: { workspacePath: string
             embedded
             workflowScope={{ presetQueryId: presetQueryId || undefined, workspacePath: workspacePath || undefined }}
             onClose={closeInspector}
+            headerAction={askAIHeaderAction}
           />
         )
       case 'folders':
-        return <WorkflowFolderAccessView workspacePath={workspacePath} />
+        return <WorkflowFolderAccessView workspacePath={workspacePath} headerAction={askAIHeaderAction} />
       case 'pulse':
         return (
           <PulseView
@@ -213,13 +232,13 @@ function InspectorBody({ workspacePath, presetQueryId }: { workspacePath: string
           />
         )
       case 'backup':
-        return <WorkflowBackupView workspacePath={workspacePath} />
+        return <WorkflowBackupView workspacePath={workspacePath} headerAction={askAIHeaderAction} />
       case 'publish':
-        return <WorkflowPublishView workspacePath={workspacePath} />
+        return <WorkflowPublishView workspacePath={workspacePath} headerAction={askAIHeaderAction} />
       case 'notify':
-        return <WorkflowNotificationView workspacePath={workspacePath} />
+        return <WorkflowNotificationView workspacePath={workspacePath} headerAction={askAIHeaderAction} />
       case 'access':
-        return <WorkflowAccessView workspacePath={workspacePath} />
+        return <WorkflowAccessView workspacePath={workspacePath} headerAction={askAIHeaderAction} />
       case 'skills':
       case 'mcp':
       case 'secrets':
@@ -233,18 +252,8 @@ function InspectorBody({ workspacePath, presetQueryId }: { workspacePath: string
   }
 
   if (!isInspectorView(workflowWorkspaceView)) return null
-  const askAIMessage = INSPECTOR_ASK_AI_MESSAGE[workflowWorkspaceView]
   return (
-    <div className="relative h-full min-h-0">
-      {askAIMessage && (
-        <AskAIButton
-          workspacePath={workspacePath}
-          message={askAIMessage}
-          iconOnly
-          title="This view only shows what's already set up. Ask in chat to search for, configure, or explain something that isn't here."
-          className="absolute right-2 top-2 z-10 flex items-center justify-center rounded-md border border-border bg-background/90 p-1.5 text-muted-foreground shadow-sm backdrop-blur transition-colors hover:border-primary/40 hover:text-primary"
-        />
-      )}
+    <div className="h-full min-h-0">
       <Suspense
         // A new token remounts the view, so it refetches whatever it shows.
         key={`${workflowWorkspaceView}:${refreshToken}`}
@@ -334,8 +343,17 @@ export const WorkspaceViewHost = React.memo(forwardRef<WorkflowCanvasRef, Workfl
   const toggleMonitor = useCallback(() => {
     if (!workspacePath || monitorSaving) return
     setMonitorSaving(true)
-    updateWorkflowManifest(workspacePath, { pulse_enabled: !monitorOn })
-      .catch(err => console.error('[WorkspaceViewHost] Failed to toggle Pulse review schedule:', err))
+    void (async () => {
+      if (!monitorOn) {
+        const response = await agentApi.getPulseImpact(workspacePath)
+        if (!response.success) throw new Error(response.error || 'Could not check goal setup')
+        if (!response.impact?.metrics?.length) {
+          await sendWorkflowMessageToChat({ workspacePath, viewMode: 'formatted', message: 'Set up Pulse for this workflow. Call get_workflow_command_guidance(kind="setup-goals", focus="First-time Pulse setup: propose outcome bullets, one primary metric, supporting metrics and boundaries from existing context; ask only unresolved questions. Enable Pulse after agreeing on the setup.") and follow it.' })
+          return
+        }
+      }
+      await updateWorkflowManifest(workspacePath, { pulse_enabled: !monitorOn })
+    })().catch(err => useChatStore.getState().addToast(err instanceof Error ? err.message : 'Could not set up Pulse', 'error'))
       .finally(() => setMonitorSaving(false))
   }, [workspacePath, monitorOn, monitorSaving, updateWorkflowManifest])
 

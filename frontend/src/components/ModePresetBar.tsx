@@ -23,7 +23,7 @@ import { GlobalActivityMonitor } from './GlobalActivityMonitor'
 import WorkflowWalkthrough from './workflow/WorkflowWalkthrough'
 import { ProductSurfaceSwitcher } from './ProductSurfaceSwitcher'
 import WorkspaceTopBarControls from './WorkspaceTopBarControls'
-import { useAppVersion } from './topbar/useAppVersion'
+import ProvidersControl from './topbar/ProvidersControl'
 import ConfirmationDialog from './ui/ConfirmationDialog'
 import LazyModalFallback from './ui/LazyModalFallback'
 import {
@@ -95,7 +95,6 @@ export const ModePresetBar: React.FC = () => {
   const isReadOnlyUser = useAuthStore(state => isWorkflowReadOnly(state.user, state.isMultiUserMode))
   // Use toolList to get all available servers, not just enabled ones
   const toolList = useMCPStore(state => state.toolList)
-  const appVersion = useAppVersion()
   const availableServers = React.useMemo(() =>
     [...new Set(toolList.map(t => t.server).filter(Boolean) as string[])],
     [toolList]
@@ -551,7 +550,7 @@ export const ModePresetBar: React.FC = () => {
           {/* Left: App logo + Mode Indicator */}
           <div className="flex min-w-0 items-center gap-3">
             {/* Product-level navigation stays separate from AgentWorks modes. */}
-            <ProductSurfaceSwitcher className="mr-1" version={appVersion} />
+            <ProductSurfaceSwitcher className="mr-1" />
 
             {/* Segmented control — single bordered container, active segment elevated */}
             <div
@@ -793,33 +792,7 @@ export const ModePresetBar: React.FC = () => {
             <div className="flex shrink-0 items-center gap-2">
               <GlobalActivityMonitor />
 
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <button
-                    onClick={openWorkflowWalkthrough}
-                    data-testid="open-walkthrough-button"
-                    className="p-1 rounded-md text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 hover:text-gray-700 dark:hover:text-gray-200 transition-colors"
-                    aria-label="Open walkthrough"
-                  >
-                    <HelpCircle className="w-4 h-4" />
-                  </button>
-                </TooltipTrigger>
-                <TooltipContent side="bottom">Walkthrough</TooltipContent>
-              </Tooltip>
-
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <button
-                    onClick={() => setShowShortcuts(true)}
-                    className="p-1 rounded-md text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 hover:text-gray-700 dark:hover:text-gray-200 transition-colors"
-                    aria-label="Keyboard shortcuts"
-                    title="Keyboard shortcuts"
-                  >
-                    <Keyboard className="w-4 h-4" />
-                  </button>
-                </TooltipTrigger>
-                <TooltipContent side="bottom">Keyboard shortcuts</TooltipContent>
-              </Tooltip>
+              <ProvidersControl />
 
               {shouldShowScheduleHeader && (
                 <>
@@ -853,6 +826,34 @@ export const ModePresetBar: React.FC = () => {
               )}
 
               <span className="mx-0.5 h-5 w-px bg-gray-200 dark:bg-gray-700" />
+
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <button
+                    onClick={openWorkflowWalkthrough}
+                    data-testid="open-walkthrough-button"
+                    className="p-1 rounded-md text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 hover:text-gray-700 dark:hover:text-gray-200 transition-colors"
+                    aria-label="Open walkthrough"
+                  >
+                    <HelpCircle className="w-4 h-4" />
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent side="bottom">Walkthrough</TooltipContent>
+              </Tooltip>
+
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <button
+                    onClick={() => setShowShortcuts(true)}
+                    className="p-1 rounded-md text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 hover:text-gray-700 dark:hover:text-gray-200 transition-colors"
+                    aria-label="Keyboard shortcuts"
+                    title="Keyboard shortcuts"
+                  >
+                    <Keyboard className="w-4 h-4" />
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent side="bottom">Keyboard shortcuts</TooltipContent>
+              </Tooltip>
 
               {/* Config/account controls relocated from the former left sidebar */}
               <WorkspaceTopBarControls />

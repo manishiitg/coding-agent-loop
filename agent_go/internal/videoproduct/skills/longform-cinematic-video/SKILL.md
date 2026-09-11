@@ -13,6 +13,12 @@ editorial grammar.
 
 ## Define the cinematic contract
 
+The user chooses the visual style: photoreal, hand-drawn, 2D/3D animation,
+motion graphics, documentary, slideshow, or mixed media. Cinematic means
+coherent storytelling and intentional picture/sound direction, not realism.
+A photoreal host may have illustrated historical cutaways. Do not refuse or
+convert those inserts to photoreal. Realistic characters are not required.
+
 Before scripting, lock the film's dramatic question, audience, runtime,
 format, emotional arc, point of view, visual language, camera grammar, color
 journey, sound world, and continuity priorities. State what must remain exact
@@ -21,8 +27,9 @@ screen direction, eyelines, lighting motivation, and recurring audio motifs.
 
 Choose a small visual vocabulary and repeat it intentionally. A cinematic
 film does not need a new style, lens, camera move, or transition for every
-beat. Video Studio uses MiniMax H3 throughout one continuous arc; vary camera
-grammar deliberately while preserving the approved H3 reference pack.
+beat. Use the user-approved medium for each sequence; a film may combine generated
+footage, supplied media, and deterministic animation. H3 reference and
+continuation rules apply to generated-video shots, not every visual sequence.
 
 ## Plan sequences before shots
 
@@ -35,7 +42,7 @@ Create `longform-sequence-plan.json` before paid video generation. Include:
 
 - chapter, sequence, scene, and shot identifiers;
 - measured narration or dialogue duration covered by each sequence;
-- H3 route: Reference-to-Video for anchors and every normal continuation;
+- H3 route chosen by actual controls: text-only, first-frame or minimal references;
 - references and their exact semantic roles;
 - incoming and outgoing character, prop, geography, motion, camera, lighting,
   and audio state;
@@ -44,27 +51,27 @@ Create `longform-sequence-plan.json` before paid video generation. Include:
 - planned cut point, transition grammar, handles, and expected seam risk;
 - the reason every independent generation is unavoidable.
 
-Before the first anchor, turn that plan into a user-approved visual-development
-pack: location/background boards, recurring wardrobe and hero-prop references,
-and start/exit references for every continuity sequence. References must be
-real files, not just prompt language; show each one to the user and record its
-role in the manifest. Carry an accepted predecessor through H3
-Reference-to-Video for every normal continuation. Use first/last stable
-boundary frames for direct-cut review and a corrected successor prompt when a
-review fails; never invent an endpoint field or create a bridge clip.
+Before expanding production, follow `cinematic-visual-development`: choose the
+minimum sufficient approved references and test one representative complete
+scene. A recurring human may need only a face identity image, with wardrobe,
+background, movement and framing in text. Full packs, background plates and
+start/exit images are conditional on the brief or an observed gap. The first
+test should exercise the difficult requirements, not merely animate a portrait.
 
-Minimize generations and seams. Prefer one H3 take up to the live-supported
-limit when the action is continuous. When a new call is necessary, use H3
-Reference-to-Video with the accepted predecessor and overlapping action. Use
-independent clips only for motivated discontinuity such as a montage, time
-jump, location change, or deliberate cutaway.
+Minimize generations and seams. Prefer one H3 take within the supported limit
+when action is continuous. For a later shot, distinguish required narrative
+continuity from reference-media inputs: use identity alone for a new
+composition, and add the accepted predecessor tail only when its state is
+needed. Check joins against the agreed editorial boundary. Keep stable frames
+for review even when they are not sent to the provider. Never invent an
+endpoint field or generate a third bridge clip to hide a failed handoff.
 
 ## Generate for the edit
 
 Generate sequence by sequence, not as an unrelated batch. Preserve the same
-approved model route, reference order, seed when supported, character spec,
-wardrobe, geography, lighting, motion vector, and audio bed across adjoining
-clips. Describe overlapping action at a seam so the editor can cut on motion.
+approved identity and required wardrobe, geography, lighting, motion and
+audio invariants across adjoining clips. Choose the route and reference inputs
+for each shot; do not blindly repeat every prior input. Describe overlapping action at a seam so the editor can cut on motion.
 Ask for clean head and tail handles without filling them with new actions.
 
 Show every new clip with `show_video` and obtain its review outcome before it
@@ -87,8 +94,8 @@ and linked narration beat for every segment.
 
 Use motivated cuts in the H3 prompt: state whether the next clip begins on an
 action, eyeline, reaction, insert, or a deliberate scene reset. Reference-to-
-Video must carry the prior accepted clip as Video 1 so H3, rather than the
-editor, makes the handoff. The final assembly is a direct concat: do not add
+Video may carry an accepted predecessor tail as Video 1 when its state is
+needed; identity-only references are valid for a planned new composition. The final assembly is a direct concat: do not add
 J/L bridges, dissolves, fades, cutaway repairs, grading, or audio repairs to
 make separate generations appear continuous.
 

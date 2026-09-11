@@ -1,0 +1,75 @@
+schema_version: 2
+
+# AgentWorks chat capability admission is owned here. Tool implementations stay
+# in Go; registration, guidance and native-session identity use the resolved policy.
+dependencies: {}
+
+prompt:
+  file: prompts/system-prompt.md
+  variables: {}
+
+profile:
+  id: agentworks
+  name: AgentWorks
+  version: 1
+  # Global, not project: AgentWorks has no single fixed workspace to bind
+  # to -- a real AgentWorks session moves between whichever workflow the
+  # user is working in, the same dynamic multi-agent behavior the platform
+  # already gives a normal (no agent-profile) session. Project scope's
+  # "one fixed prompt/workspace" model, which every other product.yaml
+  # today uses on purpose, is the wrong shape for AgentWorks specifically.
+  scope: global
+  built_in: true
+
+branding:
+  icon: ""
+  favicon: ""
+
+ui:
+  surface: ""
+  files_panel: false
+  workflow_panel: false
+  secrets: false
+  streaming: auto
+
+workflows:
+  enabled: []
+  selected_skills: []
+  browser_mode: ""
+
+# Mode is distinct from origin. Scheduled execution resolves to run; specialized
+# children retain their existing role-specific authority checks as well.
+chat_policy:
+  modes:
+    builder: &builder_capabilities
+      - mcp_management
+      - plan_authoring
+      - report_authoring
+      - secret_management
+      - knowledgebase_maintenance
+      - improvement_proposals
+      - workspace_ui
+    run: [workspace_ui]
+  origins:
+    interactive: *builder_capabilities
+    scheduled: []
+    # Pulse coordinates approved improvements through its existing typed roles.
+    pulse: [plan_authoring, report_authoring, secret_management, knowledgebase_maintenance, improvement_proposals]
+    child: [plan_authoring, report_authoring, secret_management, knowledgebase_maintenance, improvement_proposals]
+    bot: [plan_authoring, report_authoring, secret_management, knowledgebase_maintenance, improvement_proposals]
+    notification: []
+  read_only: [workspace_ui]
+
+# Prompt text stays in Markdown. Includes contain named Go-template definitions;
+# the entry file chooses which definitions to render. Runtime values stay in Go.
+chat:
+  builder:
+    prompt:
+      file: prompts/builder.md
+      includes: [prompts/workflow-shared.md]
+    skills: [system-tools, builder-reference, workflow-commands]
+  run:
+    prompt:
+      file: prompts/run.md
+      includes: [prompts/workflow-shared.md]
+    skills: [system-tools, builder-reference]

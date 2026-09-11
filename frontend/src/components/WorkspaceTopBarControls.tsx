@@ -17,10 +17,8 @@ import AccountControl from './topbar/AccountControl'
 export default function WorkspaceTopBarControls() {
   return (
     <TooltipProvider delayDuration={400}>
-      {/* LlmModalHost renders the LLM modal; it's no longer manually
-          triggered from here -- only via first-run onboarding when no LLM
-          is configured yet. LLM setup otherwise lives in each workflow's
-          capabilities panel. */}
+      {/* The icon trigger lives in ModePresetBar; this host keeps the shared
+          Providers dialog and first-run onboarding mounted exactly once. */}
       <LlmModalHost />
       <div className="flex items-center gap-1.5">
         <RuntimeHealthControl />

@@ -267,7 +267,14 @@ func createCustomTools(workflowMode bool, sessionInfo ...string) ([]llmtypes.Too
 		if !humanToolAllowed[name] {
 			continue
 		}
-		allExecutors[name] = executor
+		if name == "notify_user" && workflowMode {
+			allExecutors[name] = func(ctx context.Context, args map[string]interface{}) (string, error) {
+				return executor(virtualtools.WithGoalProgressProvider(ctx, loadGoalProgressNotificationSections), args)
+			}
+		} else {
+			allExecutors[name] = executor
+		}
+
 		toolCategories[name] = "human_tools"
 	}
 
@@ -313,6 +320,15 @@ func createCustomTools(workflowMode bool, sessionInfo ...string) ([]llmtypes.Too
 			allExecutors[name] = executor
 		}
 		for name, category := range reportHumanInputCategories {
+			toolCategories[name] = category
+		}
+
+		goalTools, goalExecutors, goalCategories := createGoalMetricTools()
+		allTools = append(allTools, goalTools...)
+		for name, executor := range goalExecutors {
+			allExecutors[name] = executor
+		}
+		for name, category := range goalCategories {
 			toolCategories[name] = category
 		}
 
@@ -811,7 +827,19 @@ func wrapExecutorsWithPlanFolderGuard(executors map[string]func(ctx context.Cont
 						if pathStr, ok := pathValue.(string); ok {
 							cleanedPath := filepath.Clean(pathStr)
 							if !isWriteAllowed(cleanedPath) {
-								return "", fmt.Errorf("access denied: writes restricted to %v (got: %s)", allowedWriteFolders, cleanedPath)
+								// Seen live: a model retried this same rejection 5 times in a
+								// row with different guesses (a bare relative path, the real
+								// host filesystem path, "./..." ) without ever landing on the
+								// one thing that actually works -- prefixing its intended
+								// relative path with the allowed folder shown here. Spell out
+								// that combination concretely so the next call gets it right
+								// on the first retry instead of guessing again.
+								suggestion := ""
+								if len(allowedWriteFolders) > 0 {
+									relativePart := strings.TrimPrefix(strings.TrimPrefix(cleanedPath, "/"), "./")
+									suggestion = fmt.Sprintf(" Prefix your intended path with the allowed folder, e.g. %q.", strings.TrimSuffix(allowedWriteFolders[0], "/")+"/"+relativePart)
+								}
+								return "", fmt.Errorf("access denied: writes restricted to %v (got: %s).%s", allowedWriteFolders, cleanedPath, suggestion)
 							}
 						}
 					}

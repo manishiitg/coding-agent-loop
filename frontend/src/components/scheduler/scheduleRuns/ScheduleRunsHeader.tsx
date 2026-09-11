@@ -12,9 +12,10 @@ type ScheduleRunsHeaderProps = {
   onClose: () => void
   /** Embedded workspace views are closed by their parent layout, not here. */
   showClose?: boolean
+  headerAction?: React.ReactNode
 }
 
-export const ScheduleRunsHeader: React.FC<ScheduleRunsHeaderProps> = ({ panel, onClose, showClose = true }) => {
+export const ScheduleRunsHeader: React.FC<ScheduleRunsHeaderProps> = ({ panel, onClose, showClose = true, headerAction }) => {
   const {
     panelTitle,
     isLoading,
@@ -129,6 +130,7 @@ export const ScheduleRunsHeader: React.FC<ScheduleRunsHeaderProps> = ({ panel, o
           </TooltipTrigger>
           <TooltipContent side="bottom">{isLoading ? 'Refreshing…' : 'Refresh'}</TooltipContent>
         </Tooltip>
+        {headerAction}
         {showClose && (
           <button onClick={onClose} className="p-1.5 rounded-md text-muted-foreground hover:text-foreground hover:bg-muted transition-colors" aria-label="Close schedules">
             <X className="w-4 h-4" />

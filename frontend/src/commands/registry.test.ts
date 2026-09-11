@@ -7,6 +7,17 @@ const { runPulseMock } = vi.hoisted(() => ({ runPulseMock: vi.fn() }))
 vi.mock('../api/scheduler', () => ({ schedulerApi: { runPulse: runPulseMock } }))
 
 describe('Pulse slash commands', () => {
+  it('uses one setup flow for new and existing goal setup names', () => {
+    const setup = findCommand('setup-goals', 'workflow', 'workshop')
+    expect(setup).toBeDefined()
+    expect(findCommand('define-success', 'workflow', 'workshop')).toBe(setup)
+    expect(findCommand('setup-goals', 'multi-agent')).toBeUndefined()
+    const onSubmit = vi.fn()
+    setup?.execute({ beforeSlash: 'Keep my existing targets', onSubmit } as unknown as CommandContext)
+    expect(onSubmit).toHaveBeenCalledWith(expect.stringContaining('kind="setup-goals"'))
+    expect(onSubmit).toHaveBeenCalledWith(expect.stringContaining('Keep my existing targets'))
+  })
+
   it('runs the complete manual Pulse lifecycle through the scheduler backend', async () => {
     runPulseMock.mockResolvedValueOnce({ run_id: 'manual-pulse-1' })
     const addToast = vi.fn()

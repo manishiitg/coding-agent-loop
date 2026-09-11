@@ -122,9 +122,12 @@ func qualityReviewDescription(candidateSource, markdownOutput string) string {
 // registry rejects slashes, so layered names wait on nested discovery.
 
 // pipelineRegistry holds every pipeline the product can run. Video Studio is
-// deliberately cinematic-only; HyperFrames remains a technique available
-// inside these pipelines, not a separate product/infographic route.
-var pipelineRegistry = []*Pipeline{shortformPipeline, longformPipeline, qualityPipeline}
+// focused on long-form video with user-selected styles. The same pipelines
+// support live action, illustration, animation, and mixed media.
+var pipelineRegistry = []*Pipeline{longformPipeline, shortformPipeline, qualityPipeline}
+
+// Keep style choice consistent across planning, references, generation and QA.
+const visualStyleWorkflowInvariant = "\n\nVisual style contract: follow the user's chosen format and visual style, including photoreal, hand-drawn illustration, animation, motion graphics, slideshow, documentary, or mixed media. Real people and realistic characters are not required. A photoreal host may coexist with illustrated historical inserts and animated location/object references. Cinematic means coherent storytelling, not mandatory realism. Judge references and QA against the approved style, never reject stylization for lacking realism. H3 generation and predecessor requirements apply only to paid generated-video shots; approved supplied media and HyperFrames sequences use their own production route."
 
 // Every cinematic workflow stage receives the same route invariant. Some
 // older stage prose still discusses generic model-selection tradeoffs for the
@@ -156,11 +159,11 @@ func init() {
 				}
 			}
 			if (pipeline.ID == "shortform" || pipeline.ID == "longform") && pipeline.Stages[i].Description != "" {
-				pipeline.Stages[i].Description += h3ReferenceWorkflowInvariant + h3TurboAnchorException
+				pipeline.Stages[i].Description += h3ReferenceWorkflowInvariant + h3TurboAnchorException + visualStyleWorkflowInvariant
 			}
 		}
 	}
 }
 
 // DefaultPipeline is the branch a run takes when nothing selects one.
-func DefaultPipeline() *Pipeline { return shortformPipeline }
+func DefaultPipeline() *Pipeline { return longformPipeline }

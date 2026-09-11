@@ -19,14 +19,59 @@ const whatsappUserSessionDBName = "session.db"
 type WhatsAppServiceManager struct {
 	baseDir string
 
-	mu             sync.RWMutex
-	services       map[string]*WhatsAppService
-	messageHandler BotMessageHandler
-	interaction    BotInteractionHandler
+	mu               sync.RWMutex
+	services         map[string]*WhatsAppService
+	messageHandler   BotMessageHandler
+	interaction      BotInteractionHandler
 	statusProvider   BotThreadStatusFunc
 	profileRouter    ProfileRouteResolver
 	voiceTranscriber VoiceTranscriberFunc
 	started          bool
+
+	// routingLocks serializes the read-primary-then-fan-out-to-every-device
+	// sequence per account. Each device's own SetRouting call is locked
+	// individually, but nothing spanned the whole sequence, so two concurrent
+	// routing writes for the same account (double-click, two open tabs, or an
+	// explicit PUT racing the throttled GET-time default-route sync) could
+	// interleave their per-device writes and leave devices with divergent
+	// routing maps -- reproducing the exact routes-differ-per-phone symptom
+	// this endpoint exists to prevent. Keyed by userID, one *sync.Mutex each.
+	routingLocks sync.Map
+
+	// keyLocks serializes "resolve or create this service" (serviceForKey's
+	// create path) against "tear this service down" (UnpairDevice) for the
+	// exact same key. Without this, serviceForKey's existence check (an RLock
+	// read) can find nothing, then -- while it's off constructing a new
+	// WhatsAppService and starting it, entirely outside any lock -- a
+	// concurrent UnpairDevice can delete the map entry and remove the
+	// on-disk directory; serviceForKey's later re-check under m.mu still
+	// finds the key absent (Unpair already removed it) and proceeds to
+	// insert and start the new service anyway, recreating the sqlite
+	// file/directory for a device that was supposed to be gone. A plain
+	// tombstone won't do: slot names are reused after removal
+	// (nextWhatsAppDeviceSlot fills gaps from the current on-disk listing),
+	// so this must be a transient per-operation lock, not a persisted flag.
+	keyLocks sync.Map
+}
+
+// LockAccountRouting acquires this account's routing lock and returns the
+// unlock function. Callers must hold it for the entire read-then-fan-out
+// sequence (read the primary's routing, write it to every linked device),
+// not just the write step.
+func (m *WhatsAppServiceManager) LockAccountRouting(userID string) func() {
+	lockIface, _ := m.routingLocks.LoadOrStore(userID, &sync.Mutex{})
+	lock := lockIface.(*sync.Mutex)
+	lock.Lock()
+	return lock.Unlock
+}
+
+// lockServiceKey serializes create/teardown for one exact service key
+// (userKey+slot) between serviceForKey's create path and UnpairDevice.
+func (m *WhatsAppServiceManager) lockServiceKey(key string) func() {
+	lockIface, _ := m.keyLocks.LoadOrStore(key, &sync.Mutex{})
+	lock := lockIface.(*sync.Mutex)
+	lock.Lock()
+	return lock.Unlock
 }
 
 // ProfileRouteResolver resolves a user's default product @token (see
@@ -175,6 +220,7 @@ const (
 // WhatsAppDevice describes one linked (or linking) phone of an account.
 type WhatsAppDevice struct {
 	Slot        string    `json:"slot"`
+	Label       string    `json:"label,omitempty"`
 	Paired      bool      `json:"paired"`
 	Connected   bool      `json:"connected"`
 	OwnJID      string    `json:"own_jid,omitempty"`
@@ -273,6 +319,9 @@ func nextWhatsAppDeviceSlot(taken []string) string {
 
 func whatsappDeviceInfo(slot string, svc *WhatsAppService) WhatsAppDevice {
 	device := WhatsAppDevice{Slot: slot, Paired: svc.IsPaired(), Connected: svc.IsConnected()}
+	if label := svc.DeviceLabel(); label != "" {
+		device.Label = label
+	}
 	if jid := svc.OwnJID(); !jid.IsEmpty() {
 		device.OwnJID = jid.String()
 	}
@@ -303,6 +352,36 @@ func (m *WhatsAppServiceManager) Devices(ctx context.Context, userID string) ([]
 		devices = append(devices, whatsappDeviceInfo(slot, svc))
 	}
 	return devices, nil
+}
+
+// SetDeviceLabel persists a display name for one device. If the device is
+// already resident in memory, the label is set on the live instance
+// directly. Otherwise it's written straight to that device's local metadata
+// store (SetDeviceLabelOffline) rather than going through the full
+// serviceForKey bootstrap -- that path opens a real WhatsApp connection
+// (whatsmeow's client.Connect()) before the cheap label upsert ever runs,
+// which saving a display name has no need for.
+func (m *WhatsAppServiceManager) SetDeviceLabel(ctx context.Context, userID, slot, label string) error {
+	userKey, err := whatsappUserKey(userID)
+	if err != nil {
+		return err
+	}
+	if slot != "" {
+		clean := sanitizeWhatsAppFileName(slot)
+		if clean == "" {
+			return fmt.Errorf("whatsapp: invalid device %q", slot)
+		}
+		slot = clean
+	}
+	key := whatsappServiceKey(userKey, slot)
+
+	m.mu.RLock()
+	svc := m.services[key]
+	m.mu.RUnlock()
+	if svc != nil {
+		return svc.SetDeviceLabel(ctx, label)
+	}
+	return NewWhatsAppService(m.devicePath(userKey, slot)).SetDeviceLabelOffline(ctx, label)
 }
 
 // NextPairingDevice is the phone a scan would pair right now: the primary
@@ -381,13 +460,22 @@ func (m *WhatsAppServiceManager) UnpairDevice(ctx context.Context, userID, slot 
 		return primary.Unpair(ctx)
 	}
 	key := whatsappServiceKey(userKey, slot)
+	svc, err := m.serviceForKey(ctx, userKey, slot)
+	if err != nil {
+		return err
+	}
+	if err := svc.LogoutAndRemove(ctx); err != nil {
+		return err
+	}
+	// Held across both the map delete and the directory removal, and shared
+	// with serviceForKey's create path (see lockServiceKey), so a lookup that
+	// arrives mid-teardown waits for this to finish rather than lazily
+	// recreating the device from a stale "not resident" read.
+	unlockKey := m.lockServiceKey(key)
+	defer unlockKey()
 	m.mu.Lock()
-	svc := m.services[key]
 	delete(m.services, key)
 	m.mu.Unlock()
-	if svc != nil {
-		svc.StopListening()
-	}
 	dir := filepath.Join(m.baseDir, userKey, whatsappDevicesDirName, slot)
 	if err := os.RemoveAll(dir); err != nil {
 		return fmt.Errorf("whatsapp: remove device %s: %w", slot, err)
@@ -408,6 +496,24 @@ func (m *WhatsAppServiceManager) serviceForKey(ctx context.Context, userKey, slo
 
 	m.mu.RLock()
 	svc := m.services[key]
+	m.mu.RUnlock()
+	if svc != nil {
+		if !svc.IsEnabled() {
+			if err := svc.StartListening(ctx); err != nil {
+				return nil, err
+			}
+		}
+		return svc, nil
+	}
+
+	// Not resident. Serialize against a concurrent UnpairDevice for this same
+	// key before doing any of the (slow, disk-touching) creation work below --
+	// otherwise a device mid-teardown can be recreated out from under it.
+	unlockKey := m.lockServiceKey(key)
+	defer unlockKey()
+
+	m.mu.RLock()
+	svc = m.services[key]
 	m.mu.RUnlock()
 	if svc != nil {
 		if !svc.IsEnabled() {
@@ -582,6 +688,36 @@ func (m *WhatsAppServiceManager) GetChannelName(ctx context.Context, channelID s
 		return ""
 	}
 	return svc.GetChannelName(ctx, chatJID)
+}
+
+// LoadBotSessionBinding implements botSessionBindingStore. serviceForThread
+// decodes the managed channel ID, so the lookup lands in exactly one
+// account/device SQLite file before using the raw WhatsApp chat JID.
+func (m *WhatsAppServiceManager) LoadBotSessionBinding(ctx context.Context, threadID ThreadID, routeKey string) (BotSessionBinding, bool, error) {
+	svc, rawThreadID, err := m.serviceForThread(ctx, threadID)
+	if err != nil {
+		return BotSessionBinding{}, false, err
+	}
+	binding, ok := svc.loadBotSessionBinding(rawThreadID.ChannelID, routeKey)
+	return binding, ok, nil
+}
+
+// SaveBotSessionBinding implements botSessionBindingStore.
+func (m *WhatsAppServiceManager) SaveBotSessionBinding(ctx context.Context, threadID ThreadID, binding BotSessionBinding) error {
+	svc, rawThreadID, err := m.serviceForThread(ctx, threadID)
+	if err != nil {
+		return err
+	}
+	return svc.saveBotSessionBinding(ctx, rawThreadID.ChannelID, binding)
+}
+
+// ClearBotSessionBinding implements botSessionBindingStore.
+func (m *WhatsAppServiceManager) ClearBotSessionBinding(ctx context.Context, threadID ThreadID) error {
+	svc, rawThreadID, err := m.serviceForThread(ctx, threadID)
+	if err != nil {
+		return err
+	}
+	return svc.clearBotSessionBinding(ctx, rawThreadID.ChannelID)
 }
 
 func (m *WhatsAppServiceManager) SetMessageHandler(handler BotMessageHandler) {

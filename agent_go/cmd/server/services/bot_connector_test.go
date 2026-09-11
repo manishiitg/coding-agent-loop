@@ -2,8 +2,8 @@ package services
 
 import (
 	"context"
-	"sync"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -18,6 +18,38 @@ type testBotConnector struct {
 	sent            []string
 	sendStarted     chan struct{}
 	releaseSend     chan struct{}
+}
+
+type persistentBindingTestConnector struct {
+	*testBotConnector
+	bindingMu  sync.Mutex
+	binding    BotSessionBinding
+	hasBinding bool
+}
+
+func (c *persistentBindingTestConnector) LoadBotSessionBinding(_ context.Context, _ ThreadID, routeKey string) (BotSessionBinding, bool, error) {
+	c.bindingMu.Lock()
+	defer c.bindingMu.Unlock()
+	if !c.hasBinding || c.binding.RouteKey != routeKey {
+		return BotSessionBinding{}, false, nil
+	}
+	return c.binding, true, nil
+}
+
+func (c *persistentBindingTestConnector) SaveBotSessionBinding(_ context.Context, _ ThreadID, binding BotSessionBinding) error {
+	c.bindingMu.Lock()
+	c.binding = binding
+	c.hasBinding = true
+	c.bindingMu.Unlock()
+	return nil
+}
+
+func (c *persistentBindingTestConnector) ClearBotSessionBinding(_ context.Context, _ ThreadID) error {
+	c.bindingMu.Lock()
+	c.binding = BotSessionBinding{}
+	c.hasBinding = false
+	c.bindingMu.Unlock()
+	return nil
 }
 
 func (c *testBotConnector) Name() string {
@@ -431,6 +463,85 @@ func TestThreadlessCompletedSameRouteReusesSessionID(t *testing.T) {
 		}
 	case <-time.After(time.Second):
 		t.Fatal("expected threadless same-route session to start")
+	}
+}
+
+func TestThreadlessSessionRestoresDurableBindingAfterManagerRestart(t *testing.T) {
+	route := &ChannelRoute{WorkflowID: "wf-report", WorkspacePath: "Workflow/report", WorkshopMode: "run"}
+	connector := &persistentBindingTestConnector{
+		testBotConnector: &testBotConnector{},
+		binding: BotSessionBinding{
+			SessionID: "bot-whatsapp--persisted",
+			RouteKey:  botRouteKey(route),
+			UpdatedAt: time.Now().Add(-5 * time.Minute),
+		},
+		hasBinding: true,
+	}
+	manager := NewBotConversationManager(nil, "", "")
+	manager.RegisterConnector(connector)
+
+	started := make(chan string, 1)
+	manager.SetStartSessionFunc(func(_ context.Context, _ map[string]interface{}, sessionID string, _ string, _ func(event *events.AgentEvent)) error {
+		started <- sessionID
+		return nil
+	})
+	manager.HandleIncomingMessage(BotIncomingMessage{
+		Platform:        "whatsapp",
+		UserID:          "phone-user",
+		WorkspaceUserID: "workspace-user",
+		ChannelID:       "account|15551234567@s.whatsapp.net",
+		Text:            "continue after restart",
+		PresetWorkflow:  route,
+		IsMention:       true,
+	})
+
+	select {
+	case got := <-started:
+		if got != "bot-whatsapp--persisted" {
+			t.Fatalf("restored session ID = %q, want persisted ID", got)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("expected persisted session to restart")
+	}
+}
+
+func TestThreadlessDurableBindingDoesNotCrossWorkflowRoutes(t *testing.T) {
+	oldRoute := &ChannelRoute{WorkflowID: "wf-old", WorkspacePath: "Workflow/old", WorkshopMode: "run"}
+	newRoute := &ChannelRoute{WorkflowID: "wf-new", WorkspacePath: "Workflow/new", WorkshopMode: "run"}
+	connector := &persistentBindingTestConnector{
+		testBotConnector: &testBotConnector{},
+		binding: BotSessionBinding{
+			SessionID: "bot-whatsapp--old-workflow",
+			RouteKey:  botRouteKey(oldRoute),
+			UpdatedAt: time.Now(),
+		},
+		hasBinding: true,
+	}
+	manager := NewBotConversationManager(nil, "", "")
+	manager.RegisterConnector(connector)
+
+	started := make(chan string, 1)
+	manager.SetStartSessionFunc(func(_ context.Context, _ map[string]interface{}, sessionID string, _ string, _ func(event *events.AgentEvent)) error {
+		started <- sessionID
+		return nil
+	})
+	manager.HandleIncomingMessage(BotIncomingMessage{
+		Platform:        "whatsapp",
+		UserID:          "phone-user",
+		WorkspaceUserID: "workspace-user",
+		ChannelID:       "account|15551234567@s.whatsapp.net",
+		Text:            "new workflow",
+		PresetWorkflow:  newRoute,
+		IsMention:       true,
+	})
+
+	select {
+	case got := <-started:
+		if got == "bot-whatsapp--old-workflow" {
+			t.Fatal("a persisted session from another workflow was reused")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("expected a new session to start")
 	}
 }
 

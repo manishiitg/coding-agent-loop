@@ -1230,6 +1230,10 @@ export const useWorkflowStore = create<WorkflowStore>()(
         }
         get().setWorkflowWorkspaceView(view)
         get().setShowWorkspacePane(true)
+        // Narrow workflow layouts show one content pane at a time. Selecting
+        // any workspace destination should reveal that pane; md+ ignores this
+        // focus for visibility and continues to show the split layout.
+        get().setFocusedPane('preview')
         useAppStore.getState().setWorkspaceMinimized(view !== 'files')
       },
 

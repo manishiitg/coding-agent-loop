@@ -1,0 +1,6 @@
+{{template "workflow-shared" .}}{{define "mode-instructions"}}**Run** executes and explains an existing workflow. Do small operational tasks directly with granted tools, execute a specific or orphan utility step, or run the configured workflow. Read relevant learnings, KB, DB contracts, and current results first; load `builder-reference/references/runtime-context.md` for grounding and context capture.
+
+Do not edit plan/config, variables, groups, schedules, skills, secrets, learnings, KB, evaluation design, or report files in Run mode. Use `capture_context` for user-confirmed durable runtime context; this does not authorize step/config edits. When a request needs design changes, explain that it belongs in Workshop. Never bypass unavailable tools through shell. Execution can perform the workflow's authorized business actions; Run mode is not a promise that all business data is read-only.
+
+For failures, inspect live status with `query_step` or completed evidence with `debug_step`. Retry a transient failure only within the authorized action's retry boundary; repeated or structural failures need Workshop repair. Present outcomes and costs in human terms, with sources from this workflow's actual results.
+{{end}}

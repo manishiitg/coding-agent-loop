@@ -78,7 +78,7 @@ For an authorized migration, using `set_code_layout_version`:
 - Input data arrives via `sys.argv[1]`, `sys.argv[2]`, ... — these are the resolved `context_dependencies`. Read them.
 - NEVER construct paths to sibling step folders (e.g. `execution/login-step/output.json`). The controller resolves correct per-group paths and passes them as sys.argv. If you need data not in sys.argv, add it as a `context_dependency` in `plan.json` — do not hardcode.
 - Write output files to `os.environ['STEP_OUTPUT_DIR']` with the exact filenames and structure the validation_schema requires. `STEP_OUTPUT_DIR` is **volatile** (per-run, wiped on re-run). A durable **file** that later steps, runs, or the builder must reach — a download, generated PDF/CSV/image/zip, any format — goes under `db/assets/` (write it via the workspace root, e.g. `os.path.join(os.path.dirname(os.environ['DB_PATH']), 'assets', name)`), with a reference row in `db.sqlite`. Use `db/assets/` for durable output files. Version 1 source and shared helpers belong in `code/`; other paths require explicit Folder Guard grants.
-- Check `python3 -m pip --version` before installing a Python dependency. Missing pip/venv is a server prerequisite failure; report it rather than repeatedly rewriting the test. For version 1, install with `python3 -m pip install --target "$WORKFLOW_CODE_DEPS" package`; the controller includes that persistent directory in `PYTHONPATH`. Do not choose a separate venv interpreter for a saved script: the runner uses `python3`. For legacy workflows verify the actual runner dependency path before installing. Never disable host package protections. Package caches persist under `.sandbox-cache/`. A deterministic saved browser suite may use Python Playwright directly; first read `references/playwright-scripted.md`. Anything needing root or `apt` must be installed by the server operator.
+- Check `python3 -m pip --version` before installing a Python dependency. Missing pip/venv is a server prerequisite failure; report it rather than repeatedly rewriting the test. For version 1, install with `python3 -m pip install --target "$WORKFLOW_CODE_DEPS" package`; the controller includes that persistent directory in `PYTHONPATH`. Do not choose a separate venv interpreter for a saved script: the runner uses `python3`. For legacy workflows verify the actual runner dependency path before installing. Never disable host package protections. Package caches persist under `.sandbox-cache/`. A saved `main.py` browser suite may use Python Playwright directly. For browser tests, first read `references/playwright-scripted.md`: JS/TS uses `@agentworks/playwright`; Python uses the `agentworks-playwright` helper/pytest fixture, while the saved-step runner remains Python. Anything needing root or `apt` must be installed by the server operator.
 
 **Data authenticity — no fabrication**
 - Every value written to output files MUST trace to a real MCP tool call, API response, or input file. No hardcoded rows, no invented records.
@@ -87,7 +87,16 @@ For an authorized migration, using `set_code_layout_version`:
 **Deliberate refusal — fail-closed guards must exit code 2, not 1**
 - Any non-zero exit is treated as a bug by default: the failure is handed back to you as repair context so you fix the script. That is correct for a real error, but wrong for a guard that deliberately detected an unsafe condition (stale data, a write that would overwrite history it could not verify, a precondition that isn't met) and refused to proceed on purpose.
 - Use `sys.exit(2)` — not `sys.exit(1)` or any other code — for that second case. Exit code 2 is reserved and means "this refusal is terminal, do not attempt an agentic workaround." The step fails outright instead of falling back to a relearn turn, and the refusal is never handed to an agent as "here is an error, fix it."
-- Print the reason for the refusal to stdout before exiting — that text becomes the step's failure detail, so it must say plainly what condition was detected and why proceeding was unsafe.
+- Before exiting, print exactly one explicit refusal record on its own stdout line: `AGENTWORKS_REFUSAL: ` followed by JSON with non-empty string fields `reason`, `blocked_action`, and `resolution`. Use `json.dumps` to escape values correctly. For example:
+  ```python
+  print("AGENTWORKS_REFUSAL: " + json.dumps({
+      "reason": "Existing balance history could not be verified",
+      "blocked_action": "Overwrite balance rows",
+      "resolution": "Restore database access and verify existing rows before retrying"
+  }), flush=True)
+  sys.exit(2)
+  ```
+- The platform displays this as the script's reported refusal, not proof the guard was correct. Exit code 2 without a complete record still stops automatic repair conservatively, but the notification states that the reason is unverified and includes captured output. Existing plain-text refusals remain stopped; malformed records never enable an automatic workaround.
 - Get this distinction right: `sys.exit(1)` on a guard that should be terminal lets an agentic retry read your own refusal, agree it was correct, and then perform the exact write the guard existed to prevent — which has happened live. `sys.exit(2)` on an ordinary bug wrongly aborts the step instead of letting the normal repair loop fix the script.
 
 **Logging**

@@ -26,10 +26,11 @@ var cliProviders = map[string]struct{}{
 	"codex-cli":   {},
 	"cursor-cli":  {},
 	"pi-cli":      {},
+	"muse-cli":    {},
 }
 
 // IsCLIProvider reports whether the given provider ID is a CLI agent
-// runtime (claude-code, codex-cli, cursor-cli, pi-cli).
+// runtime (claude-code, codex-cli, cursor-cli, pi-cli, muse-cli).
 // The lookup is case-insensitive and whitespace-trimmed for resilience against
 // config drift.
 func IsCLIProvider(provider string) bool {

@@ -35,6 +35,7 @@ export interface BackupPopupProps {
   loadErrorMessage?: string
   showEnabledBadge?: boolean
   exportAction?: BackupExportAction
+  headerAction?: React.ReactNode
 }
 
 const iconButtonClass = 'inline-flex h-8 w-8 items-center justify-center rounded-md border border-border text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:opacity-50'
@@ -53,6 +54,7 @@ const BackupPopupBody: React.FC<BackupPopupProps> = ({
   loadErrorMessage = 'Failed to load backup status',
   showEnabledBadge = false,
   exportAction,
+  headerAction,
 }) => {
   const [loading, setLoading] = useState(false)
   const [info, setInfo] = useState<WorkflowBackupInfoResponse | null>(null)
@@ -122,6 +124,7 @@ const BackupPopupBody: React.FC<BackupPopupProps> = ({
               </h2>
               <p className="mt-0.5 truncate text-xs text-muted-foreground">{subtitle}</p>
             </div>
+            {headerAction}
           </div>
 
           {error && (

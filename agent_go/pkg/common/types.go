@@ -1,6 +1,8 @@
 package common
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"log"
 	"os"
 	"path/filepath"
@@ -33,6 +35,12 @@ const (
 	FolderGuardAllowedWriteFolderKey ContextKey = "folder_guard_allowed_write_folder"
 	// UserIDKey is the context key for the user ID (used for auth/database scoping)
 	UserIDKey ContextKey = "user_id"
+	// UsernameKey is the human-readable account name attached to logs and
+	// diagnostics. Authorization must continue to use UserIDKey.
+	UsernameKey ContextKey = "username"
+	// WorkflowNameKey is the short, human-readable workflow name attached to
+	// logs. It is diagnostic metadata, not a workspace authorization input.
+	WorkflowNameKey ContextKey = "workflow_name"
 	// BrowserDownloadsPathKey is the context key for the browser downloads folder path (relative to workspace root)
 	// Used by agent-browser executor to set the working directory for screenshot/download commands
 	BrowserDownloadsPathKey ContextKey = "browser_downloads_path"
@@ -188,6 +196,9 @@ type SessionShellConfig struct {
 	DenyNetwork      bool
 	BrowserMode      string // Resolved browser mode: "headless", "cdp", ""
 	BrowserSessionID string // Shared browser identity for browser tools when "default" session is used
+	// BrowserSessionNamespace isolates every public browser name (including
+	// explicit names) to the signed-in user and owning chat/workflow.
+	BrowserSessionNamespace string
 	// Env is extra environment variables exported into this session's shell
 	// (bridge execute_shell_command). Lets per-step values like DB_PATH and
 	// STEP_OUTPUT_DIR reach the server-side bridge shell, which — unlike the
@@ -508,6 +519,57 @@ func SetSessionBrowserSessionID(sessionID, browserSessionID string) {
 	log.Printf("[SHELL] Set browser session ID for session %s: %s", sessionID, browserSessionID)
 }
 
+// BrowserSessionNamespace returns a stable, opaque browser namespace for one
+// signed-in user and chat. Including both dimensions prevents users from
+// sharing cookies/tabs in the same workflow and prevents one user's concurrent
+// chats from fighting over a single browser process.
+func BrowserSessionNamespace(userID, sessionID string) string {
+	userID = strings.TrimSpace(userID)
+	sessionID = strings.TrimSpace(sessionID)
+	if sessionID == "" {
+		return ""
+	}
+	if userID == "" {
+		userID = "anonymous"
+	}
+	hashPart := func(value string) string {
+		sum := sha256.Sum256([]byte(value))
+		return hex.EncodeToString(sum[:8])
+	}
+	return "user-" + hashPart(userID) + "--chat-" + hashPart(sessionID)
+}
+
+// BindSessionBrowserIsolation attaches the authenticated ownership boundary to
+// a chat. Repeated calls are safe: a workflow-specific default browser binding
+// is preserved for the same owner, while an ownership change resets it.
+func BindSessionBrowserIsolation(sessionID, userID string) {
+	namespace := BrowserSessionNamespace(userID, sessionID)
+	if namespace == "" {
+		return
+	}
+	updateSessionShellConfig(sessionID, func(cfg *SessionShellConfig) {
+		previousNamespace := strings.TrimSpace(cfg.BrowserSessionNamespace)
+		if strings.TrimSpace(cfg.BrowserSessionID) == "" ||
+			(previousNamespace != "" && previousNamespace != namespace) ||
+			cfg.BrowserSessionID == previousNamespace+"--default" {
+			cfg.BrowserSessionID = namespace + "--default"
+		}
+		cfg.BrowserSessionNamespace = namespace
+	})
+	log.Printf("[SHELL] Bound isolated browser namespace for session %s: %s", sessionID, namespace)
+}
+
+// SetSessionBrowserNamespace propagates an already-authenticated browser
+// namespace to an internal workflow/group tool session.
+func SetSessionBrowserNamespace(sessionID, namespace string) {
+	if strings.TrimSpace(sessionID) == "" || strings.TrimSpace(namespace) == "" {
+		return
+	}
+	updateSessionShellConfig(sessionID, func(cfg *SessionShellConfig) {
+		cfg.BrowserSessionNamespace = strings.TrimSpace(namespace)
+	})
+}
+
 // CopySessionFolderGuard copies the folder guard (ReadPaths + WritePaths +
 // BlockedWritePaths) from one session to another. Used to propagate restrictions
 // from a parent HTTP session to child group sessions (batch execution, workshop
@@ -559,16 +621,21 @@ func GetSessionShellConfig(sessionID string) *SessionShellConfig {
 }
 
 // ResolveBrowserSessionID returns the effective browser session to use for browser tools.
-// Explicit non-default session names win. The default session can be remapped to a stable
-// shared browser identity via per-session shell config.
+// The default session can be remapped to a stable shared browser identity via
+// per-session shell config. Explicit public names remain distinct but are still
+// placed inside the authenticated user's chat namespace.
 func ResolveBrowserSessionID(sessionID, requested string) string {
 	requested = strings.TrimSpace(requested)
-	if requested != "" && requested != "default" {
-		return PrefixBrowserSessionID(requested)
-	}
 	cfg := GetSessionShellConfig(sessionID)
-	if cfg != nil && strings.TrimSpace(cfg.BrowserSessionID) != "" {
+	if (requested == "" || requested == "default") && cfg != nil && strings.TrimSpace(cfg.BrowserSessionID) != "" {
 		return PrefixBrowserSessionID(strings.TrimSpace(cfg.BrowserSessionID))
+	}
+	if cfg != nil && strings.TrimSpace(cfg.BrowserSessionNamespace) != "" && requested != "" {
+		namespace := strings.TrimSpace(cfg.BrowserSessionNamespace)
+		if strings.HasPrefix(requested, namespace+"--") {
+			return PrefixBrowserSessionID(requested)
+		}
+		return PrefixBrowserSessionID(namespace + "--" + requested)
 	}
 	return PrefixBrowserSessionID(requested)
 }

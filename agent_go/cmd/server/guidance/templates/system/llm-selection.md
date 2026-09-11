@@ -14,7 +14,7 @@ A workflow always resolves these roles:
 - **Medium execution**: established work with useful context and learnings.
 - **Low execution**: deterministic validation and mature routine work.
 - **Pulse**: the background review agents a Pulse turn launches with
-  `run_in_background` (plan drift review, technical review, strategic review)
+  `run_in_background` (plan drift review, technical review, architecture review, strategic review)
   and knowledgebase maintenance -- work that starts its own process, which is
   where a different model can actually take effect. Not the Gate, worklist,
   report or notification turns themselves: those are Builder.
@@ -35,6 +35,14 @@ Saved configurations are reusable shortcuts for exact provider/model/options com
 - `get_llm_config` / `get_workflow_config` — inspect the current workflow roles and per-step overrides.
 
 ### Per-step overrides (use sparingly)
+
+Pulse Architect owns persistent tier/model improvement proposals. Runtime does
+not switch tiers from successful-run counts, learning changes, or failures.
+Unconfigured execution steps default to High; evaluation steps default to Medium.
+Existing explicit settings and one-run caller overrides keep their precedence.
+Use measured, approved trials with quality guardrails and a rollback checkpoint;
+load `architecture-review` for the evidence and decision contract.
+
 
 Set via `update_step_config(step_id, ...)`:
 

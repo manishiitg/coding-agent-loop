@@ -51,17 +51,18 @@ const (
 // event remains a compatibility fallback for older providers, but is ignored
 // once a per-call completion has been observed.
 type Observer struct {
-	ledger      *costledger.Ledger
-	sessionID   string
-	userID      string
-	agentMode   string
-	provider    string
-	modelID     string
-	workflowID  string
-	runID       string
-	executionID string
-	scope       string
-	launchPath  string
+	ledger         *costledger.Ledger
+	sessionID      string
+	userID         string
+	agentMode      string
+	provider       string
+	modelID        string
+	workflowID     string
+	runID          string
+	executionID    string
+	scope          string
+	sourcePlatform string
+	launchPath     string
 
 	mu         sync.Mutex
 	sawPerCall bool
@@ -92,6 +93,15 @@ func WithAttribution(scope, workflowID, runID, executionID string) Option {
 		o.workflowID = strings.TrimSpace(workflowID)
 		o.runID = strings.TrimSpace(runID)
 		o.executionID = strings.TrimSpace(executionID)
+	}
+}
+
+// WithSourcePlatform records the external channel that initiated the turn.
+// It is intentionally separate from scope: bot-originated turns can still be
+// chat, builder, workflow execution, or Pulse work.
+func WithSourcePlatform(platform string) Option {
+	return func(o *Observer) {
+		o.sourcePlatform = strings.ToLower(strings.TrimSpace(platform))
 	}
 }
 
@@ -345,6 +355,7 @@ func (o *Observer) baseEntry(event *unifiedevents.AgentEvent) costledger.Entry {
 		RunID:          o.runID,
 		ExecutionID:    o.executionID,
 		Scope:          o.scope,
+		SourcePlatform: o.sourcePlatform,
 		Phase:          phase,
 		AgentMode:      o.agentMode,
 		Component:      event.Component,

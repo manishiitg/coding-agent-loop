@@ -60,6 +60,7 @@ print_usage() {
     printf '%s\n' '  --only-frontend               Start only the frontend and Electron app.'
     printf '%s\n' '  --build                       Build and serve the frontend (use with --only-frontend).'
     printf '%s\n' '  --without-electron            Do not launch Electron.'
+    printf '%s\n' '  --enable-chat-terminal-debugs Enable the developer terminal/step diagnostics rail.'
     printf '%s\n' '  --background, -b              Run services in the background.'
     printf '%s\n' '  --test-connections, -t [file] Test an MCP config file.'
     printf '%s\n' '  --mcp-api-token <token>       Set the MCP server API token for this run.'
@@ -143,11 +144,9 @@ if [ "$MCP_SERVER_API_TOKEN_ARG_SET" = true ]; then
 fi
 
 # Terminal panes, child-agent rails, and execution trees are engineering
-# diagnostics. Keep them off for normal product runs; this explicit startup
-# switch enables the matching server and Vite gates for one invocation.
+# diagnostics. The command-line flag is their sole control; the resolved
+# environment is applied after loading .env below.
 if [ "$ENABLE_CHAT_TERMINAL_DEBUGS" = true ]; then
-    export AGENTWORKS_RUNTIME_DEBUG=1
-    export VITE_RUNTIME_DEBUG=1
     echo "🔬 Chat terminal diagnostics enabled for this run"
 fi
 
@@ -274,7 +273,7 @@ cleanup_coding_agent_tmux_sessions() {
     local count=0
     while IFS= read -r session; do
         case "$session" in
-            mlp-claude-code-*|mlp-codex-cli-*|mlp-cursor-cli-*|mlp-agy-cli-*|mlp-pi-cli-*)
+            mlp-claude-code-*|mlp-codex-cli-*|mlp-cursor-cli-*|mlp-agy-cli-*|mlp-pi-cli-*|mlp-muse-*)
                 tmux kill-session -t "$session" 2>/dev/null || true
                 count=$((count + 1))
                 ;;
@@ -447,6 +446,7 @@ if [ "$ONLY_FRONTEND" = true ]; then
 window.__APP_RUNTIME_CONFIG__ = {
   apiBaseUrl: "${MCP_AGENT_SERVER_URL}",
   workspaceApiBaseUrl: "${WORKSPACE_API_URL}",
+  cdpEnabled: true,
   appName: "${RUNTIME_APP_NAME}",
   faviconUrl: "${RUNTIME_FAVICON_URL}"
 };
@@ -854,11 +854,15 @@ else
     echo "ℹ️  First local run: creating a minimal .env with a secure AUTH_SECRET."
 fi
 
-# A sourced .env may contain an older value. The explicit command-line switch
-# always wins for every child process started by this script.
+# Runtime diagnostics are controlled only by the explicit command-line switch.
+# Clear inherited or legacy .env values during ordinary product runs so a stale
+# local setting cannot expose the child/step terminal rail unexpectedly.
 if [ "$ENABLE_CHAT_TERMINAL_DEBUGS" = true ]; then
     export AGENTWORKS_RUNTIME_DEBUG=1
     export VITE_RUNTIME_DEBUG=1
+else
+    unset AGENTWORKS_RUNTIME_DEBUG
+    unset VITE_RUNTIME_DEBUG
 fi
 
 ensure_local_auth_secret
@@ -1019,6 +1023,7 @@ write_frontend_runtime_config() {
 window.__APP_RUNTIME_CONFIG__ = {
   apiBaseUrl: "${MCP_AGENT_SERVER_URL}",
   workspaceApiBaseUrl: "${WORKSPACE_API_URL:-${LOCALHOST_BASE_URL}:${WORKSPACE_PORT}}",
+  cdpEnabled: true,
   appName: "${runtime_app_name}",
   faviconUrl: "${runtime_favicon_url}"
 };
@@ -1739,6 +1744,25 @@ else
     fi
     echo "✅ agent-browser updated: $(agent-browser --version 2>&1)"
 fi
+
+# Serve the same private Playwright fixtures as server releases. Build these
+# from source on every local start so archive contents match this checkout.
+# An explicit override belongs to the caller and must not be overwritten.
+if [ -z "${AGENTWORKS_PLAYWRIGHT_PACKAGES_DIR:-}" ]; then
+    export AGENTWORKS_PLAYWRIGHT_PACKAGES_DIR="$SCRIPT_DIR/packages"
+    echo "📦 Building AgentWorks Playwright fixture packages..."
+    if ! python3 "$SCRIPT_DIR/../scripts/build-playwright-packages.py" "$AGENTWORKS_PLAYWRIGHT_PACKAGES_DIR"; then
+        echo "❌ Failed to build Playwright fixture packages; check Python 3 and package sources"
+        exit 1
+    fi
+fi
+for fixture_archive in agentworks-playwright.tgz agentworks-playwright-python.zip; do
+    if [ ! -r "$AGENTWORKS_PLAYWRIGHT_PACKAGES_DIR/$fixture_archive" ]; then
+        echo "❌ Missing Playwright fixture archive: $AGENTWORKS_PLAYWRIGHT_PACKAGES_DIR/$fixture_archive"
+        exit 1
+    fi
+done
+export AGENTWORKS_PLAYWRIGHT_PACKAGES_DIR
 
 # Build mcpbridge binary (required for CLI provider MCP bridge)
 # Install from local source to pick up latest fixes (e.g., virtual tool scoping)

@@ -137,15 +137,15 @@ func getUpdateStepConfigParameters() map[string]interface{} {
 			"execution_tier": map[string]interface{}{
 				"type":        "string",
 				"enum":        []interface{}{"high", "medium", "low"},
-				"description": "Persistent execution tier override for this workflow step or evaluation step in tiered mode. Use high for subjective/ambiguous judgment, medium for normal checks, low for deterministic/file-shape checks. execution_llm still takes precedence, and execute_step(..., tier=...) can still override workflow/eval step tier for a single run. REQUIRES execution_tier_reason. Note the hidden cost: pinning the tier DISABLES adaptive tiering for this step, so it stops promoting high->medium automatically after 3 stable runs. Prefer leaving it unset and letting adaptive tiering do the work.",
+				"description": "Persistent execution tier override for this workflow step or evaluation step in tiered mode. Use high for subjective/ambiguous judgment, medium for normal checks, low for deterministic/file-shape checks. execution_llm still takes precedence, and execute_step(..., tier=...) can still override workflow/eval step tier for a single run. REQUIRES execution_tier_reason. Pulse Architecture reviews model quality, cost, latency and retries to propose measured tier trials. Successful-run counts never change tiers. Unset execution steps default to high; evaluation steps default to medium. Preserve user pins and apply changes through the existing approval contract.",
 			},
 			"execution_tier_reason": map[string]interface{}{
 				"type":        "string",
-				"description": "Why this step's tier is pinned. Required whenever execution_tier is set. Cite the owning llm_ops_review finding id, the current state, and the evidence (and the human_input_id if the change was user-approved). If the evidence does not settle it, do not pin: raise a decision with create_human_input_request and park the finding awaiting_user.",
+				"description": "Why this step's tier is pinned. Required whenever execution_tier is set. Cite the owning architecture_review finding id, the current state, and the evidence (and the human_input_id if the change was user-approved). If the evidence does not settle it, do not pin: raise a decision with create_human_input_request and park the finding awaiting_user.",
 			},
 			"execution_llm_reason": map[string]interface{}{
 				"type":        "string",
-				"description": "Why this step is pinned to a specific model. Required whenever execution_llm is set. A pin outranks execution_tier entirely and will not follow provider-profile updates, so state the capability/cost comparison that justified it, citing the owning llm_ops_review finding id (and the human_input_id if approved).",
+				"description": "Why this step is pinned to a specific model. Required whenever execution_llm is set. A pin outranks execution_tier entirely and will not follow provider-profile updates, so state the capability/cost comparison that justified it, citing the owning architecture_review finding id (and the human_input_id if approved).",
 			},
 			"validation_llm": map[string]interface{}{
 				"type":        "object",

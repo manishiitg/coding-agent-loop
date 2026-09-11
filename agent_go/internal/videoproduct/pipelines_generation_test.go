@@ -102,14 +102,14 @@ func TestShortformStagesPutDirectionAndMeasuredNarrationBeforeShots(t *testing.T
 		}
 	}
 	characters := shortformPipeline.Stages[index["shortform-characters"]].Description
-	for _, required := range []string{"budget", "recommended", "premium", "explicitly approved", "separately from video-per-second cost", "NEVER silently select it", "selected provider/model"} {
+	for _, required := range []string{"minimum sufficient approved identity reference", "face-only", "representative complete-scene test", "separately from video cost", "FLUX.2 Max", "human input approves spending on those images", "explicitly approved"} {
 		if !strings.Contains(characters, required) {
 			t.Fatalf("short-form character step is missing %q", required)
 		}
 	}
 	anchor := shortformPipeline.Stages[index["shortform-anchor-shot"]].Description
 	next := shortformPipeline.Stages[index["shortform-next-shot"]].Description
-	for _, required := range []string{"exactly one approved anchor clip", "Do not batch the remaining shots", "HyperFrames insert", "photoreal footage"} {
+	for _, required := range []string{"exactly one approved anchor clip", "Do not batch the remaining shots", "HyperFrames insert", "user-approved visual style"} {
 		if !strings.Contains(anchor, required) {
 			t.Fatalf("short-form anchor generation is missing rule %q", required)
 		}
@@ -141,7 +141,7 @@ func TestShortformStagesPutDirectionAndMeasuredNarrationBeforeShots(t *testing.T
 		}
 	}
 	visualDevelopment := shortformPipeline.Stages[index["shortform-visual-development"]]
-	for _, required := range []string{"real approved reference pack", "show_reference", "start reference", "exit/end-state reference", "shortform-reference-manifest.json"} {
+	for _, required := range []string{"minimum sufficient references", "show_reference", "start reference", "exit/end-state reference", "shortform-reference-manifest.json"} {
 		if !strings.Contains(visualDevelopment.Description, required) {
 			t.Fatalf("short-form visual-development step is missing %q", required)
 		}
@@ -172,7 +172,7 @@ func TestShortformStagesPutDirectionAndMeasuredNarrationBeforeShots(t *testing.T
 	}
 }
 
-func TestCharacterModelIsUserSelectedBeforeAnyReferenceSpend(t *testing.T) {
+func TestCharacterReferencesUseProductPolicyAndRequireSpendApproval(t *testing.T) {
 	for _, pipeline := range []*Pipeline{longformPipeline, shortformPipeline} {
 		var characters, shotlist string
 		for _, stage := range pipeline.Stages {
@@ -184,10 +184,10 @@ func TestCharacterModelIsUserSelectedBeforeAnyReferenceSpend(t *testing.T) {
 			}
 		}
 		for _, required := range []string{
-			"live-verified viable character-model choices",
-			"NEVER silently select it",
-			"selected provider/model",
-			"explicit approval to spend",
+			"Reuse approved source imagery or reviewed local crops",
+			"FLUX.2 Max",
+			"Do not substitute another model without explicit approval",
+			"human input approves spending on those images",
 			"show_character",
 		} {
 			if !strings.Contains(characters, required) {
@@ -266,7 +266,7 @@ func TestLongformStagesKeepTheirLoadBearingOrder(t *testing.T) {
 		}
 	}
 	visualDevelopment := longformPipeline.Stages[index["longform-visual-development"]]
-	for _, required := range []string{"actual visual evidence", "show_reference", "start reference", "exit/end-state reference", "longform-reference-manifest.json"} {
+	for _, required := range []string{"minimum sufficient references", "show_reference", "start reference", "exit/end-state reference", "longform-reference-manifest.json"} {
 		if !strings.Contains(visualDevelopment.Description, required) {
 			t.Fatalf("long-form visual-development step is missing %q", required)
 		}
@@ -343,7 +343,7 @@ func TestShotCreationUsesAnchorAndReusableNextShotRecipes(t *testing.T) {
 // Both cinematic pipelines retain real footage generation while permitting
 // HyperFrames only in the planning, creation, assembly, and QA steps where an
 // explicitly planned deterministic insert can be made and verified.
-func TestCinematicPipelinesScopeHyperFramesToPlannedInserts(t *testing.T) {
+func TestProductionPipelinesSupportApprovedAnimatedSequences(t *testing.T) {
 	generationSkills := map[string]bool{}
 	for _, name := range []string{"fal-ai", "google-ai", "seeddance-api", "longform-cinematic-video", "video-model-selection", "video-cinematography", "video-storytelling"} {
 		generationSkills[name] = true
@@ -377,7 +377,7 @@ func TestCinematicPipelinesScopeHyperFramesToPlannedInserts(t *testing.T) {
 				shotlist = stage.Description
 			}
 		}
-		for _, marker := range []string{"HyperFrames insert", "never use it"} {
+		for _, marker := range []string{"HyperFrames insert", "approved illustrated or animated sequences", "Real people and realistic characters are not required"} {
 			if !strings.Contains(shotlist, marker) {
 				t.Fatalf("%s shot list is missing %q", pipeline.ID, marker)
 			}
@@ -474,9 +474,8 @@ func TestNarrationIsNotLockedToOneProvider(t *testing.T) {
 	}
 }
 
-// Video Studio exposes cinematic production only. Short-form is the default;
-// HyperFrames is a technique inside it, never a separate route.
-func TestCinematicPipelinesAreTheOnlyCreativeRoutes(t *testing.T) {
+// Long-form is the default; visual styles share the same production routes.
+func TestLongformIsTheDefaultProductionRoute(t *testing.T) {
 	plan := planForAll(pipelineRegistry)
 	steps := plan["steps"].([]map[string]interface{})
 	if len(steps) == 0 || steps[0]["type"] != "routing" {
@@ -499,10 +498,10 @@ func TestCinematicPipelinesAreTheOnlyCreativeRoutes(t *testing.T) {
 	if routed["infographic"] != "" {
 		t.Fatalf("product infographic remains exposed as a route: %+v", routed)
 	}
-	if got := steps[0]["default_route_id"]; got != "shortform" {
-		t.Fatalf("default route = %v, want shortform", got)
+	if got := steps[0]["default_route_id"]; got != "longform" {
+		t.Fatalf("default route = %v, want longform", got)
 	}
-	if DefaultPipeline().ID != "shortform" {
-		t.Fatalf("DefaultPipeline() = %s, want shortform", DefaultPipeline().ID)
+	if DefaultPipeline().ID != "longform" {
+		t.Fatalf("DefaultPipeline() = %s, want longform", DefaultPipeline().ID)
 	}
 }

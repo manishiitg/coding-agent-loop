@@ -53,6 +53,7 @@ MLP="$SRC_ROOT/multi-llm-provider-go"
 MCPAGENT="$SRC_ROOT/mcpagent"
 
 ACTIVATE=0
+command -v python3 >/dev/null || { echo 'Missing python3 (required for release cleanup)' >&2; exit 1; }
 if [[ "${1:-}" == "--activate" ]]; then
   ACTIVATE=1
 fi
@@ -101,14 +102,15 @@ sync_repo "multi-llm-provider-go" "$MLP"
 # 2026-09-09: a real deploy silently ran a copy that predated agent-browser
 # provisioning, the static/report-preview fix, and the CDP-disable work by a
 # full day, because nothing ever re-copied it after those changes landed.
-# Bash has already read this whole file into memory, so overwriting it here
-# is safe for the rest of THIS run; it just makes the NEXT invocation current.
+# Replace the file atomically: Bash may still be reading this run's original
+# inode. The next invocation gets the new script without changing this run.
 SELF_SOURCE="$REPO/deploy/dedicated-vm/deploy-dominion.sh"
 SELF_TARGET="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/$(basename "${BASH_SOURCE[0]}")"
 if ! cmp -s "$SELF_SOURCE" "$SELF_TARGET"; then
   echo "==> Updating this script's own copy at $SELF_TARGET from the repo just synced (takes effect next run)"
-  cp "$SELF_SOURCE" "$SELF_TARGET"
-  chmod +x "$SELF_TARGET"
+  cp "$SELF_SOURCE" "$SELF_TARGET.next"
+  chmod +x "$SELF_TARGET.next"
+  mv "$SELF_TARGET.next" "$SELF_TARGET"
 fi
 sync_repo "mcpagent" "$MCPAGENT"
 
@@ -124,6 +126,9 @@ rm -f "$GOWORK_FILE" # regenerate fresh each run so it can never point at a stal
 RELEASE_ID="$(git -C "$REPO" rev-parse --short HEAD)-$(date +%Y%m%d%H%M%S)"
 RELEASE_DIR="$RELEASES_ROOT/$RELEASE_ID"
 mkdir -p "$RELEASE_DIR/bin" "$RELEASE_DIR/configs" "$RELEASE_DIR/frontend"
+touch "$RELEASE_DIR/.deploying"
+trap 'rm -f "$RELEASE_DIR/.deploying"' EXIT
+cp "$REPO/deploy/common/prune-releases.py" "$RELEASE_DIR/prune-releases.py"
 ln -sfn /srv/dominion/logs "$RELEASE_DIR/logs"
 echo "==> Staging release $RELEASE_ID at $RELEASE_DIR"
 
@@ -201,6 +206,13 @@ echo "Release staged: $RELEASE_DIR"
 echo "Currently active: $(readlink -f "$CURRENT_LINK" 2>/dev/null || echo none)"
 
 if [[ "$ACTIVATE" -ne 1 ]]; then
+  # Keep this candidate until the next build/activation; repeated staging
+  # must not accumulate an archive of every earlier candidate.
+  if [[ -d "$CURRENT_LINK" ]]; then
+    rm -f "$RELEASE_DIR/.deploying"
+    python3 "$RELEASE_DIR/prune-releases.py" /srv/dominion --apply --keep "$RELEASE_ID" \
+      --health-url http://127.0.0.1:21000/api/health --health-url http://127.0.0.1:21001/health
+  fi
   echo ""
   echo "Not activated (pass --activate to flip + restart). To activate this exact release later:"
   echo "  ln -sfn $RELEASE_DIR $CURRENT_LINK && systemctl --user restart dominion-agent"
@@ -212,6 +224,7 @@ echo ""
 echo "==> Activating: flipping $CURRENT_LINK -> $RELEASE_DIR and restarting dominion-workspace, dominion-agent"
 ln -sfn "$RELEASE_DIR" "$CURRENT_LINK"
 mkdir -p "$HOME/.config/systemd/user/dominion-agent.service.d"
+printf '%s\n' '[Service]' 'Environment=AGENTWORKS_MCP_STATE_DIR=/srv/dominion/state/mcp' > "$HOME/.config/systemd/user/dominion-agent.service.d/30-durable-mcp.conf"
 printf '%s\n' '[Service]' 'Environment=AGENT_BROWSER_CDP_ENABLED=false' > "$HOME/.config/systemd/user/dominion-agent.service.d/20-disable-cdp.conf"
 mkdir -p "$HOME/.config/systemd/user/dominion-workspace.service.d"
 printf '%s\n' '[Service]' 'Environment=AGENT_BROWSER_CDP_ENABLED=false' > "$HOME/.config/systemd/user/dominion-workspace.service.d/20-disable-cdp.conf"
@@ -250,3 +263,7 @@ else
   fi
   exit 1
 fi
+
+rm -f "$RELEASE_DIR/.deploying"
+python3 "$RELEASE_DIR/prune-releases.py" /srv/dominion --apply \
+  --health-url http://127.0.0.1:21000/api/health --health-url http://127.0.0.1:21001/health

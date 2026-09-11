@@ -21,6 +21,7 @@ import (
 
 var codingAgentChatE2EFlags struct {
 	serverURL           string
+	workspaceDocs       string
 	provider            string
 	model               string
 	sessionID           string
@@ -94,6 +95,27 @@ Example:
 		if model == "" {
 			model = defaultCodingAgentE2EModel(provider)
 		}
+		// Cursor's retained UI is the Workflow Builder. Ordinary direct chat
+		// intentionally uses structured transport and cannot certify tmux Send.
+		if provider == "cursor-cli" && client.presetQueryID == "" && client.agentMode == "simple" {
+			docs := strings.TrimSpace(codingAgentChatE2EFlags.workspaceDocs)
+			if docs == "" {
+				docs = strings.TrimSpace(os.Getenv("WORKSPACE_DOCS_PATH"))
+			}
+			if docs == "" {
+				return fmt.Errorf("Cursor retained P0 requires --workspace-docs for an isolated Workflow Builder fixture")
+			}
+			fixture, cleanup, err := createWorkflowAutoNotificationFixture(docs, false, provider, model)
+			if err != nil {
+				return err
+			}
+			defer cleanup()
+			client.agentMode = "workflow_phase"
+			client.phaseID = "workflow-builder"
+			client.selectedFolder = fixture.relWorkflow
+			client.presetQueryID = fixture.presetID
+			client.workshopMode = "run"
+		}
 		if codingAgentChatE2EFlags.vertexFinalJudge {
 			if codingAgentVertexJudgeAPIKey() == "" {
 				return fmt.Errorf("--vertex-final-judge requires GEMINI_API_KEY, VERTEX_API_KEY, or GOOGLE_API_KEY")
@@ -112,7 +134,7 @@ Example:
 
 		noteToken := "E2E_NOTE_" + strings.ReplaceAll(uuid.NewString(), "-", "")
 		fmt.Printf("Running coding agent chat e2e provider=%s model=%s session=%s\n", provider, model, sessionID)
-		fmt.Printf("Selected folder: %s\n", codingAgentChatE2EFlags.selectedFolder)
+		fmt.Printf("Selected folder: %s\n", client.selectedFolder)
 
 		firstQuery := fmt.Sprintf("Take note of the exact token %s. Do not write it to any file, memory, or external store. Do not use tools. Reply with exactly ACK_%s and nothing else.", noteToken, noteToken)
 		if err := client.runAndAssertContains(ctx, sessionID, provider, model, firstQuery, []string{"ACK_" + noteToken}); err != nil {
@@ -124,6 +146,12 @@ Example:
 			return fmt.Errorf("IC-11 retained-window P0 failed: %w", err)
 		}
 		fmt.Println("PASS IC-11: retained session delivered one tool receipt and one final response without reconstruction")
+		if provider == "cursor-cli" {
+			if err := client.runCursorRetainedProgressP0(ctx, sessionID, model); err != nil {
+				return fmt.Errorf("Cursor retained narration/steering P0: %w", err)
+			}
+			fmt.Println("PASS Cursor P0: both retained narration messages arrived over chat SSE before completion across a busy steer")
+		}
 		if codingAgentChatE2EFlags.retainedWindowOnly {
 			fmt.Println("PASS coding agent retained-window P0")
 			return nil
@@ -254,6 +282,7 @@ func init() {
 	codingAgentChatE2ECmd.Flags().StringVar(&codingAgentChatE2EFlags.model, "model", "", "model ID; defaults to the provider-specific E2E model")
 	codingAgentChatE2ECmd.Flags().StringVar(&codingAgentChatE2EFlags.sessionID, "session-id", "", "session ID to reuse; generated when omitted")
 	codingAgentChatE2ECmd.Flags().StringVar(&codingAgentChatE2EFlags.selectedFolder, "selected-folder", "_users/default/Chats", "workspace-relative folder for the chat session")
+	codingAgentChatE2ECmd.Flags().StringVar(&codingAgentChatE2EFlags.workspaceDocs, "workspace-docs", "", "workspace-docs root of the test server for the Cursor Workflow Builder fixture")
 	codingAgentChatE2ECmd.Flags().StringVar(&codingAgentChatE2EFlags.agentMode, "agent-mode", "simple", "agent mode to send to /api/query")
 	codingAgentChatE2ECmd.Flags().StringVar(&codingAgentChatE2EFlags.presetQueryID, "preset-query-id", "", "workflow preset ID for workflow_phase chat")
 	codingAgentChatE2ECmd.Flags().StringVar(&codingAgentChatE2EFlags.phaseID, "phase-id", "", "workflow phase ID for workflow_phase chat")
@@ -441,6 +470,14 @@ func (c *codingAgentChatE2EClient) runRetainedWindowP0(ctx context.Context, sess
 	}
 
 	since := before.LastProcessedIndex
+	var progressStream *progressP0Stream
+	if provider == "cursor-cli" {
+		progressStream, err = c.openProgressP0Stream(ctx, sessionID, since)
+		if err != nil {
+			return err
+		}
+		defer progressStream.close()
+	}
 	progressToken := "RETAINED_PROGRESS_" + strings.ReplaceAll(uuid.NewString(), "-", "")
 	toolMarker := "RETAINED_TOOL_"
 	query := fmt.Sprintf("Before using any tool, send a brief progress update containing exactly %s. That update is intermediate commentary, not your final answer. This is a tool-lifecycle test and it fails unless you emit a real MCP tool receipt: you MUST call the api-bridge `execute_shell_command` MCP tool exactly once with command `sleep 2; python3 -c 'import secrets; print(\"RETAINED_TOOL_\"+secrets.token_hex(12))'`. Do not calculate, guess, or invent its random stdout. Only after the MCP call returns, reply with exactly your complete response from the previous turn, then a vertical bar, then the complete command stdout, and nothing else.", progressToken)
@@ -470,6 +507,9 @@ func (c *codingAgentChatE2EClient) runRetainedWindowP0(ctx context.Context, sess
 	final, completionRaw, events, err := c.waitForCompletion(ctx, sessionID, since)
 	if err != nil {
 		return fmt.Errorf("retained follow-up did not complete: %w", err)
+	}
+	if err := assertRetainedProgressStream(ctx, progressStream, progressToken); err != nil {
+		return err
 	}
 	if err := assertCanonicalRetainedTurnIdentity(events, "execute_shell_command"); err != nil {
 		return err

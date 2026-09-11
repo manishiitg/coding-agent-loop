@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useState, type ReactNode } from 'react'
 import {
   AlertCircle,
   Ban,
@@ -22,6 +22,7 @@ interface WorkflowNotificationViewProps {
   onStateLoaded?: (state: WorkflowNotificationState) => void
   loadInfo?: () => Promise<WorkflowNotificationInfo>
   onSetup?: () => void
+  headerAction?: ReactNode
 }
 
 const iconButtonClass = 'inline-flex h-8 w-8 items-center justify-center rounded-md border border-border text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:opacity-50'
@@ -44,6 +45,7 @@ export default function WorkflowNotificationView({
   onStateLoaded,
   loadInfo,
   onSetup,
+  headerAction,
 }: WorkflowNotificationViewProps) {
   const [loading, setLoading] = useState(false)
   const [info, setInfo] = useState<WorkflowNotificationInfo | null>(null)
@@ -154,6 +156,7 @@ export default function WorkflowNotificationView({
               <button onClick={() => { void load() }} disabled={loading} className={iconButtonClass} aria-label="Refresh notification status">
                 <RefreshCw className={`h-3.5 w-3.5 ${loading ? 'animate-spin' : ''}`} />
               </button>
+              {headerAction}
               {onSetup ? (
                 <button type="button" onClick={onSetup} className={`${setupClass} transition-colors hover:bg-muted hover:text-foreground`}>Change with <code className="rounded bg-background px-1 font-medium text-foreground">/notify</code></button>
               ) : (

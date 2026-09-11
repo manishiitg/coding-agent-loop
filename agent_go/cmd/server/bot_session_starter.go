@@ -13,6 +13,23 @@ import (
 	"github.com/manishiitg/mcpagent/events"
 )
 
+// internalBotRequestContext gives bot-originated turns the same authenticated
+// identity as an HTTP turn from the paired account. The user directory remains
+// authoritative for permissions: we deliberately persist only the user ID on
+// the connector, then resolve the current username/email/role for every turn so
+// a promotion or demotion takes effect without re-pairing WhatsApp.
+func internalBotRequestContext(ctx context.Context, userID string) context.Context {
+	if userID == "" || GetUserFromContext(ctx) != nil {
+		return ctx
+	}
+	claims := &UserClaims{UserID: userID, Username: userID}
+	if record := directoryUserFor(userID, "", ""); record != nil {
+		claims.Username = record.Username
+		claims.Email = record.Email
+	}
+	return context.WithValue(ctx, UserContextKey, claims)
+}
+
 // startSessionInternal starts an agent session programmatically (used by bot connector).
 // It constructs a QueryRequest from the provided map and invokes handleQuery internally.
 // This blocks until the exact query execution and all descendants complete.
@@ -34,12 +51,7 @@ func (api *StreamingAPI) startSessionInternal(
 	if err != nil {
 		return fmt.Errorf("failed to create internal request: %w", err)
 	}
-	if userID != "" && GetUserFromContext(httpReq.Context()) == nil {
-		httpReq = httpReq.WithContext(context.WithValue(httpReq.Context(), UserContextKey, &UserClaims{
-			UserID:   userID,
-			Username: userID,
-		}))
-	}
+	httpReq = httpReq.WithContext(internalBotRequestContext(httpReq.Context(), userID))
 
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("X-Session-ID", sessionID)
@@ -105,12 +117,7 @@ func (api *StreamingAPI) sendFollowUpInternal(
 	if err != nil {
 		return fmt.Errorf("failed to create follow-up request: %w", err)
 	}
-	if userID != "" && GetUserFromContext(httpReq.Context()) == nil {
-		httpReq = httpReq.WithContext(context.WithValue(httpReq.Context(), UserContextKey, &UserClaims{
-			UserID:   userID,
-			Username: userID,
-		}))
-	}
+	httpReq = httpReq.WithContext(internalBotRequestContext(httpReq.Context(), userID))
 
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("X-Session-ID", sessionID)

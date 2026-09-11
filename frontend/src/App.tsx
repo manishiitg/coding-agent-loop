@@ -43,7 +43,6 @@ const queryClient = new QueryClient();
 const QuickSwitcher = lazy(() => import('./components/QuickSwitcher'))
 const WorkflowsOverviewPage = lazy(() => import('./components/WorkflowsOverviewPage').then(module => ({ default: module.WorkflowsOverviewPage })))
 const VideoStudioSurface = lazy(() => import('./products/video-studio/VideoStudioSurface').then(module => ({ default: module.VideoStudioSurface })))
-const FinanceSurface = lazy(() => import('./products/finance/FinanceSurface').then(module => ({ default: module.FinanceSurface })))
 const DominionSurface = lazy(() => import('./products/dominion/DominionSurface').then(module => ({ default: module.DominionSurface })))
 const SparkQuillSurface = lazy(() => import('./products/sparkquill/SparkQuillSurface').then(module => ({ default: module.SparkQuillSurface })))
 
@@ -100,7 +99,7 @@ function App() {
   const allowedProducts = useAuthStore(state => state.user?.allowed_products)
 
   // A dedicated deployment is an allowlist, not a visual preference. Correct
-  // persisted desktop selections before rendering so a stale Finance or
+  // persisted desktop selections before rendering so a stale SparkQuill or
   // Dominion choice cannot expose a product disabled on this host -- or, now,
   // a product this specific logged-in user isn't granted.
   useEffect(() => {
@@ -910,8 +909,6 @@ function App() {
         <ToastHost />
         {productSurface === 'video-studio' ? (
           <Suspense fallback={<FileSurfaceFallback />}><VideoStudioSurface /></Suspense>
-        ) : productSurface === 'finance' ? (
-          <Suspense fallback={<FileSurfaceFallback />}><FinanceSurface /></Suspense>
         ) : productSurface === 'dominion' ? (
           <Suspense fallback={<FileSurfaceFallback />}><DominionSurface /></Suspense>
         ) : productSurface === 'sparkquill' ? (

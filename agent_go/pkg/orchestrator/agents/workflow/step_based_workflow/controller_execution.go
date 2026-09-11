@@ -1760,19 +1760,10 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 						"This is a harness/infrastructure failure, not a fault in the script — do not modify main.py in response to it. Underlying error: %s",
 					step.GetID(), scriptedDecision.HarnessError)
 			}
-			// The script deliberately exited ScriptedTerminalRefusalExitCode: a
-			// fail-closed guard correctly detected an unsafe condition and
-			// refused to proceed. This must fail the step outright rather than
-			// fall through to the LLM relearn path — handing an agent "here is
-			// a refusal, fix it" is exactly how the refusal gets overridden
-			// instead of respected. See ScriptedTerminalRefusalExitCode's own
-			// doc comment for the live incident that established this.
+			// Exit code 2 always stops automatic repair, but does not by itself
+			// establish that a safety guard fired. Report only supplied evidence.
 			if scriptedDecision.TerminalRefusal {
-				return "", updatedContextFiles, fmt.Errorf(
-					"scripted step %q deliberately refused to proceed (exit code %d): its own protective logic detected an unsafe condition and stopped. "+
-						"This is the script working correctly, not a bug — do NOT modify main.py or attempt the write it refused. "+
-						"Investigate and resolve the underlying condition the script detected before retrying. Refusal detail: %s",
-					step.GetID(), ScriptedTerminalRefusalExitCode, scriptedDecision.TerminalRefusalReason)
+				return "", updatedContextFiles, scriptedTerminalStopError(step.GetID(), scriptedDecision.TerminalRefusalReason)
 			}
 			learnCodePriorScript = scriptedDecision.PriorScript
 			learnCodePriorError = scriptedDecision.PriorError
@@ -1859,9 +1850,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 			var formattedLearningHistory string
 			agentConfigs := getAgentConfigs(step)
 
-			learningPathIdentifier := step.GetID()
-			currentDescriptionHash := hashStepDescription(step.GetDescription())
-
 			// Learnings READ gate — controlled by learnings_access.
 			// Default is "read": every step sees _global/SKILL.md in its prompt.
 			// Only routing/eval steps or explicit learnings_access="none" opt out.
@@ -1891,25 +1879,8 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 			// If scripted was ever active in any attempt, the conversation is polluted
 			// with main.py authoring turns — fall back to fresh agents instead of continuing.
 			learnCodeActiveInAnyAttempt := false
-			adaptiveTierEnabled := hcpo.shouldUseAdaptiveExecutionTiering(ctx, agentConfigs)
-			adaptiveTier := TierHigh
-			adaptiveTierReason := "high (adaptive tiering disabled)"
-			if adaptiveTierEnabled {
-				decision, tierErr := hcpo.decideAdaptiveExecutionTier(
-					ctx,
-					learningPathIdentifier,
-					stepPath,
-					currentDescriptionHash,
-				)
-				if tierErr != nil {
-					hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to resolve adaptive execution tier for step %d: %v — defaulting to Tier 1 (High)", stepIndex+1, tierErr))
-					adaptiveTierEnabled = false
-				} else {
-					adaptiveTier = decision.Tier
-					adaptiveTierReason = decision.Reason
-					hcpo.GetLogger().Info(fmt.Sprintf("🏷️ [ADAPTIVE] Step %d initial execution tier: %s (%s)", stepIndex+1, TierLevelLabel(adaptiveTier), adaptiveTierReason))
-				}
-			}
+			// Tier selection belongs to explicit configuration and Pulse Architecture
+			// review. Never derive a runtime override from learning/run counters.
 
 			// Retry loop: Execute with validation feedback, reusing the same learning history
 			// Fires an [AUTO-NOTIFICATION] into the builder chat on the FIRST
@@ -1971,7 +1942,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 
 				agentConfigs := getAgentConfigs(step)
 				executionAgentCtx := ctx
-				attemptTier := adaptiveTier
 				var capturedToolCalls []orchestrator.ToolCallEntry
 				var capturedLLMCalls []orchestrator.LLMCallEntry
 				var attemptStartedAt time.Time
@@ -2005,11 +1975,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 					shouldContinue = false
 				}
 
-				if adaptiveTierEnabled {
-					executionAgentCtx = context.WithValue(executionAgentCtx, WorkshopTierOverrideKey, int(attemptTier))
-					hcpo.GetLogger().Info(fmt.Sprintf("🏷️ [ADAPTIVE] Step %d attempt %d/%d forcing Tier %d (%s): %s",
-						stepIndex+1, retryAttempt, maxRetryAttempts, int(attemptTier), TierLevelLabel(attemptTier), adaptiveTierReason))
-				}
 				timingCaptureCtx = executionAgentCtx
 
 				if !shouldContinue {
@@ -2236,7 +2201,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 								return "", updatedContextFiles, fmt.Errorf("script runtime unavailable: %s", canonicalResult.HarnessError)
 							}
 							if canonicalResult.TerminalRefusal {
-								return "", updatedContextFiles, fmt.Errorf("script deliberately refused: %s", canonicalResult.TerminalRefusalReason)
+								return "", updatedContextFiles, scriptedTerminalStopError(step.GetID(), canonicalResult.TerminalRefusalReason)
 							}
 							if canonicalResult.Success {
 								lastLcResult = canonicalResult
@@ -2695,11 +2660,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 							hcpo.recordRunPersistenceError(context.Background(), artifactStepID, logErr)
 						}
 					}
-					if adaptiveTierEnabled {
-						if metaErr := hcpo.recordAdaptiveExecutionTierSuccess(ctx, learningPathIdentifier, stepPath, attemptTier, currentDescriptionHash); metaErr != nil {
-							hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to record adaptive tier success for step %d: %v", stepIndex+1, metaErr))
-						}
-					}
+
 					hcpo.GetLogger().Info(fmt.Sprintf("✅ Step %d passed validation - success criteria met (Status: %s)", stepIndex+1, validationResponse.ExecutionStatus))
 
 					break // Exit retry loop and continue to next step

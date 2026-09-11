@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, type ReactNode } from 'react'
 import { Share2, ShieldCheck, Users } from 'lucide-react'
 import WorkflowSharePopup from './WorkflowSharePopup'
 import UsersAdminPanel from '../admin/UsersAdminPanel'
@@ -12,6 +12,7 @@ type AccessTab = 'workflow' | 'users'
 
 interface WorkflowAccessViewProps {
   workspacePath: string | null
+  headerAction?: ReactNode
 }
 
 /**
@@ -25,7 +26,7 @@ interface WorkflowAccessViewProps {
  * Both bodies are the existing components rendered `embedded`; this is only
  * the pane shell, header and tabs.
  */
-export default function WorkflowAccessView({ workspacePath }: WorkflowAccessViewProps) {
+export default function WorkflowAccessView({ workspacePath, headerAction }: WorkflowAccessViewProps) {
   const isMultiUser = useAuthStore(state => state.isMultiUserMode)
   const isAdmin = useAuthStore(state => state.user?.is_admin === true)
   const canManageUsers = useAuthStore(state => state.isMultiUserMode && (state.user?.is_admin === true || hasWorkflowOwnerAccess(state.user, state.isMultiUserMode)))
@@ -62,16 +63,19 @@ export default function WorkflowAccessView({ workspacePath }: WorkflowAccessView
               : 'Accounts, roles and passwords for this deployment.'}
           </p>
         </div>
-        {workflowTab && usersTab && (
-          <div className="flex shrink-0 items-center gap-1 rounded-lg bg-muted/60 p-1" role="tablist" aria-label="Access sections">
-            <button type="button" role="tab" aria-selected={tab === 'workflow'} className={tabClass(tab === 'workflow')} onClick={() => setTab('workflow')}>
-              <Share2 className="h-3.5 w-3.5" /> This workflow
-            </button>
-            <button type="button" role="tab" aria-selected={tab === 'users'} className={tabClass(tab === 'users')} onClick={() => setTab('users')}>
-              <Users className="h-3.5 w-3.5" /> Users
-            </button>
-          </div>
-        )}
+        <div className="flex shrink-0 items-center gap-2">
+          {workflowTab && usersTab && (
+            <div className="flex items-center gap-1 rounded-lg bg-muted/60 p-1" role="tablist" aria-label="Access sections">
+              <button type="button" role="tab" aria-selected={tab === 'workflow'} className={tabClass(tab === 'workflow')} onClick={() => setTab('workflow')}>
+                <Share2 className="h-3.5 w-3.5" /> This workflow
+              </button>
+              <button type="button" role="tab" aria-selected={tab === 'users'} className={tabClass(tab === 'users')} onClick={() => setTab('users')}>
+                <Users className="h-3.5 w-3.5" /> Users
+              </button>
+            </div>
+          )}
+          {headerAction}
+        </div>
       </div>
 
       <div className="flex-1 overflow-y-auto">

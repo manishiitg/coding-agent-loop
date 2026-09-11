@@ -1,23 +1,18 @@
 import type { ReportHumanInputChatResult } from '../../../utils/reportHumanInputChat'
 import type { ReportChatOptions, ReportChatReceipt } from './reportEmbedContext'
 
-type Dispatch = (request: { workspacePath: string; message: string; newChat: boolean }) => Promise<ReportHumanInputChatResult>
+type Dispatch = (request: { workspacePath: string; message: string }) => Promise<ReportHumanInputChatResult>
 type PendingRequest = {
   message: string
   requestId?: string
-  sending: boolean
-  error?: string
   result: Promise<ReportChatReceipt>
-  resolve: (receipt: ReportChatReceipt) => void
-  reject: (error: unknown) => void
 }
 
-/** One host-reviewed request at a time. This is a UI guard, not an iframe
- * isolation boundary or a backend execution/idempotency guarantee. */
+/** Dispatch through the same workflow chat lane as human decisions.
+ * Duplicate protection is per view; durable execution checks belong to the consumer. */
 export class ReportChatRequestController {
   private pending: PendingRequest | null = null
   private active = true
-  private listeners = new Set<() => void>()
   private receipts = new Map<string, { message: string; receipt: ReportChatReceipt }>()
 
   readonly workspacePath: string
@@ -28,24 +23,9 @@ export class ReportChatRequestController {
     this.dispatch = dispatch
   }
 
-  subscribe = (listener: () => void) => {
-    this.listeners.add(listener)
-    return () => { this.listeners.delete(listener) }
-  }
-
-  getSnapshot = () => this.pending
-
-  private publish(pending: PendingRequest | null) {
-    this.pending = pending
-    this.listeners.forEach(listener => listener())
-  }
-
   activate = () => { this.active = true }
-
-  dispose = () => {
-    this.active = false
-    this.cancel()
-  }
+  // Navigation must not cancel an enqueue already accepted from a user action.
+  dispose = () => { this.active = false }
 
   request = (message: string, options?: ReportChatOptions): Promise<ReportChatReceipt> => {
     if (!this.active) return Promise.reject(new Error('This report is no longer open.'))
@@ -68,51 +48,21 @@ export class ReportChatRequestController {
     }
     if (this.pending) {
       if (this.pending.message === message && this.pending.requestId === requestId) return this.pending.result
-      return Promise.reject(new Error('Finish or cancel the open report message before starting another.'))
+      return Promise.reject(new Error('Wait for the current report message to queue before sending another.'))
     }
-    let resolve!: PendingRequest['resolve']
-    let reject!: PendingRequest['reject']
-    const result = new Promise<ReportChatReceipt>((done, fail) => { resolve = done; reject = fail })
-    this.publish({ message, requestId, sending: false, result, resolve, reject })
-    return result
-  }
-
-  cancel = () => {
-    if (!this.pending || this.pending.sending) return
-    this.pending.resolve({ status: 'cancelled' })
-    this.publish(null)
-  }
-
-  send = async (message: string, newChat: boolean) => {
-    const request = this.pending
-    if (!this.active || !request || request.sending) return
-    if (!message.trim() || message.length > 12000) {
-      this.publish({ ...request, error: 'Provide a message between 1 and 12,000 characters.' })
-      return
-    }
-    this.publish({ ...request, sending: true, error: undefined })
-    try {
-      const result = await this.dispatch({
+    const result = Promise.resolve().then(async (): Promise<ReportChatReceipt> => {
+      const queued = await this.dispatch({
         workspacePath: this.workspacePath,
-        message: `From the report for ${this.workspacePath}:\n\n${message.trim()}`,
-        newChat,
+        message: `From the report for ${this.workspacePath}:\n\n${message}`,
       })
-      const receipt: ReportChatReceipt = { status: 'queued', ...result }
-      if (request.requestId) {
-        this.receipts.set(request.requestId, { message: request.message, receipt })
-        // Bound the per-view cache. Durable exactly-once execution belongs to
-        // the approval consumer, which must re-read current DB state.
+      const receipt: ReportChatReceipt = { status: 'queued', ...queued }
+      if (requestId) {
+        this.receipts.set(requestId, { message, receipt })
         if (this.receipts.size > 100) this.receipts.delete(this.receipts.keys().next().value!)
       }
-      request.resolve(receipt)
-      this.publish(null)
-    } catch (error) {
-      if (!this.active) {
-        request.reject(error)
-        this.publish(null)
-        return
-      }
-      this.publish({ ...request, sending: false, error: error instanceof Error ? error.message : 'Could not queue the message. Try again.' })
-    }
+      return receipt
+    }).finally(() => { this.pending = null })
+    this.pending = { message, requestId, result }
+    return result
   }
 }

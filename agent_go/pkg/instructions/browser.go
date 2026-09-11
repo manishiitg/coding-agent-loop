@@ -59,7 +59,8 @@ func BuildBrowserRuntimeInstructions(cfg BrowserConfig) string {
 	if mode == "auto" {
 		sb.WriteString("- Before the first action and after an availability error, call `agent_browser` status. Follow its live `effective_mode`; never infer CDP reachability from this prompt or probe Chrome through shell.\n")
 	}
-	sb.WriteString("- Before browser work, read the projected `agent-browser` skill when attached; otherwise read `builder-reference/references/browser-usage.md`. Those references contain the managed HTTP bridge, current skill-loading, tab ownership, cleanup, and safety contracts.\n")
+	sb.WriteString("- For repeatable browser tests, read `builder-reference/references/playwright-scripted.md`; use @agentworks/playwright for JS/TS or agentworks-playwright for Python when available. Its live view is watch-only; this runtime configuration concerns managed agent-browser.\n")
+	sb.WriteString("- Before interactive browser work, read the projected `agent-browser` skill when attached; otherwise read `builder-reference/references/browser-usage.md`. Those references contain the managed HTTP bridge, current skill-loading, tab ownership, cleanup, and safety contracts.\n")
 	return sb.String()
 }
 
@@ -70,7 +71,7 @@ func BuildBrowserInstructions(cfg BrowserConfig) string {
 		return ""
 	}
 
-	result := "\n## Bundled Browser Recording\nWhen requested, use agent_browser(command=\"capture\", args=[\"start\"], session=\"main\") in managed headless mode after opening/selecting the page. This Builder command starts video, HAR, console and error capture through the same backend as the Browser view. Use args=[\"status\"] before starting and after uncertain responses. Stop with args=[\"stop\"] and report the returned directory, files and errors. Stop a capture you started even when reproduction fails; never stop someone else's active recording. Do not mix capture with separate record/HAR commands or close/reset the browser. The output path is assigned from current workflow permissions. CDP uses the separate native recording commands.\n"
+	result := "\nFor repeatable browser tests, read builder-reference/references/playwright-scripted.md; use @agentworks/playwright for JS/TS or agentworks-playwright for Python when available. Its test sessions are watch-only. The following configuration, media, and capture rules concern managed agent-browser.\n\n## Bundled Browser Recording\nWhen requested, use agent_browser(command=\"capture\", args=[\"start\"], session=\"main\") in managed headless mode after opening/selecting the page. This Builder command starts video, HAR, console and error capture through the same backend as the Browser view. Use args=[\"status\"] before starting and after uncertain responses. Stop with args=[\"stop\"] and report the returned directory, files and errors. Stop a capture you started even when reproduction fails; never stop someone else's active recording. Do not mix capture with separate record/HAR commands or close/reset the browser. The output path is assigned from current workflow permissions. CDP uses the separate native recording commands.\n"
 
 	// Use Mode as primary decision, fall back to legacy CdpPort/Has* flags.
 	if cfg.Mode == "auto" {

@@ -16,9 +16,10 @@ interface WorkflowScheduleRunsPanelProps {
   embedded?: boolean
   onJobsLoaded?: (jobs: ScheduledJob[]) => void
   workflowScope?: WorkflowScope
+  headerAction?: React.ReactNode
 }
 
-const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ onClose, onJobsLoaded, workflowScope, embedded = false }) => {
+const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ onClose, onJobsLoaded, workflowScope, embedded = false, headerAction }) => {
   const panel = useScheduleRunsData({ onClose, onJobsLoaded, workflowScope })
   const {
     isLoading,
@@ -54,7 +55,7 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
         : 'mx-4 flex max-h-[85vh] w-full max-w-6xl flex-col rounded-xl border border-border bg-card text-card-foreground shadow-2xl'}>
 
         {/* Header */}
-        <ScheduleRunsHeader panel={panel} onClose={onClose} showClose={!embedded} />
+        <ScheduleRunsHeader panel={panel} onClose={onClose} showClose={!embedded} headerAction={headerAction} />
 
         {/* Body */}
         <div className="flex-1 overflow-y-auto">

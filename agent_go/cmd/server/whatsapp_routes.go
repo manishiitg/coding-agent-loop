@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"log"
 	"net/http"
+	"reflect"
 	"strconv"
 	"strings"
 	"time"
@@ -34,7 +35,8 @@ func WhatsAppRoutes(router *mux.Router, manager *services.WhatsAppServiceManager
 	waRouter.HandleFunc("/routing", whatsappGetRoutingHandler(manager)).Methods("GET")
 	waRouter.HandleFunc("/routing", whatsappPutRoutingHandler(manager)).Methods("PUT", "OPTIONS")
 	waRouter.HandleFunc("/default-profile", whatsappPutDefaultProfileHandler(manager, defaults)).Methods("PUT", "OPTIONS")
-	log.Printf("[WHATSAPP] Registered routes: GET /api/whatsapp/pair, GET /api/whatsapp/status, DELETE /api/whatsapp/session, GET|PUT /api/whatsapp/routing, PUT /api/whatsapp/default-profile")
+	waRouter.HandleFunc("/device-label", whatsappPutDeviceLabelHandler(manager)).Methods("PUT", "OPTIONS")
+	log.Printf("[WHATSAPP] Registered routes: GET /api/whatsapp/pair, GET /api/whatsapp/status, DELETE /api/whatsapp/session, GET|PUT /api/whatsapp/routing, PUT /api/whatsapp/default-profile, PUT /api/whatsapp/device-label")
 }
 
 // applyWhatsAppDefaultProfile makes profileID the pairing's default
@@ -92,6 +94,41 @@ func whatsappPutDefaultProfileHandler(manager *services.WhatsAppServiceManager, 
 		_ = json.NewEncoder(w).Encode(map[string]interface{}{
 			"default_profile_id":    profileID,
 			"default_upload_folder": folder,
+		})
+	}
+}
+
+func whatsappPutDeviceLabelHandler(manager *services.WhatsAppServiceManager) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodOptions {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		_, user, err := whatsappServiceForRequest(r, manager)
+		if err != nil {
+			http.Error(w, "whatsapp service unavailable: "+err.Error(), http.StatusServiceUnavailable)
+			return
+		}
+		var body struct {
+			Slot  string `json:"slot"`
+			Label string `json:"label"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			http.Error(w, "invalid JSON body: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+		if err := manager.SetDeviceLabel(r.Context(), user.UserID, body.Slot, body.Label); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		devices, err := manager.Devices(r.Context(), user.UserID)
+		if err != nil {
+			http.Error(w, "whatsapp devices unavailable: "+err.Error(), http.StatusServiceUnavailable)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"devices": devices,
 		})
 	}
 }
@@ -159,6 +196,18 @@ func whatsappPairHandler(manager *services.WhatsAppServiceManager, defaults What
 				return
 			}
 		}
+		// Keep @<slug> workflow routing consistent across all linked numbers.
+		// New devices start with an empty meta store; copy the primary's
+		// routing so the user can immediately message @<workflow-slug> from
+		// the newly paired phone.
+		if svc != primary && len(svc.GetRouting()) == 0 {
+			if routing := primary.GetRouting(); len(routing) > 0 {
+				if err := svc.SetRouting(routing); err != nil {
+					http.Error(w, "failed to sync routing to device: "+err.Error(), http.StatusInternalServerError)
+					return
+				}
+			}
+		}
 		if err := svc.EnsurePairingQR(context.Background()); err != nil {
 			http.Error(w, "pairing QR unavailable: "+err.Error(), http.StatusServiceUnavailable)
 			return
@@ -215,7 +264,9 @@ func whatsappUnpairHandler(manager *services.WhatsAppServiceManager) http.Handle
 			}
 			slot = found
 		}
-		if err := manager.UnpairDevice(r.Context(), user.UserID, slot); err != nil {
+		ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
+		defer cancel()
+		if err := manager.UnpairDevice(ctx, user.UserID, slot); err != nil {
 			http.Error(w, "unpair failed: "+err.Error(), http.StatusInternalServerError)
 			return
 		}
@@ -230,14 +281,38 @@ func whatsappUnpairHandler(manager *services.WhatsAppServiceManager) http.Handle
 //	{"routing": {"<slug>": {"workflow_id":"…", "workspace_path":"…", "workshop_mode":"…"}, ...}}
 func whatsappGetRoutingHandler(manager *services.WhatsAppServiceManager) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		svc, _, err := whatsappServiceForRequest(r, manager)
+		svc, user, err := whatsappServiceForRequest(r, manager)
 		if err != nil {
 			http.Error(w, "whatsapp service unavailable: "+err.Error(), http.StatusServiceUnavailable)
 			return
 		}
+		// Ensure every workflow has a default @<automation-name> route so the
+		// UI can show usable slugs immediately after pairing. Throttled
+		// internally.
+		unlockRouting := manager.LockAccountRouting(user.UserID)
+		before := svc.GetRouting()
+		svc.EnsureDefaultWorkflowRoutes(r.Context())
+		after := svc.GetRouting()
+		if !reflect.DeepEqual(before, after) {
+			// Keep every linked phone's routing in sync with the primary, so
+			// @<slug> names the same workflow no matter which number is used.
+			if devices, err := manager.Devices(r.Context(), user.UserID); err == nil {
+				for _, device := range devices {
+					if device.Slot == "" {
+						continue
+					}
+					other, err := manager.ServiceForDevice(r.Context(), user.UserID, device.Slot)
+					if err != nil {
+						continue
+					}
+					_ = other.SetRouting(after)
+				}
+			}
+		}
+		unlockRouting()
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]interface{}{
-			"routing": svc.GetRouting(),
+			"routing": after,
 		})
 	}
 }
@@ -247,7 +322,7 @@ func whatsappGetRoutingHandler(manager *services.WhatsAppServiceManager) http.Ha
 // body matches the GET response shape. Returns 400 on invalid slug names.
 func whatsappPutRoutingHandler(manager *services.WhatsAppServiceManager) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		svc, _, err := whatsappServiceForRequest(r, manager)
+		svc, user, err := whatsappServiceForRequest(r, manager)
 		if err != nil {
 			http.Error(w, "whatsapp service unavailable: "+err.Error(), http.StatusServiceUnavailable)
 			return
@@ -259,15 +334,72 @@ func whatsappPutRoutingHandler(manager *services.WhatsAppServiceManager) http.Ha
 			http.Error(w, "invalid JSON body: "+err.Error(), http.StatusBadRequest)
 			return
 		}
+		// Validate on primary first (gives a crisp 400 on invalid slugs), then
+		// fan the same routing out to every linked phone so all numbers share
+		// the same @<slug> workflow names. Held for the whole sequence, not
+		// just this write, so a concurrent request (another PUT, or the
+		// throttled GET-time default-route sync) can't interleave its own
+		// per-device writes with this one and leave devices divergent.
+		unlockRouting := manager.LockAccountRouting(user.UserID)
+		defer unlockRouting()
 		if err := svc.SetRouting(body.Routing); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
+		}
+		if devices, err := manager.Devices(r.Context(), user.UserID); err == nil {
+			for _, device := range devices {
+				if device.Slot == "" {
+					continue
+				}
+				other, err := manager.ServiceForDevice(r.Context(), user.UserID, device.Slot)
+				if err != nil {
+					http.Error(w, "whatsapp device unavailable: "+err.Error(), http.StatusServiceUnavailable)
+					return
+				}
+				if err := other.SetRouting(body.Routing); err != nil {
+					http.Error(w, "failed to sync routing to device "+device.Slot+": "+err.Error(), http.StatusInternalServerError)
+					return
+				}
+			}
 		}
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]interface{}{
 			"routing": svc.GetRouting(),
 		})
 	}
+}
+
+// shouldPrepareNextPairingDevice decides whether GET /api/whatsapp/status
+// should call NextPairingDevice (which creates an unpaired slot on disk if
+// none exists) versus only advertising an already-existing one.
+//
+// True when the caller explicitly asked (?device=next), or when the primary
+// is already paired and there's no unpaired extra slot yet -- that combination
+// is exactly the "add another number" moment. A paired primary with no
+// pending extra slot polling this endpoint is never "still working through
+// its own first pairing", so creating one here can't produce the phantom
+// phone-N this gate originally existed to prevent.
+//
+// Without the paired-primary branch, an account whose only entry point to
+// "add another number" is a status poll with no query param (SparkQuill's
+// whatsappStatus, which renders its pairing <img src> -- the only thing that
+// ever sends device=next -- only once next_device.qr_available is already
+// true) can never bootstrap: the image needs the slot to exist to render,
+// and the slot only gets created by that same image's own device=next
+// request. See PLAT-194-followup (WhatsApp PR #194 review).
+func shouldPrepareNextPairingDevice(deviceQueryParam string, primaryPaired bool, devices []services.WhatsAppDevice) bool {
+	if strings.TrimSpace(deviceQueryParam) == "next" {
+		return true
+	}
+	if !primaryPaired {
+		return false
+	}
+	for _, device := range devices {
+		if device.Slot != "" && !device.Paired {
+			return false // an unpaired extra slot already exists; advertise it, don't create another
+		}
+	}
+	return true
 }
 
 // whatsappStatusHandler reports connector lifecycle state as JSON:
@@ -290,25 +422,65 @@ func whatsappStatusHandler(manager *services.WhatsAppServiceManager) http.Handle
 				log.Printf("[WHATSAPP] refresh pairing QR failed: %v", err)
 			}
 		}
-		// Every phone of the account, and the one a scan would pair next
-		// (kept warm so its QR is ready; see the pair endpoint's device=next).
+		// After pairing completes, auto-provision default workflow slugs so
+		// a WhatsApp message can immediately target @<automation-name> without
+		// the operator having to open the routing screen first. Throttled
+		// internally.
+		beforeRouting := svc.GetRouting()
+		svc.EnsureDefaultWorkflowRoutes(r.Context())
+		afterRouting := svc.GetRouting()
+		// Every phone of the account.
 		var devices []services.WhatsAppDevice
 		nextDevice := map[string]interface{}{}
 		if listed, err := manager.Devices(r.Context(), user.UserID); err == nil {
 			devices = listed
 		}
-		if nextSvc, slot, err := manager.NextPairingDevice(r.Context(), user.UserID); err == nil {
-			if nextSvc.IsEnabled() && !nextSvc.IsPaired() {
-				if err := nextSvc.EnsurePairingQR(context.Background()); err != nil {
-					log.Printf("[WHATSAPP] refresh pairing QR for device %q failed: %v", slot, err)
+		if !reflect.DeepEqual(beforeRouting, afterRouting) && devices != nil {
+			for _, device := range devices {
+				if device.Slot == "" {
+					continue
+				}
+				other, err := manager.ServiceForDevice(r.Context(), user.UserID, device.Slot)
+				if err != nil {
+					continue
+				}
+				_ = other.SetRouting(afterRouting)
+			}
+		}
+		if shouldPrepareNextPairingDevice(r.URL.Query().Get("device"), svc.IsPaired(), devices) {
+			if nextSvc, slot, err := manager.NextPairingDevice(r.Context(), user.UserID); err == nil {
+				if nextSvc.IsEnabled() && !nextSvc.IsPaired() {
+					if err := nextSvc.EnsurePairingQR(context.Background()); err != nil {
+						log.Printf("[WHATSAPP] refresh pairing QR for device %q failed: %v", slot, err)
+					}
+				}
+				nextDevice["slot"] = slot
+				if label := nextSvc.DeviceLabel(); label != "" {
+					nextDevice["label"] = label
+				}
+				if code, expires := nextSvc.GetQR(); code != "" && !expires.IsZero() {
+					nextDevice["qr_available"] = true
+					nextDevice["qr_expires_at"] = expires.UTC().Format(time.RFC3339)
+				} else {
+					nextDevice["qr_available"] = false
 				}
 			}
-			nextDevice["slot"] = slot
-			if code, expires := nextSvc.GetQR(); code != "" && !expires.IsZero() {
-				nextDevice["qr_available"] = true
-				nextDevice["qr_expires_at"] = expires.UTC().Format(time.RFC3339)
-			} else {
-				nextDevice["qr_available"] = false
+		} else if devices != nil {
+			// If an extra slot already exists and is unpaired (left over from a
+			// prior attempt), advertise it as next without creating a new one.
+			for _, device := range devices {
+				if device.Slot == "" || device.Paired {
+					continue
+				}
+				nextDevice["slot"] = device.Slot
+				if device.Label != "" {
+					nextDevice["label"] = device.Label
+				}
+				nextDevice["qr_available"] = device.QRAvailable
+				if device.QRAvailable && !device.QRExpiresAt.IsZero() {
+					nextDevice["qr_expires_at"] = device.QRExpiresAt.UTC().Format(time.RFC3339)
+				}
+				break
 			}
 		}
 		resp := map[string]interface{}{
@@ -316,6 +488,21 @@ func whatsappStatusHandler(manager *services.WhatsAppServiceManager) http.Handle
 			"paired":    svc.IsPaired(),
 			"connected": svc.IsConnected(),
 			"own_jid":   svc.OwnJID().String(),
+		}
+		if active, started, lastErr, lastMsg, lastAt := svc.PairingInfo(); true {
+			resp["pairing_active"] = active
+			if !started.IsZero() {
+				resp["pairing_started_at"] = started.UTC().Format(time.RFC3339)
+			}
+			if lastErr != "" {
+				resp["pairing_error"] = lastErr
+			}
+			if lastMsg != "" {
+				resp["pairing_message"] = lastMsg
+			}
+			if !lastAt.IsZero() {
+				resp["pairing_last_at"] = lastAt.UTC().Format(time.RFC3339)
+			}
 		}
 		access := svc.GetAccessState()
 		resp["link_code"] = access.LinkCode

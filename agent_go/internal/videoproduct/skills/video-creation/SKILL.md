@@ -36,18 +36,17 @@ do, and running in chat does not mean skipping what those gates are for. It
 means you hold them yourself. Stop at each checkpoint and let the user
 answer before spending:
 
-1. **Before the first paid call, choose characters first.** Resolve whether
-   any character, presenter, or product must recur across shots. If so, write
-   its visual spec, then present at most three live-verified character-model
-   choices from `video-model-selection`. State the exact provider/model,
-   why it fits the subject, relevant controls, and current billing evidence.
-   Recommend one but do not choose silently: wait for the user to name a
-   model and approve the stated reference-pack spend. That model/provider is
-   then committed to the subject's whole arc unless the user explicitly
-   changes it. In the same compact question resolve which provider keys
-   actually exist, the cost ceiling or maximum paid calls, and the retry
-   allowance. If no subject recurs, record that characters are not applicable
-   rather than inventing one.
+1. **Before the first paid call, choose the minimum needed controls.** Resolve
+   which identities or exact assets must persist. Follow
+   `cinematic-visual-development`: reuse approved references or a face crop,
+   and describe clothing, scene, action and camera in text where sufficient.
+   Do not require a full reference pack before trying a complete scene. When
+   new reference imagery is necessary, follow Video Studio's FLUX.2 Max policy,
+   verify the live cost and obtain the required spending approval. Confirm
+   provider credentials, cost ceiling and retry allowance. If no subject
+   recurs, record that identity references are not applicable.
+
+
 2. **Show the plan before building it.** When the script and shot list
    exist, call `show_document` for each so the user reads what they are
    paying for. A shot list is cheap to change and expensive to regret.
@@ -57,7 +56,8 @@ answer before spending:
    the whole product: every later shot is conditioned on that reference, so
    an unapproved face propagates through the entire piece and can only be
    fixed by regenerating all of it.
-4. **Generate one shot, then stop.** The first shot of a new character,
+4. **Generate one shot, then stop.** Test one representative complete scene
+   before expanding assets. The first shot of a new character,
    scene, or model choice is a sample, not a commitment. Generate it alone,
    show it with `show_video` as a Preview (omit `qa_report_path` until the
    final quality pass), and wait
@@ -118,7 +118,7 @@ As a workflow stage, the equivalent record is your stage's own artifact (researc
 - Use local editing for trims, crops, concatenation, audio, captions, and supplied footage.
 - Use programmatic overlays for exact text, branded cards, product UI, or repeatable templates.
 - Use `longform-cinematic-video` as the director for every new production. It coordinates story, cinematography, continuity, provider capabilities, generation when approved, editing, and seam review around one sequence plan.
-- Keep every production cinematic. HyperFrames may be used selectively inside it for exact wording, UI, prices, typography, diagrams, camera motion over supplied assets, overlays, transitions, and compositing when the user wants that treatment or the approved shot list calls for it. It is not a separate route and must never replace a photoreal character, performance, location, or continuity-critical generated shot.
+- Honor the user's chosen medium and style, including hand-drawn illustration, animation, documentary, motion graphics, slideshow, photoreal footage, and mixed media. Realistic characters are not required. HyperFrames can create entire approved sequences or inserts; keep their story, pacing, and sound coherent with the production. Do not replace requested illustrated historical cutaways with photoreal footage.
 - Use the `video-editing` skill for assembly, captions, audio, and exports.
 - Use the `video-quality` skill before presenting a version as complete.
 

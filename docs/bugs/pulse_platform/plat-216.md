@@ -120,3 +120,23 @@ live incident as the reason it matters.
   BR5-01 (or any equivalent guard) before this specific incident's
   recurrence can be directly confirmed fixed; the mechanism itself is
   proven by the new tests.
+
+## Follow-up: precise terminal-stop reporting (2026-09-11)
+
+RTS's Browser Latency Collector returned exit code 2 with only preflight and
+path diagnostics. The platform incorrectly asserted that protective logic had
+detected an unsafe condition and that the script was working correctly. The
+exit code proves neither claim.
+
+Both initial execution and execution after code repair now share an evidence-based
+terminal-stop message. A script can print one `AGENTWORKS_REFUSAL:` JSON record
+with `reason`, `blocked_action`, and `resolution` to explain its reported refusal.
+Without a complete, unambiguous record, the message says the reason is unverified
+and preserves captured output. All exit-code-2 cases still stop before automatic
+repair, including legacy plain-text refusals and malformed records. Other exit
+codes retain their existing handling. This changes reporting, not permission to
+bypass a guard, and does not address the separate RTS browser-lifetime failure.
+
+Regression coverage includes the RTS diagnostic-only output, command-line errors,
+empty and legacy output, valid records, malformed/incomplete records, duplicate
+records, and preserved terminal behavior in both execution paths.

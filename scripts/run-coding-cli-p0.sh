@@ -4,7 +4,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 MULTI_LLM_DIR="$(cd "$ROOT_DIR/../multi-llm-provider-go" && pwd)"
 MCPAGENT_DIR="$(cd "$ROOT_DIR/../mcpagent" && pwd)"
-PROVIDERS="claude-code,codex-cli,cursor-cli,pi-cli"
+PROVIDERS="claude-code,codex-cli,cursor-cli,pi-cli,muse-cli"
 SERVER_URL="http://localhost:18743"
 WORKSPACE_API_URL="http://127.0.0.1:18744"
 WORKSPACE_DOCS="$ROOT_DIR/workspace-docs"
@@ -113,7 +113,7 @@ if [[ -z "${MCP_API_TOKEN:-}" ]]; then
 fi
 
 if [[ "$(printf '%s' "$PROVIDERS" | tr '[:upper:]' '[:lower:]')" == "all" ]]; then
-  PROVIDERS="claude-code,codex-cli,cursor-cli,pi-cli"
+  PROVIDERS="claude-code,codex-cli,cursor-cli,pi-cli,muse-cli"
 fi
 
 for endpoint in "$SERVER_URL" "$WORKSPACE_API_URL"; do
@@ -155,12 +155,23 @@ p0_test_regex claude-code pkg/adapters/claudecode >/dev/null
 p0_test_regex codex-cli pkg/adapters/codexcli >/dev/null
 p0_test_regex cursor-cli pkg/adapters/cursorcli >/dev/null
 p0_test_regex pi-cli pkg/adapters/picli >/dev/null
+p0_test_regex muse-cli pkg/adapters/musecli >/dev/null
 
 # IC-12 is provider-neutral and credential-free. Run it before spending any
 # live-provider capacity so a missing turn ID or duplicate/missing canonical
 # completion blocks the release immediately.
 run_required_go_tests go -C "$MCPAGENT_DIR" test -json ./agent \
   -run '^TestP0CanonicalTurnContract$' -count=1
+
+# Deterministic reproductions accompany the live proof: force the late-commit
+# steering boundary and completion-flush races rather than relying on timing.
+run_required_go_tests go -C "$MULTI_LLM_DIR" test -json ./pkg/adapters/cursorcli \
+  -run '^(TestRetainedProgressKeepsNarrationAcrossSteerAndNormalStream|TestCursorRetainedControlsSteerQueuedFollowups|TestCursorStreamNarrationRejectsPartialStreams|TestCursorStreamNarrationAllowsSchemaDiscovery)$' -count=1
+run_required_go_tests go -C "$MCPAGENT_DIR" test -json ./agent \
+  -run '^(TestRetainedProgressStreamsWhileFinalIsPending|TestRetainedCompletionFlushesProgressCommittedAfterPoll)$' -count=1
+run_required_go_tests go -C "$ROOT_DIR/agent_go" test -json ./cmd/testing \
+  -run '^TestProgressP0' -count=1
+npm --prefix "$ROOT_DIR/frontend" test -- src/utils/transcriptChunkUpdates.test.ts
 
 IFS=',' read -r -a provider_list <<< "$PROVIDERS"
 for raw_provider in "${provider_list[@]}"; do
@@ -194,6 +205,11 @@ for raw_provider in "${provider_list[@]}"; do
       run_required_go_tests go -C "$MULTI_LLM_DIR" test -json ./pkg/adapters/picli \
         -run "$test_regex" -count=1 -timeout=35m -args -coding-cli-p0-live
       ;;
+    muse-cli)
+      test_regex="$(p0_test_regex "$provider" pkg/adapters/musecli)"
+      run_required_go_tests go -C "$MULTI_LLM_DIR" test -json ./pkg/adapters/musecli \
+        -run "$test_regex" -count=1 -timeout=35m -args -coding-cli-p0-live
+      ;;
     *)
       echo "Unknown coding CLI P0 provider: $provider" >&2
       exit 2
@@ -213,10 +229,11 @@ for raw_provider in "${provider_list[@]}"; do
   # follow-up uses the durable Session, returns one authoritative tool receipt
   # (arguments/result/duration), persists exactly one final response, avoids
   # Agent reconstruction, requires stable same-turn IDs plus the canonical
-  # completion marker, and leaves the tmux reusable.
+  # completion marker, and leaves the tmux reusable. Cursor also requires
+  # every retained narration over the chat SSE stream, including a busy steer.
   go -C "$ROOT_DIR/agent_go" run . test coding-agent-chat-e2e \
     --server-url "$SERVER_URL" --provider "$provider" \
-    --selected-folder "_users/default/Chats" \
+    --selected-folder "_users/default/Chats" --workspace-docs "$WORKSPACE_DOCS" \
     --retained-window-p0-only --timeout 8m
 done
 

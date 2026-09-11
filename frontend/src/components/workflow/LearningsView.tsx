@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useState, useCallback, type ReactNode } from 'react'
 import { BookOpen, Loader2, AlertCircle, ChevronDown, ChevronRight, Code, FileText, Globe } from 'lucide-react'
 import { agentApi } from '../../services/api'
 import type { PlanningResponse } from '../../utils/stepConfigMatching'
@@ -8,6 +8,7 @@ import type { PlannerFile } from '../../services/api-types'
 interface LearningsViewProps {
   workspacePath: string | null
   plan: PlanningResponse | null
+  headerAction?: ReactNode
 }
 
 type LearningFileFreshness = {
@@ -64,7 +65,7 @@ function formatFreshnessDate(timestamp: string): string {
   return `Fresh ${date.toLocaleDateString([], { month: 'short', day: 'numeric' })}`
 }
 
-export default function LearningsView({ workspacePath }: LearningsViewProps) {
+export default function LearningsView({ workspacePath, headerAction }: LearningsViewProps) {
   // Global skill state: SKILL.md content + the shared learning package tree.
   // Displayed as a featured card at the top (global skill is the primary artifact
   // under the current architecture — per-step learnings are secondary).
@@ -355,6 +356,7 @@ export default function LearningsView({ workspacePath }: LearningsViewProps) {
           <BookOpen className="w-5 h-5 text-primary" />
           <h2 className="truncate text-lg font-semibold">Automation Learnings</h2>
         </div>
+        {headerAction}
       </div>
 
       <div className="flex-1 overflow-y-auto p-4">

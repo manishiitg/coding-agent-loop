@@ -25,12 +25,13 @@ func (api *StreamingAPI) liveBrowserSessions(r *http.Request) []map[string]strin
 	if workspace == "" {
 		return result
 	}
+	result = api.playwrightSessions(GetUserIDFromContext(r.Context()), workspace)
 	if browser.SharedBrowserEnabled() {
 		level, manifest := workflowAccessForWorkspacePath(r.Context(), GetUserFromContext(r.Context()), workspace)
 		if manifest == nil || level == WorkflowAccessNone || (manifest.Capabilities.BrowserMode != "auto" && manifest.Capabilities.BrowserMode != "headless") {
 			return result
 		}
-		return []map[string]string{{"browser_session": browser.SharedSessionName, "workflow_session": "shared", "label": "Shared browser · all users"}}
+		return append([]map[string]string{{"browser_session": browser.SharedSessionName, "workflow_session": "shared", "label": "Shared browser · all users"}}, result...)
 	}
 	for _, item := range browser.GetSessionTracker().ActiveSessions() {
 		id := item["workflow_session"]
@@ -69,6 +70,10 @@ func (api *StreamingAPI) handleLiveBrowserStream(w http.ResponseWriter, r *http.
 	}
 	if !api.checkLiveAttachOrigin(r) {
 		http.Error(w, "Origin not allowed", http.StatusForbidden)
+		return
+	}
+	if strings.HasPrefix(session, "pw-") {
+		api.handlePlaywrightViewer(w, r, session)
 		return
 	}
 	workspaceURL := strings.TrimRight(os.Getenv("WORKSPACE_API_URL"), "/")

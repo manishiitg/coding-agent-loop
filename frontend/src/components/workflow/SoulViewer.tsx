@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useState } from 'react'
-import { CheckCircle2, Loader2, ShieldAlert, Target } from 'lucide-react'
+import { Loader2, Target } from 'lucide-react'
 import { agentApi } from '../../services/api'
 import { MarkdownRenderer } from '../ui/MarkdownRenderer'
-import { extractWorkflowSoulSummary } from './soulSummaryUtils'
+import { extractWorkflowGoalSections } from './soulSummaryUtils'
 
 // Fired by the Pulse popup refresh button so goal content and module status stay aligned.
 export const WORKFLOW_SOUL_REFRESH_EVENT = 'workflow-soul-refresh'
@@ -82,14 +82,14 @@ export function SoulViewer({ workspacePath, embedded = false, pulseSummary = fal
     if (pulseSummary) {
       return (
         <div className="rounded-xl border bg-background p-4 text-xs text-muted-foreground">
-          No workflow goal or success criteria yet. Run <code className="rounded bg-muted px-1">/define-success</code>.
+          No workflow goal or success criteria yet. Run <code className="rounded bg-muted px-1">/setup-goals</code>.
         </div>
       )
     }
     return (
       <div className={`flex items-center justify-center p-6 text-center ${embedded ? 'min-h-40' : 'h-full'}`}>
         <div className="max-w-md text-sm text-muted-foreground">
-          No soul yet — the workflow's north star. Run <code className="rounded bg-muted px-1">/define-success</code> to
+          No soul yet — the workflow's north star. Run <code className="rounded bg-muted px-1">/setup-goals</code> to
           confirm the <code className="rounded bg-muted px-1">## Objective</code> and <code className="rounded bg-muted px-1">## Success Criteria</code>. Then turn on Pulse from the toolbar if you want recurring review.
         </div>
       </div>
@@ -97,48 +97,19 @@ export function SoulViewer({ workspacePath, embedded = false, pulseSummary = fal
   }
 
   if (pulseSummary) {
-    const summary = extractWorkflowSoulSummary(content)
+    const summary = extractWorkflowGoalSections(content)
     return (
-      <section className="overflow-hidden rounded-xl border bg-background">
-        <div className="grid gap-3 px-4 py-3.5 lg:grid-cols-3 sm:px-5">
-          <div className="flex min-w-0 gap-2.5">
-            <Target className="mt-0.5 h-4 w-4 shrink-0 text-sky-500" />
-            <div className="min-w-0">
-              <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">Goal</div>
-              <div className="mt-1 line-clamp-2 text-xs font-medium leading-5 text-foreground">
-                {summary.goal || 'Objective is not defined in soul/soul.md.'}
-              </div>
-            </div>
+      <section className="rounded-xl border bg-background p-4 sm:p-5" aria-label="Workflow goal">
+        <h2 className="mb-3 flex items-center gap-2 text-sm font-semibold"><Target className="h-4 w-4 text-sky-500" />What we’re working toward</h2>
+        {summary.primaryGoals || summary.secondaryGoals ? (
+          <div className="space-y-4">
+            {summary.primaryGoals && <div><h3 className="mb-2 text-sm font-semibold text-sky-700 dark:text-sky-300">Primary goals</h3><MarkdownRenderer content={summary.primaryGoals} disablePathLinking /></div>}
+            {summary.secondaryGoals && <div className={summary.primaryGoals ? 'border-t pt-4' : ''}><h3 className="mb-2 text-sm font-semibold">Secondary goals</h3><MarkdownRenderer content={summary.secondaryGoals} disablePathLinking /></div>}
+            {summary.otherGoals && <div className="border-t pt-4"><h3 className="mb-2 text-sm font-medium text-muted-foreground">Additional goal context</h3><MarkdownRenderer content={summary.otherGoals} disablePathLinking /></div>}
           </div>
-          <div className="flex min-w-0 gap-2.5 lg:border-l lg:pl-4">
-            <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-emerald-500" />
-            <div className="min-w-0">
-              <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">Success</div>
-              <div className="mt-1 line-clamp-2 text-xs font-medium leading-5 text-foreground">
-                {summary.success || 'Success criteria are not defined in soul/soul.md.'}
-              </div>
-            </div>
-          </div>
-          <div className="flex min-w-0 gap-2.5 lg:border-l lg:pl-4">
-            <ShieldAlert className="mt-0.5 h-4 w-4 shrink-0 text-amber-500" />
-            <div className="min-w-0">
-              <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">Constraints</div>
-              <div className="mt-1 line-clamp-2 text-xs font-medium leading-5 text-foreground">
-                {summary.constraints || 'Constraints are not defined in soul/soul.md.'}
-              </div>
-            </div>
-          </div>
-        </div>
-        <details className="group border-t">
-          <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-4 py-2 text-[10px] font-medium text-muted-foreground hover:bg-muted/30 sm:px-5">
-            <span>Full goal and success criteria</span>
-            <span className="group-open:hidden">Show</span>
-            <span className="hidden group-open:inline">Hide</span>
-          </summary>
-          <div className="border-t px-4 py-4 sm:px-5">
-            <MarkdownRenderer content={content} disablePathLinking />
-          </div>
-        </details>
+        ) : <MarkdownRenderer content={summary.goal || 'No outcome goals defined yet. Use /setup-goals.'} disablePathLinking />}
+        {summary.acceptance && <details className="mt-4 border-t pt-3 text-xs"><summary className="cursor-pointer font-medium text-muted-foreground">Acceptance conditions</summary><div className="mt-3"><MarkdownRenderer content={summary.acceptance} disablePathLinking /></div></details>}
+        {summary.boundaries && <details className="mt-3 border-t pt-3 text-xs"><summary className="cursor-pointer font-medium text-muted-foreground">What must stay true</summary><div className="mt-3"><MarkdownRenderer content={summary.boundaries} disablePathLinking /></div></details>}
       </section>
     )
   }

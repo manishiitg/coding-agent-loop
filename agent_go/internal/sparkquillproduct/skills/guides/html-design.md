@@ -5,7 +5,7 @@
 
 Every HTML file the app generates (the progress page, study material,
 tests, and anything else) shares this look so they feel like one product. Build a
-**complete standalone document** — inline the CSS, no web fonts, no hotlinked
+**complete standalone document** — inline the CSS, no web fonts, no remote
 images, no network calls at load time.
 
 The one thing that may live beside the page rather than inside it is a picture —
@@ -14,6 +14,23 @@ and "AI-generated pictures" below). It sits in the same folder and is referenced
 with a plain relative `<img src="filename.png">`; the app resolves that when it
 displays the page. Never reference a URL on the internet directly — that breaks
 the moment the page is printed or opened offline.
+
+**Never base64-encode a picture into the page.** "Standalone document" means no
+*network* dependency at load time, not "everything inline" — a picture is still a
+separate file, referenced by its relative filename, exactly like every other
+example in this guide. A `data:image/...;base64,...` src bloats the page to
+hundreds of KB over a one-line reference, is far more likely to silently
+mis-encode the wrong bytes, and both diverges from what `find_image`/`image_gen`
+already hand back (a saved file plus a filename, not a data URI) and what
+`open_file`/print rendering expect.
+  - BAD: `<img src="data:image/png;base64,iVBORw0KGgo...">`
+  - GOOD: `<img src="seedling.png">` (the exact filename the tool returned)
+
+**A picture you fetched or generated but never placed on the page teaches
+nothing.** Before you finish a page, check that every file `find_image`,
+`image_gen`, or `image_edit` actually saved this turn has a matching `<img
+src="...">` somewhere in the page — a saved-but-unused image file is a real
+mistake, not a harmless leftover.
 
 ## Rules
 
@@ -81,7 +98,9 @@ the moment the page is printed or opened offline.
 - For content that should change turn by turn as the conversation unfolds — rather
   than being fixed at creation time — use `show_scene` instead of this file: a small
   snippet rendered inline in a reply, generated fresh, using the same SQ.choose
-  pattern.
+  pattern. Everything below about pictures — relative `<img src>`, never base64,
+  `.fig`/`figcaption` — applies to a scene's HTML exactly the same as a page's; a
+  scene resolves a picture from the activity folder the same way.
 
 ## Base template
 

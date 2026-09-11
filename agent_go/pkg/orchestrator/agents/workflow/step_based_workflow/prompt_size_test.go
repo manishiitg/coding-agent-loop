@@ -14,7 +14,11 @@ import (
 // in cmd/server, including workspace, capability, channel, and runtime additions.
 func executeRealisticWorkshopPromptForMode(t *testing.T, mode string) string {
 	t.Helper()
-	rendered, err := ExecuteTemplate("interactiveWorkshopSystem", map[string]string{
+	name := "interactiveWorkshopSystem"
+	if mode != "workshop" {
+		name = "interactiveRunSystem"
+	}
+	rendered, err := ExecuteTemplate(name, map[string]string{
 		"AbsDocsRoot":                       "/app/workspace-docs",
 		"AbsWorkspacePath":                  "/app/workspace-docs/Workflow/example",
 		"AvailableGroups":                   "group-1",

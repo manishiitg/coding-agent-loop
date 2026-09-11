@@ -214,6 +214,7 @@ export const WorkflowChatTabs: React.FC<WorkflowChatTabsProps> = ({ embedded = f
   })))
 
   const setShowChatArea = useWorkflowStore(state => state.setShowChatArea)
+  const setFocusedPane = useWorkflowStore(state => state.setFocusedPane)
   const activePresetId = useGlobalPresetStore(state => state.activePresetIds.workflow)
 
   // Repair tabs already corrupted by the old Restore path. The durable
@@ -276,7 +277,10 @@ export const WorkflowChatTabs: React.FC<WorkflowChatTabsProps> = ({ embedded = f
 
   const handleTabClick = useCallback((tabId: string) => {
     activateTab(tabId)
-  }, [])
+    // On narrow screens the toolbar stays visible while only one content pane
+    // is shown. A chat-tab selection must therefore bring the chat pane back.
+    setFocusedPane('chat')
+  }, [setFocusedPane])
 
   const handleCloseTab = useCallback((tabId: string) => {
     const nextWorkflowTabId = activeTabId === tabId
@@ -312,7 +316,8 @@ export const WorkflowChatTabs: React.FC<WorkflowChatTabsProps> = ({ embedded = f
     })
     activateTab(tabId)
     setShowChatArea(true)
-  }, [setShowChatArea])
+    setFocusedPane('chat')
+  }, [setFocusedPane, setShowChatArea])
 
   // Stop this tab's running session (from the in-tab Stop control).
   const handleStopTab = useCallback(async (tabId: string) => {

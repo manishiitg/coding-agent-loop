@@ -2,11 +2,110 @@ package services
 
 import (
 	"context"
+	"path/filepath"
 	"testing"
 	"time"
 
 	"go.mau.fi/whatsmeow/types"
 )
+
+// PLAT (SetDeviceLabel network bootstrap): the label must persist to disk
+// through the meta-store-only path, durably (read back with a fresh
+// instance, not just held in the writer's memory), and without ever
+// starting the whatsmeow connector.
+func TestSetDeviceLabelOfflinePersistsWithoutStartingConnector(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "device.db")
+	svc := NewWhatsAppService(dbPath)
+
+	if err := svc.SetDeviceLabelOffline(context.Background(), "Mom's Phone"); err != nil {
+		t.Fatalf("SetDeviceLabelOffline failed: %v", err)
+	}
+	if svc.IsEnabled() {
+		t.Fatal("SetDeviceLabelOffline must not start the whatsmeow connector")
+	}
+
+	reader := NewWhatsAppService(dbPath)
+	if err := reader.openMetaStore(context.Background()); err != nil {
+		t.Fatalf("openMetaStore failed: %v", err)
+	}
+	defer reader.closeMetaStore()
+	reader.loadDeviceLabel(context.Background())
+	if got := reader.DeviceLabel(); got != "Mom's Phone" {
+		t.Fatalf("DeviceLabel() after fresh reload = %q, want %q", got, "Mom's Phone")
+	}
+}
+
+func TestSetDeviceLabelOfflineRejectsOverlongLabel(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "device.db")
+	svc := NewWhatsAppService(dbPath)
+	overlong := make([]rune, 61)
+	for i := range overlong {
+		overlong[i] = 'a'
+	}
+	if err := svc.SetDeviceLabelOffline(context.Background(), string(overlong)); err == nil {
+		t.Fatal("expected an error for a label over 60 characters")
+	}
+}
+
+func TestWhatsAppSessionBindingPersistsAcrossReopen(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "session.db")
+	writer := NewWhatsAppService(dbPath)
+	if err := writer.openMetaStore(context.Background()); err != nil {
+		t.Fatalf("open writer meta store: %v", err)
+	}
+	wantTime := time.Now().UTC().Truncate(time.Millisecond)
+	if err := writer.saveBotSessionBinding(context.Background(), "15551234567@s.whatsapp.net", BotSessionBinding{
+		SessionID: "bot-whatsapp--session-1",
+		RouteKey:  "workflow|report",
+		UpdatedAt: wantTime,
+	}); err != nil {
+		t.Fatalf("save binding: %v", err)
+	}
+	writer.closeMetaStore()
+
+	reader := NewWhatsAppService(dbPath)
+	if err := reader.openMetaStore(context.Background()); err != nil {
+		t.Fatalf("open reader meta store: %v", err)
+	}
+	defer reader.closeMetaStore()
+	reader.loadSessionBindings(context.Background())
+
+	got, ok := reader.loadBotSessionBinding("15551234567@s.whatsapp.net", "workflow|report")
+	if !ok {
+		t.Fatal("expected binding to survive reopening the SQLite store")
+	}
+	if got.SessionID != "bot-whatsapp--session-1" || got.RouteKey != "workflow|report" || !got.UpdatedAt.Equal(wantTime) {
+		t.Fatalf("binding after reopen = %+v", got)
+	}
+	if _, ok := reader.loadBotSessionBinding("15551234567@s.whatsapp.net", "workflow|other"); ok {
+		t.Fatal("a binding must not cross workflow routes")
+	}
+}
+
+func TestWhatsAppSessionBindingClearPersists(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "session.db")
+	svc := NewWhatsAppService(dbPath)
+	if err := svc.openMetaStore(context.Background()); err != nil {
+		t.Fatalf("open meta store: %v", err)
+	}
+	if err := svc.saveBotSessionBinding(context.Background(), "chat@s.whatsapp.net", BotSessionBinding{SessionID: "session-1"}); err != nil {
+		t.Fatalf("save binding: %v", err)
+	}
+	if err := svc.clearBotSessionBinding(context.Background(), "chat@s.whatsapp.net"); err != nil {
+		t.Fatalf("clear binding: %v", err)
+	}
+	svc.closeMetaStore()
+
+	reader := NewWhatsAppService(dbPath)
+	if err := reader.openMetaStore(context.Background()); err != nil {
+		t.Fatalf("reopen meta store: %v", err)
+	}
+	defer reader.closeMetaStore()
+	reader.loadSessionBindings(context.Background())
+	if _, ok := reader.loadBotSessionBinding("chat@s.whatsapp.net", ""); ok {
+		t.Fatal("cleared binding reappeared after reopening the SQLite store")
+	}
+}
 
 func TestWhatsAppUserNotificationSkipsWhenUnpaired(t *testing.T) {
 	svc := &WhatsAppService{}

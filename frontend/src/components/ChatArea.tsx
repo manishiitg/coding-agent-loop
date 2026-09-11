@@ -1,7 +1,8 @@
 import { isForegroundSessionEvent } from '../../shared/session/foreground'
-import { useEffect, useRef, useCallback, forwardRef, useImperativeHandle, useMemo, useState, type ComponentType, type ForwardedRef, type ReactNode } from 'react'
+import { useEffect, useRef, useCallback, forwardRef, useImperativeHandle, useMemo, useState, lazy, Suspense, type ComponentType, type ForwardedRef, type ReactNode } from 'react'
 import { normalizeEventViewMode } from '../stores/useChatStore'
 import { intermediateUpdateFromTranscriptChunk } from '../utils/transcriptChunkUpdates'
+import { withLiveInputReceipt } from '../utils/liveInputReceipt'
 import { useRenderLogger, useMemoLogger } from '../utils/renderLogger'
 import { chatSubmissionLane } from '../utils/promiseLane'
 import {
@@ -21,6 +22,7 @@ import { WorkflowModeHandler, type WorkflowModeHandlerRef } from './workflow'
 import { useWorkspaceStore } from '../stores/useWorkspaceStore'
 import { useWorkflowStore } from '../stores/useWorkflowStore'
 import { useAppStore, useLLMStore, useMCPStore, useChatStore, useGlobalPresetStore } from '../stores'
+import { useCapabilitiesStore } from '../stores/useCapabilitiesStore'
 import { useModeStore, type ModeCategory } from '../stores/useModeStore'
 import { PreviousChatHistoryPanel } from './PreviousChatHistoryPanel'
 import { resolveChatSurface, resolveWorkflowChatSurface } from './resolveChatSurface'
@@ -49,6 +51,7 @@ import { shouldKeepWorkflowSessionSubscribed } from '../utils/workflowSessionSub
 import { activateTab } from '../utils/activateTab'
 import { selectWorkflowPreset } from '../utils/workflowNavigation'
 import { ProductChatSurface } from '../platform/chat/ProductChatSurface'
+import { submissionFailure } from '../platform/chat/submissionFailure'
 import { WORKFLOW_LOG_REFRESH_EVENT } from './workflow/workflowEvents'
 import { decisionMutationNeedsRefresh } from '../utils/decisionRefresh'
 
@@ -64,6 +67,15 @@ const STALE_STREAMING_RECOVERY_GRACE_MS = 10000
 // than probing the internal tmux terminal inventory.
 const RESUME_SETTLE_MS = 10000
 const STREAMING_EVENT_TYPES = new Set(['streaming_start', 'streaming_chunk', 'streaming_end'])
+// Terminal inspection (the child/step terminal rail) is developer diagnostics,
+// not product navigation: it stays behind the server's explicit
+// AGENTWORKS_RUNTIME_DEBUG opt-in (run_server_with_logging.sh
+// --enable-chat-terminal-debugs), reported back through GET /api/capabilities
+// as runtime_debug. Restored 2026-09-11 -- this panel existed before
+// 07ec24c62 ("Keep main tmux available without child terminal rail") dropped
+// its wiring from ChatArea while leaving the component, the server capability
+// flag, and the server-side diagnostic endpoints themselves fully intact.
+const RuntimeDiagnosticsPanel = lazy(() => import('./TerminalCenter').then(module => ({ default: module.TerminalCenter })))
 
 type RuntimeEventScope = {
   kind: 'session' | 'delegation' | 'workshop'
@@ -168,11 +180,7 @@ function getDisplaySafeUserMessageContent(content: string): string {
 }
 
 function createSubmissionErrorEvent(sessionId: string, error: unknown): PollingEvent {
-  const message = typeof error === 'string'
-    ? error
-    : error instanceof Error
-      ? error.message
-      : 'The request could not be started.'
+  const failure = submissionFailure(error)
   return {
     id: `conversation-error-${globalThis.crypto.randomUUID()}`,
     type: 'conversation_error',
@@ -180,7 +188,12 @@ function createSubmissionErrorEvent(sessionId: string, error: unknown): PollingE
     session_id: sessionId,
     data: {
       type: 'conversation_error',
-      data: { error: message },
+      data: {
+        error: failure.message,
+        code: failure.code,
+        provider: failure.provider,
+        technical_details: failure.technicalDetails,
+      },
     } as PollingEvent['data'],
   }
 }
@@ -699,7 +712,9 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
   // (not when any other session gets events)
   const activeSessionId = activeTab?.sessionId
   const activeEventViewMode = normalizeEventViewMode(activeTab?.viewMode)
+  const serverRuntimeDiagnosticsEnabled = useCapabilitiesStore(state => state.capabilities?.runtime_debug === true)
   const showMainTerminal = activeEventViewMode === 'terminal'
+  const showRuntimeDiagnostics = serverRuntimeDiagnosticsEnabled && showMainTerminal
 
   // processEventsResponse runs for every polled session and does not carry
   // activeSessionId in its dependency array, so reading it through a ref keeps
@@ -2663,12 +2678,12 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
         return ts === null ? latest : Math.max(latest, ts)
       }, 0)
       const optimisticTimestampMs = Math.max(Date.now(), latestTimestampMs + 1)
-      const optimisticUserMessage = createUserMessageEvent(
+      const optimisticUserMessage = withLiveInputReceipt(createUserMessageEvent(
         trimmedQuery,
         undefined,
         new Date(optimisticTimestampMs).toISOString(),
         tabSessionId,
-      )
+      ), 'sending')
       optimisticLiveInputEventID = optimisticUserMessage.id
       // This is a human-visible action rather than a high-volume SSE event;
       // bypass the store's micro-batch so it appears in the current frame.
@@ -2678,7 +2693,12 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
 
       try {
         const response = await agentApi.sendLiveInput(tabSessionId, trimmedQuery)
-        if (response.delivery_status === 'sent_to_cli' || response.delivery_status === 'next_turn_started') {
+        if (response.delivery_status === 'sent_to_cli' || response.delivery_status === 'next_turn_started' || response.delivery_status === 'queued_for_injection') {
+          useChatStore.setState(state => ({ tabEvents: { ...state.tabEvents,
+            [tabSessionId]: (state.tabEvents[tabSessionId] || []).map(event => event.id === optimisticLiveInputEventID
+              ? withLiveInputReceipt(event, response.delivery_status!, response.provider)
+              : event),
+          } }))
           chatStore.setAutoScroll(true)
           chatStore.setIsCompleted(false)
           chatStore.setIsStreaming(true)
@@ -2705,6 +2725,10 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
         // Continue into the full request path, which resumes or launches the CLI.
         logger.debug('ChatArea', 'Minimal live input unavailable; using full turn setup', error)
       }
+      useChatStore.setState(state => ({ tabEvents: { ...state.tabEvents,
+        [tabSessionId]: (state.tabEvents[tabSessionId] || []).map(event => event.id === optimisticLiveInputEventID
+          ? withLiveInputReceipt(event, '') : event),
+      } }))
     }
 
     const pendingRestoredConversationPath = currentTab.config?.restoredConversationPath?.trim() || ''
@@ -3635,7 +3659,15 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
                 in explicitly enabled runtime diagnostics. */}
             {visibleWorkflowSurface === 'active' && activeTab?.sessionId && (
               showMainTerminal
-                ? <MainAgentTerminal sessionId={activeTab.sessionId} onUnavailable={() => useChatStore.getState().setTabViewMode(activeTab.tabId, 'formatted')} />
+                ? (
+                    showRuntimeDiagnostics
+                      ? (
+                          <Suspense fallback={<div className="p-4 text-sm text-neutral-500">Loading runtime diagnostics…</div>}>
+                            <RuntimeDiagnosticsPanel currentSessionId={activeTab.sessionId} compact={false} />
+                          </Suspense>
+                        )
+                      : <MainAgentTerminal sessionId={activeTab.sessionId} onUnavailable={() => useChatStore.getState().setTabViewMode(activeTab.tabId, 'formatted')} />
+                  )
                 : <TerminalEventTranscript
                     scrollKey={activeTab.tabId}
                     events={transcriptEvents}
@@ -3691,7 +3723,15 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
                 is available only through the explicit developer flag. */}
             {multiAgentSurface === 'active' && activeTab?.sessionId && (
               showMainTerminal
-                ? <MainAgentTerminal sessionId={activeTab.sessionId} onUnavailable={() => useChatStore.getState().setTabViewMode(activeTab.tabId, 'formatted')} />
+                ? (
+                    showRuntimeDiagnostics
+                      ? (
+                          <Suspense fallback={<div className="p-4 text-sm text-neutral-500">Loading runtime diagnostics…</div>}>
+                            <RuntimeDiagnosticsPanel currentSessionId={activeTab.sessionId} compact={false} />
+                          </Suspense>
+                        )
+                      : <MainAgentTerminal sessionId={activeTab.sessionId} onUnavailable={() => useChatStore.getState().setTabViewMode(activeTab.tabId, 'formatted')} />
+                  )
                 : <TerminalEventTranscript
                     scrollKey={activeTab.tabId}
                     events={transcriptEvents}

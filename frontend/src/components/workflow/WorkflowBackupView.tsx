@@ -8,6 +8,7 @@ interface WorkflowBackupViewProps {
   // Called whenever backup info is (re)loaded, so the parent can keep an
   // at-a-glance status indicator (e.g. the toolbar dot) in sync.
   onStateLoaded?: (state: string) => void
+  headerAction?: React.ReactNode
 }
 
 const FALLBACK_SUPPORTED_STRATEGIES: WorkflowBackupStrategyInfo[] = [
@@ -58,7 +59,8 @@ const getBackupSummary = (backupInfo: WorkflowBackupInfoResponse | null): string
 
 const WorkflowBackupView: React.FC<WorkflowBackupViewProps> = ({
   workspacePath,
-  onStateLoaded
+  onStateLoaded,
+  headerAction,
 }) => {
   const loadInfo = useCallback(async () => {
     if (!workspacePath) throw new Error('No workflow is selected')
@@ -90,6 +92,7 @@ const WorkflowBackupView: React.FC<WorkflowBackupViewProps> = ({
         filename: `${name}-backup.zip`,
         exportBlob,
       }}
+      headerAction={headerAction}
     />
   )
 }

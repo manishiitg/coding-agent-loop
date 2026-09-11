@@ -23,6 +23,15 @@ const orchestratorIDKey contextKey = "orchestrator_id"
 
 func boolPointer(value bool) *bool { return &value }
 
+func platformBridgeToolsFromDirectTools(directTools []mcpagent.ToolDefinition) []string {
+	for _, tool := range directTools {
+		if tool.Name == "read_image" {
+			return []string{tool.Name}
+		}
+	}
+	return nil
+}
+
 // AgentMode represents the mode of operation for an agent
 type AgentMode string
 
@@ -239,6 +248,7 @@ func NewBaseAgent(
 			MCP:    mcpSources,
 		},
 	}
+	platformBridgeTools := platformBridgeToolsFromDirectTools(directTools)
 	runtime := mcpagent.RuntimeConfig{
 		Model:         llm,
 		MCPConfigPath: configPath,
@@ -246,6 +256,10 @@ func NewBaseAgent(
 		Tools: mcpagent.ToolRuntimeConfig{
 			SelectedTools: selectedTools, SelectedServers: serverNames,
 			CodeExecution: useCodeExecutionMode, ParallelExecution: enableParallelToolExecution,
+			// read_image is a platform executor. Mount it directly for coding
+			// agents (including Muse structured workflow steps) when it exists in
+			// this agent's admitted direct-tool registry.
+			AdditionalBridge: platformBridgeTools,
 		},
 		Context: mcpagent.ContextRuntimeConfig{
 			Offloading: enableContextOffloading, LargeOutputThreshold: largeOutputThreshold,
@@ -259,6 +273,7 @@ func NewBaseAgent(
 		Coding: mcpagent.CodingRuntimeConfig{
 			PersistentClaudeCode: codingAgentKeepAlive, PersistentCodex: codingAgentKeepAlive,
 			PersistentCursor: codingAgentKeepAlive, PersistentPi: codingAgentKeepAlive,
+			PersistentMuse: codingAgentKeepAlive,
 			CLISecurityPolicy: cliSecurityPolicy,
 		},
 		MCP: mcpagent.MCPRuntimeConfig{SessionID: mcpSessionID, RuntimeOverrides: runtimeOverrides},

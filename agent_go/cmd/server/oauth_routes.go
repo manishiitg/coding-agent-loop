@@ -292,7 +292,11 @@ func (e *oauthStartError) Error() string { return e.message }
 // itself on its own button-click handler, so handleOAuthStart passes nil;
 // install_mcp_server passes a callback that nudges the mcp workspace view,
 // since chat has no other way to learn the flow finished.
-func (api *StreamingAPI) beginOAuthFlow(userID, serverName, redirectURI, clientID string, onInstalled func()) (*OAuthStartResponse, *OAuthDiscoveryResponse, error) {
+// sessionID is the chat session that triggered this install, if any — used
+// only to report completion/failure back into that conversation once the
+// background wait below resolves (empty when this was started from the
+// connector-directory UI instead of chat, which has no synthetic-turn target).
+func (api *StreamingAPI) beginOAuthFlow(userID, sessionID, serverName, redirectURI, clientID string, onInstalled func()) (*OAuthStartResponse, *OAuthDiscoveryResponse, error) {
 	api.logger.Info(fmt.Sprintf("🔐 OAuth start for server %s, user %s", serverName, userID))
 
 	// Ensure user token directory exists
@@ -308,10 +312,12 @@ func (api *StreamingAPI) beginOAuthFlow(userID, serverName, redirectURI, clientI
 		return nil, nil, &oauthStartError{http.StatusInternalServerError, "Failed to load server config"}
 	}
 
-	serverConfig, err := config.GetServer(serverName)
+	canonicalName, serverConfig, err := config.ResolveServer(serverName)
 	if err != nil {
 		return nil, nil, &oauthStartError{http.StatusNotFound, fmt.Sprintf("Server '%s' not found", serverName)}
 	}
+
+	serverName = canonicalName
 
 	// Use per-user token file path
 	userTokenFile := getUserTokenFilePath(userID, serverName)
@@ -433,9 +439,11 @@ func (api *StreamingAPI) beginOAuthFlow(userID, serverName, redirectURI, clientI
 			api.logger.Info(fmt.Sprintf("📥 Received authorization code for %s (code length: %d)", serverName, len(code)))
 		case err := <-flow.ErrChan:
 			api.logger.Error(fmt.Sprintf("OAuth flow failed for %s: %v", serverName, err), err)
+			api.notifyOAuthFlowOutcome(sessionID, serverName, false, err.Error())
 			return
 		case <-ctx.Done():
 			api.logger.Error(fmt.Sprintf("OAuth flow timed out for %s", serverName), ctx.Err())
+			api.notifyOAuthFlowOutcome(sessionID, serverName, false, "the user did not complete authorization within 5 minutes")
 			return
 		}
 
@@ -445,6 +453,7 @@ func (api *StreamingAPI) beginOAuthFlow(userID, serverName, redirectURI, clientI
 		token, err := oauthMgr.ExchangeCodeForToken(ctx, code)
 		if err != nil {
 			api.logger.Error(fmt.Sprintf("❌ Failed to exchange code for token for %s: %v", serverName, err), err)
+			api.notifyOAuthFlowOutcome(sessionID, serverName, false, fmt.Sprintf("token exchange failed: %v", err))
 			return
 		}
 
@@ -465,6 +474,10 @@ func (api *StreamingAPI) beginOAuthFlow(userID, serverName, redirectURI, clientI
 				onInstalled()
 			}
 		}
+
+		// Reauthorization must replace this account's retained connection so its
+		// OAuth manager uses the newly saved token/config on the next live call.
+		mcpclient.GetSessionRegistry().CloseSessionServer("mcp-user:"+userID, serverName)
 
 		// Invalidate cache for this server so tools are re-discovered with OAuth token
 		api.logger.Info(fmt.Sprintf("🔄 Invalidating cache for %s to refresh tools with OAuth", serverName))
@@ -488,6 +501,7 @@ func (api *StreamingAPI) beginOAuthFlow(userID, serverName, redirectURI, clientI
 		api.clearDiscoveryFailure(serverName)
 		api.appendServerLog(serverName, "info", "Authentication succeeded, rediscovering tools...")
 		api.startServerDiscovery(userID, serverName)
+		api.notifyOAuthFlowOutcome(sessionID, serverName, true, "")
 	}()
 
 	return &OAuthStartResponse{
@@ -496,6 +510,38 @@ func (api *StreamingAPI) beginOAuthFlow(userID, serverName, redirectURI, clientI
 		State:      state,
 		Message:    "Please authorize in your browser",
 	}, nil, nil
+}
+
+// notifyOAuthFlowOutcome closes the gap where an OAuth install that started
+// from chat finished (or failed/timed out) minutes later, in a background
+// goroutine, with no way to tell the conversation: install_mcp_server had
+// already returned "give the user this link" long before this runs. Injects
+// a synthetic turn so the resident agent for sessionID actually tells the
+// user, instead of the outcome only ever being visible in server logs.
+// No-op when sessionID is "" (a UI-driven connect has no chat session).
+func (api *StreamingAPI) notifyOAuthFlowOutcome(sessionID, serverName string, success bool, detail string) {
+	if sessionID == "" {
+		return
+	}
+	status := "completed"
+	message := fmt.Sprintf("The OAuth connection to MCP server %q finished successfully and the token was saved. Tool discovery is running; verify discovery or a live tool call before saying it is ready. It still needs update_workflow_config(add_servers=[%q]) to be usable in a specific workflow.", serverName, serverName)
+	if !success {
+		status = "failed"
+		message = fmt.Sprintf("The OAuth connection to MCP server %q did not complete: %s. Tell the user and offer to retry (they can ask you to start the connection again).", serverName, detail)
+	}
+	api.emitSyntheticTurnReady(sessionID, "oauth:"+serverName, serverName, status, message)
+	if api.executeSyntheticTurn(sessionID, message) {
+		return
+	}
+	// The session was mid-turn (or its agent hadn't been stored yet) at the
+	// exact moment this fired. One bounded retry covers the common case of a
+	// user's own message still being processed when authorization completes;
+	// this is a one-shot event, not a durable queue, so no further retries.
+	time.AfterFunc(10*time.Second, func() {
+		if !api.executeSyntheticTurn(sessionID, message) {
+			api.logger.Warn(fmt.Sprintf("Could not deliver OAuth %s notification for %s into session %s: no reachable synthetic-turn target", status, serverName, sessionID))
+		}
+	})
 }
 
 func (api *StreamingAPI) handleOAuthStart(w http.ResponseWriter, r *http.Request) {
@@ -515,7 +561,9 @@ func (api *StreamingAPI) handleOAuthStart(w http.ResponseWriter, r *http.Request
 	// Derive redirect URI from PUBLIC_URL env var (for production) or incoming request (for local)
 	redirectURI := deriveOAuthRedirectURI(r)
 
-	startResp, discoveryResp, err := api.beginOAuthFlow(userID, req.ServerName, redirectURI, req.ClientID, nil)
+	// No chat session behind a UI-driven connect — "" disables the
+	// synthetic-turn completion notification in beginOAuthFlow.
+	startResp, discoveryResp, err := api.beginOAuthFlow(userID, "", req.ServerName, redirectURI, req.ClientID, nil)
 	if err != nil {
 		status := http.StatusInternalServerError
 		if se, ok := err.(*oauthStartError); ok {
@@ -845,6 +893,8 @@ func (api *StreamingAPI) handleDisconnectServer(w http.ResponseWriter, r *http.R
 		return
 	}
 
+	// Drop the account-scoped chat connection as well as the saved token.
+	mcpclient.GetSessionRegistry().CloseSessionServer("mcp-user:"+userID, req.ServerName)
 	api.invalidateServerDiscovery(req.ServerName, "Disconnected — rediscovering tools...")
 
 	w.Header().Set("Content-Type", "application/json")

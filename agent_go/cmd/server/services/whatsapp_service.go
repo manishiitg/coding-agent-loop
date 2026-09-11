@@ -82,14 +82,28 @@ type WhatsAppService struct {
 
 	routingMu sync.RWMutex
 	routing   WhatsAppRouting
+	// autoRoutedWorkflows holds the workflow IDs that have already been given
+	// their default @<automation-name> route. Provisioning is once-only per
+	// workflow: a route the operator renames or deletes afterwards stays gone
+	// instead of reappearing on the next scan.
+	autoRoutedWorkflows map[string]bool
+	// autoRouteCheckedAt throttles the workspace scan behind
+	// EnsureDefaultWorkflowRoutes, which is driven by polled HTTP handlers.
+	autoRouteCheckedAt time.Time
 
 	activeRoutesMu sync.RWMutex
 	activeRoutes   map[string]string
 
 	activeRouteHints map[string]time.Time
 
+	sessionBindingsMu sync.RWMutex
+	sessionBindings   map[string]whatsAppSessionBinding
+
 	accessMu    sync.RWMutex
 	accessState WhatsAppAccessState
+
+	deviceLabelMu sync.RWMutex
+	deviceLabel   string
 
 	ownerMu sync.RWMutex
 	owner   *WhatsAppOwner
@@ -167,7 +181,10 @@ func (w *WhatsAppService) StartListening(ctx context.Context) error {
 	w.loadOwner(ctx)
 	w.loadRouting(ctx)
 	w.loadActiveRoutes(ctx)
+	w.loadSessionBindings(ctx)
+	w.loadAutoRoutedWorkflows(ctx)
 	w.loadAccessState(ctx)
+	w.loadDeviceLabel(ctx)
 
 	debug := os.Getenv("WHATSAPP_DEBUG") == "true"
 	if debug {
@@ -188,7 +205,12 @@ func (w *WhatsAppService) StartListening(ctx context.Context) error {
 	w.mu.Lock()
 	w.conn = conn
 	w.mu.Unlock()
-	if err := conn.Start(ctx); err != nil {
+	// IMPORTANT: do not tie the connector's background context to an HTTP
+	// request context. The manager lazily starts services inside request
+	// handlers; if we pass r.Context() through, it gets cancelled as soon as
+	// the response is written, which immediately kills pairing/reconnect loops
+	// (you'll see "Context is done" from whatsmeow's QR emitter).
+	if err := conn.Start(context.Background()); err != nil {
 		w.mu.Lock()
 		w.conn = nil
 		w.mu.Unlock()
@@ -211,21 +233,40 @@ func (w *WhatsAppService) StopListening() {
 	w.closeMetaStore()
 }
 
-// Unpair disconnects the client, drops the session DB, and re-initializes a
-// fresh empty store so the next pairing attempt starts with a clean slate.
-// After Unpair returns, the service is back in "unpaired" state — the next
-// pairing QR will be generated on the next reconnect.
-func (w *WhatsAppService) Unpair(ctx context.Context) error {
-	w.StopListening()
-	w.clearOwner()
-
-	// Delete the session DB (and WAL/SHM sidecars) so the next start is a
-	// clean pairing with no leftover device rows or owner binding.
+// removeSessionFiles drops the session DB and WAL/SHM sidecars after the
+// remote WhatsApp logout has succeeded.
+func (w *WhatsAppService) removeSessionFiles() error {
 	for _, suffix := range []string{"", "-wal", "-shm"} {
 		path := w.dbPath + suffix
 		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
 			return fmt.Errorf("whatsapp: remove %s: %w", path, err)
 		}
+	}
+	return nil
+}
+
+// LogoutAndRemove logs the linked device out of WhatsApp, then deletes local
+// session state. It intentionally fails before local deletion when the remote
+// logout fails, so the user can retry instead of leaving a linked device
+// stranded in WhatsApp.
+func (w *WhatsAppService) LogoutAndRemove(ctx context.Context) error {
+	if conn := w.connector(); conn != nil {
+		if err := conn.UnpairAll(ctx); err != nil {
+			return err
+		}
+	}
+	w.StopListening()
+	w.clearOwner()
+	return w.removeSessionFiles()
+}
+
+// Unpair disconnects the client, drops the session DB, and re-initializes a
+// fresh empty store so the next pairing attempt starts with a clean slate.
+// After Unpair returns, the service is back in "unpaired" state — the next
+// pairing QR will be generated on the next reconnect.
+func (w *WhatsAppService) Unpair(ctx context.Context) error {
+	if err := w.LogoutAndRemove(ctx); err != nil {
+		return err
 	}
 	return w.StartListening(ctx)
 }
@@ -238,6 +279,15 @@ func (w *WhatsAppService) GetQR() (code string, expires time.Time) {
 		return conn.GetQR()
 	}
 	return "", time.Time{}
+}
+
+// PairingInfo provides diagnostics for the current or most recent pairing
+// attempt (used by the UI to show why scanning didn't stick).
+func (w *WhatsAppService) PairingInfo() (active bool, started time.Time, lastErr string, lastMsg string, lastAt time.Time) {
+	if conn := w.connector(); conn != nil {
+		return conn.PairingInfo()
+	}
+	return false, time.Time{}, "", "", time.Time{}
 }
 
 func (w *WhatsAppService) connector() *whatsappbot.Connector {
@@ -298,14 +348,33 @@ const metaKeyRouting = "routing"
 // metaKeyActiveRouting holds the JSON map of WhatsApp chat JID → active slug.
 const metaKeyActiveRouting = "active_routing"
 
+// metaKeySessionBindings holds the durable chat → AgentWorks conversation
+// pointers. Each WhatsAppService has its own SQLite file, so the surrounding
+// account and device are already part of the storage boundary.
+const metaKeySessionBindings = "session_bindings"
+
+// metaKeyAutoRoutedWorkflows holds the JSON array of workflow IDs that have
+// already been handed a default @<automation-name> route, so provisioning
+// never resurrects a route the operator deliberately removed.
+const metaKeyAutoRoutedWorkflows = "auto_routed_workflows"
+
 // metaKeyAccessState holds explicit WhatsApp DM bindings. This avoids using
 // fragile phone-number/LID self-detection as the security boundary.
 const metaKeyAccessState = "access_state"
+
+// metaKeyDeviceLabel holds the user-visible name for this linked phone.
+const metaKeyDeviceLabel = "device_label"
 
 // WhatsAppRouting is the full slug → ChannelRoute map persisted to the meta
 // table. A nil / empty map means "no routing — all messages go to the
 // default multi-agent chat flow".
 type WhatsAppRouting map[string]ChannelRoute
+
+type whatsAppSessionBinding struct {
+	SessionID string    `json:"session_id"`
+	RouteKey  string    `json:"route_key"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
 
 type whatsappDownloadedMedia struct {
 	Kind      string
@@ -330,7 +399,7 @@ type whatsappDownloadedMedia struct {
 // whatsapp_meta table exists. Called from StartListening after sqlstore has
 // been set up, so the underlying SQLite file is already initialized.
 func (w *WhatsAppService) openMetaStore(ctx context.Context) error {
-	dsn := fmt.Sprintf("file:%s?_pragma=foreign_keys(1)&_pragma=journal_mode(WAL)", w.dbPath)
+	dsn := fmt.Sprintf("file:%s?_pragma=foreign_keys(1)&_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)", w.dbPath)
 	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return fmt.Errorf("whatsapp: open meta db: %w", err)
@@ -451,6 +520,69 @@ func (w *WhatsAppService) loadActiveRoutes(ctx context.Context) {
 	log.Printf("[WHATSAPP] Loaded %d active workflow route(s)", len(m))
 }
 
+// loadSessionBindings restores the current AgentWorks conversation for each
+// WhatsApp chat. Missing data is normal for pairings created before durable
+// resume support was added.
+func (w *WhatsAppService) loadSessionBindings(ctx context.Context) {
+	w.mu.RLock()
+	db := w.metaDB
+	w.mu.RUnlock()
+	if db == nil {
+		return
+	}
+	var raw string
+	err := db.QueryRowContext(ctx, `SELECT value FROM whatsapp_meta WHERE key = ?`, metaKeySessionBindings).Scan(&raw)
+	if err != nil {
+		if !errors.Is(err, sql.ErrNoRows) {
+			log.Printf("[WHATSAPP] Failed to read session bindings: %v", err)
+		}
+		return
+	}
+	var bindings map[string]whatsAppSessionBinding
+	if err := json.Unmarshal([]byte(raw), &bindings); err != nil {
+		log.Printf("[WHATSAPP] Failed to parse session bindings: %v (ignoring)", err)
+		return
+	}
+	w.sessionBindingsMu.Lock()
+	w.sessionBindings = bindings
+	w.sessionBindingsMu.Unlock()
+	log.Printf("[WHATSAPP] Loaded %d durable conversation binding(s)", len(bindings))
+}
+
+// loadAutoRoutedWorkflows pulls the set of workflow IDs that already got
+// their default @<automation-name> route. Missing row means nothing has been
+// provisioned yet — normal for a pairing made before this behaviour existed.
+func (w *WhatsAppService) loadAutoRoutedWorkflows(ctx context.Context) {
+	w.mu.RLock()
+	db := w.metaDB
+	w.mu.RUnlock()
+	if db == nil {
+		return
+	}
+	var raw string
+	err := db.QueryRowContext(ctx, `SELECT value FROM whatsapp_meta WHERE key = ?`, metaKeyAutoRoutedWorkflows).Scan(&raw)
+	if err != nil {
+		if !errors.Is(err, sql.ErrNoRows) {
+			log.Printf("[WHATSAPP] Failed to read auto-routed workflow row: %v", err)
+		}
+		return
+	}
+	var ids []string
+	if err := json.Unmarshal([]byte(raw), &ids); err != nil {
+		log.Printf("[WHATSAPP] Failed to parse auto-routed workflow row: %v (ignoring)", err)
+		return
+	}
+	seen := make(map[string]bool, len(ids))
+	for _, id := range ids {
+		if id = strings.TrimSpace(id); id != "" {
+			seen[id] = true
+		}
+	}
+	w.routingMu.Lock()
+	w.autoRoutedWorkflows = seen
+	w.routingMu.Unlock()
+}
+
 func (w *WhatsAppService) loadAccessState(ctx context.Context) {
 	w.mu.RLock()
 	db := w.metaDB
@@ -478,6 +610,75 @@ func (w *WhatsAppService) loadAccessState(ctx context.Context) {
 	w.accessMu.Unlock()
 	w.ensureLinkCode()
 	log.Printf("[WHATSAPP] Loaded %d bound DM chat(s)", len(state.BoundChats))
+}
+
+func (w *WhatsAppService) loadDeviceLabel(ctx context.Context) {
+	w.mu.RLock()
+	db := w.metaDB
+	w.mu.RUnlock()
+	if db == nil {
+		return
+	}
+	var label string
+	err := db.QueryRowContext(ctx, `SELECT value FROM whatsapp_meta WHERE key = ?`, metaKeyDeviceLabel).Scan(&label)
+	if err != nil {
+		if !errors.Is(err, sql.ErrNoRows) {
+			log.Printf("[WHATSAPP] Failed to read device label row: %v", err)
+		}
+		return
+	}
+	w.deviceLabelMu.Lock()
+	w.deviceLabel = strings.TrimSpace(label)
+	w.deviceLabelMu.Unlock()
+}
+
+func (w *WhatsAppService) DeviceLabel() string {
+	w.deviceLabelMu.RLock()
+	defer w.deviceLabelMu.RUnlock()
+	return w.deviceLabel
+}
+
+// SetDeviceLabelOffline persists a device's display name without connecting
+// to WhatsApp: opens just the lightweight local metadata store (a plain
+// sqlite file, no network) long enough to write the label, then closes it.
+// Used by WhatsAppServiceManager.SetDeviceLabel for a device that isn't
+// already resident in memory, so saving a name never requires the real
+// WhatsApp handshake that a full StartListening would trigger.
+func (w *WhatsAppService) SetDeviceLabelOffline(ctx context.Context, label string) error {
+	if w.dbPath == "" {
+		return fmt.Errorf("whatsapp: session DB path not configured")
+	}
+	if err := os.MkdirAll(filepath.Dir(w.dbPath), 0o700); err != nil {
+		return fmt.Errorf("whatsapp: mkdir session dir: %w", err)
+	}
+	if err := w.openMetaStore(ctx); err != nil {
+		return err
+	}
+	defer w.closeMetaStore()
+	return w.SetDeviceLabel(ctx, label)
+}
+
+func (w *WhatsAppService) SetDeviceLabel(ctx context.Context, label string) error {
+	w.mu.RLock()
+	db := w.metaDB
+	w.mu.RUnlock()
+	if db == nil {
+		return fmt.Errorf("whatsapp: meta store not open")
+	}
+	label = strings.TrimSpace(label)
+	if len([]rune(label)) > 60 {
+		return fmt.Errorf("whatsapp: device name must be 60 characters or fewer")
+	}
+	if _, err := db.ExecContext(ctx,
+		`INSERT INTO whatsapp_meta(key, value) VALUES(?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value`,
+		metaKeyDeviceLabel, label,
+	); err != nil {
+		return fmt.Errorf("whatsapp: persist device name: %w", err)
+	}
+	w.deviceLabelMu.Lock()
+	w.deviceLabel = label
+	w.deviceLabelMu.Unlock()
+	return nil
 }
 
 func (w *WhatsAppService) persistAccessStateLocked(ctx context.Context) error {
@@ -518,6 +719,82 @@ func (w *WhatsAppService) persistActiveRoutesLocked(ctx context.Context) error {
 		return fmt.Errorf("whatsapp: persist active routing: %w", err)
 	}
 	return nil
+}
+
+func (w *WhatsAppService) persistSessionBindingsLocked(ctx context.Context) error {
+	w.mu.RLock()
+	db := w.metaDB
+	w.mu.RUnlock()
+	if db == nil {
+		return fmt.Errorf("whatsapp: meta store not open")
+	}
+	raw, err := json.Marshal(w.sessionBindings)
+	if err != nil {
+		return fmt.Errorf("whatsapp: marshal session bindings: %w", err)
+	}
+	if _, err := db.ExecContext(ctx,
+		`INSERT INTO whatsapp_meta(key, value) VALUES(?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value`,
+		metaKeySessionBindings, string(raw),
+	); err != nil {
+		return fmt.Errorf("whatsapp: persist session bindings: %w", err)
+	}
+	return nil
+}
+
+func (w *WhatsAppService) loadBotSessionBinding(chatJID, routeKey string) (BotSessionBinding, bool) {
+	chatJID = strings.TrimSpace(chatJID)
+	routeKey = strings.TrimSpace(routeKey)
+	if chatJID == "" {
+		return BotSessionBinding{}, false
+	}
+	w.sessionBindingsMu.RLock()
+	binding, ok := w.sessionBindings[chatJID]
+	w.sessionBindingsMu.RUnlock()
+	if !ok || strings.TrimSpace(binding.SessionID) == "" || binding.RouteKey != routeKey {
+		return BotSessionBinding{}, false
+	}
+	return BotSessionBinding{
+		SessionID: binding.SessionID,
+		RouteKey:  binding.RouteKey,
+		UpdatedAt: binding.UpdatedAt,
+	}, true
+}
+
+func (w *WhatsAppService) saveBotSessionBinding(ctx context.Context, chatJID string, binding BotSessionBinding) error {
+	chatJID = strings.TrimSpace(chatJID)
+	binding.SessionID = strings.TrimSpace(binding.SessionID)
+	if chatJID == "" || binding.SessionID == "" {
+		return fmt.Errorf("whatsapp: chat and session IDs are required")
+	}
+	if binding.UpdatedAt.IsZero() {
+		binding.UpdatedAt = time.Now()
+	}
+	w.sessionBindingsMu.Lock()
+	if w.sessionBindings == nil {
+		w.sessionBindings = make(map[string]whatsAppSessionBinding)
+	}
+	w.sessionBindings[chatJID] = whatsAppSessionBinding{
+		SessionID: binding.SessionID,
+		RouteKey:  binding.RouteKey,
+		UpdatedAt: binding.UpdatedAt,
+	}
+	err := w.persistSessionBindingsLocked(ctx)
+	w.sessionBindingsMu.Unlock()
+	return err
+}
+
+func (w *WhatsAppService) clearBotSessionBinding(ctx context.Context, chatJID string) error {
+	chatJID = strings.TrimSpace(chatJID)
+	if chatJID == "" {
+		return nil
+	}
+	w.sessionBindingsMu.Lock()
+	if w.sessionBindings != nil {
+		delete(w.sessionBindings, chatJID)
+	}
+	err := w.persistSessionBindingsLocked(ctx)
+	w.sessionBindingsMu.Unlock()
+	return err
 }
 
 // GetRouting returns a copy of the slug → workflow map. Safe for UI display.
@@ -568,6 +845,16 @@ func (w *WhatsAppService) SetRouting(routing WhatsAppRouting) error {
 	}
 	w.routingMu.Lock()
 	w.routing = cleaned
+	// Any workflow that is present in this routing map has, by definition,
+	// been provisioned once already (by automation or by the operator). Record
+	// that fact so a workflow route that is later deliberately deleted is not
+	// auto-provisioned again on the next workspace scan.
+	for _, route := range cleaned {
+		w.markWorkflowAutoRoutedLocked(route.WorkflowID)
+	}
+	if err := w.persistAutoRoutedWorkflowsLocked(context.Background()); err != nil {
+		log.Printf("[WHATSAPP] Failed to persist auto-routed workflow ids after routing update: %v", err)
+	}
 	w.routingMu.Unlock()
 
 	w.activeRoutesMu.Lock()
@@ -847,6 +1134,31 @@ func (w *WhatsAppService) activeSlug(chatJID string) string {
 	return w.activeRoutes[chatJID]
 }
 
+// formatWhatsAppSlugChoices is the safe landing page for a chat that has no
+// active route. WhatsApp messages must always run in an explicitly selected
+// workflow; they must never fall through to the generic Builder chat (whose
+// runtime/model selection is unrelated to the WhatsApp routing table).
+func formatWhatsAppSlugChoices(routing WhatsAppRouting) string {
+	slugs := make([]string, 0, len(routing))
+	for slug := range routing {
+		if slug = strings.ToLower(strings.TrimSpace(slug)); slug != "" {
+			slugs = append(slugs, slug)
+		}
+	}
+	sort.Strings(slugs)
+	if len(slugs) == 0 {
+		return "No WhatsApp workflows are configured yet. Ask an admin to add a workflow slug."
+	}
+
+	var sb strings.Builder
+	sb.WriteString("Choose a workflow for this chat:\n")
+	for i, slug := range slugs {
+		fmt.Fprintf(&sb, "%d. @%s\n", i+1, slug)
+	}
+	sb.WriteString("\nSend one of the @slugs above to select it. Your later messages will keep using it until you send @off.")
+	return sb.String()
+}
+
 type whatsappWorkflowCandidate struct {
 	Number        int
 	ID            string
@@ -955,9 +1267,9 @@ func (w *WhatsAppService) handleWorkflowCommand(ctx context.Context, text, chatJ
 		active := w.activeSlug(chatJID)
 		w.clearActiveSlug(chatJID)
 		if active != "" {
-			w.sendWorkflowCommandReply(ctx, chatJID, "Workflow off. Default chat active.")
+			w.sendWorkflowCommandReply(ctx, chatJID, "Workflow off. Send a new @slug to choose another workflow; use @list to see the options.")
 		} else {
-			w.sendWorkflowCommandReply(ctx, chatJID, "No active workflow.")
+			w.sendWorkflowCommandReply(ctx, chatJID, "No active workflow. Use @list to choose one.")
 		}
 		return true
 	}
@@ -1248,6 +1560,25 @@ func (w *WhatsAppService) findWorkflowCandidateByRoute(ctx context.Context, owne
 }
 
 func (w *WhatsAppService) ensureWorkflowRoute(ctx context.Context, candidate whatsappWorkflowCandidate, mode string) string {
+	w.routingMu.Lock()
+	defer w.routingMu.Unlock()
+
+	finalSlug := w.assignWorkflowRouteLocked(candidate, mode)
+	w.markWorkflowAutoRoutedLocked(candidate.ID)
+	if err := w.persistRoutingLocked(ctx); err != nil {
+		log.Printf("[WHATSAPP] Failed to persist auto workflow route @%s: %v", finalSlug, err)
+	}
+	if err := w.persistAutoRoutedWorkflowsLocked(ctx); err != nil {
+		log.Printf("[WHATSAPP] Failed to persist auto-routed workflow ids: %v", err)
+	}
+	return finalSlug
+}
+
+// assignWorkflowRouteLocked maps the automation onto its own name as the
+// slug — "Invoice Processing" answers to @invoice-processing — falling back
+// to a name+id slug only when a different workflow already holds that name.
+// Caller holds routingMu.
+func (w *WhatsAppService) assignWorkflowRouteLocked(candidate whatsappWorkflowCandidate, mode string) string {
 	slug := candidate.Slug
 	if slug == "" {
 		slug = slugifyWhatsAppWorkflow(candidate.Label)
@@ -1260,9 +1591,6 @@ func (w *WhatsAppService) ensureWorkflowRoute(ctx context.Context, candidate wha
 	} else {
 		mode = "run"
 	}
-	route := ChannelRoute{WorkflowID: candidate.ID, WorkspacePath: candidate.WorkspacePath, WorkshopMode: mode}
-
-	w.routingMu.Lock()
 	if w.routing == nil {
 		w.routing = make(WhatsAppRouting)
 	}
@@ -1275,12 +1603,101 @@ func (w *WhatsAppService) ensureWorkflowRoute(ctx context.Context, candidate wha
 		}
 		finalSlug = slug + "-" + suffix
 	}
-	w.routing[finalSlug] = route
-	if err := w.persistRoutingLocked(ctx); err != nil {
-		log.Printf("[WHATSAPP] Failed to persist auto workflow route @%s: %v", finalSlug, err)
+	w.routing[finalSlug] = ChannelRoute{WorkflowID: candidate.ID, WorkspacePath: candidate.WorkspacePath, WorkshopMode: mode}
+	return finalSlug
+}
+
+// routingHasWorkflowLocked reports whether any slug already points at this
+// workflow. Caller holds routingMu.
+func (w *WhatsAppService) routingHasWorkflowLocked(workflowID string) bool {
+	for _, route := range w.routing {
+		if route.WorkflowID == workflowID {
+			return true
+		}
+	}
+	return false
+}
+
+// markWorkflowAutoRoutedLocked records that this workflow has had its default
+// route provisioned, so it is never provisioned a second time. Caller holds
+// routingMu.
+func (w *WhatsAppService) markWorkflowAutoRoutedLocked(workflowID string) {
+	if strings.TrimSpace(workflowID) == "" {
+		return
+	}
+	if w.autoRoutedWorkflows == nil {
+		w.autoRoutedWorkflows = make(map[string]bool)
+	}
+	w.autoRoutedWorkflows[workflowID] = true
+}
+
+// whatsappAutoRouteScanInterval bounds how often EnsureDefaultWorkflowRoutes
+// walks the workspace. The handlers that call it are polled, and the scan
+// reads every workflow manifest.
+const whatsappAutoRouteScanInterval = 30 * time.Second
+
+// EnsureDefaultWorkflowRoutes gives every automation a WhatsApp route named
+// after it, so a paired phone reaches one with @<automation-name> without
+// anyone having to invent a slug first — before this, a workflow with no
+// slug simply could not be talked to over WhatsApp.
+//
+// Each workflow is provisioned exactly once: a route later renamed or
+// deleted is not recreated, and automations added after pairing pick theirs
+// up on a later call. No-op until the phone is paired and a workspace user
+// owns the pairing (the scan runs as that user).
+func (w *WhatsAppService) EnsureDefaultWorkflowRoutes(ctx context.Context) {
+	owner := w.GetOwner()
+	if owner == nil || !w.IsPaired() {
+		return
+	}
+
+	w.routingMu.Lock()
+	if time.Since(w.autoRouteCheckedAt) < whatsappAutoRouteScanInterval {
+		w.routingMu.Unlock()
+		return
+	}
+	w.autoRouteCheckedAt = time.Now()
+	w.routingMu.Unlock()
+
+	candidates, err := w.discoverWorkflowCandidates(ctx, owner)
+	if err != nil {
+		log.Printf("[WHATSAPP] Couldn't provision default workflow routes: %v", err)
+		return
+	}
+
+	w.routingMu.Lock()
+	added := make([]string, 0, len(candidates))
+	changed := false
+	for _, candidate := range candidates {
+		if strings.TrimSpace(candidate.ID) == "" || w.autoRoutedWorkflows[candidate.ID] {
+			continue
+		}
+		// A workflow routed by hand counts as provisioned too, so removing
+		// that hand-made route later doesn't bring a default one back.
+		if w.routingHasWorkflowLocked(candidate.ID) {
+			w.markWorkflowAutoRoutedLocked(candidate.ID)
+			changed = true
+			continue
+		}
+		added = append(added, w.assignWorkflowRouteLocked(candidate, candidate.WorkshopMode))
+		w.markWorkflowAutoRoutedLocked(candidate.ID)
+		changed = true
+	}
+	if len(added) > 0 {
+		if err := w.persistRoutingLocked(ctx); err != nil {
+			log.Printf("[WHATSAPP] Failed to persist default workflow routes: %v", err)
+		}
+	}
+	if changed {
+		if err := w.persistAutoRoutedWorkflowsLocked(ctx); err != nil {
+			log.Printf("[WHATSAPP] Failed to persist auto-routed workflow ids: %v", err)
+		}
 	}
 	w.routingMu.Unlock()
-	return finalSlug
+
+	if len(added) > 0 {
+		log.Printf("[WHATSAPP] Provisioned %d default workflow route(s): @%s", len(added), strings.Join(added, ", @"))
+	}
 }
 
 func (w *WhatsAppService) persistRoutingLocked(ctx context.Context) error {
@@ -1299,6 +1716,33 @@ func (w *WhatsAppService) persistRoutingLocked(ctx context.Context) error {
 		metaKeyRouting, string(raw),
 	); err != nil {
 		return fmt.Errorf("whatsapp: persist routing: %w", err)
+	}
+	return nil
+}
+
+// persistAutoRoutedWorkflowsLocked writes the provisioned-workflow set.
+// Caller holds routingMu.
+func (w *WhatsAppService) persistAutoRoutedWorkflowsLocked(ctx context.Context) error {
+	w.mu.RLock()
+	db := w.metaDB
+	w.mu.RUnlock()
+	if db == nil {
+		return fmt.Errorf("whatsapp: meta store not open")
+	}
+	ids := make([]string, 0, len(w.autoRoutedWorkflows))
+	for id := range w.autoRoutedWorkflows {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	raw, err := json.Marshal(ids)
+	if err != nil {
+		return fmt.Errorf("whatsapp: marshal auto-routed workflows: %w", err)
+	}
+	if _, err := db.ExecContext(ctx,
+		`INSERT INTO whatsapp_meta(key, value) VALUES(?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value`,
+		metaKeyAutoRoutedWorkflows, string(raw),
+	); err != nil {
+		return fmt.Errorf("whatsapp: persist auto-routed workflows: %w", err)
 	}
 	return nil
 }
@@ -1803,7 +2247,7 @@ func (w *WhatsAppService) RouteActivated(ctx context.Context, msg *whatsappbot.M
 // RouteDeactivated implements whatsappbot.RouteObserver ("@slug deactivate").
 func (w *WhatsAppService) RouteDeactivated(ctx context.Context, msg *whatsappbot.Message, key string) {
 	msg.React("👀")
-	if _, err := w.SendThreadMessage(ctx, ThreadID{Platform: "whatsapp", ChannelID: msg.Chat.String()}, fmt.Sprintf("Deactivated @%s. Plain WhatsApp messages will use the default chat again.", key)); err != nil {
+	if _, err := w.SendThreadMessage(ctx, ThreadID{Platform: "whatsapp", ChannelID: msg.Chat.String()}, fmt.Sprintf("Deactivated @%s. Send another @slug to choose a workflow; use @list to see the options.", key)); err != nil {
 		log.Printf("[WHATSAPP] Failed to send deactivate acknowledgement for @%s: %v", key, err)
 	}
 }
@@ -1841,6 +2285,24 @@ func (w *WhatsAppService) HandleMessage(ctx context.Context, msg *whatsappbot.Me
 	info := msg.Event.Info
 	chatJID := msg.Chat.String()
 	text := msg.Text
+
+	// The router populates Route both for an explicit @slug and for a slug
+	// remembered by ActiveSlugStore. If neither exists, stop here and offer
+	// the configured routes. In particular, do not let an unrouted WhatsApp
+	// message become a generic Builder turn with an implicit LLM default.
+	if msg.Route == nil {
+		if stale := w.activeSlug(chatJID); stale != "" {
+			w.clearActiveSlug(chatJID)
+			log.Printf("[WHATSAPP] Cleared unavailable active route @%s for chat=%s user=%s", stale, chatJID, owner.UserID)
+		}
+		msg.React("👀")
+		reply := formatWhatsAppSlugChoices(w.GetRouting())
+		if _, err := w.SendThreadMessage(ctx, ThreadID{Platform: "whatsapp", ChannelID: chatJID}, reply); err != nil {
+			log.Printf("[WHATSAPP] Failed to send route choices for chat=%s user=%s: %v", chatJID, owner.UserID, err)
+		}
+		log.Printf("[WHATSAPP] Unrouted message held for chat=%s user=%s; offered workflow slug choices", chatJID, owner.UserID)
+		return
+	}
 
 	var presetRoute *ChannelRoute
 	var presetProfile *ProfileRoute

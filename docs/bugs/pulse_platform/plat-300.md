@@ -84,5 +84,5 @@ agent-facing way to use them even if there were.
 ## Deployment
 
 Shipped as part of confida's `agent_go` + frontend bundle
-(`deploy/confida/deploy-rootless-confida.sh`, remote-main mode). Not evaluated
+(`deploy/cf/deploy-cf.sh`, remote-main mode). Not evaluated
 against RTS or Dominion — those deployments are managed separately.

@@ -392,6 +392,35 @@ func TestPlanFolderGuardBlocksConfigWriteByDefault(t *testing.T) {
 	}
 }
 
+// Seen live in a real SparkQuill session: a model retried a blocked
+// diff_patch_workspace_file write 5 times in a row (a bare relative path,
+// the real host filesystem path, "./...") without ever landing on the one
+// thing that works -- prefixing its relative path with the allowed folder.
+// The error now spells out that exact combination as a concrete suggestion.
+func TestPlanFolderGuardWriteDeniedSuggestsThePrefixedPath(t *testing.T) {
+	const activityFolder = "_users/default/Chats/SparkQuill/activities/2026-09-09-science"
+
+	noop := func(ctx context.Context, args map[string]interface{}) (string, error) {
+		return "OK", nil
+	}
+	wrapped := wrapExecutorsWithPlanFolderGuard(
+		map[string]func(ctx context.Context, args map[string]interface{}) (string, error){
+			"diff_patch_workspace_file": noop,
+		},
+		activityFolder,
+		nil,
+	)
+
+	_, err := wrapped["diff_patch_workspace_file"](context.Background(), map[string]interface{}{"filepath": "attempts/myra-attempts.md"})
+	if err == nil {
+		t.Fatal("write outside the activity folder should be blocked")
+	}
+	wantSuggestion := activityFolder + "/attempts/myra-attempts.md"
+	if !strings.Contains(err.Error(), wantSuggestion) {
+		t.Fatalf("error should suggest the prefixed path %q, got: %v", wantSuggestion, err)
+	}
+}
+
 func TestExternalRecommendationWriteAccessIsImproveLogOnly(t *testing.T) {
 	const chatsFolder = "_users/default/Chats"
 	const workflowRoot = "Workflow/rtslatency"

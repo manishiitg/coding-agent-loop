@@ -285,26 +285,19 @@ func TestOrdinaryNonZeroExitStillRelearnsNotJustReservedCode(t *testing.T) {
 	}
 }
 
-// The step must abort rather than fall through, and say plainly that this is
-// the script working correctly, not a bug to fix.
-func TestTerminalRefusalStepErrorExplainsItIsNotABug(t *testing.T) {
+// Both execution paths must use the evidence-based message and stop before repair.
+func TestTerminalRefusalStepErrorStopsBeforeRelearning(t *testing.T) {
 	src := readSourceFile(t, "controller_execution.go")
 	idx := strings.Index(src, "if scriptedDecision.TerminalRefusal {")
-	if idx < 0 {
-		t.Fatal("the terminal-refusal branch must abort the step before the relearn switch")
-	}
 	relearn := strings.Index(src, "learnCodePriorError = scriptedDecision.PriorError")
-	if relearn < idx {
-		t.Fatal("the abort must come before relearn context is assigned")
+	if idx < 0 || relearn < idx {
+		t.Fatal("terminal stop must precede relearn context")
 	}
-	block := src[idx:relearn]
-	if !strings.Contains(block, "return \"\", updatedContextFiles, fmt.Errorf(") {
-		t.Fatalf("the branch must return an error, not fall through:\n%s", block)
+	if !strings.Contains(src[idx:relearn], "return \"\", updatedContextFiles, scriptedTerminalStopError(") {
+		t.Fatal("terminal stop must return the evidence-based error")
 	}
-	for _, want := range []string{"not a bug", "do NOT modify main.py", "working correctly"} {
-		if !strings.Contains(block, want) {
-			t.Fatalf("step error must state %q:\n%s", want, block)
-		}
+	if !strings.Contains(src, "scriptedTerminalStopError(step.GetID(), canonicalResult.TerminalRefusalReason)") {
+		t.Fatal("canonical repair execution must use the same terminal stop message")
 	}
 }
 

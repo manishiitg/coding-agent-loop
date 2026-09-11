@@ -86,24 +86,19 @@ func (c *WorkspaceAPIClient) ListFiles(folderPath string) ([]DocumentEntry, erro
 	}
 
 	// The workspace API wraps the folder listing: data=[{filepath:"skills", type:"folder", children:[...]}]
-	// We need to unwrap and return the children of the requested folder.
-	if len(result.Data) == 1 && result.Data[0].Type == "folder" && result.Data[0].Filepath == folderPath {
-		return result.Data[0].Children, nil
-	}
-
-	// Also handle multi-entry responses where the root matches
-	var flattened []DocumentEntry
+	// It also repeats each of those children as its own top-level entry,
+	// expanded one level deeper. Flattening both shapes returned every
+	// subfolder twice, so a workspace holding one skill discovered two, and
+	// the identically named pair was rejected when the agent definition was
+	// finalized. The requested folder's own entry is the authoritative
+	// listing of its direct contents; when it is present, read nothing else.
 	for _, entry := range result.Data {
-		if entry.Type == "folder" && len(entry.Children) > 0 && entry.Filepath == folderPath {
-			flattened = append(flattened, entry.Children...)
-		} else {
-			flattened = append(flattened, entry)
+		if entry.Type == "folder" && entry.Filepath == folderPath {
+			return entry.Children, nil
 		}
 	}
-	if len(flattened) > 0 {
-		return flattened, nil
-	}
 
+	// No self entry: the response is already this folder's contents.
 	return result.Data, nil
 }
 

@@ -54,9 +54,13 @@ func readFrontendChildTranscriptDetailTypes(t *testing.T) map[string]bool {
 	if !ok {
 		t.Fatal("resolve contract test path")
 	}
+	// 11ab6120b ("One session-event client, shared by AgentWorks and
+	// SparkQuill") moved the real policy to frontend/shared/session/
+	// workingSet.ts; frontend/src/utils/sessionEventWorkingSet.ts is now
+	// just a re-export shim with no declaration for this scraper to find.
 	path := filepath.Clean(filepath.Join(
 		filepath.Dir(currentFile),
-		"../../../frontend/src/utils/sessionEventWorkingSet.ts",
+		"../../../frontend/shared/session/workingSet.ts",
 	))
 	sourceBytes, err := os.ReadFile(path)
 	if err != nil {

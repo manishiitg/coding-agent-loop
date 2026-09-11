@@ -99,7 +99,7 @@ func runtimeConfigForLLMAgent(config LLMAgentConfig, model llmtypes.Model, trace
 		Tools: mcpagent.ToolRuntimeConfig{
 			SelectedTools: config.SelectedTools, SelectedServers: configuredServerNames(config.ServerName),
 			CodeExecution: config.UseCodeExecutionMode, ParallelExecution: config.EnableParallelToolExecution,
-			Timeout: config.ToolTimeout,
+			Timeout: config.ToolTimeout, AdditionalBridge: config.AdditionalBridgeTools,
 		},
 		Context: mcpagent.ContextRuntimeConfig{
 			LargeOutputThreshold:      config.LargeOutputThreshold,
@@ -119,6 +119,7 @@ func runtimeConfigForLLMAgent(config LLMAgentConfig, model llmtypes.Model, trace
 			PersistentCodex:                   config.CodexPersistentInteractiveSession,
 			PersistentCursor:                  config.CursorPersistentInteractiveSession,
 			PersistentPi:                      config.PiPersistentInteractiveSession,
+			PersistentMuse:                    config.MusePersistentInteractiveSession,
 			CursorBridgeTools:                 config.CursorBridgeToolsMode,
 			AgentToolsMode:                    config.CodingAgentToolsMode,
 			ApprovalsMode:                     config.CodingAgentApprovalsMode,
@@ -295,6 +296,10 @@ type LLMAgentConfig struct {
 	ToolTimeout        time.Duration      // Tool execution timeout (default: 5 minutes)
 	AgentMode          mcpagent.AgentMode // Agent mode (Simple or ReAct)
 	SelectedTools      []string           // Selected tools in "server:tool" format
+	// AdditionalBridgeTools exposes selected registered platform tools directly
+	// through the coding-agent MCP bridge. The coding CLI calls these tools; it
+	// does not become their implementation backend.
+	AdditionalBridgeTools []string
 
 	// AdmitTool decides which tools may enter this agent's definition. It is a
 	// construction input rather than a setter because the decision is only
@@ -321,6 +326,7 @@ type LLMAgentConfig struct {
 	CodexPersistentInteractiveSession      bool
 	CursorPersistentInteractiveSession     bool
 	PiPersistentInteractiveSession         bool
+	MusePersistentInteractiveSession       bool
 	CursorBridgeToolsMode                  bool
 	CodingAgentToolsMode                   string
 	CodingAgentApprovalsMode               string
@@ -436,7 +442,7 @@ func NewLLMAgentWrapper(ctx context.Context, config LLMAgentConfig, tracer obser
 // and one grouped runtime configuration.
 func NewLLMAgentWrapperWithTrace(ctx context.Context, config LLMAgentConfig, tracer observability.Tracer, mainTraceID observability.TraceID, logger loggerv2.Logger) (*LLMAgentWrapper, error) {
 	if logger == nil {
-		logger = loggerv2.NewDefault()
+		logger = agentlogger.WithContext(loggerv2.NewDefault(), ctx)
 	}
 	// Never format the full config here: CodingAgentSecretEnvironment contains
 	// plaintext SECRET_* values for the native child process. Logging the struct
@@ -468,7 +474,7 @@ func NewLLMAgentWrapperWithTrace(ctx context.Context, config LLMAgentConfig, tra
 	if traceID == "" {
 		traceID = observability.TraceID(fmt.Sprintf("agent-init-%s-%d", config.Name, time.Now().UnixNano()))
 	}
-	model, err := initializeLLMWithConfig(config, logger, traceID)
+	model, err := initializeLLMWithConfig(ctx, config, logger, traceID)
 	if err != nil {
 		if tracer != nil && mainTraceID == "" {
 			event := events.NewAgentEvent(&events.AgentErrorEvent{
@@ -974,7 +980,7 @@ func (w *LLMAgentWrapper) updateFailureMetrics(duration time.Duration, err error
 }
 
 // initializeLLMWithConfig initializes an LLM using detailed configuration from frontend
-func initializeLLMWithConfig(config LLMAgentConfig, logger loggerv2.Logger, traceID observability.TraceID) (llmtypes.Model, error) {
+func initializeLLMWithConfig(ctx context.Context, config LLMAgentConfig, logger loggerv2.Logger, traceID observability.TraceID) (llmtypes.Model, error) {
 	// Validate and convert provider string to llm.Provider type
 	llmProvider, err := llm.ValidateProvider(string(config.Provider))
 	if err != nil {
@@ -1008,13 +1014,13 @@ func initializeLLMWithConfig(config LLMAgentConfig, logger loggerv2.Logger, trac
 	// Create a separate LLM logger that writes to llm_debug.log
 	// This separates LLM logs (including [GEMINI] logs from multi-llm-provider-go) from server logs
 	var v2LoggerForLLM loggerv2.Logger
-	llmLogger, err := agentlogger.CreateLogger("logs/llm_debug.log", "info", "text", false)
+	llmLogger, err := agentlogger.CreateLoggerWithContext("logs/llm_debug.log", "info", "text", false, ctx)
 	if err != nil {
 		// Fallback to the provided logger if LLM logger creation fails
 		if logger != nil {
 			v2LoggerForLLM = logger
 		} else {
-			v2LoggerForLLM = loggerv2.NewDefault()
+			v2LoggerForLLM = agentlogger.WithContext(loggerv2.NewDefault(), ctx)
 		}
 	} else {
 		v2LoggerForLLM = llmLogger

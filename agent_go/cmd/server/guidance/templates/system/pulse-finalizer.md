@@ -113,3 +113,8 @@ Use ordinary language. Do not expose manifests, finding IDs, hashes, packet
 names, paths, or state codes in notifications. Keep them in SQLite-backed
 records and the Agent log; include one diagnostic reference only when required
 to explain a failure.
+
+## Lead the Pulse summary with goal progress
+When interpreting progress, preserve the Primary goals and Secondary goals in the canonical soul/soul.md Objective. Goal priority and metric role are separate: supporting metric movement does not automatically mean a secondary goal improved, and secondary progress cannot establish that a primary goal was achieved. Do not invent priorities for legacy ungrouped goals.
+
+Before composing pulse_summary (including split-routing Pulse email), call get_goal_metrics. Use the tool's deterministic progress snapshots (value, change_from_previous, state and observed_at) rather than inventing a score or recalculating across unlike series. The backend automatically inserts Goal progress and Supporting metrics into both run_summary and pulse_summary, including custom email HTML; do not duplicate those blocks in email_html/email_html_file. Use these facts in the interpretation: primary metric latest valid value + unit, measurement window and observation date, target if configured, and comparable change. Add compact supporting metric facts next, then decisions and review actions. Missing/stale data must be labelled, never replaced with zero or an evaluation score. If no metrics are configured say "Measurement setup needed — /setup-goals". Do not claim a goal was reached from more tasks/posts/reviews alone. Respect explicit summary preferences; keep recipients/routing unchanged. Do not re-run collectors or ask questions in the finalizer.

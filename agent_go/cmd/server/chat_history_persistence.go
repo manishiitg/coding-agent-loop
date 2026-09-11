@@ -44,6 +44,7 @@ type ChatHistorySession struct {
 // ChatHistoryAgentRuntime records enough information to reopen a previous chat
 // with its original runtime when that runtime supports native resume.
 type ChatHistoryAgentRuntime struct {
+	ChatPolicyKey      string                       `json:"chat_policy_key,omitempty"`
 	Kind               string                       `json:"kind,omitempty"`
 	Provider           string                       `json:"provider,omitempty"`
 	ModelID            string                       `json:"model_id,omitempty"`

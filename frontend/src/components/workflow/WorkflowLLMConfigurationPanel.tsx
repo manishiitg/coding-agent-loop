@@ -43,7 +43,7 @@ const API_KEY_PROVIDER_IDS = new Set<string>(['bedrock', 'openai', 'vertex', 'an
 const HIDDEN_CHAT_PROVIDER_TABS = new Set<string>([
   'openrouter', 'z-ai', 'kimi', 'minimax', 'minimax-coding-plan', 'elevenlabs', 'deepgram',
 ])
-const CODING_AGENT_PROVIDER_ORDER = ['claude-code', 'codex-cli', 'cursor-cli', 'pi-cli']
+const CODING_AGENT_PROVIDER_ORDER = ['claude-code', 'codex-cli', 'cursor-cli', 'pi-cli', 'muse-cli']
 const codingAgentProviderRank = (provider: string) => {
   const index = CODING_AGENT_PROVIDER_ORDER.indexOf(provider)
   return index === -1 ? 999 : index

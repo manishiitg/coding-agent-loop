@@ -3425,6 +3425,11 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 	// Scheduled/Chief requests may already carry the configured secret name at
 	// this point. Resolve it for backend delivery and strip it from agent env.
 	api.resolveNotificationSecretForRequest(r.Context(), currentUserID, req.SelectedFolder, &req)
+	// Browser names supplied by an agent (including the conventional "default")
+	// are public aliases. Bind them to this authenticated user + durable chat ID
+	// before any browser executor can run so accounts never share cookies, tabs,
+	// recordings, or a browser process when working in the same workflow.
+	common.BindSessionBrowserIsolation(sessionID, currentUserID)
 	common.SetSessionBrowserMode(sessionID, getBrowserMode(req))
 	// Keep configured browser intent on the request. In auto mode,
 	// agent_browser queries current CDP reachability at tool-call time.

@@ -2,6 +2,7 @@ package common
 
 import (
 	"slices"
+	"strings"
 	"testing"
 )
 
@@ -27,6 +28,55 @@ func TestResolveBrowserSessionIDUsesInstancePrefix(t *testing.T) {
 	}
 	if got := ResolveBrowserSessionID("", "video-product-dev--isolated-123"); got != "video-product-dev--isolated-123" {
 		t.Fatalf("already-qualified browser session should not be prefixed twice, got %q", got)
+	}
+}
+
+func TestBrowserSessionsAreIsolatedByUserAndChat(t *testing.T) {
+	manishChat := "browser-isolation-manish"
+	shubhamChat := "browser-isolation-shubham"
+	secondManishChat := "browser-isolation-manish-two"
+	for _, sessionID := range []string{manishChat, shubhamChat, secondManishChat} {
+		t.Cleanup(func() { ClearSessionShellConfig(sessionID) })
+	}
+
+	BindSessionBrowserIsolation(manishChat, "manish-user-id")
+	BindSessionBrowserIsolation(shubhamChat, "shubham-user-id")
+	BindSessionBrowserIsolation(secondManishChat, "manish-user-id")
+
+	manishDefault := ResolveBrowserSessionID(manishChat, "default")
+	shubhamDefault := ResolveBrowserSessionID(shubhamChat, "default")
+	if manishDefault == shubhamDefault {
+		t.Fatalf("different users shared default browser %q", manishDefault)
+	}
+	if manishDefault == ResolveBrowserSessionID(secondManishChat, "default") {
+		t.Fatalf("two chats for the same user shared default browser %q", manishDefault)
+	}
+	if ResolveBrowserSessionID(manishChat, "research") == ResolveBrowserSessionID(shubhamChat, "research") {
+		t.Fatal("explicit browser names were not scoped to the authenticated user/chat")
+	}
+}
+
+func TestBindSessionBrowserIsolationPreservesWorkflowDefault(t *testing.T) {
+	sessionID := "browser-isolation-workflow"
+	t.Cleanup(func() { ClearSessionShellConfig(sessionID) })
+	BindSessionBrowserIsolation(sessionID, "user-id")
+	SetSessionBrowserSessionID(sessionID, "workflow-browser-stable")
+
+	BindSessionBrowserIsolation(sessionID, "user-id")
+	if got := ResolveBrowserSessionID(sessionID, "default"); got != "workflow-browser-stable" {
+		t.Fatalf("same-owner follow-up replaced workflow browser binding: %q", got)
+	}
+}
+
+func TestBrowserSessionIsolationComposesWithDeploymentPrefix(t *testing.T) {
+	t.Setenv("AGENTWORKS_BROWSER_SESSION_PREFIX", "confida")
+	sessionID := "browser-isolation-prefix"
+	t.Cleanup(func() { ClearSessionShellConfig(sessionID) })
+	BindSessionBrowserIsolation(sessionID, "user-id")
+
+	got := ResolveBrowserSessionID(sessionID, "default")
+	if !strings.HasPrefix(got, "confida--user-") {
+		t.Fatalf("deployment prefix was not applied to isolated browser: %q", got)
 	}
 }
 

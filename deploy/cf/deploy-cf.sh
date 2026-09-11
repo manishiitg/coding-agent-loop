@@ -164,6 +164,8 @@ curl -fsSI "https://confida.agentworkshq.com/login" | head -1
     pid=\$(systemctl --user show \"\$unit\" -p MainPID --value)
     test \"\$pid\" -gt 0
     tr '\\0' '\\n' < \"/proc/\$pid/environ\" | grep -Fqx 'PATH=$REMOTE_RUNTIME_PATH'
+    tr '\\0' '\\n' < \"/proc/\$pid/environ\" | grep -Fqx 'AGENTWORKS_BROWSER_SESSION_PREFIX=confida'
+    tr '\\0' '\\n' < \"/proc/\$pid/environ\" | grep -Fqx 'AGENTWORKS_BROWSER_STAGING_NAMESPACE=confida'
   done"
 
 echo "==> Done."

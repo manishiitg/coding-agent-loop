@@ -11,7 +11,7 @@ import (
 const BrowserUploadStagingDirName = "agentworks-browser-uploads"
 
 func BrowserUploadStagingDir() string {
-	return filepath.Join(string(filepath.Separator), "tmp", BrowserUploadStagingDirName)
+	return filepath.Join(string(filepath.Separator), "tmp", browserStagingDirName(BrowserUploadStagingDirName))
 }
 
 // StageBrowserUpload copies one file authorized for the current request into a

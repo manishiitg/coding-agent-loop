@@ -24,6 +24,16 @@ class ConfidaRuntimeDependenciesTest(unittest.TestCase):
         self.assertIn("confida-workspace.service.d/zz-runtime-tools.conf", activate)
         self.assertIn("/proc/$pid/environ", activate)
 
+    def test_browser_runtime_is_namespaced_to_confida(self) -> None:
+        activate = (CF_DIR / "server-build-and-activate.sh").read_text()
+        deploy = (CF_DIR / "deploy-cf.sh").read_text()
+
+        for script in (activate, deploy):
+            self.assertIn("AGENTWORKS_BROWSER_SESSION_PREFIX=confida", script)
+            self.assertIn("AGENTWORKS_BROWSER_STAGING_NAMESPACE=confida", script)
+        self.assertIn("confida-agent.service.d/40-browser-isolation.conf", activate)
+        self.assertIn("confida-workspace.service.d/40-browser-isolation.conf", activate)
+
 
 if __name__ == "__main__":
     unittest.main()

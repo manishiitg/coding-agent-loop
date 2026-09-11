@@ -120,12 +120,18 @@ runtime_path="$REMOTE_APP/tools/bin:$REMOTE_APP/home/.local/bin:/usr/local/sbin:
 # the executed process still receives the stale value. Replace just this
 # non-secret line atomically and preserve every other deployment setting.
 env_file="$REMOTE_APP/.env"
-env_next="$(mktemp "$REMOTE_APP/.env.path.XXXXXX")"
+env_next="$(mktemp "$REMOTE_APP/.env.runtime.XXXXXX")"
 awk -v managed_path="$runtime_path" '
-  BEGIN { wrote = 0 }
-  /^PATH=/ { if (!wrote) { print "PATH=" managed_path; wrote = 1 }; next }
-  { print }
-  END { if (!wrote) print "PATH=" managed_path }
+	BEGIN { wrote_path = 0; wrote_browser_prefix = 0; wrote_staging_namespace = 0 }
+	/^PATH=/ { if (!wrote_path) { print "PATH=" managed_path; wrote_path = 1 }; next }
+	/^AGENTWORKS_BROWSER_SESSION_PREFIX=/ { if (!wrote_browser_prefix) { print "AGENTWORKS_BROWSER_SESSION_PREFIX=confida"; wrote_browser_prefix = 1 }; next }
+	/^AGENTWORKS_BROWSER_STAGING_NAMESPACE=/ { if (!wrote_staging_namespace) { print "AGENTWORKS_BROWSER_STAGING_NAMESPACE=confida"; wrote_staging_namespace = 1 }; next }
+	{ print }
+	END {
+		if (!wrote_path) print "PATH=" managed_path
+		if (!wrote_browser_prefix) print "AGENTWORKS_BROWSER_SESSION_PREFIX=confida"
+		if (!wrote_staging_namespace) print "AGENTWORKS_BROWSER_STAGING_NAMESPACE=confida"
+	}
 ' "$env_file" > "$env_next"
 chmod 0600 "$env_next"
 mv "$env_next" "$env_file"
@@ -135,9 +141,11 @@ mkdir -p "$HOME/.config/systemd/user/confida-agent.service.d"
 printf '%s\n' '[Service]' "Environment=PATH=$runtime_path" > "$HOME/.config/systemd/user/confida-agent.service.d/zz-runtime-tools.conf"
 printf '%s\n' '[Service]' 'Environment=AGENTWORKS_MCP_STATE_DIR=/srv/confida/state/mcp' > "$HOME/.config/systemd/user/confida-agent.service.d/30-durable-mcp.conf"
 printf '%s\n' '[Service]' 'Environment=AGENT_BROWSER_CDP_ENABLED=false' > "$HOME/.config/systemd/user/confida-agent.service.d/20-disable-cdp.conf"
+printf '%s\n' '[Service]' 'Environment=AGENTWORKS_BROWSER_SESSION_PREFIX=confida' 'Environment=AGENTWORKS_BROWSER_STAGING_NAMESPACE=confida' > "$HOME/.config/systemd/user/confida-agent.service.d/40-browser-isolation.conf"
 mkdir -p "$HOME/.config/systemd/user/confida-workspace.service.d"
 printf '%s\n' '[Service]' "Environment=PATH=$runtime_path" > "$HOME/.config/systemd/user/confida-workspace.service.d/zz-runtime-tools.conf"
 printf '%s\n' '[Service]' 'Environment=AGENT_BROWSER_CDP_ENABLED=false' > "$HOME/.config/systemd/user/confida-workspace.service.d/20-disable-cdp.conf"
+printf '%s\n' '[Service]' 'Environment=AGENTWORKS_BROWSER_SESSION_PREFIX=confida' 'Environment=AGENTWORKS_BROWSER_STAGING_NAMESPACE=confida' > "$HOME/.config/systemd/user/confida-workspace.service.d/40-browser-isolation.conf"
 systemctl --user daemon-reload
 systemctl --user restart confida-workspace
 sleep 2
@@ -154,6 +162,8 @@ for unit in confida-agent confida-workspace; do
   pid="$(systemctl --user show "$unit" -p MainPID --value)"
   [[ "$pid" -gt 0 ]]
   tr '\0' '\n' < "/proc/$pid/environ" | grep -Fqx "PATH=$runtime_path"
+  tr '\0' '\n' < "/proc/$pid/environ" | grep -Fqx 'AGENTWORKS_BROWSER_SESSION_PREFIX=confida'
+  tr '\0' '\n' < "/proc/$pid/environ" | grep -Fqx 'AGENTWORKS_BROWSER_STAGING_NAMESPACE=confida'
 done
 
 echo "==> [$RELEASE_ID] Verifying"

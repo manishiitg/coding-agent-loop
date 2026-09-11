@@ -43,6 +43,7 @@ HOST_IP="${HOST_IP:-116.202.210.102}"
 SSH_PORT="${SSH_PORT:-2299}"
 SSH_KEY_PATH="${SSH_KEY_PATH:-$HOME/.ssh/confida_deploy}"
 REMOTE_APP="/srv/confida"
+REMOTE_TOOLS="$REMOTE_APP/tools"
 DEPLOY_SOURCE_MODE="${DEPLOY_SOURCE_MODE:-remote-main}"
 DEPLOY_BRANCH="${DEPLOY_BRANCH:-main}"
 
@@ -85,20 +86,18 @@ fi
 # browser-automation tool shell out to it by name with no PATH check of their
 # own, so a missing install surfaces only as an opaque "exit code 127:
 # agent-browser: not found" deep inside a tool call. Unlike jq, it needs no
-# root (a per-user npm global prefix is enough), so attempt the install here
-# rather than only warning -- non-fatal, since this script cannot know this
-# host's exact prefix/PATH convention in advance.
+# root (a per-user npm global prefix is enough). Confida owns a stable tools
+# prefix outside releases so the CLI survives release pruning and every
+# deploy can safely ensure/update it. A missing mandatory browser runtime is
+# fatal: activating a release that cannot execute browser tools is not a
+# successful deployment.
 echo "==> Ensuring agent-browser is installed on the remote host"
-if "${SSH[@]}" 'command -v agent-browser' >/dev/null 2>&1; then
-  echo "    agent-browser is present."
-elif "${SSH[@]}" 'npm install -g agent-browser@latest >/dev/null 2>&1 && command -v agent-browser' >/dev/null 2>&1; then
-  echo "    agent-browser installed."
-else
-  echo "    WARNING: agent-browser is NOT installed on $HOST_IP and the default-prefix install failed" >&2
-  echo "    (likely a permissions error on the system npm prefix). Install it once with a writable" >&2
-  echo "    --prefix and put that prefix's bin/ on PATH: ssh -p $SSH_PORT confida@$HOST_IP" >&2
-  echo "      npm install --prefix <writable-dir> -g agent-browser@latest" >&2
-fi
+"${SSH[@]}" "set -e
+  install -d -m 0755 '$REMOTE_TOOLS'
+  npm install -g --prefix '$REMOTE_TOOLS' agent-browser@latest >/dev/null
+  export PATH='$REMOTE_TOOLS/bin':\"\$PATH\"
+  command -v agent-browser >/dev/null
+  agent-browser --version"
 
 JOB="confida-deploy-$(date +%Y%m%d%H%M%S)-$$"
 REMOTE_JOB="$REMOTE_APP/builds/$JOB"
@@ -157,5 +156,10 @@ echo "==> Building on confida@$HOST_IP: cloning/using $DEPLOY_BRANCH and buildin
 
 echo "==> Verifying"
 curl -fsSI "https://confida.agentworkshq.com/login" | head -1
+"${SSH[@]}" "set -e
+  export PATH='$REMOTE_TOOLS/bin':\"\$PATH\"
+  command -v agent-browser >/dev/null
+  systemctl --user show confida-agent -p Environment --value | grep -Fq 'PATH=$REMOTE_TOOLS/bin:'
+  systemctl --user show confida-workspace -p Environment --value | grep -Fq 'PATH=$REMOTE_TOOLS/bin:'"
 
 echo "==> Done."

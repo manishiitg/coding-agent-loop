@@ -104,9 +104,14 @@ ln -sfn "$REMOTE_APP/logs" "$BUILD_DIR/logs"
 ln -sfn "$BUILD_DIR" "$REMOTE_APP/current"
 
 export XDG_RUNTIME_DIR="/run/user/$(id -u)"
+runtime_path="$REMOTE_APP/tools/bin:$REMOTE_APP/home/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 mkdir -p "$HOME/.config/systemd/user/confida-agent.service.d"
+# Keep this drop-in lexically after the legacy muse.conf on existing hosts;
+# PATH is a scalar systemd environment assignment, so the last drop-in wins.
+printf '%s\n' '[Service]' "Environment=PATH=$runtime_path" > "$HOME/.config/systemd/user/confida-agent.service.d/zz-runtime-tools.conf"
 printf '%s\n' '[Service]' 'Environment=AGENT_BROWSER_CDP_ENABLED=false' > "$HOME/.config/systemd/user/confida-agent.service.d/20-disable-cdp.conf"
 mkdir -p "$HOME/.config/systemd/user/confida-workspace.service.d"
+printf '%s\n' '[Service]' "Environment=PATH=$runtime_path" > "$HOME/.config/systemd/user/confida-workspace.service.d/zz-runtime-tools.conf"
 printf '%s\n' '[Service]' 'Environment=AGENT_BROWSER_CDP_ENABLED=false' > "$HOME/.config/systemd/user/confida-workspace.service.d/20-disable-cdp.conf"
 systemctl --user daemon-reload
 systemctl --user restart confida-workspace

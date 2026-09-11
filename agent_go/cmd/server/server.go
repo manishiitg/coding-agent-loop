@@ -8675,7 +8675,7 @@ func (api *StreamingAPI) tryDeliverQueryAsLiveInput(w http.ResponseWriter, r *ht
 		fallbackCancel()
 		if handled {
 			if err != nil {
-				http.Error(w, fmt.Sprintf("Live input unavailable: %v", err), http.StatusConflict)
+				api.writeLiveInputUnavailable(w, sessionID, retainedProvider, err.Error())
 				return true
 			}
 			api.recordRetainedTerminalLiveInput(sessionID, message, retainedProvider, queryID)
@@ -8813,7 +8813,7 @@ func (api *StreamingAPI) handleLiveInputMessage(w http.ResponseWriter, r *http.R
 		fallbackCancel()
 		if handled {
 			if err != nil {
-				http.Error(w, fmt.Sprintf("Live input unavailable: %v", err), http.StatusConflict)
+				api.writeLiveInputUnavailable(w, sessionID, retainedProvider, err.Error())
 				return
 			}
 			writeRetainedTerminalLiveInputResponse(w, sessionID, req.Message, retainedProvider, api)
@@ -8887,7 +8887,7 @@ func (api *StreamingAPI) handleLiveInputMessage(w http.ResponseWriter, r *http.R
 		if !hasActiveForegroundTurn && api.startNextTurnFromLiveInput(w, r, sessionID, req.Message, runningAgent) {
 			return
 		}
-		http.Error(w, fmt.Sprintf("Live input unavailable: %v", err), http.StatusConflict)
+		api.writeLiveInputUnavailable(w, sessionID, string(mcpagent.ReadAgentRuntimeInfo(runningAgent).Provider), err.Error())
 		return
 	}
 	if agentSupportsLiveInputDelivery(runningAgent) && delivery.DeliveryStatus != mcpagent.UserMessageDeliveryStatusSentToCLI {
@@ -8895,7 +8895,7 @@ func (api *StreamingAPI) handleLiveInputMessage(w http.ResponseWriter, r *http.R
 		if !hasActiveForegroundTurn && api.startNextTurnFromLiveInput(w, r, sessionID, req.Message, runningAgent) {
 			return
 		}
-		http.Error(w, "Live input was not confirmed by the coding CLI", http.StatusConflict)
+		api.writeLiveInputUnavailable(w, sessionID, string(mcpagent.ReadAgentRuntimeInfo(runningAgent).Provider), "Live input was not confirmed by the coding CLI")
 		return
 	}
 

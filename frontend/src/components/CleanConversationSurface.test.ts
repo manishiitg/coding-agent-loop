@@ -182,6 +182,29 @@ describe('buildCleanConversationItems', () => {
     ])
   })
 
+  it('uses the server tmux diagnostic as Technical details for a failed submission', () => {
+    const technicalDetails = 'Request failed with status code 409\ntmux: mlp-pi-cli-test\nTerminal snapshot:\nπ • ✅ api-bridge_execute_shell_command'
+    const items = buildCleanConversationItems([
+      event('failure', 'conversation_error', {
+        error: 'Live input unavailable: context deadline exceeded',
+        code: 'live_input_unavailable',
+        provider: 'pi-cli',
+        technical_details: technicalDetails,
+      }),
+    ])
+
+    expect(items).toEqual([
+      expect.objectContaining({
+        role: 'error',
+        failure: expect.objectContaining({
+          title: 'The response could not be completed',
+          provider: 'pi-cli',
+          technicalDetails,
+        }),
+      }),
+    ])
+  })
+
   it('redacts credentials from technical failure details', () => {
     const items = buildCleanConversationItems([
       event('failure', 'agent_error', {

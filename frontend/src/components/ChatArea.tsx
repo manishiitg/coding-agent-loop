@@ -51,6 +51,7 @@ import { shouldKeepWorkflowSessionSubscribed } from '../utils/workflowSessionSub
 import { activateTab } from '../utils/activateTab'
 import { selectWorkflowPreset } from '../utils/workflowNavigation'
 import { ProductChatSurface } from '../platform/chat/ProductChatSurface'
+import { submissionFailure } from '../platform/chat/submissionFailure'
 import { WORKFLOW_LOG_REFRESH_EVENT } from './workflow/workflowEvents'
 import { decisionMutationNeedsRefresh } from '../utils/decisionRefresh'
 
@@ -179,11 +180,7 @@ function getDisplaySafeUserMessageContent(content: string): string {
 }
 
 function createSubmissionErrorEvent(sessionId: string, error: unknown): PollingEvent {
-  const message = typeof error === 'string'
-    ? error
-    : error instanceof Error
-      ? error.message
-      : 'The request could not be started.'
+  const failure = submissionFailure(error)
   return {
     id: `conversation-error-${globalThis.crypto.randomUUID()}`,
     type: 'conversation_error',
@@ -191,7 +188,12 @@ function createSubmissionErrorEvent(sessionId: string, error: unknown): PollingE
     session_id: sessionId,
     data: {
       type: 'conversation_error',
-      data: { error: message },
+      data: {
+        error: failure.message,
+        code: failure.code,
+        provider: failure.provider,
+        technical_details: failure.technicalDetails,
+      },
     } as PollingEvent['data'],
   }
 }

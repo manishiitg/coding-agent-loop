@@ -63,6 +63,7 @@ function failureHints(payload: Record<string, unknown>) {
     code: firstText(payload.code, payload.error_code, error?.code, error?.kind, metadata?.code, metadata?.error_code),
     provider: firstText(payload.provider, payload.llm_provider, error?.provider, metadata?.provider),
     retryAt: payload.retry_at ?? payload.resume_after ?? error?.retry_at ?? error?.retryAt ?? metadata?.retry_at ?? metadata?.resume_after,
+    technicalDetails: firstText(payload.technical_details, payload.technicalDetails, error?.technical_details, error?.technicalDetails, metadata?.technical_details, metadata?.technicalDetails),
   }
 }
 

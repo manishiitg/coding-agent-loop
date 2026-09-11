@@ -21,6 +21,7 @@ type FailureHints = {
   code?: unknown
   provider?: unknown
   retryAt?: unknown
+  technicalDetails?: unknown
 }
 
 const QUOTA_MARKERS = [
@@ -76,7 +77,7 @@ export function looksLikeProductChatFailure(raw: string): boolean {
 
 export function normalizeProductChatFailure(rawError: string, hints: FailureHints = {}): ProductChatFailure {
   const raw = rawError.trim() || 'The request could not be completed.'
-  const technicalDetails = safeTechnicalDetails(raw)
+  const technicalDetails = safeTechnicalDetails(text(hints.technicalDetails) || raw)
   const normalizedCode = text(hints.code)?.toLowerCase().replace(/-/g, '_')
   const provider = providerFrom(raw, hints.provider)
   const retryAt = retryAtFrom(raw, hints.retryAt)

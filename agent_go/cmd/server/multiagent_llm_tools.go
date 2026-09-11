@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -510,24 +511,46 @@ func cursorCLILocalAuthState() (authenticated, conclusive bool) {
 	return authenticated, conclusive
 }
 
-// museCLILocalAuthState probes stored `muse login` state: `muse auth status`
-// exits 0 when logged in (observed exit 2 when logged out, 2026-09-10). The
-// logged-in exit code is the command's natural contract, not yet observed
-// live — treat non-zero as logged-out, never as proof either way beyond that.
+// museCLILocalAuthState probes stored `muse login` state. `muse auth status`
+// was assumed to exist and exit 0 when logged in, but `muse auth`'s only
+// subcommand is `set` (verified live 2026-09-11 against `muse auth --help`):
+// running `status` always fails with "expected `auth set`" regardless of
+// login state, so the previous check reported every muse-cli install as
+// logged out — the direct, observed cause of the workflow LLM picker's
+// permanent "Needs setup" for Muse despite a real, working stored login.
+// `muse login`/`muse auth --help` expose no status subcommand either, so the
+// only reliable signal is the credential file `muse login` itself writes:
+// $XDG_CONFIG_HOME/muse/auth.json, else ~/.config/muse/auth.json (same
+// resolution the muse launcher script and musecli.museSettingsPath use).
+// A present, non-empty file is conclusive; anything else is inconclusive,
+// not proof of logged-out, since the file could be transiently mid-write.
 func museCLILocalAuthState() (authenticated, conclusive bool) {
 	if _, err := exec.LookPath("muse"); err != nil {
 		return false, false
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	cmd := exec.CommandContext(ctx, "muse", "auth", "status")
-	if err := cmd.Run(); err != nil {
-		if ctx.Err() == context.DeadlineExceeded {
-			return false, false
-		}
-		return false, true
+	path := museAuthJSONPath()
+	if path == "" {
+		return false, false
 	}
-	return true, true
+	info, err := os.Stat(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return false, true
+		}
+		return false, false
+	}
+	return info.Size() > 0, true
+}
+
+func museAuthJSONPath() string {
+	if dir := strings.TrimSpace(os.Getenv("XDG_CONFIG_HOME")); dir != "" {
+		return filepath.Join(dir, "muse", "auth.json")
+	}
+	home, err := os.UserHomeDir()
+	if err != nil || strings.TrimSpace(home) == "" {
+		return ""
+	}
+	return filepath.Join(home, ".config", "muse", "auth.json")
 }
 
 func cursorCLIAuthStatus(out []byte) (authenticated, conclusive bool) {

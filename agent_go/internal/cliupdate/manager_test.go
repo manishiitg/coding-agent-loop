@@ -76,7 +76,9 @@ func TestDailyChecksPersistAcrossRestarts(t *testing.T) {
 		t.Fatalf("calls=%d", calls)
 	}
 	s := readState(t, m)
-	if !s.NextCheck.Equal(now.Add(Interval)) || !s.LastSuccess.Equal(*now) {
+	// muse's self-updating status re-probes hourly (RetryInterval), not
+	// daily like the 4 managed providers, so it's the earliest NextCheck.
+	if !s.NextCheck.Equal(now.Add(RetryInterval)) || !s.LastSuccess.Equal(*now) {
 		t.Fatalf("state=%+v", s)
 	}
 	info, _ := os.Stat(filepath.Join(m.Root, "state.json"))
@@ -294,6 +296,42 @@ func TestExplicitPiPinAndAbsentCLIsAreNotInstalled(t *testing.T) {
 	s := readState(t, m)
 	if calls != 2 || s.CLIs["pi"].Status != "operator_pinned" || s.CLIs["claude"].Status != "not_installed" {
 		t.Fatalf("calls=%d state=%+v", calls, s)
+	}
+}
+
+// TestSelfUpdatingProviderIsProbedNotInstalled pins the policy behind
+// selfUpdatingProviders: muse's own launcher already self-updates in the
+// background (unlike codex/claude/cursor-agent/pi, which only expose a
+// manual `update` subcommand nothing else ever calls), so this package must
+// never install for it -- only observe its version via `muse --version` and
+// leave PATH/current/bin untouched.
+func TestSelfUpdatingProviderIsProbedNotInstalled(t *testing.T) {
+	m, now := fixture(t)
+	calls := 0
+	m.Install = fakeInstall(t, "2", &calls)
+	check(t, m)
+	s := readState(t, m)
+
+	if s.CLIs["muse"].Status != "self_updating" {
+		t.Fatalf("muse status = %q, want self_updating: %+v", s.CLIs["muse"].Status, s.CLIs["muse"])
+	}
+	if s.CLIs["muse"].Version != "old" {
+		t.Fatalf("muse version = %q, want the fake CLI's real --version output", s.CLIs["muse"].Version)
+	}
+	if !s.CLIs["muse"].LastSuccess.Equal(*now) {
+		t.Fatalf("muse LastSuccess = %v, want %v", s.CLIs["muse"].LastSuccess, *now)
+	}
+	if !s.CLIs["muse"].NextCheck.Equal(now.Add(RetryInterval)) {
+		t.Fatalf("muse NextCheck = %v, want now+RetryInterval (hourly, not daily)", s.CLIs["muse"].NextCheck)
+	}
+	if calls != 4 {
+		t.Fatalf("calls=%d, want 4 (muse must never reach the installer)", calls)
+	}
+	if _, err := os.Lstat(filepath.Join(m.Root, "current", "muse")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("muse must never get a managed symlink under current/, got err=%v", err)
+	}
+	if _, err := os.Lstat(filepath.Join(m.Root, "bin", "muse")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("muse must never get a managed shim under bin/, got err=%v", err)
 	}
 }
 

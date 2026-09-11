@@ -25,7 +25,19 @@ var providers = []Provider{
 	{"claude", "@anthropic-ai/claude-code"},
 	{"pi", "@earendil-works/pi-coding-agent"},
 	{"cursor-agent", ""},
+	{"muse", ""},
 }
+
+// selfUpdatingProviders never get a managed install: their own launcher
+// already checks for and applies updates in the background on its own
+// cadence (muse's ~/.local/bin/muse wrapper polls MUSE_CHANNEL_URL every
+// MUSE_UPDATE_INTERVAL_SECONDS, default 1h, with no invocation needed).
+// codex/claude/cursor-agent/pi all expose an `update` subcommand too, but
+// none of them ever call it themselves -- that manual-only shape is exactly
+// what this package's scheduled Check exists to drive, so they stay fully
+// managed. Muse is the only one where "our own update" would just race an
+// update already happening on its own.
+var selfUpdatingProviders = map[string]bool{"muse": true}
 
 type Result struct {
 	Status      string    `json:"status"`
@@ -87,6 +99,12 @@ func (m *Manager) Prepare() error {
 	for _, p := range providers {
 		// Explicit PI_BIN is an operator pin, not an installation we own.
 		if p.Name == "pi" && os.Getenv("PI_BIN") != "" {
+			continue
+		}
+		// Self-updating providers keep resolving straight to their own PATH
+		// entry; a managed shim/symlink here would just shadow whatever
+		// version their own updater just installed.
+		if selfUpdatingProviders[p.Name] {
 			continue
 		}
 		current := filepath.Join(m.Root, "current", p.Name)
@@ -184,6 +202,23 @@ func (m *Manager) Check(ctx context.Context) error {
 			s.CLIs[p.Name] = r
 			if err := m.save(&s); err != nil {
 				return err
+			}
+			continue
+		}
+		if selfUpdatingProviders[p.Name] {
+			version, executable, probeErr := probeSelfUpdatingVersion(ctx, p.Name)
+			if probeErr != nil {
+				r.Status, r.Error, r.NextCheck = "not_installed", "", now.Add(Interval)
+			} else {
+				r.Status, r.Error, r.Version, r.Executable, r.LastSuccess, r.NextCheck =
+					"self_updating", "", version, executable, now, now.Add(RetryInterval)
+			}
+			s.CLIs[p.Name] = r
+			if err := m.save(&s); err != nil {
+				return err
+			}
+			if m.Log != nil {
+				m.Log("[CLI UPDATE] %s: %s (version=%s)", p.Name, r.Status, r.Version)
 			}
 			continue
 		}
@@ -352,4 +387,28 @@ if [ "$name" = cursor-agent ]; then
 fi
 exec "$target" "$@"
 `
+}
+
+// probeSelfUpdatingVersion reports a self-updating provider's current
+// version without touching PATH, symlinks, or the provider's own update
+// cycle: this package never installs for these providers (see
+// selfUpdatingProviders), it only observes what their own updater already
+// produced. executable is the resolved binary path so State.CLIs carries
+// the same field shape as a managed install.
+func probeSelfUpdatingVersion(ctx context.Context, name string) (version, executable string, err error) {
+	path, err := exec.LookPath(name)
+	if err != nil {
+		return "", "", err
+	}
+	probeCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	out, err := exec.CommandContext(probeCtx, path, "--version").Output()
+	if err != nil {
+		return "", "", fmt.Errorf("%s --version: %w", name, err)
+	}
+	firstLine := strings.SplitN(strings.TrimSpace(string(out)), "\n", 2)[0]
+	if firstLine == "" {
+		return "", "", fmt.Errorf("%s --version produced no output", name)
+	}
+	return firstLine, path, nil
 }

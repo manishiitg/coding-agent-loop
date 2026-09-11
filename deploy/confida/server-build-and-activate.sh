@@ -49,7 +49,11 @@ DEPLOY_GOWORK="$BUILD_DIR/go.work"
 } > "$BUILD_DIR/SOURCE_REVISIONS"
 
 echo "==> [$RELEASE_ID] Building binaries (native linux/amd64, on $(hostname))"
-(cd "$WORKSPACE_ROOT" && GOWORK="$DEPLOY_GOWORK" GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o "$BUILD_DIR/bin/confida-agent" "$REPO_ROOT/agent_go")
+# Match RTS's production voice build: compile only the agent with cgo enabled,
+# embed an $ORIGIN/lib rpath, and stage sherpa-onnx plus ONNX Runtime beside
+# the binary. The remaining Go services stay static CGO_ENABLED=0 builds.
+bash "$REPO_ROOT/deploy/aws-ec2/build/build-linux-agent.sh" "$BUILD_DIR" "$REPO_ROOT/agent_go" "$WORKSPACE_ROOT"
+mv "$BUILD_DIR/bin/video-studio-agent" "$BUILD_DIR/bin/confida-agent"
 (cd "$WORKSPACE_ROOT" && GOWORK="$DEPLOY_GOWORK" GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o "$BUILD_DIR/bin/confida-workspace" "$REPO_ROOT/workspace")
 # Literal filename required: workspace/security/landlock_policy.go resolves
 # its sandbox launcher by this exact name regardless of which product runs.

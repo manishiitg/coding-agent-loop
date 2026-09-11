@@ -538,6 +538,10 @@ function App() {
 
   const [showQuickSwitcher, setShowQuickSwitcher] = useState(false)
   const [quickSwitcherInitialQuery, setQuickSwitcherInitialQuery] = useState('')
+  useEffect(() => {
+    if (productSurface !== 'agentworks') setShowQuickSwitcher(false)
+  }, [productSurface])
+
   
   // Ref to prevent duplicate default tab creation (React StrictMode runs effects twice)
 
@@ -548,6 +552,7 @@ function App() {
 
   useEffect(() => {
     const handleOpenQuickSwitcher = (event: Event) => {
+      if (useProductSurfaceStore.getState().productSurface !== 'agentworks') return
       const detail = (event as CustomEvent<{ query?: string }>).detail
       setQuickSwitcherInitialQuery(detail?.query || '')
       setShowQuickSwitcher(true)
@@ -847,8 +852,9 @@ function App() {
         chatStore.setAutoScroll(!chatStore.autoScroll)
         return
       }
-      // Ctrl/Cmd + K for the global quick switcher
+      // Ctrl/Cmd + K belongs to the AgentWorks quick switcher.
       if ((event.ctrlKey || event.metaKey) && event.key === 'k') {
+        if (useProductSurfaceStore.getState().productSurface !== 'agentworks') return
         event.preventDefault()
         setQuickSwitcherInitialQuery('')
         setShowQuickSwitcher(prev => !prev)

@@ -68,7 +68,7 @@ describe('hydrateTabEvents restored chat fallback', () => {
     expect(mocks.getChatHistoryResumeConversation).toHaveBeenCalledWith(
       'restored-session',
       '/workspace/workflow',
-      100,
+      20,
       0,
       true,
     )
@@ -241,7 +241,7 @@ describe('hydrateTabEvents restored chat fallback', () => {
     expect(mocks.getChatHistoryResumeConversation).toHaveBeenCalledWith(
       'schedule-session',
       '/workspace/workflow',
-      100,
+      20,
       0,
       true,
     )
@@ -265,5 +265,28 @@ describe('hydrateTabEvents restored chat fallback', () => {
         expect.objectContaining({ id: 'child-answer', type: 'unified_completion' }),
       ]),
     )
+  })
+})
+
+describe('lazy history hydration', () => {
+  beforeEach(() => vi.clearAllMocks())
+  it('shows recent history before live status finishes and keeps the older-page cursor', async () => {
+    let resolveLive!: (value: unknown) => void
+    mocks.getRecentSessionEvents.mockReturnValue(new Promise(resolve => { resolveLive = resolve }))
+    mocks.getChatHistoryResumeConversation.mockResolvedValue({
+      session_id: 'paged',
+      conversation_history: [
+        { Role: 'human', Parts: [{ Text: 'Recent question' }] },
+        { Role: 'ai', Parts: [{ Text: 'Recent answer' }] },
+      ],
+      history_pagination: { has_more: true, next_offset: 20 },
+    })
+    const restoring = hydrateTabEvents('paged', { workspacePath: 'Workflow/test' })
+    await vi.waitFor(() => expect(mocks.setTabEvents).toHaveBeenCalled())
+    expect(mocks.getChatHistoryResumeConversation).toHaveBeenCalledWith('paged', 'Workflow/test', 20, 0, true)
+    resolveLive({ events: [{ id: 'live', type: 'conversation_end' }], session_status: 'completed', has_more: false })
+    await restoring
+    expect(mocks.setTabHistoryPagination).toHaveBeenCalledWith('paged', { hasMore: true, nextOffset: 20 })
+    expect(mocks.setTabHasMoreOlderEvents).toHaveBeenLastCalledWith('paged', true)
   })
 })

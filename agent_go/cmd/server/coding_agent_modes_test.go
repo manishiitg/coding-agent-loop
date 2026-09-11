@@ -36,6 +36,7 @@ func TestCodingAgentPersistentInteractiveFlags(t *testing.T) {
 		wantCodexCLI    bool
 		wantCursorCLI   bool
 		wantPiCLI       bool
+		wantMuseCLI     bool
 	}{
 		{
 			name:            "claude code chat gets persistent tmux",
@@ -68,6 +69,18 @@ func TestCodingAgentPersistentInteractiveFlags(t *testing.T) {
 			wantPiCLI:       true,
 		},
 		{
+			name:            "muse chat gets persistent tmux",
+			provider:        string(llm.ProviderMuseCLI),
+			allowPersistent: true,
+			wantMuseCLI:     true,
+		},
+		{
+			name:            "muse structured chat never persists",
+			provider:        string(llm.ProviderMuseCLI),
+			allowPersistent: true,
+			structured:      true,
+		},
+		{
 			name:            "non coding provider never gets tmux",
 			provider:        string(llm.ProviderOpenAI),
 			allowPersistent: true,
@@ -80,9 +93,9 @@ func TestCodingAgentPersistentInteractiveFlags(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			gotClaudeCode, gotCodexCLI, gotCursorCLI, gotPiCLI := codingAgentPersistentInteractiveFlags(tt.provider, tt.allowPersistent, tt.structured)
-			if gotClaudeCode != tt.wantClaudeCode || gotCodexCLI != tt.wantCodexCLI || gotCursorCLI != tt.wantCursorCLI || gotPiCLI != tt.wantPiCLI {
-				t.Fatalf("flags = (%v, %v, %v, %v), want (%v, %v, %v, %v)", gotClaudeCode, gotCodexCLI, gotCursorCLI, gotPiCLI, tt.wantClaudeCode, tt.wantCodexCLI, tt.wantCursorCLI, tt.wantPiCLI)
+			gotClaudeCode, gotCodexCLI, gotCursorCLI, gotPiCLI, gotMuseCLI := codingAgentPersistentInteractiveFlags(tt.provider, tt.allowPersistent, tt.structured)
+			if gotClaudeCode != tt.wantClaudeCode || gotCodexCLI != tt.wantCodexCLI || gotCursorCLI != tt.wantCursorCLI || gotPiCLI != tt.wantPiCLI || gotMuseCLI != tt.wantMuseCLI {
+				t.Fatalf("flags = (%v, %v, %v, %v, %v), want (%v, %v, %v, %v, %v)", gotClaudeCode, gotCodexCLI, gotCursorCLI, gotPiCLI, gotMuseCLI, tt.wantClaudeCode, tt.wantCodexCLI, tt.wantCursorCLI, tt.wantPiCLI, tt.wantMuseCLI)
 			}
 		})
 	}
@@ -94,9 +107,9 @@ func TestCodingAgentPersistentInteractiveFlagsCoverTmuxContracts(t *testing.T) {
 			continue
 		}
 		t.Run(string(contract.Provider), func(t *testing.T) {
-			gotClaudeCode, gotCodexCLI, gotCursorCLI, gotPiCLI := codingAgentPersistentInteractiveFlags(string(contract.Provider), true, false)
+			gotClaudeCode, gotCodexCLI, gotCursorCLI, gotPiCLI, gotMuseCLI := codingAgentPersistentInteractiveFlags(string(contract.Provider), true, false)
 			count := 0
-			for _, enabled := range []bool{gotClaudeCode, gotCodexCLI, gotCursorCLI, gotPiCLI} {
+			for _, enabled := range []bool{gotClaudeCode, gotCodexCLI, gotCursorCLI, gotPiCLI, gotMuseCLI} {
 				if enabled {
 					count++
 				}
@@ -119,6 +132,9 @@ func TestCodingAgentUsesStructuredTransportForChat(t *testing.T) {
 		{name: "Cursor ordinary chat stays structured", provider: "cursor-cli", wantStructured: true},
 		{name: "Cursor workflow builder uses tmux", provider: "cursor-cli", workflowBuilder: true},
 		{name: "Cursor workflow builder overrides structured profile", provider: "cursor-cli", policy: "structured", workflowBuilder: true},
+		{name: "Muse ordinary chat stays structured", provider: "muse-cli", wantStructured: true},
+		{name: "Muse workflow builder uses tmux", provider: "muse-cli", workflowBuilder: true},
+		{name: "Muse workflow builder overrides structured profile", provider: "muse-cli", policy: "structured", workflowBuilder: true},
 		{name: "Claude workflow builder keeps provider default", provider: "claude-code", workflowBuilder: true},
 		{name: "explicit structured Claude remains structured", provider: "claude-code", policy: "structured", workflowBuilder: true, wantStructured: true},
 	}
@@ -137,6 +153,11 @@ func TestCodingAgentUsesStructuredTransport(t *testing.T) {
 	}
 	if codingAgentUsesStructuredTransport(string(llm.ProviderClaudeCode)) {
 		t.Fatal("Claude Code must retain its configured transport")
+	}
+	// Muse is exec-lane only until its tmux lane lands: structured even
+	// though the provider contract declares tmux.
+	if !codingAgentUsesStructuredTransport(string(llm.ProviderMuseCLI)) {
+		t.Fatal("Muse must use structured transport while exec-only")
 	}
 }
 

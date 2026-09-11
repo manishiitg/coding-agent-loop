@@ -133,6 +133,14 @@ var providerStaticInfoMap = map[string]providerStaticInfo{
 		apiKeyEnv:       "Provider-specific: GEMINI_API_KEY, ZAI_API_KEY, KIMI_API_KEY, MINIMAX_API_KEY, DEEPSEEK_API_KEY, etc.",
 		apiKeyURL:       "https://pi.dev/docs/latest/providers",
 	},
+	"muse-cli": {
+		displayName:     "Muse",
+		description:     "Uses the locally installed muse CLI (Meta). Authentication via muse login or META_API_KEY.",
+		integrationKind: "coding_agent",
+		authDescription: "Local CLI (Meta login or API key)",
+		requiresAPIKey:  false,
+		apiKeyEnv:       "META_API_KEY",
+	},
 	"claude-code": {
 		displayName:     "Claude Code",
 		description:     "Uses the locally installed claude CLI. Handles its own authentication, model selection, and tool execution.",
@@ -311,7 +319,7 @@ func (api *StreamingAPI) handleGetProviderManifest(w http.ResponseWriter, r *htt
 	capabilitiesByProvider := buildProviderCapabilities(ctx)
 
 	providerOrder := []string{
-		"claude-code", "codex-cli", "cursor-cli", "pi-cli",
+		"claude-code", "codex-cli", "cursor-cli", "pi-cli", "muse-cli",
 		"openai", "anthropic", "vertex", "bedrock", "azure",
 	}
 

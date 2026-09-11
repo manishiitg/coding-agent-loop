@@ -13,6 +13,8 @@ import { useShallow } from 'zustand/react/shallow'
 import { ReactFlowProvider } from '@xyflow/react'
 import { FileWorkspacePane } from '../../FileWorkspacePane'
 import { AskAIButton } from '../AskAIButton'
+import { sendWorkflowMessageToChat } from '../../../utils/reportHumanInputChat'
+import { useChatStore } from '../../../stores/useChatStore'
 import { WorkflowToolbar } from './WorkflowToolbar'
 import { ReportView } from '../ReportViewer'
 import { usePlanData } from '../hooks/usePlanData'
@@ -341,8 +343,17 @@ export const WorkspaceViewHost = React.memo(forwardRef<WorkflowCanvasRef, Workfl
   const toggleMonitor = useCallback(() => {
     if (!workspacePath || monitorSaving) return
     setMonitorSaving(true)
-    updateWorkflowManifest(workspacePath, { pulse_enabled: !monitorOn })
-      .catch(err => console.error('[WorkspaceViewHost] Failed to toggle Pulse review schedule:', err))
+    void (async () => {
+      if (!monitorOn) {
+        const response = await agentApi.getPulseImpact(workspacePath)
+        if (!response.success) throw new Error(response.error || 'Could not check goal setup')
+        if (!response.impact?.metrics?.length) {
+          await sendWorkflowMessageToChat({ workspacePath, viewMode: 'formatted', message: 'Set up Pulse for this workflow. Call get_workflow_command_guidance(kind="setup-goals", focus="First-time Pulse setup: propose outcome bullets, one primary metric, supporting metrics and boundaries from existing context; ask only unresolved questions. Enable Pulse after agreeing on the setup.") and follow it.' })
+          return
+        }
+      }
+      await updateWorkflowManifest(workspacePath, { pulse_enabled: !monitorOn })
+    })().catch(err => useChatStore.getState().addToast(err instanceof Error ? err.message : 'Could not set up Pulse', 'error'))
       .finally(() => setMonitorSaving(false))
   }, [workspacePath, monitorOn, monitorSaving, updateWorkflowManifest])
 

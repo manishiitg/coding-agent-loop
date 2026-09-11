@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -24,11 +25,13 @@ type playwrightLiveSession struct {
 	latest                           map[string][]byte
 	watchers                         map[chan []byte]struct{}
 	done                             chan struct{}
+	recording                        *playwrightRecording
 }
 
 type playwrightLiveRegistry struct {
 	sync.Mutex
-	sessions map[string]*playwrightLiveSession
+	sessions   map[string]*playwrightLiveSession
+	recordings map[string]*playwrightRecording
 }
 
 func (api *StreamingAPI) playwrightSessions(user, workspace string) []map[string]string {
@@ -37,9 +40,44 @@ func (api *StreamingAPI) playwrightSessions(user, workspace string) []map[string
 	items := []map[string]string{}
 	for _, s := range api.playwrightLive.sessions {
 		if s.owner == user && s.workspace == workspace {
-			items = append(items, map[string]string{"browser_session": s.id, "workflow_session": s.run, "label": s.label, "kind": "playwright", "read_only": "true"})
+			item := map[string]string{"browser_session": s.id, "workflow_session": s.run, "label": s.label, "kind": "playwright", "read_only": "true"}
+			if s.recording != nil {
+				item["recording_state"], item["recording_error"] = s.recording.status()
+			}
+			items = append(items, item)
 		}
 	}
+	for _, rec := range api.playwrightLive.recordings {
+		if rec.owner != user || rec.workspace != workspace {
+			continue
+		}
+		state, problem := rec.status()
+		found := false
+		for _, item := range items {
+			if item["browser_session"] == rec.id {
+				item["recording_state"] = state
+				item["recording_error"] = problem
+				found = true
+				break
+			}
+		}
+		if !found {
+			items = append(items, map[string]string{"browser_session": rec.id, "workflow_session": rec.run, "label": rec.label, "kind": "playwright", "read_only": "true", "state": "completed", "recording_state": state, "recording_error": problem})
+		}
+	}
+	sort.Slice(items, func(i, j int) bool {
+		a, b := api.playwrightLive.recordings[items[i]["browser_session"]], api.playwrightLive.recordings[items[j]["browser_session"]]
+		if a == nil && b == nil {
+			return items[i]["browser_session"] < items[j]["browser_session"]
+		}
+		if a == nil {
+			return false
+		}
+		if b == nil {
+			return true
+		}
+		return a.created.After(b.created)
+	})
 	return items
 }
 
@@ -108,6 +146,9 @@ func (api *StreamingAPI) handlePlaywrightPublisher(w http.ResponseWriter, r *htt
 		delete(api.playwrightLive.sessions, s.id)
 		api.playwrightLive.Unlock()
 		close(s.done)
+		if s.recording != nil {
+			s.recording.finish()
+		}
 	}()
 	upgrader := api.liveAttachUpgrader()
 	conn, err := upgrader.Upgrade(w, r, nil)
@@ -115,6 +156,10 @@ func (api *StreamingAPI) handlePlaywrightPublisher(w http.ResponseWriter, r *htt
 		return
 	}
 	defer conn.Close()
+	rec := api.newPlaywrightRecording(s)
+	api.playwrightLive.Lock()
+	s.recording = rec
+	api.playwrightLive.Unlock()
 	conn.SetReadLimit(2 << 20)
 	_ = conn.WriteJSON(map[string]string{"type": "registered", "browser_session": s.id})
 	var lastFrame time.Time
@@ -159,6 +204,7 @@ func (api *StreamingAPI) handlePlaywrightPublisher(w http.ResponseWriter, r *htt
 			lastFrame = time.Now()
 			clean, _ := json.Marshal(map[string]interface{}{"type": "frame", "data": m.Data, "metadata": m.Metadata})
 			s.publish("frame", clean)
+			s.recording.add(bytes)
 		case "tabs":
 			if len(m.Tabs) > 32 {
 				return

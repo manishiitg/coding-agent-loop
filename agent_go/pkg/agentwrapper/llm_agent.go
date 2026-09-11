@@ -119,6 +119,7 @@ func runtimeConfigForLLMAgent(config LLMAgentConfig, model llmtypes.Model, trace
 			PersistentCodex:                   config.CodexPersistentInteractiveSession,
 			PersistentCursor:                  config.CursorPersistentInteractiveSession,
 			PersistentPi:                      config.PiPersistentInteractiveSession,
+			PersistentMuse:                    config.MusePersistentInteractiveSession,
 			CursorBridgeTools:                 config.CursorBridgeToolsMode,
 			AgentToolsMode:                    config.CodingAgentToolsMode,
 			ApprovalsMode:                     config.CodingAgentApprovalsMode,
@@ -321,6 +322,7 @@ type LLMAgentConfig struct {
 	CodexPersistentInteractiveSession      bool
 	CursorPersistentInteractiveSession     bool
 	PiPersistentInteractiveSession         bool
+	MusePersistentInteractiveSession       bool
 	CursorBridgeToolsMode                  bool
 	CodingAgentToolsMode                   string
 	CodingAgentApprovalsMode               string

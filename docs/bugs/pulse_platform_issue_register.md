@@ -1,5 +1,16 @@
 # Pulse Platform-Issue Register
 
+## Manual workflow runs could manage MCP servers — PLAT-307
+
+[PLAT-307](pulse_platform/plat-307.md) fixes a manual Run-button execution
+(`agent_mode: "workflow"`) getting the full MCP server management toolset
+(search/inspect/install/add/edit/remove/logs/discovery) that only the workflow
+builder chat and regular chat are meant to have — scheduled/cron runs were
+already correctly excluded via a different `agent_mode` value. Also makes
+`remove_mcp_server` scan and warn about workflows left with a dangling
+reference after an account-wide removal. Implemented and regression-tested
+locally; deployment pending.
+
 ## Minimal review recording — PLAT-306
 
 [PLAT-306](pulse_platform/plat-306.md) replaces mandatory review Markdown

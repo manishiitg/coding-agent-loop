@@ -183,6 +183,11 @@ func TestToolSetInvariants(t *testing.T) {
 		}
 	}
 
+	for _, name := range []string{"get_goal_metrics", "configure_goal_metrics", "record_goal_observations"} {
+		if !pool[name] || cats[name] != "workflow" {
+			t.Fatalf("missing goal tool %s", name)
+		}
+	}
 	// 4. Pulse worklist tools are registered in the workflow tool pool and must
 	//    be visible in workshop mode, otherwise scheduled Pulse turns can ask
 	//    for record_pulse_result/get_pulse_state and then fail at

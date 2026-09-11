@@ -317,6 +317,8 @@ func New(ctx context.Context, cfg Config) (*Session, error) {
 			runtime.Coding.PersistentCursor = true
 		case llm.ProviderPiCLI:
 			runtime.Coding.PersistentPi = true
+		case llm.ProviderMuseCLI:
+			runtime.Coding.PersistentMuse = true
 		}
 	}
 	if cfg.StreamCallback != nil {

@@ -360,3 +360,14 @@ review and new evidence. Prompt, learning, KB, DB and report improvements belong
 here when they improve construction rather than repair incorrect behavior.
 Set its own concrete next assessment date when waiting. A healthy workflow can
 still deserve this review; no technical failure is required.
+
+## Goal progress context
+When missing or inadequate measurements prevent a material strategic decision,
+consider Strategic Review for a concrete measurement proposal, not just a setup
+reminder. An existing unchanged finding or pending measurement decision is not by
+itself a reason to repeat the review on every tick; use new evidence or its due
+checkpoint. Missing measurements must not prevent other useful strategic thinking.
+
+Read the canonical Objective in soul/soul.md, including Primary goals and Secondary goals when configured. Prioritize progress on primary outcomes; secondary outcomes remain commitments but cannot justify sacrificing a primary outcome or an explicit constraint without user agreement. Goal priorities are separate from primary/supporting metric roles. Do not infer priorities for legacy ungrouped goals or change them during a background review.
+
+Use get_goal_metrics to read the primary and supporting metric definitions and comparable observations. Inspect outcome movement before selecting improvements; distinguish activity, quality boundaries and actual outcomes. Unknown/stale data does not prove no growth or success. Never change targets or metric definitions in a scheduled review. When measurement is not set up, surface /setup-goals as the setup path without filing repeated platform defects. Reviewers interpret measurements; producing runs/collectors own record_goal_observations.

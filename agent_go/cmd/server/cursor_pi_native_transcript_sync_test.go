@@ -103,6 +103,73 @@ func TestRefreshLatestBuilderConversationFromPiTranscript(t *testing.T) {
 	}
 }
 
+// Same failure class as the Codex/Pi cases, on muse: the persisted record
+// was last saved after one full turn, then the chat continued through
+// retained live input muse's own transcript captured but the record never
+// caught up to. Pins the fix for the gap found live 2026-09-11: muse had no
+// case in nativeTranscriptMessagesForRuntime at all, so this resync path
+// never ran for it.
+func TestRefreshLatestBuilderConversationFromMuseTranscript(t *testing.T) {
+	dataHome := t.TempDir()
+	t.Setenv("XDG_DATA_HOME", dataHome)
+	const nativeSessionID = "01a08ec6-9a6e-77c3-bcbb-ae96565a0f6b"
+	dir := filepath.Join(dataHome, "muse", "sessions", "2026", "09", "11", nativeSessionID)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	lines := []string{
+		`{"payload_type":"runtime.command_intake.received","payload":{"record":{"command_id":"c1","command":{"prompt":"what is our top strategy"}}}}`,
+		`{"payload_type":"runtime.session","payload":{"kind":"run","run_id":"run-1","event":{"kind":"assistant_message_committed","text":"The top strategy is the builder flywheel."}}}`,
+		`{"payload_type":"runtime.command_intake.received","payload":{"record":{"command_id":"c2","command":{"prompt":"and how many posts"}}}}`,
+		`{"payload_type":"runtime.session","payload":{"kind":"run","run_id":"run-2","event":{"kind":"assistant_message_committed","text":"Twelve so far."}}}`,
+	}
+	if err := os.WriteFile(filepath.Join(dir, "session.jsonl"), []byte(strings.Join(lines, "\n")+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	conv := builderConversationLog{
+		SessionID: "builder-session",
+		PhaseID:   "workflow-builder",
+		UpdatedAt: "2026-09-11T11:10:41+05:30",
+		ConversationHistory: []builderConversationMessage{
+			{Role: "human", Parts: []builderConversationPart{{Text: "what is our top strategy"}}},
+			{Role: "ai", Parts: []builderConversationPart{{Text: "The top strategy is the builder flywheel."}}},
+		},
+	}
+	record := map[string]interface{}{
+		"session_id": conv.SessionID,
+		"phase_id":   conv.PhaseID,
+		"updated_at": conv.UpdatedAt,
+		"conversation_history": []map[string]interface{}{
+			{"Role": "human", "Parts": []map[string]interface{}{{"Text": "what is our top strategy"}}},
+			{"Role": "ai", "Parts": []map[string]interface{}{{"Text": "The top strategy is the builder flywheel."}}},
+		},
+		"runtime": map[string]interface{}{
+			"provider":            "muse-cli",
+			"external_session_id": nativeSessionID,
+			"agent_session_handle": map[string]interface{}{
+				"provider": map[string]interface{}{
+					"provider": "muse-cli", "native_session_id": nativeSessionID,
+				},
+			},
+		},
+	}
+	rawContent, err := json.Marshal(record)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	api := &StreamingAPI{}
+	refreshed := api.refreshLatestBuilderConversationFromNativeTranscript(context.Background(), "Workflow/x/builder/conversation/2026-09-11/session-builder-session-conversation.json", string(rawContent), conv)
+
+	if len(refreshed.ConversationHistory) != 4 {
+		t.Fatalf("expected 4 messages after catch-up, got %d: %+v", len(refreshed.ConversationHistory), refreshed.ConversationHistory)
+	}
+	if last := refreshed.ConversationHistory[3]; last.Role != "ai" || last.Parts[0].Text != "Twelve so far." {
+		t.Fatalf("expected muse's newest reply last, got %+v", last)
+	}
+}
+
 func TestNativeTranscriptMessagesForRuntimeCursorNeedsWorkingDirAndSession(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)

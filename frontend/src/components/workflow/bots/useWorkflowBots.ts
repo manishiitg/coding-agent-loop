@@ -91,8 +91,14 @@ export function useWorkflowBots(workspacePath: string | null) {
   const [qrImageURL, setQrImageURL] = useState<string | null>(null)
   const [qrLoading, setQrLoading] = useState(false)
   const [qrError, setQrError] = useState<string | null>(null)
-  const [unpairConfirm, setUnpairConfirm] = useState(false)
-  const [unpairing, setUnpairing] = useState(false)
+  const [waAddDeviceOpen, setWaAddDeviceOpen] = useState(false)
+  const [waUnpairConfirmSlot, setWaUnpairConfirmSlot] = useState<string | null>(null)
+  const [waUnpairingSlot, setWaUnpairingSlot] = useState<string | null>(null)
+  const [waDeviceLabelDrafts, setWaDeviceLabelDrafts] = useState<Record<string, string>>({})
+  const [waDeviceLabelSavingSlot, setWaDeviceLabelSavingSlot] = useState<string | null>(null)
+  const [waPairDeviceLabel, setWaPairDeviceLabel] = useState('')
+  const [waPairDeviceLabelSaving, setWaPairDeviceLabelSaving] = useState(false)
+  const [waPairingDeviceSlot, setWaPairingDeviceSlot] = useState<string | null>(null)
   const waPollingRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
   // ── Gmail (account-wide, shared by every workflow) ────────────────────────
@@ -184,6 +190,14 @@ export function useWorkflowBots(workspacePath: string | null) {
     } catch (err) {
       setWaRoutingError(err instanceof Error ? err.message : String(err))
     }
+  }, [])
+
+  const refreshWaQR = useCallback(() => {
+    setQrBust(Date.now())
+  }, [])
+
+  const setWaDeviceLabelDraft = useCallback((slot: string, label: string) => {
+    setWaDeviceLabelDrafts(current => ({ ...current, [slot]: label }))
   }, [])
 
   const loadGmailConnections = useCallback(async (attempt = 0) => {
@@ -426,6 +440,8 @@ export function useWorkflowBots(workspacePath: string | null) {
   // user having to refresh. Only runs while the WhatsApp setup screen is open.
   useEffect(() => {
     if (setup !== 'whatsapp') {
+      setWaAddDeviceOpen(false)
+      setWaPairingDeviceSlot(null)
       if (waPollingRef.current) {
         clearInterval(waPollingRef.current)
         waPollingRef.current = null
@@ -434,15 +450,38 @@ export function useWorkflowBots(workspacePath: string | null) {
     }
 
     let cancelled = false
-    let lastExpires: string | undefined
+    let lastQRKey: string | undefined
     const tick = async () => {
       try {
-        const s = await agentApi.getWhatsAppStatus()
+        const s = await agentApi.getWhatsAppStatus(waAddDeviceOpen && waPairingDeviceSlot === null ? { device: 'next' } : undefined)
         if (cancelled) return
+        if (waAddDeviceOpen) {
+          const targetSlot = waPairingDeviceSlot ?? s.next_device?.slot ?? ''
+          const hasPairingTarget = waPairingDeviceSlot !== null || s.next_device !== undefined
+          const targetDevice = s.devices?.find(device => device.slot === targetSlot)
+          if (hasPairingTarget && targetDevice?.paired) {
+            setWaStatus(s)
+            setWaError(null)
+            setWaAddDeviceOpen(false)
+            setWaPairingDeviceSlot(null)
+            setWaPairDeviceLabel('')
+            setQrImageURL(prev => {
+              if (prev) URL.revokeObjectURL(prev)
+              return null
+            })
+            return
+          }
+          if (waPairingDeviceSlot === null && s.next_device) {
+            setWaPairingDeviceSlot(s.next_device.slot)
+          }
+        }
         setWaStatus(s)
         setWaError(null)
-        if (s.qr_expires_at !== lastExpires) {
-          lastExpires = s.qr_expires_at
+        const key = (waAddDeviceOpen && s.paired)
+          ? `next|${waPairingDeviceSlot ?? s.next_device?.slot ?? ''}|${s.next_device?.qr_expires_at || ''}`
+          : `primary|${s.qr_expires_at || ''}`
+        if (key !== lastQRKey) {
+          lastQRKey = key
           setQrBust(Date.now())
         }
       } catch (err) {
@@ -459,10 +498,17 @@ export function useWorkflowBots(workspacePath: string | null) {
         waPollingRef.current = null
       }
     }
-  }, [setup])
+  }, [setup, waAddDeviceOpen, waPairingDeviceSlot])
 
   useEffect(() => {
-    if (setup !== 'whatsapp' || !waStatus?.enabled || waStatus.paired || !waStatus.qr_available) {
+    const pairingMode: 'primary' | 'next' | null = !waStatus?.paired ? 'primary' : waAddDeviceOpen ? 'next' : null
+    const nextSlotMatches = pairingMode !== 'next'
+      || waPairingDeviceSlot === null
+      || waStatus?.next_device?.slot === waPairingDeviceSlot
+    const qrAvailable = pairingMode === 'next'
+      ? nextSlotMatches && !!waStatus?.next_device?.qr_available
+      : !!waStatus?.qr_available
+    if (setup !== 'whatsapp' || !waStatus?.enabled || pairingMode === null || !qrAvailable) {
       setQrLoading(false)
       setQrError(null)
       setQrImageURL(prev => {
@@ -475,7 +521,8 @@ export function useWorkflowBots(workspacePath: string | null) {
     let cancelled = false
     setQrLoading(true)
     setQrError(null)
-    agentApi.getWhatsAppPairQR(384, qrBust)
+    const device = pairingMode === 'next' ? (waPairingDeviceSlot ?? 'next') : undefined
+    agentApi.getWhatsAppPairQR(384, qrBust, device)
       .then(blob => {
         if (cancelled) return
         const nextURL = URL.createObjectURL(blob)
@@ -499,13 +546,30 @@ export function useWorkflowBots(workspacePath: string | null) {
     return () => {
       cancelled = true
     }
-  }, [setup, waStatus?.enabled, waStatus?.paired, waStatus?.qr_available, qrBust])
+  }, [setup, waStatus?.enabled, waStatus?.paired, waStatus?.qr_available, waStatus?.next_device?.qr_available, waStatus?.next_device?.slot, waAddDeviceOpen, waPairingDeviceSlot, qrBust])
 
   useEffect(() => {
     return () => {
       if (qrImageURL) URL.revokeObjectURL(qrImageURL)
     }
   }, [qrImageURL])
+
+  useEffect(() => {
+    const devices = waStatus?.devices || []
+    if (devices.length === 0) return
+    setWaDeviceLabelDrafts(current => {
+      let changed = false
+      const next = { ...current }
+      for (const device of devices) {
+        const slot = device.slot || ''
+        if (!(slot in next)) {
+          next[slot] = device.label || ''
+          changed = true
+        }
+      }
+      return changed ? next : current
+    })
+  }, [waStatus?.devices])
 
   // ── Routes for this workflow ──────────────────────────────────────────────
   const myRoutes = useMemo<WorkflowRoute[]>(() => {
@@ -704,27 +768,76 @@ export function useWorkflowBots(workspacePath: string | null) {
   }
 
   // ── WhatsApp handlers (setup screen) ──────────────────────────────────────
-  // Drops the paired phone, restarts the service, and refreshes local status.
-  // Two-step confirmation prevents accidental clicks.
-  const handleUnpairWhatsApp = async () => {
-    if (!unpairConfirm) {
-      setUnpairConfirm(true)
-      setTimeout(() => setUnpairConfirm(false), 5000)
+  const openAddWhatsAppDevice = useCallback(() => {
+    setWaAddDeviceOpen(true)
+    setWaPairingDeviceSlot(null)
+    setQrBust(Date.now())
+  }, [])
+
+  const closeAddWhatsAppDevice = useCallback(() => {
+    setWaAddDeviceOpen(false)
+    setWaPairDeviceLabel('')
+    setWaPairingDeviceSlot(null)
+    setQrBust(Date.now())
+  }, [])
+
+  const handleSaveWhatsAppDeviceLabel = useCallback(async (slot: string, label: string) => {
+    try {
+      setWaDeviceLabelSavingSlot(slot)
+      setWaError(null)
+      await agentApi.updateWhatsAppDeviceLabel(slot, label)
+      setWaDeviceLabelDrafts(current => ({ ...current, [slot]: label.trim() }))
+      await loadWaStatus()
+      return true
+    } catch (err) {
+      setWaError(err instanceof Error ? err.message : 'Failed to save WhatsApp name')
+      return false
+    } finally {
+      setWaDeviceLabelSavingSlot(null)
+    }
+  }, [loadWaStatus])
+
+  const handleSaveWhatsAppPairDeviceLabel = useCallback(async () => {
+    const slot = waAddDeviceOpen ? (waPairingDeviceSlot ?? waStatus?.next_device?.slot ?? '') : ''
+    try {
+      setWaPairDeviceLabelSaving(true)
+      setWaError(null)
+      await agentApi.updateWhatsAppDeviceLabel(slot, waPairDeviceLabel)
+      const status = await agentApi.getWhatsAppStatus(waAddDeviceOpen && waPairingDeviceSlot === null ? { device: 'next' } : undefined)
+      setWaStatus(status)
+    } catch (err) {
+      setWaError(err instanceof Error ? err.message : 'Failed to save WhatsApp name')
+    } finally {
+      setWaPairDeviceLabelSaving(false)
+    }
+  }, [waAddDeviceOpen, waPairDeviceLabel, waPairingDeviceSlot, waStatus?.next_device?.slot])
+
+  // Drops one linked phone/number (slot "" = primary), restarts that
+  // connector session, and refreshes local status. Two-step confirmation
+  // prevents accidental clicks.
+  const handleUnpairWhatsAppDevice = useCallback(async (slot: string) => {
+    if (waUnpairConfirmSlot !== slot) {
+      setWaUnpairConfirmSlot(slot)
+      window.setTimeout(() => {
+        setWaUnpairConfirmSlot(current => (current === slot ? null : current))
+      }, 5000)
       return
     }
     try {
-      setUnpairing(true)
+      setWaUnpairingSlot(slot)
       setWaError(null)
-      await agentApi.unpairWhatsApp()
-      setUnpairConfirm(false)
+      await agentApi.unpairWhatsApp(slot ? { device: slot } : undefined)
+      setWaUnpairConfirmSlot(null)
+      setWaAddDeviceOpen(false)
+      setWaPairingDeviceSlot(null)
       await loadWaStatus()
       setQrBust(Date.now())
     } catch (err) {
       setWaError(err instanceof Error ? err.message : 'Failed to unpair')
     } finally {
-      setUnpairing(false)
+      setWaUnpairingSlot(null)
     }
-  }
+  }, [loadWaStatus, waUnpairConfirmSlot])
 
   // ── Gmail derived state + save/test ───────────────────────────────────────
   const gmailCurrentBlocked = normalizeGmailEmails(gmailBlockedText)
@@ -797,11 +910,12 @@ export function useWorkflowBots(workspacePath: string | null) {
       : !slackOriginal.bot_mode ? 'Bot mode off'
         : 'Connected'
 
-  const waReady = !!waStatus?.enabled && !!waStatus.paired
+  const waLinkedDevices = waStatus?.devices?.filter(device => device.paired) || []
+  const waReady = !!waStatus?.enabled && (waStatus.paired || waLinkedDevices.length > 0)
   const waStatusLabel = !waStatus ? (waError ? 'Unavailable' : 'Loading…')
     : !waStatus.enabled ? 'Disabled on server'
-      : !waStatus.paired ? 'Not paired'
-        : waStatus.connected ? 'Connected' : 'Paired, offline'
+      : !waReady ? 'Not paired'
+        : waStatus.connected || waLinkedDevices.some(device => device.connected) ? 'Connected' : 'Paired, offline'
 
   const slackHasChanges = JSON.stringify(slackConfig) !== JSON.stringify(slackOriginal)
 
@@ -817,8 +931,12 @@ export function useWorkflowBots(workspacePath: string | null) {
     allowedEmails, setAllowedEmails, emailsDirty, setEmailsDirty, emailsSaving, emailsSaved, setEmailsSaved,
     handleEmailsSave, handleSlackSave, handleSlackTest, slackHasChanges, slackReady, slackStatusLabel,
     // whatsapp
-    waStatus, waError, waRoutingError, qrImageURL, qrLoading, qrError, unpairConfirm, unpairing,
-    handleUnpairWhatsApp, waReady, waStatusLabel,
+    waStatus, waError, waRoutingError, qrImageURL, qrLoading, qrError,
+    waAddDeviceOpen, openAddWhatsAppDevice, closeAddWhatsAppDevice,
+    waUnpairConfirmSlot, waUnpairingSlot, refreshWaQR, handleUnpairWhatsAppDevice,
+    waDeviceLabelDrafts, setWaDeviceLabelDraft, waDeviceLabelSavingSlot, handleSaveWhatsAppDeviceLabel,
+    waPairDeviceLabel, setWaPairDeviceLabel, waPairDeviceLabelSaving, waPairingDeviceSlot, handleSaveWhatsAppPairDeviceLabel,
+    waReady, waStatusLabel,
     // routes
     myRoutes, removeRoute, updateRoute, addSlackRoute, addWaRoute,
     // gmail

@@ -15,6 +15,10 @@ import (
 
 func (api *StreamingAPI) handleBrowserRecording(w http.ResponseWriter, r *http.Request) {
 	session := mux.Vars(r)["session"]
+	if strings.HasPrefix(session, "pw-") {
+		api.handlePlaywrightRecording(w, r, session)
+		return
+	}
 	authorized := false
 	for _, item := range api.liveBrowserSessions(r) {
 		if item["browser_session"] == session {
@@ -26,8 +30,8 @@ func (api *StreamingAPI) handleBrowserRecording(w http.ResponseWriter, r *http.R
 		http.Error(w, "Browser session not found", 404)
 		return
 	}
-	if strings.HasPrefix(session, "pw-") {
-		http.Error(w, "Playwright recordings are managed by the test runner", http.StatusMethodNotAllowed)
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", 405)
 		return
 	}
 	var request struct {

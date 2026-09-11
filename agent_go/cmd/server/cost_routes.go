@@ -21,6 +21,7 @@ func newCostObserver(ledger *costledger.Ledger, sessionID, userID, agentMode str
 var (
 	withCostModel                = costobserver.WithModel
 	withCostAttribution          = costobserver.WithAttribution
+	withCostSourcePlatform       = costobserver.WithSourcePlatform
 	inferCostScope               = costobserver.InferScope
 	scopeForScheduledTurn        = costobserver.ScopeForScheduledTurn
 	costFirstNonEmpty            = costobserver.FirstNonEmpty

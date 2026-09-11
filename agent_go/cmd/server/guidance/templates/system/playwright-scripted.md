@@ -4,8 +4,10 @@ Use this reference when authoring or repairing repeatable browser tests, or conn
 user-written Playwright tests to the workflow Browser panel. For interactive browsing,
 use the managed `agent_browser` tool and `references/browser-usage.md`.
 
-To watch a suite, open the workflow Browser panel and select **Playwright tests**.
-This separate entry stays available between cases and waits for the next test;
+To watch a suite, open the workflow Browser panel and select **Follow latest test**.
+While following, that option shows the fixture-provided test name, a short run ID,
+Live/Replay, and Auto. Each run also has its own named option; selecting it pins
+that live browser or replay. The follow option stays available between cases;
 the shared agent-browser remains a separate choice. Each test still owns its
 browser/context. A `pw-` registration confirms the stream source, not that the
 user's panel selected it or displayed frames. Verify the selected test and a
@@ -182,3 +184,16 @@ Run syntax/import and dependency/browser preflight checks first. Validate the ha
 small local fixture that exercises pass, assertion failure, and timeout finalization. Use
 `execute_step(fast_path_only=true)` for the real selected group only when a live run is authorized;
 do not launch an expensive or externally mutating suite merely to prove the harness compiles.
+
+## Temporary Browser-panel replay
+
+The shared live-browser service automatically records the streamed viewport for
+both Node.js and Python, including direct attach helpers. After teardown the
+Browser panel offers MP4 playback and Download video. This is a silent replay of
+the live view (up to 4 fps), independent of the runner's full-quality video policy.
+No changes to existing context creation, assertions, or report evidence paths are
+needed. Closing the panel deletes its temporary replays, including an in-progress
+recording; download anything to keep first. Abandoned replays expire after one hour.
+A bounded recording that reaches the size limit is labeled partial. If recording
+capacity or encoding fails, the panel reports it; do not claim a replay exists until
+it is ready. Report-owned evidence is not deleted by closing the Browser panel.

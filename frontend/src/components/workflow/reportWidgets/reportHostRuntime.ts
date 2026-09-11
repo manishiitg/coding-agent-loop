@@ -6,7 +6,9 @@
 // preview_report page (src/report-preview). A report that passes preview
 // therefore passes in the app: they render through one runtime.
 
-import type { ReportDataApi } from './reportEmbedContext'
+import { getReportEvaluations, getReportCosts, renderReportEvaluations, renderReportCosts } from './reportOperationalMetrics'
+import type { ReportCostOptions, ReportDataApi } from './reportEmbedContext'
+import { getReportGoalMetrics, renderReportGoalProgress } from './reportGoalProgress'
 import { REPORT_OPEN_ATTR, REPORT_SRC_ATTR } from './reportMarkdownLinks'
 
 export type ReportHostTheme = 'dark' | 'light'
@@ -76,7 +78,7 @@ export const REPORT_BOOTSTRAP = `<script>(function(){
       });
     };
   }
-  ['query', 'get', 'getText', 'getHtml', 'fileUrl', 'mediaUrl', 'updateField', 'updateFields'].forEach(function(name){
+  ['query', 'get', 'getText', 'getHtml', 'fileUrl', 'mediaUrl', 'updateField', 'updateFields', 'getGoalMetrics', 'renderGoalProgress', 'getEvaluations', 'renderEvaluations', 'getCosts', 'renderCosts'].forEach(function(name){
     api[name] = queueCall(name);
   });
   api.openFile = function(){
@@ -438,7 +440,17 @@ export function installReportHost(frame: HTMLIFrameElement, options: ReportHostI
 
   if (!dataApi) return
 
+  const getEvaluations = () => getReportEvaluations(dataApi)
+  const getCosts = (costOptions?: ReportCostOptions) => getReportCosts(dataApi, costOptions)
+  const renderEvaluations = (target: string | HTMLElement) => renderReportEvaluations(doc, dataApi, target)
+  const renderCosts = (target: string | HTMLElement, costOptions?: ReportCostOptions) => renderReportCosts(doc, dataApi, target, costOptions)
+  const getGoalMetrics = () => getReportGoalMetrics(dataApi.query)
+  const renderGoalProgress = (target: string | HTMLElement) => renderReportGoalProgress(doc, dataApi.query, target)
+
   win.report = {
+    getEvaluations, getCosts, renderEvaluations, renderCosts,
+    getGoalMetrics,
+    renderGoalProgress,
     ready: (fn: unknown) => {
       if (typeof fn !== 'function') return
       const queue = win.__reportQueuedCallbacks
@@ -468,6 +480,12 @@ export function installReportHost(frame: HTMLIFrameElement, options: ReportHostI
   // array is drained and cleared here, so it stays empty on every later
   // re-injection (data refresh, theme change).
   const realReportMethods: Record<string, ((...args: unknown[]) => unknown) | undefined> = {
+    getEvaluations,
+    getCosts: getCosts as (...args: unknown[]) => unknown,
+    renderEvaluations: renderEvaluations as (...args: unknown[]) => unknown,
+    renderCosts: renderCosts as (...args: unknown[]) => unknown,
+    getGoalMetrics,
+    renderGoalProgress: renderGoalProgress as (...args: unknown[]) => unknown,
     query: dataApi.query as (...args: unknown[]) => unknown,
     get: dataApi.get as (...args: unknown[]) => unknown,
     getText: dataApi.getText as (...args: unknown[]) => unknown,

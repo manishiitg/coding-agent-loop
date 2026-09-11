@@ -26,7 +26,7 @@ import (
 )
 
 var (
-	codingCLIP0ProvidersFlag     = flag.String("coding-cli-p0-providers", "claude-code,codex-cli,cursor-cli,pi-cli", "comma-separated live coding CLI providers")
+	codingCLIP0ProvidersFlag     = flag.String("coding-cli-p0-providers", "claude-code,codex-cli,cursor-cli,pi-cli,muse-cli", "comma-separated live coding CLI providers")
 	codingCLIP0WorkspaceAPIFlag  = flag.String("coding-cli-p0-workspace-api", "http://127.0.0.1:18744", "live workspace API URL")
 	codingCLIP0WorkspaceDocsFlag = flag.String("coding-cli-p0-workspace-docs", "", "absolute workspace-docs path")
 )
@@ -52,7 +52,7 @@ func TestCodingCLIWorkflowP0CompletionAdvancesNextStep(t *testing.T) {
 
 func TestCodingCLIWorkflowP0ProviderMatrix(t *testing.T) {
 	providers := codingCLIP0Providers(t)
-	for _, name := range []string{"claude-code", "codex-cli", "cursor-cli", "pi-cli"} {
+	for _, name := range []string{"claude-code", "codex-cli", "cursor-cli", "pi-cli", "muse-cli"} {
 		provider, ok := providers[name]
 		if !ok {
 			t.Fatalf("active coding CLI %s is missing from the workflow P0 matrix", name)
@@ -61,8 +61,8 @@ func TestCodingCLIWorkflowP0ProviderMatrix(t *testing.T) {
 			t.Fatalf("coding CLI %s has an incomplete workflow P0 definition: %#v", name, provider)
 		}
 	}
-	if len(providers) != 4 {
-		t.Fatalf("workflow P0 matrix has %d providers, want exactly the four active coding CLIs", len(providers))
+	if len(providers) != 5 {
+		t.Fatalf("workflow P0 matrix has %d providers, want exactly the five active coding CLIs", len(providers))
 	}
 }
 
@@ -125,6 +125,14 @@ func codingCLIP0Providers(t *testing.T) map[string]codingCLIP0Provider {
 			apiKeys:     &llm.ProviderAPIKeys{PiCLI: optional(piKey)},
 			cleanup:     func(ctx context.Context) { _ = llmproviders.CleanupPiCLIInteractiveSessions(ctx) },
 		},
+		"muse-cli": {
+			name:        "muse-cli",
+			provider:    llm.ProviderMuseCLI,
+			model:       model("MUSE_CLI_WORKFLOW_P0_MODEL", "muse-spark-1.3-contributor"),
+			requiredBin: "muse",
+			apiKeys:     &llm.ProviderAPIKeys{MuseCLI: optional(os.Getenv("META_API_KEY"))},
+			cleanup:     func(ctx context.Context) { _ = llmproviders.CleanupMuseCLIInteractiveSessions(ctx) },
+		},
 	}
 }
 
@@ -132,7 +140,7 @@ func requestedCodingCLIP0Providers(t *testing.T, providers map[string]codingCLIP
 	t.Helper()
 	requested := strings.TrimSpace(*codingCLIP0ProvidersFlag)
 	if requested == "" || requested == "all" {
-		requested = "claude-code,codex-cli,cursor-cli,pi-cli"
+		requested = "claude-code,codex-cli,cursor-cli,pi-cli,muse-cli"
 	}
 
 	var out []codingCLIP0Provider

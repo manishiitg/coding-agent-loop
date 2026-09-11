@@ -43,6 +43,18 @@ func readerFor(content string) func(context.Context, string) (string, error) {
 	return func(context.Context, string) (string, error) { return content, nil }
 }
 
+func TestSoulRuntimePreservesGoalPriorities(t *testing.T) {
+	objective := "### Primary goals\n- Make conversations feel immediate.\n\n### Secondary goals\n- Make the learner experience ready quickly."
+	content := "## Objective\n" + objective + "\n\n## Success Criteria\n- Meet agreed metric targets.\n\n## Constraints\n- Preserve privacy."
+	got, success, constraints, err := ReadWorkflowSoulSections(context.Background(), "Workflow/learner", readerFor(content))
+	if err != nil || got != objective || success != "- Meet agreed metric targets." || constraints != "- Preserve privacy." {
+		t.Fatalf("priorities must reach runtime without losing acceptance or constraints: %q, %q, %q, %v", got, success, constraints, err)
+	}
+	if stripSoulTodoPlaceholder(extractSoulSection(SoulScaffold("New workflow"), soulObjectiveSection)) != "" {
+		t.Fatal("a scaffold must not be treated as configured outcome goals")
+	}
+}
+
 // The `## Constraints` section was a documented soul.md convention that nothing
 // parsed, so owner-approved values were retyped into step descriptions and
 // learnings and drifted from the owner's decision. It must extract cleanly and

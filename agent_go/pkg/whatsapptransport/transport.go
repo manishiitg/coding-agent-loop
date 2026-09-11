@@ -54,7 +54,7 @@ func OpenStore(ctx context.Context, dbPath, appName string, appVersion [3]uint32
 		dbLogger = waLog.Stdout("WhatsApp-DB", "DEBUG", true)
 		clientLogger = waLog.Stdout("WhatsApp", "DEBUG", true)
 	}
-	dsn := fmt.Sprintf("file:%s?_pragma=foreign_keys(1)&_pragma=journal_mode(WAL)", dbPath)
+	dsn := fmt.Sprintf("file:%s?_pragma=foreign_keys(1)&_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)", dbPath)
 	container, err := sqlstore.New(ctx, "sqlite", dsn, dbLogger)
 	if err != nil {
 		return nil, fmt.Errorf("whatsapp: open session store: %w", err)
@@ -367,6 +367,14 @@ func (a *Account) Pair(ctx context.Context, timeout time.Duration, onQR func(QRU
 				if onQR != nil {
 					onQR(QRUpdate{Code: evt.Code, Expires: time.Now().Add(evt.Timeout)})
 				}
+			case "error":
+				if onQR != nil {
+					onQR(QRUpdate{})
+				}
+				if evt.Error != nil {
+					return false, fmt.Errorf("pairing error: %w", evt.Error)
+				}
+				return false, fmt.Errorf("pairing error")
 			case "success":
 				if onQR != nil {
 					onQR(QRUpdate{})
@@ -377,6 +385,16 @@ func (a *Account) Pair(ctx context.Context, timeout time.Duration, onQR func(QRU
 					onQR(QRUpdate{})
 				}
 				return false, nil
+			default:
+				// whatsmeow can emit terminal "err-*" statuses (e.g.
+				// err-client-outdated, err-scanned-without-multidevice).
+				if onQR != nil {
+					onQR(QRUpdate{})
+				}
+				if evt.Error != nil {
+					return false, fmt.Errorf("pairing failed (%s): %w", evt.Event, evt.Error)
+				}
+				return false, fmt.Errorf("pairing failed (%s)", evt.Event)
 			}
 		case <-deadlineC:
 			a.client.Disconnect()

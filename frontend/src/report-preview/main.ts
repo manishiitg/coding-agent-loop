@@ -14,6 +14,7 @@
 //   window.__reportPreview.setTheme('dark'|'light') -> re-theme without reload
 //   window.__reportPreview.setWidth(px)             -> re-layout at a viewport width
 
+import type { PulseEvalResultsResponse, WorkflowCostsResponse } from '../services/api-types'
 import type { ReportDataApi } from '../components/workflow/reportWidgets/reportEmbedContext'
 import {
   applyReportTheme,
@@ -93,9 +94,17 @@ async function fetchFile(path: string): Promise<{ ok: boolean; status: number; t
   }
 }
 
+async function fetchReportMetrics<T>(kind: string, params: Record<string, string> = {}): Promise<T> {
+  const response = await fetch(apiUrl(kind, params), { headers: { Authorization: `Bearer ${token}` } })
+  if (!response.ok) throw new Error(`${kind} unavailable (HTTP ${response.status})`)
+  return response.json() as Promise<T>
+}
+
 function createPreviewDataApi(): ReportDataApi {
   return {
     workspacePath: workspace,
+    getEvaluations: () => fetchReportMetrics<PulseEvalResultsResponse>('evaluations'),
+    getCosts: options => fetchReportMetrics<WorkflowCostsResponse>('costs', { days: String(options.days || 30), before: options.before || '' }),
     query: async (sql: string) => {
       const response = await fetch(apiUrl('query', {}), {
         method: 'POST',

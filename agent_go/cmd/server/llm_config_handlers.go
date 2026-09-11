@@ -30,6 +30,7 @@ var supportedLLMProviders = []string{
 	"codex-cli",
 	"cursor-cli",
 	"pi-cli",
+	"muse-cli",
 }
 
 // deprecatedAPIModelProviders were deprecated 2026-08-20: see
@@ -68,14 +69,16 @@ func providerReplacementProvider(provider string) string {
 	return "pi-cli"
 }
 
+// isPublishedLLMProviderAllowed reports whether provider names a real
+// provider in the shared registry (multi-llm-provider-go ValidateProvider,
+// via mcpagent/llm). The allowed set is derived, not listed here, so new
+// coding CLIs validate automatically once their contract lands upstream.
+// Product offering/visibility stays governed by supportedLLMProviders (and
+// the SUPPORTED_LLM_PROVIDERS env override); deprecated API transports are
+// filtered separately by isDeprecatedLLMProvider.
 func isPublishedLLMProviderAllowed(provider string) bool {
-	switch strings.ToLower(strings.TrimSpace(provider)) {
-	case "bedrock", "openai", "vertex", "anthropic", "azure",
-		"claude-code", "codex-cli", "cursor-cli", "pi-cli":
-		return true
-	default:
-		return false
-	}
+	_, err := llm.ValidateProvider(strings.ToLower(strings.TrimSpace(provider)))
+	return err == nil
 }
 
 func fallbackPublishedLLMProviderAndModel() (string, string) {
@@ -388,6 +391,11 @@ func buildProviderAPIKeysFromEnv() *llm.ProviderAPIKeys {
 	if s := os.Getenv("MINIMAX_API_KEY"); s != "" {
 		keys.MiniMax = &s
 	}
+	// Muse CLI: explicit META_API_KEY only (never a third-party key).
+	// Empty means stored `muse login`, mirroring the adapter's precedence.
+	if s := os.Getenv("META_API_KEY"); s != "" {
+		keys.MuseCLI = &s
+	}
 	keys.PiProviderKeys = buildPiProviderKeysFromEnv()
 	if endpoint := os.Getenv("AZURE_AI_ENDPOINT"); endpoint != "" {
 		apiKey := os.Getenv("AZURE_AI_API_KEY")
@@ -479,6 +487,8 @@ func providerDisplayLabel(provider string) string {
 		return "Cursor CLI"
 	case "pi-cli":
 		return "Pi CLI"
+	case "muse-cli":
+		return "Muse"
 	case "claude-code":
 		return "Claude Code"
 	case "openai":
@@ -538,6 +548,8 @@ func discoveryModelOptions(provider string) []string {
 		return []string{"cursor-cli", "composer-2.5", "gpt-5", "sonnet-4-thinking", "sonnet-4"}
 	case "pi-cli":
 		return piCuratedModelIDs()
+	case "muse-cli":
+		return []string{"muse-spark-1.3-contributor"}
 	case "claude-code":
 		options := append([]string{}, claudeCodeCapabilityModels()...)
 		for _, alias := range []string{"high", "medium", "low"} {
@@ -560,6 +572,8 @@ func discoverySetupHint(provider string, runtimeMissing bool) string {
 			return "Install Cursor CLI so the cursor-agent command is available on the backend PATH."
 		case "pi-cli":
 			return "Install Pi CLI with npm install -g @earendil-works/pi-coding-agent, or ensure npx is available on the backend PATH."
+		case "muse-cli":
+			return "Install Muse CLI so the muse command is available on the backend PATH."
 		case "claude-code":
 			return "Install Claude Code so the claude command is available on the backend PATH."
 		default:
@@ -574,6 +588,8 @@ func discoverySetupHint(provider string, runtimeMissing bool) string {
 		return "Run cursor-agent login or set CURSOR_API_KEY, then test again."
 	case "pi-cli":
 		return "Set PI_API_KEY, GEMINI_API_KEY, or GOOGLE_API_KEY, then test again."
+	case "muse-cli":
+		return "Run muse login or set META_API_KEY, then test again."
 	case "claude-code":
 		return "Run claude to finish Claude Code authentication, then test again."
 	default:
@@ -594,6 +610,7 @@ func buildLLMDiscovery(ctx context.Context) llmDiscoveryResponse {
 		"codex-cli",
 		"cursor-cli",
 		"pi-cli",
+		"muse-cli",
 		"openai",
 		"anthropic",
 		"vertex",
@@ -742,7 +759,7 @@ func getDefaultPublishedLLMs(locked bool, primaryConfig interface{}) []map[strin
 	// 3) Auto-generate defaults from AvailableModels for locked providers
 	var entries []map[string]interface{}
 	defaults := llm.GetLLMDefaults()
-	providers := []string{"codex-cli", "cursor-cli", "pi-cli", "claude-code", "azure", "bedrock", "openai", "anthropic", "vertex"}
+	providers := []string{"codex-cli", "cursor-cli", "pi-cli", "muse-cli", "claude-code", "azure", "bedrock", "openai", "anthropic", "vertex"}
 
 	for _, p := range providers {
 		// If provider is locked (or global lock is on), include its available models
@@ -963,6 +980,8 @@ func (api *StreamingAPI) populateValidationCredentialsFromMergedKeys(ctx context
 		setAPIKey(keys.CodexCLI)
 	case "cursor-cli":
 		setAPIKey(keys.CursorCLI)
+	case "muse-cli":
+		setAPIKey(keys.MuseCLI)
 	case "pi-cli":
 		if req.APIKey == "" {
 			req.APIKey = selectPiAPIKeyForModel(keys, req.ModelID)
@@ -1007,6 +1026,8 @@ func validateProviderConfig(req llm.APIKeyValidationRequest) llm.APIKeyValidatio
 		return validateCodexCLI(req.APIKey)
 	case "cursor-cli":
 		return validateCursorCLI(req.APIKey, req.ModelID)
+	case "muse-cli":
+		return validateMuseCLI(req.APIKey)
 	case "pi-cli":
 		return validatePiCLI(req.APIKey, req.ModelID, req.Options)
 	case "kimi":
@@ -1172,6 +1193,85 @@ func validateCodexCLI(apiKey string) llm.APIKeyValidationResponse {
 	return llm.APIKeyValidationResponse{
 		Valid:   true,
 		Message: fmt.Sprintf("Codex CLI is working. Response: %s", responseText),
+	}
+}
+
+// validateMuseCLI validates Muse CLI through the real exec-lane adapter path:
+// binary on PATH, init (explicit key, else META_API_KEY, else stored login),
+// then one live canary turn. Mirrors validateCodexCLI.
+func validateMuseCLI(apiKey string) llm.APIKeyValidationResponse {
+	log.Printf("[MUSE-CLI VALIDATION] Starting CLI validation")
+
+	musePath, err := exec.LookPath("muse")
+	if err != nil {
+		log.Printf("[MUSE-CLI VALIDATION] CLI not found on PATH: %v", err)
+		return llm.APIKeyValidationResponse{
+			Valid:   false,
+			Message: "Muse CLI not found. Install it so the muse command is available on the backend PATH.",
+		}
+	}
+	log.Printf("[MUSE-CLI VALIDATION] CLI found at: %s", musePath)
+
+	keys := &llm.ProviderAPIKeys{}
+	if apiKey == "" {
+		apiKey = os.Getenv("META_API_KEY")
+	}
+	if strings.TrimSpace(apiKey) != "" {
+		keys.MuseCLI = &apiKey
+	}
+
+	model, err := llm.InitializeLLM(llm.Config{
+		Provider: llm.ProviderMuseCLI,
+		ModelID:  "muse-spark-1.3-contributor",
+		APIKeys:  keys,
+		Context:  context.Background(),
+	})
+	if err != nil {
+		return llm.APIKeyValidationResponse{
+			Valid:   false,
+			Message: fmt.Sprintf("Failed to initialize Muse CLI: %v", err),
+		}
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	resp, err := model.GenerateContent(ctx, []llmtypes.MessageContent{
+		{
+			Role: llmtypes.ChatMessageTypeHuman,
+			Parts: []llmtypes.ContentPart{
+				llmtypes.TextContent{Text: "Reply with exactly: Muse CLI is working."},
+			},
+		},
+	})
+	if err != nil {
+		if ctx.Err() == context.DeadlineExceeded {
+			return llm.APIKeyValidationResponse{
+				Valid:   false,
+				Message: "Muse CLI timed out after 60s. Check authentication (run 'muse login' or set META_API_KEY).",
+			}
+		}
+		return llm.APIKeyValidationResponse{
+			Valid:   false,
+			Message: fmt.Sprintf("Muse CLI error: %s", strings.TrimSpace(err.Error())),
+		}
+	}
+
+	responseText := ""
+	if resp != nil && len(resp.Choices) > 0 {
+		responseText = strings.TrimSpace(resp.Choices[0].Content)
+	}
+	if responseText == "" {
+		return llm.APIKeyValidationResponse{
+			Valid:   false,
+			Message: "Muse CLI returned an empty response. Check authentication with 'muse login' or META_API_KEY.",
+		}
+	}
+
+	log.Printf("[MUSE-CLI VALIDATION SUCCESS] Got response: %s", responseText)
+	return llm.APIKeyValidationResponse{
+		Valid:   true,
+		Message: fmt.Sprintf("Muse CLI is working. Response: %s", responseText),
 	}
 }
 

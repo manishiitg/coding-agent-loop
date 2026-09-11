@@ -108,12 +108,25 @@ func LoadAttachableIn(workspaceAPIURL, workspacePath string, selectedSkills []st
 		return nil
 	}
 	out := make([]*llmtypes.Skill, 0, len(selectedSkills))
+	// Deduplicate on the resolved name, which is what the agent definition is
+	// keyed by: two selections can land on one name without repeating a folder
+	// (a folder whose SKILL.md frontmatter renames it to another folder's
+	// name), and a caller may simply pass the same name twice. Attaching both
+	// fails the whole turn at finalization, so drop the repeat here instead.
+	// Trimming matches the validator, which compares trimmed names.
+	seen := make(map[string]struct{}, len(selectedSkills))
 	for _, folderName := range selectedSkills {
 		skill, err := loadOneAttachable(workspaceAPIURL, workspacePath, folderName)
 		if err != nil {
 			log.Printf("[SKILLS] Failed to load %s: %v (skipping)", folderName, err)
 			continue
 		}
+		name := strings.TrimSpace(skill.Name)
+		if _, duplicate := seen[name]; duplicate {
+			log.Printf("[SKILLS] Skipping %s: skill %q is already attached", folderName, name)
+			continue
+		}
+		seen[name] = struct{}{}
 		out = append(out, skill)
 	}
 	return out

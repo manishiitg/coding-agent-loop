@@ -2203,7 +2203,7 @@ func runServer(cmd *cobra.Command, args []string) {
 	apiRouter.HandleFunc("/browser/sessions", api.handleGetBrowserSessions).Methods("GET")
 	apiRouter.HandleFunc("/browser/live/sessions", api.handleLiveBrowserSessions).Methods("GET")
 	apiRouter.HandleFunc("/browser/live/{session}/stream", api.handleLiveBrowserStream).Methods("GET")
-	apiRouter.HandleFunc("/browser/live/{session}/recording", api.handleBrowserRecording).Methods("POST")
+	apiRouter.HandleFunc("/browser/live/{session}/recording", api.handleBrowserRecording).Methods("GET", "POST")
 
 	// Active Session API routes (from polling.go)
 	apiRouter.HandleFunc("/sessions/active", api.handleGetActiveSessions).Methods("GET")
@@ -2505,6 +2505,8 @@ func runServer(cmd *cobra.Command, args []string) {
 	// report-preview scoped token can reach; see report_preview_routes.go.
 	apiRouter.HandleFunc("/workflow/report-preview/file", api.handleReportPreviewFile).Methods("GET")
 	apiRouter.HandleFunc("/workflow/report-preview/query", api.handleReportPreviewQuery).Methods("POST")
+	apiRouter.HandleFunc("/workflow/report-preview/costs", api.handleReportPreviewMetrics).Methods("GET")
+	apiRouter.HandleFunc("/workflow/report-preview/evaluations", api.handleReportPreviewMetrics).Methods("GET")
 	apiRouter.HandleFunc("/workflow/report-preview/media-url", api.handleReportMediaURL).Methods("POST")
 	apiRouter.HandleFunc("/workflow/report-media", api.handleReportMediaStream).Methods("GET", "HEAD")
 
@@ -4816,7 +4818,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		}
 		allowPersistentInteractive := codingAgentRequestAllowsPersistentInteractive(&req, sessionID)
 		forceStructuredCodingAgent := codingAgentUsesStructuredTransportForChat(finalProvider, profileTransportPolicy, isWorkflowBuilderPhase && allowPersistentInteractive)
-		claudeCodePersistentInteractive, codexPersistentInteractive, cursorPersistentInteractive, piPersistentInteractive := codingAgentPersistentInteractiveFlags(finalProvider, allowPersistentInteractive, forceStructuredCodingAgent)
+		claudeCodePersistentInteractive, codexPersistentInteractive, cursorPersistentInteractive, piPersistentInteractive, musePersistentInteractive := codingAgentPersistentInteractiveFlags(finalProvider, allowPersistentInteractive, forceStructuredCodingAgent)
 		claudeCodeTransport := codingAgentClaudeCodeChatTransport(finalProvider)
 		if forceStructuredCodingAgent {
 			// A structured coding CLI is a one-shot native JSON process. There is
@@ -4826,6 +4828,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			codexPersistentInteractive = false
 			cursorPersistentInteractive = false
 			piPersistentInteractive = false
+			musePersistentInteractive = false
 			claudeCodeTransport = ""
 		}
 		chatWorkingFolder := perUserChatsFolder
@@ -4939,6 +4942,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			CodingAgentApprovalsMode:               profileApprovalsMode,
 			BridgeRoutingInstructionsOverride:      profileBridgeRoutingInstructions,
 			PiPersistentInteractiveSession:         piPersistentInteractive,
+			MusePersistentInteractiveSession:       musePersistentInteractive,
 			ClaudeCodeTransport:                    claudeCodeTransport,
 			ForceStructuredCodingAgent:             forceStructuredCodingAgent,
 			CodingAgentWorkingDir:                  chatWorkingDir,
@@ -5017,7 +5021,11 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		// if missing). This is the one piece of grant-specific logic that doesn't fit
 		// the registry — it's an install-on-demand side effect unique to skill-creator.
 		if resolvedGrants.HasGrant("skill-creator") {
-			workspaceAPIURL := api.GetAPIURL()
+			// The workspace API, not this server. GetAPIURL points at the agent
+			// server, so the lookup could never find the skill and every turn
+			// re-imported it from GitHub — an unauthenticated API call per
+			// message, on its way to being rate limited.
+			workspaceAPIURL := getWorkspaceAPIURL()
 			_, err := skills.GetSkill(workspaceAPIURL, "skill-creator")
 			if err != nil {
 				log.Printf("[SKILL CREATOR] skill-creator not found, attempting import from GitHub...")
@@ -5521,7 +5529,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				}
 				logfWithContext(queryLogCtx, "[LLM TOOLS] Registered workflow LLM discovery tools")
 			}
-			if isToolBackedChat {
+			if mcpServerToolsEligible(isToolBackedChat, req.AgentMode) {
 				if err := api.registerMultiAgentMCPServerTools(llmAgent, func(toolName string) bool {
 					return profileDisablesVirtualTool(resolvedProfile, toolName)
 				}); err != nil {
@@ -5530,7 +5538,8 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 					return
 				}
 				logfWithContext(queryLogCtx, "[MCP SERVER TOOLS] Registered multi-agent MCP server tools")
-
+			}
+			if isToolBackedChat {
 				secretWorkflowPath := ""
 				if resolvedProfile != nil {
 					secretWorkflowPath = req.SelectedFolder
@@ -6127,6 +6136,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				workflowPhaseRunFolder,
 				queryID,
 			),
+			withCostSourcePlatform(req.BotPlatform),
 		)
 		if err := llmAgent.AddObserver(eventObserver); err != nil {
 			sendError(fmt.Sprintf("Failed to attach event observer: %v", err), true)
@@ -10883,7 +10893,7 @@ func (api *StreamingAPI) registerMultiAgentMCPServerTools(registrar interface {
 				return fmt.Sprintf("%q requires OAuth sign-in, and this server has no PUBLIC_URL configured to build a callback URL from chat. Ask the user to connect it from the connector directory in the UI instead.", name), nil
 			}
 
-			startResp, discoveryResp, err := api.beginOAuthFlow(GetUserIDFromContext(ctx), name, redirectURI, clientID, notifyMCPViewRefresh)
+			startResp, discoveryResp, err := api.beginOAuthFlow(GetUserIDFromContext(ctx), sessionID, name, redirectURI, clientID, notifyMCPViewRefresh)
 			if err != nil {
 				return "", fmt.Errorf("failed to start OAuth for %q: %w", name, err)
 			}
@@ -11126,6 +11136,13 @@ func (api *StreamingAPI) registerMultiAgentMCPServerTools(registrar interface {
 				return fmt.Sprintf("User-defined MCP server %q was not found.", name), nil
 			}
 
+			// Removal is platform-wide (this account's config), but a workflow
+			// that attached this server via update_workflow_config(add_servers)
+			// keeps a dangling reference — nothing else checks or cleans that up.
+			// Warn about every workflow affected so the agent can actually tell
+			// the user, instead of them finding out later when a run breaks.
+			affectedWorkflows := workflowsReferencingMCPServer(ctx, name)
+
 			delete(userConfig.MCPServers, name)
 			if err := mcpclient.SaveConfig(userConfigPath, userConfig); err != nil {
 				return "", fmt.Errorf("failed to save user MCP config: %w", err)
@@ -11134,7 +11151,11 @@ func (api *StreamingAPI) registerMultiAgentMCPServerTools(registrar interface {
 			api.appendServerLog(name, "info", "Server removed from user MCP config")
 			go api.triggerMCPDiscovery()
 
-			return fmt.Sprintf("Removed user MCP server %q and started discovery refresh.", name), nil
+			if len(affectedWorkflows) == 0 {
+				return fmt.Sprintf("Removed user MCP server %q and started discovery refresh. No workflow had it attached.", name), nil
+			}
+			return fmt.Sprintf("Removed user MCP server %q and started discovery refresh. WARNING: it is still attached to %d workflow(s), which now reference a server that no longer exists: %s. Tell the user this before they next run one of those workflows — offer to detach it there with update_workflow_config(remove_servers=[%q]).",
+				name, len(affectedWorkflows), strings.Join(affectedWorkflows, ", "), name), nil
 		},
 	); err != nil {
 		return err

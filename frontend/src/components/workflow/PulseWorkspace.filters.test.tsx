@@ -4,10 +4,16 @@ import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { PulseFindingLifecycle, PulseReviewFocus } from '../../services/api-types'
 
-vi.mock('../../services/api', () => ({ agentApi: {
-  getPulseFindings: vi.fn(), getPulseReviews: vi.fn(), getPulseImpact: vi.fn(), getPulseContext: vi.fn(),
-} }))
-vi.mock('./SoulViewer', () => ({ SoulViewer: () => null }))
+vi.mock('../../services/api', () => ({
+  getApiBaseUrl: () => '',
+  agentApi: {
+    getPulseFindings: vi.fn(), getPulseReviews: vi.fn(), getPulseImpact: vi.fn(), getPulseContext: vi.fn(),
+  },
+}))
+vi.mock('./SoulViewer', () => ({
+  SoulViewer: () => null,
+  WORKFLOW_SOUL_REFRESH_EVENT: 'workflow-soul-refresh',
+}))
 vi.mock('./ReportHumanInputPanel', () => ({ ReportHumanInputPanel: () => null }))
 
 import { agentApi } from '../../services/api'

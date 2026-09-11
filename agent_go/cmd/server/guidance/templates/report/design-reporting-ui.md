@@ -2,10 +2,28 @@ Design the workflow's reporting UI from the ground up. Load
 `read_skill(skills=[{"name":"builder-reference","path":"references/reporting-policy.md"},{"name":"builder-reference","path":"references/html-output.md"}])`
 first and follow it. A workflow report is one complete HTML experience at
 `db/reports/index.html`; its own HTML chooses tabs, sections, sidebar, or a
-single scrolling layout. There is no `report_plan.json`, JSON layout, report
-widget, or platform-generated report navigation.{{if .Focus}}
+single scrolling layout. There is no `report_plan.json`, JSON layout, or
+platform-generated report navigation. Optional built-in metric widgets fit
+inside the workflow-owned HTML.{{if .Focus}}
 
 Focus on: {{.Focus}}.{{end}}
+
+For goal tracking, evaluations, or costs, use the shared report helpers before
+writing custom queries or charts:
+- `window.report.getGoalMetrics()` / `renderGoalProgress('#goals')`
+- `window.report.getEvaluations()` / `renderEvaluations('#evals')`
+- `window.report.getCosts({ days: 30 })` / `renderCosts('#costs', { days: 30 })`
+
+The renderers provide responsive styling, loading/empty states and expandable
+history without custom design work. Add only the sections useful to the reader;
+use the data functions when a custom layout is requested. Call them inside
+`window.report.ready(async () => { ... })` and await their promises. The loaded
+`reporting-policy.md` reference contains complete examples and data semantics.
+Use configured goals/observations for outcome progress, individual evaluations
+for quality evidence, and the ledger for costs. Do not invent targets, blend
+criterion scores, or add a collector/table just to populate a widget. Keep
+missing and skipped results explicit. Cost total/activity are all-time;
+model/daily breakdowns and window_total_usd cover the selected UTC window.
 
 Every report must include one section, as its own top-level tab — not a
 subsection scrolled past within another tab, and not merely an anchored
@@ -48,10 +66,10 @@ For report actions that should hand work to the agent, use
 `read_skill(skills=[{"name":"builder-reference","path":"references/human-in-the-loop.md"}])`
 to choose the human interaction pattern, then
 `window.report.sendChatMessage(message, { requestId })` from the button handler,
-following `reporting-policy.md`. The app lets the user review the message and
-reuse or start a chat. Save any existing report-owned approval first; include
-the exact item/version and intended route, and distinguish approval saved,
-request cancelled, request queued, and evidence of actual completion. Never
+following `reporting-policy.md`. The app sends directly to an existing workflow
+chat, creating one only if none exists. Save any existing report-owned approval
+first; include the exact item/version and intended route, and distinguish
+approval saved, request queued, and evidence of actual completion. Never
 send during rendering or polling.
 
 1. Decide the reader's questions and the durable DB/asset evidence that answers
@@ -61,7 +79,7 @@ send during rendering or polling.
    values or make a workflow run regenerate a report.
 3. Write the complete experience as `db/reports/index.html`. Include a
    meaningful `<title>` and accessible internal navigation when needed. Use
-   `window.report.query` for live data, inline CSS/JS, responsive layout, clear
+   `window.report` data helpers or `query` for live data, inline CSS/JS, responsive layout, clear
    empty/error states, no external CDN, no fixed body height, and no nested
    scrolling. Theme off the app, not the OS: style dark mode under
    `:root.dark` / `[data-theme="dark"]` (or use the injected

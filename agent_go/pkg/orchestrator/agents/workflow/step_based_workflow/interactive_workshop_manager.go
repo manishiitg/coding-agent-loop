@@ -1389,6 +1389,7 @@ func GetToolsForWorkshopMode(mode string) []string {
 	// System tools — always available regardless of mode.
 	// Includes workspace, shell, virtual tools, and human interaction/notification.
 	system := []string{
+		"record_goal_observations",
 		// Workspace advanced tools. Basic workspace file tools are intentionally
 		// not in the central workspace registry; use the active shell/diff/text/search tools.
 		"execute_shell_command", "diff_patch_workspace_file",
@@ -1423,6 +1424,7 @@ func GetToolsForWorkshopMode(mode string) []string {
 
 	// Read-only info tools — safe in all modes
 	readOnly := []string{
+		"get_goal_metrics",
 		"get_step_prompts", "get_plan_prompt_health", "get_workflow_config", "request_workflow_folder_access", "get_llm_config", "get_cost_summary",
 	}
 
@@ -1462,6 +1464,7 @@ func GetToolsForWorkshopMode(mode string) []string {
 
 	// Variable & config tools
 	variableConfig := []string{
+		"configure_goal_metrics",
 		"update_variable", "add_group", "update_group", "delete_group",
 		"update_workflow_config", "set_workflow_contract_version",
 	}

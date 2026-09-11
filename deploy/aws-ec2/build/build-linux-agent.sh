@@ -25,6 +25,12 @@ WORKSPACE_ROOT="$3"
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 IMAGE="video-studio-linux-amd64-builder"
 
+test -f "$BUILD_DIR/go.work"
+mkdir -p "$BUILD_DIR/bin/lib"
+if [[ "$(uname -sm)" == "Linux x86_64" ]]; then
+  echo "Building agent natively on the Linux server"
+  (cd "$WORKSPACE_ROOT" && GOWORK="$BUILD_DIR/go.work" CGO_ENABLED=1 CGO_LDFLAGS='-Wl,-rpath,$ORIGIN/lib' go build -o "$BUILD_DIR/bin/video-studio-agent" "$AGENT_DIR")
+else
 command -v docker >/dev/null || { echo "Missing docker (needed for the cgo linux/amd64 agent build)" >&2; exit 1; }
 test -f "$BUILD_DIR/go.work" || { echo "Expected $BUILD_DIR/go.work" >&2; exit 1; }
 
@@ -45,6 +51,8 @@ docker run --rm --platform linux/arm64 \
   -e CGO_LDFLAGS='-Wl,-rpath,$ORIGIN/lib' \
   -w "$WORKSPACE_ROOT" \
   "$IMAGE" go build -o "$BUILD_DIR/bin/video-studio-agent" "$AGENT_DIR"
+
+fi
 
 # The exact module version the build linked against, from the same go.work.
 SHERPA_DIR="$(cd "$AGENT_DIR" && GOWORK="$BUILD_DIR/go.work" go list -m -f '{{.Dir}}' github.com/k2-fsa/sherpa-onnx-go-linux)"

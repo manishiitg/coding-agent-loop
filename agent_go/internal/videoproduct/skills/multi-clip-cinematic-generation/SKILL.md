@@ -21,9 +21,9 @@ optimisation. Select and record one route for each seam:
    with no reference or continuity obligation;
 2. `minimax/h3-max/image-to-video` when an approved start image must control
    the opening composition;
-3. `minimax/h3-max/reference-to-video` from the accepted predecessor for every
-   normal continuation, including a motivated camera-angle change;
-4. a motivated editorial cut with the stable approved reference pack;
+3. `minimax/h3-max/reference-to-video` with identity-only references for a new
+   shot, adding an accepted predecessor tail only when its state is needed;
+4. a motivated editorial cut preserving the required identity and scene state;
 5. an intentional discontinuity such as a time jump, location change, or
    montage beat.
 
@@ -38,39 +38,28 @@ user-approved dialogue to fit that boundary without explicit approval. Do not
 create a third bridge clip when a direct review fails; regenerate or redesign
 the affected H3 successor through Reference-to-Video.
 
-## Make an approved reference pack, then a reference manifest
+## Choose minimum references and record the manifest
 
-Before the anchor, create **real visual-development evidence** and a
-sequence-level manifest. A Markdown description such as “warm coffee shop” is
-not an approved reference and is not enough to condition a follow-up shot.
-Generate and present the images the sequence actually needs for review:
+Follow `cinematic-visual-development` before preparing assets. Test one
+representative complete scene with the minimum sufficient references before
+expanding packs. A recurring human can start with one approved face-only image
+and text-directed wardrobe, location, action and camera. Exact objects,
+costumes or geography may need more visual evidence. Do not require background
+plates or start/exit images merely because a sequence has multiple shots.
 
-- one location/background reference for every returning place, including its
-  return geography, time of day, weather, and practical-light motivation;
-- any recurring wardrobe, hero prop, or vehicle reference that will be visible
-  at a seam;
-- a start reference for each continuity sequence and a planned exit/end-state
-  reference for every sequence that has a successor;
-- selected stable boundary frames for direct-cut review and successor prompt
-  handoff; they are not a request to make an intervening bridge clip.
+Call `show_reference` for actual new conditioning images and obtain approval
+before use. The reference manifest records delivery orientation, required
+identity/wardrobe/prop/geography/sound invariants, intentional changes, model
+discretion, and actual source paths with their semantic roles. Text direction
+belongs in the plan; do not mislabel it as an approved image. One identity
+image or an empty image list for a prompt-only shot is a valid manifest.
 
-Call `show_reference` for each generated reference and obtain approval before
-footage consumes it. Keep the assets under `references/` and record exact
-paths and semantic roles. The manifest is the contract each later prompt and
-request must reuse:
-
-- delivery aspect ratio and orientation;
-- approved character/identity, wardrobe, prop, location, and lighting
-  references, with their roles;
-- palette, time of day, weather, and texture;
-- composition: screen side, headroom, subject size, gaze/eyeline, and walking
-  or object direction;
-- camera language: lens family, camera height, distance, side of the action,
-  movement vector, speed, and focus behavior;
-- sound world and whether the beat uses native dialogue, off-camera voiceover,
-  or no speech;
-- the accepted predecessor path, its selected stable boundary frame, and the
-  exact endpoint-supported reference inputs when a follow-up is required.
+Keep the accepted predecessor path and stable boundary frames for review.
+Distinguish **editorial continuity** from **provider conditioning**: a later
+shot must fit the story, but does not automatically need the previous video
+as input. Add a tail when the incoming shot needs its motion or composition;
+omit it when that would constrain a planned new angle or movement. Record the
+choice and check the intended join after generation.
 
 Keep a normal film in one orientation and aspect ratio. Do not mix 16:9 and
 9:16 generated footage unless the shot list explicitly calls for an in-world
@@ -127,16 +116,17 @@ orientation, camera side, or gaze direction by accident.
 ## Generate, receipt-check, then advance
 
 Create exactly one clip per generation recipe. Reuse the manifest, approved
-references, and planned handoff in its request. The normal successor uses H3
-Max Reference-to-Video with the accepted predecessor as Video 1; H3 owns the
-continuity, including a deliberate change of angle. Show and inspect the MP4
+references, and planned handoff in its request. Use H3 Max Reference-to-Video
+for identity conditioning; add the accepted predecessor tail as Video 1 only
+when needed for the handoff. Describe intentional changes in text. Show and inspect the MP4
 before accepting it. On acceptance, record the actual output and handoff state;
 on rejection, record the reason and regenerate or redesign that H3 successor.
 
 For each preview, perform only a clip receipt: `ffprobe` the downloaded asset
 and inspect its stable opening and ending frames. For a successor, compare its
 opening against the predecessor's ending closely enough to catch an obvious
-break. Do not render a per-shot FFmpeg seam preview, set default trims, or
+break. Inspect whether source framing, pose or motion conflicts with the new
+shot before paying for a retry; follow cinematic-visual-development. Do not render a per-shot FFmpeg seam preview, set default trims, or
 write a seam-proof document. If the boundary is visibly wrong, revise the H3
 prompt/reference set and regenerate the successor; never use a bridge clip,
 crossfade, blend, zoom, or reframe to conceal it. Full delivery QA happens once

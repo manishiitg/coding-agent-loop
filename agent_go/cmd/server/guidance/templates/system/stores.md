@@ -176,3 +176,9 @@ Learning content should answer **"how should this step operate next time?"** It 
 - **Step is pure data transformation, math, or file IO**: neither. Leave both empty.
 - **Step calls an LLM for analysis/classification**: worth KB (facts discovered) if outputs are domain facts; not worth learning (the LLM prompt is stable and doesn't need SKILL.md tips).
 - **Step is scripted (a `regular` step whose work is `<script-dir>/main.py`)**: generally leave `learning_objective` empty. The saved `<script-dir>/main.py` script IS the captured HOW — running a separate learning pass on top of it just duplicates work and risks drift between the script and SKILL.md. Only opt in if there's HOW-knowledge the script itself can't encode (e.g. out-of-band operator notes, cross-step patterns that belong in the shared `_global/` skill).
+
+Goal measurements are also platform-owned: `workflow_goal_metrics` holds managed
+metric definitions and `pulse_goal_observations` holds append-only measured history.
+Use `configure_goal_metrics` and `record_goal_observations` to write them. Reports
+may query them or use `window.report.getGoalMetrics()` / `renderGoalProgress()`;
+report field updates must not edit them.

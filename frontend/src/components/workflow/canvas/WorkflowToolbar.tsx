@@ -3,8 +3,6 @@ import { useShallow } from 'zustand/react/shallow'
 import {
   Cloud,
   Globe,
-  LoaderCircle,
-  Play,
   ShieldCheck,
   Activity,
   BellRing,
@@ -30,6 +28,7 @@ import { getNotificationDotClass } from '../notificationStatus'
 import { loadWorkflowNotificationInfo, type WorkflowNotificationState } from '../../../services/workflow-notifications'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '../../ui/tooltip'
 import { hasWorkflowOwnerAccess } from '../../../utils/workflowPermissions'
+import { usePendingDecisionCount } from '../hooks/usePendingDecisionCount'
 import { useCanWriteWorkflow } from '../../../hooks/useCanWriteWorkflow'
 
 // Execution phase ID - special phase that should be displayed separately
@@ -39,22 +38,22 @@ const WORKFLOW_SCHEDULE_TOOLBAR_LIMIT = 10_000
 // Product-tour / test hooks on specific toolbar buttons. Kept here rather
 // than in the view registry because they describe this toolbar's buttons,
 // not the views themselves.
-// Report is always visible. Everything used to observe or operate a workflow
-// is grouped under Pulse; configuration stays under Setup. Which expandable
+// Report and Pulse are always visible. Other workspace tools are grouped
+// under Views; configuration stays under Setup. Which expandable
 // group is open is a per-browser preference shared by all workflows.
 const TOOLBAR_OPEN_GROUPS_KEY = 'workflow-toolbar-open-groups'
-type ToolbarGroupId = 'pulse' | 'setup'
+type ToolbarGroupId = 'views' | 'setup'
 const readOpenGroups = (): Record<ToolbarGroupId, boolean> => {
-  const fallback: Record<ToolbarGroupId, boolean> = { pulse: false, setup: false }
+  const fallback: Record<ToolbarGroupId, boolean> = { views: false, setup: false }
   try {
     const raw = localStorage.getItem(TOOLBAR_OPEN_GROUPS_KEY)
     if (!raw) return fallback
-    const stored = JSON.parse(raw) as Partial<Record<ToolbarGroupId | 'views', boolean>>
-    // Migrate the removed Views group into Pulse so a user's expanded toolbar
-    // stays expanded after this release. Setup wins if an older malformed
+    const stored = JSON.parse(raw) as Partial<Record<ToolbarGroupId | 'pulse', boolean>>
+    // Preserve the expanded state of the former Pulse group as Views.
+    // Setup wins if an older malformed
     // preference has more than one group open.
-    if (stored.setup) return { pulse: false, setup: true }
-    if (stored.pulse || stored.views) return { pulse: true, setup: false }
+    if (stored.setup) return { views: false, setup: true }
+    if (stored.pulse || stored.views) return { views: true, setup: false }
     return fallback
   } catch {
     return fallback
@@ -146,6 +145,7 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
   monitorOn,
   className = ''
 }) => {
+  const pendingDecisionCount = usePendingDecisionCount(workspacePath)
   const canWriteWorkflow = useCanWriteWorkflow(workspacePath)
   const canManageAccess = useAuthStore(state => state.isMultiUserMode && (state.user?.is_admin === true || hasWorkflowOwnerAccess(state.user, state.isMultiUserMode)))
 
@@ -192,44 +192,18 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
   // Share is for this workflow's owners (or an admin), multi-user mode only.
   const isMultiUser = useAuthStore(state => state.isMultiUserMode)
   const [workflowScheduleStats, setWorkflowScheduleStats] = useState<WorkflowScheduleStats>(EMPTY_WORKFLOW_SCHEDULE_STATS)
-  const [manualPulseStarting, setManualPulseStarting] = useState(false)
   const [openGroups, setOpenGroups] = useState<Record<ToolbarGroupId, boolean>>(() => readOpenGroups())
   // One group open at a time. Opening one closes the other; clicking the open
   // one closes it, so both collapsed is a valid state.
   const toggleGroup = useCallback((group: ToolbarGroupId) => {
     setOpenGroups(current => {
       const opening = !current[group]
-      const next = { pulse: false, setup: false } as Record<ToolbarGroupId, boolean>
+      const next = { views: false, setup: false } as Record<ToolbarGroupId, boolean>
       if (opening) next[group] = true
       try { localStorage.setItem(TOOLBAR_OPEN_GROUPS_KEY, JSON.stringify(next)) } catch { /* preference only */ }
       return next
     })
   }, [])
-
-  const runPulseNow = useCallback(async () => {
-    if (!workspacePath || manualPulseStarting) return
-    const confirmed = window.confirm(
-      'Run Pulse now? This performs the workflow version preflight, reviews the latest retained run, applies eligible fixes, and runs configured backup, publish, and notification actions. It does not execute the workflow.'
-    )
-    if (!confirmed) return
-
-    setManualPulseStarting(true)
-    try {
-      await schedulerApi.runPulse(workspacePath)
-      useChatStore.getState().addToast('Pulse started', 'success')
-    } catch (error) {
-      const responseData = (error as { response?: { data?: unknown } })?.response?.data
-      const detail = typeof responseData === 'string'
-        ? responseData
-        : error instanceof Error
-          ? error.message
-          : 'Unable to start Pulse'
-      useChatStore.getState().addToast(detail.trim() || 'Unable to start Pulse', 'error')
-    } finally {
-      setManualPulseStarting(false)
-    }
-  }, [manualPulseStarting, workspacePath])
-
 
   const updateWorkflowScheduleStats = useCallback((jobs: ScheduledJob[]) => {
     const normalizedWorkspacePath = normalizeWorkspacePath(workspacePath)
@@ -511,7 +485,7 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
       {/* Right side - View controls */}
       <div data-tour="workflow-tools" data-testid="tour-workflow-tools" className="ml-auto flex shrink-0 items-center gap-1">
         <TooltipProvider delayDuration={150}>
-          {/* Report is the primary output and is never hidden in a menu. */}
+          {/* Report and Pulse are primary views, always visible outside the groups. */}
           {workspacePath && (
             <Tooltip>
               <TooltipTrigger asChild>
@@ -529,17 +503,34 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
             </Tooltip>
           )}
 
-          {/* One continuous pill: Pulse | Setup, separated by a divider. */}
+          {workspacePath && (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button
+                  type="button"
+                  onClick={() => openWorkspaceView('pulse')}
+                  className={`relative flex h-8 w-8 items-center justify-center rounded-lg border border-border transition-colors ${activeWorkspaceView === 'pulse' ? 'bg-muted text-foreground shadow-sm' : 'bg-muted/60 text-muted-foreground hover:bg-muted hover:text-foreground'}`}
+                  aria-label={pendingDecisionCount > 0 ? `Pulse, ${pendingDecisionCount} pending ${pendingDecisionCount === 1 ? 'decision' : 'decisions'}` : 'Pulse'}
+                  aria-pressed={activeWorkspaceView === 'pulse'}
+                >
+                  <Activity className={`h-3.5 w-3.5 ${monitorOn ? 'text-primary' : ''}`} />
+                  {pendingDecisionCount > 0 && <span aria-hidden="true" data-testid="pulse-pending-decisions-dot" className="absolute right-0.5 top-0.5 h-2 w-2 rounded-full border border-background bg-amber-500 motion-safe:animate-pulse" />}
+                </button>
+              </TooltipTrigger>
+              <TooltipContent side="bottom"><p>{pendingDecisionCount > 0 ? `Pulse · ${pendingDecisionCount} ${pendingDecisionCount === 1 ? 'decision needs' : 'decisions need'} your input` : 'Pulse'}</p></TooltipContent>
+            </Tooltip>
+          )}
+
+          {/* One continuous pill: Views | Setup, separated by a divider. */}
           {(workspacePath || canWriteWorkflow) && (
           <div className="inline-flex h-8 items-center divide-x divide-border rounded-lg border border-border bg-muted/60 py-0.5 shadow-sm">
-          {/* Pulse is the single home for workflow structure, evidence,
-              operations, review, repair, backup, publishing and notifications. */}
+          {/* Supporting workspace views and operations. */}
           {workspacePath && (
             <ToolbarGroup
-              label="Pulse"
-              open={openGroups.pulse}
-              onToggle={() => toggleGroup('pulse')}
-              title={openGroups.pulse ? 'Hide Pulse' : 'Show Pulse: plan, evidence, data, schedules, files, review and operations'}
+              label="Views"
+              open={openGroups.views}
+              onToggle={() => toggleGroup('views')}
+              title={openGroups.views ? 'Hide views' : 'Show views: plan, evidence, data, browser, schedules, files and operations'}
             >
               <div className="inline-flex items-center gap-0.5">
                 {workspaceViewDefinitions.map(({ id: view, icon: Icon, label }) => {
@@ -598,36 +589,6 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
                 <TooltipTrigger asChild>
                   <button
                     type="button"
-                    onClick={() => openWorkspaceView('pulse')}
-                    className="flex h-6 w-7 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-background/70 hover:text-foreground"
-                    aria-label="Pulse status"
-                  >
-                    <Activity className={`h-3.5 w-3.5 ${monitorOn ? 'text-primary' : ''}`} />
-                  </button>
-                </TooltipTrigger>
-                <TooltipContent side="bottom"><p>Pulse status and module cadence</p></TooltipContent>
-              </Tooltip>
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <button
-                    type="button"
-                    onClick={runPulseNow}
-                    disabled={!canWriteWorkflow || manualPulseStarting}
-                    className="flex h-6 w-7 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-background/70 hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
-                    aria-label="Run Pulse now"
-                  >
-                    {manualPulseStarting
-                      ? <LoaderCircle className="h-3.5 w-3.5 animate-spin" />
-                      : <Play className="h-3.5 w-3.5" />}
-                  </button>
-                </TooltipTrigger>
-                <TooltipContent side="bottom"><p>Run Pulse on the latest retained run</p></TooltipContent>
-              </Tooltip>
-              <span className="mx-0.5 h-4 w-px bg-border" aria-hidden="true" />
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <button
-                    type="button"
                     onClick={() => openWorkspaceView('backup')}
                     className="relative flex h-6 w-7 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-background/70 hover:text-foreground"
                     aria-label="Backup"
@@ -677,7 +638,7 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
             label="Setup"
             open={openGroups.setup}
             onToggle={() => toggleGroup('setup')}
-            title={openGroups.setup ? 'Hide setup' : 'Show setup: skills, secrets, MCP servers, browser, LLM, bots, folders, sharing, users'}
+            title={openGroups.setup ? 'Hide setup' : 'Show setup: skills, secrets, MCP servers, LLM, bots, folders, sharing, users'}
           >
           <div className="inline-flex items-center gap-0.5">
             {capabilityViewDefinitions.map(({ id, icon: Icon, label }) => {

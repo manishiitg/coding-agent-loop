@@ -870,7 +870,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) prepareCustomTools(stepConfig *AgentC
 	// DB and cost access come from capabilities, not from whether an explicit
 	// tool list was supplied. Filtering against the actual workspace pool below
 	// cannot introduce a tool withheld by the owning profile.
-	enabledTools = append(enabledTools, "workflow_db:query_workflow_db", "workflow_costs:query_workflow_costs")
+	enabledTools = append(enabledTools, "workflow_db:query_workflow_db", "workflow_costs:query_workflow_costs", "workflow:get_goal_metrics", "workflow:record_goal_observations")
 	if resolveDBAccess(stepConfig) == DBAccessReadWrite {
 		enabledTools = append(enabledTools, "workflow_db:mutate_workflow_db", "workflow_db:apply_workflow_db_migration")
 	}

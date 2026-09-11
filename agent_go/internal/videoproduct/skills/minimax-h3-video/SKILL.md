@@ -1,6 +1,6 @@
 ---
 name: minimax-h3-video
-description: "Plan Video Studio's MiniMax H3 Max generation through fal.ai, including H3 Max Turbo for an initial image-controlled anchor, Reference-to-Video for queued continuity, and Director for explicitly approved real-time direction. Read with video-provider-capabilities and fal-ai before any paid H3 call."
+description: "Plan Video Studio's MiniMax H3 Max generation through fal.ai, including H3 Max Turbo for an initial image-controlled anchor, minimal-reference complete scenes and optional predecessor continuity, and Director for explicitly approved real-time direction. Read with video-provider-capabilities and fal-ai before any paid H3 call."
 ---
 
 # Use MiniMax H3 Max deliberately
@@ -51,9 +51,20 @@ the Production panel prefers Fal's CDN for fast preview playback and falls back
 to the retained local file. After its `completed` event, run the normal file receipt
 (`ffprobe`, stable-frame inspection, then `show_video`) before accepting it.
 
-## Prepare a focused continuity tail
+## Choose references before preparing assets
 
-For a direct continuation, do not send the full predecessor as Video 1. After
+Follow `cinematic-visual-development`: start with the minimum sufficient
+references and one representative complete-scene test. For face identity,
+prefer an approved face-only image plus text for wardrobe, scene and movement.
+A posed/full-body image may also constrain composition; a predecessor tail may
+carry motion or framing that conflicts with a new shot. Use them only for a
+required control. A shot can use `reference_image_urls` without any
+`reference_video_urls`; a recurring identity does not require a predecessor.
+Inspect conditioning conflicts before retries or proposing compositing.
+
+## Prepare a focused continuity tail when needed
+
+When a direct continuation requires the predecessor state, do not send the full predecessor as Video 1. After
 the predecessor is accepted, create a deterministic **2- or 3-second tail**
 from its end, then pass the uploaded tail URL as Video 1 with only the still
 references that have a distinct job in the successor. Default to 3 seconds;
@@ -121,10 +132,10 @@ Choose the smallest topology that respects the actual dramatic action:
    change. Record the exact boundary in the shot contract and obtain approval
    if it changes user-approved dialogue or the requested continuous-take
    treatment.
-3. Use Reference-to-Video only for that planned successor shot. Give its
-   2- or 3-second predecessor tail the role `continuity context`, state the
-   outgoing/incoming action, and do
-   not ask it to recreate a mid-word mouth pose or claim that it will do so.
+3. Choose reference inputs for the planned shot. Use an approved identity image
+   and text for a new composition; add a 2- or 3-second predecessor tail only
+   when its state is needed, with the role `continuity context`. State the
+   outgoing/incoming action; never promise a mid-word mouth match.
 
 If a boundary is rejected, redesign the editorial beat or regenerate the
 successor with a clearer handoff. Never silently shorten/rewrite approved
@@ -175,40 +186,21 @@ cinematic prompt.
 
 ### Required shot-contract detail
 
-- **Purpose, success, and priority:** name the story/emotional beat, one
-  observable success criterion, and a ranked conflict policy. State what wins
-  if H3 cannot satisfy every request—for example: `1. identity and exact
-  dialogue/lip-sync; 2. true-POV framing; 3. continuity; 4. performance;
-  5. set dressing.` Never let the model silently choose the tradeoff.
-- **Subject and performance:** identity reference, face/hair/wardrobe, body
-  position, gaze/eyeline, expression at the beginning and end of each timed
-  beat, exact emotional turn, hand/prop action, and things the subject must
-  not do. Describe an expression concretely: for example, "brow slightly
-  drawn, lips relaxed and closed, concern in the eyes; no smile" rather than
-  "warm and patient."
-- **Place and set dressing:** foreground, midground, and background; named
-  objects, their screen side/relative placement, practical lights, time of
-  day, weather, lighting direction, palette, texture, and atmosphere. Identify
-  which details come from the approved location reference and which must remain
-  absent.
-- **Camera:** shot scale, camera height, side, distance, viewpoint, lens
-  character when relevant, composition, focus behavior, movement/vector or
-  explicit static lock, and prohibited reframing. A true POV must say whose
-  eyes, what body/reflection/shadow must never appear, and the relative
-  eye-level and distance to each visible subject.
-- **Timed action and sound:** a `[0–N seconds]` list covering visual action,
-  expression, camera, and sound. Record exact dialogue, speaker, language,
-  delivery, native lip-sync, voice/performance reference, ambience, foley,
-  music, and explicit exclusions. Mark whether dialogue is verbatim and
-  confirm that its words fit the clip duration naturally before generating.
-- **Continuity and negatives:** approved reference roles, the prior clip's
-  exact outgoing state and required incoming match, plus named visual/audio
-  failures to prevent—text, subtitles, watermark, smile, body parts, extra
-  people, a wrong prop, camera drift, an unwanted cut, or a change of location.
-- **Approval, retry, and delivery:** exact approved source paths and a
-  `do-not-regenerate/change` marker for protected references; aspect ratio and
-  safe-area/text/caption rules; preview versus final status; the approved cost
-  and retry allowance; and the frames/audio checks that decide acceptance.
+- **Purpose and success:** the story beat, observable acceptance criteria and
+  priorities if essential requirements compete.
+- **Must preserve:** approved identity and exact details required by the brief,
+  exact dialogue/language when applicable, delivery format and intended continuity.
+- **May change:** desired wardrobe, setting, pose, framing, motion or angle
+  changes. Describe the whole scene H3 should produce.
+- **Model discretion:** incidental set dressing, microgestures and other
+  unspecified details. Do not invent rigid locks for every object or body part.
+- **Request and review:** route, duration, reference paths and each one's job,
+  audio direction, cost/retry allowance and checks for accepting the output.
+
+Use timed blocks when meaningful action or dialogue changes need timing;
+otherwise a concise single-beat direction is sufficient. Specify a precise
+camera or emotional performance when it matters to the brief. More detail and
+more references are not automatically stronger control.
 
 The visible contract is the approval boundary: do not send a paid request until
 the user approves it, unless the user has explicitly asked to skip that review
@@ -240,10 +232,9 @@ splitting it mid-sentence, or inventing new words.
 3. **Identity, motion, voice, or continuation:** use
    `minimax/h3-max/reference-to-video` whenever a shot needs subject/style
    locking, a predecessor's motion or performance, reference audio, or any
-   multi-asset conditioning. For a continuation, send the runner-extracted
-   2- or 3-second tail of the accepted immediate predecessor in
-   `reference_video_urls` as Video 1 and describe the exact handoff from its
-   final stable motion. Reference each asset in prompt order:
+   multi-asset conditioning. If the shot needs predecessor motion/composition, send the runner-extracted
+   2- or 3-second tail in `reference_video_urls` as Video 1 and describe the
+   handoff. Otherwise omit the tail and direct the new shot in text. Reference each asset in prompt order:
    Image 1, Video 1, Audio 1 — never arbitrary JSON labels.
 
 Reference-to-Video accepts at most 9 images, 3 videos, and 3 audio clips, with
@@ -267,16 +258,14 @@ identity, start composition, end state, motion, camera language, environment,
 voice, music, ambience, or style. Use the exact positional tokens and ordering
 shown by the live endpoint schema.
 
-For a direct successor, the predecessor tail is the default continuity context
-for everything visibly present in its final seconds. Include an approved
-character still when that character must remain recognizably locked. Include a
-location/background still only when it has a distinct job the tail cannot do:
-the successor opens on a new or wider angle, must reveal set detail outside the
-tail's framing, has a deliberate composition change, or prior attempts show
-location drift. For the same visible setting and framing, describe the next
-action in the prompt and omit the duplicate background still. Do not send every
-available image merely because it exists; record why each supplied reference is
-needed.
+For a direct continuation that needs the predecessor's state, a tail can
+carry its visible setting and motion; omit duplicate stills. For a new shot
+with the same person, start with the approved identity image and text direction.
+Add a location, costume or motion donor only for an explicit requirement or a
+specific failure observed in a simpler attempt. Do not attach a posed image or
+prior clip solely because it exists. Inspect unwanted composition/pose cues in
+the inputs before another paid retry. Voice continuity needs its own audible
+check; a face match or “same voice” prompt is not proof.
 
 Current H3 documentation describes a unified multimodal context with images,
 video clips, and audio tracks, but its published counts and combined-duration
@@ -309,14 +298,12 @@ overwrite the last accepted version.
 
 ## Continue and review
 
-For a planned successor shot, use Reference-to-Video from a 2- or 3-second tail
-of the accepted immediate predecessor as Video 1. Carry forward the accepted
-output, endpoint route, reference order, subject state, screen direction,
-lighting, audio bed, and the precise next camera/action handoff. Keep approved
-character still references when identity requires them; include the location
-still only under the reference-role rule above. Prefer this generation-time
-continuity over manual stitching or a bridge workaround. H3 Max produces a new
-bounded file; it does not append footage to its predecessor or reproduce an
+For a planned successor, preserve the editorial state in the ledger and choose
+only the references needed for the incoming shot. A direct continuation may
+use a 2- or 3-second accepted predecessor tail as Video 1. A new composition
+may use identity-only references and text without the tail. Record why inputs
+are retained or omitted, then check the result against the planned handoff.
+H3 Max produces a new bounded file; it does not append footage or guarantee an
 exact vocal/mouth state at the boundary.
 
 Persist the queue request ID immediately and rejoin it after timeouts. Download

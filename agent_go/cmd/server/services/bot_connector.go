@@ -2541,13 +2541,26 @@ func (m *BotConversationManager) buildQueryWithThreadHistory(query string, platf
 	return combined
 }
 
-// resolveChannelWorkflow looks up the ChannelRoute for a given Slack channel ID.
-// Returns nil if no routing is configured for the channel.
-func (m *BotConversationManager) resolveChannelWorkflow(channelID string) *ChannelRoute {
+// resolveChannelWorkflow looks up the ChannelRoute for a channel on the given
+// platform. Returns nil if no routing is configured for the channel.
+//
+// Connector configs are keyed by platform, and this read used to ask for
+// "slack" whatever the message arrived on, so channel routing configured for
+// any other platform was never found and those messages fell through to
+// generic chat, silently losing the workflow's own tools and LLM config.
+// This is the fallback path only: a platform that resolves its own route
+// first — WhatsApp maps an "@slug" to a workflow in WhatsAppService.Resolve —
+// arrives here already routed and never reaches this lookup. An empty
+// platform keeps the historical key.
+func (m *BotConversationManager) resolveChannelWorkflow(platform, channelID string) *ChannelRoute {
 	if m.chatStore == nil {
 		return nil
 	}
-	botCfg, err := m.chatStore.GetBotConnectorConfig(context.Background(), "slack")
+	configID := strings.ToLower(strings.TrimSpace(platform))
+	if configID == "" {
+		configID = "slack"
+	}
+	botCfg, err := m.chatStore.GetBotConnectorConfig(context.Background(), configID)
 	if err != nil || botCfg == nil {
 		return nil
 	}
@@ -2620,7 +2633,7 @@ func (m *BotConversationManager) buildQueryRequest(query string, userID string, 
 	// which wins over "no routing at all" (default multi-agent chat).
 	route := presetRoute
 	if route == nil && channelID != "" {
-		route = m.resolveChannelWorkflow(channelID)
+		route = m.resolveChannelWorkflow(platform, channelID)
 	}
 	if route != nil {
 		req["preset_query_id"] = route.WorkflowID

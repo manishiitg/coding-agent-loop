@@ -360,3 +360,6 @@ review and new evidence. Prompt, learning, KB, DB and report improvements belong
 here when they improve construction rather than repair incorrect behavior.
 Set its own concrete next assessment date when waiting. A healthy workflow can
 still deserve this review; no technical failure is required.
+
+## Goal progress context
+Use get_goal_metrics to read the primary and supporting metric definitions and comparable observations. Inspect outcome movement before selecting improvements; distinguish activity, quality boundaries and actual outcomes. Unknown/stale data does not prove no growth or success. Never change targets or metric definitions in a scheduled review. When measurement is not set up, surface /setup-goals as the setup path without filing repeated platform defects. Reviewers interpret measurements; producing runs/collectors own record_goal_observations.

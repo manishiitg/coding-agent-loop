@@ -23,7 +23,7 @@ Workshop; executing a workflow does not authorize changing its plan.
 | An unexpected, urgent human-only input while a workflow step is running | `human_feedback` | The calling execution agent waits for the bounded response card. Answering returns to the same tool call; expiry is not approval. This tool is unavailable in Builder chat. |
 | A review decision that can wait beyond this turn/run | `create_human_input_request` | Persist a question in the workflow's decision system and finish/park the affected work. A later consumer reads the explicit saved answer. |
 | The user reviews individual business items in a dashboard | Report-owned DB approval | `window.report.updateField`/`updateFields` saves the item's status. An existing consumer route/step reads approved items later; the write alone starts nothing. |
-| A report action should hand a specific task to the agent now | Report `sendChatMessage` | The app shows the message for user review, then queues it in an existing or new workflow chat. Save an existing business approval first when the request depends on it. |
+| A report action should hand a specific task to the agent now | Report `sendChatMessage` | The action queues its message directly in an existing workflow chat, creating one only if none exists. Save an existing business approval first when the request depends on it. |
 | The user corrects an execution already running | `send_step_message` | Forward to the exact active execution, live or at the next safe agent boundary. This does not start, restart, or resume completed work. |
 
 `notify_user`, Daily Actions, and Pulse summaries are notifications/evidence,
@@ -106,12 +106,12 @@ item into a Pulse decision just to support a dashboard button.
 Choose the button's behavior explicitly:
 
 - **Approve** saves the business approval for its existing consumer.
-- **Approve and apply** saves it, then offers a scoped report-to-chat request.
-- **Ask agent** offers a question about the item without changing its approval.
+- **Approve and apply** saves it, then sends a scoped report-to-chat request.
+- **Ask agent** sends a question about the item without changing its approval.
 
-`window.report.sendChatMessage(message, { requestId })` opens the app's review
-panel. The user can edit the message and select **Start a new chat**. Otherwise
-it reuses a suitable interactive workflow chat, or creates one if needed; a
+`window.report.sendChatMessage(message, { requestId })` sends directly from the
+user action without a popup or chat-choice step. It reuses a suitable
+interactive workflow chat, or creates one only if none exists; a
 running foreground turn keeps the message queued. It does not interrupt the
 turn, take over a scheduled/view-only chat, or directly launch a route.
 
@@ -121,10 +121,9 @@ Ask the agent to re-read approval, skip already applied work, execute only that
 item, verify the result, and refresh the report. A generic full-workflow run
 may repeat the audit or approval gate and is not an equivalent handoff.
 
-Await the DB save before requesting chat. Cancellation leaves the approval
-saved and may still allow its scheduled consumer to act later; say so clearly.
-A failed send must be retryable without rewriting approval. The result says
-`cancelled` or `queued`, not started/applied/completed. Per-view request IDs
+Await the DB save before requesting chat. A failed send leaves the approval
+saved and must be retryable without rewriting it; its scheduled consumer may
+still act later. A successful result says `queued`, not started/applied/completed. Per-view request IDs
 reduce duplicate sends; durable already-applied checks still belong to the
 consumer. Chat dispatch and approval saving are not one atomic transaction.
 
@@ -132,8 +131,8 @@ For API limits, receipt fields, error handling, and an authoring example, load
 `read_skill(skills=[{"name":"builder-reference","path":"references/reporting-policy.md"}])`
 in Workshop/Run when that reference is available. Report actions are unavailable
 in headless preview and static published snapshots. Never send from rendering,
-refresh, or polling callbacks. The host review UI does not fix the report
-iframe's existing same-origin isolation limitation.
+refresh, or polling callbacks. Chat dispatch does not change the report iframe's existing same-origin
+isolation limitation.
 
 ### Correcting active work
 

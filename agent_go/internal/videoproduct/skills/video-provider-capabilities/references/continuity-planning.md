@@ -6,7 +6,9 @@ persist. Script beats inside that scene do not justify separate generation.
 
 ## Strategy order
 
-Choose the first supported strategy that fits:
+Choose the least conditioning that meets the intended shot and handoff.
+The list describes available strategies, not a requirement to pass prior
+footage whenever the endpoint supports it:
 
 1. **One take:** one request for uninterrupted action within the endpoint's
    duration limit.
@@ -20,10 +22,12 @@ Choose the first supported strategy that fits:
    frame at the intended cut point and use it as the next start frame;
    optionally provide a designed end frame. Do not blindly use the literal
    final decoded frame: it may be blurred, mid-action, a blink, or an artifact.
-5. **Reference-driven continuation:** reuse the accepted video plus approved
-   character/location/object/audio references.
-6. **Independent generation:** only for a deliberate discontinuity approved in
-   the plan.
+5. **Reference-driven shot:** use approved identity and any other required
+   controls. Add predecessor video only when its state is needed; it can also
+   carry unwanted pose, framing or motion into a deliberately changed shot.
+6. **Independent generation:** a planned new shot or deliberate discontinuity.
+   Recurring subjects can use identity-only conditioning plus text direction.
+   Review the editorial join even when predecessor media is omitted.
 
 Minimize both paid calls and seams. Keep uninterrupted visible dialogue or one
 continuous action inside one supported take whenever possible. Do not choose

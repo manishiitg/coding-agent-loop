@@ -85,3 +85,6 @@ Finish with a short executive summary leading with strategic insights and
 Needs your decision proposals, followed by distinct findings, technical handoffs,
 and evidence boundaries. Deferred areas are unassessed, not clean. Do not truncate
 the result to a Top 3.
+
+## Goal progress context
+Use get_goal_metrics to read the primary and supporting metric definitions and comparable observations. Inspect outcome movement before selecting improvements; distinguish activity, quality boundaries and actual outcomes. Unknown/stale data does not prove no growth or success. Never change targets or metric definitions in a scheduled review. When measurement is not set up, surface /setup-goals as the setup path without filing repeated platform defects. Reviewers interpret measurements; producing runs/collectors own record_goal_observations.

@@ -78,6 +78,8 @@ func providerLabel(content string, metadata map[string]interface{}) string {
 			return "Cursor CLI"
 		case "pi-cli", "picli":
 			return "Pi CLI"
+		case "muse-cli", "musecli":
+			return "Muse"
 		default:
 			return provider
 		}
@@ -91,6 +93,8 @@ func providerLabel(content string, metadata map[string]interface{}) string {
 		return "Codex CLI"
 	case isCursorPaneHeader(lower):
 		return "Cursor CLI"
+	case strings.Contains(lower, "muse code"):
+		return "Muse"
 	default:
 		return ""
 	}

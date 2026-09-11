@@ -148,3 +148,24 @@ func TestClosedLeaseWithoutSnapshotDeadlineGetsBoundedRetention(t *testing.T) {
 		t.Fatalf("expired prune = %d, want 1", got)
 	}
 }
+
+// TestProviderFromTmuxSessionRecognizesEveryRegisteredProvider pins a real
+// gap found live 2026-09-11: muse-cli's mlp-muse- tmux sessions had no case
+// here, so every muse lease was labeled the generic "coding-cli" fallback
+// instead of "muse-cli" -- surfacing as "we never know which model we're
+// using" in lease/terminal-status displays.
+func TestProviderFromTmuxSessionRecognizesEveryRegisteredProvider(t *testing.T) {
+	cases := map[string]string{
+		"mlp-claude-code-int-1":       "claude-code",
+		"mlp-codex-cli-int-1":         "codex-cli",
+		"mlp-cursor-cli-int-1":        "cursor-cli",
+		"mlp-pi-cli-int-1":            "pi-cli",
+		"mlp-muse-f42a1454-cf58-4948": "muse-cli",
+		"something-unrelated":         "coding-cli",
+	}
+	for session, want := range cases {
+		if got := providerFromTmuxSession(session); got != want {
+			t.Fatalf("providerFromTmuxSession(%q) = %q, want %q", session, got, want)
+		}
+	}
+}

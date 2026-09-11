@@ -34,11 +34,11 @@ When reviewing an approval or feedback flow, read
 `read_skill(skills=[{"name":"builder-reference","path":"references/human-in-the-loop.md"}])`
 and check which interaction the workflow actually needs.
 Reports can offer `window.report.sendChatMessage(message, { requestId })` from
-user click handlers. It opens a host message review panel with an existing/new
-chat choice, using the same queue as Ask in chat. For an existing report-owned
+user click handlers. It sends directly through the same queue as Ask in chat,
+reusing an existing workflow chat or creating one only if none exists. For an existing report-owned
 approval, save it before requesting the action and include its exact item,
-version, and intended route/consumer. Follow `reporting-policy.md` for cancelled
-and queued receipts, retries, and deduplication limits. Do not label queued work
+version, and intended route/consumer. Follow `reporting-policy.md` for
+queued receipts, retries, and deduplication limits. Do not label queued work
 as applied or send messages from render/poll callbacks.
 
 INTENT

@@ -66,10 +66,10 @@ For report actions that should hand work to the agent, use
 `read_skill(skills=[{"name":"builder-reference","path":"references/human-in-the-loop.md"}])`
 to choose the human interaction pattern, then
 `window.report.sendChatMessage(message, { requestId })` from the button handler,
-following `reporting-policy.md`. The app lets the user review the message and
-reuse or start a chat. Save any existing report-owned approval first; include
-the exact item/version and intended route, and distinguish approval saved,
-request cancelled, request queued, and evidence of actual completion. Never
+following `reporting-policy.md`. The app sends directly to an existing workflow
+chat, creating one only if none exists. Save any existing report-owned approval
+first; include the exact item/version and intended route, and distinguish
+approval saved, request queued, and evidence of actual completion. Never
 send during rendering or polling.
 
 1. Decide the reader's questions and the durable DB/asset evidence that answers

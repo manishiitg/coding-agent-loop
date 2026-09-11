@@ -167,6 +167,78 @@
     },
     "Cortex": {
       "url": "https://mcp.cortex.io/mcp"
+    },
+    "Todoist": {
+      "url": "https://ai.todoist.net/mcp",
+      "oauth": {
+        "auth_url": "https://todoist.com/oauth/authorize",
+        "token_url": "https://todoist.com/oauth/access_token",
+        "token_file": "~/.config/mcpagent/tokens/default/Todoist.json",
+        "resource": "https://ai.todoist.net/mcp",
+        "registration_endpoint": "https://todoist.com/oauth/register"
+      }
+    },
+    "Asana": {
+      "url": "https://mcp.asana.com/v2/mcp",
+      "oauth": {
+        "auth_url": "https://app.asana.com/-/oauth_authorize",
+        "token_url": "https://app.asana.com/-/oauth_token",
+        "token_file": "~/.config/mcpagent/tokens/default/Asana.json",
+        "resource": "https://mcp.asana.com/v2/mcp"
+      }
+    },
+    "Atlassian": {
+      "url": "https://mcp.atlassian.com/v2/mcp",
+      "oauth": {
+        "auth_url": "https://auth.atlassian.com/authorize",
+        "token_url": "https://auth.atlassian.com/oauth/token",
+        "token_file": "~/.config/mcpagent/tokens/default/Atlassian.json",
+        "resource": "https://mcp.atlassian.com/v2/mcp",
+        "registration_endpoint": "https://auth.atlassian.com/VCeDsk8ZHncYF1g234fKtc4lNipbBhu3/dcr/register"
+      }
+    },
+    "ClickUp": {
+      "url": "https://mcp.clickup.com/mcp",
+      "oauth": {
+        "auth_url": "https://mcp.clickup.com/oauth/authorize",
+        "token_url": "https://mcp.clickup.com/oauth/token",
+        "token_file": "~/.config/mcpagent/tokens/default/ClickUp.json",
+        "resource": "https://mcp.clickup.com/mcp",
+        "registration_endpoint": "https://mcp.clickup.com/oauth/register"
+      }
+    },
+    "Dropbox": {
+      "url": "https://mcp.dropbox.com/mcp",
+      "oauth": {
+        "auth_url": "https://www.dropbox.com/oauth2/authorize",
+        "token_url": "https://api.dropboxapi.com/oauth2/token",
+        "token_file": "~/.config/mcpagent/tokens/default/Dropbox.json",
+        "resource": "https://mcp.dropbox.com/mcp",
+        "registration_endpoint": "https://www.dropbox.com/oauth2/register"
+      }
+    },
+    "Miro": {
+      "url": "https://mcp.miro.com/",
+      "oauth": {
+        "auth_url": "https://mcp.miro.com/authorize",
+        "token_url": "https://mcp.miro.com/token",
+        "token_file": "~/.config/mcpagent/tokens/default/Miro.json",
+        "resource": "https://mcp.miro.com/",
+        "registration_endpoint": "https://mcp.miro.com/register"
+      }
+    },
+    "Figma": {
+      "url": "https://mcp.figma.com/mcp",
+      "oauth": {
+        "auth_url": "https://www.figma.com/oauth/mcp",
+        "token_url": "https://api.figma.com/v1/oauth/token",
+        "token_file": "~/.config/mcpagent/tokens/default/Figma.json",
+        "resource": "https://mcp.figma.com/mcp",
+        "registration_endpoint": "https://api.figma.com/v1/oauth/mcp/register",
+        "scopes": [
+          "mcp:connect"
+        ]
+      }
     }
   }
 }

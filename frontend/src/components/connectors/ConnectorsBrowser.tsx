@@ -19,6 +19,7 @@ import { useMCPStore } from '../../stores'
 import { READ_ONLY_TITLE, useCanWriteWorkflow } from '../../hooks/useCanWriteWorkflow'
 import { useToolSelectionStore } from '../../stores/useToolSelectionStore'
 import MCPConfigPopup from '../MCPConfigPopup'
+import { AskAIButton } from '../workflow/AskAIButton'
 
 /**
  * The card's status marker answers "is this mine?", which is what `connection`
@@ -257,9 +258,22 @@ export default function ConnectorsBrowser({ compact = false, selectedServers, on
           </button>
         )}
       </div>
-      <p className="mt-1.5 text-xs text-gray-500 dark:text-gray-400">
-        Don't see what you need? This list isn't everything that exists — ask in chat and it can search the web and connect an MCP server, CLI tool, or skill for you.
-      </p>
+      <div className="mt-3 flex shrink-0 flex-wrap items-center gap-4 rounded-xl border border-primary/20 bg-primary/5 p-4">
+        <div className="min-w-0 flex-1 basis-56">
+          <p className="text-base font-semibold text-foreground">Need another connection?</p>
+          <p className="mt-1 text-sm leading-6 text-muted-foreground">
+            Tell the builder which app you need. It can search for an official MCP server and help you connect it.
+          </p>
+        </div>
+        <AskAIButton
+          workspacePath={readOnly ? null : workspacePath ?? null}
+          label="Add MCP"
+          message={query.trim()
+            ? `Help me add an MCP server for ${JSON.stringify(query.trim())} to this workflow. Search the catalog and official provider documentation on the web, and help me connect it. Ask for any missing details.`
+            : 'Help me add an MCP server to this workflow. Ask me which app or service I want to connect, then search the catalog and official provider documentation on the web and help me connect it.'}
+          className="inline-flex shrink-0 items-center justify-center gap-2 rounded-lg bg-primary px-4 py-2.5 text-sm font-medium text-primary-foreground shadow-sm transition-colors hover:bg-primary/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+        />
+      </div>
 
       {/* Grid */}
       <div className="min-h-0 flex-1 overflow-y-auto pt-5">

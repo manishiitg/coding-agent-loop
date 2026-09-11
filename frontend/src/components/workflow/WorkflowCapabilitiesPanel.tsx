@@ -155,7 +155,7 @@ export default function WorkflowCapabilitiesPanel({ section, workspacePath }: Wo
   // each message here is a real, complete first message it delivers (not a
   // prefilled fragment), ending by inviting the agent to ask what's needed.
   const ASK_CHAT_MESSAGE: Partial<Record<WorkflowCapabilitySection, string>> = {
-    mcp: "I want to connect an MCP server this workflow doesn't have yet — search the catalog and the web for it, or a CLI tool if that fits better. Ask me what service or capability I need.",
+    mcp: "Help me add an MCP server to this workflow. Ask me which app or service I want to connect, then search the catalog and official provider documentation on the web and help me connect it.",
     skills: "I want a skill this workflow doesn't have yet. Ask me what it should cover, then find an existing one or write a new one.",
     secrets: "I need to add a secret this workflow doesn't have yet. Ask me which credential it is and where it should come from.",
     llm: "I want to change or add an LLM provider/model this workflow doesn't have configured yet. Ask me which one and what it's for.",

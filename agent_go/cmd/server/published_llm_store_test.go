@@ -10,6 +10,8 @@ func TestAutoPublishedCodingAgentLLMsIncludeConcreteClaudeAndCodexModels(t *test
 	t.Setenv("SUPPORTED_LLM_PROVIDERS", "claude-code,codex-cli")
 	withFakeExecutable(t, "claude")
 	withFakeExecutable(t, "codex")
+	withClaudeStatus(t, `{"loggedIn":true}`, nil)
+	withCodexStatus(t, "Logged in using ChatGPT", nil)
 
 	llms := buildAutoPublishedCodingAgentLLMs(context.Background(), nil)
 
@@ -43,6 +45,7 @@ func TestAutoPublishedCodingAgentLLMsSkipSavedDuplicate(t *testing.T) {
 	t.Setenv("WORKSPACE_DOCS_PATH", t.TempDir())
 	t.Setenv("SUPPORTED_LLM_PROVIDERS", "claude-code")
 	withFakeExecutable(t, "claude")
+	withClaudeStatus(t, `{"loggedIn":true}`, nil)
 
 	saved := []StoredPublishedLLM{{
 		ID:       "user-claude-opus-high",

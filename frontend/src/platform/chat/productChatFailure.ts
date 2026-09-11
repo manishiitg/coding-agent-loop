@@ -13,6 +13,9 @@ export type ProductChatFailure = {
   message: string
   provider?: string
   retryAt?: string
+  resetLabel?: string
+  actionUrl?: string
+  actionLabel?: string
   retryable: boolean
   technicalDetails?: string
 }
@@ -34,6 +37,7 @@ const QUOTA_MARKERS = [
 const STRONG_FAILURE_MARKERS = [
   /^all LLMs failed\b/i,
   /\[(?:quota_exhausted|authentication_failed|rate_limited|provider_unavailable)\]/i,
+  /^usage limit reached\s*·\s*\/upgrade/i,
   /^failed to (?:start|continue|complete) (?:streaming|the request|the conversation)/i,
 ]
 
@@ -43,12 +47,26 @@ function text(value: unknown): string | undefined {
 
 function providerFrom(raw: string, hint?: unknown): string | undefined {
   const explicit = text(hint)
-  if (explicit) return explicit
+  if (explicit) {
+    if (/^muse(?:-cli)?$/i.test(explicit)) return 'Muse'
+    return explicit
+  }
   if (/claude(?: code|code)?/i.test(raw) || /claudecode/i.test(raw)) return 'Claude Code'
   if (/codex(?: cli)?/i.test(raw)) return 'Codex'
   if (/cursor(?: cli)?/i.test(raw)) return 'Cursor'
   if (/\bpi(?: cli)?\b/i.test(raw)) return 'Pi'
+  if (/\bmuse(?:-cli| code)?\b/i.test(raw) || /accountscenter\.meta\.com\/muse_code/i.test(raw)) return 'Muse'
   return undefined
+}
+
+function museResetLabelFrom(raw: string): string | undefined {
+  return raw.match(/wait for usage to reset at\s+([a-z]{3}\s+\d{1,2}\s+at\s+\d{1,2}:\d{2}\s+(?:am|pm))/i)?.[1]
+}
+
+function museUpgradeUrlFrom(raw: string): string | undefined {
+  return /https:\/\/accountscenter\.meta\.com\/muse_code\/?\?ep=xgrade/i.test(raw)
+    ? 'https://accountscenter.meta.com/muse_code/?ep=xgrade'
+    : undefined
 }
 
 function retryAtFrom(raw: string, hint?: unknown): string | undefined {
@@ -78,20 +96,28 @@ export function looksLikeProductChatFailure(raw: string): boolean {
 export function normalizeProductChatFailure(rawError: string, hints: FailureHints = {}): ProductChatFailure {
   const raw = rawError.trim() || 'The request could not be completed.'
   const technicalDetails = safeTechnicalDetails(text(hints.technicalDetails) || raw)
+  const evidence = technicalDetails === raw ? raw : `${raw}\n${technicalDetails}`
   const normalizedCode = text(hints.code)?.toLowerCase().replace(/-/g, '_')
-  const provider = providerFrom(raw, hints.provider)
-  const retryAt = retryAtFrom(raw, hints.retryAt)
+  const provider = providerFrom(evidence, hints.provider)
+  const retryAt = retryAtFrom(evidence, hints.retryAt)
+  const resetLabel = museResetLabelFrom(evidence)
+  const actionUrl = museUpgradeUrlFrom(evidence)
   const providerLabel = provider || 'The AI provider'
 
-  if (normalizedCode === 'quota_exhausted' || QUOTA_MARKERS.some((pattern) => pattern.test(raw))) {
+  if (normalizedCode === 'quota_exhausted' || QUOTA_MARKERS.some((pattern) => pattern.test(evidence))) {
     return {
       code: 'quota_exhausted',
       title: `${providerLabel} usage limit reached`,
-      message: retryAt
+      message: resetLabel
+        ? `${providerLabel} is temporarily unavailable because its usage limit has been reached. Retry after ${resetLabel}.`
+        : retryAt
         ? `${providerLabel} is temporarily unavailable. You can retry after ${new Date(retryAt).toLocaleString()}.`
         : `${providerLabel} is temporarily unavailable because its usage limit has been reached. Retry after the provider limit resets.`,
       provider,
       retryAt,
+      resetLabel,
+      actionUrl,
+      actionLabel: actionUrl ? 'Upgrade Muse' : undefined,
       retryable: true,
       technicalDetails,
     }

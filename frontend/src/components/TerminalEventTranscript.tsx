@@ -382,6 +382,16 @@ const TurnFailureMessage: React.FC<{ failure: ReturnType<typeof normalizeProduct
             {timestamp && <span className="ml-auto shrink-0 text-[11px] tabular-nums text-muted-foreground">{timestamp}</span>}
           </div>
           <p className="mt-1 text-[length:calc(13px*var(--chat-scale,1))] leading-relaxed text-muted-foreground">{failure.message}</p>
+          {failure.actionUrl && (
+            <a
+              href={failure.actionUrl}
+              target="_blank"
+              rel="noreferrer"
+              className="mt-2 inline-flex rounded-md border border-border px-2 py-1 text-xs font-medium text-foreground hover:bg-muted"
+            >
+              {failure.actionLabel || 'Open provider'}
+            </a>
+          )}
           {failure.retryable && onRetry && (
             <button
               type="button"

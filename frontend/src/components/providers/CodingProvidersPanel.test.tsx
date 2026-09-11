@@ -115,10 +115,11 @@ describe('CodingProvidersPanel', () => {
 
       await act(async () => Array.from(dialog.querySelectorAll('button')).find(button => button.textContent?.includes('Codex CLI'))!.click())
       expect(dialog.textContent).toContain('Authentication detected via Codex home')
-      expect(dialog.textContent).toContain('Sign in again')
-      expect(dialog.textContent).toContain('does not make a model call')
-      expect(dialog.querySelector('[aria-label="Codex CLI is ready"]')).not.toBeNull()
-      expect(Array.from(dialog.querySelectorAll('span')).filter(span => span.textContent === 'Ready')).toHaveLength(1)
+      expect(dialog.textContent).toContain('Change sign-in')
+      expect(dialog.textContent).toContain('Open terminal')
+      expect(dialog.textContent).toContain('Type /status')
+      expect(dialog.querySelector('[aria-label="Codex CLI is connected"]')).not.toBeNull()
+      expect(Array.from(dialog.querySelectorAll('span')).filter(span => span.textContent === 'Connected')).toHaveLength(1)
     } finally {
       await act(async () => root.unmount())
       host.remove()
@@ -181,14 +182,18 @@ describe('CodingProvidersPanel', () => {
     }
   })
 
-  it('shows a compact discovered model catalog for coding providers except Pi CLI', async () => {
-    vi.mocked(llmConfigService.getProviderModels).mockImplementation(async providerId => ({
+  it('shows fixed provider models and Pi’s grouped live model inventory', async () => {
+    vi.mocked(llmConfigService.getProviderModels).mockImplementation(async (providerId, _full, availableOnly) => ({
       provider: providerId,
       model_selection_mode: providerId === 'pi-cli' ? 'dynamic' : 'fixed_tier',
       models: providerId === 'claude-code' ? [
         { model_id: 'claude-sonnet-5', model_name: 'Claude Sonnet 5', is_default: true },
         { model_id: 'claude-opus-5', model_name: 'Claude Opus 5' },
+      ] : providerId === 'pi-cli' && availableOnly ? [
+        { model_id: 'google/gemini-3.8-flash', model_name: 'Gemini 3.8 Flash', group: 'Gemini', is_default: true },
+        { model_id: 'openrouter/openrouter/free', model_name: 'OpenRouter Free', group: 'OpenRouter', is_free: true },
       ] : [],
+      groups: providerId === 'pi-cli' ? ['Gemini', 'OpenRouter'] : undefined,
       source: 'test',
     }))
     vi.mocked(llmConfigService.getProviderManifest).mockResolvedValue({
@@ -222,11 +227,19 @@ describe('CodingProvidersPanel', () => {
       expect(dialog.querySelector('[data-testid="provider-model-catalog"]')).not.toBeNull()
       expect(dialog.textContent).toContain('Claude Sonnet 5')
       expect(dialog.textContent).toContain('Claude Opus 5')
-      expect(dialog.querySelector('[aria-label="Claude Code is ready"]')).not.toBeNull()
+      expect(dialog.querySelector('[aria-label="Claude Code is connected"]')).not.toBeNull()
 
       await act(async () => Array.from(dialog.querySelectorAll('button')).find(button => button.textContent?.includes('Pi CLI'))!.click())
-      expect(dialog.querySelector('[data-testid="provider-model-catalog"]')).toBeNull()
-      expect(llmConfigService.getProviderModels).not.toHaveBeenCalledWith('pi-cli')
+      await act(async () => Promise.resolve())
+      await act(async () => Promise.resolve())
+      expect(dialog.querySelector('[data-testid="pi-provider-model-catalog"]')).not.toBeNull()
+      expect(dialog.textContent).toContain('Connected model providers')
+      expect(dialog.textContent).toContain('Gemini 1')
+      expect(dialog.textContent).toContain('OpenRouter 1')
+      expect(dialog.textContent).toContain('google/gemini-3.8-flash')
+      expect(dialog.textContent).toContain('AgentWorks will not silently replace it')
+      expect(dialog.textContent).toContain('Manage provider logins')
+      expect(llmConfigService.getProviderModels).toHaveBeenCalledWith('pi-cli', false, true)
     } finally {
       await act(async () => root.unmount())
       host.remove()

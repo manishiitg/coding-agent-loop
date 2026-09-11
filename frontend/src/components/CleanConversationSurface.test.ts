@@ -138,6 +138,27 @@ describe('buildCleanConversationItems', () => {
     }))
   })
 
+  it('shows the Muse reset time and upgrade action instead of a network failure', () => {
+    const raw = `all LLMs failed (primary + 0 fallbacks): muse-cli/muse-spark-1.3-contributor [quota_exhausted]: Usage limit reached · /upgrade
+(https://accountscenter.meta.com/muse_code/?ep=xgrade) for increased limits, or
+wait for usage to reset at Sep 14 at 5:30 AM`
+    const items = buildCleanConversationItems([
+      event('user', 'user_message', { content: 'Run the workflow' }),
+      event('failure', 'agent_error', { error: raw, code: 'quota_exhausted', provider: 'muse-cli' }),
+    ])
+
+    expect(items.at(-1)).toEqual(expect.objectContaining({
+      role: 'error',
+      content: expect.stringContaining('Retry after Sep 14 at 5:30 AM.'),
+      failure: expect.objectContaining({
+        code: 'quota_exhausted',
+        title: 'Muse usage limit reached',
+        actionLabel: 'Upgrade Muse',
+        actionUrl: 'https://accountscenter.meta.com/muse_code/?ep=xgrade',
+      }),
+    }))
+  })
+
   it('does not present a failed completion as an assistant answer', () => {
     const raw = 'all LLMs failed (primary + 0 fallbacks): provider unavailable'
     const items = buildCleanConversationItems([

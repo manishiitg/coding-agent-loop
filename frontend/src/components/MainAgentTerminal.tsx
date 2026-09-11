@@ -12,6 +12,13 @@ type MainAgentTerminalProps = {
   onUnavailable?: () => void
 }
 
+// Keep the diagnostics-only terminal readable without allowing it to dictate
+// the normal chat/workspace split. At the 13px JetBrains Mono metrics used by
+// TerminalCenter this leaves room for roughly 80 columns, including xterm's
+// padding. Narrow chat panes scroll the terminal horizontally instead of
+// repeatedly shrinking and reflowing the underlying tmux TUI.
+export const MAIN_AGENT_TERMINAL_MIN_WIDTH_PX = 680
+
 // Product raw view for the one main coding-agent terminal. This intentionally
 // reuses the mature xterm renderer/live tmux attach rather than maintaining a
 // second preformatted-text terminal. Child terminal rails stay diagnostics-only.
@@ -60,8 +67,15 @@ export function MainAgentTerminal({ sessionId, onUnavailable }: MainAgentTermina
   const isLive = Boolean(snapshot?.active && snapshot.tmux_session)
 
   return (
-    <section className="flex min-h-0 flex-1 flex-col bg-[#0b0e14] text-[#e7e9e5]">
-      <div className="min-h-0 flex-1">
+    <section
+      className="flex min-h-0 min-w-0 flex-1 flex-col overflow-x-auto bg-[#0b0e14] text-[#e7e9e5]"
+      data-testid="main-agent-terminal-scroll-container"
+    >
+      <div
+        className="min-h-0 flex-1"
+        data-testid="main-agent-terminal-grid"
+        style={{ minWidth: MAIN_AGENT_TERMINAL_MIN_WIDTH_PX }}
+      >
         {error ? (
           <div className="p-4 text-sm text-red-300">{error}</div>
         ) : !snapshot ? (

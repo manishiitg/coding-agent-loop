@@ -73,4 +73,20 @@ describe('shared transcript failure retry', () => {
     const host = await mount(failedTurn)
     expect(host.textContent).not.toContain('Retry message')
   })
+
+  it('shows the Muse reset time and upgrade link', async () => {
+    const raw = `all LLMs failed (primary + 0 fallbacks): muse-cli/muse-spark-1.3-contributor [quota_exhausted]: Usage limit reached · /upgrade
+(https://accountscenter.meta.com/muse_code/?ep=xgrade) for increased limits, or
+wait for usage to reset at Sep 14 at 5:30 AM`
+    const host = await mount([
+      event('user', 'user_message', { content: 'Run it' }),
+      event('failed', 'agent_error', { error: raw, provider: 'muse-cli', code: 'quota_exhausted' }),
+    ])
+
+    expect(host.textContent).toContain('Muse usage limit reached')
+    expect(host.textContent).toContain('Retry after Sep 14 at 5:30 AM.')
+    const upgrade = host.querySelector<HTMLAnchorElement>('a[href="https://accountscenter.meta.com/muse_code/?ep=xgrade"]')
+    expect(upgrade?.textContent).toBe('Upgrade Muse')
+    expect(upgrade?.target).toBe('_blank')
+  })
 })

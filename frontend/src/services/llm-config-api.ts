@@ -118,13 +118,14 @@ export interface DynamicModelsResponse {
   source: string
   cached_at?: string
   cache_ttl_seconds?: number
+  error?: string
 }
 
 export interface GetModelMetadataResponse {
   models: ModelMetadata[]
 }
 
-export type ProviderSetupAction = 'authenticate'
+export type ProviderSetupAction = 'authenticate' | 'inspect'
 
 export interface ProviderSetupSession {
   id: string
@@ -197,8 +198,12 @@ export const llmConfigService = {
   },
 
   // Get dynamic model list for a provider (cursor-cli, pi-cli, etc.)
-  getProviderModels: async (provider: string, full?: boolean): Promise<DynamicModelsResponse> => {
-    const url = `/api/llm-config/providers/${provider}/models` + (full ? '?full=true' : '')
+  getProviderModels: async (provider: string, full?: boolean, availableOnly?: boolean): Promise<DynamicModelsResponse> => {
+    const query = new URLSearchParams()
+    if (full) query.set('full', 'true')
+    if (availableOnly) query.set('available_only', 'true')
+    const suffix = query.size > 0 ? `?${query.toString()}` : ''
+    const url = `/api/llm-config/providers/${provider}/models${suffix}`
     const response = await llmConfigApi.get(url)
     return response.data
   },
@@ -209,8 +214,15 @@ export const llmConfigService = {
     action: ProviderSetupAction,
     cols?: number,
     rows?: number,
+    workspacePath?: string,
   ): Promise<ProviderSetupSession> => {
-    const response = await llmConfigApi.post('/api/provider-setup/sessions', { provider, action, cols, rows })
+    const response = await llmConfigApi.post('/api/provider-setup/sessions', {
+      provider,
+      action,
+      cols,
+      rows,
+      workspace_path: workspacePath,
+    })
     return response.data.session
   },
 

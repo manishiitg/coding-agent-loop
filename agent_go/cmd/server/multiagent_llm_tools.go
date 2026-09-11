@@ -15,12 +15,26 @@ import (
 	llmproviders "github.com/manishiitg/multi-llm-provider-go"
 )
 
-var cursorCLIAuthProbeCache = struct {
+type cliAuthProbeCache struct {
 	sync.Mutex
 	checkedAt     time.Time
 	authenticated bool
 	conclusive    bool
-}{}
+}
+
+var (
+	claudeCLIAuthProbeCache cliAuthProbeCache
+	codexCLIAuthProbeCache  cliAuthProbeCache
+	cursorCLIAuthProbeCache cliAuthProbeCache
+)
+
+var claudeCLIAuthStatusCommand = func(ctx context.Context) ([]byte, error) {
+	return exec.CommandContext(ctx, "claude", "auth", "status").CombinedOutput()
+}
+
+var codexCLIAuthStatusCommand = func(ctx context.Context) ([]byte, error) {
+	return exec.CommandContext(ctx, "codex", "login", "status").CombinedOutput()
+}
 
 var cursorCLIStatusJSON = func(ctx context.Context) ([]byte, error) {
 	return exec.CommandContext(ctx, "cursor-agent", "status", "--format", "json").Output()
@@ -45,7 +59,7 @@ func listProviderModelsJSON(provider string) string {
 	}
 
 	if providerModelSelectionMode(provider) == "dynamic" {
-		resp := getDynamicModels(provider, true)
+		resp := getDynamicModels(provider, true, false)
 		payload := map[string]interface{}{
 			"provider":              resp.Provider,
 			"model_selection_mode":  resp.ModelSelectionMode,
@@ -428,7 +442,11 @@ func providerAuthConfigured(provider string, keys *llm.ProviderAPIKeys) (bool, s
 	case string(llm.ProviderAnthropic):
 		return keys.Anthropic != nil && strings.TrimSpace(*keys.Anthropic) != "", "ANTHROPIC_API_KEY or workspace provider auth"
 	case string(llm.ProviderClaudeCode):
-		return true, "Claude Code CLI login"
+		if keys.ClaudeCodeOAuthToken != nil && strings.TrimSpace(*keys.ClaudeCodeOAuthToken) != "" {
+			return true, "Workflow Claude Code OAuth token"
+		}
+		configured, _ := claudeCLILocalAuthState()
+		return configured, "Claude Code CLI login"
 	case string(llm.ProviderZAI):
 		return keys.ZAI != nil && strings.TrimSpace(*keys.ZAI) != "", "Z_AI_API_KEY/ZAI_API_KEY or workspace provider auth"
 	case string(llm.ProviderKimi):
@@ -439,7 +457,11 @@ func providerAuthConfigured(provider string, keys *llm.ProviderAPIKeys) (bool, s
 				strings.TrimSpace(os.Getenv("VERTEX_PROJECT_ID")) != "",
 			"VERTEX_API_KEY/GOOGLE_API_KEY/GEMINI_API_KEY/ADC project env or workspace provider auth"
 	case string(llm.ProviderCodexCLI):
-		return true, "Codex CLI login or CODEX_API_KEY/workspace provider auth"
+		if keys.CodexCLI != nil && strings.TrimSpace(*keys.CodexCLI) != "" {
+			return true, "CODEX_API_KEY or workspace provider auth"
+		}
+		configured, _ := codexCLILocalAuthState()
+		return configured, "Codex CLI login or CODEX_API_KEY/workspace provider auth"
 	case string(llm.ProviderCursorCLI):
 		if keys.CursorCLI != nil && strings.TrimSpace(*keys.CursorCLI) != "" {
 			return true, "CURSOR_API_KEY or workspace provider auth"
@@ -447,7 +469,11 @@ func providerAuthConfigured(provider string, keys *llm.ProviderAPIKeys) (bool, s
 		configured, _ := cursorCLILocalAuthState()
 		return configured, "Cursor CLI login or CURSOR_API_KEY/workspace provider auth"
 	case string(llm.ProviderPiCLI):
-		return piProviderAuthConfigured(keys), "Provider-specific Pi API key or workspace provider auth"
+		if piProviderAuthConfigured(keys) {
+			return true, "Provider-specific Pi API key or workspace provider auth"
+		}
+		configured, _ := piCLILocalAuthState()
+		return configured, "Pi provider login or workspace provider auth"
 	case string(llm.ProviderMuseCLI):
 		if keys.MuseCLI != nil && strings.TrimSpace(*keys.MuseCLI) != "" {
 			return true, "META_API_KEY or workspace provider auth"
@@ -476,6 +502,109 @@ func piProviderAuthConfigured(keys *llm.ProviderAPIKeys) bool {
 		}
 	}
 	return false
+}
+
+var piCLIAuthProbeCache struct {
+	sync.Mutex
+	checkedAt     time.Time
+	authenticated bool
+	conclusive    bool
+}
+
+func piCLILocalAuthState() (authenticated, conclusive bool) {
+	piCLIAuthProbeCache.Lock()
+	defer piCLIAuthProbeCache.Unlock()
+	if !piCLIAuthProbeCache.checkedAt.IsZero() && time.Since(piCLIAuthProbeCache.checkedAt) < 30*time.Second {
+		return piCLIAuthProbeCache.authenticated, piCLIAuthProbeCache.conclusive
+	}
+
+	models, err := listPiCLIModelsFn()
+	authenticated = err == nil && len(models) > 0
+	conclusive = err == nil
+	piCLIAuthProbeCache.checkedAt = time.Now()
+	piCLIAuthProbeCache.authenticated = authenticated
+	piCLIAuthProbeCache.conclusive = conclusive
+	return authenticated, conclusive
+}
+
+func claudeCLILocalAuthState() (authenticated, conclusive bool) {
+	return cachedCLIAuthState("claude", &claudeCLIAuthProbeCache, claudeCLIAuthStatusCommand, claudeCLIAuthStatus)
+}
+
+func codexCLILocalAuthState() (authenticated, conclusive bool) {
+	return cachedCLIAuthState("codex", &codexCLIAuthProbeCache, codexCLIAuthStatusCommand, codexCLIAuthStatus)
+}
+
+func invalidateProviderAuthProbe(provider string) {
+	var cache *cliAuthProbeCache
+	switch normalizeManagedProvider(provider) {
+	case string(llm.ProviderClaudeCode):
+		cache = &claudeCLIAuthProbeCache
+	case string(llm.ProviderCodexCLI):
+		cache = &codexCLIAuthProbeCache
+	case string(llm.ProviderCursorCLI):
+		cache = &cursorCLIAuthProbeCache
+	case string(llm.ProviderPiCLI):
+		invalidatePiProviderCaches()
+		return
+	default:
+		return
+	}
+	cache.Lock()
+	cache.checkedAt = time.Time{}
+	cache.authenticated = false
+	cache.conclusive = false
+	cache.Unlock()
+}
+
+func cachedCLIAuthState(runtime string, cache *cliAuthProbeCache, probe func(context.Context) ([]byte, error), parse func([]byte) (bool, bool)) (authenticated, conclusive bool) {
+	if _, err := exec.LookPath(runtime); err != nil {
+		return false, false
+	}
+	cache.Lock()
+	defer cache.Unlock()
+	if !cache.checkedAt.IsZero() && time.Since(cache.checkedAt) < 30*time.Second {
+		return cache.authenticated, cache.conclusive
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	out, err := probe(ctx)
+	authenticated, conclusive = parse(out)
+	if err != nil && !conclusive && cache.conclusive && cache.authenticated {
+		// A transient command failure must not turn a previously confirmed
+		// connection into a logged-out state.
+		authenticated = true
+		conclusive = true
+	}
+	cache.checkedAt = time.Now()
+	cache.authenticated = authenticated
+	cache.conclusive = conclusive
+	return authenticated, conclusive
+}
+
+func claudeCLIAuthStatus(out []byte) (authenticated, conclusive bool) {
+	var status struct {
+		LoggedIn *bool `json:"loggedIn"`
+	}
+	if json.Unmarshal(out, &status) == nil && status.LoggedIn != nil {
+		return *status.LoggedIn, true
+	}
+	return false, false
+}
+
+func codexCLIAuthStatus(out []byte) (authenticated, conclusive bool) {
+	lower := strings.ToLower(strings.TrimSpace(string(out)))
+	if lower == "" {
+		return false, false
+	}
+	if strings.Contains(lower, "not logged in") || strings.Contains(lower, "logged out") {
+		return false, true
+	}
+	if strings.Contains(lower, "logged in") {
+		return true, true
+	}
+	return false, false
 }
 
 func cursorCLILocalAuthState() (authenticated, conclusive bool) {

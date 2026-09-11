@@ -95,6 +95,7 @@ type dynamicModelsResponse struct {
 	Source             string              `json:"source"`
 	CachedAt           string              `json:"cached_at,omitempty"`
 	CacheTTLSeconds    int                 `json:"cache_ttl_seconds,omitempty"`
+	Error              string              `json:"error,omitempty"`
 }
 
 // --- Provider static metadata ---
@@ -439,7 +440,8 @@ func (api *StreamingAPI) handleGetProviderModels(w http.ResponseWriter, r *http.
 
 	if mode == "dynamic" {
 		full := r.URL.Query().Get("full") == "true"
-		resp := getDynamicModels(provider, full)
+		availableOnly := r.URL.Query().Get("available_only") == "true"
+		resp := getDynamicModels(provider, full, availableOnly)
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(resp)
 		return
@@ -474,17 +476,24 @@ func (api *StreamingAPI) handleGetProviderModels(w http.ResponseWriter, r *http.
 	json.NewEncoder(w).Encode(resp)
 }
 
-func getDynamicModels(provider string, full bool) *dynamicModelsResponse {
+func getDynamicModels(provider string, full, availableOnly bool) *dynamicModelsResponse {
 	cacheKey := provider
 	if full {
 		cacheKey = provider + ":full"
+	}
+	if availableOnly {
+		cacheKey = provider + ":available"
 	}
 
 	dynamicModelCacheMu.RLock()
 	cached, ok := dynamicModelCache[cacheKey]
 	dynamicModelCacheMu.RUnlock()
 
-	if ok && time.Since(cached.fetchedAt) < dynamicModelCacheTTL {
+	cacheTTL := dynamicModelCacheTTL
+	if availableOnly {
+		cacheTTL = 30 * time.Second
+	}
+	if ok && time.Since(cached.fetchedAt) < cacheTTL {
 		return cached.response
 	}
 
@@ -493,7 +502,11 @@ func getDynamicModels(provider string, full bool) *dynamicModelsResponse {
 	case "cursor-cli":
 		resp = fetchCursorCLIModels()
 	case "pi-cli":
-		resp = fetchPiCLIModels(full)
+		if availableOnly {
+			resp = fetchAvailablePiCLIModels()
+		} else {
+			resp = fetchPiCLIModels(full)
+		}
 	default:
 		resp = &dynamicModelsResponse{
 			Provider:           provider,
@@ -511,6 +524,40 @@ func getDynamicModels(provider string, full bool) *dynamicModelsResponse {
 	dynamicModelCacheMu.Unlock()
 
 	return resp
+}
+
+func fetchAvailablePiCLIModels() *dynamicModelsResponse {
+	resp := &dynamicModelsResponse{
+		Provider:           "pi-cli",
+		ModelSelectionMode: "dynamic",
+		Models:             []dynamicModelEntry{},
+		Source:             "cli_available",
+		CacheTTLSeconds:    30,
+		CachedAt:           time.Now().UTC().Format(time.RFC3339),
+	}
+	models, err := listPiCLIModelsFn()
+	if err != nil {
+		resp.Source = "cli_available_error"
+		resp.Error = err.Error()
+		return resp
+	}
+	resp.Models = models
+	resp.Groups = dynamicModelGroups(models)
+	return resp
+}
+
+func invalidatePiProviderCaches() {
+	dynamicModelCacheMu.Lock()
+	delete(dynamicModelCache, "pi-cli")
+	delete(dynamicModelCache, "pi-cli:full")
+	delete(dynamicModelCache, "pi-cli:available")
+	dynamicModelCacheMu.Unlock()
+
+	piCLIAuthProbeCache.Lock()
+	piCLIAuthProbeCache.checkedAt = time.Time{}
+	piCLIAuthProbeCache.authenticated = false
+	piCLIAuthProbeCache.conclusive = false
+	piCLIAuthProbeCache.Unlock()
 }
 
 func fetchCursorCLIModels() *dynamicModelsResponse {

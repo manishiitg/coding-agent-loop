@@ -1,7 +1,7 @@
 import { stripRetiredLLMFallbacks } from '../../utils/retiredLLMFallbacks'
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
 import { useShallow } from 'zustand/react/shallow'
-import { AlertCircle, ArrowLeft, CheckCircle, ChevronDown, ChevronRight, Loader2, Lock, RefreshCw, Search, X } from 'lucide-react'
+import { ArrowLeft, CheckCircle2, ChevronDown, ChevronRight, Loader2, Lock, RefreshCw, Search, X } from 'lucide-react'
 import LLMRoleSelector from '../LLMRoleSelector'
 import LLMSelectionDropdown from '../LLMSelectionDropdown'
 import { WorkflowProviderCredentialField } from '../WorkflowProviderCredentialField'
@@ -218,11 +218,6 @@ export default function WorkflowLLMConfigurationPanel({ workspacePath, llmConfig
   const [query, setQuery] = useState('')
   const [tokenOpen, setTokenOpen] = useState(false)
   const [refreshing, setRefreshing] = useState(false)
-  // Inline connection tests for the sign-in CLIs (Claude Code, Codex, Cursor):
-  // those rows have nothing to configure, so Test and Use live on the row
-  // itself instead of behind a drill-in. Keyed by row id.
-  type RowTest = { status: 'testing' | 'valid' | 'invalid'; message?: string }
-  const [rowTests, setRowTests] = useState<Record<string, RowTest>>({})
   const [rowUsing, setRowUsing] = useState<string | null>(null)
   const [piCliModels, setPiCliModels] = useState<DynamicModelEntry[]>([])
   const [piCliGroups, setPiCliGroups] = useState<string[]>([])
@@ -509,24 +504,6 @@ export default function WorkflowLLMConfigurationPanel({ workspacePath, llmConfig
     if (!activeRow) return
     await applyRowToWorkflow(activeRow)
     setActiveProviderId(null)
-  }
-
-  // Same check the drill-in runs, against the provider's default model.
-  const testRow = async (row: ProviderRow) => {
-    setRowTests(current => ({ ...current, [row.id]: { status: 'testing' } }))
-    try {
-      const response = await llmConfigService.validateAPIKey({
-        provider: row.id as Parameters<typeof llmConfigService.validateAPIKey>[0]['provider'],
-      })
-      setRowTests(current => ({
-        ...current,
-        [row.id]: response.valid
-          ? { status: 'valid', message: response.message || `${row.name} is working.` }
-          : { status: 'invalid', message: response.message || response.error || 'Validation failed.' },
-      }))
-    } catch (err) {
-      setRowTests(current => ({ ...current, [row.id]: { status: 'invalid', message: err instanceof Error ? err.message : 'Connection test failed.' } }))
-    }
   }
 
   const useManagedDefaults = () => {
@@ -816,12 +793,10 @@ export default function WorkflowLLMConfigurationPanel({ workspacePath, llmConfig
     const selected = row.id === selectedRowId
     const inlineActions = row.entry.integration_kind === 'coding_agent' && !row.groupFilter
     if (inlineActions) {
-      // Sign-in CLI: nothing to configure, so no radio and no drill-in. The
-      // row is the whole flow: status, Test, Use. A workflow-scoped token
-      // override for the selected provider stays available under the status
-      // line above the list.
-      const test = rowTests[row.id]
-      const usable = status.label === 'Ready' || status.label === 'Managed' || test?.status === 'valid'
+      // Sign-in CLI: authentication and diagnostics live in the platform-level
+      // Providers panel. This workflow-level row only reports that state and
+      // lets the user choose which connected CLI to use.
+      const connected = row.entry.auth_configured && status.label === 'Ready'
       return (
         <div key={row.id} className={`flex items-center gap-2 px-3 py-2 ${selected ? 'bg-primary/5' : ''}`}>
           <span className={`shrink-0 text-sm ${selected ? 'font-semibold' : 'font-medium'} text-foreground`}>{row.name}</span>
@@ -831,13 +806,9 @@ export default function WorkflowLLMConfigurationPanel({ workspacePath, llmConfig
             </span>
           )}
           <span className="min-w-0 flex-1" />
-          {test?.status === 'valid' ? (
-            <span className="inline-flex shrink-0 items-center gap-1 text-[11px] font-medium text-emerald-600 dark:text-emerald-400" title={test.message}>
-              <CheckCircle className="h-3 w-3" /> Working
-            </span>
-          ) : test?.status === 'invalid' ? (
-            <span className="inline-flex shrink-0 items-center gap-1 text-[11px] font-medium text-red-500" title={test.message}>
-              <AlertCircle className="h-3 w-3" /> Failed
+          {connected ? (
+            <span className="inline-flex shrink-0 items-center gap-1 text-[11px] font-medium text-emerald-600 dark:text-emerald-400" title="Signed in on this server and ready to use">
+              <CheckCircle2 className="h-3 w-3" /> Connected
             </span>
           ) : (
             <span
@@ -850,18 +821,9 @@ export default function WorkflowLLMConfigurationPanel({ workspacePath, llmConfig
           )}
           <button
             type="button"
-            onClick={() => void testRow(row)}
-            disabled={readOnly || test?.status === 'testing'}
-            title={readOnly ? disabledTitle : `Send a test prompt to ${row.name}`}
-            className="inline-flex shrink-0 items-center gap-1 rounded-md border border-border px-2 py-0.5 text-xs font-medium text-foreground hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
-          >
-            {test?.status === 'testing' ? <><Loader2 className="h-3 w-3 animate-spin" /> Testing…</> : 'Test'}
-          </button>
-          <button
-            type="button"
             onClick={() => void applyRowToWorkflow(row)}
             disabled={readOnly || selected || !row.selectable || rowUsing === row.id}
-            title={readOnly ? disabledTitle : selected ? 'Already in use' : !usable ? 'Not verified yet: Test first, or use anyway' : `Use ${row.name} for this workflow`}
+            title={readOnly ? disabledTitle : selected ? 'Already in use' : status.label === 'Ready' || status.label === 'Managed' ? `Use ${row.name} for this workflow` : `${row.name} still needs setup in Providers`}
             className="inline-flex shrink-0 items-center gap-1 rounded-md bg-primary px-2 py-0.5 text-xs font-medium text-primary-foreground hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50"
           >
             {rowUsing === row.id ? <><Loader2 className="h-3 w-3 animate-spin" /> Saving…</> : 'Use'}
@@ -1124,7 +1086,7 @@ export default function WorkflowLLMConfigurationPanel({ workspacePath, llmConfig
           <>
             {renderGroup(
               'Coding agent CLIs',
-              'Sign in once on this machine. Test the connection, then use it in this workflow.',
+              'Authentication is managed in Providers. Choose which connected CLI this workflow uses.',
               visibleRows.filter(row => row.entry.integration_kind === 'coding_agent' && !row.groupFilter),
             )}
             {renderGroup(

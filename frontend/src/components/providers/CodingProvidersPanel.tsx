@@ -6,6 +6,7 @@ import {
   CircleAlert,
   Clipboard,
   Code2,
+  Gauge,
   Loader2,
   RefreshCw,
   ShieldCheck,
@@ -40,7 +41,7 @@ const providerStatus = (provider: ProviderManifestEntry): ProviderStatus => {
 
 const STATUS_STYLES: Record<ProviderStatus, { label: string; className: string }> = {
   ready: {
-    label: 'Ready',
+    label: 'Connected',
     className: 'bg-emerald-50 text-emerald-700 ring-emerald-200 dark:bg-emerald-500/10 dark:text-emerald-300 dark:ring-emerald-500/30',
   },
   auth: {
@@ -58,7 +59,38 @@ const STATUS_STYLES: Record<ProviderStatus, { label: string; className: string }
 }
 
 const TIER_ORDER: Array<keyof ProviderDefaultTierModels> = ['builder', 'high', 'medium', 'low', 'maintenance', 'pulse']
-const GUIDED_SETUP_PROVIDERS = new Set(['claude-code', 'codex-cli', 'cursor-cli', 'muse-cli'])
+const GUIDED_SETUP_PROVIDERS = new Set(['claude-code', 'codex-cli', 'cursor-cli', 'pi-cli', 'muse-cli'])
+
+const PROVIDER_INSPECTION: Record<string, { label: string; note: string }> = {
+  'claude-code': {
+    label: 'Open terminal',
+    note: 'Type /usage to inspect the connected Claude subscription. Shell and file tools are disabled in this terminal.',
+  },
+  'codex-cli': {
+    label: 'Open terminal',
+    note: 'Type /status to inspect the connected Codex account and plan limits. The terminal runs in read-only mode with approvals disabled.',
+  },
+  'cursor-cli': {
+    label: 'Open terminal',
+    note: 'Use Cursor’s built-in commands to inspect its account and models. The terminal starts in ask mode with its sandbox enabled.',
+  },
+  'pi-cli': {
+    label: 'Open terminal',
+    note: 'Use Pi’s built-in commands to inspect or switch connected model providers. Usage remains provider-specific.',
+  },
+  'muse-cli': {
+    label: 'Open terminal',
+    note: 'Use Muse’s built-in commands to inspect the connected account. Shell and workspace writes are disabled in this terminal.',
+  },
+}
+
+const providerUsageNote = (providerId: string): string => {
+  if (providerId === 'claude-code' || providerId === 'codex-cli') return 'Current provider usage windows appear in workflow status as the CLI reports them during real runs.'
+  if (providerId === 'cursor-cli') return 'Cursor does not expose subscription quota through a safe CLI status command. AgentWorks still reports any limit response returned during a run.'
+  if (providerId === 'muse-cli') return 'Muse reports usage-limit and reset information during runs. AgentWorks shows those provider messages directly when they occur.'
+  if (providerId === 'pi-cli') return 'Pi connects several model providers. Usage and billing remain separate for each connected provider; the live model inventory is shown below.'
+  return 'AgentWorks reports provider usage and limits when the provider exposes them.'
+}
 
 function StatusBadge({ provider }: { provider: ProviderManifestEntry }) {
   const status = STATUS_STYLES[providerStatus(provider)]
@@ -83,7 +115,7 @@ function ProviderListStatus({ provider }: { provider: ProviderManifestEntry }) {
     <span
       className={`inline-flex shrink-0 items-center ${color}`}
       title={label}
-      aria-label={status === 'ready' ? `${provider.display_name} is ready` : `${provider.display_name}: ${label}`}
+      aria-label={status === 'ready' ? `${provider.display_name} is connected` : `${provider.display_name}: ${label}`}
     >
       {status === 'ready' ? <CheckCircle2 className="h-4 w-4" /> : <CircleAlert className="h-4 w-4" />}
     </span>
@@ -177,6 +209,107 @@ const uniqueModels = (models: DynamicModelEntry[], defaultModelId: string): Dyna
   })
 }
 
+function PiProviderModelCatalog({ provider }: { provider: ProviderManifestEntry }) {
+  const [response, setResponse] = useState<Awaited<ReturnType<typeof llmConfigService.getProviderModels>> | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [expanded, setExpanded] = useState(false)
+
+  useEffect(() => {
+    let cancelled = false
+    setLoading(true)
+    setExpanded(false)
+    void llmConfigService.getProviderModels('pi-cli', false, true)
+      .then(result => {
+        if (!cancelled) setResponse(result)
+      })
+      .catch(error => {
+        if (!cancelled) {
+          setResponse({
+            provider: 'pi-cli',
+            model_selection_mode: 'dynamic',
+            models: [],
+            source: 'cli_available_error',
+            error: error instanceof Error ? error.message : 'Could not inspect Pi models',
+          })
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false)
+      })
+    return () => { cancelled = true }
+  }, [provider.auth_configured, provider.usable])
+
+  const tierIDs = useMemo(() => new Set(tierModels(provider).map(model => model.model_id)), [provider])
+  const models = useMemo(() => uniqueModels(response?.models || [], provider.default_model_id).sort((left, right) => {
+    const leftRecommended = tierIDs.has(left.model_id) || left.is_default
+    const rightRecommended = tierIDs.has(right.model_id) || right.is_default
+    if (leftRecommended !== rightRecommended) return leftRecommended ? -1 : 1
+    return left.model_name.localeCompare(right.model_name)
+  }), [provider.default_model_id, response?.models, tierIDs])
+  const groupCounts = useMemo(() => {
+    const counts = new Map<string, number>()
+    for (const model of models) {
+      const group = model.group || 'Other'
+      counts.set(group, (counts.get(group) || 0) + 1)
+    }
+    return Array.from(counts.entries())
+  }, [models])
+  const visibleModels = expanded ? models : models.slice(0, 8)
+
+  return (
+    <div className="mt-5" data-testid="pi-provider-model-catalog">
+      <div className="mb-2 flex items-center justify-between gap-3">
+        <div className="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">Connected model providers</div>
+        <div className="text-[11px] text-gray-400">{loading ? 'Checking…' : `${models.length} available model${models.length === 1 ? '' : 's'}`}</div>
+      </div>
+
+      {loading ? (
+        <div className="flex items-center gap-2 rounded-lg border border-gray-200 px-3 py-3 text-xs text-gray-500 dark:border-gray-700 dark:text-gray-400">
+          <Loader2 className="h-3.5 w-3.5 animate-spin" /> Asking Pi which models are available…
+        </div>
+      ) : response?.error ? (
+        <p className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-200">
+          Pi’s live model inventory could not be checked. Complete sign-in above, then check status again.
+        </p>
+      ) : models.length === 0 ? (
+        <p className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-200">
+          No connected Pi model provider was detected. Start sign-in, type /login, and connect at least one provider.
+        </p>
+      ) : (
+        <>
+          <div className="flex flex-wrap gap-2">
+            {groupCounts.map(([group, count]) => (
+              <span key={group} className="inline-flex items-center gap-1.5 rounded-full bg-emerald-50 px-2.5 py-1 text-xs font-medium text-emerald-700 ring-1 ring-inset ring-emerald-200 dark:bg-emerald-500/10 dark:text-emerald-300 dark:ring-emerald-500/30">
+                <CheckCircle2 className="h-3 w-3" /> {group} <span className="text-emerald-600/70 dark:text-emerald-300/70">{count}</span>
+              </span>
+            ))}
+          </div>
+          <div className="mt-3 overflow-hidden rounded-lg border border-gray-200 dark:border-gray-700">
+            {visibleModels.map(model => {
+              const recommended = tierIDs.has(model.model_id) || model.is_default
+              return (
+                <div key={model.model_id} className="flex min-h-10 items-center justify-between gap-3 border-b border-gray-200 px-3 py-2 last:border-b-0 dark:border-gray-700">
+                  <div className="min-w-0">
+                    <div className="truncate text-xs font-medium text-gray-800 dark:text-gray-200" title={model.model_name}>{model.model_name}</div>
+                    <div className="truncate font-mono text-[10px] text-gray-400" title={model.model_id}>{model.model_id}</div>
+                  </div>
+                  {recommended && <span className="shrink-0 rounded bg-violet-50 px-1.5 py-0.5 text-[10px] font-medium text-violet-700 dark:bg-violet-500/10 dark:text-violet-300">Recommended</span>}
+                </div>
+              )
+            })}
+            {models.length > 8 && (
+              <button type="button" onClick={() => setExpanded(value => !value)} className="w-full border-t border-gray-200 px-3 py-2 text-left text-xs font-medium text-violet-600 hover:bg-gray-50 dark:border-gray-700 dark:text-violet-300 dark:hover:bg-gray-800/60">
+                {expanded ? 'Show fewer models' : `Show ${models.length - 8} more models`}
+              </button>
+            )}
+          </div>
+          <p className="mt-2 text-xs leading-5 text-gray-500 dark:text-gray-400">Choose the exact provider/model in a workflow. AgentWorks will not silently replace it if Pi’s catalog changes.</p>
+        </>
+      )}
+    </div>
+  )
+}
+
 function ProviderModelCatalog({ provider }: { provider: ProviderManifestEntry }) {
   const fallbackModels = useMemo(() => uniqueModels([
     ...manifestModels(provider),
@@ -208,7 +341,7 @@ function ProviderModelCatalog({ provider }: { provider: ProviderManifestEntry })
     return () => { cancelled = true }
   }, [fallbackModels, provider.default_model_id, provider.id])
 
-  if (provider.id === 'pi-cli') return null
+  if (provider.id === 'pi-cli') return <PiProviderModelCatalog provider={provider} />
 
   const visibleModels = expanded ? models : models.slice(0, 6)
   return (
@@ -472,6 +605,96 @@ export default function CodingProvidersPanel({ isOpen, onClose }: CodingProvider
                     </div>
                   )}
 
+                  {selectedProvider.usable ? (
+                    <div className="mb-6 space-y-4">
+                      <section className="rounded-xl border border-emerald-200 bg-emerald-50/70 p-4 dark:border-emerald-500/30 dark:bg-emerald-500/10">
+                        <div className="flex items-start gap-3">
+                          <ShieldCheck className="mt-0.5 h-5 w-5 shrink-0 text-emerald-600 dark:text-emerald-300" />
+                          <div className="min-w-0">
+                            <h3 className="text-sm font-semibold text-emerald-950 dark:text-emerald-100">Connected on this server</h3>
+                            <p className="mt-1 text-sm leading-6 text-emerald-800/80 dark:text-emerald-200/80">
+                              {selectedProvider.auth_source
+                                ? `Authentication detected via ${selectedProvider.auth_source}.`
+                                : 'AgentWorks detected a working provider login.'}
+                              {' '}The CLI is installed and ready for workflows.
+                            </p>
+                          </div>
+                        </div>
+                      </section>
+
+                      <div className="grid gap-3 sm:grid-cols-2">
+                        <section className="rounded-xl border border-gray-200 p-4 dark:border-gray-700">
+                          <div className="flex items-center gap-2">
+                            <Gauge className="h-4 w-4 text-violet-600 dark:text-violet-300" />
+                            <h3 className="text-sm font-semibold text-gray-900 dark:text-gray-100">Account & usage</h3>
+                          </div>
+                          <p className="mt-2 text-xs leading-5 text-gray-500 dark:text-gray-400">
+                            {providerUsageNote(selectedProvider.id)}
+                          </p>
+                          {PROVIDER_INSPECTION[selectedProvider.id] && (
+                            <p className="mt-2 text-xs leading-5 text-gray-500 dark:text-gray-400">{PROVIDER_INSPECTION[selectedProvider.id].note}</p>
+                          )}
+                          {PROVIDER_INSPECTION[selectedProvider.id] && canRunGuidedSetup && (
+                            <button
+                              type="button"
+                              onClick={() => void startGuidedSetup('inspect')}
+                              disabled={guidedStarting !== null || guidedSession?.status === 'running'}
+                              className="mt-3 inline-flex items-center gap-2 rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm font-medium text-gray-700 transition-colors hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-200 dark:hover:bg-gray-700"
+                            >
+                              {guidedStarting === 'inspect' ? <Loader2 className="h-4 w-4 animate-spin" /> : <Terminal className="h-4 w-4" />}
+                              {PROVIDER_INSPECTION[selectedProvider.id].label}
+                            </button>
+                          )}
+                          {PROVIDER_INSPECTION[selectedProvider.id] && !canRunGuidedSetup && (
+                            <p className="mt-2 text-xs text-gray-500 dark:text-gray-400">Only an administrator can open the shared server account view.</p>
+                          )}
+                        </section>
+
+                        <section className="rounded-xl border border-gray-200 p-4 dark:border-gray-700">
+                          <h3 className="text-sm font-semibold text-gray-900 dark:text-gray-100">Manage connection</h3>
+                          <p className="mt-2 text-xs leading-5 text-gray-500 dark:text-gray-400">
+                            Re-authenticate only when changing the shared provider account or repairing an expired login.
+                          </p>
+                          {canRunGuidedSetup ? (
+                            <div className="mt-3 flex flex-wrap gap-2">
+                              <button
+                                type="button"
+                                onClick={() => void startGuidedSetup('authenticate')}
+                                disabled={guidedStarting !== null || guidedSession?.status === 'running'}
+                                className="inline-flex items-center gap-2 rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm font-medium text-gray-700 transition-colors hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-200 dark:hover:bg-gray-700"
+                              >
+                                {guidedStarting === 'authenticate' ? <Loader2 className="h-4 w-4 animate-spin" /> : <Terminal className="h-4 w-4" />}
+                                {selectedProvider.id === 'pi-cli' ? 'Manage provider logins' : 'Change sign-in'}
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => void refresh()}
+                                disabled={loading}
+                                className="inline-flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-medium text-gray-600 transition-colors hover:bg-gray-100 disabled:opacity-50 dark:text-gray-300 dark:hover:bg-gray-800"
+                              >
+                                <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} /> Check status
+                              </button>
+                            </div>
+                          ) : (
+                            <p className="mt-2 text-xs text-gray-500 dark:text-gray-400">An administrator manages this shared server connection.</p>
+                          )}
+                        </section>
+                      </div>
+
+                      <section className="rounded-xl border border-violet-200 bg-violet-50/70 p-4 dark:border-violet-500/30 dark:bg-violet-500/10">
+                        <div className="flex items-start gap-3">
+                          <Clipboard className="mt-0.5 h-4 w-4 shrink-0 text-violet-600 dark:text-violet-300" />
+                          <div>
+                            <p className="text-sm font-medium text-violet-950 dark:text-violet-100">Ready to use in workflows</p>
+                            <p className="mt-1 text-sm leading-6 text-violet-800/80 dark:text-violet-200/80">
+                              Open a workflow, go to Setup → Workflow LLM configuration, then choose this provider with Use.
+                            </p>
+                          </div>
+                        </div>
+                      </section>
+                  </div>
+                  ) : (
+                  <div>
                   <SetupStep number={1} title="CLI availability" complete={selectedProvider.runtime_available === true}>
                     {selectedProvider.runtime_available === true ? (
                       <p className="flex items-center gap-1.5 text-sm text-emerald-700 dark:text-emerald-300">
@@ -484,7 +707,7 @@ export default function CodingProvidersPanel({ isOpen, onClose }: CodingProvider
                     )}
                   </SetupStep>
 
-                  <SetupStep number={2} title="Authenticate" complete={selectedProvider.auth_configured}>
+                  <SetupStep number={2} title={selectedProvider.id === 'pi-cli' ? 'Connect model providers' : 'Authenticate'} complete={selectedProvider.auth_configured}>
                     <p className="text-sm leading-6 text-gray-600 dark:text-gray-300">{guide.authenticateNote}</p>
                     {GUIDED_SETUP_PROVIDERS.has(selectedProvider.id) && selectedProvider.runtime_available === true && (
                       canRunGuidedSetup ? (
@@ -495,7 +718,9 @@ export default function CodingProvidersPanel({ isOpen, onClose }: CodingProvider
                           className="mt-3 inline-flex items-center gap-2 rounded-lg bg-violet-600 px-3 py-2 text-sm font-medium text-white transition-colors hover:bg-violet-700 disabled:cursor-not-allowed disabled:opacity-50"
                         >
                           {guidedStarting === 'authenticate' ? <Loader2 className="h-4 w-4 animate-spin" /> : <Terminal className="h-4 w-4" />}
-                          {selectedProvider.auth_configured ? 'Sign in again' : 'Start sign-in'}
+                          {selectedProvider.id === 'pi-cli'
+                            ? (selectedProvider.auth_configured ? 'Manage connections' : 'Connect a provider')
+                            : (selectedProvider.auth_configured ? 'Sign in again' : 'Start sign-in')}
                         </button>
                       ) : (
                         <p className="mt-2 text-xs text-gray-500 dark:text-gray-400">An administrator must authenticate providers on this server.</p>
@@ -546,19 +771,10 @@ export default function CodingProvidersPanel({ isOpen, onClose }: CodingProvider
                       </div>
                     </div>
                   </SetupStep>
+                  </div>
+                  )}
 
                   <div className="border-t border-gray-200 pt-5 dark:border-gray-700">
-                    <div className="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">Capabilities</div>
-                    <div className="mt-2 flex flex-wrap gap-2">
-                      {selectedProvider.capabilities.map(capability => (
-                        <span key={capability} className="rounded-md bg-gray-100 px-2 py-1 text-xs text-gray-600 dark:bg-gray-800 dark:text-gray-300">
-                          {capability.replaceAll('_', ' ')}
-                        </span>
-                      ))}
-                      {selectedProvider.supports_dynamic_models && (
-                        <span className="rounded-md bg-gray-100 px-2 py-1 text-xs text-gray-600 dark:bg-gray-800 dark:text-gray-300">dynamic models</span>
-                      )}
-                    </div>
                     <TierSummary tiers={selectedProvider.default_tier_models} />
                     <ProviderModelCatalog provider={selectedProvider} />
                   </div>

@@ -18,6 +18,10 @@ import (
 	"github.com/creack/pty"
 	"github.com/gorilla/mux"
 	"github.com/gorilla/websocket"
+	"github.com/manishiitg/mcpagent/llm"
+
+	"github.com/manishiitg/coding-agent-loop/agent_go/internal/claudeauth"
+	"github.com/manishiitg/coding-agent-loop/agent_go/internal/cursorauth"
 )
 
 const (
@@ -36,16 +40,27 @@ type providerSetupCommand struct {
 // remote shell.
 var providerSetupCommands = map[string]map[string]providerSetupCommand{
 	"claude-code": {
-		"authenticate": {command: "claude"},
+		"authenticate": {command: "claude", args: []string{"auth", "login"}},
+		"inspect":      {command: "claude", args: []string{"--tools", ""}},
 	},
 	"codex-cli": {
 		"authenticate": {command: "codex", args: []string{"login"}},
+		"inspect":      {command: "codex", args: []string{"--sandbox", "read-only", "--ask-for-approval", "never"}},
 	},
 	"cursor-cli": {
 		"authenticate": {command: "cursor-agent", args: []string{"login"}},
+		"inspect":      {command: "cursor-agent", args: []string{"--mode", "ask", "--sandbox", "enabled"}},
+	},
+	"pi-cli": {
+		// Pi exposes provider authentication from inside its TUI via /login.
+		// Keep the PTY attached so the administrator can choose the underlying
+		// provider and complete its browser/API-key flow without server access.
+		"authenticate": {command: "pi"},
+		"inspect":      {command: "pi"},
 	},
 	"muse-cli": {
 		"authenticate": {command: "muse", args: []string{"login"}},
+		"inspect":      {command: "muse", args: []string{"--disable-shell", "--disable-write"}},
 	},
 }
 
@@ -150,7 +165,9 @@ func (s *providerSetupSession) finish(err error) {
 		close(subscriber)
 		delete(s.subscribers, subscriber)
 	}
+	provider := s.provider
 	s.mu.Unlock()
+	invalidateProviderAuthProbe(provider)
 }
 
 func (s *providerSetupSession) subscribe() ([]byte, <-chan []byte, func()) {
@@ -211,11 +228,13 @@ func (s *providerSetupSession) stop() {
 	s.updatedAt = time.Now().UTC()
 	cancel := s.cancel
 	terminal := s.terminal
+	provider := s.provider
 	for subscriber := range s.subscribers {
 		close(subscriber)
 		delete(s.subscribers, subscriber)
 	}
 	s.mu.Unlock()
+	invalidateProviderAuthProbe(provider)
 	if cancel != nil {
 		cancel()
 	}
@@ -233,16 +252,22 @@ func newProviderSetupManager() *providerSetupManager {
 	return &providerSetupManager{sessions: make(map[string]*providerSetupSession)}
 }
 
-func (m *providerSetupManager) start(ownerID, provider, action string, cols, rows int) (*providerSetupSession, error) {
+func (m *providerSetupManager) start(ownerID, provider, action string, cols, rows int, environment []string, cleanup func()) (*providerSetupSession, error) {
+	if cleanup == nil {
+		cleanup = func() {}
+	}
 	actions, ok := providerSetupCommands[provider]
 	if !ok {
+		cleanup()
 		return nil, fmt.Errorf("guided setup is not available for provider %q", provider)
 	}
 	spec, ok := actions[action]
 	if !ok {
+		cleanup()
 		return nil, fmt.Errorf("guided %s is not available for provider %q", action, provider)
 	}
 	if _, err := exec.LookPath(spec.command); err != nil {
+		cleanup()
 		return nil, fmt.Errorf("required command %q is not available on the server", spec.command)
 	}
 
@@ -250,6 +275,7 @@ func (m *providerSetupManager) start(ownerID, provider, action string, cols, row
 	for _, existing := range m.sessions {
 		if existing.provider == provider && existing.isRunning() {
 			m.mu.Unlock()
+			cleanup()
 			return nil, fmt.Errorf("a %s setup session is already running", provider)
 		}
 	}
@@ -257,11 +283,15 @@ func (m *providerSetupManager) start(ownerID, provider, action string, cols, row
 
 	id, err := randomProviderSetupID()
 	if err != nil {
+		cleanup()
 		return nil, err
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), providerSetupMaxDuration)
 	command := exec.CommandContext(ctx, spec.command, spec.args...)
-	command.Env = append(os.Environ(), "TERM=xterm-256color", "COLORTERM=truecolor")
+	if environment == nil {
+		environment = os.Environ()
+	}
+	command.Env = append(environment, "TERM=xterm-256color", "COLORTERM=truecolor")
 	cols, rows, validSize := clampLiveAttachGeometry(cols, rows)
 	if !validSize {
 		cols, rows = liveAttachDefaultCols, liveAttachDefaultRows
@@ -269,6 +299,7 @@ func (m *providerSetupManager) start(ownerID, provider, action string, cols, row
 	terminal, err := pty.StartWithSize(command, &pty.Winsize{Cols: uint16(cols), Rows: uint16(rows)})
 	if err != nil {
 		cancel()
+		cleanup()
 		return nil, fmt.Errorf("start %s %s: %w", provider, action, err)
 	}
 	now := time.Now().UTC()
@@ -289,6 +320,7 @@ func (m *providerSetupManager) start(ownerID, provider, action string, cols, row
 	m.mu.Unlock()
 
 	go func() {
+		defer cleanup()
 		buffer := make([]byte, 32*1024)
 		for {
 			n, readErr := terminal.Read(buffer)
@@ -344,10 +376,46 @@ func (api *StreamingAPI) providerSetupManager() *providerSetupManager {
 }
 
 type startProviderSetupRequest struct {
-	Provider string `json:"provider"`
-	Action   string `json:"action"`
-	Cols     int    `json:"cols,omitempty"`
-	Rows     int    `json:"rows,omitempty"`
+	Provider      string `json:"provider"`
+	Action        string `json:"action"`
+	WorkspacePath string `json:"workspace_path,omitempty"`
+	Cols          int    `json:"cols,omitempty"`
+	Rows          int    `json:"rows,omitempty"`
+}
+
+// workflowProviderSetupEnvironment builds an isolated CLI environment for an
+// account-inspection terminal. The credential is resolved server-side and is
+// never returned to the browser or stored in the setup session snapshot.
+//
+// Claude gets a throwaway config directory in addition to stripped Anthropic
+// variables. That prevents a rejected workflow token from silently falling
+// back to the server's saved Claude login. Cursor similarly loses any ambient
+// login token before the workflow API key is injected.
+func workflowProviderSetupEnvironment(provider string, keys *llm.ProviderAPIKeys) ([]string, func(), error) {
+	if keys == nil {
+		return nil, nil, errors.New("no workflow provider credential is configured")
+	}
+	switch provider {
+	case string(llm.ProviderClaudeCode):
+		if keys.ClaudeCodeOAuthToken == nil || strings.TrimSpace(*keys.ClaudeCodeOAuthToken) == "" {
+			return nil, nil, errors.New("no Claude Code setup token is configured for this workflow")
+		}
+		configDir, err := os.MkdirTemp("", "agentworks-claude-terminal-*")
+		if err != nil {
+			return nil, nil, errors.New("could not prepare the workflow Claude terminal")
+		}
+		cleanup := func() { _ = os.RemoveAll(configDir) }
+		return claudeauth.CheckEnv(os.Environ(), configDir, strings.TrimSpace(*keys.ClaudeCodeOAuthToken)), cleanup, nil
+	case string(llm.ProviderCursorCLI):
+		if keys.CursorCLI == nil || strings.TrimSpace(*keys.CursorCLI) == "" {
+			return nil, nil, errors.New("no Cursor API key is configured for this workflow")
+		}
+		environment := cursorauth.CheckEnv(os.Environ())
+		environment = append(environment, "CURSOR_API_KEY="+strings.TrimSpace(*keys.CursorCLI))
+		return environment, func() {}, nil
+	default:
+		return nil, nil, fmt.Errorf("workflow-scoped terminals are not available for provider %q", provider)
+	}
 }
 
 func (api *StreamingAPI) handleStartProviderSetup(w http.ResponseWriter, r *http.Request) {
@@ -362,7 +430,32 @@ func (api *StreamingAPI) handleStartProviderSetup(w http.ResponseWriter, r *http
 	}
 	request.Provider = strings.TrimSpace(request.Provider)
 	request.Action = strings.TrimSpace(request.Action)
-	session, err := api.providerSetupManager().start(GetUserIDFromContext(r.Context()), request.Provider, request.Action, request.Cols, request.Rows)
+	request.WorkspacePath = strings.TrimSpace(request.WorkspacePath)
+	var environment []string
+	var cleanup func()
+	if request.WorkspacePath != "" {
+		if request.Action != "inspect" {
+			http.Error(w, `{"error":"workflow context is only supported for account inspection"}`, http.StatusBadRequest)
+			return
+		}
+		if !requireWorkflowVisible(w, r, request.WorkspacePath) {
+			return
+		}
+		keys, resolveErr := api.resolveEffectiveAPIKeys(r.Context(), GetUserIDFromContext(r.Context()), request.WorkspacePath, nil)
+		if resolveErr != nil {
+			http.Error(w, `{"error":"could not resolve the workflow provider credential"}`, http.StatusInternalServerError)
+			return
+		}
+		var environmentErr error
+		environment, cleanup, environmentErr = workflowProviderSetupEnvironment(request.Provider, keys)
+		if environmentErr != nil {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadRequest)
+			_ = json.NewEncoder(w).Encode(map[string]string{"error": environmentErr.Error()})
+			return
+		}
+	}
+	session, err := api.providerSetupManager().start(GetUserIDFromContext(r.Context()), request.Provider, request.Action, request.Cols, request.Rows, environment, cleanup)
 	if err != nil {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusBadRequest)

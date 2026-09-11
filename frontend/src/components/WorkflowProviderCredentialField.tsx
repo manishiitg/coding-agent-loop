@@ -1,10 +1,13 @@
-import { useCallback, useEffect, useState } from 'react';
-import { CheckCircle2, Eye, EyeOff, KeyRound, Loader2, Trash2 } from 'lucide-react';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { CheckCircle2, Eye, EyeOff, KeyRound, Loader2, Terminal, Trash2 } from 'lucide-react';
 import { Button } from './ui/Button';
 import { secretsApi, type WorkflowCredentialProvider } from '../api/secrets';
 import { useChatStore } from '../stores/useChatStore';
+import { useAuthStore } from '../stores/useAuthStore';
 import { READ_ONLY_TITLE } from '../hooks/useCanWriteWorkflow';
 import { maskCredentialPreviewClient } from '../utils/maskCredentialPreview';
+import GuidedProviderTerminal from './providers/GuidedProviderTerminal';
+import { llmConfigService, type ProviderSetupSession } from '../services/llm-config-api';
 
 
 export interface WorkflowProviderCredentialCopy {
@@ -79,12 +82,36 @@ export function WorkflowProviderCredentialField({
   const [isDeleting, setIsDeleting] = useState(false);
   const [isRevealed, setIsRevealed] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [terminalSession, setTerminalSession] = useState<ProviderSetupSession | null>(null);
+  const terminalSessionRef = useRef<ProviderSetupSession | null>(null);
+  const [isStartingTerminal, setIsStartingTerminal] = useState(false);
+  const isMultiUserMode = useAuthStore(state => state.isMultiUserMode);
+  const isAdmin = useAuthStore(state => state.user?.is_admin === true);
+  const supportsWorkflowTerminal = provider === 'claude-code' || provider === 'cursor-cli';
+  const canOpenTerminal = supportsWorkflowTerminal && (!isMultiUserMode || isAdmin);
 
   useEffect(() => {
     setValue('');
     setIsRevealed(false);
     setError(null);
+    const current = terminalSessionRef.current;
+    if (current?.status === 'running') {
+      void llmConfigService.cancelProviderSetup(current.id).catch(() => undefined);
+    }
+    terminalSessionRef.current = null;
+    setTerminalSession(null);
   }, [resetKey]);
+
+  useEffect(() => {
+    terminalSessionRef.current = terminalSession;
+  }, [terminalSession]);
+
+  useEffect(() => () => {
+    const current = terminalSessionRef.current;
+    if (current?.status === 'running') {
+      void llmConfigService.cancelProviderSetup(current.id).catch(() => undefined);
+    }
+  }, []);
 
   useEffect(() => {
     onDirtyChange?.(value.trim() !== '');
@@ -161,6 +188,29 @@ export function WorkflowProviderCredentialField({
       setIsDeleting(false);
     }
   }, [copy.noun, copy.removedMessage, provider, workflowCredentialPath]);
+
+  const handleOpenTerminal = useCallback(async () => {
+    if (!workflowCredentialPath || !configured || !canOpenTerminal) return;
+    setIsStartingTerminal(true);
+    setError(null);
+    try {
+      const session = await llmConfigService.startProviderSetup(
+        provider,
+        'inspect',
+        100,
+        24,
+        workflowCredentialPath,
+      );
+      setTerminalSession(session);
+    } catch (err) {
+      const responseMessage = (err as { response?: { data?: { error?: string } } })?.response?.data?.error;
+      const detail = responseMessage || (err instanceof Error ? err.message : 'Could not open workflow terminal');
+      setError(detail);
+      useChatStore.getState().addToast(`Failed to open workflow terminal: ${detail}`, 'error');
+    } finally {
+      setIsStartingTerminal(false);
+    }
+  }, [canOpenTerminal, configured, provider, workflowCredentialPath]);
 
   return (
     <div>
@@ -245,18 +295,42 @@ export function WorkflowProviderCredentialField({
             This {copy.noun} is private to the current user and automation.
           </span>
           {configured && (
-            <button
-              type="button"
-              onClick={handleDelete}
-              disabled={readOnly || isDeleting || isSaving || isFormBusy}
-              title={readOnly ? READ_ONLY_TITLE : undefined}
-              className="inline-flex shrink-0 items-center gap-1 text-xs text-red-600 hover:text-red-700 disabled:opacity-50 dark:text-red-400"
-            >
-              {isDeleting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}
-              Remove {copy.noun}
-            </button>
+            <div className="flex flex-wrap items-center gap-3">
+              {canOpenTerminal && (
+                <button
+                  type="button"
+                  onClick={() => void handleOpenTerminal()}
+                  disabled={isStartingTerminal || terminalSession?.status === 'running'}
+                  className="inline-flex shrink-0 items-center gap-1 text-xs font-medium text-violet-600 hover:text-violet-700 disabled:opacity-50 dark:text-violet-300"
+                  title={`Open ${provider === 'claude-code' ? 'Claude Code' : 'Cursor'} with this workflow's saved ${copy.noun}`}
+                >
+                  {isStartingTerminal ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Terminal className="h-3.5 w-3.5" />}
+                  Open workflow terminal
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={handleDelete}
+                disabled={readOnly || isDeleting || isSaving || isFormBusy || terminalSession?.status === 'running'}
+                title={readOnly ? READ_ONLY_TITLE : undefined}
+                className="inline-flex shrink-0 items-center gap-1 text-xs text-red-600 hover:text-red-700 disabled:opacity-50 dark:text-red-400"
+              >
+                {isDeleting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}
+                Remove {copy.noun}
+              </button>
+            </div>
           )}
         </div>
+
+        {terminalSession && (
+          <div className="mt-3">
+            <GuidedProviderTerminal
+              session={terminalSession}
+              onFinished={setTerminalSession}
+              onClose={() => setTerminalSession(null)}
+            />
+          </div>
+        )}
       </div>
     </div>
   );

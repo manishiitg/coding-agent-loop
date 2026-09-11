@@ -55,6 +55,26 @@ func TestProviderAuthConfiguredTreatsPiProviderKeysAsPiAuth(t *testing.T) {
 	}
 }
 
+func TestProviderAuthConfiguredDetectsPiLocalLoginFromAvailableModels(t *testing.T) {
+	original := listPiCLIModelsFn
+	listPiCLIModelsFn = func() ([]dynamicModelEntry, error) {
+		return []dynamicModelEntry{{ModelID: "google/gemini-3.8-flash", Group: "Gemini"}}, nil
+	}
+	invalidatePiProviderCaches()
+	t.Cleanup(func() {
+		listPiCLIModelsFn = original
+		invalidatePiProviderCaches()
+	})
+
+	configured, source := providerAuthConfigured("pi-cli", &llm.ProviderAPIKeys{})
+	if !configured {
+		t.Fatal("pi-cli auth configured = false, want local Pi login detected from --list-models")
+	}
+	if source != "Pi provider login or workspace provider auth" {
+		t.Fatalf("pi-cli auth source = %q", source)
+	}
+}
+
 func TestRetiredMediaProvidersAreNeitherCollectableNorAdvertised(t *testing.T) {
 	keys := &StoredProviderKeys{}
 	for _, provider := range []string{"minimax", "elevenlabs", "deepgram"} {
@@ -157,6 +177,36 @@ func TestProviderAuthConfiguredAcceptsCursorPlainLoggedInStatus(t *testing.T) {
 	}
 }
 
+func TestProviderAuthConfiguredUsesActualClaudeLoginStatus(t *testing.T) {
+	withFakeExecutable(t, "claude")
+	withClaudeStatus(t, `{"loggedIn":false,"authMethod":"none"}`, nil)
+	configured, _ := providerAuthConfigured("claude-code", &llm.ProviderAPIKeys{})
+	if configured {
+		t.Fatal("claude-code auth configured = true for a logged-out installed CLI")
+	}
+
+	withClaudeStatus(t, `{"loggedIn":true,"authMethod":"claude.ai"}`, nil)
+	configured, _ = providerAuthConfigured("claude-code", &llm.ProviderAPIKeys{})
+	if !configured {
+		t.Fatal("claude-code auth configured = false for a confirmed CLI login")
+	}
+}
+
+func TestProviderAuthConfiguredUsesActualCodexLoginStatus(t *testing.T) {
+	withFakeExecutable(t, "codex")
+	withCodexStatus(t, "Not logged in", nil)
+	configured, _ := providerAuthConfigured("codex-cli", &llm.ProviderAPIKeys{})
+	if configured {
+		t.Fatal("codex-cli auth configured = true for a logged-out installed CLI")
+	}
+
+	withCodexStatus(t, "Logged in using ChatGPT", nil)
+	configured, _ = providerAuthConfigured("codex-cli", &llm.ProviderAPIKeys{})
+	if !configured {
+		t.Fatal("codex-cli auth configured = false for a confirmed CLI login")
+	}
+}
+
 func TestCursorCLIAuthProbeKeepsLastConfirmedLoginOnTransientFailure(t *testing.T) {
 	t.Setenv("WORKSPACE_DOCS_PATH", t.TempDir())
 	withFakeExecutable(t, "cursor-agent")
@@ -235,12 +285,38 @@ func withCursorStatusJSON(t *testing.T, output string, err error) {
 	})
 }
 
+func withClaudeStatus(t *testing.T, output string, err error) {
+	t.Helper()
+	previous := claudeCLIAuthStatusCommand
+	resetCLIAuthProbeCache(&claudeCLIAuthProbeCache)
+	claudeCLIAuthStatusCommand = func(context.Context) ([]byte, error) { return []byte(output), err }
+	t.Cleanup(func() {
+		claudeCLIAuthStatusCommand = previous
+		resetCLIAuthProbeCache(&claudeCLIAuthProbeCache)
+	})
+}
+
+func withCodexStatus(t *testing.T, output string, err error) {
+	t.Helper()
+	previous := codexCLIAuthStatusCommand
+	resetCLIAuthProbeCache(&codexCLIAuthProbeCache)
+	codexCLIAuthStatusCommand = func(context.Context) ([]byte, error) { return []byte(output), err }
+	t.Cleanup(func() {
+		codexCLIAuthStatusCommand = previous
+		resetCLIAuthProbeCache(&codexCLIAuthProbeCache)
+	})
+}
+
+func resetCLIAuthProbeCache(cache *cliAuthProbeCache) {
+	cache.Lock()
+	defer cache.Unlock()
+	cache.checkedAt = time.Time{}
+	cache.authenticated = false
+	cache.conclusive = false
+}
+
 func resetCursorCLIAuthProbeCache() {
-	cursorCLIAuthProbeCache.Lock()
-	defer cursorCLIAuthProbeCache.Unlock()
-	cursorCLIAuthProbeCache.checkedAt = time.Time{}
-	cursorCLIAuthProbeCache.authenticated = false
-	cursorCLIAuthProbeCache.conclusive = false
+	resetCLIAuthProbeCache(&cursorCLIAuthProbeCache)
 }
 
 func containsLLMCapabilityString(values []string, want string) bool {

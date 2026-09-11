@@ -8,6 +8,7 @@ import { READ_ONLY_TITLE } from '../../../hooks/useCanWriteWorkflow'
 import type { WorkflowBots } from './useWorkflowBots'
 import { StatusBanner } from './StatusBanner'
 import { GmailSetupGuide } from './GmailSetupGuide'
+import { gmailConnectionUsesSharedOAuthClient } from './gmailSharedOAuthClient'
 
 // ── Email notifications (account-wide, shared by every workflow) ──────────
 
@@ -218,6 +219,8 @@ export function GmailNotifications({ bots }: { bots: GmailNotificationsBots }) {
     gmailNewClientEmail, setGmailNewClientEmail,
     createGmailOAuthClient, removeGmailMailboxAndClient,
   } = bots
+
+  const [sharedClientConfirm, setSharedClientConfirm] = useState<string | null>(null)
 
   const handleRemoveMailbox = (conn: { id: string; display_name: string; client_name?: string }) => {
     if (!window.confirm(`Remove "${conn.display_name}"? This also removes its OAuth client if no other account uses it.`)) return
@@ -450,7 +453,13 @@ export function GmailNotifications({ bots }: { bots: GmailNotificationsBots }) {
 
                         <div className="mt-2 flex flex-wrap gap-2">
                           <button
-                            onClick={() => connectGmailAccount(conn.id)}
+                            onClick={() => {
+                              if (gmailConnectionUsesSharedOAuthClient(conn)) {
+                                setSharedClientConfirm(conn.id)
+                                return
+                              }
+                              connectGmailAccount(conn.id)
+                            }}
                             disabled={readOnly || gmailAuthPending !== null}
                             title={readOnly ? READ_ONLY_TITLE : undefined}
                             className="rounded border border-primary px-2 py-1 text-xs text-primary hover:bg-primary/10 disabled:opacity-40"
@@ -498,6 +507,37 @@ export function GmailNotifications({ bots }: { bots: GmailNotificationsBots }) {
                             Remove
                           </button>
                         </div>
+
+                        {sharedClientConfirm === conn.id && (
+                          <div className="mt-2 rounded-md border border-amber-500/40 bg-amber-50 p-2 dark:bg-amber-900/20">
+                            <p className="text-xs text-amber-900 dark:text-amber-200">
+                              This older account uses the host&rsquo;s shared Google OAuth client, which may also back
+                              the <code>gws</code> login in its terminal. Reconnecting updates that shared Google
+                              authorization. Existing permissions are preserved, but the authorization is not isolated
+                              to this account row.
+                            </p>
+                            <p className="mt-1 text-xs text-amber-900 dark:text-amber-200">
+                              To keep the host login separate, cancel and add the mailbox with its own OAuth client.
+                            </p>
+                            <div className="mt-1.5 flex gap-2">
+                              <button
+                                onClick={() => {
+                                  setSharedClientConfirm(null)
+                                  connectGmailAccount(conn.id)
+                                }}
+                                className="rounded border border-amber-600 px-2 py-1 text-xs text-amber-900 hover:bg-amber-100 dark:text-amber-200 dark:hover:bg-amber-900/40"
+                              >
+                                Reconnect anyway
+                              </button>
+                              <button
+                                onClick={() => setSharedClientConfirm(null)}
+                                className="rounded border border-border px-2 py-1 text-xs text-muted-foreground hover:text-foreground"
+                              >
+                                Cancel
+                              </button>
+                            </div>
+                          </div>
+                        )}
 
                         {editGrantsSavedConnId === conn.id && (
                           <StatusBanner tone="success">

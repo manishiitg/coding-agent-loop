@@ -325,15 +325,28 @@ func BeginGmailOAuth(connectionID, clientName, redirectURL string, includeRead b
 	}
 	gmailOAuthPendingMu.Unlock()
 
+	return cfg.AuthCodeURL(state, gmailOAuthAuthCodeOptions(clientName)...), nil
+}
+
+func gmailOAuthAuthCodeOptions(clientName string) []oauth2.AuthCodeOption {
 	// AccessTypeOffline is what yields a refresh token at all; ApprovalForce
 	// makes Google re-issue one even if the user has consented before, which
 	// otherwise returns an access token only and leaves the connection unable
 	// to send once it expires.
-	return cfg.AuthCodeURL(state,
+	options := []oauth2.AuthCodeOption{
 		oauth2.AccessTypeOffline,
 		oauth2.ApprovalForce,
 		oauth2.SetAuthURLParam("prompt", "select_account consent"),
-	), nil
+	}
+
+	// The unnamed legacy client is also used by the host's gws login. Preserve
+	// its broader grant when AgentWorks reconnects that account. Named clients
+	// are isolated per account and intentionally omit this option so removing a
+	// permission in the UI takes effect on the next reconnect.
+	if strings.TrimSpace(clientName) == "" {
+		options = append(options, oauth2.SetAuthURLParam("include_granted_scopes", "true"))
+	}
+	return options
 }
 
 // CompleteGmailOAuth exchanges the callback code and stores the credential.

@@ -70,8 +70,8 @@ export default function LearningsView({ workspacePath, headerAction }: Learnings
   // Displayed as a featured card at the top (global skill is the primary artifact
   // under the current architecture — per-step learnings are secondary).
   const [globalSkillContent, setGlobalSkillContent] = useState<string>('')
-  // globalFiles holds shared files under learnings/ (root markdown plus
-  // references/, scripts/, assets/, and _global/) except the already-rendered SKILL.md. Each entry is
+  // globalFiles holds shared files under learnings/_global/ (root markdown plus
+  // references/, scripts/, and assets/) except the already-rendered SKILL.md. Each entry is
   // keyed by its relative path (e.g. "references/selectors.md") so grouping by dir
   // is trivial.
   const [globalFiles, setGlobalFiles] = useState<Array<{ name: string; relPath: string; absPath: string; dir: string }>>([])
@@ -83,9 +83,8 @@ export default function LearningsView({ workspacePath, headerAction }: Learnings
   const [expandedFilePaths, setExpandedFilePaths] = useState<Set<string>>(new Set())
   const [fileContentCache, setFileContentCache] = useState<Record<string, string>>({})
 
-  // Fetch the shared learning package on mount: SKILL.md content + the file
-  // tree (root markdown, references/, scripts/, assets/, and _global/)
-  // decided to write). Per-file content is lazy-loaded on click.
+  // Fetch the shared learning package on mount: SKILL.md content + the full
+  // learnings/_global/ tree. Per-file content is lazy-loaded on click.
   useEffect(() => {
     if (!workspacePath) return
     let cancelled = false
@@ -99,14 +98,16 @@ export default function LearningsView({ workspacePath, headerAction }: Learnings
     setExpandedFilePaths(new Set())
 
     const learningsPath = `${workspacePath}/learnings`
+    const globalLearningsPath = `${learningsPath}/_global`
     const resolveAbs = (raw: string, relPath?: string): string => {
       const clean = raw.replace(/^\/+/, '')
       if (raw.startsWith(workspacePath) || clean.startsWith(workspacePath)) return clean
       if (clean.includes('/learnings/_global/')) return clean
       if (clean.startsWith('learnings/_global/')) return `${workspacePath}/${clean}`
+      if (relPath) return `${globalLearningsPath}/${relPath}`
       if (clean.includes('/learnings/')) return clean
       if (clean.startsWith('learnings/')) return `${workspacePath}/${clean}`
-      return `${learningsPath}/${relPath || clean}`
+      return `${globalLearningsPath}/${clean}`
     }
     const relFromLearnings = (absOrRel: string): string => {
       const normalized = absOrRel.replace(/\\/g, '/')
@@ -116,16 +117,20 @@ export default function LearningsView({ workspacePath, headerAction }: Learnings
       if (normalized.startsWith('learnings/')) return normalized.slice('learnings/'.length)
       return normalized.replace(/^\/+/, '')
     }
+    const relFromGlobalLearnings = (absOrRel: string): string => {
+      const rel = normalizeGlobalSkillRelPath(relFromLearnings(absOrRel))
+      return rel.startsWith('_global/') ? rel.slice('_global/'.length) : rel
+    }
     const isGlobalLearningPackageFile = (relPath: string): boolean => {
       if (!relPath || relPath.endsWith('/')) return false
       if (relPath === 'SKILL.md') return true
       if (/^[^/]+\.(md|markdown)$/i.test(relPath)) return true
-      return /^(?:_global|references|scripts|assets)\//.test(relPath)
+      return /^(?:references|scripts|assets)\//.test(relPath)
     }
 
     ;(async () => {
       try {
-        const filesResponse = await agentApi.getPlannerFiles(learningsPath, 500, 3)
+        const filesResponse = await agentApi.getPlannerFiles(globalLearningsPath, -1)
         const files: PlannerFile[] = Array.isArray(filesResponse)
           ? filesResponse as PlannerFile[]
           : (filesResponse?.data && Array.isArray(filesResponse.data) ? filesResponse.data as PlannerFile[] : [])
@@ -149,11 +154,11 @@ export default function LearningsView({ workspacePath, headerAction }: Learnings
 
         // Pull SKILL.md first for the featured markdown view.
         const skill = flatFiles.find(f => {
-          const rel = normalizeGlobalSkillRelPath(relFromLearnings(f.filepath || ''))
-          return rel === '_global/SKILL.md' || rel === 'SKILL.md'
+          const rel = relFromGlobalLearnings(f.filepath || '')
+          return rel === 'SKILL.md'
         })
         if (skill) {
-          const skillRelPath = normalizeGlobalSkillRelPath(relFromLearnings(skill.filepath || ''))
+          const skillRelPath = relFromGlobalLearnings(skill.filepath || '')
           const skillPath = resolveAbs(skill.filepath || '', skillRelPath)
           const contentResp = await agentApi.getPlannerFileContent(skillPath)
           if (!cancelled && contentResp.success && contentResp.data?.content) {
@@ -167,9 +172,9 @@ export default function LearningsView({ workspacePath, headerAction }: Learnings
           }
         }
 
-        const freshnessFile = flatFiles.find(f => normalizeGlobalSkillRelPath(relFromLearnings(f.filepath || '')) === '_global/_freshness.json')
+        const freshnessFile = flatFiles.find(f => relFromGlobalLearnings(f.filepath || '') === '_freshness.json')
         if (freshnessFile) {
-          const freshnessPath = resolveAbs(freshnessFile.filepath || '', '_global/_freshness.json')
+          const freshnessPath = resolveAbs(freshnessFile.filepath || '', '_freshness.json')
           const freshnessResp = await agentApi.getPlannerFileContent(freshnessPath)
           if (!cancelled && freshnessResp.success && freshnessResp.data?.content) {
             setGlobalFileFreshness(parseGlobalFileFreshness(freshnessResp.data.content))
@@ -182,9 +187,9 @@ export default function LearningsView({ workspacePath, headerAction }: Learnings
         const dedupedByRelPath = new Map<string, { relPath: string; rawPath: string }>()
         for (const file of flatFiles) {
           const rawPath = file.filepath || ''
-          const relPath = normalizeGlobalSkillRelPath(relFromLearnings(rawPath))
+          const relPath = relFromGlobalLearnings(rawPath)
 
-          if (!relPath || relPath === 'SKILL.md' || relPath === '_global/SKILL.md') continue
+          if (!relPath || relPath === 'SKILL.md') continue
           // Freshness is display metadata for the files below, not a learning
           // artifact users need to open on its own.
           if (relPath === '_freshness.json') continue
@@ -243,12 +248,16 @@ export default function LearningsView({ workspacePath, headerAction }: Learnings
   const relPathFromGlobalLink = useCallback((filepath: string, displayPath?: string): string | null => {
     const normalized = filepath.replace(/\\/g, '/')
     const candidates = [normalized, displayPath?.replace(/\\/g, '/')].filter((value): value is string => Boolean(value))
+    const toGlobalRelPath = (value: string): string | null => {
+      const relPath = normalizeGlobalSkillRelPath(value)
+      const globalRelPath = relPath.startsWith('_global/') ? relPath.slice('_global/'.length) : relPath
+      return globalRelPath.split('/').includes('..') ? null : globalRelPath
+    }
     const slashMarker = '/learnings/'
     for (const candidate of candidates) {
       const slashIndex = candidate.indexOf(slashMarker)
       if (slashIndex !== -1) {
-        const relPath = normalizeGlobalSkillRelPath(candidate.slice(slashIndex + slashMarker.length))
-        return relPath.split('/').includes('..') ? null : relPath
+        return toGlobalRelPath(candidate.slice(slashIndex + slashMarker.length))
       }
     }
 
@@ -256,22 +265,21 @@ export default function LearningsView({ workspacePath, headerAction }: Learnings
     for (const candidate of candidates) {
       const markerIndex = candidate.indexOf(marker)
       if (markerIndex !== -1) {
-        const relPath = normalizeGlobalSkillRelPath(candidate.slice(markerIndex + marker.length))
-        return relPath.split('/').includes('..') ? null : relPath
+        return toGlobalRelPath(candidate.slice(markerIndex + marker.length))
       }
     }
 
     for (const candidate of candidates) {
-      const relPath = normalizeGlobalSkillRelPath(candidate)
-      if (!relPath || relPath.split('/').includes('..')) continue
+      const relPath = toGlobalRelPath(candidate)
+      if (!relPath) continue
       if (globalFiles.some(file => file.relPath === relPath)) {
         return relPath
       }
     }
 
-    const relPath = normalizeGlobalSkillRelPath(normalized)
+    const relPath = toGlobalRelPath(normalized)
     if (relPath && /^[^/]+\.(md|markdown)$/i.test(relPath)) {
-      return relPath.split('/').includes('..') ? null : relPath
+      return relPath
     }
 
     return null
@@ -290,7 +298,7 @@ export default function LearningsView({ workspacePath, headerAction }: Learnings
     }
 
     const existing = globalFiles.find(file => file.relPath === relPath)
-    const absPath = existing?.absPath || `${workspacePath}/learnings/${relPath}`
+    const absPath = existing?.absPath || `${workspacePath}/learnings/_global/${relPath}`
     return { relPath, absPath }
   }, [globalFiles, relPathFromGlobalLink, workspacePath])
 

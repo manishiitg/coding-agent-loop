@@ -10671,7 +10671,7 @@ func (api *StreamingAPI) registerMultiAgentMCPServerTools(registrar interface {
 
 	if err := registerTool(
 		"search_mcp_catalog",
-		"Search for an MCP (Model Context Protocol) server for a given service or capability — e.g. \"is there an MCP for ClickUp?\". Searches three sources: our own curated catalog (already vetted, ready to connect from the connector directory), GitHub's public MCP Registry, and Smithery's directory. Catalog hits report whether the user has already connected them; GitHub/Smithery hits are NOT vetted — do not assume they are safe to add sight-unseen, and note to the user that adding one (especially an OAuth or locally-run package one) needs the same scrutiny a human would give any third-party integration. Use add_mcp_server only for a catalog hit or a Smithery/GitHub hit the user has explicitly reviewed and asked to add.",
+		"Search for an MCP (Model Context Protocol) server for a given service or capability — e.g. \"is there an MCP for ClickUp?\". Searches our curated catalog, GitHub's public MCP Registry, and the official MCP Registry. Registries supply metadata, not a required hosting or authorization service. Prefer the provider's own documented endpoint. If no suitable MCP is found, continue with an internet search using available web/search/browser tools and verify the provider's official documentation or repository. A registry miss does not establish that no MCP exists; never invent an endpoint. Catalog hits report whether the user has already connected them; public registry hits are NOT vetted — do not assume they are safe to add sight-unseen, and note to the user that adding one (especially an OAuth or locally-run package one) needs the same scrutiny a human would give any third-party integration. Use install_mcp_server for a verified provider URL; add_mcp_server is for a custom configuration whose auth is already known.",
 		map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
@@ -10683,7 +10683,8 @@ func (api *StreamingAPI) registerMultiAgentMCPServerTools(registrar interface {
 			"required": []string{"query"},
 		},
 		func(ctx context.Context, args map[string]interface{}) (string, error) {
-			query := strings.TrimSpace(fmt.Sprint(args["query"]))
+			query, _ := args["query"].(string)
+			query = strings.TrimSpace(query)
 			if query == "" {
 				return "query is required.", nil
 			}
@@ -10698,7 +10699,7 @@ func (api *StreamingAPI) registerMultiAgentMCPServerTools(registrar interface {
 			sb.WriteString(fmt.Sprintf("## MCP search: %q\n\n", query))
 
 			// Our own catalog first: every entry here was hand-verified (OAuth
-			// shape, live-probed), unlike the two sources below.
+			// shape, live-probed), unlike the public registries below.
 			var catalogHits []string
 			for name, server := range api.mcpConfig.MCPServers {
 				if !strings.Contains(strings.ToLower(name), needle) {
@@ -10745,12 +10746,13 @@ func (api *StreamingAPI) registerMultiAgentMCPServerTools(registrar interface {
 						desc = "(no description provided)"
 					}
 					sb.WriteString(fmt.Sprintf("- **%s**", r.Name))
-					if r.Identifier != "" {
-						sb.WriteString(fmt.Sprintf(" (`%s` — pass this as qualified_name to inspect_mcp_server for its full tool list)", r.Identifier))
-					}
+
 					sb.WriteString(fmt.Sprintf(" — %s. %s", desc, kind))
 					if r.Link != "" {
-						sb.WriteString(fmt.Sprintf(" (%s)", r.Link))
+						sb.WriteString(fmt.Sprintf(" (endpoint or repository: %s)", r.Link))
+						if r.RepositoryURL != "" && r.RepositoryURL != r.Link {
+							sb.WriteString(fmt.Sprintf("; source: %s", r.RepositoryURL))
+						}
 					}
 					sb.WriteString("\n")
 				}
@@ -10760,67 +10762,11 @@ func (api *StreamingAPI) registerMultiAgentMCPServerTools(registrar interface {
 			githubResults, githubErr := services.SearchGitHubMCPRegistry(ctx, query, 10)
 			appendExternal("GitHub MCP Registry", githubResults, githubErr)
 
-			if services.SmitheryConfigured() {
-				smitheryResults, smitheryErr := services.SearchSmitheryRegistry(ctx, query, 10)
-				appendExternal("Smithery", smitheryResults, smitheryErr)
-			} else {
-				sb.WriteString("### Smithery (unvetted — review before adding)\n\nSMITHERY_API_KEY is not configured on this server; skipped.\n\n")
-			}
+			officialResults, officialErr := services.SearchOfficialMCPRegistry(ctx, query, 10)
+			appendExternal("Official MCP Registry", officialResults, officialErr)
 
-			return sb.String(), nil
-		},
-	); err != nil {
-		return err
-	}
+			sb.WriteString("### Check official providers on the internet\n\nAlso search the internet for the provider's official MCP documentation or source repository using available web/search/browser tools. Registry listings can be incomplete and do not prove provider ownership. Verify and prefer the provider's direct endpoint before proposing a connection; explain any hosted intermediary. If no suitable match appears here, continue the internet search rather than concluding that no MCP exists.\n")
 
-	if err := registerTool(
-		"inspect_mcp_server",
-		"Get the full tool list (names, descriptions, input schemas) for an unvetted MCP server found via search_mcp_catalog, before deciding whether to install it. Smithery hits only — pass the `qualified_name` shown next to that hit in search_mcp_catalog's results. GitHub MCP Registry hits have no equivalent: those servers only advertise their tools via the live MCP protocol handshake once actually running, so there is nothing to inspect ahead of time — review their repo/README instead.",
-		map[string]interface{}{
-			"type": "object",
-			"properties": map[string]interface{}{
-				"qualified_name": map[string]interface{}{
-					"type":        "string",
-					"description": "The Smithery qualified name from a search_mcp_catalog hit, e.g. \"github\" or \"node2flow/notion\".",
-				},
-			},
-			"required": []string{"qualified_name"},
-		},
-		func(ctx context.Context, args map[string]interface{}) (string, error) {
-			qualifiedName := strings.TrimSpace(fmt.Sprint(args["qualified_name"]))
-			if qualifiedName == "" {
-				return "qualified_name is required.", nil
-			}
-
-			detail, err := services.InspectSmitheryServer(ctx, qualifiedName)
-			if err != nil {
-				return fmt.Sprintf("Could not inspect %q: %v", qualifiedName, err), nil
-			}
-
-			displayName := detail.DisplayName
-			if displayName == "" {
-				displayName = detail.QualifiedName
-			}
-			var sb strings.Builder
-			sb.WriteString(fmt.Sprintf("## %s (`%s`) — unvetted, review before adding\n\n", displayName, detail.QualifiedName))
-			if detail.Description != "" {
-				sb.WriteString(detail.Description + "\n\n")
-			}
-			if detail.DeploymentURL != "" {
-				sb.WriteString(fmt.Sprintf("Deployment URL: %s\n\n", detail.DeploymentURL))
-			}
-			if len(detail.Tools) == 0 {
-				sb.WriteString("No tools reported.\n")
-				return sb.String(), nil
-			}
-			sb.WriteString(fmt.Sprintf("### Tools (%d)\n\n", len(detail.Tools)))
-			for _, t := range detail.Tools {
-				sb.WriteString(fmt.Sprintf("- **%s**", t.Name))
-				if t.Description != "" {
-					sb.WriteString(" — " + strings.SplitN(t.Description, "\n", 2)[0])
-				}
-				sb.WriteString("\n")
-			}
 			return sb.String(), nil
 		},
 	); err != nil {
@@ -10829,7 +10775,7 @@ func (api *StreamingAPI) registerMultiAgentMCPServerTools(registrar interface {
 
 	if err := registerTool(
 		"install_mcp_server",
-		"Platform-level install of an MCP server, from OUR CATALOG (found via search_mcp_catalog or list_mcp_servers) OR fresh from a URL (a search_mcp_catalog GitHub/Smithery hit, or any URL the user gives you) — distinct from add_mcp_server, which is for a server with no auth at all. This is tier 1 of a two-tier model: installing makes the server available account-wide; it still needs update_workflow_config(add_servers=[name]) to actually be usable in a specific workflow. For a fresh URL, this live-probes it the same way a human would evaluate any third-party integration before installing it — spec-compliant discovery (RFC 9728/8414 via a real 401), not a guess — so tell the user what was found before proceeding on anything unvetted (GitHub/Smithery hits). Outcomes: (1) no sign-in required — installs immediately. (2) needs an API key — pass api_key once the user has given you one. (3) needs OAuth with Dynamic Client Registration discoverable — starts the flow and returns an auth_url; give that URL to the user as a clickable link, the connection completes automatically once they authorize, no further tool call needed. (4) needs OAuth but no DCR was discoverable — tell the user plainly (it may still support CIMD or need a manually registered OAuth app); if they give you a client_id, pass it and call again. Cannot complete an OAuth consent screen itself — it only starts the flow and hands back the link.",
+		"Platform-level install of an MCP server, from OUR CATALOG (found via search_mcp_catalog or list_mcp_servers) OR fresh from a URL (a search_mcp_catalog public registry hit, or any URL the user gives you) — distinct from add_mcp_server, which is for a server with no auth at all. This is tier 1 of a two-tier model: installing makes the server available account-wide; it still needs update_workflow_config(add_servers=[name]) to actually be usable in a specific workflow. For a fresh URL, this live-probes it the same way a human would evaluate any third-party integration before installing it — spec-compliant discovery (RFC 9728/8414 via a real 401), not a guess — so tell the user what was found before proceeding on anything unvetted (public registry hits). Outcomes: (1) no sign-in required — installs immediately. (2) needs an API key — pass api_key once the user has given you one. (3) needs OAuth with Dynamic Client Registration discoverable — starts the flow and returns an auth_url; give that URL to the user as a clickable link, the connection completes automatically once they authorize, no further tool call needed. (4) needs OAuth but no DCR was discoverable — tell the user plainly (it may still support CIMD or need a manually registered OAuth app); if they give you a client_id, pass it and call again. Cannot complete an OAuth consent screen itself — it only starts the flow and hands back the link.",
 		map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
@@ -10839,7 +10785,7 @@ func (api *StreamingAPI) registerMultiAgentMCPServerTools(registrar interface {
 				},
 				"url": map[string]interface{}{
 					"type":        "string",
-					"description": "Only when name is not already in our catalog: the server's URL (from a search_mcp_catalog GitHub/Smithery hit, or one the user gave you). Triggers a live auth probe before installing.",
+					"description": "Only when name is not already in our catalog: the server's URL (from a search_mcp_catalog public registry hit, or one the user gave you). Triggers a live auth probe before installing.",
 				},
 				"api_key": map[string]interface{}{
 					"type":        "string",

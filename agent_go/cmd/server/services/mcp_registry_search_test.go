@@ -4,9 +4,57 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"testing"
 )
+
+func TestOfficialRegistryUsesPublicMetadataAndDirectEndpoints(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "" {
+			t.Error("public discovery must not send credentials")
+		}
+		if r.URL.Path != "/v0.1/servers" || r.URL.Query().Get("version") != "latest" || r.URL.Query().Get("search") != "jam & logs" {
+			t.Errorf("unexpected registry query: %s", r.URL)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"servers":[
+		{"server":{"name":"dev.jam/mcp","remotes":[{"url":"https://mcp.jam.dev/mcp"}],"repository":{"url":"https://github.com/example/jam"}}},
+		{"server":{"name":"proxy/jam","remotes":[{"url":"https://server.smithery.ai/jam/mcp"}]}},
+		{"server":{"name":"multiple/jam","remotes":[{"url":"https://jam.smithery.run/mcp"},{"url":"https://mcp.jam.dev/mcp"}]}}
+		]}`))
+	}))
+	defer server.Close()
+	original := officialMCPRegistryBaseURL
+	officialMCPRegistryBaseURL = server.URL
+	defer func() { officialMCPRegistryBaseURL = original }()
+	results, err := SearchOfficialMCPRegistry(context.Background(), "jam & logs", 5)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 2 {
+		t.Fatalf("expected direct results only: %+v", results)
+	}
+	for _, r := range results {
+		if r.Source != "official" || r.Link != "https://mcp.jam.dev/mcp" || !r.Remote {
+			t.Errorf("wrong metadata: %+v", r)
+		}
+	}
+	if results[0].RepositoryURL != "https://github.com/example/jam" {
+		t.Fatal("lost verification source")
+	}
+}
+
+func TestSmitheryEndpointFilterUsesHostname(t *testing.T) {
+	for _, raw := range []string{"https://smithery.ai", "https://server.smithery.ai/mcp", "https://x.smithery.run/mcp", "https://SERVER.SMITHERY.AI./mcp"} {
+		if !isSmitheryURL(raw) {
+			t.Errorf("missed %s", raw)
+		}
+	}
+	for _, raw := range []string{"https://mcp.jam.dev/mcp", "https://example.com/smithery.ai", "https://notsmithery.ai/mcp"} {
+		if isSmitheryURL(raw) {
+			t.Errorf("incorrectly removed %s", raw)
+		}
+	}
+}
 
 func TestSearchGitHubMCPRegistryParsesRemoteAndPackageEntries(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -55,147 +103,5 @@ func TestSearchGitHubMCPRegistryPropagatesHTTPErrors(t *testing.T) {
 
 	if _, err := SearchGitHubMCPRegistry(context.Background(), "clickup", 5); err == nil {
 		t.Fatal("expected an error on non-200 status, got nil")
-	}
-}
-
-func TestSmitheryConfiguredIsAlwaysTrueViaDefaultFallback(t *testing.T) {
-	original := os.Getenv(smitheryAPIKeyEnv)
-	defer os.Setenv(smitheryAPIKeyEnv, original)
-
-	os.Unsetenv(smitheryAPIKeyEnv)
-	if !SmitheryConfigured() {
-		t.Error("expected SmitheryConfigured() to be true even when env var unset, via smitheryDefaultAPIKey fallback")
-	}
-	os.Setenv(smitheryAPIKeyEnv, "test-key")
-	if !SmitheryConfigured() {
-		t.Error("expected SmitheryConfigured() to be true when env var set")
-	}
-}
-
-func TestSmitheryAPIKeyPrefersEnvVarOverDefault(t *testing.T) {
-	original := os.Getenv(smitheryAPIKeyEnv)
-	defer os.Setenv(smitheryAPIKeyEnv, original)
-
-	os.Unsetenv(smitheryAPIKeyEnv)
-	if got := smitheryAPIKey(); got != smitheryDefaultAPIKey {
-		t.Errorf("smitheryAPIKey() = %q, want default %q when env unset", got, smitheryDefaultAPIKey)
-	}
-
-	os.Setenv(smitheryAPIKeyEnv, "test-key")
-	if got := smitheryAPIKey(); got != "test-key" {
-		t.Errorf("smitheryAPIKey() = %q, want env override %q", got, "test-key")
-	}
-}
-
-func TestSearchSmitheryRegistryUsesDefaultKeyWhenEnvUnset(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if got := r.Header.Get("Authorization"); got != "Bearer "+smitheryDefaultAPIKey {
-			t.Errorf("Authorization header = %q, want Bearer %s", got, smitheryDefaultAPIKey)
-		}
-		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte(`{"servers":[]}`))
-	}))
-	defer server.Close()
-
-	originalURL := smitheryRegistryBaseURL
-	smitheryRegistryBaseURL = server.URL
-	defer func() { smitheryRegistryBaseURL = originalURL }()
-
-	original := os.Getenv(smitheryAPIKeyEnv)
-	os.Unsetenv(smitheryAPIKeyEnv)
-	defer os.Setenv(smitheryAPIKeyEnv, original)
-
-	if _, err := SearchSmitheryRegistry(context.Background(), "clickup", 5); err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-}
-
-func TestSearchSmitheryRegistrySendsBearerTokenAndParsesResults(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if got := r.Header.Get("Authorization"); got != "Bearer test-key" {
-			t.Errorf("Authorization header = %q, want Bearer test-key", got)
-		}
-		if got := r.URL.Query().Get("q"); got != "clickup" {
-			t.Errorf("q query = %q, want clickup", got)
-		}
-		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte(`{"servers":[{"qualifiedName":"clickup","displayName":"ClickUp","description":"Project management","remote":true,"homepage":"https://clickup.com"}]}`))
-	}))
-	defer server.Close()
-
-	originalURL := smitheryRegistryBaseURL
-	smitheryRegistryBaseURL = server.URL
-	defer func() { smitheryRegistryBaseURL = originalURL }()
-
-	originalKey := os.Getenv(smitheryAPIKeyEnv)
-	os.Setenv(smitheryAPIKeyEnv, "test-key")
-	defer os.Setenv(smitheryAPIKeyEnv, originalKey)
-
-	results, err := SearchSmitheryRegistry(context.Background(), "clickup", 5)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if len(results) != 1 || results[0].Name != "ClickUp" || results[0].Source != "smithery" || !results[0].Remote {
-		t.Fatalf("unexpected results: %+v", results)
-	}
-	if results[0].Identifier != "clickup" {
-		t.Errorf("Identifier = %q, want qualifiedName %q", results[0].Identifier, "clickup")
-	}
-}
-
-func TestInspectSmitheryServerParsesToolsAndEscapesNamespacedName(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if got, want := r.URL.Path, "/servers/node2flow/notion"; got != want {
-			t.Errorf("request path = %q, want %q", got, want)
-		}
-		if got := r.Header.Get("Authorization"); got != "Bearer test-key" {
-			t.Errorf("Authorization header = %q, want Bearer test-key", got)
-		}
-		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte(`{
-			"qualifiedName": "node2flow/notion",
-			"displayName": "Notion",
-			"description": "Notion integration",
-			"remote": true,
-			"deploymentUrl": "https://node2flow-notion.run.tools",
-			"tools": [
-				{"name": "search_pages", "description": "Search Notion pages.\nSupports filters.", "inputSchema": {"type": "object"}}
-			]
-		}`))
-	}))
-	defer server.Close()
-
-	originalURL := smitheryRegistryBaseURL
-	smitheryRegistryBaseURL = server.URL
-	defer func() { smitheryRegistryBaseURL = originalURL }()
-
-	originalKey := os.Getenv(smitheryAPIKeyEnv)
-	os.Setenv(smitheryAPIKeyEnv, "test-key")
-	defer os.Setenv(smitheryAPIKeyEnv, originalKey)
-
-	detail, err := InspectSmitheryServer(context.Background(), "node2flow/notion")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if detail.QualifiedName != "node2flow/notion" || detail.DisplayName != "Notion" || detail.DeploymentURL != "https://node2flow-notion.run.tools" {
-		t.Fatalf("unexpected detail: %+v", detail)
-	}
-	if len(detail.Tools) != 1 || detail.Tools[0].Name != "search_pages" {
-		t.Fatalf("unexpected tools: %+v", detail.Tools)
-	}
-}
-
-func TestInspectSmitheryServerPropagatesNotFound(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusNotFound)
-	}))
-	defer server.Close()
-
-	originalURL := smitheryRegistryBaseURL
-	smitheryRegistryBaseURL = server.URL
-	defer func() { smitheryRegistryBaseURL = originalURL }()
-
-	if _, err := InspectSmitheryServer(context.Background(), "does-not-exist"); err == nil {
-		t.Fatal("expected an error for a 404 response, got nil")
 	}
 }

@@ -44,6 +44,7 @@ SSH_PORT="${SSH_PORT:-2299}"
 SSH_KEY_PATH="${SSH_KEY_PATH:-$HOME/.ssh/confida_deploy}"
 REMOTE_APP="/srv/confida"
 REMOTE_TOOLS="$REMOTE_APP/tools"
+REMOTE_RUNTIME_PATH="$REMOTE_TOOLS/bin:$REMOTE_APP/home/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 DEPLOY_SOURCE_MODE="${DEPLOY_SOURCE_MODE:-remote-main}"
 DEPLOY_BRANCH="${DEPLOY_BRANCH:-main}"
 
@@ -157,9 +158,12 @@ echo "==> Building on confida@$HOST_IP: cloning/using $DEPLOY_BRANCH and buildin
 echo "==> Verifying"
 curl -fsSI "https://confida.agentworkshq.com/login" | head -1
 "${SSH[@]}" "set -e
-  export PATH='$REMOTE_TOOLS/bin':\"\$PATH\"
+  export PATH='$REMOTE_RUNTIME_PATH'
   command -v agent-browser >/dev/null
-  systemctl --user show confida-agent -p Environment --value | grep -Fq 'PATH=$REMOTE_TOOLS/bin:'
-  systemctl --user show confida-workspace -p Environment --value | grep -Fq 'PATH=$REMOTE_TOOLS/bin:'"
+  for unit in confida-agent confida-workspace; do
+    pid=\$(systemctl --user show \"\$unit\" -p MainPID --value)
+    test \"\$pid\" -gt 0
+    tr '\\0' '\\n' < \"/proc/\$pid/environ\" | grep -Fqx 'PATH=$REMOTE_RUNTIME_PATH'
+  done"
 
 echo "==> Done."

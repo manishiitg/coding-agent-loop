@@ -18,8 +18,11 @@ class ConfidaRuntimeDependenciesTest(unittest.TestCase):
         activate = (CONFIDA_DIR / "server-build-and-activate.sh").read_text()
 
         self.assertIn('runtime_path="$REMOTE_APP/tools/bin:', activate)
+        self.assertIn('awk -v managed_path="$runtime_path"', activate)
+        self.assertIn("/^PATH=/", activate)
         self.assertIn("confida-agent.service.d/zz-runtime-tools.conf", activate)
         self.assertIn("confida-workspace.service.d/zz-runtime-tools.conf", activate)
+        self.assertIn("/proc/$pid/environ", activate)
 
 
 if __name__ == "__main__":

@@ -105,6 +105,21 @@ ln -sfn "$BUILD_DIR" "$REMOTE_APP/current"
 
 export XDG_RUNTIME_DIR="/run/user/$(id -u)"
 runtime_path="$REMOTE_APP/tools/bin:$REMOTE_APP/home/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+# EnvironmentFile values are applied after Environment= and therefore win for
+# duplicate variables. Existing Confida hosts carry PATH in /srv/confida/.env,
+# so updating only a systemd drop-in looks correct in `systemctl show` while
+# the executed process still receives the stale value. Replace just this
+# non-secret line atomically and preserve every other deployment setting.
+env_file="$REMOTE_APP/.env"
+env_next="$(mktemp "$REMOTE_APP/.env.path.XXXXXX")"
+awk -v managed_path="$runtime_path" '
+  BEGIN { wrote = 0 }
+  /^PATH=/ { if (!wrote) { print "PATH=" managed_path; wrote = 1 }; next }
+  { print }
+  END { if (!wrote) print "PATH=" managed_path }
+' "$env_file" > "$env_next"
+chmod 0600 "$env_next"
+mv "$env_next" "$env_file"
 mkdir -p "$HOME/.config/systemd/user/confida-agent.service.d"
 # Keep this drop-in lexically after the legacy muse.conf on existing hosts;
 # PATH is a scalar systemd environment assignment, so the last drop-in wins.
@@ -121,6 +136,15 @@ sleep 2
 systemctl --user restart confida-gateway
 sleep 2
 systemctl --user is-active confida-workspace confida-agent confida-gateway
+
+# Verify what the services actually received at exec time. `systemctl show`
+# reports Environment= assignments but does not expose a later PATH override
+# from EnvironmentFile=, which is how the original broken deploy passed.
+for unit in confida-agent confida-workspace; do
+  pid="$(systemctl --user show "$unit" -p MainPID --value)"
+  [[ "$pid" -gt 0 ]]
+  tr '\0' '\n' < "/proc/$pid/environ" | grep -Fqx "PATH=$runtime_path"
+done
 
 echo "==> [$RELEASE_ID] Verifying"
 curl -fsS -o /dev/null -w "agent  /api/health: %{http_code}\n" http://127.0.0.1:22000/api/health

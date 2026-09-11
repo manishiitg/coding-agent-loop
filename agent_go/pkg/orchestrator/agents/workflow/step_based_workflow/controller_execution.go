@@ -1760,19 +1760,10 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 						"This is a harness/infrastructure failure, not a fault in the script — do not modify main.py in response to it. Underlying error: %s",
 					step.GetID(), scriptedDecision.HarnessError)
 			}
-			// The script deliberately exited ScriptedTerminalRefusalExitCode: a
-			// fail-closed guard correctly detected an unsafe condition and
-			// refused to proceed. This must fail the step outright rather than
-			// fall through to the LLM relearn path — handing an agent "here is
-			// a refusal, fix it" is exactly how the refusal gets overridden
-			// instead of respected. See ScriptedTerminalRefusalExitCode's own
-			// doc comment for the live incident that established this.
+			// Exit code 2 always stops automatic repair, but does not by itself
+			// establish that a safety guard fired. Report only supplied evidence.
 			if scriptedDecision.TerminalRefusal {
-				return "", updatedContextFiles, fmt.Errorf(
-					"scripted step %q deliberately refused to proceed (exit code %d): its own protective logic detected an unsafe condition and stopped. "+
-						"This is the script working correctly, not a bug — do NOT modify main.py or attempt the write it refused. "+
-						"Investigate and resolve the underlying condition the script detected before retrying. Refusal detail: %s",
-					step.GetID(), ScriptedTerminalRefusalExitCode, scriptedDecision.TerminalRefusalReason)
+				return "", updatedContextFiles, scriptedTerminalStopError(step.GetID(), scriptedDecision.TerminalRefusalReason)
 			}
 			learnCodePriorScript = scriptedDecision.PriorScript
 			learnCodePriorError = scriptedDecision.PriorError
@@ -2236,7 +2227,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 								return "", updatedContextFiles, fmt.Errorf("script runtime unavailable: %s", canonicalResult.HarnessError)
 							}
 							if canonicalResult.TerminalRefusal {
-								return "", updatedContextFiles, fmt.Errorf("script deliberately refused: %s", canonicalResult.TerminalRefusalReason)
+								return "", updatedContextFiles, scriptedTerminalStopError(step.GetID(), canonicalResult.TerminalRefusalReason)
 							}
 							if canonicalResult.Success {
 								lastLcResult = canonicalResult

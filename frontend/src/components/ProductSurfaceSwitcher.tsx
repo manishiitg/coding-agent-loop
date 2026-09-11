@@ -9,10 +9,10 @@ import { useAppStore } from '../stores/useAppStore'
 import { useAuthStore } from '../stores/useAuthStore'
 import { isEnabledProductSurface, intersectAllowedProductSurfaces } from '../products/productSurfaceConfig'
 import { cn } from '../lib/utils'
+import { APP_VERSION } from '../version'
 
 type ProductSurfaceSwitcherProps = {
   className?: string
-  version?: string
 }
 
 // Product marks can render any element; callers only rely on the common
@@ -36,7 +36,7 @@ export function visibleProductSurfaceIDs(allowedProducts?: string[] | null): Pro
   return intersectAllowedProductSurfaces(deploymentSurfaces, allowedProducts)
 }
 
-export function ProductSurfaceSwitcher({ className, version }: ProductSurfaceSwitcherProps) {
+export function ProductSurfaceSwitcher({ className }: ProductSurfaceSwitcherProps) {
   const productSurface = useProductSurfaceStore((state) => state.productSurface)
   const setProductSurface = useProductSurfaceStore((state) => state.setProductSurface)
   const allowedProducts = useAuthStore((state) => state.user?.allowed_products)
@@ -85,7 +85,7 @@ export function ProductSurfaceSwitcher({ className, version }: ProductSurfaceSwi
         aria-label="Switch product"
         aria-haspopup="menu"
         aria-expanded={open}
-        title={currentProduct.id === 'agentworks' && version ? `${currentProduct.label} v${version}` : currentProduct.label}
+        title={`${currentProduct.label} v${APP_VERSION}`}
         className="flex items-center gap-2.5 rounded-xl border border-slate-200 bg-white px-2 py-1.5 text-left text-slate-900 shadow-sm transition hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100 dark:hover:bg-slate-800"
       >
         <CurrentIcon className="h-7 w-7 shrink-0" title="" />
@@ -114,7 +114,10 @@ export function ProductSurfaceSwitcher({ className, version }: ProductSurfaceSwi
               >
                 <Icon className="h-8 w-8 shrink-0" title="" />
                 <span className="min-w-0 flex-1">
-                  <strong className={cn('block text-xs', active ? 'text-violet-800 dark:text-violet-200' : 'text-slate-900 dark:text-slate-100')}>{product.label}</strong>
+                  <span className="flex items-baseline gap-1.5">
+                    <strong className={cn('block text-xs', active ? 'text-violet-800 dark:text-violet-200' : 'text-slate-900 dark:text-slate-100')}>{product.label}</strong>
+                    <span className="text-[8px] leading-none text-slate-300 dark:text-slate-600">v{APP_VERSION}</span>
+                  </span>
                   <small className={cn('mt-0.5 block text-[10px]', active ? 'text-violet-500 dark:text-violet-400' : 'text-slate-400')}>
                     {product.description}
                   </small>

@@ -23,7 +23,6 @@ import { GlobalActivityMonitor } from './GlobalActivityMonitor'
 import WorkflowWalkthrough from './workflow/WorkflowWalkthrough'
 import { ProductSurfaceSwitcher } from './ProductSurfaceSwitcher'
 import WorkspaceTopBarControls from './WorkspaceTopBarControls'
-import { useAppVersion } from './topbar/useAppVersion'
 import ConfirmationDialog from './ui/ConfirmationDialog'
 import LazyModalFallback from './ui/LazyModalFallback'
 import {
@@ -95,7 +94,6 @@ export const ModePresetBar: React.FC = () => {
   const isReadOnlyUser = useAuthStore(state => isWorkflowReadOnly(state.user, state.isMultiUserMode))
   // Use toolList to get all available servers, not just enabled ones
   const toolList = useMCPStore(state => state.toolList)
-  const appVersion = useAppVersion()
   const availableServers = React.useMemo(() =>
     [...new Set(toolList.map(t => t.server).filter(Boolean) as string[])],
     [toolList]
@@ -551,7 +549,7 @@ export const ModePresetBar: React.FC = () => {
           {/* Left: App logo + Mode Indicator */}
           <div className="flex min-w-0 items-center gap-3">
             {/* Product-level navigation stays separate from AgentWorks modes. */}
-            <ProductSurfaceSwitcher className="mr-1" version={appVersion} />
+            <ProductSurfaceSwitcher className="mr-1" />
 
             {/* Segmented control — single bordered container, active segment elevated */}
             <div

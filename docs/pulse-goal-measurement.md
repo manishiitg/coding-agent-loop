@@ -129,3 +129,21 @@ proposes a grouping, preserves commitments and explicit priorities, and asks abo
 ambiguous tradeoffs. Reviewers must not sacrifice a primary goal or constraint to
 improve a secondary goal without the user's agreement. No live workflow is rewritten
 until its setup flow runs.
+
+## Strategic reviews and measurement improvement
+
+Both scheduled Strategic Review and `/strategy-auditor` read configured metrics
+early and connect recommendations to the primary/secondary outcomes, current
+evidence, expected metric movement and a later outcome check. They assess whether
+the metrics answer the real goal, rather than optimizing activity or a misleading
+proxy. Unknown and stale measurements remain explicit; reviews can still explore
+promising strategies while evidence is incomplete.
+
+A material missing or inadequate measurement becomes a concrete proposal: what to
+measure, its definition/source, collection needed, one verified observation and
+the next useful evidence checkpoint. New or changed metric meaning goes through
+the existing decision flow and `/setup-goals`; broken collection under an agreed
+definition can go to the fixer. Legitimate outcome lag is an evidence wait.
+The reviewer preserves definitions, targets and workflow implementation while
+proposing changes. Existing findings and pending decisions are reused; there is
+no new report, scorecard, database contract or recording turn to maintain.

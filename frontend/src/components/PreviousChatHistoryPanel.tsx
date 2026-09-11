@@ -15,6 +15,7 @@ import { isScheduledChatHistorySession } from '../utils/chatHistoryOpenDispositi
 import { chatHistoryWorkshopMode } from '../utils/chatHistoryWorkshopMode'
 import { type ScheduleActivityItem } from '../utils/scheduleRunPresentation'
 import { ScheduleRunCard } from './ScheduleRunCard'
+import { ChatSessionIdCopyButton } from './ChatSessionIdCopyButton'
 import { ConversationMarkdownRenderer } from './ui/MarkdownRenderer'
 import {
   CHAT_HISTORY_CLEANUP_AGE_OPTIONS,
@@ -832,6 +833,7 @@ export const PreviousChatHistoryPanel: React.FC<PreviousChatHistoryPanelProps> =
                       deletingRunIds={deletingSessionIds}
                       compact={compact}
                       showScheduleName
+                      showCopySessionId
                     />
                   </div>
                 ))}
@@ -912,6 +914,7 @@ export const PreviousChatHistoryPanel: React.FC<PreviousChatHistoryPanelProps> =
                     </button>
 
                     <div className="flex shrink-0 items-center gap-1">
+                      <ChatSessionIdCopyButton sessionId={session.session_id} compact={compact} />
                       {canDelete && (
                         <button
                           type="button"

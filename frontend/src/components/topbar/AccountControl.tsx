@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState } from 'react'
-import { KeyRound, LogOut, Terminal } from 'lucide-react'
+import { KeyRound, LogOut, Terminal, Users } from 'lucide-react'
 import { Tooltip, TooltipContent, TooltipTrigger } from '../ui/tooltip'
 import { useAuthStore } from '../../stores/useAuthStore'
 import ChangePasswordDialog from './ChangePasswordDialog'
 import AccessTokensDialog from './AccessTokensDialog'
+import UsersAdminPanel from '../admin/UsersAdminPanel'
 
 /**
  * AccountControl - the signed-in user's avatar (their initial) which opens a
@@ -17,6 +18,7 @@ export default function AccountControl() {
   const [open, setOpen] = useState(false)
   const [changingPassword, setChangingPassword] = useState(false)
   const [managingTokens, setManagingTokens] = useState(false)
+  const [managingUsers, setManagingUsers] = useState(false)
   const containerRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -90,6 +92,18 @@ export default function AccountControl() {
             <Terminal className="w-4 h-4 text-gray-500 dark:text-gray-400" />
             Access tokens
           </button>
+          {isMultiUserMode && user.is_admin && <button
+            type="button"
+            role="menuitem"
+            className={itemClass}
+            onClick={() => {
+              setOpen(false)
+              setManagingUsers(true)
+            }}
+          >
+            <Users className="w-4 h-4 text-gray-500 dark:text-gray-400" />
+            Users &amp; access
+          </button>}
           {isMultiUserMode && <button
             type="button"
             role="menuitem"
@@ -106,6 +120,7 @@ export default function AccountControl() {
       )}
 
       {managingTokens && <AccessTokensDialog onClose={() => setManagingTokens(false)} />}
+      <UsersAdminPanel isOpen={managingUsers} onClose={() => setManagingUsers(false)} />
       <ChangePasswordDialog isOpen={changingPassword} onClose={() => setChangingPassword(false)} />
     </div>
   )

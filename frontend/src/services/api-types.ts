@@ -586,7 +586,26 @@ export interface PulseImpactAssessment {
   assessed_at: string
 }
 
+export interface GoalMetric {
+  id: string
+  criterion_id: string
+  name: string
+  role: 'primary' | 'supporting'
+  unit: string
+  direction: 'increase' | 'decrease' | 'maintain'
+  definition: string
+  source: string
+  window: string
+  route: string
+  environment: string
+  collection_frequency: string
+  freshness_hours: number
+  target?: number
+  target_date?: string
+}
+
 export interface PulseImpactLedger {
+  metrics?: GoalMetric[]
   interventions: PulseIntervention[]
   observations: PulseGoalObservation[]
   assessments: PulseImpactAssessment[]

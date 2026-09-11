@@ -83,9 +83,9 @@ const VIEWS = [
   // -- files (last button of the "views" cluster) --------------------------
   { id: 'files', kind: 'files', label: 'Files', icon: Files, toolbarGroup: 'views', pane: false },
   // -- inspectors (toolbar "pulse" cluster) --------------------------------
-  // The toolbar builds this cluster by hand (status dots, a run button, and a
-  // divider between the immediate Pulse controls and the backup/publish/notify
-  // group don't fit a generic button loop), so `toolbarGroup: 'pulse'` here
+  // Pulse is a primary toolbar button beside Report. The remaining controls
+  // are hand-built in Views/Setup for their status dots and permissions,
+  // so the legacy `toolbarGroup: 'pulse'` here
   // is categorization only -- nothing filters on it the way `views` and
   // `capabilities` are filtered into their auto-rendered clusters below.
   { id: 'pulse', kind: 'inspector', label: 'Pulse', icon: Activity, toolbarGroup: 'pulse', pane: true },

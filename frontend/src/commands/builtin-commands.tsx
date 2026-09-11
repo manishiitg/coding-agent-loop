@@ -140,6 +140,17 @@ export const builtinCommands: CommandDefinition[] = [
     }
   },
   {
+    command: 'setup-goals',
+    aliases: ['define-success'],
+    description: 'Set up outcome goals, primary and supporting metrics, and progress tracking',
+    icon: <Target className="w-4 h-4" />,
+    modes: ['workflow'],
+    requiredWorkflowMode: 'plan',
+    requiredWorkshopMode: 'workshop',
+    source: 'builtin',
+    execute: ctx => submitGuidedWorkflowCommand(ctx, 'setup-goals'),
+  },
+  {
     command: 'pulse',
     description: 'Run one complete Pulse now against the latest retained run',
     icon: <Activity className="w-4 h-4" />,

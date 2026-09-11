@@ -1,4 +1,7 @@
 import { createContext, useContext } from 'react'
+import type { PulseEvalResultsResponse, WorkflowCostsResponse } from '../../../services/api-types'
+
+export interface ReportCostOptions { days?: number; before?: string }
 
 export type ReportChatReceipt =
   | { status: 'cancelled' }
@@ -16,6 +19,8 @@ export type ReportChatOptions = {
 // demand. Exposed inside the iframe as `window.report`.
 export interface ReportDataApi {
   workspacePath: string
+  getEvaluations?: () => Promise<PulseEvalResultsResponse>
+  getCosts?: (options: ReportCostOptions) => Promise<WorkflowCostsResponse>
   // Opens the app's message review UI. Only the user's Send submits to chat.
   // Uses the same queue as human-decision Ask in chat, with an optional new chat
   // chosen by the user. Queued is not proof of execution or completion.

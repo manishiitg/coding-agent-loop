@@ -15,7 +15,7 @@ import (
 //	# <Workflow display name>
 //
 //	## Objective
-//	<one-paragraph statement of what the workflow is for>
+//	<outcome bullets describing what the workflow should achieve>
 //
 //	## Success Criteria
 //	<bullet list or paragraph describing when the workflow is "done right">
@@ -44,7 +44,7 @@ const (
 	soulDefaultScaffoldTemplate = `# %s
 
 ## Objective
-<TODO: one-paragraph statement of what this workflow is for.>
+<TODO: outcome bullets describing what this workflow should achieve.>
 
 ## Success Criteria
 <TODO: bullet list or paragraph describing when the workflow is "done right".>

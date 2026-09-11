@@ -1047,6 +1047,8 @@ func quoteIdent(name string) string {
 // endpoint's own audit log). Keep in sync with the Go-managed table list in
 // guidance/templates/system/stores.md.
 var reportFieldUpdateReservedTables = map[string]bool{
+	"workflow_goal_metrics":     true,
+	"pulse_goal_observations":   true,
 	"report_human_inputs":       true,
 	"report_human_input_events": true,
 	"schema_migration_log":      true,

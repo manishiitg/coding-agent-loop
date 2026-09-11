@@ -87,3 +87,12 @@ export function extractWorkflowSoulSummary(markdown: string): WorkflowSoulSummar
     constraints: firstConcreteCriterion(sectionFor(markdown, ['Constraints', 'Guardrails'])),
   }
 }
+
+export function extractWorkflowGoalSections(markdown: string) {
+  const objective = sectionFor(markdown, ['Objective', 'Goal'])?.lines.join('\n').trim() || ''
+  // Preserve existing bullet structure and all paragraphs; never invent shorter
+  // outcomes by splitting sentences or discarding the rest of a long objective.
+  const goal = /^\s*(?:[-*+]|\d+[.)])\s/m.test(objective) ? objective
+    : objective.split(/\n\s*\n/).filter(Boolean).map(p => `- ${p.replace(/\n/g, ' ')}`).join('\n')
+  return { goal, acceptance: sectionFor(markdown, ['Success Criteria', 'Success'])?.lines.join('\n').trim() || '', boundaries: sectionFor(markdown, ['Constraints', 'Guardrails'])?.lines.join('\n').trim() || '' }
+}

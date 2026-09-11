@@ -263,3 +263,79 @@ See "Writing back" and "Sending a report request" above.
 For typed route rows, `summary_text` contains only the shared lead; `message`
 remains the complete rendered digest for older reports. Render the lead plus
 route entries once, or the complete message as a fallback, never both.
+
+### Goal progress: shared data and an optional ready-made widget
+
+Reports can show the same primary metric, supporting metrics, and measured history
+as Pulse. No additional collector, table, chart library, or custom CSS is needed:
+
+```html
+<section id="goal-progress"></section>
+<script>
+window.report.ready(async function () {
+  await window.report.renderGoalProgress('#goal-progress');
+});
+</script>
+```
+
+The optional widget renders primary/supporting cards, targets, change since the
+previous measurement, trends, freshness, and expandable definitions/evidence/history.
+It inherits the report's text color, fits the available width, and replaces its
+contents on refresh. Use an empty `div` or `section` as the container. Keep the
+returned promise inside `ready` so preview_report can observe loading/errors.
+
+For a custom layout, `await window.report.getGoalMetrics()` returns
+`{ metrics, observations, progress }`. Each progress item contains `metric`,
+`current`, `delta`, `state`, `stale`, `targetMet`, `latest`, `history`, and `numeric`.
+`current` can be undefined: never turn missing data into zero. The latest failed
+measurement remains unavailable rather than falling back to an older good value.
+History includes up to 120 comparable observations per active metric, with scope,
+unit, and evidence preserved. Use `window.report.query` against
+`workflow_goal_metrics` and `pulse_goal_observations` for a longer/custom history;
+check `sqlite_master` first for workflows that have not configured measurements.
+These are platform-owned, read-only tables for reports; use the managed goal tools
+for changes, not `updateField`/`updateFields` or direct SQL writes. Run `/setup-goals`
+when definitions or collection are missing. Do not invent targets or samples.
+
+Adding this section is optional and does not replace the report's own navigation
+or layout. Offer it when a user wants goal tracking in their dashboard. Validate
+and preview the report using the normal report tools after adding it.
+
+### Evaluations and costs: matching report helpers
+
+Use the existing stored evaluations and canonical cost ledger without creating
+report-owned copies. Both helpers work in the app and `preview_report`:
+
+```html
+<section id="evaluations"></section>
+<section id="costs"></section>
+<script>
+window.report.ready(async function () {
+  await Promise.all([
+    window.report.renderEvaluations('#evaluations'),
+    window.report.renderCosts('#costs', { days: 30 })
+  ]);
+});
+</script>
+```
+
+The widgets include their own responsive styling and expandable details. No chart
+library or design work is required. Add them only when useful to the user's report.
+
+For custom layouts, call `getEvaluations()` and `getCosts({ days: 30 })`:
+- Evaluations returns `{ results, criteria, run_count, result_limit, possibly_truncated }`.
+  Each criterion has `id`, `title`, `historical`, `latest`, and `history`. Results
+  include captured/skipped flags, raw scores, reasoning, evidence, and run/date.
+  The current reader supplies up to 200 rows; this is recent history, not an
+  all-time run count. Uncaptured and skipped scores are not zeros or failures.
+  Keep criteria separate; do not invent a blended score or a pass threshold.
+- Costs returns `{ summary, history, window_total_usd, state }`. `summary.total` and `summary.by_scope` are **all-time** recorded amounts.
+  `summary.by_model`, `summary.by_date`, and `window_total_usd` cover only the requested UTC date window.
+  `summary` is null and `state` is `unavailable` if the ledger is unavailable.
+  Options support `days` (1–90, default 30) and `before` (exclusive YYYY-MM-DD).
+  Read older daily pages using `history.next_before` when `history.has_more` is true.
+  Do not add the repeated all-time total across pages. USD costs are recorded ledger
+  amounts and do not prove every call was priced. No model prices are guessed.
+
+Continue using `window.report.ready` for loading and refresh. Returned promises
+reject on read failures, which the host exposes in the report's error surface.

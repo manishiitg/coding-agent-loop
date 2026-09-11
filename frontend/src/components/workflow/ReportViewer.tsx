@@ -18,7 +18,6 @@ import { HtmlReportFrame } from './reportWidgets/HtmlWidgetFrame'
 import { ReportEmbedProvider, type ReportDataApi } from './reportWidgets/reportEmbedContext'
 import { isStreamableReportMediaPath } from './reportWidgets/reportMedia'
 import { allowedReportPath, normalizeReportSource, renderReportMarkdown, reportMarkdownBasePath } from './reportWidgets/reportMarkdown'
-import { ReportHumanInputPanel } from './ReportHumanInputPanel'
 import { ReportChatPanel } from './reportWidgets/ReportChatPanel'
 import { useReportChat } from './reportWidgets/useReportChat'
 
@@ -79,6 +78,8 @@ function useReportDataApi(workspacePath: string, sendChatMessage: ReportDataApi[
     }
     return {
       workspacePath,
+      getEvaluations: () => agentApi.getPulseEvalResults(workspacePath),
+      getCosts: (options) => agentApi.getCosts(workspacePath, { ...options, view: 'summary' }),
       sendChatMessage,
       query: async (sql: string) => {
         const response = await agentApi.queryWorkflowDB(`${workspacePath}/db/db.sqlite`, sql)
@@ -211,7 +212,6 @@ function ReportViewComponent({ workspacePath, onClose, focusTier }: ReportViewPr
           className="min-h-0 flex-1 overflow-y-auto overscroll-y-contain"
         >
           <div className={shellClass}>
-            <ReportHumanInputPanel workspacePath={workspacePath} contentMode="pending" />
             {loading && <div className="flex min-h-64 items-center justify-center gap-2 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" /> Loading report…</div>}
             {error && <div className="m-3 rounded-md border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive">Failed to load report: {error}</div>}
             {!loading && !error && !report && (

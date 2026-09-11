@@ -12,7 +12,7 @@ import {
 import { delegateReportHumanInputActionToChat, sendReportHumanInputQuestionToChat } from '../../utils/reportHumanInputChat'
 import { useContainerSizeTier } from './reportWidgets/tableHelpers'
 import { PlainMarkdown } from '../ui/PlainMarkdown'
-import { WORKFLOW_LOG_REFRESH_EVENT } from './workflowEvents'
+import { WORKFLOW_DECISIONS_REFRESH_EVENT, WORKFLOW_LOG_REFRESH_EVENT } from './workflowEvents'
 
 type ReportHumanInputDraft = {
   selectedOptionId: string
@@ -187,6 +187,7 @@ export function ReportHumanInputPanel({
 	if (!visibleLoading && !visibleError && pending.length === 0 && history.length === 0) return null
 
 	const requestRefresh = () => {
+    window.dispatchEvent(new CustomEvent(WORKFLOW_DECISIONS_REFRESH_EVENT, { detail: { workspacePath } }))
 		if (onRequestRefresh) {
 			onRequestRefresh()
 			return

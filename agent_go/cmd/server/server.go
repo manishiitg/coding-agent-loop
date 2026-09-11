@@ -2505,6 +2505,8 @@ func runServer(cmd *cobra.Command, args []string) {
 	// report-preview scoped token can reach; see report_preview_routes.go.
 	apiRouter.HandleFunc("/workflow/report-preview/file", api.handleReportPreviewFile).Methods("GET")
 	apiRouter.HandleFunc("/workflow/report-preview/query", api.handleReportPreviewQuery).Methods("POST")
+	apiRouter.HandleFunc("/workflow/report-preview/costs", api.handleReportPreviewMetrics).Methods("GET")
+	apiRouter.HandleFunc("/workflow/report-preview/evaluations", api.handleReportPreviewMetrics).Methods("GET")
 	apiRouter.HandleFunc("/workflow/report-preview/media-url", api.handleReportMediaURL).Methods("POST")
 	apiRouter.HandleFunc("/workflow/report-media", api.handleReportMediaStream).Methods("GET", "HEAD")
 

@@ -1631,3 +1631,26 @@ func TestPulseReviewsUseOneOptionalSQLiteNoteWithoutReportingTurns(t *testing.T)
 		}
 	}
 }
+
+func TestArchitectureOwnsMeasuredTierChanges(t *testing.T) {
+	rendered, err := renderFromRegistry("architecture-review", tmplData{}, referenceKinds)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"execution_tier", "query_workflow_costs", "output quality, retries, duration", "not proof a cheaper tier preserves quality", "rollback", "human_input_id", "No per-run tier switching", "Never silently replace a user pin"} {
+		if !containsNormalizedText(rendered, want) {
+			t.Fatalf("architecture tier contract missing %q", want)
+		}
+	}
+	for _, kind := range []string{"step-config", "pulse-fixer-practices", "llm-selection", "pulse-gate"} {
+		text, err := renderFromRegistry(kind, tmplData{}, referenceKinds)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, retired := range []string{"disables adaptive tiering", "3 stable runs", "letting adaptive tiering do the work"} {
+			if strings.Contains(strings.ToLower(text), retired) {
+				t.Fatalf("%s still instructs automatic tier promotion: %s", kind, retired)
+			}
+		}
+	}
+}

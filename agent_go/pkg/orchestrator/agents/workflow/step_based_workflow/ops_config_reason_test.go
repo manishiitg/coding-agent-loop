@@ -7,7 +7,7 @@ import (
 	loggerv2 "github.com/manishiitg/mcpagent/logger/v2"
 )
 
-// PLAT-060. llm_ops_review already owns tier, mode and model selection, is
+// PLAT-060. architecture_review already owns tier, mode and model selection, is
 // read-only, and already produces "current state, exact suggestion, expected
 // benefit, risk, and evidence" for every recommendation. That rationale lived
 // only in the Pulse finding: the Fixer applied it through a tool call with no
@@ -27,8 +27,8 @@ func TestExecutionTierPinRequiresAReason(t *testing.T) {
 	}
 	for _, want := range []string{
 		"execution_tier_reason",
-		"DISABLES adaptive tiering", // the consequence a caller would not guess
-		"llm_ops_review",            // where the evidence must come from
+		"successful-run counts do not change it", // configuration remains stable
+		"architecture_review",                    // where the evidence must come from
 		"create_human_input_request",
 	} {
 		if !strings.Contains(err.Error(), want) {

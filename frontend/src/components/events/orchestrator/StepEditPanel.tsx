@@ -1136,23 +1136,19 @@ export const StepEditPanel: React.FC<StepEditPanelProps> = ({
 	                <div>
 	                  <label className="text-xs text-gray-600 dark:text-gray-400">Execution Tier</label>
 	                  <p className="text-[10px] text-gray-500 dark:text-gray-500 mb-1">
-	                    Set by Ops Review with evidence; pinning also disables adaptive tiering
+	                    Reviewed by Pulse Architect using quality, cost, and latency evidence
 	                  </p>
 	                  {agentConfigs.execution_llm?.provider && agentConfigs.execution_llm?.model_id ? (
 	                    <p className="text-[10px] text-amber-600 dark:text-amber-400 mt-1">
 	                      ⚠️ Execution LLM is set — it takes precedence over execution tier.
 	                    </p>
 	                  ) : (
-	                    /* PLAT-060: the tier setter was removed deliberately. Pinning a tier also
-	                       disables adaptive tiering for this step — it stops promoting high→medium
-	                       automatically after 3 stable runs — so it is a cost decision, not a
-	                       preference. It now arrives from a Technical Review recommendation carrying
-	                       its evidence, and the runtime requires a stated reason. State stays
-	                       visible here; change it via Pulse. */
+	                    /* Tier changes carry evidence and are applied through Pulse decisions.
+                         Display configured state without guessing whether a user or reviewer set it. */
 	                    <p className="text-xs text-gray-900 dark:text-gray-100">
 	                      {agentConfigs.execution_tier
-	                        ? `${agentConfigs.execution_tier} (pinned by Technical Review)`
-	                        : 'Auto (adaptive)'}
+	                        ? `${agentConfigs.execution_tier} (configured)`
+	                        : 'High (default)'}
 	                    </p>
 	                  )}
 	                </div>

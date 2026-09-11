@@ -84,10 +84,10 @@ func shouldDirectWriteLearnings(agentConfigs *AgentConfigs, step PlanStepInterfa
 	return canWriteLearnings(agentConfigs, step, isEvalMode)
 }
 
-// PLAT-060. Ops-owned config decisions must carry the reason that justified
+// PLAT-060. Architecture-owned config decisions must carry the reason that justified
 // them into step_config.json, which is what the *next* reviewer actually reads.
 //
-// llm_ops_review already owns tier, mode, and model selection, is read-only, and
+// architecture_review owns tier, mode, and model selection, is read-only, and
 // already produces "current state, exact suggestion, expected benefit, risk, and
 // evidence" for every recommendation. That rationale lived only in the Pulse
 // finding: the Fixer applied it through a tool call with no reason parameter, so
@@ -102,14 +102,12 @@ func shouldDirectWriteLearnings(agentConfigs *AgentConfigs, step PlanStepInterfa
 const reasonEscapeHatch = " If the evidence does not settle it, do not make the change: raise a decision with create_human_input_request and park the finding awaiting_user. An invented reason is worse than no change."
 
 // validateExecutionTierChange rejects a tier override that states no reason.
-// Naming the adaptive-tiering opt-out here is the point — it is the consequence
-// the caller is least likely to know about, and this is the last moment they can
-// reconsider.
+// Configuration stays stable until explicitly changed; record the evidence.
 func validateExecutionTierChange(tier string, reason string) error {
 	if strings.TrimSpace(tier) == "" || strings.TrimSpace(reason) != "" {
 		return nil
 	}
-	return fmt.Errorf("execution_tier=%q requires execution_tier_reason: pinning the tier also DISABLES adaptive tiering for this step, so it no longer promotes high→medium automatically after 3 stable runs — that cost decision needs a justification a later reviewer can judge. Cite the owning llm_ops_review finding (and the human_input_id if it was approved), the current state, and the evidence.%s",
+	return fmt.Errorf("execution_tier=%q requires execution_tier_reason: the tier stays configured until explicitly changed; successful-run counts do not change it. Cite the owning architecture_review finding (and the human_input_id if it was approved), the current state, and the evidence.%s",
 		strings.TrimSpace(tier), reasonEscapeHatch)
 }
 
@@ -119,7 +117,7 @@ func validateExecutionLLMChange(pinned bool, reason string) error {
 	if !pinned || strings.TrimSpace(reason) != "" {
 		return nil
 	}
-	return fmt.Errorf("execution_llm requires execution_llm_reason: a model pin outranks execution_tier entirely, so it silently overrides every tier decision above it and will not follow provider-profile updates. Cite the owning llm_ops_review finding (and the human_input_id if it was approved), the current model, and the capability/cost comparison that justified the pin.%s",
+	return fmt.Errorf("execution_llm requires execution_llm_reason: a model pin outranks execution_tier entirely, so it silently overrides every tier decision above it and will not follow provider-profile updates. Cite the owning architecture_review finding (and the human_input_id if it was approved), the current model, and the capability/cost comparison that justified the pin.%s",
 		reasonEscapeHatch)
 }
 

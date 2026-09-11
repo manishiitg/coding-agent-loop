@@ -95,3 +95,26 @@ Full run reproduced the known 22-failure baseline exactly; no new failures.
 currently disabled at the Gate for the core-system verification phase, so the
 lens that supplies these reasons does not run. The enforcement is live; the
 loop it serves resumes when that block is removed from `pulse-gate.md`.
+
+## Follow-up: Architecture owns tier decisions (2026-09-11)
+
+Removed runtime High-to-Medium promotion based on `description_hash_runs` and
+all tier state updates from execution. Those counters were learning-reflection
+records, not consecutive successful executions, and a description reset could
+reuse the old count. Model selection now follows explicit model/tier/caller
+settings; absent an override, execution defaults to High and evaluation to Medium.
+Existing explicit pins are preserved. Legacy adaptive metadata remains historical
+only and does not migrate into a persistent pin or affect execution.
+
+Pulse Architecture now owns evidence-based tier/model proposals. It compares
+actual execution/evaluation quality, retries, duration and workflow cost evidence,
+proposes bounded trials through the existing impact/approval contract, and assesses
+them at a checkpoint with rollback settings. It must respect user pins, avoid
+per-run switching and not infer cheaper-model quality from a success count. QA
+retains concrete provider failures and attribution defects. Tool descriptions,
+configuration reason validation, reviewer guidance and step UI describe this same
+ownership. No additional reviewer or reporting ledger was introduced.
+
+Regression checks cover unchanged default and explicit-tier selection across
+repeated calls, evaluation defaults, model/one-run override precedence, absence of
+history-derived runtime overrides, reason requirements and the Architect contract.

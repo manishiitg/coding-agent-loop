@@ -35,7 +35,7 @@ const GlobalLearningID = "_global"
 type LearningMetadata struct {
 	StepID              string `json:"step_id"`
 	StepPath            string `json:"step_path"`
-	LearningContentHash string `json:"learning_content_hash,omitempty"` // DEPRECATED — no longer read or written by adaptive tiering. Retained so older .learning_metadata.json files parse cleanly. Adaptive tier promotion is now gated on description stability + success count only; changes to SKILL.md content do not reset the tier.
+	LearningContentHash string `json:"learning_content_hash,omitempty"` // Deprecated historical field; retained for older metadata. Learning content never selects the execution tier.
 	TotalIterations     int    `json:"total_iterations"`
 	SuccessfulRuns      int    `json:"successful_runs"`                 // Total count of successful runs (all description versions, observability only)
 	LastDescriptionHash string `json:"last_description_hash,omitempty"` // SHA256 of step.GetDescription(); resets DescriptionHashRuns when it changes
@@ -49,8 +49,8 @@ type LearningMetadata struct {
 	LastDetectionReasoning  string                  `json:"last_detection_reasoning,omitempty"`
 	LastDetectionConfidence float64                 `json:"last_detection_confidence,omitempty"`
 	DetectionHistory        []DetectionHistoryEntry `json:"detection_history,omitempty"`
-	// Adaptive execution tiering (Tier 1 High vs Tier 2 Medium) for execution agents.
-	// The step starts on High and may promote to Medium after stable successful runs.
+	// Legacy adaptive tier history, retained for backwards-compatible metadata reads.
+	// These fields are not used to select or change a model; Architecture owns tier review.
 	// Validation failures stay on the selected tier and are surfaced to Pulse as
 	// concerns rather than silently changing model allocation.
 	PreferredExecutionTier              string `json:"preferred_execution_tier,omitempty"`                 // "high" | "medium"

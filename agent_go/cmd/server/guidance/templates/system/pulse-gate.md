@@ -10,11 +10,11 @@ The canonical modules are:
 
 - `technical_review`: one retained technical reviewer sequence. Engineering
   correctness, Stores Health, runtime operations, orchestration fitness,
-  model/tier fitness, cost attribution, tool reliability, and execution
-  efficiency are selectable focus lenses inside this module—not separate
+  cost attribution defects, tool reliability, and execution
+  correctness are selectable focus lenses inside this module—not separate
   durable queues or separate default agents.
 - `architecture_review`: improve working prompts, orchestration, scripted execution,
-  learning, KB, DB, reports and efficiency. Research and propose measurable changes;
+  learning, KB, DB, reports, execution tier/model fitness and efficiency. Research and propose measurable changes;
   it is independent of correctness repair and business strategy.
 - `strategic_review`: one retained strategic reviewer sequence. It audits the
   current strategy and measurement system, and conditionally explores
@@ -116,7 +116,7 @@ focus keys when applicable:
 - `store_integrity`
 - `report_quality_truth` — report accuracy plus reporting UI, accessibility, and performance practices
 - `evaluation_quality_truth` — evaluator truth, rubrics, thresholds, negative tests, and reproducibility
-- `model_cost_fitness` — model/tier/reasoning/fallback choices, quality-cost fit, and cost attribution. Read this workflow's own per-run/per-step/per-item cost and token breakdown with `query_workflow_costs` (PLAT-184) — do not rely on the global Cost Analysis dashboard, which this workflow's own agents cannot reach at all.
+- `model_cost_fitness` — concrete provider/model failures and cost attribution defects. Persistent tier/model optimization belongs to `architecture_review`, not QA. Read this workflow's own per-run/per-step/per-item cost and token breakdown with `query_workflow_costs` (PLAT-184) — do not rely on the global Cost Analysis dashboard, which this workflow's own agents cannot reach at all.
 
 This is agentic selection, not a Go threshold or semantic classifier. A large
 run can be justified by adaptive research, browser dwell, or independent
@@ -371,3 +371,9 @@ checkpoint. Missing measurements must not prevent other useful strategic thinkin
 Read the canonical Objective in soul/soul.md, including Primary goals and Secondary goals when configured. Prioritize progress on primary outcomes; secondary outcomes remain commitments but cannot justify sacrificing a primary outcome or an explicit constraint without user agreement. Goal priorities are separate from primary/supporting metric roles. Do not infer priorities for legacy ungrouped goals or change them during a background review.
 
 Use get_goal_metrics to read the primary and supporting metric definitions and comparable observations. Inspect outcome movement before selecting improvements; distinguish activity, quality boundaries and actual outcomes. Unknown/stale data does not prove no growth or success. Never change targets or metric definitions in a scheduled review. When measurement is not set up, surface /setup-goals as the setup path without filing repeated platform defects. Reviewers interpret measurements; producing runs/collectors own record_goal_observations.
+
+For Architecture tier/model review, use material quality, retry, cost or latency
+changes and due trial checkpoints as evidence. A count of successful runs alone
+is not a review trigger or permission to change tier. Let the normal Architecture
+cadence cover stable opportunities; reuse pending decisions and wait for the named
+checkpoint rather than scheduling a tier review after every execution.

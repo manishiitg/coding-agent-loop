@@ -2865,7 +2865,7 @@ func pulseLifecycleModuleReviewStep(pulseRunID, module string) pulseLifecycleSte
 	label, reference, contract := "technical-review", "technical-review", "Investigate material correctness failures and apply safe workflow-owned repairs. Do not perform a general optimization audit."
 	switch module {
 	case pulseModuleArchitectureReview:
-		label, reference, contract = "architecture-review", "architecture-review", "Improve the construction of a working workflow. Research and propose bounded improvements; do not mutate implementation in the review."
+		label, reference, contract = "architecture-review", "architecture-review", "Improve the construction of a working workflow, including evidence-based execution tier/model choices. Use actual quality, retries, cost and latency evidence; preserve explicit user pins and propose measured trials with a checkpoint and rollback through architecture decisions. Runtime does not change tiers from run counts. Research and propose bounded improvements; do not mutate implementation in the review."
 	case pulseModuleStrategicReview:
 		label, reference, contract = "strategic-review", "strategy-auditor", "Investigate the goal and strategy using workflow evidence, authorized MCP data, browser and external research. Read get_goal_metrics early, connect proposals to outcome metrics and verification checkpoints, and propose bounded measurement additions or repairs when metrics are missing or inadequate. Do not mutate implementation or perform business actions."
 	}

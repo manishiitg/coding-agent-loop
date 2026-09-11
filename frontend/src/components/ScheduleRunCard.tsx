@@ -89,7 +89,7 @@ export function ScheduleRunCard({
         </div>
         <div className="flex shrink-0 items-center gap-1">
           {run.session_id && showCopySessionId && (
-            <ChatSessionIdCopyButton sessionId={run.session_id} compact={compact} />
+            <ChatSessionIdCopyButton sessionId={run.session_id} compact />
           )}
           {run.session_id && (
             <button

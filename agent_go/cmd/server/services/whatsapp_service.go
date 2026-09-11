@@ -1014,6 +1014,31 @@ func (w *WhatsAppService) activeSlug(chatJID string) string {
 	return w.activeRoutes[chatJID]
 }
 
+// formatWhatsAppSlugChoices is the safe landing page for a chat that has no
+// active route. WhatsApp messages must always run in an explicitly selected
+// workflow; they must never fall through to the generic Builder chat (whose
+// runtime/model selection is unrelated to the WhatsApp routing table).
+func formatWhatsAppSlugChoices(routing WhatsAppRouting) string {
+	slugs := make([]string, 0, len(routing))
+	for slug := range routing {
+		if slug = strings.ToLower(strings.TrimSpace(slug)); slug != "" {
+			slugs = append(slugs, slug)
+		}
+	}
+	sort.Strings(slugs)
+	if len(slugs) == 0 {
+		return "No WhatsApp workflows are configured yet. Ask an admin to add a workflow slug."
+	}
+
+	var sb strings.Builder
+	sb.WriteString("Choose a workflow for this chat:\n")
+	for i, slug := range slugs {
+		fmt.Fprintf(&sb, "%d. @%s\n", i+1, slug)
+	}
+	sb.WriteString("\nSend one of the @slugs above to select it. Your later messages will keep using it until you send @off.")
+	return sb.String()
+}
+
 type whatsappWorkflowCandidate struct {
 	Number        int
 	ID            string
@@ -1122,9 +1147,9 @@ func (w *WhatsAppService) handleWorkflowCommand(ctx context.Context, text, chatJ
 		active := w.activeSlug(chatJID)
 		w.clearActiveSlug(chatJID)
 		if active != "" {
-			w.sendWorkflowCommandReply(ctx, chatJID, "Workflow off. Default chat active.")
+			w.sendWorkflowCommandReply(ctx, chatJID, "Workflow off. Send a new @slug to choose another workflow; use @list to see the options.")
 		} else {
-			w.sendWorkflowCommandReply(ctx, chatJID, "No active workflow.")
+			w.sendWorkflowCommandReply(ctx, chatJID, "No active workflow. Use @list to choose one.")
 		}
 		return true
 	}
@@ -2102,7 +2127,7 @@ func (w *WhatsAppService) RouteActivated(ctx context.Context, msg *whatsappbot.M
 // RouteDeactivated implements whatsappbot.RouteObserver ("@slug deactivate").
 func (w *WhatsAppService) RouteDeactivated(ctx context.Context, msg *whatsappbot.Message, key string) {
 	msg.React("👀")
-	if _, err := w.SendThreadMessage(ctx, ThreadID{Platform: "whatsapp", ChannelID: msg.Chat.String()}, fmt.Sprintf("Deactivated @%s. Plain WhatsApp messages will use the default chat again.", key)); err != nil {
+	if _, err := w.SendThreadMessage(ctx, ThreadID{Platform: "whatsapp", ChannelID: msg.Chat.String()}, fmt.Sprintf("Deactivated @%s. Send another @slug to choose a workflow; use @list to see the options.", key)); err != nil {
 		log.Printf("[WHATSAPP] Failed to send deactivate acknowledgement for @%s: %v", key, err)
 	}
 }
@@ -2140,6 +2165,24 @@ func (w *WhatsAppService) HandleMessage(ctx context.Context, msg *whatsappbot.Me
 	info := msg.Event.Info
 	chatJID := msg.Chat.String()
 	text := msg.Text
+
+	// The router populates Route both for an explicit @slug and for a slug
+	// remembered by ActiveSlugStore. If neither exists, stop here and offer
+	// the configured routes. In particular, do not let an unrouted WhatsApp
+	// message become a generic Builder turn with an implicit LLM default.
+	if msg.Route == nil {
+		if stale := w.activeSlug(chatJID); stale != "" {
+			w.clearActiveSlug(chatJID)
+			log.Printf("[WHATSAPP] Cleared unavailable active route @%s for chat=%s user=%s", stale, chatJID, owner.UserID)
+		}
+		msg.React("👀")
+		reply := formatWhatsAppSlugChoices(w.GetRouting())
+		if _, err := w.SendThreadMessage(ctx, ThreadID{Platform: "whatsapp", ChannelID: chatJID}, reply); err != nil {
+			log.Printf("[WHATSAPP] Failed to send route choices for chat=%s user=%s: %v", chatJID, owner.UserID, err)
+		}
+		log.Printf("[WHATSAPP] Unrouted message held for chat=%s user=%s; offered workflow slug choices", chatJID, owner.UserID)
+		return
+	}
 
 	var presetRoute *ChannelRoute
 	var presetProfile *ProfileRoute

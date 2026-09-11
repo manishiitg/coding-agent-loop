@@ -124,6 +124,19 @@ export interface GetModelMetadataResponse {
   models: ModelMetadata[]
 }
 
+export type ProviderSetupAction = 'authenticate'
+
+export interface ProviderSetupSession {
+  id: string
+  provider: string
+  action: ProviderSetupAction
+  status: 'running' | 'completed' | 'failed' | 'cancelled'
+  exit_code?: number
+  error?: string
+  created_at: string
+  updated_at: string
+}
+
 // Create axios instance for LLM configuration API (use Vite env so deploy URL works)
 const llmConfigApi = axios.create({
   baseURL: getApiBaseUrl(),
@@ -188,6 +201,34 @@ export const llmConfigService = {
     const url = `/api/llm-config/providers/${provider}/models` + (full ? '?full=true' : '')
     const response = await llmConfigApi.get(url)
     return response.data
+  },
+
+  // Start an owner-only, allowlisted interactive setup command on the server.
+  startProviderSetup: async (
+    provider: string,
+    action: ProviderSetupAction,
+    cols?: number,
+    rows?: number,
+  ): Promise<ProviderSetupSession> => {
+    const response = await llmConfigApi.post('/api/provider-setup/sessions', { provider, action, cols, rows })
+    return response.data.session
+  },
+
+  getProviderSetup: async (sessionId: string): Promise<ProviderSetupSession> => {
+    const response = await llmConfigApi.get(`/api/provider-setup/sessions/${encodeURIComponent(sessionId)}`)
+    return response.data.session
+  },
+
+  cancelProviderSetup: async (sessionId: string): Promise<void> => {
+    await llmConfigApi.delete(`/api/provider-setup/sessions/${encodeURIComponent(sessionId)}`)
+  },
+
+  getProviderSetupStreamUrl: (sessionId: string): string => {
+    const httpBase = getApiBaseUrl() || (typeof window !== 'undefined' ? window.location.origin : '')
+    const url = new URL(`/api/provider-setup/sessions/${encodeURIComponent(sessionId)}/stream`, httpBase.replace(/^http/i, 'ws'))
+    const token = getAuthToken()
+    if (token) url.searchParams.set('token', token)
+    return url.toString()
   },
 
   // Get delegation tier defaults from environment variables

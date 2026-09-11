@@ -23,6 +23,7 @@ import { GlobalActivityMonitor } from './GlobalActivityMonitor'
 import WorkflowWalkthrough from './workflow/WorkflowWalkthrough'
 import { ProductSurfaceSwitcher } from './ProductSurfaceSwitcher'
 import WorkspaceTopBarControls from './WorkspaceTopBarControls'
+import ProvidersControl from './topbar/ProvidersControl'
 import ConfirmationDialog from './ui/ConfirmationDialog'
 import LazyModalFallback from './ui/LazyModalFallback'
 import {
@@ -791,33 +792,7 @@ export const ModePresetBar: React.FC = () => {
             <div className="flex shrink-0 items-center gap-2">
               <GlobalActivityMonitor />
 
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <button
-                    onClick={openWorkflowWalkthrough}
-                    data-testid="open-walkthrough-button"
-                    className="p-1 rounded-md text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 hover:text-gray-700 dark:hover:text-gray-200 transition-colors"
-                    aria-label="Open walkthrough"
-                  >
-                    <HelpCircle className="w-4 h-4" />
-                  </button>
-                </TooltipTrigger>
-                <TooltipContent side="bottom">Walkthrough</TooltipContent>
-              </Tooltip>
-
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <button
-                    onClick={() => setShowShortcuts(true)}
-                    className="p-1 rounded-md text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 hover:text-gray-700 dark:hover:text-gray-200 transition-colors"
-                    aria-label="Keyboard shortcuts"
-                    title="Keyboard shortcuts"
-                  >
-                    <Keyboard className="w-4 h-4" />
-                  </button>
-                </TooltipTrigger>
-                <TooltipContent side="bottom">Keyboard shortcuts</TooltipContent>
-              </Tooltip>
+              <ProvidersControl />
 
               {shouldShowScheduleHeader && (
                 <>
@@ -851,6 +826,34 @@ export const ModePresetBar: React.FC = () => {
               )}
 
               <span className="mx-0.5 h-5 w-px bg-gray-200 dark:bg-gray-700" />
+
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <button
+                    onClick={openWorkflowWalkthrough}
+                    data-testid="open-walkthrough-button"
+                    className="p-1 rounded-md text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 hover:text-gray-700 dark:hover:text-gray-200 transition-colors"
+                    aria-label="Open walkthrough"
+                  >
+                    <HelpCircle className="w-4 h-4" />
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent side="bottom">Walkthrough</TooltipContent>
+              </Tooltip>
+
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <button
+                    onClick={() => setShowShortcuts(true)}
+                    className="p-1 rounded-md text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 hover:text-gray-700 dark:hover:text-gray-200 transition-colors"
+                    aria-label="Keyboard shortcuts"
+                    title="Keyboard shortcuts"
+                  >
+                    <Keyboard className="w-4 h-4" />
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent side="bottom">Keyboard shortcuts</TooltipContent>
+              </Tooltip>
 
               {/* Config/account controls relocated from the former left sidebar */}
               <WorkspaceTopBarControls />

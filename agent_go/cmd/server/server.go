@@ -439,6 +439,11 @@ type StreamingAPI struct {
 	// the snapshot/replay path above still serves the rail / non-selected panes.
 	liveAttach *liveAttachManager
 
+	// Short-lived, owner-only PTY sessions used by the guided provider setup
+	// wizard. Commands are selected from a server-side allowlist.
+	providerSetupMu sync.Mutex
+	providerSetups  *providerSetupManager
+
 	// Workflow orchestrator configuration
 	provider      string
 	model         string
@@ -1865,6 +1870,7 @@ func runServer(cmd *cobra.Command, args []string) {
 		terminalLeaseRegistry:              terminalLeaseRegistry,
 		terminalPipeRecorder:               terminalPipeRecorder,
 		liveAttach:                         newLiveAttachManagerIfEnabled(),
+		providerSetups:                     newProviderSetupManager(),
 		provider:                           config.Provider,
 		model:                              config.ModelID,
 		mcpConfigPath:                      configPath,
@@ -2062,6 +2068,9 @@ func runServer(cmd *cobra.Command, args []string) {
 	apiRouter.HandleFunc("/llm-config/delegation-tiers", api.handleGetDelegationTierDefaults).Methods("GET")
 	apiRouter.HandleFunc("/llm-config/providers", api.handleGetProviderManifest).Methods("GET")
 	apiRouter.HandleFunc("/llm-config/providers/{provider}/models", api.handleGetProviderModels).Methods("GET")
+	apiRouter.HandleFunc("/provider-setup/sessions", requireAdmin(api.handleStartProviderSetup)).Methods("POST", "OPTIONS")
+	apiRouter.HandleFunc("/provider-setup/sessions/{id}", requireAdmin(api.handleProviderSetupSession)).Methods("GET", "DELETE", "OPTIONS")
+	apiRouter.HandleFunc("/provider-setup/sessions/{id}/stream", requireAdmin(api.handleProviderSetupStream)).Methods("GET")
 	apiRouter.HandleFunc("/session/cancel-turn", api.handleCancelCurrentTurn).Methods("POST")
 	apiRouter.HandleFunc("/session/stop", api.handleStopSession).Methods("POST")
 	apiRouter.HandleFunc("/session/clear", api.handleClearSession).Methods("POST")
@@ -4943,6 +4952,10 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		// guessed.
 		toolGate := newProductToolGate(resolvedProfile)
 		defer toolGate.logSurface(sessionID)
+		platformBridgeTools := []string{}
+		if toolGate.Admit("read_image") {
+			platformBridgeTools = append(platformBridgeTools, "read_image")
+		}
 
 		agentConfig := agent.LLMAgentConfig{
 			Name:               "chat-agent",
@@ -4958,6 +4971,12 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			StreamingChunkSize: 50,
 			Timeout:            0,             // No per-Invoke timeout; streamCtx is explicitly canceled when needed.
 			SelectedTools:      selectedTools, // NEW: Pass selected tools
+			// read_image remains the platform's workspace-aware image-analysis
+			// executor. Expose it directly through every coding-agent bridge so
+			// Muse gets the same path as Codex without re-enabling native file or
+			// shell tools. Admission and registration remain authoritative: if a
+			// product excludes read_image, the bridge cannot advertise it.
+			AdditionalBridgeTools: platformBridgeTools,
 
 			// Detailed LLM configuration from frontend (unified fallback structure)
 			Fallbacks: fallbacks,

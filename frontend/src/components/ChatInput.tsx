@@ -118,7 +118,7 @@ import type { InlineSelectionItem } from './InlineSelectionPopup'
 import SkillImportDialog from './skills/SkillImportDialog'
 import { MCPConfigPopup } from './MCPConfigPopup'
 import MCPDetailsModal from './MCPDetailsModal'
-import LLMConfigurationModal from './LLMConfigurationModal'
+import CodingProvidersPanel from './providers/CodingProvidersPanel'
 import type { PlannerFile, LLMProvider, TerminalSnapshot } from '../services/api-types'
 import type { LLMOption } from '../types/llm'
 import { useAppStore, useMCPStore, useLLMStore, useChatStore } from '../stores'
@@ -3970,7 +3970,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
           onClose={() => closeDialog('mcpConfig')}
         />
       )}
-      <LLMConfigurationModal
+      <CodingProvidersPanel
         isOpen={showModels}
         onClose={() => closeDialog('models')}
       />

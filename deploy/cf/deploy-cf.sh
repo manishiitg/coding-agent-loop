@@ -109,21 +109,33 @@ echo "==> Ensuring Confida Node $REMOTE_NODE_VERSION is installed"
   test \"\$(node --version)\" = 'v$REMOTE_NODE_VERSION'
   npm --version"
 
-# agent-browser is a mandatory runtime dependency: preview_report and every
-# browser-automation tool shell out to it by name with no PATH check of their
-# own, so a missing install surfaces only as an opaque "exit code 127:
-# agent-browser: not found" deep inside a tool call. Unlike jq, it needs no
-# root (a per-user npm global prefix is enough). Confida owns a stable tools
-# prefix outside releases so the CLI survives release pruning and every
-# deploy can safely ensure/update it. A missing mandatory browser runtime is
-# fatal: activating a release that cannot execute browser tools is not a
-# successful deployment.
-echo "==> Ensuring agent-browser is installed on the remote host"
-"${SSH[@]}" "set -e
-  install -d -m 0755 '$REMOTE_TOOLS'
+# Browser automation and every advertised coding provider are installation
+# dependencies, not something an AgentWorks user is expected to install over
+# SSH. Keep the binaries in stable, service-owned paths outside releases so
+# credentials and CLI availability survive release pruning. A missing CLI is
+# fatal: the Providers UI may report status and guide authentication, but it
+# must never ask an end user to repair the host.
+echo "==> Installing server CLI dependencies (agent-browser, claude, codex, pi, cursor, muse)"
+"${SSH[@]}" "set -euo pipefail
+  install -d -m 0755 '$REMOTE_TOOLS' '$REMOTE_APP/home/.local/bin'
   export PATH='$REMOTE_RUNTIME_PATH'
   npm install -g --prefix '$REMOTE_TOOLS' --allow-scripts=agent-browser agent-browser@latest >/dev/null
-  command -v agent-browser >/dev/null
+  npm install -g --prefix '$REMOTE_TOOLS' \
+    @anthropic-ai/claude-code@latest \
+    @openai/codex@latest \
+    @earendil-works/pi-coding-agent@latest >/dev/null
+  HOME='$REMOTE_APP/home' curl --fail --silent --show-error --location \
+    --proto '=https' --proto-redir '=https' --tlsv1.2 https://cursor.com/install | HOME='$REMOTE_APP/home' bash
+  export HOME='$REMOTE_APP/home'
+  export MUSE_INSTALL_DIR='$REMOTE_APP/home/.local/bin'
+  export MUSE_NO_MODIFY_PATH=1
+  curl --fail --silent --show-error --location \
+    --proto '=https' --proto-redir '=https' --tlsv1.2 https://dev.meta.ai/install.sh | bash
+  export PATH='$REMOTE_TOOLS/bin':\"\$PATH\"
+  export PATH='$REMOTE_APP/home/.local/bin':\"\$PATH\"
+  for cli in agent-browser claude codex pi cursor-agent muse; do
+    command -v \"\$cli\" >/dev/null
+  done
   test \"\$(node --version)\" = 'v$REMOTE_NODE_VERSION'
   agent-browser --version"
 
@@ -187,7 +199,9 @@ curl -fsSI "https://confida.agentworkshq.com/login" | head -1
 "${SSH[@]}" "set -e
   export PATH='$REMOTE_RUNTIME_PATH'
   test \"\$(node --version)\" = 'v$REMOTE_NODE_VERSION'
-  command -v agent-browser >/dev/null
+  for cli in agent-browser claude codex pi cursor-agent muse; do
+    command -v "\$cli" >/dev/null
+  done
   for unit in confida-agent confida-workspace; do
     pid=\$(systemctl --user show \"\$unit\" -p MainPID --value)
     test \"\$pid\" -gt 0

@@ -18,13 +18,22 @@ class ConfidaRuntimeDependenciesTest(unittest.TestCase):
         self.assertIn("/srv/confida/tools/node/bin:/srv/confida/tools/bin", activate)
         self.assertIn('[[ "$(node --version)" == v24.* ]]', activate)
 
-    def test_agent_browser_uses_writable_persistent_prefix_and_is_mandatory(self) -> None:
+    def test_all_provider_clis_use_persistent_paths_and_are_mandatory(self) -> None:
         deploy = (CF_DIR / "deploy-cf.sh").read_text()
 
         self.assertIn('REMOTE_TOOLS="$REMOTE_APP/tools"', deploy)
         self.assertIn("npm install -g --prefix '$REMOTE_TOOLS' --allow-scripts=agent-browser agent-browser@latest", deploy)
+        for package in (
+            "@anthropic-ai/claude-code@latest",
+            "@openai/codex@latest",
+            "@earendil-works/pi-coding-agent@latest",
+        ):
+            self.assertIn(package, deploy)
+        self.assertIn("https://cursor.com/install", deploy)
+        self.assertIn("https://dev.meta.ai/install.sh", deploy)
+        self.assertIn("MUSE_INSTALL_DIR='$REMOTE_APP/home/.local/bin'", deploy)
         self.assertNotIn("WARNING: agent-browser is NOT installed", deploy)
-        self.assertIn("command -v agent-browser >/dev/null", deploy)
+        self.assertIn("for cli in agent-browser claude codex pi cursor-agent muse", deploy)
 
     def test_agent_and_workspace_services_receive_tools_path(self) -> None:
         activate = (CF_DIR / "server-build-and-activate.sh").read_text()

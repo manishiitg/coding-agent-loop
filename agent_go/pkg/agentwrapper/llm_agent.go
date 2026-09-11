@@ -99,7 +99,7 @@ func runtimeConfigForLLMAgent(config LLMAgentConfig, model llmtypes.Model, trace
 		Tools: mcpagent.ToolRuntimeConfig{
 			SelectedTools: config.SelectedTools, SelectedServers: configuredServerNames(config.ServerName),
 			CodeExecution: config.UseCodeExecutionMode, ParallelExecution: config.EnableParallelToolExecution,
-			Timeout: config.ToolTimeout,
+			Timeout: config.ToolTimeout, AdditionalBridge: config.AdditionalBridgeTools,
 		},
 		Context: mcpagent.ContextRuntimeConfig{
 			LargeOutputThreshold:      config.LargeOutputThreshold,
@@ -296,6 +296,10 @@ type LLMAgentConfig struct {
 	ToolTimeout        time.Duration      // Tool execution timeout (default: 5 minutes)
 	AgentMode          mcpagent.AgentMode // Agent mode (Simple or ReAct)
 	SelectedTools      []string           // Selected tools in "server:tool" format
+	// AdditionalBridgeTools exposes selected registered platform tools directly
+	// through the coding-agent MCP bridge. The coding CLI calls these tools; it
+	// does not become their implementation backend.
+	AdditionalBridgeTools []string
 
 	// AdmitTool decides which tools may enter this agent's definition. It is a
 	// construction input rather than a setter because the decision is only

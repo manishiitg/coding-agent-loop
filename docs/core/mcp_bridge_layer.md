@@ -126,3 +126,11 @@ and nothing to edit in the shared `mcpagent` module. If you're calling
 is registered (handler exists) but genuinely invisible to the model — a real,
 easy-to-hit gap, not a permissions issue. Either way, never add app-specific
 names to the shared `bridgeTools` var itself.
+
+AgentWorks uses that scoped mechanism for the platform `read_image` executor in
+both chat and workflow-agent construction. It is therefore a direct MCP bridge
+tool for Muse, Codex, and the other coding CLIs when the session's tool policy
+admits it. This does not enable a provider-native image or file tool: the call
+still lands on AgentWorks' workspace-aware `read_image` implementation, which
+selects its configured image-analysis provider independently of the calling
+chat model.

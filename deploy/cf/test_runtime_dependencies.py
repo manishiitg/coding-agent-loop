@@ -22,7 +22,7 @@ class ConfidaRuntimeDependenciesTest(unittest.TestCase):
         deploy = (CF_DIR / "deploy-cf.sh").read_text()
 
         self.assertIn('REMOTE_TOOLS="$REMOTE_APP/tools"', deploy)
-        self.assertIn("npm install -g --prefix '$REMOTE_TOOLS' agent-browser@latest", deploy)
+        self.assertIn("npm install -g --prefix '$REMOTE_TOOLS' --allow-scripts=agent-browser agent-browser@latest", deploy)
         self.assertNotIn("WARNING: agent-browser is NOT installed", deploy)
         self.assertIn("command -v agent-browser >/dev/null", deploy)
 

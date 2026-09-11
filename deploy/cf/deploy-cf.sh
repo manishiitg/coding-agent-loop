@@ -122,7 +122,7 @@ echo "==> Ensuring agent-browser is installed on the remote host"
 "${SSH[@]}" "set -e
   install -d -m 0755 '$REMOTE_TOOLS'
   export PATH='$REMOTE_RUNTIME_PATH'
-  npm install -g --prefix '$REMOTE_TOOLS' agent-browser@latest >/dev/null
+  npm install -g --prefix '$REMOTE_TOOLS' --allow-scripts=agent-browser agent-browser@latest >/dev/null
   command -v agent-browser >/dev/null
   test \"\$(node --version)\" = 'v$REMOTE_NODE_VERSION'
   agent-browser --version"

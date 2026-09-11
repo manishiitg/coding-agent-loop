@@ -417,7 +417,6 @@ type activeBotSession struct {
 	builderDone      bool            // event filter signaled the parent session finished its own turn
 	pendingWorkflows int             // live workflows attached via SpawnListener (>0 defers cancel)
 	activeWorkflows  map[string]bool // wfSessionID set, for idempotent NotifyWorkflowEnded
-	queuedMessages   []BotIncomingMessage
 	sendFullDetails  bool
 	// profileTurn marks a session running in a product profile's own
 	// conversation (ProfileTurnFunc). Every later turn in it is built the
@@ -853,12 +852,6 @@ const threadlessSessionIdleLimit = 1 * time.Hour
 // references ("the same issue as before", etc.).
 const staleContextTurns = 3
 
-// maxThreadlessQueuedMessages caps WhatsApp/Telegram messages received while
-// the builder is still processing the current turn. These platforms have no
-// threads, so queueing preserves user intent without letting a stuck session
-// accumulate unbounded work.
-const maxThreadlessQueuedMessages = 10
-
 // loadRecentChatTurns reads the last `n` user/assistant turns from a
 // session's conversation.json. Returns nil on any read/parse failure; the
 // caller treats "no context" and "failed to load" identically. Used to
@@ -951,7 +944,6 @@ func (m *BotConversationManager) handleExistingSession(active *activeBotSession,
 	awaiting := active.awaitingUserInput
 	blockingEventType := active.blockingEventType
 	lastActivity := active.LastActivity
-	builderDone := active.builderDone
 	sendFullDetails := active.sendFullDetails
 	oldSessionID := active.SessionID
 	oldUserID := active.UserID
@@ -1053,11 +1045,13 @@ func (m *BotConversationManager) handleExistingSession(active *activeBotSession,
 			sid := active.SessionID
 			uid := active.UserID
 			active.mu.Unlock()
-			if builderDone && m.startFollowUpTurn(active, msg, sid, uid, "threadless-free") {
-				return
-			}
-			if connector := m.GetConnector(active.Platform); connector != nil {
-				m.queueThreadlessMessage(active, connector, msg)
+			// Share the app's /api/query entry point. It chooses retained tmux
+			// steering or a normal turn from actual execution state. A bot-local
+			// busy flag must never hold a user's steering message behind a turn.
+			if !m.startFollowUpTurn(active, msg, sid, uid, "threadless") {
+				if connector := m.GetConnector(active.Platform); connector != nil {
+					connector.SendThreadMessage(context.Background(), active.ThreadID, "Couldn't deliver your message: the chat session is unavailable. Please try again.")
+				}
 			}
 			return
 		}
@@ -1299,7 +1293,14 @@ func (m *BotConversationManager) startFollowUpTurn(active *activeBotSession, msg
 		source = "follow-up"
 	}
 	log.Printf("[BOT_MANAGER] Sending %s to session %s: %s", source, sessionID, botTruncate(msg.Text, 80))
-	m.resetActiveForNewTurn(active)
+	active.mu.Lock()
+	builderDone := active.builderDone
+	active.mu.Unlock()
+	// Steering belongs to the current turn. Preserve its completion tracking
+	// and already-forwarded text; only a completed builder starts a new turn.
+	if builderDone {
+		m.resetActiveForNewTurn(active)
+	}
 	active.mu.Lock()
 	active.LastActivity = time.Now()
 	active.mu.Unlock()
@@ -1313,6 +1314,9 @@ func (m *BotConversationManager) startFollowUpTurn(active *activeBotSession, msg
 		err := m.followUpSession(followCtx, m.turnRequestForActive(active, m.withBotRuntimeState(active, msg.Text), userID, platform, threadID), sessionID, userID)
 		if err != nil {
 			log.Printf("[BOT_MANAGER] Follow-up failed: %v", err)
+			if connector := m.GetConnector(platform); connector != nil {
+				connector.SendThreadMessage(context.Background(), threadID, fmt.Sprintf("Couldn't deliver your message: %v", err))
+			}
 		}
 	}()
 	return true
@@ -1341,55 +1345,6 @@ func (m *BotConversationManager) withBotRuntimeState(active *activeBotSession, u
 		return fmt.Sprintf("## Bot Connector Runtime State\nNo workflow/sub-agent work is currently pending for this bot conversation. The previous builder/workflow turn status is %s. If the user asks to wait, asks for status, or asks what happened, answer from the existing conversation/results instead of promising a future ping.\n\n---\n\n## Current Message\n%s", status, userText)
 	}
 	return userText
-}
-
-func (m *BotConversationManager) queueThreadlessMessage(active *activeBotSession, connector BotConnector, msg BotIncomingMessage) {
-	if connector == nil {
-		return
-	}
-	active.mu.Lock()
-	threadID := active.ThreadID
-	sessionID := active.SessionID
-	if len(active.queuedMessages) >= maxThreadlessQueuedMessages {
-		queueLen := len(active.queuedMessages)
-		active.LastActivity = time.Now()
-		active.mu.Unlock()
-		log.Printf("[BOT_MANAGER] Thread-less queue full for session %s; dropping message: %s", sessionID, botTruncate(msg.Text, 80))
-		connector.SendThreadMessage(context.Background(), threadID,
-			fmt.Sprintf("Builder is still processing your previous message. I already have %d message(s) queued; send `@done` to end this run before sending more.", queueLen))
-		return
-	}
-	active.queuedMessages = append(active.queuedMessages, msg)
-	queueLen := len(active.queuedMessages)
-	active.LastActivity = time.Now()
-	active.mu.Unlock()
-
-	log.Printf("[BOT_MANAGER] Queued thread-less message for session %s (queue=%d): %s", sessionID, queueLen, botTruncate(msg.Text, 80))
-	reply := "Builder is processing your previous message. I queued this one and will run it next."
-	if queueLen > 1 {
-		reply = fmt.Sprintf("Builder is processing your previous message. I queued this one at position %d.", queueLen)
-	}
-	connector.SendThreadMessage(context.Background(), threadID, reply)
-}
-
-func (m *BotConversationManager) startNextQueuedMessage(active *activeBotSession) bool {
-	if m.followUpSession == nil {
-		return false
-	}
-	active.mu.Lock()
-	if active.awaitingUserInput || len(active.queuedMessages) == 0 {
-		active.mu.Unlock()
-		return false
-	}
-	msg := active.queuedMessages[0]
-	active.queuedMessages = active.queuedMessages[1:]
-	sessionID := active.SessionID
-	userID := active.UserID
-	remaining := len(active.queuedMessages)
-	active.mu.Unlock()
-
-	log.Printf("[BOT_MANAGER] Draining queued thread-less message for session %s (remaining=%d)", sessionID, remaining)
-	return m.startFollowUpTurn(active, msg, sessionID, userID, "queued-threadless")
 }
 
 // handleBlockingResponse handles a user response to a blocking event (plan_approval, human feedback, etc.)
@@ -2108,13 +2063,7 @@ func (m *BotConversationManager) startMirroringExistingSession(active *activeBot
 		active.mu.Unlock()
 	})
 	active.eventFilter.SetSessionDoneCallback(func() {
-		active.mu.Lock()
-		active.builderDone = true
-		pending := active.pendingWorkflows
-		active.mu.Unlock()
-		if m.startNextQueuedMessage(active) {
-			return
-		}
+		pending := m.markBotBuilderDone(active)
 		if pending == 0 {
 			cancel()
 		}
@@ -2134,6 +2083,21 @@ func (m *BotConversationManager) startMirroringExistingSession(active *activeBot
 		active.mu.Unlock()
 		m.persistBotSessionBinding(active, completedAt)
 	}()
+}
+
+// markBotBuilderDone releases the bot's turn state, including stale prompts
+// after a terminal failure. Background workflows retain their own lifecycle.
+func (m *BotConversationManager) markBotBuilderDone(active *activeBotSession) int {
+	active.mu.Lock()
+	defer active.mu.Unlock()
+	active.builderDone = true
+	active.awaitingUserInput = false
+	active.blockingEventType = ""
+	active.blockingRequestID = ""
+	if active.eventFilter != nil && active.eventFilter.SessionFailed() {
+		active.Status = chathistory.BotSessionStatusFailed
+	}
+	return active.pendingWorkflows
 }
 
 // runSession runs the agent session with event filtering and lifecycle management
@@ -2171,13 +2135,7 @@ func (m *BotConversationManager) runSession(active *activeBotSession, queryReq m
 	// therefore on clearing Slack reactions) until every mirrored workflow has
 	// drained. The last mirror to finish will call cancel() itself.
 	active.eventFilter.SetSessionDoneCallback(func() {
-		active.mu.Lock()
-		active.builderDone = true
-		pending := active.pendingWorkflows
-		active.mu.Unlock()
-		if m.startNextQueuedMessage(active) {
-			return
-		}
+		pending := m.markBotBuilderDone(active)
 		if pending > 0 {
 			log.Printf("[BOT_MANAGER] Builder done for %s but %d workflow(s) still running — deferring cancel", active.SessionID, pending)
 			return

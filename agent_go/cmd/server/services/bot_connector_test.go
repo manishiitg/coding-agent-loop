@@ -665,55 +665,51 @@ func TestThreadlessPrefixedDoneEndsSession(t *testing.T) {
 	}
 }
 
-func TestThreadlessRunningSessionQueuesWhileBuilderBusy(t *testing.T) {
-	manager := NewBotConversationManager(nil, "", "")
-	connector := &testBotConnector{}
-	manager.RegisterConnector(connector)
-
-	followUps := make(chan string, 1)
-	manager.SetFollowUpFunc(func(_ context.Context, req map[string]interface{}, _ string, _ string) error {
-		followUps <- req["query"].(string)
-		return nil
-	})
-
-	active := &activeBotSession{
-		SessionID:    "session-1",
-		UserID:       "user-1",
-		Status:       chathistory.BotSessionStatusRunning,
-		Platform:     "whatsapp",
-		ThreadID:     ThreadID{Platform: "whatsapp", ChannelID: "dm", ThreadTS: "dm"},
-		LastActivity: time.Now(),
-		builderDone:  false,
-	}
-
-	manager.handleExistingSession(active, BotIncomingMessage{
-		Platform:  "whatsapp",
-		ChannelID: "dm",
-		Text:      "next question",
-	}, false)
-
-	select {
-	case got := <-followUps:
-		t.Fatalf("unexpected immediate follow-up injection: %q", got)
-	default:
-	}
-	if len(connector.sent) != 1 {
-		t.Fatalf("connector sent %d replies, want 1", len(connector.sent))
-	}
-	if len(active.queuedMessages) != 1 {
-		t.Fatalf("queued messages = %d, want 1", len(active.queuedMessages))
-	}
-
-	if !manager.startNextQueuedMessage(active) {
-		t.Fatal("expected queued message to start")
-	}
-	select {
-	case got := <-followUps:
-		if got != "next question" {
-			t.Fatalf("follow-up query = %q, want %q", got, "next question")
-		}
-	case <-time.After(time.Second):
-		t.Fatal("expected queued follow-up injection")
+// P0: a busy tmux turn must remain steerable from a thread-less connector.
+// Submission reaches the same follow-up callback used by the chat backend
+// before the previous turn (or even a previous submission) has finished.
+func TestThreadlessBusySessionSteersImmediatelyP0(t *testing.T) {
+	for _, platform := range []string{"whatsapp", "telegram"} {
+		t.Run(platform, func(t *testing.T) {
+			manager := NewBotConversationManager(nil, "", "")
+			connector := &testBotConnector{name: platform}
+			manager.RegisterConnector(connector)
+			inputs := make(chan string, 2)
+			release := make(chan struct{})
+			defer close(release)
+			manager.SetFollowUpFunc(func(_ context.Context, req map[string]interface{}, sessionID, _ string) error {
+				if sessionID != "session-1" {
+					t.Errorf("steer changed session: %s", sessionID)
+				}
+				inputs <- req["query"].(string)
+				<-release
+				return nil
+			})
+			filter := NewBotEventFilter(connector, ThreadID{Platform: platform}, "session-1", "", "user-1")
+			filter.MarkMainTextSent("Already forwarded progress")
+			active := &activeBotSession{
+				SessionID: "session-1", UserID: "user-1", Status: chathistory.BotSessionStatusRunning,
+				Platform: platform, ThreadID: ThreadID{Platform: platform, ChannelID: "dm", ThreadTS: "dm"},
+				LastActivity: time.Now(), builderDone: false, eventFilter: filter,
+			}
+			for _, text := range []string{"use Notion instead", "keep the existing steps"} {
+				manager.handleExistingSession(active, BotIncomingMessage{Platform: platform, ChannelID: "dm", Text: text}, false)
+				select {
+				case got := <-inputs:
+					if got != text {
+						t.Fatalf("steer = %q, want %q", got, text)
+					}
+				case <-time.After(time.Second):
+					t.Fatal("busy builder blocked steering")
+				}
+			}
+			if len(connector.sent) != 0 {
+				t.Fatalf("unexpected busy/queue response: %v", connector.sent)
+			}
+			if filter.ShouldSendSyntheticFinal("Already forwarded progress") {
+				t.Fatal("steering reset the current turn's text deduplication")
+			}
+		})
 	}
 }
 

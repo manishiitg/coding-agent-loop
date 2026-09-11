@@ -7362,6 +7362,8 @@ func retainedCodingAgentProvider(snapshot terminals.Snapshot) string {
 		return string(llm.ProviderCodexCLI)
 	case strings.HasPrefix(tmuxSession, "mlp-cursor-cli"):
 		return string(llm.ProviderCursorCLI)
+	case strings.HasPrefix(tmuxSession, "mlp-muse-"):
+		return string(llm.ProviderMuseCLI)
 	case strings.HasPrefix(tmuxSession, "mlp-pi-cli"):
 		return string(llm.ProviderPiCLI)
 	}
@@ -7374,6 +7376,8 @@ func retainedCodingAgentProvider(snapshot terminals.Snapshot) string {
 		return string(llm.ProviderCodexCLI)
 	case strings.Contains(label, "cursor"):
 		return string(llm.ProviderCursorCLI)
+	case strings.Contains(label, "muse"):
+		return string(llm.ProviderMuseCLI)
 	case strings.Contains(label, "pi-cli") || strings.HasPrefix(label, "pi "):
 		return string(llm.ProviderPiCLI)
 	default:

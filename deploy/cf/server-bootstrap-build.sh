@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Runs on confida@116.202.210.102 only, inside a scratch job dir shipped by
-# deploy-rootless-confida.sh. Mirrors deploy/aws-ec2/server/bootstrap-build.sh
+# deploy-cf.sh. Mirrors deploy/aws-ec2/server/bootstrap-build.sh
 # (RTS): the local machine sends only instructions (repo URLs / branch), this
 # clones fresh on the target host, then hands off to the actual build script
 # living INSIDE that fresh checkout -- so the build logic itself always tracks
@@ -52,4 +52,4 @@ else
   done
 fi
 
-bash "$JOB/source/mcp-agent-builder-go/deploy/confida/server-build-and-activate.sh" "$JOB/source"
+bash "$JOB/source/mcp-agent-builder-go/deploy/cf/server-build-and-activate.sh" "$JOB/source"

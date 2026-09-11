@@ -12,7 +12,7 @@ set -euo pipefail
 [[ "$(uname -sm)" == "Linux x86_64" ]] || { echo "Build must run on Linux x86_64" >&2; exit 1; }
 WORKSPACE_ROOT="$1"
 REPO_ROOT="$WORKSPACE_ROOT/mcp-agent-builder-go"
-SCRIPT_DIR="$REPO_ROOT/deploy/confida"
+SCRIPT_DIR="$REPO_ROOT/deploy/cf"
 REMOTE_APP="/srv/confida"
 export GOMAXPROCS=4 GOFLAGS=-p=4 NODE_OPTIONS=--max-old-space-size=2048
 
@@ -81,7 +81,7 @@ install -m 0644 "$SCRIPT_DIR/runtime-config.js" "$BUILD_DIR/frontend/runtime-con
 # already-registered agentworkshq.com OAuth client metadata) -- confida is a
 # generic AgentWorks instance, not a locked single-purpose product profile
 # like Dominion, so it gets the same catalog Video Studio ships with.
-install -m 0644 "$SCRIPT_DIR/mcp_servers_confida.json" "$BUILD_DIR/configs/mcp_servers_confida.json"
+install -m 0644 "$SCRIPT_DIR/mcp-servers-cf.json" "$BUILD_DIR/configs/mcp_servers_confida.json"
 node "$BUILD_DIR/check-release-assets.mjs" "$BUILD_DIR/frontend"
 
 # Carry the previous release's hashed frontend assets into the new one. A tab

@@ -5,7 +5,7 @@
 // frontend/public/runtime-config.js is a LOCAL DEV file: it bakes in
 // whatever ports a locally-running dev agent/workspace happen to use, and
 // `npm run build` copies it into dist/ verbatim like any other public/
-// asset. deploy-rootless-confida.sh overwrites it with this file after
+// asset. deploy-cf.sh overwrites it with this file after
 // every build -- do not delete this step.
 window.__APP_RUNTIME_CONFIG__ = {
   apiBaseUrl: "",

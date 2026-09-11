@@ -36,7 +36,7 @@ set -euo pipefail
 # server and build those -- fast iteration only, never for a release you
 # intend to keep.
 #
-# Usage: ./deploy-rootless-confida.sh
+# Usage: ./deploy-cf.sh
 # Env overrides: HOST_IP, SSH_PORT, SSH_KEY_PATH, DEPLOY_SOURCE_MODE, DEPLOY_BRANCH
 
 HOST_IP="${HOST_IP:-116.202.210.102}"

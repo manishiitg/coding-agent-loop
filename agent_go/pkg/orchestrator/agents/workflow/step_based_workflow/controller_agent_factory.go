@@ -339,6 +339,17 @@ func ConfigureManagedWorkflowDBSession(sessionID, workspacePath string, readWrit
 	configureWorkflowDBSession(sessionID, workspacePath, dbAccess, false)
 }
 
+// appendManagedDBFileAccess is the common filesystem contract for agentic
+// message sequences and orchestrators. SQL access remains mediated by DB tools;
+// never grant the parent db/ directory, which would also expose db.sqlite.
+func appendManagedDBFileAccess(workspacePath string, readPaths, writePaths []string) ([]string, []string) {
+	dbPath := getDBPath(workspacePath)
+	assetsPath := filepath.Join(dbPath, DBAssetsFolderName)
+	readPaths = append(readPaths, assetsPath, filepath.Join(dbPath, "README.md"))
+	writePaths = append(writePaths, assetsPath)
+	return readPaths, writePaths
+}
+
 func dbWritePathGranted(writePaths []string, workspacePath string) bool {
 	want := filepath.Clean(getDBPath(workspacePath))
 	for _, path := range writePaths {

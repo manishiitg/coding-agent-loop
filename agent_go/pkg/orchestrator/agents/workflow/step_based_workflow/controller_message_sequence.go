@@ -1478,30 +1478,14 @@ func (hcpo *StepBasedWorkflowOrchestrator) setupMessageSequenceFolderGuard(stepP
 	if hcpo.isEvaluationMode {
 		learningsAccess = LearningsAccessNone
 	}
-	// message_sequence agents use query_workflow_db/mutate_workflow_db, so
-	// db/db.sqlite itself stays off the filesystem grant: configureWorkflowDBSession
-	// blocks it for managed agents, and Landlock cannot represent a broad parent
-	// allow with a narrower child deny because its rules are additive (introduced
-	// in commit a960df20 -- no PLAT ticket was filed for it; an earlier version
-	// of this comment mislabeled it "PLAT-169 follow-up", a real but unrelated
-	// ticket about MCP server checkbox spelling, corrected here as part of
-	// PLAT-175). db/assets/ is a sibling of db.sqlite, not a child of it, so
-	// granting it directly doesn't reopen that conflict -- and it has to be
-	// granted, because it's the only durable location a step can write an
-	// arbitrary file to (stores.md), and mutate_workflow_db is SQL-only and
-	// cannot write one. A prior version of this fix dropped the whole db/ grant
-	// instead of narrowing it, which took db/assets/ down as collateral damage:
-	// confida-login's survey step is instructed to sync db/assets/business-context/
-	// via shell every cycle and had no legal path to do so (PLAT-175).
-	dbAssetsPath := filepath.Join(getDBPath(baseWorkspacePath), DBAssetsFolderName)
-	readPaths = append(readPaths, dbAssetsPath)
+	readPaths, writePaths = appendManagedDBFileAccess(baseWorkspacePath, readPaths, nil)
 	if kbAccessAllowsRead(kbAccess) {
 		readPaths = append(readPaths, getKnowledgebasePath(baseWorkspacePath))
 	}
 	if learningsAccess != LearningsAccessNone {
 		readPaths = appendLearningReadPaths(readPaths, baseWorkspacePath, stepID)
 	}
-	writePaths = []string{stepFolderPath, downloadsPath, dbAssetsPath}
+	writePaths = append(writePaths, stepFolderPath, downloadsPath)
 	if itemWriteAccess.Knowledgebase && kbAccessAllowsWrite(kbAccess) {
 		writePaths = append(writePaths, filepath.Join(getKnowledgebasePath(baseWorkspacePath), "notes"))
 	}
@@ -1621,9 +1605,9 @@ func (hcpo *StepBasedWorkflowOrchestrator) buildMessageSequenceTemplateVars(step
 }
 
 func buildMessageSequenceAccessNote(writeAccess MessageSequenceWriteAccess) string {
-	grants := []string{"step folder", "Downloads"}
+	grants := []string{"step folder", "Downloads", "db/assets/"}
 	if writeAccess.DB {
-		grants = append(grants, "db/")
+		grants = append(grants, "database rows via mutate_workflow_db")
 	}
 	if writeAccess.Knowledgebase {
 		grants = append(grants, "knowledgebase/notes/")
@@ -1631,7 +1615,7 @@ func buildMessageSequenceAccessNote(writeAccess MessageSequenceWriteAccess) stri
 	if writeAccess.Learnings {
 		grants = append(grants, "learnings/_global/")
 	}
-	return "Reads are available for execution outputs, soul, builder logs, db/, knowledgebase/, learnings/_global/, and this step's learnings folder. Writes for this item are limited to: " + strings.Join(grants, ", ") + "."
+	return "Database files: db/README.md is read-only; db/assets/ is readable and writable. Use query_workflow_db/mutate_workflow_db for database rows; other db/ files are not granted. Other readable folders are listed in Allowed READ. Writes for this item are limited to: " + strings.Join(grants, ", ") + "."
 }
 
 // messageSequenceAbsPath lifts a WORKFLOW-ROOT-RELATIVE path (e.g.

@@ -17,6 +17,7 @@ import (
 	"github.com/gorilla/mux"
 	"github.com/gorilla/websocket"
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/browser"
+	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/common"
 )
 
 func TestLiveBrowserSessionIsolation(t *testing.T) {
@@ -222,7 +223,7 @@ func TestLiveBrowserRealHeadless(t *testing.T) {
 	}
 }
 
-func TestSharedBrowserDiscoveryHonorsWorkflowAccess(t *testing.T) {
+func TestUserBrowserDiscoveryHonorsOwnershipAndWorkflowAccess(t *testing.T) {
 	t.Setenv("AGENT_BROWSER_SHARED_PROFILE", "/data/browser-profile")
 	t.Setenv("MULTI_USER_MODE", "true")
 	withMemoryUserDirectory(t, `{"users":[{"id":"alice","username":"alice","can_create":true,"products":[]},{"id":"bob","username":"bob","can_create":true,"products":[]},{"id":"outsider","username":"outsider","can_create":true,"products":[]}]}`)
@@ -237,6 +238,11 @@ func TestSharedBrowserDiscoveryHonorsWorkflowAccess(t *testing.T) {
 	t.Setenv("WORKSPACE_API_URL", workspace.URL)
 	api := &StreamingAPI{}
 	for _, user := range []string{"alice", "bob", "outsider"} {
+		name := common.PrefixBrowserSessionID(common.BrowserSessionNamespace(user, "") + "--browser")
+		browser.GetSessionTracker().Touch(name, "old-chat", "old-chat")
+		defer browser.GetSessionTracker().Remove(name)
+	}
+	for _, user := range []string{"alice", "bob", "outsider"} {
 		r := httptest.NewRequest("GET", "/?workspace_path=Workflow/shared-view-check", nil)
 		r = r.WithContext(context.WithValue(r.Context(), UserContextKey, &UserClaims{UserID: user}))
 		items := api.liveBrowserSessions(r)
@@ -246,7 +252,7 @@ func TestSharedBrowserDiscoveryHonorsWorkflowAccess(t *testing.T) {
 			}
 			continue
 		}
-		if len(items) != 1 || items[0]["browser_session"] != browser.SharedSessionName {
+		if len(items) != 1 || items[0]["browser_session"] != common.PrefixBrowserSessionID(common.BrowserSessionNamespace(user, "")+"--browser") {
 			t.Fatalf("%s: %v", user, items)
 		}
 	}

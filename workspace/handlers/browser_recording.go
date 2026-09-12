@@ -21,15 +21,21 @@ import (
 )
 
 type browserCapture struct {
-	Workspace   string     `json:"workspace"`
-	Directory   string     `json:"directory"`
-	StartedAt   time.Time  `json:"started_at"`
-	Recording   bool       `json:"recording"`
-	VideoActive bool       `json:"video_active"`
-	HARActive   bool       `json:"har_active"`
-	StoppedAt   *time.Time `json:"stopped_at,omitempty"`
-	Files       []string   `json:"files,omitempty"`
-	Errors      []string   `json:"errors,omitempty"`
+	StreamPort     int        `json:"stream_port,omitempty"`
+	OwnerSession   string     `json:"owner_session,omitempty"`
+	BrowserSession string     `json:"browser_session"`
+	Source         string     `json:"source,omitempty"`
+	Validation     string     `json:"validation,omitempty"`
+	Frames         int        `json:"frames,omitempty"`
+	Workspace      string     `json:"workspace"`
+	Directory      string     `json:"directory"`
+	StartedAt      time.Time  `json:"started_at"`
+	Recording      bool       `json:"recording"`
+	VideoActive    bool       `json:"video_active"`
+	HARActive      bool       `json:"har_active"`
+	StoppedAt      *time.Time `json:"stopped_at,omitempty"`
+	Files          []string   `json:"files,omitempty"`
+	Errors         []string   `json:"errors,omitempty"`
 }
 
 var browserCaptureLock sync.Mutex
@@ -37,6 +43,7 @@ var browserCaptureLock sync.Mutex
 // Internal route: the agent API verifies session ownership and workflow write access.
 func BrowserRecording(c *gin.Context) {
 	var req struct {
+		OwnerSession     string                    `json:"owner_session"`
 		Workspace        string                    `json:"workspace_path"`
 		Action           string                    `json:"action"`
 		WorkingDirectory string                    `json:"working_directory"`
@@ -51,10 +58,22 @@ func BrowserRecording(c *gin.Context) {
 		return
 	}
 	session := c.Param("session")
-	_, socketDir, err := browserLiveEndpoint(session)
-	if err != nil {
-		c.JSON(404, gin.H{"error": "Browser session is no longer running"})
+	port, socketDir, liveErr := browserLiveEndpoint(session)
+	if !browserLiveSessionName.MatchString(session) {
+		c.JSON(400, gin.H{"error": "Invalid browser session"})
 		return
+	}
+	if liveErr != nil {
+		for _, candidate := range browserSocketDirs() {
+			if _, err := os.Stat(filepath.Join(candidate, session+".capture.json")); err == nil {
+				socketDir = candidate
+				break
+			}
+		}
+		if socketDir == "" {
+			c.JSON(404, gin.H{"error": "Browser session is no longer running"})
+			return
+		}
 	}
 	root, err := filepath.EvalSymlinks(viper.GetString("docs-dir"))
 	if err != nil {
@@ -75,12 +94,29 @@ func BrowserRecording(c *gin.Context) {
 			c.JSON(409, gin.H{"error": "Recording state is unreadable"})
 			return
 		}
+		// Reconcile cached state with the actual encoder; never reuse stale captures.
+		if capture.Recording && (liveErr != nil || (capture.Source == "live-stream" && capture.VideoActive && (capture.StreamPort != port || captureStreams[session] == nil || !captureStreams[session].active()))) {
+			if stream := captureStreams[session]; stream != nil {
+				stream.finish()
+				delete(captureStreams, session)
+			}
+			capture.Recording, capture.VideoActive, capture.HARActive = false, false, false
+			capture.Validation = "failed"
+			capture.Errors = append(capture.Errors, "Recording interrupted: browser or recording service stopped. Start a new capture for this run.")
+			stopped := time.Now().UTC()
+			capture.StoppedAt = &stopped
+			_ = writeCaptureJSON(marker, capture)
+		}
 		if capture.Workspace != req.Workspace && (req.Action == "start" || req.Action == "status") && !capture.Recording {
 			capture = browserCapture{}
 		} else if capture.Workspace != req.Workspace {
 			c.JSON(409, gin.H{"error": "Recording belongs to a different workflow"})
 			return
 		}
+	}
+	if capture.Recording && req.Action != "status" && capture.OwnerSession != "" && req.OwnerSession != "" && req.OwnerSession != capture.OwnerSession {
+		c.JSON(409, gin.H{"error": "Recording belongs to another run"})
+		return
 	}
 	base := filepath.Join(workspace, "browser-recordings")
 	// UI requests have already passed workflow authorization in the agent API.
@@ -110,6 +146,10 @@ func BrowserRecording(c *gin.Context) {
 			c.JSON(403, gin.H{"error": "Capture requires access to its workspace recording directory"})
 			return
 		}
+	}
+	if liveErr != nil && req.Action == "start" {
+		c.JSON(404, gin.H{"error": "Open the user browser before starting a fresh capture"})
+		return
 	}
 	if req.Action == "status" {
 		c.JSON(200, capture)
@@ -142,7 +182,12 @@ func BrowserRecording(c *gin.Context) {
 			return
 		}
 		rel, _ := filepath.Rel(root, dir)
-		capture = browserCapture{Workspace: req.Workspace, Directory: filepath.ToSlash(rel), StartedAt: time.Now().UTC()}
+		capture = browserCapture{OwnerSession: req.OwnerSession, BrowserSession: session, Workspace: req.Workspace, Directory: filepath.ToSlash(rel), StartedAt: time.Now().UTC()}
+		// Clear an abandoned HAR after a recording-service restart. Discard old-run
+		// traffic; it must not enter the new capture's evidence bundle.
+		if browserconfig.IsUserSession(session) {
+			_, _ = run("network", "har", "stop", os.DevNull)
+		}
 		// Exclude response bodies; HAR still records request timing, URLs and headers.
 		if _, err = run("network", "har", "start", "--content", "none"); err == nil {
 			_, err = run("console", "--clear")
@@ -151,7 +196,18 @@ func BrowserRecording(c *gin.Context) {
 			_, err = run("errors", "--clear")
 		}
 		if err == nil {
-			_, err = run("record", "start", filepath.Join(dir, "video.webm"), "--fps", "10")
+			if browserconfig.IsUserSession(session) {
+				capture.Source = "live-stream"
+				capture.StreamPort = port
+				capture.Validation = "pending"
+				var stream *captureStream
+				stream, err = startCaptureStream(port, filepath.Join(dir, "video.webm"))
+				if err == nil {
+					captureStreams[session] = stream
+				}
+			} else {
+				_, err = run("record", "start", filepath.Join(dir, "video.webm"), "--fps", "10")
+			}
 		}
 		if err != nil {
 			_, _ = run("network", "har", "stop", filepath.Join(dir, "network.har"))
@@ -164,7 +220,12 @@ func BrowserRecording(c *gin.Context) {
 		capture.VideoActive = true
 		capture.HARActive = true
 		if err := writeCaptureJSON(marker, capture); err != nil {
-			_, _ = run("record", "stop")
+			if stream := captureStreams[session]; stream != nil {
+				stream.finish()
+				delete(captureStreams, session)
+			} else {
+				_, _ = run("record", "stop")
+			}
 			_, _ = run("network", "har", "stop", filepath.Join(dir, "network.har"))
 			c.JSON(500, gin.H{"error": "Cannot persist recording status"})
 			return
@@ -193,7 +254,37 @@ func BrowserRecording(c *gin.Context) {
 		if item.File == "har-stop.json" && !capture.HARActive {
 			continue
 		}
-		output, runErr := run(item.Args...)
+		var output []byte
+		var runErr error
+		if item.File == "record-stop.json" && capture.Source == "live-stream" {
+			stream := captureStreams[session]
+			if stream != nil {
+				stream.finish()
+				delete(captureStreams, session)
+				capture.Frames = stream.frames
+				runErr = stream.err
+				if runErr == nil && (stream.frames < 2 || !stream.nonBlank) {
+					runErr = fmt.Errorf("recording has no usable page footage (blank or too short)")
+				}
+				if runErr == nil {
+					runErr = validateCaptureVideo(filepath.Join(dir, "video.webm"))
+				}
+			} else {
+				runErr = fmt.Errorf("recording service no longer owns this capture")
+			}
+			capture.VideoActive = false
+			capture.Validation = "passed"
+			if runErr != nil {
+				capture.Validation = "failed"
+			}
+			output, _ = json.Marshal(map[string]interface{}{"frames": capture.Frames, "validation": capture.Validation})
+		} else {
+			output, runErr = run(item.Args...)
+		}
+		if runErr != nil && (strings.Contains(strings.ToLower(runErr.Error()), "no recording in progress") || strings.Contains(strings.ToLower(runErr.Error()), "no frames captured")) {
+			capture.VideoActive = false
+			capture.Validation = "failed"
+		}
 		if runErr == nil && item.File == "record-stop.json" {
 			capture.VideoActive = false
 		}
@@ -243,7 +334,7 @@ func capturePathWithin(root, path string) bool {
 	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) && !filepath.IsAbs(rel)
 }
 func runCaptureCommand(ctx context.Context, socketDir, session string, args ...string) ([]byte, error) {
-	argv := append([]string{"--session", session}, browserconfig.HeadlessArgs()...)
+	argv := append([]string{"--session", session}, browserconfig.HeadlessArgsForSession(session)...)
 	argv = append(argv, args...)
 	argv = append(argv, "--json")
 	cmd := exec.CommandContext(ctx, "agent-browser", argv...)

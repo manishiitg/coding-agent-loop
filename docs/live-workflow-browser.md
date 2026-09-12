@@ -84,8 +84,7 @@ allow an idle timeout longer than 45 seconds. No session port is published.
 The generic workspace proxy rejects this internal stream route. The live viewer
 only forwards viewport, tab, URL and connection status messages, and accepts
 input only while its connection holds control. Shared desktop/CDP sessions are
-not listed; they can contain tabs belonging to other workflows. Discovery is
-limited to the signed-in user's active workflow sessions.
+not listed; they can contain tabs belonging to other workflows. Discovery exposes only the signed-in user’s managed browser through workflows they can access.
 
 ## Troubleshooting
 
@@ -390,3 +389,41 @@ in its test report. No automatic upload into a custom dashboard is performed.
 Validation: `AGENTWORKS_PLAYWRIGHT_LIVE_TEST=1 go -C agent_go test ./cmd/server
 -run '^TestPlaywrightFixtureLive$' -count=1` runs a real Chromium test against an
 isolated local publisher/viewer server.
+
+## User browser ownership and capture
+
+Managed headless browsing uses one opaque, deployment-prefixed browser identity per
+signed-in user. Builder chats, execution agents and workflow groups all resolve to
+it, regardless of an agent's session label. Anonymous chats retain separate identities.
+Tabs are optional; the agent can reuse the current tab or open/select one as useful.
+When a persistent shared profile is configured, user profiles live in sibling
+`<configured-profile>-users/<browser-identity>` directories, so cookies never cross users.
+Existing per-chat browsers are not migrated or replayed into the new browser; a new
+user browser may require login. Legacy unbound callers and external CDP retain their
+existing routing; this change concerns authenticated managed headless browsing.
+
+Workflow/agent cleanup preserves user browsers. Idle reaping still applies when no
+capture is active. Browser commands and manual control share a per-browser lock;
+this serializes individual actions, not an entire snapshot-to-click conversation.
+Agents still need fresh snapshots and coordination for concurrent tasks. A capture
+started by a tool pins the browser to its owning root run until stopped; viewer-started
+capture is workflow-scoped. Manual user control remains available.
+
+Bundled user-browser capture encodes the selected-tab WebSocket stream with ffmpeg,
+so tab switches appear in the same video. Native `record start` remains a separate,
+single-target command; don't mix it with bundled capture. Background tabs are not
+recorded simultaneously. The manifest records browser identity, owner session,
+source, timestamps, frame count and validation. `validation=passed` means nonblank
+frames and a decodable video, not proof that the workflow achieved its goal; inspect
+the actual footage before claiming success. Never substitute an earlier run's video.
+HAR/console/error exports retain the upstream CLI's scope and may be partial.
+
+An encoder or browser disconnect marks the capture interrupted on the next status,
+stop or start call. A service restart cannot revive a cached active marker. Starting
+again creates a fresh directory/file and discards abandoned HAR state. ffmpeg is
+required in the workspace service PATH. Deploy both backend services for this change.
+
+Regression coverage: common user/alias/child routing, group-to-builder identity,
+profile isolation, viewer authorization, cleanup and capture ownership, real ffmpeg
+encoding across a simulated selected-tab change, blank footage, disconnects and stale
+capture retries. A live Confida smoke test remains necessary after deployment.

@@ -3426,7 +3426,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 	// this point. Resolve it for backend delivery and strip it from agent env.
 	api.resolveNotificationSecretForRequest(r.Context(), currentUserID, req.SelectedFolder, &req)
 	// Browser names supplied by an agent (including the conventional "default")
-	// are public aliases. Bind them to this authenticated user + durable chat ID
+	// are public aliases. Bind them to this authenticated user (guests remain chat-scoped)
 	// before any browser executor can run so accounts never share cookies, tabs,
 	// recordings, or a browser process when working in the same workflow.
 	common.BindSessionBrowserIsolation(sessionID, currentUserID)

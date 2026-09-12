@@ -63,9 +63,9 @@ When the user/workflow requests recording or reproduction evidence in managed he
     # Reproduce the issue with ordinary managed browser commands.
     agent_browser("capture", ["stop"], session="main")
 
-Open/select the intended page before starting. Keep using the same session. The workspace path is assigned automatically; do not pass a filename. Capture records the page active at start; do not promise video across tab switches. Console/errors are exported from the cleared buffers when stopped.
+Open/select the intended page before starting. Keep using the same session. The workspace path is assigned automatically; do not pass a filename. User-browser capture follows the selected-tab live stream, including tab changes. It does not record background tabs simultaneously. Console/errors are exported from the cleared buffers when stopped.
 
-Check status first. If recording is already active, reuse it only as requested and do not claim ownership or automatically stop it. Stop captures you started even when reproduction fails. After a timeout check status before retrying. On stop, inspect recording, errors, directory and files: partial failures can leave recording active and require another stop. Report the actual returned paths. Never mix capture with separate record/HAR start/stop commands during the same capture. Stopping recording does not close the browser or clear sign-ins. Workflow permission errors must not be bypassed through shell.
+Check status first. If recording is already active, reuse it only as requested and do not claim ownership or automatically stop it. Stop captures you started even when reproduction fails. After a timeout check status before retrying. On stop, inspect recording, validation, errors, directory and files. Only validation=passed establishes decodable nonblank footage; visually verify it matches this run. Never substitute an earlier run’s video. Partial errors must be reported: partial failures can leave recording active and require another stop. Report the actual returned paths. Never mix capture with separate record/HAR start/stop commands during the same capture. Stopping recording does not close the browser or clear sign-ins. Workflow permission errors must not be bypassed through shell.
 
 This is a Builder extension, so upstream skills do not document it. CDP currently uses the separate record, network HAR, console and errors commands. The native record command remains video-only.
 
@@ -198,9 +198,9 @@ HAR files and videos can capture credentials or other visible secrets. Create th
 
 ## Headless Rules
 
-- Query live status before acting. Headless mode may use isolated sessions or a persistent shared browser.
-- Shared mode preserves tabs and sign-ins across workflows and users. Inspect existing tabs first; do not close/reset the browser, clear storage, or sign out unless explicitly requested. Users coordinate concurrent actions themselves.
-- Isolated sessions retain cookies for their lifetime; close only isolated sessions when finished.
+- Managed headless browsing shares one browser across the signed-in user’s chats, builder and workflow steps/groups. Other users have separate browsers. Session labels do not create browsers.
+- Tabs are optional: reuse the current/existing tab or create one when useful. Coordinate parallel tasks and re-snapshot before interacting. Do not close/reset the browser, clear storage, or sign out merely because your step finished.
+- During capture, other runs wait until the recording stops. Preserve the browser and sign-ins at completion.
 - Users can watch and interact in the workflow Browser view. Use workspace view tools to show that view when appropriate.
 - Verify login from page content; never assume a session is authenticated.
 

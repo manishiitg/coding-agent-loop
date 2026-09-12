@@ -195,7 +195,7 @@ type SessionShellConfig struct {
 	StrictAllowlist  bool
 	DenyNetwork      bool
 	BrowserMode      string // Resolved browser mode: "headless", "cdp", ""
-	BrowserSessionID string // Shared browser identity for browser tools when "default" session is used
+	BrowserSessionID string // Legacy browser binding; authenticated namespaces take precedence
 	// BrowserSessionNamespace isolates every public browser name (including
 	// explicit names) to the signed-in user and owning chat/workflow.
 	BrowserSessionNamespace string
@@ -513,44 +513,34 @@ func SetSessionBrowserSessionID(sessionID, browserSessionID string) {
 	log.Printf("[SHELL] Set browser session ID for session %s: %s", sessionID, browserSessionID)
 }
 
-// BrowserSessionNamespace returns a stable, opaque browser namespace for one
-// signed-in user and chat. Including both dimensions prevents users from
-// sharing cookies/tabs in the same workflow and prevents one user's concurrent
-// chats from fighting over a single browser process.
+// BrowserSessionNamespace is the authenticated browser ownership boundary.
+// Chats, workflow groups and explicit tool session names share one user browser.
+// Anonymous contexts remain chat-scoped so unrelated guests never share cookies.
 func BrowserSessionNamespace(userID, sessionID string) string {
-	userID = strings.TrimSpace(userID)
-	sessionID = strings.TrimSpace(sessionID)
-	if sessionID == "" {
+	userID, sessionID = strings.TrimSpace(userID), strings.TrimSpace(sessionID)
+	if userID == "" && sessionID == "" {
 		return ""
 	}
-	if userID == "" {
-		userID = "anonymous"
+	identity := userID
+	kind := "user-"
+	if identity == "" {
+		identity = sessionID
+		kind = "guest-"
 	}
-	hashPart := func(value string) string {
-		sum := sha256.Sum256([]byte(value))
-		return hex.EncodeToString(sum[:8])
-	}
-	return "user-" + hashPart(userID) + "--chat-" + hashPart(sessionID)
+	sum := sha256.Sum256([]byte(identity))
+	return kind + hex.EncodeToString(sum[:8])
 }
 
-// BindSessionBrowserIsolation attaches the authenticated ownership boundary to
-// a chat. Repeated calls are safe: a workflow-specific default browser binding
-// is preserved for the same owner, while an ownership change resets it.
+// BindSessionBrowserIsolation always replaces obsolete per-chat/per-group bindings.
 func BindSessionBrowserIsolation(sessionID, userID string) {
-	namespace := BrowserSessionNamespace(userID, sessionID)
-	if namespace == "" {
+	if strings.TrimSpace(sessionID) == "" {
 		return
 	}
+	namespace := BrowserSessionNamespace(userID, sessionID)
 	updateSessionShellConfig(sessionID, func(cfg *SessionShellConfig) {
-		previousNamespace := strings.TrimSpace(cfg.BrowserSessionNamespace)
-		if strings.TrimSpace(cfg.BrowserSessionID) == "" ||
-			(previousNamespace != "" && previousNamespace != namespace) ||
-			cfg.BrowserSessionID == previousNamespace+"--default" {
-			cfg.BrowserSessionID = namespace + "--default"
-		}
 		cfg.BrowserSessionNamespace = namespace
+		cfg.BrowserSessionID = namespace + "--browser"
 	})
-	log.Printf("[SHELL] Bound isolated browser namespace for session %s: %s", sessionID, namespace)
 }
 
 // SetSessionBrowserNamespace propagates an already-authenticated browser
@@ -658,22 +648,16 @@ func workflowCapabilityEnv(key string) bool {
 	return strings.HasPrefix(key, "WORKFLOW_FOLDER_") || strings.HasPrefix(key, "WORKFLOW_KB_")
 }
 
-// ResolveBrowserSessionID returns the effective browser session to use for browser tools.
-// The default session can be remapped to a stable shared browser identity via
-// per-session shell config. Explicit public names remain distinct but are still
-// placed inside the authenticated user's chat namespace.
+// ResolveBrowserSessionID ignores agent-chosen names within an ownership boundary.
+// Unbound legacy callers retain their configured session behavior.
 func ResolveBrowserSessionID(sessionID, requested string) string {
 	requested = strings.TrimSpace(requested)
 	cfg := GetSessionShellConfig(sessionID)
+	if cfg != nil && strings.TrimSpace(cfg.BrowserSessionNamespace) != "" {
+		return PrefixBrowserSessionID(strings.TrimSpace(cfg.BrowserSessionNamespace) + "--browser")
+	}
 	if (requested == "" || requested == "default") && cfg != nil && strings.TrimSpace(cfg.BrowserSessionID) != "" {
 		return PrefixBrowserSessionID(strings.TrimSpace(cfg.BrowserSessionID))
-	}
-	if cfg != nil && strings.TrimSpace(cfg.BrowserSessionNamespace) != "" && requested != "" {
-		namespace := strings.TrimSpace(cfg.BrowserSessionNamespace)
-		if strings.HasPrefix(requested, namespace+"--") {
-			return PrefixBrowserSessionID(requested)
-		}
-		return PrefixBrowserSessionID(namespace + "--" + requested)
 	}
 	return PrefixBrowserSessionID(requested)
 }

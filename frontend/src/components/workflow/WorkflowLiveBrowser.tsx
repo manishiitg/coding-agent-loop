@@ -8,7 +8,7 @@ import { useCanWriteWorkflow } from '../../hooks/useCanWriteWorkflow'
 
 const PLAYWRIGHT_BROWSER = 'playwright-tests'
 
-type Recording = { recording: boolean; directory?: string; errors?: string[] }
+type Recording = { recording: boolean; validation?: string; directory?: string; errors?: string[] }
 
 type BrowserSession = { browser_session: string; workflow_session: string; label?: string; kind?: string; read_only?: string; state?: string; recording_state?: string; recording_error?: string }
 function testBrowserLabel(browser: BrowserSession): string {
@@ -228,7 +228,7 @@ export default function WorkflowLiveBrowser({ workspacePath, toolbar }: { worksp
     try {
       const { data } = await api.post<Recording>(`/api/browser/live/${encodeURIComponent(session)}/recording`, { action: recording.recording ? 'stop' : 'start' }, { params: { workspace_path: workspacePath }, timeout: 105000 })
       setRecording(data)
-      if (data.errors?.length) setError(`Recording saved with issues: ${data.errors.join('; ')}`)
+      if (data.validation === 'failed' || data.errors?.length) setError(`Recording incomplete: ${data.errors?.join('; ') || 'Footage validation failed'}`)
       else if (!data.recording && data.directory) useChatStore.getState().addToast(`Recording saved to ${data.directory}`, 'success')
     } catch (cause) {
       const response = (cause as { response?: { data?: { error?: string } } }).response
@@ -307,7 +307,7 @@ export default function WorkflowLiveBrowser({ workspacePath, toolbar }: { worksp
       {!recording.recording && recording.directory && recording.directory !== dismissedRecording && (
         <div className="flex shrink-0 flex-wrap items-center gap-2 border-b border-border bg-muted/30 px-3 py-2 text-xs">
           <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-600 dark:text-emerald-400" aria-hidden="true" />
-          <span className="min-w-0 flex-1 font-medium" title={recording.directory}>Recording saved</span>
+          <span className="min-w-0 flex-1 font-medium" title={recording.directory}>{recording.validation === 'failed' || recording.errors?.length ? 'Recording incomplete — check details' : 'Recording saved'}</span>
           <div className="ml-auto flex items-center gap-1">
             <button type="button" className="inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" onClick={() => void copyRecordingPath()}>
               <Copy className="h-4 w-4" aria-hidden="true" />

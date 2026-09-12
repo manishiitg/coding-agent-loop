@@ -275,8 +275,8 @@ func (e *Executor) liveBrowserStatus(ctx context.Context) browserRuntimeStatus {
 		status.EffectiveMode = mode
 		status.Instruction = "Browser configuration is invalid; update the workflow browser_mode."
 	}
-	if status.EffectiveMode == "headless" && SharedBrowserEnabled() {
-		status.Instruction += " This deployment uses one persistent shared browser for ALL users and workflows. Session names map to shared-browser. Existing tabs and sign-ins are shared; inspect tabs first, do not close/reset the browser or clear storage unless explicitly requested. Users coordinate concurrent actions themselves."
+	if status.EffectiveMode == "headless" {
+		status.Instruction += " Managed browsing is shared across the signed-in user’s chats and workflow steps. Session labels do not create separate browsers. Reuse an existing tab or open a new tab only when useful; preserve tabs and sign-ins at step completion."
 	}
 	return status
 }
@@ -488,9 +488,7 @@ func (e *Executor) HandleAgentBrowser(ctx context.Context, args map[string]inter
 	if command == "capture" && isCdpMode {
 		return "", fmt.Errorf("CAPTURE_UNSUPPORTED: bundled capture requires the managed headless browser; CDP supports the separate record, network HAR, console and errors commands")
 	}
-	if !isCdpMode {
-		cmdArgs = append(cmdArgs, HeadlessLaunchArgs()...)
-	}
+
 	log.Printf("[BROWSER] mode=%s command=%s session=%s", map[bool]string{true: "cdp", false: "headless"}[isCdpMode], command, args["session"])
 
 	// Add session flag (required)
@@ -532,14 +530,23 @@ func (e *Executor) HandleAgentBrowser(ctx context.Context, args map[string]inter
 			log.Printf("[BROWSER] CDP: remapped session %q -> %q for shared browser port %d", session, sharedSession, cdpPort)
 			session = sharedSession
 		}
-	} else if SharedBrowserEnabled() {
-		session = SharedSessionName
 	} else {
-		resolvedSession := common.ResolveBrowserSessionID(agentSessionID, session)
+		ownerSessionID := agentSessionID
+		if cfg := common.GetSessionShellConfig(ownerSessionID); cfg == nil || cfg.BrowserSessionNamespace == "" {
+			ownerSessionID = workflowSessionID
+		}
+		resolvedSession := common.ResolveBrowserSessionID(ownerSessionID, session)
+		if SharedBrowserEnabled() && !IsUserBrowserSession(resolvedSession) {
+			resolvedSession = SharedSessionName
+		}
 		if resolvedSession != "" && resolvedSession != session {
 			log.Printf("[BROWSER] remapped session %q -> %q for agent=%q", session, resolvedSession, agentSessionID)
 			session = resolvedSession
 		}
+	}
+
+	if !isCdpMode {
+		cmdArgs = append(cmdArgs, HeadlessLaunchArgsForSession(session)...)
 	}
 
 	log.Printf("[BROWSER] session=%q agent=%q workflow=%q command=%q", session, agentSessionID, workflowSessionID, command)
@@ -550,6 +557,18 @@ func (e *Executor) HandleAgentBrowser(ctx context.Context, args map[string]inter
 			return "", err
 		}
 		defer release()
+		workspace := ""
+		for _, id := range []string{agentSessionID, workflowSessionID} {
+			if cfg := common.GetSessionShellConfig(id); captureWorkspace(cfg) != "" {
+				workspace = captureWorkspace(cfg)
+				break
+			}
+		}
+		if !(command == "capture" && len(argsWithoutCDP) == 1 && argsWithoutCDP[0] == "status") {
+			if conflict := GetSessionTracker().CaptureConflict(session, workflowSessionID, workspace, command); conflict != "" {
+				return "", fmt.Errorf("BROWSER_RECORDING_BUSY: %s", conflict)
+			}
+		}
 	}
 
 	// Track headless browser sessions to prevent unbounded growth.
@@ -558,7 +577,7 @@ func (e *Executor) HandleAgentBrowser(ctx context.Context, args map[string]inter
 	isHeadless := !isCdpMode
 	tracker := GetSessionTracker()
 
-	if isHeadless && !SharedBrowserEnabled() {
+	if isHeadless && session != SharedSessionName {
 		isOpenCommand := isBrowserOpenCommand(command) || (command == "tab" && len(argsWithoutCDP) > 0 && argsWithoutCDP[0] == "new")
 
 		if isOpenCommand {
@@ -566,6 +585,14 @@ func (e *Executor) HandleAgentBrowser(ctx context.Context, args map[string]inter
 			// Used for both per-agent and global eviction so the new session can proceed
 			// without the LLM needing to close things manually.
 			autoEvict := func(evictSession string) {
+				release, ok := TryTakeBrowserControl(evictSession)
+				if !ok {
+					return
+				}
+				defer release()
+				if tracker.Recording(evictSession) {
+					return
+				}
 				log.Printf("[BROWSER_TRACKER] Auto-evicting session %q to free slot for %q", evictSession, session)
 				killSessionRuntime(evictSession)
 				removeSessionFiles(evictSession)
@@ -598,12 +625,15 @@ func (e *Executor) HandleAgentBrowser(ctx context.Context, args map[string]inter
 			}
 
 			// Check global limit — auto-evict oldest if needed
-			if tracker.Count() >= MaxBrowserSessionsGlobal {
+			if !tracker.HasSession(session) && tracker.Count() >= MaxBrowserSessionsGlobal {
 				oldest := tracker.GetOldestSession()
 				if oldest != "" && oldest != session {
 					log.Printf("[BROWSER_TRACKER] Global limit (%d) reached, auto-closing oldest: %q",
 						MaxBrowserSessionsGlobal, oldest)
 					autoEvict(oldest)
+				}
+				if tracker.Count() >= MaxBrowserSessionsGlobal {
+					return "", fmt.Errorf("BROWSER_CAPACITY: all browser slots are busy or recording; retry after a slot is released")
 				}
 			}
 

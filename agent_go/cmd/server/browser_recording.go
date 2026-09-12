@@ -53,6 +53,12 @@ func (api *StreamingAPI) handleBrowserRecording(w http.ResponseWriter, r *http.R
 	if endpoint == "" {
 		endpoint = "http://127.0.0.1:8081"
 	}
+	release, err := browser.AcquireBrowserAutomation(r.Context(), session)
+	if err != nil {
+		http.Error(w, "Browser busy", 409)
+		return
+	}
+	defer release()
 	payload, _ := json.Marshal(map[string]string{"action": request.Action, "workspace_path": workspace})
 	upstream, err := http.NewRequestWithContext(r.Context(), http.MethodPost, endpoint+"/api/browser/live/"+session+"/recording", bytes.NewReader(payload))
 	if err != nil {
@@ -71,10 +77,11 @@ func (api *StreamingAPI) handleBrowserRecording(w http.ResponseWriter, r *http.R
 	w.WriteHeader(response.StatusCode)
 	body, _ := io.ReadAll(io.LimitReader(response.Body, 1<<20))
 	var state struct {
-		Recording bool `json:"recording"`
+		Recording bool   `json:"recording"`
+		Owner     string `json:"owner_session"`
 	}
-	if response.StatusCode == http.StatusOK && json.Unmarshal(body, &state) == nil && state.Recording {
-		browser.GetSessionTracker().TouchExisting(session)
+	if response.StatusCode == http.StatusOK && json.Unmarshal(body, &state) == nil {
+		browser.GetSessionTracker().SetCapture(session, state.Recording, state.Owner, workspace)
 	}
 	_, _ = w.Write(body)
 }

@@ -93,3 +93,15 @@ existing scheduler's pending-event storage.
 
 The workflow Schedules panel also shows the POST endpoint and a copy button on
 each webhook row, including disabled triggers. Credentials remain in API trigger setup.
+
+## Triggers in Plan
+
+Plan displays saved schedules and webhooks above Start, with timing, state,
+route selections, groups, and webhook URLs. Settings buttons open the existing
+Schedules or API triggers panels. The cards refresh from the scheduler every
+15 seconds while Plan is open; they are projections, not editable plan steps.
+
+Highlight path starts at workflow entry, retaining prerequisite steps and
+following saved choices at routing/branch nodes. Unspecified decisions show
+possible paths. Missing route bindings are shown as unavailable. Pulse-only and
+optimizer jobs appear as maintenance triggers and do not link into plan execution.

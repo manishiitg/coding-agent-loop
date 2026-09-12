@@ -4,7 +4,7 @@ import dagre from 'dagre'
 import type { PlanStep, PlanningResponse, AgentLLMConfig, ValidationSchema, RoutingRoute, MessageSequenceItem } from '../../../utils/stepConfigMatching'
 import { isHumanInputStep, isTodoTaskStep, isRoutingStep, isBranchStep, isMessageSequenceStep, isRegularStep, runsAsMessageSequence, effectiveMessageSequenceItems } from '../../../utils/stepConfigMatching'
 import type { ChangeType, PlanChanges } from './usePlanData'
-import type { VariablesManifest, EvaluationStep } from '../../../services/api-types'
+import type { VariablesManifest, EvaluationStep, ScheduledJob } from '../../../services/api-types'
 import type { VariablesNodeData } from '../nodes/VariablesNode'
 import { useActiveWorkflowPreset } from '../../../hooks/useActiveWorkflowPreset'
 import { useLLMStore } from '../../../stores/useLLMStore'
@@ -156,7 +156,21 @@ export interface WorkflowArtifactNodeData extends Record<string, unknown> {
   detail?: string
 }
 
-export type WorkflowNodeData = StepNodeData | TodoTaskNodeData | HumanInputNodeData | RoutingStepNodeData | ValidationNodeData | LearningNodeData | EvaluationNodeData | VariablesNodeData | EvaluationStepNodeData | WorkflowArtifactNodeData
+export interface WorkflowTriggerNodeData extends Record<string, unknown> {
+  id: string
+  title: string
+  job?: ScheduledJob
+  routeSummary?: { label: string; canTrace: boolean }
+  active?: boolean
+  loading?: boolean
+  error?: string
+  count?: number
+  onSelect?: () => void
+  onSettings?: (kind: 'schedules' | 'api-triggers') => void
+  onRefresh?: () => void
+}
+
+export type WorkflowNodeData = WorkflowTriggerNodeData | StepNodeData | TodoTaskNodeData | HumanInputNodeData | RoutingStepNodeData | ValidationNodeData | LearningNodeData | EvaluationNodeData | VariablesNodeData | EvaluationStepNodeData | WorkflowArtifactNodeData
 
 // Node and edge types
 export type WorkflowNode = Node<WorkflowNodeData>

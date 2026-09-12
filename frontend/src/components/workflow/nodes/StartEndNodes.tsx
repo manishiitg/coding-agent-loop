@@ -32,6 +32,8 @@ export const StartNode = memo(({ data }: StartEndNodeProps) => {
         <span className="text-sm font-medium text-green-700 dark:text-green-300">Start</span>
       </div>
 
+      <Handle id="trigger-input" type="target" position={Position.Top} className="!w-2 !h-2 !bg-green-500" />
+
       {/* Output handle */}
       <Handle
         type="source"

@@ -24,6 +24,9 @@ import {
 import { getExecutionModeVisuals } from '../nodes/executionModeVisuals'
 import { edgeTypes } from '../edges'
 import { routeTraceFromEdge, traceRouteGraph, type RouteTrace } from './routeTrace'
+import { usePlanTriggers } from './usePlanTriggers'
+import { appendTriggerCards, traceTriggerGraph } from './triggerLayout'
+import { WorkflowTriggerNode, WorkflowTriggerHeading } from '../nodes/WorkflowTriggerNodes'
 import { appendEvaluationGroups } from './evaluationLayout'
 import { CompactEvaluationNode, EvaluationGroupNode } from '../nodes/CompactEvaluationNodes'
 import { VariablesSidebar } from './VariablesSidebar'
@@ -74,6 +77,8 @@ const FLOW_HEADER_NODE_HEIGHTS: Record<string, number> = {
 
 const canvasNodeTypes = {
   ...nodeTypes,
+  'workflow-trigger': WorkflowTriggerNode,
+  'workflow-trigger-heading': WorkflowTriggerHeading,
   'evaluation-card': CompactEvaluationNode,
   'evaluation-group': EvaluationGroupNode,
   step: HandoffStepNode,
@@ -178,7 +183,6 @@ export function usePreviewDevice(scopeId?: string | null): PreviewDevice {
     }
     window.addEventListener(REPORT_PREVIEW_PREFERENCE_CHANGED_EVENT, handler)
     return () => window.removeEventListener(REPORT_PREVIEW_PREFERENCE_CHANGED_EVENT, handler)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [scopeId])
   return pref
 }
@@ -1037,6 +1041,8 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
   // Flow view is vertical-only. WorkspaceViewHost only mounts this component
   // for the Plan view, so there is no per-mode branching in here.
   const layoutDirection: 'LR' | 'TB' = 'TB'
+  const triggers = usePlanTriggers(workspacePath, toolbarOnly)
+  const refreshTriggers = triggers.refresh
   const workflowWorkspaceView = useWorkflowStore(state => state.workflowWorkspaceView)
   const selectedGroupIds = useWorkflowStore(state => state.selectedGroupIds)
   const setSelectedRunFolder = useWorkflowStore(state => state.setSelectedRunFolder)
@@ -1305,11 +1311,12 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
   }, [setVariablesManifest, setVariablesManifestInStore])
 
   // The in-canvas Plan control is intentionally narrower than the canvas-wide
-  // refresh used by the toolbar and imperative API: it only reloads the plan.
+  // refresh used by the toolbar and imperative API: it reloads plan inputs and triggers.
   const handlePlanRefresh = useCallback(async () => {
     if (isRefreshingPlan) return
     setIsRefreshingPlan(true)
     try {
+      refreshTriggers()
       const [reloaded] = await Promise.all([
         loadPlanRefresh(),
         refreshEvaluationPlan(),
@@ -1326,9 +1333,12 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
     } finally {
       setIsRefreshingPlan(false)
     }
-  }, [isRefreshingPlan, loadPlanRefresh, refreshEvaluationPlan, setIsRefreshingPlan])
+  }, [isRefreshingPlan, loadPlanRefresh, refreshEvaluationPlan, setIsRefreshingPlan, refreshTriggers])
 
   // Current step and status from store (set by ChatArea polling when step_progress_updated events arrive)
+  const [selectedTrigger, setSelectedTrigger] = React.useState<{ workspace: string | null; id: string } | null>(null)
+  const selectedTriggerJob = selectedTrigger?.workspace === workspacePath ? triggers.jobs.find(job => job.id === selectedTrigger.id) : undefined
+  const openTriggerSettings = useCallback((view: 'schedules' | 'api-triggers') => useWorkflowStore.getState().openWorkspaceView(view), [])
   const stepStatusMap = useWorkflowStore(state => state.stepStatusMap)
 
   // React Flow state (need to define before usePlanToFlow to use in callbacks)
@@ -1340,8 +1350,19 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
   const activeTrace = tracedRoute ? routeTrace : null
   const tracedEvaluations = (traceSource?.data as RoutingStepNodeData | undefined)?.routeEvaluations?.[tracedRoute?.route_id ?? ''] ?? []
   const allRouteEvaluationCount = (traceSource?.data as RoutingStepNodeData | undefined)?.allRouteEvaluationCount ?? 0
-  const tracedGraph = React.useMemo(() => traceRouteGraph(nodes, edges, activeTrace), [nodes, edges, activeTrace])
+  const selectTrigger = useCallback((id: string) => {
+    setRouteTrace(null)
+    setSelectedFlowNode(null)
+    setSelectedTrigger(current => current?.workspace === workspacePath && current.id === id ? null : { workspace: workspacePath, id })
+  }, [workspacePath])
+  const triggerFlow = React.useMemo(() => appendTriggerCards(nodes, edges, triggers.jobs, {
+    selectedID: selectedTriggerJob?.id, loading: triggers.loading, error: triggers.error, onSelect: selectTrigger, onSettings: openTriggerSettings, onRefresh: triggers.refresh,
+  }), [nodes, edges, triggers.jobs, triggers.loading, triggers.error, triggers.refresh, selectedTriggerJob?.id, selectTrigger, openTriggerSettings])
+  const tracedGraph = React.useMemo(() => selectedTriggerJob
+    ? traceTriggerGraph(triggerFlow.nodes, triggerFlow.edges, selectedTriggerJob)
+    : traceRouteGraph(triggerFlow.nodes, triggerFlow.edges, activeTrace), [triggerFlow, selectedTriggerJob, activeTrace])
   const toggleRouteTrace = useCallback((trace: RouteTrace) => {
+    setSelectedTrigger(null)
     setSelectedFlowNode(null)
     setRouteTrace(current => current?.workspace === workspacePath && current.nodeId === trace.nodeId && current.routeId === trace.routeId
       ? null : { workspace: workspacePath, ...trace })
@@ -1405,7 +1426,7 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
       }
 
       if (!result) {
-        const dataUrl = renderFlowToImage(nodesRef.current, edgesRef.current, format)
+        const dataUrl = renderFlowToImage(displayNodes, displayEdges, format)
         result = await saveWorkflowImage(dataUrl, filename, format)
       }
 
@@ -1420,7 +1441,7 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
       setViewport(previousViewport, { duration: 0 })
       setIsExportingImage(false)
     }
-  }, [fitView, getViewport, setViewport, toolbarOnly, workspacePath])
+  }, [fitView, getViewport, setViewport, displayNodes, displayEdges, toolbarOnly, workspacePath])
 
   // Map of parent node ID to child node IDs (for grouped movement)
   const nodeGroupsRef = React.useRef<Map<string, string[]>>(new Map())
@@ -2310,7 +2331,7 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
   // Fit the full plan on first render so the workflow shape is visible by default.
   React.useEffect(() => {
     if (toolbarOnly) return
-    if (!hasInitializedView.current && nodes.length > 0) {
+    if (!hasInitializedView.current && !triggers.loading && nodes.length > 0) {
       const fitTimer = window.setTimeout(() => {
         window.requestAnimationFrame(() => {
           if (previewDevice === 'tablet') {
@@ -2342,7 +2363,7 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
 
       return () => window.clearTimeout(fitTimer)
     }
-  }, [embeddedPlanOnly, nodes, fitView, getViewport, previewDevice, setViewport, toolbarOnly])
+  }, [embeddedPlanOnly, nodes, fitView, getViewport, previewDevice, setViewport, toolbarOnly, triggers.loading])
 
   // Track previous stepStatusMap to detect actual changes
   const prevStepStatusMapRef = React.useRef<Map<string, 'pending' | 'running' | 'completed' | 'failed'>>(new Map())
@@ -2397,10 +2418,11 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
 
 
   useEffect(() => {
-    if (!selectedFlowNode && !activeTrace) return
+    if (!selectedFlowNode && !activeTrace && !selectedTriggerJob) return
 
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
+        setSelectedTrigger(null)
         setRouteTrace(null)
         setSelectedFlowNode(null)
       }
@@ -2408,10 +2430,10 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
 
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [selectedFlowNode, activeTrace])
+  }, [selectedFlowNode, activeTrace, selectedTriggerJob])
 
   const onNodeClick = useCallback((_: React.MouseEvent, node: WorkflowNode) => {
-    if (node.type === 'evaluation-group') return
+    if (node.type === 'evaluation-group' || node.type === 'workflow-trigger' || node.type === 'workflow-trigger-heading') return
     if (node.type === 'variables') {
       setShowVariablesSidebar(true)
       setSelectedFlowNode(null)
@@ -2420,6 +2442,7 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
     setSelectedFlowNode(current => current?.id === node.id ? null : node)
   }, [])
   const onPaneClick = useCallback(() => {
+    setSelectedTrigger(null)
     setRouteTrace(null)
     setSelectedFlowNode(null)
   }, [])
@@ -2536,6 +2559,10 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
     <div className="h-full min-h-0" ref={reactFlowWrapper}>
         {/* Canvas area — skip when toolbarOnly to avoid rendering 1000+ SVG nodes */}
         {toolbarOnly ? null : <div className="h-full min-h-0 relative flex">
+          {selectedTriggerJob && <div className="absolute left-3 top-3 z-20 max-w-[calc(100%-12rem)] rounded-lg border border-primary/40 bg-background/95 px-3 py-2 text-sm shadow-lg" role="status">
+            <div className="flex items-center gap-2"><span className="truncate">Trigger: {selectedTriggerJob.name}</span><button type="button" onClick={() => setSelectedTrigger(null)} className="shrink-0 rounded px-2 py-1 text-xs hover:bg-muted">Show all</button></div>
+            <p className="text-xs text-muted-foreground">Saved route choices and required earlier steps. Unspecified decisions show possible paths.</p>
+          </div>}
           {activeTrace && tracedRoute && (
             <div className="absolute left-3 top-3 z-20 max-w-[calc(100%-12rem)] rounded-lg border border-teal-500/50 bg-background/95 px-3 py-2 text-sm shadow-lg">
               <div className="flex items-center gap-3" role="status">
@@ -2555,8 +2582,14 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
               </div>
             </div>
           )}
+          <button type="button" onClick={() => {
+            setRouteTrace(null)
+            setSelectedTrigger(null)
+            void fitView({ nodes: triggerFlow.nodes.filter(node => node.type === 'workflow-trigger' || node.type === 'workflow-trigger-heading' || node.id === 'start'), padding: 0.15, duration: 300, minZoom: FLOW_FIT_MIN_ZOOM, maxZoom: FLOW_FIT_MAX_ZOOM })
+          }} className="absolute right-44 top-3 z-20 h-8 rounded-md border border-border bg-background/95 px-2 text-xs text-foreground shadow-sm hover:bg-muted" aria-label="Show triggers">Triggers {triggers.jobs.length}</button>
           {!!evaluationPlan?.steps.length && <button type="button" onClick={() => {
             setRouteTrace(null)
+            setSelectedTrigger(null)
             setSelectedFlowNode(null)
             void fitView({ nodes: nodes.filter(node => node.data.isEvaluationStep || node.type === 'evaluation-group'),
               padding: 0.12, duration: 300, minZoom: FLOW_FIT_MIN_ZOOM, maxZoom: FLOW_FIT_MAX_ZOOM })

@@ -1980,6 +1980,9 @@ func runServer(cmd *cobra.Command, args []string) {
 
 	// Load global secrets from GLOBAL_SECRET_* environment variables
 	loadGlobalSecrets()
+	if err := api.loadManagedGlobalSecrets(context.Background()); err != nil {
+		log.Fatalf("Failed to load managed global secrets: %v", err)
+	}
 
 	// Setup routes
 	router := mux.NewRouter()
@@ -2167,6 +2170,7 @@ func runServer(cmd *cobra.Command, args []string) {
 	apiRouter.HandleFunc("/secrets/encrypt", api.handleEncryptSecret).Methods("POST", "OPTIONS")
 	apiRouter.HandleFunc("/secrets/decrypt", api.handleDecryptSecret).Methods("POST", "OPTIONS")
 	apiRouter.HandleFunc("/secrets/global", api.handleGetGlobalSecrets).Methods("GET", "OPTIONS")
+	apiRouter.HandleFunc("/secrets/global", api.handleManageGlobalSecret).Methods("POST", "PUT", "DELETE")
 	apiRouter.HandleFunc("/secrets/store", api.handleStoreUserSecret).Methods("PUT", "OPTIONS")
 	apiRouter.HandleFunc("/secrets/store/{name}", api.handleDeleteUserSecret).Methods("DELETE", "OPTIONS")
 	apiRouter.HandleFunc("/secrets/stored", api.handleListStoredSecrets).Methods("GET", "OPTIONS")
@@ -3032,6 +3036,15 @@ func (api *StreamingAPI) loadSelectedSecrets(ctx context.Context, userID, workfl
 				addResult(s.Name, plaintext)
 				resolved[s.Name] = true
 			}
+		}
+	}
+
+	// A promoted secret keeps working through the source workflow's existing
+	// selected_secrets attachment. Its value now resolves from the global store.
+	for _, secret := range getGlobalSecrets() {
+		if secret.Managed && selectedSet[secret.Name] && !resolved[secret.Name] {
+			addResult(secret.Name, secret.Value)
+			resolved[secret.Name] = true
 		}
 	}
 

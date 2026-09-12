@@ -22,7 +22,7 @@ func knownWorkshopRegisteredToolNamesOutsideWorkflowPool() map[string]string {
 	add("conditional workspace browser tools", "agent_browser")
 	add("server secret management tools",
 		"list_secrets", "set_workflow_secret", "delete_workflow_secret",
-		"set_user_secret", "delete_user_secret",
+		"set_user_secret", "delete_user_secret", "manage_global_secret",
 	)
 	add("auto-improvement context tools", "capture_context")
 	// Registered by registerLLMCapabilityDiscoveryTools in multiagent_llm_tools.go,

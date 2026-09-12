@@ -15,8 +15,8 @@ import (
 
 // registerSecretManagementTools registers list_secrets, set_user_secret, and
 // delete_user_secret on the given agent. In workflow contexts it also registers
-// set_workflow_secret and delete_workflow_secret. Global secrets (env-backed)
-// are exposed read-only; user/workflow secrets support CRUD on encrypted values.
+// set_workflow_secret and delete_workflow_secret. Global secrets are server-wide; admins can manage encrypted globals.
+// User/workflow secrets support CRUD on encrypted values.
 // toolCategory groups the tools in the agent's tool registry (e.g. "secret_tools").
 // afterUpsert, if non-nil, is invoked after a successful set_workflow_secret /
 // set_user_secret so callers can auto-attach the secret to workspace state
@@ -73,7 +73,7 @@ func (api *StreamingAPI) registerSecretManagementTools(agent definitionToolRegis
 
 	if err := registerTool(
 		"list_secrets",
-		"List all secrets available to the current user. Returns JSON buckets: 'global' (env-backed, read-only), 'workflow' (encrypted per-user and scoped to this workflow when applicable), and 'user' (encrypted per-user, reusable). Values are never returned — only names. Use this before setting, deleting, or attaching secrets.",
+		"List all secrets available to the current user. Returns JSON buckets: 'global' (server-wide, admin-managed), 'workflow' (encrypted per-user and scoped to this workflow when applicable), and 'user' (encrypted per-user, reusable). Values are never returned — only names. Use this before setting, deleting, or attaching secrets.",
 		map[string]interface{}{
 			"type":       "object",
 			"properties": map[string]interface{}{},
@@ -112,7 +112,7 @@ func (api *StreamingAPI) registerSecretManagementTools(agent definitionToolRegis
 			out, _ := json.MarshalIndent(map[string]interface{}{
 				"global": map[string]interface{}{
 					"read_only": true,
-					"source":    "GLOBAL_SECRET_* env vars",
+					"source":    "server environment and encrypted managed globals",
 					"names":     globalNames,
 				},
 				"workflow": map[string]interface{}{
@@ -138,9 +138,44 @@ func (api *StreamingAPI) registerSecretManagementTools(agent definitionToolRegis
 		return nil
 	}
 
+	if canManageGlobalSecrets(userID) {
+		if err := registerTool("manage_global_secret", "Admin-only server-wide secret management. action=promote moves an existing secret from the active workflow into the encrypted global store; existing source attachments continue working. Other workflows may select it from Global Secrets. action=set creates or updates a managed global value; action=delete removes a managed global. Environment globals cannot be changed here. Promotion never overwrites a global name. Values are never returned. Only promote when the user intends server-wide access.", map[string]interface{}{
+			"type": "object", "properties": map[string]interface{}{
+				"action": map[string]interface{}{"type": "string", "enum": []string{"promote", "set", "delete"}},
+				"name":   map[string]interface{}{"type": "string"},
+				"value":  map[string]interface{}{"type": "string", "description": "New value for action=set only; omit when promoting an existing workflow secret."},
+			}, "required": []string{"action", "name"},
+		}, func(ctx context.Context, args map[string]interface{}) (string, error) {
+			if !canManageGlobalSecrets(userID) {
+				return "", errGlobalAdmin
+			}
+			name, _ := args["name"].(string)
+			name = strings.TrimSpace(name)
+			action, _ := args["action"].(string)
+			var err error
+			switch action {
+			case "promote":
+				err = api.promoteWorkflowSecret(ctx, userID, workflowPath, name)
+			case "set":
+				value, _ := args["value"].(string)
+				err = api.saveManagedGlobalSecret(ctx, userID, name, value, false)
+			case "delete":
+				err = api.deleteManagedGlobalSecret(ctx, userID, name)
+			default:
+				return "", fmt.Errorf("action must be promote, set, or delete")
+			}
+			if err != nil {
+				return "", err
+			}
+			return fmt.Sprintf("Global secret %q: %s completed. No value returned. Global changes apply to new turns and runs; select this name in the destination workflow's global secrets.", name, action), nil
+		}); err != nil {
+			return err
+		}
+	}
+
 	if err := registerTool(
 		"set_user_secret",
-		"Create or update a user-owned secret. The value is AES-256-GCM encrypted with the user's key and stored server-side. Use for API keys, tokens, credentials the workflow needs. REJECTS names that collide with global (env-backed) secrets — those are managed by the operator, not the user. In workflow-builder/workshop contexts the secret is AUTO-ATTACHED to the active workflow and injected into the live shell env, so $SECRET_<NAME> is usable immediately in this session — no separate update_workflow_config call needed.",
+		"Create or update a user-owned secret. The value is AES-256-GCM encrypted with the user's key and stored server-side. Use for API keys, tokens, credentials the workflow needs. REJECTS names that collide with global secrets — those are managed by the operator, not the user. In workflow-builder/workshop contexts the secret is AUTO-ATTACHED to the active workflow and injected into the live shell env, so $SECRET_<NAME> is usable immediately in this session — no separate update_workflow_config call needed.",
 		map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
@@ -166,7 +201,7 @@ func (api *StreamingAPI) registerSecretManagementTools(agent definitionToolRegis
 				return "Error: 'value' is required (use delete_user_secret to remove a secret).", nil
 			}
 			if isGlobalName(name) {
-				return fmt.Sprintf("Error: %q is a GLOBAL secret (read-only, managed via GLOBAL_SECRET_%s env var). Pick a different name or ask the operator to update the env var.", name, name), nil
+				return fmt.Sprintf("Error: %q is a GLOBAL secret. Pick a different name or ask an admin to update the global secret.", name), nil
 			}
 			encrypted, err := encryptValue(value)
 			if err != nil {
@@ -189,7 +224,7 @@ func (api *StreamingAPI) registerSecretManagementTools(agent definitionToolRegis
 
 	if err := registerTool(
 		"delete_user_secret",
-		"Delete a user-owned secret from the encrypted store. Only user secrets can be deleted; global (env-backed) secrets are read-only. Does NOT detach the secret from workflows that reference it — call update_workflow_config remove_secrets separately if needed.",
+		"Delete a user-owned secret from the encrypted store. Only user secrets can be deleted; global secrets are read-only. Does NOT detach the secret from workflows that reference it — call update_workflow_config remove_secrets separately if needed.",
 		map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
@@ -207,7 +242,7 @@ func (api *StreamingAPI) registerSecretManagementTools(agent definitionToolRegis
 				return "Error: 'name' is required.", nil
 			}
 			if isGlobalName(name) {
-				return fmt.Sprintf("Error: %q is a GLOBAL secret and cannot be deleted via chat. Global secrets are managed via GLOBAL_SECRET_%s env var on the server.", name, name), nil
+				return fmt.Sprintf("Error: %q is a GLOBAL secret. Ask an admin to manage it with manage_global_secret (environment globals remain server-managed).", name), nil
 			}
 			if err := api.chatStore.DeleteUserSecret(ctx, userID, name); err != nil {
 				return "", fmt.Errorf("delete secret: %w", err)

@@ -37,6 +37,16 @@ const workflowProviderCredentialUrl = (provider: WorkflowCredentialProvider) =>
   `/api/workflow-provider-credentials/${provider}`;
 
 export const secretsApi = {
+  promoteWorkflowSecret: async (workspacePath: string, name: string): Promise<void> => {
+    await api.post('/api/secrets/global', { workspace_path: workspacePath, name });
+  },
+  saveGlobalSecret: async (name: string, value: string): Promise<void> => {
+    const { encrypted } = await secretsApi.encrypt(value);
+    await api.put('/api/secrets/global', { name, encrypted_value: encrypted });
+  },
+  deleteGlobalSecret: async (name: string): Promise<void> => {
+    await api.delete('/api/secrets/global', { params: { name } });
+  },
   encrypt: async (value: string): Promise<{ encrypted: string }> => {
     const response = await api.post('/api/secrets/encrypt', { value });
     return response.data;

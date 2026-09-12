@@ -1,3 +1,5 @@
+import axios from 'axios';
+import { useAuthStore } from '../../stores/useAuthStore';
 import React, { useEffect, useMemo, useState } from 'react';
 import { Checkbox } from '../ui/checkbox';
 import { KeyRound, Globe, Plus, Trash2, Eye, EyeOff } from 'lucide-react';
@@ -39,6 +41,29 @@ export const SecretSelectionSection: React.FC<SecretSelectionSectionProps> = ({
   // may run the workflow with them, but the server refuses reveal and every
   // mutation, so the controls disable here rather than fail on click.
   const canWrite = useCanWriteWorkflow(workflowPath?.trim() || undefined);
+  const isAdmin = useAuthStore(state => state.user?.is_admin === true || (state.isMultiUserModeChecked && !state.isMultiUserMode));
+  const [globalEditor, setGlobalEditor] = useState<string | null>(null);
+  const [globalValue, setGlobalValue] = useState('');
+  const [globalBusy, setGlobalBusy] = useState(false);
+  const [globalStatus, setGlobalStatus] = useState('');
+  const manageGlobal = async (action: 'promote' | 'set' | 'delete', name: string) => {
+    if (!isAdmin || globalBusy) return;
+    if (action === 'promote' && !confirm(`Make ${name} global? It will be available server-wide to all users and workflows. Its source workflow will use the global value.`)) return;
+    if (action === 'delete' && !confirm(`Delete global secret ${name}? Workflows using it will no longer receive its value on new runs.`)) return;
+    setGlobalBusy(true); setGlobalStatus('');
+    try {
+      if (action === 'promote') await secretsApi.promoteWorkflowSecret(workflowPath!.trim(), name);
+      else if (action === 'set') await secretsApi.saveGlobalSecret(name, globalValue);
+      else await secretsApi.deleteGlobalSecret(name);
+      await fetchGlobalSecrets();
+      if (workflowPath) await fetchWorkflowSecrets(workflowPath.trim());
+      setGlobalEditor(null); setGlobalValue('');
+      setGlobalStatus(action === 'delete' ? `Removed global secret ${name}.` : `${name} is global. Changes apply to new turns and runs.`);
+    } catch (error) {
+      setGlobalStatus(axios.isAxiosError(error) && typeof error.response?.data === 'string' ? error.response.data : 'Could not update global secret.');
+    } finally { setGlobalBusy(false); }
+  };
+
   const [workflowSecretName, setWorkflowSecretName] = useState('');
   const [workflowSecretValue, setWorkflowSecretValue] = useState('');
   const [workflowSecretError, setWorkflowSecretError] = useState<string | null>(null);
@@ -128,11 +153,13 @@ export const SecretSelectionSection: React.FC<SecretSelectionSectionProps> = ({
 
   const toggleGlobal = (name: string) => {
     if (!onGlobalSecretChange) return;
+    const attachedByName = selectedSecretNames.has(name);
+    if (attachedByName) onSecretChange(selectedSecrets.filter(selected => selected !== name));
     const isSelected = selectedGlobalSecrets === null || selectedGlobalSecrets.includes(name);
     if (isSelected) {
       const remaining = (selectedGlobalSecrets ?? globalSecrets.map(g => g.name)).filter(n => n !== name);
       onGlobalSecretChange(remaining);
-    } else {
+    } else if (!attachedByName) {
       const next = [...(selectedGlobalSecrets ?? []), name];
       onGlobalSecretChange(next.length === globalSecrets.length ? null : next);
     }
@@ -232,6 +259,14 @@ export const SecretSelectionSection: React.FC<SecretSelectionSectionProps> = ({
         </div>
       )}
 
+      {globalStatus && <p role="status" className="text-xs text-muted-foreground">{globalStatus}</p>}
+      {isAdmin && globalEditor !== null && <form className="flex shrink-0 flex-wrap items-center gap-2 rounded border border-border p-3" onSubmit={event => { event.preventDefault(); void manageGlobal('set', globalEditor); }}>
+        <span className="text-xs">Update global {globalEditor}</span>
+        <input type="password" aria-label="New global secret value" autoComplete="new-password" value={globalValue} onChange={event => setGlobalValue(event.target.value)} className="min-w-0 flex-1 rounded border border-border bg-background px-2 py-1 text-sm" />
+        <button type="submit" disabled={globalBusy || !globalValue} className="text-xs disabled:opacity-40">Save</button>
+        <button type="button" disabled={globalBusy} onClick={() => { setGlobalEditor(null); setGlobalValue(''); }} className="text-xs">Cancel</button>
+      </form>}
+
       <div className={`border border-gray-200 dark:border-gray-700 rounded-md bg-white dark:bg-gray-800 ${fillAvailableHeight ? 'min-h-0 flex-1 overflow-y-auto' : ''}`}>
         {sortedWorkflowSecrets.map((secret) => (
           <div key={`workflow-${secret.name}`} className="flex items-center gap-2 p-3 border-b border-gray-200 dark:border-gray-700 last:border-b-0 hover:bg-gray-100 dark:hover:bg-gray-700">
@@ -249,6 +284,7 @@ export const SecretSelectionSection: React.FC<SecretSelectionSectionProps> = ({
               </span>
               <span className="ml-auto shrink-0 text-[10px] px-1.5 py-0.5 rounded bg-amber-100 dark:bg-amber-900/50 text-amber-700 dark:text-amber-300">Automation</span>
             </label>
+            {isAdmin && canWrite && <button type="button" disabled={globalBusy} onClick={() => void manageGlobal('promote', secret.name)} className="shrink-0 text-xs text-blue-600 disabled:opacity-40" aria-label={`Make ${secret.name} global`}>Make global</button>}
             <button
               type="button"
               onClick={() => { void toggleReveal(secret) }}
@@ -274,7 +310,7 @@ export const SecretSelectionSection: React.FC<SecretSelectionSectionProps> = ({
           <div key={`global-${gs.name}`} className="flex items-center gap-2 p-3 border-b border-gray-200 dark:border-gray-700 last:border-b-0 hover:bg-gray-100 dark:hover:bg-gray-700">
             <Checkbox
               id={`global-secret-${gs.name}`}
-              checked={selectedGlobalSecrets === null || selectedGlobalSecrets.includes(gs.name)}
+              checked={selectedSecretNames.has(gs.name) || selectedGlobalSecrets === null || selectedGlobalSecrets.includes(gs.name)}
               onCheckedChange={() => toggleGlobal(gs.name)}
               disabled={!onGlobalSecretChange}
             />
@@ -283,6 +319,10 @@ export const SecretSelectionSection: React.FC<SecretSelectionSectionProps> = ({
               <span className="font-mono">{gs.name}</span>
               <span className="ml-auto text-[10px] px-1.5 py-0.5 rounded bg-blue-100 dark:bg-blue-900/50 text-blue-600 dark:text-blue-400">Global</span>
             </label>
+            {isAdmin && gs.managed && <>
+              <button type="button" disabled={globalBusy} onClick={() => { setGlobalEditor(gs.name); setGlobalValue(''); }} className="text-xs" aria-label={`Update global ${gs.name}`}>Update</button>
+              <button type="button" disabled={globalBusy} onClick={() => void manageGlobal('delete', gs.name)} className="text-xs text-destructive" aria-label={`Delete global ${gs.name}`}>Remove</button>
+            </>}
           </div>
         ))}
 

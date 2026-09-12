@@ -20,8 +20,9 @@ import (
 
 // globalSecretEntry holds a single env-based global secret (name + plaintext value)
 type globalSecretEntry struct {
-	Name  string
-	Value string
+	Name    string
+	Value   string
+	Managed bool
 }
 
 // globalSecrets is populated once at startup from GLOBAL_SECRET_* env vars
@@ -29,6 +30,8 @@ var globalSecrets []globalSecretEntry
 
 // loadGlobalSecrets scans os.Environ() for GLOBAL_SECRET_ prefix and populates globalSecrets
 func loadGlobalSecrets() {
+	managedGlobalsMu.Lock()
+	defer managedGlobalsMu.Unlock()
 	const prefix = "GLOBAL_SECRET_"
 	globalSecrets = nil
 	for _, env := range os.Environ() {
@@ -55,20 +58,22 @@ func loadGlobalSecrets() {
 	}
 }
 
-// getGlobalSecrets returns the loaded global secrets (read-only after startup)
+// getGlobalSecrets snapshots environment and encrypted admin-managed globals.
 func getGlobalSecrets() []globalSecretEntry {
-	return globalSecrets
+	return sortedGlobalSecrets()
 }
 
 // handleGetGlobalSecrets returns the names of global secrets (no values exposed)
 // GET /api/secrets/global
 func (api *StreamingAPI) handleGetGlobalSecrets(w http.ResponseWriter, r *http.Request) {
 	type entry struct {
-		Name string `json:"name"`
+		Name    string `json:"name"`
+		Managed bool   `json:"managed"`
 	}
-	result := make([]entry, len(globalSecrets))
-	for i, s := range globalSecrets {
-		result[i] = entry{Name: s.Name}
+	globals := getGlobalSecrets()
+	result := make([]entry, len(globals))
+	for i, s := range globals {
+		result[i] = entry{Name: s.Name, Managed: s.Managed}
 	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(result)

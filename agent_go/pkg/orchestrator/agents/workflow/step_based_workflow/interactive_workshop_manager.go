@@ -1395,9 +1395,9 @@ func GetToolsForWorkshopMode(mode string) []string {
 		"query_workflow_db", "mutate_workflow_db", "apply_workflow_db_migration", "create_workflow_database_snapshot",
 		// PLAT-184. This workflow's own per-workspace cost ledger.
 		"query_workflow_costs",
-		// Secret management tools. Global secrets are read-only; workflow/user
+		// Secret management tools. Managed globals require server admin; workflow/user
 		// encrypted stores are writable when the corresponding tools are registered.
-		"list_secrets", "set_workflow_secret", "delete_workflow_secret", "set_user_secret", "delete_user_secret",
+		"list_secrets", "set_workflow_secret", "delete_workflow_secret", "set_user_secret", "delete_user_secret", "manage_global_secret",
 		// Human tools are appended below from virtualtools.HumanToolNamesForWorkshopMode()
 		// (single source shared with registration, so the allow-list can't drift).
 		// Browser (if registered)

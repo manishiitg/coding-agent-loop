@@ -2,9 +2,9 @@
 
 Secrets are credentials (API keys, tokens, passwords). They may come from three buckets:
 
-- **Workflow secrets** — per-user, AES-GCM encrypted, scoped only to one workflow. Use these by default for workflow-specific credentials when the workflow secret tools are available.
+- **Workflow secrets** — shared with users who have workflow access, AES-GCM encrypted, scoped only to one workflow. Use these by default for workflow-specific credentials when the workflow secret tools are available.
 - **User secrets** — per-user, AES-GCM encrypted, reusable across workflows.
-- **Global secrets** — operator-managed via `GLOBAL_SECRET_*` env vars. Read-only from chat.
+- **Global secrets** — server-wide. Admins manage encrypted globals through chat and the Secrets UI; `GLOBAL_SECRET_*` environment entries remain operator-managed.
 
 ### Tools
 
@@ -12,18 +12,18 @@ Secrets are credentials (API keys, tokens, passwords). They may come from three 
 - **`set_workflow_secret(name, value)`** — create or update a workflow-scoped value. Available only in workflow-scoped builder/workshop chats.
 - **`delete_workflow_secret(name)`** — delete a workflow-scoped value. Available only in workflow-scoped builder/workshop chats.
 - **`set_user_secret(name, value)`** — create or update a reusable user secret value. Names that collide with a global are rejected. Use `UPPER_SNAKE_CASE` (e.g. `SLACK_TOKEN`).
-- **`delete_user_secret(name)`** — delete a reusable user secret from the store. Globals cannot be deleted.
+- **`delete_user_secret(name)`** — delete a reusable user secret from the store. Use the admin global tool for managed globals.
 
 ### When a user says "store / save / set this key"
 
 1. Call `list_secrets` first to check if the name already exists and which bucket owns it.
-2. In a workflow builder/workshop chat, prefer `set_workflow_secret(name, value)` for workflow-only credentials. Use `set_user_secret(name, value)` only when the same credential should be reusable across workflows.
+2. In a workflow builder/workshop chat, prefer `set_workflow_secret(name, value)` for workflow-only credentials. For credentials shared across workflows, prefer admin-managed globals. User secrets remain available for personal use.
 3. In a workflow-builder session, `set_workflow_secret` and `set_user_secret` automatically attach and inject a newly stored value. For an already-stored secret, attach it with the workflow config tool (for example `update_workflow_config(add_secrets=["NAME"])`). The attached value becomes immediately available to the builder shell and workflow steps as `$SECRET_<NAME>` without revealing plaintext to the model.
 4. Confirm success. Do NOT echo the plaintext value back to the user — acknowledge by name only.
 
 ### Safety rules
 
-Secret values must never be printed, echoed, logged, or passed to unrelated tools. The designated `set_workflow_secret` / `set_user_secret` tool may receive a user-provided value for the requested save; that exception does not authorize plaintext files, shell commands, or disclosure to other tools. If a user pastes a secret in chat, treat it as sensitive: store it, then acknowledge only by name.
+Secret values must never be printed, echoed, logged, or passed to unrelated tools. The designated `set_workflow_secret` / `set_user_secret` / admin `manage_global_secret(action="set")` tool may receive a user-provided value for the requested save; that exception does not authorize plaintext files, shell commands, or disclosure to other tools. If a user pastes a secret in chat, treat it as sensitive: store it, then acknowledge only by name.
 
 Do not tell the user to rotate the secret after a normal requested save. Recommend rotation only for a concrete exposure event such as logs, files, commits, or the wrong channel.
 
@@ -36,5 +36,11 @@ Do not tell the user to rotate the secret after a normal requested save. Recomme
 
 - `delete_workflow_secret(name)` for workflow-scoped values.
 - `delete_user_secret(name)` for reusable user secrets.
-- Global secrets cannot be deleted from chat — they are operator-managed.
+- Admins use `manage_global_secret(action="delete", name="NAME")` for managed globals. Environment globals are removed through server configuration.
 - After deleting a workflow secret that was attached to a workflow, the runtime `$SECRET_<NAME>` will no longer resolve for that workflow's steps. Detach it from the workflow config too if needed.
+
+## Reusing a secret across workflows
+
+Secrets needed by multiple workflows belong in Global Secrets. Server admins can use `manage_global_secret(action="promote", name="NAME")` to move an existing active-workflow secret into the encrypted global store without reading or printing its value. Promotion makes it available server-wide, so only do this when the user intends that scope. The Secrets UI offers **Make global** with the same permission check. Existing source attachments keep working; other workflows select the global name. Name collisions fail without overwriting.
+
+Admins can use `action="set"` with a new value to update a managed global, or `action="delete"` to remove it. Values are never returned. Changes apply to new turns and runs; running sessions may retain their existing environment. Environment-backed `GLOBAL_SECRET_*` entries remain operator-managed and cannot be overwritten here. Ordinary owners and readers cannot manage globals, and attaching read-only workflow context grants no authority to publish its secrets.

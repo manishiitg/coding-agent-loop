@@ -46,6 +46,8 @@ func (hcpo *StepBasedWorkflowOrchestrator) setupOrchestratorFolderGuard(step Pla
 	// to coordinate work inside the current run, not inspect global workflow state.
 	downloadsPath := filepath.Join(executionWorkspacePath, "Downloads")
 	readPaths = []string{executionWorkspacePath, downloadsPath, filepath.Join(baseWorkspacePath, "soul", "soul.md")}
+	// The bridge writes oversized tool results here; agents need read access to retrieve them.
+	readPaths = append(readPaths, filepath.Join(baseWorkspacePath, "tool_output_folder"))
 	writePaths = []string{executionWorkspacePath, downloadsPath}
 	readPaths, writePaths = appendManagedDBFileAccess(baseWorkspacePath, readPaths, writePaths)
 	if learningsAccessForGuard != LearningsAccessNone {

@@ -1623,7 +1623,7 @@ func (iwm *InteractiveWorkshopManager) registerMarkChangelogArtifactReviewedTool
 				},
 				"report_entry_id": map[string]interface{}{
 					"type":        "string",
-					"description": "ID/heading slug of the builder/improve.html Artifact Review entry that records this review.",
+					"description": "Optional reference ID of the structured Pulse review record that records this review.",
 				},
 				"reviewed_at": map[string]interface{}{
 					"type":        "string",
@@ -1873,7 +1873,7 @@ func workshopWritePaths(workspacePath string) []string {
 		fmt.Sprintf("%s/memory", workspacePath),
 		fmt.Sprintf("%s/execution", workspacePath),
 		fmt.Sprintf("%s/variables", workspacePath),
-		fmt.Sprintf("%s/builder", workspacePath), // improve.html and archives
+		fmt.Sprintf("%s/builder", workspacePath), // workshop conversation and changelog artifacts
 	}
 }
 
@@ -7508,7 +7508,6 @@ Review these files/directories when present. Stay read-only:
 - `+"`knowledgebase/notes/_index.json`"+` and relevant `+"`knowledgebase/notes/*.md`"+`: check topic registry, stale/duplicated notes, and whether steps that produce domain facts have matching KB contribution contracts.
 - `+"`db/README.md`"+`, `+"`db/db.sqlite`"+`, and `+"`db/assets/`"+`: check schema/DDL documentation, table shape, primary keys, upsert rules, indexes, writer ownership, group separation, durable asset metadata/provenance, and report compatibility.
 - `+"`db/reports/index.html`"+`: check whether every report view's `+"`window.report.query`"+` SQL reads durable `+"`db/db.sqlite`"+` tables (and references `+"`db/assets/`"+`/KB via `+"`window.report.get`"+`/`+"`fileUrl`"+`) rather than volatile run paths, whether referenced columns exist, and whether derived report helper tables could be collapsed into the report's query (JOIN/GROUP BY).
-- `+"`builder/improve.html`"+`: read if present to avoid repeating already-known findings and to see unresolved prior review items.
 
 {{if .TargetRunFolder}}## OPTIONAL RUN EVIDENCE
 If useful, read:

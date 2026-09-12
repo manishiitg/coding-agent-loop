@@ -1459,7 +1459,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) setupMessageSequenceFolderGuard(stepP
 	readPaths = []string{
 		executionWorkspacePath,
 		fmt.Sprintf("%s/soul", baseWorkspacePath),
-		fmt.Sprintf("%s/builder", baseWorkspacePath),
 		// tool_output_folder is where any bridge tool result past its inline size
 		// cap is spilled (MCP_TOOL_OUTPUT_DIR) -- most often a large agent_browser
 		// snapshot. setupExecutionFolderGuard has granted this since PLAT-073

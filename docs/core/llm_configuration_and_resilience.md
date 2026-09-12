@@ -1,6 +1,6 @@
 # LLM Configuration & Resilience
 
-This document outlines the system for managing LLM configurations, user-driven fallbacks, and the automated temporary LLM cascading flow for execution resilience.
+This document outlines the system for managing LLM configurations, explicit model selection, and retries on the selected model.
 
 ---
 
@@ -14,11 +14,10 @@ The Model Library combines provider discovery, setup status, available models, a
 
 **Key Principles:**
 - **Simple mode**: Stores a coding-agent provider profile. Current role defaults resolve from `multi-llm-provider-go` after every app update.
-- **Advanced mode**: Stores direct provider/model/options/fallback selections for each role.
+- **Advanced mode**: Stores direct provider/model/options selections for each role.
 - **Saved configurations**: Optional reusable provider/model/options combinations.
 - **Separate Auth**: Model metadata does not store secrets; provider auth is managed separately.
 - **Backend Defaults**: Backend uses ambient credentials (AWS Bedrock) for internal operations only.
-- **Fallback Chain**: Simple ordered fallback array configured by the user.
 
 ### 📁 Key Files & Locations
 
@@ -26,7 +25,6 @@ The Model Library combines provider discovery, setup status, available models, a
 |-----------|------|---------------|
 | **LLM Store** | `frontend/src/stores/useLLMStore.ts` | `savedLLMs`, `refreshAvailableLLMs()`, `getCurrentLLMOption()` |
 | **Model Library** | `frontend/src/components/llm/LibraryTab.tsx` | Provider readiness and saved configurations |
-| **Fallbacks Tab** | `frontend/src/components/llm/FallbacksTab.tsx` | Primary selection, fallback chain |
 | **LLM Dropdown** | `frontend/src/components/LLMSelectionDropdown.tsx` | Rich metadata display |
 | **LLM Types** | `frontend/src/types/llm.ts` | `LLMOption` interface |
 | **API Types** | `frontend/src/services/api-types.ts` | `SavedLLM`, `LLMModel`, `AgentLLMConfiguration` |
@@ -70,7 +68,6 @@ interface SavedLLM extends LLMModel {
 // Agent configuration sent to backend
 interface AgentLLMConfiguration {
   primary: LLMModel     // Selected directly or resolved from a provider profile
-  fallbacks: LLMModel[] // Ordered fallback chain
 }
 ```
 
@@ -91,7 +88,6 @@ interface AgentLLMConfiguration {
 | Component | Purpose | Key Features |
 |-----------|---------|--------------|
 | **Model Library** | Providers plus saved configs | Readiness, models, tier defaults, reusable configurations |
-| **Fallbacks Tab** | Configure fallback chain | Add a direct model or reusable saved configuration |
 | **LLM Dropdown** | Select LLM for execution | Rich metadata (cost, context, reasoning options) |
 
 #### LLM Dropdown Display
@@ -141,7 +137,7 @@ loadProviderManifest()
 
 ### 📋 Overview
 
-Execution agents now select models from a fixed priority chain: step override, sub-agent override, tiered resolution, then workflow fallback. Retry state still matters for control flow, but it no longer changes the execution model.
+Execution agents now select models from a fixed priority chain: step override, sub-agent override, tiered resolution, then workflow default. Retry state still matters for control flow, but it no longer changes the execution model.
 
 **Key Benefits:**
 - **Explicit overrides**: Step `execution_llm` wins whenever it is set
@@ -180,7 +176,7 @@ graph TD
 1. **Step execution LLM** - Used when `agent_configs.execution_llm` is set for the step.
 2. **Sub-agent override** - Used when execution is running inside a sub-agent context that supplies `sub_agent_llm`.
 3. **Tiered execution resolution** - Used when tiered mode is active and no step override is present.
-4. **Original LLM chain** (preset/workflow execution LLM) - Used as the remaining fallback.
+4. **Original LLM chain** (preset/workflow execution LLM) - Used as the inherited default.
 
 ### ⚙️ Failure Criteria
 
@@ -232,7 +228,7 @@ if stepConfig.ExecutionLLM != nil {
 } else if tierResolver != nil {
     // Resolve execution tier from context and learning maturity
 } else {
-    // Use workflow/preset execution LLM fallback
+    // Use workflow/preset execution LLM default
 }
 ```
 
@@ -245,7 +241,7 @@ if stepConfig.ExecutionLLM != nil {
 | Step `execution_llm` set | Explicit per-step model choice | Overrides all runtime execution model selection | Applies in both manual and tiered modes |
 | `sub_agent_llm` present in context | Use parent-selected model for nested execution | Overrides tiered/preset selection when step config is absent | Only applies to sub-agent executions |
 | Tier resolver configured | Use maturity-based execution tier | Selects tiered execution model when no step override is present | Active in tiered mode |
-| No step override and no tier resolver result | Fall back to workflow execution LLM | Uses preset/workflow execution config | Final execution fallback |
+| No step override and no tier resolver result | Inherit workflow execution LLM | Uses preset/workflow execution config | Inherited execution default |
 
 ### 🛠️ Common Issues & Solutions
 
@@ -261,7 +257,7 @@ if stepConfig.ExecutionLLM != nil {
 **Constraints:**
 - ✅ **Allowed**: Set `execution_llm` on a step to force that execution model.
 - ✅ **Allowed**: Let tiered mode select execution models when no step override is present.
-- ✅ **Allowed**: Fall back to the workflow execution LLM when no higher-priority override exists.
+- ✅ **Allowed**: Inherit the workflow execution LLM when no higher-priority override exists.
 
 **Failure Detection:**
 - Only `ExecutionStatus == "FAILED"` triggers `isRetryAfterValidationFailure`
@@ -273,7 +269,7 @@ if stepConfig.ExecutionLLM != nil {
 1. Step `execution_llm`
 2. `sub_agent_llm`
 3. Tiered execution resolution
-4. Workflow execution LLM fallback
+4. Workflow execution LLM default
 
 **Example Flows:**
 
@@ -309,3 +305,9 @@ Loop Iteration 2: Selected execution model → SUCCESS
 - [Controller Execution](../../agent_go/pkg/orchestrator/agents/workflow/step_based_workflow/controller_execution.go) - Retry logic implementation
 - [Model Metadata](https://github.com/manishiitg/multi-llm-provider-go/blob/main/llmtypes/model_metadata.go) - Pricing, context, capabilities
 - [LLM Store](../../frontend/src/stores/useLLMStore.ts) - State management
+
+## Retry behavior
+
+Calls never automatically switch models, coding agents, or providers. Transient failures retry on the selected model with bounded exponential backoff. Authentication errors, unavailable models, and exhausted quota return the provider error. Cancellation and requests for user input stop retries immediately.
+
+The `fallbacks`, `fallback_models`, and `cross_provider_fallback` configuration fields and `update_tier_fallbacks` workflow operation have been removed. Old JSON fallback fields are ignored when loaded and omitted when serialized. Fallback environment variables are not consumed by either application or the shared provider library. Provider initialization attempts only the selected model. Missing provider/model configuration and unknown delegation tiers return errors instead of selecting a substitute. Retry telemetry uses `retry_attempt`; fallback/model-switch telemetry is no longer emitted.

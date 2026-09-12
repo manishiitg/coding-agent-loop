@@ -607,7 +607,7 @@ export type TranscriptItem =
   | { kind: 'event'; key: string; event: PollingEvent }
   | { kind: 'tools'; key: string; events: PollingEvent[]; toolCount: number }
   /** Consecutive conversation_thinking events: one collapsible block, like tools. */
-  | { kind: 'thinking'; key: string; events: PollingEvent[]; text: string }
+  | { kind: 'thinking'; key: string; events: PollingEvent[]; text: string; assistantUpdate?: boolean }
 
 const TURN_FAILURE_EVENT_TYPES = new Set(['llm_generation_error', 'conversation_error', 'agent_error', 'context_cancelled'])
 
@@ -655,6 +655,12 @@ export function collapseTurnFailures(items: TranscriptItem[]): TranscriptItem[] 
     out.push(item)
   }
   return out
+}
+
+export function isAssistantUpdate(event: PollingEvent): boolean {
+  const envelope = event.data as Record<string, unknown> | undefined
+  const inner = envelope?.data as Record<string, unknown> | undefined
+  return metadataField(inner || envelope || {}, 'presentation') === 'assistant_update'
 }
 
 function transcriptThinkingText(event: PollingEvent): string {
@@ -922,13 +928,14 @@ export function buildTranscriptItems(events: PollingEvent[]): TranscriptItem[] {
       // while it is the newest thing on screen and minimised once the answer
       // (or a tool batch) follows -- the same shape tool calls already have.
       const batch: PollingEvent[] = []
-      while (cursor < visibleEvents.length && visibleEvents[cursor].type === 'conversation_thinking') {
+      const assistantUpdate = isAssistantUpdate(event)
+      while (cursor < visibleEvents.length && visibleEvents[cursor].type === 'conversation_thinking' && isAssistantUpdate(visibleEvents[cursor]) === assistantUpdate) {
         batch.push(visibleEvents[cursor])
         cursor += 1
       }
       const text = batch.map(transcriptThinkingText).filter(Boolean).join('\n\n')
       if (text) {
-        items.push({ kind: 'thinking', key: batch[0].id || `thinking-${items.length}`, events: batch, text })
+        items.push({ kind: 'thinking', key: batch[0].id || `thinking-${items.length}`, events: batch, text, assistantUpdate })
       }
       continue
     }

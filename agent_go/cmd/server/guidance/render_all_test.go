@@ -752,6 +752,12 @@ func TestStrategyAdvisorGuidanceBalancesExplorationEvidenceAndHumanDecisions(t *
 		"repeated targeting or audience saturation",
 		"exploitation without enough discovery or exploration",
 		"perfect-execution counterfactual",
+		"get_goal_metrics(workspace_path=...)",
+		"which metric should move and why",
+		"Missing or inadequate metrics are actionable review findings",
+		"verify one real observation",
+		"Waiting for a correctly collected outcome to mature",
+		"No extra metric scorecard",
 		"strategy_flaw",
 		"execution_bug",
 		"measurement_gap",
@@ -1621,6 +1627,29 @@ func TestPulseReviewsUseOneOptionalSQLiteNoteWithoutReportingTurns(t *testing.T)
 		for _, forbidden := range []string{"Update the run-scoped checkpoint", "Preserve checkpoint", "final persistence phase owns", "Keep a compact checkpoint:"} {
 			if containsNormalizedText(rendered, forbidden) {
 				t.Fatalf("%s retains mandatory bookkeeping %q", kind, forbidden)
+			}
+		}
+	}
+}
+
+func TestArchitectureOwnsMeasuredTierChanges(t *testing.T) {
+	rendered, err := renderFromRegistry("architecture-review", tmplData{}, referenceKinds)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"execution_tier", "query_workflow_costs", "output quality, retries, duration", "not proof a cheaper tier preserves quality", "rollback", "human_input_id", "No per-run tier switching", "Never silently replace a user pin"} {
+		if !containsNormalizedText(rendered, want) {
+			t.Fatalf("architecture tier contract missing %q", want)
+		}
+	}
+	for _, kind := range []string{"step-config", "pulse-fixer-practices", "llm-selection", "pulse-gate"} {
+		text, err := renderFromRegistry(kind, tmplData{}, referenceKinds)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, retired := range []string{"disables adaptive tiering", "3 stable runs", "letting adaptive tiering do the work"} {
+			if strings.Contains(strings.ToLower(text), retired) {
+				t.Fatalf("%s still instructs automatic tier promotion: %s", kind, retired)
 			}
 		}
 	}

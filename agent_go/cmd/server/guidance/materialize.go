@@ -20,7 +20,14 @@ import (
 // Returns nil if no kinds are allowed in the given mode (so callers can skip
 // attaching without an extra check).
 func MaterializeReferenceSkill(mode string) *llmtypes.Skill {
+	return materializeReferenceSkillWithMCP(mode, true)
+}
+
+func materializeReferenceSkillWithMCP(mode string, mcpManagement bool) *llmtypes.Skill {
 	spec := referenceSkillSpecForMode(mode)
+	if !mcpManagement {
+		spec.Intro = "Read the matching reference before acting. This session cannot install or configure MCP integrations; an interactive Builder with write access can do that. Reading documentation does not grant tools."
+	}
 	return buildMegaSkill(buildMegaSkillSpec{
 		Mode:             mode,
 		Registry:         referenceKinds,
@@ -28,6 +35,9 @@ func MaterializeReferenceSkill(mode string) *llmtypes.Skill {
 		DescriptionIntro: spec.DescriptionIntro,
 		Intro:            spec.Intro,
 		Render:           renderReferenceKind,
+		Select: func(kind string, meta kindMeta) bool {
+			return (mcpManagement || kind != "integration-discovery") && (mode == "" || modeAllowedIn(kind, mode, referenceKinds))
+		},
 	})
 }
 
@@ -64,7 +74,7 @@ func referenceSkillSpecForMode(mode string) referenceSkillSpec {
 	return referenceSkillSpec{
 		Name:             "builder-reference",
 		DescriptionIntro: "Workflow workshop reference docs — detailed contracts and rules to consult before specific actions.",
-		Intro:            "This skill bundles the workflow workshop's reference documentation. Match it when you need detailed rules, patterns, or contracts for any of the topics below — especially LLM/provider configuration via tools, not by reading or editing `config/` files; connecting a new third-party service/tool, which is managed through search_mcp_catalog/search_skills/add_mcp_server and never by hand-installing a package or hand-editing a config file; browser/CDP automation; and Gmail/Google Workspace connection scope or permission issues. Read the single matching file under `references/`. You don't need to read more than one unless the action spans multiple topics.",
+		Intro:            "This skill bundles the workflow workshop's reference documentation. Match it when you need detailed rules, patterns, or contracts for any of the topics below — especially LLM/provider configuration via tools, not by reading or editing `config/` files; connecting a new third-party service/tool, using integration-discovery for catalog and internet search, provider verification, and installation through install_mcp_server (or add_mcp_server for known custom config), never hand-editing managed MCP config; browser/CDP automation; and Gmail/Google Workspace connection scope or permission issues. Read the single matching file under `references/`. You don't need to read more than one unless the action spans multiple topics.",
 	}
 }
 
@@ -149,22 +159,48 @@ func MaterializeReferenceKindsAsSkills(mode string, names []string) ([]*llmtypes
 }
 
 func AttachReferenceSurface(mode string, attach func(*llmtypes.Skill) error) error {
+	return AttachReferenceSurfaceWithMCP(mode, true, attach)
+}
+
+func AttachReferenceSurfaceWithMCP(mode string, mcpManagement bool, attach func(*llmtypes.Skill) error) error {
+	return AttachConfiguredReferenceSurface(mode, mcpManagement, []string{"system-tools", "builder-reference", "workflow-commands"}, attach)
+}
+
+// AttachConfiguredReferenceSurface honors the product's ordered bundle list.
+// Mode and MCP admission still filter the contents; a YAML entry grants no tools.
+func AttachConfiguredReferenceSurface(mode string, mcpManagement bool, names []string, attach func(*llmtypes.Skill) error) error {
 	if attach == nil {
 		return fmt.Errorf("attach reference surface: nil attach function")
 	}
-	if meta := BuildSystemToolsSkill(mode); meta != nil {
-		if err := attach(meta); err != nil {
-			return fmt.Errorf("attach %s: %w", meta.Name, err)
+	seen := map[string]bool{}
+	for _, name := range names {
+		if seen[name] {
+			return fmt.Errorf("duplicate reference skill %q", name)
+		}
+		seen[name] = true
+		switch name {
+		case "system-tools", "builder-reference", "workflow-commands":
+		default:
+			return fmt.Errorf("unknown reference skill %q", name)
 		}
 	}
-	if refs := MaterializeReferenceSkill(mode); refs != nil {
-		if err := attach(refs); err != nil {
-			return fmt.Errorf("attach %s: %w", refs.Name, err)
+	for _, name := range names {
+		var skill *llmtypes.Skill
+		switch name {
+		case "system-tools":
+			skill = buildSystemToolsSkillWithMCP(mode, mcpManagement)
+			if skill != nil && !mcpManagement {
+				skill.Content += "\nMCP management is unavailable in this session. Do not attempt integration installation or manual host config edits; ask an interactive Builder with write access to configure it.\n"
+			}
+		case "builder-reference":
+			skill = materializeReferenceSkillWithMCP(mode, mcpManagement)
+		case "workflow-commands":
+			skill = MaterializeGuidanceSkill(mode)
 		}
-	}
-	if cmds := MaterializeGuidanceSkill(mode); cmds != nil {
-		if err := attach(cmds); err != nil {
-			return fmt.Errorf("attach %s: %w", cmds.Name, err)
+		if skill != nil {
+			if err := attach(skill); err != nil {
+				return fmt.Errorf("attach %s: %w", name, err)
+			}
 		}
 	}
 	return nil

@@ -10,7 +10,7 @@ import (
 )
 
 // Live auth probing for an MCP server found outside our own curated catalog
-// (search_mcp_catalog's GitHub/Smithery results, or any URL a user gives).
+// (search_mcp_catalog's public registry results, or any URL a user gives).
 //
 // This automates the exact method PR #191's author ran by hand for each of
 // the 67 catalog additions: call the server, and if it answers 401, follow

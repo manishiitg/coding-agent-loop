@@ -15,28 +15,16 @@ func workflowUICallerAllowed(phase, session string, req QueryRequest, active *Ac
 	if phase != workflowtypes.WorkflowStatusWorkflowBuilder || strings.TrimSpace(req.AgentProfileID) != "" {
 		return false
 	}
-	if req.IsAutoNotification || strings.TrimSpace(req.ParentSessionID) != "" || strings.TrimSpace(req.SessionKind) != "" || strings.TrimSpace(req.BotPlatform) != "" {
-		return false
+	mode := "workshop"
+	if req.ExecutionOptions != nil && req.ExecutionOptions.WorkshopMode != "" {
+		mode = req.ExecutionOptions.WorkshopMode
 	}
-	if active != nil && (strings.TrimSpace(active.ParentSessionID) != "" || strings.TrimSpace(active.SessionKind) != "" || strings.TrimSpace(active.BotPlatform) != "") {
-		return false
-	}
-	// Explicit "make interactive" keeps the scheduled session ID by design.
-	// Merely opening/observing a schedule or retaining its native CLI is NOT
-	// promotion. Child/Pulse/bot restrictions above still apply.
-	if req.UserInteractiveContinuation {
-		return true
-	}
-	if isScheduledSessionIdentity(session, req.TriggeredBy) {
-		return false
-	}
-	if active != nil && isScheduledSessionIdentity(session, active.TriggeredBy) {
-		return false
-	}
-	return !strings.EqualFold(strings.TrimSpace(req.TriggeredBy), "auto_notification")
+	policy := resolveWorkflowChatPolicy(mode, session, req, active, false)
+	return policy.allows("workspace_ui")
+
 }
 
-func (api *StreamingAPI) registerWorkflowUIForCaller(registrar definitionToolRegistrar, phase, session, workspace string, req QueryRequest) error {
+func (api *StreamingAPI) registerWorkflowUIForCaller(registrar definitionToolRegistrar, phase, session, workspace string, req QueryRequest, readOnly bool) error {
 	active, _ := api.getActiveSession(session)
 	if !workflowUICallerAllowed(phase, session, req, active) {
 		// Invalidates any old lease if the same session changes role. The new
@@ -47,9 +35,14 @@ func (api *StreamingAPI) registerWorkflowUIForCaller(registrar definitionToolReg
 	if err := api.registerOpenWorkspaceViewTool(registrar, session, workspace); err != nil {
 		return err
 	}
-	// Same gate as the UI tools above: widening a Gmail connection's grants
-	// must only ever be something a real interactive user in this exact
-	// workflow-builder chat asked for, never a scheduled/bot/sub-agent
-	// session silently expanding its own permissions.
+	// Viewing the workspace does not grant connection-editing authority.
+	mode := "workshop"
+	if req.ExecutionOptions != nil && req.ExecutionOptions.WorkshopMode != "" {
+		mode = req.ExecutionOptions.WorkshopMode
+	}
+	policy := resolveWorkflowChatPolicy(mode, session, req, active, readOnly)
+	if !policy.allows("secret_management") {
+		return nil
+	}
 	return api.registerGmailConnectionManagementTools(registrar, session, workspace)
 }

@@ -12,11 +12,36 @@ import (
 
 const browserArtifactStagingDirName = "agentworks-browser-artifacts"
 const browserUploadStagingDirName = "agentworks-browser-uploads"
+const browserStagingNamespaceEnv = "AGENTWORKS_BROWSER_STAGING_NAMESPACE"
 
 func browserArtifactStagingDir() string {
 	// This path crosses the agent server, workspace server, and persistent
-	// browser daemon. A fixed OS temp path avoids process-specific TMPDIR values.
-	return filepath.Join(string(filepath.Separator), "tmp", browserArtifactStagingDirName)
+	// browser daemon. A deployment-qualified OS temp path avoids process-specific
+	// TMPDIR values without colliding with another Unix service account.
+	return filepath.Join(string(filepath.Separator), "tmp", browserStagingDirName(browserArtifactStagingDirName))
+}
+
+func browserStagingDirName(base string) string {
+	namespace := strings.ToLower(strings.TrimSpace(os.Getenv(browserStagingNamespaceEnv)))
+	if namespace == "" {
+		return base
+	}
+	var safe strings.Builder
+	for _, char := range namespace {
+		if (char >= 'a' && char <= 'z') || (char >= '0' && char <= '9') || char == '-' || char == '_' {
+			safe.WriteRune(char)
+		} else if safe.Len() > 0 && !strings.HasSuffix(safe.String(), "-") {
+			safe.WriteByte('-')
+		}
+		if safe.Len() >= 48 {
+			break
+		}
+	}
+	qualified := strings.Trim(safe.String(), "-_")
+	if qualified == "" {
+		return base
+	}
+	return base + "-" + qualified
 }
 
 type browserArtifactPlan struct {
@@ -178,7 +203,7 @@ func prepareBrowserUploads(command string, args []string) (*browserUploadPlan, e
 }
 
 func browserUploadStagingDir() string {
-	return filepath.Join(string(filepath.Separator), "tmp", browserUploadStagingDirName)
+	return filepath.Join(string(filepath.Separator), "tmp", browserStagingDirName(browserUploadStagingDirName))
 }
 
 func newBrowserUploadStagingPath(source string) (string, error) {

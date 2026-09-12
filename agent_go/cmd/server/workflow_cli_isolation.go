@@ -9,6 +9,7 @@ import (
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/cliruntime"
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/fsutil"
 	mcpagent "github.com/manishiitg/mcpagent/agent"
+	"github.com/manishiitg/multi-llm-provider-go/pkg/adapters/musecli"
 )
 
 // Workflow chat isolation is the default for coding-agent providers. Keep an
@@ -88,7 +89,29 @@ func workflowCLIResumeAllowed(agent *mcpagent.Agent, runtime *ChatHistoryAgentRu
 	if !strings.Contains(current.Provider.WorkingDir, string(os.PathSeparator)+"cli-runtimes"+string(os.PathSeparator)+"v1"+string(os.PathSeparator)) {
 		return true
 	}
-	if runtime.AgentSessionHandle == nil || !cliruntime.CanResume(current.Provider.WorkingDir, runtime.AgentSessionHandle.Provider.WorkingDir) {
+	if runtime.AgentSessionHandle == nil {
+		return false
+	}
+	// Older Muse completion handles omitted cwd. Recover only from the native
+	// session's metadata, and still enforce the private-directory identity.
+	// Never infer the missing directory from the current chat alone.
+	if strings.EqualFold(current.Provider.Provider, "muse-cli") &&
+		strings.EqualFold(runtime.Provider, "muse-cli") &&
+		strings.EqualFold(runtime.AgentSessionHandle.Provider.Provider, "muse-cli") &&
+		strings.TrimSpace(runtime.AgentSessionHandle.Provider.WorkingDir) == "" {
+		id := firstNonEmptyTrimmed(runtime.AgentSessionHandle.Provider.NativeSessionID, runtime.ExternalSessionID)
+		if runtime.ExternalSessionID != "" && runtime.AgentSessionHandle.Provider.NativeSessionID != "" && runtime.ExternalSessionID != runtime.AgentSessionHandle.Provider.NativeSessionID {
+			return false
+		}
+		saved := musecli.NativeSessionWorkingDir(id)
+		if !cliruntime.CanResume(current.Provider.WorkingDir, saved) {
+			return false
+		}
+		copyHandle := *runtime.AgentSessionHandle
+		copyHandle.Provider.WorkingDir = saved
+		runtime.AgentSessionHandle = &copyHandle
+	}
+	if !cliruntime.CanResume(current.Provider.WorkingDir, runtime.AgentSessionHandle.Provider.WorkingDir) {
 		return false
 	}
 	// Codex's project directory also selects the process cwd and can override

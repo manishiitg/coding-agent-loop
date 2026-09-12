@@ -207,16 +207,16 @@ consumer contract.
 - Never perform a speculative migration. When row meaning is ambiguous, retain
   the evidence and request the missing decision.
 
-## Applying an Ops config recommendation
+## Applying an Architecture config recommendation
 
 Use this whenever a finding asks you to change `execution_tier` or
-`execution_llm`. These are cost decisions the selected `technical_review`
-focus owns; it is read-only, so you are the writer. (Moving a step between
+`execution_llm`. These are tier/model decisions `architecture_review`
+owns; apply them only through their approved decision contract. (Moving a step between
 scripted and agentic is a step-type change — `change_step_type(step_id,
 target_type, reason)` — not a config field; the same evidence bar applies and
 the `reason` lands in the plan changelog.)
 
-1. **Never apply one without an owning Ops finding.** These fields are not
+1. **Never apply one without an owning Architecture finding.** These fields are not
    yours to tune opportunistically. If no finding recommends the change, the
    change is not justified — file the finding first, or leave it alone.
 2. **Carry the evidence into the config, not just the fix.** Each field requires
@@ -230,10 +230,11 @@ the `reason` lands in the plan changelog.)
    `user_judgment_required` or applied after approval, include the
    `human_input_id` in the reason. A reason pointing at a recorded human call is
    the strongest form available.
-4. **Know what you are switching off.** Pinning `execution_tier` also disables
-   adaptive tiering for that step — it will no longer promote high→medium after
-   3 stable runs. Pinning `execution_llm` overrides tier entirely. Say so in the
-   reason, so the next reviewer knows it was deliberate.
+4. **Preserve explicit settings and the trial contract.** Runtime never changes
+   tiers from run counts. Pinning `execution_llm` overrides tier entirely; a tier
+   change cannot trial a different model until that pin is cleared or changed.
+   Respect user pins and apply only the approved scope, checkpoint and rollback
+   settings. Record the reason so the next reviewer can assess the trial.
 5. **If the evidence does not settle it, do not change it.** Raise the question
    with `create_human_input_request` and park the finding `awaiting_user`
    against that pending decision. Never invent a reason to satisfy the field —

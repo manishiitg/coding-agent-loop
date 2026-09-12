@@ -14,17 +14,3 @@ export const getAvailableModels = (provider: string): string[] => {
   }
   return [];
 };
-
-// Get fallback providers for a given provider
-export const getFallbackProviders = (currentProvider: string): string[] => {
-  if (currentProvider === "bedrock") {
-    return ["openai", "vertex", "anthropic"];
-  } else if (currentProvider === "openai") {
-    return ["bedrock", "vertex", "anthropic"];
-  } else if (currentProvider === "vertex") {
-    return ["openai", "bedrock", "anthropic"];
-  } else if (currentProvider === "anthropic") {
-    return ["openai", "bedrock", "vertex"];
-  }
-  return [];
-};

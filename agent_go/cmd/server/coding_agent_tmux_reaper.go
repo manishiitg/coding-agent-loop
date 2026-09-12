@@ -212,7 +212,8 @@ func isCodingAgentTmuxSessionName(tmuxSession string) bool {
 	return strings.HasPrefix(name, "mlp-claude-code") ||
 		strings.HasPrefix(name, "mlp-codex-cli") ||
 		strings.HasPrefix(name, "mlp-cursor-cli") ||
-		strings.HasPrefix(name, "mlp-pi-cli")
+		strings.HasPrefix(name, "mlp-pi-cli") ||
+		strings.HasPrefix(name, "mlp-muse-")
 }
 
 func closeCodingAgentTmuxSessionByName(tmuxSession, reason string) bool {

@@ -7,6 +7,7 @@ import { useShallow } from 'zustand/react/shallow'
 const DBG = '[skill-popup]'
 import { Send, Wand2, Loader2, Globe, Layers, X, History, Server, Download, Paperclip, Terminal, Plus } from 'lucide-react'
 import { Button } from './ui/Button'
+import { SessionStopButton } from './SessionStopButton'
 import { Textarea } from './ui/Textarea'
 import FileContextDisplay from './FileContextDisplay'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from './ui/tooltip'
@@ -23,6 +24,8 @@ import { isChatCompatiblePhase } from '../utils/chatSubmitHelpers'
 import { useWorkflowStore } from '../stores/useWorkflowStore'
 import { useWorkflowManifestStore } from '../stores/useWorkflowManifestStore'
 import { useCanWriteWorkflow } from '../hooks/useCanWriteWorkflow'
+import { useAuthStore } from '../stores/useAuthStore'
+import { isWorkflowReadOnly } from '../utils/workflowPermissions'
 import { chromeCdpInstallCommand, chromeCdpLaunchCommand, chromeCdpVerifyCommand, chromeCdpZipUrl } from '../utils/cdpSetup'
 import { CHAT_TOOL_COMMAND_EVENT, chatToolCommandFromEvent } from '../utils/chatToolEvents'
 import { loadAgentProfileCapabilityEnabled, loadAgentProfileProviderOptions, loadAgentProfileRuntime, type AgentProfileProviderOption } from '../utils/agentProfileCapabilities'
@@ -118,7 +121,7 @@ import type { InlineSelectionItem } from './InlineSelectionPopup'
 import SkillImportDialog from './skills/SkillImportDialog'
 import { MCPConfigPopup } from './MCPConfigPopup'
 import MCPDetailsModal from './MCPDetailsModal'
-import LLMConfigurationModal from './LLMConfigurationModal'
+import CodingProvidersPanel from './providers/CodingProvidersPanel'
 import type { PlannerFile, LLMProvider, TerminalSnapshot } from '../services/api-types'
 import type { LLMOption } from '../types/llm'
 import { useAppStore, useMCPStore, useLLMStore, useChatStore } from '../stores'
@@ -135,9 +138,10 @@ import { shouldUsePastedTextAttachment } from '../utils/chatPasteBehavior'
 import { isMainAgentTerminal } from '../utils/terminalIdentity'
 
 const AUTO_NOTIFICATION_PREFIX = '[AUTO-NOTIFICATION]'
-const FALLBACK_CODING_AGENT_PROVIDERS = new Set(['claude-code', 'codex-cli', 'cursor-cli', 'pi-cli'])
+const FALLBACK_CODING_AGENT_PROVIDERS = new Set(['claude-code', 'codex-cli', 'cursor-cli', 'pi-cli', 'muse-cli'])
 // Providers whose chat turns never have a tmux pane (server: codingAgentUsesStructuredTransport).
-const STRUCTURED_TRANSPORT_PROVIDERS = new Set(['cursor-cli'])
+// Muse is exec-lane only until its tmux lane lands.
+const STRUCTURED_TRANSPORT_PROVIDERS = new Set(['cursor-cli', 'muse-cli'])
 const FALLBACK_LIVE_INPUT_PROVIDERS = new Set(['claude-code', 'codex-cli', 'cursor-cli', 'pi-cli'])
 
 interface ChatInputProps {
@@ -447,6 +451,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
   onNewChat,
 }) => {
   const isProductSurface = surfaceVariant === 'product'
+  const isReadOnlyUser = useAuthStore(state => isWorkflowReadOnly(state.user, state.isMultiUserMode))
   // Store subscriptions
   const {
     agentMode,
@@ -1471,30 +1476,6 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
   ])
 
   // TEMP DEBUG (spinner flicker investigation) - remove after diagnosis.
-  // Logs only on an actual state transition (not every recompute), with the
-  // raw inputs behind it, so the real running<->ready<->waiting sequence is
-  // visible instead of buried in render-frequency noise.
-  const lastSpinnerDebugStateRef = useRef<string | undefined>(undefined)
-  useEffect(() => {
-    const nextState = mainAgentRuntimeStatus?.state
-    if (lastSpinnerDebugStateRef.current === nextState) return
-    // eslint-disable-next-line no-console
-    console.log('[SPINNER_DEBUG] state transition', {
-      t: Date.now(),
-      from: lastSpinnerDebugStateRef.current,
-      to: nextState,
-      isTurnInFlight,
-      isCompleted: activeTab?.isCompleted,
-      sessionStatus: activeSession?.status,
-      phase: activeSession?.runtime_state?.phase,
-      waitingForUser: activeSession?.runtime_state?.waiting_for_user,
-      backgroundLive: activeSession?.runtime_state?.background_live,
-      hasRunningBg: activeSession?.has_running_background_agents,
-      needsUserInput: activeSession?.needs_user_input,
-    })
-    lastSpinnerDebugStateRef.current = nextState
-  }, [mainAgentRuntimeStatus?.state, isTurnInFlight, activeTab?.isCompleted, activeSession])
-
   // mainAgentRuntimeStatus reads activeSession from activeSessionsCache, a
   // 30s-TTL cache that nothing polls on a timer inside the workflow-builder
   // view (only the main chat view's GlobalActivityMonitor does, every 5s).
@@ -2913,6 +2894,11 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
 
   // Removed editing preset query functionality - not needed for multi-agent mode
 
+  // Scheduled/bot runs use the separate footer in ChatArea.
+  const hasRunFooter = !!activeTab?.metadata?.isScheduledRun || !!activeTab?.metadata?.isBotRun
+  const showStopButton = !!tabSessionId && !isReadOnlyUser && isTurnInFlight && !hasRunFooter
+  const stopButton = activeTabId ? <SessionStopButton key={activeTabId} tabId={activeTabId} /> : null
+
   // Check if query is valid (view-only tabs cannot submit)
   const hasValidQuery = Boolean(inputText?.trim())
   const inputDisabled = isSummarizing || isViewOnly || (!tabSessionId && !canBootstrapMultiAgentTab && !canBootstrapWorkflowPhaseTab)
@@ -2989,22 +2975,25 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
                 ? `${botPlatform || 'Bot'} run — view only`
               : 'View only — restored conversation'}
           </span>
-          {liveTerminalOffered && activeTabId && (
-            <Button
-              type="button"
-              variant={terminalViewSelected ? 'secondary' : 'ghost'}
-              size="icon"
-              onClick={() => useChatStore.getState().setTabViewMode(
-                activeTabId,
-                terminalViewSelected ? 'formatted' : 'terminal',
-              )}
-              className="absolute right-0 h-7 w-7 p-0"
-              aria-label={terminalViewSelected ? 'Return to conversation' : 'Open live view'}
-              title={terminalViewSelected ? 'Return to conversation' : 'Open live view'}
-            >
-              <Terminal className="h-3.5 w-3.5" />
-            </Button>
-          )}
+          <div className="ml-auto flex shrink-0 items-center gap-1">
+            {showStopButton && stopButton}
+            {liveTerminalOffered && activeTabId && (
+              <Button
+                type="button"
+                variant={terminalViewSelected ? 'secondary' : 'ghost'}
+                size="icon"
+                onClick={() => useChatStore.getState().setTabViewMode(
+                  activeTabId,
+                  terminalViewSelected ? 'formatted' : 'terminal',
+                )}
+                className="h-7 w-7 p-0"
+                aria-label={terminalViewSelected ? 'Return to conversation' : 'Open live view'}
+                title={terminalViewSelected ? 'Return to conversation' : 'Open live view'}
+              >
+                <Terminal className="h-3.5 w-3.5" />
+              </Button>
+            )}
+          </div>
         </div>
       </div>
     )
@@ -3807,7 +3796,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
               {/* Show old buttons */}
               {(
                 <div className="flex items-center gap-1">
-                  {isSummarizing ? (
+                  {isSummarizing && !showStopButton ? (
                     <div className="flex items-center gap-2 px-3 py-1.5 text-sm text-gray-600 dark:text-gray-400">
                       <Loader2 className="w-4 h-4 animate-spin" />
                       <span>Summarizing...</span>
@@ -3817,10 +3806,9 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
                       {!sparkQuillComposerLayout && sparkleEl}
                       {!sparkQuillComposerLayout && attachmentEl}
                       {sparkQuillComposerLayout && micEl}
-                      {/* Sending during a running turn is supported: routeSubmit
-                          queues the message and the live-delivery effect steers
-                          it into the turn. Hiding the button hid that. */}
-                      {(
+                      {/* Enter still sends/steers a follow-up while the primary
+                          button stops the running session. */}
+                      {showStopButton ? stopButton : (
                         <Tooltip>
                           <TooltipTrigger asChild>
                             <Button
@@ -3969,7 +3957,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
           onClose={() => closeDialog('mcpConfig')}
         />
       )}
-      <LLMConfigurationModal
+      <CodingProvidersPanel
         isOpen={showModels}
         onClose={() => closeDialog('models')}
       />

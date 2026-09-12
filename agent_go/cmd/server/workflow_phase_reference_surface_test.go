@@ -55,7 +55,7 @@ func TestReferenceSurfaceAttachesOutsideWorkshopSessionGuard(t *testing.T) {
 		t.Fatal("could not find the end of the workshopSession guard")
 	}
 
-	attach := regexp.MustCompile(`guidance\.AttachReferenceSurface\(`)
+	attach := regexp.MustCompile(`guidance\.Attach(?:Configured)?ReferenceSurface(?:WithMCP)?\(`)
 	var attachLines []int
 	for i, line := range lines {
 		if attach.MatchString(line) {

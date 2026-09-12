@@ -25,7 +25,6 @@ Shows only essential events for a cleaner experience:
 - `agent_end` - When agent completes
 - `conversation_error` - When conversation encounters an error
 - `agent_error` - When agent encounters an error
-- `fallback_model_used` - When a fallback model is used
 - `large_tool_output_detected` - When large tool outputs are detected
 
 ### Advanced Mode

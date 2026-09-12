@@ -158,10 +158,12 @@ func closeAllCodingCLIInteractiveSessionsForOwner(owner, reason string) {
 	llmproviders.CloseCodexCLIInteractiveSessionForOwner(owner, reason)
 	llmproviders.CloseClaudeCodeInteractiveSessionForOwner(owner, reason)
 	llmproviders.ClosePiCLIInteractiveSessionForOwner(owner, reason)
+	llmproviders.CloseMuseCLIInteractiveSessionForOwner(owner, reason)
 }
 
 // gracefulCloseCodingCLITmuxByName runs the provider-specific graceful shutdown
-// (e.g. claude: "C-u /exit C-m"; codex/cursor/gemini: C-c) plus the adapter's
+// (e.g. claude: "C-u /exit C-m"; codex/cursor/gemini: C-c; muse: tmux
+// kill-session -- it has no in-app exit keystroke) plus the adapter's
 // file/MCP-lease cleanup for the tmux-backed
 // coding CLI identified by its tmux session name. The provider is detected from
 // the session-name prefix (set by each adapter's new<Provider>TmuxSessionName).
@@ -183,6 +185,8 @@ func gracefulCloseCodingCLITmuxByName(tmuxName, reason string) bool {
 		llmproviders.CloseCursorCLIInteractiveSessionByTmux(name, reason)
 	case strings.HasPrefix(name, "mlp-pi-cli"):
 		llmproviders.ClosePiCLIInteractiveSessionByTmux(name, reason)
+	case strings.HasPrefix(name, "mlp-muse-"):
+		llmproviders.CloseMuseCLIInteractiveSessionByTmux(name, reason)
 	default:
 		return false
 	}

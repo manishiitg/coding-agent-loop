@@ -79,6 +79,58 @@ could help. Consider alternatives in this review without needing a prior failure
 proven strategy ceiling, or another reviewer. An optional later opportunity phase
 can deepen a promising question; it is not permission to start thinking broadly.
 
+### Improve outcomes through trustworthy measurements
+
+Call `get_goal_metrics(workspace_path=...)` once early in the review, alongside
+representative outputs. Read the Primary goals and Secondary goals in the canonical
+Objective; preserve their priorities and constraints. Goal priority is independent
+of the metric's primary/supporting role. Use configured definitions and comparable
+observations to judge movement toward the outcomes, not just whether steps ran.
+
+For material strategic questions, connect the outcome to its relevant metric,
+current value and trend, agreed target or baseline, and supporting signals that
+help explain movement. Respect the defined window, denominator, route/environment,
+freshness and outcome lag. Distinguish measured improvement, regression, no clear
+change and unknown; a small or confounded sample is not proof of causation.
+Activity, such as posting more often, is not proof of audience or business growth.
+Consider whether optimizing a proxy would harm the real goal or its guardrails.
+
+For each worthwhile improvement, explain which outcome it advances, which metric
+should move and why, and when/how its effect can be checked against a comparable
+baseline. Expected direction is enough when the size of the gain is unknown; do
+not invent numeric lifts, targets or observations. If the current metrics cannot
+test the idea, include a bounded measurement proposal with it. Continue exploring
+useful strategy even when measurements are incomplete.
+
+Missing or inadequate metrics are actionable review findings, not just a reminder
+to run `/setup-goals`. Check whether an important outcome is unmeasured, a proxy
+answers the wrong question, a definition is ambiguous, or collection is absent,
+stale, unreliable or not comparable. Name the decision this prevents and inspect
+existing data before proposing new instrumentation. A saved definition without
+verified observations does not establish working measurement.
+
+For a material `measurement_gap`, propose the smallest useful addition or repair:
+the outcome to measure, proposed metric and primary/supporting role, precise
+calculation/unit/window, available source, and collection or delayed refresh needed.
+State how to verify one real observation and when enough evidence should exist to
+reassess the strategic question. Identify missing source access honestly. Reuse
+existing collectors and comparable history where possible; do not create duplicate
+tables or require a report redesign just to expose a number.
+
+Use the existing proposal and handoff routes below. New metrics, changed measurement
+meaning, priorities or targets need a concrete `decision_required` proposal with
+the normal bounded `apply_contract`; `/setup-goals` is the builder's implementation
+path. Broken collection for an already agreed definition can be a bounded
+`fixer_handoff` that preserves that definition. Waiting for a correctly collected
+outcome to mature is `evidence_wait`, not a broken metric. Reuse the matching finding
+and pending decision; do not file the same missing setup as a new platform defect
+on every review. The reviewer proposes changes; authorized producing runs and
+collectors own `record_goal_observations` and the builder owns configuration.
+
+Keep this reasoning in the existing recommendation, evidence, outcome checkpoint
+and decision fields. No extra metric scorecard, mandatory Markdown report, new
+recording contract or separate reporting turn is required.
+
 ### Evidence and creative latitude
 
 Separate supported observations, reasoned hypotheses, and exploratory opportunities.

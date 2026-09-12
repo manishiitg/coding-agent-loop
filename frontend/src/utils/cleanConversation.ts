@@ -6,13 +6,14 @@ import {
   normalizeProductChatFailure,
   type ProductChatFailure,
 } from '../platform/chat/productChatFailure'
-import { pairToolCalls } from './terminalEventTranscript'
+import { pairToolCalls, isAssistantUpdate } from './terminalEventTranscript'
 
 export type ConversationItem = {
   id: string
   role: 'user' | 'assistant' | 'reasoning' | 'error' | 'notification'
   content: string
   timestamp?: string
+  assistantUpdate?: boolean
   usage?: ConversationUsage
   failure?: ProductChatFailure
 }
@@ -63,6 +64,7 @@ function failureHints(payload: Record<string, unknown>) {
     code: firstText(payload.code, payload.error_code, error?.code, error?.kind, metadata?.code, metadata?.error_code),
     provider: firstText(payload.provider, payload.llm_provider, error?.provider, metadata?.provider),
     retryAt: payload.retry_at ?? payload.resume_after ?? error?.retry_at ?? error?.retryAt ?? metadata?.retry_at ?? metadata?.resume_after,
+    technicalDetails: firstText(payload.technical_details, payload.technicalDetails, error?.technical_details, error?.technicalDetails, metadata?.technical_details, metadata?.technicalDetails),
   }
 }
 
@@ -167,11 +169,13 @@ export function buildCleanConversationItems(events: PollingEvent[]): Conversatio
       // A token-streamed fragment (is_delta) continues the reasoning item
       // before it rather than opening another one.
       const previous = items.at(-1)
-      if (payload.is_delta === true && previous?.role === 'reasoning') {
+      const assistantUpdate = isAssistantUpdate(event)
+      const role = assistantUpdate ? 'assistant' : 'reasoning'
+      if (payload.is_delta === true && previous?.role === role && !!previous.assistantUpdate === assistantUpdate) {
         items[items.length - 1] = { ...previous, content: appendStreamingText(previous.content, content, true) }
         continue
       }
-      pushUnique({ id: event.id, role: 'reasoning', content, timestamp: event.timestamp })
+      pushUnique({ id: event.id, role, content, timestamp: event.timestamp, ...(assistantUpdate ? { assistantUpdate: true } : {}) })
       continue
     }
 

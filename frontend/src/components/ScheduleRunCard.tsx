@@ -10,6 +10,7 @@ import {
   scheduleRunStartMessage,
   scheduleStatusPresentation,
 } from '../utils/scheduleRunPresentation'
+import { ChatSessionIdCopyButton } from './ChatSessionIdCopyButton'
 
 interface ScheduleRunCardProps {
   job: ScheduledJob
@@ -31,6 +32,8 @@ interface ScheduleRunCardProps {
   // ScheduleExecutionHistoryList, which still groups runs under a job header
   // that already names the schedule.
   showScheduleName?: boolean
+  /** Show the durable chat/session identifier for debugging. */
+  showCopySessionId?: boolean
 }
 
 export function ScheduleRunCard({
@@ -42,6 +45,7 @@ export function ScheduleRunCard({
   deletingRunIds,
   compact = false,
   showScheduleName = false,
+  showCopySessionId = false,
 }: ScheduleRunCardProps) {
   const item: ScheduleActivityItem = { id: run.id, job, run, kind: 'run', occurredAt: run.started_at }
   const presentation = scheduleStatusPresentation(item)
@@ -84,6 +88,9 @@ export function ScheduleRunCard({
           </div>
         </div>
         <div className="flex shrink-0 items-center gap-1">
+          {run.session_id && showCopySessionId && (
+            <ChatSessionIdCopyButton sessionId={run.session_id} compact />
+          )}
           {run.session_id && (
             <button
               type="button"

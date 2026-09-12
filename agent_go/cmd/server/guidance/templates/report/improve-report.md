@@ -70,6 +70,7 @@ when the reader's questions are already answered accurately.
 
 GOAL TRACKING CONTRACT
 Before proposing visual/layout work, translate `soul.md` success criteria into the dashboard's tracked signals using existing evidence:
+- Preserve configured Primary goals and Secondary goals from the Objective. These are outcome priorities, independent of primary/supporting metric roles. Do not turn a supporting metric into a secondary goal or infer priorities from legacy bullet order.
 - Prefer configured outcome metrics from `window.report.getGoalMetrics()` or its prebuilt goal-progress widget. Acceptance criteria and constraints remain supporting context.
 - For each important success criterion, show the best available signal from `db/db.sqlite`, `evaluation/`, `costs/`, `workflow.json`, typed Pulse records, or durable report-facing files.
 - If `evaluation_plan.json` has an eval step scoring this criterion, its verdict is already a `db/db.sqlite` row — see EVALUATION VERDICTS below — no separate measurement step is needed for that criterion.

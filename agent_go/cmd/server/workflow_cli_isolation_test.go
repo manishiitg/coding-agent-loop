@@ -226,3 +226,52 @@ func TestPLAT296WorkflowCLIDirectories(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestMuseLegacyResumeMissingWorkingDirP0(t *testing.T) {
+	t.Setenv("AGENTWORKS_ISOLATE_WORKFLOW_CLI", "true")
+	data := t.TempDir()
+	t.Setenv("XDG_DATA_HOME", data)
+	currentDir := filepath.Join(t.TempDir(), "cli-runtimes", "v1", "chat-a")
+	if err := os.MkdirAll(currentDir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name, nativeDir, payloadType string
+		allowed                      bool
+	}{
+		{"matching native metadata", currentDir, "runtime.session.metadata", true},
+		{"different chat", filepath.Join(filepath.Dir(currentDir), "chat-b"), "runtime.session.metadata", false},
+		{"tool output is not metadata", currentDir, "runtime.tool.result", false},
+		{"missing metadata", "", "runtime.session.metadata", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			agent := testAgentWithHandle("chat-a", llmtypes.CodingProviderSessionHandle{Provider: "muse-cli", WorkingDir: currentDir})
+			runtime := &ChatHistoryAgentRuntime{Kind: "coding_agent", Provider: "muse-cli", ResumeSupported: true, ExternalSessionID: "muse-native-id", WorkshopMode: "workshop"}
+			runtime.AgentSessionHandle = requireAgentHandle(t, testAgentWithHandle("chat-a", llmtypes.CodingProviderSessionHandle{Provider: "muse-cli", NativeSessionID: "muse-native-id"}))
+			originalHandle := runtime.AgentSessionHandle
+			path := filepath.Join(data, "muse", "sessions", "2026", "09", "12", "muse-native-id", "session.jsonl")
+			if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+				t.Fatal(err)
+			}
+			raw, err := json.Marshal(map[string]any{"payload_type": tc.payloadType, "payload": map[string]any{"record": map[string]string{"workspace_root": tc.nativeDir}}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(path, raw, 0600); err != nil {
+				t.Fatal(err)
+			}
+			if got := (&StreamingAPI{}).seedCodingAgentRuntimeFromRestoredConversation("chat-a", "muse-cli", "workshop", runtime, agent); got != tc.allowed {
+				t.Fatalf("resume = %v want %v", got, tc.allowed)
+			}
+			if originalHandle.Provider.WorkingDir != "" {
+				t.Fatal("mutated shared persisted handle")
+			}
+			if tc.allowed {
+				handle := requireAgentHandle(t, agent)
+				if handle.Provider.NativeSessionID != "muse-native-id" || handle.Provider.WorkingDir != currentDir {
+					t.Fatalf("resume identity lost: %+v", handle.Provider)
+				}
+			}
+		})
+	}
+}

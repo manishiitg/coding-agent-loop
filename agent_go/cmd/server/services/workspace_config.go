@@ -41,7 +41,7 @@ type PublishedLLM struct {
 func isPublishedLLMProviderAllowed(provider string) bool {
 	switch strings.ToLower(strings.TrimSpace(provider)) {
 	case "bedrock", "openai", "vertex", "anthropic", "azure",
-		"claude-code", "codex-cli", "cursor-cli", "pi-cli":
+		"claude-code", "codex-cli", "cursor-cli", "pi-cli", "muse-cli":
 		return true
 	default:
 		return false
@@ -54,13 +54,11 @@ type ImageGenerationModelConfig struct {
 }
 
 type ImageGenerationConfig struct {
-	Primary   *ImageGenerationModelConfig  `json:"primary,omitempty"`
-	Fallbacks []ImageGenerationModelConfig `json:"fallbacks,omitempty"`
+	Primary *ImageGenerationModelConfig `json:"primary,omitempty"`
 }
 
 type ImageAnalysisConfig struct {
-	Primary   *ImageGenerationModelConfig  `json:"primary,omitempty"`
-	Fallbacks []ImageGenerationModelConfig `json:"fallbacks,omitempty"`
+	Primary *ImageGenerationModelConfig `json:"primary,omitempty"`
 }
 
 // readWorkspaceFile reads a file from the workspace API using the given workspaceURL.
@@ -282,15 +280,6 @@ func LoadImageGenerationConfig(ctx context.Context, workspaceURL string) (*Image
 			cfg.Primary = primary
 		}
 	}
-	for _, fallback := range stored.Fallbacks {
-		fb := fallback
-		if sanitized := sanitizeImageGenerationModelConfig(&fb); sanitized != nil {
-			cfg.Fallbacks = append(cfg.Fallbacks, *sanitized)
-		}
-	}
-	if len(cfg.Fallbacks) == 0 {
-		cfg.Fallbacks = nil
-	}
 
 	return cfg, true, nil
 }
@@ -313,15 +302,6 @@ func LoadImageAnalysisConfig(ctx context.Context, workspaceURL string) (*ImageAn
 		if primary := sanitizeImageGenerationModelConfig(stored.Primary); primary != nil {
 			cfg.Primary = primary
 		}
-	}
-	for _, fallback := range stored.Fallbacks {
-		fb := fallback
-		if sanitized := sanitizeImageGenerationModelConfig(&fb); sanitized != nil {
-			cfg.Fallbacks = append(cfg.Fallbacks, *sanitized)
-		}
-	}
-	if len(cfg.Fallbacks) == 0 {
-		cfg.Fallbacks = nil
 	}
 
 	return cfg, true, nil

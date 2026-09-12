@@ -83,3 +83,34 @@ func TestPricedProviderCallsAreNotMarkedUnpriced(t *testing.T) {
 		t.Fatalf("a priced call must not carry the unpriced key at all (omitempty), got: %s", encoded)
 	}
 }
+
+// TestMuseCLICallsHaveRealPricing pins a real gap found live 2026-09-11:
+// getModelMetadata's provider switch had cases for claude-code, codex-cli,
+// cursor-cli, and pi-cli but none for muse-cli, so every muse-cli call fell
+// through to the "unsupported provider" default and every cost in the
+// AgentWorks UI showed $0/unpriced -- even though multi-llm-provider-go's
+// musecli.GetMuseModelMetadata already carries real, sourced per-1M-token
+// rates for muse-spark-1.3-contributor. Wiring in the missing case is the
+// fix; this pins it the same way TestPricedProviderCallsAreNotMarkedUnpriced
+// pins claude-code.
+func TestMuseCLICallsHaveRealPricing(t *testing.T) {
+	modelData := &ModelTokenData{
+		Provider:     "muse-cli",
+		ModelID:      "muse-spark-1.3-contributor",
+		InputTokens:  10_000,
+		OutputTokens: 2_000,
+		LLMCallCount: 4,
+	}
+	_, _, _, _, _, _, pricingFound := calculatePricingFromModelData(modelData)
+	if !pricingFound {
+		t.Fatal("muse-spark-1.3-contributor has a real rate card; pricingFound should be true")
+	}
+
+	usage := buildModelTokenUsage(modelData)
+	if usage.Unpriced {
+		t.Fatal("a priced muse-cli model must not be marked Unpriced")
+	}
+	if usage.TotalCost <= 0 {
+		t.Fatalf("expected a real nonzero total cost, got %v", usage.TotalCost)
+	}
+}

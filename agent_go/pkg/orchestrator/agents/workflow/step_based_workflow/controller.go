@@ -273,17 +273,37 @@ func (hcpo *StepBasedWorkflowOrchestrator) SetHTTPSessionID(httpSessionID string
 }
 
 func (hcpo *StepBasedWorkflowOrchestrator) resolveWorkshopBrowserSessionID(groupName string) string {
+	return common.PrefixBrowserSessionID(workshopBrowserSessionID(hcpo.workshopBrowserNamespace(), hcpo.GetWorkspacePath(), groupName))
+}
+
+func workshopBrowserSessionID(browserNamespace, workspacePath, groupName string) string {
 	groupName = strings.TrimSpace(groupName)
 	if groupName == "" {
 		groupName = "default-group"
 	}
 	safeGroupName := strings.NewReplacer("/", "-", "\\", "-", " ", "-", ":", "-").Replace(groupName)
-	workspacePath := strings.TrimSpace(hcpo.GetWorkspacePath())
+	workspacePath = strings.TrimSpace(workspacePath)
+	browserNamespace = strings.TrimSpace(browserNamespace)
 	hasher := fnv.New64a()
+	_, _ = hasher.Write([]byte(browserNamespace))
+	_, _ = hasher.Write([]byte("::"))
 	_, _ = hasher.Write([]byte(workspacePath))
 	_, _ = hasher.Write([]byte("::"))
 	_, _ = hasher.Write([]byte(groupName))
-	return fmt.Sprintf("workflow-browser-%x-%s", hasher.Sum64(), safeGroupName)
+	name := fmt.Sprintf("workflow-browser-%x-%s", hasher.Sum64(), safeGroupName)
+	if browserNamespace != "" {
+		return browserNamespace + "--" + name
+	}
+	return name
+}
+
+func (hcpo *StepBasedWorkflowOrchestrator) workshopBrowserNamespace() string {
+	for _, sessionID := range []string{hcpo.httpSessionID, hcpo.sessionID, hcpo.GetMCPSessionID()} {
+		if cfg := common.GetSessionShellConfig(strings.TrimSpace(sessionID)); cfg != nil && strings.TrimSpace(cfg.BrowserSessionNamespace) != "" {
+			return strings.TrimSpace(cfg.BrowserSessionNamespace)
+		}
+	}
+	return ""
 }
 
 func (hcpo *StepBasedWorkflowOrchestrator) bindWorkshopBrowserSession(toolSessionID, browserSessionID string) {
@@ -291,6 +311,9 @@ func (hcpo *StepBasedWorkflowOrchestrator) bindWorkshopBrowserSession(toolSessio
 	browserSessionID = strings.TrimSpace(browserSessionID)
 	if toolSessionID == "" || browserSessionID == "" {
 		return
+	}
+	if namespace := hcpo.workshopBrowserNamespace(); namespace != "" {
+		common.SetSessionBrowserNamespace(toolSessionID, namespace)
 	}
 	common.SetSessionBrowserSessionID(toolSessionID, browserSessionID)
 }

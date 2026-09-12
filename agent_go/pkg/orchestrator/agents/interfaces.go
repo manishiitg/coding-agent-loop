@@ -56,15 +56,14 @@ type LLMModel struct {
 	Options map[string]interface{} `json:"options,omitempty"` // Provider-specific runtime options
 }
 
-// LLMConfig holds the primary and fallback LLM configurations
+// LLMConfig holds the selected LLM configuration
 type LLMConfig struct {
-	Primary   LLMModel   `json:"primary"`
-	Fallbacks []LLMModel `json:"fallbacks"`
+	Primary LLMModel `json:"primary"`
 }
 
 // OrchestratorAgentConfig defines the configuration for an orchestrator agent
 type OrchestratorAgentConfig struct {
-	// Unified LLM configuration (Primary + Fallbacks)
+	// Unified LLM configuration (selected model)
 	LLMConfig LLMConfig `json:"llm_config"`
 
 	// LLMFactory optionally injects an LLM instance for tests or specialized callers.
@@ -198,12 +197,6 @@ type OrchestratorAgentConfig struct {
 	DirectTools []mcpagent.ToolDefinition `json:"-"`
 }
 
-// CrossProviderFallback represents cross-provider fallback configuration
-type CrossProviderFallback struct {
-	Provider string   `json:"provider"`
-	Models   []string `json:"models"`
-}
-
 // AgentAPIKeys is an alias for llm.ProviderAPIKeys (canonical type).
 type AgentAPIKeys = llm.ProviderAPIKeys
 
@@ -217,9 +210,8 @@ type AzureAgentConfig = llm.AzureAPIConfig
 func NewOrchestratorAgentConfig(name string) *OrchestratorAgentConfig {
 	return &OrchestratorAgentConfig{
 		// LLMConfig.Primary must be set by caller
-		LLMConfig:   LLMConfig{},
-		Temperature: 0.0,
-
+		LLMConfig:      LLMConfig{},
+		Temperature:    0.0,
 		Mode:           "", // Must be set by caller
 		OutputFormat:   OutputFormatText,
 		ServerNames:    []string{},

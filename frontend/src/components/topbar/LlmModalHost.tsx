@@ -1,8 +1,8 @@
-import LLMConfigurationModal from '../LLMConfigurationModal'
+import CodingProvidersPanel from '../providers/CodingProvidersPanel'
 import { useLlmOnboarding } from './useLlmOnboarding'
 
 /**
- * Renders the shared model configuration modal and its first-run onboarding.
+ * Renders the shared coding-provider surface and its first-run onboarding.
  * Mount exactly once in the global top bar.
  */
 export default function LlmModalHost() {
@@ -13,7 +13,7 @@ export default function LlmModalHost() {
 
   return (
     <>
-      <LLMConfigurationModal
+      <CodingProvidersPanel
         isOpen={showLLMModal}
         onClose={closeLLMConfigurationModal}
       />

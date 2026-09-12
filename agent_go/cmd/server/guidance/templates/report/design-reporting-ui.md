@@ -14,6 +14,11 @@ writing custom queries or charts:
 - `window.report.getEvaluations()` / `renderEvaluations('#evals')`
 - `window.report.getCosts({ days: 30 })` / `renderCosts('#costs', { days: 30 })`
 
+When displaying outcome goals, preserve the Primary goals and Secondary goals
+grouping in soul/soul.md. These priorities are independent of primary/supporting
+metric roles; do not label supporting measurements as secondary goals or invent
+priorities for legacy ungrouped outcomes.
+
 The renderers provide responsive styling, loading/empty states and expandable
 history without custom design work. Add only the sections useful to the reader;
 use the data functions when a custom layout is requested. Call them inside

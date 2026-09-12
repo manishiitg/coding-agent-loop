@@ -106,16 +106,7 @@ func (bo *BaseOrchestrator) createAgentConfigWithLLM(agentName string, maxTurns 
 			Region:   llmConfig.Primary.Region,
 			Options:  llmConfig.Primary.Options,
 		}
-		// Copy Fallbacks
-		for _, fallback := range llmConfig.Fallbacks {
-			config.LLMConfig.Fallbacks = append(config.LLMConfig.Fallbacks, agents.LLMModel{
-				Provider: fallback.Provider,
-				ModelID:  fallback.ModelID,
-				APIKey:   fallback.APIKey,
-				Region:   fallback.Region,
-				Options:  fallback.Options,
-			})
-		}
+
 		// Direct assignment — orchestrator.APIKeys and agents.AgentAPIKeys are
 		// both aliases for llm.ProviderAPIKeys, so no conversion needed.
 		if llmConfig.APIKeys != nil {

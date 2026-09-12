@@ -25,7 +25,9 @@ of required behavior using compact backlog, run output/validation receipts and
 bounded traces. Load `pulse-bug-review.md` for the QA evidence method and
 `pulse-fixer-practices.md` plus `fix-verification.md` for safe repair practices.
 An ordinary successful run is not a reason to audit all implementation surfaces.
-General prompt, script, orchestration, learning, KB, DB and report improvements
+Persistent model/tier optimization belongs to Architecture; preserve explicit
+settings while diagnosing concrete failures. General prompt, script, orchestration,
+learning, KB, DB and report improvements
 belong to Architecture unless they repair a concrete correctness failure.
 
 Use `get_pulse_state(view="backlog", detail="compact")` and semantic issue IDs.

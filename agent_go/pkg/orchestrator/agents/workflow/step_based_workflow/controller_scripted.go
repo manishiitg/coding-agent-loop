@@ -184,7 +184,9 @@ var ErrScriptedHarnessTimeout = errors.New("script exceeded the workspace harnes
 //
 // A script opts into this by returning sys.exit(2) specifically; any other
 // non-zero code (including the still-conventional sys.exit(1)) keeps today's
-// relearn-fallback behavior unchanged.
+// relearn-fallback behavior unchanged. Code 2 alone is not proof a safety
+// guard fired: scripts and command-line parsers may use it for other errors.
+// Keep the stop behavior, and describe intent only when explicitly reported.
 const ScriptedTerminalRefusalExitCode = 2
 
 // ScriptedFastPathResult is returned by tryRunSavedScriptedScript.
@@ -209,8 +211,9 @@ type ScriptedFastPathResult struct {
 	HarnessTimeout bool
 	TimeoutError   string
 	// TerminalRefusal means the script ran and exited
-	// ScriptedTerminalRefusalExitCode: a deliberate, terminal refusal, not a
-	// bug. Like HarnessFailure, this must never reach the LLM relearn path --
+	// ScriptedTerminalRefusalExitCode. This stops repair conservatively; intent
+	// is unverified without explicit refusal details. Like HarnessFailure,
+	// this must never reach the LLM relearn path --
 	// handing an agent "here is a refusal, fix it" is exactly how the refusal
 	// gets overridden instead of respected.
 	TerminalRefusal       bool
@@ -1230,16 +1233,12 @@ func (hcpo *StepBasedWorkflowOrchestrator) tryRunSavedScriptedScript(
 		}
 	}
 
-	// A deliberate terminal refusal (sys.exit(2)) is not a run to validate or
-	// score, the same way a harness rejection is not — the script correctly
-	// detected an unsafe condition and stopped, which is the mechanism
-	// working, not a failure of it. Handled before pre-validation and before
-	// updateScriptedRunStats for the same reason as the harness-rejection
-	// branch above: this must not count against lock_code_stats or be handed
-	// to the LLM as something to fix.
+	// Preserve the reserved-code stop before validation/statistics and repair.
+	// Exit code 2 alone cannot prove why the script stopped; do not describe
+	// it as a successful safety guard without explicit refusal evidence.
 	if execErr == nil && exitCode == ScriptedTerminalRefusalExitCode {
 		hcpo.GetLogger().Warn(fmt.Sprintf(
-			"🛑 [scripted] Step %d (%s) main.py deliberately refused to proceed (exit %d) — treating as terminal, not falling back to an agentic retry",
+			"🛑 [scripted] Step %d (%s) main.py stopped with exit code %d — automatic repair withheld; inspect output for the reason",
 			stepIndex+1, stepID, ScriptedTerminalRefusalExitCode))
 		return &ScriptedFastPathResult{
 			RanScript:             true,

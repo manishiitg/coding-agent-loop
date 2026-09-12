@@ -92,10 +92,6 @@ func TestApplyMultiAgentCapabilitiesToRequestOverridesRequestCapabilities(t *tes
 			BuilderLLM: &workflowtypes.AgentLLMConfig{
 				Provider: "openai",
 				ModelID:  "gpt-test",
-				Fallbacks: []workflowtypes.AgentLLMFallback{{
-					Provider: "anthropic",
-					ModelID:  "claude-test",
-				}},
 			},
 		},
 	})
@@ -127,9 +123,7 @@ func TestApplyMultiAgentCapabilitiesToRequestOverridesRequestCapabilities(t *tes
 	if req.LLMConfig == nil || req.LLMConfig.Primary.Provider != "openai" || req.LLMConfig.Primary.ModelID != "gpt-test" {
 		t.Fatalf("llm config = %+v, want saved phase llm", req.LLMConfig)
 	}
-	if len(req.LLMConfig.Fallbacks) != 1 || req.LLMConfig.Fallbacks[0].Provider != "anthropic" || req.LLMConfig.Fallbacks[0].ModelID != "claude-test" {
-		t.Fatalf("llm fallbacks = %+v, want saved fallback", req.LLMConfig.Fallbacks)
-	}
+
 }
 
 func TestApplyMultiAgentCapabilitiesToRequestDisablesBrowserForNone(t *testing.T) {

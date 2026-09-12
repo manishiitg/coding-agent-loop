@@ -96,15 +96,7 @@ type DelegationTierConfig struct {
 
 // TierModel represents a specific provider+model for a tier
 type TierModel struct {
-	Provider  string                 `json:"provider"`
-	ModelID   string                 `json:"model_id"`
-	Options   map[string]interface{} `json:"options,omitempty"`
-	Fallbacks []TierModelFallback    `json:"fallbacks,omitempty"`
-}
-
-// TierModelFallback represents an ordered fallback model for a delegation tier
-type TierModelFallback struct {
-	Provider string                 `json:"provider,omitempty"`
+	Provider string                 `json:"provider"`
 	ModelID  string                 `json:"model_id"`
 	Options  map[string]interface{} `json:"options,omitempty"`
 }
@@ -394,7 +386,9 @@ func handleDelegate(ctx context.Context, args map[string]interface{}) (string, e
 	// Extract reasoning_level
 	reasoningLevel, _ := args["reasoning_level"].(string)
 	if reasoningLevel != "" {
-		reasoningLevel = ValidateReasoningLevel(ctx, reasoningLevel)
+		if ValidateReasoningLevel(ctx, reasoningLevel) == "" {
+			return "", fmt.Errorf("invalid reasoning_level %q; select a configured reasoning tier", reasoningLevel)
+		}
 	}
 
 	// In multi-agent mode, reasoning_level is mandatory

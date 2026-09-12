@@ -106,15 +106,6 @@ type AgentLLMConfig struct {
 	Provider       string                 `json:"provider"`
 	ModelID        string                 `json:"model_id"`
 	Options        map[string]interface{} `json:"options,omitempty"`
-	Fallbacks      []AgentLLMFallback     `json:"fallbacks,omitempty"`
-}
-
-// AgentLLMFallback represents a fallback LLM model.
-type AgentLLMFallback struct {
-	PublishedLLMID string                 `json:"published_llm_id,omitempty"`
-	Provider       string                 `json:"provider"`
-	ModelID        string                 `json:"model_id"`
-	Options        map[string]interface{} `json:"options,omitempty"`
 }
 
 func agentLLMConfigFromCodingAgentRef(ref llmproviders.CodingAgentTierModelRef) *AgentLLMConfig {

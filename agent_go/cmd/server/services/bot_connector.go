@@ -74,21 +74,7 @@ func multiAgentChatLLMConfigForRequest(preset *workflowtypes.PresetLLMConfig) ma
 			"model_id": primary.ModelID,
 		},
 	}
-	if len(primary.Fallbacks) > 0 {
-		fallbacks := make([]map[string]interface{}, 0, len(primary.Fallbacks))
-		for _, fallback := range primary.Fallbacks {
-			if strings.TrimSpace(fallback.Provider) == "" || strings.TrimSpace(fallback.ModelID) == "" {
-				continue
-			}
-			fallbacks = append(fallbacks, map[string]interface{}{
-				"provider": fallback.Provider,
-				"model_id": fallback.ModelID,
-			})
-		}
-		if len(fallbacks) > 0 {
-			result["fallbacks"] = fallbacks
-		}
-	}
+
 	return result
 }
 
@@ -172,6 +158,25 @@ type BotIncomingMessage struct {
 	// account has linked more than one (WhatsApp: another parent's phone);
 	// "" is the account's primary device.
 	DeviceSlot string
+}
+
+// BotSessionBinding is the durable pointer from a thread-less platform chat
+// to the AgentWorks conversation that chat is currently using. Connectors
+// that persist their own platform state (WhatsApp) can implement
+// botSessionBindingStore so this pointer survives a server restart.
+type BotSessionBinding struct {
+	SessionID string
+	RouteKey  string
+	UpdatedAt time.Time
+}
+
+// botSessionBindingStore is optional. A connector that implements it lets the
+// conversation manager restore a thread-less chat after process restart while
+// keeping the persistence scoped to the connector's own account/device store.
+type botSessionBindingStore interface {
+	LoadBotSessionBinding(ctx context.Context, threadID ThreadID, routeKey string) (BotSessionBinding, bool, error)
+	SaveBotSessionBinding(ctx context.Context, threadID ThreadID, binding BotSessionBinding) error
+	ClearBotSessionBinding(ctx context.Context, threadID ThreadID) error
 }
 
 // ProfileRoute is a product profile a channel message was routed to by the
@@ -412,7 +417,6 @@ type activeBotSession struct {
 	builderDone      bool            // event filter signaled the parent session finished its own turn
 	pendingWorkflows int             // live workflows attached via SpawnListener (>0 defers cancel)
 	activeWorkflows  map[string]bool // wfSessionID set, for idempotent NotifyWorkflowEnded
-	queuedMessages   []BotIncomingMessage
 	sendFullDetails  bool
 	// profileTurn marks a session running in a product profile's own
 	// conversation (ProfileTurnFunc). Every later turn in it is built the
@@ -420,12 +424,12 @@ type activeBotSession struct {
 	profileTurn bool
 	// profileRoute is the product profile the thread was routed to by an
 	// @token (nil: the pairing's default profile); later turns keep it.
-	profileRoute *ProfileRoute
-	AgentMode    string
-	PresetQueryID    string
-	WorkspacePath    string
-	PhaseID          string
-	WorkshopMode     string
+	profileRoute  *ProfileRoute
+	AgentMode     string
+	PresetQueryID string
+	WorkspacePath string
+	PhaseID       string
+	WorkshopMode  string
 }
 
 // NewBotConversationManager creates a new manager.
@@ -566,6 +570,41 @@ func (m *BotConversationManager) GetConnector(platform string) BotConnector {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	return m.connectors[platform]
+}
+
+func (m *BotConversationManager) persistBotSessionBinding(active *activeBotSession, updatedAt time.Time) {
+	if active == nil {
+		return
+	}
+	active.mu.Lock()
+	platform := active.Platform
+	threadID := active.ThreadID
+	binding := BotSessionBinding{
+		SessionID: active.SessionID,
+		RouteKey:  active.RouteKey,
+		UpdatedAt: updatedAt,
+	}
+	active.mu.Unlock()
+	store, ok := m.GetConnector(platform).(botSessionBindingStore)
+	if !ok || binding.SessionID == "" {
+		return
+	}
+	if binding.UpdatedAt.IsZero() {
+		binding.UpdatedAt = time.Now()
+	}
+	if err := store.SaveBotSessionBinding(context.Background(), threadID, binding); err != nil {
+		log.Printf("[BOT_MANAGER] Failed to persist conversation binding for thread %s: %v", threadID.Key(), err)
+	}
+}
+
+func (m *BotConversationManager) clearBotSessionBinding(platform string, threadID ThreadID) {
+	store, ok := m.GetConnector(platform).(botSessionBindingStore)
+	if !ok {
+		return
+	}
+	if err := store.ClearBotSessionBinding(context.Background(), threadID); err != nil {
+		log.Printf("[BOT_MANAGER] Failed to clear conversation binding for thread %s: %v", threadID.Key(), err)
+	}
 }
 
 // loadMCPServerNames reads server names from the MCP config.
@@ -739,8 +778,6 @@ func (m *BotConversationManager) HandleIncomingMessage(msg BotIncomingMessage) {
 	}
 
 	// Check if there's an existing in-memory session for this thread.
-	// Bot sessions are pure in-memory now — a reply that arrives after a
-	// server restart simply starts a new session.
 	m.mu.RLock()
 	active, exists := m.sessions[threadKey]
 	m.mu.RUnlock()
@@ -752,6 +789,29 @@ func (m *BotConversationManager) HandleIncomingMessage(msg BotIncomingMessage) {
 
 	if m.handleBotControlWithoutSession(msg, threadID, supportsThreads) {
 		return
+	}
+
+	// WhatsApp persists the current chat → session pointer in its per-device
+	// SQLite store. Restore it after a process restart, subject to the same
+	// one-hour inactivity boundary used by the in-memory path.
+	if !supportsThreads {
+		if store, ok := connector.(botSessionBindingStore); ok {
+			binding, found, err := store.LoadBotSessionBinding(context.Background(), threadID, botMessageRouteKey(msg))
+			if err != nil {
+				log.Printf("[BOT_MANAGER] Failed to load conversation binding for thread %s: %v", threadKey, err)
+			} else if found {
+				idle := time.Since(binding.UpdatedAt)
+				if msg.PresetProfile != nil || binding.UpdatedAt.IsZero() || idle <= threadlessSessionIdleLimit {
+					log.Printf("[BOT_MANAGER] Restoring persisted session %s for thread %s after server restart", binding.SessionID, threadKey)
+					go m.startNewSessionDirect(msg, threadID, binding.SessionID)
+					return
+				}
+				history := m.loadRecentChatTurns(context.Background(), m.resolveWorkspaceUserID(msg), binding.SessionID, staleContextTurns)
+				msg.Text = buildStaleSessionPreamble(history, idle) + msg.Text
+				log.Printf("[BOT_MANAGER] Persisted session %s for thread %s idle %s — starting new conversation with %d context turn(s)",
+					binding.SessionID, threadKey, humanDuration(idle), len(history))
+			}
+		}
 	}
 
 	go m.startNewSessionDirect(msg, threadID)
@@ -791,12 +851,6 @@ const threadlessSessionIdleLimit = 1 * time.Hour
 // isn't drowned in old context but has enough to resolve casual
 // references ("the same issue as before", etc.).
 const staleContextTurns = 3
-
-// maxThreadlessQueuedMessages caps WhatsApp/Telegram messages received while
-// the builder is still processing the current turn. These platforms have no
-// threads, so queueing preserves user intent without letting a stuck session
-// accumulate unbounded work.
-const maxThreadlessQueuedMessages = 10
 
 // loadRecentChatTurns reads the last `n` user/assistant turns from a
 // session's conversation.json. Returns nil on any read/parse failure; the
@@ -890,7 +944,6 @@ func (m *BotConversationManager) handleExistingSession(active *activeBotSession,
 	awaiting := active.awaitingUserInput
 	blockingEventType := active.blockingEventType
 	lastActivity := active.LastActivity
-	builderDone := active.builderDone
 	sendFullDetails := active.sendFullDetails
 	oldSessionID := active.SessionID
 	oldUserID := active.UserID
@@ -913,6 +966,7 @@ func (m *BotConversationManager) handleExistingSession(active *activeBotSession,
 	}
 	if !supportsThreads && isSessionEndCommand(msg.Text, requireControlPrefix) {
 		log.Printf("[BOT_MANAGER] Session end command received for %s", active.SessionID)
+		m.clearBotSessionBinding(active.Platform, active.ThreadID)
 		m.cancelSession(active, "Session ended by user.")
 		return
 	}
@@ -965,6 +1019,13 @@ func (m *BotConversationManager) handleExistingSession(active *activeBotSession,
 		}
 	}
 
+	// The message is continuing this conversation. Refresh the durable clock
+	// so a later server restart applies the inactivity window from the latest
+	// real chat activity rather than from when the session was first created.
+	if !supportsThreads {
+		m.persistBotSessionBinding(active, time.Now())
+	}
+
 	switch status {
 	case chathistory.BotSessionStatusRunning, chathistory.BotSessionStatusAwaitingPlanApproval:
 		// Check if session is waiting for user input (any blocking event)
@@ -984,11 +1045,13 @@ func (m *BotConversationManager) handleExistingSession(active *activeBotSession,
 			sid := active.SessionID
 			uid := active.UserID
 			active.mu.Unlock()
-			if builderDone && m.startFollowUpTurn(active, msg, sid, uid, "threadless-free") {
-				return
-			}
-			if connector := m.GetConnector(active.Platform); connector != nil {
-				m.queueThreadlessMessage(active, connector, msg)
+			// Share the app's /api/query entry point. It chooses retained tmux
+			// steering or a normal turn from actual execution state. A bot-local
+			// busy flag must never hold a user's steering message behind a turn.
+			if !m.startFollowUpTurn(active, msg, sid, uid, "threadless") {
+				if connector := m.GetConnector(active.Platform); connector != nil {
+					connector.SendThreadMessage(context.Background(), active.ThreadID, "Couldn't deliver your message: the chat session is unavailable. Please try again.")
+				}
 			}
 			return
 		}
@@ -1042,6 +1105,7 @@ func (m *BotConversationManager) handleExistingSession(active *activeBotSession,
 func (m *BotConversationManager) handleBotControlWithoutSession(msg BotIncomingMessage, threadID ThreadID, supportsThreads bool) bool {
 	requireControlPrefix := !supportsThreads
 	if isSessionEndCommand(msg.Text, requireControlPrefix) {
+		m.clearBotSessionBinding(msg.Platform, threadID)
 		if connector := m.GetConnector(msg.Platform); connector != nil {
 			connector.SendThreadMessage(context.Background(), threadID, "No active bot session in this thread.")
 		}
@@ -1101,6 +1165,7 @@ func (m *BotConversationManager) handleBotResumeCommand(msg BotIncomingMessage, 
 		Status:        status,
 		Platform:      msg.Platform,
 		ThreadID:      threadID,
+		RouteKey:      botMessageRouteKey(msg),
 		Metadata:      botMetaFromMsg(msg, threadID),
 		LastActivity:  time.Now(),
 		AgentMode:     strings.TrimSpace(target.AgentMode),
@@ -1130,6 +1195,7 @@ func (m *BotConversationManager) handleBotResumeCommand(msg BotIncomingMessage, 
 	}
 	m.sessions[threadKey] = active
 	m.mu.Unlock()
+	m.persistBotSessionBinding(active, time.Now())
 
 	// Start streaming live events to this thread whenever there's anything in
 	// flight to mirror — a running/awaiting workflow or background agents still
@@ -1227,7 +1293,14 @@ func (m *BotConversationManager) startFollowUpTurn(active *activeBotSession, msg
 		source = "follow-up"
 	}
 	log.Printf("[BOT_MANAGER] Sending %s to session %s: %s", source, sessionID, botTruncate(msg.Text, 80))
-	m.resetActiveForNewTurn(active)
+	active.mu.Lock()
+	builderDone := active.builderDone
+	active.mu.Unlock()
+	// Steering belongs to the current turn. Preserve its completion tracking
+	// and already-forwarded text; only a completed builder starts a new turn.
+	if builderDone {
+		m.resetActiveForNewTurn(active)
+	}
 	active.mu.Lock()
 	active.LastActivity = time.Now()
 	active.mu.Unlock()
@@ -1238,9 +1311,12 @@ func (m *BotConversationManager) startFollowUpTurn(active *activeBotSession, msg
 		threadID := active.ThreadID
 		platform := active.Platform
 		active.mu.Unlock()
-		err := m.followUpSession(followCtx, m.turnRequestForActive(active,m.withBotRuntimeState(active, msg.Text), userID, platform, threadID), sessionID, userID)
+		err := m.followUpSession(followCtx, m.turnRequestForActive(active, m.withBotRuntimeState(active, msg.Text), userID, platform, threadID), sessionID, userID)
 		if err != nil {
 			log.Printf("[BOT_MANAGER] Follow-up failed: %v", err)
+			if connector := m.GetConnector(platform); connector != nil {
+				connector.SendThreadMessage(context.Background(), threadID, fmt.Sprintf("Couldn't deliver your message: %v", err))
+			}
 		}
 	}()
 	return true
@@ -1271,55 +1347,6 @@ func (m *BotConversationManager) withBotRuntimeState(active *activeBotSession, u
 	return userText
 }
 
-func (m *BotConversationManager) queueThreadlessMessage(active *activeBotSession, connector BotConnector, msg BotIncomingMessage) {
-	if connector == nil {
-		return
-	}
-	active.mu.Lock()
-	threadID := active.ThreadID
-	sessionID := active.SessionID
-	if len(active.queuedMessages) >= maxThreadlessQueuedMessages {
-		queueLen := len(active.queuedMessages)
-		active.LastActivity = time.Now()
-		active.mu.Unlock()
-		log.Printf("[BOT_MANAGER] Thread-less queue full for session %s; dropping message: %s", sessionID, botTruncate(msg.Text, 80))
-		connector.SendThreadMessage(context.Background(), threadID,
-			fmt.Sprintf("Builder is still processing your previous message. I already have %d message(s) queued; send `@done` to end this run before sending more.", queueLen))
-		return
-	}
-	active.queuedMessages = append(active.queuedMessages, msg)
-	queueLen := len(active.queuedMessages)
-	active.LastActivity = time.Now()
-	active.mu.Unlock()
-
-	log.Printf("[BOT_MANAGER] Queued thread-less message for session %s (queue=%d): %s", sessionID, queueLen, botTruncate(msg.Text, 80))
-	reply := "Builder is processing your previous message. I queued this one and will run it next."
-	if queueLen > 1 {
-		reply = fmt.Sprintf("Builder is processing your previous message. I queued this one at position %d.", queueLen)
-	}
-	connector.SendThreadMessage(context.Background(), threadID, reply)
-}
-
-func (m *BotConversationManager) startNextQueuedMessage(active *activeBotSession) bool {
-	if m.followUpSession == nil {
-		return false
-	}
-	active.mu.Lock()
-	if active.awaitingUserInput || len(active.queuedMessages) == 0 {
-		active.mu.Unlock()
-		return false
-	}
-	msg := active.queuedMessages[0]
-	active.queuedMessages = active.queuedMessages[1:]
-	sessionID := active.SessionID
-	userID := active.UserID
-	remaining := len(active.queuedMessages)
-	active.mu.Unlock()
-
-	log.Printf("[BOT_MANAGER] Draining queued thread-less message for session %s (remaining=%d)", sessionID, remaining)
-	return m.startFollowUpTurn(active, msg, sessionID, userID, "queued-threadless")
-}
-
 // handleBlockingResponse handles a user response to a blocking event (plan_approval, human feedback, etc.)
 func (m *BotConversationManager) handleBlockingResponse(active *activeBotSession, msg BotIncomingMessage) {
 	text := botNormalizeText(msg.Text)
@@ -1342,7 +1369,7 @@ func (m *BotConversationManager) handleBlockingResponse(active *activeBotSession
 				go func() {
 					followCtx, followCancel := context.WithTimeout(context.Background(), 5*time.Minute)
 					defer followCancel()
-					err := m.followUpSession(followCtx, m.turnRequestForActive(active,"Approved. Execute the plan.", uid, platform, threadID), sid, uid)
+					err := m.followUpSession(followCtx, m.turnRequestForActive(active, "Approved. Execute the plan.", uid, platform, threadID), sid, uid)
 					if err != nil {
 						log.Printf("[BOT_MANAGER] Plan approval follow-up failed: %v", err)
 					}
@@ -1360,7 +1387,7 @@ func (m *BotConversationManager) handleBlockingResponse(active *activeBotSession
 			go func() {
 				followCtx, followCancel := context.WithTimeout(context.Background(), 5*time.Minute)
 				defer followCancel()
-				err := m.followUpSession(followCtx, m.turnRequestForActive(active,msg.Text, uid, platform, threadID), sid, uid)
+				err := m.followUpSession(followCtx, m.turnRequestForActive(active, msg.Text, uid, platform, threadID), sid, uid)
 				if err != nil {
 					log.Printf("[BOT_MANAGER] Plan feedback follow-up failed: %v", err)
 				}
@@ -1379,7 +1406,7 @@ func (m *BotConversationManager) handleBlockingResponse(active *activeBotSession
 			go func() {
 				followCtx, followCancel := context.WithTimeout(context.Background(), 5*time.Minute)
 				defer followCancel()
-				err := m.followUpSession(followCtx, m.turnRequestForActive(active,msg.Text, uid, platform, threadID), sid, uid)
+				err := m.followUpSession(followCtx, m.turnRequestForActive(active, msg.Text, uid, platform, threadID), sid, uid)
 				if err != nil {
 					log.Printf("[BOT_MANAGER] Blocking response follow-up failed: %v", err)
 				}
@@ -1430,7 +1457,7 @@ func (m *BotConversationManager) handleBlockingResponseSync(ctx context.Context,
 			log.Printf("[BOT_MANAGER] HandleMessageSync: plan approved for session %s", sid)
 			m.clearBlockingState(active)
 			if m.followUpSession != nil {
-				err := m.followUpSession(ctx, m.turnRequestForActive(active,"Approved. Execute the plan.", uid, platform, activeThreadID), sid, uid)
+				err := m.followUpSession(ctx, m.turnRequestForActive(active, "Approved. Execute the plan.", uid, platform, activeThreadID), sid, uid)
 				if err != nil {
 					return nil, fmt.Errorf("plan approval follow-up failed: %w", err)
 				}
@@ -1454,7 +1481,7 @@ func (m *BotConversationManager) handleBlockingResponseSync(ctx context.Context,
 		}
 		// Not a clear approve/reject — send as feedback
 		if m.followUpSession != nil {
-			err := m.followUpSession(ctx, m.turnRequestForActive(active,msg.Text, uid, platform, activeThreadID), sid, uid)
+			err := m.followUpSession(ctx, m.turnRequestForActive(active, msg.Text, uid, platform, activeThreadID), sid, uid)
 			if err != nil {
 				return nil, fmt.Errorf("plan feedback follow-up failed: %w", err)
 			}
@@ -1480,7 +1507,7 @@ func (m *BotConversationManager) handleBlockingResponseSync(ctx context.Context,
 		log.Printf("[BOT_MANAGER] HandleMessageSync: responding to %s for session %s", blockingEvt, sid)
 		m.clearBlockingState(active)
 		if m.followUpSession != nil {
-			err := m.followUpSession(ctx, m.turnRequestForActive(active,msg.Text, uid, platform, activeThreadID), sid, uid)
+			err := m.followUpSession(ctx, m.turnRequestForActive(active, msg.Text, uid, platform, activeThreadID), sid, uid)
 			if err != nil {
 				return nil, fmt.Errorf("blocking response follow-up failed: %w", err)
 			}
@@ -1844,7 +1871,7 @@ func (m *BotConversationManager) HandleMessageSync(ctx context.Context, msg BotI
 		if m.followUpSession != nil {
 			log.Printf("[BOT_MANAGER] HandleMessageSync: injecting follow-up into session %s: %s", sessionID, botTruncate(msg.Text, 80))
 			m.resetActiveForNewTurn(active)
-			err := m.followUpSession(ctx, m.turnRequestForActive(active,msg.Text, uid, msg.Platform, threadID), sessionID, uid)
+			err := m.followUpSession(ctx, m.turnRequestForActive(active, msg.Text, uid, msg.Platform, threadID), sessionID, uid)
 			if err != nil {
 				return nil, fmt.Errorf("follow-up failed: %w", err)
 			}
@@ -1876,7 +1903,8 @@ func (m *BotConversationManager) HandleMessageSync(ctx context.Context, msg BotI
 	addRestoredConversationSessionID(queryReq, restoredConversationSessionID)
 	sendFullDetails := botFullDetailsFromRequest(queryReq)
 
-	// Track as active session — bot sessions are in-memory only.
+	// Track the live session in memory. Connectors with durable bindings also
+	// receive the session pointer below so it can be recovered after restart.
 	m.mu.Lock()
 	activeTask := &activeBotSession{
 		SessionID:       newSessionID,
@@ -1885,12 +1913,15 @@ func (m *BotConversationManager) HandleMessageSync(ctx context.Context, msg BotI
 		Platform:        msg.Platform,
 		ThreadID:        threadID,
 		Metadata:        botMeta,
+		LastActivity:    time.Now(),
 		sendFullDetails: sendFullDetails,
 		RouteKey:        botMessageRouteKey(msg),
 	}
+	startedAt := activeTask.LastActivity
 	applyBotRequestMetadata(activeTask, queryReq)
 	m.sessions[threadID.Key()] = activeTask
 	m.mu.Unlock()
+	m.persistBotSessionBinding(activeTask, startedAt)
 
 	// Start the session in background
 	go m.runSession(activeTask, queryReq)
@@ -1951,7 +1982,8 @@ func (m *BotConversationManager) startNewSessionDirect(msg BotIncomingMessage, t
 	}
 	sendFullDetails := botFullDetailsFromRequest(queryReq)
 
-	// Track active session — bot sessions are in-memory only.
+	// Track the live session in memory. The durable connector binding is saved
+	// immediately afterwards, before the agent run begins.
 	m.mu.Lock()
 	active := &activeBotSession{
 		SessionID:       sessionID,
@@ -1968,9 +2000,11 @@ func (m *BotConversationManager) startNewSessionDirect(msg BotIncomingMessage, t
 		profileRoute:    msg.PresetProfile,
 		RouteKey:        botMessageRouteKey(msg),
 	}
+	startedAt := active.LastActivity
 	applyBotRequestMetadata(active, queryReq)
 	m.sessions[threadID.Key()] = active
 	m.mu.Unlock()
+	m.persistBotSessionBinding(active, startedAt)
 
 	// Long-running indicator: if the agent hasn't replied within ~10s, layer an
 	// hourglass reaction on top of the "eyes" ack so the user knows the bot is
@@ -2029,13 +2063,7 @@ func (m *BotConversationManager) startMirroringExistingSession(active *activeBot
 		active.mu.Unlock()
 	})
 	active.eventFilter.SetSessionDoneCallback(func() {
-		active.mu.Lock()
-		active.builderDone = true
-		pending := active.pendingWorkflows
-		active.mu.Unlock()
-		if m.startNextQueuedMessage(active) {
-			return
-		}
+		pending := m.markBotBuilderDone(active)
 		if pending == 0 {
 			cancel()
 		}
@@ -2051,8 +2079,25 @@ func (m *BotConversationManager) startMirroringExistingSession(active *activeBot
 			active.Status = chathistory.BotSessionStatusCompleted
 		}
 		active.LastActivity = time.Now()
+		completedAt := active.LastActivity
 		active.mu.Unlock()
+		m.persistBotSessionBinding(active, completedAt)
 	}()
+}
+
+// markBotBuilderDone releases the bot's turn state, including stale prompts
+// after a terminal failure. Background workflows retain their own lifecycle.
+func (m *BotConversationManager) markBotBuilderDone(active *activeBotSession) int {
+	active.mu.Lock()
+	defer active.mu.Unlock()
+	active.builderDone = true
+	active.awaitingUserInput = false
+	active.blockingEventType = ""
+	active.blockingRequestID = ""
+	if active.eventFilter != nil && active.eventFilter.SessionFailed() {
+		active.Status = chathistory.BotSessionStatusFailed
+	}
+	return active.pendingWorkflows
 }
 
 // runSession runs the agent session with event filtering and lifecycle management
@@ -2090,13 +2135,7 @@ func (m *BotConversationManager) runSession(active *activeBotSession, queryReq m
 	// therefore on clearing Slack reactions) until every mirrored workflow has
 	// drained. The last mirror to finish will call cancel() itself.
 	active.eventFilter.SetSessionDoneCallback(func() {
-		active.mu.Lock()
-		active.builderDone = true
-		pending := active.pendingWorkflows
-		active.mu.Unlock()
-		if m.startNextQueuedMessage(active) {
-			return
-		}
+		pending := m.markBotBuilderDone(active)
 		if pending > 0 {
 			log.Printf("[BOT_MANAGER] Builder done for %s but %d workflow(s) still running — deferring cancel", active.SessionID, pending)
 			return
@@ -2166,7 +2205,9 @@ func (m *BotConversationManager) runSession(active *activeBotSession, queryReq m
 	// Entries are pruned by the background janitor after 7 days of inactivity.
 	active.mu.Lock()
 	active.LastActivity = time.Now()
+	completedAt := active.LastActivity
 	active.mu.Unlock()
+	m.persistBotSessionBinding(active, completedAt)
 }
 
 // progressiveTextPollInterval is a var, not a const, so a test can shorten
@@ -2541,13 +2582,26 @@ func (m *BotConversationManager) buildQueryWithThreadHistory(query string, platf
 	return combined
 }
 
-// resolveChannelWorkflow looks up the ChannelRoute for a given Slack channel ID.
-// Returns nil if no routing is configured for the channel.
-func (m *BotConversationManager) resolveChannelWorkflow(channelID string) *ChannelRoute {
+// resolveChannelWorkflow looks up the ChannelRoute for a channel on the given
+// platform. Returns nil if no routing is configured for the channel.
+//
+// Connector configs are keyed by platform, and this read used to ask for
+// "slack" whatever the message arrived on, so channel routing configured for
+// any other platform was never found and those messages fell through to
+// generic chat, silently losing the workflow's own tools and LLM config.
+// This is the fallback path only: a platform that resolves its own route
+// first — WhatsApp maps an "@slug" to a workflow in WhatsAppService.Resolve —
+// arrives here already routed and never reaches this lookup. An empty
+// platform keeps the historical key.
+func (m *BotConversationManager) resolveChannelWorkflow(platform, channelID string) *ChannelRoute {
 	if m.chatStore == nil {
 		return nil
 	}
-	botCfg, err := m.chatStore.GetBotConnectorConfig(context.Background(), "slack")
+	configID := strings.ToLower(strings.TrimSpace(platform))
+	if configID == "" {
+		configID = "slack"
+	}
+	botCfg, err := m.chatStore.GetBotConnectorConfig(context.Background(), configID)
 	if err != nil || botCfg == nil {
 		return nil
 	}
@@ -2620,7 +2674,7 @@ func (m *BotConversationManager) buildQueryRequest(query string, userID string, 
 	// which wins over "no routing at all" (default multi-agent chat).
 	route := presetRoute
 	if route == nil && channelID != "" {
-		route = m.resolveChannelWorkflow(channelID)
+		route = m.resolveChannelWorkflow(platform, channelID)
 	}
 	if route != nil {
 		req["preset_query_id"] = route.WorkflowID

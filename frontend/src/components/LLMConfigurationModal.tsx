@@ -41,7 +41,7 @@ const HIDDEN_CHAT_PROVIDER_TABS = new Set<string>([
   'openrouter', 'z-ai', 'kimi', 'minimax', 'minimax-coding-plan', 'elevenlabs', 'deepgram'
 ])
 const API_KEY_PROVIDER_IDS = new Set<string>(['bedrock', 'openai', 'vertex', 'anthropic', 'azure'])
-const CODING_AGENT_PROVIDER_ORDER = ['claude-code', 'codex-cli', 'cursor-cli', 'pi-cli']
+const CODING_AGENT_PROVIDER_ORDER = ['claude-code', 'codex-cli', 'cursor-cli', 'pi-cli', 'muse-cli']
 const CODING_AGENT_PROVIDER_RANK = new Map<string, number>(
   CODING_AGENT_PROVIDER_ORDER.map((provider, index) => [provider, index])
 )
@@ -237,26 +237,6 @@ export default function LLMConfigurationModal({ isOpen, onClose }: LLMConfigurat
           provider: modePrimaryConfig.provider,
           model_id: modePrimaryConfig.model_id,
         },
-        fallbacks: []
-      }
-
-      // Migrate legacy fallbacks
-      if (modePrimaryConfig.fallback_models) {
-        modePrimaryConfig.fallback_models.forEach(modelId => {
-          newConfig.fallbacks.push({
-            provider: modePrimaryConfig.provider,
-            model_id: modelId
-          })
-        })
-      }
-
-      if (modePrimaryConfig.cross_provider_fallback) {
-        modePrimaryConfig.cross_provider_fallback.models.forEach(modelId => {
-          newConfig.fallbacks.push({
-            provider: modePrimaryConfig.cross_provider_fallback!.provider,
-            model_id: modelId
-          })
-        })
       }
 
       setModeAgentConfig(newConfig)
@@ -368,8 +348,6 @@ export default function LLMConfigurationModal({ isOpen, onClose }: LLMConfigurat
       const updatedPrimaryConfig: LLMConfiguration = {
         provider: provider,
         model_id: config.model_id,
-        fallback_models: config.fallback_models,
-        cross_provider_fallback: config.cross_provider_fallback
       }
       setModePrimaryConfig(updatedPrimaryConfig)
     }

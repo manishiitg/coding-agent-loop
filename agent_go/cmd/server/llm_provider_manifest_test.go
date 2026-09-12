@@ -175,6 +175,32 @@ func TestParsePiCLIModelListNoMatches(t *testing.T) {
 	}
 }
 
+func TestFetchAvailablePiCLIModelsReturnsOnlyLiveConnectedInventory(t *testing.T) {
+	original := listPiCLIModelsFn
+	listPiCLIModelsFn = func() ([]dynamicModelEntry, error) {
+		return []dynamicModelEntry{
+			{ModelID: "google/gemini-3.8-flash", ModelName: "Gemini 3.8 Flash", Group: "Gemini"},
+			{ModelID: "openrouter/openrouter/free", ModelName: "OpenRouter Free", Group: "OpenRouter"},
+		}, nil
+	}
+	invalidatePiProviderCaches()
+	t.Cleanup(func() {
+		listPiCLIModelsFn = original
+		invalidatePiProviderCaches()
+	})
+
+	resp := fetchAvailablePiCLIModels()
+	if resp.Source != "cli_available" || resp.Error != "" {
+		t.Fatalf("available response = %#v", resp)
+	}
+	if len(resp.Models) != 2 {
+		t.Fatalf("available models = %#v, want exactly the two live models", resp.Models)
+	}
+	if len(resp.Groups) != 2 || resp.Groups[0] != "Gemini" || resp.Groups[1] != "OpenRouter" {
+		t.Fatalf("available groups = %#v", resp.Groups)
+	}
+}
+
 func TestProviderModelMetadataIncludesClaudeCodeSonnet5(t *testing.T) {
 	ids := providerModelIDs("claude-code")
 	if !containsLLMCapabilityString(ids, "claude-sonnet-5") {

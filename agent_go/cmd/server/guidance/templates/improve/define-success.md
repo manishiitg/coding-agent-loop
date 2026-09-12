@@ -24,15 +24,39 @@ number of goals, routes or primary metrics; preserve existing boundaries unless 
 user authorizes restructuring.
 
 ## Agree on outcomes and measurement
-Present a short proposal: outcome goal bullets, one or more primary metrics per goal, their supporting
+Present a short proposal: primary and secondary outcome goal bullets, one or more primary metrics per goal, their supporting
 measurements, a target or "establish a baseline first", and explicit boundaries.
 Ask only about unresolved priorities, targets or material changes to meaning.
 For X, distinguish followers from paid subscribers; use received engagement,
 not actions performed, to describe audience response. Activity metrics can
 support an outcome but do not prove it improved.
 
-Keep the confirmed outcome bullets under ## Objective in soul/soul.md. Preserve
-user constraints under ## Constraints. Keep nonnumeric acceptance conditions
+Keep the confirmed outcome bullets under ## Objective in soul/soul.md, grouped
+under ### Primary goals and, when applicable, ### Secondary goals. Primary goals
+are the main outcomes the workflow exists to achieve; secondary goals are
+additional desired outcomes. Keep primary goals focused; multiple primary goals
+are allowed when the user considers them equally important. Secondary goals are
+optional: do not manufacture any. Each bullet describes an outcome, not a task,
+implementation choice, or measurement. For example:
+
+```markdown
+## Objective
+### Primary goals
+- Make learner conversations feel immediate and natural.
+### Secondary goals
+- Make the learner experience ready to use quickly.
+```
+
+Goal priority is independent of metric role. A primary goal can have several
+supporting metrics; a secondary goal is still an outcome, not a supporting
+metric. Preserve existing explicit priorities. For unprioritized existing goals,
+propose the grouping and resolve ambiguous tradeoffs with the user; never infer
+priority from bullet order or quietly demote or drop an existing commitment.
+Reviewers must not trade away a primary goal to improve a secondary one without
+the user's agreement. Keep goal priorities in this canonical objective section,
+not a duplicate database or report. Metrics retain their separate typed contract.
+
+Preserve user constraints under ## Constraints. Keep nonnumeric acceptance conditions
 under ## Success Criteria. Keep this required section even when all acceptance is numeric: refer to the configured goal metric targets and agreed boundaries without duplicating their numbers. Metric targets belong in typed definitions, not a
 second manually maintained metric table. Move implementation details to the
 appropriate plan/config through its managed tools, preserving behavior and
@@ -92,6 +116,6 @@ while measurement is being configured. Baseline collection may continue after
 Pulse is enabled; no fabricated baseline or target is required to enable it.
 
 ## Finish
-Summarize the goals, primary metrics and their supporting measurements, sources, verified collection,
+Summarize the primary/secondary goals, primary metrics and their supporting measurements, sources, verified collection,
 backfill coverage and any outstanding decisions. No separate Markdown review,
 HTML dashboard or manual chart: Pulse renders the typed data automatically.

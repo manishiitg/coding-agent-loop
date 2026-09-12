@@ -17,9 +17,9 @@ type LLMModel struct {
 
 // LLMConfig represents the unified LLM configuration
 type LLMConfig struct {
-	Primary   LLMModel   `json:"primary"`
-	Fallbacks []LLMModel `json:"fallbacks,omitempty"`
-	APIKeys   *APIKeys   `json:"api_keys,omitempty"` // Global API keys (fallback if per-model not set)
+	Primary LLMModel `json:"primary"`
+
+	APIKeys *APIKeys `json:"api_keys,omitempty"` // Global API keys (fallback if per-model not set)
 }
 
 // APIKeys is an alias for llm.ProviderAPIKeys (canonical type).

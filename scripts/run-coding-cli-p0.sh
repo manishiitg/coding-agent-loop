@@ -4,7 +4,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 MULTI_LLM_DIR="$(cd "$ROOT_DIR/../multi-llm-provider-go" && pwd)"
 MCPAGENT_DIR="$(cd "$ROOT_DIR/../mcpagent" && pwd)"
-PROVIDERS="claude-code,codex-cli,cursor-cli,pi-cli"
+PROVIDERS="claude-code,codex-cli,cursor-cli,pi-cli,muse-cli"
 SERVER_URL="http://localhost:18743"
 WORKSPACE_API_URL="http://127.0.0.1:18744"
 WORKSPACE_DOCS="$ROOT_DIR/workspace-docs"
@@ -113,7 +113,7 @@ if [[ -z "${MCP_API_TOKEN:-}" ]]; then
 fi
 
 if [[ "$(printf '%s' "$PROVIDERS" | tr '[:upper:]' '[:lower:]')" == "all" ]]; then
-  PROVIDERS="claude-code,codex-cli,cursor-cli,pi-cli"
+  PROVIDERS="claude-code,codex-cli,cursor-cli,pi-cli,muse-cli"
 fi
 
 for endpoint in "$SERVER_URL" "$WORKSPACE_API_URL"; do
@@ -155,6 +155,7 @@ p0_test_regex claude-code pkg/adapters/claudecode >/dev/null
 p0_test_regex codex-cli pkg/adapters/codexcli >/dev/null
 p0_test_regex cursor-cli pkg/adapters/cursorcli >/dev/null
 p0_test_regex pi-cli pkg/adapters/picli >/dev/null
+p0_test_regex muse-cli pkg/adapters/musecli >/dev/null
 
 # IC-12 is provider-neutral and credential-free. Run it before spending any
 # live-provider capacity so a missing turn ID or duplicate/missing canonical
@@ -202,6 +203,11 @@ for raw_provider in "${provider_list[@]}"; do
     pi-cli)
       test_regex="$(p0_test_regex "$provider" pkg/adapters/picli)"
       run_required_go_tests go -C "$MULTI_LLM_DIR" test -json ./pkg/adapters/picli \
+        -run "$test_regex" -count=1 -timeout=35m -args -coding-cli-p0-live
+      ;;
+    muse-cli)
+      test_regex="$(p0_test_regex "$provider" pkg/adapters/musecli)"
+      run_required_go_tests go -C "$MULTI_LLM_DIR" test -json ./pkg/adapters/musecli \
         -run "$test_regex" -count=1 -timeout=35m -args -coding-cli-p0-live
       ;;
     *)

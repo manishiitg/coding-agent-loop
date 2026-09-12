@@ -130,11 +130,9 @@ func GetWorkspaceReference(docsRoot, chatsFolder string) string {
 
 ## LLM Tier Configuration
 Do not read or write tier-config storage with shell/file tools. Use the UI or dedicated backend tier-config API; raw workspace file tools intentionally do not have ` + "`config/`" + ` access.
-- Schema: ` + "`{\"main\":{\"provider\":\"anthropic\",\"model_id\":\"...\",\"fallbacks\":[{\"provider\":\"openai\",\"model_id\":\"gpt-5.4-mini\"},{\"model_id\":\"gpt-5.4\"}]},\"high\":{...},\"medium\":{...},\"low\":{...},\"custom\":{\"my-tier\":{...}}}`" + `
-- To add fallbacks for a tier, add an ordered ` + "`fallbacks`" + ` array under that tier object.
-- Each fallback entry uses ` + "`{\"provider\":\"...\",\"model_id\":\"...\"}`" + `. If ` + "`provider`" + ` is omitted, it defaults to the tier's own provider.
-- Example: ` + "`{\"main\":{\"provider\":\"anthropic\",\"model_id\":\"claude-sonnet-4-6\",\"fallbacks\":[{\"model_id\":\"claude-haiku-4-5-20251001\"},{\"provider\":\"openai\",\"model_id\":\"gpt-5.4-mini\"}]}}`" + `
-- Preserve existing tiers when editing. Only change the specific tier or ` + "`fallbacks`" + ` entries the user asked for.
+- Each tier selects one provider, model_id, and optional options.
+- Preserve existing tiers when editing. Change only the tier the user requested.
+- Failed calls remain on the selected agent/provider. Transient retries never switch models.
 
 ## Published LLMs & Provider Auth
 Published LLM metadata and provider authentication are workspace-backed configuration surfaces. Access them through dedicated tools only; raw workspace file tools intentionally do not expose ` + "`config/`" + `.
@@ -155,7 +153,7 @@ Video/audio/music generation and transcription provider tools remain deprecated 
 ## Image Generation Defaults
 Image generation defaults are workspace-backed configuration. Provider authentication is managed separately through ` + "`set_provider_auth`" + `.
 - Do not read or write saved defaults with shell/file tools. Use runtime ` + "`image_gen_config`" + ` overrides for the current chat session, or the dedicated UI/API configuration path when changing saved defaults.
-- ` + "`primary`" + ` is tried first. ` + "`fallbacks`" + ` are tried in order when the primary provider lacks workspace auth.
+- The configured primary is used. Missing provider auth returns an error.
 - Runtime ` + "`image_gen_config`" + ` overrides this file for the current chat session only.
 - Keep provider auth updated with the ` + "`set_provider_auth`" + ` tool; do not hand-edit encrypted auth files.
 - Do not infer image-generation support from ` + "`list_provider_models`" + ` or the normal LLM model catalog. Those lists are for chat/text models, not image models.
@@ -164,8 +162,8 @@ Image generation defaults are workspace-backed configuration. Provider authentic
 ## Image Analysis Defaults
 Image understanding for the ` + "`read_image`" + ` tool can be routed via workspace-backed image analysis defaults, including through a coding-agent CLI's own native vision by passing it the local workspace image path directly (` + "`codex-cli`" + `, ` + "`cursor-cli`" + `, and ` + "`claude-code`" + ` are all supported providers for this) rather than only through a standalone vision-model API.
 - Do not read or write saved defaults with shell/file tools. Use per-call ` + "`read_image`" + ` overrides, or the dedicated UI/API configuration path when changing saved defaults.
-- If this file exists, ` + "`read_image`" + ` uses its ` + "`primary`" + ` and ordered ` + "`fallbacks`" + ` with workspace provider auth.
-- If this file does not exist, ` + "`read_image`" + ` falls back to the current chat model.
+- If this file exists, ` + "`read_image`" + ` uses its ` + "`primary`" + ` with workspace provider auth.
+- If this file does not exist, ` + "`read_image`" + ` uses the current chat model.
 - For one-off ` + "`read_image`" + ` calls, use ` + "`list_llm_capabilities(capability=\"read_image\", include_models=true)`" + ` and pass ` + "`provider`" + ` with the matching ` + "`model_id`" + ` when overriding defaults.
 - Keep provider auth updated with the ` + "`set_provider_auth`" + ` tool; do not hand-edit encrypted auth files.
 

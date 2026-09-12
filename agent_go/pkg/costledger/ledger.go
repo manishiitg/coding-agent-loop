@@ -37,6 +37,7 @@ type Entry struct {
 	RunID          string    `json:"run_id,omitempty"`
 	ExecutionID    string    `json:"execution_id,omitempty"`
 	Scope          string    `json:"scope,omitempty"`
+	SourcePlatform string    `json:"source_platform,omitempty"`
 	// Phase distinguishes what kind of turn produced this entry within one
 	// ExecutionID — "execution_only" or "reflection" for a workflow step
 	// (PLAT-166), matching the same phase-string vocabulary the older
@@ -162,6 +163,7 @@ type DateAggregate struct {
 	Aggregate
 	ByModel          map[string]*Aggregate      `json:"by_model,omitempty"`
 	ByScope          map[string]*ScopeAggregate `json:"by_scope,omitempty"`
+	BySourcePlatform map[string]*Aggregate      `json:"by_source_platform,omitempty"`
 	WorkflowRunCount int                        `json:"workflow_run_count,omitempty"`
 	workflowRunIDs   map[string]struct{}
 }
@@ -188,13 +190,14 @@ type ExecutionAggregate struct {
 
 // Summary is the aggregated view returned by Summarize.
 type Summary struct {
-	From     string                     `json:"from,omitempty"`
-	To       string                     `json:"to,omitempty"`
-	Total    Aggregate                  `json:"total"`
-	ByDate   map[string]*DateAggregate  `json:"by_date"`  // YYYY-MM-DD UTC
-	ByModel  map[string]*Aggregate      `json:"by_model"` // model_id
-	ByScope  map[string]*ScopeAggregate `json:"by_scope,omitempty"`
-	Coverage Coverage                   `json:"coverage"`
+	From             string                     `json:"from,omitempty"`
+	To               string                     `json:"to,omitempty"`
+	Total            Aggregate                  `json:"total"`
+	ByDate           map[string]*DateAggregate  `json:"by_date"`  // YYYY-MM-DD UTC
+	ByModel          map[string]*Aggregate      `json:"by_model"` // model_id
+	ByScope          map[string]*ScopeAggregate `json:"by_scope,omitempty"`
+	BySourcePlatform map[string]*Aggregate      `json:"by_source_platform,omitempty"`
+	Coverage         Coverage                   `json:"coverage"`
 }
 
 // Coverage reports whether the aggregate omitted or could not price evidence.
@@ -492,12 +495,13 @@ func (l *Ledger) summarizeLegacyFiltered(from, to, executionID, workflowID, scop
 	defer l.mu.Unlock()
 
 	summary := &Summary{
-		From:     from,
-		To:       to,
-		ByDate:   make(map[string]*DateAggregate),
-		ByModel:  make(map[string]*Aggregate),
-		ByScope:  make(map[string]*ScopeAggregate),
-		Coverage: Coverage{Source: "legacy_jsonl"},
+		From:             from,
+		To:               to,
+		ByDate:           make(map[string]*DateAggregate),
+		ByModel:          make(map[string]*Aggregate),
+		ByScope:          make(map[string]*ScopeAggregate),
+		BySourcePlatform: make(map[string]*Aggregate),
+		Coverage:         Coverage{Source: "legacy_jsonl"},
 	}
 
 	content, exists, err := l.readFile(ledgerWorkspacePath)
@@ -589,9 +593,22 @@ func addEntryToExecutionBucket(bucket *ExecutionAggregate, e Entry) {
 }
 
 func addEntryToSummary(summary *Summary, date string, e Entry) {
+	normalizeEntry(&e)
 	summary.Total.add(e)
 	if summary.ByScope == nil {
 		summary.ByScope = make(map[string]*ScopeAggregate)
+	}
+	sourcePlatform := strings.TrimSpace(e.SourcePlatform)
+	if sourcePlatform != "" {
+		if summary.BySourcePlatform == nil {
+			summary.BySourcePlatform = make(map[string]*Aggregate)
+		}
+		sourceBucket, ok := summary.BySourcePlatform[sourcePlatform]
+		if !ok {
+			sourceBucket = &Aggregate{}
+			summary.BySourcePlatform[sourcePlatform] = sourceBucket
+		}
+		sourceBucket.add(e)
 	}
 	scope := strings.TrimSpace(e.Scope)
 	if scope == "" {
@@ -619,13 +636,22 @@ func addEntryToSummary(summary *Summary, date string, e Entry) {
 	bucket, ok := summary.ByDate[date]
 	if !ok {
 		bucket = &DateAggregate{
-			ByModel:        make(map[string]*Aggregate),
-			ByScope:        make(map[string]*ScopeAggregate),
-			workflowRunIDs: make(map[string]struct{}),
+			ByModel:          make(map[string]*Aggregate),
+			ByScope:          make(map[string]*ScopeAggregate),
+			BySourcePlatform: make(map[string]*Aggregate),
+			workflowRunIDs:   make(map[string]struct{}),
 		}
 		summary.ByDate[date] = bucket
 	}
 	bucket.Aggregate.add(e)
+	if sourcePlatform != "" {
+		dateSourceBucket, ok := bucket.BySourcePlatform[sourcePlatform]
+		if !ok {
+			dateSourceBucket = &Aggregate{}
+			bucket.BySourcePlatform[sourcePlatform] = dateSourceBucket
+		}
+		dateSourceBucket.add(e)
+	}
 	dateScopeBucket, ok := bucket.ByScope[scope]
 	if !ok {
 		dateScopeBucket = &ScopeAggregate{ByExecution: make(map[string]*ExecutionAggregate)}

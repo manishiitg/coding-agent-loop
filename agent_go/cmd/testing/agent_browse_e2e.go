@@ -189,7 +189,6 @@ func (c *codingAgentChatE2EClient) startAgentBrowseQueryWithOptions(ctx context.
 				"provider": opts.provider,
 				"model_id": opts.model,
 			},
-			"fallbacks": []interface{}{},
 		},
 		"agent_mode":            "simple",
 		"enabled_servers":       []string{"NO_SERVERS"},

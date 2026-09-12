@@ -4,6 +4,7 @@ import { chatHistoryOpenDisposition } from '../utils/chatHistoryOpenDisposition'
 import { isProviderTranscriptArtifact } from '../utils/restoredConversationFilter'
 import { scheduleRunSlotLabel } from '../utils/scheduleRunSlot'
 import { chatHistoryWorkshopMode } from '../utils/chatHistoryWorkshopMode'
+import { chatHistoryRuntimeLabel, chatHistoryRuntimeShortLabel } from '../utils/chatHistoryRuntimeLabel'
 
 function session(overrides: Partial<ChatHistorySession>): ChatHistorySession {
   return {
@@ -54,6 +55,22 @@ describe('chat history workshop mode', () => {
   it('treats mode-less legacy chats as Workshop', () => {
     const legacySession = session({})
     expect(chatHistoryWorkshopMode(legacySession)).toBe('workshop')
+  })
+})
+
+describe('chat history runtime labels', () => {
+  it('keeps the complete provider/model available while using a compact agent label', () => {
+    const museSession = session({
+      runtime: {
+        kind: 'coding_agent',
+        provider: 'muse-cli',
+        model_id: 'muse-spark-1.3-contributor',
+        resume_supported: false,
+      },
+    })
+
+    expect(chatHistoryRuntimeShortLabel(museSession)).toBe('Muse')
+    expect(chatHistoryRuntimeLabel(museSession)).toBe('muse-cli · muse-spark-1.3-contributor')
   })
 })
 

@@ -10,15 +10,6 @@ func TestTierResolverPreservesModelOptions(t *testing.T) {
 			Options: map[string]interface{}{
 				"reasoning_effort": "low",
 			},
-			Fallbacks: []AgentLLMFallback{
-				{
-					Provider: "claude-code",
-					ModelID:  "sonnet",
-					Options: map[string]interface{}{
-						"reasoning_effort": "medium",
-					},
-				},
-			},
 		},
 	}, nil)
 
@@ -29,10 +20,19 @@ func TestTierResolverPreservesModelOptions(t *testing.T) {
 	if got := config.Primary.Options["reasoning_effort"]; got != "low" {
 		t.Fatalf("expected primary reasoning_effort=low, got %v", got)
 	}
-	if len(config.Fallbacks) != 1 {
-		t.Fatalf("expected one fallback, got %d", len(config.Fallbacks))
+
+}
+
+func TestTierResolverDoesNotSubstituteAnotherTier(t *testing.T) {
+	resolver := NewTierResolver(&TieredLLMConfig{
+		Tier1: &AgentLLMConfig{Provider: "codex-cli", ModelID: "selected"},
+	}, nil)
+	for _, tier := range []TierLevel{TierMedium, TierLow, TierLevel(99)} {
+		if got := resolver.ResolveTier(tier); got != nil {
+			t.Fatalf("tier %v silently selected another model: %+v", tier, got)
+		}
 	}
-	if got := config.Fallbacks[0].Options["reasoning_effort"]; got != "medium" {
-		t.Fatalf("expected fallback reasoning_effort=medium, got %v", got)
+	if got := NewTierResolver(nil, nil).ResolveTier(TierHigh); got != nil {
+		t.Fatalf("missing config selected a model: %+v", got)
 	}
 }

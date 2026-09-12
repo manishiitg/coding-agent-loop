@@ -1,13 +1,14 @@
+import { stripRetiredLLMFallbacks } from '../../utils/retiredLLMFallbacks'
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
 import { useShallow } from 'zustand/react/shallow'
-import { AlertCircle, ArrowLeft, CheckCircle, ChevronDown, ChevronRight, Loader2, Lock, RefreshCw, Search, X } from 'lucide-react'
+import { ArrowLeft, CheckCircle2, ChevronDown, ChevronRight, Loader2, Lock, RefreshCw, Search, X } from 'lucide-react'
 import LLMRoleSelector from '../LLMRoleSelector'
 import LLMSelectionDropdown from '../LLMSelectionDropdown'
 import { WorkflowProviderCredentialField } from '../WorkflowProviderCredentialField'
 import { CodingAgentSection } from '../llm/CodingAgentSection'
 import { APIProviderSection } from '../llm/APIProviderSection'
 import { providerStatus } from '../llm/providerStatus'
-import type { AgentLLMConfig, AgentLLMFallback, LLMProvider, PresetLLMConfig } from '../../services/api-types'
+import type { AgentLLMConfig, LLMProvider, PresetLLMConfig } from '../../services/api-types'
 import { llmConfigService, type DynamicModelEntry, type ModelMetadata, type ProviderManifestEntry } from '../../services/llm-config-api'
 import { useLLMStore } from '../../stores/useLLMStore'
 import { READ_ONLY_TITLE, useCanWriteWorkflow } from '../../hooks/useCanWriteWorkflow'
@@ -43,7 +44,7 @@ const API_KEY_PROVIDER_IDS = new Set<string>(['bedrock', 'openai', 'vertex', 'an
 const HIDDEN_CHAT_PROVIDER_TABS = new Set<string>([
   'openrouter', 'z-ai', 'kimi', 'minimax', 'minimax-coding-plan', 'elevenlabs', 'deepgram',
 ])
-const CODING_AGENT_PROVIDER_ORDER = ['claude-code', 'codex-cli', 'cursor-cli', 'pi-cli']
+const CODING_AGENT_PROVIDER_ORDER = ['claude-code', 'codex-cli', 'cursor-cli', 'pi-cli', 'muse-cli']
 const codingAgentProviderRank = (provider: string) => {
   const index = CODING_AGENT_PROVIDER_ORDER.indexOf(provider)
   return index === -1 ? 999 : index
@@ -100,16 +101,6 @@ function toAgentLLMConfig(llm: LLMOption): AgentLLMConfig {
     provider: llm.provider as LLMProvider,
     model_id: llm.model,
     ...(hasOptions(llm.options) ? { options: llm.options } : {}),
-  }
-}
-
-function toFallback(llm: LLMOption): AgentLLMFallback {
-  const config = toAgentLLMConfig(llm)
-  return {
-    ...(config.published_llm_id ? { published_llm_id: config.published_llm_id } : {}),
-    provider: config.provider,
-    model_id: config.model_id,
-    ...(hasOptions(config.options) ? { options: config.options } : {}),
   }
 }
 
@@ -227,11 +218,6 @@ export default function WorkflowLLMConfigurationPanel({ workspacePath, llmConfig
   const [query, setQuery] = useState('')
   const [tokenOpen, setTokenOpen] = useState(false)
   const [refreshing, setRefreshing] = useState(false)
-  // Inline connection tests for the sign-in CLIs (Claude Code, Codex, Cursor):
-  // those rows have nothing to configure, so Test and Use live on the row
-  // itself instead of behind a drill-in. Keyed by row id.
-  type RowTest = { status: 'testing' | 'valid' | 'invalid'; message?: string }
-  const [rowTests, setRowTests] = useState<Record<string, RowTest>>({})
   const [rowUsing, setRowUsing] = useState<string | null>(null)
   const [piCliModels, setPiCliModels] = useState<DynamicModelEntry[]>([])
   const [piCliGroups, setPiCliGroups] = useState<string[]>([])
@@ -496,7 +482,7 @@ export default function WorkflowLLMConfigurationPanel({ workspacePath, llmConfig
   const selectRow = (row: ProviderRow) => {
     const config = configForRow(row)
     if (!config) return
-    onChange(config)
+    onChange(stripRetiredLLMFallbacks(config))
   }
 
   // "Use in this workflow": select the provider and persist right away. Used
@@ -506,7 +492,7 @@ export default function WorkflowLLMConfigurationPanel({ workspacePath, llmConfig
     if (!config) return
     setRowUsing(row.id)
     try {
-      onChange(config)
+      onChange(stripRetiredLLMFallbacks(config))
       if (onUseProvider) await onUseProvider(config)
       setChanging(false)
     } finally {
@@ -518,24 +504,6 @@ export default function WorkflowLLMConfigurationPanel({ workspacePath, llmConfig
     if (!activeRow) return
     await applyRowToWorkflow(activeRow)
     setActiveProviderId(null)
-  }
-
-  // Same check the drill-in runs, against the provider's default model.
-  const testRow = async (row: ProviderRow) => {
-    setRowTests(current => ({ ...current, [row.id]: { status: 'testing' } }))
-    try {
-      const response = await llmConfigService.validateAPIKey({
-        provider: row.id as Parameters<typeof llmConfigService.validateAPIKey>[0]['provider'],
-      })
-      setRowTests(current => ({
-        ...current,
-        [row.id]: response.valid
-          ? { status: 'valid', message: response.message || `${row.name} is working.` }
-          : { status: 'invalid', message: response.message || response.error || 'Validation failed.' },
-      }))
-    } catch (err) {
-      setRowTests(current => ({ ...current, [row.id]: { status: 'invalid', message: err instanceof Error ? err.message : 'Connection test failed.' } }))
-    }
   }
 
   const useManagedDefaults = () => {
@@ -556,14 +524,9 @@ export default function WorkflowLLMConfigurationPanel({ workspacePath, llmConfig
   // bailed out entirely while still on a provider profile (silent no-op:
   // the very first edit did not save) and, even past that, only wrote the
   // single touched role.
-  const updateRole = (key: RoleKey, next: AgentLLMConfig, preserveFallbacks = true) => {
-    const current = roleConfig(llmConfig, key)
-    const withFallbacks: AgentLLMConfig = {
-      ...next,
-      ...(preserveFallbacks && current?.fallbacks?.length ? { fallbacks: current.fallbacks } : {}),
-    }
+  const updateRole = (key: RoleKey, next: AgentLLMConfig) => {
     const seed = (roleKey: RoleKey): AgentLLMConfig | undefined =>
-      key === roleKey ? withFallbacks : (roleConfig(llmConfig, roleKey) ?? defaultForRole(roleKey))
+      key === roleKey ? next : (roleConfig(llmConfig, roleKey) ?? defaultForRole(roleKey))
     const nextConfig: PresetLLMConfig = {
       ...llmConfig,
       schema_version: 2,
@@ -571,12 +534,12 @@ export default function WorkflowLLMConfigurationPanel({ workspacePath, llmConfig
       builder_llm: seed('builder_llm'),
       pulse_llm: seed('pulse_llm'),
       tiered_config: {
-        tier_1: seed('tier_1') ?? withFallbacks,
-        tier_2: seed('tier_2') ?? withFallbacks,
-        tier_3: seed('tier_3') ?? withFallbacks,
+        tier_1: seed('tier_1') ?? next,
+        tier_2: seed('tier_2') ?? next,
+        tier_3: seed('tier_3') ?? next,
       },
     }
-    onChange(nextConfig)
+    onChange(stripRetiredLLMFallbacks(nextConfig))
   }
 
   const defaultForRole = (key: RoleKey): AgentLLMConfig | undefined => {
@@ -591,16 +554,7 @@ export default function WorkflowLLMConfigurationPanel({ workspacePath, llmConfig
   const resetRole = (key: RoleKey) => {
     const defaultValue = defaultForRole(key)
     if (!advanced || !defaultValue) return
-    updateRole(key, defaultValue, false)
-  }
-
-  const updateFallbacks = (key: RoleKey, fallbacks: AgentLLMFallback[]) => {
-    const current = roleConfig(llmConfig, key)
-    if (!current) return
-    const next = { ...current }
-    if (fallbacks.length) next.fallbacks = fallbacks
-    else delete next.fallbacks
-    updateRole(key, next, false)
+    updateRole(key, defaultValue)
   }
 
   const handleRefresh = async () => {
@@ -839,12 +793,10 @@ export default function WorkflowLLMConfigurationPanel({ workspacePath, llmConfig
     const selected = row.id === selectedRowId
     const inlineActions = row.entry.integration_kind === 'coding_agent' && !row.groupFilter
     if (inlineActions) {
-      // Sign-in CLI: nothing to configure, so no radio and no drill-in. The
-      // row is the whole flow: status, Test, Use. A workflow-scoped token
-      // override for the selected provider stays available under the status
-      // line above the list.
-      const test = rowTests[row.id]
-      const usable = status.label === 'Ready' || status.label === 'Managed' || test?.status === 'valid'
+      // Sign-in CLI: authentication and diagnostics live in the platform-level
+      // Providers panel. This workflow-level row only reports that state and
+      // lets the user choose which connected CLI to use.
+      const connected = row.entry.auth_configured && status.label === 'Ready'
       return (
         <div key={row.id} className={`flex items-center gap-2 px-3 py-2 ${selected ? 'bg-primary/5' : ''}`}>
           <span className={`shrink-0 text-sm ${selected ? 'font-semibold' : 'font-medium'} text-foreground`}>{row.name}</span>
@@ -854,13 +806,9 @@ export default function WorkflowLLMConfigurationPanel({ workspacePath, llmConfig
             </span>
           )}
           <span className="min-w-0 flex-1" />
-          {test?.status === 'valid' ? (
-            <span className="inline-flex shrink-0 items-center gap-1 text-[11px] font-medium text-emerald-600 dark:text-emerald-400" title={test.message}>
-              <CheckCircle className="h-3 w-3" /> Working
-            </span>
-          ) : test?.status === 'invalid' ? (
-            <span className="inline-flex shrink-0 items-center gap-1 text-[11px] font-medium text-red-500" title={test.message}>
-              <AlertCircle className="h-3 w-3" /> Failed
+          {connected ? (
+            <span className="inline-flex shrink-0 items-center gap-1 text-[11px] font-medium text-emerald-600 dark:text-emerald-400" title="Signed in on this server and ready to use">
+              <CheckCircle2 className="h-3 w-3" /> Connected
             </span>
           ) : (
             <span
@@ -873,18 +821,9 @@ export default function WorkflowLLMConfigurationPanel({ workspacePath, llmConfig
           )}
           <button
             type="button"
-            onClick={() => void testRow(row)}
-            disabled={readOnly || test?.status === 'testing'}
-            title={readOnly ? disabledTitle : `Send a test prompt to ${row.name}`}
-            className="inline-flex shrink-0 items-center gap-1 rounded-md border border-border px-2 py-0.5 text-xs font-medium text-foreground hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
-          >
-            {test?.status === 'testing' ? <><Loader2 className="h-3 w-3 animate-spin" /> Testing…</> : 'Test'}
-          </button>
-          <button
-            type="button"
             onClick={() => void applyRowToWorkflow(row)}
             disabled={readOnly || selected || !row.selectable || rowUsing === row.id}
-            title={readOnly ? disabledTitle : selected ? 'Already in use' : !usable ? 'Not verified yet: Test first, or use anyway' : `Use ${row.name} for this workflow`}
+            title={readOnly ? disabledTitle : selected ? 'Already in use' : status.label === 'Ready' || status.label === 'Managed' ? `Use ${row.name} for this workflow` : `${row.name} still needs setup in Providers`}
             className="inline-flex shrink-0 items-center gap-1 rounded-md bg-primary px-2 py-0.5 text-xs font-medium text-primary-foreground hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50"
           >
             {rowUsing === row.id ? <><Loader2 className="h-3 w-3 animate-spin" /> Saving…</> : 'Use'}
@@ -1065,9 +1004,8 @@ export default function WorkflowLLMConfigurationPanel({ workspacePath, llmConfig
   // there is no separate "pin models" step.
   const renderRole = (row: RoleRow) => {
     const value = roleConfig(llmConfig, row.key) ?? defaultForRole(row.key)
-    const fallbackList = value?.fallbacks ?? []
     const defaultValue = defaultForRole(row.key)
-    const isCustomized = advanced && (configKey(value ?? {}) !== configKey(defaultValue ?? {}) || fallbackList.length > 0)
+    const isCustomized = advanced && (configKey(value ?? {}) !== configKey(defaultValue ?? {}))
 
     return (
       <div key={row.key} className="flex flex-col gap-2 border-t border-border px-3 py-2.5 first:border-t-0 sm:flex-row sm:items-center sm:gap-3">
@@ -1082,7 +1020,7 @@ export default function WorkflowLLMConfigurationPanel({ workspacePath, llmConfig
         </div>
         <div className="min-w-0 flex-1 space-y-1.5">
           {value ? (
-            <LLMRoleSelector availableLLMs={workflowOptions} value={value} onLLMSelect={llm => updateRole(row.key, toAgentLLMConfig(llm), true)} disabled={readOnly} />
+            <LLMRoleSelector availableLLMs={workflowOptions} value={value} onLLMSelect={llm => updateRole(row.key, toAgentLLMConfig(llm))} disabled={readOnly} />
           ) : (
             <span className="text-xs text-muted-foreground">Select a provider first.</span>
           )}
@@ -1092,30 +1030,7 @@ export default function WorkflowLLMConfigurationPanel({ workspacePath, llmConfig
                 Reset to provider default
               </button>
             )}
-            {value && (
-              <details className="text-[11px]">
-                <summary className="cursor-pointer text-muted-foreground hover:text-foreground">Fallbacks{fallbackList.length ? ` (${fallbackList.length})` : ''}</summary>
-                <div className="mt-1.5 space-y-1.5">
-                  {fallbackList.map((fallback, index) => (
-                    <span key={`${row.key}-${configKey(fallback)}-${index}`} className="mr-1 inline-flex items-center gap-1 rounded-full bg-muted px-2 py-0.5 text-xs text-foreground">
-                      {fallback.provider}/{fallback.model_id.split('/').pop()}
-                      <button type="button" onClick={() => updateFallbacks(row.key, fallbackList.filter((_, itemIndex) => itemIndex !== index))} disabled={readOnly} title={readOnly ? disabledTitle : undefined} className="text-muted-foreground hover:text-destructive disabled:cursor-not-allowed disabled:opacity-50" aria-label={`Remove ${row.label} fallback`}>
-                        <X className="h-3 w-3" />
-                      </button>
-                    </span>
-                  ))}
-                  <LLMSelectionDropdown
-                    inModal
-                    availableLLMs={workflowOptions.filter(option => optionKey(option) !== configKey(value) && !fallbackList.some(fallback => configKey(fallback) === optionKey(option)))}
-                    selectedLLM={null}
-                    onLLMSelect={llm => updateFallbacks(row.key, [...fallbackList, toFallback(llm)])}
-                    onRefresh={loadDefaultsFromBackend}
-                    placeholder="+ Add fallback"
-                    disabled={readOnly}
-                  />
-                </div>
-              </details>
-            )}
+
           </div>
         </div>
       </div>
@@ -1171,7 +1086,7 @@ export default function WorkflowLLMConfigurationPanel({ workspacePath, llmConfig
           <>
             {renderGroup(
               'Coding agent CLIs',
-              'Sign in once on this machine. Test the connection, then use it in this workflow.',
+              'Authentication is managed in Providers. Choose which connected CLI this workflow uses.',
               visibleRows.filter(row => row.entry.integration_kind === 'coding_agent' && !row.groupFilter),
             )}
             {renderGroup(

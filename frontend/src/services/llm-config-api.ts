@@ -118,10 +118,24 @@ export interface DynamicModelsResponse {
   source: string
   cached_at?: string
   cache_ttl_seconds?: number
+  error?: string
 }
 
 export interface GetModelMetadataResponse {
   models: ModelMetadata[]
+}
+
+export type ProviderSetupAction = 'authenticate' | 'inspect'
+
+export interface ProviderSetupSession {
+  id: string
+  provider: string
+  action: ProviderSetupAction
+  status: 'running' | 'completed' | 'failed' | 'cancelled'
+  exit_code?: number
+  error?: string
+  created_at: string
+  updated_at: string
 }
 
 // Create axios instance for LLM configuration API (use Vite env so deploy URL works)
@@ -184,10 +198,49 @@ export const llmConfigService = {
   },
 
   // Get dynamic model list for a provider (cursor-cli, pi-cli, etc.)
-  getProviderModels: async (provider: string, full?: boolean): Promise<DynamicModelsResponse> => {
-    const url = `/api/llm-config/providers/${provider}/models` + (full ? '?full=true' : '')
+  getProviderModels: async (provider: string, full?: boolean, availableOnly?: boolean): Promise<DynamicModelsResponse> => {
+    const query = new URLSearchParams()
+    if (full) query.set('full', 'true')
+    if (availableOnly) query.set('available_only', 'true')
+    const suffix = query.size > 0 ? `?${query.toString()}` : ''
+    const url = `/api/llm-config/providers/${provider}/models${suffix}`
     const response = await llmConfigApi.get(url)
     return response.data
+  },
+
+  // Start an owner-only, allowlisted interactive setup command on the server.
+  startProviderSetup: async (
+    provider: string,
+    action: ProviderSetupAction,
+    cols?: number,
+    rows?: number,
+    workspacePath?: string,
+  ): Promise<ProviderSetupSession> => {
+    const response = await llmConfigApi.post('/api/provider-setup/sessions', {
+      provider,
+      action,
+      cols,
+      rows,
+      workspace_path: workspacePath,
+    })
+    return response.data.session
+  },
+
+  getProviderSetup: async (sessionId: string): Promise<ProviderSetupSession> => {
+    const response = await llmConfigApi.get(`/api/provider-setup/sessions/${encodeURIComponent(sessionId)}`)
+    return response.data.session
+  },
+
+  cancelProviderSetup: async (sessionId: string): Promise<void> => {
+    await llmConfigApi.delete(`/api/provider-setup/sessions/${encodeURIComponent(sessionId)}`)
+  },
+
+  getProviderSetupStreamUrl: (sessionId: string): string => {
+    const httpBase = getApiBaseUrl() || (typeof window !== 'undefined' ? window.location.origin : '')
+    const url = new URL(`/api/provider-setup/sessions/${encodeURIComponent(sessionId)}/stream`, httpBase.replace(/^http/i, 'ws'))
+    const token = getAuthToken()
+    if (token) url.searchParams.set('token', token)
+    return url.toString()
   },
 
   // Get delegation tier defaults from environment variables

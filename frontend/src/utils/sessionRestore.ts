@@ -8,6 +8,9 @@ import axios from 'axios'
 
 const TAG = '[SessionRestore]'
 
+// Fetch older turns only when the user requests them through history pagination.
+const INITIAL_HISTORY_TURNS = 20
+
 type RuntimeSessionState = {
   status: string
   hasRunningBackgroundAgents?: boolean
@@ -266,8 +269,8 @@ async function hydrateTabEventsFromChatHistory(sessionId: string, workspacePath?
   // has them, so restoreToolArgumentsFromConversation patches those back in
   // regardless of which path built the underlying events.
   const conversation = includeUiEvents
-    ? await agentApi.getChatHistoryResumeConversation(sessionId, workspacePath, 100, 0, true)
-    : await agentApi.getChatHistoryResumeConversation(sessionId, workspacePath)
+    ? await agentApi.getChatHistoryResumeConversation(sessionId, workspacePath, INITIAL_HISTORY_TURNS, 0, true)
+    : await agentApi.getChatHistoryResumeConversation(sessionId, workspacePath, INITIAL_HISTORY_TURNS)
   const rawEvents = conversationToRestoredEvents(conversation)
   const events = restoreToolArgumentsFromConversation(rawEvents, conversation)
 
@@ -378,9 +381,6 @@ export async function hydrateTabEvents(
       }
       if (response.last_processed_index !== undefined) {
         chatStore.setTabLastEventIndex(sessionId, response.last_processed_index)
-      }
-      if (response.has_more !== undefined) {
-        chatStore.setTabHasMoreOlderEvents(sessionId, response.has_more)
       }
     }
     return {

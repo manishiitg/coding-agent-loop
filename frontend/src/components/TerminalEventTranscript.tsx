@@ -358,12 +358,14 @@ const AssistantTranscriptMessage: React.FC<{ event: PollingEvent; content: strin
   )
 }
 
-function failureHints(payload: Record<string, unknown>): { code?: unknown; provider?: unknown; retryAt?: unknown } {
+function failureHints(payload: Record<string, unknown>): { code?: unknown; provider?: unknown; retryAt?: unknown; technicalDetails?: unknown } {
   const metadata = payload.metadata && typeof payload.metadata === 'object' ? payload.metadata as Record<string, unknown> : {}
+  const error = payload.error && typeof payload.error === 'object' ? payload.error as Record<string, unknown> : {}
   return {
-    code: payload.code ?? payload.error_kind ?? payload.kind ?? metadata.code ?? metadata.error_kind,
-    provider: payload.provider ?? metadata.provider,
-    retryAt: payload.retry_at ?? payload.retryAt ?? metadata.retry_at ?? metadata.retryAt,
+    code: payload.code ?? payload.error_kind ?? payload.kind ?? error.code ?? metadata.code ?? metadata.error_kind,
+    provider: payload.provider ?? error.provider ?? metadata.provider,
+    retryAt: payload.retry_at ?? payload.retryAt ?? error.retry_at ?? error.retryAt ?? metadata.retry_at ?? metadata.retryAt,
+    technicalDetails: payload.technical_details ?? payload.technicalDetails ?? error.technical_details ?? error.technicalDetails ?? metadata.technical_details ?? metadata.technicalDetails,
   }
 }
 
@@ -380,6 +382,16 @@ const TurnFailureMessage: React.FC<{ failure: ReturnType<typeof normalizeProduct
             {timestamp && <span className="ml-auto shrink-0 text-[11px] tabular-nums text-muted-foreground">{timestamp}</span>}
           </div>
           <p className="mt-1 text-[length:calc(13px*var(--chat-scale,1))] leading-relaxed text-muted-foreground">{failure.message}</p>
+          {failure.actionUrl && (
+            <a
+              href={failure.actionUrl}
+              target="_blank"
+              rel="noreferrer"
+              className="mt-2 inline-flex rounded-md border border-border px-2 py-1 text-xs font-medium text-foreground hover:bg-muted"
+            >
+              {failure.actionLabel || 'Open provider'}
+            </a>
+          )}
           {failure.retryable && onRetry && (
             <button
               type="button"
@@ -594,6 +606,14 @@ const ToolCallField: React.FC<{ label: string; value: string }> = ({ label, valu
 // while the agent is still reasoning; the toggle is the user's alone.
 const ThinkingBatch: React.FC<{ item: Extract<TranscriptItem, { kind: 'thinking' }>; live: boolean }> = ({ item, live }) => {
   const [expanded, toggle] = useDisclosure(`thinking:${item.key}`, true)
+
+  if (item.assistantUpdate) {
+    return (
+      <div data-testid="terminal-assistant-update" className="my-2 text-foreground">
+        <ConversationMarkdownRenderer content={item.text} framed={false} maxHeight="none" />
+      </div>
+    )
+  }
 
   return (
     <div data-testid="terminal-clear-thinking-batch" className="my-1">

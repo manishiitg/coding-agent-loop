@@ -42,17 +42,17 @@ Only pass `lock_code` when explicitly changing it. Learning write eligibility is
 - **`use_code_execution_mode`**: per-step override of the preset's code-execution toggle (nil = inherit).
 - **Model selection**: `execution_tier` (`high`/`medium`/`low`) maps to the workflow's tiered allocation; `execution_llm` / `validation_llm` pin a specific published model for that role. Prefer tiers over hard pins, and prefer leaving the tier unset over pinning it. Full framework: `read_skill(skills=[{"name":"builder-reference","path":"references/llm-selection.md"}])`.
 
-### Ops-owned decisions need a stated reason (PLAT-060)
+### Architecture-owned decisions need a stated reason (PLAT-060)
 
-Two fields are cost decisions owned by the `technical_review` model-tier or cost focus, and each **requires a
+Two fields are cost decisions owned by the `architecture_review` tier/model focus, and each **requires a
 paired reason — `update_step_config` rejects the change without it**:
 
 | Field | Required reason | The consequence the reason must acknowledge |
 |---|---|---|
-| `execution_tier` | `execution_tier_reason` | Pinning the tier **disables adaptive tiering** for the step — it stops promoting high→medium automatically after 3 stable runs |
+| `execution_tier` | `execution_tier_reason` | The configured tier remains in force until explicitly changed; run counts never change it |
 | `execution_llm` | `execution_llm_reason` | A pin **outranks `execution_tier` entirely** and will not follow provider-profile updates |
 
-Cite the owning `technical_review` finding id, the current state, and the evidence
+Cite the owning `architecture_review` finding id, the current state, and the evidence
 — and the `human_input_id` when the change was user-approved. Clearing a field
 clears its reason; clearing never requires one.
 

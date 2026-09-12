@@ -34,3 +34,38 @@ export function workflowTabsNeedingHydration<T extends HydratableTab>(
     getTabEvents(tab.sessionId).length === 0,
   )
 }
+
+/** Start the selected tab first, with at most two transcript requests in flight.
+ * Resolve when that tab settles; other tabs continue without blocking the view.
+ * Each failure is handled independently so one unavailable tab cannot stall others.
+ */
+export async function hydrateWorkflowTabsPrioritized<T extends HydratableTab>(
+  tabs: T[],
+  activeTabId: string | null,
+  hydrate: (tab: T) => Promise<void>,
+  onError: (tab: T, error: unknown) => void,
+): Promise<number> {
+  if (tabs.length === 0) return 0
+  const selected = tabs.find(tab => tab.tabId === activeTabId) ?? tabs[0]
+  const queue = [selected, ...tabs.filter(tab => tab !== selected)]
+  let finishSelected!: () => void
+  const selectedDone = new Promise<void>(resolve => { finishSelected = resolve })
+  let next = 0
+  const worker = async () => {
+    while (next < queue.length) {
+      const tab = queue[next++]
+      try {
+        await hydrate(tab)
+      } catch (error) {
+        onError(tab, error)
+      } finally {
+        if (tab === selected) finishSelected()
+      }
+    }
+  }
+  // The selected tab can finish before the other worker. Consume every worker's
+  // outcome even after this call returns; there must be no unhandled rejection.
+  void Promise.allSettled([worker(), worker()])
+  await selectedDone
+  return tabs.length
+}

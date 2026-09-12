@@ -16,6 +16,7 @@ export type ProviderType =
   | 'cursor-cli'
   | 'agy-cli'
   | 'pi-cli'
+  | 'muse-cli'
   | 'minimax'
   | 'minimax-coding-plan'
   | 'elevenlabs'
@@ -59,7 +60,7 @@ export const LLM_INTEGRATION_DISPLAY_INFO: Record<LLMIntegrationKind, LLMIntegra
   },
 }
 
-export const CODING_AGENT_PROVIDERS = new Set(['claude-code', 'codex-cli', 'cursor-cli', 'pi-cli'])
+export const CODING_AGENT_PROVIDERS = new Set(['claude-code', 'codex-cli', 'cursor-cli', 'pi-cli', 'muse-cli'])
 const AUDIO_PROVIDER_PROVIDERS = new Set(['elevenlabs', 'deepgram'])
 
 // Pi CLI routes to several different model backends via a `<backend>/<model>`
@@ -171,6 +172,11 @@ const PROVIDER_DISPLAY_INFO: Record<ProviderType, ProviderDisplayInfo> = {
     authDescription: 'Local CLI (Pi provider key)',
     colorClass: 'text-lime-700 dark:text-lime-300',
   },
+  'muse-cli': {
+    name: 'Muse',
+    authDescription: 'Local CLI (Meta login or API key)',
+    colorClass: 'text-orange-600 dark:text-orange-400',
+  },
   minimax: {
     name: 'MiniMax',
     authDescription: 'API Key',
@@ -197,6 +203,7 @@ export const PROVIDER_ORDER: ProviderType[] = [
   'codex-cli',
   'cursor-cli',
   'pi-cli',
+  'muse-cli',
   'claude-code',
   'bedrock',
   'openai',

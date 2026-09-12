@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { ArrowUpRight, Bot, CalendarClock, ChevronDown, ChevronRight, Code2, Loader2, MessageSquare, Paperclip, Trash2, UserRound, type LucideIcon } from 'lucide-react'
+import { ArrowUpRight, Bot, CalendarClock, ChevronDown, ChevronRight, Code2, Eye, Loader2, MessageSquare, Paperclip, Trash2, UserRound, type LucideIcon } from 'lucide-react'
 import { agentApi } from '../services/api'
 import { schedulerApi } from '../api/scheduler'
 import {
@@ -13,8 +13,10 @@ import {
 import { useChatStore } from '../stores/useChatStore'
 import { isScheduledChatHistorySession } from '../utils/chatHistoryOpenDisposition'
 import { chatHistoryWorkshopMode } from '../utils/chatHistoryWorkshopMode'
+import { chatHistoryRuntimeLabel, chatHistoryRuntimeShortLabel } from '../utils/chatHistoryRuntimeLabel'
 import { type ScheduleActivityItem } from '../utils/scheduleRunPresentation'
 import { ScheduleRunCard } from './ScheduleRunCard'
+import { ChatSessionIdCopyButton } from './ChatSessionIdCopyButton'
 import { ConversationMarkdownRenderer } from './ui/MarkdownRenderer'
 import {
   CHAT_HISTORY_CLEANUP_AGE_OPTIONS,
@@ -98,15 +100,25 @@ export function chatHistoryConversationPath(session: ChatHistorySession): string
   return `_users/${userId}/chat_history/${session.session_id}/conversation.json`
 }
 
-export function chatHistoryRuntimeLabel(session: ChatHistorySession): string | undefined {
-  const runtime = session.runtime
-  const provider = runtime?.provider?.trim()
-  if (!runtime || !provider) return undefined
+function ChatHistoryRuntimeBadge({ session }: { session: ChatHistorySession }) {
+  const fullLabel = chatHistoryRuntimeLabel(session)
+  const shortLabel = chatHistoryRuntimeShortLabel(session)
+  if (!fullLabel || !shortLabel) return null
 
-  const model = runtime.model_id?.trim()
-  if (model && model !== provider) return `${provider} · ${model}`
-  return provider
+  return (
+    <span
+      className="group/runtime inline-flex min-w-0 max-w-full items-center gap-1 rounded border border-border/70 bg-muted/30 px-1.5 py-0.5 text-[10px]"
+      title={`Coding agent and model: ${fullLabel}`}
+      aria-label={`Coding agent and model: ${fullLabel}`}
+    >
+      <Code2 className="h-3 w-3 shrink-0" />
+      <span className="whitespace-nowrap group-hover/runtime:hidden">{shortLabel}</span>
+      <span className="hidden max-w-64 truncate whitespace-nowrap group-hover/runtime:inline">{fullLabel}</span>
+    </span>
+  )
 }
+
+export { chatHistoryRuntimeLabel, chatHistoryRuntimeShortLabel } from '../utils/chatHistoryRuntimeLabel'
 
 function chatHistoryRuntimeTransport(session: ChatHistorySession): string {
   const runtime = session.runtime
@@ -832,6 +844,7 @@ export const PreviousChatHistoryPanel: React.FC<PreviousChatHistoryPanelProps> =
                       deletingRunIds={deletingSessionIds}
                       compact={compact}
                       showScheduleName
+                      showCopySessionId
                     />
                   </div>
                 ))}
@@ -903,15 +916,13 @@ export const PreviousChatHistoryPanel: React.FC<PreviousChatHistoryPanelProps> =
                           </span>
                         )}
                         {runtimeLabel && (
-                          <span className="inline-flex min-w-0 max-w-full items-center gap-1 rounded border border-border/70 bg-muted/30 px-1.5 py-0.5">
-                            <Code2 className="h-3 w-3 shrink-0" />
-                            <span className="truncate">{runtimeLabel}</span>
-                          </span>
+                          <ChatHistoryRuntimeBadge session={session} />
                         )}
                       </div>
                     </button>
 
                     <div className="flex shrink-0 items-center gap-1">
+                      <ChatSessionIdCopyButton sessionId={session.session_id} compact />
                       {canDelete && (
                         <button
                           type="button"
@@ -934,8 +945,13 @@ export const PreviousChatHistoryPanel: React.FC<PreviousChatHistoryPanelProps> =
                           {!compact && <span>{actionLabel}</span>}
                         </button>
                       ) : (
-                        <span className="inline-flex items-center rounded border border-border/70 bg-muted/30 px-2 py-1 text-[11px] font-medium text-muted-foreground">
-                          View only
+                        <span
+                          className="inline-flex items-center rounded border border-border/70 bg-muted/30 p-1 text-muted-foreground"
+                          title="View only"
+                          aria-label="View only"
+                        >
+                          <Eye className="h-3.5 w-3.5" />
+                          <span className="sr-only">View only</span>
                         </span>
                       )}
                     </div>

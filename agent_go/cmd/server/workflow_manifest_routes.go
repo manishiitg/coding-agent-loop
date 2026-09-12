@@ -771,3 +771,38 @@ func normalizeGmailConnectionIDs(values []string) []string {
 	}
 	return out
 }
+
+// workflowsReferencingMCPServer returns a display label (workflow Label, or
+// its workspace path if Label is empty) for every workflow visible to the
+// requesting user whose capabilities.selected_servers includes serverName.
+// Used by remove_mcp_server to warn about dangling references before/after
+// deleting a server from the account-wide config -- nothing else in that
+// path checks this, so without it a removed server silently breaks the next
+// run of any workflow that had it attached.
+func workflowsReferencingMCPServer(ctx context.Context, serverName string) []string {
+	discovered, err := DiscoverWorkflowManifests(ctx)
+	if err != nil {
+		log.Printf("[MCP] Failed to discover workflows while checking references to %q: %v", serverName, err)
+		return nil
+	}
+	discovered = filterWorkflowManifestsForUser(GetUserFromContext(ctx), discovered)
+
+	var affected []string
+	for _, wf := range discovered {
+		if wf.Manifest == nil {
+			continue
+		}
+		for _, selected := range wf.Manifest.Capabilities.SelectedServers {
+			if selected != serverName {
+				continue
+			}
+			label := strings.TrimSpace(wf.Manifest.Label)
+			if label == "" {
+				label = wf.WorkspacePath
+			}
+			affected = append(affected, label)
+			break
+		}
+	}
+	return affected
+}

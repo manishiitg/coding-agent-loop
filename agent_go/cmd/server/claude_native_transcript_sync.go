@@ -12,6 +12,7 @@ import (
 
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 	"github.com/manishiitg/multi-llm-provider-go/pkg/adapters/cursorcli"
+	"github.com/manishiitg/multi-llm-provider-go/pkg/adapters/musecli"
 	"github.com/manishiitg/multi-llm-provider-go/pkg/adapters/picli"
 	"github.com/manishiitg/multi-llm-provider-go/pkg/pathidentity"
 )
@@ -191,13 +192,14 @@ func claudeNativeTranscriptSyncSupported(raw []byte) bool {
 // nativeTranscriptSyncSupportedProvider: the coding CLIs whose on-disk
 // transcript can be read back -- Claude Code and Codex by readers in this
 // package (claude_native_transcript_sync.go, codex_native_transcript_sync.go),
-// Cursor and Pi by the adapters' own exported readers in
+// Cursor, Pi, and Muse by the adapters' own exported readers in
 // multi-llm-provider-go (cursorcli.ReadNativeTranscript,
-// picli.ReadNativeTranscript), since those formats (a sqlite blob store and
-// pi's session JSONL) are already parsed there for turn completion.
+// picli.ReadNativeTranscript, musecli.ReadNativeTranscript), since those
+// formats (a sqlite blob store and two session JSONL variants) are already
+// parsed there for turn completion.
 func nativeTranscriptSyncSupportedProvider(provider string) bool {
 	switch strings.ToLower(strings.TrimSpace(provider)) {
-	case "claude-code", "codex-cli", "cursor-cli", "pi-cli":
+	case "claude-code", "codex-cli", "cursor-cli", "pi-cli", "muse-cli":
 		return true
 	}
 	return false
@@ -272,6 +274,15 @@ func nativeTranscriptMessagesForRuntime(provider, nativeSessionID, workingDir st
 			return nil, time.Time{}, "", false, nil
 		}
 		transcript, found, err := picli.ReadNativeTranscript(nativeSessionID)
+		if err != nil || !found {
+			return nil, time.Time{}, "", false, err
+		}
+		return builderConversationMessagesFromLLMTypes(transcript.Messages), transcript.UpdatedAt, transcript.Path, true, nil
+	case "muse-cli":
+		if nativeSessionID == "" {
+			return nil, time.Time{}, "", false, nil
+		}
+		transcript, found, err := musecli.ReadNativeTranscript(nativeSessionID)
 		if err != nil || !found {
 			return nil, time.Time{}, "", false, err
 		}

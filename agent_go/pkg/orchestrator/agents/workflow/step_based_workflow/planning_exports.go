@@ -220,6 +220,9 @@ func PhaseChatSystemPrompt(phaseId string, templateVars map[string]string) strin
 		// EvaluationPlanJSON and EvaluationReportJSON are intentionally NOT injected —
 		// the agent reads them on demand via execute_shell_command.
 		tmpl = interactiveWorkshopSystemTemplate
+		if templateVars["WorkshopMode"] != "workshop" {
+			tmpl = interactiveRunSystemTemplate
+		}
 	}
 
 	var result strings.Builder

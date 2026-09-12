@@ -48,7 +48,6 @@ to `agent.NewLLMAgentWrapperWithTrace()`. The wrapper calls
 | ModelID | `req.LLMConfig.Primary.ModelID` | `llm.Config.ModelID` |
 | Temperature | `req.Temperature` | `llm.Config.Temperature` |
 | API Keys | `config/provider-api-keys.json` | `llm.Config.APIKeys` |
-| Fallbacks | `req.LLMConfig.Fallbacks[]` | `llm.Config.FallbackModels` |
 | Working Dir | `agentConfig.CodingAgentWorkingDir` | agent option → adapter option |
 | Session ID | HTTP `X-Session-ID` | `agentConfig.SessionID` → `WithSessionID()` |
 | Transport | `agentConfig.ClaudeCodeTransport` | `llm.Config.ClaudeCodeTransport` |
@@ -94,9 +93,9 @@ Every config field set in the HTTP request must arrive at the adapter's
 `GenerateContent` call with the correct value.
 
 **Proof required:** provider→adapter routing, modelID→`--model`,
-Temperature, API key, Working dir, Fallback models all propagate.
+Temperature, API key, and working directory all propagate. Retired backup-chain fields are discarded.
 
-**Risk areas:** provider enum mapping, cross-provider fallback parsing,
+**Risk areas:** provider enum mapping, selected-model preservation,
 `CodingAgentWorkingDir` not wired through for all providers.
 
 ### IC-2: Streaming Chunk Flow
@@ -177,11 +176,12 @@ auto-routing/composer/etc.) must be available downstream.
 **Risk:** CLI doesn't report → fallback to requested model ID, accept it
 may be wrong.
 
-### IC-6: Fallback Chain
+### IC-6: Selected Model Retries
 
-When primary model fails, agent must try fallback models in order. Cross-
-provider fallback (e.g. `openai/gpt-5.5` → `anthropic/claude-opus-4-7`)
-must instantiate a different adapter, not just swap model IDs.
+A failed request may retry only the selected model and provider. Initialization,
+authentication, quota, and unsupported-provider failures must never switch to
+another model, provider, or coding agent. Retired backup-chain settings are
+ignored on legacy input and omitted from saved configuration and event schemas.
 
 ### IC-7: Error Propagation
 
@@ -431,7 +431,7 @@ matrix test fails loudly with which provider broke.
 | IC-3 | Token usage & cost | B3 → B1 | adapter + bridge + ledger + HTTP |
 | IC-4 | Session ID & resume | B3 → B2 → B3 | mcpagent |
 | IC-5 | Model metadata | B3 → B1 | mcpagent + cost ledger (effective) |
-| IC-6 | Fallback chain | B2 | mcpagent |
+| IC-6 | Selected model retries | B2 | mcpagent |
 | IC-7 | Error propagation | B3 → B1 | mcpagent + coding-agent-loop |
 | IC-8 | Cancellation propagation | B1 → B3 | coding-agent-loop |
 | IC-9 | Multi-turn tool context | B2 → B3 | mcpagent |
@@ -475,7 +475,7 @@ Each contract area should be verified for all supported providers.
 
 **P2 (important but not urgent):**
 - IC-5 Model metadata
-- IC-6 Fallback chain
+- IC-6 Selected model retries
 - IC-9 Multi-turn tool context
 - IC-10 MCP bridge propagation
 - **Inspector contract** (debug-only, opt-in)

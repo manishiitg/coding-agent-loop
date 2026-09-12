@@ -76,7 +76,7 @@ var allKinds = map[string]kindMeta{
 	// Reviews — recommend, don't apply; persist their typed result through Pulse.
 	"review-artifact-drift": {Group: "review", Description: "Manual Plan Drift: check affected compatibility and prompt quality, apply bounded safe repairs through the scheduled candidate/receipt contract, and persist remaining dependency findings", Modes: []string{"workshop"}},
 	"ops-review":            {Group: "review", Description: "Focused read-only Technical Review: investigate material outcome, reliability, efficiency, or structural concerns; use relevant checks and ignore harmless recovered tool errors", Modes: []string{"workshop"}},
-	"strategy-auditor":      {Group: "review", Description: "Open-ended Workflow Strategy Advisor: assess usefulness, challenge assumptions, explore better approaches, and create human decision proposals without changing the workflow", Modes: []string{"workshop"}},
+	"strategy-auditor":      {Group: "review", Description: "Open-ended Workflow Strategy Advisor: assess outcome metrics, propose measurement improvements, challenge assumptions, explore better approaches, and create human decision proposals without changing the workflow", Modes: []string{"workshop"}},
 
 	// Knowledgebase maintenance — applies targeted or cross-step KB cleanup
 	"improve-knowledge": {Group: "kb", Description: "Read-only knowledgebase/notes health review with targeted or cross-step fixer recommendations", Modes: []string{"workshop"}},
@@ -88,8 +88,8 @@ var allKinds = map[string]kindMeta{
 	"improve-database": {Group: "db", Description: "Read-only db/db.sqlite contract, schema, integrity, and report-compatibility review", Modes: []string{"workshop"}},
 
 	// Improvements — evidence-driven reliability and strategy flows
-	"setup-goals":         {Group: "improve", AliasOf: "define-success", Description: "Set up outcome goals, primary and supporting metrics, collection and targets for new or existing workflows", Modes: []string{"workshop"}},
-	"define-success":      {Group: "improve", Description: "Set up outcome goals and measurable progress; also available as setup-goals", Modes: []string{"workshop"}},
+	"setup-goals":         {Group: "improve", AliasOf: "define-success", Description: "Set up primary and secondary outcome goals, primary and supporting metrics, collection and targets for new or existing workflows", Modes: []string{"workshop"}},
+	"define-success":      {Group: "improve", Description: "Set up primary and secondary outcome goals and measurable progress; also available as setup-goals", Modes: []string{"workshop"}},
 	"improve-evaluation":  {Group: "improve", Description: "Read-only evaluation coverage and correctness review with fixer recommendations", Modes: []string{"workshop"}},
 	"engineering-review":  {Group: "improve", Description: "Read-only Technical Review phase: choose useful investigations, persist material findings, and leave bounded repairs to an explicitly supplied Fix phase", Modes: []string{"workshop"}},
 	"pulse-fixer":         {Group: "improve", Description: "Apply reviewed bounded repairs with proportional immediate checks; close applied fixes and reopen only on reproduction", Modes: []string{"workshop"}},
@@ -136,7 +136,7 @@ var referenceKinds = map[string]kindMeta{
 	"pulse-bug-review":      {Group: "system", Description: "The Technical Review runtime/logic evidence pack: Exploratory QA behavioral-contract and risk-matrix method, control-path reachability checks (wrong_store_write / shadow_store_drift / dead_configuration), observable execution-trace review, and finding classifications (correctness_bug, efficiency_or_coaching, no_issue, insufficient_evidence). Gate decides whether technical_review is due and records that in the durable worklist. Load when the selected technical focus needs runtime or logic evidence.", Modes: []string{"workshop"}},
 	"technical-review":      {Group: "system", Description: "Exception-driven QA review and bounded workflow repair with durable receipts; general optimization belongs to Architecture.", Modes: []string{"workshop"}},
 	"architecture-review":   {Group: "system", Description: "Improve workflow construction: prompts, orchestration, scripts, learning, KB, DB, reports and efficiency. Research and propose measurable improvements without editing implementation.", Modes: []string{"workshop"}},
-	"strategy-auditor":      {Group: "system", Description: "Shared Workflow Strategy Advisor contract: investigate freely within and beyond the current approach, use optional coverage lenses, distinguish evidence from hypotheses, and route actionable proposals to human decisions.", Modes: []string{"workshop"}},
+	"strategy-auditor":      {Group: "system", Description: "Shared Workflow Strategy Advisor contract: improve outcomes through trustworthy metrics, propose missing or inadequate measurements, investigate freely within and beyond the current approach, distinguish evidence from hypotheses, and route actionable proposals to human decisions.", Modes: []string{"workshop"}},
 	"fix-verification":      {Group: "system", Description: "Proportional immediate checks for bounded repairs. Record what actually passed; changed_unverified still closes an applied fix when stronger runtime proof is unavailable. Reopen only on reproduction, with no future-run verification queue. Load before applying fixes.", Modes: []string{"workshop"}},
 	"message-sequence":      {Group: "system", Description: "Message-sequence patterns — when same-context ordered turns should share one conversation, route patterns (stateful specialist, test/fix loop, maker+reviewer, panel, clean-room retry, HITL re-entry, scripted conversation), and single-step quality patterns (self-validation/interrogation gate, compute-then-reason, citation/grounding gate, self-healing script). Load when multiple regular steps may collapse into message_sequence, when using message_sequence as a todo_task route, or when a standalone step should self-check its own work.", Modes: []string{"workshop"}},
 	"routing":               {Group: "system", Description: "Routing step design: when to use routing vs todo_task/message_sequence/human_input, deterministic route_selection.json contract, route_selections for builder-selected fixed branches, route structure (route_id/condition/next_step_id/default_route_id), anti-patterns. Routing is now the \"route\" (major sub-workflow fork) concept; for a small in-flow decision use a branch step instead.", Modes: []string{"workshop"}},
@@ -157,7 +157,7 @@ var referenceKinds = map[string]kindMeta{
 	"llm-provider-config":   {Group: "system", Description: "Model Library and provider-auth management for multi-agent chat and workflow workshop: discover provider models, validate candidates, optionally save reusable provider/model/options configurations, preserve reasoning_effort, and never read or edit config/ files directly. Load when the user asks which LLMs exist, wants a reusable saved configuration, or needs provider auth.", Modes: []string{"multi-agent", "workshop"}},
 	"llm-selection":         {Group: "system", Description: "Choosing the LLM that runs workflow work: provider-profile vs explicit Builder/Pulse/high/medium/low roles via set_workflow_llm_config, per-step overrides (execution_tier, execution_llm, validation_llm), precedence rules, cost review tools, and provider auth. Load when picking, pinning, or changing which model executes a workflow step (not media generation — see workspace-media-tools for that).", Modes: []string{"workshop"}},
 	"skill-management":      {Group: "system", Description: "Install skills and wire them into workflows: find (list_skills/search_skills), install (install_skill/import_skill), select for workflow/builder context (update_workflow_config add_skills), enable at runtime per step (update_step_config enabled_skills), the no-cascade attachment model, learnings/_global/SKILL.md as shared-know-how home, remove/uninstall, and troubleshooting. Load before installing a skill or wiring skills onto a workflow or step.", Modes: []string{"multi-agent", "workshop"}},
-	"integration-discovery": {Group: "system", Description: "How to connect a third-party service (\"I want to use ClickUp/Notion/Stripe in this workflow\"): check three avenues in order — CLI first (token-efficient, preferred), then a skill wrapping it, then MCP last — using search_mcp_catalog, search_skills, and execute_shell_command/web search for CLI discovery. Covers the preference order, why, and how to report findings and help the user connect whichever fits. Load whenever a user asks to integrate or connect a new service/tool.", Modes: []string{"multi-agent", "workshop"}, Tools: []string{"search_mcp_catalog", "search_skills", "install_skill", "add_mcp_server"}},
+	"integration-discovery": {Group: "system", Description: "Connect a third-party service using CLI, skills or MCP. Honor explicit MCP requests. Search our catalog, GitHub and the official MCP Registry; fall back to internet search when no suitable server is found. Verify provider documentation, prefer direct endpoints, explain intermediaries before authorization, and confirm discovery after installation. Load whenever a user asks to integrate or connect a service/tool.", Modes: []string{"multi-agent", "workshop"}, Tools: []string{"search_mcp_catalog", "search_skills", "install_skill", "install_mcp_server", "add_mcp_server"}},
 
 	// Multi-agent and Workshop reference docs for secret management. Run can
 	// inspect available secret names but cannot create, replace, or delete them.
@@ -463,6 +463,10 @@ func ReferenceKindNames() []string {
 //
 // An empty mode returns nil (no skill to attach).
 func BuildSystemToolsSkill(mode string) *llmtypes.Skill {
+	return buildSystemToolsSkillWithMCP(mode, true)
+}
+
+func buildSystemToolsSkillWithMCP(mode string, mcpManagement bool) *llmtypes.Skill {
 	if strings.TrimSpace(mode) == "" {
 		return nil
 	}
@@ -487,6 +491,9 @@ func BuildSystemToolsSkill(mode string) *llmtypes.Skill {
 
 	configAccess := buildConfigurationAccessGuidance(mode)
 	referenceExamples := "`pulse-gate` for Pulse Gate, `pulse-review-fixer` for review/fix work, `code-authoring` before authoring `main.py`, `llm-selection` before changing workflow models, `integration-discovery` before connecting a new third-party service/MCP server, `browser-usage` before driving a browser or troubleshooting CDP, or `gmail-connection-scopes` before touching a Gmail/Workspace connection's permissions"
+	if !mcpManagement {
+		referenceExamples = strings.ReplaceAll(referenceExamples, "`integration-discovery` before connecting a new third-party service/MCP server, ", "")
+	}
 	proceduralGuidance := "- `get_workflow_command_guidance(kind, focus?)` — canonical procedural flows (design-plan, improve-evaluation, strategy-auditor, define-success, etc.). The returned text is your instructions for that turn; follow it verbatim.\n"
 	if strings.EqualFold(strings.TrimSpace(mode), "run") {
 		referenceExamples = "`runtime-context` before answering from workflow state, `running-steps` before execution, or `human-in-the-loop` when work needs a user decision"

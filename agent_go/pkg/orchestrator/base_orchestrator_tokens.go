@@ -17,6 +17,7 @@ import (
 	"github.com/manishiitg/multi-llm-provider-go/pkg/adapters/claudecode"
 	"github.com/manishiitg/multi-llm-provider-go/pkg/adapters/codexcli"
 	"github.com/manishiitg/multi-llm-provider-go/pkg/adapters/cursorcli"
+	"github.com/manishiitg/multi-llm-provider-go/pkg/adapters/musecli"
 	"github.com/manishiitg/multi-llm-provider-go/pkg/adapters/openai"
 	"github.com/manishiitg/multi-llm-provider-go/pkg/adapters/picli"
 	"github.com/manishiitg/multi-llm-provider-go/pkg/adapters/vertex"
@@ -78,6 +79,8 @@ func getModelMetadata(provider, modelID string) (*llmtypes.ModelMetadata, error)
 		return cursorcli.NewCursorCLIAdapter("", resolvedModelID, nil).GetModelMetadata(resolvedModelID)
 	case "pi-cli":
 		return picli.NewPiCLIAdapter("", resolvedModelID, nil).GetModelMetadata(resolvedModelID)
+	case "muse-cli":
+		return musecli.NewMuseCLIAdapter("", resolvedModelID, nil).GetModelMetadata(resolvedModelID)
 	default:
 		return nil, fmt.Errorf("unsupported provider: %s", provider)
 	}

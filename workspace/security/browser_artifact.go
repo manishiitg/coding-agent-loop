@@ -10,11 +10,35 @@ import (
 )
 
 const BrowserArtifactStagingDirName = "agentworks-browser-artifacts"
+const browserStagingNamespaceEnv = "AGENTWORKS_BROWSER_STAGING_NAMESPACE"
 
 // BrowserArtifactStagingDir is the only host directory from which the trusted
 // workspace server will finalize browser-generated artifacts.
 func BrowserArtifactStagingDir() string {
-	return filepath.Join(string(filepath.Separator), "tmp", BrowserArtifactStagingDirName)
+	return filepath.Join(string(filepath.Separator), "tmp", browserStagingDirName(BrowserArtifactStagingDirName))
+}
+
+func browserStagingDirName(base string) string {
+	namespace := strings.ToLower(strings.TrimSpace(os.Getenv(browserStagingNamespaceEnv)))
+	if namespace == "" {
+		return base
+	}
+	var safe strings.Builder
+	for _, char := range namespace {
+		if (char >= 'a' && char <= 'z') || (char >= '0' && char <= '9') || char == '-' || char == '_' {
+			safe.WriteRune(char)
+		} else if safe.Len() > 0 && !strings.HasSuffix(safe.String(), "-") {
+			safe.WriteByte('-')
+		}
+		if safe.Len() >= 48 {
+			break
+		}
+	}
+	qualified := strings.Trim(safe.String(), "-_")
+	if qualified == "" {
+		return base
+	}
+	return base + "-" + qualified
 }
 
 // PrepareBrowserArtifactStaging creates and validates the one shared staging

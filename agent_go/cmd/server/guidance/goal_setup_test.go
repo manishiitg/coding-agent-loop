@@ -11,7 +11,7 @@ func TestGoalSetupSharesCanonicalMeasurementFlow(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		for _, required := range []string{"configure_goal_metrics", "record_goal_observations", "one or more primary metrics", "supports", "goal_id", "Never force or execute a split", "backfill", "pulse_enabled=true"} {
+		for _, required := range []string{"configure_goal_metrics", "record_goal_observations", "one or more primary metrics", "supports", "goal_id", "Never force or execute a split", "backfill", "pulse_enabled=true", "### Primary goals", "### Secondary goals", "Goal priority is independent of metric role", "never infer", "quietly demote or drop"} {
 			if !strings.Contains(text, required) {
 				t.Errorf("%s missing %s", kind, required)
 			}

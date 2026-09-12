@@ -1,5 +1,6 @@
+import { sessionStreamingState, type SessionActivitySnapshot } from '../utils/sessionStreamingState'
 import { isForegroundSessionEvent } from '../../shared/session/foreground'
-import { useEffect, useRef, useCallback, forwardRef, useImperativeHandle, useMemo, useState, type ComponentType, type ForwardedRef, type ReactNode } from 'react'
+import { useEffect, useRef, useCallback, forwardRef, useImperativeHandle, useMemo, useState, lazy, Suspense, type ComponentType, type ForwardedRef, type ReactNode } from 'react'
 import { normalizeEventViewMode } from '../stores/useChatStore'
 import { intermediateUpdateFromTranscriptChunk } from '../utils/transcriptChunkUpdates'
 import { withLiveInputReceipt } from '../utils/liveInputReceipt'
@@ -16,12 +17,14 @@ import { agentApi, resetSessionId, getSessionId } from '../services/api'
 import type { PollingEvent, ExtendedLLMConfiguration, SSEEventMessage, SSEStatusMessage, ExecutionOptions } from '../services/api-types'
 import type { AgentMode } from '../stores/types'
 import { ChatInput } from './ChatInput'
+import { SessionStopButton } from './SessionStopButton'
 import { TerminalEventTranscript } from './TerminalEventTranscript'
 import { MainAgentTerminal } from './MainAgentTerminal'
 import { WorkflowModeHandler, type WorkflowModeHandlerRef } from './workflow'
 import { useWorkspaceStore } from '../stores/useWorkspaceStore'
 import { useWorkflowStore } from '../stores/useWorkflowStore'
 import { useAppStore, useLLMStore, useMCPStore, useChatStore, useGlobalPresetStore } from '../stores'
+import { useCapabilitiesStore } from '../stores/useCapabilitiesStore'
 import { useModeStore, type ModeCategory } from '../stores/useModeStore'
 import { PreviousChatHistoryPanel } from './PreviousChatHistoryPanel'
 import { resolveChatSurface, resolveWorkflowChatSurface } from './resolveChatSurface'
@@ -50,6 +53,7 @@ import { shouldKeepWorkflowSessionSubscribed } from '../utils/workflowSessionSub
 import { activateTab } from '../utils/activateTab'
 import { selectWorkflowPreset } from '../utils/workflowNavigation'
 import { ProductChatSurface } from '../platform/chat/ProductChatSurface'
+import { submissionFailure } from '../platform/chat/submissionFailure'
 import { WORKFLOW_LOG_REFRESH_EVENT } from './workflow/workflowEvents'
 import { decisionMutationNeedsRefresh } from '../utils/decisionRefresh'
 
@@ -65,6 +69,15 @@ const STALE_STREAMING_RECOVERY_GRACE_MS = 10000
 // than probing the internal tmux terminal inventory.
 const RESUME_SETTLE_MS = 10000
 const STREAMING_EVENT_TYPES = new Set(['streaming_start', 'streaming_chunk', 'streaming_end'])
+// Terminal inspection (the child/step terminal rail) is developer diagnostics,
+// not product navigation: it stays behind the server's explicit
+// AGENTWORKS_RUNTIME_DEBUG opt-in (run_server_with_logging.sh
+// --enable-chat-terminal-debugs), reported back through GET /api/capabilities
+// as runtime_debug. Restored 2026-09-11 -- this panel existed before
+// 07ec24c62 ("Keep main tmux available without child terminal rail") dropped
+// its wiring from ChatArea while leaving the component, the server capability
+// flag, and the server-side diagnostic endpoints themselves fully intact.
+const RuntimeDiagnosticsPanel = lazy(() => import('./TerminalCenter').then(module => ({ default: module.TerminalCenter })))
 
 type RuntimeEventScope = {
   kind: 'session' | 'delegation' | 'workshop'
@@ -169,11 +182,7 @@ function getDisplaySafeUserMessageContent(content: string): string {
 }
 
 function createSubmissionErrorEvent(sessionId: string, error: unknown): PollingEvent {
-  const message = typeof error === 'string'
-    ? error
-    : error instanceof Error
-      ? error.message
-      : 'The request could not be started.'
+  const failure = submissionFailure(error)
   return {
     id: `conversation-error-${globalThis.crypto.randomUUID()}`,
     type: 'conversation_error',
@@ -181,7 +190,12 @@ function createSubmissionErrorEvent(sessionId: string, error: unknown): PollingE
     session_id: sessionId,
     data: {
       type: 'conversation_error',
-      data: { error: message },
+      data: {
+        error: failure.message,
+        code: failure.code,
+        provider: failure.provider,
+        technical_details: failure.technicalDetails,
+      },
     } as PollingEvent['data'],
   }
 }
@@ -700,7 +714,9 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
   // (not when any other session gets events)
   const activeSessionId = activeTab?.sessionId
   const activeEventViewMode = normalizeEventViewMode(activeTab?.viewMode)
+  const serverRuntimeDiagnosticsEnabled = useCapabilitiesStore(state => state.capabilities?.runtime_debug === true)
   const showMainTerminal = activeEventViewMode === 'terminal'
+  const showRuntimeDiagnostics = serverRuntimeDiagnosticsEnabled && showMainTerminal
 
   // processEventsResponse runs for every polled session and does not carry
   // activeSessionId in its dependency array, so reading it through a ref keeps
@@ -1510,7 +1526,7 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
   // Takes an events response (same shape from SSE or REST) and a tab, then processes
   // session status, streaming chunks, event filtering, and stores events.
   const processEventsResponse = useCallback((
-    response: { events: PollingEvent[]; session_status?: string; last_processed_index?: number; has_more?: boolean; has_running_background_agents?: boolean; is_synthetic_turn?: boolean; can_steer?: boolean; session_id?: string },
+    response: SessionActivitySnapshot & { events: PollingEvent[]; session_status?: string; last_processed_index?: number; has_more?: boolean; has_running_background_agents?: boolean; is_synthetic_turn?: boolean; can_steer?: boolean; session_id?: string },
     sessionId: string,
     tab: ChatTab | null
   ) => {
@@ -1524,12 +1540,13 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
       tab?.metadata?.presetQueryId === useGlobalPresetStore.getState().activePresetIds.workflow
 
     // --- Session status handling ---
-    const sessionStatus = response.session_status
+    const activity = sessionStreamingState(response)
+    const sessionStatus = activity.status
     if (tab && sessionStatus) {
-      const hasBgAgents = response.has_running_background_agents ?? false
-      const isSyntheticTurn = response.is_synthetic_turn ?? false
-      const canSteer = response.can_steer ?? false
-      const isForegroundStreaming = sessionStatus === 'running' && !isSyntheticTurn && (!hasBgAgents || canSteer)
+      const hasBgAgents = activity.hasRunningBgAgents
+      const isSyntheticTurn = activity.isSyntheticTurn
+      const canSteer = activity.canSteer
+      const isForegroundStreaming = activity.isStreaming
       if (sessionStatus === 'completed' || sessionStatus === 'error') {
         if (hasBgAgents) {
           chatStore.setTabCompleted(tab.tabId, false)
@@ -1558,10 +1575,7 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
       // Only the session the user is actually viewing may drive the app-wide
       // indicators below. They are globals, and responses arrive here for every
       // polled session — see sessionOwnsGlobalChatIndicators.
-      const hasBgAgents = response.has_running_background_agents ?? false
-      const isSyntheticTurn = response.is_synthetic_turn ?? false
-      const canSteer = response.can_steer ?? false
-      const isForegroundStreaming = sessionStatus === 'running' && !isSyntheticTurn && (!hasBgAgents || canSteer)
+      const isForegroundStreaming = activity.isStreaming
       if (sessionStatus === 'completed' || sessionStatus === 'error') {
         setIsStreaming(false)
         setIsCompleted(true)
@@ -1974,6 +1988,8 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
         {
           events: nonStreamingEvents,
           session_status: msg.session_status,
+          runtime_state: msg.runtime_state,
+          display_status: msg.display_status,
           last_processed_index: msg.last_processed_index,
           has_more: msgAny.has_more as boolean | undefined,
           has_running_background_agents: msg.has_running_background_agents,
@@ -2218,11 +2234,7 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
         const freshStore = useChatStore.getState()
         const freshTab = Object.values(freshStore.chatTabs).find(candidate => candidate.sessionId === sessionId) || null
         processEventsResponse(response, sessionId, freshTab)
-        const terminalStatus = response.session_status === 'completed' ||
-          response.session_status === 'error' ||
-          response.session_status === 'stopped' ||
-          response.session_status === 'inactive'
-        shouldContinue = !(terminalStatus && !response.has_running_background_agents)
+        shouldContinue = sessionStreamingState(response).isActive
       } catch (error) {
         logger.debug('ChatArea', `Foreground event catch-up failed for ${sessionId}; retrying`, error)
       }
@@ -3645,7 +3657,15 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
                 in explicitly enabled runtime diagnostics. */}
             {visibleWorkflowSurface === 'active' && activeTab?.sessionId && (
               showMainTerminal
-                ? <MainAgentTerminal sessionId={activeTab.sessionId} onUnavailable={() => useChatStore.getState().setTabViewMode(activeTab.tabId, 'formatted')} />
+                ? (
+                    showRuntimeDiagnostics
+                      ? (
+                          <Suspense fallback={<div className="p-4 text-sm text-neutral-500">Loading runtime diagnostics…</div>}>
+                            <RuntimeDiagnosticsPanel currentSessionId={activeTab.sessionId} compact={false} />
+                          </Suspense>
+                        )
+                      : <MainAgentTerminal sessionId={activeTab.sessionId} onUnavailable={() => useChatStore.getState().setTabViewMode(activeTab.tabId, 'formatted')} />
+                  )
                 : <TerminalEventTranscript
                     scrollKey={activeTab.tabId}
                     events={transcriptEvents}
@@ -3701,7 +3721,15 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
                 is available only through the explicit developer flag. */}
             {multiAgentSurface === 'active' && activeTab?.sessionId && (
               showMainTerminal
-                ? <MainAgentTerminal sessionId={activeTab.sessionId} onUnavailable={() => useChatStore.getState().setTabViewMode(activeTab.tabId, 'formatted')} />
+                ? (
+                    showRuntimeDiagnostics
+                      ? (
+                          <Suspense fallback={<div className="p-4 text-sm text-neutral-500">Loading runtime diagnostics…</div>}>
+                            <RuntimeDiagnosticsPanel currentSessionId={activeTab.sessionId} compact={false} />
+                          </Suspense>
+                        )
+                      : <MainAgentTerminal sessionId={activeTab.sessionId} onUnavailable={() => useChatStore.getState().setTabViewMode(activeTab.tabId, 'formatted')} />
+                  )
                 : <TerminalEventTranscript
                     scrollKey={activeTab.tabId}
                     events={transcriptEvents}
@@ -3738,6 +3766,12 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
           showNewChatAction={showNewChatAction}
           placeholderOverride={composerPlaceholder}
         />
+      )}
+
+      {/* Scheduled/bot runs have no composer, so keep their stop action
+          pinned below the transcript in a separate footer. */}
+      {isReadOnlyRunView && activeTab && (
+        <SessionStopButton key={activeTab.tabId} tabId={activeTab.tabId} footer />
       )}
 
       {/* Toasts render from ToastHost at the app root, so they also appear on

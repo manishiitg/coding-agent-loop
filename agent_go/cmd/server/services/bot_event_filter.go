@@ -51,6 +51,7 @@ type BotEventFilter struct {
 	pendingDelegations  int
 	awaitingInput       bool   // set on any blocking event, cleared externally
 	completionReceived  bool   // set when unified_completion, agent_end, or conversation_end arrives
+	sessionFailed       bool   // authoritative main-level error completion
 	sessionDone         bool   // idempotency guard — ensures onSessionDone fires at most once
 	workflowStepStarted bool   // true once a workflow step breadcrumb was sent
 	baseHierarchy       int    // the minimum hierarchy level seen — treated as "main" level
@@ -58,6 +59,7 @@ type BotEventFilter struct {
 	lastActivity        string // human-friendly description of current activity
 	toolCallCount       int    // total tool calls seen (for progress feel)
 	mainTextSent        bool   // true once we've sent main-level text via llm_generation_end
+	lastErrorText       string // prevents duplicate error/completion notifications
 	lastMainText        string // last main-level text sent to the bot thread this turn
 	sendFullDetails     bool   // opt-in: forward workflow runtime chatter to bot channel
 	onBlockingEvent     BlockingEventCallback
@@ -109,11 +111,20 @@ func (f *BotEventFilter) SetSendFullDetails(enabled bool) {
 func (f *BotEventFilter) ResetForNewTurn() {
 	f.mu.Lock()
 	f.sessionDone = false
+	f.sessionFailed = false
 	f.completionReceived = false
 	f.mainTextSent = false
 	f.lastMainText = ""
+	f.lastErrorText = ""
 	f.mu.Unlock()
 	log.Printf("[BOT_FILTER] Reset for new turn")
+}
+
+// SessionFailed reports whether the current turn ended with a terminal error.
+func (f *BotEventFilter) SessionFailed() bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.sessionFailed
 }
 
 // HasSentMainText reports whether this turn already forwarded a main builder
@@ -341,9 +352,24 @@ func (f *BotEventFilter) processEvent(ctx context.Context, event BotEventData) b
 		f.checkSessionDone("delegation_end")
 
 	case "unified_completion":
-		// Skip server error completions (from failed follow-ups, etc.)
+		// A terminal failure must report its error and release the turn, even
+		// without a separate error event. A nested failure does not finish its parent.
 		if uc, ok := event.Data.Data.(*events.UnifiedCompletionEvent); ok && uc.Status == "error" {
-			log.Printf("[BOT_FILTER] unified_completion: skipping error completion (agent_type=%s)", uc.AgentType)
+			if f.isMainLevel(event) {
+				message := strings.TrimSpace(uc.Error)
+				if message == "" {
+					message = "The previous turn failed."
+				}
+				sent := f.sendErrorMessage(ctx, "Error: "+message)
+				f.mu.Lock()
+				f.sessionFailed = true
+				f.completionReceived = true
+				f.awaitingInput = false
+				f.pendingDelegations = 0
+				f.mu.Unlock()
+				f.checkSessionDone("unified_completion_error")
+				return sent
+			}
 			return false
 		}
 		sent := false
@@ -424,8 +450,7 @@ func (f *BotEventFilter) processEvent(ctx context.Context, event BotEventData) b
 
 	case "agent_error", "conversation_error", "orchestrator_agent_error":
 		if kind := f.classifyBotNotification(event); kind == BotNotifyError {
-			f.sendMessage(ctx, f.formatErrorEvent(event))
-			return true
+			return f.sendErrorMessage(ctx, f.formatErrorEvent(event))
 		}
 	}
 	return false
@@ -1018,6 +1043,18 @@ func (f *BotEventFilter) getDelegationName(event BotEventData) string {
 		name = name[:50] + "…"
 	}
 	return name
+}
+
+func (f *BotEventFilter) sendErrorMessage(ctx context.Context, message string) bool {
+	f.mu.Lock()
+	if f.lastErrorText == message {
+		f.mu.Unlock()
+		return false
+	}
+	f.lastErrorText = message
+	f.mu.Unlock()
+	f.sendMessage(ctx, message)
+	return true
 }
 
 // formatErrorEvent renders an error event for display in the bot thread.

@@ -59,22 +59,11 @@ func TestValidateStepLLMConfigAcceptsRealPairings(t *testing.T) {
 	}
 }
 
-// A broken fallback is otherwise only discovered once the primary has already
-// failed — the worst possible moment to learn the safety net is also broken.
-func TestCollectStepLLMConfigsIncludesFallbacks(t *testing.T) {
-	cfg := &AgentLLMConfig{
-		Provider: "anthropic", ModelID: "claude-sonnet-5",
-		Fallbacks: []AgentLLMFallback{{Provider: "claude-code", ModelID: "claude-code"}},
-	}
+func TestCollectStepLLMConfigsUsesSelectedModel(t *testing.T) {
+	cfg := &AgentLLMConfig{Provider: "anthropic", ModelID: "claude-sonnet-5"}
 	got := collectStepLLMConfigsForValidation(cfg)
-	if len(got) != 2 {
-		t.Fatalf("expected primary + 1 fallback, got %d", len(got))
-	}
-	if got[1].label != "execution_llm.fallbacks[0]" {
-		t.Fatalf("fallback label should locate it precisely, got %q", got[1].label)
-	}
-	if validateStepLLMConfig(got[1].label, got[1].publishedID, got[1].provider, got[1].modelID) == "" {
-		t.Fatal("a malformed fallback must be caught too")
+	if len(got) != 1 || got[0].label != "execution_llm" || got[0].provider != cfg.Provider || got[0].modelID != cfg.ModelID {
+		t.Fatalf("expected only the selected model, got %+v", got)
 	}
 }
 

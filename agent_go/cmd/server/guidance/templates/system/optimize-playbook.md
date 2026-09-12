@@ -117,8 +117,8 @@ For steps in scripted mode, the saved Python script at `<script-dir>/main.py` is
 - If diagnosis revealed the fix (e.g., a selector changed), apply it directly. If the issue is complex, use your live MCP access to prototype the fix interactively before patching.
 
 **3. Test** — Run the patched script:
-- Use `execute_step(step_id, group_name, fast_path_only=true)` to test the fix directly — this runs ONLY the saved script with no LLM fallback, so you see exactly what your patch does
-- Or use `execute_step(step_id, group_name)` to run with normal LLM fallback if the script fails
+- Use `execute_step(step_id, group_name, fast_path_only=true)` to test the fix directly — this runs ONLY the saved script without invoking the step agent, so you see exactly what your patch does
+- Or use `execute_step(step_id, group_name)` to let the selected step agent handle a script failure
 - After running, use `agent_browser(command="snapshot", args=["-i"])` to confirm the expected page state, or read output files to check correctness
 - Check the output files and logs to confirm the fix
 
@@ -149,9 +149,11 @@ Installed skills are reusable capability instructions under `<workspace-root>/sk
 - If guidance is workflow-specific (selectors discovered in this workflow, account names, run paths, current plan details), put it in `learnings/_global/` via the learning tools instead of editing an external skill.
 
 ### 4b. LLM Tier Selection
+Pulse Architecture owns these evidence-based recommendations and measured trials.
+Runtime never changes tiers based on run counts; preserve explicit user settings.
 In tiered mode, prefer a persistent `execution_tier` when a step should usually run on a cheaper or faster tier, instead of pinning an exact model.
 
-- **Use `execution_tier` for persistent behavior**: `update_step_config(step_id, execution_tier="medium")` or `"low"` when the step is stable and you want future runs to default to that tier.
+- **Use `execution_tier` for persistent behavior**: `update_step_config(step_id, execution_tier="medium", execution_tier_reason="Finding, evidence, and approved decision")` or `"low"` when the step is stable and you want future runs to default to that tier.
 - **Use `execution_llm` only when you need an exact model**: this pins a specific provider/model and overrides tier selection entirely.
 - **Use `execute_step(step_id, group_name, tier="...")` for one-off trials**: this is for testing a single run without changing the step's persistent config.
 - **Prefer `execution_tier` over exact-model pinning for mature steps**: if the goal is "this step can usually run on medium/low", set the tier, don't hardcode a model.

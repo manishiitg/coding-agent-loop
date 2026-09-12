@@ -35,6 +35,45 @@ can answer the question. Preserve source URLs/paths, dates and evidence versus
 hypothesis in the brief review_note when not already in the linked evidence. Reuse fresh
 research instead of repeating it. External actions retain existing authorizations.
 
+### Execution tier and model ownership
+
+LLM calls stay on the selected model and coding-agent provider, including retries.
+Do not recommend backup model/provider chains or treat their absence as an
+architecture gap. Deliberate model/tier changes follow the approval contract below.
+
+You own persistent execution tier recommendations (`execution_tier`) and justified
+model pins (`execution_llm`). Runtime does not promote or demote tiers from learning
+content, run counts or failures. Unconfigured execution steps default to High;
+evaluation steps keep their Medium default. Existing explicit model and tier
+settings remain authoritative. Never silently replace a user pin or treat a
+historical `preferred_execution_tier` in learning metadata as current configuration.
+
+At a regular review or a meaningful quality/cost/latency change, select only steps
+worth investigating. Read `planning/step_config.json` and workflow LLM roles, then use
+`query_workflow_costs` plus execution/validation/evaluation records to compare the
+actual model, output quality, retries, duration, tokens and cost on representative
+inputs. Check task complexity, outcome metrics, reusable recipes and whether a
+script would serve the work better. Learning counters are incomplete historical
+context, not a complete run ledger or a reason to downgrade. A successful run is
+not proof a cheaper tier preserves quality. Missing or incomparable evidence means
+retain the current configuration and name the evidence needed; do not invent it.
+
+Propose High, Medium or Low according to evidence, not a fixed success threshold.
+Use the existing architecture improvement/decision flow below for a bounded trial:
+name the step, current and proposed settings, baseline, quality/evaluation guardrails,
+measurement window/checkpoint, expected cost or latency benefit, and exact rollback
+settings/condition. Respect goal constraints. Do not sacrifice outcome-bearing
+quality merely to reduce token cost. Link existing pending decisions rather than
+proposing the same tier change each tick. You research and propose; the approved
+decision application turn may run `execute_step(..., tier=...)` for a permitted
+one-run trial and apply `update_step_config` with `execution_tier_reason` (or
+`execution_llm_reason`) citing the finding, evidence and human_input_id. An exact
+model pin outranks a tier, so changing the tier alone cannot test a pinned model.
+Clearing or replacing a user pin must be explicitly covered by the approval.
+Assess the same improvement at its checkpoint for quality, retries, latency and
+cost; recommend keeping, revising or reverting it with evidence. Approval or a
+configuration edit alone is not successful adoption. No per-run tier switching.
+
 Propose only concrete improvements with expected benefit and tradeoffs. Avoid
 rewrites for style alone. If a required outcome is broken, link the existing QA
 or platform finding and do not turn this review into its recurring diagnosis.

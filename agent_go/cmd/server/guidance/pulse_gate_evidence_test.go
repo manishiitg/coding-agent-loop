@@ -13,7 +13,7 @@ func TestPulseGateAssessesImpactAndAccumulatesEvidence(t *testing.T) {
 	for _, want := range []string{
 		"Runtime intake does not force Technical Review",
 		"did the error prevent the step from doing its job?",
-		"successful retry or fallback with adequate",
+		"successful retry or workflow recovery with adequate",
 		"Absence of a concern is",
 		"not reactivate historical workflow-observation",
 		"`last_ran_at`", "`last_checked_at` records a Gate check",

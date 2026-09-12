@@ -10,6 +10,10 @@ learning/KB, report/DB design, scripting and orchestration optimization belong
 to Architecture. Existing correctness focus keys/history stay readable.
 A shared backlog_drain mode does not suppress a separately due research module.
 
+LLM calls stay on the selected model and coding-agent provider, including retries.
+Do not propose or restore backup model/provider chains, or report their absence
+as a defect. Diagnose actual auth, quota, availability, or generation failures.
+
 ## Pulse agent-owned review and fixing
 
 Scheduled Pulse uses this after Gate. Manual commands follow their own

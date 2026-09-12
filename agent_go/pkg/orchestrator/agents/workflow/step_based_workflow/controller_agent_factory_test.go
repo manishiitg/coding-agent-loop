@@ -1141,9 +1141,6 @@ func TestSelectExecutionLLM_PrefersStepExecutionLLMOverSubAgentAndTiered(t *test
 		ExecutionLLM: &AgentLLMConfig{
 			Provider: "openai",
 			ModelID:  "step-override",
-			Fallbacks: []AgentLLMFallback{
-				{Provider: "openai", ModelID: "step-fallback"},
-			},
 		},
 	}
 
@@ -1154,9 +1151,7 @@ func TestSelectExecutionLLM_PrefersStepExecutionLLMOverSubAgentAndTiered(t *test
 	if llm.Primary.ModelID != "step-override" {
 		t.Fatalf("expected step override model, got %q", llm.Primary.ModelID)
 	}
-	if len(llm.Fallbacks) != 1 || llm.Fallbacks[0].ModelID != "step-fallback" {
-		t.Fatalf("expected step fallback to be preserved, got %+v", llm.Fallbacks)
-	}
+
 }
 
 func TestSelectExecutionLLM_UsesTierResolverWhenStepExecutionLLMIsUnset(t *testing.T) {
@@ -1189,12 +1184,30 @@ func TestSelectExecutionLLM_UsesTierResolverWhenStepExecutionLLMIsUnset(t *testi
 		}, nil),
 	}
 
-	llm := hcpo.selectExecutionLLM(context.Background(), &AgentConfigs{}, "step-1")
-	if llm == nil {
-		t.Fatal("expected execution llm config, got nil")
-	}
-	if llm.Primary.ModelID != "tier-1" {
-		t.Fatalf("expected tier-1 model for no learnings path, got %q", llm.Primary.ModelID)
+	// Repeated executions do not progressively change the tier. Only an
+	// explicit setting (including a reviewed trial) changes model selection.
+	for _, tc := range []struct {
+		name   string
+		config AgentConfigs
+		eval   bool
+		want   string
+	}{
+		{"default execution", AgentConfigs{}, false, "tier-1"},
+		{"reviewed medium", AgentConfigs{ExecutionTier: "medium"}, false, "tier-2"},
+		{"reviewed low", AgentConfigs{ExecutionTier: "low"}, false, "tier-3"},
+		{"cleared returns to high", AgentConfigs{}, false, "tier-1"},
+		{"evaluation default unchanged", AgentConfigs{}, true, "tier-2"},
+		{"evaluation pin respected", AgentConfigs{ExecutionTier: "high"}, true, "tier-1"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			hcpo.isEvaluationMode = tc.eval
+			for run := 0; run < 5; run++ {
+				llm := hcpo.selectExecutionLLM(context.Background(), &tc.config, "step-1")
+				if llm == nil || llm.Primary.ModelID != tc.want {
+					t.Fatalf("run %d: expected %s, got %+v", run, tc.want, llm)
+				}
+			}
+		})
 	}
 }
 
@@ -1414,5 +1427,16 @@ func TestSelectBackgroundTaskLLMRoutesPulseTurnChildrenToPulseModel(t *testing.T
 	hcpo.presetPulseLLM = nil
 	if got := hcpo.selectBackgroundTaskLLM(true, "Pulse review agent"); got == nil || got.Primary.ModelID != "claude-sonnet-5" {
 		t.Fatalf("Pulse-turn background task without pulse_llm = %+v, want the phase model fallback", got)
+	}
+}
+
+// Historical counters may still be present on disk, but the execution path
+// must not turn them into a model override before consulting explicit config.
+func TestExecutionDoesNotInjectHistoryBasedTierOverrides(t *testing.T) {
+	src := readSourceFile(t, "controller_execution.go")
+	for _, retired := range []string{"decideAdaptiveExecutionTier", "recordAdaptiveExecutionTierSuccess", "DescriptionHashRuns", "PreferredExecutionTier", "context.WithValue(executionAgentCtx, WorkshopTierOverrideKey"} {
+		if strings.Contains(src, retired) {
+			t.Fatalf("execution still derives a tier override from retired history: %s", retired)
+		}
 	}
 }

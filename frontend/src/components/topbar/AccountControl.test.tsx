@@ -5,6 +5,7 @@ import { describe, expect, it, vi } from 'vitest'
 vi.mock('../../stores/useAuthStore', () => ({ useAuthStore: vi.fn() }))
 vi.mock('./AccessTokensDialog', () => ({ default: () => <div role="dialog">Manage access tokens</div> }))
 vi.mock('./ChangePasswordDialog', () => ({ default: () => null }))
+vi.mock('../admin/UsersAdminPanel', () => ({ default: ({ isOpen }: { isOpen: boolean }) => isOpen ? <div role="dialog">Manage users</div> : null }))
 import { useAuthStore } from '../../stores/useAuthStore'
 import { TooltipProvider } from '../ui/tooltip'
 import AccountControl from './AccountControl'
@@ -21,9 +22,22 @@ describe('Account menu availability', () => {
       await act(async () => trigger.click())
       expect(host.textContent).toContain('Access tokens')
       expect(host.textContent?.includes('Change password')).toBe(isMultiUserMode)
+      expect(host.textContent).not.toContain('Users & access')
       expect(host.textContent?.includes('Sign out')).toBe(isMultiUserMode)
       await act(async () => Array.from(host.querySelectorAll('button')).find(b => b.textContent?.includes('Access tokens'))!.click())
       expect(host.querySelector('[role="dialog"]')?.textContent).toBe('Manage access tokens')
+    } finally { await act(async () => root.unmount()); host.remove() }
+  })
+  it('exposes deployment user management to an admin account', async () => {
+    vi.mocked(useAuthStore).mockReturnValue({ user: { id: 'admin', username: 'Owner', is_admin: true }, isMultiUserMode: true, logout: vi.fn() })
+    const host = document.createElement('div'); document.body.append(host); const root = createRoot(host)
+    try {
+      await act(async () => root.render(<TooltipProvider><AccountControl /></TooltipProvider>))
+      await act(async () => host.querySelector('button')!.click())
+      const usersItem = Array.from(host.querySelectorAll('button')).find(b => b.textContent?.includes('Users & access'))
+      expect(usersItem).toBeTruthy()
+      await act(async () => usersItem!.click())
+      expect(host.querySelector('[role="dialog"]')?.textContent).toBe('Manage users')
     } finally { await act(async () => root.unmount()); host.remove() }
   })
   it('waits for the local account session to initialize', async () => {

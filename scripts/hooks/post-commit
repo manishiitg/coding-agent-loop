@@ -1,0 +1,5 @@
+#!/bin/bash
+# Reconcile the generated version after Git finishes a path-only commit.
+set -e
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+node "$REPO_ROOT/scripts/sync-product-version-index.mjs"

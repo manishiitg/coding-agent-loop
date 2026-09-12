@@ -77,17 +77,7 @@ func runtimeBool(value bool) *bool { return &value }
 
 func runtimeConfigForLLMAgent(config LLMAgentConfig, model llmtypes.Model, tracer observability.Tracer, traceID observability.TraceID, logger loggerv2.Logger) mcpagent.RuntimeConfig {
 	llmConfig := mcpagent.AgentLLMConfiguration{
-		Primary:   mcpagent.LLMModel{Provider: string(config.Provider), ModelID: config.ModelID, Options: config.Options},
-		Fallbacks: make([]mcpagent.LLMModel, 0, len(config.Fallbacks)),
-	}
-	for _, fallback := range config.Fallbacks {
-		provider := strings.TrimSpace(fallback.Provider)
-		if provider == "" {
-			provider = string(config.Provider)
-		}
-		if modelID := strings.TrimSpace(fallback.ModelID); modelID != "" {
-			llmConfig.Fallbacks = append(llmConfig.Fallbacks, mcpagent.LLMModel{Provider: provider, ModelID: modelID, Options: fallback.Options})
-		}
+		Primary: mcpagent.LLMModel{Provider: string(config.Provider), ModelID: config.ModelID, Options: config.Options},
 	}
 
 	runtime := mcpagent.RuntimeConfig{
@@ -99,7 +89,7 @@ func runtimeConfigForLLMAgent(config LLMAgentConfig, model llmtypes.Model, trace
 		Tools: mcpagent.ToolRuntimeConfig{
 			SelectedTools: config.SelectedTools, SelectedServers: configuredServerNames(config.ServerName),
 			CodeExecution: config.UseCodeExecutionMode, ParallelExecution: config.EnableParallelToolExecution,
-			Timeout: config.ToolTimeout,
+			Timeout: config.ToolTimeout, AdditionalBridge: config.AdditionalBridgeTools,
 		},
 		Context: mcpagent.ContextRuntimeConfig{
 			LargeOutputThreshold:      config.LargeOutputThreshold,
@@ -119,6 +109,7 @@ func runtimeConfigForLLMAgent(config LLMAgentConfig, model llmtypes.Model, trace
 			PersistentCodex:                   config.CodexPersistentInteractiveSession,
 			PersistentCursor:                  config.CursorPersistentInteractiveSession,
 			PersistentPi:                      config.PiPersistentInteractiveSession,
+			PersistentMuse:                    config.MusePersistentInteractiveSession,
 			CursorBridgeTools:                 config.CursorBridgeToolsMode,
 			AgentToolsMode:                    config.CodingAgentToolsMode,
 			ApprovalsMode:                     config.CodingAgentApprovalsMode,
@@ -295,6 +286,10 @@ type LLMAgentConfig struct {
 	ToolTimeout        time.Duration      // Tool execution timeout (default: 5 minutes)
 	AgentMode          mcpagent.AgentMode // Agent mode (Simple or ReAct)
 	SelectedTools      []string           // Selected tools in "server:tool" format
+	// AdditionalBridgeTools exposes selected registered platform tools directly
+	// through the coding-agent MCP bridge. The coding CLI calls these tools; it
+	// does not become their implementation backend.
+	AdditionalBridgeTools []string
 
 	// AdmitTool decides which tools may enter this agent's definition. It is a
 	// construction input rather than a setter because the decision is only
@@ -312,8 +307,6 @@ type LLMAgentConfig struct {
 	// must not call back into the wrapper.
 	AdmitTool func(name string) bool
 
-	// Unified fallback configuration (replaces FallbackModels and CrossProviderFallback)
-	Fallbacks []FallbackModel // Fallback models with optional provider override
 	// Code execution mode: When enabled, only virtual tools are added to LLM
 	// MCP tools are accessed through generated scripts using the on-demand HTTP API specification.
 	UseCodeExecutionMode                   bool
@@ -321,6 +314,7 @@ type LLMAgentConfig struct {
 	CodexPersistentInteractiveSession      bool
 	CursorPersistentInteractiveSession     bool
 	PiPersistentInteractiveSession         bool
+	MusePersistentInteractiveSession       bool
 	CursorBridgeToolsMode                  bool
 	CodingAgentToolsMode                   string
 	CodingAgentApprovalsMode               string
@@ -378,14 +372,6 @@ type LLMAgentConfig struct {
 	RuntimeOverrides mcpclient.RuntimeOverrides
 }
 
-// FallbackModel represents a fallback model configuration
-// If Provider is empty, it uses the same provider as the primary model
-type FallbackModel struct {
-	Provider string                 `json:"provider,omitempty"` // Optional: override provider for cross-provider fallback
-	ModelID  string                 `json:"model_id"`
-	Options  map[string]interface{} `json:"options,omitempty"`
-}
-
 // agentMetricsImpl is the concrete implementation of AgentMetrics interface
 type agentMetricsImpl struct {
 	mu sync.RWMutex
@@ -436,7 +422,7 @@ func NewLLMAgentWrapper(ctx context.Context, config LLMAgentConfig, tracer obser
 // and one grouped runtime configuration.
 func NewLLMAgentWrapperWithTrace(ctx context.Context, config LLMAgentConfig, tracer observability.Tracer, mainTraceID observability.TraceID, logger loggerv2.Logger) (*LLMAgentWrapper, error) {
 	if logger == nil {
-		logger = loggerv2.NewDefault()
+		logger = agentlogger.WithContext(loggerv2.NewDefault(), ctx)
 	}
 	// Never format the full config here: CodingAgentSecretEnvironment contains
 	// plaintext SECRET_* values for the native child process. Logging the struct
@@ -468,7 +454,7 @@ func NewLLMAgentWrapperWithTrace(ctx context.Context, config LLMAgentConfig, tra
 	if traceID == "" {
 		traceID = observability.TraceID(fmt.Sprintf("agent-init-%s-%d", config.Name, time.Now().UnixNano()))
 	}
-	model, err := initializeLLMWithConfig(config, logger, traceID)
+	model, err := initializeLLMWithConfig(ctx, config, logger, traceID)
 	if err != nil {
 		if tracer != nil && mainTraceID == "" {
 			event := events.NewAgentEvent(&events.AgentErrorEvent{
@@ -974,7 +960,7 @@ func (w *LLMAgentWrapper) updateFailureMetrics(duration time.Duration, err error
 }
 
 // initializeLLMWithConfig initializes an LLM using detailed configuration from frontend
-func initializeLLMWithConfig(config LLMAgentConfig, logger loggerv2.Logger, traceID observability.TraceID) (llmtypes.Model, error) {
+func initializeLLMWithConfig(ctx context.Context, config LLMAgentConfig, logger loggerv2.Logger, traceID observability.TraceID) (llmtypes.Model, error) {
 	// Validate and convert provider string to llm.Provider type
 	llmProvider, err := llm.ValidateProvider(string(config.Provider))
 	if err != nil {
@@ -982,58 +968,35 @@ func initializeLLMWithConfig(config LLMAgentConfig, logger loggerv2.Logger, trac
 	}
 	runtimeModelID := resolveRuntimeModelID(config.Provider, config.ModelID)
 
-	// Build fallback models list from unified Fallbacks structure
-	var fallbackModels []string
-
-	// Add custom fallback models from config if provided
-	if len(config.Fallbacks) > 0 {
-		for _, fb := range config.Fallbacks {
-			// Format: provider/model for cross-provider fallbacks, or just model for same-provider
-			if fb.Provider != "" && fb.Provider != string(config.Provider) {
-				fallbackModels = append(fallbackModels, fmt.Sprintf("%s/%s", fb.Provider, fb.ModelID))
-			} else {
-				fallbackModels = append(fallbackModels, fb.ModelID)
-			}
-		}
-		logger.Info(fmt.Sprintf("Using custom fallback models from config: %v", fallbackModels))
-	} else {
-		// Use default fallback models for the provider
-		fallbackModels = append(fallbackModels, llm.GetDefaultFallbackModelsForModel(llmProvider, runtimeModelID)...)
-		// Also add default cross-provider fallbacks
-		crossProviderFallbacks := llm.GetCrossProviderFallbackModels(llmProvider)
-		fallbackModels = append(fallbackModels, crossProviderFallbacks...)
-		logger.Info(fmt.Sprintf("Using default fallback models for provider %s: %v", config.Provider, fallbackModels))
-	}
-
 	// Create a separate LLM logger that writes to llm_debug.log
 	// This separates LLM logs (including [GEMINI] logs from multi-llm-provider-go) from server logs
 	var v2LoggerForLLM loggerv2.Logger
-	llmLogger, err := agentlogger.CreateLogger("logs/llm_debug.log", "info", "text", false)
+	llmLogger, err := agentlogger.CreateLoggerWithContext("logs/llm_debug.log", "info", "text", false, ctx)
 	if err != nil {
 		// Fallback to the provided logger if LLM logger creation fails
 		if logger != nil {
 			v2LoggerForLLM = logger
 		} else {
-			v2LoggerForLLM = loggerv2.NewDefault()
+			v2LoggerForLLM = agentlogger.WithContext(loggerv2.NewDefault(), ctx)
 		}
 	} else {
 		v2LoggerForLLM = llmLogger
 	}
 
-	// Use the existing LLM provider system with detailed fallback models
+	// Use the existing LLM provider system with the selected model
 	llmConfig := llm.Config{
-		Provider:            llmProvider,
-		ModelID:             runtimeModelID,
-		Temperature:         config.Temperature,
-		TraceID:             traceID, // Pass the trace ID for proper span hierarchy
-		FallbackModels:      fallbackModels,
+		Provider:    llmProvider,
+		ModelID:     runtimeModelID,
+		Temperature: config.Temperature,
+		TraceID:     traceID, // Pass the trace ID for proper span hierarchy
+
 		MaxRetries:          3,
 		Logger:              v2LoggerForLLM,
 		APIKeys:             config.APIKeys, // Use API keys directly from config
 		ClaudeCodeTransport: config.ClaudeCodeTransport,
 	}
 
-	// Initialize the LLM using the factory with detailed fallback support
+	// Initialize the LLM using the factory with the selected model
 	return llm.InitializeLLM(llmConfig)
 }
 

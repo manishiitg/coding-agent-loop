@@ -138,15 +138,6 @@ type AgentLLMConfig struct {
 	Provider       string                 `json:"provider,omitempty"`         // e.g., "openai", "bedrock", "openrouter", "vertex"
 	ModelID        string                 `json:"model_id,omitempty"`         // e.g., "gpt-4o", "claude-3-5-sonnet-20241022"
 	Options        map[string]interface{} `json:"options,omitempty"`          // Provider-specific runtime options
-	Fallbacks      []AgentLLMFallback     `json:"fallbacks,omitempty"`        // Optional fallback models for retry on failure
-}
-
-// AgentLLMFallback represents a fallback LLM model
-type AgentLLMFallback struct {
-	PublishedLLMID string                 `json:"published_llm_id,omitempty"`
-	Provider       string                 `json:"provider"`
-	ModelID        string                 `json:"model_id"`
-	Options        map[string]interface{} `json:"options,omitempty"`
 }
 
 // ValidationSchema represents structured validation rules for step outputs
@@ -251,9 +242,9 @@ type ConsistencyRule struct {
 // AgentConfigs represents per-agent configuration for a step
 type AgentConfigs struct {
 	ExecutionLLM                 *AgentLLMConfig `json:"execution_llm,omitempty"`
-	ExecutionLLMReason           string          `json:"execution_llm_reason,omitempty"`            // PLAT-060. Why this step is pinned to a specific model. Required whenever execution_llm is set — update_step_config rejects the pin without it. A pin outranks execution_tier entirely, so it silently overrides every tier decision above it. Cite the owning llm_ops_review finding id, and the human_input_id when the pin was user-approved.
+	ExecutionLLMReason           string          `json:"execution_llm_reason,omitempty"`            // PLAT-060. Why this step is pinned to a specific model. Required whenever execution_llm is set — update_step_config rejects the pin without it. A pin outranks execution_tier entirely, so it silently overrides every tier decision above it. Cite the owning architecture_review finding id, and the human_input_id when the pin was user-approved.
 	ExecutionTier                string          `json:"execution_tier,omitempty"`                  // Persistent execution tier override in tiered mode: "high" | "medium" | "low"
-	ExecutionTierReason          string          `json:"execution_tier_reason,omitempty"`           // PLAT-060. Why this step's tier is pinned. Required whenever execution_tier is set — update_step_config rejects the override without it. Setting the tier explicitly also DISABLES adaptive tiering for the step (see shouldUseAdaptiveExecutionTiering), so it opts out of the automatic high→medium promotion after 3 stable runs. Cite the owning llm_ops_review finding id, and the human_input_id when approved.
+	ExecutionTierReason          string          `json:"execution_tier_reason,omitempty"`           // PLAT-060. Why this step's tier is pinned. Required whenever execution_tier is set — update_step_config rejects the override without it. The tier stays configured until explicitly changed; run counters do not select tiers. Cite the owning architecture_review finding id, and the human_input_id when approved.
 	ExecutionMaxTurns            *int            `json:"execution_max_turns,omitempty"`             // default: 500
 	LearningObjective            string          `json:"learning_objective,omitempty"`              // What SKILL.md should capture from successful runs of this step — selectors, timings, auth flows, tool-call patterns, API quirks. This is the instruction the step agent uses during its post-completion turn to know what HOW-to-run knowledge to extract. Required when learnings_access includes write; must be specific (not "learn from this run").
 	LearningsAccess              string          `json:"learnings_access,omitempty"`                // "read" | "read-write" | "none". Mirrors knowledgebase_access. "read" (default): step sees global SKILL.md in its prompt but doesn't write. "read-write": reads and writes — requires learning_objective to be non-empty. "none": no read, no write. Empty = legacy auto-migration (see resolveLearningsAccess). Writes happen via the step agent's own post-completion turn (shell + diff_patch_workspace_file); no separate analyzer runs.

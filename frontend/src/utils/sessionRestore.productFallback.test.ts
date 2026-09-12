@@ -85,7 +85,7 @@ describe('session restore chat-history fallback', () => {
     expect(getChatHistoryResumeConversation).toHaveBeenCalledWith(
       'video-studio:project:launch',
       workspacePath,
-      100,
+      20,
       0,
       true,
     )
@@ -148,7 +148,7 @@ describe('session restore chat-history fallback', () => {
     expect(getChatHistoryResumeConversation).toHaveBeenCalledWith(
       'video-studio:project:race',
       workspacePath,
-      100,
+      20,
       0,
       true,
     )

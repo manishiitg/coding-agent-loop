@@ -7,6 +7,7 @@ import type { ChatTab } from '../stores/useChatStore'
 import type { CustomPreset, PredefinedPreset } from '../types/preset'
 import type { ActiveSessionInfo } from '../services/api-types'
 import { activateTab } from '../utils/activateTab'
+import { scopeQuickSwitcherToAgentWorks } from '../utils/quickSwitcherScope'
 import { openCanonicalActivitySession, openWorkflowPresetPage, pickWorkflowActiveSession, workflowSessionBotPlatform } from '../utils/workflowSessionRestore'
 import { runtimeHasBackgroundAgents, runtimeNeedsUserInput, sessionRuntimeStatus } from '../utils/runtimeActivity'
 import { hasIdleAliveCodingAgent, isVisibleActivitySession, nonWorkflowActivityTitle } from '../utils/activitySessions'
@@ -180,13 +181,15 @@ export const QuickSwitcher: React.FC<QuickSwitcherProps> = ({
     }
   }, [isOpen, initialQuery, workflowPresets])
 
-  // Build a cross-mode command center: active work + chats + workflows.
+  // The shared chat store also contains other products. Scope every result
+  // source before grouping so excluded chats cannot reappear as active work.
   const allItems = useMemo<QuickSwitcherItem[]>(() => {
     if (!isOpen) return []
 
-    const allTabs = Object.values(chatTabs)
+    const { tabs: scopedTabs, sessions: scopedSessions } = scopeQuickSwitcherToAgentWorks(chatTabs, activeSessions)
+    const allTabs = Object.values(scopedTabs)
     const activeSessionsByID = new Map<string, ActiveSessionInfo>()
-    for (const session of activeSessions.filter(isVisibleActivitySession)) {
+    for (const session of scopedSessions.filter(isVisibleActivitySession)) {
       activeSessionsByID.set(session.session_id, session)
     }
     const visibleActiveSessions = Array.from(activeSessionsByID.values())
@@ -196,7 +199,7 @@ export const QuickSwitcher: React.FC<QuickSwitcherProps> = ({
       return tab.isStreaming || tab.isSyntheticTurn ? ' · builder busy' : ' · builder idle'
     }
 
-    const chatItems: ChatTabItem[] = Object.values(chatTabs)
+    const chatItems: ChatTabItem[] = Object.values(scopedTabs)
       .filter(tab => tab.metadata?.mode === 'multi-agent' && !tab.metadata?.isOrganizationAssistant)
       .sort((a, b) => a.createdAt - b.createdAt)
       .map(tab => {
@@ -218,8 +221,8 @@ export const QuickSwitcher: React.FC<QuickSwitcherProps> = ({
     const workflowItems: WorkflowItem[] = workflowPresets
       .filter(p => p.selectedFolder?.filepath)
       .map(p => {
-        const matchingActiveSessions = visibleActiveSessions.filter(session => workflowSessionMatchesPreset(session, p, chatTabs))
-        const activeSession = pickWorkflowActiveSession(matchingActiveSessions, p, chatTabs)
+        const matchingActiveSessions = visibleActiveSessions.filter(session => workflowSessionMatchesPreset(session, p, scopedTabs))
+        const activeSession = pickWorkflowActiveSession(matchingActiveSessions, p, scopedTabs)
         const workflowTab = allTabs.find(tab => tab.metadata?.mode === 'workflow' && tab.metadata?.presetQueryId === p.id)
         const activeCountSuffix = matchingActiveSessions.length > 1 ? ` · ${matchingActiveSessions.length} active runs` : ''
         return {
@@ -240,16 +243,16 @@ export const QuickSwitcher: React.FC<QuickSwitcherProps> = ({
 
     const activeItems: ActiveWorkItem[] = visibleActiveSessions
       .filter(session => {
-        const tab = findTabForSession(chatTabs, session.session_id)
+        const tab = findTabForSession(scopedTabs, session.session_id)
         if (tab && !tab.metadata?.isOrganizationAssistant) return false
         if (
           isWorkflowSession(session) &&
-          workflowPresets.some(preset => workflowSessionMatchesPreset(session, preset, chatTabs))
+          workflowPresets.some(preset => workflowSessionMatchesPreset(session, preset, scopedTabs))
         ) return false
         return true
       })
       .map(session => {
-        const tab = findTabForSession(chatTabs, session.session_id)
+        const tab = findTabForSession(scopedTabs, session.session_id)
         const workflow = isWorkflowSession(session)
         const status = activeSessionStatusLabel(session)
         const current = session.current_execution_name ? ` · ${session.current_execution_name}` : ''

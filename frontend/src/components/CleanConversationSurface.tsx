@@ -195,6 +195,16 @@ export function CleanConversationSurface({
                   <p className="text-sm font-semibold leading-5">{item.failure.title}</p>
                   <p className="whitespace-pre-wrap text-sm leading-6">{item.content}</p>
                   <div className="flex flex-wrap items-center gap-2 pt-1">
+                    {item.failure.actionUrl ? (
+                      <a
+                        href={item.failure.actionUrl}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="rounded-lg border border-red-300 bg-white px-3 py-1.5 text-xs font-semibold text-red-700 transition hover:bg-red-100 dark:border-red-800 dark:bg-red-950/30 dark:text-red-200 dark:hover:bg-red-950/60"
+                      >
+                        {item.failure.actionLabel || 'Open provider'}
+                      </a>
+                    ) : null}
                     {item.failure.retryable && onRetryLastMessage ? (
                       <button
                         type="button"

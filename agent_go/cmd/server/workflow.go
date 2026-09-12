@@ -3186,7 +3186,7 @@ func (api *StreamingAPI) handleGetExecutionLogs(w http.ResponseWriter, r *http.R
 
 	// Merge in each step's configured execution_tier (planning/step_config.json)
 	// so the UI can show it alongside the model actually used — the tier is a
-	// config-time pin/default (or empty when the step uses adaptive tiering),
+	// config-time pin/default (or empty when the step uses its default tier),
 	// not necessarily the tier of any one specific execution attempt: no
 	// per-execution record currently stores which tier resolved a given run.
 	stepConfigJSONPath := cleanedWorkspacePath + "/planning/step_config.json"

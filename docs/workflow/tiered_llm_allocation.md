@@ -61,7 +61,7 @@ Inside tiered resolution, execution uses this order:
 Current priority in `selectLearningLLM()`:
 
 1. tiered learning resolution
-2. workflow primary model fallback
+2. inherited workflow primary model
 3. no valid config => error
 
 ## Phase LLM

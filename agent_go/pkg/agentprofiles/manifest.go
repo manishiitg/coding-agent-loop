@@ -18,9 +18,31 @@ import (
 // differs per profile is the prompt, tools, skills, commands and runtime
 // policy (including the sandbox), which is exactly what a parent and a
 // child profile of one product need.
+// ChatCapabilityPolicy declares host capabilities by chat mode and caller origin.
+// Effective capabilities are their intersection, further restricted for read-only users.
+type ChatCapabilityPolicy struct {
+	Modes    map[string][]string `yaml:"modes"`
+	Origins  map[string][]string `yaml:"origins"`
+	ReadOnly []string            `yaml:"read_only"`
+}
+
+// ChatModeDefinition selects prompt files and built-in skill bundles. Capability
+// admission remains separate: selecting documentation never grants tools.
+type ChatModeDefinition struct {
+	Prompt ChatPromptSource `yaml:"prompt"`
+	Skills []string         `yaml:"skills"`
+}
+
+type ChatPromptSource struct {
+	File     string   `yaml:"file"`
+	Includes []string `yaml:"includes,omitempty"`
+}
+
 type ProductManifest struct {
-	SchemaVersion int                  `yaml:"schema_version"`
-	Dependencies  productdeps.Manifest `yaml:"dependencies"`
+	Chat          map[string]ChatModeDefinition `yaml:"chat,omitempty"`
+	ChatPolicy    *ChatCapabilityPolicy         `yaml:"chat_policy,omitempty"`
+	SchemaVersion int                           `yaml:"schema_version"`
+	Dependencies  productdeps.Manifest          `yaml:"dependencies"`
 	// Prompt is the primary profile's prompt source.
 	Prompt PromptSource `yaml:"prompt"`
 	// Profile is the primary profile (the one the product surface opens).
@@ -95,6 +117,14 @@ func LoadProductManifest(fsys fs.FS, path string) (ProductManifest, error) {
 		}
 		if err := ResolveCommandPrompts(fsys, profile.Commands); err != nil {
 			return manifest, fmt.Errorf("profile %q: %w", profile.ID, err)
+		}
+	}
+	for mode, def := range manifest.Chat {
+		if strings.TrimSpace(mode) == "" {
+			return manifest, fmt.Errorf("chat mode must not be empty")
+		}
+		if _, err := LoadChatPrompt(fsys, def.Prompt); err != nil {
+			return manifest, fmt.Errorf("chat %s: %w", mode, err)
 		}
 	}
 	return manifest, nil

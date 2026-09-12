@@ -87,7 +87,16 @@ For an authorized migration, using `set_code_layout_version`:
 **Deliberate refusal — fail-closed guards must exit code 2, not 1**
 - Any non-zero exit is treated as a bug by default: the failure is handed back to you as repair context so you fix the script. That is correct for a real error, but wrong for a guard that deliberately detected an unsafe condition (stale data, a write that would overwrite history it could not verify, a precondition that isn't met) and refused to proceed on purpose.
 - Use `sys.exit(2)` — not `sys.exit(1)` or any other code — for that second case. Exit code 2 is reserved and means "this refusal is terminal, do not attempt an agentic workaround." The step fails outright instead of falling back to a relearn turn, and the refusal is never handed to an agent as "here is an error, fix it."
-- Print the reason for the refusal to stdout before exiting — that text becomes the step's failure detail, so it must say plainly what condition was detected and why proceeding was unsafe.
+- Before exiting, print exactly one explicit refusal record on its own stdout line: `AGENTWORKS_REFUSAL: ` followed by JSON with non-empty string fields `reason`, `blocked_action`, and `resolution`. Use `json.dumps` to escape values correctly. For example:
+  ```python
+  print("AGENTWORKS_REFUSAL: " + json.dumps({
+      "reason": "Existing balance history could not be verified",
+      "blocked_action": "Overwrite balance rows",
+      "resolution": "Restore database access and verify existing rows before retrying"
+  }), flush=True)
+  sys.exit(2)
+  ```
+- The platform displays this as the script's reported refusal, not proof the guard was correct. Exit code 2 without a complete record still stops automatic repair conservatively, but the notification states that the reason is unverified and includes captured output. Existing plain-text refusals remain stopped; malformed records never enable an automatic workaround.
 - Get this distinction right: `sys.exit(1)` on a guard that should be terminal lets an agentic retry read your own refusal, agree it was correct, and then perform the exact write the guard existed to prevent — which has happened live. `sys.exit(2)` on an ordinary bug wrongly aborts the step instead of letting the normal repair loop fix the script.
 
 **Logging**

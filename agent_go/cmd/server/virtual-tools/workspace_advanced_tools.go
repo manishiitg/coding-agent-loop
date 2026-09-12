@@ -514,26 +514,9 @@ func sanitizeTierModelLocal(model *TierModel) *TierModel {
 	}
 
 	sanitized := &TierModel{
-		Provider:  provider,
-		ModelID:   modelID,
-		Options:   model.Options,
-		Fallbacks: nil,
-	}
-
-	for _, fb := range model.Fallbacks {
-		fallbackModelID := strings.TrimSpace(fb.ModelID)
-		if fallbackModelID == "" {
-			continue
-		}
-		sanitized.Fallbacks = append(sanitized.Fallbacks, TierModelFallback{
-			Provider: strings.TrimSpace(fb.Provider),
-			ModelID:  fallbackModelID,
-			Options:  fb.Options,
-		})
-	}
-
-	if len(sanitized.Fallbacks) == 0 {
-		sanitized.Fallbacks = nil
+		Provider: provider,
+		ModelID:  modelID,
+		Options:  model.Options,
 	}
 
 	return sanitized
@@ -646,12 +629,11 @@ func loadWorkspaceProviderAPIKeys(ctx context.Context, workspaceURL string) *llm
 func createLLMFromTierModel(ctx context.Context, model *TierModel, apiKeys *llm.ProviderAPIKeys) (llmtypes.Model, error) {
 	provider := llm.Provider(model.Provider)
 	llmCfg := llm.Config{
-		Provider:       provider,
-		ModelID:        resolveRuntimeModelIDForVirtualTool(provider, model.ModelID),
-		Context:        ctx,
-		APIKeys:        apiKeys,
-		FallbackModels: formatTierFallbackModels(model),
-		MaxRetries:     3,
+		Provider:   provider,
+		ModelID:    resolveRuntimeModelIDForVirtualTool(provider, model.ModelID),
+		Context:    ctx,
+		APIKeys:    apiKeys,
+		MaxRetries: 3,
 	}
 
 	return llm.InitializeLLM(llmCfg)
@@ -693,32 +675,6 @@ func resolveRuntimeModelIDForVirtualTool(provider llm.Provider, modelID string) 
 	return modelID
 }
 
-func formatTierFallbackModels(model *TierModel) []string {
-	if model == nil || len(model.Fallbacks) == 0 {
-		return nil
-	}
-
-	fallbacks := make([]string, 0, len(model.Fallbacks))
-	defaultProvider := strings.TrimSpace(model.Provider)
-	for _, fb := range model.Fallbacks {
-		modelID := strings.TrimSpace(fb.ModelID)
-		if modelID == "" {
-			continue
-		}
-		provider := strings.TrimSpace(fb.Provider)
-		if provider == "" || provider == defaultProvider {
-			fallbacks = append(fallbacks, modelID)
-			continue
-		}
-		fallbacks = append(fallbacks, provider+"/"+modelID)
-	}
-
-	if len(fallbacks) == 0 {
-		return nil
-	}
-	return fallbacks
-}
-
 // wrapReadImageExecutor wraps the read_image executor in the map with LLM analysis.
 // The LLM config is read from context at execution time (injected by conversation.go).
 func wrapReadImageExecutor(executors map[string]func(ctx context.Context, args map[string]any) (string, error), workspaceURL string) {
@@ -728,19 +684,19 @@ func wrapReadImageExecutor(executors map[string]func(ctx context.Context, args m
 	}
 }
 
-// SetReadImageFallbackLLMConfig re-wraps the read_image executor so that when the
+// SetReadImageLLMConfig re-wraps the read_image executor so that when the
 // context doesn't carry ToolExecutionLLMConfigKey (e.g. HTTP calls from claude CLI),
-// the provided fallbackConfig is injected before the inner executor runs.
+// the provided selected config is injected before the inner executor runs.
 // Call this after both CreateWorkspaceAdvancedToolExecutors* AND the agent have been
 // created, so the real LLM config is known.
-func SetReadImageFallbackLLMConfig(
+func SetReadImageLLMConfig(
 	executors map[string]func(ctx context.Context, args map[string]any) (string, error),
-	fallback mcpagent.LLMModel,
+	selected mcpagent.LLMModel,
 ) {
 	if existing, ok := executors["read_image"]; ok {
-		executors["read_image"] = injectLLMConfigFallback(existing, fallback)
-		log.Printf("[READ_IMAGE_DEBUG] read_image executor wrapped with LLM fallback (provider=%s, model=%s)",
-			fallback.Provider, fallback.ModelID)
+		executors["read_image"] = injectSelectedLLMConfig(existing, selected)
+		log.Printf("[READ_IMAGE_DEBUG] read_image executor wrapped with LLM selected (provider=%s, model=%s)",
+			selected.Provider, selected.ModelID)
 	}
 }
 
@@ -762,17 +718,17 @@ func stringFromMap(args map[string]any, key string) string {
 	}
 }
 
-// injectLLMConfigFallback wraps an executor: if the context has no ToolExecutionLLMConfigKey,
-// the fallback config is injected before calling the inner executor.
-func injectLLMConfigFallback(
+// injectSelectedLLMConfig wraps an executor: if the context has no ToolExecutionLLMConfigKey,
+// the selected config is injected before calling the inner executor.
+func injectSelectedLLMConfig(
 	inner func(ctx context.Context, args map[string]any) (string, error),
-	fallback mcpagent.LLMModel,
+	selected mcpagent.LLMModel,
 ) func(ctx context.Context, args map[string]any) (string, error) {
 	return func(ctx context.Context, args map[string]any) (string, error) {
 		if ctx.Value(mcpagent.ToolExecutionLLMConfigKey) == nil {
-			log.Printf("[READ_IMAGE_DEBUG] No LLM config in context, injecting fallback (provider=%s, model=%s)",
-				fallback.Provider, fallback.ModelID)
-			ctx = context.WithValue(ctx, mcpagent.ToolExecutionLLMConfigKey, fallback)
+			log.Printf("[READ_IMAGE_DEBUG] No LLM config in context, injecting selected (provider=%s, model=%s)",
+				selected.Provider, selected.ModelID)
+			ctx = context.WithValue(ctx, mcpagent.ToolExecutionLLMConfigKey, selected)
 		}
 		return inner(ctx, args)
 	}
@@ -953,7 +909,6 @@ func createImageAnalysisLLM(ctx context.Context, workspaceURL, requestedProvider
 			if imageCfg.Primary != nil {
 				candidates = append(candidates, *imageCfg.Primary)
 			}
-			candidates = append(candidates, imageCfg.Fallbacks...)
 
 			for _, candidate := range candidates {
 				provider, modelID, err := normalizeImageAnalysisProviderAndModel(candidate.Provider, candidate.ModelID)
@@ -977,10 +932,6 @@ func createImageAnalysisLLM(ctx context.Context, workspaceURL, requestedProvider
 			return nil, "", "", fmt.Errorf("image analysis config requires a valid configured provider/model with matching auth")
 		}
 
-		if model, provider, modelID, ok := createWorkspaceDefaultImageAnalysisLLM(ctx, apiKeys); ok {
-			log.Printf("[READ_IMAGE_DEBUG] Using workspace-auth image analysis default (provider=%s, model=%s) because no per-call LLM config was available yet", provider, modelID)
-			return model, provider, modelID, nil
-		}
 	}
 
 	llmConfigRaw := ctx.Value(mcpagent.ToolExecutionLLMConfigKey)
@@ -999,38 +950,6 @@ func createImageAnalysisLLM(ctx context.Context, workspaceURL, requestedProvider
 		return nil, "", "", err
 	}
 	return model, llmConfig.Provider, llmConfig.ModelID, nil
-}
-
-func createWorkspaceDefaultImageAnalysisLLM(ctx context.Context, apiKeys *llm.ProviderAPIKeys) (llmtypes.Model, string, string, bool) {
-	apiKeys = imageAnalysisAPIKeysWithEnv(apiKeys)
-	candidates := []services.ImageGenerationModelConfig{
-		{Provider: string(llm.ProviderVertex), ModelID: defaultImageAnalysisModelForProvider(string(llm.ProviderVertex))},
-		{Provider: string(llm.ProviderCodexCLI), ModelID: defaultImageAnalysisModelForProvider(string(llm.ProviderCodexCLI))},
-		{Provider: string(llm.ProviderCursorCLI), ModelID: defaultImageAnalysisModelForProvider(string(llm.ProviderCursorCLI))},
-		{Provider: string(llm.ProviderClaudeCode), ModelID: defaultImageAnalysisModelForProvider(string(llm.ProviderClaudeCode))},
-	}
-
-	for _, candidate := range candidates {
-		provider, modelID, err := normalizeImageAnalysisProviderAndModel(candidate.Provider, candidate.ModelID)
-		if err != nil {
-			continue
-		}
-		if !hasWorkspaceDefaultImageAnalysisAuth(provider, apiKeys) {
-			continue
-		}
-		model, err := llm.InitializeLLM(llm.Config{
-			Provider: llm.Provider(provider),
-			ModelID:  modelID,
-			Context:  ctx,
-			APIKeys:  apiKeys,
-		})
-		if err == nil {
-			return model, provider, modelID, true
-		}
-		log.Printf("[READ_IMAGE_DEBUG] Failed to initialize workspace-auth image analysis default %s/%s: %v", provider, modelID, err)
-	}
-
-	return nil, "", "", false
 }
 
 func imageAnalysisAPIKeysWithEnv(apiKeys *llm.ProviderAPIKeys) *llm.ProviderAPIKeys {

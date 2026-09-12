@@ -2161,9 +2161,10 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
       modeCategory: selectedModeCategory ?? undefined,
       workflowMode: effectiveModes.workflowMode,
       workshopMode: effectiveModes.workshopMode,
-      workflowPhaseId
+      workflowPhaseId,
+      workflowWorkspacePath: commandWorkflowPath ?? undefined,
     }
-  }, [activeTabId, tabSessionId, tabConfig, isSummarizing, isStreaming, routeLiveInputToCLI, onSubmit, openDialog, setTabConfig, addToast, handleSummarize, handleCompact, getEffectiveWorkflowModes, selectedModeCategory, workflowPhaseId])
+  }, [activeTabId, tabSessionId, tabConfig, isSummarizing, isStreaming, routeLiveInputToCLI, onSubmit, openDialog, setTabConfig, addToast, handleSummarize, handleCompact, getEffectiveWorkflowModes, selectedModeCategory, workflowPhaseId, commandWorkflowPath])
 
   const getCommandValidationError = useCallback((cmd: CommandDefinition, beforeSlash: string) => {
     if (!cmd.validate) return null

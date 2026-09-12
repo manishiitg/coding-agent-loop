@@ -159,7 +159,7 @@ export const builtinCommands: CommandDefinition[] = [
     requiredWorkshopMode: 'workshop',
     source: 'builtin',
     execute: async (ctx) => {
-      const workspacePath = ctx.getWorkspaceStore().activeFolder?.trim()
+      const workspacePath = ctx.workflowWorkspacePath?.trim()
       if (!workspacePath) {
         ctx.addToast('Open a workflow before running Pulse', 'error')
         return

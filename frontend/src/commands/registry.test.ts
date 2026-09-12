@@ -27,12 +27,34 @@ describe('Pulse slash commands', () => {
       beforeSlash: '',
       onSubmit: vi.fn(),
       workshopMode: 'workshop',
-      getWorkspaceStore: () => ({ activeFolder: 'Workflow/social-media' }),
+      workflowWorkspacePath: 'Workflow/social-media',
+      getWorkspaceStore: () => ({ activeFolder: null }),
       addToast,
     } as unknown as CommandContext)
 
     expect(runPulseMock).toHaveBeenCalledWith('Workflow/social-media')
     expect(addToast).toHaveBeenCalledWith('Pulse started', 'success')
+  })
+
+  it('uses the chat workflow even when the file browser points elsewhere', async () => {
+    runPulseMock.mockClear().mockResolvedValueOnce({ run_id: 'pulse-chat' })
+    await findCommand('pulse', 'workflow')?.execute({
+      workflowWorkspacePath: 'Workflow/rts-latency',
+      getWorkspaceStore: () => ({ activeFolder: 'Workflow/other' }),
+      addToast: vi.fn(),
+    } as unknown as CommandContext)
+    expect(runPulseMock).toHaveBeenCalledExactlyOnceWith('Workflow/rts-latency')
+  })
+
+  it('does not run Pulse against a file browser folder when no workflow is open', async () => {
+    runPulseMock.mockClear()
+    const addToast = vi.fn()
+    await findCommand('pulse', 'workflow')?.execute({
+      getWorkspaceStore: () => ({ activeFolder: 'Workflow/other' }),
+      addToast,
+    } as unknown as CommandContext)
+    expect(runPulseMock).not.toHaveBeenCalled()
+    expect(addToast).toHaveBeenCalledWith('Open a workflow before running Pulse', 'error')
   })
 
   it('has no slash command for recurring Pulse setup — it is a toolbar/popup toggle', () => {

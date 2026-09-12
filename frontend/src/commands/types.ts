@@ -56,6 +56,8 @@ export interface CommandContext {
   modeCategory?: ModeCategory
   workflowMode?: 'plan' | 'eval' | 'output'
   workshopMode?: WorkshopMode
+  // Resolved from the active chat workflow; shared with command permission checks.
+  workflowWorkspacePath?: string
   workflowPhaseId?: string
 }
 

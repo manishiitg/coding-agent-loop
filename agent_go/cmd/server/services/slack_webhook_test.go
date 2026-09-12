@@ -78,14 +78,15 @@ func TestSendSlackIncomingWebhook(t *testing.T) {
 	var payload struct {
 		Text        string `json:"text"`
 		Attachments []struct {
-			Color  string                   `json:"color"`
-			Blocks []map[string]interface{} `json:"blocks"`
+			Color    string                   `json:"color"`
+			Fallback string                   `json:"fallback"`
+			Blocks   []map[string]interface{} `json:"blocks"`
 		} `json:"attachments"`
 	}
 	if err := json.Unmarshal([]byte(gotBody), &payload); err != nil {
 		t.Fatalf("decode body: %v; body=%s", err, gotBody)
 	}
-	if payload.Text != "*Done*" || len(payload.Attachments) != 1 || payload.Attachments[0].Color != "#4f46e5" || len(payload.Attachments[0].Blocks) != 1 {
+	if payload.Text != "" || len(payload.Attachments) != 1 || payload.Attachments[0].Fallback != "*Done*" || payload.Attachments[0].Color != "#4f46e5" || len(payload.Attachments[0].Blocks) != 1 {
 		t.Fatalf("unexpected rich default payload: %#v", payload)
 	}
 }
@@ -173,5 +174,24 @@ func TestSendSlackIncomingWebhookDoesNotLeakSecretURL(t *testing.T) {
 	}
 	if strings.Contains(err.Error(), raw) || strings.Contains(err.Error(), "super-secret-token") {
 		t.Fatalf("error leaked webhook URL: %v", err)
+	}
+}
+
+func TestSlackWebhookHasOneVisibleSummary(t *testing.T) {
+	const message = "RTS AWS Pulse: security failed; cost OK."
+	payload, err := buildSlackWebhookPayload(message, SlackWebhookContent{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, exists := payload["text"]; exists {
+		t.Fatal("top-level text duplicates attachment body")
+	}
+	attachments := payload["attachments"].([]map[string]interface{})
+	if attachments[0]["fallback"] != message {
+		t.Fatal("notification fallback missing")
+	}
+	blocks := attachments[0]["blocks"].([]map[string]interface{})
+	if len(blocks) != 1 || blocks[0]["text"].(map[string]interface{})["text"] != message {
+		t.Fatal("formatted body missing")
 	}
 }

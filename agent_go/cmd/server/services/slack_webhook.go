@@ -218,10 +218,12 @@ func buildSlackWebhookPayload(message string, content SlackWebhookContent) (map[
 		return nil, err
 	}
 	return map[string]interface{}{
-		"text": fallback,
 		"attachments": []map[string]interface{}{{
-			"color":  color,
-			"blocks": blocks,
+			// Top-level text is visibly rendered above attachment blocks.
+			// Keep the plain alternative in attachment fallback instead.
+			"fallback": fallback,
+			"color":    color,
+			"blocks":   blocks,
 		}},
 	}, nil
 }

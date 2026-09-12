@@ -33,3 +33,12 @@ Progress retains its separate setup action; missing metric data remains explicit
 Hook tests cover successful enablement without goal setup and permission/save
 errors with saving state released. Implemented locally; release verification
 pending. This does not change backend workflow-write permission requirements.
+
+## 2026-09-12 deployment confirmation
+
+The latest follow-up above is included in RTS release `3a37a1c-20260912143119`
+(app `3a37a1c75`). Source revisions and all three services were verified after
+activation. The configured-environment Linux sandbox regression passed.
+Earlier pending-deployment notes are superseded; feature-specific live acceptance
+limits remain as documented. No user accounts/sharing or notification recipients
+were changed during verification.

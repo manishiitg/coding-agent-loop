@@ -1,6 +1,7 @@
 package services
 
 import (
+	"io"
 	"mime"
 	"mime/multipart"
 	"os"
@@ -354,5 +355,49 @@ func TestAuthStatusCachedPrefersStaleOverPending(t *testing.T) {
 	}
 	if !st.Authenticated {
 		t.Fatalf("stale status lost: %#v", st)
+	}
+}
+
+func TestGmailRichBodyDoesNotAppendPlainAlternative(t *testing.T) {
+	raw, err := buildGmailMIME("user@example.com", nil, "Pulse", "PLAIN_ONLY fallback", "<p>RICH_ONLY summary</p>", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	message := string(raw)
+	_, params, err := mime.ParseMediaType(headerValue(message, "Content-Type"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	outer := multipart.NewReader(strings.NewReader(message[strings.Index(message, "\r\n\r\n")+4:]), params["boundary"])
+	part, err := outer.NextPart()
+	if err != nil {
+		t.Fatal(err)
+	}
+	kind, alt, err := mime.ParseMediaType(part.Header.Get("Content-Type"))
+	if err != nil || kind != "multipart/alternative" {
+		t.Fatal("plain and HTML are not alternatives")
+	}
+	alternatives := multipart.NewReader(part, alt["boundary"])
+	plain, err := alternatives.NextPart()
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := io.ReadAll(plain)
+	if string(body) != "PLAIN_ONLY fallback" {
+		t.Fatal("unexpected plain alternative")
+	}
+	rich, err := alternatives.NextPart()
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ = io.ReadAll(rich)
+	if string(body) != "<p>RICH_ONLY summary</p>" {
+		t.Fatal("plain fallback duplicated into HTML")
+	}
+	if _, err := alternatives.NextPart(); err != io.EOF {
+		t.Fatal("extra body alternative")
+	}
+	if _, err := outer.NextPart(); err != io.EOF {
+		t.Fatal("extra visible body outside alternatives")
 	}
 }

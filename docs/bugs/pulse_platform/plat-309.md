@@ -43,3 +43,12 @@ route execution. Internal tests do not prove public gateway reachability.
 
 Regression tests cover generated secrets, list redaction, a signed setup ping,
 reader rejection and Run exclusion. Feature implemented; final release pending.
+
+## 2026-09-12 deployment confirmation
+
+The latest follow-up above is included in RTS release `3a37a1c-20260912143119`
+(app `3a37a1c75`). Source revisions and all three services were verified after
+activation. The configured-environment Linux sandbox regression passed.
+Earlier pending-deployment notes are superseded; feature-specific live acceptance
+limits remain as documented. No user accounts/sharing or notification recipients
+were changed during verification.

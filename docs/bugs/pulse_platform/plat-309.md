@@ -52,3 +52,17 @@ activation. The configured-environment Linux sandbox regression passed.
 Earlier pending-deployment notes are superseded; feature-specific live acceptance
 limits remain as documented. No user accounts/sharing or notification recipients
 were changed during verification.
+
+## Follow-up — Trigger connectors and route destinations
+
+Revision `2e3be2042` fixes presentation-card reconciliation clearing React Flow
+handle measurements, which caused trigger edges to disappear. Fixed card sizes
+now retain measured dimensions. Solid labeled arrows connect triggers to Start;
+dashed `Selects: <route>` arrows connect saved choices to their route entry steps.
+Full-workflow triggers are labeled explicitly. The Triggers viewport includes
+connection destinations, and route highlighting retains prerequisites from Start.
+
+Verification: eight focused layout/node tests and the frontend build passed.
+A browser fixture verified both route-specific schedules and full-workflow
+webhooks render real SVG paths that remain after graph updates. RTS release `2e3be20-20260912145652` deployed successfully with all three
+services active and public health passing; user will test the production interaction.

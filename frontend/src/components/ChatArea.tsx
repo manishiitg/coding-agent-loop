@@ -3768,9 +3768,9 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
         />
       )}
 
-      {/* Scheduled/bot runs have no composer, so keep their stop action
-          pinned below the transcript in a separate footer. */}
-      {isReadOnlyRunView && activeTab && (
+      {/* Scheduled runs show a compact stop action beside the terminal toggle.
+          Keep the footer for bot runs and surfaces that hide the input row. */}
+      {isReadOnlyRunView && activeTab && (!activeTab.metadata?.isScheduledRun || hideInput) && (
         <SessionStopButton key={activeTab.tabId} tabId={activeTab.tabId} footer />
       )}
 

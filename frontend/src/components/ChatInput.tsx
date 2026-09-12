@@ -2894,8 +2894,9 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
 
   // Removed editing preset query functionality - not needed for multi-agent mode
 
-  // Scheduled/bot runs use the separate footer in ChatArea.
-  const hasRunFooter = !!activeTab?.metadata?.isScheduledRun || !!activeTab?.metadata?.isBotRun
+  // Scheduled runs share the compact actions beside the live-terminal toggle.
+  // Bot runs still use the separate footer in ChatArea.
+  const hasRunFooter = !!activeTab?.metadata?.isBotRun && !activeTab?.metadata?.isScheduledRun
   const showStopButton = !!tabSessionId && !isReadOnlyUser && isTurnInFlight && !hasRunFooter
   const stopButton = activeTabId ? <SessionStopButton key={activeTabId} tabId={activeTabId} /> : null
 

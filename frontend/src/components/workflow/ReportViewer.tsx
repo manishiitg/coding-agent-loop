@@ -155,9 +155,9 @@ function ReportViewComponent({ workspacePath, onClose, focusTier }: ReportViewPr
   // open_workspace_view(view="report", target="<tab>") lands here; the frame
   // hands it to the report HTML, which owns its own tabs.
   const viewTarget = useWorkflowStore(state => state.workspaceViewTarget)
-  const reportFocus = viewTarget?.view === 'report'
+  const reportFocus = useMemo(() => viewTarget?.view === 'report'
     ? { value: viewTarget.target, token: viewTarget.token }
-    : undefined
+    : undefined, [viewTarget])
   const [previewPreference, setPreviewPreference] = useState<ReportPreviewDevice>(() => readReportPreviewPreference(workspacePath))
   const reportChat = useReportChat(workspacePath)
   const dataApi = useReportDataApi(workspacePath, reportChat.request)
@@ -211,7 +211,7 @@ function ReportViewComponent({ workspacePath, onClose, focusTier }: ReportViewPr
           className="min-h-0 flex-1 overflow-y-auto overscroll-y-contain"
         >
           <div className={shellClass}>
-            {loading && <div className="flex min-h-64 items-center justify-center gap-2 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" /> Loading report…</div>}
+            {loading && !report && <div className="flex min-h-64 items-center justify-center gap-2 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" /> Loading report…</div>}
             {error && <div className="m-3 rounded-md border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive">Failed to load report: {error}</div>}
             {!loading && !error && !report && (
               <div className="m-3 flex flex-col items-center gap-3 rounded-xl border border-dashed border-border p-8 text-center">
@@ -226,7 +226,7 @@ function ReportViewComponent({ workspacePath, onClose, focusTier }: ReportViewPr
               </div>
             )}
             {!loading && report && !report.html && <div className="m-3 rounded-md border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive">Could not read {report.label}.</div>}
-            {report?.html && <HtmlReportFrame html={report.html} title={report.label} autoHeight refreshToken={refreshNonce} focusTarget={reportFocus} className="block w-full border-0" />}
+            {report?.html && <HtmlReportFrame key={report.path} html={report.html} title={report.label} autoHeight refreshToken={refreshNonce} focusTarget={reportFocus} className="block w-full border-0" />}
           </div>
         </div>
         <FilePreviewModal />

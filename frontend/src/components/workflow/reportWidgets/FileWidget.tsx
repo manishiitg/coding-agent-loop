@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { lazy, Suspense, useEffect, useMemo, useState } from 'react'
 import { File, FileJson, FileText, FolderOpen, Image, Music, Video } from 'lucide-react'
 import type { PlannerFile, ReportFileListFormat, ReportFileRenderFormat, ReportWidget } from '../../../services/api-types'
 import { agentApi, workspaceApi } from '../../../services/api'
@@ -6,18 +6,28 @@ import { WidgetError, WidgetHeader } from './shared'
 import { useReportFilePreviewStore } from '../../../stores/useReportFilePreviewStore'
 import { HtmlReportFrame } from './HtmlWidgetFrame'
 
+const DocxRenderer = lazy(() => import('../../ui/DocxRenderer').then(module => ({ default: module.DocxRenderer })))
+
+function DocxPreview({ data }: { data: ArrayBuffer }) {
+  return (
+    <Suspense fallback={<div className="p-4 text-sm text-muted-foreground">Loading document preview…</div>}>
+      <DocxRenderer data={data} />
+    </Suspense>
+  )
+}
+
 // previewReportFile opens a file-list entry in the in-report preview modal.
 // file.filepath is the absolute workspace path the planner-files API returns.
 function previewReportFile(file: PlannerFile) {
   useReportFilePreviewStore.getState().show({ path: file.filepath, name: basename(file.filepath) })
 }
 
-type ArtifactKind = 'html' | 'text' | 'code' | 'json' | 'image' | 'video' | 'audio' | 'pdf' | 'other'
+type ArtifactKind = 'html' | 'text' | 'code' | 'json' | 'image' | 'video' | 'audio' | 'pdf' | 'docx' | 'other'
 
 type FileContentState =
   | { status: 'loading' }
   | { status: 'error'; message: string }
-  | { status: 'ready'; content?: string; objectUrl?: string; mimeType?: string }
+  | { status: 'ready'; content?: string; objectUrl?: string; mimeType?: string; binaryData?: ArrayBuffer }
 
 type FileListState =
   | { status: 'loading' }
@@ -56,6 +66,7 @@ function artifactKind(path: string): ArtifactKind {
   if (ext === 'md' || ext === 'markdown') return 'text'
   if (ext === 'json' || ext === 'jsonl') return 'json'
   if (ext === 'pdf') return 'pdf'
+  if (ext === 'docx') return 'docx'
   if (IMAGE_EXTENSIONS.has(ext)) return 'image'
   if (VIDEO_EXTENSIONS.has(ext)) return 'video'
   if (AUDIO_EXTENSIONS.has(ext)) return 'audio'
@@ -119,6 +130,16 @@ function collectFiles(items: PlannerFile[], out: PlannerFile[] = []): PlannerFil
   return out
 }
 
+async function loadDocxData(path: string): Promise<ArrayBuffer> {
+  const response = await workspaceApi.get<ArrayBuffer>(`/api/documents/${encodeURIComponent(path)}`, {
+    params: { download: 'true' },
+    responseType: 'arraybuffer',
+    headers: { Accept: 'application/octet-stream' },
+    transformResponse: [(data) => data],
+  })
+  return response.data
+}
+
 async function loadBinaryObjectUrl(path: string, mimeType = mimeTypeFor(path)): Promise<string> {
   const response = await workspaceApi.get(`/api/documents/${encodeURIComponent(path)}`, {
     params: { download: 'true' },
@@ -138,7 +159,7 @@ function ArtifactIcon({ kind }: { kind: ArtifactKind }) {
   if (kind === 'video') return <Video className={className} />
   if (kind === 'audio') return <Music className={className} />
   if (kind === 'json') return <FileJson className={className} />
-  if (kind === 'text' || kind === 'code' || kind === 'html' || kind === 'pdf') return <FileText className={className} />
+  if (kind === 'text' || kind === 'code' || kind === 'html' || kind === 'pdf' || kind === 'docx') return <FileText className={className} />
   return <File className={className} />
 }
 
@@ -160,6 +181,11 @@ function useFileContent(widget: ReportWidget, workspacePath: string): FileConten
         }
         if (format === 'link') {
           if (!cancelled) setState({ status: 'ready' })
+          return
+        }
+        if (format === 'docx') {
+          const binaryData = await loadDocxData(path)
+          if (!cancelled) setState({ status: 'ready', binaryData })
           return
         }
         if (format === 'image') {
@@ -246,6 +272,11 @@ export function FileWidget({ widget, workspacePath }: { widget: ReportWidget; wo
       )}
       {format === 'pdf' && state.objectUrl && (
         <iframe title={widget.title || name} src={state.objectUrl} className="h-[min(820px,75vh)] w-full rounded-lg border border-border bg-background" />
+      )}
+      {format === 'docx' && state.binaryData && (
+        <div className="max-h-[720px] overflow-auto p-3">
+          <DocxPreview data={state.binaryData} />
+        </div>
       )}
       {(format === 'link' || format === 'other') && (
         <div className="flex items-center gap-2 rounded-lg border border-border bg-muted/20 px-2.5 py-2 text-sm text-foreground">
@@ -518,6 +549,11 @@ function useAbsoluteFileContent(path: string, kind: ArtifactKind): FileContentSt
 
     const load = async () => {
       try {
+        if (kind === 'docx') {
+          const binaryData = await loadDocxData(path)
+          if (!cancelled) setState({ status: 'ready', binaryData })
+          return
+        }
         if (kind === 'image') {
           const response = await agentApi.getPlannerFileContent(path)
           const content = typeof response?.data?.content === 'string' ? response.data.content : ''
@@ -554,7 +590,7 @@ function useAbsoluteFileContent(path: string, kind: ArtifactKind): FileContentSt
 
 // FilePreviewByPath renders a single workspace file inline given its absolute
 // path — the body of the in-report preview modal. Handles the same formats as
-// the single-file FileWidget (pdf/image/video/audio/html/text/code/json).
+// the single-file FileWidget (pdf/docx/image/video/audio/html/text/code/json).
 export function FilePreviewByPath({ path, name }: { path: string; name?: string }) {
   const kind = artifactKind(path)
   const state = useAbsoluteFileContent(path, kind)
@@ -577,6 +613,9 @@ export function FilePreviewByPath({ path, name }: { path: string; name?: string 
   }
   if (kind === 'pdf' && state.objectUrl) {
     return <iframe title={label} src={state.objectUrl} className="h-full w-full bg-background" />
+  }
+  if (kind === 'docx' && state.binaryData) {
+    return <div className="h-full overflow-auto p-3"><DocxPreview data={state.binaryData} /></div>
   }
   if (kind === 'image') {
     return (

@@ -1,5 +1,6 @@
 import { memo, useCallback, useEffect, useLayoutEffect, useRef } from 'react'
 import { useReportDataApi } from './reportEmbedContext'
+import { readReportTabSelection, restoreReportTabSelection, type ReportTabSelection } from './reportTabSelection'
 import {
   applyReportTheme,
   installReportHost,
@@ -117,6 +118,7 @@ function HtmlReportFrameComponent({
   const injectedDataApiRef = useRef<typeof dataApi>(null)
   const injectedRefreshTokenRef = useRef<number | null>(null)
   const appliedThemeRef = useRef<{ document: Document; theme: ReportHostTheme } | null>(null)
+  const savedTabRef = useRef<ReportTabSelection | null>(null)
 
   // Do not pass srcDoc through React's normal DOM-prop reconciliation. A report
   // frame is a live document: when an outer polling update re-renders its
@@ -126,6 +128,7 @@ function HtmlReportFrameComponent({
   useLayoutEffect(() => {
     const frame = iframeRef.current
     if (!frame || appliedHtmlRef.current === html) return
+    if (appliedHtmlRef.current !== null) savedTabRef.current = readReportTabSelection(frame.contentDocument)
     appliedHtmlRef.current = html
     injectedDocumentRef.current = null
     injectedDataApiRef.current = null
@@ -277,7 +280,7 @@ function HtmlReportFrameComponent({
       if (deliver() || ++tries > 20) window.clearInterval(timer)
     }, 100)
     return () => window.clearInterval(timer)
-  }, [focusTarget])
+  }, [focusTarget?.value, focusTarget?.token])
 
   // Keep the iframe theme in sync when the user toggles the app's light/dark mode
   // while the report is open (watches the app's <html> class).
@@ -299,6 +302,10 @@ function HtmlReportFrameComponent({
         loadedDocumentRef.current = iframeRef.current?.contentDocument || null
         debugReportFrame('iframe loaded', title)
         inject()
+        const doc = iframeRef.current?.contentDocument
+        const selection = savedTabRef.current
+        savedTabRef.current = null
+        if (doc && selection) restoreReportTabSelection(doc, selection)
       }}
       className={className}
     />

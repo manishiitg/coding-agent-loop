@@ -17,6 +17,9 @@ export function DocxRenderer({ data }: DocxRendererProps) {
     async function convert() {
       try {
         setLoading(true)
+        setError(null)
+        setHtml(null)
+        setWarnings([])
         const result = await mammoth.convertToHtml({ arrayBuffer: data })
         if (cancelled) return
         setHtml(result.value)

@@ -45,9 +45,9 @@ export function SessionStopButton({ tabId, footer = false }: SessionStopButtonPr
       type="button"
       onClick={() => void stopSession()}
       disabled={stopping}
-      variant="destructive"
+      variant={footer ? 'destructive' : 'ghost'}
       size={footer ? 'sm' : 'icon'}
-      className={footer ? 'gap-2' : 'h-7 w-7 p-0'}
+      className={footer ? 'gap-2' : 'h-7 w-7 p-0 text-muted-foreground hover:bg-destructive/10 hover:text-destructive'}
       data-testid={footer ? 'scheduled-run-stop-button' : 'chat-stop-button'}
       aria-label={stopping ? 'Stopping session' : 'Stop session and background work'}
       title="Stop session and background work"

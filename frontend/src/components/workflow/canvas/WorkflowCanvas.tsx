@@ -5,6 +5,8 @@ import {
   useNodesState,
   useEdgesState,
   useReactFlow,
+  getNodesBounds,
+  getViewportForBounds,
   BackgroundVariant,
   type NodeChange,
   type OnNodeDrag
@@ -1358,6 +1360,15 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
   const triggerFlow = React.useMemo(() => appendTriggerCards(nodes, edges, triggers.jobs, {
     selectedID: selectedTriggerJob?.id, loading: triggers.loading, error: triggers.error, onSelect: selectTrigger, onSettings: openTriggerSettings, onRefresh: triggers.refresh,
   }), [nodes, edges, triggers.jobs, triggers.loading, triggers.error, triggers.refresh, selectedTriggerJob?.id, selectTrigger, openTriggerSettings])
+  const focusTriggers = useCallback(() => {
+    const surface = reactFlowWrapper.current?.querySelector('.react-flow')
+    const focusNodes = triggerFlow.nodes.filter(node => node.type === 'workflow-trigger' || node.type === 'workflow-trigger-heading' || node.id === 'start')
+    if (!surface || !focusNodes.length || !surface.clientWidth || !surface.clientHeight) return
+    // Set the viewport directly: queued fitView can be displaced by controlled
+    // plan-node reconciliation while presentation cards are being measured.
+    const bounds = getNodesBounds(focusNodes)
+    void setViewport(getViewportForBounds(bounds, Math.min(surface.clientWidth, reactFlowWrapper.current!.clientWidth), surface.clientHeight, FLOW_FIT_MIN_ZOOM, FLOW_FIT_MAX_ZOOM, 0.15), { duration: 300 })
+  }, [triggerFlow.nodes, setViewport])
   const tracedGraph = React.useMemo(() => selectedTriggerJob
     ? traceTriggerGraph(triggerFlow.nodes, triggerFlow.edges, selectedTriggerJob)
     : traceRouteGraph(triggerFlow.nodes, triggerFlow.edges, activeTrace), [triggerFlow, selectedTriggerJob, activeTrace])
@@ -2335,6 +2346,11 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
       const fitTimer = window.setTimeout(() => {
         window.requestAnimationFrame(() => {
           if (previewDevice === 'tablet') {
+            if (triggers.jobs.length) {
+              focusTriggers()
+              hasInitializedView.current = true
+              return
+            }
             const firstNode = nodes.find(node => node.id !== 'start' && node.id !== 'variables') ?? nodes[0]
             setViewport({
               x: 48 - firstNode.position.x * 0.85,
@@ -2363,7 +2379,7 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
 
       return () => window.clearTimeout(fitTimer)
     }
-  }, [embeddedPlanOnly, nodes, fitView, getViewport, previewDevice, setViewport, toolbarOnly, triggers.loading])
+  }, [embeddedPlanOnly, nodes, fitView, getViewport, previewDevice, setViewport, toolbarOnly, triggers.loading, triggers.jobs.length, focusTriggers])
 
   // Track previous stepStatusMap to detect actual changes
   const prevStepStatusMapRef = React.useRef<Map<string, 'pending' | 'running' | 'completed' | 'failed'>>(new Map())
@@ -2585,7 +2601,7 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
           <button type="button" onClick={() => {
             setRouteTrace(null)
             setSelectedTrigger(null)
-            void fitView({ nodes: triggerFlow.nodes.filter(node => node.type === 'workflow-trigger' || node.type === 'workflow-trigger-heading' || node.id === 'start'), padding: 0.15, duration: 300, minZoom: FLOW_FIT_MIN_ZOOM, maxZoom: FLOW_FIT_MAX_ZOOM })
+            focusTriggers()
           }} className="absolute right-44 top-3 z-20 h-8 rounded-md border border-border bg-background/95 px-2 text-xs text-foreground shadow-sm hover:bg-muted" aria-label="Show triggers">Triggers {triggers.jobs.length}</button>
           {!!evaluationPlan?.steps.length && <button type="button" onClick={() => {
             setRouteTrace(null)

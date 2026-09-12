@@ -5,7 +5,7 @@
 | Coordination | Value |
 |---|---|
 | Assigned agent | Codex |
-| Ticket state | Slack fix tested; release pending. Reported email duplication not reproduced by code tests |
+| Ticket state | Slack fix deployed to RTS; reported email duplication not reproduced by code tests |
 | Last synchronized | 2026-09-12 |
 
 The shared Slack webhook formatter sent the full message as top-level `text`
@@ -27,3 +27,8 @@ preserve that MIME structure. A parser-based test verifies one plain alternative
 one HTML alternative and no additional visible body. It does not reproduce the
 reported email symptom, nor prove that caller-authored HTML never repeats itself.
 Email duplication remains unverified; do not close it based on the Slack fix.
+
+RTS deployment verified on 2026-09-12: release `ee63424-20260912144418`,
+application revision `ee634249d61c606fc0e6077486a661a0285bdf06`.
+All three services and public health passed. The host isolation regression
+passed with the deployed GOG_HOME configuration.

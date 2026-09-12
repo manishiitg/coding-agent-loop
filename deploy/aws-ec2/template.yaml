@@ -13,7 +13,7 @@ Parameters:
     Description: Ubuntu 24.04 amd64 AMI ID for the selected region.
   InstanceType:
     Type: String
-    Default: t3.xlarge
+    Default: t3.large
     AllowedValues: [t3.large, t3.xlarge, t3.2xlarge]
   KeyName:
     Type: AWS::EC2::KeyPair::KeyName

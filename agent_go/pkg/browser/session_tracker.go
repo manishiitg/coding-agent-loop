@@ -46,6 +46,9 @@ type browserSessionInfo struct {
 	agentSessionID    string // agent-level browser owner ID
 	workflowSessionID string // root workflow/chat session ID (always the parent, for per-workflow limit)
 	lastUsed          time.Time
+	captureActive     bool
+	captureOwner      string
+	captureWorkspace  string
 	createdAt         time.Time
 }
 
@@ -88,7 +91,7 @@ func reapIdleSessions(idleTimeout time.Duration) {
 	tracker.mu.Lock()
 	var stale []string
 	for name, s := range tracker.sessions {
-		if time.Since(s.lastUsed) > idleTimeout && !(SharedBrowserEnabled() && name == SharedSessionName) {
+		if time.Since(s.lastUsed) > idleTimeout && !s.captureActive && !(SharedBrowserEnabled() && name == SharedSessionName) {
 			stale = append(stale, name)
 		}
 	}
@@ -99,9 +102,22 @@ func reapIdleSessions(idleTimeout time.Duration) {
 	}
 	log.Printf("[BROWSER_REAPER] Reaping %d idle session(s) (idle > %s): %v", len(stale), idleTimeout, stale)
 	for _, session := range stale {
+		release, ok := TryTakeBrowserControl(session)
+		if !ok {
+			continue
+		}
+		tracker.mu.Lock()
+		info := tracker.sessions[session]
+		eligible := info != nil && !info.captureActive && time.Since(info.lastUsed) > idleTimeout
+		tracker.mu.Unlock()
+		if !eligible {
+			release()
+			continue
+		}
 		killSessionRuntime(session)
 		removeSessionFiles(session)
 		tracker.Remove(session)
+		release()
 		log.Printf("[BROWSER_REAPER] Reaped idle session %q", session)
 	}
 }
@@ -224,6 +240,9 @@ func (t *SessionTracker) GetOldestSession() string {
 	defer t.mu.Unlock()
 	var oldest *browserSessionInfo
 	for _, s := range t.sessions {
+		if s.captureActive {
+			continue
+		}
 		if oldest == nil || s.lastUsed.Before(oldest.lastUsed) {
 			oldest = s
 		}
@@ -326,7 +345,7 @@ func (t *SessionTracker) RemoveAllForAgent(agentSessionID string) []string {
 	defer t.mu.Unlock()
 	var removed []string
 	for name, s := range t.sessions {
-		if s.agentSessionID == agentSessionID {
+		if s.agentSessionID == agentSessionID && !IsUserBrowserSession(name) {
 			removed = append(removed, name)
 			delete(t.sessions, name)
 		}
@@ -344,7 +363,7 @@ func (t *SessionTracker) RemoveAllForWorkflow(workflowSessionID string) []string
 	defer t.mu.Unlock()
 	var removed []string
 	for name, s := range t.sessions {
-		if s.workflowSessionID == workflowSessionID {
+		if s.workflowSessionID == workflowSessionID && !IsUserBrowserSession(name) {
 			removed = append(removed, name)
 			delete(t.sessions, name)
 		}
@@ -367,7 +386,7 @@ func (t *SessionTracker) CloseAllForWorkflow(workflowSessionID string, client *C
 
 	log.Printf("[BROWSER_CLEANUP] Closing %d browser session(s) for workflow %q: %v", len(sessions), workflowSessionID, sessions)
 	for _, session := range sessions {
-		if SharedBrowserEnabled() && session == SharedSessionName {
+		if IsUserBrowserSession(session) || (SharedBrowserEnabled() && session == SharedSessionName) {
 			continue
 		}
 		if client != nil {
@@ -447,4 +466,46 @@ func (t *SessionTracker) RemoveAllForChat(chatSessionID string) []string {
 // CloseAllForChat is an alias for CloseAllForWorkflow (backward compat)
 func (t *SessionTracker) CloseAllForChat(chatSessionID string, client *Client) {
 	t.CloseAllForWorkflow(chatSessionID, client)
+}
+
+// SetCapture retains browser lifetime for a recording and identifies its owning run.
+func (t *SessionTracker) SetCapture(session string, active bool, owner, workspace string) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.sessions[session] == nil && active && IsUserBrowserSession(session) {
+		t.sessions[session] = &browserSessionInfo{browserSession: session, agentSessionID: owner, workflowSessionID: owner, createdAt: time.Now()}
+	}
+	if s := t.sessions[session]; s != nil {
+		s.captureActive = active
+		s.captureOwner = owner
+		s.captureWorkspace = workspace
+		s.lastUsed = time.Now()
+	}
+}
+func (t *SessionTracker) CaptureConflict(session, owner, workspace, command string) string {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	s := t.sessions[session]
+	if s == nil || !s.captureActive {
+		return ""
+	}
+	if command == "close" || command == "quit" || command == "exit" || command == "reset" {
+		return "Stop the active capture before closing or resetting the user browser."
+	}
+	if (s.captureOwner != "" && owner != s.captureOwner) || (s.captureWorkspace != "" && workspace != s.captureWorkspace) {
+		return "The user browser is recording another run. Wait until that capture stops before using this browser."
+	}
+	return ""
+}
+func (t *SessionTracker) Recording(session string) bool {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	s := t.sessions[session]
+	return s != nil && s.captureActive
+}
+
+func (t *SessionTracker) HasSession(session string) bool {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.sessions[session] != nil
 }

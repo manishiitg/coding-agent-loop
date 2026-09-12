@@ -25,20 +25,16 @@ func (e *Executor) handleCapture(ctx context.Context, session string, args []str
 	if cfg == nil || guard == nil || !guard.Enabled {
 		return "", fmt.Errorf("CAPTURE_ACCESS_DENIED: capture requires a workflow session with workspace permissions")
 	}
-	workspace := cfg.WorkflowPath
-	if workspace == "" {
-		// Older sessions have only a trusted working directory. Workflow roots
-		// are Workflow/<name>; never infer ownership from an agent's arguments.
-		parts := strings.Split(path.Clean(cfg.WorkingDir), "/")
-		if len(parts) >= 2 && parts[0] == "Workflow" && parts[1] != ".." {
-			workspace = strings.Join(parts[:2], "/")
-		}
-	}
+	workspace := captureWorkspace(cfg)
 	if workspace == "" || workspace != path.Clean(workspace) || !strings.HasPrefix(workspace, "Workflow/") || len(strings.Split(workspace, "/")) != 2 {
 		return "", fmt.Errorf("CAPTURE_ACCESS_DENIED: no owning workflow is configured for this session")
 	}
+	owner, _ := ctx.Value(common.WorkflowSessionIDKey).(string)
+	if owner == "" {
+		owner, _ = ctx.Value(common.ChatSessionIDKey).(string)
+	}
 	payload, err := json.Marshal(map[string]interface{}{
-		"action": args[0], "workspace_path": workspace,
+		"action": args[0], "workspace_path": workspace, "owner_session": owner,
 		"working_directory": cfg.WorkingDir, "folder_guard": guard,
 	})
 	if err != nil {
@@ -64,6 +60,28 @@ func (e *Executor) handleCapture(ctx context.Context, session string, args []str
 	if resp.StatusCode != http.StatusOK {
 		return "", fmt.Errorf("capture returned HTTP %d: %s", resp.StatusCode, body)
 	}
-	GetSessionTracker().TouchExisting(session)
+	var state struct {
+		Recording bool   `json:"recording"`
+		Owner     string `json:"owner_session"`
+	}
+	if json.Unmarshal(body, &state) == nil {
+		GetSessionTracker().SetCapture(session, state.Recording, state.Owner, workspace)
+	}
 	return string(body), nil
+}
+
+func captureWorkspace(cfg *common.SessionShellConfig) string {
+	if cfg == nil {
+		return ""
+	}
+	workspace := cfg.WorkflowPath
+	if workspace == "" {
+		// Older sessions have only a trusted working directory. Workflow roots
+		// are Workflow/<name>; never infer ownership from an agent's arguments.
+		parts := strings.Split(path.Clean(cfg.WorkingDir), "/")
+		if len(parts) >= 2 && parts[0] == "Workflow" && parts[1] != ".." {
+			workspace = strings.Join(parts[:2], "/")
+		}
+	}
+	return workspace
 }

@@ -15,6 +15,7 @@ import (
 	"github.com/gorilla/mux"
 	"github.com/gorilla/websocket"
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/browser"
+	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/common"
 )
 
 // Browser discovery is scoped to both the signed-in session owner and workflow.
@@ -26,14 +27,19 @@ func (api *StreamingAPI) liveBrowserSessions(r *http.Request) []map[string]strin
 		return result
 	}
 	result = api.playwrightSessions(GetUserIDFromContext(r.Context()), workspace)
-	if browser.SharedBrowserEnabled() {
-		level, manifest := workflowAccessForWorkspacePath(r.Context(), GetUserFromContext(r.Context()), workspace)
-		if manifest == nil || level == WorkflowAccessNone || (manifest.Capabilities.BrowserMode != "auto" && manifest.Capabilities.BrowserMode != "headless") {
-			return result
-		}
-		return append([]map[string]string{{"browser_session": browser.SharedSessionName, "workflow_session": "shared", "label": "Shared browser · all users"}}, result...)
-	}
 	for _, item := range browser.GetSessionTracker().ActiveSessions() {
+		if browser.IsUserBrowserSession(item["browser_session"]) {
+			userID := GetUserIDFromContext(r.Context())
+			expected := common.PrefixBrowserSessionID(common.BrowserSessionNamespace(userID, "") + "--browser")
+			if userID != "" && item["browser_session"] == expected {
+				item["label"] = "Your browser"
+				level, manifest := workflowAccessForWorkspacePath(r.Context(), GetUserFromContext(r.Context()), workspace)
+				if manifest != nil && level != WorkflowAccessNone && (manifest.Capabilities.BrowserMode == "auto" || manifest.Capabilities.BrowserMode == "headless") {
+					result = append(result, item)
+				}
+			}
+			continue
+		}
 		id := item["workflow_session"]
 		api.activeSessionsMux.RLock()
 		owner := api.activeSessions[id]
@@ -212,7 +218,7 @@ func (api *StreamingAPI) handleLiveBrowserStream(w http.ResponseWriter, r *http.
 			if releaseControl == nil || !liveBrowserTabRef.MatchString(message.Tab) {
 				continue
 			}
-			_, err := browser.NewClient(workspaceURL).ExecuteCommand(ctx, append(browser.HeadlessLaunchArgs(), "--session", session, "tab", message.Tab, "--json"), &browser.ExecuteOptions{Timeout: 10 * time.Second})
+			_, err := browser.NewClient(workspaceURL).ExecuteCommand(ctx, append(browser.HeadlessLaunchArgsForSession(session), "--session", session, "tab", message.Tab, "--json"), &browser.ExecuteOptions{Timeout: 10 * time.Second})
 			if err != nil {
 				sendError("Unable to switch browser tab.")
 			}

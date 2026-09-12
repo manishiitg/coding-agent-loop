@@ -1,29 +1,26 @@
 package step_based_workflow
 
 import (
-	"strings"
+	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/common"
 	"testing"
 )
 
-func TestWorkshopBrowserSessionIDIsNamespacedPerUserChat(t *testing.T) {
-	manish := workshopBrowserSessionID("user-manish--chat-one", "Workflow/testing", "research")
-	shubham := workshopBrowserSessionID("user-shubham--chat-two", "Workflow/testing", "research")
-
-	if manish == shubham {
-		t.Fatalf("different users received the same workflow browser: %q", manish)
+func TestWorkshopBrowserMatchesBuilderAcrossGroupsAndWorkflows(t *testing.T) {
+	const parent = "browser-test-parent"
+	common.BindSessionBrowserIsolation(parent, "alice")
+	defer common.ClearSessionShellConfig(parent)
+	namespace := common.GetSessionShellConfig(parent).BrowserSessionNamespace
+	expected := common.ResolveBrowserSessionID(parent, "main")
+	for _, workspace := range []string{"Workflow/one", "Workflow/two"} {
+		for _, group := range []string{"default", "ai-news", "parallel-worker"} {
+			got := common.PrefixBrowserSessionID(workshopBrowserSessionID(namespace, workspace, group))
+			if got != expected {
+				t.Fatalf("%s/%s got %s; builder %s", workspace, group, got, expected)
+			}
+		}
 	}
-	if !strings.HasPrefix(manish, "user-manish--chat-one--workflow-browser-") {
-		t.Fatalf("workflow browser lost its authenticated namespace: %q", manish)
-	}
-	if !strings.HasSuffix(manish, "-research") {
-		t.Fatalf("workflow browser lost its group label: %q", manish)
-	}
-}
-
-func TestWorkshopBrowserSessionIDIsStableWithinUserChatAndGroup(t *testing.T) {
-	first := workshopBrowserSessionID("user-one--chat-one", "Workflow/testing", "research")
-	second := workshopBrowserSessionID("user-one--chat-one", "Workflow/testing", "research")
-	if first != second {
-		t.Fatalf("same user/chat/group was not stable: %q != %q", first, second)
+	other := workshopBrowserSessionID(common.BrowserSessionNamespace("bob", "chat"), "Workflow/one", "default")
+	if common.PrefixBrowserSessionID(other) == expected {
+		t.Fatal("different users share workflow browser")
 	}
 }

@@ -51,15 +51,7 @@ func browserLiveEndpoint(session string) (int, string, error) {
 	if !browserLiveSessionName.MatchString(session) {
 		return 0, "", fmt.Errorf("invalid session")
 	}
-	home, _ := os.UserHomeDir()
-	dirs := []string{filepath.Join(home, ".agent-browser"), filepath.Join(os.TempDir(), "agent-browser"), filepath.Join(os.TempDir(), ".agent-browser"), "/tmp/.agent-browser"}
-	if runtimeDir := os.Getenv("XDG_RUNTIME_DIR"); runtimeDir != "" {
-		dirs = append([]string{filepath.Join(runtimeDir, "agent-browser")}, dirs...)
-	}
-	if socketDir := os.Getenv("AGENT_BROWSER_SOCKET_DIR"); socketDir != "" {
-		dirs = append([]string{socketDir}, dirs...)
-	}
-	for _, dir := range dirs {
+	for _, dir := range browserSocketDirs() {
 		data, err := os.ReadFile(filepath.Join(dir, session+".stream"))
 		if err != nil {
 			continue
@@ -70,4 +62,16 @@ func browserLiveEndpoint(session string) (int, string, error) {
 		}
 	}
 	return 0, "", fmt.Errorf("stream metadata unavailable")
+}
+
+func browserSocketDirs() []string {
+	home, _ := os.UserHomeDir()
+	dirs := []string{filepath.Join(home, ".agent-browser"), filepath.Join(os.TempDir(), "agent-browser"), filepath.Join(os.TempDir(), ".agent-browser"), "/tmp/.agent-browser"}
+	if runtimeDir := os.Getenv("XDG_RUNTIME_DIR"); runtimeDir != "" {
+		dirs = append([]string{filepath.Join(runtimeDir, "agent-browser")}, dirs...)
+	}
+	if socketDir := os.Getenv("AGENT_BROWSER_SOCKET_DIR"); socketDir != "" {
+		dirs = append([]string{socketDir}, dirs...)
+	}
+	return dirs
 }

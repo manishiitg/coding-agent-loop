@@ -71,7 +71,7 @@ func BuildBrowserInstructions(cfg BrowserConfig) string {
 		return ""
 	}
 
-	result := "\nFor repeatable browser tests, read builder-reference/references/playwright-scripted.md; use @agentworks/playwright for JS/TS or agentworks-playwright for Python when available. Its test sessions are watch-only. The following configuration, media, and capture rules concern managed agent-browser.\n\n## Bundled Browser Recording\nWhen requested, use agent_browser(command=\"capture\", args=[\"start\"], session=\"main\") in managed headless mode after opening/selecting the page. This Builder command starts video, HAR, console and error capture through the same backend as the Browser view. Use args=[\"status\"] before starting and after uncertain responses. Stop with args=[\"stop\"] and report the returned directory, files and errors. Stop a capture you started even when reproduction fails; never stop someone else's active recording. Do not mix capture with separate record/HAR commands or close/reset the browser. The output path is assigned from current workflow permissions. CDP uses the separate native recording commands.\n"
+	result := "\nFor repeatable browser tests, read builder-reference/references/playwright-scripted.md; use @agentworks/playwright for JS/TS or agentworks-playwright for Python when available. Its test sessions are watch-only. The following configuration, media, and capture rules concern managed agent-browser.\n\n## Bundled Browser Recording\nWhen requested, use agent_browser(command=\"capture\", args=[\"start\"], session=\"main\") in managed headless mode after opening/selecting the page. This Builder command starts video, HAR, console and error capture through the same backend as the Browser view. Use args=[\"status\"] before starting and after uncertain responses. Stop with args=[\"stop\"] and report the returned directory, files, validation and errors. A failed validation means the capture is not verified evidence; never substitute a previous run’s footage. Stop a capture you started even when reproduction fails; never stop someone else's active recording. Do not mix capture with separate record/HAR commands or close/reset the browser. The output path is assigned from current workflow permissions. CDP uses the separate native recording commands.\n"
 
 	// Use Mode as primary decision, fall back to legacy CdpPort/Has* flags.
 	if cfg.Mode == "auto" {
@@ -87,28 +87,7 @@ func BuildBrowserInstructions(cfg BrowserConfig) string {
 	}
 
 	// Add session limits — applies to all browser types
-	closeRule := "- Close only isolated headless sessions when done. In persistent shared headless mode, never close/reset the browser or clear sign-ins unless explicitly requested."
-	if isCdp {
-		// CDP connects to the user's real browser. Workflow-owned labeled tabs
-		// are retained for review and closed by the backend after one hour.
-		closeRule = "- Never call top-level **close** in CDP mode. Leave workflow-created labeled tabs open at normal completion; the backend closes only those owned tabs after one hour and preserves pre-existing user tabs."
-	} else if cfg.Mode == "auto" {
-		closeRule = "- Follow live status: in CDP mode never call top-level close and let the backend clean up workflow-owned tabs after one hour; in headless mode close only isolated sessions; preserve the persistent shared browser and its sign-ins."
-	}
-	result += fmt.Sprintf("\n\n## Browser Session Limits\n"+
-		"- **Per agent:** max %d concurrent browser session(s). Do NOT open multiple browsers — use one at a time.\n"+
-		"- **Per workflow:** max %d concurrent browser sessions across all agents.\n"+
-		"- **Global:** max %d concurrent browser sessions across all workflows.\n"+
-		"%s\n"+
-		"- **Multiple browsers in a workflow:** Each parallel agent MUST use a **unique session name** "+
-		"(e.g. session=\"twitter_research\", session=\"linkedin_lookup\"). "+
-		"If two agents both use session=\"default\", they will share the same browser instead of getting separate ones. "+
-		"Pick a descriptive name related to the agent's task.",
-		browser.MaxBrowserSessionsPerAgent,
-		browser.MaxBrowserSessionsPerWorkflow,
-		browser.MaxBrowserSessionsGlobal,
-		closeRule,
-	)
+	result += "\n\n## Managed Browser Ownership\nOne headless browser per signed-in user is shared by builder, chats, workflow steps and groups. Session labels do not create separate browsers. Tabs are optional: reuse the current/existing tab or create one when useful. Browser commands are serialized; coordinate parallel tasks and re-snapshot before interaction. Preserve the browser and sign-ins when a step finishes. During capture, wait for another run’s recording to stop. In CDP mode keep the existing owned-tab and cleanup rules.\n"
 
 	return result
 }
@@ -199,9 +178,8 @@ func GetHeadlessModeInstructions() string {
 You are controlling a **headless Chromium browser** running inside a container.
 
 **Key behaviors:**
-- Query live status before acting. Headless mode may use isolated sessions or a persistent shared browser.
-- Shared mode preserves tabs and sign-ins across workflows and users. Inspect existing tabs first; do not close/reset the browser, clear storage, or sign out unless explicitly requested. Users coordinate concurrent actions themselves.
-- Isolated sessions retain cookies for their lifetime; close only isolated sessions when finished.
+- Managed headless browsing shares one browser across the signed-in user’s chats and workflow steps. Other users have separate browsers. Session labels do not create browsers.
+- Tabs are optional. Inspect existing tabs; reuse one or create one when useful. Coordinate parallel work, take fresh snapshots, and preserve the browser/sign-ins when a step finishes.
 - Users can watch and interact in the workflow Browser view. Use workspace view tools to show that view when appropriate.
 - Verify login from page content; never assume a session is authenticated.
 - Managed headless Chrome has a synthetic microphone/camera and automatic media permissions. This is test audio, not user speech. Verify getUserMedia and the application result through agent_browser; do not switch to a separate Playwright harness when a media flow fails.
@@ -309,9 +287,8 @@ Key commands: skills (version-matched docs), open, snapshot, click, fill, type, 
 Before the first browser action, load the core skill with agent_browser(command="skills", args=["get", "core"], session="default"). Use args=["list"] to discover specialized skills and load only those relevant to the task (for example dogfood for exploratory QA).
 
 ### Headless-Specific Behaviors
-- Query live status before acting. Headless mode may use isolated sessions or a persistent shared browser.
-- Shared mode preserves tabs and sign-ins across workflows and users. Inspect existing tabs first; do not close/reset the browser, clear storage, or sign out unless explicitly requested. Users coordinate concurrent actions themselves.
-- Isolated sessions retain cookies for their lifetime; close only isolated sessions when finished.
+- Managed headless browsing shares one browser across the signed-in user’s chats and workflow steps. Other users have separate browsers. Session labels do not create browsers.
+- Tabs are optional. Inspect existing tabs; reuse one or create one when useful. Coordinate parallel work, take fresh snapshots, and preserve the browser/sign-ins when a step finishes.
 - Users can watch and interact in the workflow Browser view. Use workspace view tools to show that view when appropriate.
 - Verify login from page content; never assume a session is authenticated.
 - Managed headless Chrome has a synthetic microphone/camera and automatic media permissions. This is test audio, not user speech. Verify getUserMedia and the application result through agent_browser; do not switch to a separate Playwright harness when a media flow fails.

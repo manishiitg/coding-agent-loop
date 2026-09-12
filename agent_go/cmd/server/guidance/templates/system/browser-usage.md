@@ -32,7 +32,7 @@ rejected. Desktop/local deployments may still report CDP as supported.
 | Mode | Browser | Visibility | Logins / cookies |
 |---|---|---|---|
 | **CDP** (`agent_browser` with `--cdp`) | The user's real Chrome via Chrome DevTools Protocol | User sees every action | Existing cookies + sessions are available — leverage them |
-| **Headless** (`agent_browser`) | Server-side Chromium | Live in the workflow Browser view; screenshots also available | Isolated session; cookies persist for its lifetime |
+| **Headless** (`agent_browser`) | Server-side Chromium | Live in the workflow Browser view; screenshots also available | User-owned browser shared across chats and workflow steps |
 
 The CDP row is unavailable whenever live status reports
 `"cdp_supported": false`; this is a deployment policy, not a transient
@@ -176,9 +176,8 @@ After it is reachable, configure the workflow with that port, for example
 
 ### Headless-specific rules
 
-- Call status to determine whether this deployment uses isolated sessions or a persistent shared browser.
-- In shared mode, all users and workflows see the same tabs and sign-ins. Inspect tabs before navigating; do not close/reset the browser, clear storage, or sign out unless the user explicitly asks. Users coordinate concurrent actions themselves.
-- In isolated mode, cookies last for the session lifetime; login may be needed.
+- One managed headless browser belongs to each signed-in user. Builder, chats, workflow steps and groups share it; other users have separate browsers. Session labels do not create browsers.
+- Tabs are optional: reuse the current/existing tab or create one when useful. Coordinate parallel work and take fresh snapshots before interaction. Do not close/reset the browser, clear storage, or sign out merely because your step finished.
 - The user can watch through the Browser workspace view.
 - Use `browser("reset")` only when the daemon is genuinely broken; otherwise
   it wastes time.
@@ -224,9 +223,9 @@ When the user/workflow requests recording or reproduction evidence in managed he
     # Reproduce the issue with ordinary managed browser commands.
     agent_browser("capture", ["stop"], session="main")
 
-Open/select the intended page before starting. Keep using the same session. The workspace path is assigned automatically; do not pass a filename. Capture records the page active at start; do not promise video across tab switches. Console/errors are exported from the cleared buffers when stopped.
+Open/select the intended page before starting. Keep using the same session. The workspace path is assigned automatically; do not pass a filename. User-browser capture records the selected-tab live stream and follows tab changes. It does not record background tabs simultaneously. Console/errors are exported from the cleared buffers when stopped.
 
-Check status first. If recording is already active, reuse it only as requested and do not claim ownership or automatically stop it. Stop captures you started even when reproduction fails. After a timeout check status before retrying. On stop, inspect recording, errors, directory and files: partial failures can leave recording active and require another stop. Report the actual returned paths. Never mix capture with separate record/HAR start/stop commands during the same capture. Stopping recording does not close the browser or clear sign-ins. Workflow permission errors must not be bypassed through shell.
+Check status first. If recording is already active, reuse it only as requested and do not claim ownership or automatically stop it. Stop captures you started even when reproduction fails. After a timeout check status before retrying. On stop, inspect recording, validation, errors, directory and files. Only validation=passed establishes decodable nonblank footage; visually check it matches this run before presenting it. Never substitute an earlier run’s video. Partial errors must be reported: partial failures can leave recording active and require another stop. Report the actual returned paths. Never mix capture with separate record/HAR start/stop commands during the same capture. Stopping recording does not close the browser or clear sign-ins. Workflow permission errors must not be bypassed through shell.
 
 This is a Builder extension, so upstream skills do not document it. CDP currently uses the separate record, network HAR, console and errors commands. The native record command remains video-only.
 
@@ -235,7 +234,7 @@ This is a Builder extension, so upstream skills do not document it. CDP currentl
 - Default per-agent / per-workflow / global concurrency caps are enforced
   by the runtime — keep one browser open at a time per agent. Re-use the
   same session name across calls within one task.
-- In isolated headless mode, parallel agents need unique session names. Persistent shared headless mode maps all names to the same browser; preserve its tabs and sign-ins. In shared CDP
+- In managed headless mode, all names map to the user browser; preserve its tabs and sign-ins. Tabs are optional. In shared CDP
   mode, sessions are intentionally remapped to one per port; isolation comes
   from workflow-owned labeled tabs plus the per-port select-and-act lock.
 

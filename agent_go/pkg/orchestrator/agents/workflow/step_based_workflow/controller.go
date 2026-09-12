@@ -277,6 +277,9 @@ func (hcpo *StepBasedWorkflowOrchestrator) resolveWorkshopBrowserSessionID(group
 }
 
 func workshopBrowserSessionID(browserNamespace, workspacePath, groupName string) string {
+	if namespace := strings.TrimSpace(browserNamespace); namespace != "" {
+		return namespace + "--browser"
+	}
 	groupName = strings.TrimSpace(groupName)
 	if groupName == "" {
 		groupName = "default-group"
@@ -321,7 +324,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) bindWorkshopBrowserSession(toolSessio
 // switchWorkshopGroupSession ensures workshop step execution uses a stable MCP
 // session per group name instead of the controller's "default-group" placeholder.
 // Reusing a cached per-group session preserves browser/login state across steps
-// for the same group while keeping different groups isolated.
+// for the same group. All groups inherit the owning user’s browser.
 func (hcpo *StepBasedWorkflowOrchestrator) switchWorkshopGroupSession(groupName string) (func(), error) {
 	groupName = strings.TrimSpace(groupName)
 	if groupName == "" {

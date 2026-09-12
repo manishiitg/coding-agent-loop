@@ -1,3 +1,4 @@
+import { sessionStreamingState } from '../utils/sessionStreamingState'
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import type { PollingEvent, ExtendedLLMConfiguration, SessionStatusResponse, ActiveSessionInfo, DelegationTierConfig, SSEEventMessage, SSEStatusMessage, WorkflowScheduleSummary } from '../services/api-types'
@@ -856,33 +857,31 @@ export const reconcileSessionTabStreamingState = (
   for (const [tabId, tab] of Object.entries(state.chatTabs)) {
     if (!tab.sessionId) continue
     const activeSession = activeSessionById.get(tab.sessionId)
-    const activeStatus = activeSession?.status?.toLowerCase()
+    const activity = activeSession ? sessionStreamingState(activeSession) : undefined
 
-    // The opposite gap: the backend has live work on this session (e.g. a
-    // turn a bot channel started, not this UI) but the tab's own local state
-    // never learned it. A queued EventSource can sit "connecting" forever
-    // without ever firing onerror, and nothing here started the foreground
-    // catch-up loop either, since that only begins on a local submission —
-    // so the tab looks finished even though the backend is actively
-    // streaming. Flip local state so ChatArea's existing "heal already-
-    // running turns" effect (which re-checks on every activeSessionsCache
-    // tick) picks it up on its next pass instead of leaving it stuck.
+    // Recover externally started work or a dead SSE stream using the same
+    // foreground/background decision as event polling. Raw status=running
+    // alone can describe an idle retained CLI or background-only work; forcing
+    // foreground streaming then makes each SSE status tick undo this recovery.
     if (
-      (activeStatus === 'running' || activeSession?.has_running_background_agents) &&
-      !tab.isStreaming && !tab.hasRunningBgAgents
+      activity && (activity.isStreaming || activity.hasRunningBgAgents) &&
+      (tab.isStreaming !== activity.isStreaming || tab.hasRunningBgAgents !== activity.hasRunningBgAgents)
     ) {
       if (!nextChatTabs) nextChatTabs = { ...state.chatTabs }
       nextChatTabs[tabId] = {
         ...tab,
-        isStreaming: true,
-        lastStreamingStartedAt: now,
-        hasRunningBgAgents: !!activeSession?.has_running_background_agents,
+        isStreaming: activity.isStreaming,
+        isCompleted: false,
+        lastStreamingStartedAt: activity.isStreaming ? (tab.lastStreamingStartedAt ?? now) : undefined,
+        hasRunningBgAgents: activity.hasRunningBgAgents,
+        isSyntheticTurn: activity.isSyntheticTurn,
+        canSteer: activity.canSteer,
       }
       healedCount += 1
       continue
     }
 
-    if (activeStatus === 'running' || activeStatus === 'paused') continue
+    if (activity?.isActive) continue
     if (!tab.isStreaming && !tab.hasRunningBgAgents && !tab.canSteer && !tab.isSyntheticTurn) continue
 
     const streamingAge = tab.lastStreamingStartedAt ? now - tab.lastStreamingStartedAt : Number.POSITIVE_INFINITY
@@ -914,7 +913,7 @@ export const reconcileSessionTabStreamingState = (
     logger.debug('SessionStore', `Cleared stale streaming state for ${clearedCount} tab(s) with no active backend session`)
   }
   if (healedCount > 0) {
-    logger.debug('SessionStore', `Marked ${healedCount} tab(s) streaming to match a backend-active session (dead SSE / externally-triggered turn recovery)`)
+    logger.debug('SessionStore', `Recovered activity for ${healedCount} tab(s) to match a backend-active session (dead SSE / externally-triggered turn recovery)`)
   }
 
   return {

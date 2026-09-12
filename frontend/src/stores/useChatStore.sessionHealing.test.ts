@@ -1,5 +1,6 @@
+import { sessionStreamingState } from '../utils/sessionStreamingState'
 import { describe, expect, it } from 'vitest'
-import type { ActiveSessionInfo } from '../services/api-types'
+import type { ActiveSessionInfo, RuntimeSnapshot } from '../services/api-types'
 import { reconcileSessionTabStreamingState, type ChatState, type ChatTab } from './useChatStore'
 
 // A turn a bot channel (WhatsApp, Slack, a scheduled run) starts on a session
@@ -52,7 +53,7 @@ describe('reconcileSessionTabStreamingState', () => {
     expect(result.chatTabs?.['tab-1'].lastStreamingStartedAt).toBeGreaterThan(0)
   })
 
-  it('marks an idle tab streaming when the backend reports running background agents, even if status is not "running"', () => {
+  it('recovers background activity without starting foreground streaming', () => {
     const state = {
       chatTabs: { 'tab-1': baseTab({}) },
       tabSessionStatus: {},
@@ -64,7 +65,7 @@ describe('reconcileSessionTabStreamingState', () => {
       Date.now(),
     )
 
-    expect(result.chatTabs?.['tab-1'].isStreaming).toBe(true)
+    expect(result.chatTabs?.['tab-1'].isStreaming).toBe(false)
     expect(result.chatTabs?.['tab-1'].hasRunningBgAgents).toBe(true)
   })
 
@@ -100,5 +101,56 @@ describe('reconcileSessionTabStreamingState', () => {
 
     expect(result.chatTabs?.['tab-1'].isStreaming).toBe(false)
     expect(result.tabSessionStatus?.['tab-1'].status).toBeNull()
+  })
+})
+
+const runtime = (overrides: Partial<RuntimeSnapshot> = {}): RuntimeSnapshot => ({
+  session_id: 'session-1', generation: 1, revision: 1, phase: 'idle',
+  foreground_turn: { busy: false, has_cancel: false, can_steer: false, synthetic: false },
+  background_live: false, terminal_busy: false, waiting_for_user: false,
+  started_at: '', last_progress_at: '', observed_at: '', ...overrides,
+})
+
+describe('P0 session recovery and event status agreement', () => {
+  it.each(['idle', 'completed', 'failed', 'canceled'] as const)(
+    'does not resurrect a %s runtime from stale running / background flags', phase => {
+      const state = { chatTabs: { 'tab-1': baseTab({}) }, tabSessionStatus: {} } as unknown as ChatState
+      const session = activeSession({ status: 'running', has_running_background_agents: true,
+        runtime_state: runtime({ phase }) })
+      for (let poll = 0; poll < 5; poll++) {
+        expect(reconcileSessionTabStreamingState(state, [session], Date.now() + poll * 5000)).toEqual({})
+        expect(sessionStreamingState({ ...session, session_status: 'completed' }).isStreaming).toBe(false)
+      }
+    },
+  )
+
+  it.each([
+    { name: 'background-only', snapshot: runtime({ phase: 'running', background_live: true }), streaming: false, bg: true },
+    { name: 'external foreground', snapshot: runtime({ phase: 'running', foreground_turn: { busy: true, has_cancel: true, can_steer: true, synthetic: false } }), streaming: true, bg: false },
+    { name: 'retained busy terminal', snapshot: runtime({ phase: 'running', terminal_busy: true }), streaming: true, bg: false },
+    { name: 'synthetic notification', snapshot: runtime({ phase: 'running', foreground_turn: { busy: true, has_cancel: true, can_steer: false, synthetic: true } }), streaming: false, bg: false },
+    { name: 'waiting for input', snapshot: runtime({ phase: 'waiting', waiting_for_user: true }), streaming: false, bg: false },
+  ])('stays stable across repeated recovery and event ticks: $name', ({ snapshot, streaming, bg }) => {
+    let state = { chatTabs: { 'tab-1': baseTab({}) }, tabSessionStatus: {} } as unknown as ChatState
+    const session = activeSession({ status: 'running', runtime_state: snapshot })
+    // Both endpoints carry the same runtime, even if their legacy statuses disagree.
+    const eventActivity = sessionStreamingState({ session_status: 'completed', runtime_state: snapshot })
+    expect(eventActivity.isStreaming).toBe(streaming)
+    expect(eventActivity.hasRunningBgAgents).toBe(bg)
+    state = { ...state, ...reconcileSessionTabStreamingState(state, [session], 10000) }
+    expect(state.chatTabs['tab-1'].isStreaming).toBe(streaming)
+    expect(state.chatTabs['tab-1'].hasRunningBgAgents).toBe(bg)
+    if (streaming || bg) expect(state.chatTabs['tab-1'].isCompleted).toBe(false)
+    // Simulate ChatArea applying a status-only SSE tick, then the 5s list refresh.
+    state = { ...state, chatTabs: { 'tab-1': { ...state.chatTabs['tab-1'], ...eventActivity } } }
+    for (let poll = 1; poll <= 5; poll++) {
+      expect(reconcileSessionTabStreamingState(state, [session], 10000 + poll * 5000)).toEqual({})
+    }
+  })
+
+  it('keeps a just-submitted turn during the startup grace period', () => {
+    const state = { chatTabs: { 'tab-1': baseTab({ isStreaming: true, lastStreamingStartedAt: 1000 }) }, tabSessionStatus: {} } as unknown as ChatState
+    expect(reconcileSessionTabStreamingState(state, [activeSession({ runtime_state: runtime() })], 1001)).toEqual({})
+    expect(reconcileSessionTabStreamingState(state, [activeSession({ runtime_state: runtime() })], 12000).chatTabs?.['tab-1'].isStreaming).toBe(false)
   })
 })

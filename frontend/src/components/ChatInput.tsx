@@ -1472,30 +1472,6 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
   ])
 
   // TEMP DEBUG (spinner flicker investigation) - remove after diagnosis.
-  // Logs only on an actual state transition (not every recompute), with the
-  // raw inputs behind it, so the real running<->ready<->waiting sequence is
-  // visible instead of buried in render-frequency noise.
-  const lastSpinnerDebugStateRef = useRef<string | undefined>(undefined)
-  useEffect(() => {
-    const nextState = mainAgentRuntimeStatus?.state
-    if (lastSpinnerDebugStateRef.current === nextState) return
-    // eslint-disable-next-line no-console
-    console.log('[SPINNER_DEBUG] state transition', {
-      t: Date.now(),
-      from: lastSpinnerDebugStateRef.current,
-      to: nextState,
-      isTurnInFlight,
-      isCompleted: activeTab?.isCompleted,
-      sessionStatus: activeSession?.status,
-      phase: activeSession?.runtime_state?.phase,
-      waitingForUser: activeSession?.runtime_state?.waiting_for_user,
-      backgroundLive: activeSession?.runtime_state?.background_live,
-      hasRunningBg: activeSession?.has_running_background_agents,
-      needsUserInput: activeSession?.needs_user_input,
-    })
-    lastSpinnerDebugStateRef.current = nextState
-  }, [mainAgentRuntimeStatus?.state, isTurnInFlight, activeTab?.isCompleted, activeSession])
-
   // mainAgentRuntimeStatus reads activeSession from activeSessionsCache, a
   // 30s-TTL cache that nothing polls on a timer inside the workflow-builder
   // view (only the main chat view's GlobalActivityMonitor does, every 5s).

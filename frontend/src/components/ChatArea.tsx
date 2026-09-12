@@ -1,3 +1,4 @@
+import { sessionStreamingState, type SessionActivitySnapshot } from '../utils/sessionStreamingState'
 import { isForegroundSessionEvent } from '../../shared/session/foreground'
 import { useEffect, useRef, useCallback, forwardRef, useImperativeHandle, useMemo, useState, lazy, Suspense, type ComponentType, type ForwardedRef, type ReactNode } from 'react'
 import { normalizeEventViewMode } from '../stores/useChatStore'
@@ -1524,7 +1525,7 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
   // Takes an events response (same shape from SSE or REST) and a tab, then processes
   // session status, streaming chunks, event filtering, and stores events.
   const processEventsResponse = useCallback((
-    response: { events: PollingEvent[]; session_status?: string; last_processed_index?: number; has_more?: boolean; has_running_background_agents?: boolean; is_synthetic_turn?: boolean; can_steer?: boolean; session_id?: string },
+    response: SessionActivitySnapshot & { events: PollingEvent[]; session_status?: string; last_processed_index?: number; has_more?: boolean; has_running_background_agents?: boolean; is_synthetic_turn?: boolean; can_steer?: boolean; session_id?: string },
     sessionId: string,
     tab: ChatTab | null
   ) => {
@@ -1538,12 +1539,13 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
       tab?.metadata?.presetQueryId === useGlobalPresetStore.getState().activePresetIds.workflow
 
     // --- Session status handling ---
-    const sessionStatus = response.session_status
+    const activity = sessionStreamingState(response)
+    const sessionStatus = activity.status
     if (tab && sessionStatus) {
-      const hasBgAgents = response.has_running_background_agents ?? false
-      const isSyntheticTurn = response.is_synthetic_turn ?? false
-      const canSteer = response.can_steer ?? false
-      const isForegroundStreaming = sessionStatus === 'running' && !isSyntheticTurn && (!hasBgAgents || canSteer)
+      const hasBgAgents = activity.hasRunningBgAgents
+      const isSyntheticTurn = activity.isSyntheticTurn
+      const canSteer = activity.canSteer
+      const isForegroundStreaming = activity.isStreaming
       if (sessionStatus === 'completed' || sessionStatus === 'error') {
         if (hasBgAgents) {
           chatStore.setTabCompleted(tab.tabId, false)
@@ -1572,10 +1574,7 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
       // Only the session the user is actually viewing may drive the app-wide
       // indicators below. They are globals, and responses arrive here for every
       // polled session — see sessionOwnsGlobalChatIndicators.
-      const hasBgAgents = response.has_running_background_agents ?? false
-      const isSyntheticTurn = response.is_synthetic_turn ?? false
-      const canSteer = response.can_steer ?? false
-      const isForegroundStreaming = sessionStatus === 'running' && !isSyntheticTurn && (!hasBgAgents || canSteer)
+      const isForegroundStreaming = activity.isStreaming
       if (sessionStatus === 'completed' || sessionStatus === 'error') {
         setIsStreaming(false)
         setIsCompleted(true)
@@ -1988,6 +1987,8 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
         {
           events: nonStreamingEvents,
           session_status: msg.session_status,
+          runtime_state: msg.runtime_state,
+          display_status: msg.display_status,
           last_processed_index: msg.last_processed_index,
           has_more: msgAny.has_more as boolean | undefined,
           has_running_background_agents: msg.has_running_background_agents,
@@ -2232,11 +2233,7 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
         const freshStore = useChatStore.getState()
         const freshTab = Object.values(freshStore.chatTabs).find(candidate => candidate.sessionId === sessionId) || null
         processEventsResponse(response, sessionId, freshTab)
-        const terminalStatus = response.session_status === 'completed' ||
-          response.session_status === 'error' ||
-          response.session_status === 'stopped' ||
-          response.session_status === 'inactive'
-        shouldContinue = !(terminalStatus && !response.has_running_background_agents)
+        shouldContinue = sessionStreamingState(response).isActive
       } catch (error) {
         logger.debug('ChatArea', `Foreground event catch-up failed for ${sessionId}; retrying`, error)
       }

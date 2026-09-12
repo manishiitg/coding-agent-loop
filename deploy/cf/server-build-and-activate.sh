@@ -18,6 +18,7 @@ export GOMAXPROCS=4 GOFLAGS=-p=4 NODE_OPTIONS=--max-old-space-size=2048
 export PATH="/srv/confida/tools/node/bin:/srv/confida/tools/bin:$PATH"
 
 for command in git go gcc npm rsync python3; do command -v "$command" >/dev/null || { echo "Missing $command" >&2; exit 1; }; done
+python3 "$SCRIPT_DIR/deployment_checks.py" preflight
 
 # Config overlay files are read from THIS checkout (i.e. from whatever is on
 # the deployed branch), not from wherever the deploy was triggered -- keeping
@@ -68,6 +69,7 @@ echo "==> [$RELEASE_ID] Building frontend"
 cp -R "$REPO_ROOT/frontend/dist/." "$BUILD_DIR/frontend/"
 cp "$REPO_ROOT/frontend/scripts/check-release-assets.mjs" "$BUILD_DIR/check-release-assets.mjs"
 cp "$REPO_ROOT/deploy/common/prune-releases.py" "$BUILD_DIR/prune-releases.py"
+cp "$SCRIPT_DIR/deployment_checks.py" "$BUILD_DIR/deployment_checks.py"
 # frontend's build:report-preview step (part of `npm run build` above) writes
 # report-preview.js to agent_go/cmd/server/static/ in the source checkout,
 # never into the release. confida-agent, like RTS's video-studio-agent and
@@ -100,6 +102,8 @@ if [[ -d "$prev" && -d "$next" ]]; then
 fi
 
 echo "==> [$RELEASE_ID] Activating release and restarting services"
+# Check again after the build, before switching current or restarting services.
+python3 "$SCRIPT_DIR/deployment_checks.py" preflight
 chmod +x "$BUILD_DIR"/bin/*
 ln -sfn "$REMOTE_APP/logs" "$BUILD_DIR/logs"
 # User-installed integrations survive release replacement. Migrate the old
@@ -169,8 +173,11 @@ done
 [[ "$(node --version)" == v24.* ]]
 
 echo "==> [$RELEASE_ID] Verifying"
+python3 "$BUILD_DIR/deployment_checks.py" running
 curl -fsS -o /dev/null -w "agent  /api/health: %{http_code}\n" http://127.0.0.1:22000/api/health
 curl -fsS http://127.0.0.1:22001/health; echo
+curl -fsS -o /dev/null "https://confida.agentworkshq.com/api/health"
+curl -fsS -o /dev/null "https://confida.agentworkshq.com/login"
 
 rm -f "$BUILD_DIR/.deploying"
 python3 "$BUILD_DIR/prune-releases.py" "$REMOTE_APP" --apply --health-url http://127.0.0.1:22000/api/health --health-url http://127.0.0.1:22001/health

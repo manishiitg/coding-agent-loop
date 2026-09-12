@@ -71,6 +71,11 @@ SSH_OPTS=(-p "$SSH_PORT" -i "$SSH_KEY_PATH" -o BatchMode=yes -o ConnectTimeout=1
 SSH=(ssh "${SSH_OPTS[@]}" "confida@$HOST_IP")
 RSYNC_SSH="ssh ${SSH_OPTS[*]}"
 
+# Fail before dependency installation or release changes. Read only the named
+# setting; never source or print the deployment environment (it holds secrets).
+echo "==> Checking Confida deployment configuration"
+"${SSH[@]}" 'python3 - preflight' < "$LOCAL_SCRIPT_DIR/deployment_checks.py"
+
 # jq is not needed by this script itself -- it's a runtime dependency of
 # agent-authored shell scripts, which the MCP bridge guidance (mcp-bridge.md)
 # explicitly tells agents to use for encoding JSON tool-call payloads. A
@@ -195,6 +200,8 @@ echo "==> Building on confida@$HOST_IP: cloning/using $DEPLOY_BRANCH and buildin
 "${SSH[@]}" "systemd-run --user --quiet --wait --pipe --unit='$JOB' -p MemoryMax=6G -p CPUQuota=300% -p Nice=10 bash '$REMOTE_JOB/bootstrap-build.sh' '$REMOTE_JOB'"
 
 echo "==> Verifying"
+"${SSH[@]}" 'python3 - running' < "$LOCAL_SCRIPT_DIR/deployment_checks.py"
+curl -fsS -o /dev/null "https://confida.agentworkshq.com/api/health"
 curl -fsSI "https://confida.agentworkshq.com/login" | head -1
 "${SSH[@]}" "set -e
   export PATH='$REMOTE_RUNTIME_PATH'

@@ -4,11 +4,13 @@ import { createRoot } from "react-dom/client";
 import { afterEach, expect, it, vi } from "vitest";
 import { KnowledgebaseSources } from "./KnowledgebaseSources";
 import KnowledgebaseView from "./KnowledgebaseView";
+import WorkflowFolderAccessView from "./WorkflowFolderAccessView";
 import { workflowManifestApi, agentApi } from "../../services/api";
 import { useCanWriteWorkflow } from "../../hooks/useCanWriteWorkflow";
 vi.mock("../../services/api", () => ({
   workflowManifestApi: {
     getKnowledgebaseSources: vi.fn(),
+    getWorkflowManifest: vi.fn(),
     listWorkflowManifests: vi.fn(),
     updateWorkflowManifest: vi.fn(),
     readKnowledgebaseSource: vi.fn(),
@@ -216,4 +218,77 @@ it("attaches another workflow while preserving existing sources", async () => {
       { workflow_id: "security", alias: "security", access: "read" },
     ],
   });
+});
+
+it("shows shared KB access in Attached folders and refreshes the KB view after detach", async () => {
+  let sources = [{ ...source, workspace_path: "Workflow/rts" }];
+  vi.mocked(workflowManifestApi.getKnowledgebaseSources).mockImplementation(
+    async () => ({ success: true, sources }),
+  );
+  vi.mocked(workflowManifestApi.getWorkflowManifest).mockResolvedValue({
+    success: true,
+    manifest: { folder_access: [] },
+  } as never);
+  vi.mocked(workflowManifestApi.updateWorkflowManifest).mockImplementation(
+    async () => {
+      sources = [];
+      return { success: true };
+    },
+  );
+  const select = vi.fn();
+  const host = await mount(
+    <>
+      <WorkflowFolderAccessView workspacePath="Workflow/consumer" />
+      <KnowledgebaseSources
+        workspacePath="Workflow/consumer"
+        selected="rts"
+        onSelect={select}
+      />
+    </>,
+  );
+  const panels = host.querySelectorAll(
+    'section[aria-label="Knowledge sources"]',
+  );
+  expect(panels).toHaveLength(2);
+  for (const panel of panels) {
+    expect(panel.textContent).toContain("1 attached");
+    expect(panel.textContent).toContain("Workflow/rts/knowledgebase/");
+    expect(panel.textContent).toContain("$WORKFLOW_KB_RTS");
+    expect(panel.textContent).toContain("Read only");
+  }
+  expect(panels[0].querySelector("select")).toBeNull();
+  await act(async () => {
+    (
+      panels[0].querySelector(
+        'button[aria-label="Detach RTS knowledge base"]',
+      ) as HTMLButtonElement
+    ).click();
+  });
+  expect(workflowManifestApi.updateWorkflowManifest).toHaveBeenCalledWith({
+    workspace_path: "Workflow/consumer",
+    knowledgebase_sources: [],
+  });
+  for (const panel of panels)
+    expect(panel.textContent).toContain("No shared knowledge bases attached.");
+  expect(select).toHaveBeenCalledWith("");
+});
+
+it("shows unavailable sources to readers without offering write or detach controls", async () => {
+  vi.mocked(useCanWriteWorkflow).mockReturnValue(false);
+  vi.mocked(workflowManifestApi.getKnowledgebaseSources).mockResolvedValue({
+    success: true,
+    sources: [
+      { ...source, available: false, reason: "Source permission revoked" },
+    ],
+  });
+  const host = await mount(
+    <KnowledgebaseSources
+      workspacePath="Workflow/consumer"
+      variant="folders"
+    />,
+  );
+  expect(host.textContent).toContain("Unavailable · Source permission revoked");
+  expect(host.textContent).toContain("Read only");
+  expect(host.textContent).toContain("Shell when available:");
+  expect(host.querySelectorAll("button, select")).toHaveLength(0);
 });

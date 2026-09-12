@@ -3,6 +3,7 @@ import { FolderOpen, LoaderCircle, Plus, Trash2 } from 'lucide-react'
 import { workflowManifestApi } from '../../services/api'
 import type { WorkflowFolderAccessRequest, WorkflowFolderGrant } from '../../services/api-types'
 import { useWorkflowManifestStore } from '../../stores/useWorkflowManifestStore'
+import { KnowledgebaseSources } from './KnowledgebaseSources'
 import { READ_ONLY_TITLE, useCanWriteWorkflow } from '../../hooks/useCanWriteWorkflow'
 
 interface WorkflowFolderAccessViewProps {
@@ -169,7 +170,7 @@ export default function WorkflowFolderAccessView({ workspacePath, headerAction }
           <div className="flex items-start justify-between border-b border-border px-5 py-4">
             <div>
               <h2 className="text-base font-semibold text-foreground">Attached folders</h2>
-              <p className="mt-1 text-xs text-muted-foreground">Give this workflow explicit access to a folder outside workspace-docs.</p>
+              <p className="mt-1 text-xs text-muted-foreground">Folders and shared knowledge bases this workflow can access.</p>
             </div>
             <div className="flex shrink-0 items-center gap-2">
               {!canWriteWorkflow && <span className="rounded-full border border-amber-500/30 bg-amber-500/10 px-2 py-1 text-[11px] font-medium text-amber-700 dark:text-amber-300">Read-only</span>}
@@ -178,6 +179,8 @@ export default function WorkflowFolderAccessView({ workspacePath, headerAction }
           </div>
 
           <div className="min-h-0 flex-1 space-y-5 overflow-y-auto p-5">
+            {workspacePath && <KnowledgebaseSources key={workspacePath} workspacePath={workspacePath} variant="folders" />}
+            <h3 className="text-sm font-semibold text-foreground">External folders</h3>
             {error && <div className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive">{error}</div>}
             {loading ? (
               <div className="flex justify-center py-8"><LoaderCircle className="h-5 w-5 animate-spin text-muted-foreground" /></div>

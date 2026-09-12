@@ -1,10 +1,13 @@
 package server
 
 import (
+	"encoding/json"
 	"fmt"
+	"reflect"
 	"testing"
 
 	internalevents "github.com/manishiitg/coding-agent-loop/agent_go/internal/events"
+	pkgevents "github.com/manishiitg/mcpagent/events"
 )
 
 func chunkEvent(id, execID string) internalevents.Event {
@@ -123,4 +126,46 @@ func eventIDs(events []internalevents.Event) []string {
 		ids = append(ids, e.ID)
 	}
 	return ids
+}
+
+func TestCollapseStreamingChunksPreservesAdjacentTranscriptMessages(t *testing.T) {
+	message := func(id string) internalevents.Event {
+		e := chunkEvent(id, "main")
+		e.Data = &pkgevents.AgentEvent{Data: &pkgevents.StreamingChunkEvent{Source: "transcript", Content: id}}
+		return e
+	}
+	input := []internalevents.Event{
+		chunkEvent("frame-1", "main"), chunkEvent("frame-2", "main"),
+		message("Checking helpers."), message("Now inserting the render function."),
+		chunkEvent("frame-3", "main"), chunkEvent("frame-4", "main"),
+		otherEvent("tool", "tool_call_start"), message("Now validating."),
+		chunkEvent("frame-5", "main"), otherEvent("final", "unified_completion"),
+	}
+	got := collapseChatHistoryStreamingChunks(input)
+	want := []string{"frame-2", "Checking helpers.", "Now inserting the render function.", "frame-4", "tool", "Now validating.", "frame-5", "final"}
+	if !reflect.DeepEqual(eventIDs(got), want) {
+		t.Fatalf("got %v, want %v", eventIDs(got), want)
+	}
+	encoded, err := json.Marshal(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var restored []internalevents.Event
+	if err := json.Unmarshal(encoded, &restored); err != nil {
+		t.Fatal(err)
+	}
+	if ids := eventIDs(collapseChatHistoryStreamingChunks(restored)); !reflect.DeepEqual(ids, want) {
+		t.Fatalf("restored got %v, want %v", ids, want)
+	}
+	projected := attachChatHistoryUIEventsForResume([]byte(`{"session_id":"s"}`), encoded)
+	var doc struct {
+		Events []internalevents.Event `json:"ui_events"`
+	}
+	if err := json.Unmarshal(projected, &doc); err != nil {
+		t.Fatal(err)
+	}
+	visible := []string{"Checking helpers.", "Now inserting the render function.", "tool", "Now validating.", "final"}
+	if ids := eventIDs(doc.Events); !reflect.DeepEqual(ids, visible) {
+		t.Fatalf("resume got %v, want %v", ids, visible)
+	}
 }

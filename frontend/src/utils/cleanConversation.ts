@@ -1,3 +1,4 @@
+import { intermediateUpdateFromTranscriptChunk } from './transcriptChunkUpdates'
 import type { PollingEvent } from '../services/api-types'
 import { appendStreamingText } from './streamingStatus'
 import { humanReadableAgentResult } from '../components/events/system/eventDisplayUtils'
@@ -132,7 +133,8 @@ export function buildCleanConversationItems(events: PollingEvent[]): Conversatio
 		items.push(item)
 	}
 
-  for (const event of events) {
+  for (const rawEvent of events) {
+    const event = intermediateUpdateFromTranscriptChunk(rawEvent) || rawEvent
     const payload = eventPayload(event)
 
     if (event.type === 'user_message') {

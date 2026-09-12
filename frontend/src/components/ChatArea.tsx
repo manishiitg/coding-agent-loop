@@ -793,7 +793,7 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
       displayEventsRef.current = []
     }
 
-    const filtered = tabEvents.filter(event => {
+    const filtered = tabEvents.map(event => intermediateUpdateFromTranscriptChunk(event) || event).filter(event => {
       // See the Formatted View Visibility Contract in
       // utils/terminalEventTranscript.ts. Streaming packets drive the transient
       // live buffer; they are not durable conversation records.

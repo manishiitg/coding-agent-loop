@@ -869,10 +869,12 @@ func chatHistoryMessagesEqual(a, b llmtypes.MessageContent) bool {
 	return aErr == nil && bErr == nil && string(aJSON) == string(bJSON)
 }
 
-// collapseChatHistoryStreamingChunks drops every streaming_chunk in a
+// collapseChatHistoryStreamingChunks drops transient streaming chunks in a
 // consecutive run except the last one for that execution.
 //
-// A streaming_chunk is not a text delta -- it is a full render of the pane at
+// Only transient chunks can collapse. Whole transcript messages are durable
+// assistant updates and must survive alongside tool calls and final answers.
+// A terminal snapshot is a full render of the pane at
 // that instant, roughly a kilobyte apiece, and the UI consumes it by calling
 // setOwnedStreamingTerminalSnapshot(key, chunkIndex, content), i.e. last
 // writer wins. Nothing replays the intermediate frames, so persisting all of
@@ -891,7 +893,7 @@ func collapseChatHistoryStreamingChunks(uiEvents []internalevents.Event) []inter
 	collapsed := make([]internalevents.Event, 0, len(uiEvents))
 	for i := 0; i < len(uiEvents); i++ {
 		event := uiEvents[i]
-		if event.Type != streamingChunk {
+		if event.Type != streamingChunk || internalevents.IsTranscriptMessage(event) {
 			collapsed = append(collapsed, event)
 			continue
 		}
@@ -900,7 +902,7 @@ func collapseChatHistoryStreamingChunks(uiEvents []internalevents.Event) []inter
 		// are not silently dropped.
 		last := i
 		for j := i + 1; j < len(uiEvents); j++ {
-			if uiEvents[j].Type != streamingChunk || uiEvents[j].ExecutionID != event.ExecutionID {
+			if uiEvents[j].Type != streamingChunk || internalevents.IsTranscriptMessage(uiEvents[j]) || uiEvents[j].ExecutionID != event.ExecutionID {
 				break
 			}
 			last = j

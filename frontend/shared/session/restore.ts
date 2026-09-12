@@ -1,3 +1,4 @@
+import { intermediateUpdateFromTranscriptChunk } from './transcriptChunkUpdates'
 // Rebuilds a conversation's event stream from the persisted chat history
 // (`GET /api/chat-history/sessions/{id}`), which is the durable record: the
 // live event store is in memory and empty after a server restart. Moved here
@@ -265,12 +266,36 @@ function mergePersistedUIEvents(
   sessionId: string,
   eventIndexBase: number,
 ): PollingEvent[] {
+  const normalizedTrace = persistedUIEvents.map(event => intermediateUpdateFromTranscriptChunk(event) || event)
+  // History messages have synthetic timestamps. When the same carrier exists
+  // in the trace, retain its actual time so trace-only progress stays between
+  // the user's prompt and the final answer after sorting.
+  const traceCarriers = new Map<string, PollingEvent[]>()
+  for (const event of normalizedTrace) {
+    const key = transcriptCarrierKey(event)
+    if (key && Number.isFinite(Date.parse(event.timestamp || ''))) {
+      traceCarriers.set(key, [...(traceCarriers.get(key) || []), event])
+    }
+  }
+  const carrierCounts = new Map<string, number>()
+  for (const event of conversationEvents) {
+    const key = `${event.type}:${transcriptCarrierKey(event)}`
+    carrierCounts.set(key, (carrierCounts.get(key) || 0) + 1)
+  }
+  conversationEvents = conversationEvents.map(event => {
+    const key = transcriptCarrierKey(event)
+    if ((carrierCounts.get(`${event.type}:${key}`) || 0) !== 1) return event
+    const matches = key ? traceCarriers.get(key) || [] : []
+    const sameType = matches.filter(candidate => candidate.type === event.type)
+    const candidates = sameType.length ? sameType : matches
+    return candidates.length === 1 ? { ...event, timestamp: candidates[0].timestamp } : event
+  })
   const knownIDs = new Set(conversationEvents.map(event => event.id).filter(Boolean))
   const knownCarriers = new Set(conversationEvents
     .map(transcriptCarrierKey)
     .filter((key): key is string => !!key))
 
-  const trace = persistedUIEvents
+  const trace = normalizedTrace
     .map((event, index) => markPersistedRestoreTrace(event, sessionId, eventIndexBase + index + 1))
     .filter((event) => {
       if (event.id && knownIDs.has(event.id)) return false

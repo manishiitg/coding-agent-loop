@@ -70,9 +70,12 @@ it("shows several sources and detaches only the selected attachment", async () =
       workspacePath="Workflow/consumer"
       selected="rts"
       onSelect={select}
+      variant="folders"
     />,
   );
-  expect(host.querySelectorAll("option")).toHaveLength(3);
+  expect(
+    host.querySelectorAll('ul[aria-label="Attached knowledge bases"] > li'),
+  ).toHaveLength(2);
   expect(host.textContent).toContain("Source unavailable");
   await act(async () => {
     Array.from(host.querySelectorAll("button"))
@@ -186,8 +189,7 @@ it("attaches another workflow while preserving existing sources", async () => {
   const host = await mount(
     <KnowledgebaseSources
       workspacePath="Workflow/consumer"
-      selected=""
-      onSelect={() => {}}
+      variant="folders"
     />,
   );
   await act(async () => {
@@ -250,12 +252,15 @@ it("shows shared KB access in Attached folders and refreshes the KB view after d
     'section[aria-label="Knowledge sources"]',
   );
   expect(panels).toHaveLength(2);
-  for (const panel of panels) {
-    expect(panel.textContent).toContain("1 attached");
-    expect(panel.textContent).toContain("Workflow/rts/knowledgebase/");
-    expect(panel.textContent).toContain("$WORKFLOW_KB_RTS");
-    expect(panel.textContent).toContain("Read only");
-  }
+  expect(panels[0].textContent).toContain("1 attached");
+  expect(panels[0].textContent).toContain("Workflow/rts/knowledgebase/");
+  expect(panels[0].textContent).toContain("$WORKFLOW_KB_RTS");
+  expect(panels[0].textContent).toContain("Read only");
+  expect(panels[1].querySelector("ul")).toBeNull();
+  expect(panels[1].textContent).not.toContain("Attach knowledge");
+  expect(panels[1].textContent).not.toContain("Detach");
+  expect(panels[1].textContent).toContain("Setup → Attached folders");
+  expect(panels[1].querySelectorAll("option")).toHaveLength(2);
   expect(panels[0].querySelector("select")).toBeNull();
   await act(async () => {
     (
@@ -268,8 +273,10 @@ it("shows shared KB access in Attached folders and refreshes the KB view after d
     workspace_path: "Workflow/consumer",
     knowledgebase_sources: [],
   });
-  for (const panel of panels)
-    expect(panel.textContent).toContain("No shared knowledge bases attached.");
+  expect(panels[0].textContent).toContain(
+    "No shared knowledge bases attached.",
+  );
+  expect(panels[1].querySelectorAll("option")).toHaveLength(1);
   expect(select).toHaveBeenCalledWith("");
 });
 

@@ -42,7 +42,7 @@ func (es *EventStore) GetForwardEventPage(sessionID string, sinceIndex, limit in
 	}
 	page.LastProcessedIndex = base + start - 1
 	for i := start; i < len(rows); i++ {
-		if shouldReturnEvent(rows[i].Type, false) {
+		if shouldReturnEvent(rows[i], false) {
 			if len(page.Events) == limit {
 				page.HasMore = true
 				break

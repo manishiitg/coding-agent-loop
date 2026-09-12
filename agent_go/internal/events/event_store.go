@@ -128,7 +128,37 @@ func ShouldShowEvent(eventType string) bool {
 	return !HIDDEN_EVENTS[eventType]
 }
 
-func shouldReturnEvent(eventType string, includeStreaming bool) bool {
+// IsTranscriptMessage distinguishes whole assistant messages from transient
+// terminal snapshots and token deltas, even after JSON restoration.
+func IsTranscriptMessage(event Event) bool {
+	if event.Type != "streaming_chunk" || event.Data == nil {
+		return false
+	}
+	var source, content string
+	var delta, tool bool
+	var metadata map[string]interface{}
+	switch data := event.Data.Data.(type) {
+	case *events.StreamingChunkEvent:
+		if data == nil {
+			return false
+		}
+		source, content, delta, tool, metadata = data.Source, data.Content, data.IsDelta, data.IsToolCall, data.Metadata
+	default:
+		payload := eventPayloadMap(&event)
+		source, _ = payload["source"].(string)
+		content, _ = payload["content"].(string)
+		delta, _ = payload["is_delta"].(bool)
+		tool, _ = payload["is_tool_call"].(bool)
+		metadata, _ = payload["metadata"].(map[string]interface{})
+	}
+	return source == "transcript" && strings.TrimSpace(content) != "" && !delta && !tool && metadata["kind"] != "terminal" && metadata["replace"] != true
+}
+
+func shouldReturnEvent(event Event, includeStreaming bool) bool {
+	eventType := event.Type
+	if IsTranscriptMessage(event) {
+		return true
+	}
 	if includeStreaming && (eventType == "streaming_start" || eventType == "streaming_chunk" || eventType == "streaming_end") {
 		return true
 	}
@@ -166,7 +196,7 @@ func pruneEventsForRetention(events []Event, maxEvents int) ([]Event, int) {
 		if dropped >= toDrop {
 			break
 		}
-		if STRUCTURAL_EVENTS[event.Type] {
+		if STRUCTURAL_EVENTS[event.Type] || IsTranscriptMessage(event) {
 			continue
 		}
 		drop[i] = true
@@ -211,6 +241,37 @@ type Event struct {
 	TerminalOwnerID   string             `json:"terminal_owner_id,omitempty"`
 	TerminalID        string             `json:"terminal_id,omitempty"`
 	Sequence          int64              `json:"sequence,omitempty"`
+}
+
+// UnmarshalJSON restores the EventData interface as a lossless generic payload.
+// Without this, reading a persisted UI trace fails on every non-empty event.
+func (e *Event) UnmarshalJSON(raw []byte) error {
+	type eventAlias Event
+	var envelope struct {
+		eventAlias
+		Data json.RawMessage `json:"data"`
+	}
+	if err := json.Unmarshal(raw, &envelope); err != nil {
+		return err
+	}
+	*e = Event(envelope.eventAlias)
+	if len(envelope.Data) == 0 || string(envelope.Data) == "null" {
+		return nil
+	}
+	type agentAlias events.AgentEvent
+	var agent struct {
+		agentAlias
+		Data map[string]interface{} `json:"data"`
+	}
+	if err := json.Unmarshal(envelope.Data, &agent); err != nil {
+		return err
+	}
+	restored := events.AgentEvent(agent.agentAlias)
+	if agent.Data != nil {
+		restored.Data = NewGenericEventData(string(restored.Type), agent.Data)
+	}
+	e.Data = &restored
+	return nil
 }
 
 // MarshalJSON customizes JSON serialization to flatten the event structure for frontend
@@ -966,7 +1027,7 @@ func (es *EventStore) GetEvents(sessionID string, opts GetEventsOptions) GetEven
 		// Step 1: Filter the entire array first
 		filteredEvents := make([]Event, 0, len(events))
 		for _, event := range events {
-			if shouldReturnEvent(event.Type, opts.IncludeStreaming) {
+			if shouldReturnEvent(event, opts.IncludeStreaming) {
 				filteredEvents = append(filteredEvents, event)
 			}
 		}
@@ -975,7 +1036,7 @@ func (es *EventStore) GetEvents(sessionID string, opts GetEventsOptions) GetEven
 		// Use effectiveSinceIndex (relative to in-memory array)
 		filteredCountUpToSinceIndex := 0
 		for i := 0; i <= effectiveSinceIndex && i < len(events); i++ {
-			if shouldReturnEvent(events[i].Type, opts.IncludeStreaming) {
+			if shouldReturnEvent(events[i], opts.IncludeStreaming) {
 				filteredCountUpToSinceIndex++
 			}
 		}
@@ -1014,7 +1075,7 @@ func (es *EventStore) GetEvents(sessionID string, opts GetEventsOptions) GetEven
 					filteredCount := 0
 					actualLastIndex := -1
 					for i := 0; i < len(events); i++ {
-						if shouldReturnEvent(events[i].Type, opts.IncludeStreaming) {
+						if shouldReturnEvent(events[i], opts.IncludeStreaming) {
 							filteredCount++
 							if filteredCount == nextFilteredPos+MaxPollingLimit {
 								actualLastIndex = i
@@ -1039,7 +1100,7 @@ func (es *EventStore) GetEvents(sessionID string, opts GetEventsOptions) GetEven
 		// Otherwise, offset would be wrong if some events are filtered out
 		eventsToPaginate := make([]Event, 0, len(events))
 		for _, event := range events {
-			if shouldReturnEvent(event.Type, opts.IncludeStreaming) {
+			if shouldReturnEvent(event, opts.IncludeStreaming) {
 				eventsToPaginate = append(eventsToPaginate, event)
 			}
 		}
@@ -1072,7 +1133,7 @@ func (es *EventStore) GetEvents(sessionID string, opts GetEventsOptions) GetEven
 		// No specific mode: return all filtered events
 		filtered := make([]Event, 0, len(events))
 		for _, event := range events {
-			if shouldReturnEvent(event.Type, opts.IncludeStreaming) {
+			if shouldReturnEvent(event, opts.IncludeStreaming) {
 				filtered = append(filtered, event)
 			}
 		}
@@ -1121,7 +1182,7 @@ func (es *EventStore) GetTerminalEvents(sessionID, terminalID string, opts GetTe
 
 	filtered := make([]Event, 0, len(owned))
 	for _, event := range owned {
-		if shouldReturnEvent(event.Type, false) {
+		if shouldReturnEvent(event, false) {
 			filtered = append(filtered, event)
 		}
 	}

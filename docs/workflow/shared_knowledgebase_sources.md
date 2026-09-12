@@ -173,13 +173,14 @@ fresh or rewrite the source workflow's freshness ledger.
 
 ## Attach, update, and detach
 
-Both Attached folders and the Knowledge UI list shared KBs as visible source cards,
-including workflow name, alias, KB folder, shell variable, read-only access, and any
-unavailability reason. Shared KBs appear separately from external folder grants.
-The Knowledge UI also labels the selected local or shared source above its content.
-Attachment changes refresh other open source panels for the same workflow.
+**Setup → Attached folders** manages shared KB attachments, with visible source
+cards showing workflow name, alias, KB folder, shell variable, read-only access,
+and any unavailability reason. Shared KBs appear separately from external folders.
 Workflow editors can use **Attach knowledge**, choose a source and alias, and
-remove an attachment with **Detach**. Readers can browse but cannot manage sources.
+remove an attachment with **Detach**. Readers can inspect but cannot manage sources.
+The Knowledge UI keeps a compact local/shared source selector and read-only status
+above its content. Attachment changes refresh other open source panels for the
+same workflow; attachment controls live in Setup.
 Unavailable attachments retain their reason and can be repaired or detached.
 
 Builders use `get_workflow_config` to inspect attachments and discover eligible

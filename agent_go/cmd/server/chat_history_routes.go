@@ -713,8 +713,16 @@ func attachChatHistoryUIEventsForResume(projected, rawUIEvents []byte) []byte {
 		var header struct {
 			Type string `json:"type"`
 		}
-		if json.Unmarshal(event, &header) == nil && isFormattedResumeUIEventType(header.Type) {
+		if json.Unmarshal(event, &header) != nil {
+			continue
+		}
+		if isFormattedResumeUIEventType(header.Type) {
 			kept = append(kept, event)
+		} else if header.Type == "streaming_chunk" {
+			var decoded storeevents.Event
+			if json.Unmarshal(event, &decoded) == nil && storeevents.IsTranscriptMessage(decoded) {
+				kept = append(kept, event)
+			}
 		}
 	}
 	if len(kept) == 0 {
@@ -733,9 +741,8 @@ func attachChatHistoryUIEventsForResume(projected, rawUIEvents []byte) []byte {
 }
 
 // isFormattedResumeUIEventType intentionally excludes system prompts, token
-// counters, raw terminal frames, and streaming chunks. Final messages and
-// paired tool calls are enough to reconstruct what happened without turning a
-// read-only schedule restore into a terminal dump.
+// counters and raw terminal frames. Whole transcript chunks are selected by
+// payload separately so intermediate narration also survives schedule restore.
 func isFormattedResumeUIEventType(eventType string) bool {
 	switch eventType {
 	case "user_message", "llm_generation_end", "llm_generation_error", "unified_completion",

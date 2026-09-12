@@ -1,8 +1,7 @@
 import React, { useMemo, useEffect, useCallback, useRef, useState } from 'react'
 import { useShallow } from 'zustand/react/shallow'
-import { MessageSquare, Square, X } from 'lucide-react'
+import { MessageSquare, X } from 'lucide-react'
 import { useChatStore, type ChatTab } from '../../stores/useChatStore'
-import { agentApi } from '../../services/api'
 import { activateTab } from '../../utils/activateTab'
 import { useWorkflowStore } from '../../stores/useWorkflowStore'
 import { useGlobalPresetStore } from '../../stores/useGlobalPresetStore'
@@ -27,7 +26,6 @@ interface WorkflowTabItemProps {
   onTabClick: (tabId: string) => void
   onCloseTab: (tabId: string) => void
   onMakeInteractive: (tabId: string) => void
-  onStop: (tabId: string) => void
 }
 
 // TEMPORARY 2026-09-04: schedule/bot tabs cannot be turned into an
@@ -51,7 +49,6 @@ const WorkflowTabItem = React.memo<WorkflowTabItemProps>(({
   onTabClick,
   onCloseTab,
   onMakeInteractive,
-  onStop,
 }) => {
 	const isReadOnlyUser = useAuthStore(state => isWorkflowReadOnly(state.user, state.isMultiUserMode))
 	const displayName = workflowTabDisplayName(tab, isBlank)
@@ -69,10 +66,10 @@ const WorkflowTabItem = React.memo<WorkflowTabItemProps>(({
   // A live multi-step run can toggle isStreaming/hasRunningBgAgents on
   // consecutive 500ms polls as background agents register/deregister between
   // steps or tool calls — real backend state, but a raw render of it makes
-  // the stop icon visibly blink on and off every second or two. Leaving busy
+  // the status dot visibly flicker every second or two. Entering busy
   // applies instantly (immediate feedback), so this only smooths the
   // busy -> idle/stopped edge: it must hold for a short window before the
-  // pill (and the stop button) actually leaves the busy state.
+  // pill actually leaves the busy state.
   const [status, setStatus] = useState(rawStatus)
   useEffect(() => {
     if (rawStatus === status) return
@@ -108,26 +105,6 @@ const WorkflowTabItem = React.memo<WorkflowTabItemProps>(({
       {/* Tab Name */}
       <span className="min-w-0 max-w-[14rem] truncate whitespace-nowrap">{displayName}</span>
 
-      {/* In-tab Stop — only while this tab is busy. Hidden (not just
-          disabled) for a read-only-access user: cosmetic only — stop_step/
-          stop_all_executions stay registered server-side in Run mode for
-          every session, this just avoids showing an action-looking control
-          on this account's own tab. See PLAT-262. */}
-      {isBusy && tab.sessionId && !isReadOnlyUser && (
-        <button
-          type="button"
-          onClick={(e) => {
-            e.stopPropagation()
-            onStop(tab.tabId)
-          }}
-          className="ml-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded text-[hsl(var(--destructive))] opacity-70 transition-colors hover:bg-[hsl(var(--destructive)/0.12)] hover:opacity-100"
-          aria-label={`Stop ${displayName} session and background work`}
-          title="Stop session and background work"
-        >
-          <Square className="h-2.5 w-2.5" fill="currentColor" />
-        </button>
-      )}
-
       {/* Convert a read-only scheduled/bot run into an interactive Automation Builder chat.
           Hidden for a read-only-access user (PLAT-262): the resulting session
           would still be Run-mode-restricted server-side, but this button's
@@ -155,7 +132,7 @@ const WorkflowTabItem = React.memo<WorkflowTabItemProps>(({
       {/* A busy tab can't be closed. Closing never stopped its run — the work
           kept executing on the backend and the still-running-workflow
           reconciler recreated the tab on its next poll, so the X read as a
-          no-op. Stop the run first (the control to the left), then close. */}
+          no-op. Stop the run first (the control in the chat input), then close. */}
       {canClose && (
         <button
           type="button"
@@ -202,15 +179,11 @@ export const WorkflowChatTabs: React.FC<WorkflowChatTabsProps> = ({ embedded = f
     activeTabId,
     tabEvents,
     closeTab,
-    setTabStreaming,
-    setTabHasRunningBgAgents,
   } = useChatStore(useShallow(state => ({
     chatTabs: state.chatTabs,
     activeTabId: state.activeTabId,
     tabEvents: state.tabEvents,
     closeTab: state.closeTab,
-    setTabStreaming: state.setTabStreaming,
-    setTabHasRunningBgAgents: state.setTabHasRunningBgAgents,
   })))
 
   const setShowChatArea = useWorkflowStore(state => state.setShowChatArea)
@@ -319,19 +292,6 @@ export const WorkflowChatTabs: React.FC<WorkflowChatTabsProps> = ({ embedded = f
     setFocusedPane('chat')
   }, [setFocusedPane, setShowChatArea])
 
-  // Stop this tab's running session (from the in-tab Stop control).
-  const handleStopTab = useCallback(async (tabId: string) => {
-    const t = useChatStore.getState().getTab(tabId)
-    if (!t?.sessionId) return
-    try {
-      await agentApi.stopSession(t.sessionId, true)
-      setTabStreaming(tabId, false)
-      setTabHasRunningBgAgents(tabId, false)
-    } catch (error) {
-      console.error('[WorkflowChatTabs] Failed to stop session:', error)
-    }
-  }, [setTabStreaming, setTabHasRunningBgAgents])
-
   // DISABLED 2026-09-04 (shipped and reverted same day): staleWorkflowTabIds
   // treats a tab as "safe to sweep" using isStreaming/hasRunningBgAgents,
   // but reconcileRunningWorkflowTab (WorkflowLayout.tsx) treats a session as
@@ -387,7 +347,6 @@ export const WorkflowChatTabs: React.FC<WorkflowChatTabsProps> = ({ embedded = f
                 onTabClick={handleTabClick}
                 onCloseTab={handleCloseTab}
                 onMakeInteractive={handleMakeInteractive}
-                onStop={handleStopTab}
               />
             )
           })}

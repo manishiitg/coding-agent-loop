@@ -58,9 +58,6 @@ Both frontend and backend **read and write** only the object format with `steps`
           "provider": "openai",
           "model_id": "gpt-4o"
         },
-        "execution_max_turns": 25,
-        "validation_max_turns": 10,
-        "learning_max_turns": 5,
         "use_code_execution_mode": true,
         "disable_validation": false,
         "llm_validation_mode": "skip",
@@ -159,14 +156,9 @@ content, err := json.MarshalIndent(file, "", "  ")
 | `execution_llm` | `object` | Preset default | LLM config for execution agent (`{ provider: string, model_id: string }`) |
 | `validation_llm` | `object` | Preset default | LLM config for validation agent |
 
-### Max Turns Configuration
+### Turn Limits
 
-| Field | Type | Default | Purpose |
-|-------|------|---------|---------|
-| `execution_max_turns` | `number` | Preset default (typically 100) | Maximum conversation turns for execution agent |
-| `validation_max_turns` | `number` | Preset default (typically 100) | Maximum conversation turns for validation agent |
-| `learning_max_turns` | `number` | Preset default (typically 100) | Maximum conversation turns for learning agent |
-| `orchestration_max_iterations` | `number` | Orchestrator max turns (typically 100) | Maximum iterations for orchestration step loop |
+Per-step and workflow-default turn-limit properties are retired. Legacy `execution_max_turns` values are ignored on load and omitted from typed config saves; execution uses the shared runtime limit.
 
 ### Tool & Server Configuration
 
@@ -255,7 +247,6 @@ content, err := json.MarshalIndent(file, "", "  ")
 - All boolean fields use `nil` (undefined) to mean "use default/preset value"
 - `enabled_custom_tools` uses unified format: `"category:tool"` or `"category:*"`. Current categories include `workspace_advanced`, `workspace_tools`, `workspace_browser`, and `human_tools`; use `execute_shell_command` / `diff_patch_workspace_file` for file access instead of legacy basic workspace tool names.
 - `learning_detail_level` accepts `"exact"`, `"general"`, or `"none"` (default: `"exact"`)
-- `orchestration_max_iterations` only applies to orchestration step types
 
 ---
 

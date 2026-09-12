@@ -29,8 +29,6 @@ interface StepEditPanelProps {
   onToggleExpanded?: (expanded: boolean) => void; // Callback when expansion state changes
 }
 
-const MAX_TURNS_OPTIONS = [10, 25, 50, 75, 100, 200, 500] as const;
-
 export const StepEditPanel: React.FC<StepEditPanelProps> = ({
   step,
   stepIndex,
@@ -476,20 +474,6 @@ export const StepEditPanel: React.FC<StepEditPanelProps> = ({
       ...prev,
       execution_llm: optionToLLMConfig(llm),
     }));
-  };
-
-  // Update max turns (only for execution - validation/learning are fixed at 25)
-  const handleMaxTurnsChange = (
-    agentType: 'execution',
-    value: number
-  ) => {
-    setAgentConfigs((prev) => {
-      const key = `${agentType}_max_turns` as keyof AgentConfigs;
-      return {
-        ...prev,
-        [key]: value,
-      };
-    });
   };
 
   // Update toggles
@@ -1117,20 +1101,7 @@ export const StepEditPanel: React.FC<StepEditPanelProps> = ({
                     openDirection="down"
                   />
                 </div>
-                <div className="flex items-center gap-2">
-                  <label className="text-xs text-gray-600 dark:text-gray-400 whitespace-nowrap">Max Turns:</label>
-                  <select
-                    value={agentConfigs.execution_max_turns || 500}
-                    onChange={(e) => handleMaxTurnsChange('execution', parseInt(e.target.value))}
-                    className="px-2 py-1.5 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 text-xs focus:ring-2 focus:ring-blue-500 focus:border-blue-500 w-20"
-                  >
-                    {MAX_TURNS_OPTIONS.map((value) => (
-                      <option key={value} value={value}>
-                        {value}
-                      </option>
-                    ))}
-	                  </select>
-	                </div>
+
 	              </div>
 	              {presetLLMConfig?.mode === 'explicit' && (
 	                <div>

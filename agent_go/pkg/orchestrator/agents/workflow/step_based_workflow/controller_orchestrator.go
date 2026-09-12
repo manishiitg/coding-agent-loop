@@ -44,8 +44,9 @@ func (hcpo *StepBasedWorkflowOrchestrator) setupOrchestratorFolderGuard(step Pla
 	// Do not grant the workflow root here. That would expose workflow.json, variables/,
 	// planning/, and sibling groups to a nested todo_task orchestrator whose job is
 	// to coordinate work inside the current run, not inspect global workflow state.
-	readPaths = []string{executionWorkspacePath}
-	writePaths = []string{executionWorkspacePath}
+	downloadsPath := filepath.Join(executionWorkspacePath, "Downloads")
+	readPaths = []string{executionWorkspacePath, downloadsPath, filepath.Join(baseWorkspacePath, "soul", "soul.md")}
+	writePaths = []string{executionWorkspacePath, downloadsPath}
 	readPaths, writePaths = appendManagedDBFileAccess(baseWorkspacePath, readPaths, writePaths)
 	if learningsAccessForGuard != LearningsAccessNone {
 		globalLearningsPath := filepath.Join(baseWorkspacePath, "learnings", GlobalLearningID)
@@ -75,6 +76,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) setupOrchestratorFolderGuard(step Pla
 		hcpo.GetLogger().Info(fmt.Sprintf("🎯 Added skill folder paths to todo task folder guard: %v", skillReadPaths))
 	}
 
+	readPaths, writePaths = hcpo.appendCDPHostDownloadsPaths(readPaths, writePaths)
 	return common.DeduplicateStrings(readPaths), common.DeduplicateStrings(writePaths)
 }
 

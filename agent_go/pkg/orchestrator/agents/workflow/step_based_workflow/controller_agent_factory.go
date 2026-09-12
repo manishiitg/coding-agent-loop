@@ -608,18 +608,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) getCodeExecutionMode(stepConfig *Agen
 	return isCodeExecutionMode
 }
 
-// getExecutionMaxTurns determines max turns with priority: step config > orchestrator default
-func (hcpo *StepBasedWorkflowOrchestrator) getExecutionMaxTurns(stepConfig *AgentConfigs) int {
-	maxTurns := hcpo.GetMaxTurns()
-	if stepConfig != nil && stepConfig.ExecutionMaxTurns != nil {
-		maxTurns = *stepConfig.ExecutionMaxTurns
-		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using step-specific execution-only max turns: %d (orchestrator default was: %d)", maxTurns, hcpo.GetMaxTurns()))
-	} else {
-		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using orchestrator default execution-only max turns: %d (no step-specific config)", maxTurns))
-	}
-	return maxTurns
-}
-
 // resolveStepID resolves the step ID from stepIDOverride or falls back to stepPath
 // Priority: stepIDOverride > stepPath fallback
 func (hcpo *StepBasedWorkflowOrchestrator) resolveStepID(stepPath, stepIDOverride string) string {
@@ -1296,7 +1284,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) createExecutionOnlyAgent(ctx context.
 
 	// 3. Determine settings (extracted methods)
 	isCodeExecutionMode := hcpo.getCodeExecutionMode(stepConfig)
-	maxTurns := hcpo.getExecutionMaxTurns(stepConfig)
+	maxTurns := hcpo.GetMaxTurns()
 
 	// 4. Select LLM (extracted method)
 	llmConfig := hcpo.selectExecutionLLM(ctx, stepConfig, stepPath)

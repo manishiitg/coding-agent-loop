@@ -5056,11 +5056,6 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 					"maximum":     maxRunRetentionCount,
 					"description": "Number of backup run/eval iterations to keep, excluding active iteration-0. Defaults to 3 when omitted. Raise this for workflows whose Pulse or Goal Advisor reviews need a wider evidence window.",
 				},
-				"execution_max_turns": map[string]interface{}{
-					"type":        "integer",
-					"minimum":     1,
-					"description": "Workflow-level default max turns per step (stored in execution_defaults, applies to EVERY step unless a step sets its own execution_max_turns). Default when omitted: 500. Use for a workflow whose steps generally need a different ceiling than the platform default; prefer per-step tuning via update_step_config when only some steps need it. Pass null to clear the workflow-level default.",
-				},
 				"disable_parallel_tool_execution": map[string]interface{}{
 					"type":        "boolean",
 					"description": "Workflow-level default (stored in execution_defaults, applies to EVERY step unless a step overrides it) forcing one tool call per turn. Use only when most steps in this workflow need strictly sequential tool calls (e.g. a workflow that is browser-driven throughout); prefer per-step tuning via update_step_config when only some steps need it. Pass null to clear the workflow-level default.",
@@ -6055,10 +6050,9 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 			}
 
 			// --- Execution Defaults (workflow-level overrides applied to every step) ---
-			_, hasExecMaxTurns := args["execution_max_turns"]
 			_, hasDisableParallel := args["disable_parallel_tool_execution"]
 			_, hasEnabledCustomTools := args["enabled_custom_tools"]
-			if hasExecMaxTurns || hasDisableParallel || hasEnabledCustomTools {
+			if hasDisableParallel || hasEnabledCustomTools {
 				content, err := iwm.controller.ReadWorkspaceFile(ctx, "workflow.json")
 				if err != nil {
 					return fmt.Sprintf("Failed to read workflow.json: %v", err), nil
@@ -6073,38 +6067,6 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				}
 
 				var summary []string
-
-				if hasExecMaxTurns {
-					raw := args["execution_max_turns"]
-					if raw == nil {
-						delete(execDefaults, "execution_max_turns")
-						summary = append(summary, "execution_max_turns: cleared (steps use their own/default max turns)")
-					} else {
-						parseInt := func(raw interface{}) (int, bool) {
-							switch v := raw.(type) {
-							case int:
-								return v, true
-							case int64:
-								return int(v), true
-							case float64:
-								if v == float64(int(v)) {
-									return int(v), true
-								}
-							case json.Number:
-								if n, err := v.Int64(); err == nil {
-									return int(n), true
-								}
-							}
-							return 0, false
-						}
-						turns, ok := parseInt(raw)
-						if !ok || turns < 1 {
-							return "Error: execution_max_turns must be a positive integer (or null to clear).", nil
-						}
-						execDefaults["execution_max_turns"] = turns
-						summary = append(summary, fmt.Sprintf("execution_max_turns: %d (applies to every step)", turns))
-					}
-				}
 
 				if hasDisableParallel {
 					raw := args["disable_parallel_tool_execution"]

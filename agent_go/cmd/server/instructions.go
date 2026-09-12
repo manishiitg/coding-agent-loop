@@ -430,9 +430,7 @@ Workflow-level manifest. **Required fields**: ` + "`schema_version`" + ` (int, 1
     "use_code_execution_mode": false,
     "llm_config": null
   },
-  "execution_defaults": {
-    "execution_max_turns": 10
-  },
+  "execution_defaults": {},
   "schedules": []
 }
 ` + "```" + `

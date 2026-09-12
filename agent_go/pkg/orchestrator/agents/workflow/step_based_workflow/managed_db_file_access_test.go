@@ -40,13 +40,21 @@ func TestManagedStepDBFileAccessP0(t *testing.T) {
 					t.Fatalf("unexpected external test grant: %s", path)
 				}
 				dir := path
-				if strings.HasSuffix(path, "/README.md") {
+				if strings.HasSuffix(path, ".md") {
 					dir = filepath.Dir(path)
 				}
 				if err := os.MkdirAll(dir, 0700); err != nil {
 					t.Fatal(err)
 				}
 			}
+			soul := filepath.Join(workflow, "soul", "soul.md")
+			if err := os.MkdirAll(filepath.Dir(soul), 0700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(soul, []byte("fixture"), 0600); err != nil {
+				t.Fatal(err)
+			}
+			download := filepath.Join(hcpo.getOrchestratorExecutionWorkspacePath(), "Downloads", "download.txt")
 			db := filepath.Join(workflow, "db")
 			for _, name := range []string{"README.md", "strategy_framework.md", "db.sqlite", "db.sqlite-wal", "db.sqlite-shm"} {
 				if err := os.WriteFile(filepath.Join(db, name), []byte("fixture"), 0600); err != nil {
@@ -59,6 +67,9 @@ func TestManagedStepDBFileAccessP0(t *testing.T) {
 				allowed       bool
 			}{
 				{"read README", "cat ../README.md", true},
+				{"read soul", "cat '" + soul + "'", true},
+				{"write soul", "printf changed > '" + soul + "'", false},
+				{"Downloads read and write", "printf fixture > '" + download + "' && cat '" + download + "'", true},
 				{"write README", "printf changed > ../README.md", false},
 				{"assets read and write", "printf asset > artifact.txt && cat artifact.txt", true},
 				{"read sibling document", "cat ../strategy_framework.md", false},

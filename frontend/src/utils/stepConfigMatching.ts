@@ -14,10 +14,6 @@ export interface AgentLLMConfig {
 export interface AgentConfigs {
   execution_llm?: AgentLLMConfig;
   execution_tier?: 'high' | 'medium' | 'low';
-  execution_max_turns?: number;
-  validation_max_turns?: number;
-  learning_max_turns?: number;
-  orchestration_max_iterations?: number;
   lock_code?: boolean;                        // Freeze main.py against LLM rewrites
   // DEPRECATED: backend removed these fields (replaced by learnings_access).
   // Kept on the interface only so legacy node-display code compiles; the backend

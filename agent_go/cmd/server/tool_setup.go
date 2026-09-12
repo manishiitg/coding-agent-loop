@@ -102,8 +102,8 @@ func extractFileContextWriteFolders(query string) []string {
 
 // extractWorkflowContextFolders normalizes workflow context paths selected via the #workflow picker
 // so they can participate in folder guard setup just like @context paths.
-// These paths come from trusted UI workflow selections, but we still clean/dedupe them and
-// drop protected/invalid values before they reach the folder guard.
+// handleQuery authorizes these paths against live workflow permissions first.
+// This helper only normalizes paths; it is not an authorization boundary.
 func extractWorkflowContextFolders(paths []string) []string {
 	if len(paths) == 0 {
 		return nil

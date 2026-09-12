@@ -3298,6 +3298,13 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	contextPaths, contextErr := authorizeWorkflowContextPaths(r.Context(), req.WorkflowContextPaths)
+	if contextErr != nil {
+		http.Error(w, contextErr.Error(), http.StatusForbidden)
+		return
+	}
+	req.WorkflowContextPaths = contextPaths
+
 	// Handle alias: Map Message to Query if Query is empty
 	if req.Query == "" && req.Message != "" {
 		req.Query = req.Message

@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react'
 import { Layers, Search } from 'lucide-react'
-import { useGlobalPresetStore } from '../stores/useGlobalPresetStore'
+import { workflowManifestApi } from '../services/api'
+import { useAuthStore } from '../stores/useAuthStore'
 
 interface WorkflowItem {
   presetId: string
@@ -52,20 +53,27 @@ export const WorkflowSelectionDialog: React.FC<WorkflowSelectionDialogProps> = (
     }
   }, [isOpen])
 
-  // Build all workflow items from preset store
-  const allWorkflows = useMemo<WorkflowItem[]>(() => {
-    if (!isOpen) return []
-    const presetStore = useGlobalPresetStore.getState()
-    // Use manifest-based workflow presets only
-    const allPresets = presetStore.workflowPresets
-    return allPresets
-      .filter(p => p.agentMode === 'workflow' && p.selectedFolder?.filepath)
-      .map(p => ({
-        presetId: p.id,
-        label: p.label,
-        workspacePath: p.selectedFolder!.filepath
-      }))
-  }, [isOpen]) // re-compute when popup opens to pick up new presets
+  const userID = useAuthStore(state => state.user?.id)
+  const [workflowResult, setWorkflowResult] = useState<{ userID?: string; items: WorkflowItem[] } | null>(null)
+  const [loadError, setLoadError] = useState(false)
+  // Fetch the permission-filtered list for every opening. Never fall back to
+  // cached presets after an error, account change, or sharing revocation.
+  useEffect(() => {
+    let cancelled = false
+    setWorkflowResult(null)
+    setLoadError(false)
+    if (!isOpen) return
+    void workflowManifestApi.listWorkflowManifests().then(response => {
+      if (cancelled) return
+      setWorkflowResult({ userID, items: (response.workflows || []).map(workflow => ({
+        presetId: workflow.manifest.id || workflow.workspace_path,
+        label: workflow.manifest.label,
+        workspacePath: workflow.workspace_path,
+      })) })
+    }).catch(() => { if (!cancelled) setLoadError(true) })
+    return () => { cancelled = true }
+  }, [isOpen, userID])
+  const allWorkflows = useMemo(() => isOpen && workflowResult?.userID === userID ? workflowResult?.items || [] : [], [isOpen, workflowResult, userID])
 
   // Filter synchronously
   const filteredWorkflows = useMemo<WorkflowItem[]>(() => {
@@ -175,7 +183,7 @@ export const WorkflowSelectionDialog: React.FC<WorkflowSelectionDialogProps> = (
       <div ref={listRef} className="overflow-y-auto max-h-64">
         {filteredWorkflows.length === 0 ? (
           <div className="px-3 py-4 text-center text-muted-foreground text-sm">
-            {localQuery ? 'No automations found' : 'No automation presets available'}
+            {loadError ? 'Unable to load accessible automations. Close and reopen to retry.' : !workflowResult ? 'Loading accessible automations…' : localQuery ? 'No automations found' : 'No accessible automations available'}
           </div>
         ) : (
           filteredWorkflows.map((workflow, index) => (

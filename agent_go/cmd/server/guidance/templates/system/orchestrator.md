@@ -57,6 +57,19 @@ Known isolated agentic tasks can be separate message-sequence plan steps without
 an adaptive parent. See `references/plan-design.md`, Step 2, for scripted batch support and its limits.
 Script batches do not grant agentic delegation to message sequences.
 
+## Example: investigating a problem
+
+Use the scope already supplied by the user, launch variables, or upstream evidence;
+ask only for information that is actually missing. Available research, testing, and
+validation routes can be known upfront. The parent interprets their findings,
+resolves contradictions, decides whether more evidence is needed, and owns the
+conclusion. It may write the report in the same conversation; use a separate
+report step only when its context or durable output contract needs a boundary.
+
+An unknown work breakdown is one use case, not a prerequisite. A known breakdown
+can still require substantive decisions about strategy, evidence, recovery, or
+completion. Merely dispatching a fixed checklist remains insufficient.
+
 ## Anatomy
 
 An orchestrator plan step has two big parts:

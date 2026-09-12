@@ -73,13 +73,13 @@ call **`read_skill(skills=[{"name":"builder-reference","path":"references/plan-d
 point for any plan-composition decision. From there:
 
 - **Per-step-type deep dives**: `orchestrator` (anatomy + routes +
-  nested + scripted fast-path), `human-input` (input types + routing
+  nested + scripted routes), `human-input` (input types + routing
   pairing + unattended schedules), `message-sequence` (full pattern
   catalog: Stateful Specialist, Test/Fix Loop, Maker+Reviewer, Panel,
 	  Clean-Room Retry, HITL Re-entry, Scripted Conversation), `routing`
 	  (deterministic route_selection.json contract, anti-patterns), `branch`
 	  (same mechanics as `routing`, for a small in-flow decision).
-- **Recurring multi-step shapes**: `workflow-patterns` (Phase Router,
-  Scoped Investigation, Linear Pipeline, Fan-out & Consolidate,
-  Verification Gate, Pre-flight Probe, Human Checkpoint, Critique
-  Loop, Persistence Tail).
+- **Combining steps**: examples live with their owning contracts in `plan-design`,
+  `message-sequence` (script batches, verification, SQL iteration), `orchestrator`
+  (adaptive investigations), `human-in-the-loop` (review/approval), and `stores`
+  (durable persistence).

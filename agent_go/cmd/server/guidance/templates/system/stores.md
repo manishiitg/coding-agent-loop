@@ -188,3 +188,18 @@ metric definitions and `pulse_goal_observations` holds append-only measured hist
 Use `configure_goal_metrics` and `record_goal_observations` to write them. Reports
 may query them or use `window.report.getGoalMetrics()` / `renderGoalProgress()`;
 report field updates must not edit them.
+
+
+### Completing a run's durable output
+
+Batch related result/asset writes under one transaction or retry contract where
+possible. Split persistence into another step only when it needs an independent
+permission, output, transaction, or failure boundary. Make rerunnable writes
+idempotent, validate what actually persisted, and declare table contracts in
+`db/README.md`. A persistence failure is a real failure even if analysis finished.
+
+HTML reports read report-facing rows live with `window.report.query`; do not create
+a second result store just for reporting. Domain observations belong in
+`knowledgebase/notes/`, while reusable task-specific HOW belongs behind the
+`learnings/_global/SKILL.md` index. Use the existing store rules above instead of
+adding a separate step automatically for each store.

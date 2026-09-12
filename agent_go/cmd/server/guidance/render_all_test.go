@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 )
 
 // readPulseDesignSpec loads docs/design/pulse-post-run-monitor-spec.md.
@@ -314,7 +316,7 @@ func TestOrchestratorEligibilityStaysConsistentAcrossGuidance(t *testing.T) {
 		}
 	}
 
-	for _, kind := range []string{"plan-design", "orchestrator", "optimize-playbook", "workflow-patterns"} {
+	for _, kind := range []string{"plan-design", "orchestrator", "optimize-playbook"} {
 		doc := RenderSystemDoc(kind)
 		if !containsNormalizedText(doc, "fixed child set and order does not justify an `orchestrator` step") {
 			t.Fatalf("%s guidance weakened the canonical fixed-child invariant", kind)
@@ -1393,7 +1395,6 @@ func TestDeterministicFetchersFeedLargeAgenticProcessors(t *testing.T) {
 	}{
 		"planning-steps":    {registry: referenceKinds, text: "one atomic action with no"},
 		"optimize-playbook": {registry: referenceKinds, text: "add a separate step after it that reads the output"},
-		"workflow-patterns": {registry: referenceKinds, text: "`regular`(action) → `regular`(verify"},
 		"orchestrator":      {registry: referenceKinds, text: "manages multiple discrete tasks"},
 	}
 	for kind, check := range stale {
@@ -1441,12 +1442,12 @@ func TestSharedContextSpansOwnProofValidationAndRepair(t *testing.T) {
 				"Validate in context",
 			},
 		},
-		"workflow-patterns": {
+		"message-sequence": {
 			registry: referenceKinds,
 			wants: []string{
-				"one large `message_sequence` owns",
+				"one persistent conversation",
 				"re-read the system of record and prove the effect",
-				"start with one large `message_sequence` per shared-context span",
+				"one large sequence per coherent shared-context span",
 			},
 		},
 	}
@@ -1464,40 +1465,36 @@ func TestSharedContextSpansOwnProofValidationAndRepair(t *testing.T) {
 	}
 }
 
-func TestWorkflowPatternsUseCurrentRuntimeAndStoreContracts(t *testing.T) {
-	rendered, err := renderFromRegistry("workflow-patterns", tmplData{}, referenceKinds)
-	if err != nil {
-		t.Fatalf("render workflow-patterns: %v", err)
-	}
-
-	for _, want := range []string{
-		"already supplied by the user, launch variables",
-		"one large `message_sequence` to investigate and produce the proof-bearing deliverable",
-		"scripted `regular` for deterministic API/CLI/DB/auth/connectivity checks",
-		"another large `message_sequence` only when adaptive post-approval judgment",
-		"knowledgebase/notes/",
-		"learnings/_global/SKILL.md",
-		"HTML reports read report-facing rows live with `window.report.query`",
-		"read-only `source_sql`",
-		"message_sequence.items[]",
-		"orchestrator.messages[]",
-		"processed-versus-selected counts",
-	} {
-		if !strings.Contains(rendered, want) {
-			t.Fatalf("workflow-patterns missing current contract %q", want)
+// Check the shipped skill bundle: examples remain discoverable in their owning
+// references, and no live reference sends the builder to the retired document.
+func TestWorkflowCompositionExamplesLiveInOwningReferences(t *testing.T) {
+	for _, mode := range []string{"workshop", "run", "multi-agent"} {
+		for _, skill := range []*llmtypes.Skill{MaterializeReferenceSkill(mode), MaterializeGuidanceSkill(mode)} {
+			if skill == nil {
+				continue
+			}
+			if strings.Contains(skill.Content, "workflow-patterns") {
+				t.Fatalf("%s skill still advertises retired workflow-patterns", mode)
+			}
+			for _, file := range skill.SupportingFiles {
+				if strings.Contains(file.RelPath, "workflow-patterns") || strings.Contains(string(file.Content), "workflow-patterns") {
+					t.Fatalf("%s/%s still contains a retired reference", mode, file.RelPath)
+				}
+			}
 		}
 	}
-
-	for _, stale := range []string{
-		"writes a JSON array to `db/<file>.json`",
-		"KB SKILL.md update",
-		"`regular`(draft / propose / select)",
-		"Skipping the `human_input`",
-		"First `regular` step is a cheap probe",
-		"consumer's `source` must point",
+	for kind, wants := range map[string][]string{
+		"plan-design":       {"Composition examples", "readiness", "draft"},
+		"orchestrator":      {"known upfront", "unknown work breakdown is one use case, not a prerequisite", "already supplied by the user"},
+		"message-sequence":  {"re-read the system of record", "processed-versus-selected counts", "source_sql", "max_parallel"},
+		"stores":            {"transaction or retry contract", "window.report.query", "knowledgebase/notes/", "learnings/_global/SKILL.md"},
+		"human-in-the-loop": {"provide the actual draft/change/evidence", "Schedules must complete unattended"},
 	} {
-		if strings.Contains(rendered, stale) {
-			t.Fatalf("workflow-patterns retains stale contract %q", stale)
+		doc := RenderSystemDoc(kind)
+		for _, want := range wants {
+			if !containsNormalizedText(strings.ToLower(doc), strings.ToLower(want)) {
+				t.Fatalf("%s lost composition guidance %q", kind, want)
+			}
 		}
 	}
 }

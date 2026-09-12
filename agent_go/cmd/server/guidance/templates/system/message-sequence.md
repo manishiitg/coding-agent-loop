@@ -195,6 +195,14 @@ For a step that persists to the db (the common case for state/side-effect work),
 
 Use deterministic validation for artifacts and schemas. Use a user-message critique turn for subjective review.
 
+For a mutation such as upload, publish, or a DB write, the verification turn should
+re-read the system of record and prove the effect. The action's own success message
+is not independent evidence. Keep verification and repair in the owning conversation
+unless different credentials, an independently rerunnable contract, or a clean-room
+review requires separation. Use schemas for structural checks and critique for
+semantic judgment; give any deliberate critique loop a clear completion/failure
+condition rather than asking for indefinite improvement.
+
 ## FOREACH
 
 Use `foreach` when every selected database row must get one conversational turn.
@@ -219,6 +227,11 @@ Example:
   "max_iterations": 50
 }
 ```
+
+The producer should persist canonical rows with an idempotent write and a documented
+table contract. The consumer's SQL must use those actual table/column names and the
+intended group/run scope. Verify processed-versus-selected counts and task identities;
+a cap, a failed row, or an accidental filter must not look like full completion.
 
 `source_sql` must be read-only. Each result row is bound to `.` in the Go template. The step-level `validation_schema` automatically gates the final aggregate result; add a static prevalidation after the loop only when later items must not run unless that intermediate aggregate passes.
 

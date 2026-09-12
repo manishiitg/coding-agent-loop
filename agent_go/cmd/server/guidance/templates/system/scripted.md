@@ -13,7 +13,7 @@ sub-workflow fork), sub-agent coordination (`orchestrator`), or operator input (
 
 - Deterministic, self-contained work: fixed API/SDK calls, CLI commands, data fetching, known pagination, parse, normalize, transform, write, and mechanically verify. Declare these steps `scripted` from initial design and batch related calls that share one source/auth/retry/output contract.
 - One clear deterministic objective expressible as a `description` plus a `validation_schema`.
-- A coherent scripted boundary inside the **Linear Pipeline** pattern (see `read_skill(skills=[{"name":"builder-reference","path":"references/workflow-patterns.md"}])`), not one step per pipeline action.
+- Batch related deterministic actions behind one input/output and retry contract; use `references/plan-design.md` for composing that script with agentic work.
 
 If selecting further work requires agentic judgment, or the task needs conversational
 memory, use the redirects below. A deterministic script may process many records;
@@ -130,8 +130,9 @@ Each saved-script attempt is retained in the execution log directory as `scripte
 - Cramming multiple durable outputs into one step — split at output / store /
   failure-domain boundaries.
 - Narrative branching in the description ("if X do A else B") — use a `branch` or `routing` step.
-- A regular step that just enumerates a list and processes each item — if the list is
-  a db array, use a `foreach` (see `workflow-patterns` #10); if each item needs
-  sub-agents, use `orchestrator`.
+- Choosing an agent merely because there are many records. Deterministic row processing
+  can stay in a saved script. Use SQL `foreach` in `references/message-sequence.md`
+  when every selected row needs a conversational turn; use `references/orchestrator.md`
+  when the parent must reason about the investigation or strategy.
 - Missing or weak `validation_schema` — every step needs one strong enough that a
   bad/absent output fails it.

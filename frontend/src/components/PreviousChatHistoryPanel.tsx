@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { ArrowUpRight, Bot, CalendarClock, ChevronDown, ChevronRight, Code2, Eye, Loader2, MessageSquare, Paperclip, Trash2, UserRound, type LucideIcon } from 'lucide-react'
+import { ArrowUpRight, Bot, CalendarClock, ChevronDown, ChevronRight, Code2, Eye, Loader2, MessageSquare, Paperclip, Trash2, UserRound, Webhook, type LucideIcon } from 'lucide-react'
 import { agentApi } from '../services/api'
 import { schedulerApi } from '../api/scheduler'
 import {
@@ -11,6 +11,7 @@ import {
   type ScheduledJobRun,
 } from '../services/api-types'
 import { useChatStore } from '../stores/useChatStore'
+import { workflowTriggerLabel } from '../utils/workflowSessionKinds'
 import { isScheduledChatHistorySession } from '../utils/chatHistoryOpenDisposition'
 import { chatHistoryWorkshopMode } from '../utils/chatHistoryWorkshopMode'
 import { chatHistoryRuntimeLabel, chatHistoryRuntimeShortLabel } from '../utils/chatHistoryRuntimeLabel'
@@ -40,7 +41,7 @@ const EXPANDED_FETCH_INCREMENT = 30
 // shown before the details fetch lands or if it fails.
 const PREVIEW_MESSAGE_LIMIT = 14
 
-type PreviousChatKind = 'chat' | 'schedule' | 'bot'
+type PreviousChatKind = 'chat' | 'schedule' | 'bot' | 'webhook'
 type PreviousChatFilter = PreviousChatKind
 type EmptyStateIcon = LucideIcon
 
@@ -58,6 +59,11 @@ const emptyStateContent: Record<PreviousChatFilter, {
     icon: CalendarClock,
     title: 'No scheduled chats yet',
     body: 'Use the Schedules control in the top bar to create a recurring task. After a run starts, the latest scheduled chat will appear here.',
+  },
+  webhook: {
+    icon: Webhook,
+    title: 'No webhook runs yet',
+    body: 'Add a trigger in Setup → API triggers. Its executions will appear here when an external service calls it.',
   },
   bot: {
     icon: Bot,
@@ -187,6 +193,7 @@ const isSessionOlderThanDays = (session: ChatHistorySession, days: number): bool
 }
 
 const getChatKind = (session: ChatHistorySession): PreviousChatKind => {
+  if (workflowTriggerLabel({ sessionId: session.session_id }) === 'Webhook') return 'webhook'
   if (isScheduledChatHistorySession(session)) return 'schedule'
   if (session.session_id.startsWith('bot-')) return 'bot'
   return 'chat'
@@ -402,12 +409,9 @@ export const PreviousChatHistoryPanel: React.FC<PreviousChatHistoryPanelProps> =
   const [expandedWindowBySession, setExpandedWindowBySession] = useState<Record<string, number>>({})
   const [hasMoreBySession, setHasMoreBySession] = useState<Record<string, boolean>>({})
   const [scheduleJobs, setScheduleJobs] = useState<ScheduledJob[]>([])
-  // Eagerly populated (all jobs, in parallel) once scheduleJobs loads — the
-  // Schedules tab is a flat, recency-sorted feed of runs, not a per-job
-  // grouping the user expands one at a time.
+  // Both trigger feeds use recorded runs, ordered by recency.
   const [scheduleRunsByJob, setScheduleRunsByJob] = useState<Record<string, ScheduledJobRun[]>>({})
   const [isLoadingScheduleActivity, setIsLoadingScheduleActivity] = useState(false)
-  const [isLoadingScheduleRuns, setIsLoadingScheduleRuns] = useState(false)
   const [scheduleJobsWorkspacePath, setScheduleJobsWorkspacePath] = useState('')
   const expandedMessagesRef = useRef(expandedMessagesBySession)
   const loadingExpandedSessionIdsRef = useRef(loadingExpandedSessionIds)
@@ -424,6 +428,9 @@ export const PreviousChatHistoryPanel: React.FC<PreviousChatHistoryPanelProps> =
   useEffect(() => {
     let cancelled = false
     setSessions([])
+    setScheduleJobs([])
+    setScheduleRunsByJob({})
+    setScheduleJobsWorkspacePath('')
     setActiveFilter('chat')
     setVisibleCount(PAGE_SIZE)
     setExpandedSessionIds(new Set())
@@ -454,58 +461,45 @@ export const PreviousChatHistoryPanel: React.FC<PreviousChatHistoryPanelProps> =
     return () => { cancelled = true }
   }, [addToast, workspacePath])
 
-  // Load the parent schedules as soon as the workflow changes. The Schedule
-  // badge must never claim zero just because its tab has not been opened yet.
-  // Individual run histories remain lazy and are loaded only when expanded.
+  const showRunActivity = activeFilter === 'schedule' || activeFilter === 'webhook'
   useEffect(() => {
     if (!workspacePath) {
       setScheduleJobs([])
+      setScheduleRunsByJob({})
       setScheduleJobsWorkspacePath('')
       return
     }
     let cancelled = false
-    setIsLoadingScheduleActivity(true)
-    setIsLoadingScheduleRuns(false)
-
-    void schedulerApi.listJobs({ entity_type: 'workflow', limit: 100 })
-      .then(async response => {
+    let inFlight = false
+    const refresh = async (initial = false) => {
+      if (inFlight) return
+      inFlight = true
+      if (initial) setIsLoadingScheduleActivity(true)
+      try {
+        const response = await schedulerApi.listJobs({ entity_type: 'workflow', limit: 100 })
         const jobs = (response.jobs || []).filter(job => sameWorkspace(job.workspace_path, workspacePath))
+        const results = await Promise.allSettled(jobs.map(job => schedulerApi.getJobRuns(job.id, 30)))
         if (cancelled) return
         setScheduleJobs(jobs)
-        setScheduleRunsByJob({})
+        setScheduleRunsByJob(previous => Object.fromEntries(jobs.map((job, index) => {
+          const result = results[index]
+          return [job.id, result.status === 'fulfilled' ? result.value.runs || [] : previous[job.id] || []]
+        })))
+        if (results.some(result => result.status === 'rejected') && initial) addToast('Some run histories could not be loaded', 'error')
         setScheduleJobsWorkspacePath(workspacePath)
-        setIsLoadingScheduleActivity(false)
-
-        if (jobs.length === 0) return
-        setIsLoadingScheduleRuns(true)
-        try {
-          // A workspace has a handful of schedules at most, so this stays a
-          // small, bounded, one-time fan-out — not a poll. Cap per job since
-          // the feed shows everything at once now (no per-job "show more"
-          // gate left to bound an unbounded fetch behind).
-          const runsByJob = await Promise.all(
-            jobs.map(job => schedulerApi.getJobRuns(job.id, 30).then(
-              response => [job.id, response.runs || []] as const,
-              () => [job.id, []] as const,
-            ))
-          )
-          if (cancelled) return
-          setScheduleRunsByJob(Object.fromEntries(runsByJob))
-        } finally {
-          if (!cancelled) setIsLoadingScheduleRuns(false)
+      } catch {
+        if (!cancelled && initial) addToast('Failed to load run activity', 'error')
+      } finally {
+        inFlight = false
+        if (!cancelled) {
+          setIsLoadingScheduleActivity(false)
         }
-      })
-      .catch(() => {
-        if (cancelled) return
-        setScheduleJobs([])
-        setScheduleRunsByJob({})
-        setScheduleJobsWorkspacePath(workspacePath)
-        setIsLoadingScheduleActivity(false)
-        addToast('Failed to load schedule activity', 'error')
-      })
-
-    return () => { cancelled = true }
-  }, [addToast, workspacePath])
+      }
+    }
+    void refresh(true)
+    const timer = showRunActivity ? window.setInterval(() => { if (!document.hidden) void refresh() }, 10000) : undefined
+    return () => { cancelled = true; if (timer !== undefined) window.clearInterval(timer) }
+  }, [addToast, workspacePath, showRunActivity])
 
   const visibleSessions = useMemo(
     () => sessions.filter(session => session.session_id !== activeSessionId),
@@ -516,6 +510,7 @@ export const PreviousChatHistoryPanel: React.FC<PreviousChatHistoryPanelProps> =
     const counts: Record<PreviousChatFilter, number> = {
       chat: 0,
       schedule: 0,
+      webhook: 0,
       bot: 0,
     }
     for (const session of visibleSessions) {
@@ -560,27 +555,28 @@ export const PreviousChatHistoryPanel: React.FC<PreviousChatHistoryPanelProps> =
     return items.sort((a, b) => Date.parse(b.run.started_at || '') - Date.parse(a.run.started_at || ''))
   }, [scheduleJobs, scheduleRunsByJob])
 
-  const displayedScheduleRuns = useMemo(
-    () => flattenedScheduleRuns.slice(0, visibleCount),
-    [flattenedScheduleRuns, visibleCount]
-  )
+  const isRunFilter = activeFilter === 'schedule' || activeFilter === 'webhook'
+  const isWebhookRun = ({ job, run }: { job: ScheduledJob; run: ScheduledJobRun }) =>
+    job.schedule_type === 'webhook' || workflowTriggerLabel({ sessionId: run.session_id, triggeredBy: run.trigger_source }) === 'Webhook'
+  const webhookRuns = flattenedScheduleRuns.filter(isWebhookRun)
+  const scheduledRuns = flattenedScheduleRuns.filter(item => !isWebhookRun(item))
+  const filteredRuns = activeFilter === 'webhook' ? webhookRuns : scheduledRuns
+  const displayedScheduleRuns = filteredRuns.slice(0, visibleCount)
+  const filteredJobs = scheduleJobs.filter(job => (job.schedule_type === 'webhook') === (activeFilter === 'webhook'))
 
-  const displayFilterCounts = useMemo(() => ({
+  const displayFilterCounts = {
     ...filterCounts,
-    // Before its durable schedule list arrives, show a loading mark rather
-    // than the unrelated legacy chat-session count (often a false zero).
-    schedule: scheduleDataMatchesWorkspace
-      ? (isLoadingScheduleRuns ? '…' : flattenedScheduleRuns.length)
-      : '…',
-  }), [filterCounts, flattenedScheduleRuns.length, isLoadingScheduleRuns, scheduleDataMatchesWorkspace])
+    schedule: scheduleDataMatchesWorkspace && !isLoadingScheduleActivity ? scheduledRuns.length : '…',
+    webhook: scheduleDataMatchesWorkspace && !isLoadingScheduleActivity ? webhookRuns.length : '…',
+  }
 
   const sessionsByID = useMemo(
     () => new Map(visibleSessions.map(session => [session.session_id, session])),
     [visibleSessions]
   )
 
-  const totalForActiveFilter = activeFilter === 'schedule' ? flattenedScheduleRuns.length : filteredSessions.length
-  const displayedCountForActiveFilter = activeFilter === 'schedule' ? displayedScheduleRuns.length : displayedSessions.length
+  const totalForActiveFilter = isRunFilter ? filteredRuns.length : filteredSessions.length
+  const displayedCountForActiveFilter = isRunFilter ? displayedScheduleRuns.length : displayedSessions.length
 
   useEffect(() => {
     setVisibleCount(PAGE_SIZE)
@@ -703,7 +699,14 @@ export const PreviousChatHistoryPanel: React.FC<PreviousChatHistoryPanelProps> =
 
   const openScheduleActivity = useCallback((item: ScheduleActivityItem) => {
     const sessionID = item.run?.session_id
-    const session = sessionID ? sessionsByID.get(sessionID) : undefined
+    const session: ChatHistorySession | undefined = sessionID ? sessionsByID.get(sessionID) || {
+      session_id: sessionID,
+      created_at: item.run!.started_at,
+      updated_at: item.run!.completed_at || item.run!.started_at,
+      query: item.job.name,
+      agent_mode: 'workflow',
+      workshop_mode: 'run',
+    } : undefined
     if (!session) {
       addToast('This run has no restorable conversation record', 'info')
       return
@@ -755,6 +758,7 @@ export const PreviousChatHistoryPanel: React.FC<PreviousChatHistoryPanelProps> =
     { filter: 'chat' as const, label: 'Recent', icon: MessageSquare },
     { filter: 'schedule' as const, label: 'Schedules', icon: CalendarClock },
     { filter: 'bot' as const, label: 'Bots', icon: Bot },
+    { filter: 'webhook' as const, label: 'Webhooks', icon: Webhook },
   ]
 
   return (
@@ -766,7 +770,7 @@ export const PreviousChatHistoryPanel: React.FC<PreviousChatHistoryPanelProps> =
           {!compact && title && (
             <div className="flex min-w-0 items-center gap-2 text-sm">
               <MessageSquare className="h-4 w-4 shrink-0 text-muted-foreground/80" />
-              <span className="truncate font-medium text-foreground">{activeFilter === 'schedule' ? 'Schedule activity' : title}</span>
+              <span className="truncate font-medium text-foreground">{activeFilter === 'webhook' ? 'Webhook activity' : activeFilter === 'schedule' ? 'Schedule activity' : title}</span>
             </div>
           )}
 
@@ -778,6 +782,9 @@ export const PreviousChatHistoryPanel: React.FC<PreviousChatHistoryPanelProps> =
                 return (
                   <button
                     key={filter}
+                    aria-label={label}
+                    aria-pressed={isActive}
+                    title={label}
                     type="button"
                     onClick={() => setActiveFilter(filter)}
                     className={`inline-flex shrink-0 items-center gap-1.5 rounded px-2 py-1 text-xs font-medium transition-colors ${
@@ -799,7 +806,7 @@ export const PreviousChatHistoryPanel: React.FC<PreviousChatHistoryPanelProps> =
                 )
                 })}
               </div>
-              {activeFilter !== 'schedule' && hasOldVisibleSessions && (
+              {!isRunFilter && hasOldVisibleSessions && (
                 <CleanupOldChatsDropdown
                   counts={oldVisibleSessionCounts}
                   isLoading={isCleanupLoading || isLoading}
@@ -812,22 +819,17 @@ export const PreviousChatHistoryPanel: React.FC<PreviousChatHistoryPanelProps> =
 
         {isLoading ? (
           <div className="px-3 py-3 text-xs text-muted-foreground">Loading previous chats...</div>
-        ) : activeFilter === 'schedule' ? (
+        ) : isRunFilter ? (
           <div className={`${fill ? 'min-h-0 flex-1 overflow-y-auto' : ''}`}>
             {isLoadingScheduleActivity ? (
               <div className="flex items-center gap-2 px-3 py-4 text-xs text-muted-foreground">
                 <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                <span>Loading schedule activity...</span>
+                <span>Loading {activeFilter === 'webhook' ? 'webhook' : 'schedule'} activity...</span>
               </div>
-            ) : scheduleJobs.length === 0 ? (
-              <div className="px-3 py-4 text-sm text-muted-foreground">No schedules are configured for this workflow yet.</div>
-            ) : isLoadingScheduleRuns ? (
-              <div className="flex items-center gap-2 px-3 py-4 text-xs text-muted-foreground">
-                <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                <span>Loading scheduled runs...</span>
-              </div>
-            ) : flattenedScheduleRuns.length === 0 ? (
-              <div className="px-3 py-4 text-sm text-muted-foreground">No scheduled runs recorded yet.</div>
+            ) : filteredJobs.length === 0 ? (
+              <div className="px-3 py-4 text-sm text-muted-foreground">{activeFilter === 'webhook' ? 'No webhooks configured. Add one in Setup → API triggers.' : 'No schedules are configured for this workflow yet.'}</div>
+            ) : filteredRuns.length === 0 ? (
+              <div className="px-3 py-4 text-sm text-muted-foreground">{activeFilter === 'webhook' ? 'No webhook runs recorded yet.' : 'No scheduled runs recorded yet.'}</div>
             ) : (
               <div className="divide-y divide-border">
                 {displayedScheduleRuns.map(({ job, run }) => (

@@ -258,8 +258,9 @@ func shouldSkipAuth(path string) bool {
 		"/api/auth/providers", // Get available auth providers
 		"/api/health",
 		"/api/capabilities",
-		"/api/shared/",        // Shared session links are public
-		"/api/oauth/callback", // OAuth callback comes from external provider without our JWT
+		"/api/hooks/workflow/", // Inbound webhook handlers verify their own secret/signature.
+		"/api/shared/",         // Shared session links are public
+		"/api/oauth/callback",  // OAuth callback comes from external provider without our JWT
 		// Google redirects the user's browser here after they consent. It is a
 		// plain navigation, so it cannot carry our JWT. Safe to expose because
 		// the request is worthless without the OAuth state parameter, which is

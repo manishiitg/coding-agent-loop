@@ -3001,7 +3001,7 @@ export interface ScheduledJob {
   query?: string  // message to execute (multi-agent mode)
   resume_previous?: boolean  // coding-agent CLI only: explicit true resumes latest prior thread; omitted/false starts fresh
   user_id?: string  // user context (multi-agent mode)
-  schedule_type?: 'cron' | 'calendar'
+  schedule_type?: 'cron' | 'calendar' | 'webhook'
   calendar_items?: CalendarScheduleItem[]
   cron_expression: string
   timezone: string
@@ -3059,7 +3059,7 @@ export interface CreateScheduledJobRequest {
   after_terminal_status?: 'completed' | 'any_terminal'
   after_delay_minutes?: number
   dependency_deadline?: string
-  schedule_type?: 'cron' | 'calendar'
+  schedule_type?: 'cron' | 'calendar' | 'webhook'
   calendar_items?: CalendarScheduleItem[]
   cron_expression?: string
   timezone?: string
@@ -3087,7 +3087,7 @@ export interface UpdateScheduledJobRequest {
   after_terminal_status?: 'completed' | 'any_terminal'
   after_delay_minutes?: number
   dependency_deadline?: string
-  schedule_type?: 'cron' | 'calendar'
+  schedule_type?: 'cron' | 'calendar' | 'webhook'
   calendar_items?: CalendarScheduleItem[]
   cron_expression?: string
   timezone?: string
@@ -3113,6 +3113,7 @@ export interface ListScheduledJobsResponse {
 export interface ScheduledJobRun {
   id: string
   job_id: string
+  webhook?: { trigger_name: string; delivery_id: string; event?: string; received_at: string }
   trigger_source?: 'manual' | 'cron' | 'calendar' | string
   scheduled_for?: string
   run_folder?: string
@@ -3234,7 +3235,7 @@ export interface WorkflowScheduleEntry {
   id: string
   name: string
   description?: string
-  schedule_type?: 'cron' | 'calendar'
+  schedule_type?: 'cron' | 'calendar' | 'webhook'
   cron_expression: string
   timezone: string
   enabled: boolean

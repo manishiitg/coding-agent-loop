@@ -50,7 +50,7 @@ export const scheduleStatusPresentation = (item: ScheduleActivityItem): {
 // Open, while the raw failure stays in a small disclosure for diagnosis.
 export const scheduleRunStartMessage = (job: ScheduledJob, session?: ChatHistorySession): string => {
   const configuredMessage = (job.messages || []).find(message => message.trim()) || job.query || ''
-  return (session?.query || configuredMessage || 'This scheduled run started without a saved instruction.').trim()
+  return (session?.query || configuredMessage || (job.schedule_type === 'webhook' ? 'An incoming webhook started the configured route.' : 'This scheduled run started without a saved instruction.')).trim()
 }
 
 export const scheduleRunLatestAgentMessage = (session?: ChatHistorySession): string | undefined => {

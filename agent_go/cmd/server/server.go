@@ -578,7 +578,8 @@ type StreamingAPI struct {
 	workshopChatSessions sync.Map
 
 	// Cron scheduler service for scheduled workflow executions
-	scheduler *SchedulerService
+	scheduler          *SchedulerService
+	webhookInvocations sync.Map // session ID -> *step_based_workflow.WebhookInvocation; internal only
 
 	// Background completion loop tracking — prevents multiple loops per session
 	completionLoopStarted   map[string]bool
@@ -2497,6 +2498,7 @@ func runServer(cmd *cobra.Command, args []string) {
 		go productScheduleSvc.Start(schedulerCtx)
 	}
 	SchedulerRoutes(router, schedulerSvc)
+	WorkflowWebhookRoutes(router, schedulerSvc)
 
 	// Workflow API routes
 	apiRouter.HandleFunc("/workflow/create", requireWorkflowCreateAccess(api.handleCreateWorkflow)).Methods("POST", "OPTIONS")
@@ -7035,7 +7037,7 @@ func scheduledRequestBypassesWorkflowBusy(sessionID, triggeredBy string) bool {
 func isScheduledSessionIdentity(sessionID, triggeredBy string) bool {
 	trigger := strings.ToLower(strings.TrimSpace(triggeredBy))
 	id := strings.ToLower(strings.TrimSpace(sessionID))
-	return trigger == "cron" ||
+	return trigger == "cron" || trigger == "webhook" ||
 		strings.Contains(trigger, "schedule") ||
 		strings.HasPrefix(id, "schedule-") ||
 		strings.Contains(id, "-schedule-")
@@ -9578,6 +9580,9 @@ func (api *StreamingAPI) buildWorkshopConfig(
 		}
 	}
 	cfg.SchedulerFuncs = api.buildSchedulerCallbacks()
+	if invocation, ok := api.webhookInvocations.Load(sessionID); ok {
+		cfg.WebhookInvocation = invocation.(*todo_creation_human.WebhookInvocation)
+	}
 	cfg.ScheduleCollisionCheck = api.scheduleCollisionCheck(cfg.WorkspacePath, sessionID, req.TriggeredBy)
 	cfg.SkillFuncs = api.buildSkillCallbacks()
 	cfg.LLMToolsFuncs = api.buildLLMToolsCallbacks()

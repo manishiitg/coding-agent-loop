@@ -179,6 +179,14 @@ export const UI_CONTROL_CONTRACT = {
       "targets": []
     },
     {
+      "id": "api-triggers",
+      "label": "API triggers",
+      "actions": [
+        "open"
+      ],
+      "targets": []
+    },
+    {
       "id": "folders",
       "label": "Attached folders",
       "actions": [

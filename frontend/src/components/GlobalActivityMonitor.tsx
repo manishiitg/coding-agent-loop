@@ -21,7 +21,7 @@ import {
   statusTone,
   visibleActivitySessions,
 } from '../utils/globalActivityMonitorStatus'
-import { isInternalChildSession } from '../utils/workflowSessionKinds'
+import { workflowTriggerLabel, isInternalChildSession } from '../utils/workflowSessionKinds'
 
 const MAX_INLINE_ACTIVITY_ITEMS = 2
 
@@ -82,7 +82,7 @@ function displaySessionTitle(
     // For view-only (schedule/bot) tabs, tab.name is a type label ("Schedule", "WhatsApp"),
     // not the actual workflow name — skip it and resolve the real workflow title instead.
     const genericTabName = (tab?.name || '').trim().toLowerCase()
-    const tabNameIsTypeLabel = genericTabName === 'schedule' ||
+    const tabNameIsTypeLabel = genericTabName === 'schedule' || genericTabName === 'webhook' ||
       genericTabName === 'scheduled run' ||
       genericTabName === 'bot' ||
       genericTabName === 'whatsapp' ||
@@ -327,6 +327,7 @@ export const GlobalActivityMonitor: React.FC = () => {
         const fallbackName = selectedModeCategory === 'workflow' ? currentWorkflowPresetName : null
         const tone = statusTone(session)
         const title = displaySessionTitle(session, tab, undefined, fallbackName)
+        const triggerLabel = workflowTriggerLabel({ sessionId: session.session_id, triggeredBy: session.triggered_by })
         const statusLabel = headerStatusLabel(session)
         // End user only cares about two states: is it working, or is it waiting for me?
         // The icon alone conveys this — spinner = running, amber alert = waiting for input.
@@ -343,7 +344,7 @@ export const GlobalActivityMonitor: React.FC = () => {
               data-testid={i === 0 ? 'tour-active-work-switcher' : undefined}
               onClick={() => void handleOpenSession(session)}
               className={pillClasses}
-              title={`${title} · ${statusLabel}${waitingTitle}`}
+              title={`${title}${triggerLabel ? ` · ${triggerLabel}` : ''} · ${statusLabel}${waitingTitle}`}
             >
               {tone === 'needs-input'
                 ? <AlertCircle className="w-3.5 h-3.5 text-amber-500 dark:text-amber-400" />
@@ -353,6 +354,7 @@ export const GlobalActivityMonitor: React.FC = () => {
                     ? <Pause className="w-3.5 h-3.5 opacity-50" />
                     : <Clock className="w-3.5 h-3.5 opacity-50" />}
               <span className="whitespace-nowrap">{name}</span>
+              {triggerLabel && <span className="rounded border border-current/20 px-1 text-[10px] opacity-75">{triggerLabel}</span>}
             </button>
           </React.Fragment>
         )

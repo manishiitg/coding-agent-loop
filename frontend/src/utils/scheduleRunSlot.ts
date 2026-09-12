@@ -106,6 +106,7 @@ const nearestDailyCronSlot = (job: ScheduledJob, startedAt: string): { at: Date;
 }
 
 export const scheduleRunSlotLabel = (job: ScheduledJob, run: ScheduledJobRun): string | undefined => {
+  if (job.schedule_type === 'webhook' || run.trigger_source === 'webhook' || run.session_id?.startsWith('schedule-webhook--')) return undefined
   if (run.scheduled_for) {
     const scheduledFor = new Date(run.scheduled_for)
     if (!Number.isNaN(scheduledFor.getTime())) return `Scheduled slot ${formatScheduleSlot(scheduledFor, job.timezone)}`

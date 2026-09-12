@@ -38,6 +38,7 @@ type StepProgress struct {
 // ExecutionOptions carries the execution details that remain meaningful after a
 // run is selected. Full workflow runs always use the current run slot.
 type ExecutionOptions struct {
+	WebhookInputFile  string `json:"-"`                             // Internal API delivery file; cannot be supplied by tool JSON.
 	SelectedRunFolder string `json:"selected_run_folder,omitempty"` // Current run slot (iteration-0) for full workflow runs
 	ExecutionStrategy string `json:"execution_strategy"`            // Execution strategy (see constants below)
 	ResumeFromStep    int    `json:"resume_from_step,omitempty"`    // 1-based step number to resume from (for top-level steps)

@@ -685,9 +685,15 @@ func (api *StreamingAPI) handleDuplicateWorkflowManifest(w http.ResponseWriter, 
 	newManifest.CreatedAt = "" // Will be set by WriteWorkflowManifest
 	newManifest.UpdatedAt = ""
 
-	// Reset schedule IDs to avoid collisions
-	for i := range newManifest.Schedules {
-		newManifest.Schedules[i].ID = uuid.New().String()[:8]
+	// API endpoints and their credentials belong to the source workflow. A copy
+	// must attach its own API triggers; ordinary time schedules get fresh IDs.
+	newManifest.Schedules = nil
+	for _, schedule := range srcManifest.Schedules {
+		if schedule.ScheduleType == "webhook" {
+			continue
+		}
+		schedule.ID = uuid.New().String()[:8]
+		newManifest.Schedules = append(newManifest.Schedules, schedule)
 	}
 
 	// Write new manifest

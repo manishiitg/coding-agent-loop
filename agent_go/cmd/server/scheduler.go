@@ -35,6 +35,7 @@ type ScheduleContext struct {
 	WorkflowID    string
 	WorkflowLabel string
 	Schedule      WorkflowSchedule
+	WebhookInput  *WorkflowWebhookDelivery
 	Capabilities  WorkflowCapabilities
 	// OwnerUserID is the workflow's WorkflowManifest.CreatedBy, threaded
 	// through so startSessionInternal resolves secrets against the account
@@ -741,6 +742,11 @@ func (s *SchedulerService) LoadSchedule(sctx *ScheduleContext) error {
 	}
 
 	scheduleType := scheduleTypeOrDefault(sched.ScheduleType)
+	if scheduleType == "webhook" {
+		s.scheduleFingerprints[runtimeKey] = scheduleConfigFingerprint(sctx)
+		s.updateRuntimeState(runtimeKey, func(state *ScheduleRuntimeState) { state.NextRunAt = nil })
+		return nil
+	}
 	var nextRun *time.Time
 	sctxCopy := *sctx
 
@@ -1244,6 +1250,10 @@ func (s *SchedulerService) TriggerNow(workspacePath string, scheduleID string) (
 // TriggerNowFromSession is TriggerNow with the chat session that asked for the
 // run, so the run's terminals can be surfaced in that chat.
 func (s *SchedulerService) TriggerNowFromSession(workspacePath, scheduleID, originSessionID string) (string, error) {
+	return s.triggerSavedSchedule(workspacePath, scheduleID, originSessionID, nil)
+}
+
+func (s *SchedulerService) triggerSavedSchedule(workspacePath, scheduleID, originSessionID string, input *WorkflowWebhookDelivery) (string, error) {
 	ctx := context.Background()
 
 	manifest, found, err := ReadWorkflowManifest(ctx, workspacePath)
@@ -1263,6 +1273,24 @@ func (s *SchedulerService) TriggerNowFromSession(workspacePath, scheduleID, orig
 	}
 	sctx := buildScheduleContext(workspacePath, manifest, *sched)
 	sctx.TriggerSource = "manual"
+	if sched.ScheduleType == "webhook" {
+		if input == nil {
+			return "", errors.New("webhook triggers require an authenticated delivery")
+		}
+		if !sched.Enabled {
+			return "", errors.New("webhook is disabled")
+		}
+		if err := validateWebhookSchedule(*sched); err != nil {
+			return "", err
+		}
+		if err := validateWebhookRoutes(ctx, workspacePath, sched.RouteSelections); err != nil {
+			return "", err
+		}
+		sctx.TriggerSource = "webhook"
+		sctx.WebhookInput = input
+	} else if input != nil {
+		return "", errors.New("target is not a webhook")
+	}
 	sctx.OriginSessionID = originSessionID
 	startTime := time.Now().UTC()
 	sctx.ScheduledFor = startTime
@@ -1300,6 +1328,9 @@ func (s *SchedulerService) TriggerNowFromSession(workspacePath, scheduleID, orig
 		workflowRuntimeKeys = append(workflowRuntimeKeys, workflowScheduleRuntimeKey(workspacePath, manifest.Schedules[i].ID))
 	}
 	runID := uuid.NewString()
+	if input != nil {
+		runID = input.RunID
+	}
 	s.runtimeStatesMu.Lock()
 	state := s.getRuntimeStateLocked(runtimeKey)
 	if state.LastStatus == "running" {
@@ -1329,7 +1360,18 @@ func (s *SchedulerService) TriggerNowFromSession(workspacePath, scheduleID, orig
 	if s.abortCanceledScheduleRunBeforeStart(runCtx, sctx, runtimeKey, runID) {
 		return "", context.Canceled
 	}
-	s.recordScheduleFireDecision(ctx, sctx, "started", "manual trigger accepted", runID, startTime)
+	if input != nil {
+		data, marshalErr := json.Marshal(input)
+		if marshalErr == nil {
+			marshalErr = writeFileToWorkspace(ctx, webhookInputPath(workspacePath, runID), string(data))
+		}
+		if marshalErr != nil {
+			s.transitionScheduleRun(ctx, sctx, schedulerstate.Transition{RunID: runID, To: schedulerstate.StateFailed, Reason: "webhook input persistence failed", ErrorMessage: marshalErr.Error(), At: time.Now().UTC()})
+			s.rollbackScheduleRunActivation(runtimeKey, runID, previousState)
+			return "", fmt.Errorf("persist webhook input: %w", marshalErr)
+		}
+	}
+	s.recordScheduleFireDecision(ctx, sctx, "started", sctx.TriggerSource+" trigger accepted", runID, startTime)
 
 	if err := RecordWorkflowScheduleExecution(context.Background(), workspacePath, *sched, startTime); err != nil {
 		s.logf(sctx, "[SCHEDULER] Warning: failed to record manual schedule execution for %s: %v", scheduleID, err)
@@ -1341,6 +1383,9 @@ func (s *SchedulerService) TriggerNowFromSession(workspacePath, scheduleID, orig
 		}
 	}()
 
+	if input != nil {
+		return runID, nil
+	}
 	return "triggered", nil
 }
 
@@ -2090,6 +2135,9 @@ func (s *SchedulerService) runJob(ctx context.Context, sctx *ScheduleContext, ru
 		Status:        "running",
 		GroupNames:    sctx.Schedule.GroupNames,
 		StartedAt:     startTime,
+	}
+	if sctx.WebhookInput != nil {
+		run.Webhook = webhookRunMetadata(sctx)
 	}
 	if sctx.CapacityResumeRunID != "" {
 		// A resumed run continues its own history row rather than opening a
@@ -3519,6 +3567,9 @@ func (s *SchedulerService) executeJob(ctx context.Context, sctx *ScheduleContext
 // executeWorkshopJob runs a workflow via the workshop builder path (workflow_phase mode).
 func (s *SchedulerService) executeWorkshopJob(ctx context.Context, sctx *ScheduleContext, runID string) (string, string, error) {
 	messages := scheduledWorkshopMessages(sctx)
+	if sctx.WebhookInput != nil {
+		messages[0] += " " + webhookRunInputInstruction(webhookInputPath(sctx.WorkspacePath, sctx.WebhookInput.RunID))
+	}
 	runFolder := "iteration-0"
 	if sctx.PulseOnly && strings.TrimSpace(sctx.PulseEvidenceRunFolder) != "" {
 		runFolder = strings.TrimSpace(sctx.PulseEvidenceRunFolder)
@@ -3543,6 +3594,13 @@ func (s *SchedulerService) executeWorkshopJob(ctx context.Context, sctx *Schedul
 	sctx.ProducedRunEvidence = false
 
 	sessionID := s.newScheduleSessionID(sctx)
+	if sctx.WebhookInput != nil {
+		s.api.webhookInvocations.Store(sessionID, &stepworkflow.WebhookInvocation{
+			InputFile:       webhookInputPath(sctx.WorkspacePath, sctx.WebhookInput.RunID),
+			RouteSelections: sctx.Schedule.RouteSelections, GroupNames: sctx.Schedule.GroupNames,
+		})
+		defer s.api.webhookInvocations.Delete(sessionID)
+	}
 
 	s.updateRuntimeState(scheduleRuntimeKey(sctx), func(state *ScheduleRuntimeState) {
 		state.LastSessionID = sessionID
@@ -4084,8 +4142,16 @@ func filterScheduleRunsNewestFirst(runs []ScheduleRunEntry, scheduleID string) [
 	return filtered
 }
 
+// scheduleSessionTrigger preserves the webhook origin in active session metadata.
+func scheduleSessionTrigger(sctx *ScheduleContext) string {
+	if sctx != nil && (sctx.Schedule.ScheduleType == "webhook" || sctx.WebhookInput != nil) {
+		return "webhook"
+	}
+	return "cron"
+}
+
 // stampScheduleNameOnSession updates the tracked session with the
-// schedule's display name + triggered_by=cron so the frontend reconnect
+// schedule's display name and trigger source so the frontend reconnect
 // path can identify this as a scheduled run and label the tab using the
 // schedule name instead of falling back to the literal "Workflow".
 // Safe to call after startSessionInternal returns — the session is
@@ -4101,7 +4167,7 @@ func (s *SchedulerService) stampScheduleNameOnSession(sessionID string, sctx *Sc
 			sess.Title = sctx.Schedule.Name
 		}
 		if sess.TriggeredBy == "" {
-			sess.TriggeredBy = "cron"
+			sess.TriggeredBy = scheduleSessionTrigger(sctx)
 		}
 	}
 }
@@ -4207,7 +4273,7 @@ func (s *SchedulerService) buildWorkshopRequest(ctx context.Context, sctx *Sched
 		"phase_id":                    workflowtypes.WorkflowStatusWorkflowBuilder,
 		"preset_query_id":             sctx.WorkflowID,
 		"selected_folder":             sctx.WorkspacePath,
-		"triggered_by":                "cron",
+		"triggered_by":                scheduleSessionTrigger(sctx),
 		"session_title":               sctx.Schedule.Name,
 		"servers":                     sctx.Capabilities.SelectedServers,
 		"selected_tools":              sctx.Capabilities.SelectedTools,
@@ -4453,6 +4519,9 @@ func (s *SchedulerService) claimScheduleRun(ctx context.Context, sctx *ScheduleC
 	s.stateStoreMu.RLock()
 	defer s.stateStoreMu.RUnlock()
 	if s.stateStore == nil {
+		if sctx.WebhookInput != nil {
+			return errors.New("API trigger run store is unavailable")
+		}
 		return nil
 	}
 	scopeType, scopeID, lockKey := scheduleStateScope(sctx)

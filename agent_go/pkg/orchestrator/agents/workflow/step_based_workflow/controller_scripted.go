@@ -858,6 +858,9 @@ func (hcpo *StepBasedWorkflowOrchestrator) resolveScriptedShellGuard(
 		writePaths[0] = stepExecutionRelPath
 	}
 	_, _, readOnlyPaths, _ := appendWorkflowFolderAccess(hcpo.GetWorkspacePath(), nil, nil, kbAccessAllowsRead(resolveKnowledgebaseAccess(getAgentConfigs(step), hcpo.UseKnowledgebase())))
+	if opts := hcpo.GetExecutionOptions(); opts != nil && opts.WebhookInputFile != "" {
+		readOnlyPaths = append(readOnlyPaths, opts.WebhookInputFile)
+	}
 	if includeCodeDir && len(writePaths) > 0 {
 		writePaths = append(writePaths, writePaths[0]+"/code")
 	}

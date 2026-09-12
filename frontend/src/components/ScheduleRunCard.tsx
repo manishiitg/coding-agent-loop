@@ -1,5 +1,6 @@
 import { ArrowUpRight, ChevronRight, Loader2, RotateCcw, Trash2 } from 'lucide-react'
 import type { ChatHistorySession, ScheduledJob, ScheduledJobRun } from '../services/api-types'
+import { workflowTriggerLabel } from '../utils/workflowSessionKinds'
 import { scheduleRunSlotLabel } from '../utils/scheduleRunSlot'
 import {
   type ScheduleActivityItem,
@@ -57,6 +58,7 @@ export function ScheduleRunCard({
   const startedWith = scheduleRunStartMessage(job, session)
   const latestAgentUpdate = scheduleRunLatestAgentMessage(session)
   const outcome = latestAgentUpdate || presentation.detail
+  const triggerLabel = workflowTriggerLabel({ sessionId: run.session_id, triggeredBy: run.trigger_source || (job.schedule_type === 'webhook' ? 'webhook' : 'cron') })
   const slotLabel = scheduleRunSlotLabel(job, run)
 
   return (
@@ -70,7 +72,7 @@ export function ScheduleRunCard({
           {showScheduleName && (
             <div className="flex items-center gap-1 text-[11px] font-medium text-muted-foreground">
               <ChevronRight className="h-3 w-3 shrink-0" />
-              <span className="truncate">{job.name}</span>
+              <span className="truncate">{run.webhook?.trigger_name || job.name}</span>
             </div>
           )}
           <div className="text-sm font-medium text-foreground">
@@ -81,6 +83,9 @@ export function ScheduleRunCard({
                 : duration ? `Stopped after ${duration}` : 'Run stopped'}
           </div>
           <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] text-muted-foreground">
+            {triggerLabel && <span className="rounded border border-border px-1.5 py-0.5" aria-label={`Trigger: ${triggerLabel}`}>{triggerLabel}</span>}
+            {run.run_folder && <span>{run.run_folder}</span>}
+            {run.webhook?.event && <span>{run.webhook.event}</span>}
             {slotLabel && <span className="font-medium text-foreground/75">{slotLabel}</span>}
             <span>Started {formatScheduleRunTime(run.started_at)}</span>
             {run.completed_at && <span>ended {formatScheduleRunTime(run.completed_at)}</span>}
@@ -126,6 +131,18 @@ export function ScheduleRunCard({
           <p className="line-clamp-3 text-xs leading-5 text-foreground/90">{scheduleRunExcerpt(outcome)}</p>
         </div>
       </div>
+
+      {run.webhook && (
+        <details className="text-[11px] text-muted-foreground">
+          <summary className="cursor-pointer font-medium">Delivery details</summary>
+          <dl className="mt-1 space-y-1 break-words rounded border border-border p-2">
+            <dt>Trigger</dt><dd>{run.webhook.trigger_name}</dd>
+            <dt>Delivery ID</dt><dd className="font-mono">{run.webhook.delivery_id}</dd>
+            {run.webhook.event && <><dt>Event</dt><dd>{run.webhook.event}</dd></>}
+            <dt>Received</dt><dd>{formatScheduleRunTime(run.webhook.received_at)}</dd>
+          </dl>
+        </details>
+      )}
 
       {run.error && (
         <details className="text-[11px] text-muted-foreground">

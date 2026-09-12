@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react'
+import { workflowTriggerLabel } from '../utils/workflowSessionKinds'
 import { useShallow } from 'zustand/react/shallow'
 import { Settings, Copy, LayoutDashboard, ArrowLeft, Eye, Plus } from 'lucide-react'
 import { useAuthStore } from '../stores/useAuthStore'
@@ -152,6 +153,7 @@ export const ModePresetBar: React.FC = () => {
     activeSessionsCache,
     currentSessionId(activeTabId, chatTabs, selectedModeCategory, isGlobalPage),
   )
+  const currentTriggerLabel = currentSession ? workflowTriggerLabel({ sessionId: currentSession.session_id, triggeredBy: currentSession.triggered_by }) : undefined
   const currentSessionStatusLabel = currentSession ? headerStatusLabel(currentSession) : null
 
   const openWorkflowWalkthrough = useCallback(() => {
@@ -583,6 +585,7 @@ export const ModePresetBar: React.FC = () => {
                               <span className="block max-w-[190px] truncate whitespace-nowrap text-sm font-medium text-gray-700 dark:text-gray-300">
                                 {activePreset.label}
                               </span>
+                              {currentTriggerLabel && <span className="rounded border border-border px-1 text-[10px] text-muted-foreground">{currentTriggerLabel}</span>}
                             </>
                           ) : (
                             <>

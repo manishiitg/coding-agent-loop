@@ -5,11 +5,13 @@ import { describe, expect, it, vi } from 'vitest'
 import type { ScheduledJob } from '../../../services/api-types'
 import { ScheduleTableView } from './ScheduleTableView'
 
+vi.mock('../../../services/api', () => ({ getApiBaseUrl: () => 'https://agent.example', getAuthToken: () => null }))
+
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true })
 
 describe('global schedule table', () => {
-  it.each([false, true])('keeps details on demand and respects read-only access (%s)', async isReadOnlyUser => {
-    const job = { id: 'daily', name: 'Daily report', workflow_label: 'Research', enabled: true,
+  it.each([{ isReadOnlyUser: false, isWebhook: false }, { isReadOnlyUser: true, isWebhook: false }, { isReadOnlyUser: false, isWebhook: true }, { isReadOnlyUser: true, isWebhook: true }])('keeps details on demand and respects access for %o', async ({ isReadOnlyUser, isWebhook }) => {
+    const job = { schedule_type: isWebhook ? 'webhook' : 'cron', id: 'daily', name: 'Daily report', workflow_label: 'Research', enabled: true,
       cron_expression: '0 8 * * *', run_count: 3, last_status: 'error', last_error: 'Previous run failed',
       messages: ['Collect evidence and prepare the daily report.'], missed_run_count: 2,
       next_run_at: '2026-09-13T08:00:00Z', last_run_at: '2026-09-12T08:00:00Z',
@@ -31,7 +33,12 @@ describe('global schedule table', () => {
       expect(details.textContent).toContain(job.messages![0])
       expect(details.textContent).toContain(job.last_error)
       const run = Array.from(details.querySelectorAll('button')).find(b => b.textContent === 'Run now')
-      expect(Boolean(run)).toBe(!isReadOnlyUser)
+      expect(Boolean(run)).toBe(!isReadOnlyUser && !isWebhook)
+      if (isWebhook) {
+        expect(host.textContent).toContain('Webhook · on request')
+        expect(details.textContent).toContain('/api/hooks/workflow/daily')
+        expect(details.querySelector('[aria-label="Copy webhook URL for Daily report"]')).not.toBeNull()
+      }
       if (run) {
         await act(async () => run.click())
         expect(trigger).toHaveBeenCalledWith(job)

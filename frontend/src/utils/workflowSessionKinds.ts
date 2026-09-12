@@ -23,6 +23,7 @@ export function isScheduledSession(identity: WorkflowSessionIdentity): boolean {
 
   return trigger.includes('schedule') ||
     trigger === 'cron' ||
+    trigger === 'webhook' ||
     sessionId.startsWith('schedule-') ||
     sessionId.includes('-schedule-')
 }
@@ -42,4 +43,14 @@ export function isExternalReadOnlyWorkflowSession(identity: WorkflowSessionIdent
     trigger.includes('slack') ||
     botPlatform !== '' ||
     sessionId.startsWith('bot-')
+}
+
+/** Prefer the durable session identity for older webhook sessions stamped cron. */
+export function workflowTriggerLabel(identity: WorkflowSessionIdentity): 'Webhook' | 'Scheduled' | 'Manual' | undefined {
+  const id = (identity.sessionId || '').toLowerCase()
+  const trigger = (identity.triggeredBy || '').toLowerCase()
+  if (id.startsWith('schedule-webhook--') || trigger === 'webhook') return 'Webhook'
+  if (id.startsWith('schedule-manual--') || trigger === 'manual') return 'Manual'
+  if (isScheduledSession(identity)) return 'Scheduled'
+  return undefined
 }

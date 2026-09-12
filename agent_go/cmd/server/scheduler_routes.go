@@ -51,26 +51,26 @@ type ScheduledJobResponse struct {
 	ConsecutiveFailures  int                    `json:"consecutive_failures"`
 	// DeferredReason is set while a due product schedule is held back by its
 	// quiet rule (the user is active); empty otherwise.
-	DeferredReason string `json:"deferred_reason,omitempty"`
-	ExecutionMode        string                 `json:"execution_mode,omitempty"`
-	CollisionPolicy      string                 `json:"collision_policy,omitempty"`
-	MaxStartDelayMinutes int                    `json:"max_start_delay_minutes,omitempty"`
-	AfterScheduleID      string                 `json:"after_schedule_id,omitempty"`
-	AfterTerminalStatus  string                 `json:"after_terminal_status,omitempty"`
-	AfterDelayMinutes    int                    `json:"after_delay_minutes,omitempty"`
-	DependencyDeadline   string                 `json:"dependency_deadline,omitempty"`
-	WaitingSince         *time.Time             `json:"waiting_since,omitempty"`
-	WaitingUntil         *time.Time             `json:"waiting_until,omitempty"`
-	WaitingReason        string                 `json:"waiting_reason,omitempty"`
-	QueuedOccurrences    int                    `json:"queued_occurrences,omitempty"`
-	MissedRunCount       int                    `json:"missed_run_count,omitempty"`
-	LatestMissedRunAt    *time.Time             `json:"latest_missed_run_at,omitempty"`
-	MissedRunReason      string                 `json:"missed_run_reason,omitempty"`
-	PulseReviewOnly      bool                   `json:"pulse_review_only,omitempty"`
-	PulseMode            string                 `json:"pulse_mode,omitempty"`
-	PulseModeReason      string                 `json:"pulse_mode_reason,omitempty"`
-	CreatedAt            string                 `json:"created_at,omitempty"`
-	UpdatedAt            string                 `json:"updated_at,omitempty"`
+	DeferredReason       string     `json:"deferred_reason,omitempty"`
+	ExecutionMode        string     `json:"execution_mode,omitempty"`
+	CollisionPolicy      string     `json:"collision_policy,omitempty"`
+	MaxStartDelayMinutes int        `json:"max_start_delay_minutes,omitempty"`
+	AfterScheduleID      string     `json:"after_schedule_id,omitempty"`
+	AfterTerminalStatus  string     `json:"after_terminal_status,omitempty"`
+	AfterDelayMinutes    int        `json:"after_delay_minutes,omitempty"`
+	DependencyDeadline   string     `json:"dependency_deadline,omitempty"`
+	WaitingSince         *time.Time `json:"waiting_since,omitempty"`
+	WaitingUntil         *time.Time `json:"waiting_until,omitempty"`
+	WaitingReason        string     `json:"waiting_reason,omitempty"`
+	QueuedOccurrences    int        `json:"queued_occurrences,omitempty"`
+	MissedRunCount       int        `json:"missed_run_count,omitempty"`
+	LatestMissedRunAt    *time.Time `json:"latest_missed_run_at,omitempty"`
+	MissedRunReason      string     `json:"missed_run_reason,omitempty"`
+	PulseReviewOnly      bool       `json:"pulse_review_only,omitempty"`
+	PulseMode            string     `json:"pulse_mode,omitempty"`
+	PulseModeReason      string     `json:"pulse_mode_reason,omitempty"`
+	CreatedAt            string     `json:"created_at,omitempty"`
+	UpdatedAt            string     `json:"updated_at,omitempty"`
 }
 
 // CreateScheduleRequest is the request body for creating a schedule.
@@ -197,6 +197,8 @@ func runtimeStateForScheduleResult(svc *SchedulerService, result *ScheduleSearch
 
 func validateScheduleRequest(scheduleType string, cronExpr string, calendarItems []CalendarScheduleItem) error {
 	switch scheduleType {
+	case "webhook":
+		return nil
 	case "cron":
 		if strings.TrimSpace(cronExpr) == "" {
 			return errBadRequest("cron_expression is required for cron schedules")
@@ -219,7 +221,7 @@ func validateScheduleRequest(scheduleType string, cronExpr string, calendarItems
 		}
 		return nil
 	default:
-		return errBadRequest("schedule_type must be 'cron' or 'calendar'")
+		return errBadRequest("schedule_type must be 'cron', 'calendar', or 'webhook'")
 	}
 }
 
@@ -1071,18 +1073,19 @@ func getScheduledJobRunsHandler(svc *SchedulerService) http.HandlerFunc {
 
 		// Map to response format compatible with frontend ScheduledJobRun
 		type RunResponse struct {
-			ID            string     `json:"id"`
-			JobID         string     `json:"job_id"`
-			TriggerSource string     `json:"trigger_source,omitempty"`
-			ScheduledFor  *time.Time `json:"scheduled_for,omitempty"`
-			RunFolder     string     `json:"run_folder,omitempty"`
-			SessionID     string     `json:"session_id,omitempty"`
-			Status        string     `json:"status"`
-			Error         string     `json:"error,omitempty"`
-			DurationMs    *int64     `json:"duration_ms,omitempty"`
-			GroupNames    []string   `json:"group_names,omitempty"`
-			StartedAt     time.Time  `json:"started_at"`
-			CompletedAt   *time.Time `json:"completed_at,omitempty"`
+			ID            string              `json:"id"`
+			JobID         string              `json:"job_id"`
+			TriggerSource string              `json:"trigger_source,omitempty"`
+			Webhook       *WebhookRunMetadata `json:"webhook,omitempty"`
+			ScheduledFor  *time.Time          `json:"scheduled_for,omitempty"`
+			RunFolder     string              `json:"run_folder,omitempty"`
+			SessionID     string              `json:"session_id,omitempty"`
+			Status        string              `json:"status"`
+			Error         string              `json:"error,omitempty"`
+			DurationMs    *int64              `json:"duration_ms,omitempty"`
+			GroupNames    []string            `json:"group_names,omitempty"`
+			StartedAt     time.Time           `json:"started_at"`
+			CompletedAt   *time.Time          `json:"completed_at,omitempty"`
 		}
 
 		var respRuns []RunResponse
@@ -1091,6 +1094,7 @@ func getScheduledJobRunsHandler(svc *SchedulerService) http.HandlerFunc {
 				ID:            run.ID,
 				JobID:         id,
 				TriggerSource: run.TriggerSource,
+				Webhook:       run.Webhook,
 				ScheduledFor:  run.ScheduledFor,
 				RunFolder:     run.RunFolder,
 				SessionID:     run.SessionID,

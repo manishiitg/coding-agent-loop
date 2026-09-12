@@ -63,6 +63,7 @@ const DatabaseView = lazy(() => import('../DatabaseView'))
 const PulseEvalSummary = lazy(() => import('../PulseEvalSummary').then(module => ({ default: module.PulseEvalSummary })))
 const WorkflowScheduleRunsPanel = lazy(() => import('../../scheduler/WorkflowScheduleRunsPanel'))
 const WorkflowCapabilitiesPanel = lazy(() => import('../WorkflowCapabilitiesPanel'))
+const WorkflowAPITriggersView = lazy(() => import('../WorkflowAPITriggersView'))
 const WorkflowFolderAccessView = lazy(() => import('../WorkflowFolderAccessView'))
 const PulseView = lazy(() => import('../PulseView'))
 const WorkflowBackupView = lazy(() => import('../WorkflowBackupView'))
@@ -212,6 +213,8 @@ function InspectorBody({ workspacePath, presetQueryId }: { workspacePath: string
             headerAction={askAIHeaderAction}
           />
         )
+      case 'api-triggers':
+        return <WorkflowAPITriggersView key={workspacePath} workspacePath={workspacePath} />
       case 'folders':
         return <WorkflowFolderAccessView workspacePath={workspacePath} headerAction={askAIHeaderAction} />
       case 'pulse':

@@ -25,7 +25,8 @@ type ScheduleRunEntry struct {
 	// user clicking Run now. Without it the history UI has to guess from the
 	// session ID and can make a manual run look as if it fulfilled a missed
 	// scheduled slot.
-	TriggerSource string `json:"trigger_source,omitempty"`
+	TriggerSource string              `json:"trigger_source,omitempty"`
+	Webhook       *WebhookRunMetadata `json:"webhook,omitempty"`
 	// ScheduledFor is the durable identity of the cron/calendar occurrence.
 	// It is intentionally nil for manual runs, whose start time is not a
 	// scheduled slot.

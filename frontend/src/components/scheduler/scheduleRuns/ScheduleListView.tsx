@@ -3,6 +3,7 @@ import {
   Clock, CheckCircle, XCircle, Minus, Loader,
   AlertTriangle, Square
 } from 'lucide-react'
+import { WebhookEndpoint } from './WebhookEndpoint'
 import { describeCron } from './cron'
 import {
   formatDuration,
@@ -50,7 +51,7 @@ export const ScheduleListView: React.FC<ScheduleListViewProps> = ({ panel }) => 
     <div className="divide-y divide-gray-100 dark:divide-gray-700">
       {filteredJobs.map((job, index, jobsList) => {
         const preset = presetMap.get(job.preset_query_id ?? '')
-        const cronDesc = describeCron(job.cron_expression)
+        const cronDesc = job.schedule_type === 'webhook' ? 'API trigger · on request' : describeCron(job.cron_expression)
         const localizedJobName = getLocalizedJobName(job)
         const workflowDisplayLabel = preset?.label || job.workflow_label || job.name
         const executionScope = getScheduleExecutionScope(job)
@@ -123,7 +124,7 @@ export const ScheduleListView: React.FC<ScheduleListViewProps> = ({ panel }) => 
                 <div className={`${showWorkflowIdentityInScheduleRows ? 'mt-1' : ''} flex items-center gap-2 flex-wrap pr-28`}>
                   {showWorkflowIdentityInScheduleRows && (
                     <span className="text-[11px] uppercase tracking-wide text-gray-400 dark:text-gray-500">
-                      Schedule
+                      {job.schedule_type === 'webhook' ? 'Webhook' : 'Schedule'}
                     </span>
                   )}
                   <span className={`${showWorkflowIdentityInScheduleRows ? 'text-xs font-medium' : 'text-sm font-semibold'} text-gray-700 dark:text-gray-300 truncate`} title={job.name}>
@@ -175,6 +176,8 @@ export const ScheduleListView: React.FC<ScheduleListViewProps> = ({ panel }) => 
                     </div>
                   </div>
                 )}
+
+                {job.schedule_type === 'webhook' && <WebhookEndpoint id={job.id} name={job.name} />}
 
                 {/* Run stats */}
                 <div className="mt-1.5 flex flex-wrap gap-x-4 gap-y-0.5 text-xs text-gray-500 dark:text-gray-400">

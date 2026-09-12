@@ -7,7 +7,7 @@ import { useGlobalPresetStore } from '../stores/useGlobalPresetStore'
 import { useRunningWorkflowsStore } from '../stores/useRunningWorkflowsStore'
 import { useWorkflowStore } from '../stores/useWorkflowStore'
 import type { CustomPreset, PredefinedPreset } from '../types/preset'
-import { isInternalChildSession } from './workflowSessionKinds'
+import { isScheduledSession, isInternalChildSession } from './workflowSessionKinds'
 import { isVisibleActivitySession } from './activitySessions'
 import { normalizeWorkspacePath } from './workspacePathUtils'
 import { activateWorkflowTab, beginWorkflowNavigation, isCurrentWorkflowNavigation, selectWorkflowPreset } from './workflowNavigation'
@@ -180,12 +180,7 @@ async function findRunningWorkflowForPreset(
 }
 
 export function isScheduledWorkflowSession(session: ActiveSessionInfo, runningWorkflow?: RunningWorkflowInfo): boolean {
-  const triggeredBy = (session.triggered_by || runningWorkflow?.triggered_by || '').toLowerCase()
-  const sessionId = (session.session_id || '').toLowerCase()
-  return triggeredBy.includes('schedule') ||
-    triggeredBy === 'cron' ||
-    sessionId.startsWith('schedule-') ||
-    sessionId.includes('-schedule-')
+  return isScheduledSession({ sessionId: session.session_id, triggeredBy: session.triggered_by || runningWorkflow?.triggered_by })
 }
 
 export function workflowSessionBotPlatform(

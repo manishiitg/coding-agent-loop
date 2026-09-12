@@ -436,12 +436,12 @@ type WorkflowExecutionDefaults struct {
 	WorkshopMode                 string   `json:"workshop_mode,omitempty"` // Session mode: "workshop" or "run". Every retired name (builder, optimizer, reporting, eval, output, ask, debugger, runner) normalizes to one of those two.
 }
 
-// WorkflowSchedule represents a cron or calendar schedule stored in the manifest.
+// WorkflowSchedule represents a clock or webhook trigger stored in the manifest.
 type WorkflowSchedule struct {
 	ID             string                 `json:"id"`
 	Name           string                 `json:"name"`
 	Description    string                 `json:"description,omitempty"`
-	ScheduleType   string                 `json:"schedule_type,omitempty"` // "cron" (default) or "calendar"
+	ScheduleType   string                 `json:"schedule_type,omitempty"` // "cron" (default), "calendar", or "webhook"
 	CronExpression string                 `json:"cron_expression"`
 	Timezone       string                 `json:"timezone"`
 	Enabled        bool                   `json:"enabled"`
@@ -451,9 +451,10 @@ type WorkflowSchedule struct {
 	// RouteSelections selects deterministic routing-step branches for the scheduled
 	// full workflow. It is the same shape accepted by run_full_workflow; keeping it
 	// as data prevents a schedule from becoming a second, free-text workflow.
-	RouteSelections map[string]string `json:"route_selections,omitempty"`
-	Mode            string            `json:"mode,omitempty"`     // "workshop" for workflow schedules; legacy "workflow" is normalized at runtime
-	Messages        []string          `json:"messages,omitempty"` // Predefined message queue for workshop schedules (sent one-by-one)
+	RouteSelections map[string]string      `json:"route_selections,omitempty"`
+	Webhook         *WorkflowWebhookConfig `json:"webhook,omitempty"`
+	Mode            string                 `json:"mode,omitempty"`     // "workshop" for workflow schedules; legacy "workflow" is normalized at runtime
+	Messages        []string               `json:"messages,omitempty"` // Predefined message queue for workshop schedules (sent one-by-one)
 	// DirectMessagesReason records why a schedule-local conversation is preferable
 	// to a canonical route despite its weaker step-level lifecycle.
 	DirectMessagesReason string `json:"direct_messages_reason,omitempty"`
@@ -516,6 +517,9 @@ type CalendarScheduleItem struct {
 }
 
 func validateScheduleRuntimePolicy(schedule WorkflowSchedule) error {
+	if err := validateWebhookSchedule(schedule); err != nil {
+		return err
+	}
 	switch strings.TrimSpace(schedule.ExecutionMode) {
 	case "", "close_only":
 	default:

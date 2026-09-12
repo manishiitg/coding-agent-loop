@@ -605,6 +605,7 @@ func formatWorkshopExecutionName(kind string, targetRunFolder string) string {
 // exact same tool/LLM/browser/image-gen setup as normal workflow execution.
 // Built by server.go using the same preset-loading logic as the normal workflow path.
 type WorkshopConfig struct {
+	WebhookInvocation      *WebhookInvocation // Set internally by API trigger dispatch, never from tool arguments.
 	ScheduleCollisionCheck ScheduleCollisionCheck
 	WorkspacePath          string
 	RunFolder              string
@@ -1965,6 +1966,14 @@ func RegisterRunFullWorkflowTool(
 				}
 			}
 
+			if cfg.WebhookInvocation != nil {
+				var bindingErr error
+				routeSelections, bindingErr = cfg.WebhookInvocation.RoutesForGroup(groupName)
+				if bindingErr != nil {
+					return "", bindingErr
+				}
+			}
+
 			// Validate: if the selected route has human_input steps, human_inputs must cover them.
 			// Route-scoped validation matters for workflows like Upwork where one plan contains
 			// bid/search/profile branches; a search run must not be forced to answer bid approval.
@@ -1972,6 +1981,10 @@ func RegisterRunFullWorkflowTool(
 			if err != nil {
 				return fmt.Sprintf("Failed to load plan: %v", err), nil
 			}
+			if cfg.WebhookInvocation != nil && plan != nil {
+				humanInputs = attachWebhookStepInputs(plan.Steps, humanInputs, cfg.WebhookInvocation.InputFile)
+			}
+
 			// Preflight: refuse to launch when the workflow declares MCP
 			// servers that the host config doesn't actually provide.
 			// Without this the run silently fails later — locked scripts hit
@@ -2208,6 +2221,9 @@ func RegisterRunFullWorkflowTool(
 					HumanInputs:       humanInputs,
 					RouteSelections:   routeSelections,
 					DisableEval:       disableEval,
+				}
+				if cfg.WebhookInvocation != nil {
+					execOpts.WebhookInputFile = cfg.WebhookInvocation.InputFile
 				}
 				workflowController.SetExecutionOptions(execOpts)
 				if len(routeSelections) > 0 {

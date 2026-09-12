@@ -42,7 +42,7 @@ export const ScheduleRowActions: React.FC<ScheduleRowActionsProps> = ({
             <Square className="h-3 w-3" />
             Stop
           </button>
-        ) : (
+        ) : job.schedule_type !== 'webhook' ? (
           <button
             type="button"
             onClick={() => handleTrigger(job)}
@@ -56,7 +56,7 @@ export const ScheduleRowActions: React.FC<ScheduleRowActionsProps> = ({
             <Play className="h-3 w-3" />
             Run now
           </button>
-        )
+        ) : null
       ) : (
         <button
           type="button"

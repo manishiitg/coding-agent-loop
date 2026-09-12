@@ -146,6 +146,7 @@ export const RoutingStepNode = memo(({ data, selected }: RoutingStepNodeProps) =
             {routes.map((route, index) => {
               const isSelectedRoute = selectedRouteId === route.route_id
               const routeColor = routeColorForIndex(index)
+              const evaluations = data.routeEvaluations?.[route.route_id]
               return (
                 <button
                   type="button"
@@ -153,7 +154,7 @@ export const RoutingStepNode = memo(({ data, selected }: RoutingStepNodeProps) =
                   disabled={!data.onTraceRoute}
                   aria-label={`Trace route: ${route.route_name || route.route_id}`}
                   aria-pressed={data.tracedRouteId === route.route_id}
-                  title={route.route_name || route.route_id}
+                  title={[route.route_name || route.route_id, ...(evaluations?.map(evaluation => `Eval: ${evaluation.title}`) ?? [])].join('\n')}
                   onPointerDown={event => event.stopPropagation()}
                   onClick={event => {
                     event.stopPropagation()
@@ -172,7 +173,7 @@ export const RoutingStepNode = memo(({ data, selected }: RoutingStepNodeProps) =
                   >
                     {isSelectedRoute ? <CheckCircle className="h-3 w-3" /> : index + 1}
                   </span>
-                  <div className="min-w-0">
+                  <div className="min-w-0 flex-1">
                     <div className={`truncate text-[11px] font-semibold ${
                       isSelectedRoute
                         ? 'text-teal-900 dark:text-teal-100'
@@ -181,6 +182,11 @@ export const RoutingStepNode = memo(({ data, selected }: RoutingStepNodeProps) =
                       {route.route_name || route.route_id}
                     </div>
                   </div>
+                  {evaluations && (
+                    <span className="shrink-0 text-[10px] text-muted-foreground" aria-label={`${evaluations.length} route-specific evaluations`}>
+                      {evaluations.length} eval{evaluations.length === 1 ? '' : 's'}
+                    </span>
+                  )}
                 </button>
               )
             })}

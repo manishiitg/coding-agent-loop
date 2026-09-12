@@ -5,6 +5,8 @@ import type { StepNodeData } from '../hooks/usePlanToFlow'
 import type { ChangeType } from '../hooks/usePlanData'
 import { getExecutionModeVisuals } from './executionModeVisuals'
 import { effectiveExecutionMode, effectiveExecutionModeReason } from '../../../utils/stepConfigMatching'
+import type { EvaluationStep } from '../../../services/api-types'
+import { evaluationScopeLabel } from '../canvas/routeEvaluations'
 
 interface StepNodeProps {
   data: StepNodeData
@@ -128,6 +130,12 @@ export const StepNode = memo(({ data, selected }: StepNodeProps) => {
             </h3>
           </div>
         </div>
+        {isEvaluationStep && (
+          <div className="text-[10px] leading-relaxed text-muted-foreground">
+            <span className="font-semibold text-purple-600 dark:text-purple-300">Evaluation · </span>
+            <span>{data.evaluationScopeLabel || evaluationScopeLabel(step as unknown as EvaluationStep, [])}</span>
+          </div>
+        )}
         {showFooterMetadata && (
           <div className="flex items-center gap-1.5">
             <div className="flex-1" />

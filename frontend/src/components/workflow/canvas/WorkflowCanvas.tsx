@@ -24,6 +24,7 @@ import {
 import { getExecutionModeVisuals } from '../nodes/executionModeVisuals'
 import { edgeTypes } from '../edges'
 import { routeTraceFromEdge, traceRouteGraph, type RouteTrace } from './routeTrace'
+import { annotateRouteEvaluations } from './routeEvaluations'
 import { VariablesSidebar } from './VariablesSidebar'
 import { BatchProgressHeader } from '../BatchProgressHeader'
 import {
@@ -1321,6 +1322,8 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
   const traceSource = routeTrace && routeTrace.workspace === workspacePath ? nodes.find(node => node.id === routeTrace.nodeId) : undefined
   const tracedRoute = (traceSource?.data as RoutingStepNodeData | undefined)?.routes?.find(route => route.route_id === routeTrace?.routeId)
   const activeTrace = tracedRoute ? routeTrace : null
+  const tracedEvaluations = (traceSource?.data as RoutingStepNodeData | undefined)?.routeEvaluations?.[tracedRoute?.route_id ?? ''] ?? []
+  const allRouteEvaluationCount = (traceSource?.data as RoutingStepNodeData | undefined)?.allRouteEvaluationCount ?? 0
   const tracedGraph = React.useMemo(() => traceRouteGraph(nodes, edges, activeTrace), [nodes, edges, activeTrace])
   const toggleRouteTrace = useCallback((trace: RouteTrace) => {
     setSelectedFlowNode(null)
@@ -1755,7 +1758,7 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
 
     const evaluationSteps = evaluationPlan?.steps ?? []
     if (evaluationSteps.length === 0) {
-      return { nodes, edges }
+      return { nodes: annotateRouteEvaluations(nodes, []), edges }
     }
 
     const evalNodeIds = evaluationSteps.map((step, index) => `workflow-evaluation-step-${step.id || index}`)
@@ -1802,7 +1805,7 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
       })
     })
 
-    return { nodes, edges }
+    return { nodes: annotateRouteEvaluations(nodes, evaluationSteps), edges }
   }, [planFlow, evaluationPlan, layoutDirection, workspacePath, selectedRunFolder])
 
   const { nodes: initialNodes, edges: initialEdges } = augmentedFlow
@@ -2577,10 +2580,22 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
         {/* Canvas area — skip when toolbarOnly to avoid rendering 1000+ SVG nodes */}
         {toolbarOnly ? null : <div className="h-full min-h-0 relative flex">
           {activeTrace && tracedRoute && (
-            <div className="absolute left-3 top-3 z-20 flex max-w-[calc(100%-8rem)] items-center gap-3 rounded-lg border border-teal-500/50 bg-background/95 px-3 py-2 text-sm shadow-lg" role="status">
-              <Route className="h-4 w-4 shrink-0 text-teal-500" />
-              <span className="truncate">Tracing: {tracedRoute.route_name || tracedRoute.route_id}</span>
-              <button type="button" onClick={() => setRouteTrace(null)} className="shrink-0 rounded px-2 py-1 text-xs hover:bg-muted focus-visible:outline" title="Clear route trace (Escape)">Show all</button>
+            <div className="absolute left-3 top-3 z-20 max-w-[calc(100%-8rem)] rounded-lg border border-teal-500/50 bg-background/95 px-3 py-2 text-sm shadow-lg">
+              <div className="flex items-center gap-3" role="status">
+                <Route className="h-4 w-4 shrink-0 text-teal-500" />
+                <span className="truncate">Tracing: {tracedRoute.route_name || tracedRoute.route_id}</span>
+                <button type="button" onClick={() => setRouteTrace(null)} className="shrink-0 rounded px-2 py-1 text-xs hover:bg-muted focus-visible:outline" title="Clear route trace (Escape)">Show all</button>
+              </div>
+              <div className="mt-1 max-h-40 overflow-y-auto border-t pt-2 text-xs" aria-label="Route evaluations">
+                <p className="text-muted-foreground">{tracedEvaluations.length} route-specific eval{tracedEvaluations.length === 1 ? '' : 's'} · {allRouteEvaluationCount} all-route eval{allRouteEvaluationCount === 1 ? '' : 's'}</p>
+                {tracedEvaluations.map(evaluation => (
+                  <button key={evaluation.id} type="button" onClick={() => showStepNode(`workflow-evaluation-step-${evaluation.id}`)}
+                    className="mt-1 block max-w-full truncate rounded px-1 py-0.5 text-left hover:bg-muted focus-visible:outline"
+                    title={`Show evaluation: ${evaluation.title}`}>
+                    {evaluation.title}
+                  </button>
+                ))}
+              </div>
             </div>
           )}
           <button type="button" onClick={() => void fitView({ padding: FLOW_FIT_PADDING, duration: 300, minZoom: FLOW_FIT_MIN_ZOOM, maxZoom: FLOW_FIT_MAX_ZOOM })}

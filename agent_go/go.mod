@@ -17,8 +17,8 @@ require (
 	github.com/joho/godotenv v1.5.1
 	github.com/k2-fsa/sherpa-onnx-go v1.13.5
 	github.com/manishiitg/coding-agent-loop/workspace v0.0.0
-	github.com/manishiitg/mcpagent v1.7.12-0.20260912042709-2ffa59f15a5a
-	github.com/manishiitg/multi-llm-provider-go v0.7.4-0.20260912041202-4a4448fb661b
+	github.com/manishiitg/mcpagent v1.7.12-0.20260912055028-97869f9ba108
+	github.com/manishiitg/multi-llm-provider-go v0.7.4-0.20260912054946-4b59cc67ff63
 	github.com/mark3labs/mcp-go v1.0.0
 	github.com/openai/openai-go/v3 v3.36.0
 	github.com/robfig/cron/v3 v3.0.1

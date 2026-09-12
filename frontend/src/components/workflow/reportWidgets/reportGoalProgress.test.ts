@@ -201,3 +201,50 @@ describe("report goal metrics", () => {
     ).toBe("Response latency");
   });
 });
+
+it("renders supporting slices beneath their primary and preserves independent goals", async () => {
+  const primary = {
+    ...metric,
+    goal_id: "performance",
+    goal_name: "Responsiveness",
+  };
+  const cost = {
+    ...metric,
+    id: "cost",
+    name: "AWS cost",
+    goal_id: "spend",
+    goal_name: "Cost control",
+  };
+  const english = {
+    ...metric,
+    id: "english",
+    name: "English latency",
+    role: "supporting",
+    supports: [primary.id],
+    support_kind: "breakdown",
+    dimensions: { language: "English" },
+  };
+  const host = container();
+  await renderReportGoalProgress(
+    document,
+    async (sql) =>
+      sql.includes("sqlite_master")
+        ? [{ name: "workflow_goal_metrics" }]
+        : [english, cost, primary].map((m) => ({
+            metric_id: m.id,
+            definition_json: JSON.stringify(m),
+          })),
+    host,
+  );
+  const speed = host.shadowRoot!.querySelector(
+    '[aria-label="Response latency and supporting measurements"]',
+  )!;
+  expect(speed.querySelectorAll("article")).toHaveLength(2);
+  expect(speed.textContent).toContain("Breakdown");
+  expect(speed.textContent).toContain("language: English");
+  const spend = host.shadowRoot!.querySelector(
+    '[aria-label="AWS cost and supporting measurements"]',
+  )!;
+  expect(spend.querySelectorAll("article")).toHaveLength(1);
+  expect(spend.textContent).not.toContain("English latency");
+});

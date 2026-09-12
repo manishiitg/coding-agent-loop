@@ -22,10 +22,10 @@ export function PdfRenderer({ data }: PdfRendererProps) {
   }
 
   return (
-    <div className="w-full h-full flex flex-col">
+    <div className="w-full h-full min-h-0">
       <iframe
         src={url}
-        className="flex-1 w-full border-0"
+        className="block h-full w-full border-0"
         title="PDF Viewer"
       />
     </div>

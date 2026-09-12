@@ -50,6 +50,13 @@ func newExternalToolsFixture(t *testing.T) *externalToolsFixture {
 	f.write(t, "Workflow/invoices/planning/step_config.json", `{"steps":[]}`)
 	f.write(t, "Workflow/invoices/docs/process.md", "Invoices are reviewed weekly.\n")
 	router := gin.New()
+	router.POST("/api/shared-assets", func(c *gin.Context) {
+		if c.GetHeader("X-Workspace-Token") != workspaceToken {
+			c.AbortWithStatus(401)
+			return
+		}
+		workspacehandlers.SharedAssets(c)
+	})
 	router.POST("/api/workflow-files", func(c *gin.Context) {
 		if c.GetHeader("X-Workspace-Token") != workspaceToken {
 			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "missing server-only workspace token"})

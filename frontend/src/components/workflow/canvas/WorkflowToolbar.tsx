@@ -513,8 +513,10 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
                   aria-label={pendingDecisionCount > 0 ? `Pulse, ${pendingDecisionCount} pending ${pendingDecisionCount === 1 ? 'decision' : 'decisions'}` : 'Pulse'}
                   aria-pressed={activeWorkspaceView === 'pulse'}
                 >
-                  <Activity className={`h-3.5 w-3.5 ${monitorOn ? 'text-primary' : ''}`} />
-                  {pendingDecisionCount > 0 && <span aria-hidden="true" data-testid="pulse-pending-decisions-dot" className="absolute right-0.5 top-0.5 h-2 w-2 rounded-full border border-background bg-amber-500 motion-safe:animate-pulse" />}
+                  <Activity
+                    aria-hidden="true"
+                    className={`h-3.5 w-3.5 ${pendingDecisionCount > 0 ? 'pulse-decision-heartbeat text-amber-500' : monitorOn ? 'text-primary' : ''}`}
+                  />
                 </button>
               </TooltipTrigger>
               <TooltipContent side="bottom"><p>{pendingDecisionCount > 0 ? `Pulse · ${pendingDecisionCount} ${pendingDecisionCount === 1 ? 'decision needs' : 'decisions need'} your input` : 'Pulse'}</p></TooltipContent>

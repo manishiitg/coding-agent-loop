@@ -93,3 +93,25 @@ the result to a Top 3.
 Read the canonical Objective in soul/soul.md, including Primary goals and Secondary goals when configured. Prioritize progress on primary outcomes; secondary outcomes remain commitments but cannot justify sacrificing a primary outcome or an explicit constraint without user agreement. Goal priorities are separate from primary/supporting metric roles. Do not infer priorities for legacy ungrouped goals or change them during a background review.
 
 Use the shared reference's "Improve outcomes through trustworthy measurements" guidance for this manual review too. Inspect outcome movement, test the usefulness of the metrics, and propose concrete measurement additions or repairs when needed. Reuse existing findings and decisions; keep strategy exploration moving while evidence is incomplete. Never change targets, metric definitions or collection directly in the review.
+
+## Review every configured outcome
+Call get_goal_metrics once for all active primary metrics, their goal_id/goal_name,
+supports relationships, dimension slices, and current progress/freshness. Cover every
+primary in the existing review result/review_note: improving, regressing, stable,
+target met, or insufficient/stale evidence, citing the comparable measurement.
+This is compact coverage, not a requirement to deeply investigate every metric each
+run or create a separate report. Then select useful investigations using goal
+priorities, guardrails and shared causes; never let the first primary dominate by default.
+Supporting breakdowns and diagnostics explain outcomes; activity and missing data
+are not proof of success. Never average unrelated metrics into one success score.
+Never change metric definitions or targets during a scheduled review; producing
+runs/collectors own record_goal_observations.
+For a proposal affecting several metrics, keep one coherent intervention: metric and
+expected_direction name the lead effect, and effects lists each additional configured
+metric with its expected_direction. Include cross-goal risks and guardrails. Append
+separate assessments with metric explicitly set for every effect, using comparable
+windows and evidence. Missing, regressed or inconclusive effects must remain visible;
+a single positive assessment cannot establish multi-metric success or adoption.
+Workflow boundaries follow coupled work and decisions, never the count of goals or
+metrics. Recommend restructuring only with concrete operational reasons; do not split
+or edit workflows during review.

@@ -2,6 +2,11 @@ import type {
   GoalMetric,
   PulseGoalObservation,
 } from "../../../services/api-types";
+import {
+  goalMetricGroups,
+  supportingMetricLabel,
+  metricDimensions,
+} from "../goalMetricGroups";
 import { goalMetricProgress } from "../goalMetricProgress";
 import type { ReportDataApi } from "./reportEmbedContext";
 
@@ -46,6 +51,19 @@ export async function getReportGoalMetrics(
           "window",
           "collection_frequency",
         ].every((k) => typeof m[k as keyof GoalMetric] === "string") ||
+        (m.goal_id != null && typeof m.goal_id !== "string") ||
+        (m.goal_name != null && typeof m.goal_name !== "string") ||
+        (m.supports != null &&
+          (!Array.isArray(m.supports) ||
+            !m.supports.every((id) => typeof id === "string"))) ||
+        (m.support_kind != null &&
+          !["breakdown", "diagnostic", "guardrail"].includes(m.support_kind)) ||
+        (m.dimensions != null &&
+          (typeof m.dimensions !== "object" ||
+            Array.isArray(m.dimensions) ||
+            !Object.values(m.dimensions).every(
+              (value) => typeof value === "string",
+            ))) ||
         (m.route != null && typeof m.route !== "string") ||
         (m.environment != null && typeof m.environment !== "string") ||
         !Number.isFinite(m.freshness_hours) ||
@@ -160,17 +178,50 @@ export async function renderReportGoalProgress(
     if (renders.get(host) !== version) return data;
     const section = el("section");
     section.setAttribute("aria-label", "Goal progress");
-    section.append(el("h2", "Progress toward the goal"));
+    section.append(el("h2", "Progress toward goals"));
     const grid = el("div", "", "grid");
-    for (const p of data.progress) {
-      const m = p.metric;
+    const { groups, unassigned } = goalMetricGroups(data.metrics);
+    const entries: Array<{ metric: GoalMetric; container: HTMLElement }> = [];
+    for (const group of groups) {
+      const goal = el("section");
+      goal.style.gridColumn = "1 / -1";
+      goal.setAttribute("aria-label", group.name);
+      goal.append(el("h2", group.name));
+      for (const { metric, supporting } of group.primaries) {
+        const container = el("section", "", "grid");
+        container.style.marginBottom = "16px";
+        container.setAttribute(
+          "aria-label",
+          `${metric.name} and supporting measurements`,
+        );
+        entries.push(
+          ...[metric, ...supporting].map((metric) => ({ metric, container })),
+        );
+        goal.append(container);
+      }
+      grid.append(goal);
+    }
+    if (unassigned.length) {
+      const container = el("section", "", "grid");
+      container.style.gridColumn = "1 / -1";
+      container.append(
+        el(
+          "p",
+          "Unassigned supporting measurements. Edit goals & metrics to assign them.",
+        ),
+      );
+      entries.push(...unassigned.map((metric) => ({ metric, container })));
+      grid.append(container);
+    }
+    for (const { metric: m, container } of entries) {
+      const p = data.progress.find((p) => p.metric.id === m.id)!;
       const card = el("article", "", m.role === "primary" ? "primary" : "");
       const header = el("header"),
         title = el("div");
       title.append(
         el(
           "p",
-          m.role === "primary" ? "Primary metric" : "Supporting metric",
+          m.role === "primary" ? "Primary metric" : supportingMetricLabel(m),
           "eyebrow",
         ),
         el("h3", m.name),
@@ -256,7 +307,9 @@ export async function renderReportGoalProgress(
         ],
         [
           "Scope",
-          [m.route, m.environment].filter(Boolean).join(" · ") || "Workflow",
+          [m.route, m.environment, metricDimensions(m)]
+            .filter(Boolean)
+            .join(" · ") || "Workflow",
         ],
       ]) {
         dl.append(el("dt", label), el("dd", text));
@@ -289,7 +342,7 @@ export async function renderReportGoalProgress(
       scroll.append(table);
       details.append(scroll);
       card.append(details);
-      grid.append(card);
+      container.append(card);
     }
     section.append(
       data.metrics.length

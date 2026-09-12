@@ -89,7 +89,7 @@ func authenticateAccessToken(w http.ResponseWriter, r *http.Request, raw string)
 		externalError(w, 401, "unauthorized", "Access tokens must use the Authorization header.")
 		return nil, false
 	}
-	if !((r.Method == "GET" && r.URL.Path == "/api/external/v1/tools") || (r.Method == "POST" && r.URL.Path == "/api/external/v1/call")) {
+	if !((r.Method == "GET" && r.URL.Path == "/api/external/v1/tools") || (r.Method == "POST" && r.URL.Path == "/api/external/v1/call") || ((r.Method == "GET" || r.Method == "HEAD") && r.URL.Path == "/api/external/v1/files/content")) {
 		externalError(w, 403, "forbidden", "Access tokens are valid only for the external tools API.")
 		return nil, false
 	}
@@ -219,7 +219,7 @@ func externalTokenAllows(c *UserClaims, tool externalTool) bool {
 		return t.Allows("plan:write")
 	}
 	switch tool.Name {
-	case "list_files", "read_file", "search_files":
+	case "list_files", "read_file", "search_files", "get_file_link":
 		return t.Allows("files:read")
 	case "write_file", "patch_file":
 		return t.Allows("files:write")

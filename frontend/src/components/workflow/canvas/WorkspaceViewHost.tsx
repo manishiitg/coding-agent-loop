@@ -348,7 +348,7 @@ export const WorkspaceViewHost = React.memo(forwardRef<WorkflowCanvasRef, Workfl
         const response = await agentApi.getPulseImpact(workspacePath)
         if (!response.success) throw new Error(response.error || 'Could not check goal setup')
         if (!response.impact?.metrics?.length) {
-          await sendWorkflowMessageToChat({ workspacePath, viewMode: 'formatted', message: 'Set up Pulse for this workflow. Call get_workflow_command_guidance(kind="setup-goals", focus="First-time Pulse setup: propose outcome bullets, one primary metric, supporting metrics and boundaries from existing context; ask only unresolved questions. Enable Pulse after agreeing on the setup.") and follow it.' })
+          await sendWorkflowMessageToChat({ workspacePath, viewMode: 'formatted', message: 'Set up Pulse for this workflow. Call get_workflow_command_guidance(kind="setup-goals", focus="First-time Pulse setup: propose outcome bullets, one or more primary metrics per goal, linked supporting measurements and boundaries from existing context; ask only unresolved questions. Enable Pulse after agreeing on the setup.") and follow it.' })
           return
         }
       }

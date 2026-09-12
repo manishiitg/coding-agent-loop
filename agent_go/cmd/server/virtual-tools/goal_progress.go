@@ -31,9 +31,13 @@ func addGoalProgressToNotification(ctx context.Context, kind string, dest *servi
 	if len(sections) == 0 {
 		return
 	}
+	generatedHeadings := map[string]bool{}
+	for _, section := range sections {
+		generatedHeadings[section.Heading] = true
+	}
 	remaining := []services.NotificationSummarySection{}
 	for _, section := range summary.Sections {
-		if section.Heading != "Goal progress" && section.Heading != "Supporting metrics" {
+		if !generatedHeadings[section.Heading] && section.Heading != "Goal progress" && section.Heading != "Supporting metrics" && !strings.HasPrefix(section.Heading, "Goal progress: ") {
 			remaining = append(remaining, section)
 		}
 	}

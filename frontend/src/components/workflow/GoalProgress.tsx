@@ -5,6 +5,11 @@ import type {
 } from "../../services/api-types";
 import { AskAIButton } from "./AskAIButton";
 import { TooltipProvider } from "../ui/tooltip";
+import {
+  goalMetricGroups,
+  supportingMetricLabel,
+  metricDimensions,
+} from "./goalMetricGroups";
 import { goalMetricProgress } from "./goalMetricProgress";
 
 const format = (value: number) =>
@@ -40,7 +45,7 @@ function MetricCard({
       <div className="flex flex-wrap items-start justify-between gap-2">
         <div>
           <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
-            {primary ? "Primary metric" : "Supporting metric"}
+            {primary ? "Primary metric" : supportingMetricLabel(metric)}
           </p>
           <h3 className="mt-1 text-sm font-medium">{metric.name}</h3>
         </div>
@@ -64,6 +69,7 @@ function MetricCard({
       </div>
       <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
         <span>{metric.window}</span>
+        {metricDimensions(metric) && <span>{metricDimensions(metric)}</span>}
         {p.delta !== undefined && (
           <span>
             {p.delta > 0 ? "+" : ""}
@@ -185,13 +191,12 @@ export function GoalProgress({
   impact: PulseImpactLedger;
   workspacePath: string;
 }) {
-  const metrics = [...(impact.metrics || [])].sort(
-    (a, b) => Number(b.role === "primary") - Number(a.role === "primary"),
-  );
+  const metrics = impact.metrics || [];
+  const { groups, unassigned } = goalMetricGroups(metrics);
   return (
     <section aria-label="Goal progress" className="space-y-3">
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <h2 className="text-sm font-semibold">Progress toward the goal</h2>
+        <h2 className="text-sm font-semibold">Progress toward goals</h2>
         <TooltipProvider>
           <AskAIButton
             workspacePath={workspacePath}
@@ -206,32 +211,62 @@ export function GoalProgress({
         <div className="rounded-xl border border-dashed p-5">
           <p className="text-sm font-medium">Measurement setup needed</p>
           <p className="mt-1 text-xs leading-5 text-muted-foreground">
-            Choose a primary metric and supporting metrics with the builder.
-            Existing workflow runs and history are preserved.
+            Choose primary metrics and their supporting measurements with the
+            builder. Existing workflow runs and history are preserved.
           </p>
         </div>
       ) : (
         <>
-          {metrics
-            .filter((m) => m.role === "primary")
-            .map((m) => (
-              <MetricCard
-                key={m.id}
-                metric={m}
-                observations={impact.observations}
-              />
-            ))}
-          <div className="grid gap-3 md:grid-cols-2">
-            {metrics
-              .filter((m) => m.role !== "primary")
-              .map((m) => (
+          {groups.map((group) => (
+            <section
+              key={group.id}
+              aria-label={group.name}
+              className="space-y-3"
+            >
+              <h3 className="text-sm font-semibold">{group.name}</h3>
+              {group.primaries.map(({ metric, supporting }) => (
+                <section
+                  key={metric.id}
+                  aria-label={`${metric.name} and supporting measurements`}
+                  className="space-y-3"
+                >
+                  <MetricCard
+                    metric={metric}
+                    observations={impact.observations}
+                  />
+                  {supporting.length > 0 && (
+                    <div className="grid gap-3 border-l-2 pl-3 md:grid-cols-2">
+                      {supporting.map((m) => (
+                        <MetricCard
+                          key={m.id}
+                          metric={m}
+                          observations={impact.observations}
+                        />
+                      ))}
+                    </div>
+                  )}
+                </section>
+              ))}
+            </section>
+          ))}
+          {unassigned.length > 0 && (
+            <section
+              aria-label="Unassigned supporting measurements"
+              className="space-y-3"
+            >
+              <p className="text-xs text-muted-foreground">
+                These supporting measurements need a primary metric
+                relationship. Edit goals &amp; metrics to assign them.
+              </p>
+              {unassigned.map((m) => (
                 <MetricCard
                   key={m.id}
                   metric={m}
                   observations={impact.observations}
                 />
               ))}
-          </div>
+            </section>
+          )}
         </>
       )}
     </section>

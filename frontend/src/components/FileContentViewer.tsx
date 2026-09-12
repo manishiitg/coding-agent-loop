@@ -1,3 +1,4 @@
+import { sharedLink } from '../utils/sharedLinks'
 import { Suspense, lazy, useCallback, useEffect, useRef, useState } from 'react'
 import { useShallow } from 'zustand/react/shallow'
 import { Download, Edit, Github, Link, Loader2, MoreHorizontal, Save, X } from 'lucide-react'
@@ -317,18 +318,26 @@ export function FileContentViewerBody({ variant }: { variant: 'pane' | 'overlay'
 
   // Handle download
   const handleDownload = useCallback(() => {
-    if (!selectedFile || !fileContent) return
+    if (!selectedFile || loadingFileContent) return
 
-    const blob = new Blob([fileContent], { type: 'text/plain' })
-    const url = URL.createObjectURL(blob)
+    // Binary previews keep their original bytes separately from text content.
+    // Images already contain a downloadable data URL; keep that encoding intact.
+    const isImageDataUrl = !binaryFileData && fileContent.startsWith('data:image/')
+    const blob = new Blob([binaryFileData ?? fileContent], {
+      type: binaryFileData
+        ? (selectedFile.path.toLowerCase().endsWith('.pdf') ? 'application/pdf' : 'application/octet-stream')
+        : 'text/plain;charset=utf-8',
+    })
+    const url = isImageDataUrl ? fileContent : URL.createObjectURL(blob)
     const a = document.createElement('a')
     a.href = url
     a.download = selectedFile.path.split('/').pop() || 'download'
     document.body.appendChild(a)
     a.click()
     document.body.removeChild(a)
-    URL.revokeObjectURL(url)
-  }, [selectedFile, fileContent])
+    // Give the browser time to start reading the download before releasing it.
+    if (!isImageDataUrl) setTimeout(() => URL.revokeObjectURL(url), 60_000)
+  }, [selectedFile, fileContent, binaryFileData, loadingFileContent])
 
   // Handle cancel edit
   const handleCancelEdit = useCallback(() => {
@@ -565,9 +574,8 @@ export function FileContentViewerBody({ variant }: { variant: 'pane' | 'overlay'
 
   const copyShareLink = useCallback(() => {
     if (!selectedFile?.path) return
-    const encoded = btoa(unescape(encodeURIComponent(selectedFile.path)))
     const uid = useAuthStore.getState().user?.id || ''
-    const shareUrl = `${window.location.origin}/file?path=${encoded}${uid ? `&uid=${encodeURIComponent(uid)}` : ''}`
+    const shareUrl = sharedLink(window.location.origin, 'file', selectedFile.path, uid)
     copyToClipboard(shareUrl).then((ok) => {
       if (ok) {
         setShareCopied(true)
@@ -583,7 +591,8 @@ export function FileContentViewerBody({ variant }: { variant: 'pane' | 'overlay'
   const isMarkdownFile = selectedFilePathLower.endsWith('.md') || selectedFilePathLower.endsWith('.markdown')
   // PDF, video, and HTML surfaces fill the viewport in the overlay and the
   // pane in the pane.
-  const tallSurfaceClass = variant === 'pane' ? 'h-full min-h-[320px]' : 'h-[calc(100vh-120px)]'
+  const isTallSurface = /\.(pdf|html?|webm|mp4|mov)$/i.test(selectedFile?.path || '')
+  const tallSurfaceClass = variant === 'pane' ? 'h-full min-h-0' : 'h-[calc(100vh-120px)]'
 
   const paneActions: PaneAction[] = [
     { key: 'copy', label: contentCopied ? 'Copied!' : 'Copy content', icon: <CopyIcon />, onSelect: () => { void copyContent() } },
@@ -673,7 +682,7 @@ export function FileContentViewerBody({ variant }: { variant: 'pane' | 'overlay'
                     <Edit className="w-4 h-4" />
                   </button>
                 )}
-                <button onClick={handleDownload} className={ICON_BUTTON_CLASS} title="Download file">
+                <button onClick={handleDownload} disabled={loadingFileContent || !selectedFile} className={`${ICON_BUTTON_CLASS} disabled:opacity-50 disabled:cursor-not-allowed`} title="Download file">
                   <Download className="w-4 h-4" />
                 </button>
                 {isRenderedMarkdownSearchAvailable && (
@@ -691,7 +700,7 @@ export function FileContentViewerBody({ variant }: { variant: 'pane' | 'overlay'
                       <SlackIcon />
                       {slackCopied && <span className="text-xs text-green-600 dark:text-green-400">Copied!</span>}
                     </button>
-                    <button onClick={copyShareLink} className={`${ICON_BUTTON_CLASS} gap-1`} title="Copy public share link">
+                    <button onClick={copyShareLink} className={`${ICON_BUTTON_CLASS} gap-1`} title="Copy share link (sign-in required)">
                       <Link className="w-4 h-4" />
                       {shareCopied && <span className="text-xs text-green-600 dark:text-green-400">Copied!</span>}
                     </button>
@@ -825,7 +834,7 @@ export function FileContentViewerBody({ variant }: { variant: 'pane' | 'overlay'
         )}
 
         {/* Scrollable Content */}
-        <div className="flex-1 overflow-y-auto">
+        <div className="min-h-0 flex-1 overflow-y-auto">
           {loadingFileContent ? (
             <div className="flex items-center justify-center h-full">
               <div className="text-center">
@@ -869,7 +878,7 @@ export function FileContentViewerBody({ variant }: { variant: 'pane' | 'overlay'
                   </Suspense>
                 </div>
               ) : (
-                <div className={(selectedFile?.path?.toLowerCase().endsWith('.pdf') || selectedFile?.path?.toLowerCase().endsWith('.html') || selectedFile?.path?.toLowerCase().endsWith('.htm')) ? "" : "p-6"}>
+                <div className={`${variant === 'pane' && isTallSurface ? 'h-full min-h-0 ' : ''}${/\.(pdf|html?)$/i.test(selectedFile?.path || '') ? '' : 'p-6'}`}>
                   {(() => {
                     const filePath = selectedFile?.path?.toLowerCase() || ''
 

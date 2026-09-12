@@ -15,7 +15,8 @@ import {
   FileText,
   Search,
 } from 'lucide-react'
-import { agentApi } from '../../services/api'
+import { agentApi, workflowManifestApi } from '../../services/api'
+import { KnowledgebaseSources } from './KnowledgebaseSources'
 import { MarkdownRenderer } from '../ui/MarkdownRenderer'
 
 interface KnowledgebaseViewProps {
@@ -189,6 +190,15 @@ function formatFreshnessDate(timestamp: string): string {
 }
 
 export default function KnowledgebaseView({ workspacePath, headerAction }: KnowledgebaseViewProps) {
+ const [sourceAlias, setSourceAlias] = useState('')
+ useEffect(() => setSourceAlias(''), [workspacePath])
+ return <div className="flex h-full min-h-0 flex-col">
+   {workspacePath && <KnowledgebaseSources workspacePath={workspacePath} selected={sourceAlias} onSelect={setSourceAlias} />}
+   <div className="min-h-0 flex-1"><KnowledgebaseContent key={`${workspacePath}:${sourceAlias}`} workspacePath={workspacePath} headerAction={sourceAlias ? undefined : headerAction} sourceAlias={sourceAlias} /></div>
+ </div>
+}
+
+function KnowledgebaseContent({ workspacePath, headerAction, sourceAlias }: KnowledgebaseViewProps & {sourceAlias: string}) {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [notesIndex, setNotesIndex] = useState<KBNotesIndex | null>(null)
@@ -205,14 +215,23 @@ export default function KnowledgebaseView({ workspacePath, headerAction }: Knowl
     ? `${workspacePath}/knowledgebase/_freshness.json`
     : null
 
+  const readSourceText = useCallback(async (path: string) => {
+    if (!sourceAlias || !workspacePath) return readText(path)
+    const prefix = `${workspacePath}/knowledgebase/`
+    if (!path.startsWith(prefix)) throw new Error('Invalid knowledge path')
+    const result = await workflowManifestApi.readKnowledgebaseSource(workspacePath, sourceAlias, path.slice(prefix.length))
+    if (!result.success) throw new Error('Shared knowledge could not be read')
+    return result.content
+  }, [sourceAlias, workspacePath])
+
   const load = useCallback(async () => {
     if (!notesIndexPath || !freshnessPath) return
     setLoading(true)
     setError(null)
     try {
       const [rawIndex, rawFreshness] = await Promise.all([
-        readJSON<unknown>(notesIndexPath),
-        readJSON<unknown>(freshnessPath),
+        sourceAlias ? readSourceText(notesIndexPath).then(raw => raw === null ? null : JSON.parse(raw)) : readJSON<unknown>(notesIndexPath),
+        sourceAlias ? readSourceText(freshnessPath).then(raw => raw === null ? null : JSON.parse(raw)).catch(() => null) : readJSON<unknown>(freshnessPath),
       ])
       setNotesIndex(normalizeKBIndex(rawIndex))
       setFileFreshness(parseKBFileFreshness(rawFreshness))
@@ -224,7 +243,7 @@ export default function KnowledgebaseView({ workspacePath, headerAction }: Knowl
     } finally {
       setLoading(false)
     }
-  }, [freshnessPath, notesIndexPath])
+  }, [freshnessPath, notesIndexPath, sourceAlias, readSourceText])
 
   useEffect(() => {
     load()
@@ -240,11 +259,13 @@ export default function KnowledgebaseView({ workspacePath, headerAction }: Knowl
       // Selective load — only fetch the markdown when the row is expanded.
       // Matches the index-first read discipline the KB agent enforces.
       if (notesBodies[topic.id] === undefined && workspacePath) {
-        const body = await readText(`${workspacePath}/knowledgebase/notes/${topic.file}`)
-        setNotesBodies(prev => ({ ...prev, [topic.id]: body }))
+        try {
+          const body = await readSourceText(`${workspacePath}/knowledgebase/notes/${topic.file}`)
+          setNotesBodies(prev => ({ ...prev, [topic.id]: body }))
+        } catch (e) { setError(e instanceof Error ? e.message : 'Knowledge file unavailable') }
       }
     },
-    [expandedNotes, notesBodies, workspacePath],
+    [expandedNotes, notesBodies, workspacePath, readSourceText],
   )
 
   const topics = useMemo(() => notesIndex?.topics ?? [], [notesIndex])

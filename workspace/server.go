@@ -167,6 +167,7 @@ func runServer(cmd *cobra.Command, args []string) {
 			c.Status(http.StatusNoContent)
 		})
 		api.POST("/workflow-files", requireConfiguredWorkspaceAPIToken(), handlers.WorkflowFiles)
+		api.POST("/shared-assets", requireConfiguredWorkspaceAPIToken(), handlers.SharedAssets)
 		api.POST("/documents", handlers.WorkflowDocumentLock, handlers.CreateDocument)
 		api.GET("/documents", handlers.WorkflowDocumentLock, handlers.ListDocuments)
 

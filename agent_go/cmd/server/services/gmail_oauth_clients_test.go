@@ -3,6 +3,7 @@ package services
 import (
 	"context"
 	"encoding/json"
+	"os"
 	"path/filepath"
 	"testing"
 )
@@ -20,6 +21,7 @@ func gmailOAuthClientJSON(t *testing.T, id, secret string) []byte {
 
 func TestCreateOAuthClientRequiresName(t *testing.T) {
 	t.Setenv("GMAIL_OAUTH_CLIENTS_DIR", t.TempDir())
+	isolateGogClientStore(t)
 	if _, err := CreateOAuthClient(context.Background(), "", gmailOAuthClientJSON(t, "id", "secret"), false); err == nil {
 		t.Fatal("expected an error for an empty name")
 	}
@@ -27,6 +29,7 @@ func TestCreateOAuthClientRequiresName(t *testing.T) {
 
 func TestCreateOAuthClientValidatesNameShape(t *testing.T) {
 	t.Setenv("GMAIL_OAUTH_CLIENTS_DIR", t.TempDir())
+	isolateGogClientStore(t)
 	// Leading/trailing whitespace is trimmed before validation (a pasted name
 	// with an accidental space should not be rejected), so it is not tested
 	// here as an invalid case.
@@ -39,6 +42,7 @@ func TestCreateOAuthClientValidatesNameShape(t *testing.T) {
 
 func TestCreateOAuthClientRejectsMalformedSecret(t *testing.T) {
 	t.Setenv("GMAIL_OAUTH_CLIENTS_DIR", t.TempDir())
+	isolateGogClientStore(t)
 	if _, err := CreateOAuthClient(context.Background(), "primary", []byte(`{"neither":"installed nor web"}`), false); err == nil {
 		t.Fatal("expected an error for a secret with no installed/web client")
 	}
@@ -51,6 +55,7 @@ func TestCreateOAuthClientRejectsMalformedSecret(t *testing.T) {
 // under the same name must never silently replace the first.
 func TestCreateOAuthClientRefusesToOverwriteWithoutReplace(t *testing.T) {
 	t.Setenv("GMAIL_OAUTH_CLIENTS_DIR", t.TempDir())
+	isolateGogClientStore(t)
 	ctx := context.Background()
 
 	first, err := CreateOAuthClient(ctx, "primary", gmailOAuthClientJSON(t, "id-1", "secret-1"), false)
@@ -90,6 +95,7 @@ func TestCreateOAuthClientRefusesToOverwriteWithoutReplace(t *testing.T) {
 
 func TestListAndDeleteOAuthClients(t *testing.T) {
 	t.Setenv("GMAIL_OAUTH_CLIENTS_DIR", t.TempDir())
+	isolateGogClientStore(t)
 	ctx := context.Background()
 
 	if clients, err := ListOAuthClients(); err != nil || len(clients) != 0 {
@@ -137,6 +143,7 @@ func TestImportLegacyOAuthClientWithNoLegacySecret(t *testing.T) {
 	t.Setenv("GOOGLE_WORKSPACE_CLI_CLIENT_ID", "")
 	t.Setenv("GOOGLE_WORKSPACE_CLI_CLIENT_SECRET", "")
 	t.Setenv("GMAIL_OAUTH_CLIENTS_DIR", t.TempDir())
+	isolateGogClientStore(t)
 
 	g := &GmailService{}
 	if _, _, err := g.ImportLegacyOAuthClient(context.Background(), "legacy"); err == nil {
@@ -152,6 +159,7 @@ func TestImportLegacyOAuthClientWithNoConnectionsToBackfill(t *testing.T) {
 	t.Setenv("GOOGLE_WORKSPACE_CLI_CLIENT_ID", "")
 	t.Setenv("GOOGLE_WORKSPACE_CLI_CLIENT_SECRET", "")
 	t.Setenv("GMAIL_OAUTH_CLIENTS_DIR", t.TempDir())
+	isolateGogClientStore(t)
 	writeClientSecretFile(t, filepath.Join(home, ".config", "gws", "client_secret.json"), "legacy-id", "legacy-secret")
 
 	// An empty service (no connections) never calls SaveConfig — its
@@ -170,5 +178,29 @@ func TestImportLegacyOAuthClientWithNoConnectionsToBackfill(t *testing.T) {
 	}
 	if !OAuthClientExists("legacy") {
 		t.Error("expected the imported client to be registered")
+	}
+}
+
+// Exercise registry semantics without invoking an installed CLI or touching
+// the developer's real credentials. The CLI contract is tested separately.
+func isolateGogClientStore(t *testing.T) {
+	t.Helper()
+	t.Setenv("GOG_HOME", t.TempDir())
+	original := storeGogClient
+	t.Cleanup(func() { storeGogClient = original })
+	storeGogClient = func(ctx context.Context, name string, raw []byte) error {
+		id, secret, err := parseGmailClientSecretJSON(raw)
+		if err != nil {
+			return err
+		}
+		path, err := gogClientCredentialsPath(name)
+		if err != nil {
+			return err
+		}
+		if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+			return err
+		}
+		body, _ := json.Marshal(map[string]string{"client_id": id, "client_secret": secret})
+		return os.WriteFile(path, body, 0600)
 	}
 }

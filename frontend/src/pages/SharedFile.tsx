@@ -1,5 +1,6 @@
+import { sharedLink } from '../utils/sharedLinks'
 import { useEffect, useRef, useState } from 'react'
-import { Loader2, FileText, ArrowLeft, LogIn } from 'lucide-react'
+import { Loader2, FileText, ArrowLeft, LogIn, Download } from 'lucide-react'
 import { MarkdownRenderer } from '../components/ui/MarkdownRenderer'
 import { RenderedContentSearchBar, RenderedContentSearchButton, useRenderedContentSearch } from '../components/ui/RenderedContentSearch'
 import { CsvRenderer } from '../components/ui/CsvRenderer'
@@ -46,6 +47,9 @@ export function SharedFile({ encodedPath, uid, onBack }: SharedFileProps) {
 
   const fileName = filePath?.split('/').pop() || 'Unknown file'
   const lowerPath = (filePath || '').toLowerCase()
+  const isPDF = lowerPath.endsWith('.pdf')
+  const isHTML = /\.html?$/.test(lowerPath)
+  const isOfficeOrBinary = /\.(docx?|xlsx?|pptx?|zip|gz|bin|dat)$/.test(lowerPath)
   const isVideoFile = lowerPath.endsWith('.mp4') || lowerPath.endsWith('.webm') || lowerPath.endsWith('.mov')
   const isAudioFile = ['.mp3', '.wav', '.m4a', '.aac', '.ogg', '.oga', '.flac', '.opus'].some(ext => lowerPath.endsWith(ext))
   const isImageFile = ['.png', '.jpg', '.jpeg', '.gif', '.webp', '.svg', '.bmp', '.ico'].some(ext => lowerPath.endsWith(ext))
@@ -74,53 +78,55 @@ export function SharedFile({ encodedPath, uid, onBack }: SharedFileProps) {
       return
     }
 
+    const controller = new AbortController()
+    let objectUrl: string | undefined
     const loadFile = async () => {
       try {
         setLoading(true)
         setError(null)
-        setBinaryUrl((current) => {
-          if (current) URL.revokeObjectURL(current)
-          return null
-        })
+        setNeedsAuth(false)
+        setBinaryUrl(null)
+        setContent(null)
         const base = getApiBaseUrl() || ''
         const headers: Record<string, string> = {}
         const token = getAuthToken()
         if (token) headers['Authorization'] = `Bearer ${token}`
         const uidParam = uid ? `&uid=${encodeURIComponent(uid)}` : ''
-        const resp = await fetch(`${base}/api/public/file?path=${encodedPath}${uidParam}`, { headers })
+        const resp = await fetch(`${base}/api/public/file?path=${encodeURIComponent(encodedPath)}${uidParam}`, { headers, signal: controller.signal })
+        if (controller.signal.aborted) return
         if (resp.status === 401) {
           setNeedsAuth(true)
           return
         }
         if (!resp.ok) {
-          throw new Error(resp.status === 404 ? 'File not found' : `Failed to load file (${resp.status})`)
+          throw new Error(resp.status === 403 ? 'You do not have access to this file.' : resp.status === 404 ? 'File not found' : `Failed to load file (${resp.status})`)
         }
 
-        if (isVideoFile || isAudioFile || isImageFile) {
+        if (isVideoFile || isAudioFile || isImageFile || isPDF || isOfficeOrBinary || (!resp.headers.get("Content-Type")?.startsWith("text/") && !/\.(md|markdown|json|jsonl|csv|xml|ya?ml|py|go|js|ts|tsx|jsx|sh|css|html?)$/.test(lowerPath))) {
           const blob = await resp.blob()
-          const objectUrl = URL.createObjectURL(blob)
+          if (controller.signal.aborted) return
+          objectUrl = URL.createObjectURL(blob)
           setBinaryUrl(objectUrl)
           setContent(null)
         } else {
           const text = await resp.text()
-          setContent(text)
+          if (!controller.signal.aborted) setContent(text)
         }
       } catch (err) {
+        if (controller.signal.aborted) return
         console.error('Failed to load shared file:', err)
         setError(err instanceof Error ? err.message : 'Failed to load file')
       } finally {
-        setLoading(false)
+        if (!controller.signal.aborted) setLoading(false)
       }
     }
 
     loadFile()
     return () => {
-      setBinaryUrl((current) => {
-        if (current) URL.revokeObjectURL(current)
-        return null
-      })
+      controller.abort()
+      if (objectUrl) URL.revokeObjectURL(objectUrl)
     }
-  }, [encodedPath, filePath, uid, isVideoFile, isAudioFile, isImageFile])
+  }, [encodedPath, filePath, uid, isVideoFile, isAudioFile, isImageFile, isPDF, isOfficeOrBinary, lowerPath])
 
   if (loading) {
     return (
@@ -143,7 +149,7 @@ export function SharedFile({ encodedPath, uid, onBack }: SharedFileProps) {
             You need to be logged in to view this shared file.
           </p>
           <button
-            onClick={() => { window.location.href = '/' }}
+            onClick={() => { window.location.href = '/login?next=' + encodeURIComponent(window.location.pathname + window.location.search) }}
             className="px-6 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-medium transition-colors"
           >
             Go to Login
@@ -158,7 +164,7 @@ export function SharedFile({ encodedPath, uid, onBack }: SharedFileProps) {
       <div className="min-h-screen flex items-center justify-center bg-gray-100 dark:bg-gray-900">
         <div className="max-w-md w-full p-8 bg-white dark:bg-gray-800 rounded-lg shadow-lg text-center">
           <div className="text-red-500 dark:text-red-400 text-6xl mb-4">!</div>
-          <h2 className="text-xl font-bold text-gray-900 dark:text-white mb-2">File Not Found</h2>
+          <h2 className="text-xl font-bold text-gray-900 dark:text-white mb-2">Unable to open file</h2>
           <p className="text-gray-600 dark:text-gray-400 mb-4">{error}</p>
           {onBack && (
             <button onClick={onBack} className="text-blue-600 dark:text-blue-400 hover:underline">
@@ -173,6 +179,9 @@ export function SharedFile({ encodedPath, uid, onBack }: SharedFileProps) {
   if (content === null && binaryUrl === null) return null
 
   const renderContent = () => {
+    if (isPDF && binaryUrl) return <iframe title={fileName} src={binaryUrl} className="w-full h-[75vh] border-0" />
+    if (isHTML && content !== null) return <iframe title={fileName} sandbox="" srcDoc={content} className="w-full h-[75vh] border-0 bg-white" />
+    if (binaryUrl && !isVideoFile && !isAudioFile && !isImageFile) return <p className="text-sm p-6">Download this file to open it in its associated application.</p>
     if (isVideoFile && binaryUrl) {
       return (
         <div className="h-[calc(100vh-180px)] w-full flex items-center justify-center bg-black rounded-lg">
@@ -221,7 +230,7 @@ export function SharedFile({ encodedPath, uid, onBack }: SharedFileProps) {
       const codeBlockContent = `\`\`\`${language}\n${content}\n\`\`\``
       return (
         <div ref={renderedContentRef} className="prose prose-sm max-w-none dark:prose-invert">
-          <MarkdownRenderer content={codeBlockContent} className="max-w-none" showScrollbar={true} />
+          <MarkdownRenderer basePath={filePath || undefined} workspaceLinkHref={path => sharedLink(window.location.origin, 'file', path, uid)} content={codeBlockContent} className="max-w-none" showScrollbar={true} />
         </div>
       )
     }
@@ -229,7 +238,7 @@ export function SharedFile({ encodedPath, uid, onBack }: SharedFileProps) {
     // Default: render as markdown
     return (
       <div ref={renderedContentRef} className="prose prose-sm max-w-none dark:prose-invert prose-headings:font-semibold prose-headings:text-gray-900 dark:prose-headings:text-gray-100 prose-p:text-gray-700 dark:prose-p:text-gray-300 prose-a:text-blue-600 dark:prose-a:text-blue-400 prose-a:no-underline hover:prose-a:underline prose-code:text-blue-600 dark:prose-code:text-blue-400 prose-pre:bg-gray-50 dark:prose-pre:bg-gray-900">
-        <MarkdownRenderer content={content} className="max-w-none" showScrollbar={true} />
+        <MarkdownRenderer basePath={filePath || undefined} workspaceLinkHref={path => sharedLink(window.location.origin, 'file', path, uid)} content={content} className="max-w-none" showScrollbar={true} />
       </div>
     )
   }
@@ -260,6 +269,13 @@ export function SharedFile({ encodedPath, uid, onBack }: SharedFileProps) {
               {isRenderedSearchAvailable && (
                 <RenderedContentSearchButton search={renderedContentSearch} />
               )}
+              <button onClick={() => {
+                const href = binaryUrl || URL.createObjectURL(new Blob([content || ''], { type: 'text/plain' }))
+                const link = document.createElement('a'); link.href = href; link.download = fileName; link.click()
+                if (!binaryUrl) setTimeout(() => URL.revokeObjectURL(href), 1000)
+              }} className="inline-flex items-center gap-2 text-sm px-3 py-1.5 rounded border border-gray-300 dark:border-gray-600">
+                <Download className="w-4 h-4" />Download
+              </button>
               <span className="bg-yellow-100 dark:bg-yellow-900/30 text-yellow-800 dark:text-yellow-400 px-2 py-0.5 rounded text-xs font-medium">
                 Read-only
               </span>

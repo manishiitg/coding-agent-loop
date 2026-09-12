@@ -16,22 +16,10 @@ import (
 	"golang.org/x/oauth2/google"
 )
 
-// Server-driven Gmail OAuth.
-//
-// The alternative — authenticating each account with `gws auth login` on the
-// host — means a terminal step per mailbox, which is not something a user of a
-// web UI can do. So the server runs the OAuth flow itself and never asks gws to
-// authenticate at all.
-//
-// It works because gws accepts a pre-obtained access token via
-// GOOGLE_WORKSPACE_CLI_TOKEN, which takes priority over every other credential
-// source. We hold the refresh token, mint short-lived access tokens, and hand
-// one to each gws invocation. Nothing writes to gws's own credential store, so
-// there is no dependency on its on-disk format.
-//
-// Refresh tokens are secrets and live OUTSIDE the workspace: gmail-config.json
-// is workspace content, readable by anything that can read the workspace, and a
-// refresh token there would be a standing grant to send as that person.
+// Browser-driven Google OAuth. The server exchanges the one-time code and
+// imports new credentials into gog; it does not persist or refresh another
+// copy. The token file and TokenSource helpers below remain only for legacy
+// gws connections until they are migrated or reconnected.
 
 // gmailOAuthScopesFor is the minimum that supports the send path plus
 // identity discovery, plus gmail.readonly only when the connection was
@@ -200,6 +188,9 @@ func loadGmailOAuthToken(connectionID string) (*oauth2.Token, bool) {
 // the connection is deleted, so revoking access does not leave a live token.
 func deleteGmailOAuthToken(connectionID string) {
 	_ = os.Remove(gmailOAuthTokenPath(connectionID))
+	gmailTokenSourceMu.Lock()
+	delete(gmailTokenSources, connectionID)
+	gmailTokenSourceMu.Unlock()
 }
 
 // HasServerManagedOAuth reports whether this connection authenticates through
@@ -337,39 +328,37 @@ func BeginGmailOAuth(connectionID, clientName, redirectURL string, includeRead b
 }
 
 // CompleteGmailOAuth exchanges the callback code and stores the credential.
-// Returns the connection the flow belonged to.
-func CompleteGmailOAuth(ctx context.Context, state, code string) (string, error) {
+// Returns the connection and verified account email after gog import succeeds.
+func CompleteGmailOAuth(ctx context.Context, state, code string) (string, string, error) {
 	gmailOAuthPendingMu.Lock()
 	pending, ok := gmailOAuthPending[state]
 	delete(gmailOAuthPending, state)
 	gmailOAuthPendingMu.Unlock()
 
 	if !ok {
-		return "", fmt.Errorf("this sign-in link has expired or was already used — start again from the Gmail settings")
+		return "", "", fmt.Errorf("this sign-in link has expired or was already used — start again from the Gmail settings")
 	}
 	if time.Since(pending.CreatedAt) > gmailOAuthPendingTTL {
-		return "", fmt.Errorf("this sign-in took too long and expired — start again from the Gmail settings")
+		return "", "", fmt.Errorf("this sign-in took too long and expired — start again from the Gmail settings")
 	}
 
 	cfg, err := gmailOAuthConfig(pending.RedirectURL, pending.ClientName, pending.IncludeRead, pending.ExtraScopes)
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 	token, err := cfg.Exchange(ctx, code)
 	if err != nil {
-		return "", fmt.Errorf("gmail oauth: exchange authorization code: %w", err)
+		return "", "", fmt.Errorf("gmail oauth: exchange authorization code: %w", err)
 	}
 	if strings.TrimSpace(token.RefreshToken) == "" {
-		return "", fmt.Errorf("Google did not return a refresh token — revoke this app's access in your Google account and try again")
+		return "", "", fmt.Errorf("Google did not return a refresh token — revoke this app's access in your Google account and try again")
 	}
-	if err := storeGmailOAuthToken(pending.ConnectionID, token); err != nil {
-		return "", err
+	_, email, err := googleTokenInfo(ctx, token.AccessToken)
+	if err != nil || email == "" {
+		return "", "", fmt.Errorf("could not verify the Google account identity; retry sign-in")
 	}
-	// Drop any cached source so the next send uses the new credential rather
-	// than a TokenSource still holding the previous account's refresh token.
-	gmailTokenSourceMu.Lock()
-	delete(gmailTokenSources, pending.ConnectionID)
-	gmailTokenSourceMu.Unlock()
-
-	return pending.ConnectionID, nil
+	if err := ImportRefreshTokenIntoGog(ctx, email, pending.ClientName, token.RefreshToken); err != nil {
+		return "", "", err
+	}
+	return pending.ConnectionID, email, nil
 }

@@ -97,13 +97,14 @@ export function SharedFolder({ encodedPath, uid, onBack }: SharedFolderProps) {
     try {
       setLoading(true)
       setError(null)
+      setNeedsAuth(false)
       const base = getApiBaseUrl() || ''
       const encoded = btoa(unescape(encodeURIComponent(path)))
       const headers: Record<string, string> = {}
       const token = getAuthToken()
       if (token) headers['Authorization'] = `Bearer ${token}`
       const uidParam = uid ? `&uid=${encodeURIComponent(uid)}` : ''
-      const resp = await fetch(`${base}/api/public/folder?path=${encoded}${uidParam}`, { headers })
+      const resp = await fetch(`${base}/api/public/folder?path=${encodeURIComponent(encoded)}${uidParam}`, { headers })
       if (resp.status === 401) {
         setNeedsAuth(true)
         return
@@ -139,7 +140,7 @@ export function SharedFolder({ encodedPath, uid, onBack }: SharedFolderProps) {
       const token = getAuthToken()
       if (token) headers['Authorization'] = `Bearer ${token}`
       const uidParam = uid ? `&uid=${encodeURIComponent(uid)}` : ''
-      const resp = await fetch(`${base}/api/public/folder/download?path=${encoded}${uidParam}`, { headers })
+      const resp = await fetch(`${base}/api/public/folder/download?path=${encodeURIComponent(encoded)}${uidParam}`, { headers })
       if (!resp.ok) throw new Error(`Download failed (${resp.status})`)
       const blob = await resp.blob()
       const url = window.URL.createObjectURL(blob)
@@ -194,7 +195,7 @@ export function SharedFolder({ encodedPath, uid, onBack }: SharedFolderProps) {
       const token = getAuthToken()
       if (token) headers['Authorization'] = `Bearer ${token}`
       const uidParam = uid ? `&uid=${encodeURIComponent(uid)}` : ''
-      const resp = await fetch(`${base}/api/public/folder/download?path=${encoded}${uidParam}`, { headers })
+      const resp = await fetch(`${base}/api/public/folder/download?path=${encodeURIComponent(encoded)}${uidParam}`, { headers })
       if (!resp.ok) throw new Error(`Download failed (${resp.status})`)
       const blob = await resp.blob()
 
@@ -253,7 +254,7 @@ export function SharedFolder({ encodedPath, uid, onBack }: SharedFolderProps) {
             You need to be logged in to view this shared folder.
           </p>
           <button
-            onClick={() => { window.location.href = '/' }}
+            onClick={() => { window.location.href = '/login?next=' + encodeURIComponent(window.location.pathname + window.location.search) }}
             className="px-6 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-medium transition-colors"
           >
             Go to Login

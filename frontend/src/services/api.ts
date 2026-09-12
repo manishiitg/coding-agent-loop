@@ -2752,6 +2752,14 @@ export interface WorkflowUserPermissionsResponse {
 
 // --- Workflow manifest API ---
 export const workflowManifestApi = {
+  getKnowledgebaseSources: async (workspacePath: string): Promise<{success: boolean; sources: import('./api-types').KnowledgebaseSourceStatus[]}> => {
+    const response = await api.get('/api/workflows/knowledgebase-sources', {params: {workspace_path: workspacePath}})
+    return response.data
+  },
+  readKnowledgebaseSource: async (workspacePath: string, alias: string, path: string): Promise<{success: boolean; content: string}> => {
+    const response = await api.get('/api/workflows/knowledgebase-sources', {params: {workspace_path: workspacePath, alias, path}})
+    return response.data
+  },
   listWorkflowManifests: async (): Promise<ListWorkflowManifestsResponse> => {
     const response = await api.get('/api/workflows/manifests')
     return response.data

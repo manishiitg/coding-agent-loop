@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"math"
 	"sort"
 	"strings"
@@ -15,21 +16,29 @@ import (
 // Definitions are configured once by the builder. Measurements reuse the
 // immutable Pulse observation ledger; reviewers do not maintain another report.
 type GoalMetric struct {
-	ID                  string   `json:"id"`
-	CriterionID         string   `json:"criterion_id"`
-	Name                string   `json:"name"`
-	Role                string   `json:"role"`
-	Unit                string   `json:"unit"`
-	Direction           string   `json:"direction"`
-	Definition          string   `json:"definition"`
-	Source              string   `json:"source"`
-	Window              string   `json:"window"`
-	Route               string   `json:"route"`
-	Environment         string   `json:"environment"`
-	CollectionFrequency string   `json:"collection_frequency"`
-	FreshnessHours      float64  `json:"freshness_hours"`
-	Target              *float64 `json:"target,omitempty"`
-	TargetDate          string   `json:"target_date,omitempty"`
+	// Goal grouping is independent of the immutable observation criterion.
+	GoalID      string   `json:"goal_id,omitempty"`
+	GoalName    string   `json:"goal_name,omitempty"`
+	Supports    []string `json:"supports,omitempty"`
+	SupportKind string   `json:"support_kind,omitempty"`
+	// A definition identifies one fixed dimension slice; its metric ID isolates
+	// observations without changing legacy collection or observation identities.
+	Dimensions          map[string]string `json:"dimensions,omitempty"`
+	ID                  string            `json:"id"`
+	CriterionID         string            `json:"criterion_id"`
+	Name                string            `json:"name"`
+	Role                string            `json:"role"`
+	Unit                string            `json:"unit"`
+	Direction           string            `json:"direction"`
+	Definition          string            `json:"definition"`
+	Source              string            `json:"source"`
+	Window              string            `json:"window"`
+	Route               string            `json:"route"`
+	Environment         string            `json:"environment"`
+	CollectionFrequency string            `json:"collection_frequency"`
+	FreshnessHours      float64           `json:"freshness_hours"`
+	Target              *float64          `json:"target,omitempty"`
+	TargetDate          string            `json:"target_date,omitempty"`
 }
 
 const goalMetricsSchema = `CREATE TABLE IF NOT EXISTS workflow_goal_metrics (
@@ -57,15 +66,16 @@ func loadGoalMetrics(ctx context.Context, db pulseFindingLifecycleDB) ([]GoalMet
 		}
 		metrics = append(metrics, m)
 	}
-	return metrics, rows.Err()
+	return GoalMetricsWithLegacyLinks(metrics), rows.Err()
 }
 
 // ConfigureGoalMetrics atomically replaces the active selection. Omitted
 // definitions are retired, never erased, so repeated setup preserves history.
 func ConfigureGoalMetrics(ctx context.Context, workspacePath string, metrics []GoalMetric) error {
 	if len(metrics) == 0 || len(metrics) > 30 {
-		return fmt.Errorf("provide 1 to 30 metrics, including exactly one primary metric")
+		return fmt.Errorf("provide 1 to 30 metrics, including at least one primary metric")
 	}
+	metrics = GoalMetricsWithLegacyLinks(metrics)
 	seen := map[string]bool{}
 	primary := 0
 	for _, m := range metrics {
@@ -101,8 +111,11 @@ func ConfigureGoalMetrics(ctx context.Context, workspacePath string, metrics []G
 			}
 		}
 	}
-	if primary != 1 {
-		return fmt.Errorf("configure exactly one primary metric")
+	if primary == 0 {
+		return fmt.Errorf("configure at least one primary metric")
+	}
+	if err := validateGoalMetricRelationships(metrics); err != nil {
+		return err
 	}
 	db, err := openRunConcernsDB(ctx, workspacePath, true)
 	if err != nil {
@@ -131,7 +144,7 @@ func ConfigureGoalMetrics(ctx context.Context, workspacePath string, metrics []G
 			if err = json.Unmarshal([]byte(raw), &old); err != nil {
 				return err
 			}
-			if old.CriterionID != m.CriterionID || old.Unit != m.Unit || old.Definition != m.Definition || old.Source != m.Source || old.Window != m.Window || old.Route != m.Route || old.Environment != m.Environment || old.Direction != m.Direction {
+			if old.CriterionID != m.CriterionID || old.Unit != m.Unit || old.Definition != m.Definition || old.Source != m.Source || old.Window != m.Window || old.Route != m.Route || old.Environment != m.Environment || old.Direction != m.Direction || !maps.Equal(old.Dimensions, m.Dimensions) {
 				return fmt.Errorf("metric %q meaning changed: use a new id to keep historical series comparable", m.ID)
 			}
 		}
@@ -282,4 +295,78 @@ func GoalMetricSnapshots(ledger *PulseImpactLedger, now time.Time) []GoalMetricS
 	}
 	sort.SliceStable(result, func(i, j int) bool { return result[i].Metric.Role == "primary" && result[j].Metric.Role != "primary" })
 	return result
+}
+
+// Legacy workflows had one primary and a flat supporting list. Resolve that
+// relationship on read and reconfiguration without rewriting measurements.
+func GoalMetricsWithLegacyLinks(metrics []GoalMetric) []GoalMetric {
+	result := append([]GoalMetric{}, metrics...)
+	primaryID := ""
+	count := 0
+	for _, m := range result {
+		if m.Role == "primary" {
+			primaryID = m.ID
+			count++
+		}
+	}
+	for i := range result {
+		if result[i].Role == "supporting" && len(result[i].Supports) == 0 && count == 1 {
+			result[i].Supports = []string{primaryID}
+		}
+	}
+	return result
+}
+
+func validateGoalMetricRelationships(metrics []GoalMetric) error {
+	byID := map[string]GoalMetric{}
+	goalNames := map[string]string{}
+	for _, m := range metrics {
+		byID[m.ID] = m
+	}
+	for _, m := range metrics {
+		if strings.TrimSpace(m.GoalID) != m.GoalID || strings.TrimSpace(m.GoalName) != m.GoalName {
+			return fmt.Errorf("goal_id and goal_name must be trimmed")
+		}
+		if m.GoalName != "" && m.GoalID == "" {
+			return fmt.Errorf("metric %q: goal_name requires goal_id", m.ID)
+		}
+		if m.GoalID != "" {
+			if m.Role != "primary" || m.GoalName == "" {
+				return fmt.Errorf("metric %q: goal_id and goal_name belong together on primary metrics; supporting measurements inherit their parents' goals", m.ID)
+			}
+			if name, ok := goalNames[m.GoalID]; ok && name != m.GoalName {
+				return fmt.Errorf("goal %q has inconsistent names", m.GoalID)
+			}
+			goalNames[m.GoalID] = m.GoalName
+		}
+		for key, value := range m.Dimensions {
+			if key == "" || value == "" || strings.TrimSpace(key) != key || strings.TrimSpace(value) != value {
+				return fmt.Errorf("metric %q dimensions require nonblank trimmed keys and values", m.ID)
+			}
+		}
+		if m.Role == "primary" {
+			if len(m.Supports) > 0 || m.SupportKind != "" {
+				return fmt.Errorf("primary metric %q cannot have supports or support_kind", m.ID)
+			}
+			continue
+		}
+		if len(m.Supports) == 0 {
+			return fmt.Errorf("supporting metric %q requires explicit supports when multiple primary metrics are configured", m.ID)
+		}
+		if m.SupportKind != "" && m.SupportKind != "breakdown" && m.SupportKind != "diagnostic" && m.SupportKind != "guardrail" {
+			return fmt.Errorf("metric %q support_kind must be breakdown, diagnostic or guardrail", m.ID)
+		}
+		seen := map[string]bool{}
+		for _, id := range m.Supports {
+			parent, ok := byID[id]
+			if !ok || parent.Role != "primary" || seen[id] {
+				return fmt.Errorf("metric %q supports must contain unique active primary metric IDs; invalid %q", m.ID, id)
+			}
+			seen[id] = true
+			if m.SupportKind == "breakdown" && (m.Unit != parent.Unit || m.Direction != parent.Direction || m.Window != parent.Window) {
+				return fmt.Errorf("breakdown %q must match primary %q unit, direction and window", m.ID, id)
+			}
+		}
+	}
+	return nil
 }

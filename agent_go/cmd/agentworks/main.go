@@ -10,6 +10,7 @@ import (
 	"io"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"syscall"
 
@@ -92,7 +93,7 @@ func newCommand(o *options) *cobra.Command {
 		operations        []struct{ command, tool string }
 	}{
 		{"workflows", "Discover workflows", []struct{ command, tool string }{{"list", "list_workflows"}, {"get", "get_workflow"}}},
-		{"files", "Read and edit ordinary workspace files; plan files require plan tools", []struct{ command, tool string }{{"list", "list_files"}, {"read", "read_file"}, {"search", "search_files"}, {"write", "write_file"}, {"patch", "patch_file"}}},
+		{"files", "Read and edit ordinary workspace files; plan files require plan tools", []struct{ command, tool string }{{"link", "get_file_link"}, {"list", "list_files"}, {"read", "read_file"}, {"search", "search_files"}, {"write", "write_file"}, {"patch", "patch_file"}}},
 		{"runs", "Inspect workflow activity", []struct{ command, tool string }{{"list", "list_runs"}, {"get", "get_run"}, {"logs", "get_logs"}}},
 		{"builder", "Send messages to existing Workflow Builder and follow its session", []struct{ command, tool string }{{"chat", "builder_chat"}, {"status", "builder_status"}, {"reply", "builder_reply_input"}, {"cancel", "builder_cancel"}}},
 	}
@@ -104,6 +105,28 @@ func newCommand(o *options) *cobra.Command {
 			addOperationFlags(cmd, toolName)
 			cmd.RunE = func(cmd *cobra.Command, _ []string) error { return o.call(cmd, toolName) }
 			groupCmd.AddCommand(cmd)
+		}
+		if group.name == "files" {
+			download := &cobra.Command{Use: "download", Short: "Download an asset to a new local file (including large binary files)", Args: cobra.NoArgs}
+			download.Flags().String("workflow", "", "Workflow ID")
+			download.Flags().String("path", "", "Workflow-relative asset path")
+			download.Flags().String("output", "", "New local destination file; existing files are never overwritten")
+			download.RunE = func(cmd *cobra.Command, _ []string) error {
+				workflow, _ := cmd.Flags().GetString("workflow")
+				p, _ := cmd.Flags().GetString("path")
+				output, _ := cmd.Flags().GetString("output")
+				client, err := o.client()
+				if err != nil {
+					return err
+				}
+				size, err := client.Download(cmd.Context(), workflow, p, output)
+				if err != nil {
+					return err
+				}
+				absolute, _ := filepath.Abs(output)
+				return o.output(map[string]any{"path": absolute, "size": size})
+			}
+			groupCmd.AddCommand(download)
 		}
 		root.AddCommand(groupCmd)
 	}

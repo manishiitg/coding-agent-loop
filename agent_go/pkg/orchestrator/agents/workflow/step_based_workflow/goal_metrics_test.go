@@ -132,3 +132,120 @@ func TestGoalHistoryDoesNotDisappearBehindUnrelatedPulseRows(t *testing.T) {
 		t.Fatal("retirement erased history")
 	}
 }
+
+func TestMultiplePrimaryRelationshipsAndHistory(t *testing.T) {
+	ctx := context.Background()
+	ws := concernsWorkspace(t)
+	voice := testGoalMetric()
+	voice.ID = "voice"
+	voice.GoalID = "performance"
+	voice.GoalName = "Responsiveness"
+	cost := testGoalMetric()
+	cost.ID = "cost"
+	cost.GoalID = "spend"
+	cost.GoalName = "Cost control"
+	diagnostic := testGoalMetric()
+	diagnostic.ID = "diagnostic"
+	diagnostic.Role = "supporting"
+	if err := ConfigureGoalMetrics(ctx, ws, []GoalMetric{voice, diagnostic}); err != nil {
+		t.Fatal(err)
+	}
+	ledger, err := LoadPulseImpactLedger(ctx, ws, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, m := range ledger.Metrics {
+		if m.ID == diagnostic.ID && (len(m.Supports) != 1 || m.Supports[0] != voice.ID) {
+			t.Fatal("legacy links not resolved")
+		}
+	}
+	observation := PulseGoalObservation{CriterionID: diagnostic.CriterionID, Metric: diagnostic.ID, Unit: diagnostic.Unit, RunID: "run-1", Value: pulseImpactFloat(20), ObservedAt: "2026-09-12T00:00:00Z", Evidence: []string{"source"}}
+	if _, err := RecordGoalObservations(ctx, ws, []PulseGoalObservation{observation}); err != nil {
+		t.Fatal(err)
+	}
+	if err := ConfigureGoalMetrics(ctx, ws, []GoalMetric{voice, cost, diagnostic}); err == nil {
+		t.Fatal("ambiguous supporting accepted")
+	}
+	diagnostic.Supports = []string{voice.ID, cost.ID}
+	diagnostic.SupportKind = "diagnostic"
+	if err := ConfigureGoalMetrics(ctx, ws, []GoalMetric{voice, cost, diagnostic}); err != nil {
+		t.Fatal(err)
+	}
+	ledger, err = LoadPulseImpactLedger(ctx, ws, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(ledger.Metrics) != 3 || len(ledger.Observations) != 1 {
+		t.Fatal("relationship changes lost history")
+	}
+	// Promotion of an independent outcome changes organization, not measurement meaning.
+	diagnostic.Role = "primary"
+	diagnostic.Supports = nil
+	diagnostic.SupportKind = ""
+	if err := ConfigureGoalMetrics(ctx, ws, []GoalMetric{voice, cost, diagnostic}); err != nil {
+		t.Fatal(err)
+	}
+	ledger, err = LoadPulseImpactLedger(ctx, ws, 10)
+	if err != nil || len(ledger.Observations) != 1 {
+		t.Fatal("promotion lost history", err)
+	}
+}
+
+func TestGoalRelationshipsRejectInvalidParentsAndSlices(t *testing.T) {
+	primary := testGoalMetric()
+	other := testGoalMetric()
+	other.ID = "second"
+	support := testGoalMetric()
+	support.ID = "english"
+	support.Role = "supporting"
+	support.Supports = []string{primary.ID}
+	support.SupportKind = "breakdown"
+	support.Dimensions = map[string]string{"language": "English"}
+	tests := []struct {
+		name   string
+		change func(*GoalMetric)
+	}{
+		{"unknown", func(m *GoalMetric) { m.Supports = []string{"missing"} }},
+		{"self", func(m *GoalMetric) { m.Supports = []string{m.ID} }},
+		{"duplicate", func(m *GoalMetric) { m.Supports = []string{primary.ID, primary.ID} }},
+		{"different unit", func(m *GoalMetric) { m.Unit = "ms" }},
+		{"different window", func(m *GoalMetric) { m.Window = "weekly" }},
+		{"invalid kind", func(m *GoalMetric) { m.SupportKind = "outcome" }},
+		{"empty dimension", func(m *GoalMetric) { m.Dimensions = map[string]string{"language": ""} }},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m := support
+			tt.change(&m)
+			if err := ConfigureGoalMetrics(context.Background(), concernsWorkspace(t), []GoalMetric{primary, other, m}); err == nil {
+				t.Fatal("invalid relationship accepted")
+			}
+		})
+	}
+	ctx := context.Background()
+	ws := concernsWorkspace(t)
+	if err := ConfigureGoalMetrics(ctx, ws, []GoalMetric{primary, other, support}); err != nil {
+		t.Fatal(err)
+	}
+	obs := PulseGoalObservation{Metric: support.ID, CriterionID: support.CriterionID, Unit: support.Unit, RunID: "run", Value: pulseImpactFloat(10), ObservedAt: "2026-09-12T00:00:00Z", Evidence: []string{"English-only source"}}
+	if _, err := RecordGoalObservations(ctx, ws, []PulseGoalObservation{obs}); err != nil {
+		t.Fatal(err)
+	}
+	support.Dimensions = map[string]string{"language": "Hebrew"}
+	if err := ConfigureGoalMetrics(ctx, ws, []GoalMetric{primary, other, support}); err == nil {
+		t.Fatal("dimension identity changed")
+	}
+	support.ID = "hebrew"
+	if err := ConfigureGoalMetrics(ctx, ws, []GoalMetric{primary, other, support}); err != nil {
+		t.Fatal(err)
+	}
+	ledger, err := LoadPulseImpactLedger(ctx, ws, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, snapshot := range GoalMetricSnapshots(ledger, time.Now()) {
+		if snapshot.Metric.ID == support.ID && snapshot.Value != nil {
+			t.Fatal("English history leaked into Hebrew slice")
+		}
+	}
+}

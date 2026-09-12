@@ -350,6 +350,7 @@ func TestImportRefreshTokenIntoGogRegistersClientBeforeToken(t *testing.T) {
 	}
 	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("GOG_HOME", t.TempDir())
 	clientsDir := t.TempDir()
 	t.Setenv("GMAIL_OAUTH_CLIENTS_DIR", clientsDir)
 	clientDir := filepath.Join(clientsDir, "primary")
@@ -365,8 +366,8 @@ func TestImportRefreshTokenIntoGogRegistersClientBeforeToken(t *testing.T) {
 		t.Fatalf("ImportRefreshTokenIntoGog: %v", err)
 	}
 	argv := strings.Join(readArgvLines(t, argvFile), " ")
-	credentials := "auth credentials set " + secretPath + " --client primary --insecure --no-input --force"
-	if !strings.Contains(argv, credentials) {
+	credentials := "--client primary --insecure --no-input --force"
+	if !strings.Contains(argv, "auth credentials set ") || !strings.Contains(argv, credentials) {
 		t.Fatalf("argv %q missing credentials registration %q", argv, credentials)
 	}
 	if !strings.Contains(argv, "auth import --email me@example.com --client primary") {

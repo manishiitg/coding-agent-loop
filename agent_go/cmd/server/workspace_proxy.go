@@ -44,7 +44,7 @@ func workspaceProxyHandler() http.Handler {
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Internal transactions must not be reachable through the generic proxy.
-		if path.Clean("/"+workspaceProxyRelativePath(r)) == "/api/workflow-files" {
+		if internalPath := path.Clean("/" + workspaceProxyRelativePath(r)); internalPath == "/api/workflow-files" || internalPath == "/api/shared-assets" {
 			http.NotFound(w, r)
 			return
 		}

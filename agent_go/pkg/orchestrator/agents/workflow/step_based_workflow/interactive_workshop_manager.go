@@ -30,6 +30,7 @@ import (
 	orchestrator_events "github.com/manishiitg/coding-agent-loop/agent_go/pkg/orchestrator/events"
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/pulsemodules"
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/schedulepolicy"
+	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/workflowkb"
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/workflowtypes"
 	mcpagent "github.com/manishiitg/mcpagent/agent"
 	baseevents "github.com/manishiitg/mcpagent/events"
@@ -4550,6 +4551,13 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 			selected := ctrl.GetSelectedServers()
 			var sb strings.Builder
 			sb.WriteString("## Workflow Configuration\n\n")
+			sb.WriteString(workflowKnowledgebaseSourcesPrompt(ctrl.GetWorkspacePath()) + "\n\n")
+			if candidates, err := workflowkb.Candidates(GetPromptDocsRoot(), ctrl.GetWorkspacePath()); err == nil {
+				sb.WriteString("### Available knowledge source workflows\n")
+				for _, source := range candidates {
+					sb.WriteString(fmt.Sprintf("- %s: %s\n", source.WorkflowID, source.Label))
+				}
+			}
 
 			// --- MCP Servers ---
 			sb.WriteString("### Selected MCP Servers\n")
@@ -4951,6 +4959,10 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 		map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
+				"knowledgebase_sources": map[string]interface{}{
+					"type": "array", "maxItems": 20, "description": "Replace the complete read-only shared KB source list. Use stable workflow IDs and unique lowercase aliases. Empty list detaches all. Sources must be on this host and readable by every owner/reader of this workflow. Inspect workflow.json via shell or workflow discovery for IDs; never use guessed paths. Builder, eligible steps and reviewers get WORKFLOW_KB_<ALIAS> shell access.",
+					"items": map[string]interface{}{"type": "object", "additionalProperties": false, "properties": map[string]interface{}{"workflow_id": map[string]interface{}{"type": "string"}, "alias": map[string]interface{}{"type": "string"}, "access": map[string]interface{}{"type": "string", "enum": []string{"read"}}}, "required": []string{"workflow_id", "alias", "access"}}},
+
 				"add_servers": map[string]interface{}{
 					"type":        "array",
 					"items":       map[string]interface{}{"type": "string"},
@@ -6138,8 +6150,48 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				sb.WriteString(fmt.Sprintf("\n### Advisor specialization (version %d)\n- Approved decision: %s\n- Strategy Auditor and Goal Advisor now receive their separate workflow-specific lenses; the canonical reviewer contracts still take precedence.\n", activated.Version, activated.ApprovedInputID))
 			}
 
+			if raw, provided := args["knowledgebase_sources"]; provided {
+				if raw == nil {
+					return "", fmt.Errorf("knowledgebase_sources must be an array; use [] to detach all")
+				}
+				encoded, err := json.Marshal(raw)
+				if err != nil {
+					return "", err
+				}
+				var sources []workflowtypes.KnowledgebaseSource
+				if err = json.Unmarshal(encoded, &sources); err != nil {
+					return "", err
+				}
+				if sources == nil {
+					sources = []workflowtypes.KnowledgebaseSource{}
+				}
+				if err := workflowkb.Validate(GetPromptDocsRoot(), iwm.controller.GetWorkspacePath(), sources); err != nil {
+					return "", err
+				}
+				content, err := iwm.controller.ReadWorkspaceFile(ctx, "workflow.json")
+				if err != nil {
+					return "", err
+				}
+				var manifest map[string]interface{}
+				if err = json.Unmarshal([]byte(content), &manifest); err != nil {
+					return "", err
+				}
+				manifest["knowledgebase_sources"] = sources
+				manifest["updated_at"] = time.Now().UTC().Format(time.RFC3339)
+				updated, err := json.MarshalIndent(manifest, "", "  ")
+				if err != nil {
+					return "", err
+				}
+				if err = iwm.controller.WriteWorkspaceFile(ctx, "workflow.json", string(updated)); err != nil {
+					return "", err
+				}
+				refreshWorkflowFolderAccessSession(ctx, iwm.controller.GetWorkspacePath())
+				anyChanged = true
+				sb.WriteString("\n" + workflowKnowledgebaseSourcesPrompt(iwm.controller.GetWorkspacePath()) + "\n")
+			}
+
 			if !anyChanged {
-				return "No changes applied. Provide at least one of: add_servers, remove_servers, add_tools, remove_tools, add_skills, remove_skills, add_secrets, remove_secrets, run_notification_instructions, pulse_notification_instructions, run_notification_channels, pulse_notification_channels, slack_webhook_secret_name, browser_mode, cdp_ports, run_retention_count, advisor_specialization_approval_input_id.", nil
+				return "No changes applied. Provide at least one of: knowledgebase_sources, add_servers, remove_servers, add_tools, remove_tools, add_skills, remove_skills, add_secrets, remove_secrets, run_notification_instructions, pulse_notification_instructions, run_notification_channels, pulse_notification_channels, slack_webhook_secret_name, browser_mode, cdp_ports, run_retention_count, advisor_specialization_approval_input_id.", nil
 			}
 
 			// Persist config changes to workflow.json manifest (file-backed)
@@ -8735,6 +8787,8 @@ func (agent *WorkflowBackgroundTaskAgent) Execute(ctx context.Context, templateV
 	if err := backgroundTaskAgentUserTemplate.Execute(&userMessage, templateVars); err != nil {
 		return "", nil, err
 	}
+
+	systemPrompt.WriteString("\n\n" + workflowKnowledgebaseSourcesPrompt(templateVars["WorkspacePath"]))
 
 	// Single-pass execution
 	inputProcessor := func(map[string]string) string { return userMessage.String() }

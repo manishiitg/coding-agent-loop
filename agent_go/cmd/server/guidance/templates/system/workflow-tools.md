@@ -44,6 +44,23 @@ as a native bridge call. For every non-native tool, call
 `$MCP_MCP`/`$MCP_CUSTOM` route and `$MCP_AUTH`. Do not guess or hardcode an
 HTTP URL.
 
+## Shared knowledge bases (Workshop configuration)
+
+Use `get_workflow_config` to inspect attached KBs and discover eligible source
+workflow IDs. `update_workflow_config(knowledgebase_sources=[{"workflow_id":"<id>",
+"alias":"rts","access":"read"}])` replaces the entire attachment list: preserve
+existing entries when adding a source; pass `[]` to detach all. Up to 20 sources
+are supported on the same host. Aliases must start with a lowercase letter and
+contain only lowercase letters, digits, and underscores (maximum 48 characters;
+`access` is reserved). IDs and aliases must be unique; self-reference is rejected.
+
+The source must be readable by the consuming workflow's owners and readers.
+After saving, builders can immediately shell-read `$WORKFLOW_KB_RTS/notes/_index.json`
+and relevant files. Eligible execution and review sessions get the same read-only
+source grants. Source updates are live; detach or permission changes remove access
+on subsequent commands, but do not revoke an already-running subprocess's sandbox.
+Run mode consumes existing attachments; configuration changes require Workshop.
+
 ## Step Execution & Inspection
 
 - **`execute_step(step_id, group_name, instructions?, human_input?, tier?, message_sequence_restart?, script_parameters?)`** — Start a single step in the background; returns `execution_id`. In Workshop mode this is the primary way to test one step after adding or editing it. For a scripted step, `script_parameters` is an object validated against the step's declared contract and passed through `STEP_PARAMS_JSON`; it is rejected for non-scripted steps. Execution uses `iteration-0`. A standalone `message_sequence` always starts its configured queue from the beginning; `human_input` adds opening context, not durable resume. Only a message-sequence route inside an active orchestrator run has in-memory re-entry. For `human_input` steps, `human_input` is used as the response. For other executable steps, `human_input` is high-priority custom context.

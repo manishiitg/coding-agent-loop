@@ -14,6 +14,8 @@ import (
 	"sync"
 
 	"golang.org/x/sys/unix"
+
+	"github.com/manishiitg/coding-agent-loop/workspace/gogconfig"
 )
 
 var sandboxCapabilityOnce sync.Once
@@ -159,7 +161,7 @@ func (iso *Isolator) landlockCommand(ctx context.Context, policy LandlockPolicy,
 	// else the run folder (PLAT-283). Without this, pip/npm/venv default to
 	// $HOME, which lies outside every step's grant, and every install died
 	// with a bare permission error -- see sandbox_tool_env.go.
-	cmd.Env = sandboxToolEnv(BuildSafeEnvironment(), policy.WorkDir, policy.WritePaths)
+	cmd.Env = sandboxToolEnv(gogconfig.Environment(BuildSafeEnvironment(), iso.StrictAllowlist), policy.WorkDir, policy.WritePaths)
 	return cmd, cleanup, nil
 }
 

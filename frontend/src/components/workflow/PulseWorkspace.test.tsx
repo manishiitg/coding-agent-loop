@@ -13,7 +13,7 @@ describe('PulseWorkspace information hierarchy', () => {
         workspace_path: 'Workflow/example', module: 'technical_review', focus_key: 'store_integrity', route_scope: 'workflow/learnings',
         last_reviewed_at: '2026-08-31T10:16:48Z', last_pulse_run_id: 'pulse-learning', last_verdict: 'Consolidated learnings and verified references.', updated_at: '2026-08-31T10:16:48Z',
       }]} statusError={null} />)
-    expect(html.indexOf('Needs your decision')).toBeLessThan(html.indexOf('Progress toward the goal'))
+    expect(html.indexOf('Needs your decision')).toBeLessThan(html.indexOf('Progress toward goals'))
     expect(html.indexOf('Work areas')).toBeLessThan(html.indexOf('Issues and follow-through'))
     expect(html).toContain('Drift check')
     expect(html).toContain('Pending check')

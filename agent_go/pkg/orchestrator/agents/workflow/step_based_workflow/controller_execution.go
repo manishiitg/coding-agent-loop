@@ -1580,7 +1580,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 				scriptedEnv[ScriptedParametersEnv] = "{}"
 			}
 		}
-		_, _, _, folderEnv := appendWorkflowFolderAccess(hcpo.GetWorkspacePath(), nil, nil)
+		_, _, _, folderEnv := appendWorkflowFolderAccess(hcpo.GetWorkspacePath(), nil, nil, kbAccessAllowsRead(resolveKnowledgebaseAccess(getAgentConfigs(step), hcpo.UseKnowledgebase())))
 		for key, value := range folderEnv {
 			scriptedEnv[key] = value
 		}

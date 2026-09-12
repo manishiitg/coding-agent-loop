@@ -169,17 +169,19 @@ func GoogleServiceScopeURIs(grants []GoogleServiceGrant) []string {
 }
 
 // GoogleCLIAccess is what a caller needs to run one gogcli invocation on
-// behalf of a connection: which binary, which token, and which services (and
+// behalf of a connection: which binary, account/client, and which services (and
 // at what access level) that connection is actually authorized for.
 type GoogleCLIAccess struct {
+	Account string
+	Client  string
 	GogPath string
-	Token   string
+	Token   string // legacy connections only; gog accounts supply Account/Client
 	// Grants maps service -> write-allowed. A service absent from this map is
 	// not authorized at all for this connection.
 	Grants map[string]bool
 }
 
-// GoogleCLIAccessForConnection resolves the token and grant set for one
+// GoogleCLIAccessForConnection resolves authentication and the grant set for one
 // connection (or the default connection, when id is empty), for the generic
 // Google CLI tool (virtual-tools' google_cli_tool.go) to shell out with.
 //
@@ -208,9 +210,15 @@ func (g *GmailService) GoogleCLIAccessForConnection(ctx context.Context, connect
 		return GoogleCLIAccess{}, fmt.Errorf("connection %q (%s) is not authorized for any service beyond Gmail — enable one in workflow bots settings", conn.ID, conn.DisplayName)
 	}
 
-	token, err := accessTokenForConnection(ctx, conn.ID, conn.ClientName)
-	if err != nil {
-		return GoogleCLIAccess{}, err
+	var token string
+	if conn.AuthBackend != "gog" {
+		var err error
+		token, err = accessTokenForConnection(ctx, conn.ID, conn.ClientName)
+		if err != nil {
+			return GoogleCLIAccess{}, err
+		}
+	} else if conn.Email == "" || conn.ClientName == "" {
+		return GoogleCLIAccess{}, fmt.Errorf("Google connection is missing its account or client")
 	}
 
 	cfg := g.GetConfig()
@@ -225,7 +233,7 @@ func (g *GmailService) GoogleCLIAccessForConnection(ctx context.Context, connect
 	for _, grant := range conn.Services {
 		grants[grant.Service] = grant.Write
 	}
-	return GoogleCLIAccess{GogPath: gogPath, Token: token, Grants: grants}, nil
+	return GoogleCLIAccess{GogPath: gogPath, Token: token, Account: conn.Email, Client: conn.ClientName, Grants: grants}, nil
 }
 
 // sortedGoogleServiceNames lists catalog keys for an error message enumerating
@@ -301,7 +309,11 @@ func RunGoogleCLI(ctx context.Context, connectionID string, args []string) (stri
 	}
 
 	finalArgs := append([]string{"--home", gogHomeDir()}, trimmed...)
-	finalArgs = append(finalArgs, "--access-token", access.Token)
+	if access.Token != "" {
+		finalArgs = append(finalArgs, "--access-token", access.Token)
+	} else {
+		finalArgs = append(finalArgs, "--account", access.Account, "--client", access.Client)
+	}
 	if !writeAllowed {
 		finalArgs = append(finalArgs, "--readonly")
 	}

@@ -1,7 +1,8 @@
 # Outcome goals and measurable progress
 
-Pulse starts with primary and optional secondary outcome goals, then one primary
-metric and supporting metrics. Goal priority and metric role are independent.
+Pulse starts with primary and optional secondary outcome goals, then one or more
+primary metrics per goal and linked supporting measurements. Goal priority and
+metric role are independent.
 Acceptance conditions and explicit user boundaries remain available as expandable
 sections. The current soul document stays canonical for intent; SQLite owns metric
 definitions and observations. There is no extra reviewer-authored report.
@@ -58,7 +59,7 @@ collection never falls back silently to an earlier successful value. There is no
 invented universal progress percentage. Target met is a metric state, not a claim
 that every goal and boundary is satisfied.
 
-Run/Pulse summaries receive platform-computed Goal progress and Supporting metrics
+Run/Pulse summaries receive platform-computed goal progress grouped by primary metric with linked supporting measurements
 sections ahead of review details, including when agents provide rich email HTML.
 The provider reads the trusted notification workspace; recipients and routing are
 unchanged. If readings cannot be loaded, the summary says progress is unavailable.
@@ -93,12 +94,45 @@ status, and recent comparable history. Up to 120 observations per active metric
 are returned. The existing read-only `window.report.query` can query the full
 `workflow_goal_metrics` / `pulse_goal_observations` history when needed.
 
-The widget shows the primary metric first, supporting metrics, trends, targets,
+The widget groups primary metrics by goal and shows their linked supporting measurements, trends, targets,
 last observation time, and expandable definitions and evidence. Styling is bundled
 and isolated from the report's CSS. It works in both the app and `preview_report`,
 refreshes through the standard `ready` lifecycle, and never replaces missing or
 failed measurements with invented values. Legacy workflows show a setup message.
 Report field edits cannot modify these managed measurement tables.
+
+## Multiple outcomes and workflow boundaries
+
+A workflow groups work planned, executed and evaluated together. Keep shared
+investigations/actions and routine tradeoffs together; suggest splitting independent
+work. Neither goal/metric count nor schedule differences force a split.
+
+`configure_goal_metrics` accepts one or more primaries (up to 30 total measurements).
+Primary metrics may share `goal_id`/`goal_name`; `criterion_id` remains the immutable
+observation contract. Supporting metrics use `supports: [primary_id, ...]` and optional
+`support_kind: breakdown | diagnostic | guardrail`. Goal names must agree for one ID.
+Breakdowns must match their parents' unit, direction and window. A shared supporting
+measurement is collected once and shown under each related primary.
+
+Optional `dimensions` identify one fixed slice per metric ID. Collection still uses
+that ID and its exact source query, route and environment. Different slices never
+share an observation series; changing dimensions requires a new ID. No implicit
+aggregation of slices, percentiles or independent outcomes is performed.
+
+Legacy single-primary definitions acquire supporting links on read without rewriting
+observations. Reconfiguration with multiple primaries requires explicit supporting
+links. Role/group/link edits preserve history; measurement meaning changes do not.
+Old workflows and collectors continue to work; no workflow is split automatically.
+Existing RTS roles should be reviewed via setup, not automatically promoted or assigned
+new targets by a database migration.
+
+Reviews cover each primary with progress and evidence freshness, then prioritize
+investigation. An intervention retains its lead `metric` and can add `effects` with
+additional metric IDs and expected directions. Assess each using `assessment.metric`.
+Legacy assessments without a metric refer to the lead effect. Additional effects are
+retained on older-client updates and cannot be redefined in place. Adoption of an
+improvement with multiple effects requires positive/unchanged assessments for all
+of them; regression or missing evidence is not hidden by another metric's success.
 
 ## Outcome priorities
 

@@ -9,9 +9,23 @@ Read soul/soul.md, the current plan/config, reports and relevant existing data.
 Call get_goal_metrics(workspace_path=...) for current definitions and history.
 Use known user intent and prior answers. Do not ask the user to repeat them.
 
+## Choose workflow boundaries by the work
+A workflow groups work that needs to be planned, executed, and evaluated together.
+It can have multiple goals and primary metrics. Keep shared investigations,
+actions and routine outcome tradeoffs together. Consider splitting independently
+operating work, especially when owners or permission boundaries differ. Sharing
+a server alone does not justify grouping; different schedules alone do not justify
+splitting because routes can have separate schedules.
+Practical test: would separate workflows repeatedly coordinate the same investigation
+or change? Keep that work together. If they mostly exchange results, suggest separate
+workflows with shared evidence and guardrails. Explain the recommendation using the
+actual routes and let the user choose. Never force or execute a split because of the
+number of goals, routes or primary metrics; preserve existing boundaries unless the
+user authorizes restructuring.
+
 ## Agree on outcomes and measurement
-Present a short proposal: primary and secondary outcome goal bullets, one primary metric, supporting
-metrics, a target or "establish a baseline first", and explicit boundaries.
+Present a short proposal: primary and secondary outcome goal bullets, one or more primary metrics per goal, their supporting
+measurements, a target or "establish a baseline first", and explicit boundaries.
 Ask only about unresolved priorities, targets or material changes to meaning.
 For X, distinguish followers from paid subscribers; use received engagement,
 not actions performed, to describe audience response. Activity metrics can
@@ -50,9 +64,22 @@ explicit approvals. Do not discard existing success commitments during migration
 
 ## Configure once
 Call configure_goal_metrics with the COMPLETE active list (omitted metrics are
-retired, not deleted). Exactly one metric is primary. Each definition has:
+retired, not deleted). At least one metric is primary; multiple goals and primary metrics are supported. Each definition has:
 - id and criterion_id: stable IDs, reusing comparable existing observation IDs;
 - name, role (primary/supporting), unit, direction (increase/decrease/maintain);
+- goal_id and goal_name together on primary metrics to group them by outcome;
+  reuse the same goal_id/name for metrics measuring the same goal. Keep goal IDs
+  separate from immutable historical criterion_id values;
+- supports on every supporting metric: IDs of the primaries it explains or constrains;
+  one supporting measurement may serve several primaries and inherits their goals;
+- support_kind: breakdown (same measurement by cohort), diagnostic (explains movement),
+  or guardrail (a constraint). Preserve unclassified legacy supporting measurements
+  until their relationship is understood; do not automatically promote them;
+- optional dimensions: fixed key/value slice such as language=English or endpoint=/sessions.
+  Each slice uses its own stable metric ID and exact scoped collector query. A changed
+  slice requires a new ID. Existing named slice metrics keep their IDs and definitions
+  without requiring dimensions metadata to be backfilled. Never average percentiles
+  or sum component medians to manufacture an overall metric;
 - definition: precise calculation/aggregation including denominator where relevant;
 - source: exact existing query, API, output field or collector location;
 - window: instant, trailing 7 days, post age 24 hours, etc.;
@@ -60,7 +87,8 @@ retired, not deleted). Exactly one metric is primary. Each definition has:
 - collection_frequency and freshness_hours: how often to collect and when data is stale;
 - optional target and target_date (YYYY-MM-DD): use user-agreed targets only.
 Do not invent measurements, targets or a universal success percentage.
-Changing definition/unit/window/source/scope/direction requires a NEW metric ID.
+Changing definition/unit/window/source/scope/direction/dimensions requires a NEW metric ID.
+Changing role, goal grouping or supporting links preserves measurement history.
 Reruns reuse unchanged IDs and preserve historical data; never reset history.
 
 ## Connect and verify collection
@@ -88,6 +116,6 @@ while measurement is being configured. Baseline collection may continue after
 Pulse is enabled; no fabricated baseline or target is required to enable it.
 
 ## Finish
-Summarize the primary/secondary goals, primary/supporting metrics, sources, verified collection,
+Summarize the primary/secondary goals, primary metrics and their supporting measurements, sources, verified collection,
 backfill coverage and any outstanding decisions. No separate Markdown review,
 HTML dashboard or manual chart: Pulse renders the typed data automatically.

@@ -14,13 +14,20 @@ import (
 func createGoalMetricTools() ([]llmtypes.Tool, map[string]interface{}, map[string]string) {
 	var metric, observation map[string]interface{}
 	_ = json.Unmarshal([]byte(`{"type": "object", "additionalProperties": false, "properties": {"id": {"type": "string"}, "criterion_id": {"type": "string"}, "name": {"type": "string"}, "role": {"type": "string", "enum": ["primary", "supporting"]}, "unit": {"type": "string"}, "direction": {"type": "string", "enum": ["increase", "decrease", "maintain"]}, "definition": {"type": "string"}, "source": {"type": "string"}, "window": {"type": "string"}, "route": {"type": "string"}, "environment": {"type": "string"}, "collection_frequency": {"type": "string"}, "target_date": {"type": "string"}, "freshness_hours": {"type": "number", "exclusiveMinimum": 0}, "target": {"type": "number"}}, "required": ["id", "criterion_id", "name", "role", "unit", "direction", "definition", "source", "window", "collection_frequency", "freshness_hours"]}`), &metric)
+	metricProps := metric["properties"].(map[string]interface{})
+	for _, key := range []string{"goal_id", "goal_name"} {
+		metricProps[key] = map[string]interface{}{"type": "string"}
+	}
+	metricProps["supports"] = map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "string"}, "uniqueItems": true, "description": "IDs of primary metrics this supporting measurement explains or constrains. Required with multiple primaries."}
+	metricProps["support_kind"] = map[string]interface{}{"type": "string", "enum": []string{"breakdown", "diagnostic", "guardrail"}}
+	metricProps["dimensions"] = map[string]interface{}{"type": "object", "additionalProperties": map[string]interface{}{"type": "string"}, "description": "Fixed dimension slice for this metric ID, e.g. language=English. Each slice has its own immutable metric ID; never combine percentiles by averaging."}
 	_ = json.Unmarshal([]byte(`{"type": "object", "additionalProperties": false, "properties": {"criterion_id": {"type": "string"}, "metric": {"type": "string"}, "run_id": {"type": "string"}, "unit": {"type": "string"}, "route": {"type": "string"}, "environment": {"type": "string"}, "observed_at": {"type": "string"}, "status": {"type": "string"}, "value": {"type": "number"}, "evidence": {"type": "array", "items": {"type": "string"}, "minItems": 1}}, "required": ["criterion_id", "metric", "run_id", "unit", "observed_at", "evidence"]}`), &observation)
 	specs := []struct {
 		name, description, field string
 		schema                   map[string]interface{}
 	}{
 		{"get_goal_metrics", "Read configured primary/supporting metric definitions and recent source-backed observations before setup, collection or strategic review.", "", nil},
-		{"configure_goal_metrics", "Builder setup: replace the complete active metric list with exactly one primary metric. Reuse stable IDs; changing measurement meaning requires a new ID. Omitted metrics are retired, history retained. Confirm changes to goal meaning and targets with the user; never invent targets. This saves definitions, not a claim that a collector works.", "metrics", metric},
+		{"configure_goal_metrics", "Builder setup: replace the complete active metric list with one or more primary metrics. Group primary metrics using optional goal_id/goal_name; link supporting measurements with supports and support_kind. Multiple outcomes never force a workflow split. Reuse stable IDs; changing measurement meaning requires a new ID. Omitted metrics are retired, history retained. Confirm changes to goal meaning and targets with the user; never invent targets. This saves definitions, not a claim that a collector works.", "metrics", metric},
 		{"record_goal_observations", "Record real measurements from workflow runs or scheduled collectors, independently of Pulse reviews. Use configured metric IDs and exact criterion/unit/route/environment. Supply source run ID, actual observation time and evidence. Missing values need status; never substitute zero. Backfill only comparable evidence. Duplicate observations are idempotent; conflicting values are rejected.", "observations", observation},
 	}
 	tools := []llmtypes.Tool{}
@@ -81,10 +88,9 @@ func loadGoalProgressNotificationSections(ctx context.Context, workspacePath str
 		return nil, err
 	}
 	if len(ledger.Metrics) == 0 {
-		return []services.NotificationSummarySection{{Heading: "Goal progress", Body: "Measurement setup needed. Use /setup-goals to choose a primary metric and connect collection."}}, nil
+		return []services.NotificationSummarySection{{Heading: "Goal progress", Body: "Measurement setup needed. Use /setup-goals to choose primary metrics and connect collection."}}, nil
 	}
-	primary := []string{}
-	supporting := []string{}
+	lines := map[string]string{}
 	for _, p := range step.GoalMetricSnapshots(ledger, time.Now()) {
 		line := p.Metric.Name + ": " + p.State
 		if p.Value != nil {
@@ -103,15 +109,27 @@ func loadGoalProgressNotificationSections(ctx context.Context, workspacePath str
 		if p.ObservedAt != "" {
 			line += " · observed " + p.ObservedAt
 		}
-		if p.Metric.Role == "primary" {
-			primary = append(primary, line)
-		} else {
-			supporting = append(supporting, line)
-		}
+		lines[p.Metric.ID] = line
 	}
-	sections := []services.NotificationSummarySection{{Heading: "Goal progress", Body: strings.Join(primary, "\n")}}
-	if len(supporting) > 0 {
-		sections = append(sections, services.NotificationSummarySection{Heading: "Supporting metrics", Body: strings.Join(supporting, "\n")})
+	sections := []services.NotificationSummarySection{}
+	for _, m := range ledger.Metrics {
+		if m.Role != "primary" {
+			continue
+		}
+		body := []string{lines[m.ID]}
+		for _, support := range ledger.Metrics {
+			for _, id := range support.Supports {
+				if id == m.ID {
+					body = append(body, "Supporting: "+lines[support.ID])
+					break
+				}
+			}
+		}
+		heading := "Goal progress: " + m.Name
+		if m.GoalName != "" {
+			heading = m.GoalName + " — " + m.Name
+		}
+		sections = append(sections, services.NotificationSummarySection{Heading: heading, Body: strings.Join(body, "\n")})
 	}
 	return sections, nil
 }

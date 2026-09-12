@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/common"
+	"github.com/manishiitg/coding-agent-loop/workspace/gogconfig"
 )
 
 // SessionShellConfig delegates to common.SessionShellConfig.
@@ -1148,6 +1149,12 @@ func isAllowedAbsoluteHostPath(candidate string, guard *FolderGuardConfig) bool 
 		return false
 	}
 	cleanCandidate := filepath.Clean(candidate)
+	// This host-managed CLI store is a separate runtime grant, not a new
+	// workspace write permission. The execution host grants its own resolved
+	// store independently, so caller-provided environment cannot widen access.
+	if home := gogconfig.TerminalHome(guard.StrictAllowlist); home != "" && isPathUnder(cleanCandidate, filepath.Clean(home)) {
+		return true
+	}
 	for _, allowed := range guard.WritePaths {
 		if !filepath.IsAbs(allowed) {
 			continue

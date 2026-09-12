@@ -240,14 +240,7 @@ func (g *GmailService) ReloadConfig(ctx context.Context) error {
 	// Enabled requires: the flag on and a resolvable binary for whichever
 	// backend is active. Without a binary every send would fail, so we
 	// report disabled rather than register a dead connector.
-	activePath := gwsPath
-	if cfg.UseGogBackend {
-		activePath = gogPath
-	}
-	binaryOK := true
-	if _, lookErr := exec.LookPath(activePath); lookErr != nil {
-		binaryOK = false
-	}
+	binaryOK := gmailConfiguredBinaryAvailable(cfg, gwsPath, gogPath)
 
 	g.gwsPath = gwsPath
 	g.gogPath = gogPath
@@ -262,10 +255,10 @@ func (g *GmailService) ReloadConfig(ctx context.Context) error {
 	g.enabled = cfg.Enabled && binaryOK
 
 	if cfg.Enabled && !g.enabled {
-		log.Printf("[GMAIL] Service disabled: enabled=%v, hasDefaultTo=%v, backend=%s, binaryFound=%v",
-			cfg.Enabled, g.defaultTo != "", activePath, binaryOK)
+		log.Printf("[GMAIL] Service disabled: enabled=%v, hasDefaultTo=%v, gws=%s, gog=%s, binaryFound=%v",
+			cfg.Enabled, g.defaultTo != "", gwsPath, gogPath, binaryOK)
 	} else if g.enabled {
-		log.Printf("[GMAIL] Service enabled: default_to=%s, blocked_recipients=%d, backend=%s", g.defaultTo, len(cfg.BlockedRecipients), activePath)
+		log.Printf("[GMAIL] Service enabled: default_to=%s, blocked_recipients=%d, gws=%s, gog=%s", g.defaultTo, len(cfg.BlockedRecipients), gwsPath, gogPath)
 	}
 	return nil
 }
@@ -398,7 +391,7 @@ func (g *GmailService) authStatusBlocking(ctx context.Context, key string, cfg *
 // the gog backend (gmail_gog.go) when useGog is set. Split out so the caching
 // wrapper stores exactly one result regardless of which branch returns.
 func (g *GmailService) computeAuthStatus(ctx context.Context, gwsPath string, useGog bool, gogPath string, cfg *GmailConfig) GmailAuthStatus {
-	if useGog {
+	if useGog || (cfg != nil && cfg.UseGogBackend) {
 		return g.computeAuthStatusGog(ctx, gogPath, cfg)
 	}
 	if gwsPath == "" {
@@ -707,7 +700,7 @@ func (g *GmailService) send(ctx context.Context, cfg *GmailConfig, to, subject, 
 	gwsPath := g.gwsPath
 	useGog, gogPath := g.useGog, g.gogPath
 	g.mu.RUnlock()
-	if useGog {
+	if useGog || (cfg != nil && cfg.UseGogBackend) {
 		return g.sendGog(ctx, gogPath, cfg, to, subject, body)
 	}
 	if strings.TrimSpace(gwsPath) == "" {
@@ -803,7 +796,7 @@ func (g *GmailService) sendRaw(ctx context.Context, cfg *GmailConfig, to string,
 	gwsPath := g.gwsPath
 	useGog, gogPath := g.useGog, g.gogPath
 	g.mu.RUnlock()
-	if useGog {
+	if useGog || (cfg != nil && cfg.UseGogBackend) {
 		return g.sendRawGog(ctx, gogPath, cfg, to, cc, subject, body, htmlBody, attachments)
 	}
 	if strings.TrimSpace(gwsPath) == "" {

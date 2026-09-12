@@ -1,3 +1,4 @@
+import { sharedReturnPath, SHARE_RETURN_KEY } from '../utils/sharedLinks'
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import { authApi, getAuthToken, setAuthToken, clearAuthToken } from '../services/api'
@@ -113,6 +114,10 @@ export const useAuthStore = create<AuthState>()(
         loginWithOAuth: async (provider: string) => {
           set({ isLoading: true, error: null })
           try {
+            const returnTo = sharedReturnPath(window.location.pathname + window.location.search)
+              || sharedReturnPath(new URLSearchParams(window.location.search).get('next'))
+            if (returnTo) sessionStorage.setItem(SHARE_RETURN_KEY, returnTo)
+            else sessionStorage.removeItem(SHARE_RETURN_KEY)
             const redirectUri = getOAuthRedirectUri()
             const response = await authApi.startOAuth(provider, redirectUri)
 

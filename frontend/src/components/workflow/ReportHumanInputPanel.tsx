@@ -1,3 +1,4 @@
+import { PulseMetricOutcomes } from "./PulseMetricOutcomes"
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { CheckCircle2, ChevronDown, ChevronRight, Clock3, Loader2, MessageSquareText, RefreshCw, Send, Sparkles, X } from 'lucide-react'
 import { agentApi } from '../../services/api'
@@ -352,7 +353,7 @@ export function ReportHumanInputPanel({
                 {impact && (
                   <div className="rounded-md border border-violet-400/20 bg-violet-400/[0.06] px-2 py-1.5 text-violet-100">
                     <div className="font-medium">Impact tracking</div>
-                    {assessment ? (
+                    {impact.intervention.effects?.length ? <PulseMetricOutcomes item={impact.intervention} assessments={providedImpact?.assessments || []} /> : assessment ? (
                       <>
                         <div className="mt-0.5">
                           {assessment.verdict === 'improved' ? 'Improved' : assessment.verdict === 'regressed' ? 'Regressed' : assessment.verdict === 'unchanged' ? 'No clear change' : assessment.verdict === 'confounded' ? 'Could not isolate the effect' : 'Not enough evidence yet'}
@@ -361,7 +362,7 @@ export function ReportHumanInputPanel({
                             : ''}
                         </div>
                         <div className="mt-1 text-[11px] text-violet-200/70">
-                          {impact.intervention.metric.replaceAll('_', ' ')} · {assessment.confidence || 'unknown'} confidence · measured {inputTime(assessment.assessed_at)}
+                          {(assessment.metric || impact.intervention.metric).replaceAll('_', ' ')} · {assessment.confidence || 'unknown'} confidence · measured {inputTime(assessment.assessed_at)}
                         </div>
                         {assessment.next_checkpoint && <div className="mt-1 text-[11px] text-violet-200/70">Next check: {assessment.next_checkpoint}</div>}
                       </>

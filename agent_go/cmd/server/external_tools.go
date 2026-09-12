@@ -75,6 +75,7 @@ func externalTools() ([]externalTool, error) {
 			}
 			add(name, "Browse or search workflow files. Private paths and symbolic links are excluded. Results are bounded and paginated.", false, true, p, required...)
 		}
+		add("get_file_link", "Get an existing asset’s browser preview URL, authenticated download URL, size and content type. Works for large PDFs, images and videos. Links never contain credentials; recipients need workflow access.", false, true, map[string]any{"path": externalString("Workflow-relative file path.")}, "path")
 		add("read_file", "Read a workflow file up to 2 MiB, with a revision. Binary content is base64. Missing files return revision 'missing'.", false, true, map[string]any{"path": externalString("Workflow-relative file path.")}, "path")
 		for _, name := range []string{"write_file", "patch_file"} {
 			p = map[string]any{"path": externalString("Workflow-relative file path."), "expected_revision": externalString("Revision returned by read_file; use 'missing' to create.")}
@@ -261,6 +262,10 @@ func (api *StreamingAPI) handleExternalCall(w http.ResponseWriter, r *http.Reque
 		api.externalBuilderCall(w, r, tool.Name, args, *selected)
 		return
 	}
+	if tool.Name == "get_file_link" {
+		api.externalAssetLink(w, r, *selected, externalArg(args, "path"))
+		return
+	}
 	if tool.Name == "get_workflow" {
 		externalJSON(w, selected)
 		return
@@ -412,6 +417,16 @@ func (api *StreamingAPI) externalFileCall(w http.ResponseWriter, r *http.Request
 	}
 	if name == "write_file" || name == "patch_file" {
 		log.Printf("[EXTERNAL_API] user=%s tool=%s workflow=%s path=%s revision=%s", GetUserIDFromContext(r.Context()), name, workflow.Manifest.ID, req.Path, result.Revision)
+	}
+	// File responses include the existing Share file viewer URL.
+	if result.Exists {
+		raw, _ := json.Marshal(result)
+		var linked map[string]any
+		_ = json.Unmarshal(raw, &linked)
+		linked["workflow_id"] = workflow.Manifest.ID
+		linked["preview_url"] = sharedAssetURL(r, path.Join(workflow.WorkspacePath, result.Path))
+		externalJSON(w, linked)
+		return
 	}
 	externalJSON(w, result)
 }

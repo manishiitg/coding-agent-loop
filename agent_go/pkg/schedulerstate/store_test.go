@@ -510,3 +510,25 @@ func TestBeginQueuedRunAtomicallyConsumesPendingOnlyWhenLeaseSucceeds(t *testing
 		t.Fatalf("duplicate queued claim error = %v, want ErrPendingOccurrenceMissing", err)
 	}
 }
+
+func TestWebhookRunFolderBinding(t *testing.T) {
+	s := openTestStore(t)
+	ctx := context.Background()
+	if err := s.BeginRun(ctx, Run{RunID: "hook", ScopeType: "workflow", ScopeID: "test", LockKey: "test", ScheduleID: "trigger", TriggerSource: "webhook"}); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 2; i++ {
+		if err := s.AssignRunFolder(ctx, "hook", "iteration-1-hook"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := s.AssignRunFolder(ctx, "hook", "iteration-2-hook"); err == nil {
+		t.Fatal("folder reassigned")
+	}
+	if err := s.Transition(ctx, Transition{RunID: "hook", To: StateFailed}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.AssignRunFolder(ctx, "hook", "iteration-1-hook"); err == nil {
+		t.Fatal("terminal folder modified")
+	}
+}

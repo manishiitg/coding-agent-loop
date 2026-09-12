@@ -1924,6 +1924,9 @@ func RegisterRunFullWorkflowTool(
 			}
 
 			iteration := "iteration-0"
+			if cfg.WebhookInvocation != nil {
+				iteration = cfg.WebhookInvocation.RunFolder
+			}
 			strategy := "start_from_beginning_no_human"
 
 			// Single group only — required
@@ -2033,6 +2036,15 @@ func RegisterRunFullWorkflowTool(
 				}
 			}
 
+			if cfg.WebhookInvocation != nil {
+				if !regexp.MustCompile(`^iteration-[0-9]+-hook$`).MatchString(iteration) {
+					return "webhook run folder unavailable", nil
+				}
+				if err := cfg.WebhookInvocation.ClaimGroup(groupName); err != nil {
+					return err.Error(), nil
+				}
+			}
+
 			execToken := workflowExecutionIDToken()
 			execID := fmt.Sprintf("workflow-full-%s", execToken)
 			execCtx, cancel := context.WithCancel(session.sessionCtx)
@@ -2087,6 +2099,9 @@ func RegisterRunFullWorkflowTool(
 			execMeta := map[string]string{
 				"workshop_mode":  "runner",
 				"execution_type": "full-workflow",
+			}
+			if cfg.WebhookInvocation != nil {
+				execMeta["trigger_source"] = "webhook"
 			}
 			if disableEval {
 				execMeta["disable_eval"] = "true"

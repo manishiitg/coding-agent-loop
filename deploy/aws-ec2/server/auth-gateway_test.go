@@ -372,3 +372,27 @@ func TestWorkflowWebhookExceptionDoesNotExposeManagementOrOtherMethods(t *testin
 		}
 	}
 }
+
+func TestWebhookReadRoutesPreserveCredentials(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Bearer hook-secret" {
+			t.Error("credential changed")
+		}
+		w.WriteHeader(204)
+	}))
+	defer upstream.Close()
+	target, _ := url.Parse(upstream.URL)
+	g := &gateway{agent: httputil.NewSingleHostReverseProxy(target)}
+	for _, p := range []string{"/api/hooks/workflow/id/runs/run", "/api/hooks/workflow/id/runs/run/artifact?path=file&token=signed"} {
+		r := httptest.NewRequest("GET", p, nil)
+		r.Header.Set("Authorization", "Bearer hook-secret")
+		w := httptest.NewRecorder()
+		g.ServeHTTP(w, r)
+		if w.Code != 204 {
+			t.Fatalf("read route: %d", w.Code)
+		}
+	}
+	if isWorkflowWebhookRequest(httptest.NewRequest("DELETE", "/api/hooks/workflow/id/runs/run", nil)) {
+		t.Fatal("mutation bypass")
+	}
+}

@@ -923,3 +923,19 @@ func formatTime(value time.Time) string {
 func parseTime(value string) (time.Time, error) {
 	return time.Parse(time.RFC3339Nano, value)
 }
+
+// AssignRunFolder binds output identity once while the run is active.
+func (s *Store) AssignRunFolder(ctx context.Context, runID, folder string) error {
+	result, err := s.db.ExecContext(ctx, `UPDATE schedule_runs SET run_folder = ? WHERE run_id = ? AND completed_at IS NULL AND (run_folder = '' OR run_folder = ?)`, folder, runID, folder)
+	if err != nil {
+		return err
+	}
+	n, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n != 1 {
+		return fmt.Errorf("run folder already bound or run inactive")
+	}
+	return nil
+}

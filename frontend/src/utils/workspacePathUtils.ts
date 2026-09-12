@@ -215,7 +215,7 @@ export function findIterationFolders(fileList: PlannerFile[]): string[] {
       // Check if this is an iteration folder (matches pattern: runs/iteration-* or iteration-*)
       // Also handle group subfolders: runs/iteration-*/group-* or runs/iteration-*/display-name
       // Accepts both "group-X" format and display names (any alphanumeric/dash folder name)
-      if (file.filepath.match(/^runs\/iteration-\d+(\/[a-zA-Z0-9_-]+)?$/) || file.filepath.match(/^iteration-\d+(\/[a-zA-Z0-9_-]+)?$/)) {
+      if (file.filepath.match(/^runs\/iteration-\d+(?:-hook)?(\/[a-zA-Z0-9_-]+)?$/) || file.filepath.match(/^iteration-\d+(?:-hook)?(\/[a-zA-Z0-9_-]+)?$/)) {
         iterationFolders.push(file.filepath)
       }
       
@@ -235,8 +235,8 @@ export function findIterationFolders(fileList: PlannerFile[]): string[] {
  */
 export function isIterationFolder(path: string): boolean {
   return !!(
-    path.match(/^runs\/iteration-\d+(\/[a-zA-Z0-9_-]+)?$/) || 
-    path.match(/^iteration-\d+(\/[a-zA-Z0-9_-]+)?$/)
+    path.match(/^runs\/iteration-\d+(?:-hook)?(\/[a-zA-Z0-9_-]+)?$/) ||
+    path.match(/^iteration-\d+(?:-hook)?(\/[a-zA-Z0-9_-]+)?$/)
   )
 }
 

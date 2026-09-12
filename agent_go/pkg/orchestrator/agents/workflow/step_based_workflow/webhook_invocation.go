@@ -4,11 +4,15 @@ import (
 	"fmt"
 	"maps"
 	"slices"
+	"sync"
 )
 
 // WebhookInvocation is a server-created binding for an API-triggered run.
 // Delivery JSON never supplies the routes, groups, or the input file path.
 type WebhookInvocation struct {
+	RunFolder       string
+	mu              sync.Mutex
+	started         map[string]bool
 	InputFile       string
 	RouteSelections map[string]string
 	GroupNames      []string
@@ -51,4 +55,18 @@ func attachWebhookStepInputs(steps []PlanStepInterface, inputs map[string]string
 	}
 	visit(steps)
 	return result
+}
+
+// ClaimGroup prevents a resumed agent from overwriting an already dispatched delivery.
+func (w *WebhookInvocation) ClaimGroup(group string) error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if w.started[group] {
+		return fmt.Errorf("webhook group %q already started; wait for its existing execution", group)
+	}
+	if w.started == nil {
+		w.started = map[string]bool{}
+	}
+	w.started[group] = true
+	return nil
 }

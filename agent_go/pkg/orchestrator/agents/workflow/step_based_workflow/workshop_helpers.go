@@ -2,6 +2,7 @@ package step_based_workflow
 
 import (
 	"path/filepath"
+	"regexp"
 	"strings"
 )
 
@@ -15,6 +16,9 @@ func workshopInternalRunFolderForTarget(targetRunFolder string) string {
 		return "iteration-0"
 	}
 	parts := strings.Split(targetRunFolder, "/")
+	if regexp.MustCompile(`^iteration-[0-9]+-hook$`).MatchString(parts[0]) && len(parts) <= 2 && filepath.Clean(targetRunFolder) == targetRunFolder {
+		return targetRunFolder
+	}
 	if len(parts) >= 2 && strings.TrimSpace(parts[len(parts)-1]) != "" {
 		return filepath.ToSlash(filepath.Join("iteration-0", parts[len(parts)-1]))
 	}

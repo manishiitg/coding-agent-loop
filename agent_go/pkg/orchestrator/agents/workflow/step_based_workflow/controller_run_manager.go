@@ -20,6 +20,12 @@ const (
 // returns the fresh current run slot. workflow.json run_retention_count controls
 // the number of archives retained for both the workflow and evaluation trees.
 func (hcpo *StepBasedWorkflowOrchestrator) prepareCurrentRun(ctx context.Context, workspacePath string) (string, error) {
+	if opts := hcpo.GetExecutionOptions(); opts != nil && opts.WebhookInputFile != "" {
+		if !regexp.MustCompile(`^iteration-[0-9]+-hook$`).MatchString(opts.SelectedRunFolder) {
+			return "", fmt.Errorf("invalid webhook run folder")
+		}
+		return opts.SelectedRunFolder, hcpo.createRunFolderStructure(ctx, filepath.Join(workspacePath, "runs", opts.SelectedRunFolder))
+	}
 	runsPath := fmt.Sprintf("%s/runs", workspacePath)
 	evalRunsPath := fmt.Sprintf("%s/evaluation/runs", workspacePath)
 	runRetentionCount := hcpo.resolveRunRetentionCount(ctx)

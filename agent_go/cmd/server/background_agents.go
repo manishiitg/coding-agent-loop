@@ -2038,7 +2038,7 @@ func (api *StreamingAPI) processBackgroundAgentCompletion(sessionID, agentID str
 // same source-hash skip — so a run backed up by one is recognized as current by
 // the other (no double push). Keep this text in sync with Pulse's backup step.
 func workflowRunBackupDirective(snap BackgroundAgentSnapshot) string {
-	if snap.Status != BGAgentCompleted || snap.Metadata == nil {
+	if snap.Status != BGAgentCompleted || snap.Metadata == nil || snap.Metadata["trigger_source"] == "webhook" {
 		return ""
 	}
 	if snap.Kind != "workflow_run_tool" && snap.Metadata["type"] != "workflow_run" {

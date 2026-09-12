@@ -20,6 +20,7 @@ import (
 	"github.com/gorilla/websocket"
 	virtualtools "github.com/manishiitg/coding-agent-loop/agent_go/cmd/server/virtual-tools"
 	"github.com/manishiitg/mcpagent/executor"
+	"github.com/manishiitg/mcpagent/mcpclient"
 )
 
 func playwrightTestServer(t *testing.T) (*StreamingAPI, *httptest.Server) {
@@ -414,6 +415,54 @@ func TestPlaywrightSavedStepSessionResolvesActiveParent(t *testing.T) {
 			if !found || len(api.playwrightSessions("bob", "Workflow/test")) != 0 {
 				t.Fatal("child browser lost owner/workflow isolation")
 			}
+		})
+	}
+}
+
+func TestPlaywrightScheduledGroupUsesActiveRunRegistration(t *testing.T) {
+	api, server := playwrightTestServer(t)
+	registry := mcpclient.GetSessionRegistry()
+	for _, tc := range []struct {
+		name, parent string
+		allowed      bool
+	}{
+		{"scheduled", "run", true}, {"webhook", "run", true}, {"ended", "missing", false}, {"unregistered", "", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			child := "scheduled-live-test-" + tc.name
+			registry.RegisterHTTPSession(tc.parent, child)
+			defer registry.CloseHTTPSession(tc.parent)
+			conn, resp, err := websocket.DefaultDialer.Dial(strings.Replace(server.URL, "http", "ws", 1)+"/s/"+child+"/tools/browser/live", http.Header{"Authorization": []string{"Bearer producer-secret"}})
+			if !tc.allowed {
+				if conn != nil {
+					conn.Close()
+					t.Fatal("unauthorized group registered")
+				}
+				if err == nil || resp == nil || resp.StatusCode != http.StatusNotFound {
+					t.Fatalf("expected 404, got %v / %v", resp, err)
+				}
+				resp.Body.Close()
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer conn.Close()
+			readPlaywrightType(t, conn, "registered")
+			if len(api.playwrightSessions("alice", "Workflow/test")) == 0 || len(api.playwrightSessions("bob", "Workflow/test")) != 0 {
+				t.Fatal("incorrect owner visibility")
+			}
+			api.activeSessionsMux.Lock()
+			saved := api.activeSessions["run"]
+			delete(api.activeSessions, "run")
+			api.activeSessionsMux.Unlock()
+			owner, _ := api.playwrightWorkflowOwner(child)
+			if owner != "" {
+				t.Fatal("ended run still authorizes registration")
+			}
+			api.activeSessionsMux.Lock()
+			api.activeSessions["run"] = saved
+			api.activeSessionsMux.Unlock()
 		})
 	}
 }

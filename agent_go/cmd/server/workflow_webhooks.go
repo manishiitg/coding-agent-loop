@@ -96,9 +96,6 @@ func validateWebhookSchedule(s WorkflowSchedule) error {
 	if s.Webhook.AuthMode != "bearer" && s.Webhook.AuthMode != "github" {
 		return errors.New("webhook auth_mode must be bearer or github")
 	}
-	if len(s.RouteSelections) == 0 {
-		return errors.New("API triggers require a saved route selection")
-	}
 	if s.CronExpression != "" || len(s.CalendarItems) > 0 || len(s.TriggerPayload) > 0 || len(s.Messages) > 0 || s.Query != "" || s.PulseReviewOnly || s.ShouldResumePrevious() {
 		return errors.New("API triggers accept delivery input only; clock settings, request overrides, messages, and session resume are not supported")
 	}
@@ -168,9 +165,6 @@ func validateWebhookRoutes(ctx context.Context, workspacePath string, selections
 			return fmt.Errorf("API trigger route %q on step %q no longer exists", routeID, stepID)
 		}
 	}
-	if len(selections) == 0 {
-		return errors.New("select at least one workflow route")
-	}
 	return nil
 }
 
@@ -183,6 +177,8 @@ func WorkflowWebhookRoutes(router *mux.Router, svc *SchedulerService) {
 	router.HandleFunc("/api/workflow-webhooks/{id}", requireWorkflowWriteAccess(svc.deleteWorkflowWebhook)).Methods("DELETE")
 	receiver := webhookReceiver{find: findScheduleByIDAny, start: svc.triggerSavedSchedule, existing: svc.existingWebhookRun}
 	router.HandleFunc("/api/hooks/workflow/{id}", receiver.receive).Methods("POST")
+	router.HandleFunc("/api/hooks/workflow/{id}/runs/{run}", svc.pollWebhookRun).Methods("GET")
+	router.HandleFunc("/api/hooks/workflow/{id}/runs/{run}/artifact", svc.downloadWebhookArtifact).Methods("GET", "HEAD")
 }
 
 func (s *SchedulerService) listWorkflowWebhooks(w http.ResponseWriter, r *http.Request) {
@@ -478,7 +474,7 @@ func (receiver webhookReceiver) receive(w http.ResponseWriter, r *http.Request) 
 		run, lookupErr := receiver.existing(r.Context(), runID)
 		if lookupErr == nil {
 			w.Header().Set("Content-Type", "application/json")
-			_ = json.NewEncoder(w).Encode(map[string]interface{}{"status": run.State, "run_id": run.RunID, "duplicate": true})
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{"status": run.State, "run_id": run.RunID, "duplicate": true, "status_url": webhookStatusPath(id, run.RunID)})
 			return true
 		}
 		if !errors.Is(lookupErr, schedulerstate.ErrRunNotFound) {
@@ -503,5 +499,5 @@ func (receiver webhookReceiver) receive(w http.ResponseWriter, r *http.Request) 
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusAccepted)
-	_ = json.NewEncoder(w).Encode(map[string]interface{}{"status": "accepted", "run_id": acceptedID, "delivery_id": deliveryID})
+	_ = json.NewEncoder(w).Encode(map[string]interface{}{"status": "accepted", "run_id": acceptedID, "delivery_id": deliveryID, "status_url": webhookStatusPath(id, acceptedID)})
 }

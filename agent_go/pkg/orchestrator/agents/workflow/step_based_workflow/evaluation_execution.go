@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
@@ -56,7 +57,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) ExecuteEvaluationOnly(ctx context.Con
 	}
 	originalTarget := targetRunFolder
 	targetRunFolder = workshopInternalRunFolderForTarget(targetRunFolder)
-	if targetRunFolder != "iteration-0" && !strings.HasPrefix(targetRunFolder, "iteration-0/") {
+	if targetRunFolder != "iteration-0" && !strings.HasPrefix(targetRunFolder, "iteration-0/") && !regexp.MustCompile(`^iteration-[0-9]+-hook(?:/[^/]+)?$`).MatchString(targetRunFolder) {
 		// workshopInternalRunFolderForTarget always returns iteration-0[/group],
 		// so this is defense-in-depth in case the helper changes.
 		targetRunFolder = "iteration-0"

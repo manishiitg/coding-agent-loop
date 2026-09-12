@@ -63,7 +63,7 @@ func parseWorkshopIterationNumber(iteration string) int {
 		return 0
 	}
 	trimmed := strings.TrimSpace(iteration)
-	trimmed = strings.TrimPrefix(trimmed, "iteration-")
+	trimmed = strings.TrimSuffix(strings.TrimPrefix(trimmed, "iteration-"), "-hook")
 	if n, err := strconv.Atoi(trimmed); err == nil {
 		return n
 	}
@@ -3082,7 +3082,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 					"description": "Character offset into the saved scripted execution log; use next_log_offset to read more.",
 				},
 				"iteration": map[string]interface{}{
-					"type": "string", "pattern": "^iteration-[0-9]+$",
+					"type": "string", "pattern": "^iteration-[0-9]+(-hook)?$",
 					"description": "Run iteration to inspect, default iteration-0.",
 				},
 				"step_id": map[string]interface{}{
@@ -3111,7 +3111,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 
 			iteration := "iteration-0"
 			if value, ok := args["iteration"].(string); ok && value != "" {
-				if !regexp.MustCompile(`^iteration-[0-9]+$`).MatchString(value) {
+				if !regexp.MustCompile(`^iteration-[0-9]+(-hook)?$`).MatchString(value) {
 					return "iteration must be iteration-<number>", nil
 				}
 				iteration = value

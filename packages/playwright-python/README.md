@@ -96,3 +96,14 @@ recording; download anything to keep first. Abandoned replays expire after one h
 A bounded recording that reaches the size limit is labeled partial. If recording
 capacity or encoding fails, the panel reports it; do not claim a replay exists until
 it is ready. Report-owned evidence is not deleted by closing the Browser panel.
+
+### Unattended execution
+
+The platform sets `AGENTWORKS_EXECUTION_CONTEXT` for shell tools and saved scripts.
+In `schedule`, `webhook`, `bot`, `pulse`, or `notification` contexts, fixtures skip
+live registration and explicit attach helpers return a no-op handle (empty session
+ID, empty warning, safe repeated stop/context-manager cleanup). Builder behavior
+is unchanged. `AGENTWORKS_LIVE_VIEW=off` also disables explicit attachment.
+No live-stream recording is created in unattended mode. Playwright's own video,
+trace and screenshot configuration is unchanged; the Node test wrapper still
+uses its existing video-on default. Do not change assertions based on live status.

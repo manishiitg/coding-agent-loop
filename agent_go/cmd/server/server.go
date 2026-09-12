@@ -4122,6 +4122,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			secretEnvVars["SECRET_"+s.Name] = s.Value
 		}
 		sessionAwareExecutors, workspaceEnv := virtualtools.CreateWorkspaceAdvancedToolExecutorsWithSessionAndEnv(currentUserID, sessionID, secretEnvVars)
+		api.setPlaywrightExecutionContext(workspaceEnv, sessionID, req)
 		virtualtools.SetGenerateTextWorkflowTierConfig(sessionAwareExecutors, getWorkspaceAPIURL(), generateTextWorkflowTiers(presetLLMConfig))
 		if mode := validatedWorkflowExecutionMode(req.ExecutionOptions); mode != "" {
 			workspaceEnv["WORKFLOW_EXECUTION_MODE"] = mode
@@ -5154,6 +5155,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			workspaceTools := workspaceRegistry.Tools
 			workspaceExecutors := workspaceRegistry.Executors
 			workspaceEnv = workspaceRegistry.Env
+			api.setPlaywrightExecutionContext(workspaceEnv, sessionID, req)
 			toolCategories := workspaceRegistry.Categories
 			logfWithContext(queryLogCtx, "[USER_ID_DEBUGGING] Main agent workspace executors: created with explicit userID=%q sessionID=%q", currentUserID, sessionID)
 			// Inject LLM config fallback for read_image HTTP calls (e.g., from claude CLI subprocess)
@@ -9559,6 +9561,7 @@ func (api *StreamingAPI) buildWorkshopConfig(
 		secretEnvVars["SECRET_"+s.Name] = s.Value
 	}
 	sessionAwareExecutors, workspaceEnv := virtualtools.CreateWorkspaceAdvancedToolExecutorsWithSessionAndEnv(currentUserID, sessionID, secretEnvVars)
+	api.setPlaywrightExecutionContext(workspaceEnv, sessionID, req)
 	virtualtools.SetGenerateTextWorkflowTierConfig(sessionAwareExecutors, getWorkspaceAPIURL(), generateTextWorkflowTiersFromResolved(cfg.TieredConfig))
 	if mode := validatedWorkflowExecutionMode(req.ExecutionOptions); mode != "" {
 		workspaceEnv["WORKFLOW_EXECUTION_MODE"] = mode

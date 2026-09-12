@@ -628,6 +628,9 @@ func shouldRunPulseLifecycle(sctx *ScheduleContext, manifest *WorkflowManifest) 
 }
 
 func effectiveSchedulePulseMode(sctx *ScheduleContext, manifest *WorkflowManifest) string {
+	if sctx != nil && (sctx.WebhookInput != nil || sctx.Schedule.ScheduleType == "webhook") {
+		return schedulePulseModeOff
+	}
 	if sctx != nil && sctx.ForcePulseReview {
 		return schedulePulseModeFull
 	}
@@ -2351,6 +2354,9 @@ const (
 )
 
 func (s *SchedulerService) runPulseLifecycle(ctx context.Context, sctx *ScheduleContext, pulseMode, runStatus, runFolder, runSessionID, scheduleRunID, runFailureReason string) (pulseResult pulseLifecycleResult) {
+	if sctx.WebhookInput != nil || strings.EqualFold(sctx.Schedule.ScheduleType, "webhook") {
+		return pulseLifecycleNotRun
+	}
 	pulseResult = pulseLifecyclePartial
 	var reviewFixStartedAt, reviewFixCompletedAt time.Time
 
@@ -3568,9 +3574,16 @@ func (s *SchedulerService) executeJob(ctx context.Context, sctx *ScheduleContext
 func (s *SchedulerService) executeWorkshopJob(ctx context.Context, sctx *ScheduleContext, runID string) (string, string, error) {
 	messages := scheduledWorkshopMessages(sctx)
 	if sctx.WebhookInput != nil {
-		messages[0] += " " + webhookRunInputInstruction(webhookInputPath(sctx.WorkspacePath, sctx.WebhookInput.RunID))
+		messages[0] += " " + webhookRunInputInstruction(webhookInputPath(sctx.WorkspacePath, sctx.WebhookInput.RunID)) + " This is an isolated webhook invocation. Execute only the saved workflow binding. Do not run Pulse, reviewers, post-run backup, publish, or maintenance. Stop after reporting the run result."
 	}
 	runFolder := "iteration-0"
+	if sctx.WebhookInput != nil {
+		var allocationErr error
+		runFolder, allocationErr = allocateWebhookRunFolder(sctx.WorkspacePath, runID)
+		if allocationErr != nil {
+			return "", "", allocationErr
+		}
+	}
 	if sctx.PulseOnly && strings.TrimSpace(sctx.PulseEvidenceRunFolder) != "" {
 		runFolder = strings.TrimSpace(sctx.PulseEvidenceRunFolder)
 	}
@@ -3597,6 +3610,7 @@ func (s *SchedulerService) executeWorkshopJob(ctx context.Context, sctx *Schedul
 	if sctx.WebhookInput != nil {
 		s.api.webhookInvocations.Store(sessionID, &stepworkflow.WebhookInvocation{
 			InputFile:       webhookInputPath(sctx.WorkspacePath, sctx.WebhookInput.RunID),
+			RunFolder:       runFolder,
 			RouteSelections: sctx.Schedule.RouteSelections, GroupNames: sctx.Schedule.GroupNames,
 		})
 		defer s.api.webhookInvocations.Delete(sessionID)
@@ -3614,6 +3628,18 @@ func (s *SchedulerService) executeWorkshopJob(ctx context.Context, sctx *Schedul
 		len(messages), sctx.Schedule.ID, sessionID, sctx.WorkspacePath, runFolder, sctx.PulseOnly)
 
 	baseReqMap := s.buildWorkshopRequest(ctx, sctx)
+	if sctx.WebhookInput != nil {
+		baseReqMap["execution_options"].(map[string]interface{})["selected_run_folder"] = runFolder
+		s.stateStoreMu.RLock()
+		store := s.stateStore
+		s.stateStoreMu.RUnlock()
+		if store == nil {
+			return sessionID, runFolder, fmt.Errorf("webhook run store unavailable")
+		}
+		if err := store.AssignRunFolder(ctx, runID, runFolder); err != nil {
+			return sessionID, runFolder, err
+		}
+	}
 
 	// Workflow contract upgrades are a blocking preflight, not post-run cleanup.
 	// A breaking runtime migration (for example message_sequence code items to
@@ -3647,15 +3673,17 @@ func (s *SchedulerService) executeWorkshopJob(ctx context.Context, sctx *Schedul
 	// any contract upgrade — an upgrade can change the very artifacts a decision
 	// edits — and before the first schedule message. Failure to read the store
 	// is not a reason to skip the run: log it and continue unchanged.
-	if pending, listErr := listReportHumanInputs(ctx, sctx.WorkspacePath, "answered", ""); listErr != nil {
-		s.sessionLogf(sctx, sessionID, "[SCHEDULER] Could not read answered decisions for the pre-run drain (continuing): %v", listErr)
-	} else if decisionTurns := scheduledDecisionPreflightTurns(pending); len(decisionTurns) > 0 {
-		insertAt := upgradeCount
-		if insertAt < 0 || insertAt > len(turns) {
-			insertAt = 0
+	if sctx.WebhookInput == nil {
+		if pending, listErr := listReportHumanInputs(ctx, sctx.WorkspacePath, "answered", ""); listErr != nil {
+			s.sessionLogf(sctx, sessionID, "[SCHEDULER] Could not read answered decisions for the pre-run drain (continuing): %v", listErr)
+		} else if decisionTurns := scheduledDecisionPreflightTurns(pending); len(decisionTurns) > 0 {
+			insertAt := upgradeCount
+			if insertAt < 0 || insertAt > len(turns) {
+				insertAt = 0
+			}
+			turns = append(turns[:insertAt], append(decisionTurns, turns[insertAt:]...)...)
+			s.sessionLogf(sctx, sessionID, "[SCHEDULER] Running %d structured answered-decision preflight turn(s) before this run's first schedule message", len(decisionTurns))
 		}
-		turns = append(turns[:insertAt], append(decisionTurns, turns[insertAt:]...)...)
-		s.sessionLogf(sctx, sessionID, "[SCHEDULER] Running %d structured answered-decision preflight turn(s) before this run's first schedule message", len(decisionTurns))
 	}
 	// Unanswered decisions are not executable instructions and must never be
 	// silently inferred. Surface them to the first normal schedule turn so the

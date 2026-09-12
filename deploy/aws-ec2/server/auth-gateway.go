@@ -359,11 +359,23 @@ func (g *gateway) login(w http.ResponseWriter, r *http.Request) {
 // Keep management endpoints behind the normal user gate.
 func isWorkflowWebhookRequest(r *http.Request) bool {
 	const prefix = "/api/hooks/workflow/"
-	if r.Method != http.MethodPost || !strings.HasPrefix(r.URL.Path, prefix) {
+	if !strings.HasPrefix(r.URL.Path, prefix) {
 		return false
 	}
 	id := strings.TrimPrefix(r.URL.Path, prefix)
-	return id != "" && id != "." && id != ".." && !strings.Contains(id, "/")
+	parts := strings.Split(id, "/")
+	for _, part := range parts {
+		if part == "" || part == "." || part == ".." {
+			return false
+		}
+	}
+	if r.Method == http.MethodPost {
+		return len(parts) == 1
+	}
+	if r.Method != http.MethodGet && r.Method != http.MethodHead {
+		return false
+	}
+	return (len(parts) == 3 && parts[1] == "runs" && r.Method == http.MethodGet) || (len(parts) == 4 && parts[1] == "runs" && parts[3] == "artifact")
 }
 
 func (g *gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {

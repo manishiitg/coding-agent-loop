@@ -1,0 +1,394 @@
+package server
+
+import (
+	"crypto/subtle"
+	"encoding/json"
+	"fmt"
+	"io"
+	"io/fs"
+	"mime"
+	"net/http"
+	"net/url"
+	"os"
+	"path"
+	"path/filepath"
+	"regexp"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/golang-jwt/jwt/v5"
+	"github.com/gorilla/mux"
+	stepworkflow "github.com/manishiitg/coding-agent-loop/agent_go/pkg/orchestrator/agents/workflow/step_based_workflow"
+	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/schedulerstate"
+)
+
+var webhookFolderPattern = regexp.MustCompile(`^iteration-([0-9]+)-hook$`)
+
+func webhookWorkspaceRoot(workspace string) (*os.Root, error) {
+	if !strings.HasPrefix(workspace, "Workflow/") || path.Clean(workspace) != workspace || strings.ContainsAny(workspace, "\\\x00") {
+		return nil, fmt.Errorf("invalid workflow path")
+	}
+	docs, err := os.OpenRoot(stepworkflow.GetPromptDocsRoot())
+	if err != nil {
+		return nil, err
+	}
+	defer docs.Close()
+	return docs.OpenRoot(workspace)
+}
+
+// Exclusive mkdir is the final arbiter, including across concurrent processes.
+func allocateWebhookRunFolder(workspace, runID string) (string, error) {
+	lock := scheduleRunFileLock(workspace + "/hook-allocation")
+	lock.Lock()
+	defer lock.Unlock()
+	root, err := webhookWorkspaceRoot(workspace)
+	if err != nil {
+		return "", err
+	}
+	defer root.Close()
+	if err = root.MkdirAll("runs", 0700); err != nil {
+		return "", err
+	}
+	entries, err := fs.ReadDir(root.FS(), "runs")
+	if err != nil {
+		return "", err
+	}
+	n := 0
+	for _, entry := range entries {
+		if m := webhookFolderPattern.FindStringSubmatch(entry.Name()); len(m) > 0 {
+			raw, e := root.ReadFile("runs/" + entry.Name() + "/.webhook-run-id")
+			if e == nil && string(raw) == runID {
+				return entry.Name(), nil
+			}
+			i, e := strconv.Atoi(m[1])
+			if e == nil && i > n {
+				n = i
+			}
+		}
+	}
+	for {
+		n++
+		folder := fmt.Sprintf("iteration-%d-hook", n)
+		err = root.Mkdir("runs/"+folder, 0700)
+		if os.IsExist(err) {
+			continue
+		}
+		if err != nil {
+			return "", err
+		}
+		f, e := root.OpenFile("runs/"+folder+"/.webhook-run-id", os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+		if e != nil {
+			return "", e
+		}
+		_, e = f.WriteString(runID)
+		closeErr := f.Close()
+		if e != nil {
+			return "", e
+		}
+		if closeErr != nil {
+			return "", closeErr
+		}
+		return folder, nil
+	}
+}
+
+type webhookAccessClaims struct {
+	Trigger string `json:"trigger"`
+	Run     string `json:"run"`
+	File    string `json:"file,omitempty"`
+	Scope   string `json:"scope"`
+	jwt.RegisteredClaims
+}
+
+func webhookAccessToken(trigger, run, file string, ttl time.Duration) (string, error) {
+	if err := ValidateConfiguredAuthSecret(); err != nil {
+		return "", err
+	}
+	c := webhookAccessClaims{Trigger: trigger, Run: run, File: file, Scope: "webhook-run", RegisteredClaims: jwt.RegisteredClaims{ExpiresAt: jwt.NewNumericDate(time.Now().Add(ttl)), Issuer: "agentworks-webhook"}}
+	return jwt.NewWithClaims(jwt.SigningMethodHS256, c).SignedString(GetAuthSecret())
+}
+func validWebhookAccess(token, trigger, run, file string) bool {
+	c := &webhookAccessClaims{}
+	_, err := jwt.ParseWithClaims(token, c, func(t *jwt.Token) (interface{}, error) { return GetAuthSecret(), nil }, jwt.WithValidMethods([]string{"HS256"}), jwt.WithIssuer("agentworks-webhook"), jwt.WithExpirationRequired())
+	return err == nil && c.Scope == "webhook-run" && c.Trigger == trigger && c.Run == run && (c.File == "" || c.File == file)
+}
+func webhookStatusPath(trigger, run string) string {
+	return "/api/hooks/workflow/" + trigger + "/runs/" + run
+}
+
+type webhookArtifact struct {
+	Name        string     `json:"name"`
+	Path        string     `json:"path"`
+	Size        int64      `json:"size_bytes"`
+	DownloadURL string     `json:"download_url,omitempty"`
+	ExpiresAt   *time.Time `json:"expires_at,omitempty"`
+}
+type webhookStepOutput struct {
+	StepID    string                 `json:"step_id"`
+	Group     string                 `json:"group"`
+	Outputs   map[string]interface{} `json:"outputs"`
+	Artifacts []webhookArtifact      `json:"artifacts"`
+}
+type webhookRunResult struct {
+	RunID      string              `json:"run_id"`
+	Status     string              `json:"status"`
+	Terminal   bool                `json:"terminal"`
+	RunFolder  string              `json:"run_folder"`
+	Error      string              `json:"error,omitempty"`
+	FinishedAt *time.Time          `json:"finished_at,omitempty"`
+	Steps      []webhookStepOutput `json:"steps"`
+	Truncated  bool                `json:"truncated,omitempty"`
+}
+
+// Output paths are limited to a run's step output directories. Logs, source code,
+// environment files, symlinks and paths outside that run are never published.
+func webhookOutputPath(p string) bool {
+	if path.Clean(p) != p || strings.ContainsAny(p, "\\\x00") || path.IsAbs(p) {
+		return false
+	}
+	parts := strings.Split(p, "/")
+	if len(parts) < 4 || parts[1] != "execution" {
+		return false
+	}
+	for _, part := range parts {
+		if strings.HasPrefix(part, ".") || part == "code" || part == "logs" {
+			return false
+		}
+	}
+	return true
+}
+func collectWebhookOutputs(root *os.Root) ([]webhookStepOutput, bool, error) {
+	result := []webhookStepOutput{}
+	indexes := map[string]int{}
+	count, total := 0, 0
+	truncated := false
+	err := fs.WalkDir(root.FS(), ".", func(p string, d fs.DirEntry, e error) error {
+		if e != nil {
+			return e
+		}
+		if d.Type()&os.ModeSymlink != 0 {
+			return nil
+		}
+		if d.IsDir() {
+			if p != "." && (strings.HasPrefix(d.Name(), ".") || d.Name() == "code" || d.Name() == "logs") {
+				return fs.SkipDir
+			}
+			return nil
+		}
+		if !webhookOutputPath(p) {
+			return nil
+		}
+		info, e := d.Info()
+		if e != nil {
+			return e
+		}
+		if !info.Mode().IsRegular() {
+			return nil
+		}
+		count++
+		if count > 10000 {
+			truncated = true
+			return fs.SkipAll
+		}
+		parts := strings.Split(p, "/")
+		key := parts[0] + "/" + parts[2]
+		idx, ok := indexes[key]
+		if !ok {
+			idx = len(result)
+			indexes[key] = idx
+			result = append(result, webhookStepOutput{StepID: parts[2], Group: parts[0], Outputs: map[string]interface{}{}, Artifacts: []webhookArtifact{}})
+		}
+		name := strings.Join(parts[3:], "/")
+		result[idx].Artifacts = append(result[idx].Artifacts, webhookArtifact{Name: name, Path: p, Size: info.Size()})
+		if info.Size() <= 128*1024 && total+int(info.Size()) <= 2*1024*1024 {
+			ext := strings.ToLower(path.Ext(p))
+			if ext == ".json" || ext == ".txt" || ext == ".md" || ext == ".xml" || ext == ".csv" {
+				f, e := root.Open(p)
+				if e != nil {
+					return e
+				}
+				b, e := io.ReadAll(io.LimitReader(f, 128*1024+1))
+				f.Close()
+				if len(b) > 128*1024 {
+					return nil
+				}
+				if e != nil {
+					return e
+				}
+				total += len(b)
+				var v interface{}
+				if ext != ".json" || json.Unmarshal(b, &v) != nil {
+					v = string(b)
+				}
+				result[idx].Outputs[name] = v
+			}
+		}
+		return nil
+	})
+	return result, truncated, err
+}
+func (s *SchedulerService) authorizeWebhookRun(w http.ResponseWriter, r *http.Request) (*ScheduleSearchResult, schedulerstate.Run, bool) {
+	vars := mux.Vars(r)
+	found, e := findScheduleByIDAny(r.Context(), vars["id"])
+	if e != nil || found == nil {
+		http.NotFound(w, r)
+		return nil, schedulerstate.Run{}, false
+	}
+	sched := found.Manifest.Schedules[found.Index]
+	if sched.Webhook == nil || !sched.Enabled {
+		http.NotFound(w, r)
+		return nil, schedulerstate.Run{}, false
+	}
+	bearer := ""
+	if strings.HasPrefix(r.Header.Get("Authorization"), "Bearer ") {
+		bearer = strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
+	}
+	token := r.URL.Query().Get("token")
+	if token == "" {
+		token = bearer
+	}
+	valid := validWebhookAccess(token, vars["id"], vars["run"], r.URL.Query().Get("path"))
+	if !valid && bearer != "" {
+		secret, err := decryptSecretValueWithAAD(sched.Webhook.EncryptedSecret, webhookAAD(found.Manifest.ID, sched.ID))
+		valid = err == nil && subtle.ConstantTimeCompare([]byte(secret), []byte(bearer)) == 1
+	}
+	if !valid {
+		http.Error(w, "invalid run credentials", 401)
+		return nil, schedulerstate.Run{}, false
+	}
+	run, e := s.existingWebhookRun(r.Context(), vars["run"])
+	scope, scopeID, _ := scheduleStateScope(buildScheduleContext(found.WorkspacePath, found.Manifest, sched))
+	if e != nil || run.ScheduleID != sched.ID || run.ScopeType != scope || run.ScopeID != scopeID || run.TriggerSource != "webhook" {
+		http.NotFound(w, r)
+		return nil, run, false
+	}
+	return found, run, true
+}
+func openWebhookRunRoot(workspace string, run schedulerstate.Run) (*os.Root, error) {
+	if !webhookFolderPattern.MatchString(run.RunFolder) {
+		return nil, fmt.Errorf("run artifacts are not allocated")
+	}
+	root, e := webhookWorkspaceRoot(workspace)
+	if e != nil {
+		return nil, e
+	}
+	defer root.Close()
+	child, e := root.OpenRoot("runs/" + run.RunFolder)
+	if e != nil {
+		return nil, e
+	}
+	id, e := child.ReadFile(".webhook-run-id")
+	if e != nil || string(id) != run.RunID {
+		child.Close()
+		return nil, fmt.Errorf("run folder identity mismatch")
+	}
+	return child, nil
+}
+func (s *SchedulerService) pollWebhookRun(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
+	found, run, ok := s.authorizeWebhookRun(w, r)
+	if !ok {
+		return
+	}
+	lock := scheduleRunFileLock("webhook-result:" + run.RunID)
+	lock.Lock()
+	defer lock.Unlock()
+	result := webhookRunResult{RunID: run.RunID, Status: string(run.State), Terminal: run.CompletedAt != nil, RunFolder: run.RunFolder, Error: run.ErrorMessage, FinishedAt: run.CompletedAt, Steps: []webhookStepOutput{}}
+	root, e := openWebhookRunRoot(found.WorkspacePath, run)
+	if e == nil {
+		defer root.Close()
+		snapshot, readErr := root.ReadFile(".webhook-result.json")
+		if result.Terminal && readErr == nil {
+			if json.Unmarshal(snapshot, &result) != nil {
+				http.Error(w, "stored result unavailable", 503)
+				return
+			}
+		} else {
+			result.Steps, result.Truncated, e = collectWebhookOutputs(root)
+			if e != nil {
+				http.Error(w, "run outputs unavailable", 503)
+				return
+			}
+			if result.Terminal {
+				b, _ := json.Marshal(result)
+				f, err := root.OpenFile(".webhook-result.tmp", os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
+				if err == nil {
+					_, err = f.Write(b)
+					closeErr := f.Close()
+					if err == nil {
+						err = closeErr
+					}
+					if err == nil {
+						err = root.Rename(".webhook-result.tmp", ".webhook-result.json")
+					}
+				}
+				if err != nil && !os.IsExist(err) {
+					http.Error(w, "cannot persist result", 503)
+					return
+				}
+			}
+		}
+	} else if run.RunFolder != "" {
+		http.Error(w, "run outputs unavailable", 503)
+		return
+	}
+	for i := range result.Steps {
+		for j := range result.Steps[i].Artifacts {
+			a := &result.Steps[i].Artifacts[j]
+			token, err := webhookAccessToken(run.ScheduleID, run.RunID, a.Path, 30*time.Minute)
+			if err != nil {
+				http.Error(w, "artifact signing unavailable", 503)
+				return
+			}
+			expires := time.Now().Add(30 * time.Minute).UTC()
+			a.ExpiresAt = &expires
+			a.DownloadURL = webhookStatusPath(run.ScheduleID, run.RunID) + "/artifact?path=" + url.QueryEscape(a.Path) + "&token=" + url.QueryEscape(token)
+		}
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(result)
+}
+func (s *SchedulerService) downloadWebhookArtifact(w http.ResponseWriter, r *http.Request) {
+	found, run, ok := s.authorizeWebhookRun(w, r)
+	if !ok {
+		return
+	}
+	p := r.URL.Query().Get("path")
+	if !webhookOutputPath(p) {
+		http.NotFound(w, r)
+		return
+	}
+	root, e := openWebhookRunRoot(found.WorkspacePath, run)
+	if e != nil {
+		http.NotFound(w, r)
+		return
+	}
+	defer root.Close()
+	// Reject symlinks at every component, even links pointing elsewhere inside the run.
+	parts := strings.Split(p, "/")
+	for i := range parts {
+		info, e := root.Lstat(strings.Join(parts[:i+1], "/"))
+		if e != nil || info.Mode()&os.ModeSymlink != 0 {
+			http.NotFound(w, r)
+			return
+		}
+	}
+	f, e := root.Open(p)
+	if e != nil {
+		http.NotFound(w, r)
+		return
+	}
+	defer f.Close()
+	info, e := f.Stat()
+	if e != nil || !info.Mode().IsRegular() {
+		http.NotFound(w, r)
+		return
+	}
+	w.Header().Set("Content-Disposition", mime.FormatMediaType("attachment", map[string]string{"filename": filepath.Base(p)}))
+	w.Header().Set("Content-Type", "application/octet-stream")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.Header().Set("Referrer-Policy", "no-referrer")
+	w.Header().Set("Cache-Control", "private, no-store")
+	http.ServeContent(w, r, info.Name(), info.ModTime(), f)
+}

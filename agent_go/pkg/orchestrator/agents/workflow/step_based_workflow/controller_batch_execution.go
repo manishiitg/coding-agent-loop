@@ -500,6 +500,9 @@ func (hcpo *StepBasedWorkflowOrchestrator) waitForTokenPersistence() error {
 // determineBaseIterationFolder returns the current live slot. Rotation, when
 // needed, happens before batch execution; callers never choose an iteration.
 func (hcpo *StepBasedWorkflowOrchestrator) determineBaseIterationFolder() string {
+	if opts := hcpo.GetExecutionOptions(); opts != nil && opts.WebhookInputFile != "" {
+		return opts.SelectedRunFolder
+	}
 	return currentWorkflowRunFolder
 }
 

@@ -17,6 +17,7 @@ import (
 	"github.com/gorilla/mux"
 	"github.com/gorilla/websocket"
 	virtualtools "github.com/manishiitg/coding-agent-loop/agent_go/cmd/server/virtual-tools"
+	"github.com/manishiitg/mcpagent/mcpclient"
 )
 
 type playwrightLiveSession struct {
@@ -98,9 +99,15 @@ func (s *playwrightLiveSession) publish(kind string, data []byte) {
 // Never infer ownership from a session-name prefix or producer-supplied fields.
 func (api *StreamingAPI) playwrightWorkflowOwner(run string) (string, string) {
 	parent := virtualtools.GetParentChat(run)
+	registeredRun := mcpclient.GetSessionRegistry().HTTPSessionForMCPSession(run)
 	api.activeSessionsMux.RLock()
 	defer api.activeSessionsMux.RUnlock()
 	owner := api.activeSessions[run]
+	// Scheduled/webhook group sessions have no parent chat. Their execution
+	// tracker still binds them to an HTTP run; require that run to be active.
+	if owner == nil && parent == nil && registeredRun != "" {
+		owner = api.activeSessions[registeredRun]
+	}
 	if owner == nil && parent != nil {
 		owner = api.activeSessions[parent.SessionID]
 		if owner == nil || strings.TrimRight(parent.WorkflowPath, "/") != strings.TrimRight(owner.WorkspacePath, "/") || (parent.UserID != "" && parent.UserID != owner.UserID) {

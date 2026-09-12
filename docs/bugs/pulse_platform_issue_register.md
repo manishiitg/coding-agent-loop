@@ -9,6 +9,13 @@ See [PLAT-307](pulse_platform/plat-307.md) for scope and tests.
 
 # Pulse Platform-Issue Register
 
+## Builder user management and Pulse/picker follow-ups
+
+[PLAT-317](pulse_platform/plat-317.md) adds Builder-only user/access management
+with live owner/admin checks. [PLAT-315](pulse_platform/plat-315.md) removes the
+implicit metric-setup gate from the Pulse switch; [PLAT-262](pulse_platform/plat-262.md)
+fixes double handling of workflow-picker arrow keys. Release verification pending.
+
 ## September 12 — workflow capabilities and RTS fixes
 
 Implemented and deployed in RTS release `bb7ac6d-20260912135437`. Each ticket

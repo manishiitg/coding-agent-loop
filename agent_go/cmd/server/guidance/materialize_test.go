@@ -487,3 +487,14 @@ func TestMCPReferenceFollowsCapabilityAdmission(t *testing.T) {
 		}
 	}
 }
+
+func TestUserManagementReferenceIsBuilderOnly(t *testing.T) {
+	builder, err := MaterializeReferenceKindsAsSkills("workshop", []string{"user-management"})
+	if err != nil || len(builder) != 1 {
+		t.Fatalf("builder reference: %v", err)
+	}
+	run, err := MaterializeReferenceKindsAsSkills("run", []string{"user-management"})
+	if err == nil && len(run) != 0 {
+		t.Fatal("Run receives user-management skill")
+	}
+}

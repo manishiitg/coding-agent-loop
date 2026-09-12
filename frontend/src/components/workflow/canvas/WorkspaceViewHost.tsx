@@ -1,3 +1,4 @@
+import { usePulseToggle } from '../hooks/usePulseToggle'
 import React, {
   Suspense,
   forwardRef,
@@ -13,7 +14,6 @@ import { useShallow } from 'zustand/react/shallow'
 import { ReactFlowProvider } from '@xyflow/react'
 import { FileWorkspacePane } from '../../FileWorkspacePane'
 import { AskAIButton } from '../AskAIButton'
-import { sendWorkflowMessageToChat } from '../../../utils/reportHumanInputChat'
 import { useChatStore } from '../../../stores/useChatStore'
 import { WorkflowToolbar } from './WorkflowToolbar'
 import { ReportView } from '../ReportViewer'
@@ -342,23 +342,9 @@ export const WorkspaceViewHost = React.memo(forwardRef<WorkflowCanvasRef, Workfl
   }))
   const monitorOn = !!(pulseConfig.enabled || pulseConfig.legacyEnabled)
   const updateWorkflowManifest = useWorkflowManifestStore(state => state.updateWorkflow)
-  const [monitorSaving, setMonitorSaving] = useState(false)
-  const toggleMonitor = useCallback(() => {
-    if (!workspacePath || monitorSaving) return
-    setMonitorSaving(true)
-    void (async () => {
-      if (!monitorOn) {
-        const response = await agentApi.getPulseImpact(workspacePath)
-        if (!response.success) throw new Error(response.error || 'Could not check goal setup')
-        if (!response.impact?.metrics?.length) {
-          await sendWorkflowMessageToChat({ workspacePath, viewMode: 'formatted', message: 'Set up Pulse for this workflow. Call get_workflow_command_guidance(kind="setup-goals", focus="First-time Pulse setup: propose outcome bullets, one or more primary metrics per goal, linked supporting measurements and boundaries from existing context; ask only unresolved questions. Enable Pulse after agreeing on the setup.") and follow it.' })
-          return
-        }
-      }
-      await updateWorkflowManifest(workspacePath, { pulse_enabled: !monitorOn })
-    })().catch(err => useChatStore.getState().addToast(err instanceof Error ? err.message : 'Could not set up Pulse', 'error'))
-      .finally(() => setMonitorSaving(false))
-  }, [workspacePath, monitorOn, monitorSaving, updateWorkflowManifest])
+  const { monitorSaving, toggleMonitor } = usePulseToggle(
+    workspacePath, monitorOn, updateWorkflowManifest, useChatStore.getState().addToast,
+  )
 
   const [pulseModuleStates, setPulseModuleStates] = useState<PulseModuleState[]>([])
   const [pulseFinalCommandStates, setPulseFinalCommandStates] = useState<PulseFinalCommandState[]>([])

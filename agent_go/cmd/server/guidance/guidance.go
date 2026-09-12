@@ -162,6 +162,7 @@ var referenceKinds = map[string]kindMeta{
 
 	// Multi-agent and Workshop reference docs for secret management. Run can
 	// inspect available secret names but cannot create, replace, or delete them.
+	"user-management":   {Group: "system", Description: "Builder user administration and workflow ownership/sharing: inspect permissions, resolve shared KB audience mismatches, owner/admin enforcement", Modes: []string{"workshop"}},
 	"secret-management": {Group: "system", Description: "Manage workflow / user / global secrets via list_secrets, set_workflow_secret, set_user_secret, delete_workflow_secret, delete_user_secret — buckets, naming rules, attach-after-store discipline", Modes: []string{"multi-agent", "workshop"}},
 
 	// Cross-mode operational reference docs (browser and code-execution bridge).

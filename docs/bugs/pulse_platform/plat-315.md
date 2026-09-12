@@ -23,3 +23,13 @@ Included in RTS app release `bb7ac6d17ec43750e74a5c92d73ef067f66c69bf`
 (`bb7ac6d-20260912135437`), with provider `570ede69fb85beef251ddca9792a2e5ad0dfe95d`.
 All three services were active and the public health endpoint was healthy after deployment.
 Deployment health is distinct from the feature-specific acceptance scope above.
+
+## Follow-up — Pulse toggle blocked on missing metrics
+
+The Pulse pane's switch checked goal metrics and sent a setup chat instead of
+saving `pulse_enabled` when none existed, leaving the switch off. The toggle now
+saves the requested enabled state directly and reports success/failure. Goal
+Progress retains its separate setup action; missing metric data remains explicit.
+Hook tests cover successful enablement without goal setup and permission/save
+errors with saving state released. Implemented locally; release verification
+pending. This does not change backend workflow-write permission requirements.

@@ -29,7 +29,7 @@ func validateChatPolicy(m ProductManifest) error {
 	if m.ChatPolicy == nil {
 		return fmt.Errorf("AgentWorks chat_policy is required")
 	}
-	known := map[string]bool{"mcp_management": true, "plan_authoring": true, "report_authoring": true, "secret_management": true, "knowledgebase_maintenance": true, "improvement_proposals": true, "workspace_ui": true}
+	known := map[string]bool{"user_management": true, "mcp_management": true, "plan_authoring": true, "report_authoring": true, "secret_management": true, "knowledgebase_maintenance": true, "improvement_proposals": true, "workspace_ui": true}
 	validate := func(values []string) error {
 		seen := map[string]bool{}
 		for _, value := range values {

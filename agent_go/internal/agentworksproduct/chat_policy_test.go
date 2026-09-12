@@ -8,7 +8,7 @@ func TestChatPolicyManifestAuthority(t *testing.T) {
 			for _, readOnly := range []bool{false, true} {
 				got := ChatCapabilities(mode, origin, readOnly)
 				want := mode == "builder" && origin == "interactive" && !readOnly
-				if got["mcp_management"] != want {
+				if got["mcp_management"] != want || got["user_management"] != want {
 					t.Fatalf("MCP admission %s/%s readOnly=%v: %v", mode, origin, readOnly, got)
 				}
 				if readOnly && got["plan_authoring"] {

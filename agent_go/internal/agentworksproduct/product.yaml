@@ -42,6 +42,7 @@ workflows:
 chat_policy:
   modes:
     builder: &builder_capabilities
+      - user_management
       - mcp_management
       - plan_authoring
       - report_authoring

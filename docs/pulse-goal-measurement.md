@@ -9,10 +9,9 @@ definitions and observations. There is no extra reviewer-authored report.
 
 ## Setup
 
-- New workflow: enabling Pulse checks whether metrics are configured. If not, it
-  opens the shared setup conversation before enabling Pulse. The builder presents
-  outcomes, primary/supporting metrics, targets or baseline collection, and known
-  boundaries. It asks only unresolved questions, then enables Pulse after agreement.
+- Pulse can be enabled directly without configured metrics. Missing measurement
+  setup remains visible in Goal Progress; its "Set up goals & metrics" action
+  opens the shared setup conversation independently of the review toggle.
 - Existing workflow: `/setup-goals`, its `/define-success` alias, or the Pulse
   "Set up goals & metrics" button runs the same flow. Existing runs are not stopped.
 - Setup is idempotent. Existing targets/constraints are preserved unless the user

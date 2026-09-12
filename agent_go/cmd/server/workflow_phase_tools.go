@@ -57,6 +57,9 @@ func (api *StreamingAPI) installWorkflowPhaseTools(
 	}
 	active, _ := api.getActiveSession(sessionID)
 	policy := resolveWorkflowChatPolicy(phaseTemplateVars["WorkshopMode"], sessionID, syntheticReq, active, readOnly)
+	if err := api.registerUserAccessTools(definitionAgent, userID, phaseWorkspacePath, policy); err != nil {
+		return err
+	}
 	log.Printf("[CHAT_POLICY] session=%s mode=%s origin=%s capabilities=%v", sessionID, policy.Mode, policy.Origin, policy.Capabilities)
 	mcpManagement := policy.allows("mcp_management") && workflowPhaseID == workflowtypes.WorkflowStatusWorkflowBuilder && syntheticReq.AgentProfileID == ""
 	if mcpManagement {

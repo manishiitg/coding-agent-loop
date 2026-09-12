@@ -1,3 +1,3 @@
-// Manually bumped — no automated build/release versioning wired up yet.
+// The pre-commit hook increments this product patch version automatically.
 // Shown in the product switcher dropdown.
-export const APP_VERSION = '0.50.2'
+export const APP_VERSION = '0.50.3'

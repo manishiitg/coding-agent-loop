@@ -56,112 +56,14 @@ fi
 
 echo -e "${GREEN}✅ Gitleaks installed successfully${NC}"
 
-# Create scripts directory if it doesn't exist
-mkdir -p scripts
-
-# Copy the current pre-commit hook from the repo
-# The hook source of truth is maintained in .git/hooks/pre-commit
-# but we also keep a tracked copy for new clones
-cat > .git/hooks/pre-commit << 'HOOKEOF'
-#!/bin/bash
-
-# Pre-commit Hook
-# Scans staged files for secrets and sensitive data
-
-set -e
-
-# Colors for output
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-BLUE='\033[0;34m'
-NC='\033[0m' # No Color
-
-echo -e "${BLUE}🔒 Scanning for secrets with gitleaks...${NC}"
-
-# Check if gitleaks is available
-if ! command -v gitleaks &> /dev/null; then
-    echo -e "${YELLOW}⚠️  Gitleaks not found. Skipping secret scan.${NC}"
-    echo "Run './scripts/install-git-hooks.sh' to install gitleaks."
-    exit 0
-fi
-
-# Run gitleaks on staged files
-if gitleaks protect --staged --config .gitleaks.toml --verbose; then
-    echo -e "${GREEN}✅ No secrets detected.${NC}"
-else
-    echo -e "${RED}❌ Secrets detected! Commit blocked.${NC}"
-    echo ""
-    echo "Please remove or replace the detected secrets before committing."
-    echo "Common solutions:"
-    echo "  • Use environment variables instead of hardcoded secrets"
-    echo "  • Move secrets to .env files (not tracked by git)"
-    echo "  • Use placeholder values in example files"
-    echo ""
-    echo "For more information, see agent_go/SECURITY.md"
-    exit 1
-fi
-
-# Check for sensitive file patterns (bank statements, personal data, screenshots)
-echo -e "${BLUE}🔍 Checking for sensitive file patterns...${NC}"
-SENSITIVE_PATTERNS=(
-    '**/Downloads/**'
-    '**/Acct_Statement*'
-    '**/DetailedStatement*'
-    '**/Statement_*.txt'
-    '**/Statement_*.xlsx'
-    '**/Statement_*.xls'
-    '**/statement_*.txt'
-    '**/OpTransactionHistory*'
-    '**/*login*.png'
-    '**/*dashboard*.png'
-    '**/*screenshot*.png'
-    '**/*snapshot*.png'
-    '*.psv'
-)
-SENSITIVE_FILES=""
-for pattern in "${SENSITIVE_PATTERNS[@]}"; do
-    MATCHES=$(git diff --cached --diff-filter=ACMR --name-only -- "$pattern" 2>/dev/null || true)
-    if [ -n "$MATCHES" ]; then
-        SENSITIVE_FILES="$SENSITIVE_FILES$MATCHES"$'\n'
-    fi
+# Install the tracked hook, including in linked worktrees or custom hook paths.
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+HOOK_DIR="$(git rev-parse --path-format=absolute --git-path hooks)"
+mkdir -p "$HOOK_DIR"
+for hook in pre-commit post-commit; do
+    cp "$REPO_ROOT/scripts/hooks/$hook" "$HOOK_DIR/$hook"
+    chmod +x "$HOOK_DIR/$hook"
 done
-SENSITIVE_FILES=$(echo "$SENSITIVE_FILES" | sed '/^$/d')
-if [ -n "$SENSITIVE_FILES" ]; then
-    echo -e "${RED}❌ Sensitive files detected! Commit blocked.${NC}"
-    echo ""
-    echo "The following files appear to contain personal/financial data:"
-    echo "$SENSITIVE_FILES" | head -20
-    echo ""
-    echo "These files should NOT be committed to the repository."
-    echo "Remove them with: git reset HEAD <file>"
-    exit 1
-fi
-echo -e "${GREEN}✅ No sensitive file patterns detected.${NC}"
-
-# Schema drift — runs only when staged files plausibly affect generated
-# schemas/types. See scripts/check-schema-drift.sh for the exact paths.
-REPO_ROOT_FOR_DRIFT="$(git rev-parse --show-toplevel)"
-if [ -x "$REPO_ROOT_FOR_DRIFT/scripts/check-schema-drift.sh" ]; then
-    if ! "$REPO_ROOT_FOR_DRIFT/scripts/check-schema-drift.sh"; then
-        exit 1
-    fi
-fi
-
-# golangci-lint + go build (agent_go/workspace) + frontend build were removed
-# from this hook — CI (desktop-release.yml's commit-artifact job) already
-# rebuilds everything on every push to main, so re-running the full lint/
-# build locally on every commit was pure duplicated latency, not an extra
-# safety net. Run them yourself before committing if you want the earlier
-# signal (`cd agent_go && golangci-lint run ./... && go build ./...`,
-# `cd frontend && npm run build`).
-echo ""
-echo -e "${GREEN}✅ All pre-commit checks passed. Proceeding with commit.${NC}"
-exit 0
-HOOKEOF
-
-# Make the pre-commit hook executable
-chmod +x .git/hooks/pre-commit
 
 # Create a manual scan script
 cat > scripts/scan-secrets.sh << 'EOF'
@@ -229,6 +131,7 @@ echo ""
 echo -e "${GREEN}🎉 Pre-commit hooks installed successfully!${NC}"
 echo ""
 echo -e "${BLUE}What happens now:${NC}"
+echo "  • Every commit automatically bumps and stages the product patch version"
 echo "  • Every commit will be automatically scanned for secrets (gitleaks) and sensitive file patterns"
 echo "  • Commits with secrets or sensitive files will be blocked"
 echo "  • You'll get clear error messages if issues are detected"

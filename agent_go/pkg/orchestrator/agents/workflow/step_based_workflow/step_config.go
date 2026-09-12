@@ -311,7 +311,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) ReadStepOverrides(ctx context.Context
 	var manifest struct {
 		ExecutionDefaults struct {
 			DisableParallelToolExecution *bool    `json:"disable_parallel_tool_execution"`
-			ExecutionMaxTurns            *int     `json:"execution_max_turns"`
 			EnabledCustomTools           []string `json:"enabled_custom_tools"`
 		} `json:"execution_defaults"`
 	}
@@ -320,14 +319,13 @@ func (hcpo *StepBasedWorkflowOrchestrator) ReadStepOverrides(ctx context.Context
 	}
 
 	ed := manifest.ExecutionDefaults
-	if ed.DisableParallelToolExecution == nil && ed.ExecutionMaxTurns == nil && len(ed.EnabledCustomTools) == 0 {
+	if ed.DisableParallelToolExecution == nil && len(ed.EnabledCustomTools) == 0 {
 		return nil, nil
 	}
 
 	hcpo.GetLogger().Info("📁 Using step overrides from workflow.json execution_defaults")
 	return &AgentConfigs{
 		DisableParallelToolExecution: ed.DisableParallelToolExecution,
-		ExecutionMaxTurns:            ed.ExecutionMaxTurns,
 		EnabledCustomTools:           ed.EnabledCustomTools,
 	}, nil
 }
@@ -493,9 +491,6 @@ func MergeAgentConfigFields(target *AgentConfigs, source *AgentConfigs, stepID s
 	if source.KnowledgebaseContribution != "" {
 		target.KnowledgebaseContribution = source.KnowledgebaseContribution
 	}
-	if source.ExecutionMaxTurns != nil {
-		target.ExecutionMaxTurns = source.ExecutionMaxTurns
-	}
 	if source.SuccessfulRuns != nil {
 		target.SuccessfulRuns = source.SuccessfulRuns
 	}
@@ -582,7 +577,7 @@ func ApplyStepConfigFromFile(
 
 	// Apply global overrides from workflow.json execution_defaults (highest priority)
 	// This must run even when no step_config.json match exists, since execution_defaults
-	// (e.g., execution_max_turns, disable_parallel_tool_execution) apply to ALL steps regardless of per-step config.
+	// (e.g., disable_parallel_tool_execution) apply to ALL steps regardless of per-step config.
 	overrides, err := orchestrator.ReadStepOverrides(ctx)
 	if err != nil {
 		orchestrator.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to read step_override.json in ApplyStepConfigFromFile: %v", err))

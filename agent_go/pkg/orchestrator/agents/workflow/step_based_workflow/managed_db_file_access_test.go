@@ -40,10 +40,28 @@ func TestManagedStepDBFileAccessP0(t *testing.T) {
 					t.Fatalf("unexpected external test grant: %s", path)
 				}
 				dir := path
-				if strings.HasSuffix(path, "/README.md") {
+				if strings.HasSuffix(path, ".md") {
 					dir = filepath.Dir(path)
 				}
 				if err := os.MkdirAll(dir, 0700); err != nil {
+					t.Fatal(err)
+				}
+			}
+			soul := filepath.Join(workflow, "soul", "soul.md")
+			if err := os.MkdirAll(filepath.Dir(soul), 0700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(soul, []byte("fixture"), 0600); err != nil {
+				t.Fatal(err)
+			}
+			download := filepath.Join(hcpo.getOrchestratorExecutionWorkspacePath(), "Downloads", "download.txt")
+			toolOutput := filepath.Join(workflow, "tool_output_folder", "result.txt")
+			builderArtifact := filepath.Join(workflow, "builder", "conversation.txt")
+			for _, path := range []string{toolOutput, builderArtifact} {
+				if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(path, []byte("fixture"), 0600); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -59,6 +77,12 @@ func TestManagedStepDBFileAccessP0(t *testing.T) {
 				allowed       bool
 			}{
 				{"read README", "cat ../README.md", true},
+				{"read soul", "cat '" + soul + "'", true},
+				{"write soul", "printf changed > '" + soul + "'", false},
+				{"read spilled tool output", "cat '" + toolOutput + "'", true},
+				{"write spilled tool output", "printf changed > '" + toolOutput + "'", false},
+				{"read builder artifact", "cat '" + builderArtifact + "'", false},
+				{"Downloads read and write", "printf fixture > '" + download + "' && cat '" + download + "'", true},
 				{"write README", "printf changed > ../README.md", false},
 				{"assets read and write", "printf asset > artifact.txt && cat artifact.txt", true},
 				{"read sibling document", "cat ../strategy_framework.md", false},

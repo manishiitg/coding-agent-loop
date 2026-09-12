@@ -1623,7 +1623,7 @@ func (iwm *InteractiveWorkshopManager) registerMarkChangelogArtifactReviewedTool
 				},
 				"report_entry_id": map[string]interface{}{
 					"type":        "string",
-					"description": "ID/heading slug of the builder/improve.html Artifact Review entry that records this review.",
+					"description": "Optional reference ID of the structured Pulse review record that records this review.",
 				},
 				"reviewed_at": map[string]interface{}{
 					"type":        "string",
@@ -1873,7 +1873,7 @@ func workshopWritePaths(workspacePath string) []string {
 		fmt.Sprintf("%s/memory", workspacePath),
 		fmt.Sprintf("%s/execution", workspacePath),
 		fmt.Sprintf("%s/variables", workspacePath),
-		fmt.Sprintf("%s/builder", workspacePath), // improve.html and archives
+		fmt.Sprintf("%s/builder", workspacePath), // workshop conversation and changelog artifacts
 	}
 }
 
@@ -5068,11 +5068,6 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 					"maximum":     maxRunRetentionCount,
 					"description": "Number of backup run/eval iterations to keep, excluding active iteration-0. Defaults to 3 when omitted. Raise this for workflows whose Pulse or Goal Advisor reviews need a wider evidence window.",
 				},
-				"execution_max_turns": map[string]interface{}{
-					"type":        "integer",
-					"minimum":     1,
-					"description": "Workflow-level default max turns per step (stored in execution_defaults, applies to EVERY step unless a step sets its own execution_max_turns). Default when omitted: 500. Use for a workflow whose steps generally need a different ceiling than the platform default; prefer per-step tuning via update_step_config when only some steps need it. Pass null to clear the workflow-level default.",
-				},
 				"disable_parallel_tool_execution": map[string]interface{}{
 					"type":        "boolean",
 					"description": "Workflow-level default (stored in execution_defaults, applies to EVERY step unless a step overrides it) forcing one tool call per turn. Use only when most steps in this workflow need strictly sequential tool calls (e.g. a workflow that is browser-driven throughout); prefer per-step tuning via update_step_config when only some steps need it. Pass null to clear the workflow-level default.",
@@ -6067,10 +6062,9 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 			}
 
 			// --- Execution Defaults (workflow-level overrides applied to every step) ---
-			_, hasExecMaxTurns := args["execution_max_turns"]
 			_, hasDisableParallel := args["disable_parallel_tool_execution"]
 			_, hasEnabledCustomTools := args["enabled_custom_tools"]
-			if hasExecMaxTurns || hasDisableParallel || hasEnabledCustomTools {
+			if hasDisableParallel || hasEnabledCustomTools {
 				content, err := iwm.controller.ReadWorkspaceFile(ctx, "workflow.json")
 				if err != nil {
 					return fmt.Sprintf("Failed to read workflow.json: %v", err), nil
@@ -6085,38 +6079,6 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				}
 
 				var summary []string
-
-				if hasExecMaxTurns {
-					raw := args["execution_max_turns"]
-					if raw == nil {
-						delete(execDefaults, "execution_max_turns")
-						summary = append(summary, "execution_max_turns: cleared (steps use their own/default max turns)")
-					} else {
-						parseInt := func(raw interface{}) (int, bool) {
-							switch v := raw.(type) {
-							case int:
-								return v, true
-							case int64:
-								return int(v), true
-							case float64:
-								if v == float64(int(v)) {
-									return int(v), true
-								}
-							case json.Number:
-								if n, err := v.Int64(); err == nil {
-									return int(n), true
-								}
-							}
-							return 0, false
-						}
-						turns, ok := parseInt(raw)
-						if !ok || turns < 1 {
-							return "Error: execution_max_turns must be a positive integer (or null to clear).", nil
-						}
-						execDefaults["execution_max_turns"] = turns
-						summary = append(summary, fmt.Sprintf("execution_max_turns: %d (applies to every step)", turns))
-					}
-				}
 
 				if hasDisableParallel {
 					raw := args["disable_parallel_tool_execution"]
@@ -7546,7 +7508,6 @@ Review these files/directories when present. Stay read-only:
 - `+"`knowledgebase/notes/_index.json`"+` and relevant `+"`knowledgebase/notes/*.md`"+`: check topic registry, stale/duplicated notes, and whether steps that produce domain facts have matching KB contribution contracts.
 - `+"`db/README.md`"+`, `+"`db/db.sqlite`"+`, and `+"`db/assets/`"+`: check schema/DDL documentation, table shape, primary keys, upsert rules, indexes, writer ownership, group separation, durable asset metadata/provenance, and report compatibility.
 - `+"`db/reports/index.html`"+`: check whether every report view's `+"`window.report.query`"+` SQL reads durable `+"`db/db.sqlite`"+` tables (and references `+"`db/assets/`"+`/KB via `+"`window.report.get`"+`/`+"`fileUrl`"+`) rather than volatile run paths, whether referenced columns exist, and whether derived report helper tables could be collapsed into the report's query (JOIN/GROUP BY).
-- `+"`builder/improve.html`"+`: read if present to avoid repeating already-known findings and to see unresolved prior review items.
 
 {{if .TargetRunFolder}}## OPTIONAL RUN EVIDENCE
 If useful, read:

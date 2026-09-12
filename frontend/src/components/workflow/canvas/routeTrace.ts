@@ -1,4 +1,6 @@
 import type { RoutingStepNodeData, WorkflowEdge, WorkflowNode } from '../hooks/usePlanToFlow'
+import type { EvaluationStep } from '../../../services/api-types'
+import { evaluationMatchesRoute } from './routeEvaluations'
 
 export interface RouteTrace {
   nodeId: string
@@ -47,6 +49,17 @@ export function collectRouteTrace(edges: WorkflowEdge[], trace: RouteTrace) {
 export function traceRouteGraph(nodes: WorkflowNode[], edges: WorkflowEdge[], trace: RouteTrace | null) {
   const focus = trace ? collectRouteTrace(edges, trace) : null
   if (!focus) return { nodes, edges }
+  const routingStepId = (nodes.find(node => node.id === trace!.nodeId)?.data.step as { id?: string } | undefined)?.id
+  if (routingStepId) {
+    for (const node of nodes) {
+      if (node.data.isEvaluationStep && !evaluationMatchesRoute(node.data.step as EvaluationStep, routingStepId, trace!.routeId)) {
+        focus.nodeIds.delete(node.id)
+      }
+    }
+    for (const edge of edges) {
+      if (!focus.nodeIds.has(edge.source) || !focus.nodeIds.has(edge.target)) focus.edgeIds.delete(edge.id)
+    }
+  }
   // Supporting cards stay with the step they describe.
   for (const node of nodes) {
     if (typeof node.data.parentStepId === 'string' && focus.nodeIds.has(node.data.parentStepId)) {

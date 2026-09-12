@@ -121,7 +121,7 @@ func splitStageSkills(stageSkills []string) (attach []string, readPaths []string
 }
 
 func baseStageAgentConfig() map[string]interface{} {
-	return map[string]interface{}{"execution_llm": videoAgentLLMConfig(), "execution_max_turns": 100, "use_code_execution_mode": true, "additional_read_paths": []string{"uploads"}, "learnings_access": "none", "knowledgebase_access": "none", "db_access": "none"}
+	return map[string]interface{}{"execution_llm": videoAgentLLMConfig(), "use_code_execution_mode": true, "additional_read_paths": []string{"uploads"}, "learnings_access": "none", "knowledgebase_access": "none", "db_access": "none"}
 }
 func stepConfigForAll(pipelines []*Pipeline) map[string]interface{} {
 	steps := make([]map[string]interface{}, 0, len(pipelines)*8)

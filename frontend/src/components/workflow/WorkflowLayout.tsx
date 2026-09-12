@@ -1094,13 +1094,11 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
         // Load global step overrides from execution_defaults
         const hasOverrides = defaults.disable_learning !== undefined ||
           defaults.disable_parallel_tool_execution !== undefined ||
-          defaults.execution_max_turns !== undefined ||
           (defaults.enabled_custom_tools && defaults.enabled_custom_tools.length > 0)
         if (hasOverrides) {
           setStepOverride({
             disable_learning: defaults.disable_learning !== undefined ? defaults.disable_learning : undefined,
             disable_parallel_tool_execution: defaults.disable_parallel_tool_execution !== undefined ? defaults.disable_parallel_tool_execution : undefined,
-            execution_max_turns: defaults.execution_max_turns,
             enabled_custom_tools: defaults.enabled_custom_tools,
           })
         } else {

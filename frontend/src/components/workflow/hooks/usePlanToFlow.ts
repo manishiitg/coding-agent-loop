@@ -28,6 +28,7 @@ export interface StepNodeData extends Record<string, unknown> {
   selectedRunFolder?: string  // Selected iteration folder for file opening
   validation_schema?: ValidationSchema  // Validation schema from plan.json
   isEvaluationStep?: boolean  // True when rendered from evaluation_plan.json in the main flow
+  evaluationScopeLabel?: string
   // Sub-agent specific fields
   parentOrchestratorTitle?: string  // Title of parent orchestrator node (for sub-agents)
   routeName?: string  // Route name from orchestration_routes (for sub-agents)
@@ -70,6 +71,8 @@ export interface HumanInputNodeData extends Record<string, unknown> {
 }
 
 export interface RoutingStepNodeData extends Record<string, unknown> {
+  routeEvaluations?: Record<string, Array<{ id: string; title: string }>>
+  allRouteEvaluationCount?: number
   route_source?: 'human' // branch only: asks the person when nothing was preseeded
   tracedRouteId?: string
   onTraceRoute?: (routeId: string) => void
@@ -131,6 +134,7 @@ export interface EvaluationNodeData extends Record<string, unknown> {
 }
 
 export interface EvaluationStepNodeData extends Record<string, unknown> {
+  evaluationScopeLabel?: string
   id: string
   title: string
   description?: string

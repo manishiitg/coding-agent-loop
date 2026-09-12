@@ -78,7 +78,6 @@ The backend struct lives in [workflow_manifest.go](../../agent_go/cmd/server/wor
     "disable_learning": false,
     "global_skill_objective": "What the shared skill should capture",
     "disable_parallel_tool_execution": false,
-    "execution_max_turns": 100,
     "enabled_custom_tools": ["workspace_advanced:*", "human_tools:*"]
   },
   "ownership": {
@@ -133,7 +132,6 @@ Workflow-level persistent execution defaults:
 - `disable_learning`
 - `global_skill_objective`
 - `disable_parallel_tool_execution`
-- `execution_max_turns`
 - `enabled_custom_tools`
 
 This is now the active home for global step overrides.

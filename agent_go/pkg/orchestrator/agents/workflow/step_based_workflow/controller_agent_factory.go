@@ -440,7 +440,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) setupExecutionFolderGuard(stepPath st
 	}
 	executionWorkspacePath := fmt.Sprintf("%s/execution", runWorkspacePath)
 	// Set folder guard paths:
-	// READ: execution folder (to read previous step results) + soul north-star file + builder review/improve logs
+	// READ: execution folder (to read previous step results) + soul north-star file
 	// + global and step-specific learnings (if mode grants read) + knowledgebase folder (if mode grants read)
 	// WRITE: only the specific step folder (including nested sub-agent folders) plus execution/Downloads.
 	// NOTE: under kbWriteMethod=direct we add knowledgebase/notes/ to writePaths so the
@@ -451,7 +451,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) setupExecutionFolderGuard(stepPath st
 	stepFolderPath := getExecutionFolderPath(executionWorkspacePath, stepID, stepPath)
 	downloadsPath := fmt.Sprintf("%s/Downloads", executionWorkspacePath)
 	soulPath := fmt.Sprintf("%s/soul", baseWorkspacePath)
-	builderPath := fmt.Sprintf("%s/builder", baseWorkspacePath)
 	// planning/ is READ-ONLY here and deliberately so. A step previously could not
 	// see the plan at all: it got its own description plus resolved dependencies and
 	// had no way to tell whether it was the first of nine or the last, or what
@@ -475,7 +474,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) setupExecutionFolderGuard(stepPath st
 	// spilled tool output back hits "outside every workspace root" and has no
 	// legal way to comply (PLAT-073 cluster F, dd9ede3c).
 	toolOutputPath := fmt.Sprintf("%s/tool_output_folder", baseWorkspacePath)
-	readPaths = []string{runWorkspacePath, executionWorkspacePath, soulPath, builderPath, planningPath, toolOutputPath}
+	readPaths = []string{runWorkspacePath, executionWorkspacePath, soulPath, planningPath, toolOutputPath}
 	// Generic agents are also used as read-only Pulse specialists. Their review
 	// contracts span plan, eval, report, cost, config, store, and run evidence,
 	// so give them workflow-wide read access while retaining the narrow write
@@ -607,18 +606,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) getCodeExecutionMode(stepConfig *Agen
 	isCodeExecutionMode := hcpo.GetUseCodeExecutionMode()
 	hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using workflow/preset code execution mode: %v", isCodeExecutionMode))
 	return isCodeExecutionMode
-}
-
-// getExecutionMaxTurns determines max turns with priority: step config > orchestrator default
-func (hcpo *StepBasedWorkflowOrchestrator) getExecutionMaxTurns(stepConfig *AgentConfigs) int {
-	maxTurns := hcpo.GetMaxTurns()
-	if stepConfig != nil && stepConfig.ExecutionMaxTurns != nil {
-		maxTurns = *stepConfig.ExecutionMaxTurns
-		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using step-specific execution-only max turns: %d (orchestrator default was: %d)", maxTurns, hcpo.GetMaxTurns()))
-	} else {
-		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using orchestrator default execution-only max turns: %d (no step-specific config)", maxTurns))
-	}
-	return maxTurns
 }
 
 // resolveStepID resolves the step ID from stepIDOverride or falls back to stepPath
@@ -1310,7 +1297,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) createExecutionOnlyAgent(ctx context.
 
 	// 3. Determine settings (extracted methods)
 	isCodeExecutionMode := hcpo.getCodeExecutionMode(stepConfig)
-	maxTurns := hcpo.getExecutionMaxTurns(stepConfig)
+	maxTurns := hcpo.GetMaxTurns()
 
 	// 4. Select LLM (extracted method)
 	llmConfig := hcpo.selectExecutionLLM(ctx, stepConfig, stepPath)

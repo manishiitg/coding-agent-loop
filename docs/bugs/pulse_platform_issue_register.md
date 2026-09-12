@@ -9,6 +9,23 @@ See [PLAT-307](pulse_platform/plat-307.md) for scope and tests.
 
 # Pulse Platform-Issue Register
 
+## September 12 — workflow capabilities and RTS fixes
+
+Implemented and deployed in RTS release `bb7ac6d-20260912135437`. Each ticket
+records implementation commits, test evidence and remaining live acceptance limits.
+
+- [PLAT-308](pulse_platform/plat-308.md) — Admin-managed global secrets, including promotion from another workflow.
+- [PLAT-309](pulse_platform/plat-309.md) — Authenticated workflow webhooks and visible schedule/trigger routes.
+- [PLAT-310](pulse_platform/plat-310.md) — Attach multiple workflow knowledge bases with read-only shell access.
+- [PLAT-311](pulse_platform/plat-311.md) — Goal metric groups and linked supporting measurements.
+- [PLAT-312](pulse_platform/plat-312.md) — Shared gog authentication store with direct terminal access.
+- [PLAT-313](pulse_platform/plat-313.md) — Preserve intermediate CLI agent messages in real-time chat.
+- [PLAT-314](pulse_platform/plat-314.md) — Cursor live-input false 409 from empty composer footer matching.
+- [PLAT-315](pulse_platform/plat-315.md) — Pulse slash command resolves the open chat workflow.
+- [PLAT-316](pulse_platform/plat-316.md) — Animate the Pulse heartbeat when human decisions are pending.
+- [PLAT-262](pulse_platform/plat-262.md) — fresh workflow picker permissions and server-side authorization of attached chat context.
+
+
 ## Manual workflow runs could manage MCP servers — PLAT-307
 
 [PLAT-307](pulse_platform/plat-307.md) fixes a manual Run-button execution

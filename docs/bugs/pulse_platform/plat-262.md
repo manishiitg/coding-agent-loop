@@ -19,6 +19,20 @@
   authenticated identity can do everything today. The user wants a second,
   read-only user: same chat/UI experience, but everything is read-only.
 
+## 2026-09-12 — Attached workflow chat context authorization
+
+Commit `5db05c9af`, deployed in RTS release `bb7ac6d-20260912135437`:
+workflow selection now refreshes from the authorized manifest API on opening and
+identity changes, without falling back to stale cached presets. Each query
+validates source workflow paths, current access and workflow allowlists before
+session/tool initialization. Missing, malformed, revoked or unreadable sources
+fail closed; accepted attachments remain read-only.
+
+Backend authorization and picker reopen/failure regressions passed. This is a
+check on each new request, not a claim of immediate revocation inside an already
+running turn or an audit of every unrelated filesystem tool. Admin-only global
+secret promotion is a separate explicit capability: [PLAT-308](plat-308.md).
+
 ## Design constraints discovered during the conversation
 
 1. **A read-only permission tier already existed once and was deliberately

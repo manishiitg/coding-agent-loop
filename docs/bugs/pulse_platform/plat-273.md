@@ -152,3 +152,9 @@ tmux pane survives a server restart (cold-restart compatibility in
 - The confida-login session now carries four copies of each of those two
   messages in Pi's context; harmless but wasteful (~735K tokens, most of it
   cache-read).
+
+## 2026-09-12 — Related Cursor false-409 fix
+
+[PLAT-314](plat-314.md) tracks the distinct Cursor empty-composer/footer matching
+failure, fixed in provider `570ede6` and deployed to RTS. This cross-reference
+does not claim a new live Pi acceptance run for the original incident.

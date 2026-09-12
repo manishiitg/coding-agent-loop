@@ -332,3 +332,43 @@ func TestDisabledGateRequiresUserTokenAndStampsUser(t *testing.T) {
 		t.Fatal("tampered signature accepted")
 	}
 }
+
+func TestWorkflowWebhookPreservesCredentialsAndBodyWithoutAppLogin(t *testing.T) {
+	for _, disableGate := range []bool{false, true} {
+		upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.Header.Get("Authorization") != "Bearer trigger-secret" || r.Header.Get("X-Hub-Signature-256") != "sha256=original" || r.Header.Get("X-User-ID") != "" {
+				t.Errorf("gateway changed webhook authentication")
+			}
+			var payload map[string]string
+			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil || payload["event"] != "test" {
+				t.Errorf("body was not forwarded: %v", err)
+			}
+			w.WriteHeader(http.StatusAccepted)
+		}))
+		target, _ := url.Parse(upstream.URL)
+		g := &gateway{disablePasswordGate: disableGate, agent: httputil.NewSingleHostReverseProxy(target)}
+		req := httptest.NewRequest(http.MethodPost, "/api/hooks/workflow/trigger-id", strings.NewReader(`{"event":"test"}`))
+		req.Header.Set("Authorization", "Bearer trigger-secret")
+		req.Header.Set("X-Hub-Signature-256", "sha256=original")
+		req.Header.Set("X-User-ID", "spoofed-user")
+		rec := httptest.NewRecorder()
+		g.ServeHTTP(rec, req)
+		upstream.Close()
+		if rec.Code != http.StatusAccepted {
+			t.Fatalf("webhook response = %d", rec.Code)
+		}
+	}
+}
+
+func TestWorkflowWebhookExceptionDoesNotExposeManagementOrOtherMethods(t *testing.T) {
+	for _, path := range []string{"/api/workflow-webhooks", "/api/workflow-webhooks/id", "/api/hooks/workflow/", "/api/hooks/workflow/id/extra", "/api/hooks/workflow/..", "/api/wp/execute"} {
+		if isWorkflowWebhookRequest(httptest.NewRequest(http.MethodPost, path, nil)) {
+			t.Errorf("unexpected webhook exception: %s", path)
+		}
+	}
+	for _, method := range []string{http.MethodGet, http.MethodPut, http.MethodDelete} {
+		if isWorkflowWebhookRequest(httptest.NewRequest(method, "/api/hooks/workflow/id", nil)) {
+			t.Errorf("unexpected webhook method: %s", method)
+		}
+	}
+}

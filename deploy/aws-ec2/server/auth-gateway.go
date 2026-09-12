@@ -355,7 +355,23 @@ func (g *gateway) login(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprintf(w, "<form method=post><input type=hidden name=next value=%q><input type=password name=password autofocus required><button type=submit>Continue</button></form></main></body></html>", next)
 }
 
+// Webhook receivers authenticate the original request with their own secret.
+// Keep management endpoints behind the normal user gate.
+func isWorkflowWebhookRequest(r *http.Request) bool {
+	const prefix = "/api/hooks/workflow/"
+	if r.Method != http.MethodPost || !strings.HasPrefix(r.URL.Path, prefix) {
+		return false
+	}
+	id := strings.TrimPrefix(r.URL.Path, prefix)
+	return id != "" && id != "." && id != ".." && !strings.Contains(id, "/")
+}
+
 func (g *gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if isWorkflowWebhookRequest(r) {
+		r.Header.Del("X-User-ID")
+		g.agent.ServeHTTP(w, r)
+		return
+	}
 	if g.disablePasswordGate {
 		// No shared-password session to check or renew -- the inner app's
 		// own per-user auth is the sole gate. /login and /logout have

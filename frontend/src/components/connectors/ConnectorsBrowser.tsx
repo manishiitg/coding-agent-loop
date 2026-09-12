@@ -4,7 +4,6 @@ import {
   Loader2,
   AlertCircle,
   Code2,
-  ScrollText,
   Search,
 } from 'lucide-react'
 import ConnectionIcon from './ConnectionIcon'
@@ -54,16 +53,12 @@ export default function ConnectorsBrowser({ compact = false, workspacePath }: Co
     toolsError,
     getServerGroups,
     refreshTools,
-    serverLogs,
-    fetchServerLogs,
   } = useMCPStore(useShallow(state => ({
     toolList: state.toolList,
     isLoadingTools: state.isLoadingTools,
     toolsError: state.toolsError,
     getServerGroups: state.getServerGroups,
     refreshTools: state.refreshTools,
-    serverLogs: state.serverLogs,
-    fetchServerLogs: state.fetchServerLogs,
   })))
 
   // Refetch on mount rather than trusting whatever the store last held (app
@@ -76,8 +71,6 @@ export default function ConnectorsBrowser({ compact = false, workspacePath }: Co
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  const [expandedLogs, setExpandedLogs] = useState<Set<string>>(new Set())
-  const [loadingLogs, setLoadingLogs] = useState<Set<string>>(new Set())
   // Chat setup and JSON imports are disabled for read-only users.
   const readOnly = !useCanWriteWorkflow(workspacePath)
   const [query, setQuery] = useState('')
@@ -87,46 +80,6 @@ export default function ConnectorsBrowser({ compact = false, workspacePath }: Co
   // removed) top-menu MCP modal. Reusing a global flag here would let two
   // embedded browsers fight over one popup.
   const [showJsonConfig, setShowJsonConfig] = useState(false)
-
-  const toggleLogs = async (serverName: string) => {
-    const newExpanded = new Set(expandedLogs)
-    if (newExpanded.has(serverName)) {
-      newExpanded.delete(serverName)
-      setExpandedLogs(newExpanded)
-    } else {
-      newExpanded.add(serverName)
-      setExpandedLogs(newExpanded)
-      setLoadingLogs((prev) => new Set([...prev, serverName]))
-      await fetchServerLogs(serverName)
-      setLoadingLogs((prev) => {
-        const next = new Set(prev)
-        next.delete(serverName)
-        return next
-      })
-    }
-  }
-
-  const refreshLogs = async (serverName: string) => {
-    setLoadingLogs((prev) => new Set([...prev, serverName]))
-    await fetchServerLogs(serverName)
-    setLoadingLogs((prev) => {
-      const next = new Set(prev)
-      next.delete(serverName)
-      return next
-    })
-  }
-
-  useEffect(() => {
-    if (expandedLogs.size === 0) return
-
-    const interval = window.setInterval(() => {
-      expandedLogs.forEach((serverName) => {
-        fetchServerLogs(serverName)
-      })
-    }, 3000)
-
-    return () => window.clearInterval(interval)
-  }, [expandedLogs, fetchServerLogs])
 
   const groups = getServerGroups()
 
@@ -298,7 +251,6 @@ export default function ConnectorsBrowser({ compact = false, workspacePath }: Co
               {entries.map(([serverName, tools]) => {
             const status = tools[0]?.status
             const connection = tools[0]?.connection
-            const isOpen = expandedLogs.has(serverName)
 
             return (
               <div
@@ -338,67 +290,9 @@ export default function ConnectorsBrowser({ compact = false, workspacePath }: Co
                         : `Help me connect ${JSON.stringify(serverName)} to this workflow. It is already listed in the MCP catalog, so check its existing configuration and connection status first and reuse it. Guide me through the required authorization or secure credential setup, verify that its tools are available, then add it to this workflow. Ask for any missing details; do not ask me to paste secrets into chat.`}
                       className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-primary/10 hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
                     />
-                    <button
-                      type="button"
-                      onClick={() => toggleLogs(serverName)}
-                      className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${isOpen ? 'bg-primary/10 text-primary' : 'text-muted-foreground hover:bg-primary/10 hover:text-primary'}`}
-                      title="Connection logs"
-                      aria-label={`${isOpen ? 'Hide' : 'Show'} logs for ${serverName}`}
-                      aria-expanded={isOpen}
-                    >
-                      <ScrollText className="h-3.5 w-3.5" />
-                    </button>
                   </div>
                 </div>
 
-                {/* Connection Logs Panel */}
-                {isOpen && (
-                  <div className="mx-3 mb-3 rounded-md bg-gray-900 px-3 py-2 dark:bg-black">
-                    <div className="mb-2 flex items-center justify-between">
-                      <h5 className="text-[10px] font-semibold uppercase tracking-wide text-gray-400">
-                        Connection Logs
-                      </h5>
-                      <button
-                        onClick={() => refreshLogs(serverName)}
-                        disabled={loadingLogs.has(serverName)}
-                        className="text-xs text-gray-400 transition-colors hover:text-gray-200 disabled:opacity-50"
-                      >
-                        {loadingLogs.has(serverName) ? '...' : 'Refresh'}
-                      </button>
-                    </div>
-                    <div className="max-h-40 space-y-0.5 overflow-y-auto font-mono text-xs">
-                      {loadingLogs.has(serverName) && !serverLogs[serverName]?.length ? (
-                        <div className="flex items-center gap-2 text-gray-400">
-                          <div className="h-3 w-3 animate-spin rounded-full border border-gray-500 border-t-blue-400"></div>
-                          Loading logs...
-                        </div>
-                      ) : serverLogs[serverName]?.length ? (
-                        serverLogs[serverName].map((log, i) => (
-                          <div key={i} className="flex gap-2 py-0.5">
-                            <span className="shrink-0 whitespace-nowrap text-gray-500">
-                              {new Date(log.timestamp).toLocaleTimeString()}
-                            </span>
-                            <span
-                              className={
-                                log.level === 'error'
-                                  ? 'text-red-400'
-                                  : log.level === 'warn'
-                                    ? 'text-yellow-400'
-                                    : log.level === 'debug'
-                                      ? 'text-gray-500'
-                                      : 'text-green-400'
-                              }
-                            >
-                              {log.message}
-                            </span>
-                          </div>
-                        ))
-                      ) : (
-                        <div className="text-gray-500">No logs available yet.</div>
-                      )}
-                    </div>
-                  </div>
-                )}
 
               </div>
               )

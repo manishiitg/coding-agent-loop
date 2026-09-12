@@ -170,9 +170,9 @@ export const WorkflowSelectionDialog: React.FC<WorkflowSelectionDialogProps> = (
             onChange={e => setLocalQuery(e.target.value)}
             onKeyDown={e => {
               if (e.key === 'Enter') { e.preventDefault(); e.stopPropagation(); handleEnter() }
-              else if (e.key === 'ArrowDown') { e.preventDefault(); setSelectedIndex(prev => Math.min(prev + 1, filteredWorkflowsRef.current.length - 1)) }
-              else if (e.key === 'ArrowUp') { e.preventDefault(); setSelectedIndex(prev => Math.max(prev - 1, 0)) }
-              else if (e.key === 'Escape') { e.preventDefault(); onCloseRef.current() }
+              else if (e.key === 'ArrowDown') { e.preventDefault(); e.stopPropagation(); setSelectedIndex(prev => Math.min(prev + 1, filteredWorkflowsRef.current.length - 1)) }
+              else if (e.key === 'ArrowUp') { e.preventDefault(); e.stopPropagation(); setSelectedIndex(prev => Math.max(prev - 1, 0)) }
+              else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); onCloseRef.current() }
             }}
             className="w-full pl-7 pr-2 py-1.5 text-xs rounded-md border border-border bg-background text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-primary"
           />

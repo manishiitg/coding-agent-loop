@@ -481,3 +481,13 @@ either way:
 
 Verified: `npx tsc --noEmit -p .` and `npm run build` clean after each
 change (pre-existing bundle-size warning only, not a failure).
+
+## 2026-09-12 — Workflow picker arrow keys skipped the middle row
+
+The search input and document keydown listener both handled the same arrow event,
+advancing selection twice. With rts-latency, rts-aws and automation-testing, one
+ArrowDown selected automation-testing. Input arrow/Escape handling now stops
+propagation, preserving document handling when focus has not moved into search.
+A DOM regression reproduced the skip before the fix and covers down/up selection
+and single Escape dismissal. This changes navigation only, not list permissions.
+Implementation verified locally; RTS deployment verification pending.

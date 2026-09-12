@@ -17,6 +17,7 @@ import { agentApi, resetSessionId, getSessionId } from '../services/api'
 import type { PollingEvent, ExtendedLLMConfiguration, SSEEventMessage, SSEStatusMessage, ExecutionOptions } from '../services/api-types'
 import type { AgentMode } from '../stores/types'
 import { ChatInput } from './ChatInput'
+import { SessionStopButton } from './SessionStopButton'
 import { TerminalEventTranscript } from './TerminalEventTranscript'
 import { MainAgentTerminal } from './MainAgentTerminal'
 import { WorkflowModeHandler, type WorkflowModeHandlerRef } from './workflow'
@@ -3765,6 +3766,12 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
           showNewChatAction={showNewChatAction}
           placeholderOverride={composerPlaceholder}
         />
+      )}
+
+      {/* Scheduled/bot runs have no composer, so keep their stop action
+          pinned below the transcript in a separate footer. */}
+      {isReadOnlyRunView && activeTab && (
+        <SessionStopButton key={activeTab.tabId} tabId={activeTab.tabId} footer />
       )}
 
       {/* Toasts render from ToastHost at the app root, so they also appear on

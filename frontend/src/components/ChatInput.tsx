@@ -5,8 +5,9 @@ import { useQuery } from '@tanstack/react-query'
 import { useShallow } from 'zustand/react/shallow'
 
 const DBG = '[skill-popup]'
-import { Send, Square, Wand2, Loader2, Globe, Layers, X, History, Server, Download, Paperclip, Terminal, Plus } from 'lucide-react'
+import { Send, Wand2, Loader2, Globe, Layers, X, History, Server, Download, Paperclip, Terminal, Plus } from 'lucide-react'
 import { Button } from './ui/Button'
+import { SessionStopButton } from './SessionStopButton'
 import { Textarea } from './ui/Textarea'
 import FileContextDisplay from './FileContextDisplay'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from './ui/tooltip'
@@ -2893,51 +2894,10 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
 
   // Removed editing preset query functionality - not needed for multi-agent mode
 
-  // This is the former tab-strip Stop action: stop the session and its
-  // background work. Escape retains its separate foreground-interrupt behavior.
-  const [stoppingTabId, setStoppingTabId] = useState<string | null>(null)
-  const stopSessionInFlight = useRef(false)
-  const handleStopSession = useCallback(async () => {
-    if (!activeTabId || !tabSessionId || isReadOnlyUser || stopSessionInFlight.current) return
-    const targetTabId = activeTabId
-    stopSessionInFlight.current = true
-    setStoppingTabId(targetTabId)
-    try {
-      await agentApi.stopSession(tabSessionId, true)
-      const store = useChatStore.getState()
-      store.setTabStreaming(targetTabId, false)
-      store.setTabHasRunningBgAgents(targetTabId, false)
-    } catch (error) {
-      console.error('[ChatInput] Failed to stop session:', error)
-      addToast('Could not stop the session. Please try again.', 'error')
-    } finally {
-      stopSessionInFlight.current = false
-      setStoppingTabId(null)
-    }
-  }, [activeTabId, tabSessionId, isReadOnlyUser, addToast])
-  const isStoppingSession = stoppingTabId !== null && stoppingTabId === activeTabId
-  const showStopButton = !!tabSessionId && !isReadOnlyUser && (isTurnInFlight || isStoppingSession)
-  const stopButton = (
-    <Tooltip>
-      <TooltipTrigger asChild>
-        <Button
-          type="button"
-          onClick={() => void handleStopSession()}
-          disabled={isStoppingSession}
-          size="icon"
-          variant="destructive"
-          className="h-7 w-7 p-0"
-          data-testid="chat-stop-button"
-          aria-label={isStoppingSession ? 'Stopping session' : 'Stop session and background work'}
-        >
-          {isStoppingSession
-            ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
-            : <Square className="h-3.5 w-3.5" fill="currentColor" />}
-        </Button>
-      </TooltipTrigger>
-      <TooltipContent><p>Stop session and background work</p></TooltipContent>
-    </Tooltip>
-  )
+  // Scheduled/bot runs use the separate footer in ChatArea.
+  const hasRunFooter = !!activeTab?.metadata?.isScheduledRun || !!activeTab?.metadata?.isBotRun
+  const showStopButton = !!tabSessionId && !isReadOnlyUser && isTurnInFlight && !hasRunFooter
+  const stopButton = activeTabId ? <SessionStopButton key={activeTabId} tabId={activeTabId} /> : null
 
   // Check if query is valid (view-only tabs cannot submit)
   const hasValidQuery = Boolean(inputText?.trim())
@@ -3016,7 +2976,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
               : 'View only — restored conversation'}
           </span>
           <div className="ml-auto flex shrink-0 items-center gap-1">
-            {showStopButton && <TooltipProvider>{stopButton}</TooltipProvider>}
+            {showStopButton && stopButton}
             {liveTerminalOffered && activeTabId && (
               <Button
                 type="button"

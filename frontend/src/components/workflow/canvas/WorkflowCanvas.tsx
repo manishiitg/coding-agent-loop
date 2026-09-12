@@ -1362,7 +1362,8 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
   }), [nodes, edges, triggers.jobs, triggers.loading, triggers.error, triggers.refresh, selectedTriggerJob?.id, selectTrigger, openTriggerSettings])
   const focusTriggers = useCallback(() => {
     const surface = reactFlowWrapper.current?.querySelector('.react-flow')
-    const focusNodes = triggerFlow.nodes.filter(node => node.type === 'workflow-trigger' || node.type === 'workflow-trigger-heading' || node.id === 'start')
+    const targets = new Set(triggerFlow.edges.filter(edge => edge.source.startsWith('workflow-trigger-')).map(edge => edge.target))
+    const focusNodes = triggerFlow.nodes.filter(node => node.type === 'workflow-trigger' || node.type === 'workflow-trigger-heading' || node.id === 'start' || targets.has(node.id))
     if (!surface || !focusNodes.length || !surface.clientWidth || !surface.clientHeight) return
     // Set the viewport directly: queued fitView can be displaced by controlled
     // plan-node reconciliation while presentation cards are being measured.

@@ -33,7 +33,7 @@ export const WorkflowTriggerHeading = memo(({ data }: NodeProps) => {
   const { loading, error, count, onSettings, onRefresh } = data as WorkflowTriggerNodeData
   return <div className="nodrag nopan h-16 space-y-1 text-foreground">
     <div className="flex items-center gap-2 text-sm font-semibold"><span>Triggers</span><button type="button" onClick={onRefresh} aria-label="Refresh triggers" className="rounded p-1 hover:bg-muted"><RefreshCw className={`h-3 w-3 ${loading ? 'animate-spin' : ''}`} /></button></div>
-    <p className="text-xs text-muted-foreground">{error || (loading ? 'Loading schedules and webhooks…' : count ? 'Select a trigger to highlight its path from Start.' : 'No automatic triggers. This workflow can be started manually.')}</p>
+    <p className="text-xs text-muted-foreground">{error || (loading ? 'Loading schedules and webhooks…' : count ? 'Solid lines start the workflow; dashed lines select routes.' : 'No automatic triggers. This workflow can be started manually.')}</p>
     <div className="flex gap-3 text-xs"><button type="button" className="hover:underline" onClick={() => onSettings?.('schedules')}>Schedules</button><button type="button" className="hover:underline" onClick={() => onSettings?.('api-triggers')}>Webhooks</button></div>
   </div>
 })

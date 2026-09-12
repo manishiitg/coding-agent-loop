@@ -1,3 +1,4 @@
+import { MarkerType } from '@xyflow/react'
 import type { ScheduledJob, EvaluationStep } from '../../../services/api-types'
 import type { WorkflowNode, WorkflowEdge, RoutingStepNodeData } from '../hooks/usePlanToFlow'
 
@@ -9,7 +10,7 @@ export function triggerRouteSummary(job: ScheduledJob, nodes: WorkflowNode[]) {
   if (job.pulse_review_only) return { label: 'Pulse review · does not run plan steps', canTrace: false }
   if (job.workshop_mode === 'optimizer') return { label: 'Optimizer · workflow maintenance', canTrace: false }
   const choices = Object.entries(job.route_selections || {})
-  if (!choices.length) return { label: 'Workflow entry · route chosen during execution', canTrace: true }
+  if (!choices.length) return { label: 'Full workflow · routes chosen during execution', canTrace: true }
   let missing = false
   const labels = choices.map(([stepID, routeID]) => {
     const node = nodes.find(node => (node.data.step as { id?: string } | undefined)?.id === stepID && (node.type === 'routing' || node.type === 'branch'))
@@ -35,16 +36,37 @@ export function appendTriggerCards(nodes: WorkflowNode[], edges: WorkflowEdge[],
     id: triggerNodeID(job.id), type: 'workflow-trigger', draggable: false, selectable: false,
     position: { x: left + index % columns * (TRIGGER_CARD_WIDTH + 24), y: top + Math.floor(index / columns) * (TRIGGER_CARD_HEIGHT + 24) },
     width: TRIGGER_CARD_WIDTH, height: TRIGGER_CARD_HEIGHT,
+    // These fixed-size presentation nodes are not stored in useNodesState.
+    // Preserve their measured size so reconciliation retains handle bounds.
+    measured: { width: TRIGGER_CARD_WIDTH, height: TRIGGER_CARD_HEIGHT },
     data: { id: triggerNodeID(job.id), title: job.name, job, routeSummary: triggerRouteSummary(job, nodes), active: options.selectedID === job.id, onSelect: () => options.onSelect(job.id), onSettings: options.onSettings },
   }))
   cards.unshift({ id: 'workflow-trigger-heading', type: 'workflow-trigger-heading', draggable: false, selectable: false,
     position: { x: left, y: top - 90 }, width: columns * (TRIGGER_CARD_WIDTH + 24) - 24, height: 64,
     data: { id: 'workflow-trigger-heading', title: 'Triggers', loading: options.loading, error: options.error, count: jobs.length, onSettings: options.onSettings, onRefresh: options.onRefresh },
   })
-  const links: WorkflowEdge[] = jobs.filter(job => triggerRouteSummary(job, nodes).canTrace).map(job => ({
-    id: `trigger-entry-${job.id}`, source: triggerNodeID(job.id), target: 'start', targetHandle: 'trigger-input', type: 'smoothstep',
-    style: { stroke: job.enabled ? '#64748b' : '#94a3b8', strokeWidth: options.selectedID === job.id ? 2 : 1, strokeDasharray: '5 5' },
-  }))
+  const links: WorkflowEdge[] = jobs.filter(job => triggerRouteSummary(job, nodes).canTrace).flatMap(job => {
+    const color = job.enabled ? '#38bdf8' : '#94a3b8'
+    const style = { stroke: color, strokeWidth: options.selectedID === job.id ? 3 : 2 }
+    const choices = Object.entries(job.route_selections || {})
+    const entry: WorkflowEdge = {
+      id: `trigger-entry-${job.id}`, source: triggerNodeID(job.id), target: 'start', targetHandle: 'trigger-input', type: 'smoothstep',
+      label: choices.length ? 'Starts workflow' : 'Full workflow', style,
+      markerEnd: { type: MarkerType.ArrowClosed, color },
+    }
+    // These dashed links describe saved route choices, not execution shortcuts.
+    // The entry link and trace still retain all prerequisites from Start.
+    const routes = choices.flatMap(([stepID, routeID]) => {
+      const router = nodes.find(node => (node.data.step as { id?: string } | undefined)?.id === stepID && (node.type === 'routing' || node.type === 'branch'))
+      const route = (router?.data as RoutingStepNodeData | undefined)?.routes?.find(route => route.route_id === routeID)
+      return edges.filter(edge => edge.source === router?.id && (edge.sourceHandle === `route-${routeID}` || edge.sourceHandle === `handoff-${routeID}`)).map(edge => ({
+        id: `trigger-route-${job.id}-${edge.id}`, source: triggerNodeID(job.id), target: edge.target, targetHandle: edge.targetHandle, type: 'smoothstep',
+        label: `Selects: ${route?.route_name || routeID}`, style: { ...style, strokeDasharray: '6 4' },
+        markerEnd: { type: MarkerType.ArrowClosed, color },
+      } as WorkflowEdge))
+    })
+    return [entry, ...routes]
+  })
   return { nodes: [...nodes, ...cards], edges: [...edges, ...links] }
 }
 
@@ -59,7 +81,7 @@ export function traceTriggerGraph(nodes: WorkflowNode[], edges: WorkflowEdge[], 
     outgoing.set(edge.source, [...(outgoing.get(edge.source) || []), edge])
   }
   const selectedNodes = new Set<string>(['variables', triggerNodeID(job.id), 'workflow-trigger-heading'])
-  const selectedEdges = new Set<string>([`trigger-entry-${job.id}`])
+  const selectedEdges = new Set(edges.filter(edge => edge.source === triggerNodeID(job.id)).map(edge => edge.id))
   const queue = ['start']
   for (let i = 0; i < queue.length; i++) {
     const id = queue[i]

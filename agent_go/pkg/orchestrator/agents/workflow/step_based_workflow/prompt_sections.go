@@ -70,25 +70,9 @@ type PromptSections struct {
 // the same call shapes; saved scripted code has a separate $DB_PATH contract.
 func BuildManagedWorkflowDBGuidance(access string) string {
 	if strings.EqualFold(strings.TrimSpace(access), DBAccessRead) {
-		return `## Workflow database
-
-Use the managed database tool only; never open ` + "`db.sqlite`" + ` with shell or Python. This is **READ-ONLY workflow evidence**.
-
-- Use ` + "`query_workflow_db`" + ` for schema discovery and reads. Inspect an unfamiliar table first: ` + "`action: \"describe\", table: \"<table>\"`" + `.
-- Query with ` + "`sql: \"SELECT ... WHERE key = ?\", params: [\"value\"]`" + `. Use ` + "`max_rows`" + ` when a result may exceed the default limit.
-- In HTTP/code-execution mode, keep SQL in a shell variable and JSON-encode it with ` + "`jq -n --arg sql \"$sql\" '{sql:$sql}'`" + `; never place SQL containing single quotes (including ` + "`'$.field'`" + `) inside an outer single-quoted JSON literal, because the shell strips the inner quotes.
-- This session is read-only: do not call ` + "`mutate_workflow_db`" + `.
-- A table's schema alone does not explain its business meaning (writer ownership, upsert rule, what a column is for). If ` + "`db/README.md`" + ` is readable in this session, read it for that context first; not every session's Folder Guard grants it, so fall back to ` + "`query_workflow_db`" + ` with ` + "`action: \"describe\"`" + ` to inspect the table's actual columns directly when it is not.`
+		return guidance.StepSystemPromptTemplate("managed-db-read")
 	}
-	return `## Workflow database
-
-Use the managed database tools only; never open ` + "`db.sqlite`" + ` with shell or Python.
-
-- Use ` + "`query_workflow_db`" + ` for schema discovery and reads. Inspect an unfamiliar table first: ` + "`action: \"describe\", table: \"<table>\"`" + `; then query with ` + "`sql: \"SELECT ... WHERE key = ?\", params: [\"value\"]`" + `. Use ` + "`max_rows`" + ` when a result may exceed the default limit.
-- Use ` + "`mutate_workflow_db`" + ` for transactional INSERT/UPDATE/DELETE operations: one change uses ` + "`sql`" + ` + ` + "`params`" + `; related changes use ` + "`statements: [{sql, params}, ...]`" + ` as one atomic batch.
-- In HTTP/code-execution mode, keep SQL in a shell variable and JSON-encode it with ` + "`jq -n --arg sql \"$sql\" '{sql:$sql}'`" + `; never place SQL containing single quotes (including ` + "`'$.field'`" + `) inside an outer single-quoted JSON literal, because the shell strips the inner quotes.
-- Prefer primary-key upserts. Never drop, recreate, or wholesale replace tables.
-- A table's schema alone does not explain its business meaning (writer ownership, upsert rule, what a column is for). If ` + "`db/README.md`" + ` is readable in this session, read it for that context first; not every session's Folder Guard grants it, so fall back to ` + "`query_workflow_db`" + ` with ` + "`action: \"describe\"`" + ` to inspect the table's actual columns directly when it is not.`
+	return guidance.StepSystemPromptTemplate("managed-db-write")
 }
 
 // BuildCodeExecutionSection returns the code execution mode instructions.

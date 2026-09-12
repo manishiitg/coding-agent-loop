@@ -13,8 +13,9 @@ Supported item types:
 - `user_message`: one focused follow-up instruction.
 - `foreach`: one templated follow-up per row from a read-only query against `db/db.sqlite`.
 - `prevalidation`: a deterministic backend validation gate with corrective feedback sent to the same conversation.
+- `scripted`: a finite batch of saved regular scripts; the runtime executes and validates every call before advancing, without creating agent sessions.
 
-`type: "code"` was removed in workflow contract v1.0.10. Deterministic code must be a standalone `regular` step — the type alone makes it scripted; create it with `add_scripted_step`, or move existing conversational work there with `change_step_type` — with its script at `<script-dir>/main.py`. Connect conversational and scripted steps through explicit `context_dependencies`, `context_output`, database contracts, and validation.
+`type: "code"` was removed in workflow contract v1.0.10. Deterministic code lives in a saved `regular` step definition — the type alone makes it scripted; create it with `add_scripted_step`, or move existing conversational work there with `change_step_type` — with its script at `<script-dir>/main.py`. Connect conversational and scripted steps through explicit `context_dependencies`, `context_output`, database contracts, and validation.
 
 Preferred split when deterministic data is needed:
 
@@ -45,7 +46,83 @@ Do not use it when:
 - Work is a fixed API/SDK call, CLI command, data fetch, stable parse/normalize operation, or mechanical write; use a scripted regular step and consume its durable result here.
 - The workflow needs deterministic branching; use `branch` (small in-flow
   decision) or `routing` (major sub-workflow fork).
-- Work should be delegated independently; use `orchestrator` routes.
+- The parent must choose or revise the strategy from evidence; use `orchestrator`. Independent delegation alone is not the eligibility rule.
+
+## DELEGATION AND CONTROL
+
+The author defines the sequence's work and flow. **For now, only scripted child
+steps are in scope; do not add separate agentic sub-agents to a message sequence.**
+The sequence's own LLM conversation can reason, analyze script results, verify,
+repair, and write the report. Running ten known scripts, accounting for all ten,
+and reporting is sequence work, even if the scripts can run in parallel.
+Orchestrator is for a parent that interprets evidence and decides or revises
+strategy; it retains separate agentic delegation. Known isolated agentic tasks
+can instead be explicit message-sequence plan steps.
+
+Read `references/plan-design.md`, Step 2, for the decision rule. Ordered turns,
+script batches, and completion gates are enforced by the runtime, not merely a
+system-prompt preference. Continue using the existing step types; there is no
+new mode field or agentic delegation tool for sequences.
+
+## SCRIPTED BATCHES
+
+Create saved script definitions with `add_scripted_step(is_orphan=true, ...)`,
+using `insert_after_step_id: ""`. Declare `script_parameters`, explicit dependencies,
+and a non-empty `validation_schema`; author and test `<script-dir>/main.py` in
+Workshop. An orphan is callable here only if it is a scripted regular step.
+Then reference it from `add_message_sequence_step` / `update_message_sequence_step`:
+
+```json
+{
+  "id": "collect-evidence",
+  "type": "scripted",
+  "max_parallel": 2,
+  "scripted_steps": [
+    {"id": "prices", "step_id": "fetch-prices", "parameters": {"market": "NSE"}},
+    {"id": "fundamentals", "step_id": "fetch-fundamentals", "parameters": {"market": "NSE"}}
+  ]
+}
+```
+
+**Parameter contract:** `script_parameters` belongs on the saved regular script
+**definition**; each sequence call supplies its values in `parameters`. The runtime
+applies declared defaults and rejects missing required names, unknown names, wrong
+types, and values outside an `enum` before launching any script in the batch.
+The validated object is supplied to Python as `STEP_PARAMS_JSON`.
+
+**Authored values only:** the sequence agent cannot select or change these call
+parameters from earlier conversation results. Parameter values are literal JSON;
+there is no conversation/SQL binding or template/environment-variable expansion
+inside `parameters`. Do not put a placeholder there and promise it will resolve.
+SQL `foreach` templates apply to their own conversational messages only.
+
+Follow this item with a `user_message` to analyze the validated results and report.
+A script item can come first: the opening description reaches the first
+conversational turn, after the script results are available.
+
+- The runtime checks every reference, parameter contract, and saved source before
+  starting the batch. No arbitrary file path, inline code, or agentic step is callable.
+- `max_parallel` defaults to sequential (0/1), with a maximum of 8. Use parallel
+  execution only for independent scripts, including safe DB/asset writes and no
+  conflicting browser-session actions. Calls to the same script serialize.
+- Each call gets its own `STEP_OUTPUT_DIR` under the sequence's execution folder:
+  `scripts/<item-id>/<call-id>/`. Parameters go through `STEP_PARAMS_JSON`. Source
+  layout version 1 and legacy learnings layouts use the existing script runner.
+- Script definitions own store permissions and output validation. Item-level
+  `kind`/`write_access` and message/foreach fields are rejected on scripted items.
+- Every call must exit successfully AND pass validation. A failure waits for the
+  remaining batch calls and then stops the sequence; subsequent reporting or
+  side-effect items do not run. Per-call status and output paths persist in
+  `scripts/<item-id>/results.json`, with stdout/diagnostics in each call folder.
+- Stop cancels active scripts and prevents queued scripts from starting. It does
+  not turn partial completion into success. Re-running may repeat side effects;
+  scripts must implement their own idempotency/deduplication contract.
+- There is no child LLM, automatic code repair, or automatic retry. Fix failed
+  source in Workshop and deliberately rerun. Final sequence validation can still
+  repair the parent's conversational deliverable; it does not replay script items.
+- Remaining limits: calls and parameters are authored in the plan; no SQL-expanded
+  script batches, dynamic child selection, agentic children, or cross-run resume.
+  SQL `foreach` still sends sequential conversational turns, not script calls.
 
 ## MEMORY
 
@@ -120,7 +197,18 @@ Use deterministic validation for artifacts and schemas. Use a user-message criti
 
 ## FOREACH
 
-Use `foreach` when every selected database row must get one conversational turn:
+Use `foreach` when every selected database row must get one conversational turn.
+This exists today: `source_sql` reads the workflow's `db/db.sqlite`, not an arbitrary
+SQLite file path. Rows are queried and messages expanded once when the item begins,
+then processed sequentially in the same conversation. Use `ORDER BY` for a defined
+order. This does not create separate plan steps or parallel workers.
+
+Zero rows produce no work turns. A row failure stops the loop. Positive
+`max_iterations` caps processing and logs omitted rows; do not claim full coverage
+when capped. For "process every task," validate expected task IDs against persisted
+results from this run, including missing or failed tasks, before reporting success.
+
+Example:
 
 ```json
 {
@@ -159,5 +247,5 @@ For an orchestrator route, use `message_sequence` when the orchestrator should p
 - Declare item write access before execution.
 - Put the final deterministic acceptance contract in the step-level `validation_schema`; use explicit prevalidation items only for intermediate checks.
 - Create another large sequence only when its context should be intentionally isolated, and record the boundary rationale in the plan description/review.
-- Keep code, its retries, permissions, logs, and costs in standalone scripted regular steps.
+- Keep code and its permissions/validation in saved regular script definitions; use standalone steps or explicit scripted batch items to execute them.
 - Never add a legacy code item. If an old plan contains one, require the v1.0.10 workflow preflight migration.

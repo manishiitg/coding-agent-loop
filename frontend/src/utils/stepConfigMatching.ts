@@ -219,15 +219,18 @@ export interface MessageSequenceWriteAccess {
 
 export interface MessageSequenceItem {
   id: string;
-  type: 'user_message' | 'prevalidation' | 'foreach' | string;
+  type: 'user_message' | 'prevalidation' | 'foreach' | 'scripted' | string;
   kind?: 'execution' | 'learning' | 'knowledgebase' | 'db' | 'check' | 'critique' | 'self_validation' | 'reference_check' | 'hallucination_check' | 'code_review' | string;
   title?: string;
   message?: string;
   write_access?: MessageSequenceWriteAccess;
   validation_schema?: ValidationSchema;
   prevalidation?: ValidationSchema;
-  source?: string;            // foreach items: workspace-relative JSON array file (e.g. db/tasks.json)
-  source_path?: string;       // foreach items: optional dot-path to the array field
+  source_sql?: string;        // read-only query against db/db.sqlite
+  source?: string;            // legacy display only
+  source_path?: string;       // legacy display only
+  scripted_steps?: { id: string; step_id: string; parameters?: Record<string, unknown> }[];
+  max_parallel?: number;      // scripted batch concurrency, 0/1 = sequential
   max_iterations?: number;    // foreach items: optional cap on rows (0 = all)
 }
 

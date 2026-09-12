@@ -757,7 +757,7 @@ func (w *MessageSequenceWriteAccess) UnmarshalJSON(data []byte) error {
 
 type MessageSequenceItem struct {
 	ID               string                     `json:"id"`
-	Type             string                     `json:"type"` // "user_message" | "prevalidation" | "foreach"
+	Type             string                     `json:"type"` // "user_message" | "prevalidation" | "foreach" | "scripted"
 	Kind             string                     `json:"kind,omitempty"`
 	Title            string                     `json:"title,omitempty"`
 	Message          string                     `json:"message,omitempty"`
@@ -768,6 +768,9 @@ type MessageSequenceItem struct {
 	// per row. source_sql is a read-only query; each result row binds to '.'.
 	SourceSQL     string `json:"source_sql,omitempty"`     // read-only SQL against db/db.sqlite
 	MaxIterations int    `json:"max_iterations,omitempty"` // optional cap on rows (0 = all)
+	// scripted items run a declared batch of saved scripts, without agent sessions.
+	ScriptedSteps []MessageSequenceScriptCall `json:"scripted_steps,omitempty"`
+	MaxParallel   int                         `json:"max_parallel,omitempty"`
 	// prevalidation entries: corrective turns allowed on gate failure. Used by the
 	// orchestrator's scripted sequence (todo_task); a standalone message_sequence
 	// uses its own fixed repair cap. Default 1 when unset.
@@ -1489,6 +1492,7 @@ func getAddRegularStepSchema() string {
 	return `{
 		"type": "object",
 		"properties": {
+            "is_orphan": {"type": "boolean", "description": "Set true to create a reusable saved script in orphan_steps instead of the main flow, for scripted message-sequence batches. It does not auto-run. Use empty insert_after_step_id."},
 			"id": {
 				"type": "string",
 				"description": "REQUIRED: Stable step ID for this new step. Generate a unique, URL-friendly ID based on the step title (e.g., 'deploy-application' from 'Deploy Application')."
@@ -1584,12 +1588,12 @@ func getAddMessageSequenceStepSchema() string {
 			"context_output": {"type": "string", "description": "OPTIONAL: Summary/result file for later steps. Omit when the step writes its result to the db (validate via validation_schema.db)."},
 			"items": {
 				"type": "array",
-				"description": "REQUIRED: Ordered queue of follow-up turns (turns 1..N; the step description is turn 0). Turn 0 should own the complete coherent outcome, including its routine sub-actions. Add a user_message only for evidence-based verification, critique, repair, new external input, or a real phase change; do not create one item per checklist line or tool call. Use explicit prevalidation items only for intermediate gates; the top-level validation_schema runs automatically after the final work turn. Deterministic code must be a standalone regular scripted step, never a sequence item. Plain turns inherit step-level DB/KB/learnings writes. Use kind or a non-empty write_access only to narrow a turn to selected stores. Before authoring more than a single verify/repair turn, load references/message-sequence.md: read_skill(skills=[{\"name\":\"builder-reference\",\"path\":\"references/message-sequence.md\"}]).",
+				"description": "REQUIRED: Ordered queue of follow-up turns (turns 1..N; the step description is turn 0). Turn 0 should own the complete coherent outcome, including its routine sub-actions. Add a user_message only for evidence-based verification, critique, repair, new external input, or a real phase change; do not create one item per checklist line or tool call. Use explicit prevalidation items only for intermediate gates; the top-level validation_schema runs automatically after the final work turn. Use a scripted item to execute saved orphan scripts as a finite batch, without agentic children. Inline code is not supported. Each referenced script needs its own typed parameters and validation contract. Plain turns inherit step-level DB/KB/learnings writes. Use kind or a non-empty write_access only to narrow a turn to selected stores. Before authoring more than a single verify/repair turn, load references/message-sequence.md: read_skill(skills=[{\"name\":\"builder-reference\",\"path\":\"references/message-sequence.md\"}]).",
 				"items": {
 					"type": "object",
 					"properties": {
 						"id": {"type": "string"},
-						"type": {"type": "string", "enum": ["user_message", "prevalidation", "foreach"], "description": "user_message, prevalidation, or foreach"},
+						"type": {"type": "string", "enum": ["user_message", "prevalidation", "foreach", "scripted"], "description": "user_message, prevalidation, foreach, or a deterministic scripted batch"},
 						"kind": {"type": "string", "description": "Optional shorthand that narrows this turn's inherited writes to one store: learning, knowledgebase, or db. Explicit non-empty write_access overrides kind."},
 						"title": {"type": "string"},
 						"message": {"type": "string", "description": "For user_message items: a follow-up semantic workflow instruction run in the same persistent conversation. Do not copy shared AgentWorks bridge/auth, Folder Guard, managed-tool, tool-discovery, or coding-session mechanics here. Prefer evidence-seeking validation/repair turns (e.g. \"Re-open the output. Did you actually satisfy every criterion? Quote the evidence, then fix every unsupported or incomplete item.\") over routine subtask instructions. For foreach items: a Go text/template rendered once per row of source, with the row bound to '.' (e.g. 'Process {{.id}}: {{.task}}')."},
@@ -1605,7 +1609,9 @@ func getAddMessageSequenceStepSchema() string {
 						"validation_schema": {"type": "object", "description": "For prevalidation items: backend validation schema (a hard gate). Interleave prevalidation items with DIFFERENT schemas between turns to gate distinct claims one at a time."},
 						"prevalidation": {"type": "object", "description": "Alias for validation_schema on a prevalidation item."},
 						"source_sql": {"type": "string", "description": "For foreach items: a read-only SQL query against db/db.sqlite (e.g. \"SELECT id, name FROM tasks WHERE status='pending'\"). The runtime runs it and sends one user_message turn per result row, with the row (an object keyed by column) bound to '.' in the message template. Use this to reliably process every row a prior step wrote to the db."},
-						"max_iterations": {"type": "number", "description": "For foreach items: optional cap on rows processed (0 = all). Excess rows are skipped and logged, never silently dropped."}
+						"max_iterations": {"type": "number", "description": "For foreach items: optional cap on rows processed (0 = all). Excess rows are skipped and logged, never silently dropped."},
+                        "scripted_steps": {"type": "array", "minItems": 1, "description": "For scripted items: saved regular scripts in orphan_steps. No agentic workers, arbitrary code, or dynamic routes. All calls are checked before execution. Failures stop the sequence after the batch has settled; no child LLM repair or automatic retry.", "items": {"type": "object", "additionalProperties": false, "properties": {"id": {"type": "string", "description": "Unique invocation ID; letters, digits, hyphens, underscores; max 128."}, "step_id": {"type": "string", "description": "ID of an existing scripted regular definition in orphan_steps."}, "parameters": {"type": "object", "description": "Values matching the script_parameters contract; supplied via STEP_PARAMS_JSON."}}, "required": ["id", "step_id"]}},
+                        "max_parallel": {"type": "integer", "minimum": 0, "maximum": 8, "description": "For scripted items: concurrency limit, default 0/1 means sequential. Use >1 only for independent scripts with safe shared-store writes. Repeated calls to one script serialize. The next item waits for every call."}
 					},
 					"required": ["id", "type"]
 				}
@@ -1630,7 +1636,7 @@ func getUpdateMessageSequenceStepSchema() string {
 			"context_output": {"type": "string", "description": "OPTIONAL: Replaces the summary/result file for later steps. Omit to preserve the existing value, or to leave the step writing its result to the db (validate via validation_schema.db) instead of a file."},
 			"items": {
 				"type": "array",
-				"description": "OPTIONAL: Replaces the entire ordered queue of follow-up turns (turns 1..N; the step description is turn 0) — this is a full replacement, not a merge, so include every item you want kept. Add a user_message only for evidence-based verification, critique, repair, new external input, or a real phase change; do not create one item per checklist line or tool call. Use explicit prevalidation items only for intermediate gates; the top-level validation_schema runs automatically after the final work turn. Deterministic code must be a standalone regular scripted step, never a sequence item. Plain turns inherit step-level DB/KB/learnings writes; use kind or a non-empty write_access only to narrow a turn to selected stores. Before restructuring items[] into anything beyond a single verify/repair turn, load references/message-sequence.md: read_skill(skills=[{\"name\":\"builder-reference\",\"path\":\"references/message-sequence.md\"}]).",
+				"description": "OPTIONAL: Replaces the entire ordered queue of follow-up turns (turns 1..N; the step description is turn 0) — this is a full replacement, not a merge, so include every item you want kept. Add a user_message only for evidence-based verification, critique, repair, new external input, or a real phase change; do not create one item per checklist line or tool call. Use explicit prevalidation items only for intermediate gates; the top-level validation_schema runs automatically after the final work turn. Use a scripted item to execute saved orphan scripts as a finite batch, without agentic children. Inline code is not supported. Each referenced script needs its own typed parameters and validation contract. Plain turns inherit step-level DB/KB/learnings writes; use kind or a non-empty write_access only to narrow a turn to selected stores. Before restructuring items[] into anything beyond a single verify/repair turn, load references/message-sequence.md: read_skill(skills=[{\"name\":\"builder-reference\",\"path\":\"references/message-sequence.md\"}]).",
 				"items": {"type": "object"}
 			},
 			"next_step_id": {"type": "string", "description": "OPTIONAL: Replaces the explicit next step ID, or 'end'. Omit to preserve sequential execution."},
@@ -5513,7 +5519,14 @@ func validateMessageSequenceStepFieldsTypedWithOptions(step *MessageSequencePlan
 		if itemType == "" {
 			itemType = "user_message"
 		}
+		if itemType != "scripted" && (len(item.ScriptedSteps) > 0 || item.MaxParallel != 0) {
+			return fmt.Errorf("message_sequence item %q: scripted_steps/max_parallel require type scripted", item.ID)
+		}
 		switch itemType {
+		case "scripted":
+			if err := validateMessageSequenceScriptItem(item); err != nil {
+				return err
+			}
 		case "user_message":
 			if strings.TrimSpace(item.Message) == "" {
 				return fmt.Errorf("message_sequence step %q item %q is a user_message but message is empty", step.ID, item.ID)

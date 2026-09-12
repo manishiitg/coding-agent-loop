@@ -15,15 +15,28 @@ sub-workflow fork), sub-agent coordination (`orchestrator`), or operator input (
 - One clear deterministic objective expressible as a `description` plus a `validation_schema`.
 - A coherent scripted boundary inside the **Linear Pipeline** pattern (see `read_skill(skills=[{"name":"builder-reference","path":"references/workflow-patterns.md"}])`), not one step per pipeline action.
 
-If the work fans out over items, branches on a decision, needs several turns that
-share one conversation, or needs a specialist that remembers across calls, it is
-**not** a regular step — see the redirects below.
+If selecting further work requires agentic judgment, or the task needs conversational
+memory, use the redirects below. A deterministic script may process many records;
+task count alone does not make it agentic.
+
+## Calling scripts from a message sequence
+
+Create a reusable definition with `add_scripted_step(is_orphan=true, ...)`, then
+reference its ID and typed parameters from a sequence's `scripted` batch item.
+The runtime runs saved code, validates outputs, waits for the batch, and passes
+result paths to the sequence's next conversational turn. No child LLM, automatic
+code repair, or automatic retry is started by this path. Script failures stop the
+sequence after remaining batch calls settle. Keep source fixes in Workshop.
+
+This is deterministic script execution, not an agentic sub-agent. The sequence's
+own conversation handles reasoning and reporting. See `references/message-sequence.md`
+for the exact item schema, permissions, parallelism, Stop behavior, and limits.
 
 ## Anatomy
 
 - `description` — the executable instruction/prompt for the step agent, not metadata. Resolved variable values are available as `$VAR_*`.
-- `script_parameters` — the optional, typed public input contract when an orchestrator
-  calls this script as a predefined route. Each named parameter declares `type`,
+- `script_parameters` — the optional, typed public input contract for direct execution,
+  orchestrator routes, or message-sequence scripted batches. Each named parameter declares `type`,
   `description`, and optionally `required`, `default`, and `enum`. These are non-secret
   per-call values; credentials still belong in Secrets. The builder defines this contract
   with the step, and `main.py` reads the validated object from `STEP_PARAMS_JSON`.
@@ -47,11 +60,11 @@ share one conversation, or needs a specialist that remembers across calls, it is
 
 Preferred data shape: `regular scripted fetcher(s) → message_sequence processor`. Fetchers own credentials, calls, retries/rate limits, provenance, freshness, idempotency, response parsing, and authoritative DB/file output. The message sequence reads that output and owns semantic analysis, synthesis, critique, and repair.
 
-## Parameterized orchestrator routes
+## Parameterized script calls
 
 Use parameters—not rewritten code or free-form delegation prose—when one reusable script
-needs controlled variation between orchestrator calls. The saved step is the single source
-of truth:
+needs controlled variation between calls. Direct execution, sequence batches, and
+orchestrator routes share the saved step's parameter contract:
 
 ```json
 "script_parameters": {
@@ -69,14 +82,21 @@ of truth:
 }
 ```
 
-The builder must make `main.py` parse `json.loads(os.environ["STEP_PARAMS_JSON"])` and
-must not hardcode the values from an individual test run. At runtime the orchestrator first
-reads the route description, then calls `call_scripted_sub_agent` with `parameters`
-matching this contract. That tool has no `instructions` argument. The controller applies defaults and rejects unknown,
-missing, or wrongly typed values before starting Python. The same declared contract and
-current validated values are included in a repair turn, so repair must preserve the public
-interface rather than inventing a second input path. Positional arguments remain reserved
+The builder must make `main.py` parse `json.loads(os.environ["STEP_PARAMS_JSON"])`
+and must not hardcode values from an individual test run. The runtime applies
+defaults and rejects unknown parameters, missing required values, wrong types,
+and enum violations before starting Python. Positional arguments remain reserved
 for `context_dependencies`.
+
+- **Message sequence:** put literal values in each `scripted_steps[].parameters`
+  object in the authored `scripted` item. The sequence agent does not generate or
+  modify those values at runtime; no template/environment-variable expansion or
+  binding from earlier conversation results is implemented. There is no child
+  LLM or automatic repair for sequence script calls.
+- **Orchestrator:** read the route description, then call `call_scripted_sub_agent`
+  with `parameters` matching this contract. That tool has no `instructions`
+  argument. If this route enters its existing repair path, preserve the declared
+  parameter interface and current validated values.
 
 The Builder tests the identical contract with
 `execute_step(step_id="...", script_parameters={...})`; never simulate it by exporting
@@ -87,7 +107,7 @@ steps and rejects invalid values before registering background execution.
 
 - Branching on a decision or run flag → **`branch`** (small in-flow decision) or **`routing`**
   (major, self-contained sub-workflow fork).
-- Coordinating ≥2 specialized sub-agents, or dynamic per-item work → **`orchestrator`**.
+- Owning an adaptive strategy that interprets evidence and chooses subsequent work → **`orchestrator`**. A known script batch belongs in a message sequence; worker count alone does not justify an orchestrator.
 - Same-context ordered turns, a stateful conversation, self-validation/grounding
   gate, or stepping through a db array row-by-row → **`message_sequence`**
   (incl. its `foreach` item).

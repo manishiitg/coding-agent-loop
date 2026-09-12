@@ -28,9 +28,9 @@ orchestration decision that the static plan cannot directly express**, such as:
 
 - The set of tasks is dynamic — discovered at runtime — and each must be
   executed
-- Runtime evidence conditionally selects or fans out different workers
-- The parent coordinates material runtime parallelism or adaptive retries
-- An approval boundary or interim synthesis changes subsequent delegation
+- The parent reasons about runtime evidence to select further investigations or workers
+- The parent interprets results and changes its strategy, including choosing a different recovery approach
+- Interim synthesis reveals missing evidence and changes subsequent delegation
 
 **A fixed child set and order does not justify an `orchestrator` step.** Different tools,
 separate learnings, progress visibility, and easier debugging are supporting
@@ -47,6 +47,15 @@ properties after this eligibility gate, not sufficient reasons by themselves.
   `message_sequence`; use `regular` only for a deterministic script
 - The orchestrator description grows into detailed instructions for ONE
   specific task — that task should be its own sub-agent route instead
+
+The parent is the reasoning owner: it forms hypotheses, weighs evidence, decides
+next work, and can synthesize or write the final report itself. Delegation supports
+that work; starting a fixed list and waiting for results is not enough. A known
+batch of scripts is sequence work by design. Sequence child support is scoped to
+scripts only for now; separate agentic children remain an orchestrator capability.
+Known isolated agentic tasks can be separate message-sequence plan steps without
+an adaptive parent. See `references/plan-design.md`, Step 2, for scripted batch support and its limits.
+Script batches do not grant agentic delegation to message sequences.
 
 ## Anatomy
 
@@ -128,8 +137,9 @@ that in mind:
   **ad-hoc** work it wants offloaded: isolated context, parallelizable, cheaper
   tier — but **no** learning/prevalidation. Don't create a route for one-off,
   unspecialized work; leave it to the generic agent.
-- **Self-execution** — the orchestrator does small/sequential work itself
-  (shell/code/db/kb/learnings) with no sub-agent at all.
+- **Self-execution** — the parent owns substantive analysis, strategy, decisions,
+  and synthesis, and may perform bounded direct work using its available tools.
+  It is not restricted to small glue tasks or forbidden from writing the report.
 
 Rule of thumb: a route earns its place only when its work is a reusable
 specialist (and you have ≥2 of them, or genuine coordination). One-off or
@@ -181,15 +191,16 @@ reconcile and write the report").
 
 ## Anti-patterns
 
-- **Inline sub-tasks in the orchestrator description**: if the
-  `todo_task_step.description` contains specific instructions for a
-  single sub-task (e.g., "for each account, parse the PDF, extract
-  totals, then write to db"), those sub-tasks should be routes with
-  their own sub-agent steps. The orchestrator's description should be
-  about *coordination*, not *execution*.
-- **One-route orchestrators**: an orchestrator with only one route and no
-  branching is over-engineered. Make it a `regular` step instead — the
-  orchestrator shell adds no value.
+- **Dispatcher-only parent**: starting known workers, waiting, and assembling
+  results does not justify an orchestrator. Use the sequence design and current
+  capability guidance in `references/plan-design.md`.
+- **Outsourcing all reasoning**: the parent must own strategy and synthesis.
+  Extract bounded specialist instructions into routes where useful, but keep
+  the parent's substantive reasoning contract in its description.
+- **Choosing by route count**: one or many routes does not establish eligibility.
+  An adaptive investigator may use one specialist repeatedly. A fixed ten-worker
+  script batch is sequence work by design; known isolated agentic tasks can be
+  separate plan steps. Deterministic work uses scripted regular steps.
 - **Routing inside orchestrator description**: if the orchestrator picks
   between mutually exclusive paths based on a single decision, use a
   `routing` step at that point, not narrative branching in the
@@ -213,12 +224,12 @@ over `cat planning/plan.json | less`.
 
 ## Designing well
 
-1. Write the **orchestrator's description** about coordination —
-   discovering tasks, choosing routes, retrying, finishing. Not about
-   the work each task does.
-2. Identify **2–4 routes** that cover the expected branches. More than
-   ~5 routes is a sign the orchestrator is doing too much; consider
-   splitting.
+1. Write the **orchestrator's description** around the reasoning it owns:
+   evidence to interpret, decisions to make, when to change direction, and what
+   proves completion. It may perform analysis and final synthesis directly.
+2. Identify bounded specialist routes that support that reasoning. Choose the
+   route count from the work, not a numerical quota; a fixed batch alone does
+   not justify an orchestrator.
 3. For each route, decide: inline `sub_agent_step` (specific, not
    reusable) or `orphan_step_ref` (shared, reusable).
 4. If a route's work is multi-step + dynamic, consider making it a

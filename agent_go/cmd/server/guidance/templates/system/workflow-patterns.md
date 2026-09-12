@@ -19,7 +19,7 @@ patterns do not override it. A fixed child set and order does not justify an `or
 
 **Layout**:
 - Top-level `routing` step on a mode/flag (e.g., `$RUN_MODE`) → 2–N branches
-- Each branch uses one large `message_sequence` per shared-context span, coherent scripted deterministic boundaries where needed, or a `orchestrator` only for independent delegation
+- Each branch uses one large `message_sequence` per shared-context span, coherent scripted deterministic boundaries where needed, or an `orchestrator` when the parent owns adaptive strategy
 - Optional small terminate `routing` near the end of each branch to converge or end cleanly
 
 **When to use**: one logical workflow has distinct entry modes (dry-run vs apply, learn vs execute, daily vs weekly). Avoids two near-duplicate plans.
@@ -40,14 +40,14 @@ patterns do not override it. A fixed child set and order does not justify an `or
 **Layout**:
 - Use scope, target, and hypotheses already supplied by the user, launch variables, or upstream durable context. Add `human_input` only when the running workflow genuinely cannot proceed without missing scope.
 - Use one large `message_sequence` to investigate and produce the proof-bearing deliverable when the work shares one context.
-- Use a `orchestrator` only when independently delegated sources, hypotheses, or attack surfaces need isolated contexts, parallel progress, or independent retries; then feed their durable outputs to one large final `message_sequence` that consolidates, proves each finding, and repairs gaps.
+- Use an `orchestrator` when its parent must interpret evidence, choose hypotheses or attack surfaces to investigate, and revise its strategy. The parent owns synthesis; use a separate final sequence only when a real context or output boundary requires it.
 
 **When to use**: the scope cannot be known at design time and the investigation has to fan out across angles the orchestrator decides at runtime.
 
 **Pitfalls**:
 - Pre-defining too many routes in the `orchestrator` — for investigations, the generic agent often handles dynamic sub-tasks better than fixed routes.
 - Asking for scope again when it is already present in the request or variables. If required scope is truly absent at runtime, use `human_input`; never let the orchestrator invent it.
-- Putting report-writing inside the `orchestrator` instead of after it — splits the report across runs and breaks consolidation.
+- Delegating all interpretation and synthesis away from the parent — an orchestrator must own the investigation and conclusions. It may write the final report itself.
 
 ---
 
@@ -78,17 +78,35 @@ patterns do not override it. A fixed child set and order does not justify an `or
 
 **Trigger phrases**: "process every item", "for each section / source / team", "research multiple angles", "test every component", "run X for each Y".
 
-**Layout**:
-- One or more `orchestrator` steps with predefined routes per item type (or generic agent for unknowns)
-- Followed by one large `message_sequence` consolidator/synthesizer that reads every route output, proves coverage and consistency, and repairs the final deliverable
-- The consolidator owns its verification and top-level validation unless an independent clean-room boundary is required
+**Choose the control model first**:
+- Known script batch: "run these ten scripts, analyze results, and report" belongs
+  to the message-sequence design. Parallelism does not change that classification.
+- **Only scripted children are in scope for sequences for now.** Reasoning stays
+  in the sequence's own conversation; do not add separate agentic sub-agents.
+  Known isolated agentic tasks can be explicit message-sequence plan steps.
+- Adaptive investigation: use `orchestrator` when the parent interprets results,
+  chooses further tasks, changes direction, and owns the final conclusions.
+  It can delegate bounded scripted or agentic work.
 
-**When to use**: N independent sub-tasks share the same orchestrator goal and need to be combined into one deliverable.
+**Implementation**: use `scripted` items with explicit `scripted_steps` references
+to saved regular definitions in `orphan_steps`. The runtime owns bounded parallelism,
+waiting, per-call validation, and cancellation. Follow with a conversational
+analysis/report turn. See `references/message-sequence.md` for the full contract.
+Do not add agentic workers or dynamic routes to a sequence; SQL `foreach` remains
+sequential conversational iteration.
+
+**Completion contract**:
+- Define the expected task IDs and persist a terminal outcome for each.
+- Wait for all required work; distinguish failed, cancelled, and missing tasks.
+- Validate coverage and output quality before declaring success or reporting.
+- Consolidate in the owning conversation unless isolation or a distinct durable
+  output contract justifies a separate step. Align worker output contracts.
 
 **Pitfalls**:
-- Inlining detailed per-item instructions in the orchestrator description — that detail belongs in the route's `sub_agent_step.description`.
-- No consolidator step — leaves N orphan outputs and no synthesis.
-- Routes with different output schemas — consolidator can't merge them; align route outputs first.
+- Choosing orchestrator merely because scripts can run in parallel.
+- Treating a polished report as proof that every task executed successfully.
+- Assuming SQL `foreach` launches concurrent isolated workers; it sends sequential
+  turns through one conversation.
 
 ---
 
@@ -163,7 +181,7 @@ patterns do not override it. A fixed child set and order does not justify an `or
 **Layout**:
 - Default: one large `message_sequence` owns `[execute] → [re-open evidence and critique with an explicit rubric] → [repair and double-check]`
 - When genuine clean-room independence matters, use separate large maker and reviewer sequences with intentionally isolated context, then an explicit repair handoff
-- An orchestrator variant is reserved for independently delegated maker/reviewer work, not ordinary self-checking
+- An orchestrator variant requires a parent that reasons about feedback and changes strategy; independent maker/reviewer workers alone do not qualify
 
 **When to use**: outputs where quality matters and the critic can spot issues the maker missed (reports, code, strategy proposals, content).
 

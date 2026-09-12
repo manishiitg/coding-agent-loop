@@ -2,6 +2,36 @@
 
 A step's `description` is the prompt an execution agent actually runs on. Every word costs context and dilutes the ones that matter. This is a different concern from step-type selection or validation design — it is about writing quality: does this description say exactly what is needed, once, and nothing else. Read this before writing or editing any step's `description`.
 
+### Check what the runtime already supplies
+
+Before authoring, read `references/step-system-prompts.md` from this same
+builder-reference skill. It is the canonical source used by execution and
+orchestrator runtime code, not a separately maintained summary. Read its named
+section for the step type and the managed-DB sections it references. Template
+conditions and placeholders are resolved per run; they are not permission grants.
+
+The runtime supplies platform path/output conventions, effective Folder Guard
+permissions, managed database access, store responsibilities, variable/secret
+handling, completion/blocker reporting, and role-specific execution rules.
+Skills, learnings, browser instructions and shared KB access depend on the
+configured step and runtime. Keep those mechanics out of descriptions. Do not
+move copies of platform rules into global learnings or another skill either.
+
+Keep the task's data contract: table names, relevant filters, writer ownership,
+business keys and idempotency requirements, exact domain KB topics or files,
+evidence requirements, and binding business/approval constraints. For example:
+"Read active archetypes from `archetype_registry`; use the risk rules in
+`knowledgebase/strategy_framework.md`; upsert results by `experiment_id`."
+Do not add connection instructions, raw SQLite commands, or general shell/path
+rules that duplicate or contradict the runtime. Confirm that referenced files
+exist and are accessible under the step's configured permissions.
+
+For an existing run, use `get_step_prompts(step_id="...")` to inspect its saved
+system prompt and user message, selecting the relevant attempt/iteration. This
+also shows run-specific context unavailable in the source template. A saved
+prompt is evidence for that run, not a preview of later configuration changes;
+new steps have no saved prompt until execution starts.
+
 ### Description defines WHAT; skills and learnings carry HOW
 
 Write the description as an execution prompt focused on the step's objective: what result to achieve, which inputs or evidence to use, the scope and business rules, what success means, and where the result belongs. Keep binding constraints here, including approval requirements and actions outside the step's authority. These define the task even when the implementation changes.
@@ -46,7 +76,7 @@ When a fixed procedure is necessary (browser selectors, a multi-stage authentica
 
 ### Do not duplicate across steps
 
-If two steps in the same plan describe the same policy, contract, or procedure, that is not two descriptions — it is one description and a reference. Move the shared text to `learnings/_global/SKILL.md` (durable HOW-to-operate knowledge), the knowledgebase (domain facts), or a validation schema (structural contract), and have each step reference it by name. A copy-pasted paragraph across steps is a maintenance liability — a fix to one copy silently leaves the others stale — as much as it is a length problem.
+If two steps in the same plan describe the same task-specific policy, contract, or procedure, that is not two descriptions — it is one description and a reference. First remove anything already supplied by the runtime; do not relocate it. Move remaining shared task knowledge to `learnings/_global/SKILL.md` (durable HOW-to-operate knowledge), the knowledgebase (domain facts), or a validation schema (structural contract), and have each step reference it by name. A copy-pasted paragraph across steps is a maintenance liability — a fix to one copy silently leaves the others stale — as much as it is a length problem.
 
 ### A rough self-check before finalizing
 

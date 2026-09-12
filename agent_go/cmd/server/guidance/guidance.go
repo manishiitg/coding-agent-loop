@@ -44,6 +44,7 @@ type kindMeta struct {
 	Description string // shown to the agent in the kind enum
 	Modes       []string
 	AliasOf     string // compatibility kind rendered from the canonical template
+	RawTemplate bool   // expose runtime template source without evaluating its conditions/placeholders
 
 	// Tools names the runtime tools this doc explains. It is the selection key
 	// for surfaces that choose references by capability instead of by mode —
@@ -124,6 +125,7 @@ var allKinds = map[string]kindMeta{
 // prose catalog IS the agent's primary tool-discovery surface, and lazy-loading
 // would create a bootstrap problem.
 var referenceKinds = map[string]kindMeta{
+	"step-system-prompts": {Group: "system", Description: "Canonical runtime system prompt source for execution and orchestrator steps, including managed DB guidance. Read alongside step-description before authoring: these platform rules are supplied by the runtime, so descriptions should add only task-specific requirements. Conditions/placeholders are resolved per run; get_step_prompts shows a saved run.", Modes: []string{"workshop"}, RawTemplate: true},
 	// Workflow-scoped reference docs (workshop / run modes).
 	"code-authoring":        {Group: "system", Description: "Detailed main.py authoring rules and patterns (env access, sys.argv contract, data authenticity, patching discipline)", Modes: []string{"workshop"}},
 	"stores":                {Group: "system", Description: "Persistent store design contract: skill vs knowledgebase vs db, when to write to which", Modes: []string{"multi-agent", "workshop"}, Tools: []string{"query_workflow_db", "mutate_workflow_db", "apply_workflow_db_migration"}},
@@ -138,12 +140,12 @@ var referenceKinds = map[string]kindMeta{
 	"architecture-review":   {Group: "system", Description: "Improve workflow construction: prompts, orchestration, scripts, learning, KB, DB, reports and efficiency. Research and propose measurable improvements without editing implementation.", Modes: []string{"workshop"}},
 	"strategy-auditor":      {Group: "system", Description: "Shared Workflow Strategy Advisor contract: improve outcomes through trustworthy metrics, propose missing or inadequate measurements, investigate freely within and beyond the current approach, distinguish evidence from hypotheses, and route actionable proposals to human decisions.", Modes: []string{"workshop"}},
 	"fix-verification":      {Group: "system", Description: "Proportional immediate checks for bounded repairs. Record what actually passed; changed_unverified still closes an applied fix when stronger runtime proof is unavailable. Reopen only on reproduction, with no future-run verification queue. Load before applying fixes.", Modes: []string{"workshop"}},
-	"message-sequence":      {Group: "system", Description: "Message-sequence patterns — when same-context ordered turns should share one conversation, route patterns (stateful specialist, test/fix loop, maker+reviewer, panel, clean-room retry, HITL re-entry, scripted conversation), and single-step quality patterns (self-validation/interrogation gate, compute-then-reason, citation/grounding gate, self-healing script). Load when multiple regular steps may collapse into message_sequence, when using message_sequence as a todo_task route, or when a standalone step should self-check its own work.", Modes: []string{"workshop"}},
+	"message-sequence":      {Group: "system", Description: "Message sequences: one shared conversation, SQL foreach, validation/repair turns, and saved-script batches with typed parameters, bounded parallelism, completion tracking, and Stop. Script calls use authored parameter values; no dynamic parameter binding, agentic children, or child LLM repair. Load before authoring items, scripted_steps/parameters, or reusable specialist sequences.", Modes: []string{"workshop"}},
 	"routing":               {Group: "system", Description: "Routing step design: when to use routing vs todo_task/message_sequence/human_input, deterministic route_selection.json contract, route_selections for builder-selected fixed branches, route structure (route_id/condition/next_step_id/default_route_id), anti-patterns. Routing is now the \"route\" (major sub-workflow fork) concept; for a small in-flow decision use a branch step instead.", Modes: []string{"workshop"}},
 	"branch":                {Group: "system", Description: "Branch step design: a small in-flow next-step decision, same deterministic route_selection.json/routes[] mechanics as routing but without the major-fork implications -- when to use branch vs routing (now the \"route\"/major-fork concept) vs todo_task/message_sequence/human_input, branch_question requirement, anti-patterns.", Modes: []string{"workshop"}},
 	"orchestrator":          {Group: "system", Description: "orchestrator step design (plan type `orchestrator`; `todo_task` is the legacy alias; users also say sub-workflow / pipeline): when to use vs routing / message_sequence / regular, anatomy (todo_task_step + predefined_routes), inline sub_agent_step vs orphan_step_ref, nested-todo_task 1-level limit, variables and group_name handling, messages as ordinary sequence items (the orchestrator runs on the message_sequence executor), anti-patterns. Load before adding or restructuring a todo_task step.", Modes: []string{"workshop"}},
 	"human-input":           {Group: "system", Description: "human_input step design: free-form text for new steps; yesno/multiple_choice are legacy only. Use a human-decided branch for new fixed choices, route_selections for known route/branch answers, and human_inputs for value steps. Covers unattended runs, downstream validation, and anti-patterns. Load before adding or editing a human_input step.", Modes: []string{"workshop"}},
-	"scripted":              {Group: "system", Description: "scripted step design: use only as the deterministic API/CLI/data boundary; covers anatomy, required validation_schema, store access, and anti-patterns. The internal plan type remains regular for compatibility. Conversational work always uses message_sequence. Load before adding a scripted step or when unsure which step type fits.", Modes: []string{"workshop"}},
+	"scripted":              {Group: "system", Description: "Scripted step design: deterministic API/CLI/data work, script_parameters contracts and defaults, STEP_PARAMS_JSON, validation, permissions, and reuse from message-sequence script batches or orchestrator routes. Internal type is regular; conversational work uses message_sequence. Load before adding or parameterizing a saved script.", Modes: []string{"workshop"}},
 	"playwright-scripted":   {Group: "system", Description: "Repeatable browser tests: use @agentworks/playwright for JS/TS or agentworks-playwright Python sync/async/pytest fixtures for watch-only Chromium live viewing", Modes: []string{"multi-agent", "workshop", "run"}, Tools: []string{"agent_browser", "execute_shell_command"}},
 	"workflow-patterns":     {Group: "system", Description: "Recurring workflow composition patterns: routing, shared-context investigation, coherent scripted pipelines, independent fan-out, in-context verification, pre-flight probes, human checkpoints, critique, durable persistence, and SQL-driven foreach. Each pattern follows one large message_sequence per shared-context span. Load when starting a new plan or restructuring an existing one.", Modes: []string{"workshop"}},
 	"optimize-playbook":     {Group: "system", Description: "Optimizer deep-dive: harden vs replan decision tree, eval, and the Pulse/Strategic Review framework", Modes: []string{"workshop"}},
@@ -233,6 +235,9 @@ func renderFromRegistry(kind string, data tmplData, registry map[string]kindMeta
 	body, err := templatesFS.ReadFile(rel)
 	if err != nil {
 		return "", fmt.Errorf("read template %s: %w", rel, err)
+	}
+	if meta.RawTemplate {
+		return pathDisciplineGuidance + string(body), nil
 	}
 	tmpl, err := template.New(kind).Parse(string(body))
 	if err != nil {
@@ -594,6 +599,9 @@ func RenderSystemDoc(kind string) string {
 	body, err := templatesFS.ReadFile(rel)
 	if err != nil {
 		panic(fmt.Sprintf("guidance: read %s: %v", rel, err))
+	}
+	if meta.RawTemplate {
+		return string(body)
 	}
 	tmpl, err := template.New(kind).Parse(string(body))
 	if err != nil {

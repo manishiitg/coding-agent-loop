@@ -73,7 +73,7 @@ func referenceSkillSpecForMode(mode string) referenceSkillSpec {
 
 	return referenceSkillSpec{
 		Name:             "builder-reference",
-		DescriptionIntro: "Workflow workshop reference docs — detailed contracts and rules to consult before specific actions.",
+		DescriptionIntro: "Workflow workshop references — consult the relevant contract before acting.",
 		Intro:            "This skill bundles the workflow workshop's reference documentation. Match it when you need detailed rules, patterns, or contracts for any of the topics below — especially LLM/provider configuration via tools, not by reading or editing `config/` files; connecting a new third-party service/tool, using integration-discovery for catalog and internet search, provider verification, and installation through install_mcp_server (or add_mcp_server for known custom config), never hand-editing managed MCP config; browser/CDP automation; and Gmail/Google Workspace connection scope or permission issues. Read the single matching file under `references/`. You don't need to read more than one unless the action spans multiple topics.",
 	}
 }

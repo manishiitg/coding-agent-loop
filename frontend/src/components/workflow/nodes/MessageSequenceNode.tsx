@@ -56,6 +56,12 @@ function itemPresentation(item: MessageSequenceItem): { label: string; badge: st
         badge: 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300',
         icon: <ShieldCheck className="w-3 h-3 flex-shrink-0" />
       }
+    case 'scripted':
+      return {
+        label: `scripts · ${item.scripted_steps?.length ?? 0}`,
+        badge: 'bg-sky-100 text-sky-700 dark:bg-sky-900/30 dark:text-sky-300',
+        icon: <Repeat className="w-3 h-3 flex-shrink-0" />
+      }
     case 'foreach':
       return {
         label: 'foreach',
@@ -72,7 +78,7 @@ function itemPresentation(item: MessageSequenceItem): { label: string; badge: st
 }
 
 function itemPrimaryText(item: MessageSequenceItem): string {
-  const raw = item.title || item.message || item.source || item.id || ''
+  const raw = item.title || item.message || item.source_sql || item.source || item.scripted_steps?.map(call => call.step_id).join(', ') || item.id || ''
   const flat = raw.replace(/\s+/g, ' ').trim()
   return flat.length > 52 ? flat.substring(0, 49) + '…' : flat
 }

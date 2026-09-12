@@ -246,6 +246,9 @@ func validateLoadedPlanStructureWithOptions(plan *PlanningResponse, allowLegacyM
 	if err := validateNextStepIDReferences(plan); err != nil {
 		return err
 	}
+	if err := validateMessageSequenceScriptReferences(plan); err != nil {
+		return err
+	}
 	return nil
 }
 

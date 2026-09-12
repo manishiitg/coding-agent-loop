@@ -52,7 +52,8 @@ type messageSequenceSession struct {
 	runtime *messageSequenceRuntime
 	// delegation is set when this sequence is a todo_task orchestrator running on
 	// the shared executor. Never serialized: it holds live runtime hooks.
-	delegation *messageSequenceDelegation
+	delegation   *messageSequenceDelegation
+	scriptedPlan *PlanningResponse
 }
 
 type messageSequenceRuntime struct {
@@ -499,6 +500,38 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeMessageSequenceStep(
 	if !isRoute {
 		defer hcpo.closeMessageSequenceRuntime(session, "standalone message_sequence completed")
 	}
+	// Resolve a single plan/config snapshot before starting any work. Script items
+	// never acquire the orchestrator's agentic delegation tools or child sessions.
+	for _, item := range plannedItems {
+		if item.Type != "scripted" {
+			continue
+		}
+		plan, err := hcpo.ReadCurrentPlan(ctx, hcpo.isEvaluationMode)
+		if err != nil {
+			return "", session.ConversationHistory, fmt.Errorf("load sequence script definitions: %w", err)
+		}
+		configs, err := hcpo.ReadStepConfigs(ctx)
+		if err != nil {
+			return "", session.ConversationHistory, fmt.Errorf("load sequence script configuration: %w", err)
+		}
+		// Copy the definitions rather than mutating a shared plan snapshot.
+		planCopy := *plan
+		planCopy.OrphanSteps = append([]PlanStepInterface(nil), plan.OrphanSteps...)
+		for i, orphan := range planCopy.OrphanSteps {
+			if script, ok := orphan.(*RegularPlanStep); ok {
+				copy := *script
+				for _, config := range configs {
+					if config.ID == script.ID {
+						copy.AgentConfigs = config.AgentConfigs
+						break
+					}
+				}
+				planCopy.OrphanSteps[i] = &copy
+			}
+		}
+		session.scriptedPlan = &planCopy
+		break
+	}
 
 	for _, item := range plannedItems {
 		// Stop means stop. Every layer below is expected to surface a canceled
@@ -762,6 +795,8 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeMessageSequenceItem(ctx contex
 		return hcpo.executeMessageSequenceUserMessage(ctx, step, item, stepIndex, stepPath, session)
 	case "foreach":
 		return hcpo.executeMessageSequenceForeachItem(ctx, step, item, stepIndex, stepPath, session)
+	case "scripted":
+		return hcpo.executeMessageSequenceScripts(ctx, step, item, stepIndex, stepPath, session)
 	case "code":
 		return "", fmt.Errorf("message_sequence step %q item %q uses removed type \"code\"; upgrade the workflow to contract v1.0.10 before running it", step.ID, item.ID)
 	case "prevalidation":

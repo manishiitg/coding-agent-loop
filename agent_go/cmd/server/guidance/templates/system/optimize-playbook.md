@@ -276,8 +276,8 @@ cannot directly express. Several routine actions do not justify an orchestrator.
 
 **When to use orchestrator:**
 - Runtime evidence determines which or how many specialist tasks are needed
-- The parent conditionally selects or fans out workers
-- The parent coordinates material runtime parallelism or adaptive retry/recovery
+- The parent interprets evidence to decide which workers or investigations are needed
+- The parent reasons about evidence or failures and changes its strategy
 - An approval boundary or interim synthesis changes subsequent delegation
 
 Different tools/skills/servers, separate learnings, progress visibility, and
@@ -295,10 +295,10 @@ none is sufficient by itself. **A fixed child set and order does not justify an 
 - Break known, predictable tasks into **predefined sub-agents** (routes) rather than leaving them as inline orchestrator instructions
 - Each sub-agent has its own **learning files**, **server/tool scoping**, **skills (via enabled_skills in step_config)**, and **validation schemas**
 - Sub-agents can be **individually debugged, re-run, and hardened** via the workshop tools
-- The orchestrator stays lean — it manages task flow, while sub-agents handle execution details
+- The orchestrator owns substantive strategy and synthesis; bounded workers handle specialist tasks. The parent may analyze and write the final report directly.
 - If one route still needs **multiple independently delegated sub-tasks with isolated contexts**, its **sub_agent_step** may be another **orchestrator** — but stop at one nested layer. A known checklist or several same-context actions stay inside one large route `message_sequence`.
 
-**Design principle:** Split by durable control boundary, not action count. A scripted fetcher may perform many related calls/transforms under one source/auth/retry/output contract, and a message sequence may perform a large reasoning job plus verification/repair. Use orchestrator only when independent delegation itself adds value.
+**Design principle:** Split by durable control boundary, not action count. A scripted fetcher may perform many related calls/transforms under one source/auth/retry/output contract, and a message sequence may perform a large reasoning job plus verification/repair. Use orchestrator only when the parent owns substantive adaptive reasoning. Known script batches belong to the sequence design. Sequence child support is scoped to scripts only for now, with reasoning in the parent conversation; keep known isolated agentic work as separate plan steps. See `references/plan-design.md`, Step 2, for scripted batches and their limits. Parallelism, isolation, and completion tracking alone do not qualify.
 
 **Rule of thumb:** For data workflows start with scripted fetcher(s) → durable DB/file evidence → one large agentic message sequence. Add routing, human gates, or orchestrator only for real control boundaries.
 

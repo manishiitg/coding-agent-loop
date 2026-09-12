@@ -898,9 +898,22 @@ function ReadOnlyStepDetailPanel({
                       {item.title && <span className="truncate text-xs font-medium text-foreground">{item.title}</span>}
                     </div>
                     {item.message && <div className="text-xs leading-relaxed text-foreground/85">{item.message}</div>}
+                    {kind === 'scripted' && (
+                      <div className="mt-1 text-xs text-foreground/80">
+                        <p>{(item.max_parallel || 1) > 1 ? `Up to ${item.max_parallel} scripts in parallel` : 'Scripts run sequentially'} · waits for all results</p>
+                        <ul className="mt-1 space-y-1">
+                          {item.scripted_steps?.map(call => (
+                            <li key={call.id}>
+                              <span className="font-mono">{call.id}: {call.step_id}</span>
+                              {call.parameters && <pre className="overflow-x-auto whitespace-pre-wrap text-[10px]">{formatJson(call.parameters)}</pre>}
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
                     {kind === 'foreach' && (
                       <div className="mt-1 text-xs text-foreground/80">
-                        for each row in <span className="font-mono text-foreground">{item.source || '—'}</span>
+                        for each row in <span className="font-mono text-foreground">{item.source_sql || item.source || '—'}</span>
                         {item.source_path ? <> at <span className="font-mono text-foreground">{item.source_path}</span></> : null}
                         {item.max_iterations ? <> (max {item.max_iterations})</> : null}
                       </div>

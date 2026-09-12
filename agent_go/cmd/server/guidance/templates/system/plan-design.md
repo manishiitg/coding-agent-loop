@@ -29,18 +29,58 @@ Combine actions into one step when they share one objective and output contract,
 
 ### Step 2: Choose the Right Step Type
 
+**Choose by who decides the work.** A `message_sequence` follows an authored
+work contract: known tasks, dependencies, completion checks, and reporting. An
+`orchestrator` owns the strategy: it interprets evidence, decides what to
+investigate or delegate next, changes direction, and judges whether the goal
+has been met. Its parent must do substantive reasoning itself.
+
+**Scope for now: delegated work in message sequences is limited to saved scripts;
+separate agentic sub-agents are out of scope.** The sequence's own LLM conversation still
+performs reasoning, verification, repair, and reporting. Scripted children perform
+deterministic work under declared input/output contracts. Separate agentic workers
+remain an orchestrator capability, subject to the substantive-strategy eligibility
+gate below. Do not introduce an orchestrator merely to run a fixed agent checklist;
+use separate message-sequence plan steps when isolated agentic work is predetermined.
+Parallel scripts or waiting for every result do not by themselves require an orchestrator.
+
+**Supported scripted execution:** an authored `scripted` item references saved
+regular scripts in `orphan_steps`, validates typed parameters, runs the finite
+batch with `max_parallel` (default sequential, maximum 8), and waits for every
+result before advancing. Scripts retain their own permissions and validation;
+there is no child LLM, automatic script repair, or automatic retry in this path.
+A failed batch stops the sequence with per-call outcomes. See
+`references/message-sequence.md` for authoring and remaining limits.
+
+Do not add `predefined_routes`, agentic children, or generic-agent tools to a
+sequence. Parallel conversations and runtime-discovered script batches are not
+supported. SQL `foreach` remains sequential conversational iteration.
+
+Examples:
+- **Message sequence:** run ten specified scripts, account for all ten results,
+  then use the parent conversation to analyze and report. Ten separate agentic analyses currently
+  use explicit message-sequence plan steps, not agentic children of a sequence.
+- **Orchestrator:** investigate falling performance, choose analyses from the
+  evidence, resolve contradictions, and revise the investigation until the
+  explanation is supported. The parent owns that reasoning and may write the report.
+
+For any batch, define the expected task IDs, require a terminal result for every
+task, and distinguish success, failure, cancellation, and missing work. A report
+is not proof that all tasks ran. Completion tracking and waiting should be
+enforced by the runtime; validation must check coverage against the expected set.
+
 | Scenario | Step Type | Why |
 |----------|-----------|-----|
 | Agent does work, then verifies/fixes it against the success criteria (the common case) | **Message Sequence** (default) | One shared conversation: do → verify → fix, as ordered items. Keeps the agent's full working context instead of handoff artifacts between regular steps |
 | Fixed API/CLI/data work with deterministic inputs, outputs, and validation | **Regular** (`scripted`) | Runs checked-in code without spending an LLM turn; new regular steps are reserved for this boundary |
-| Runtime needs independently delegated tasks with isolated context, tools, retries, or parallel progress | **Todo Task** (sub-workflow/pipeline) with sub-agents | Delegation itself creates value; a known checklist in one shared context stays in one message sequence |
+| Parent must interpret evidence and decide or revise the work needed to reach the goal | **Orchestrator** with bounded workers | Parent owns strategy and substantive reasoning; isolation, parallelism, and worker type alone do not qualify |
 | Need to branch based on prior step output or context | **Routing** | Supported branch primitive — reads `route_selection.json` and picks a route |
 | A person must decide between a few fixed options mid-run (approve/hold, yes/no, pick one) | **Branch** with `route_source: "human"` | Routes are the options; schedules answer up front via `route_selections`, unattended runs use `default_route_id`, interactive runs ask. Successor to `yesno`/`multiple_choice` human input. |
 | Need a free-form value from the user before proceeding (an ID, a month, a note to format) | **Human Input** (`text`) | Blocks until the user responds; captures into `variable_name`. `yesno`/`multiple_choice` are no longer accepted for new steps — use the human branch above. |
 | User already told the builder which fixed branch to run | **Routing** / **Branch** | The builder/caller passes `route_selections` to `run_workflow` / `run_full_workflow`; do not add a step just to ask the same choice again. |
 | Utility/debug tool available but not auto-run | **Orphan** (is_orphan: true) | Not in main flow; manual execution from workshop only |
 
-**Default to one large Message Sequence per shared context.** Give each sequence one coherent agentic outcome. Modern agents do a lot in a single long-running turn, so begin with one shared-context conversation for each coherent agentic span: `[do the whole span] → [re-open source evidence and prove every criterion] → [repair every gap and double-check the final result]`. Improve its description, proof/evidence contract, top-level `validation_schema`, and verify/repair turns before considering more steps. Multiple large sequences are correct when their contexts should not be shared—for example because they have different credentials/security exposure, independent outputs/retries, clean-room independence, human or routing boundaries, or unrelated context that would distract or contaminate the next agent. The builder must decide this from the workflow semantics and state the boundary. Use **Message Sequence even for one-turn conversational work**. Use **Regular** only when deterministic work is implemented as a checked-in script. Use **Todo Task** only when independent delegation itself is required, and **Branch**/**Routing** only for real fixed branch choices — **Branch** for a small in-flow decision, **Routing** when the choice forks into a major, self-contained sub-workflow.
+**Default to one large Message Sequence per shared context.** Give each sequence one coherent agentic outcome. Modern agents do a lot in a single long-running turn, so begin with one shared-context conversation for each coherent agentic span: `[do the whole span] → [re-open source evidence and prove every criterion] → [repair every gap and double-check the final result]`. Improve its description, proof/evidence contract, top-level `validation_schema`, and verify/repair turns before considering more steps. Multiple large sequences are correct when their contexts should not be shared—for example because they have different credentials/security exposure, independent outputs/retries, clean-room independence, human or routing boundaries, or unrelated context that would distract or contaminate the next agent. The builder must decide this from the workflow semantics and state the boundary. Use **Message Sequence even for one-turn conversational work**. Use **Regular** only when deterministic work is implemented as a checked-in script. Use **Orchestrator** only when the parent owns substantive runtime strategy, and **Branch**/**Routing** only for real fixed branch choices — **Branch** for a small in-flow decision, **Routing** when the choice forks into a major, self-contained sub-workflow.
 
 **Deterministic fetcher → agentic processor is the default data architecture.** Put fixed API/SDK requests, CLI commands, pagination with known rules, parsing, normalization, and mechanical database/file writes in one or a few `regular` steps declared `scripted`. Batch related calls when they share credentials, retry policy, source, and output contract; do not create one step per endpoint or command. Give each fetcher an explicit authoritative output (prefer canonical rows in `db/db.sqlite`, otherwise a compact JSON artifact), provenance/freshness fields, fail-closed error handling, idempotency where relevant, and deterministic validation. Then let one large `message_sequence` read those persisted results and perform the judgment-heavy analysis, synthesis, critique, and repair. Do not spend an LLM turn reissuing a known request or parsing a stable response shape.
 
@@ -59,16 +99,22 @@ Every step reads from prior steps and writes for downstream steps:
 - **Flow must be forward-only** — no circular dependencies
 - Use JSON for structured data consumed by downstream steps. Keep output files < 100KB. For a final human-readable report or analysis, **prefer `.md`** — markdown renders richly in the file viewer (headings, tables, lists), and unlike HTML gets clickable workspace file links; it is also simpler and more robust to author. Reach for HTML only when you genuinely need a rich/branded layout markdown cannot express — and for a real dashboard, author the single `db/reports/index.html` experience that reads live data through `window.report`. For prose appended into learnings/KB, use Markdown.
 
-### Step 4: When to Use Orchestrator (Sub-Workflow / Pipeline) with Sub-Agents
+### Step 4: When to Use Orchestrator for Adaptive Reasoning
 
 **Note:** Users may refer to orchestrator steps as "Orchestrators", "orchestrators", "sub-workflows", or "pipelines", and to the routes/sub-agent steps within them as "sub-agents". These are all the same concept — the internal type name is orchestrator.
 
 **Eligibility gate:** use `orchestrator` only when the parent makes a real runtime
 orchestration decision the static plan cannot directly express. Examples are:
-- Runtime evidence determines which or how many independent tasks must run
-- The parent conditionally selects or fans out workers
-- The parent coordinates material runtime parallelism or adaptive retry/recovery
-- An approval boundary or interim synthesis changes subsequent delegation
+- The parent interprets runtime evidence to decide which investigations are needed
+- The parent weighs competing hypotheses and changes subsequent delegation
+- The parent reasons about failures and chooses a different recovery strategy
+- Interim synthesis exposes missing evidence and changes the plan
+
+The parent may self-execute analysis, decisions, synthesis, and report writing.
+Delegate bounded specialist work when isolation or parallel progress helps.
+Do not reduce the parent to a dispatcher that only starts, waits, and reports.
+Known task lists, SQL-selected rows, parallel fan-out, and fixed retry rules
+alone are not substantive strategy decisions.
 
 **A fixed child set and order does not justify an `orchestrator` step.** Different tools,
 separate learnings, progress visibility, and easier debugging are supporting
@@ -107,13 +153,13 @@ Use a `message_sequence` route when the parent orchestrator should be able to ca
 - Add learning / knowledgebase / db update items as user messages at the exact point they should happen.
 - Add explicit reference-check, hallucination-check, critique, or self-validation items when reliability needs it.
 - Plain items inherit the step-level KB, DB, and learnings permissions, just like regular steps. Use a non-empty `write_access` object or `kind` only to narrow a particular turn; an item can never escalate beyond the step configuration. See `read_skill(skills=[{"name":"builder-reference","path":"references/message-sequence.md"}])`.
-- Deterministic execution is never a sequence item. Put API/CLI/SDK calls, data fetching, parsing, transforms, and mechanical writes in standalone scripted regular steps with explicit inputs, outputs, and validation.
+- Deterministic code lives in saved regular script definitions with explicit inputs, outputs, and validation. Run them as standalone plan steps or reference orphan scripts in a `scripted` batch item; never embed code in a message item.
 - As an orchestrator predefined route, a message_sequence behaves like a reusable specialist sub-agent: reuse the same route for critique, test feedback, validation feedback, or follow-up work that should keep prior context; restart only when the prior conversation is stale, wrong, or contaminated.
-- For row/item iteration, use a `foreach` item inside message_sequence when one shared conversation should process every row. Use orchestrator when each item needs independent sub-agent delegation.
+- For row/item iteration, use a `foreach` item inside message_sequence when one shared conversation should process every row. A SQL-selected worklist does not by itself require an orchestrator. For known script batches, use a `scripted` item; choose orchestrator only when its parent owns substantive strategy.
 
 ### Step 6: When to Use Routing or Branch (brief)
 
-Use `routing` or `branch` when the next step must be **exactly one of N mutually exclusive paths** (e.g., "did login succeed, hit MFA, or fail?"). Both are deterministic: a caller or prior step must provide `route_selection.json` (or `route_selections`) with the selected route. For running every sub-task, use orchestrator. For a linear conversation, use message_sequence.
+Use `routing` or `branch` when the next step must be **exactly one of N mutually exclusive paths** (e.g., "did login succeed, hit MFA, or fail?"). Both are deterministic: a caller or prior step must provide `route_selection.json` (or `route_selections`) with the selected route. For running every known sub-task, use a message sequence or explicit plan steps within current capabilities. Use orchestrator when the parent must reason about what work is needed.
 
 **Routing is now the "route" concept: a major, self-contained sub-workflow fork** — use it when the alternatives lead to substantially different continuations of the plan. **Branch is the small in-flow decision** — use it for a lightweight fork that converges back quickly. File-based selection mechanics are shared; branch additionally supports `route_source="human"` for fixed-choice decisions. **A plan has at most one routing step** — the mode selector whose route schedules pick via `route_selections`, each route a sub-workflow of many steps. Every further fixed choice — any simple if-condition, anything with an option that goes straight to `end` — is a branch; `add_routing_step` rejects a second routing step and any route to `end`.
 
@@ -150,7 +196,7 @@ Step-level `success_criteria` is deprecated. Rely on a strong `description` plus
 
 ### Step Types Reference
 
-- **Message Sequence** (type: "message_sequence") — **the default for conversational work**: a single-agent ordered conversation with `items`. Do the whole coherent job, then **verify and fix it in focused follow-up user_message items** in the same context. Supports foreach turns and intermediate prevalidation gates. Its top-level validation_schema is automatically enforced as the final gate with same-conversation repair retries. Deterministic code is always a separate regular scripted step with explicit file dependencies and outputs. As a top-level step the queue runs once; as an orchestrator route it can be re-entered during the same workflow run and receive new instructions without replaying the queue.
+- **Message Sequence** (type: "message_sequence") — **the default for conversational work**: a single-agent ordered conversation with `items`. Do the whole coherent job, then **verify and fix it in focused follow-up user_message items** in the same context. Supports foreach turns and intermediate prevalidation gates. Its top-level validation_schema is automatically enforced as the final gate with same-conversation repair retries. Deterministic code lives in saved regular script definitions, invoked as standalone steps or scripted batch items with explicit input/output contracts. As a top-level step the queue runs once; as an orchestrator route it can be re-entered during the same workflow run and receive new instructions without replaying the queue.
 - **Regular** (type: "regular"): an explicitly scripted deterministic boundary for fixed API/CLI/data work. New regular steps are automatically declared `scripted`; use `message_sequence` for every conversational or judgment-heavy step, including one-turn work.
 - A reusable scripted route may declare `script_parameters`: a small named, typed contract (`type`, `description`, optional `required`, `default`, `enum`) for controlled per-call variation. Keep credentials in Secrets and file dependencies in `context_dependencies`; do not encode dynamic route behavior as rewritten code or narrative instructions.
 - **Orchestrator / Todo Task / Sub-Workflow** (type: "orchestrator"): Also called "orchestrator" by users. Manages runtime delegation only after the Step 4 eligibility gate is met; a fixed child set/order is not enough. Has a **todo_task_step** (orchestrator) and **predefined_routes**. Each route can either define an inline **sub_agent_step** or reuse a plan-local orphan definition via **orphan_step_ref**. Conversational route sub-agents use **message_sequence** (including one-turn work), **regular** is reserved for explicitly scripted deterministic routes, and **orchestrator** provides one nested orchestration layer. Only one nested orchestrator layer is allowed: top-level orchestrator -> nested orchestrator is valid, but a nested orchestrator must not contain another nested orchestrator.

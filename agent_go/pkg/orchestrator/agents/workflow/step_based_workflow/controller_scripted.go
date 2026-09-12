@@ -851,6 +851,12 @@ func (hcpo *StepBasedWorkflowOrchestrator) resolveScriptedShellGuard(
 	learningsAccess := resolveExecutionLearningsAccess(stepConfig, step, hcpo.isEvaluationMode)
 
 	readPaths, writePaths := hcpo.setupExecutionFolderGuard(stepPath, step.GetID(), kbAccess, learningsAccess, resolveDBAccess(stepConfig), stepConfig)
+	// Sequence batches use an invocation-specific output folder while retaining
+	// the saved script's identity and store permissions. Never grant the script's
+	// ordinary execution folder instead of the actual invocation directory.
+	if len(writePaths) > 0 && stepExecutionRelPath != "" {
+		writePaths[0] = stepExecutionRelPath
+	}
 	_, _, readOnlyPaths, _ := appendWorkflowFolderAccess(hcpo.GetWorkspacePath(), nil, nil, kbAccessAllowsRead(resolveKnowledgebaseAccess(getAgentConfigs(step), hcpo.UseKnowledgebase())))
 	if includeCodeDir && len(writePaths) > 0 {
 		writePaths = append(writePaths, writePaths[0]+"/code")
@@ -1293,7 +1299,15 @@ func (hcpo *StepBasedWorkflowOrchestrator) tryRunSavedScriptedScript(
 	}
 
 	// Script exited 0 — run pre-validation to confirm output structure
-	preValResults, _ := RunPreValidation(ctx, getValidationSchema(step), stepExecutionRelPath, hcpo.BaseOrchestrator)
+	preValResults, preValErr := RunPreValidation(ctx, getValidationSchema(step), stepExecutionRelPath, hcpo.BaseOrchestrator)
+	if preValErr != nil {
+		return &ScriptedFastPathResult{
+			RanScript: true, ExitCode: 0, Output: output,
+			Error:           fmt.Sprintf("output validation could not run: %v", preValErr),
+			ValidationError: preValErr.Error(), FailureReason: "validation_error",
+			ExistingScript: existingScript,
+		}
+	}
 	if preValResults != nil {
 		hcpo.emitPreValidationCompletedEvent(ctx, step, stepIndex, stepPath, false, preValResults)
 		if hcpo.selectedRunFolder != "" {

@@ -237,14 +237,20 @@ function getSubAgentGridMetrics(count: number, direction: 'LR' | 'TB') {
   }
 }
 
-// countOrphanStepRefs walks the plan and counts how many todo_task routes
-// reference each orphan step via `orphan_step_ref`. Used to show on an orphan
-// node whether (and how often) it is reused as a shared sub-agent definition.
+// Count both orchestrator routes and sequence script calls so reusable scripts
+// are not shown as unused orphan definitions.
 function countOrphanStepRefs(steps: PlanStep[] | undefined): Map<string, number> {
   const counts = new Map<string, number>()
   const visit = (list?: PlanStep[]) => {
     if (!list) return
     for (const s of list) {
+      if (isMessageSequenceStep(s)) {
+        for (const item of s.items || []) {
+          for (const call of item.scripted_steps || []) {
+            counts.set(call.step_id, (counts.get(call.step_id) || 0) + 1)
+          }
+        }
+      }
       if (isTodoTaskStep(s) && Array.isArray(s.predefined_routes)) {
         for (const r of s.predefined_routes) {
           if (r.orphan_step_ref) counts.set(r.orphan_step_ref, (counts.get(r.orphan_step_ref) || 0) + 1)

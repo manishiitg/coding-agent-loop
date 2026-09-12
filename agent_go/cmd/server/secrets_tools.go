@@ -73,12 +73,29 @@ func (api *StreamingAPI) registerSecretManagementTools(agent definitionToolRegis
 
 	if err := registerTool(
 		"list_secrets",
-		"List all secrets available to the current user. Returns JSON buckets: 'global' (server-wide, admin-managed), 'workflow' (encrypted per-user and scoped to this workflow when applicable), and 'user' (encrypted per-user, reusable). Values are never returned — only names. Use this before setting, deleting, or attaching secrets.",
+		"List all secrets available to the current user. Returns JSON buckets: 'global' (server-wide, admin-managed), 'workflow' (encrypted per-user and scoped to this workflow when applicable), and 'user' (encrypted per-user, reusable). Values are never returned — only names. Use this before setting, deleting, or attaching secrets. Admins may supply source_workflow_path to list another accessible workflow before global promotion.",
 		map[string]interface{}{
-			"type":       "object",
-			"properties": map[string]interface{}{},
+			"type": "object",
+			"properties": map[string]interface{}{
+				"source_workflow_path": map[string]interface{}{"type": "string", "description": "Admin-only optional source workspace path, e.g. Workflow/rts-latency. Defaults to the active workflow. Returns names only."},
+			},
 		},
-		func(ctx context.Context, _ map[string]interface{}) (string, error) {
+		func(ctx context.Context, args map[string]interface{}) (string, error) {
+			sourcePath := workflowPath
+			if raw, supplied := args["source_workflow_path"]; supplied {
+				if !canManageGlobalSecrets(userID) {
+					return "", errGlobalAdmin
+				}
+				path, ok := raw.(string)
+				if !ok || strings.TrimSpace(path) == "" {
+					return "", fmt.Errorf("source_workflow_path must be a non-empty workflow workspace path")
+				}
+				paths, err := authorizeWorkflowContextPaths(context.WithValue(ctx, UserContextKey, &UserClaims{UserID: userID}), []string{path})
+				if err != nil {
+					return "", fmt.Errorf("Source workflow is unavailable")
+				}
+				sourcePath = paths[0]
+			}
 			globals := getGlobalSecrets()
 			globalNames := make([]string, 0, len(globals))
 			for _, gs := range globals {
@@ -97,8 +114,8 @@ func (api *StreamingAPI) registerSecretManagementTools(agent definitionToolRegis
 			sort.Strings(userNames)
 
 			workflowNames := []string{}
-			if strings.TrimSpace(workflowPath) != "" {
-				workflowSecrets, err := api.ensureSharedWorkflowSecrets(ctx, workflowPath, userID)
+			if strings.TrimSpace(sourcePath) != "" {
+				workflowSecrets, err := api.ensureSharedWorkflowSecrets(ctx, sourcePath, userID)
 				if err != nil {
 					return "", fmt.Errorf("failed to list workflow secrets: %w", err)
 				}
@@ -118,7 +135,7 @@ func (api *StreamingAPI) registerSecretManagementTools(agent definitionToolRegis
 				"workflow": map[string]interface{}{
 					"read_only":     false,
 					"source":        "encrypted workflow store, shared by every user with access to this workflow",
-					"workflow_path": workflowPath,
+					"workflow_path": sourcePath,
 					"names":         workflowNames,
 				},
 				"user": map[string]interface{}{
@@ -139,11 +156,12 @@ func (api *StreamingAPI) registerSecretManagementTools(agent definitionToolRegis
 	}
 
 	if canManageGlobalSecrets(userID) {
-		if err := registerTool("manage_global_secret", "Admin-only server-wide secret management. action=promote moves an existing secret from the active workflow into the encrypted global store; existing source attachments continue working. Other workflows may select it from Global Secrets. action=set creates or updates a managed global value; action=delete removes a managed global. Environment globals cannot be changed here. Promotion never overwrites a global name. Values are never returned. Only promote when the user intends server-wide access.", map[string]interface{}{
+		if err := registerTool("manage_global_secret", "Admin-only server-wide secret management. action=promote moves an existing secret from source_workflow_path (defaults to the active workflow) into the encrypted global store. Admins can promote from another accessible workflow without switching chats; existing source attachments continue working. Other workflows may select it from Global Secrets. action=set creates or updates a managed global value; action=delete removes a managed global. Environment globals cannot be changed here. Promotion never overwrites a global name. Values are never returned. Only promote when the user intends server-wide access.", map[string]interface{}{
 			"type": "object", "properties": map[string]interface{}{
-				"action": map[string]interface{}{"type": "string", "enum": []string{"promote", "set", "delete"}},
-				"name":   map[string]interface{}{"type": "string"},
-				"value":  map[string]interface{}{"type": "string", "description": "New value for action=set only; omit when promoting an existing workflow secret."},
+				"action":               map[string]interface{}{"type": "string", "enum": []string{"promote", "set", "delete"}},
+				"name":                 map[string]interface{}{"type": "string"},
+				"source_workflow_path": map[string]interface{}{"type": "string", "description": "For promote only: source workspace path such as Workflow/rts-latency. Omit to use the active workflow. Use list_secrets with this path to discover names first."},
+				"value":                map[string]interface{}{"type": "string", "description": "New value for action=set only; omit when promoting an existing workflow secret."},
 			}, "required": []string{"action", "name"},
 		}, func(ctx context.Context, args map[string]interface{}) (string, error) {
 			if !canManageGlobalSecrets(userID) {
@@ -155,7 +173,15 @@ func (api *StreamingAPI) registerSecretManagementTools(agent definitionToolRegis
 			var err error
 			switch action {
 			case "promote":
-				err = api.promoteWorkflowSecret(ctx, userID, workflowPath, name)
+				sourcePath := workflowPath
+				if raw, supplied := args["source_workflow_path"]; supplied {
+					path, ok := raw.(string)
+					if !ok || strings.TrimSpace(path) == "" {
+						return "", fmt.Errorf("source_workflow_path must be a non-empty workflow workspace path")
+					}
+					sourcePath = path
+				}
+				err = api.promoteWorkflowSecret(ctx, userID, sourcePath, name)
 			case "set":
 				value, _ := args["value"].(string)
 				err = api.saveManagedGlobalSecret(ctx, userID, name, value, false)

@@ -64,7 +64,7 @@ it('keeps compact filters accessible and shows webhook setup guidance', async ()
   vi.mocked(schedulerApi.listJobs).mockResolvedValue({ jobs: [cron], total: 1, limit: 100, offset: 0 })
   const { host } = await mount(true)
   await select(host, 'Webhooks')
-  expect(host.textContent).toContain('Setup → API triggers')
+  expect(host.textContent).toContain('workflow builder chat')
   expect(host.querySelector('button[aria-label="Webhooks"]')?.getAttribute('aria-pressed')).toBe('true')
 })
 it('refreshes the visible feed when a webhook finishes', async () => {

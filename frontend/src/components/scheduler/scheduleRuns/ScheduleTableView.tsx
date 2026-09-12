@@ -81,7 +81,7 @@ export function ScheduleTableView({ panel }: ScheduleTableViewProps) {
                   {job.last_error && <p className="max-w-4xl whitespace-pre-wrap break-words text-xs leading-5 text-muted-foreground">Last run: {job.last_error}</p>}
                   {isMissedSchedule(job) && <p className="text-xs text-muted-foreground">{job.missed_run_count} missed occurrence{job.missed_run_count === 1 ? '' : 's'} recorded.</p>}
                   {job.waiting_reason && <p className="text-xs text-muted-foreground">{job.waiting_reason}</p>}
-                  <p className="text-xs text-muted-foreground">{isWebhook ? 'Configure this webhook in Setup → API triggers.' : 'Ask this automation in Chat to change its schedule.'}</p>
+                  <p className="text-xs text-muted-foreground">{isWebhook ? 'Ask the workflow builder chat to configure this webhook.' : 'Ask this automation in Chat to change its schedule.'}</p>
                 </div>
               </td></tr>}
             </React.Fragment>

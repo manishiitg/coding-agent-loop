@@ -63,7 +63,7 @@ const emptyStateContent: Record<PreviousChatFilter, {
   webhook: {
     icon: Webhook,
     title: 'No webhook runs yet',
-    body: 'Add a trigger in Setup → API triggers. Its executions will appear here when an external service calls it.',
+    body: 'Ask the workflow builder chat to create a webhook. Its executions will appear here when an external service calls it.',
   },
   bot: {
     icon: Bot,
@@ -827,7 +827,7 @@ export const PreviousChatHistoryPanel: React.FC<PreviousChatHistoryPanelProps> =
                 <span>Loading {activeFilter === 'webhook' ? 'webhook' : 'schedule'} activity...</span>
               </div>
             ) : filteredJobs.length === 0 ? (
-              <div className="px-3 py-4 text-sm text-muted-foreground">{activeFilter === 'webhook' ? 'No webhooks configured. Add one in Setup → API triggers.' : 'No schedules are configured for this workflow yet.'}</div>
+              <div className="px-3 py-4 text-sm text-muted-foreground">{activeFilter === 'webhook' ? 'No webhooks configured. Ask the workflow builder chat to create one.' : 'No schedules are configured for this workflow yet.'}</div>
             ) : filteredRuns.length === 0 ? (
               <div className="px-3 py-4 text-sm text-muted-foreground">{activeFilter === 'webhook' ? 'No webhook runs recorded yet.' : 'No scheduled runs recorded yet.'}</div>
             ) : (

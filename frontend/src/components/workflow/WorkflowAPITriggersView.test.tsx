@@ -62,13 +62,12 @@ it('lets a reader inspect but not change triggers', async () => {
   expect(host.textContent).not.toContain('Add API trigger')
   expect(host.textContent).not.toContain('Remove')
 })
-it('requires a route before creating an API trigger', async () => {
+it('directs creation and configuration to the builder chat without a manual form', async () => {
   const host = await mount()
-  await act(async () => button(host, 'Add API trigger').click())
-  const form = host.querySelector('form')!
-  expect(form.textContent).toContain('Route at Choose work')
-  expect((form.querySelector('button[type="submit"]') as HTMLButtonElement).disabled).toBe(true)
-  expect((form.querySelector('input[type="checkbox"]') as HTMLInputElement).checked).toBe(true)
+  expect(host.textContent).toContain('through the workflow builder chat')
+  expect(host.textContent).not.toContain('Add API trigger')
+  expect(host.querySelector('form')).toBeNull()
+  expect([...host.querySelectorAll('button')].some(node => node.textContent === 'Edit')).toBe(false)
 })
 it('removes only the selected trigger', async () => {
   const host = await mount()

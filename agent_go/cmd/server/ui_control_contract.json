@@ -179,7 +179,7 @@
     },
     {
       "id": "api-triggers",
-      "label": "API triggers",
+      "label": "Webhooks",
       "actions": [
         "open"
       ],

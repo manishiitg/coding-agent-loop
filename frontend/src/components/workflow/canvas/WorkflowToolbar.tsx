@@ -7,6 +7,7 @@ import {
   Activity,
   BellRing,
   CalendarClock,
+  Webhook,
   ChevronDown,
   ChevronRight,
   Gauge,
@@ -532,7 +533,7 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
               label="Views"
               open={openGroups.views}
               onToggle={() => toggleGroup('views')}
-              title={openGroups.views ? 'Hide views' : 'Show views: plan, evidence, data, browser, schedules, files and operations'}
+              title={openGroups.views ? 'Hide views' : 'Show views: plan, evidence, data, browser, schedules, webhooks, files and operations'}
             >
               <div className="inline-flex items-center gap-0.5">
                 {workspaceViewDefinitions.map(({ id: view, icon: Icon, label }) => {
@@ -584,6 +585,16 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
                     </button>
                   </TooltipTrigger>
                   <TooltipContent side="bottom"><p>{scheduleTooltip}</p></TooltipContent>
+                </Tooltip>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <button type="button" onClick={() => openWorkspaceView('api-triggers')}
+                      className={`flex h-6 w-7 items-center justify-center rounded transition-colors ${activeWorkspaceView === 'api-triggers' ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:bg-background/70 hover:text-foreground'}`}
+                      aria-label="Webhooks" aria-pressed={activeWorkspaceView === 'api-triggers'}>
+                      <Webhook className="h-3.5 w-3.5" />
+                    </button>
+                  </TooltipTrigger>
+                  <TooltipContent side="bottom"><p>Webhooks</p></TooltipContent>
                 </Tooltip>
               </div>
               <span className="mx-0.5 h-4 w-px bg-border" aria-hidden="true" />
@@ -640,7 +651,7 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
             label="Setup"
             open={openGroups.setup}
             onToggle={() => toggleGroup('setup')}
-            title={openGroups.setup ? 'Hide setup' : 'Show setup: skills, secrets, MCP servers, LLM, bots, API triggers, folders, sharing, users'}
+            title={openGroups.setup ? 'Hide setup' : 'Show setup: skills, secrets, MCP servers, LLM, bots, folders, sharing, users'}
           >
           <div className="inline-flex items-center gap-0.5">
             {capabilityViewDefinitions.map(({ id, icon: Icon, label }) => {

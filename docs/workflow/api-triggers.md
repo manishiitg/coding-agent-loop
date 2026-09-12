@@ -4,7 +4,7 @@ A workflow route can run from either a **time trigger** (cron/calendar) or an **
 
 ## Setup
 
-Open **Setup → API triggers**, choose a name, one or more saved routing/branch selections and variable groups, and save. Each trigger gets its own endpoint and secret. The selected route runs through the full plan, including its prerequisites; it does not jump directly to an arbitrary step.
+Ask the workflow builder chat to create a webhook with a name, one or more saved routing/branch selections, variable groups, and authentication mode. Create and edit bindings through builder chat; **Views → Webhooks**, beside Schedules, displays endpoints and existing-trigger controls. Each trigger gets its own endpoint and secret. The selected route runs through the full plan, including its prerequisites; it does not jump directly to an arbitrary step.
 
 Use generic bearer authentication for services capable of sending an Authorization header. Use GitHub authentication for GitHub's signed webhooks. Copy the generated secret immediately; it is returned only at creation/rotation and stored encrypted with the existing server secrets key. Editing authentication mode rotates the secret. Disable revokes new deliveries; remove deletes the attachment. Neither interrupts a run already accepted; use Stop in run history for that.
 

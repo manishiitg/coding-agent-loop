@@ -180,7 +180,7 @@ export const UI_CONTROL_CONTRACT = {
     },
     {
       "id": "api-triggers",
-      "label": "API triggers",
+      "label": "Webhooks",
       "actions": [
         "open"
       ],

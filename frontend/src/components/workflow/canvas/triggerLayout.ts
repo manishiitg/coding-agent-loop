@@ -46,13 +46,18 @@ export function appendTriggerCards(nodes: WorkflowNode[], edges: WorkflowEdge[],
     data: { id: 'workflow-trigger-heading', title: 'Triggers', loading: options.loading, error: options.error, count: jobs.length, onSettings: options.onSettings, onRefresh: options.onRefresh },
   })
   const links: WorkflowEdge[] = jobs.filter(job => triggerRouteSummary(job, nodes).canTrace).flatMap(job => {
-    const color = job.enabled ? '#38bdf8' : '#94a3b8'
-    const style = { stroke: color, strokeWidth: options.selectedID === job.id ? 3 : 2 }
+    const active = options.selectedID === job.id
+    const color = active ? '#38bdf8' : '#64748b'
+    const style = { stroke: color, strokeWidth: active ? 1.6 : 1, opacity: active ? 0.9 : job.enabled ? 0.35 : 0.2 }
+    const labelStyle = { fill: 'hsl(var(--muted-foreground))', fontSize: 11 }
+    const labelBgStyle = { fill: 'hsl(var(--background))', fillOpacity: 0.9 }
+    const markerEnd = active ? { type: MarkerType.ArrowClosed, color, width: 12, height: 12 } : undefined
     const choices = Object.entries(job.route_selections || {})
     const entry: WorkflowEdge = {
       id: `trigger-entry-${job.id}`, source: triggerNodeID(job.id), target: 'start', targetHandle: 'trigger-input', type: 'smoothstep',
-      label: choices.length ? 'Starts workflow' : 'Full workflow', style,
-      markerEnd: { type: MarkerType.ArrowClosed, color },
+      label: active ? choices.length ? 'Starts workflow' : 'Full workflow' : undefined,
+      ariaLabel: `${job.name}: ${choices.length ? 'Starts workflow' : 'Full workflow'}`,
+      style, labelStyle, labelBgStyle, labelBgBorderRadius: 4, markerEnd,
     }
     // These dashed links describe saved route choices, not execution shortcuts.
     // The entry link and trace still retain all prerequisites from Start.
@@ -61,8 +66,10 @@ export function appendTriggerCards(nodes: WorkflowNode[], edges: WorkflowEdge[],
       const route = (router?.data as RoutingStepNodeData | undefined)?.routes?.find(route => route.route_id === routeID)
       return edges.filter(edge => edge.source === router?.id && (edge.sourceHandle === `route-${routeID}` || edge.sourceHandle === `handoff-${routeID}`)).map(edge => ({
         id: `trigger-route-${job.id}-${edge.id}`, source: triggerNodeID(job.id), target: edge.target, targetHandle: edge.targetHandle, type: 'smoothstep',
-        label: `Selects: ${route?.route_name || routeID}`, style: { ...style, strokeDasharray: '6 4' },
-        markerEnd: { type: MarkerType.ArrowClosed, color },
+        label: active ? `Selects: ${route?.route_name || routeID}` : undefined,
+        ariaLabel: `${job.name}: Selects ${route?.route_name || routeID}`,
+        style: { ...style, strokeDasharray: '3 6' },
+        labelStyle, labelBgStyle, labelBgBorderRadius: 4, markerEnd,
       } as WorkflowEdge))
     })
     return [entry, ...routes]

@@ -31,12 +31,17 @@ describe('plan triggers', () => {
     for (let i = 1; i < cards.length; i++) expect(cards[i].position.x - cards[i - 1].position.x).toBeGreaterThan(TRIGGER_CARD_WIDTH)
     expect(result.edges.filter(edge => edge.id.startsWith('trigger-entry-')).every(edge => edge.target === 'start')).toBe(true)
     expect(edges).toHaveLength(6)
+    for (const link of result.edges.filter(edge => edge.source.startsWith('workflow-trigger-'))) {
+      expect(link.label).toBeUndefined()
+      expect(link.style?.strokeWidth).toBe(1)
+      expect(link.style?.opacity).toBeLessThanOrEqual(0.35)
+    }
     for (const card of cards) expect(card.measured).toEqual({ width: TRIGGER_CARD_WIDTH, height: TRIGGER_CARD_HEIGHT })
   })
   it('connects selected routes for schedules and webhooks and full-workflow triggers to Start', () => {
     for (const schedule_type of ['cron', 'webhook'] as const) {
       const routeJob = { ...job, schedule_type }
-      const flow = appendTriggerCards(nodes, edges, [routeJob], options)
+      const flow = appendTriggerCards(nodes, edges, [routeJob], { ...options, selectedID: job.id })
       const links = flow.edges.filter(edge => edge.source === 'workflow-trigger-hook')
       expect(links.map(edge => [edge.target, edge.label])).toEqual([
         ['start', 'Starts workflow'], ['review', 'Selects: PR review'],
@@ -44,7 +49,7 @@ describe('plan triggers', () => {
       const traced = traceTriggerGraph(flow.nodes, flow.edges, routeJob)
       expect(traced.edges.find(edge => edge.id === 'trigger-route-hook-review-edge')?.style?.opacity).toBe(1)
     }
-    const full = appendTriggerCards(nodes, edges, [{ ...job, route_selections: {} }], options)
+    const full = appendTriggerCards(nodes, edges, [{ ...job, route_selections: {} }], { ...options, selectedID: job.id })
     expect(full.edges.filter(edge => edge.source === 'workflow-trigger-hook').map(edge => [edge.target, edge.label])).toEqual([['start', 'Full workflow']])
   })
   it('retains prerequisites and follows the saved route', () => {

@@ -295,12 +295,10 @@ func (s *SchedulerService) saveWorkflowWebhook(w http.ResponseWriter, r *http.Re
 		}
 	}
 	cfg.AuthMode = req.AuthMode
-	sched := WorkflowSchedule{ID: id, Name: strings.TrimSpace(req.Name), ScheduleType: "webhook", Timezone: "UTC", Enabled: req.Enabled, RouteSelections: req.RouteSelections, GroupNames: groups, Mode: "workshop", WorkshopMode: "run", CollisionPolicy: "skip", Webhook: cfg, PulseMode: "basic", PulseModeReason: "API delivery runs the selected route with normal run finalization."}
+	sched := WorkflowSchedule{ID: id, Name: strings.TrimSpace(req.Name), ScheduleType: "webhook", Timezone: "UTC", Enabled: req.Enabled, RouteSelections: req.RouteSelections, GroupNames: groups, Mode: "workshop", WorkshopMode: "run", CollisionPolicy: "skip", Webhook: cfg, PulseMode: "off", PulseModeReason: "Webhook deliveries skip Pulse, backup and publish."}
 	if index >= 0 {
 		sched.Description = manifest.Schedules[index].Description
 		sched.ExecutionMode = manifest.Schedules[index].ExecutionMode
-		sched.PulseMode = manifest.Schedules[index].PulseMode
-		sched.PulseModeReason = manifest.Schedules[index].PulseModeReason
 		manifest.Schedules[index] = sched
 	} else {
 		manifest.Schedules = append(manifest.Schedules, sched)

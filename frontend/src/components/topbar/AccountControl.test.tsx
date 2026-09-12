@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 import React, { act } from 'react'
 import { createRoot } from 'react-dom/client'
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 vi.mock('../../stores/useAuthStore', () => ({ useAuthStore: vi.fn() }))
 vi.mock('./AccessTokensDialog', () => ({ default: () => <div role="dialog">Manage access tokens</div> }))
 vi.mock('./ChangePasswordDialog', () => ({ default: () => null }))
@@ -11,6 +11,15 @@ import { TooltipProvider } from '../ui/tooltip'
 import AccountControl from './AccountControl'
 
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true })
+beforeEach(() => {
+  const values = new Map<string, string>()
+  vi.stubGlobal('localStorage', {
+    getItem: (key: string) => values.get(key) ?? null,
+    setItem: (key: string, value: string) => values.set(key, value),
+  })
+})
+afterEach(() => vi.unstubAllGlobals())
+
 describe('Account menu availability', () => {
   it.each([false, true])('exposes token management with multi-user mode %s', async (isMultiUserMode) => {
     vi.mocked(useAuthStore).mockReturnValue({ user: { id: 'user', username: 'Alex' }, isMultiUserMode, logout: vi.fn() })
@@ -38,6 +47,24 @@ describe('Account menu availability', () => {
       expect(usersItem).toBeTruthy()
       await act(async () => usersItem!.click())
       expect(host.querySelector('[role="dialog"]')?.textContent).toBe('Manage users')
+    } finally { await act(async () => root.unmount()); host.remove() }
+  })
+  it('opens help and keyboard shortcuts from the menu and closes it after selection', async () => {
+    vi.mocked(useAuthStore).mockReturnValue({ user: { id: 'user', username: 'Alex' }, isMultiUserMode: false, logout: vi.fn() })
+    const onOpenWalkthrough = vi.fn()
+    const onOpenShortcuts = vi.fn()
+    const host = document.createElement('div'); document.body.append(host); const root = createRoot(host)
+    try {
+      await act(async () => root.render(<TooltipProvider><AccountControl onOpenWalkthrough={onOpenWalkthrough} onOpenShortcuts={onOpenShortcuts} /></TooltipProvider>))
+      expect(host.textContent).not.toContain('Keyboard shortcuts')
+      await act(async () => host.querySelector('button')!.click())
+      await act(async () => Array.from(host.querySelectorAll('button')).find(b => b.textContent?.includes('Keyboard shortcuts'))!.click())
+      expect(onOpenShortcuts).toHaveBeenCalledOnce()
+      expect(host.querySelector('[role="menu"]')).toBeNull()
+      await act(async () => host.querySelector('button')!.click())
+      await act(async () => Array.from(host.querySelectorAll('button')).find(b => b.textContent?.includes('Help & walkthrough'))!.click())
+      expect(onOpenWalkthrough).toHaveBeenCalledOnce()
+      expect(host.querySelector('[role="menu"]')).toBeNull()
     } finally { await act(async () => root.unmount()); host.remove() }
   })
   it('waits for the local account session to initialize', async () => {

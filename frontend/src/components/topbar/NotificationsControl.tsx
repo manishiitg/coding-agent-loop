@@ -8,11 +8,11 @@ import { useIsElectron } from './useIsElectron'
  * NotificationsControl - toggles desktop notifications + sound and surfaces the
  * OS permission state. Electron only; renders nothing in the browser.
  */
-export default function NotificationsControl() {
+export default function NotificationsControl({ menuItem = false }: { menuItem?: boolean }) {
   const isElectron = useIsElectron()
   const [osPermission, setOsPermission] = useState<NotificationPermission>('default')
   const [notificationsEnabled, setNotificationsEnabled] = useState(() => {
-    return localStorage.getItem('mcp_notifications_enabled') !== 'false' // Default true
+    return window.localStorage.getItem('mcp_notifications_enabled') !== 'false' // Default true
   })
 
   useEffect(() => {
@@ -68,12 +68,30 @@ export default function NotificationsControl() {
 
     const nextValue = !notificationsEnabled
     setNotificationsEnabled(nextValue)
-    localStorage.setItem('mcp_notifications_enabled', String(nextValue))
+    window.localStorage.setItem('mcp_notifications_enabled', String(nextValue))
 
     if (nextValue) {
       // Just enabled: trigger test
       testNotification()
     }
+  }
+
+  if (menuItem) {
+    return (
+      <button
+        type="button"
+        role="menuitemcheckbox"
+        aria-checked={notificationsEnabled && osPermission !== 'denied'}
+        onClick={handleNotificationClick}
+        className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm text-gray-700 transition-colors hover:bg-gray-100 dark:text-gray-200 dark:hover:bg-gray-700"
+      >
+        {osPermission === 'denied' || !notificationsEnabled
+          ? <BellOff className="h-4 w-4 text-muted-foreground" />
+          : <Bell className="h-4 w-4 text-muted-foreground" />}
+        <span className="flex-1">Notifications &amp; sound</span>
+        <span className="text-xs text-muted-foreground">{osPermission === 'denied' ? 'Blocked' : notificationsEnabled ? 'On' : 'Off'}</span>
+      </button>
+    )
   }
 
   return (

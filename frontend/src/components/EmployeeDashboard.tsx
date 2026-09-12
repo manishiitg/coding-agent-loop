@@ -49,7 +49,7 @@ export const EmployeeDashboard: React.FC = () => {
     return <div className="flex h-full min-h-[320px] items-center justify-center text-muted-foreground"><Loader2 className="mr-2 h-5 w-5 animate-spin" />Loading activity…</div>
   }
 
-  return <div className="h-[calc(100vh-116px)] min-h-[480px] overflow-hidden bg-background"><OrgDashboard workflows={workflows} onOpenWorkflow={handleOpenWorkflow} /></div>
+  return <div className="h-full min-h-0 overflow-hidden bg-background"><OrgDashboard embedded workflows={workflows} onOpenWorkflow={handleOpenWorkflow} /></div>
 }
 
 export default EmployeeDashboard

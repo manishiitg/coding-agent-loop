@@ -13,9 +13,11 @@ type ScheduleRunsHeaderProps = {
   /** Embedded workspace views are closed by their parent layout, not here. */
   showClose?: boolean
   headerAction?: React.ReactNode
+  compact?: boolean
+  navigation?: React.ReactNode
 }
 
-export const ScheduleRunsHeader: React.FC<ScheduleRunsHeaderProps> = ({ panel, onClose, showClose = true, headerAction }) => {
+export const ScheduleRunsHeader: React.FC<ScheduleRunsHeaderProps> = ({ panel, onClose, showClose = true, headerAction, compact = false, navigation }) => {
   const {
     panelTitle,
     isLoading,
@@ -30,8 +32,11 @@ export const ScheduleRunsHeader: React.FC<ScheduleRunsHeaderProps> = ({ panel, o
   } = panel
 
   return (
-    <div className="flex items-start justify-between gap-4 px-5 py-4 border-b border-border flex-shrink-0">
-      <div className="min-w-0 space-y-2">
+    <div className={`flex shrink-0 flex-wrap items-center justify-between gap-x-4 gap-y-2 border-b border-border px-4 sm:px-6 ${compact ? 'py-2' : 'py-4'}`}>
+      {compact ? <div className="flex min-w-0 flex-wrap items-center gap-3">
+        {navigation}
+        <span className="text-xs text-muted-foreground">{summary.total} schedules{isSchedulerPaused ? ' · Scheduling paused' : ''}</span>
+      </div> : <div className="min-w-0 space-y-2">
         <div className="flex items-center gap-2">
           <Calendar className="w-5 h-5 text-amber-500" />
           <h2 className="text-base font-semibold text-foreground">
@@ -63,11 +68,6 @@ export const ScheduleRunsHeader: React.FC<ScheduleRunsHeaderProps> = ({ panel, o
                 {workflowScheduleSummary.running} running
               </span>
             )}
-            {!isWorkflowScoped && workflowScheduleSummary.attention > 0 && (
-              <span className="rounded-full border border-red-500/30 bg-red-500/10 px-2 py-0.5 text-xs font-medium text-red-600 dark:text-red-300">
-                {workflowScheduleSummary.attention} need attention
-              </span>
-            )}
             {!isWorkflowScoped && workflowScheduleSummary.fullyPaused > 0 && (
               <span className="rounded-full border border-border bg-muted px-2 py-0.5 text-xs text-muted-foreground">
                 {workflowScheduleSummary.fullyPaused} fully paused
@@ -95,16 +95,16 @@ export const ScheduleRunsHeader: React.FC<ScheduleRunsHeaderProps> = ({ panel, o
             )}
           </div>
         )}
-      </div>
-      <div className="flex shrink-0 items-center gap-2">
+      </div>}
+      <div className="ml-auto flex shrink-0 items-center gap-2">
         {!isWorkflowScoped && !isReadOnlyUser && (
           <button
             onClick={handleToggleGlobalPause}
             disabled={isUpdatingSchedulerPause}
             className={`inline-flex items-center gap-2 rounded-md border px-3 py-1.5 text-xs font-medium transition-colors disabled:opacity-60 ${
               isSchedulerPaused
-                ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-500/20'
-                : 'border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-300 hover:bg-amber-500/20'
+                ? 'border-border bg-background text-foreground hover:bg-muted'
+                : 'border-border bg-background text-muted-foreground hover:bg-muted hover:text-foreground'
             }`}
           >
             {isUpdatingSchedulerPause ? (

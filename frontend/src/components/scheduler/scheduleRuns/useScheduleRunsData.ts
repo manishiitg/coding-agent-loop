@@ -37,21 +37,23 @@ import {
 } from './cron'
 
 export type UseScheduleRunsDataArgs = {
+  active?: boolean
   onClose: () => void
   onJobsLoaded?: (jobs: ScheduledJob[]) => void
   workflowScope?: WorkflowScope
 }
 
-export function useScheduleRunsData({ onClose, onJobsLoaded, workflowScope }: UseScheduleRunsDataArgs) {
+export function useScheduleRunsData({ onClose, onJobsLoaded, workflowScope, active = true }: UseScheduleRunsDataArgs) {
   const [jobs, setJobs] = useState<ScheduledJob[]>([])
   const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [openActionMenuJobId, setOpenActionMenuJobId] = useState<string | null>(null)
   const [expandedWorkflowKeys, setExpandedWorkflowKeys] = useState<string[]>([])
   const isWorkflowScoped = !!workflowScope
-  const [activeView, setActiveView] = useState<SchedulePanelView>(isWorkflowScoped ? 'schedules' : 'by-workflow')
+  const [activeView, setActiveView] = useState<SchedulePanelView>('schedules')
   const [calendarMonth, setCalendarMonth] = useState(() => new Date())
   const [selectedCalendarDate, setSelectedCalendarDate] = useState<string | null>(null)
+  const [focusedScheduleId, setFocusedScheduleId] = useState<string | null>(null)
   const [activeFilter, setActiveFilter] = useState<JobFilter>('all')
   const [searchQuery, setSearchQuery] = useState('')
   const [selectedWorkflowFilter, setSelectedWorkflowFilter] = useState('all')
@@ -150,9 +152,10 @@ export function useScheduleRunsData({ onClose, onJobsLoaded, workflowScope }: Us
   }, [onJobsLoaded])
 
   useEffect(() => {
+    if (!active) return
     loadJobs(true)
     refreshPresets()
-  }, [loadJobs, refreshPresets])
+  }, [loadJobs, refreshPresets, active])
 
   // Auto-refresh while any schedule is running: jobs list (every 5s)
   const hasRunningJob = panelJobs.some(j => j.last_status === 'running')
@@ -438,12 +441,12 @@ export function useScheduleRunsData({ onClose, onJobsLoaded, workflowScope }: Us
   )
 
   useEffect(() => {
-    if (!hasRunningJob) return
+    if (!active || !hasRunningJob) return
     const interval = setInterval(() => {
       loadJobs()
     }, 5000)
     return () => clearInterval(interval)
-  }, [hasRunningJob, loadJobs])
+  }, [hasRunningJob, loadJobs, active])
 
   const handleToggle = async (job: ScheduledJob) => {
     try {
@@ -708,8 +711,10 @@ export function useScheduleRunsData({ onClose, onJobsLoaded, workflowScope }: Us
   const showJobInWorkflowGroups = useCallback((job: ScheduledJob) => {
     const workflowKey = getWorkflowFilterMeta(job, presetMap).value
     setSelectedWorkflowFilter(workflowKey)
-    setExpandedWorkflowKeys(prev => prev.includes(workflowKey) ? prev : [...prev, workflowKey])
-    setActiveView('by-workflow')
+    setActiveFilter('all')
+    setSearchQuery(job.name)
+    setFocusedScheduleId(job.id)
+    setActiveView('schedules')
   }, [presetMap])
 
   const filterPills: Array<{ key: JobFilter; label: string; count: number }> = [
@@ -776,6 +781,7 @@ export function useScheduleRunsData({ onClose, onJobsLoaded, workflowScope }: Us
     handleToggleGlobalPause,
     toggleWorkflowGroup,
     showJobInWorkflowGroups,
+    focusedScheduleId,
     filterPills,
     activeFilterLabel,
   }

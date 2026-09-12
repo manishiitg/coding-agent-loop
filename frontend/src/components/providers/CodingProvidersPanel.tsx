@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
+  ArrowLeft,
   Check,
   CheckCircle2,
   ChevronRight,
@@ -26,6 +27,7 @@ import { useAuthStore } from '../../stores/useAuthStore'
 import type { ProviderSetupAction, ProviderSetupSession } from '../../services/llm-config-api'
 
 interface CodingProvidersPanelProps {
+  embedded?: boolean
   isOpen: boolean
   onClose: () => void
 }
@@ -387,7 +389,7 @@ function ProviderModelCatalog({ provider }: { provider: ProviderManifestEntry })
   )
 }
 
-export default function CodingProvidersPanel({ isOpen, onClose }: CodingProvidersPanelProps) {
+export default function CodingProvidersPanel({ isOpen, onClose, embedded = false }: CodingProvidersPanelProps) {
   const [providers, setProviders] = useState<ProviderManifestEntry[]>([])
   const [providerOrder, setProviderOrder] = useState<string[]>([])
   const [selectedId, setSelectedId] = useState<string | null>(null)
@@ -427,7 +429,7 @@ export default function CodingProvidersPanel({ isOpen, onClose }: CodingProvider
   }, [isOpen, refresh])
 
   useEffect(() => {
-    if (!isOpen) return
+    if (!isOpen || embedded) return
     const previousOverflow = document.body.style.overflow
     document.body.style.overflow = 'hidden'
     const closeOnEscape = (event: KeyboardEvent) => {
@@ -444,7 +446,7 @@ export default function CodingProvidersPanel({ isOpen, onClose }: CodingProvider
       document.body.style.overflow = previousOverflow
       window.removeEventListener('keydown', closeOnEscape)
     }
-  }, [guidedSession, isOpen, onClose])
+  }, [guidedSession, isOpen, onClose, embedded])
 
   const orderedProviders = useMemo(() => {
     const order = new Map(providerOrder.map((id, index) => [id, index]))
@@ -470,6 +472,10 @@ export default function CodingProvidersPanel({ isOpen, onClose }: CodingProvider
   }
 
   const closePanel = () => {
+    if (embedded) {
+      onClose()
+      return
+    }
     if (guidedSession?.status === 'running') {
       void llmConfigService.cancelProviderSetup(guidedSession.id).catch(() => undefined)
     }
@@ -477,21 +483,22 @@ export default function CodingProvidersPanel({ isOpen, onClose }: CodingProvider
     onClose()
   }
 
-  if (!isOpen) return null
+  if (!isOpen && !embedded) return null
 
-  return (
-    <ModalPortal>
+  const content = (
       <div
-        className="fixed inset-0 z-[1000] flex items-center justify-center bg-gray-950/55 p-2 backdrop-blur-sm sm:p-5"
+        className={embedded ? 'h-full min-h-0' : 'fixed inset-0 z-[1000] flex items-center justify-center bg-gray-950/55 p-2 backdrop-blur-sm sm:p-5'}
         onMouseDown={event => {
-          if (event.target === event.currentTarget) closePanel()
+          if (!embedded && event.target === event.currentTarget) closePanel()
         }}
       >
         <div
-          role="dialog"
-          aria-modal="true"
+          role={embedded ? 'region' : 'dialog'}
+          aria-modal={embedded ? undefined : true}
           aria-labelledby="providers-title"
-          className="flex h-[min(860px,calc(100vh-1rem))] w-full max-w-6xl flex-col overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-2xl dark:border-gray-700 dark:bg-gray-900 sm:h-[min(860px,calc(100vh-2.5rem))]"
+          className={embedded
+            ? 'flex h-full min-h-0 w-full flex-col overflow-hidden bg-white dark:bg-gray-900'
+            : 'flex h-[min(860px,calc(100vh-1rem))] w-full max-w-6xl flex-col overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-2xl dark:border-gray-700 dark:bg-gray-900 sm:h-[min(860px,calc(100vh-2.5rem))]'}
         >
           <header className="flex shrink-0 items-center justify-between gap-4 border-b border-gray-200 px-4 py-3 dark:border-gray-700 sm:px-6 sm:py-4">
             <div className="min-w-0">
@@ -518,10 +525,10 @@ export default function CodingProvidersPanel({ isOpen, onClose }: CodingProvider
               <button
                 type="button"
                 onClick={closePanel}
-                aria-label="Close providers"
+                aria-label={embedded ? 'Back from providers' : 'Close providers'}
                 className="rounded-lg p-2 text-gray-500 transition-colors hover:bg-gray-100 hover:text-gray-800 dark:text-gray-400 dark:hover:bg-gray-800 dark:hover:text-gray-100"
               >
-                <X className="h-4 w-4" />
+                {embedded ? <ArrowLeft className="h-4 w-4" /> : <X className="h-4 w-4" />}
               </button>
             </div>
           </header>
@@ -784,6 +791,6 @@ export default function CodingProvidersPanel({ isOpen, onClose }: CodingProvider
           </div>
         </div>
       </div>
-    </ModalPortal>
   )
+  return embedded ? content : <ModalPortal>{content}</ModalPortal>
 }

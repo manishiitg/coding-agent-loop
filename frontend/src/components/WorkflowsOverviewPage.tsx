@@ -5,7 +5,7 @@ import { usePresetApplication } from '../stores/useGlobalPresetStore'
 import ExecutionLogsPopup from './workflow/ExecutionLogsPopup'
 import EvaluationPopup from './workflow/EvaluationPopup'
 import CostsPopup from './workflow/CostsPopup'
-import { EmployeeDashboard } from './EmployeeDashboard'
+import ActivityPage from './ActivityPage'
 import type { CustomPreset, PredefinedPreset } from '../types/preset'
 import type { RunFolderInfo, EvaluationReportsResponse, RunMetadataModels } from '../services/api-types'
 import { openWorkflowPresetPage } from '../utils/workflowSessionRestore'
@@ -546,17 +546,7 @@ const PopupGroup: React.FC<{ p: ReturnType<typeof usePopupState> }> = ({ p }) =>
 )
 
 // Full page view
-export const WorkflowsOverviewPage: React.FC = () => {
-  return (
-    <div className="h-full flex flex-col bg-white dark:bg-gray-900">
-      <div className="flex-1 min-h-0 overflow-auto">
-        <div className="p-6">
-          <EmployeeDashboard />
-        </div>
-      </div>
-    </div>
-  )
-}
+export const WorkflowsOverviewPage: React.FC = () => <ActivityPage />
 
 // Popup/dialog version
 export const WorkflowsOverviewPopup: React.FC<{ isOpen: boolean; onClose: () => void }> = ({ isOpen, onClose }) => {

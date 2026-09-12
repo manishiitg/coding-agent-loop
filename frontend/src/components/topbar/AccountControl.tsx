@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
-import { KeyRound, LogOut, Terminal, Users } from 'lucide-react'
+import { HelpCircle, Keyboard, KeyRound, LogOut, Terminal, Users } from 'lucide-react'
 import { Tooltip, TooltipContent, TooltipTrigger } from '../ui/tooltip'
 import { useAuthStore } from '../../stores/useAuthStore'
+import NotificationsControl from './NotificationsControl'
 import ChangePasswordDialog from './ChangePasswordDialog'
 import AccessTokensDialog from './AccessTokensDialog'
 import UsersAdminPanel from '../admin/UsersAdminPanel'
@@ -13,7 +14,12 @@ import UsersAdminPanel from '../admin/UsersAdminPanel'
  * Escape behaviour as IconPopover; not reusing it because the trigger here
  * is the round avatar itself rather than a padded icon button.
  */
-export default function AccountControl() {
+interface AccountControlProps {
+  onOpenWalkthrough?: () => void
+  onOpenShortcuts?: () => void
+}
+
+export default function AccountControl({ onOpenWalkthrough, onOpenShortcuts }: AccountControlProps) {
   const { user, logout, isMultiUserMode } = useAuthStore()
   const [open, setOpen] = useState(false)
   const [changingPassword, setChangingPassword] = useState(false)
@@ -73,6 +79,22 @@ export default function AccountControl() {
               <p className="text-xs text-gray-500 dark:text-gray-400 truncate">{user.email}</p>
             )}
           </div>
+          {onOpenWalkthrough && <button type="button" role="menuitem" className={itemClass} onClick={() => {
+            setOpen(false)
+            onOpenWalkthrough()
+          }}>
+            <HelpCircle className="h-4 w-4 text-muted-foreground" />
+            Help &amp; walkthrough
+          </button>}
+          {onOpenShortcuts && <button type="button" role="menuitem" className={itemClass} onClick={() => {
+            setOpen(false)
+            onOpenShortcuts()
+          }}>
+            <Keyboard className="h-4 w-4 text-muted-foreground" />
+            Keyboard shortcuts
+          </button>}
+          <NotificationsControl menuItem />
+          <div role="separator" className="my-1 border-t border-border" />
           {isMultiUserMode && <button
             type="button"
             role="menuitem"

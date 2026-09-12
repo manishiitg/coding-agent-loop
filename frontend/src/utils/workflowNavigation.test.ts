@@ -83,6 +83,20 @@ afterEach(() => {
 })
 
 describe('workflow navigation coordinator', () => {
+  it('reveals a selected workflow from Providers without losing the session', async () => {
+    const { useLLMStore } = await import('../stores/useLLMStore')
+    const { useAppStore } = await import('../stores/useAppStore')
+    const tab = workflowTab('workflow-a', 'tab-a')
+    useChatStore.setState({ chatTabs: { [tab.tabId]: tab } })
+    useAppStore.getState().setShowWorkflowsOverview(true)
+    useLLMStore.getState().setShowLLMModal(true)
+    expect(navigation.activateWorkflowTab(tab.tabId)).toBe(true)
+    expect(useLLMStore.getState().showLLMModal).toBe(false)
+    expect(useAppStore.getState().showWorkflowsOverview).toBe(false)
+    expect(useChatStore.getState().activeTabId).toBe(tab.tabId)
+    expect(useChatStore.getState().chatTabs[tab.tabId].sessionId).toBe(tab.sessionId)
+  })
+
   it('invalidates an older asynchronous navigation when the user selects another workflow', () => {
     const first = navigation.beginWorkflowNavigation('workflow-a')
     navigation.selectWorkflowPreset('workflow-a')

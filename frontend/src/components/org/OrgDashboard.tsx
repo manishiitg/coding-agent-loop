@@ -20,6 +20,7 @@ interface WorkflowDashEntry {
 }
 
 interface OrgDashboardProps {
+  embedded?: boolean
   workflows: Array<{ workspacePath: string; label: string }>
   onOpenWorkflow: (workspacePath: string) => void
 }
@@ -147,7 +148,7 @@ const WorkflowSummaryRow: React.FC<{
   )
 }
 
-export const OrgDashboard: React.FC<OrgDashboardProps> = ({ workflows, onOpenWorkflow }) => {
+export const OrgDashboard: React.FC<OrgDashboardProps> = ({ workflows, onOpenWorkflow, embedded = false }) => {
   const [entries, setEntries] = useState<WorkflowDashEntry[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -200,12 +201,12 @@ export const OrgDashboard: React.FC<OrgDashboardProps> = ({ workflows, onOpenWor
   const selectedLatest = selected ? latestSummary(selected) : undefined
   const selectedHistory = selected ? [...selected.recent].sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at)) : []
 
-  const header = <div className="flex shrink-0 items-center justify-between gap-3 px-6 pt-6 pb-5">
-    <div className="flex items-center gap-3"><LayoutDashboard className="h-6 w-6 text-primary" /><div>
+  const header = <div className={`flex shrink-0 items-center justify-between gap-3 ${embedded ? 'border-b border-border px-4 py-2.5 sm:px-6' : 'px-6 pt-6 pb-5'}`}>
+    {embedded ? <p className="text-xs text-muted-foreground">{entries.length} automations<span className="mx-2 text-border">/</span>{decisionCount ? `${decisionCount} pending decision${decisionCount === 1 ? '' : 's'}` : 'No pending decisions'}</p> : <div className="flex items-center gap-3"><LayoutDashboard className="h-6 w-6 text-primary" /><div>
       <h2 className="text-xl font-semibold tracking-tight text-foreground">Activity</h2>
       <p className="mt-0.5 text-sm text-muted-foreground">Runs, Pulse updates, and decisions — by automation</p>
-    </div></div>
-    <button type="button" onClick={() => void load()} disabled={loading} className="inline-flex items-center gap-1.5 rounded-lg border border-border px-3 py-2 text-sm text-muted-foreground hover:bg-muted disabled:opacity-50"><RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />Refresh</button>
+    </div></div>}
+    <button type="button" onClick={() => void load()} disabled={loading} className="inline-flex items-center gap-1.5 rounded-md px-2 py-1.5 text-xs text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-50"><RefreshCw className={`h-3.5 w-3.5 ${loading ? 'animate-spin' : ''}`} />Refresh</button>
   </div>
 
   if (loading && !entries.length) return <div className="flex h-full min-h-[320px] flex-col items-center justify-center gap-3 text-muted-foreground"><Loader2 className="h-6 w-6 animate-spin" /><p className="text-sm">Loading activity…</p></div>
@@ -213,15 +214,15 @@ export const OrgDashboard: React.FC<OrgDashboardProps> = ({ workflows, onOpenWor
 
   return <div className="flex h-full min-h-0 flex-col">{header}
     {error && <div role="status" className="mx-6 mb-4 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-600">{error}</div>}
-    <div className="mx-6 mb-6 grid min-h-0 flex-1 grid-rows-[auto_minmax(0,1fr)] overflow-hidden rounded-xl border border-border md:grid-cols-[280px_minmax(0,1fr)] md:grid-rows-1">
+    <div className={`grid min-h-0 flex-1 grid-rows-[auto_minmax(0,1fr)] overflow-hidden md:grid-cols-[280px_minmax(0,1fr)] md:grid-rows-1 ${embedded ? '' : 'mx-6 mb-6 rounded-xl border border-border'}`}>
       <aside className="flex min-h-0 flex-col border-b border-border bg-card/70 md:border-b-0 md:border-r">
-        <div className="space-y-3 p-4">
-          <div className="flex items-center justify-between gap-2"><h3 className="text-sm font-semibold">Automations</h3><span className="text-xs text-muted-foreground">{entries.length}</span></div>
+        <div className="space-y-2.5 p-3">
+          {!embedded && <div className="flex items-center justify-between gap-2"><h3 className="text-sm font-semibold">Automations</h3><span className="text-xs text-muted-foreground">{entries.length}</span></div>}
           <label className="flex items-center gap-2 rounded-md border border-border bg-background px-2.5 py-2 focus-within:ring-2 focus-within:ring-primary/50"><Search className="h-3.5 w-3.5 shrink-0 text-muted-foreground" /><input aria-label="Search automations" value={search} onChange={event => setSearch(event.target.value)} placeholder="Find an automation" className="w-full min-w-0 bg-transparent text-xs outline-none" /></label>
           <div className="flex flex-wrap gap-1" aria-label="Activity filters">
             {([{ label: `All ${entries.length}`, value: false }, { label: `Pending decisions ${decisionAutomationCount}`, value: true }]).map(filter => <button key={filter.label} type="button" aria-pressed={decisionsOnly === filter.value} onClick={() => setDecisionsOnly(filter.value)} className={`rounded-md px-2 py-1.5 text-xs font-medium transition-colors ${decisionsOnly === filter.value ? 'bg-primary/10 text-primary' : 'text-muted-foreground hover:bg-muted'}`}>{filter.label}</button>)}
           </div>
-          <p className="text-xs text-muted-foreground">{decisionCount} pending decision{decisionCount !== 1 ? 's' : ''} across your automations</p>
+          {!embedded && <p className="text-xs text-muted-foreground">{decisionCount} pending decision{decisionCount !== 1 ? 's' : ''} across your automations</p>}
         </div>
         <nav aria-label="Automations" className="max-h-44 min-h-0 overflow-y-auto px-2 pb-2 md:max-h-none md:flex-1">
           {visibleEntries.map(entry => {
@@ -232,17 +233,17 @@ export const OrgDashboard: React.FC<OrgDashboardProps> = ({ workflows, onOpenWor
               : entry.failed ? 'text-amber-600 dark:text-amber-300' : 'text-muted-foreground'
             const statusLabel = decision ? 'Needs your decision' : entry.failed ? 'Data unavailable'
               : latest ? 'Latest update' : 'No activity yet'
-            return <button key={entry.workspacePath} type="button" aria-pressed={active} aria-label={`View ${entry.label} activity`} onClick={() => setSelectedPath(entry.workspacePath)} className={`mb-1 w-full rounded-lg border px-3 py-3 text-left transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary ${active ? 'border-primary/30 bg-primary/[0.08]' : 'border-transparent hover:bg-muted/60'}`}>
-              <div className="flex items-center gap-2"><span className="min-w-0 flex-1 truncate text-sm font-semibold text-foreground" title={entry.label}>{entry.label}</span>{!!entry.pendingInputs.length && <span className="flex shrink-0 items-center gap-1 rounded-full bg-violet-500/10 px-1.5 py-0.5 text-xs text-violet-600 dark:text-violet-300" aria-label={`${entry.pendingInputs.length} decisions`}><CircleHelp className="h-3 w-3" />{entry.pendingInputs.length}</span>}<ChevronRight className={`h-3.5 w-3.5 shrink-0 ${active ? 'text-primary' : 'text-muted-foreground/50'}`} /></div>
+            return <button key={entry.workspacePath} type="button" aria-pressed={active} aria-label={`View ${entry.label} activity`} onClick={() => setSelectedPath(entry.workspacePath)} className={`mb-0.5 w-full rounded-md border px-3 py-2.5 text-left transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary ${active ? 'border-primary/30 bg-primary/[0.08]' : 'border-transparent hover:bg-muted/60'}`}>
+              <div className="flex items-center gap-2"><span className="min-w-0 flex-1 truncate text-sm font-medium text-foreground" title={entry.label}>{entry.label}</span>{!!entry.pendingInputs.length && <span className="flex shrink-0 items-center gap-1 rounded-full bg-violet-500/10 px-1.5 py-0.5 text-xs text-violet-600 dark:text-violet-300" aria-label={`${entry.pendingInputs.length} decisions`}><CircleHelp className="h-3 w-3" />{entry.pendingInputs.length}</span>}<ChevronRight className={`h-3.5 w-3.5 shrink-0 ${active ? 'text-primary' : 'text-muted-foreground/50'}`} /></div>
               <div className="mt-1.5 flex items-center justify-between gap-2 text-[11px]"><span className={statusColor}>{statusLabel}</span>{latest && <span className="shrink-0 text-muted-foreground" title={absoluteTime(latest.created_at)}>{relativeTime(latest.created_at)}</span>}</div>
             </button>
           })}
           {!visibleEntries.length && <p className="px-3 py-4 text-xs text-muted-foreground">No matching automations.</p>}
         </nav>
       </aside>
-      {selected ? <section key={selected.workspacePath} aria-label={`${selected.label} activity`} className="min-h-0 min-w-0 overflow-y-auto bg-background p-4 sm:p-6">
-        <div className="flex flex-wrap items-start justify-between gap-3 border-b border-border pb-5">
-          <div className="min-w-0"><h3 className="break-words text-xl font-semibold tracking-tight text-foreground">{selected.label}</h3><p className="mt-1 text-xs text-muted-foreground">{selectedLatest ? `Latest update ${relativeTime(selectedLatest.created_at)}` : 'No recorded activity yet'}{selected.byRoute.length > 0 && ` · ${selected.byRoute.length} route${selected.byRoute.length !== 1 ? 's' : ''}`}</p></div>
+      {selected ? <section key={selected.workspacePath} aria-label={`${selected.label} activity`} className="min-h-0 min-w-0 overflow-y-auto bg-background p-4 sm:p-5">
+        <div className="flex flex-wrap items-start justify-between gap-3 border-b border-border pb-3">
+          <div className="min-w-0"><h3 className="break-words text-lg font-semibold tracking-tight text-foreground">{selected.label}</h3><p className="mt-1 text-xs text-muted-foreground">{selectedLatest ? `Latest update ${relativeTime(selectedLatest.created_at)}` : 'Run and Pulse updates'}{selected.byRoute.length > 0 && ` · ${selected.byRoute.length} route${selected.byRoute.length !== 1 ? 's' : ''}`}</p></div>
           <button type="button" onClick={() => onOpenWorkflow(selected.workspacePath)} className="inline-flex items-center gap-1.5 rounded-md border border-border px-3 py-2 text-xs font-medium text-foreground hover:bg-muted">Open automation<ArrowUpRight className="h-3.5 w-3.5" /></button>
         </div>
         {selected.failed && <p className="mt-4 text-sm text-amber-600 dark:text-amber-300">Some data could not be loaded. Refresh to try again.</p>}
@@ -250,17 +251,17 @@ export const OrgDashboard: React.FC<OrgDashboardProps> = ({ workflows, onOpenWor
           <div className="flex items-center gap-2 bg-violet-500/[0.05] px-4 py-3"><CircleHelp className="h-4 w-4 text-violet-500" /><h4 className="text-sm font-semibold">Needs your decision</h4><span className="text-xs text-muted-foreground">{selected.pendingInputs.length}</span></div>
           <div className="divide-y divide-border">{[...selected.pendingInputs].sort((a, b) => Date.parse(b.updated_at) - Date.parse(a.updated_at)).map(input => <button key={input.id} type="button" onClick={() => onOpenWorkflow(selected.workspacePath)} className="flex w-full items-start gap-3 px-4 py-3 text-left hover:bg-muted/50"><span className={`${PILL_BASE} mt-0.5 shrink-0 border-violet-500/25 text-violet-600 dark:text-violet-300`}>{input.priority}</span><span className="min-w-0 flex-1 text-sm leading-5 text-foreground/90">{input.question}</span><ArrowUpRight className="mt-1 h-3.5 w-3.5 shrink-0 text-muted-foreground" /></button>)}</div>
         </section>}
-        <div className="mt-6 space-y-5">
-          <div className="flex items-center gap-2"><Activity className="h-4 w-4 text-primary" /><h4 className="text-sm font-semibold">Latest updates</h4></div>
+        <div className="mt-5 space-y-4">
+          {!!selectedScopes.length && <div className="flex items-center gap-2"><Activity className="h-4 w-4 text-primary" /><h4 className="text-sm font-semibold">Latest updates</h4></div>}
           {selectedScopes.map(scope => <section key={scope.key} aria-label={`${selected.label} · ${scope.label}`} className="space-y-2">
             <h5 className="text-xs font-semibold text-muted-foreground">{scope.label}</h5>
             <WorkflowSummaryRow label="Run" summary={scope.runSummary} />
             <WorkflowSummaryRow label="Pulse" summary={scope.pulseSummary} />
           </section>)}
-          {!selectedScopes.length && <p className="rounded-lg border border-dashed border-border px-4 py-6 text-sm text-muted-foreground">No run or Pulse updates recorded yet. New activity will appear here.</p>}
+          {!selectedScopes.length && <div className="flex min-h-48 flex-col items-center justify-center px-4 py-8 text-center"><Activity className="mb-3 h-6 w-6 text-muted-foreground/50" /><p className="text-sm font-medium text-foreground">No updates yet</p><p className="mt-1 max-w-sm text-sm leading-6 text-muted-foreground">Run summaries and Pulse updates will appear here when this automation reports activity.</p></div>}
         </div>
         {!!selectedHistory.length && <details className="group mt-6 border-t border-border pt-4">
-          <summary className="flex cursor-pointer list-none items-center gap-2 rounded-md py-2 text-sm font-medium text-muted-foreground hover:text-foreground [&::-webkit-details-marker]:hidden"><ChevronRight className="h-4 w-4 transition-transform group-open:rotate-90" />Activity history<span className="ml-auto text-xs font-normal">{selectedHistory.length} retained updates</span></summary>
+          <summary className="flex cursor-pointer list-none items-center gap-2 rounded-md py-2 text-sm font-medium text-muted-foreground hover:text-foreground [&::-webkit-details-marker]:hidden"><ChevronRight className="h-4 w-4 transition-transform group-open:rotate-90" />Activity history<span className="ml-auto text-xs font-normal">{selectedHistory.length} update{selectedHistory.length === 1 ? '' : 's'}</span></summary>
           <div className="mt-3 space-y-2">{selectedHistory.map(summary => <WorkflowSummaryRow key={summary.id} label={summary.kind === 'pulse_summary' ? 'Pulse' : 'Run'} summary={summary} />)}</div>
         </details>}
       </section> : <div className="flex items-center justify-center p-6 text-sm text-muted-foreground">{decisionsOnly && !search ? 'No automations have pending decisions.' : 'No automations match your search.'}</div>}

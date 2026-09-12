@@ -1,3 +1,4 @@
+import { useLLMStore } from '../stores/useLLMStore'
 import { useAppStore } from '../stores/useAppStore'
 import { useChatStore } from '../stores/useChatStore'
 import { useModeStore } from '../stores/useModeStore'
@@ -35,6 +36,7 @@ export function activateTab(tabId: string): boolean {
 
   // Clearing the overlay is required for the pane to actually show — switching
   // the tab/mode alone is not enough.
+  useLLMStore.getState().setShowLLMModal(false)
   useAppStore.getState().setShowWorkflowsOverview(false)
 
   // The tab metadata is the source of truth for which pane it belongs to.

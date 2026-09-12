@@ -10,19 +10,14 @@ type WalkthroughStep = {
 
 const STEPS: WalkthroughStep[] = [
   {
-    selector: '[data-tour="top-mode-switcher"]',
-    title: 'Top modes',
-    body: 'Use these to move between Automation and Activity views. Keyboard shortcuts are Ctrl+1 and Ctrl+3.',
+    selector: '[data-tour="global-activity"]',
+    title: 'Activity',
+    body: 'Open Activity for updates, pending decisions, and schedules across automations. Ctrl+3 opens Activity; Ctrl+1 returns to your automation.',
   },
   {
     selector: '[data-tour="workflow-add-edit"]',
     title: 'Add or edit automations',
     body: 'Click the automation name to switch or add an automation. Use the gear beside it to edit the selected automation.',
-  },
-  {
-    selector: '[data-tour="workflow-schedules"]',
-    title: 'Schedules',
-    body: 'Open scheduled automation runs from here. It shows how many schedules exist and whether any are running now.',
   },
   {
     selector: '[data-tour="bot-connector"]',

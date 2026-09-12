@@ -1,11 +1,11 @@
 import React from 'react'
-import { AlertTriangle, ChevronRight, Clock, Pause, Play, Radio } from 'lucide-react'
+import { ChevronRight, Pause, Play } from 'lucide-react'
 import { formatExactDateTime, formatLastRunLabel, formatLocalScheduleTime } from './helpers'
 import type { ScheduleRunsPanelState } from './useScheduleRunsData'
 
 type ScheduleGroupsViewProps = {
   panel: Pick<ScheduleRunsPanelState,
-    | 'workflowGroups' | 'isReadOnlyUser' | 'setActiveFilter' | 'setActiveView'
+    | 'workflowGroups' | 'isSchedulerPaused' | 'isReadOnlyUser' | 'setActiveFilter' | 'setActiveView'
     | 'setSelectedWorkflowFilter' | 'handleToggleWorkflowGroupPause' | 'bulkUpdatingGroupKey'
   >
 }
@@ -14,6 +14,7 @@ type ScheduleGroupsViewProps = {
 export const ScheduleGroupsView: React.FC<ScheduleGroupsViewProps> = ({ panel }) => {
   const {
     workflowGroups,
+    isSchedulerPaused,
     isReadOnlyUser,
     setActiveFilter,
     setActiveView,
@@ -29,86 +30,68 @@ export const ScheduleGroupsView: React.FC<ScheduleGroupsViewProps> = ({ panel })
   }
 
   return (
-    <div className="grid gap-3 px-5 py-4 md:grid-cols-2 xl:grid-cols-3">
-      {workflowGroups.map((group) => {
-        const fullyPaused = group.enabled === 0
-        const partlyPaused = !fullyPaused && group.paused > 0
-        const hasAttention = group.issues > 0 || group.missed > 0
-        const isRunning = group.running > 0
-        const stateLabel = fullyPaused ? 'Fully paused' : partlyPaused ? 'Partly paused' : 'Active'
-        const statusDotClass = isRunning
-          ? 'bg-amber-500 animate-pulse'
-          : hasAttention
-            ? 'bg-red-500'
-            : fullyPaused
-              ? 'bg-muted-foreground/50'
-              : partlyPaused
-                ? 'bg-amber-500'
-                : 'bg-emerald-500'
-
-        return (
-          <article key={group.key} className="flex min-h-48 flex-col rounded-xl border border-border bg-background p-4 shadow-sm">
-            <div className="flex items-start gap-3">
-              <span className={`mt-1.5 h-2.5 w-2.5 shrink-0 rounded-full ${statusDotClass}`} />
-              <div className="min-w-0 flex-1">
-                <h3 className="truncate text-sm font-semibold text-foreground" title={group.label}>{group.label}</h3>
-                <p className="mt-1 truncate text-xs text-muted-foreground" title={group.workspacePath}>
-                  {group.workspacePath || 'Workspace path not recorded'}
-                </p>
-              </div>
-            </div>
-
-            <div className="mt-4 flex flex-wrap items-center gap-1.5">
-              <span className={`rounded-full border px-2 py-0.5 text-xs font-medium ${
-                fullyPaused
-                  ? 'border-border bg-muted text-muted-foreground'
-                  : partlyPaused
-                    ? 'border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-300'
-                    : 'border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300'
-              }`}>{stateLabel}</span>
-              {isRunning && (
-                <span className="inline-flex items-center gap-1 rounded-full border border-amber-500/30 bg-amber-500/10 px-2 py-0.5 text-xs font-medium text-amber-700 dark:text-amber-300">
-                  <Radio className="h-3 w-3" /> Running now
-                </span>
-              )}
-              {hasAttention && (
-                <span className="inline-flex items-center gap-1 rounded-full border border-red-500/30 bg-red-500/10 px-2 py-0.5 text-xs font-medium text-red-600 dark:text-red-300">
-                  <AlertTriangle className="h-3 w-3" /> Needs attention
-                </span>
-              )}
-            </div>
-
-            <div className="mt-4 space-y-1.5 text-xs text-muted-foreground">
-              <div className="flex items-center gap-1.5">
-                <Clock className="h-3.5 w-3.5 shrink-0" />
-                {fullyPaused ? 'No scheduled runs while paused' : `Next ${formatLocalScheduleTime(group.nextRunAt)}`}
-              </div>
-              <div title={formatExactDateTime(group.lastRunAt)}>Last activity {formatLastRunLabel(group.lastRunAt)}</div>
-            </div>
-
-            <div className="mt-auto flex items-center justify-between gap-2 pt-4">
-              {!isReadOnlyUser && (
-                <button
-                  type="button"
-                  onClick={() => handleToggleWorkflowGroupPause(group)}
-                  disabled={bulkUpdatingGroupKey === group.key}
-                  className={`inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1.5 text-xs font-medium transition-colors disabled:opacity-60 ${
-                    fullyPaused
-                      ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-700 hover:bg-emerald-500/20 dark:text-emerald-300'
-                      : 'border-amber-500/40 bg-amber-500/10 text-amber-700 hover:bg-amber-500/20 dark:text-amber-300'
-                  }`}
-                >
-                  {fullyPaused ? <Play className="h-3.5 w-3.5" /> : <Pause className="h-3.5 w-3.5" />}
-                  {fullyPaused ? 'Resume workflow' : 'Pause workflow'}
-                </button>
-              )}
-              <button type="button" onClick={() => openWorkflowSchedules(group.key)} className="ml-auto inline-flex items-center gap-1 text-xs font-medium text-primary hover:underline">
-                View schedules <ChevronRight className="h-3.5 w-3.5" />
-              </button>
-            </div>
-          </article>
-        )
-      })}
+    <div className="px-4 py-3 sm:px-6">
+      <div className="overflow-x-auto rounded-lg border border-border">
+        <table className="w-full min-w-[680px] text-left text-sm">
+          <thead className="border-b border-border bg-muted/30 text-xs text-muted-foreground">
+            <tr>
+              <th className="px-4 py-2 font-medium">Automation</th>
+              <th className="px-3 py-2 font-medium">State</th>
+              <th className="px-3 py-2 font-medium">Next run</th>
+              <th className="px-3 py-2 font-medium">Last activity</th>
+              <th className="px-4 py-2 text-right font-medium">Actions</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-border">
+            {workflowGroups.map(group => {
+              const fullyPaused = group.enabled === 0
+              const partlyPaused = !fullyPaused && group.paused > 0
+              const isRunning = group.running > 0
+              const stateLabel = isRunning ? 'Running' : fullyPaused ? 'Paused' : partlyPaused ? 'Partly paused' : 'Enabled'
+              return (
+                <tr key={group.key} className="transition-colors hover:bg-muted/20">
+                  <td className="px-4 py-3">
+                    <button type="button" onClick={() => openWorkflowSchedules(group.key)} className="block max-w-[320px] truncate text-left font-medium text-foreground hover:text-primary hover:underline" title={group.label}>
+                      {group.label}
+                    </button>
+                    <div className="mt-0.5 text-xs text-muted-foreground">{group.jobs.length} schedule{group.jobs.length === 1 ? '' : 's'}</div>
+                  </td>
+                  <td className="whitespace-nowrap px-3 py-3">
+                    <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
+                      <span className={`h-1.5 w-1.5 rounded-full ${isRunning ? 'animate-pulse bg-amber-500' : fullyPaused ? 'bg-muted-foreground/50' : partlyPaused ? 'bg-amber-500' : 'bg-emerald-500'}`} />
+                      {stateLabel}
+                    </span>
+                  </td>
+                  <td className="whitespace-nowrap px-3 py-3 text-xs text-foreground">
+                    {fullyPaused || isSchedulerPaused ? <span className="text-muted-foreground">{isSchedulerPaused && !fullyPaused ? 'Paused globally' : '—'}</span> : formatLocalScheduleTime(group.nextRunAt)}
+                  </td>
+                  <td className="whitespace-nowrap px-3 py-3 text-xs text-muted-foreground" title={formatExactDateTime(group.lastRunAt)}>
+                    {formatLastRunLabel(group.lastRunAt)}
+                  </td>
+                  <td className="px-4 py-3">
+                    <div className="flex items-center justify-end gap-3">
+                      {!isReadOnlyUser && <button
+                        type="button"
+                        onClick={() => handleToggleWorkflowGroupPause(group)}
+                        disabled={bulkUpdatingGroupKey === group.key}
+                        aria-label={`${fullyPaused ? 'Resume' : 'Pause'} ${group.label} schedules`}
+                        title={fullyPaused ? 'Resume workflow' : 'Pause workflow'}
+                        className="inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:opacity-50"
+                      >
+                        {fullyPaused ? <Play className="h-3.5 w-3.5" /> : <Pause className="h-3.5 w-3.5" />}
+                        <span className="hidden lg:inline">{fullyPaused ? 'Resume' : 'Pause'}</span>
+                      </button>}
+                      <button type="button" onClick={() => openWorkflowSchedules(group.key)} aria-label={`View ${group.label} schedules`} className="inline-flex items-center gap-1 whitespace-nowrap text-xs font-medium text-primary hover:underline">
+                        View <ChevronRight className="h-3.5 w-3.5" />
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              )
+            })}
+          </tbody>
+        </table>
+      </div>
     </div>
   )
 }

@@ -1,3 +1,4 @@
+import LlmModalHost from './components/topbar/LlmModalHost'
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { useShallow } from "zustand/react/shallow";
 import { useEffect, useCallback, useRef, useState, lazy, Suspense } from "react";
@@ -121,6 +122,7 @@ function App() {
   const savedLLMs = useLLMStore(state => state.savedLLMs)
   const llmConfigLocked = useLLMStore(state => state.llmConfigLocked)
   const isConfigValid = useLLMStore(state => state.isConfigValid)
+  const showProviders = useLLMStore(state => state.showLLMModal)
   const setShowLLMModal = useLLMStore(state => state.setShowLLMModal)
   
   // Load LLM defaults from backend
@@ -829,6 +831,7 @@ function App() {
         event.preventDefault()
         const { setModeCategory } = useModeStore.getState()
         setModeCategory('workflow')
+        useLLMStore.getState().setShowLLMModal(false)
         setShowWorkflowsOverview(false)
         restoreMostRecentWorkflowTab()
         return
@@ -836,6 +839,7 @@ function App() {
       // Ctrl/Cmd + 3 for Activity view
       if ((event.ctrlKey || event.metaKey) && event.key === '3') {
         event.preventDefault()
+        useLLMStore.getState().setShowLLMModal(false)
         setShowWorkflowsOverview(true)
         return
       }
@@ -873,7 +877,7 @@ function App() {
   }, [showWorkflowsOverview])
 
   useEffect(() => {
-    if (showWorkflowsOverview) {
+    if (showWorkflowsOverview || showProviders) {
       setWorkspaceMinimizedForLayout(true)
       return
     }
@@ -882,7 +886,7 @@ function App() {
       const { workspaceMinimizedByMode } = useAppStore.getState()
       setWorkspaceMinimizedForLayout(Boolean(workspaceMinimizedByMode?.[selectedModeCategory]))
     }
-  }, [selectedModeCategory, showWorkflowsOverview, setWorkspaceMinimizedForLayout])
+  }, [selectedModeCategory, showWorkflowsOverview, showProviders, setWorkspaceMinimizedForLayout])
 
   useEffect(() => {
     const collapseWorkspaceForPopup = () => {
@@ -944,13 +948,14 @@ function App() {
             
             <div className="flex-1 min-h-0 overflow-hidden relative">
                 {hasOpenedWorkflowsOverview && (
-                  <div className={showWorkflowsOverview ? 'h-full' : 'hidden'}>
+                  <div className={showWorkflowsOverview && !showProviders ? 'h-full' : 'hidden'}>
                     <Suspense fallback={<FileSurfaceFallback />}>
                       <WorkflowsOverviewPage />
                     </Suspense>
                   </div>
                 )}
-                <div className={!showWorkflowsOverview ? 'h-full' : 'hidden'}>
+                <LlmModalHost />
+                <div className={!showWorkflowsOverview && !showProviders ? 'h-full' : 'hidden'}>
                   <WorkflowLayout
                     className="h-full"
                     onNewChat={startNewChat}

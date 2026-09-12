@@ -53,6 +53,16 @@ export function useLlmOnboarding() {
     }
   }, [llmOnboardingActive, setShowLLMModal])
 
+  // Leaving the Providers page through Activity or a workflow also completes
+  // the onboarding visit. The terminal itself stays mounted in the page host.
+  useEffect(() => {
+    if (!showLLMModal && llmOnboardingActive) {
+      dismissLLMDiscoveryOnboarding()
+      setLLMOnboardingActive(false)
+      markLLMDiscoveryOnboardingCleared()
+    }
+  }, [showLLMModal, llmOnboardingActive])
+
   // First-run LLM setup opens the same unified Model Library used later.
   useEffect(() => {
     if (FORCE_LLM_DISCOVERY_ONBOARDING_FOR_TESTING) {

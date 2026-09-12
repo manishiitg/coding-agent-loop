@@ -4,10 +4,14 @@ import { createRoot } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 vi.mock('../../services/llm-config-api', () => ({
-  llmConfigService: { getProviderManifest: vi.fn(), getProviderModels: vi.fn() },
+  llmConfigService: { getProviderManifest: vi.fn(), getProviderModels: vi.fn(), startProviderSetup: vi.fn(), cancelProviderSetup: vi.fn() },
 }))
 vi.mock('../../stores/useAuthStore', () => ({
   useAuthStore: (selector: (state: { isMultiUserMode: boolean; user: null }) => unknown) => selector({ isMultiUserMode: false, user: null }),
+}))
+
+vi.mock('./GuidedProviderTerminal', () => ({
+  default: ({ session }: { session: { id: string } }) => <div data-testid="guided-terminal">Terminal {session.id}</div>,
 }))
 
 import { llmConfigService, type ProviderManifestEntry } from '../../services/llm-config-api'
@@ -124,6 +128,32 @@ describe('CodingProvidersPanel', () => {
       await act(async () => root.unmount())
       host.remove()
     }
+  })
+
+  it('keeps a guided session mounted when leaving the Providers page, without modal Escape or cancellation', async () => {
+    vi.mocked(llmConfigService.getProviderManifest).mockResolvedValue({ providers: [provider({})], provider_order: ['codex-cli'], integration_kinds: {} })
+    vi.mocked(llmConfigService.startProviderSetup).mockResolvedValue({ id: 'setup-1', provider: 'codex-cli', action: 'inspect', status: 'running' } as Awaited<ReturnType<typeof llmConfigService.startProviderSetup>>)
+    const host = document.createElement('div'); document.body.append(host); const root = createRoot(host)
+    const onClose = vi.fn()
+    const renderPage = (isOpen: boolean) => <div hidden={!isOpen}><CodingProvidersPanel embedded isOpen={isOpen} onClose={onClose} /></div>
+    try {
+      await act(async () => root.render(renderPage(true)))
+      expect(host.querySelector('[role="dialog"]')).toBeNull()
+      expect(host.querySelector('[role="region"]')).not.toBeNull()
+      expect(document.body.style.overflow).toBe('')
+      await act(async () => Array.from(host.querySelectorAll('button')).find(b => b.textContent?.includes('Open terminal'))!.click())
+      const terminal = host.querySelector('[data-testid="guided-terminal"]')
+      expect(terminal?.textContent).toBe('Terminal setup-1')
+      await act(async () => window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' })))
+      expect(onClose).not.toHaveBeenCalled()
+      await act(async () => host.querySelector<HTMLButtonElement>('[aria-label="Back from providers"]')!.click())
+      expect(onClose).toHaveBeenCalledOnce()
+      await act(async () => root.render(renderPage(false)))
+      expect(host.querySelector('[data-testid="guided-terminal"]')).toBe(terminal)
+      await act(async () => root.render(renderPage(true)))
+      expect(host.querySelector('[data-testid="guided-terminal"]')).toBe(terminal)
+      expect(llmConfigService.cancelProviderSetup).not.toHaveBeenCalled()
+    } finally { await act(async () => root.unmount()); host.remove() }
   })
 
   it('expects deployment-installed Muse and offers guided sign-in only', async () => {

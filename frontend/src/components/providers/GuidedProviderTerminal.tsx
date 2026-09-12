@@ -90,7 +90,7 @@ export default function GuidedProviderTerminal({ session, onFinished, onClose }:
     let outputText = ''
     let resizeTimer: number | undefined
     const sendResize = () => {
-      if (disposed) return
+      if (disposed || mount.clientWidth === 0 || mount.clientHeight === 0) return
       try {
         fit.fit()
       } catch {

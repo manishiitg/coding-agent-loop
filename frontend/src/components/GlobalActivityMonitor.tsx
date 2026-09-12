@@ -1,3 +1,4 @@
+import { useLLMStore } from '../stores/useLLMStore'
 import React, { useCallback, useEffect, useMemo } from 'react'
 import { AlertCircle, Clock, Loader2, Pause } from 'lucide-react'
 import type { ActiveSessionInfo, RunningWorkflowInfo } from '../services/api-types'
@@ -129,6 +130,7 @@ export const GlobalActivityMonitor: React.FC = () => {
   const activeTabId = useChatStore(state => state.activeTabId)
   const chatTabs = useChatStore(state => state.chatTabs)
   const selectedModeCategory = useModeStore(state => state.selectedModeCategory)
+  const showProviders = useLLMStore(state => state.showLLMModal)
   const showWorkflowsOverview = useAppStore(state => state.showWorkflowsOverview)
   const currentWorkflowPresetName = useGlobalPresetStore(state => {
     const presetId = state.activePresetIds.workflow
@@ -178,8 +180,8 @@ export const GlobalActivityMonitor: React.FC = () => {
   // Shared with ModePresetBar's current-workflow selector, so the two agree
   // on which session is "current" — see globalActivityMonitorStatus.ts.
   const currentSessionId = useMemo(
-    () => resolveCurrentSessionId(activeTabId, chatTabs, selectedModeCategory, showWorkflowsOverview),
-    [activeTabId, chatTabs, selectedModeCategory, showWorkflowsOverview],
+    () => resolveCurrentSessionId(activeTabId, chatTabs, selectedModeCategory, showWorkflowsOverview || showProviders),
+    [activeTabId, chatTabs, selectedModeCategory, showWorkflowsOverview, showProviders],
   )
   const visibleSessions = useMemo(
     () => visibleActivitySessions(activeSessions, currentSessionId),

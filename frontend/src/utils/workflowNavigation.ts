@@ -1,3 +1,4 @@
+import { useLLMStore } from '../stores/useLLMStore'
 import { useAppStore } from '../stores/useAppStore'
 import { normalizeEventViewMode, useChatStore, type EventViewMode } from '../stores/useChatStore'
 import { useGlobalPresetStore } from '../stores/useGlobalPresetStore'
@@ -63,6 +64,7 @@ export function selectWorkflowPreset(presetOrId: CustomPreset | PredefinedPreset
     }
   }
 
+  useLLMStore.getState().setShowLLMModal(false)
   useAppStore.getState().setShowWorkflowsOverview(false)
   if (useModeStore.getState().selectedModeCategory !== 'workflow') {
     useModeStore.getState().setModeCategory('workflow')

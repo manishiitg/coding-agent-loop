@@ -24,7 +24,8 @@ import {
 import { getExecutionModeVisuals } from '../nodes/executionModeVisuals'
 import { edgeTypes } from '../edges'
 import { routeTraceFromEdge, traceRouteGraph, type RouteTrace } from './routeTrace'
-import { annotateRouteEvaluations } from './routeEvaluations'
+import { appendEvaluationGroups } from './evaluationLayout'
+import { CompactEvaluationNode, EvaluationGroupNode } from '../nodes/CompactEvaluationNodes'
 import { VariablesSidebar } from './VariablesSidebar'
 import { BatchProgressHeader } from '../BatchProgressHeader'
 import {
@@ -34,7 +35,7 @@ import {
   type ReportPreviewDevice,
 } from '../../../utils/reportPreviewPreference'
 import type { PlanChanges } from '../hooks/usePlanData'
-import { usePlanToFlow, type WorkflowNode, type WorkflowEdge, type WorkflowNodeData, type StepNodeData, type EvaluationStepNodeData, type RoutingStepNodeData } from '../hooks/usePlanToFlow'
+import { usePlanToFlow, type WorkflowNode, type WorkflowEdge, type WorkflowNodeData, type StepNodeData, type RoutingStepNodeData } from '../hooks/usePlanToFlow'
 import type { VariablesNodeData } from '../nodes/VariablesNode'
 import { useWorkspaceViewData, type WorkflowImageExportFormat } from './workspaceViewData'
 import { useWorkflowStore } from '../../../stores/useWorkflowStore'
@@ -73,6 +74,8 @@ const FLOW_HEADER_NODE_HEIGHTS: Record<string, number> = {
 
 const canvasNodeTypes = {
   ...nodeTypes,
+  'evaluation-card': CompactEvaluationNode,
+  'evaluation-group': EvaluationGroupNode,
   step: HandoffStepNode,
   todo_task: HandoffTodoTaskNode,
   human_input: HandoffHumanInputNode,
@@ -742,7 +745,7 @@ function ReadOnlyStepDetailPanel({
   const data = node.data as WorkflowNodeData
   const step = 'step' in data && data.step ? data.step as PlanStep : null
   const title = (typeof data.title === 'string' && data.title) || step?.title || node.id
-  const type = step?.type || node.type || 'node'
+  const type = data.isEvaluationStep ? 'Evaluation' : step?.type || node.type || 'node'
   const routes = step?.type === 'routing' || step?.type === 'branch'
     ? step.routes
     : (step?.type === 'todo_task' || step?.type === 'orchestrator')
@@ -1323,7 +1326,7 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
     } finally {
       setIsRefreshingPlan(false)
     }
-  }, [isRefreshingPlan, loadPlanRefresh, setIsRefreshingPlan])
+  }, [isRefreshingPlan, loadPlanRefresh, refreshEvaluationPlan, setIsRefreshingPlan])
 
   // Current step and status from store (set by ChatArea polling when step_progress_updated events arrive)
   const stepStatusMap = useWorkflowStore(state => state.stepStatusMap)
@@ -1443,7 +1446,7 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
     const nodeById = new Map(currentNodes.map(node => [node.id, node]))
 
     currentNodes.forEach(node => {
-      if (node.id === 'start' || node.id === 'variables') {
+      if (node.id === 'start' || node.id === 'variables' || node.data.isEvaluationStep || node.type === 'evaluation-group') {
         return
       }
       nodePositions[node.id] = { x: node.position.x, y: node.position.y }
@@ -1756,70 +1759,9 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
     disabled: toolbarOnly
   })
 
-  const augmentedFlow = React.useMemo(() => {
-    if (!planFlow.nodes.length) {
-      return planFlow
-    }
-
-    const nodes = [...planFlow.nodes]
-    const edges = [...planFlow.edges]
-    const endNode = nodes.find(node => node.id === 'end')
-
-    if (!endNode) {
-      return planFlow
-    }
-
-    const evaluationSteps = evaluationPlan?.steps ?? []
-    if (evaluationSteps.length === 0) {
-      return { nodes: annotateRouteEvaluations(nodes, []), edges }
-    }
-
-    const evalNodeIds = evaluationSteps.map((step, index) => `workflow-evaluation-step-${step.id || index}`)
-    const isHorizontal = isHorizontalWorkflowLayout(layoutDirection)
-    const stepGap = isHorizontal ? 360 : 190
-
-    evaluationSteps.forEach((step, index) => {
-      const nodeId = evalNodeIds[index]
-      const position = isHorizontal
-        ? { x: endNode.position.x + ((index + 1) * stepGap), y: endNode.position.y }
-        : { x: endNode.position.x - 100, y: endNode.position.y + ((index + 1) * stepGap) }
-
-      const data: EvaluationStepNodeData = {
-        id: nodeId,
-        title: step.title || `Evaluation step ${index + 1}`,
-        description: step.description,
-        success_criteria: step.success_criteria,
-        status: 'pending',
-        stepIndex: index,
-        step,
-        workspacePath,
-        selectedRunFolder: selectedRunFolder ?? undefined,
-        isEvaluationStep: true
-      }
-
-      nodes.push({
-        id: nodeId,
-        type: 'step',
-        position,
-        data,
-        draggable: true
-      })
-
-      const source = index === 0 ? 'end' : evalNodeIds[index - 1]
-      edges.push({
-        id: `${source}-to-${nodeId}`,
-        source,
-        target: nodeId,
-        type: 'smoothstep',
-        style: {
-          stroke: '#6b7280',
-          strokeWidth: 2
-        }
-      })
-    })
-
-    return { nodes: annotateRouteEvaluations(nodes, evaluationSteps), edges }
-  }, [planFlow, evaluationPlan, layoutDirection, workspacePath, selectedRunFolder])
+  const augmentedFlow = React.useMemo(() => appendEvaluationGroups(planFlow, evaluationPlan?.steps ?? [], {
+    horizontal: isHorizontalWorkflowLayout(layoutDirection), workspacePath, selectedRunFolder,
+  }), [planFlow, evaluationPlan, layoutDirection, workspacePath, selectedRunFolder])
 
   const { nodes: initialNodes, edges: initialEdges } = augmentedFlow
 
@@ -2076,10 +2018,11 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
       // Priority: 1) Saved layout from file, 2) Current positions (captured before refresh), 3) Auto-layout
       if (initialNodes.length > 0) {
         // Extract header node positions from initialNodes BEFORE any restoration
-        // These positions are calculated by usePlanToFlow and MUST be preserved
+        // Header and grouped evaluation positions are generated; never restore
+        // stale eval positions from the previous serial-chain layout.
         const headerNodePositions = new Map<string, { x: number; y: number }>()
         initialNodes.forEach(node => {
-          if (node.id === 'start' || node.id === 'variables') {
+          if (node.id === 'start' || node.id === 'variables' || node.data.isEvaluationStep || node.type === 'evaluation-group') {
             headerNodePositions.set(node.id, { x: node.position.x, y: node.position.y })
           }
         })
@@ -2269,7 +2212,7 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
         // No saved layout or layout direction changed - ensure header nodes have correct positions from usePlanToFlow
         const headerNodePositions = new Map<string, { x: number; y: number }>()
         initialNodes.forEach(node => {
-          if (node.id === 'start' || node.id === 'variables') {
+          if (node.id === 'start' || node.id === 'variables' || node.data.isEvaluationStep || node.type === 'evaluation-group') {
             headerNodePositions.set(node.id, { x: node.position.x, y: node.position.y })
           }
         })
@@ -2468,6 +2411,7 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
   }, [selectedFlowNode, activeTrace])
 
   const onNodeClick = useCallback((_: React.MouseEvent, node: WorkflowNode) => {
+    if (node.type === 'evaluation-group') return
     if (node.type === 'variables') {
       setShowVariablesSidebar(true)
       setSelectedFlowNode(null)
@@ -2593,7 +2537,7 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
         {/* Canvas area — skip when toolbarOnly to avoid rendering 1000+ SVG nodes */}
         {toolbarOnly ? null : <div className="h-full min-h-0 relative flex">
           {activeTrace && tracedRoute && (
-            <div className="absolute left-3 top-3 z-20 max-w-[calc(100%-8rem)] rounded-lg border border-teal-500/50 bg-background/95 px-3 py-2 text-sm shadow-lg">
+            <div className="absolute left-3 top-3 z-20 max-w-[calc(100%-12rem)] rounded-lg border border-teal-500/50 bg-background/95 px-3 py-2 text-sm shadow-lg">
               <div className="flex items-center gap-3" role="status">
                 <Route className="h-4 w-4 shrink-0 text-teal-500" />
                 <span className="truncate">Tracing: {tracedRoute.route_name || tracedRoute.route_id}</span>
@@ -2611,6 +2555,13 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
               </div>
             </div>
           )}
+          {!!evaluationPlan?.steps.length && <button type="button" onClick={() => {
+            setRouteTrace(null)
+            setSelectedFlowNode(null)
+            void fitView({ nodes: nodes.filter(node => node.data.isEvaluationStep || node.type === 'evaluation-group'),
+              padding: 0.12, duration: 300, minZoom: FLOW_FIT_MIN_ZOOM, maxZoom: FLOW_FIT_MAX_ZOOM })
+          }} className="absolute right-24 top-3 z-20 h-8 rounded-md border border-border bg-background/95 px-2 text-xs text-foreground shadow-sm hover:bg-muted"
+            aria-label="Show evaluation groups" title="Show evaluations grouped by route">Evals {evaluationPlan.steps.length}</button>}
           <button type="button" onClick={() => void fitView({ padding: FLOW_FIT_PADDING, duration: 300, minZoom: FLOW_FIT_MIN_ZOOM, maxZoom: FLOW_FIT_MAX_ZOOM })}
             className="absolute right-14 top-3 z-20 inline-flex h-8 w-8 items-center justify-center rounded-md border border-border bg-background/95 text-muted-foreground shadow-sm hover:bg-muted hover:text-foreground"
             aria-label="Fit plan to view" title="Fit plan to view">

@@ -1,6 +1,6 @@
-import React, { lazy, Suspense, useState, useEffect, useCallback, useRef } from 'react'
+import React, { useState, useEffect, useCallback, useRef } from 'react'
 import { useShallow } from 'zustand/react/shallow'
-import { Workflow, Settings, Copy, Keyboard, Building2, HelpCircle, Eye, Plus } from 'lucide-react'
+import { Settings, Copy, LayoutDashboard, ArrowLeft, Eye, Plus } from 'lucide-react'
 import { useAuthStore } from '../stores/useAuthStore'
 import { isWorkflowReadOnly } from '../utils/workflowPermissions'
 import { useModeStore } from '../stores/useModeStore'
@@ -8,11 +8,10 @@ import { useGlobalPresetStore, usePresetApplication, usePresetManagement } from 
 import type { CustomPreset, PredefinedPreset } from '../types/preset'
 import type { PlannerFile, PresetLLMConfig, WorkflowManifest } from '../services/api-types'
 import PresetModal from './PresetModal'
-import WorkflowScheduleRunsPanel from './scheduler/WorkflowScheduleRunsPanel'
 import { agentApi, workflowManifestApi } from '../services/api'
 import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from './ui/tooltip'
 import ModalPortal from './ui/ModalPortal'
-import { useChatStore } from '../stores'
+import { useChatStore, useLLMStore } from '../stores'
 import { useMCPStore } from '../stores/useMCPStore'
 import { useAppStore } from '../stores/useAppStore'
 import { useCommandDialogStore } from '../stores/useCommandDialogStore'
@@ -25,7 +24,6 @@ import { ProductSurfaceSwitcher } from './ProductSurfaceSwitcher'
 import WorkspaceTopBarControls from './WorkspaceTopBarControls'
 import ProvidersControl from './topbar/ProvidersControl'
 import ConfirmationDialog from './ui/ConfirmationDialog'
-import LazyModalFallback from './ui/LazyModalFallback'
 import {
   LLM_DISCOVERY_ONBOARDING_CLEARED_EVENT,
   LLM_DISCOVERY_ONBOARDING_OPENED_EVENT,
@@ -35,18 +33,6 @@ import {
 } from '../utils/onboarding'
 import { openWorkflowPresetPage } from '../utils/workflowSessionRestore'
 import { currentActiveSession, currentSessionId, headerStatusLabel } from '../utils/globalActivityMonitorStatus'
-
-const WorkflowsOverviewPopup = lazy(() => import('./WorkflowsOverviewPage').then(module => ({ default: module.WorkflowsOverviewPopup })))
-
-const MODE_PILLS = [
-  {
-    key: 'workflow' as const,
-    label: 'Automation',
-    icon: Workflow,
-    activeClasses: 'bg-purple-50 text-purple-700 shadow-sm ring-1 ring-purple-200 dark:bg-purple-500/20 dark:text-purple-100 dark:ring-purple-500/40',
-    inactiveClasses: 'text-gray-500 dark:text-gray-400',
-  },
-] as const
 
 const workflowManifestToPreset = (manifest: WorkflowManifest, workspacePath: string): CustomPreset => {
   const caps = manifest.capabilities
@@ -139,8 +125,6 @@ export const ModePresetBar: React.FC = () => {
   const [showPresetModal, setShowPresetModal] = useState(false)
   const [editingPreset, setEditingPreset] = useState<CustomPreset | null>(null)
   const [showShortcuts, setShowShortcuts] = useState(false)
-  const [showRunsPanel, setShowRunsPanel] = useState(false)
-  const [showWorkflowsPopup, setShowWorkflowsPopup] = useState(false)
   const [showWorkflowWalkthrough, setShowWorkflowWalkthrough] = useState(false)
   const [workflowWalkthroughOpenToken, setWorkflowWalkthroughOpenToken] = useState(0)
   const [pendingDuplicatePreset, setPendingDuplicatePreset] = useState<{ id: string; label: string } | null>(null)
@@ -151,7 +135,9 @@ export const ModePresetBar: React.FC = () => {
   const setShowWorkflowsOverview = useAppStore(s => s.setShowWorkflowsOverview)
   const setSelectedFile = useWorkspaceStore(state => state.setSelectedFile)
   const setShowFileContent = useWorkspaceStore(state => state.setShowFileContent)
+  const showProviders = useLLMStore(state => state.showLLMModal)
   const isOrganizationView = showWorkflowsOverview
+  const isGlobalPage = showWorkflowsOverview || showProviders
 
   // GlobalActivityMonitor excludes only the current session from its pills.
   // A simultaneous scheduled run for the same workflow remains a separate
@@ -160,18 +146,13 @@ export const ModePresetBar: React.FC = () => {
   // This mirrors GlobalActivityMonitor's own currentSessionId derivation so
   // the two stay in agreement about which session is "current".
   const activeSessionsCache = useChatStore(state => state.activeSessionsCache)
-  // Populated as a side effect of GlobalActivityMonitor's 5s active-sessions
-  // poll (both come from the combined /api/header-summary endpoint) — no
-  // separate poll needed here.
-  const workflowScheduleSummary = useChatStore(state => state.workflowScheduleSummary)
   const activeTabId = useChatStore(state => state.activeTabId)
   const chatTabs = useChatStore(state => state.chatTabs)
   const currentSession = currentActiveSession(
     activeSessionsCache,
-    currentSessionId(activeTabId, chatTabs, selectedModeCategory, isOrganizationView),
+    currentSessionId(activeTabId, chatTabs, selectedModeCategory, isGlobalPage),
   )
   const currentSessionStatusLabel = currentSession ? headerStatusLabel(currentSession) : null
-  const shouldShowScheduleHeader = selectedModeCategory === 'workflow' || isOrganizationView
 
   const openWorkflowWalkthrough = useCallback(() => {
     setWorkflowWalkthroughOpenToken(token => token + 1)
@@ -224,10 +205,10 @@ export const ModePresetBar: React.FC = () => {
     pendingAutoWalkthroughAfterLLMDiscoveryRef.current = true
   }, [openWorkflowWalkthrough])
 
-  const handleModePillClick = useCallback((modeKey: 'multi-agent' | 'workflow') => {
-    setModeCategory(modeKey)
+  const returnToWorkspace = useCallback(() => {
+    useLLMStore.getState().setShowLLMModal(false)
     setShowWorkflowsOverview(false)
-  }, [setModeCategory, setShowWorkflowsOverview])
+  }, [setShowWorkflowsOverview])
 
   // Handle ESC and Enter keys for shortcuts modal
   useEffect(() => {
@@ -245,16 +226,6 @@ export const ModePresetBar: React.FC = () => {
       return () => window.removeEventListener('keydown', handleKeyDown)
     }
   }, [showShortcuts])
-
-  const scheduledWorkflows = workflowScheduleSummary?.scheduled_workflows ?? 0
-  const runningWorkflows = workflowScheduleSummary?.running_workflows ?? 0
-  const totalSchedules = workflowScheduleSummary?.total_schedules ?? 0
-  const runningSchedules = workflowScheduleSummary?.running_schedules ?? 0
-  const workflowCountLabel = `${scheduledWorkflows} automation${scheduledWorkflows !== 1 ? 's' : ''}`
-  const scheduleCountLabel = `${totalSchedules} schedule${totalSchedules !== 1 ? 's' : ''}`
-  const workflowScheduleTooltip = runningWorkflows > 0
-    ? `${runningWorkflows} of ${scheduledWorkflows} scheduled automations running now; ${runningSchedules} of ${totalSchedules} schedules running`
-    : `${workflowCountLabel} scheduled; ${scheduleCountLabel} total`
 
   const handleEditWorkflowPreset = useCallback(async (preset: CustomPreset) => {
     const workspacePath = preset.selectedFolder?.filepath
@@ -546,56 +517,23 @@ export const ModePresetBar: React.FC = () => {
   return (
     <>
       <div className="px-4 py-2 bg-gray-50 dark:bg-gray-800/50 border-b border-gray-200 dark:border-gray-700 flex-shrink-0">
-        <div className="flex items-center justify-between gap-3">
-          {/* Left: App logo + Mode Indicator */}
+        <div className="flex flex-wrap items-center justify-between gap-3 md:flex-nowrap">
+          {/* Product and current automation */}
           <div className="flex min-w-0 items-center gap-3">
             {/* Product-level navigation stays separate from AgentWorks modes. */}
             <ProductSurfaceSwitcher className="mr-1" />
 
-            {/* Segmented control — single bordered container, active segment elevated */}
-            <div
-              data-tour="top-mode-switcher"
-              data-testid="tour-top-mode-switcher"
-              className="flex shrink-0 items-center bg-gray-100 dark:bg-gray-800/80 border border-gray-200 dark:border-gray-700 rounded-lg p-0.5"
-              role="tablist"
-              aria-label="Select mode"
-            >
-              {MODE_PILLS.map((mode) => {
-                const isActive = selectedModeCategory === mode.key && !showWorkflowsOverview
-                const Icon = mode.icon
-                return (
-                  <button
-                    key={mode.key}
-                    role="tab"
-                    aria-selected={isActive}
-                    aria-label={`Switch to ${mode.label} mode`}
-                    onClick={() => handleModePillClick(mode.key)}
-                    className={`relative flex items-center gap-1.5 whitespace-nowrap px-3 py-1 rounded-md text-xs font-medium transition-all duration-150 cursor-pointer ${
-                      isActive ? mode.activeClasses : mode.inactiveClasses
-                    }`}
-                    type="button"
-                  >
-                    <Icon className="w-3 h-3" />
-                    <span className="whitespace-nowrap">{mode.label}</span>
-                  </button>
-                )
-              })}
+            {isGlobalPage && (
               <button
-                role="tab"
-                aria-selected={showWorkflowsOverview}
-                aria-label="Switch to Activity view"
-                onClick={() => setShowWorkflowsOverview(!showWorkflowsOverview)}
-                className={`relative flex items-center gap-1.5 whitespace-nowrap px-3 py-1 rounded-md text-xs font-medium transition-all duration-150 cursor-pointer ${
-                  showWorkflowsOverview
-                    ? 'bg-slate-50 text-slate-700 shadow-sm ring-1 ring-slate-200 dark:bg-slate-700/70 dark:text-slate-100 dark:ring-slate-500/50'
-                    : 'text-gray-500 dark:text-gray-400'
-                }`}
                 type="button"
+                onClick={returnToWorkspace}
+                className="flex shrink-0 items-center gap-1.5 rounded-md px-2 py-1.5 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                aria-label="Back to workspace"
               >
-                <Building2 className="w-3 h-3" />
-                <span>Activity</span>
+                <ArrowLeft className="h-4 w-4" />
+                <span className="hidden sm:inline">Back</span>
               </button>
-            </div>
+            )}
 
             {isEffectiveReadOnly && (
               <Tooltip>
@@ -619,16 +557,19 @@ export const ModePresetBar: React.FC = () => {
               {(() => {
                 // For workflow mode only, always show preset selector
                 // Chat mode no longer supports presets
-                if (selectedModeCategory === 'workflow' && !isOrganizationView) {
+                if (selectedModeCategory === 'workflow') {
                   return (
-                    <div className="relative flex items-center">
+                    <div className="relative flex min-w-0 items-center">
                       <div
                         data-tour="workflow-add-edit"
                         data-testid="tour-workflow-add-edit"
-                        className="flex items-center bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-600 rounded-md overflow-hidden"
+                        className="flex min-w-0 items-center bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-600 rounded-md overflow-hidden"
                       >
                         <button
-                          onClick={handlePresetDropdownToggle}
+                          onClick={() => {
+                            if (isGlobalPage) returnToWorkspace()
+                            handlePresetDropdownToggle()
+                          }}
                           className="flex min-w-0 items-center gap-2 px-3 py-1 hover:bg-gray-100 dark:hover:bg-slate-700 transition-colors"
                           title={currentSessionStatusLabel ? `${activePreset?.label ?? ''} · ${currentSessionStatusLabel}` : undefined}
                         >
@@ -638,14 +579,14 @@ export const ModePresetBar: React.FC = () => {
                                   selector's — it was the same information in two
                                   places. The status text stays in this button's
                                   tooltip (title) for anyone who wants it here. */}
-                              <div className="w-2 h-2 bg-green-500 rounded-full"></div>
+                              <div className="w-2 h-2 shrink-0 bg-green-500 rounded-full"></div>
                               <span className="block max-w-[190px] truncate whitespace-nowrap text-sm font-medium text-gray-700 dark:text-gray-300">
                                 {activePreset.label}
                               </span>
                             </>
                           ) : (
                             <>
-                              <div className="w-2 h-2 bg-gray-400 rounded-full"></div>
+                              <div className="w-2 h-2 shrink-0 bg-gray-400 rounded-full"></div>
                               <span className="block max-w-[190px] truncate whitespace-nowrap text-sm font-medium text-gray-500 dark:text-gray-400">
                                 Select Automation
                               </span>
@@ -741,7 +682,7 @@ export const ModePresetBar: React.FC = () => {
                                     }`}
                                   >
                                     <div className="flex items-center gap-2">
-                                      <div className="w-2 h-2 bg-green-500 rounded-full"></div>
+                                      <div className="w-2 h-2 shrink-0 bg-green-500 rounded-full"></div>
                                       <div className="flex-1">
                                         <div className="font-medium">{preset.label}</div>
                                       </div>
@@ -794,69 +735,32 @@ export const ModePresetBar: React.FC = () => {
 
               <ProvidersControl />
 
-              {shouldShowScheduleHeader && (
-                <>
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <button
-                        onClick={() => setShowRunsPanel(true)}
-                        data-tour="workflow-schedules"
-                        data-testid="tour-workflow-schedules"
-                        aria-label="Workflow schedules"
-                        className={`relative flex items-center gap-2 rounded-md p-1 transition-colors ${
-                          runningWorkflows > 0
-                            ? 'text-green-700 dark:text-green-300 bg-green-50 dark:bg-green-900/20 hover:bg-green-100 dark:hover:bg-green-900/30'
-                            : 'text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 hover:text-gray-700 dark:hover:text-gray-200'
-                        }`}
-                      >
-                        <Workflow className="w-4 h-4 flex-shrink-0" />
-                        {runningWorkflows > 0 && (
-                          <>
-                            <span className="absolute -top-0.5 -right-0.5 w-2.5 h-2.5 rounded-full bg-green-500 border border-white dark:border-gray-800" />
-                            <span className="absolute -top-0.5 -right-0.5 w-2.5 h-2.5 rounded-full bg-green-500 animate-ping opacity-50" />
-                          </>
-                        )}
-                      </button>
-                    </TooltipTrigger>
-                    <TooltipContent side="bottom">
-                      {workflowScheduleTooltip}
-                    </TooltipContent>
-                  </Tooltip>
-                </>
-              )}
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      useLLMStore.getState().setShowLLMModal(false)
+                      setShowWorkflowsOverview(true)
+                    }}
+                    data-tour="global-activity"
+                    aria-label="Activity"
+                    aria-pressed={showWorkflowsOverview && !showProviders}
+                    className={`rounded-md p-1.5 transition-colors ${showWorkflowsOverview && !showProviders
+                      ? 'bg-primary/10 text-primary'
+                      : 'text-muted-foreground hover:bg-muted hover:text-foreground'}`}
+                  >
+                    <LayoutDashboard className="h-4 w-4" />
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent side="bottom">Activity · Updates and schedules</TooltipContent>
+              </Tooltip>
 
               <span className="mx-0.5 h-5 w-px bg-gray-200 dark:bg-gray-700" />
-
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <button
-                    onClick={openWorkflowWalkthrough}
-                    data-testid="open-walkthrough-button"
-                    className="p-1 rounded-md text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 hover:text-gray-700 dark:hover:text-gray-200 transition-colors"
-                    aria-label="Open walkthrough"
-                  >
-                    <HelpCircle className="w-4 h-4" />
-                  </button>
-                </TooltipTrigger>
-                <TooltipContent side="bottom">Walkthrough</TooltipContent>
-              </Tooltip>
-
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <button
-                    onClick={() => setShowShortcuts(true)}
-                    className="p-1 rounded-md text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 hover:text-gray-700 dark:hover:text-gray-200 transition-colors"
-                    aria-label="Keyboard shortcuts"
-                    title="Keyboard shortcuts"
-                  >
-                    <Keyboard className="w-4 h-4" />
-                  </button>
-                </TooltipTrigger>
-                <TooltipContent side="bottom">Keyboard shortcuts</TooltipContent>
-              </Tooltip>
-
-              {/* Config/account controls relocated from the former left sidebar */}
-              <WorkspaceTopBarControls />
+              <WorkspaceTopBarControls
+                onOpenWalkthrough={openWorkflowWalkthrough}
+                onOpenShortcuts={() => setShowShortcuts(true)}
+              />
 
             </div>
           </TooltipProvider>
@@ -867,12 +771,13 @@ export const ModePresetBar: React.FC = () => {
       {showShortcuts && (
         <ModalPortal>
           <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[9999] p-4" onClick={() => setShowShortcuts(false)}>
-            <div className="bg-white dark:bg-gray-800 rounded-xl shadow-2xl w-full max-w-lg max-h-[calc(100vh-2rem)] overflow-hidden text-gray-900 dark:text-gray-100 flex flex-col" onClick={e => e.stopPropagation()}>
+            <div role="dialog" aria-modal="true" aria-labelledby="keyboard-shortcuts-title" className="bg-white dark:bg-gray-800 rounded-xl shadow-2xl w-full max-w-lg max-h-[calc(100vh-2rem)] overflow-hidden text-gray-900 dark:text-gray-100 flex flex-col" onClick={e => e.stopPropagation()}>
               {/* Header */}
               <div className="flex items-center justify-between px-5 py-4 border-b border-gray-200 dark:border-gray-700">
-                <h3 className="text-base font-semibold">Keyboard Shortcuts</h3>
+                <h3 id="keyboard-shortcuts-title" className="text-base font-semibold">Keyboard Shortcuts</h3>
                 <button
                   onClick={() => setShowShortcuts(false)}
+                  aria-label="Close keyboard shortcuts"
                   className="p-1 rounded-md text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
                 >
                   <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -976,21 +881,6 @@ export const ModePresetBar: React.FC = () => {
         agentMode={agentMode}
         onDeleteWorkflow={handleDeleteWorkflow}
       />
-
-      {/* Scheduled Workflow Runs Panel */}
-      {showRunsPanel && (
-        <WorkflowScheduleRunsPanel onClose={() => setShowRunsPanel(false)} />
-      )}
-
-      {/* Workflows Overview Popup */}
-      {showWorkflowsPopup && (
-        <Suspense fallback={<LazyModalFallback label="Loading automations..." />}>
-          <WorkflowsOverviewPopup
-            isOpen
-            onClose={() => setShowWorkflowsPopup(false)}
-          />
-        </Suspense>
-      )}
 
       <WorkflowWalkthrough
         isOpen={showWorkflowWalkthrough}

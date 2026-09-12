@@ -25,3 +25,21 @@ Included in RTS app release `bb7ac6d17ec43750e74a5c92d73ef067f66c69bf`
 (`bb7ac6d-20260912135437`), with provider `570ede69fb85beef251ddca9792a2e5ad0dfe95d`.
 All three services were active and the public health endpoint was healthy after deployment.
 Deployment health is distinct from the feature-specific acceptance scope above.
+
+## Follow-up — Builder webhook registrar and testing skill
+
+The initial release shipped management HTTP endpoints but no corresponding
+Builder registrar, so agents incorrectly directed users to a removed creation
+form. `manage_workflow_webhook` now exposes list/create/update/delete and test in
+interactive writable Builder mode, reusing the management handlers and receiver.
+Run has no management tool. Every call checks current workflow visibility and
+mutations/tests enforce ownership/write access.
+
+The workshop-only webhook-triggers skill covers discovery, real route binding,
+bearer versus GitHub authentication, secret handling, test payloads, delivery
+idempotency and run-result follow-through. Test uses the stored credential
+internally; real events may execute the route. GitHub ping verifies setup without
+route execution. Internal tests do not prove public gateway reachability.
+
+Regression tests cover generated secrets, list redaction, a signed setup ping,
+reader rejection and Run exclusion. Feature implemented; final release pending.

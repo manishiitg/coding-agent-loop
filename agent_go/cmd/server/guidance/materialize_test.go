@@ -498,3 +498,13 @@ func TestUserManagementReferenceIsBuilderOnly(t *testing.T) {
 		t.Fatal("Run receives user-management skill")
 	}
 }
+
+func TestWebhookReferenceIsBuilderOnly(t *testing.T) {
+	builder, err := MaterializeReferenceKindsAsSkills("workshop", []string{"webhook-triggers"})
+	if err != nil || len(builder) != 1 {
+		t.Fatalf("webhook skill: %v", err)
+	}
+	if run, err := MaterializeReferenceKindsAsSkills("run", []string{"webhook-triggers"}); err == nil && len(run) > 0 {
+		t.Fatal("Run receives webhook management skill")
+	}
+}

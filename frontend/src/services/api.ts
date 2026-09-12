@@ -1671,9 +1671,9 @@ export const agentApi = {
     return response.data
   },
 
-  getPlannerFileContent: async (filepath: string) => {
+  getPlannerFileContent: async (filepath: string, timeoutMs?: number) => {
     // API handles path conversion internally
-    const response = await workspaceApi.get(`/api/documents/${encodeURIComponent(filepath)}`)
+    const response = await workspaceApi.get(`/api/documents/${encodeURIComponent(filepath)}`, timeoutMs ? { timeout: timeoutMs } : undefined)
     return response.data
   },
 

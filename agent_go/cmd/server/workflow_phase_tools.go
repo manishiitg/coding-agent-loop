@@ -57,6 +57,9 @@ func (api *StreamingAPI) installWorkflowPhaseTools(
 	}
 	active, _ := api.getActiveSession(sessionID)
 	policy := resolveWorkflowChatPolicy(phaseTemplateVars["WorkshopMode"], sessionID, syntheticReq, active, readOnly)
+	if err := api.registerWebhookTools(definitionAgent, userID, phaseWorkspacePath, policy); err != nil {
+		return err
+	}
 	if err := api.registerUserAccessTools(definitionAgent, userID, phaseWorkspacePath, policy); err != nil {
 		return err
 	}

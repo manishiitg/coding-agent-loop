@@ -244,7 +244,10 @@ export function usePlanData(workspacePath: string | null): UsePlanDataReturn {
       throw new Error('No workspace path provided')
     }
 
-    const response = await agentApi.getPlannerFileContent(planPath)
+    const [response, stepConfigResponse] = await Promise.all([
+      agentApi.getPlannerFileContent(planPath, 20000),
+      stepConfigPath ? agentApi.getPlannerFileContent(stepConfigPath, 20000).catch(() => null) : Promise.resolve(null),
+    ])
 
     if (response.success && response.data && response.data.content && typeof response.data.content === 'string') {
       let planData: PlanningResponse = JSON.parse(response.data.content)
@@ -252,8 +255,7 @@ export function usePlanData(workspacePath: string | null): UsePlanDataReturn {
       // Also load step_config.json to merge agent_configs
       if (stepConfigPath) {
         try {
-          const stepConfigResponse = await agentApi.getPlannerFileContent(stepConfigPath)
-          if (stepConfigResponse.success && stepConfigResponse.data && stepConfigResponse.data.content && typeof stepConfigResponse.data.content === 'string') {
+          if (stepConfigResponse?.success && stepConfigResponse.data && stepConfigResponse.data.content && typeof stepConfigResponse.data.content === 'string') {
             const rawStepConfig = JSON.parse(stepConfigResponse.data.content)
             const stepConfigs = normalizeStepConfigFile(rawStepConfig)
             planData = mergeStepConfigs(planData, stepConfigs)
@@ -278,71 +280,41 @@ export function usePlanData(workspacePath: string | null): UsePlanDataReturn {
       return false
     }
 
+    currentWorkspaceRef.current = workspacePath
+    const isCurrent = () => currentWorkspaceRef.current === workspacePath
     const cacheEntry = getPlanCacheEntry(workspacePath)
-
-    // Reuse the cached plan for this workspace across workflow switches.
+    setError(null)
     if (cacheEntry.data !== null) {
       setPlan(cacheEntry.data)
+      setLoading(false)
       return true
     }
-
-    // Check if a load is already in progress for this workspace
-    if (cacheEntry.promise) {
-      try {
-        const data = await cacheEntry.promise
-        setPlan(data)
-        return data !== null
-      } catch (err) {
-        setError(err instanceof Error ? err.message : 'Failed to load plan')
-        return false
-      }
-    }
-
-    // Check if workspace changed
-    const isWorkspaceChange = currentWorkspaceRef.current !== workspacePath
-    if (isWorkspaceChange) {
-      currentWorkspaceRef.current = workspacePath
-    }
-
     setLoading(true)
-    setError(null)
-
-    // Create the promise and cache it
-    const loadPromise = fetchPlanData()
-    cacheEntry.promise = loadPromise
-
+    setPlan(null)
+    if (!cacheEntry.promise) {
+      const promise = fetchPlanData().then(data => {
+        cacheEntry.data = data
+        cacheEntry.timestamp = Date.now()
+        return data
+      }).finally(() => { cacheEntry.promise = null })
+      cacheEntry.promise = promise
+    }
     try {
-      const planData = await loadPromise
-
-      // Update cache
-      cacheEntry.data = planData
-      cacheEntry.timestamp = Date.now()
-      cacheEntry.promise = null
-
-      setPlan(planData)
-      return planData !== null
+      const data = await cacheEntry.promise
+      if (isCurrent()) setPlan(data)
+      return data !== null
     } catch (err) {
-      cacheEntry.promise = null
-
-      // Check if it's a 404 or "not found" error (plan doesn't exist yet)
-      const is404 = err && typeof err === 'object' && 'response' in err &&
-        (err as { response?: { status?: number } }).response?.status === 404
-      const httpStatus = err && typeof err === 'object' && 'response' in err
-        ? (err as { response?: { status?: number } }).response?.status
-        : undefined
-      const errMsg = err instanceof Error ? err.message : String(err)
-      const isNotFound = is404 || /not found|does not exist|no such file/i.test(errMsg)
-
-      if (isNotFound) {
+      if (!isCurrent()) return false
+      const status = (err as { response?: { status?: number } })?.response?.status
+      const message = err instanceof Error ? err.message : String(err)
+      if (status === 404 || /not found|does not exist|no such file/i.test(message)) {
         setPlan(null)
         return false
       }
-
-      console.error('[usePlanData] Failed to load plan:', { httpStatus, errMsg })
-      setError(errMsg || 'Failed to load plan')
+      setError(message || 'Failed to load plan')
       return false
     } finally {
-      setLoading(false)
+      if (isCurrent()) setLoading(false)
     }
   }, [workspacePath, fetchPlanData])
 
@@ -719,6 +691,7 @@ export function usePlanData(workspacePath: string | null): UsePlanDataReturn {
     } else {
       // Reset everything when no workspace
       setPlan(null)
+      setLoading(false)
       currentWorkspaceRef.current = null
       setError(null)
       setChanges(null)

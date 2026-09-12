@@ -91,7 +91,7 @@ func validateWebhookSchedule(s WorkflowSchedule) error {
 		return nil
 	}
 	if s.Webhook == nil || s.Webhook.EncryptedSecret == "" {
-		return errors.New("API triggers must be created through the API triggers setup to generate a secret")
+		return errors.New("Create API triggers with manage_workflow_webhook in Builder chat to generate a secret")
 	}
 	if s.Webhook.AuthMode != "bearer" && s.Webhook.AuthMode != "github" {
 		return errors.New("webhook auth_mode must be bearer or github")

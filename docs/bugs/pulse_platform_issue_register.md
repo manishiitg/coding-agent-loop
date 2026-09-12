@@ -9,6 +9,12 @@ See [PLAT-307](pulse_platform/plat-307.md) for scope and tests.
 
 # Pulse Platform-Issue Register
 
+## Builder webhook creation and Plan loading follow-ups
+
+[PLAT-309](pulse_platform/plat-309.md) now records the missing Builder registrar,
+authenticated testing tool and webhook skill. [PLAT-318](pulse_platform/plat-318.md)
+tracks concurrent Plan loading and stale-result isolation. Final release pending.
+
 ## Builder user management and Pulse/picker follow-ups
 
 [PLAT-317](pulse_platform/plat-317.md) adds Builder-only user/access management

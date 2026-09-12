@@ -114,6 +114,9 @@ func (hcpo *StepBasedWorkflowOrchestrator) runBatchExecution(
 	execCtx *ExecutionContext,
 ) (*BatchExecutionResult, error) {
 	enabledGroups := hcpo.getEnabledGroupsForExecution()
+	if opts := hcpo.GetExecutionOptions(); opts != nil && opts.WebhookInputFile != "" {
+		enabledGroups = applyWebhookVariableOverrides(enabledGroups, opts.WebhookVariables)
+	}
 	totalGroups := len(enabledGroups)
 
 	if totalGroups == 0 {

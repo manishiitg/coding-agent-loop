@@ -42,3 +42,43 @@ links. Configure CI to poll with a timeout, evaluate its output contract, downlo
 artifacts and fail the job on execution or test failure. Do not log secrets or
 signed URLs. Shared Playwright skips live registration in unattended contexts;
 native videos/traces remain controlled by the test configuration.
+
+
+### Retention, concurrency, progress and runtime inputs
+
+- The server retains the latest 10 terminal webhook run folders per workflow,
+  independently of normal schedule retention. Active hooks are never pruned.
+  Older run history remains; status shows artifacts_expired=true and downloads
+  return 410 Gone. Do not promise permanent video/artifact storage; CI should
+  download and archive artifacts before retention removes them.
+- Webhooks have separate execution leases from schedules. One delivery per trigger
+  may run at a time; separate triggers can overlap. Busy same-trigger deliveries
+  receive 503 and must retry with the same delivery ID. Provider capacity controls
+  still apply. Separate run folders do not isolate shared KB, learning files,
+  database semantics or external systems: use supported transactional DB tools,
+  existing resource locks and idempotent external operations. Do not edit shared
+  scripts/configuration as part of a concurrent smoke-test route.
+- Use manage_workflow_webhook action=status with id and run_id after test. This
+  reads progress, available step outputs, terminal status and artifact links
+  without exposing the trigger secret. Poll modestly while testing and bound the
+  wait. progress entries contain group, step_id, step_path, title, status and
+  updated_at. They describe observed execution, not guessed route percentages.
+- Raw input is the default and keeps arbitrary external provider JSON unchanged.
+  Configure input_mode="envelope" only for callers you control (e.g. CI), with
+  allowed_variables listing exact declared non-secret workflow variable names.
+  group_names is both the allowed group list and the default execution groups.
+  With an envelope, an omitted group runs the configured default groups; supplying
+  group selects exactly one of them. Explicitly explain this if prod is allowed.
+- Envelope body: {"group":"dev","variables":{"base_url":"https://staging.example.com"},"payload":{"pr_number":123}}.
+  Variables use string values, at most 16 KiB each, and apply only to this run.
+  Unknown groups, undeclared/disallowed/protected variables and malformed envelopes
+  fail with 400 before execution. Never allow tokens, passwords, credentials or
+  runtime environment controls as overridable variables. Saved variables and
+  secrets are not modified. Raw event fields named group/variables are only data.
+- For create/update supply input_mode and allowed_variables; preserve existing
+  values when editing unrelated configuration. An empty allowed_variables array
+  removes override permission. Choose raw to restore native provider payloads.
+- Validate with a harmless authorized dev test, check action=status, verify the
+  chosen group and changed input through a step result, inspect progress and
+  download an artifact. Also verify an unauthorized group/variable is rejected.
+  A GitHub ping checks authentication only; it cannot prove envelope execution.

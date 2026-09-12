@@ -2009,7 +2009,16 @@ func RegisterRunFullWorkflowTool(
 				var missingSteps []string
 				var legacyRoutingSteps []string
 				validationSteps := plan.Steps
-				if variableValues := workflowRunValidationVariableValues(ctx, session, groupName); len(variableValues) > 0 {
+				variableValues := workflowRunValidationVariableValues(ctx, session, groupName)
+				if cfg.WebhookInvocation != nil {
+					if variableValues == nil {
+						variableValues = map[string]string{}
+					}
+					for k, v := range cfg.WebhookInvocation.Variables {
+						variableValues[k] = v
+					}
+				}
+				if len(variableValues) > 0 {
 					validationSteps = routeScopedValidationSteps(plan.Steps, variableValues, humanInputs, routeSelections)
 				} else if len(routeSelections) > 0 {
 					validationSteps = routeScopedValidationSteps(plan.Steps, nil, humanInputs, routeSelections)
@@ -2239,6 +2248,7 @@ func RegisterRunFullWorkflowTool(
 				}
 				if cfg.WebhookInvocation != nil {
 					execOpts.WebhookInputFile = cfg.WebhookInvocation.InputFile
+					execOpts.WebhookVariables = cfg.WebhookInvocation.Variables
 				}
 				workflowController.SetExecutionOptions(execOpts)
 				if len(routeSelections) > 0 {

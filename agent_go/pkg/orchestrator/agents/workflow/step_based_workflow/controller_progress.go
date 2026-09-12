@@ -23,6 +23,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) saveStepProgress(ctx context.Context,
 
 // emitStepStartedEvent emits a step started event via step_progress_updated
 func (hcpo *StepBasedWorkflowOrchestrator) emitStepStartedEvent(ctx context.Context, step PlanStepInterface, stepIndex int, stepPath string) {
+	hcpo.persistWebhookProgress(ctx, step, stepIndex, stepPath, "running")
 	bridge := hcpo.GetContextAwareBridge()
 	if bridge == nil {
 		return
@@ -48,6 +49,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) emitStepStartedEvent(ctx context.Cont
 
 // emitStepFinishedEvent emits a step finished event via step_progress_updated
 func (hcpo *StepBasedWorkflowOrchestrator) emitStepFinishedEvent(ctx context.Context, step PlanStepInterface, stepIndex int, stepPath string) {
+	hcpo.persistWebhookProgress(ctx, step, stepIndex, stepPath, "completed")
 	bridge := hcpo.GetContextAwareBridge()
 	if bridge == nil {
 		return
@@ -75,6 +77,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) emitStepFinishedEvent(ctx context.Con
 // step out of "running" when a step ends in error. Mirrors emitStepFinishedEvent
 // but with status "failed" + the error message.
 func (hcpo *StepBasedWorkflowOrchestrator) emitStepFailedEvent(ctx context.Context, step PlanStepInterface, stepIndex int, stepPath string, errorMsg string) {
+	hcpo.persistWebhookProgress(ctx, step, stepIndex, stepPath, "failed")
 	bridge := hcpo.GetContextAwareBridge()
 	if bridge == nil {
 		return

@@ -19,16 +19,19 @@ func (api *StreamingAPI) registerWebhookTools(reg definitionToolRegistrar, userI
 	if policy.Mode != "builder" || policy.Origin != "interactive" || !policy.allows("plan_authoring") {
 		return nil
 	}
-	return reg.RegisterCustomTool("manage_workflow_webhook", "Create and manage inbound route webhooks directly in Builder chat. First list to discover valid routes and groups. The platform generates/encrypts the secret; the UI displays existing triggers but has no creation form. Create/update require a complete name, enabled, auth_mode, route_selections and group_names configuration. Create/rotation returns a one-time secret: provide it only to the requesting user or their explicitly requested secret store, never shell logs. Bearer is for CI POSTs; github verifies signed GitHub webhooks. action=test sends an authenticated internal delivery through the receiver and executes the route; use only when the user requested testing. It does not verify public DNS/gateway connectivity. All calls enforce current workflow permissions.", map[string]interface{}{
+	return reg.RegisterCustomTool("manage_workflow_webhook", "Create and manage inbound route webhooks directly in Builder chat. First list to discover valid routes and groups. The platform generates/encrypts the secret; the UI displays existing triggers but has no creation form. Create/update require a complete name, enabled, auth_mode, route_selections and group_names configuration. Create/rotation returns a one-time secret: provide it only to the requesting user or their explicitly requested secret store, never shell logs. Bearer is for CI POSTs; github verifies signed GitHub webhooks. action=test sends an authenticated internal delivery through the receiver and executes the route; use only when the user requested testing. It does not verify public DNS/gateway connectivity. Configure input_mode=raw (default, native event JSON) or envelope (group/variables/payload), and allowed_variables for declared non-secret string overrides. group_names bounds caller group selection. action=status with id and run_id reads step progress, outputs and artifact links without revealing the trigger secret. Retains 10 finished hook folders plus active runs; hooks can overlap schedules but the same trigger remains serialized. All calls enforce current workflow permissions.", map[string]interface{}{
 		"type": "object", "additionalProperties": false, "required": []string{"action"}, "properties": map[string]interface{}{
-			"action":      map[string]interface{}{"type": "string", "enum": []string{"list", "create", "update", "delete", "test"}},
+			"action":      map[string]interface{}{"type": "string", "enum": []string{"list", "create", "update", "delete", "test", "status"}},
 			"payload":     map[string]interface{}{"type": "object", "description": "JSON test event. test executes the saved route and can have external effects."},
+			"run_id":      map[string]interface{}{"type": "string", "description": "Run ID returned by test or delivery; required for status."},
 			"delivery_id": map[string]interface{}{"type": "string", "description": "Reuse for retries; omit for a new test event."},
 			"event":       map[string]interface{}{"type": "string", "description": "Event type; defaults to agentworks.test."},
 			"id":          map[string]interface{}{"type": "string"}, "name": map[string]interface{}{"type": "string"}, "enabled": map[string]interface{}{"type": "boolean"},
-			"auth_mode":        map[string]interface{}{"type": "string", "enum": []string{"bearer", "github"}},
-			"route_selections": map[string]interface{}{"type": "object", "additionalProperties": map[string]interface{}{"type": "string"}, "description": "Map routing step IDs to saved route IDs, obtained from list."},
-			"group_names":      map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "string"}}, "rotate_secret": map[string]interface{}{"type": "boolean"},
+			"input_mode":        map[string]interface{}{"type": "string", "enum": []string{"raw", "envelope"}},
+			"allowed_variables": map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "string"}},
+			"auth_mode":         map[string]interface{}{"type": "string", "enum": []string{"bearer", "github"}},
+			"route_selections":  map[string]interface{}{"type": "object", "additionalProperties": map[string]interface{}{"type": "string"}, "description": "Map routing step IDs to saved route IDs, obtained from list."},
+			"group_names":       map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "string"}}, "rotate_secret": map[string]interface{}{"type": "boolean"},
 		}}, func(ctx context.Context, args map[string]interface{}) (string, error) {
 		ctx = context.WithValue(ctx, UserContextKey, &UserClaims{UserID: userID})
 		if userAccessForClaims(&UserClaims{UserID: userID}).Disabled {
@@ -41,7 +44,7 @@ func (api *StreamingAPI) registerWebhookTools(reg definitionToolRegistrar, userI
 			return "", fmt.Errorf("Workflow scheduler is unavailable")
 		}
 		action, _ := args["action"].(string)
-		if action == "test" {
+		if action == "test" || action == "status" {
 			return api.testWorkflowWebhook(ctx, workspace, args)
 		}
 		method, target := http.MethodGet, "/api/workflow-webhooks?workspace_path="+url.QueryEscape(workspace)
@@ -56,6 +59,11 @@ func (api *StreamingAPI) registerWebhookTools(reg definitionToolRegistrar, userI
 					return "", fmt.Errorf("%s is required for %s", key, action)
 				}
 				payload[key] = v
+			}
+			for _, key := range []string{"input_mode", "allowed_variables"} {
+				if v, ok := args[key]; ok {
+					payload[key] = v
+				}
 			}
 			if v, ok := args["rotate_secret"]; ok {
 				payload["rotate_secret"] = v
@@ -124,6 +132,21 @@ func (api *StreamingAPI) testWorkflowWebhook(ctx context.Context, workspace stri
 	secret, err := decryptSecretValueWithAAD(sched.Webhook.EncryptedSecret, webhookAAD(manifest.ID, id))
 	if err != nil {
 		return "", fmt.Errorf("Cannot read webhook authentication")
+	}
+	if args["action"] == "status" {
+		runID, _ := args["run_id"].(string)
+		if runID == "" {
+			return "", fmt.Errorf("run_id is required")
+		}
+		req, _ := http.NewRequestWithContext(ctx, http.MethodGet, webhookStatusPath(id, runID), nil)
+		req.Header.Set("Authorization", "Bearer "+secret)
+		req = mux.SetURLVars(req, map[string]string{"id": id, "run": runID})
+		rec := &accessToolResponse{header: make(http.Header)}
+		api.scheduler.pollWebhookRun(rec, req)
+		if rec.status >= 400 {
+			return "", fmt.Errorf("Webhook status failed (%d): %s", rec.status, rec.String())
+		}
+		return rec.String(), nil
 	}
 	payload, ok := args["payload"].(map[string]interface{})
 	if !ok {

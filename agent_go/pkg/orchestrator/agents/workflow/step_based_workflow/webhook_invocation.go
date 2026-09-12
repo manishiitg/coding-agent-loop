@@ -10,6 +10,7 @@ import (
 // WebhookInvocation is a server-created binding for an API-triggered run.
 // Delivery JSON never supplies the routes, groups, or the input file path.
 type WebhookInvocation struct {
+	Variables       map[string]string
 	RunFolder       string
 	mu              sync.Mutex
 	started         map[string]bool
@@ -69,4 +70,19 @@ func (w *WebhookInvocation) ClaimGroup(group string) error {
 	}
 	w.started[group] = true
 	return nil
+}
+
+func applyWebhookVariableOverrides(groups []VariableGroup, overrides map[string]string) []VariableGroup {
+	result := append([]VariableGroup(nil), groups...)
+	for i := range result {
+		values := make(map[string]string, len(result[i].Values))
+		for k, v := range result[i].Values {
+			values[k] = v
+		}
+		for k, v := range overrides {
+			values[k] = v
+		}
+		result[i].Values = values
+	}
+	return result
 }

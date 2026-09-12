@@ -28,16 +28,20 @@ const maxWebhookBodyBytes = 1024 * 1024
 // The plaintext secret is returned only on creation/rotation. Ciphertext uses
 // the existing server secrets key, bound to this workflow and trigger.
 type WorkflowWebhookConfig struct {
-	AuthMode        string `json:"auth_mode"`
-	EncryptedSecret string `json:"encrypted_secret"`
+	InputMode        string   `json:"input_mode,omitempty"`
+	AllowedVariables []string `json:"allowed_variables,omitempty"`
+	AuthMode         string   `json:"auth_mode"`
+	EncryptedSecret  string   `json:"encrypted_secret"`
 }
 
 type WorkflowWebhookDelivery struct {
-	RunID      string          `json:"run_id"`
-	DeliveryID string          `json:"delivery_id"`
-	Event      string          `json:"event,omitempty"`
-	ReceivedAt time.Time       `json:"received_at"`
-	Payload    json.RawMessage `json:"payload"`
+	Group      string            `json:"group,omitempty"`
+	Variables  map[string]string `json:"variables,omitempty"`
+	RunID      string            `json:"run_id"`
+	DeliveryID string            `json:"delivery_id"`
+	Event      string            `json:"event,omitempty"`
+	ReceivedAt time.Time         `json:"received_at"`
+	Payload    json.RawMessage   `json:"payload"`
 }
 
 // WebhookRunMetadata is safe delivery context for history; never includes payloads or secrets.
@@ -63,24 +67,28 @@ type webhookRouteOption struct {
 }
 
 type workflowWebhookResponse struct {
-	ID              string            `json:"id"`
-	Name            string            `json:"name"`
-	Enabled         bool              `json:"enabled"`
-	AuthMode        string            `json:"auth_mode"`
-	Path            string            `json:"path"`
-	RouteSelections map[string]string `json:"route_selections"`
-	GroupNames      []string          `json:"group_names"`
-	Secret          string            `json:"secret,omitempty"`
+	InputMode        string            `json:"input_mode,omitempty"`
+	AllowedVariables []string          `json:"allowed_variables,omitempty"`
+	ID               string            `json:"id"`
+	Name             string            `json:"name"`
+	Enabled          bool              `json:"enabled"`
+	AuthMode         string            `json:"auth_mode"`
+	Path             string            `json:"path"`
+	RouteSelections  map[string]string `json:"route_selections"`
+	GroupNames       []string          `json:"group_names"`
+	Secret           string            `json:"secret,omitempty"`
 }
 
 type workflowWebhookRequest struct {
-	WorkspacePath   string            `json:"workspace_path"`
-	Name            string            `json:"name"`
-	Enabled         bool              `json:"enabled"`
-	AuthMode        string            `json:"auth_mode"`
-	RouteSelections map[string]string `json:"route_selections"`
-	GroupNames      []string          `json:"group_names"`
-	RotateSecret    bool              `json:"rotate_secret"`
+	InputMode        string            `json:"input_mode,omitempty"`
+	AllowedVariables []string          `json:"allowed_variables,omitempty"`
+	WorkspacePath    string            `json:"workspace_path"`
+	Name             string            `json:"name"`
+	Enabled          bool              `json:"enabled"`
+	AuthMode         string            `json:"auth_mode"`
+	RouteSelections  map[string]string `json:"route_selections"`
+	GroupNames       []string          `json:"group_names"`
+	RotateSecret     bool              `json:"rotate_secret"`
 }
 
 func validateWebhookSchedule(s WorkflowSchedule) error {
@@ -123,7 +131,12 @@ func workflowWebhookDTO(s WorkflowSchedule) workflowWebhookResponse {
 	if s.Webhook != nil {
 		authMode = s.Webhook.AuthMode
 	}
-	return workflowWebhookResponse{ID: s.ID, Name: s.Name, Enabled: s.Enabled, AuthMode: authMode, Path: "/api/hooks/workflow/" + s.ID, RouteSelections: s.RouteSelections, GroupNames: s.GroupNames}
+	out := workflowWebhookResponse{ID: s.ID, Name: s.Name, Enabled: s.Enabled, AuthMode: authMode, Path: "/api/hooks/workflow/" + s.ID, RouteSelections: s.RouteSelections, GroupNames: s.GroupNames}
+	if s.Webhook != nil {
+		out.InputMode = s.Webhook.InputMode
+		out.AllowedVariables = s.Webhook.AllowedVariables
+	}
+	return out
 }
 
 func workflowWebhookRoutes(ctx context.Context, workspacePath string) ([]webhookRouteOption, error) {
@@ -209,17 +222,21 @@ func (s *SchedulerService) listWorkflowWebhooks(w http.ResponseWriter, r *http.R
 		routes = []webhookRouteOption{}
 	}
 	groups := []string{}
+	variableNames := []string{}
 	content, exists, err := readFileFromWorkspace(r.Context(), path+"/variables/variables.json")
 	if err == nil && exists {
 		var vars VariablesManifest
 		if json.Unmarshal([]byte(content), &vars) == nil {
+			for _, v := range vars.Variables {
+				variableNames = append(variableNames, v.Name)
+			}
 			for _, g := range vars.Groups {
 				groups = append(groups, g.Name)
 			}
 		}
 	}
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]interface{}{"triggers": hooks, "routes": routes, "groups": groups, "route_error": routeError})
+	_ = json.NewEncoder(w).Encode(map[string]interface{}{"triggers": hooks, "routes": routes, "groups": groups, "declared_variables": variableNames, "route_error": routeError})
 }
 
 func (s *SchedulerService) saveWorkflowWebhook(w http.ResponseWriter, r *http.Request) {
@@ -295,6 +312,20 @@ func (s *SchedulerService) saveWorkflowWebhook(w http.ResponseWriter, r *http.Re
 		}
 	}
 	cfg.AuthMode = req.AuthMode
+	if req.InputMode != "" && req.InputMode != "raw" && req.InputMode != "envelope" {
+		http.Error(w, "input_mode must be raw or envelope", 400)
+		return
+	}
+	if req.InputMode != "" {
+		cfg.InputMode = req.InputMode
+	}
+	if req.AllowedVariables != nil {
+		cfg.AllowedVariables = req.AllowedVariables
+	}
+	if err := validateWebhookVariableNames(r.Context(), req.WorkspacePath, cfg.AllowedVariables); err != nil {
+		http.Error(w, err.Error(), 400)
+		return
+	}
 	sched := WorkflowSchedule{ID: id, Name: strings.TrimSpace(req.Name), ScheduleType: "webhook", Timezone: "UTC", Enabled: req.Enabled, RouteSelections: req.RouteSelections, GroupNames: groups, Mode: "workshop", WorkshopMode: "run", CollisionPolicy: "skip", Webhook: cfg, PulseMode: "off", PulseModeReason: "Webhook deliveries skip Pulse, backup and publish."}
 	if index >= 0 {
 		sched.Description = manifest.Schedules[index].Description
@@ -485,6 +516,10 @@ func (receiver webhookReceiver) receive(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	input := &WorkflowWebhookDelivery{RunID: runID, DeliveryID: deliveryID, Event: event, ReceivedAt: time.Now().UTC(), Payload: append(json.RawMessage(nil), body...)}
+	if err := resolveWebhookDeliveryOptions(sched, input); err != nil {
+		http.Error(w, err.Error(), 400)
+		return
+	}
 	acceptedID, err := receiver.start(result.WorkspacePath, id, "", input)
 	if err != nil {
 		// A concurrent retry may have claimed this delivery since the first lookup.

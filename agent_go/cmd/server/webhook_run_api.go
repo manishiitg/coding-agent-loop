@@ -55,6 +55,11 @@ func allocateWebhookRunFolder(workspace, runID string) (string, error) {
 		return "", err
 	}
 	n := 0
+	if raw, e := root.ReadFile(".webhook-sequence"); e == nil {
+		if previous, e := strconv.Atoi(strings.TrimSpace(string(raw))); e == nil && previous > n {
+			n = previous
+		}
+	}
 	for _, entry := range entries {
 		if m := webhookFolderPattern.FindStringSubmatch(entry.Name()); len(m) > 0 {
 			raw, e := root.ReadFile("runs/" + entry.Name() + "/.webhook-run-id")
@@ -88,6 +93,9 @@ func allocateWebhookRunFolder(workspace, runID string) (string, error) {
 		}
 		if closeErr != nil {
 			return "", closeErr
+		}
+		if e := root.WriteFile(".webhook-sequence", []byte(strconv.Itoa(n)), 0600); e != nil {
+			return "", e
 		}
 		return folder, nil
 	}
@@ -131,14 +139,16 @@ type webhookStepOutput struct {
 	Artifacts []webhookArtifact      `json:"artifacts"`
 }
 type webhookRunResult struct {
-	RunID      string              `json:"run_id"`
-	Status     string              `json:"status"`
-	Terminal   bool                `json:"terminal"`
-	RunFolder  string              `json:"run_folder"`
-	Error      string              `json:"error,omitempty"`
-	FinishedAt *time.Time          `json:"finished_at,omitempty"`
-	Steps      []webhookStepOutput `json:"steps"`
-	Truncated  bool                `json:"truncated,omitempty"`
+	ArtifactsExpired bool                   `json:"artifacts_expired,omitempty"`
+	Progress         []webhookProgressEntry `json:"progress"`
+	RunID            string                 `json:"run_id"`
+	Status           string                 `json:"status"`
+	Terminal         bool                   `json:"terminal"`
+	RunFolder        string                 `json:"run_folder"`
+	Error            string                 `json:"error,omitempty"`
+	FinishedAt       *time.Time             `json:"finished_at,omitempty"`
+	Steps            []webhookStepOutput    `json:"steps"`
+	Truncated        bool                   `json:"truncated,omitempty"`
 }
 
 // Output paths are limited to a run's step output directories. Logs, source code,
@@ -295,6 +305,8 @@ func (s *SchedulerService) pollWebhookRun(w http.ResponseWriter, r *http.Request
 	lock.Lock()
 	defer lock.Unlock()
 	result := webhookRunResult{RunID: run.RunID, Status: string(run.State), Terminal: run.CompletedAt != nil, RunFolder: run.RunFolder, Error: run.ErrorMessage, FinishedAt: run.CompletedAt, Steps: []webhookStepOutput{}}
+	result.ArtifactsExpired = webhookArtifactsExpired(found.WorkspacePath, run.RunID)
+	result.Progress = []webhookProgressEntry{}
 	root, e := openWebhookRunRoot(found.WorkspacePath, run)
 	if e == nil {
 		defer root.Close()
@@ -305,6 +317,7 @@ func (s *SchedulerService) pollWebhookRun(w http.ResponseWriter, r *http.Request
 				return
 			}
 		} else {
+			result.Progress = collectWebhookProgress(root)
 			result.Steps, result.Truncated, e = collectWebhookOutputs(root)
 			if e != nil {
 				http.Error(w, "run outputs unavailable", 503)
@@ -329,7 +342,7 @@ func (s *SchedulerService) pollWebhookRun(w http.ResponseWriter, r *http.Request
 				}
 			}
 		}
-	} else if run.RunFolder != "" {
+	} else if run.RunFolder != "" && !result.ArtifactsExpired {
 		http.Error(w, "run outputs unavailable", 503)
 		return
 	}
@@ -352,6 +365,10 @@ func (s *SchedulerService) pollWebhookRun(w http.ResponseWriter, r *http.Request
 func (s *SchedulerService) downloadWebhookArtifact(w http.ResponseWriter, r *http.Request) {
 	found, run, ok := s.authorizeWebhookRun(w, r)
 	if !ok {
+		return
+	}
+	if webhookArtifactsExpired(found.WorkspacePath, run.RunID) {
+		http.Error(w, "run artifacts expired", http.StatusGone)
 		return
 	}
 	p := r.URL.Query().Get("path")

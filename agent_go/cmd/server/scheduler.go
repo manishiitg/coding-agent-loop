@@ -117,6 +117,9 @@ func scheduleStateLockKeyFromRuntimeKey(runtimeKey string) string {
 func scheduleStateScope(sctx *ScheduleContext) (scopeType, scopeID, lockKey string) {
 	if sctx != nil {
 		scopeID = filepath.Clean(strings.TrimSpace(sctx.WorkspacePath))
+		if sctx.Schedule.ScheduleType == "webhook" {
+			return "workflow", scopeID, strings.Join([]string{"workflow-hook", scopeID, sctx.Schedule.ID}, scheduleScopeSeparator)
+		}
 		if sctx.Schedule.ID == manualWorkflowPulseScheduleID {
 			return "workflow", scopeID, strings.Join([]string{"workflow-pulse", scopeID}, scheduleScopeSeparator)
 		}
@@ -1291,6 +1294,20 @@ func (s *SchedulerService) triggerSavedSchedule(workspacePath, scheduleID, origi
 		}
 		sctx.TriggerSource = "webhook"
 		sctx.WebhookInput = input
+		if input.Group != "" && !slices.Contains(sched.GroupNames, input.Group) {
+			return "", errors.New("group is no longer allowed by this trigger")
+		}
+		for name := range input.Variables {
+			if !slices.Contains(sched.Webhook.AllowedVariables, name) {
+				return "", fmt.Errorf("variable %q is no longer allowed by this trigger", name)
+			}
+		}
+		if input.Group != "" {
+			sctx.Schedule.GroupNames = []string{input.Group}
+		}
+		if err := validateWebhookVariableNames(ctx, workspacePath, keysWebhookVariables(input.Variables)); err != nil {
+			return "", err
+		}
 	} else if input != nil {
 		return "", errors.New("target is not a webhook")
 	}
@@ -1307,7 +1324,7 @@ func (s *SchedulerService) triggerSavedSchedule(workspacePath, scheduleID, origi
 
 	// A workflow may have one interactive builder chat and one schedule at the
 	// same time. Other workflow executions still block a schedule start.
-	if activeExec := s.findActiveNonBuilderExecutionForWorkspace(workspacePath); activeExec != nil {
+	if activeExec := s.findActiveNonBuilderExecutionForWorkspace(workspacePath); input == nil && activeExec != nil {
 		triggeredBy := activeExec.TriggeredBy
 		if strings.TrimSpace(triggeredBy) == "" {
 			triggeredBy = "unknown"
@@ -1328,7 +1345,9 @@ func (s *SchedulerService) triggerSavedSchedule(workspacePath, scheduleID, origi
 	runtimeKey := workflowScheduleRuntimeKey(workspacePath, scheduleID)
 	workflowRuntimeKeys := make([]string, 0, len(manifest.Schedules))
 	for i := range manifest.Schedules {
-		workflowRuntimeKeys = append(workflowRuntimeKeys, workflowScheduleRuntimeKey(workspacePath, manifest.Schedules[i].ID))
+		if input == nil && manifest.Schedules[i].ScheduleType != "webhook" {
+			workflowRuntimeKeys = append(workflowRuntimeKeys, workflowScheduleRuntimeKey(workspacePath, manifest.Schedules[i].ID))
+		}
 	}
 	runID := uuid.NewString()
 	if input != nil {
@@ -1543,7 +1562,7 @@ func (s *SchedulerService) stopRunningJob(runtimeKey, scheduleID string) {
 		s.stateStoreMu.RLock()
 		store := s.stateStore
 		if store != nil {
-			if active, err := store.ActiveRunByLockKey(context.Background(), lockKey); err == nil {
+			if active, err := store.ActiveRunByLockKey(context.Background(), lockKey); err == nil && active.ScheduleID == scheduleID {
 				runID = active.RunID
 			}
 		}
@@ -1638,7 +1657,9 @@ func (s *SchedulerService) triggerSchedule(sctx *ScheduleContext, scheduledFor t
 
 		workflowScheduleIDs = make([]string, 0, len(manifest.Schedules))
 		for i := range manifest.Schedules {
-			workflowScheduleIDs = append(workflowScheduleIDs, manifest.Schedules[i].ID)
+			if manifest.Schedules[i].ScheduleType != "webhook" {
+				workflowScheduleIDs = append(workflowScheduleIDs, manifest.Schedules[i].ID)
+			}
 		}
 
 		// Find current schedule in manifest (may have been updated)
@@ -2081,6 +2102,9 @@ func (s *SchedulerService) endQueuedLaunch(key string) {
 
 // runJob executes a scheduled job: updates runtime state, creates run history, executes, updates results.
 func (s *SchedulerService) runJob(ctx context.Context, sctx *ScheduleContext, runID string) (string, error) {
+	if sctx.WebhookInput != nil {
+		defer s.pruneWebhookRuns(sctx.WorkspacePath)
+	}
 	defer s.releaseScheduleRunContext(runID)
 	defer s.maintainRunLease(ctx, runID)()
 	schedID := sctx.Schedule.ID
@@ -3595,6 +3619,7 @@ func (s *SchedulerService) executeWorkshopJob(ctx context.Context, sctx *Schedul
 	// iteration rotation). This snapshot lets the post-run check below tell a
 	// NEW run folder created by this invocation from a pre-existing one.
 	preRunFolders, preRunFoldersErr := s.api.loadRunFoldersInternal(ctx, sctx.WorkspacePath)
+	preRunFolders = webhookInvocationFolders(preRunFolders, runFolder, sctx.WebhookInput != nil)
 	preRunFolderNames := runFolderNameSet(preRunFolders)
 	// A failed snapshot is not an empty workspace. Without this distinction the
 	// reconciler below compares against an empty baseline, concludes every
@@ -3611,6 +3636,7 @@ func (s *SchedulerService) executeWorkshopJob(ctx context.Context, sctx *Schedul
 		s.api.webhookInvocations.Store(sessionID, &stepworkflow.WebhookInvocation{
 			InputFile:       webhookInputPath(sctx.WorkspacePath, sctx.WebhookInput.RunID),
 			RunFolder:       runFolder,
+			Variables:       sctx.WebhookInput.Variables,
 			RouteSelections: sctx.Schedule.RouteSelections, GroupNames: sctx.Schedule.GroupNames,
 		})
 		defer s.api.webhookInvocations.Delete(sessionID)
@@ -3824,6 +3850,7 @@ func (s *SchedulerService) executeWorkshopJob(ctx context.Context, sctx *Schedul
 	// (BUG-20260729-10, social-media 2026-07-29: the scheduler recorded
 	// "success" for a run that fully failed at its first posting step).
 	postRunFolders, postRunFoldersErr := s.api.loadRunFoldersInternal(ctx, sctx.WorkspacePath)
+	postRunFolders = webhookInvocationFolders(postRunFolders, runFolder, sctx.WebhookInput != nil)
 	sctx.ProducedRunEvidence = workshopRunProducedEvidence(preRunFolderNames, postRunFolders, invocationStartedAt)
 	if !sctx.ProducedRunEvidence && s.scheduledWorkflowExecutionProducedEvidence(sessionID, invocationStartedAt) {
 		sctx.ProducedRunEvidence = true
@@ -3894,7 +3921,7 @@ func (s *SchedulerService) preserveRunEvidenceAfterFailedTurn(ctx context.Contex
 	// lost (PLAT-070), and an empty baseline would make every folder look new
 	// and answer "evidence" unconditionally — the opposite error.
 	if folders, listErr := s.api.loadRunFoldersInternal(ctx, sctx.WorkspacePath); listErr == nil &&
-		workshopRunStartedDuringInvocation(folders, since) {
+		sctx.WebhookInput == nil && workshopRunStartedDuringInvocation(webhookInvocationFolders(folders, "iteration-0", false), since) {
 		sctx.ProducedRunEvidence = true
 		s.sessionLogf(sctx, sessionID, "[SCHEDULER] turn failed for %s, but a full workflow run started during this invocation and its own metadata is the authority; preserving run evidence for Pulse", sctx.Schedule.ID)
 		return
@@ -4692,7 +4719,7 @@ func (s *SchedulerService) findActiveNonBuilderExecutionForWorkspace(workspacePa
 	}
 
 	tracked := s.api.findRunningTrackedExecutionForWorkspaceWhere(workspacePath, func(exec *TrackedWorkflowExecution) bool {
-		return trackedExecutionBlocksScheduledWorkflow(exec)
+		return exec.TriggeredBy != "webhook" && exec.Metadata["trigger_source"] != "webhook" && !strings.HasPrefix(exec.SessionID, "schedule-webhook--") && trackedExecutionBlocksScheduledWorkflow(exec)
 	})
 	if tracked == nil {
 		return nil

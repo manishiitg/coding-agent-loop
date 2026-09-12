@@ -68,7 +68,7 @@ Reuse an Idempotency-Key for retries of the same event; GitHub uses its delivery
 
 ## Configuration and management API
 
-API triggers are stored beside time schedules in `workflow.json.schedules`, with `schedule_type="webhook"`, `route_selections`, `group_names`, constrained run mode, and a `webhook` configuration containing auth mode and encrypted secret. The scheduler does not register clock ticks or missed occurrences for them. It shares the workflow collision lock with time-triggered runs.
+API triggers are stored beside time schedules in `workflow.json.schedules`, with `schedule_type="webhook"`, `route_selections`, `group_names`, constrained run mode, and a `webhook` configuration containing auth mode and encrypted secret. The scheduler does not register clock ticks or missed occurrences for them. Each API trigger has a separate collision lock. A webhook can overlap schedules and other triggers; two deliveries to the same trigger remain serialized.
 
 Authenticated management endpoints are `GET/POST /api/workflow-webhooks` and `PUT/DELETE /api/workflow-webhooks/{id}`. Supply `workspace_path` in mutation JSON or GET/DELETE query parameters. Writes require workflow ownership/write access; readers may inspect bindings but receive no secrets. POST/PUT accept `name`, `enabled`, `auth_mode` (`bearer`/`github`), `route_selections`, `group_names`, and optional `rotate_secret`. Responses include the relative endpoint `path`; a plaintext `secret` appears only when newly issued. The inbound endpoint and its run-result/artifact endpoints bypass user JWT authentication and perform their own trigger-specific authentication.
 
@@ -111,8 +111,9 @@ optimizer jobs appear as maintenance triggers and do not link into plan executio
 
 Each new delivery gets `runs/iteration-<n>-hook/<group>/`. These folders are not
 rotated into or overwritten by `iteration-0`; duplicate delivery IDs retain their
-original run. Hook folders and payloads currently require explicit cleanup and
-are excluded from ordinary run rotation. A webhook does not drain answered Pulse
+original run. The latest 10 terminal hook folders are retained, plus every active hook. Hook
+retention is independent of ordinary run rotation; delivery payloads remain
+retained separately. A webhook does not drain answered Pulse
 decisions or start post-run Pulse, backup, publish or reviewer turns. Required
 workflow contract upgrades still run before execution. Explicit steps in the
 selected workflow remain part of the run.
@@ -185,3 +186,40 @@ The shared Playwright helper detects builder versus schedule/webhook/bot context
 Unattended runs skip live-view registration. Builder live view/recording is
 unchanged; Playwright test video/trace output follows the test configuration and
 can still be saved as downloadable step artifacts.
+
+
+## Runtime group and variable selection
+
+Keep `input_mode="raw"` for native provider webhooks; all body fields remain event
+data. For CI callers, Builder can set `input_mode="envelope"` and
+`allowed_variables=["base_url", "test_suite"]` using manage_workflow_webhook.
+Names must be declared non-secret workflow variables. Settings are returned by
+list and preserved by updates that omit them; an empty array clears permission.
+
+```json
+{
+  "group": "dev",
+  "variables": {"base_url": "https://staging.example.com", "test_suite": "smoke"},
+  "payload": {"pr_number": 123}
+}
+```
+
+`group` selects one of the trigger's `group_names`. Omit it to execute all saved
+groups. Overrides are string values (maximum 16 KiB each) scoped to the delivery;
+they do not edit variables.json or secrets. Unknown groups, variables, protected
+names or invalid envelopes return 400. Steps read the inner payload in the normal
+delivery file, alongside the resolved group and variables. Native GitHub payloads
+should normally stay raw; CI envelope POSTs can use bearer authentication.
+
+Polling also returns `progress`: observed step IDs, group, path, title, status and
+last-update timestamps. Outputs appear as steps write files. There is no guessed
+percentage or denominator that counts unused branches. Builder can read this with
+`manage_workflow_webhook(action="status", id=..., run_id=...)`.
+
+Cleanup retains the latest 10 terminal webhook runs independently of schedules,
+plus all active runs. After expiration, history/status remains accessible with
+`artifacts_expired=true`; artifact requests return 410 Gone. CI should archive
+assets promptly. The same trigger remains serialized (503 while busy); hooks and
+schedules otherwise share provider capacity but have separate run locks. Shared
+KB/scripts, database semantics and external effects are not isolated by folders:
+use transactional DB tools, existing resource locks and idempotent route actions.

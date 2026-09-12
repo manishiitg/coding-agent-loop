@@ -35,6 +35,7 @@ func TestWebhookRunOutputsAndDownloads(t *testing.T) {
 	}
 	base := filepath.Join(docs, workspace, "runs", folder)
 	files := map[string]string{"dev/execution/smoke/result.json": `{"passed":2,"failed":0}`, "dev/execution/smoke/video.webm": "video-bytes", "dev/execution/smoke/.env": "secret", "dev/execution/smoke/code/main.py": "private-code", "dev/execution/smoke/logs/internal.txt": "private-log"}
+	files["dev/webhook_progress.json"] = `{"smoke:":{"step_id":"smoke","title":"Smoke","status":"completed","updated_at":"2026-09-12T12:00:00Z"}}`
 	for p, b := range files {
 		if err := os.MkdirAll(filepath.Dir(filepath.Join(base, p)), 0700); err != nil {
 			t.Fatal(err)
@@ -102,6 +103,9 @@ func TestWebhookRunOutputsAndDownloads(t *testing.T) {
 	}
 	if !result.Terminal || result.Status != "completed" || result.RunFolder != folder || len(result.Steps) != 1 || len(result.Steps[0].Artifacts) != 2 {
 		t.Fatalf("unexpected result: %+v", result)
+	}
+	if len(result.Progress) != 1 || result.Progress[0].Status != "completed" {
+		t.Fatalf("missing step progress: %+v", result.Progress)
 	}
 	output := result.Steps[0].Outputs["result.json"].(map[string]interface{})
 	if output["passed"] != float64(2) {

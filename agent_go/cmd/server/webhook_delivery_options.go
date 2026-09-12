@@ -1,0 +1,117 @@
+package server
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"fmt"
+	"regexp"
+	"slices"
+	"strings"
+)
+
+func keysWebhookVariables(values map[string]string) []string {
+	out := []string{}
+	for k := range values {
+		out = append(out, k)
+	}
+	return out
+}
+
+func resolveWebhookDeliveryOptions(s WorkflowSchedule, input *WorkflowWebhookDelivery) error {
+	if s.Webhook.InputMode != "envelope" {
+		return nil
+	}
+	var envelope struct {
+		Group     string            `json:"group"`
+		Variables map[string]string `json:"variables"`
+		Payload   json.RawMessage   `json:"payload"`
+	}
+	decoder := json.NewDecoder(bytes.NewReader(input.Payload))
+	decoder.DisallowUnknownFields()
+	if !strings.HasPrefix(strings.TrimSpace(string(input.Payload)), "{") {
+		return fmt.Errorf("webhook envelope must be an object")
+	}
+	if err := decoder.Decode(&envelope); err != nil {
+		return fmt.Errorf("invalid webhook envelope: group must be a string and variables must be string values")
+	}
+	if envelope.Group != "" && !slices.Contains(s.GroupNames, envelope.Group) {
+		return fmt.Errorf("group is not allowed by this trigger")
+	}
+	for k, v := range envelope.Variables {
+		if !slices.Contains(s.Webhook.AllowedVariables, k) {
+			return fmt.Errorf("variable %q is not allowed by this trigger", k)
+		}
+		if len(v) > 16384 {
+			return fmt.Errorf("variable %q exceeds 16 KiB", k)
+		}
+	}
+	input.Group = envelope.Group
+	input.Variables = envelope.Variables
+	if len(envelope.Payload) == 0 {
+		input.Payload = json.RawMessage(`{}`)
+	} else {
+		input.Payload = envelope.Payload
+	}
+	return nil
+}
+
+func validateWebhookVariableNames(ctx context.Context, workspace string, names []string) error {
+	if len(names) == 0 {
+		return nil
+	}
+	raw, exists, err := readFileFromWorkspace(ctx, workspace+"/variables/variables.json")
+	if err != nil || !exists {
+		return fmt.Errorf("cannot validate workflow variables")
+	}
+	var vars VariablesManifest
+	if json.Unmarshal([]byte(raw), &vars) != nil {
+		return fmt.Errorf("invalid workflow variables")
+	}
+	declared := map[string]bool{}
+	for _, v := range vars.Variables {
+		declared[v.Name] = true
+	}
+	manifest, found, err := ReadWorkflowManifest(ctx, workspace)
+	if err != nil || !found {
+		return fmt.Errorf("cannot validate secret boundaries")
+	}
+	blocked := map[string]bool{}
+	for _, v := range manifest.Capabilities.SelectedSecrets {
+		blocked[v] = true
+	}
+	for _, v := range getGlobalSecrets() {
+		blocked[v.Name] = true
+	}
+	for _, name := range names {
+		upper := strings.ToUpper(name)
+		if slices.Contains([]string{"PATH", "HOME", "LD_PRELOAD", "LD_LIBRARY_PATH", "PYTHONPATH", "NODE_OPTIONS", "BASH_ENV", "ENV", "SHELL"}, upper) {
+			return fmt.Errorf("variable %q is protected", name)
+		}
+		if !regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_]*$`).MatchString(name) || !declared[name] || blocked[name] {
+			return fmt.Errorf("variable %q is undeclared or protected", name)
+		}
+		for _, part := range []string{"SECRET", "TOKEN", "PASSWORD", "API_KEY", "CREDENTIAL", "AUTH_", "AGENTWORKS_", "WORKFLOW_", "GOG_"} {
+			if strings.Contains(upper, part) {
+				return fmt.Errorf("variable %q is protected", name)
+			}
+		}
+	}
+	return nil
+}
+
+// Concurrent invocations must never attribute another lane's failure to this run.
+func webhookInvocationFolders(folders []RunFolderInfo, folder string, hook bool) []RunFolderInfo {
+	result := []RunFolderInfo{}
+	for _, f := range folders {
+		base := strings.Split(f.Name, "/")[0]
+		if hook {
+			if base == folder {
+				result = append(result, f)
+			}
+		} else if !webhookFolderPattern.MatchString(base) {
+			result = append(result, f)
+		}
+	}
+	return result
+}

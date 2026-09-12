@@ -1,8 +1,9 @@
 import { createContext, useContext } from 'react'
+import type { PulseEvalResultsResponse, WorkflowCostsResponse } from '../../../services/api-types'
 
-export type ReportChatReceipt =
-  | { status: 'cancelled' }
-  | { status: 'queued'; tabId: string; reused: boolean; queuedBehindRunningTurn: boolean }
+export interface ReportCostOptions { days?: number; before?: string }
+
+export type ReportChatReceipt = { status: 'queued'; tabId: string; reused: boolean; queuedBehindRunningTurn: boolean }
 
 export type ReportChatOptions = {
   /** Stable identity for this item/version/action. Deduplicates in this report view. */
@@ -16,9 +17,11 @@ export type ReportChatOptions = {
 // demand. Exposed inside the iframe as `window.report`.
 export interface ReportDataApi {
   workspacePath: string
-  // Opens the app's message review UI. Only the user's Send submits to chat.
-  // Uses the same queue as human-decision Ask in chat, with an optional new chat
-  // chosen by the user. Queued is not proof of execution or completion.
+  getEvaluations?: () => Promise<PulseEvalResultsResponse>
+  getCosts?: (options: ReportCostOptions) => Promise<WorkflowCostsResponse>
+  // Sends directly from a report action through the human-decision chat queue.
+  // Reuses an interactive automation chat, or creates one only if none exists.
+  // Queued is not proof of execution or completion.
   sendChatMessage: (message: string, options?: ReportChatOptions) => Promise<ReportChatReceipt>
   query: (sql: string) => Promise<Record<string, unknown>[]>
   get: (path: string) => Promise<unknown>

@@ -523,6 +523,7 @@ func handleNotifyUser(ctx context.Context, args map[string]interface{}) (string,
 	if dest == nil {
 		dest = &services.NotificationDestination{}
 	}
+	addGoalProgressToNotification(ctx, notificationKind, dest, summary, gc)
 	if notificationKind == "run_summary" && len(summary.Routes) == 0 && strings.TrimSpace(summary.Route) == "" {
 		summary.Route = notificationRouteFromSelections(dest.RouteSelections)
 	}

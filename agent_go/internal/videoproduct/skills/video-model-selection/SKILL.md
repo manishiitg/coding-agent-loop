@@ -60,7 +60,10 @@ re-ask what was already decided.
 
 ## Character references: lock the approved reference model before the first image
 
-When a recurring character, presenter, or product needs a generated reference,
+First follow `cinematic-visual-development`: reuse approved imagery or a reviewed
+local crop and test a representative complete scene before expanding assets.
+A human identity may need only a face-only image; exact products or costumes
+may need richer evidence. When a new generated reference is actually needed,
 Video Studio's system policy selects `fal-ai/flux-2-max` for the first approved
 character or background master and `fal-ai/flux-2-max/edit` for controlled
 derivatives. Verify the current Fal schemas and billing before the first
@@ -70,11 +73,10 @@ alongside the character. Do not offer a model-selection menu or substitute a
 different still-image model unless the user explicitly asks to change the
 policy.
 
-The selected provider/model is the character arc's default: every later shot
-with that subject uses it and the approved reference unless the user explicitly
-approves a change. This is deliberately before shot planning and before any
-paid media generation; a reference made on an unchosen model is already sunk
-cost and can lock the production into the wrong continuity path.
+Record the reference-image provider/model separately from the H3 video route.
+Reuse the approved identity; choose the minimum reference inputs each shot
+needs. A posed image, full-body sheet or previous video is not automatically
+required for a later appearance of the same character.
 
 ## Present a costed choice before spending
 

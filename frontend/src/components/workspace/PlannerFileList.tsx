@@ -1,3 +1,4 @@
+import { sharedLink } from '../../utils/sharedLinks'
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type RefObject } from 'react'
 import { FileText, Folder, AlertCircle, Loader2, ChevronRight, ChevronDown, Trash2, MessageSquare, Upload, Plus, Image, MoreHorizontal, Move, Download, Archive, CheckSquare, Edit2, Link, Check } from 'lucide-react'
 import type { PlannerFile } from '../../services/api-types'
@@ -428,11 +429,10 @@ export default function PlannerFileList({
                     )}
                     <button
                       onClick={(e) => {
-                          e.stopPropagation()
-                          setOpenActionsPath(null)
-                          const encoded = btoa(unescape(encodeURIComponent(file.originalFilepath || file.filepath)))
+                        e.stopPropagation()
+                        setOpenActionsPath(null)
                         const uid = useAuthStore.getState().user?.id || ''
-                        const shareUrl = `${window.location.origin}/folder?path=${encoded}${uid ? `&uid=${encodeURIComponent(uid)}` : ''}`
+                        const shareUrl = sharedLink(window.location.origin, 'folder', file.originalFilepath || file.filepath, uid)
                         copyToClipboard(shareUrl).then((ok) => {
                           if (ok) {
                             setCopiedPath(file.filepath)
@@ -565,11 +565,10 @@ export default function PlannerFileList({
                     )}
                     <button
                       onClick={(e) => {
-                          e.stopPropagation()
-                          setOpenActionsPath(null)
-                          const encoded = btoa(unescape(encodeURIComponent(file.originalFilepath || file.filepath)))
+                        e.stopPropagation()
+                        setOpenActionsPath(null)
                         const uid = useAuthStore.getState().user?.id || ''
-                        const shareUrl = `${window.location.origin}/file?path=${encoded}${uid ? `&uid=${encodeURIComponent(uid)}` : ''}`
+                        const shareUrl = sharedLink(window.location.origin, 'file', file.originalFilepath || file.filepath, uid)
                         copyToClipboard(shareUrl).then((ok) => {
                           if (ok) {
                             setCopiedPath(file.filepath)

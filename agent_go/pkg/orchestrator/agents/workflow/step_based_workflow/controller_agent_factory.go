@@ -15,6 +15,7 @@ import (
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/orchestrator"
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/orchestrator/agents"
 	orchestrator_events "github.com/manishiitg/coding-agent-loop/agent_go/pkg/orchestrator/events"
+	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/workflowkb"
 	"github.com/manishiitg/coding-agent-loop/workspace/security"
 	mcpagent "github.com/manishiitg/mcpagent/agent"
 	"github.com/manishiitg/mcpagent/agent/codeexec"
@@ -534,7 +535,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) setupExecutionFolderGuard(stepPath st
 	}
 
 	readPaths = appendAdditionalWorkflowReadPaths(readPaths, baseWorkspacePath, stepConfig)
-	readPaths, writePaths, _, _ = appendWorkflowFolderAccess(baseWorkspacePath, readPaths, writePaths)
+	readPaths, writePaths, _, _ = appendWorkflowFolderAccess(baseWorkspacePath, readPaths, writePaths, kbAccessAllowsRead(kbAccess))
 	readPaths, writePaths = hcpo.appendCDPHostDownloadsPaths(readPaths, writePaths)
 	// PLAT-284: one persistent, workflow-scoped folder for anything a step
 	// installs (pip --user site, npm globals, downloaded binaries). Steps run
@@ -870,7 +871,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) prepareCustomTools(stepConfig *AgentC
 	// DB and cost access come from capabilities, not from whether an explicit
 	// tool list was supplied. Filtering against the actual workspace pool below
 	// cannot introduce a tool withheld by the owning profile.
-	enabledTools = append(enabledTools, "workflow_db:query_workflow_db", "workflow_costs:query_workflow_costs")
+	enabledTools = append(enabledTools, "workflow_db:query_workflow_db", "workflow_costs:query_workflow_costs", "workflow:get_goal_metrics", "workflow:record_goal_observations")
 	if resolveDBAccess(stepConfig) == DBAccessReadWrite {
 		enabledTools = append(enabledTools, "workflow_db:mutate_workflow_db", "workflow_db:apply_workflow_db_migration")
 	}
@@ -974,9 +975,9 @@ func (hcpo *StepBasedWorkflowOrchestrator) setupKBUpdateFolderGuard(stepID strin
 // calling CreateAndSetupStandardAgentWithConfig. The caller should also call
 // `common.ClearSessionShellConfig(sessionID)` after the agent finishes
 // (typically deferred in the runXxxPhase function).
-func (hcpo *StepBasedWorkflowOrchestrator) setupSubAgentSessionGuard(agentKind string, stepID string, readPaths []string, writePaths []string) string {
+func (hcpo *StepBasedWorkflowOrchestrator) setupSubAgentSessionGuard(agentKind string, stepID string, readPaths []string, writePaths []string, kbReadOverride ...bool) string {
 	sessionID := fmt.Sprintf("sub-%s-%s-%d", agentKind, stepID, time.Now().UnixNano())
-	hcpo.configureSubAgentSessionGuard(sessionID, agentKind, stepID, readPaths, writePaths)
+	hcpo.configureSubAgentSessionGuard(sessionID, agentKind, stepID, readPaths, writePaths, kbReadOverride...)
 	return sessionID
 }
 
@@ -994,8 +995,21 @@ func (hcpo *StepBasedWorkflowOrchestrator) workflowStepShellWorkingDir() string 
 	return fmt.Sprintf("%s/runs/%s/execution", workspacePath, runFolder)
 }
 
-func (hcpo *StepBasedWorkflowOrchestrator) configureSubAgentSessionGuard(sessionID string, agentKind string, stepID string, readPaths []string, writePaths []string) {
-	readPaths, writePaths, readOnlyPaths, folderEnv := appendWorkflowFolderAccess(hcpo.GetWorkspacePath(), readPaths, writePaths)
+func (hcpo *StepBasedWorkflowOrchestrator) configureSubAgentSessionGuard(sessionID string, agentKind string, stepID string, readPaths []string, writePaths []string, kbReadOverride ...bool) {
+	kbRead := false
+	localKB := filepath.Join(GetPromptDocsRoot(), hcpo.GetWorkspacePath(), "knowledgebase")
+	for _, path := range readPaths {
+		if !filepath.IsAbs(path) {
+			path = filepath.Join(GetPromptDocsRoot(), path)
+		}
+		if workflowkb.Within(path, localKB) {
+			kbRead = true
+		}
+	}
+	if len(kbReadOverride) > 0 {
+		kbRead = kbReadOverride[0]
+	}
+	readPaths, writePaths, readOnlyPaths, folderEnv := appendWorkflowFolderAccess(hcpo.GetWorkspacePath(), readPaths, writePaths, kbRead)
 	common.SetSessionFolderGuard(sessionID, readPaths, writePaths)
 	configureWorkflowFolderAccessSession(sessionID, hcpo.GetWorkspacePath(), readOnlyPaths, folderEnv)
 	hcpo.grantSessionCDPHostDownloadsReadWrite(sessionID)
@@ -1263,7 +1277,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) createExecutionOnlyAgent(ctx context.
 		}
 		hcpo.GetLogger().Info(fmt.Sprintf("🔒 Message sequence folder guard override for execution agent - Read: %v Write: %v", readPaths, writePaths))
 	}
-	readPaths, writePaths, _, _ = appendWorkflowFolderAccess(hcpo.GetWorkspacePath(), readPaths, writePaths)
+	readPaths, writePaths, _, _ = appendWorkflowFolderAccess(hcpo.GetWorkspacePath(), readPaths, writePaths, kbAccessAllowsRead(kbAccess))
 
 	// Scripted code mode: add code/ subdir to the enforced write paths so the LLM can write main.py there.
 	// writePaths[0] is the step execution folder (e.g. execution/step-1); appending /code gives execution/step-1/code.
@@ -1324,9 +1338,9 @@ func (hcpo *StepBasedWorkflowOrchestrator) createExecutionOnlyAgent(ctx context.
 	execSessionID := ""
 	if override, ok := ctx.Value(messageSequenceRuntimeSessionOverrideKey{}).(*messageSequenceRuntimeSessionOverride); ok && override != nil && strings.TrimSpace(override.SessionID) != "" {
 		execSessionID = strings.TrimSpace(override.SessionID)
-		hcpo.configureSubAgentSessionGuard(execSessionID, "message-sequence", stepID, readPaths, writePaths)
+		hcpo.configureSubAgentSessionGuard(execSessionID, "message-sequence", stepID, readPaths, writePaths, kbAccessAllowsRead(kbAccess))
 	} else {
-		execSessionID = hcpo.setupSubAgentSessionGuard("exec", stepID, readPaths, writePaths)
+		execSessionID = hcpo.setupSubAgentSessionGuard("exec", stepID, readPaths, writePaths, kbAccessAllowsRead(kbAccess))
 	}
 	config.MCPSessionID = execSessionID
 	directDBAccess := isScriptedStep(planStep, stepConfig)

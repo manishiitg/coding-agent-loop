@@ -13,6 +13,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/manishiitg/coding-agent-loop/workspace/gogconfig"
 )
 
 // gog (github.com/openclaw/gogcli) backend, selected via GmailConfig.UseGogBackend.
@@ -22,28 +24,16 @@ import (
 // (--access-token, or --account/--client), so there is no directory-per-
 // connection isolation to manage: every call shares one GOG_HOME.
 //
-// gws stays the default (UseGogBackend unset/false) — shipping this file
-// changes no deployment's behavior until an operator explicitly opts in,
-// verifies a real send locally, and flips the flag.
+// New and migrated connections select gog through their AuthBackend marker.
+// The top-level switch remains compatible with older deployments; un-migrated
+// legacy connections can continue using gws.
 
 // gogHomeDir is the single shared root gog stores every account and named
 // client under, always passed explicitly via --home rather than relying on
 // ambient GOG_HOME — so an operator's own shell environment cannot silently
 // repoint the server at a different store than the one gmail_oauth_clients.go
 // manages.
-func gogHomeDir() string {
-	if v := strings.TrimSpace(os.Getenv("GOG_HOME")); v != "" {
-		return v
-	}
-	if xdg := strings.TrimSpace(os.Getenv("XDG_CONFIG_HOME")); xdg != "" {
-		return filepath.Join(xdg, "agentworks", "gog")
-	}
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return filepath.Join(os.TempDir(), "agentworks-gog")
-	}
-	return filepath.Join(home, ".config", "agentworks", "gog")
-}
+func gogHomeDir() string { return gogconfig.Home() }
 
 // gogArgsForAuth picks how one gog invocation authenticates, from the same
 // per-connection knobs gmailConnectionConfig already resolves:
@@ -136,23 +126,31 @@ func (g *GmailService) computeAuthStatusGog(ctx context.Context, gogPath string,
 		// connection as broken.
 	}
 
-	// The --account/--client path: gog manages refresh internally and exposes
-	// no documented "print token" command, so there is no raw token to
-	// introspect. getProfile is the only probe available, which means a
-	// send-only account registered directly through gog reads as
-	// unauthenticated here — reconnect it through this app to fix that.
-	email, err := gogFetchGmailProfileEmail(ctx, gogPath, authArgs)
+	// Preserve the legacy explicitly supplied access-token fallback while
+	// migrated connections use only gog's own token store.
+	if cfg.Token != "" {
+		email, err := gogFetchGmailProfileEmail(ctx, gogPath, authArgs)
+		if err != nil {
+			st.Detail = "not authenticated — reconnect this account"
+			return st
+		}
+		st.Authenticated, st.HasGmailScope, st.Email = true, true, email
+		st.Scopes = gmailOAuthScopesFor(false, nil)
+		return st
+	}
+	account, err := checkedGogAccount(ctx, gogPath, cfg.gogAccountEmail, cfg.gogClientName)
 	if err != nil {
-		st.Detail = "not authenticated — reconnect this account"
+		st.Detail = err.Error()
 		return st
 	}
 	st.Authenticated = true
-	st.HasGmailScope = true
-	st.Email = email
-	// Nothing to introspect, so this is the base requested set; it assumes
-	// the common case (send-only) rather than over-reporting read, and may
-	// under-report a scope granted directly through gog outside this app.
-	st.Scopes = gmailOAuthScopesFor(false, nil)
+	st.Email = account.Email
+	st.Scopes = account.Scopes
+	st.HasGmailScope = scopesGrantGmailSend(account.Scopes)
+	if !st.HasGmailScope {
+		st.Detail = "authenticated, but this account has no Gmail send scope"
+	}
+
 	return st
 }
 
@@ -298,17 +296,13 @@ func (g *GmailService) sendRawGog(ctx context.Context, gogPath string, cfg *Gmai
 	return parseGwsMessageID(stdout.Bytes()), nil
 }
 
-// ImportRefreshTokenIntoGog registers a refresh token gog can use directly
-// (via --account/--client) under the given named client, so an agent's own
-// `gog <service> ...` shell commands work independently of this server's
-// per-call --access-token path — the whole point of teaching the agent to
-// drive gog itself for services beyond Gmail send.
-//
-// Called from the OAuth callback right after this server stores its own
-// copy of the credential (gmail_oauth.go). Best-effort and non-fatal: gog
-// not being installed, or any other failure here, must never break a sign-in
-// that already succeeded and is already usable through the normal send path.
+// ImportRefreshTokenIntoGog stores a token under its exact account/client pair.
+// This is required for new sign-ins and used by legacy migration. Failure is
+// returned to the caller; the application must not report a successful gog
+// connection or retire legacy credentials until import and verification pass.
 func ImportRefreshTokenIntoGog(ctx context.Context, email, clientName, refreshToken string) error {
+	ctx, cancel := context.WithTimeout(ctx, 60*time.Second)
+	defer cancel()
 	email = strings.TrimSpace(email)
 	clientName = strings.TrimSpace(clientName)
 	if email == "" || clientName == "" || strings.TrimSpace(refreshToken) == "" {
@@ -324,15 +318,16 @@ func ImportRefreshTokenIntoGog(ctx context.Context, email, clientName, refreshTo
 	// has an empty gog home, and `auth import --client <name>` alone otherwise
 	// creates a token bucket that cannot refresh. The file-keyring form is
 	// deliberate for headless services; GOG_KEYRING_PASSWORD protects it.
-	credentialsPath := gmailOAuthClientSecretPath(clientName)
-	credentialsArgs := gogBaseArgs(nil)
-	credentialsArgs = append(credentialsArgs, "auth", "credentials", "set", credentialsPath,
-		"--client", clientName, "--insecure", "--no-input", "--force")
-	var credentialsStderr bytes.Buffer
-	credentialsCmd := exec.CommandContext(ctx, gogPath, credentialsArgs...)
-	credentialsCmd.Stderr = &credentialsStderr
-	if err := credentialsCmd.Run(); err != nil {
-		return fmt.Errorf("gog auth credentials set: %w: %s", err, strings.TrimSpace(credentialsStderr.String()))
+	clientID, clientSecret, err := GetOAuthClientSecret(clientName)
+	if err != nil {
+		return err
+	}
+	secretJSON, err := json.Marshal(map[string]any{"installed": map[string]string{"client_id": clientID, "client_secret": clientSecret}})
+	if err != nil {
+		return err
+	}
+	if err := storeGogClient(ctx, clientName, secretJSON); err != nil {
+		return err
 	}
 
 	tmpDir, err := os.MkdirTemp("", "gmail-gog-import-*")
@@ -355,7 +350,7 @@ func ImportRefreshTokenIntoGog(ctx context.Context, email, clientName, refreshTo
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("gog auth import: %w: %s", err, strings.TrimSpace(stderr.String()))
+		return fmt.Errorf("gog auth import: %w", err)
 	}
 	return nil
 }

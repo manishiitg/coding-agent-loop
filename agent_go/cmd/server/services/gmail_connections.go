@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -44,6 +45,10 @@ const (
 
 // GmailConnection is one sending identity.
 type GmailConnection struct {
+	// AuthBackend is "gog" once gog owns this connection's token and refresh.
+	// Empty retains legacy authentication until a verified migration succeeds.
+	AuthBackend string `json:"auth_backend,omitempty"`
+
 	// ID is stable for the life of the connection and is what workflow config
 	// references. An identifier, never a secret.
 	ID string `json:"id"`
@@ -379,11 +384,9 @@ func (g *GmailService) CreateConnection(ctx context.Context, in GmailConnectionI
 	id := nextGmailConnectionID(cfg.Connections)
 
 	configHome := strings.TrimSpace(in.ConfigHome)
-	if configHome == "" {
-		configHome = filepath.Join(gmailConnectionsBaseDir(), id)
-		if err := os.MkdirAll(configHome, 0o700); err != nil {
-			return GmailConnection{}, fmt.Errorf("gmail connection: create config dir: %w", err)
-		}
+	authBackend := "gog"
+	if configHome != "" || strings.TrimSpace(in.CredentialsFile) != "" {
+		authBackend = "" // explicit legacy gws connection
 	}
 
 	now := time.Now().UTC()
@@ -393,6 +396,7 @@ func (g *GmailService) CreateConnection(ctx context.Context, in GmailConnectionI
 	}
 	conn := GmailConnection{
 		ID:              id,
+		AuthBackend:     authBackend,
 		DisplayName:     name,
 		ConfigHome:      configHome,
 		CredentialsFile: strings.TrimSpace(in.CredentialsFile),
@@ -507,6 +511,29 @@ func (g *GmailService) DeleteConnection(ctx context.Context, id string) error {
 		cfg.HostAccountDismissed = true
 	}
 
+	// Several registry entries may reference one gog account/client pair.
+	// Remove its token only when the last reference is removed.
+	if conn.AuthBackend == "gog" && conn.Email != "" {
+		shared := false
+		for _, other := range kept {
+			if strings.EqualFold(other.Email, conn.Email) && other.ClientName == conn.ClientName {
+				shared = true
+				break
+			}
+		}
+		if !shared {
+			cmdCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+			defer cancel()
+			binary := strings.TrimSpace(cfg.GogPath)
+			if binary == "" {
+				binary = "gog"
+			}
+			args := append(gogBaseArgs(nil), "--client", conn.ClientName, "auth", "tokens", "delete", conn.Email, "--no-input")
+			if err := exec.CommandContext(cmdCtx, binary, args...).Run(); err != nil {
+				return fmt.Errorf("remove gog account credential: %w", err)
+			}
+		}
+	}
 	if err := g.SaveConfig(ctx, cfg); err != nil {
 		return err
 	}
@@ -566,6 +593,10 @@ func gmailConnectionConfig(conn GmailConnection) *GmailConfig {
 		gogAccountEmail: conn.Email,
 		gogClientName:   conn.ClientName,
 	}
+	if conn.AuthBackend == "gog" {
+		cfg.UseGogBackend = true
+		return cfg
+	}
 	if token, err := accessTokenForConnection(context.Background(), conn.ID, conn.ClientName); err == nil && token != "" {
 		cfg.Token = token
 	}
@@ -576,7 +607,7 @@ func gmailConnectionConfig(conn GmailConnection) *GmailConfig {
 // same credentials. Only the auth-relevant fields count: renaming a connection
 // or toggling its default must not throw away a valid cached auth status.
 func gmailAuthKnobsEqual(a, b GmailConnection) bool {
-	return a.ConfigHome == b.ConfigHome && a.CredentialsFile == b.CredentialsFile && a.ClientName == b.ClientName
+	return a.ConfigHome == b.ConfigHome && a.CredentialsFile == b.CredentialsFile && a.ClientName == b.ClientName && a.AuthBackend == b.AuthBackend && a.Email == b.Email
 }
 
 // retainedGmailAuthCaches decides which cached auth statuses survive a config

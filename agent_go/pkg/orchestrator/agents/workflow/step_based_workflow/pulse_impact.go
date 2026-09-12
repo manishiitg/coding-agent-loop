@@ -80,23 +80,32 @@ type PulseInterventionSource struct {
 	SourceID   string `json:"source_id"`
 }
 
+// Effects lists additional configured metrics affected by the same change.
+// The existing metric/expected_direction fields remain the lead effect for
+// compatibility with old callers, decisions and historical assessments.
+type PulseMetricEffect struct {
+	Metric            string `json:"metric"`
+	ExpectedDirection string `json:"expected_direction"`
+}
+
 type PulseIntervention struct {
-	InterventionID      string   `json:"intervention_id"`
-	PulseRunID          string   `json:"pulse_run_id,omitempty"`
-	Title               string   `json:"title"`
-	CriterionID         string   `json:"criterion_id"`
-	ImpactType          string   `json:"impact_type"`
-	Metric              string   `json:"metric"`
-	ExpectedDirection   string   `json:"expected_direction"`
-	Scope               []string `json:"scope,omitempty"`
-	Provenance          string   `json:"provenance,omitempty"`
-	BaselineWindow      string   `json:"baseline_window,omitempty"`
-	Checkpoint          string   `json:"checkpoint,omitempty"`
-	MinimumEvidenceRuns int      `json:"minimum_evidence_runs"`
-	Status              string   `json:"status"`
-	Kind                string   `json:"kind,omitempty"`
-	Guardrails          []string `json:"guardrails,omitempty"`
-	RollbackCondition   string   `json:"rollback_condition,omitempty"`
+	Effects             []PulseMetricEffect `json:"effects,omitempty"`
+	InterventionID      string              `json:"intervention_id"`
+	PulseRunID          string              `json:"pulse_run_id,omitempty"`
+	Title               string              `json:"title"`
+	CriterionID         string              `json:"criterion_id"`
+	ImpactType          string              `json:"impact_type"`
+	Metric              string              `json:"metric"`
+	ExpectedDirection   string              `json:"expected_direction"`
+	Scope               []string            `json:"scope,omitempty"`
+	Provenance          string              `json:"provenance,omitempty"`
+	BaselineWindow      string              `json:"baseline_window,omitempty"`
+	Checkpoint          string              `json:"checkpoint,omitempty"`
+	MinimumEvidenceRuns int                 `json:"minimum_evidence_runs"`
+	Status              string              `json:"status"`
+	Kind                string              `json:"kind,omitempty"`
+	Guardrails          []string            `json:"guardrails,omitempty"`
+	RollbackCondition   string              `json:"rollback_condition,omitempty"`
 	// InterferenceDomains names the goal criterion, control surface,
 	// channel/cohort, metric stream, shared resource, or contamination boundary
 	// an experiment can affect. Use stable values such as "control:reply-copy"
@@ -126,6 +135,7 @@ type PulseGoalObservation struct {
 }
 
 type PulseImpactAssessment struct {
+	Metric         string   `json:"metric,omitempty"`
 	AssessmentID   string   `json:"assessment_id"`
 	InterventionID string   `json:"intervention_id"`
 	Verdict        string   `json:"verdict"`
@@ -149,6 +159,7 @@ type PulseImpactUpdate struct {
 }
 
 type PulseImpactLedger struct {
+	Metrics       []GoalMetric            `json:"metrics"`
 	Interventions []PulseIntervention     `json:"interventions"`
 	Observations  []PulseGoalObservation  `json:"observations"`
 	Assessments   []PulseImpactAssessment `json:"assessments"`
@@ -168,41 +179,55 @@ func ensurePulseImpactSchema(ctx context.Context, db pulseFindingLifecycleDB) er
 			return err
 		}
 	}
-	return ensurePulseInterventionColumns(ctx, db)
+	if err := ensurePulseInterventionColumns(ctx, db); err != nil {
+		return err
+	}
+	if err := ensurePulseTableColumns(ctx, db, "pulse_impact_assessments", map[string]string{"metric": "TEXT NOT NULL DEFAULT ''"}); err != nil {
+		return err
+	}
+	_, err := db.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS pulse_intervention_effects (
+ intervention_id TEXT NOT NULL, metric TEXT NOT NULL, expected_direction TEXT NOT NULL,
+ PRIMARY KEY(intervention_id, metric))`)
+	return err
 }
 
 func ensurePulseInterventionColumns(ctx context.Context, db pulseFindingLifecycleDB) error {
-	rows, err := db.QueryContext(ctx, `PRAGMA table_info(pulse_interventions)`)
-	if err != nil {
-		return err
-	}
-	defer rows.Close()
-	existing := map[string]bool{}
-	for rows.Next() {
-		var cid int
-		var name, columnType string
-		var notNull, primaryKey int
-		var defaultValue interface{}
-		if err := rows.Scan(&cid, &name, &columnType, &notNull, &defaultValue, &primaryKey); err != nil {
-			return err
-		}
-		existing[name] = true
-	}
-	if err := rows.Err(); err != nil {
-		return err
-	}
-	for name, definition := range map[string]string{
+	return ensurePulseTableColumns(ctx, db, "pulse_interventions", map[string]string{
 		"kind":                      "TEXT NOT NULL DEFAULT 'fix_bundle'",
 		"guardrails_json":           "TEXT NOT NULL DEFAULT '[]'",
 		"rollback_condition":        "TEXT NOT NULL DEFAULT ''",
 		"interference_domains_json": "TEXT NOT NULL DEFAULT '[]'",
 		"human_input_id":            "TEXT NOT NULL DEFAULT ''",
 		"terminal_outcome":          "TEXT NOT NULL DEFAULT ''",
-	} {
+	})
+}
+
+func ensurePulseTableColumns(ctx context.Context, db pulseFindingLifecycleDB, table string, columns map[string]string) error {
+	rows, err := db.QueryContext(ctx, "PRAGMA table_info("+table+")")
+	if err != nil {
+		return err
+	}
+	existing := map[string]bool{}
+	for rows.Next() {
+		var cid, notNull, primaryKey int
+		var name, columnType string
+		var defaultValue interface{}
+		if err := rows.Scan(&cid, &name, &columnType, &notNull, &defaultValue, &primaryKey); err != nil {
+			rows.Close()
+			return err
+		}
+		existing[name] = true
+	}
+	err = rows.Err()
+	rows.Close()
+	if err != nil {
+		return err
+	}
+	for name, definition := range columns {
 		if existing[name] {
 			continue
 		}
-		if _, err := db.ExecContext(ctx, fmt.Sprintf("ALTER TABLE pulse_interventions ADD COLUMN %s %s", name, definition)); err != nil {
+		if _, err := db.ExecContext(ctx, "ALTER TABLE "+table+" ADD COLUMN "+name+" "+definition); err != nil {
 			return err
 		}
 	}
@@ -412,6 +437,14 @@ func RecordPulseImpactUpdate(ctx context.Context, workspacePath string, update P
 				return nil, fmt.Errorf("an applied improvement cannot be reset to %s; assess, block or retire it with evidence", intervention.Status)
 			}
 		}
+		if err := recordPulseMetricEffects(ctx, tx, intervention); err != nil {
+			return nil, err
+		}
+		if isPlannedPulseImprovement(intervention.Kind) && intervention.Status == "adopted" {
+			if err := requirePulseMetricAssessments(ctx, tx, intervention); err != nil {
+				return nil, err
+			}
+		}
 		if intervention.Kind == "architecture_improvement" {
 			if intervention.Status == "running" || intervention.Status == "measuring" || intervention.Status == "adopted" {
 				var status, selected string
@@ -540,25 +573,61 @@ func RecordPulseImpactUpdate(ctx context.Context, workspacePath string, update P
 			return nil, fmt.Errorf("assessments[%d] references unknown intervention_id %q; an assessment can only be appended to an intervention that already exists, so include it in this call's interventions array or use the intervention_id shown in get_pulse_state(view=\"module\").impact_ledger",
 				index, assessment.InterventionID)
 		}
+		var leadMetric string
+		if err := tx.QueryRowContext(ctx, "SELECT metric FROM pulse_interventions WHERE intervention_id=?", assessment.InterventionID).Scan(&leadMetric); err != nil {
+			return nil, err
+		}
+		if assessment.Metric == "" {
+			assessment.Metric = leadMetric
+		}
+		if assessment.Metric != leadMetric {
+			var count int
+			if err := tx.QueryRowContext(ctx, "SELECT COUNT(*) FROM pulse_intervention_effects WHERE intervention_id=? AND metric=?", assessment.InterventionID, assessment.Metric).Scan(&count); err != nil {
+				return nil, err
+			}
+			if count != 1 {
+				return nil, fmt.Errorf("assessment metric %q is not an effect of intervention %q", assessment.Metric, assessment.InterventionID)
+			}
+		}
 		assessment.AssessmentID = strings.TrimSpace(assessment.AssessmentID)
 		if assessment.AssessmentID == "" {
 			assessment.AssessmentID = "impact-" + pulseImpactID(assessment.InterventionID, assessment.BeforeWindow, assessment.AfterWindow, assessment.AssessedAt)
+			if assessment.Metric != leadMetric {
+				assessment.AssessmentID = "impact-" + pulseImpactID(assessment.InterventionID, assessment.Metric, assessment.BeforeWindow, assessment.AfterWindow, assessment.AssessedAt)
+			}
+		}
+		var existingIntervention, existingMetric string
+		readErr := tx.QueryRowContext(ctx, "SELECT intervention_id, metric FROM pulse_impact_assessments WHERE assessment_id=?", assessment.AssessmentID).Scan(&existingIntervention, &existingMetric)
+		if readErr != nil && readErr != sql.ErrNoRows {
+			return nil, readErr
+		}
+		if readErr == nil {
+			if existingMetric == "" {
+				existingMetric = leadMetric
+			}
+			if existingIntervention != assessment.InterventionID || existingMetric != assessment.Metric {
+				return nil, fmt.Errorf("assessment_id %q already belongs to another intervention or metric", assessment.AssessmentID)
+			}
 		}
 		if _, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO pulse_impact_assessments
 			(assessment_id, intervention_id, verdict, before_window, after_window, before_value, after_value,
-			 absolute_change, relative_change, confidence, confounders_json, evidence_json, next_checkpoint, assessed_at)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			 absolute_change, relative_change, confidence, confounders_json, evidence_json, next_checkpoint, assessed_at, metric)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 			assessment.AssessmentID, assessment.InterventionID, assessment.Verdict,
 			assessment.BeforeWindow, assessment.AfterWindow, nullableFloat(assessment.BeforeValue),
 			nullableFloat(assessment.AfterValue), nullableFloat(assessment.AbsoluteChange), nullableFloat(assessment.RelativeChange),
 			assessment.Confidence, pulseImpactJSON(assessment.Confounders), pulseImpactJSON(assessment.Evidence),
-			strings.TrimSpace(assessment.NextCheckpoint), assessment.AssessedAt); err != nil {
+			strings.TrimSpace(assessment.NextCheckpoint), assessment.AssessedAt, assessment.Metric); err != nil {
 			return nil, err
 		}
 		if _, err := tx.ExecContext(ctx, `UPDATE pulse_interventions
 			SET status=CASE
 				WHEN kind IN ('strategy_experiment', 'architecture_improvement') AND status IN ('running', 'measuring') THEN 'measuring'
-				WHEN kind='fix_bundle' AND status!='retired' THEN 'assessed'
+				WHEN kind='fix_bundle' AND status!='retired' THEN CASE
+     WHEN EXISTS (SELECT 1 FROM pulse_intervention_effects e WHERE e.intervention_id=pulse_interventions.intervention_id
+       AND NOT EXISTS (SELECT 1 FROM pulse_impact_assessments a WHERE a.intervention_id=e.intervention_id AND a.metric=e.metric))
+       OR NOT EXISTS (SELECT 1 FROM pulse_impact_assessments a WHERE a.intervention_id=pulse_interventions.intervention_id AND (a.metric=pulse_interventions.metric OR a.metric=''))
+     THEN 'measuring' ELSE 'assessed' END
 				ELSE status
 			END, updated_at=?
 			WHERE intervention_id=?`,
@@ -627,6 +696,10 @@ func LoadPulseImpactLedger(ctx context.Context, workspacePath string, limit int)
 		return nil, err
 	}
 	ledger := &PulseImpactLedger{Interventions: []PulseIntervention{}, Observations: []PulseGoalObservation{}, Assessments: []PulseImpactAssessment{}}
+	ledger.Metrics, err = loadGoalMetrics(ctx, db)
+	if err != nil {
+		return nil, err
+	}
 
 	rows, err := db.QueryContext(ctx, `SELECT intervention_id, pulse_run_id, title, criterion_id, impact_type, metric,
 		expected_direction, scope_json, provenance, baseline_window, checkpoint, minimum_evidence_runs,
@@ -665,13 +738,42 @@ func LoadPulseImpactLedger(ctx context.Context, workspacePath string, limit int)
 			item.Sources = append(item.Sources, source)
 		}
 		sourceRows.Close()
+		effectRows, err := db.QueryContext(ctx, "SELECT metric, expected_direction FROM pulse_intervention_effects WHERE intervention_id=? ORDER BY metric", item.InterventionID)
+		if err != nil {
+			rows.Close()
+			return nil, err
+		}
+		for effectRows.Next() {
+			var effect PulseMetricEffect
+			if err := effectRows.Scan(&effect.Metric, &effect.ExpectedDirection); err != nil {
+				effectRows.Close()
+				rows.Close()
+				return nil, err
+			}
+			item.Effects = append(item.Effects, effect)
+		}
+		err = effectRows.Err()
+		effectRows.Close()
+		if err != nil {
+			rows.Close()
+			return nil, err
+		}
 		ledger.Interventions = append(ledger.Interventions, item)
 	}
 	rows.Close()
 
 	rows, err = db.QueryContext(ctx, `SELECT observation_id, criterion_id, metric, run_id, route, environment,
 		value, status, unit, observed_at, evidence_json, recorded_at
-		FROM pulse_goal_observations ORDER BY observed_at DESC LIMIT ?`, limit)
+		FROM pulse_goal_observations WHERE observation_id IN (
+ SELECT observation_id FROM pulse_goal_observations ORDER BY observed_at DESC LIMIT ?
+ ) OR observation_id IN (
+ SELECT observation_id FROM (
+ SELECT o.observation_id, ROW_NUMBER() OVER (PARTITION BY o.metric,o.criterion_id,o.unit,o.route,o.environment ORDER BY o.observed_at DESC) AS position
+ FROM pulse_goal_observations o JOIN workflow_goal_metrics m ON m.metric_id=o.metric AND m.active=1
+ WHERE o.criterion_id=json_extract(m.definition_json,'$.criterion_id') AND o.unit=json_extract(m.definition_json,'$.unit')
+ AND o.route=json_extract(m.definition_json,'$.route') AND o.environment=json_extract(m.definition_json,'$.environment')
+ ) WHERE position<=120
+ ) ORDER BY observed_at DESC`, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -695,7 +797,7 @@ func LoadPulseImpactLedger(ctx context.Context, workspacePath string, limit int)
 
 	rows, err = db.QueryContext(ctx, `SELECT assessment_id, intervention_id, verdict, before_window, after_window,
 		before_value, after_value, absolute_change, relative_change, confidence, confounders_json,
-		evidence_json, next_checkpoint, assessed_at FROM pulse_impact_assessments ORDER BY assessed_at DESC LIMIT ?`, limit)
+		evidence_json, next_checkpoint, assessed_at, CASE WHEN metric='' THEN (SELECT metric FROM pulse_interventions i WHERE i.intervention_id=pulse_impact_assessments.intervention_id) ELSE metric END FROM pulse_impact_assessments ORDER BY assessed_at DESC LIMIT ?`, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -705,7 +807,7 @@ func LoadPulseImpactLedger(ctx context.Context, workspacePath string, limit int)
 		var confoundersJSON, evidenceJSON string
 		if err := rows.Scan(&item.AssessmentID, &item.InterventionID, &item.Verdict, &item.BeforeWindow,
 			&item.AfterWindow, &before, &after, &absolute, &relative, &item.Confidence,
-			&confoundersJSON, &evidenceJSON, &item.NextCheckpoint, &item.AssessedAt); err != nil {
+			&confoundersJSON, &evidenceJSON, &item.NextCheckpoint, &item.AssessedAt, &item.Metric); err != nil {
 			rows.Close()
 			return nil, err
 		}

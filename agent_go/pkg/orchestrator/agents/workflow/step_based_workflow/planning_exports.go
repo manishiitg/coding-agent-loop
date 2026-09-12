@@ -227,6 +227,9 @@ func PhaseChatSystemPrompt(phaseId string, templateVars map[string]string) strin
 		panic(fmt.Sprintf("[FATAL] Phase chat system prompt template failed for phase=%q: %v — this means the LLM will receive no system prompt. Fix the template or templateData.", phaseId, err))
 	}
 	rendered := result.String()
+	if phaseId == "workflow-builder" {
+		rendered += "\n\n" + workflowFolderAccessBuilderPrompt(templateVars["WorkspacePath"])
+	}
 	// Guard against empty or suspiciously short prompts — the workshop template should be 10K+ chars
 	if len(rendered) < 1000 {
 		panic(fmt.Sprintf("[FATAL] Phase chat system prompt for phase=%q is only %d chars (expected 10000+). Template likely has missing variables or rendering issues.", phaseId, len(rendered)))

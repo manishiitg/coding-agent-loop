@@ -4,14 +4,10 @@
 package server
 
 import (
-	"bytes"
-	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
-	"log"
 	"net/http"
-	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -52,195 +48,26 @@ func (api *StreamingAPI) handleHealth(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// handlePublicFile serves workspace files via a shareable URL.
-// GET /api/public/file?path=<base64-encoded-filepath>
+// Existing Share file and Share folder URLs keep their route contract.
 func (api *StreamingAPI) handlePublicFile(w http.ResponseWriter, r *http.Request) {
-	encoded := r.URL.Query().Get("path")
-	if encoded == "" {
-		http.Error(w, "path query parameter required", http.StatusBadRequest)
-		return
-	}
-
-	// Decode base64 filepath
-	decoded, err := base64.StdEncoding.DecodeString(encoded)
-	if err != nil {
-		decoded, err = base64.RawURLEncoding.DecodeString(encoded)
-		if err != nil {
-			log.Printf("[PUBLIC-FILE] Failed to decode base64 path: %s, error: %v", encoded, err)
-			http.Error(w, "invalid file path encoding", http.StatusBadRequest)
-			return
-		}
-	}
-	filePath := string(decoded)
-
-	uid := publicWorkspaceUserID(r)
-	log.Printf("[PUBLIC-FILE] Serving file: %s for user: %s", filePath, uid)
-
-	// URL-encode each path segment for the workspace API
-	segments := strings.Split(filePath, "/")
-	for i, seg := range segments {
-		segments[i] = url.PathEscape(seg)
-	}
-	encodedPath := strings.Join(segments, "/")
-
-	wsURL := getWorkspaceAPIURL() + "/api/documents/" + encodedPath + "/raw"
-	log.Printf("[PUBLIC-FILE] Proxying to workspace: %s", wsURL)
-
-	req, err := http.NewRequestWithContext(r.Context(), "GET", wsURL, nil)
-	if err != nil {
-		log.Printf("[PUBLIC-FILE] Failed to create request: %v", err)
-		http.Error(w, "internal error", http.StatusInternalServerError)
-		return
-	}
-	req.Header.Set("X-User-ID", uid)
-	if rangeHeader := r.Header.Get("Range"); rangeHeader != "" {
-		req.Header.Set("Range", rangeHeader)
-	}
-
-	resp, err := workspaceHTTPClient.Do(req)
-	if err != nil {
-		log.Printf("[PUBLIC-FILE] Workspace request failed: %v", err)
-		http.Error(w, "workspace unavailable", http.StatusBadGateway)
-		return
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusPartialContent {
-		body, _ := io.ReadAll(resp.Body)
-		log.Printf("[PUBLIC-FILE] Workspace returned %d: %s", resp.StatusCode, string(body))
-		http.Error(w, "file not found", http.StatusNotFound)
-		return
-	}
-
-	// Proxy streaming/range headers so media players can seek through the same
-	// generic workspace surface used by every product.
-	for _, header := range []string{"Content-Type", "Content-Length", "Content-Range", "Accept-Ranges", "Last-Modified"} {
-		if value := resp.Header.Get(header); value != "" {
-			w.Header().Set(header, value)
-		}
-	}
-	w.Header().Set("Content-Disposition", "inline")
-	w.WriteHeader(resp.StatusCode)
-	io.Copy(w, resp.Body)
+	api.servePublicAsset(w, r, "read")
 }
-
-// handlePublicFolder lists workspace folder contents via a shareable URL.
-// GET /api/public/folder?path=<base64-encoded-folderpath>
 func (api *StreamingAPI) handlePublicFolder(w http.ResponseWriter, r *http.Request) {
-	encoded := r.URL.Query().Get("path")
-	if encoded == "" {
-		http.Error(w, "path query parameter required", http.StatusBadRequest)
-		return
-	}
-
-	decoded, err := base64.StdEncoding.DecodeString(encoded)
-	if err != nil {
-		decoded, err = base64.RawURLEncoding.DecodeString(encoded)
-		if err != nil {
-			log.Printf("[PUBLIC-FOLDER] Failed to decode base64 path: %s, error: %v", encoded, err)
-			http.Error(w, "invalid path encoding", http.StatusBadRequest)
-			return
-		}
-	}
-	folderPath := string(decoded)
-
-	uid := publicWorkspaceUserID(r)
-	log.Printf("[PUBLIC-FOLDER] Listing folder: %s for user: %s", folderPath, uid)
-
-	wsURL := getWorkspaceAPIURL() + "/api/documents"
-	req, err := http.NewRequestWithContext(r.Context(), "GET", wsURL, nil)
-	if err != nil {
-		http.Error(w, "internal error", http.StatusInternalServerError)
-		return
-	}
-	q := req.URL.Query()
-	q.Set("folder", folderPath)
-	req.URL.RawQuery = q.Encode()
-	req.Header.Set("X-User-ID", uid)
-
-	resp, err := workspaceHTTPClient.Do(req)
-	if err != nil {
-		log.Printf("[PUBLIC-FOLDER] Workspace request failed: %v", err)
-		http.Error(w, "workspace unavailable", http.StatusBadGateway)
-		return
-	}
-	defer resp.Body.Close()
-
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(resp.StatusCode)
-	io.Copy(w, resp.Body)
+	api.servePublicAsset(w, r, "list")
 }
-
-// handlePublicFolderDownload exports a shared folder as a ZIP download.
-// GET /api/public/folder/download?path=<base64-encoded-folderpath>&uid=<owner-id>
 func (api *StreamingAPI) handlePublicFolderDownload(w http.ResponseWriter, r *http.Request) {
-	encoded := r.URL.Query().Get("path")
-	if encoded == "" {
-		http.Error(w, "path query parameter required", http.StatusBadRequest)
-		return
-	}
-
-	decoded, err := base64.StdEncoding.DecodeString(encoded)
-	if err != nil {
-		decoded, err = base64.RawURLEncoding.DecodeString(encoded)
-		if err != nil {
-			http.Error(w, "invalid path encoding", http.StatusBadRequest)
-			return
-		}
-	}
-	folderPath := string(decoded)
-
-	uid := publicWorkspaceUserID(r)
-	log.Printf("[PUBLIC-FOLDER-DOWNLOAD] Exporting folder: %s for user: %s", folderPath, uid)
-
-	// Proxy to workspace export endpoint
-	wsURL := getWorkspaceAPIURL() + "/api/workspace/export"
-	body, _ := json.Marshal(map[string]string{"workspace_path": folderPath})
-	req, err := http.NewRequestWithContext(r.Context(), "POST", wsURL, bytes.NewReader(body))
-	if err != nil {
-		http.Error(w, "internal error", http.StatusInternalServerError)
-		return
-	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("X-User-ID", uid)
-
-	client := &http.Client{Timeout: 120 * time.Second}
-	resp, err := client.Do(req)
-	if err != nil {
-		log.Printf("[PUBLIC-FOLDER-DOWNLOAD] Workspace request failed: %v", err)
-		http.Error(w, "workspace unavailable", http.StatusBadGateway)
-		return
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		respBody, _ := io.ReadAll(resp.Body)
-		log.Printf("[PUBLIC-FOLDER-DOWNLOAD] Workspace returned %d: %s", resp.StatusCode, string(respBody))
-		http.Error(w, "export failed", resp.StatusCode)
-		return
-	}
-
-	// Proxy ZIP response headers and body
-	for _, h := range []string{"Content-Type", "Content-Disposition", "Content-Length"} {
-		if v := resp.Header.Get(h); v != "" {
-			w.Header().Set(h, v)
-		}
-	}
-	io.Copy(w, resp.Body)
+	api.servePublicAsset(w, r, "archive")
 }
 
 // publicWorkspaceUserID selects the durable workspace owner for public file
 // routes. In a single-user deployment, the gateway's JWT subject is an
 // internal product label (for example "video-studio"), not another workspace
 // owner. Every public asset must therefore resolve to DEFAULT_USER_ID. The
-// explicit uid query parameter remains available only in multi-user mode for
-// intentional cross-user sharing.
+// uid query parameter is not an access grant; personal files stay with the
+// authenticated owner. Workflow links follow workflow sharing permissions.
 func publicWorkspaceUserID(r *http.Request) string {
 	if !IsMultiUserMode() {
 		return GetDefaultUserID()
-	}
-	if uid := r.URL.Query().Get("uid"); uid != "" {
-		return uid
 	}
 	return GetUserIDFromContext(r.Context())
 }

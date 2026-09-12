@@ -1,3 +1,4 @@
+import { GoalProgress } from './GoalProgress'
 import { PulseImprovements } from './PulseImprovements'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
@@ -21,7 +22,7 @@ import { ReportHumanInputPanel } from './ReportHumanInputPanel'
 import { WORKFLOW_LOG_REFRESH_EVENT } from './workflowEvents'
 import { mergePulseReviewCoverage } from './pulseReviewCoverage'
 import { PulseReviewOverview } from './PulseReviewOverview'
-import { SoulViewer } from './SoulViewer'
+import { SoulViewer, WORKFLOW_SOUL_REFRESH_EVENT } from './SoulViewer'
 import { PulseFindingCard } from './PulseFindingCard'
 import { pulseFindingPresentation, type PulseFindingQueue } from './pulseFindingPresentation'
 import { isPulseOwnedFinding, pulseIssueForFinding } from './pulseModuleInspectorUtils'
@@ -216,7 +217,11 @@ export function PulseWorkspace({
   useEffect(() => {
     const onRefresh = () => { void load(false) }
     window.addEventListener(WORKFLOW_LOG_REFRESH_EVENT, onRefresh)
-    return () => window.removeEventListener(WORKFLOW_LOG_REFRESH_EVENT, onRefresh)
+    window.addEventListener(WORKFLOW_SOUL_REFRESH_EVENT, onRefresh)
+    return () => {
+      window.removeEventListener(WORKFLOW_LOG_REFRESH_EVENT, onRefresh)
+      window.removeEventListener(WORKFLOW_SOUL_REFRESH_EVENT, onRefresh)
+    }
   }, [load])
 
   const areaFindings = useMemo(() => findings.filter((finding) => !moduleFilter
@@ -286,18 +291,21 @@ export function PulseWorkspace({
   )
   if (loading && findings.length === 0 && reviews.length === 0) {
     return (
-      <div className="flex min-h-96 items-center justify-center gap-2 text-sm text-muted-foreground">
-        <Loader2 className="h-4 w-4 animate-spin" />
-        Loading Pulse workspace…
+      <div className="space-y-4">
+        <ReportHumanInputPanel workspacePath={workspacePath} contentMode="all" providedImpact={impact} />
+        <div className="flex min-h-96 items-center justify-center gap-2 text-sm text-muted-foreground">
+          <Loader2 className="h-4 w-4 animate-spin" />
+          Loading Pulse workspace…
+        </div>
       </div>
     )
   }
 
   return (
     <div className="space-y-4">
-      <SoulViewer workspacePath={workspacePath} pulseSummary />
-
       <ReportHumanInputPanel workspacePath={workspacePath} contentMode="all" providedImpact={impact} />
+      <SoulViewer workspacePath={workspacePath} pulseSummary />
+      <GoalProgress workspacePath={workspacePath} impact={impact} />
       <PulseImprovements impact={impact} />
 
       <PulseReviewOverview moduleStates={moduleStates} coverage={mergePulseReviewCoverage(coverage, reviewFocuses, reviewFocusSelections)}

@@ -2505,6 +2505,8 @@ func runServer(cmd *cobra.Command, args []string) {
 	// report-preview scoped token can reach; see report_preview_routes.go.
 	apiRouter.HandleFunc("/workflow/report-preview/file", api.handleReportPreviewFile).Methods("GET")
 	apiRouter.HandleFunc("/workflow/report-preview/query", api.handleReportPreviewQuery).Methods("POST")
+	apiRouter.HandleFunc("/workflow/report-preview/costs", api.handleReportPreviewMetrics).Methods("GET")
+	apiRouter.HandleFunc("/workflow/report-preview/evaluations", api.handleReportPreviewMetrics).Methods("GET")
 	apiRouter.HandleFunc("/workflow/report-preview/media-url", api.handleReportMediaURL).Methods("POST")
 	apiRouter.HandleFunc("/workflow/report-media", api.handleReportMediaStream).Methods("GET", "HEAD")
 
@@ -2542,6 +2544,7 @@ func runServer(cmd *cobra.Command, args []string) {
 	// Plan and Step Config API routes
 	apiRouter.HandleFunc("/external/v1/tools", api.handleExternalTools).Methods("GET")
 	apiRouter.HandleFunc("/external/v1/call", api.handleExternalCall).Methods("POST")
+	apiRouter.HandleFunc("/external/v1/files/content", api.handleExternalAssetContent).Methods("GET", "HEAD")
 	apiRouter.HandleFunc("/workflow/plan/update-step", requireWorkflowWriteAccess(api.handleUpdatePlanStep)).Methods("POST", "OPTIONS")
 	apiRouter.HandleFunc("/workflow/plan/update-step-config", requireWorkflowWriteAccess(api.handleUpdateStepConfig)).Methods("POST", "OPTIONS")
 	apiRouter.HandleFunc("/workflow/plan/batch-update-steps", requireWorkflowWriteAccess(api.handleBatchUpdateSteps)).Methods("POST", "OPTIONS")
@@ -2558,6 +2561,7 @@ func runServer(cmd *cobra.Command, args []string) {
 	apiRouter.HandleFunc("/workflows/summary", api.handleGetWorkflowsSummary).Methods("GET", "OPTIONS")
 	apiRouter.HandleFunc("/workflows/overview", api.handleGetWorkflowsOverview).Methods("GET", "OPTIONS")
 	apiRouter.HandleFunc("/workflows/manifests", api.handleListWorkflowManifests).Methods("GET", "OPTIONS")
+	apiRouter.HandleFunc("/workflows/knowledgebase-sources", api.handleWorkflowKnowledgebaseSources).Methods("GET", "OPTIONS")
 	apiRouter.HandleFunc("/workflows/manifest", api.handleGetWorkflowManifest).Methods("GET", "OPTIONS")
 	apiRouter.HandleFunc("/workflows/manifest", requireWorkflowCreateAccess(api.handleCreateWorkflowManifest)).Methods("POST", "OPTIONS")
 	apiRouter.HandleFunc("/workflows/manifest", requireWorkflowWriteAccess(api.handleUpdateWorkflowManifest)).Methods("PUT", "OPTIONS")

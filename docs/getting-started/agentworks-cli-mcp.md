@@ -23,8 +23,8 @@ by building this binary.
 
 Configure the same nonempty `WORKSPACE_API_TOKEN` in the agent and workspace
 services. This is a **server-to-server credential**, never a user's CLI token.
-The new internal `/api/workflow-files` endpoint fails closed when this token is
-missing and is blocked by the generic workspace proxy. Keep the workspace
+The internal `/api/workflow-files` and `/api/shared-assets` endpoints fail closed
+when this token is missing and are blocked by the generic workspace proxy. Keep the workspace
 service on the internal network; expose only the authenticated AgentWorks server.
 
 ## Test locally with the testing workflow
@@ -43,7 +43,9 @@ running development services or their workspace.
 
 The probe exercises app-generated PAT login, workflow/tool discovery, document
 read/write/patch/search, native plan edits, revision conflicts, read-only user
-permissions, and protected plan paths. It then connects the actual stdio MCP
+permissions, and protected plan paths. It also creates a WAV asset larger than
+2 MiB, gets its share link, downloads it through the CLI, and verifies an
+authenticated byte-range request through the browser file endpoint. It then connects the actual stdio MCP
 bridge, restores the edited step title through MCP, and checks the native
 changelog, then revokes the token and checks that both the CLI and the existing
 MCP connection are denied. Run/log inspection uses explicitly synthetic artifacts.
@@ -81,7 +83,7 @@ Tokens have five permissions: `workflows:read`, `files:read`, `files:write`,
 currently/future accessible workflows or specific workflow IDs. Every call
 checks both the token restrictions and the user's current workflow access.
 Tokens cannot call account management, the general query endpoint, or the
-workspace proxy; only the external tool endpoints accept them.
+workspace proxy; only the external tool and asset-content endpoints accept them.
 
 **Builder chat requires all five permissions and all accessible workflows.**
 Its existing runtime can execute shell commands and use integrations, so this
@@ -206,6 +208,50 @@ Run tools browse saved run/log artifacts; retrieve selected paths with
 `files read`. They do not start runs. Direct run start/stop, schedule management,
 and workflow creation/deletion are outside this release.
 
+## Asset links and downloads
+
+Use the existing Share file viewer for a clickable output link:
+
+```sh
+agentworks files link --workflow WORKFLOW_ID --path db/assets/report.pdf
+agentworks files download --workflow WORKFLOW_ID --path db/assets/report.pdf \
+  --output ./report.pdf
+```
+
+MCP exposes the same `get_file_link` tool with `workflow_id` and `path` arguments.
+It returns the file size, content type, `preview_url`, and `download_url` without
+loading the asset into model context. Successful file reads/writes/patches also
+include a `preview_url`. After Builder finishes creating an output, an external
+agent can call `get_file_link` and give the user its `preview_url`.
+
+The preview opens `/file?path=…` in AgentWorks. Local installations initialize
+the local app session before fetching; hosted installations preserve the file
+or folder URL through password or OAuth sign-in. Images, audio, video, PDF,
+Markdown, and text have previews. HTML renders in a sandbox without scripts;
+other binary formats offer a download. Markdown workspace images use authenticated
+requests, and linked workspace documents open their own shared viewer.
+
+**A share link identifies a file; it does not grant permission.** Workflow owners
+and readers can view/download it. Every file, folder listing, and ZIP request
+checks the recipient's current workflow access. Removing access also blocks old
+links. Personal Chats/Downloads remain private to their owner; an old `uid` link
+cannot grant another user access. Private files and symlinks are excluded.
+
+Preview URLs contain no credentials. The `download_url` requires a PAT or app
+session in the `Authorization: Bearer …` header; clicking that API URL alone does
+not supply a header. Use `preview_url` for people and `files download` for a local
+agent. Downloads require `files:read` and access to the selected workflow, stream
+without the tool's 2 MiB read limit, and refuse to overwrite existing local files.
+Folder listings are bounded at 10,000 scanned entries; ZIP downloads are bounded
+at 512 MiB of uncompressed files. Choose a smaller folder when needed.
+
+Set `PUBLIC_URL` to the externally reachable AgentWorks origin when running
+behind a proxy. The normal hosted/local app serves the viewer and API on that
+origin. A separate frontend development server needs the appropriate `PUBLIC_URL`
+and API runtime configuration. A localhost link works on the machine running
+that installation; sharing it with someone on another machine requires a reachable
+hosted address.
+
 ## Workflow Builder chat
 
 ```sh
@@ -266,7 +312,8 @@ can also use these endpoints with their normal JWT. Account token management is
 an app session only. Call bodies
 are `{ "name": "TOOL_NAME", "arguments": { ... } }`.
 
-File reads are capped at 2 MiB. Text is UTF-8; binary files return base64. Search
+Tool file reads are capped at 2 MiB; asset streaming uses
+`GET/HEAD /api/external/v1/files/content?workflow_id=…&path=…`. Text is UTF-8; binary files return base64. Search
 is literal and case-insensitive, with bounded depth, entry counts, and scanned
 bytes. Pagination uses `next_offset` only when another result was found;
 `truncated` can also mean the depth/scan budget was reached. Narrow the directory

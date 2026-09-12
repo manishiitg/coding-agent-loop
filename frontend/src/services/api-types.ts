@@ -530,6 +530,7 @@ export interface PulseInterventionSource {
 }
 
 export interface PulseIntervention {
+  effects?: Array<{ metric: string; expected_direction: 'increase' | 'decrease' | 'maintain' }>
   intervention_id: string
   pulse_run_id?: string
   title: string
@@ -570,6 +571,7 @@ export interface PulseGoalObservation {
 }
 
 export interface PulseImpactAssessment {
+  metric?: string
   assessment_id: string
   intervention_id: string
   verdict: 'improved' | 'unchanged' | 'regressed' | 'inconclusive' | 'confounded' | string
@@ -586,7 +588,31 @@ export interface PulseImpactAssessment {
   assessed_at: string
 }
 
+export interface GoalMetric {
+  goal_id?: string
+  goal_name?: string
+  supports?: string[]
+  support_kind?: 'breakdown' | 'diagnostic' | 'guardrail'
+  dimensions?: Record<string, string>
+  id: string
+  criterion_id: string
+  name: string
+  role: 'primary' | 'supporting'
+  unit: string
+  direction: 'increase' | 'decrease' | 'maintain'
+  definition: string
+  source: string
+  window: string
+  route: string
+  environment: string
+  collection_frequency: string
+  freshness_hours: number
+  target?: number
+  target_date?: string
+}
+
 export interface PulseImpactLedger {
+  metrics?: GoalMetric[]
   interventions: PulseIntervention[]
   observations: PulseGoalObservation[]
   assessments: PulseImpactAssessment[]
@@ -3119,6 +3145,7 @@ export interface WorkflowManifest {
   run_retention_count?: number
   pulse?: WorkflowPulseConfig
   backup?: WorkflowBackupConfig
+  knowledgebase_sources?: KnowledgebaseSource[]
   folder_access?: WorkflowFolderGrant[]
   folder_access_requests?: WorkflowFolderAccessRequest[]
 }
@@ -3263,6 +3290,7 @@ export interface UpdateWorkflowManifestRequest {
   run_notification_gmail_connection_ids?: string[]
   pulse_notification_gmail_connection_ids?: string[]
   notification_instructions?: string
+  knowledgebase_sources?: KnowledgebaseSource[]
   folder_access?: WorkflowFolderGrant[]
   folder_access_requests?: WorkflowFolderAccessRequest[]
 }
@@ -3357,4 +3385,16 @@ export interface OrgDashboardNotification {
   fields?: OrgDashboardNotificationField[]
   sections?: OrgDashboardNotificationSection[]
   created_at: string
+}
+
+export interface KnowledgebaseSource {
+  workflow_id: string
+  alias: string
+  access: 'read'
+}
+export interface KnowledgebaseSourceStatus extends KnowledgebaseSource {
+  label?: string
+  workspace_path?: string
+  available: boolean
+  reason?: string
 }

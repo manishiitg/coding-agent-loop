@@ -10,6 +10,8 @@ import (
 	"runtime"
 	"strings"
 	"time"
+
+	"github.com/manishiitg/coding-agent-loop/workspace/gogconfig"
 )
 
 type Isolator struct {
@@ -153,6 +155,14 @@ func (iso *Isolator) ExecuteIsolated(ctx context.Context, command string, args [
 		return nil, nil, fmt.Errorf("prepare browser helper: %w", err)
 	}
 	local.WritePaths = append(append([]string{}, iso.WritePaths...), canonicalPath(tmp))
+	if home := gogconfig.TerminalHome(iso.StrictAllowlist); home != "" {
+		if err := os.MkdirAll(home, 0700); err != nil {
+			releaseScratch()
+			return nil, nil, fmt.Errorf("prepare GOG_HOME: %w", err)
+		}
+		local.WritePaths = append(local.WritePaths, canonicalPath(home))
+		local.ReadPaths = append(append([]string{}, iso.ReadPaths...), canonicalPath(home))
+	}
 	var cmd *exec.Cmd
 	var backendCleanup func()
 	if runtime.GOOS == "darwin" {
@@ -235,7 +245,7 @@ func (iso *Isolator) executeIsolatedMountNamespace(ctx context.Context, command 
 
 	// CRITICAL: Set safe environment (no secrets), with package-manager state
 	// routed to the workflow's persistent sandbox folder (PLAT-284).
-	cmd.Env = iso.toolEnv(BuildSafeEnvironment())
+	cmd.Env = iso.toolEnv(gogconfig.Environment(BuildSafeEnvironment(), iso.StrictAllowlist))
 
 	return cmd, cleanup, nil
 }
@@ -274,7 +284,7 @@ func (iso *Isolator) executeIsolatedMacOS(ctx context.Context, command string, a
 	// leaves $HOME writable, so installs never failed here the way they did
 	// under Landlock -- but route them identically so a workflow behaves the
 	// same on a Mac as on a Linux deployment (PLAT-284).
-	cmd.Env = iso.toolEnv(BuildSafeEnvironment())
+	cmd.Env = iso.toolEnv(gogconfig.Environment(BuildSafeEnvironment(), iso.StrictAllowlist))
 
 	return cmd, cleanup, nil
 }

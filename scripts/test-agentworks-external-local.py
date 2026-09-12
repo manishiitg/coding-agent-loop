@@ -16,6 +16,7 @@ import time
 import urllib.request
 import urllib.error
 import selectors
+import wave
 
 REPO = Path(__file__).resolve().parents[1]
 SOURCE = REPO / 'workspace-docs/Workflow/testing'
@@ -82,6 +83,9 @@ class Probe:
           'pulse':{'enabled':False},'backup':{'enabled':False},'publish':{'enabled':False}}
         (self.fixture/'workflow.json').write_text(json.dumps(manifest,indent=2))
         (self.fixture/'DO-NOT-EXECUTE.txt').write_text('Copied plan is design evidence only. Do not execute retained source workflow steps.\n')
+        (self.fixture/'db/assets').mkdir(parents=True)
+        with wave.open(str(self.fixture/'db/assets/local smoke.wav'),'wb') as asset:
+            asset.setnchannels(1);asset.setsampwidth(2);asset.setframerate(16000);asset.writeframes(bytes(3<<20))
         (self.fixture/'docs').mkdir();(self.fixture/'docs/readme.md').write_text('AgentWorks external local smoke marker.\n')
         # Saved run artifacts are synthetic, not claims about an executed run.
         run=self.fixture/'runs/iteration-smoke/smoke';(run/'logs').mkdir(parents=True)
@@ -128,6 +132,17 @@ class Probe:
         self.call('patch_file',{**args,'expected_revision':current['revision'],'diff':'--- a/readme.md\n+++ b/readme.md\n@@ -1 +1 @@\n-AgentWorks CLI UPDATED marker.\n+AgentWorks CLI PATCHED marker.\n'})
         assert 'PATCHED' in self.call('read_file',args)['content']
         self.record('file read/write/patch/search and stale-write rejection')
+        link=self.command('files','link','--workflow',self.wid,'--path','db/assets/local smoke.wav')
+        assert link['size']>2<<20 and '/file?path=' in link['preview_url'] and 'token=' not in link['preview_url']
+        downloaded=self.root/'downloaded.wav'
+        self.command('files','download','--workflow',self.wid,'--path','db/assets/local smoke.wav','--output',str(downloaded))
+        assert digest(downloaded)==digest(self.fixture/'db/assets/local smoke.wav')
+        from urllib.parse import urlsplit
+        asset_query=urlsplit(link['preview_url']).query
+        req=urllib.request.Request(self.server+'/api/public/file?'+asset_query,headers={'Authorization':'Bearer '+self.app_token,'Range':'bytes=0-15'})
+        with urllib.request.urlopen(req,timeout=10) as response:
+            assert response.status==206 and response.read()==downloaded.read_bytes()[:16]
+        self.record('Large asset link, authenticated browser range request, and CLI download')
         plan=self.call('get_plan',{'workflow_id':self.wid})
         step=next(s for s in plan['plan']['steps'] if s['type']=='message_sequence')
         self.original_title=step['title'];self.step_id=step['id']
@@ -178,6 +193,9 @@ class Probe:
             result=rpc('tools/call',{'name':name,'arguments':args})
             if result.get('isError'):raise RuntimeError(str(result))
             return result.get('structuredContent') or json.loads(result['content'][0]['text'])
+        asset=mcp_call('get_file_link',{'workflow_id':self.wid,'path':'db/assets/local smoke.wav'})
+        assert asset['size']>2<<20 and '/file?path=' in asset['preview_url'] and 'token=' not in asset['preview_url']
+        self.record('MCP asset link returns the browser preview and large-file metadata')
         current=mcp_call('get_plan',{'workflow_id':self.wid})
         mcp_call('update_message_sequence_step',{'workflow_id':self.wid,'expected_revision':current['revision'],'existing_step_id':self.step_id,'title':self.original_title,'reason':'Restore isolated testing step title through MCP after CLI smoke test.'})
         restored=self.call('get_plan',{'workflow_id':self.wid});assert next(s for s in restored['plan']['steps'] if s['id']==self.step_id)['title']==self.original_title

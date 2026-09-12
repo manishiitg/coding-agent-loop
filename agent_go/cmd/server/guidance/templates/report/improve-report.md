@@ -34,11 +34,11 @@ When reviewing an approval or feedback flow, read
 `read_skill(skills=[{"name":"builder-reference","path":"references/human-in-the-loop.md"}])`
 and check which interaction the workflow actually needs.
 Reports can offer `window.report.sendChatMessage(message, { requestId })` from
-user click handlers. It opens a host message review panel with an existing/new
-chat choice, using the same queue as Ask in chat. For an existing report-owned
+user click handlers. It sends directly through the same queue as Ask in chat,
+reusing an existing workflow chat or creating one only if none exists. For an existing report-owned
 approval, save it before requesting the action and include its exact item,
-version, and intended route/consumer. Follow `reporting-policy.md` for cancelled
-and queued receipts, retries, and deduplication limits. Do not label queued work
+version, and intended route/consumer. Follow `reporting-policy.md` for
+queued receipts, retries, and deduplication limits. Do not label queued work
 as applied or send messages from render/poll callbacks.
 
 INTENT
@@ -50,8 +50,27 @@ The report dashboard should help the user measure and track whether the workflow
 - What evidence supports that conclusion?
 - What did this workflow actually do — in plain, non-technical language, not KPIs alone?
 
+SHARED REPORT METRICS
+Reports may use `getGoalMetrics`/`renderGoalProgress`,
+`getEvaluations`/`renderEvaluations`, and `getCosts`/`renderCosts` on
+`window.report`. These use the platform's existing records and include optional
+styled widgets. Treat their use as valid live-data wiring; do not recommend
+replacing them with handwritten SQL, duplicate tables, or custom charts merely
+because their queries are hidden inside the host. Their promises belong inside
+`window.report.ready` so refresh and errors work correctly. The parent applying
+a fix can load `builder-reference/references/reporting-policy.md` for examples.
+
+Check meaning rather than just appearance: configured goal targets and freshness
+must be preserved; evaluations keep each criterion and distinguish captured zero,
+missing score and skipped evaluation; cost total/activity are all-time while
+model/daily breakdowns and window_total_usd cover the selected UTC window.
+Evaluation history is bounded to 200 results, so its run count is not all-time.
+A useful report may include only some widgets; their absence alone is not a defect
+when the reader's questions are already answered accurately.
+
 GOAL TRACKING CONTRACT
 Before proposing visual/layout work, translate `soul.md` success criteria into the dashboard's tracked signals using existing evidence:
+- Prefer configured outcome metrics from `window.report.getGoalMetrics()` or its prebuilt goal-progress widget. Acceptance criteria and constraints remain supporting context.
 - For each important success criterion, show the best available signal from `db/db.sqlite`, `evaluation/`, `costs/`, `workflow.json`, typed Pulse records, or durable report-facing files.
 - If `evaluation_plan.json` has an eval step scoring this criterion, its verdict is already a `db/db.sqlite` row — see EVALUATION VERDICTS below — no separate measurement step is needed for that criterion.
 - Prefer a compact goal band: status, current value/state, target/baseline, trend/delta vs prior run/window, last updated, and a short plain-language interpretation.
@@ -66,7 +85,8 @@ GOAL ADVISOR MEASUREMENT HANDOFF
   proposed experiment/decision; do not add a KPI tile that implies measurement
   exists.
 - After the approved measurement step has written trustworthy timestamped rows,
-  expose the metric through live `window.report.query` SQL. Show current value,
+  expose configured metrics through `window.report.getGoalMetrics()` or
+  `renderGoalProgress`; use live `window.report.query` SQL for other persisted data. Show current value,
   baseline/target, trend, freshness, group scope, and an honest unknown/error
   state. The dashboard reads evidence; it never recomputes or fabricates missing
   business outcomes from prose.
@@ -81,7 +101,9 @@ EVALUATION VERDICTS
 - Each eval step in `evaluation_plan.json` already writes its own score/reasoning into
   `db/db.sqlite`'s framework-owned `eval_results` table (one row per `run_folder` +
   `step_id`: `score`, `max_score`, `reasoning`, `evidence`) — no extra step or measurement
-  contract needed. Query it directly via `window.report.query`, same as any other table.
+  contract needed. Prefer `window.report.getEvaluations()` or `renderEvaluations`
+  for joined criterion titles, captured/skipped flags, and history; direct
+  `window.report.query` remains available for custom queries.
 - Keep each `eval_results` criterion visible with its score, evidence, route, and
   run. Do not invent a combined score or assume `soul.md` defines an aggregation
   rule. Show an aggregate only when the workflow explicitly defines its semantics;
@@ -113,7 +135,7 @@ HTML/CSS/JS without pretending to have seen the rendering. For HTML reports, als
 queries through `query_workflow_db` (schema from `sqlite_master` plus bounded
 `SELECT ... LIMIT`; never raw `sqlite3` access), and check `db/assets/`, `knowledgebase/context/context.md`, and `knowledgebase/notes/`. Use the available view plus raw data/document to propose improvements in these categories:
 
-1. **Live vs stale.** The report is HTML; it should read its numbers live via `window.report.query` so it never goes stale. Flag any report that hardcodes data as static text (it should query the db instead), or that depends on a workflow step regenerating it each run (it shouldn't — author once, read live).
+1. **Live vs stale.** The report is HTML; it should read its numbers live via the `window.report` metric helpers or `query` so it never goes stale. Flag any report that hardcodes data as static text (it should query the db instead), or that depends on a workflow step regenerating it each run (it shouldn't — author once, read live).
 2. **Layout (insight-first / inverted pyramid).** Does it lead with the answer? Canonical skeleton: conditional alert/status banner → headline KPI tiles → the key supporting chart → detailed tables last. A report should read like a briefing (answer first, evidence below), not a data dump. When it has internal views, does each view answer a distinct question?
 3. **Live-data correctness (HTML).** Do the `window.report.query` SQL statements hit the right tables/columns? Do the joins/aggregation/sort/limit happen in SQL (one `SELECT ... JOIN ... GROUP BY ... ORDER BY ... LIMIT`) rather than fetching everything and reshaping in JS, or relying on a pre-flattened helper table? Collapse derived/helper tables back to a query against the canonical tables.
 4. **Visualization fit.** For each chart, is bar/line/area/pie right for the data? (bar=categorical, line=time series, pie=composition ≤6 slices.) Are numbers shown as tables (right-aligned, tabular-nums), not raw JSON/logs?

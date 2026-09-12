@@ -1,3 +1,4 @@
+import { usePointerDrag } from '../../hooks/usePointerDrag'
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react'
 import {
   AlertCircle,
@@ -755,27 +756,18 @@ function ProjectWorkspace({ project, onBack }: { project: VideoProject; onBack: 
   const [panelWidth, setPanelWidth] = useState(() => loadStoredPanelWidth())
   const [isResizingPanel, setIsResizingPanel] = useState(false)
   const layoutGridRef = useRef<HTMLDivElement>(null)
-  const startPanelResize = useCallback((event: React.PointerEvent) => {
-    event.preventDefault()
+  const { start: startPanelDrag } = usePointerDrag()
+  const startPanelResize = useCallback((event: React.PointerEvent<HTMLElement>) => {
     const grid = layoutGridRef.current
     if (!grid) return
-    setIsResizingPanel(true)
-    const handlePointerMove = (moveEvent: PointerEvent) => {
-      const gridRight = grid.getBoundingClientRect().right
-      setPanelWidth(clampPanelWidth(gridRight - moveEvent.clientX))
-    }
-    const stopResize = () => {
-      setIsResizingPanel(false)
-      window.removeEventListener('pointermove', handlePointerMove)
-      window.removeEventListener('pointerup', stopResize)
-      // Persist once at the end of the drag rather than on every pointermove
-      // -- localStorage.setItem on a mousemove-frequency callback is wasted
-      // work for a value nobody reads until the next page load.
-      setPanelWidth((current) => { saveStoredPanelWidth(current); return current })
-    }
-    window.addEventListener('pointermove', handlePointerMove)
-    window.addEventListener('pointerup', stopResize)
-  }, [])
+    if (startPanelDrag(event, {
+      onMove: clientX => setPanelWidth(clampPanelWidth(grid.getBoundingClientRect().right - clientX)),
+      onEnd: () => {
+        setIsResizingPanel(false)
+        setPanelWidth(current => { saveStoredPanelWidth(current); return current })
+      },
+    })) setIsResizingPanel(true)
+  }, [startPanelDrag])
 
   const refreshProject = useCallback(async (quiet = false) => {
     if (!quiet) setRefreshing(true)

@@ -91,3 +91,6 @@ Pulse module cadence is not encoded in schedule JSON. Pulse Gate stores module s
 Do not create new `workshop_mode="optimizer"` schedules. Existing saved legacy
 values are handled by migration/backend compatibility; new continuous
 improvement uses normal Run mode plus Pulse.
+
+## Goal measurement setup
+When setting up Pulse for a new workflow, use get_workflow_command_guidance(kind="setup-goals") before enabling it. Propose outcomes, one or more primary metrics per goal, linked supporting measurements and boundaries using existing context. Ask only unresolved user decisions. Connect collection to producing runs or appropriate delayed refreshes, independently of Pulse review cadence. Existing workflows without configured metrics keep running; recommend /setup-goals without repeatedly raising technical bugs for missing setup.

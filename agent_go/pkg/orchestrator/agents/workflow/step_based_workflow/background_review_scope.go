@@ -30,7 +30,7 @@ func researchReviewToolAllowed(name string) bool {
 		"agent_browser", "web_search", "web_fetch", "google_workspace_cli", "read_skill", "get_api_spec", "get_prompt", "get_resource",
 		"query_workflow_db", "query_workflow_costs", "get_step_prompts", "get_plan_prompt_health", "get_workflow_config", "get_llm_config", "get_cost_summary",
 		"list_llm_capabilities", "list_published_llms", "list_provider_models", "list_executions", "get_sub_agent_conversation", "get_route_description",
-		"get_pulse_state", "record_pulse_finding", "record_pulse_result", "record_pulse_review_focus", "record_pulse_impact", "merge_pulse_issues",
+		"get_goal_metrics", "get_pulse_state", "record_pulse_finding", "record_pulse_result", "record_pulse_review_focus", "record_pulse_impact", "merge_pulse_issues",
 		"get_human_input_request", "list_human_input_requests", "create_human_input_request", "resolve_run_concern", "record_pulse_module_due":
 		return true
 	}

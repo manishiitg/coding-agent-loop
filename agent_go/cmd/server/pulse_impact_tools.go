@@ -31,6 +31,7 @@ func createRecordPulseImpactTool() (llmtypes.Tool, func(context.Context, map[str
 	interventionSchema := map[string]interface{}{
 		"type": "object", "additionalProperties": false,
 		"properties": map[string]interface{}{
+			"effects":               map[string]interface{}{"type": "array", "description": "Additional configured metrics affected by this same change. The top-level metric remains its lead effect. Effects are retained on updates; assess each separately using assessment.metric.", "items": map[string]interface{}{"type": "object", "additionalProperties": false, "properties": map[string]interface{}{"metric": map[string]interface{}{"type": "string"}, "expected_direction": map[string]interface{}{"type": "string", "enum": []string{"increase", "decrease", "maintain"}}}, "required": []string{"metric", "expected_direction"}}},
 			"intervention_id":       map[string]interface{}{"type": "string", "description": "Stable id; omit to derive it from criterion, metric, and title."},
 			"kind":                  map[string]interface{}{"type": "string", "enum": []string{"fix_bundle", "strategy_experiment", "architecture_improvement"}, "description": "Use architecture_improvement for construction improvements and strategy_experiment for business strategy experiments. Both share proposal, decision, baseline, guardrail and outcome tracking. Omit for ordinary fix bundles."},
 			"title":                 map[string]interface{}{"type": "string"},
@@ -73,6 +74,7 @@ func createRecordPulseImpactTool() (llmtypes.Tool, func(context.Context, map[str
 	assessmentSchema := map[string]interface{}{
 		"type": "object", "additionalProperties": false,
 		"properties": map[string]interface{}{
+			"metric":          map[string]interface{}{"type": "string", "description": "Affected metric ID. Omit only for the intervention lead metric (legacy compatibility). Record a separate assessment for every additional effect; never average outcomes."},
 			"assessment_id":   map[string]interface{}{"type": "string"},
 			"intervention_id": map[string]interface{}{"type": "string"},
 			"verdict":         map[string]interface{}{"type": "string", "enum": []string{"improved", "unchanged", "regressed", "inconclusive", "confounded"}},

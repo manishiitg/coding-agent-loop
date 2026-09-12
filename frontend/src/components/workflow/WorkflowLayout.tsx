@@ -1,3 +1,4 @@
+import { usePointerDrag } from '../../hooks/usePointerDrag'
 import React, { useMemo, useCallback, useRef, useEffect, forwardRef, useState } from 'react'
 import { useShallow } from 'zustand/react/shallow'
 import { GripVertical, Laptop, PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen, Smartphone, Tablet } from 'lucide-react'
@@ -975,30 +976,19 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
     if (persist) writeWorkflowSplitPreference(workspacePath, ratio, reportPreviewPreference)
   }, [reportPreviewPreference, workspacePath])
 
+  const { start: startSplitDrag, stop: stopSplitDrag } = usePointerDrag()
+  useEffect(() => stopSplitDrag, [stopSplitDrag, workspacePath, reportPreviewPreference, showChatArea, showWorkspacePane])
   const handleSplitPointerDown = useCallback((event: React.PointerEvent<HTMLButtonElement>) => {
     if (window.innerWidth < 768) return
-    event.preventDefault()
     const container = splitLayoutRef.current
     if (!container) return
-    event.currentTarget.setPointerCapture(event.pointerId)
     const rect = container.getBoundingClientRect()
-    const update = (clientX: number) => setSplitRatio((clientX - rect.left) / rect.width)
-    update(event.clientX)
-    const onMove = (moveEvent: PointerEvent) => {
-      if (moveEvent.pointerId === event.pointerId) update(moveEvent.clientX)
-    }
-    const onEnd = (endEvent: PointerEvent) => {
-      if (endEvent.pointerId !== event.pointerId) return
-      writeWorkflowSplitPreference(workspacePath, workspaceSplitRatioRef.current, reportPreviewPreference)
-      event.currentTarget.removeEventListener('pointermove', onMove)
-      event.currentTarget.removeEventListener('pointerup', onEnd)
-      event.currentTarget.removeEventListener('pointercancel', onEnd)
-      if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId)
-    }
-    event.currentTarget.addEventListener('pointermove', onMove)
-    event.currentTarget.addEventListener('pointerup', onEnd)
-    event.currentTarget.addEventListener('pointercancel', onEnd)
-  }, [reportPreviewPreference, setSplitRatio, workspacePath])
+    if (!rect.width) return
+    startSplitDrag(event, {
+      onMove: clientX => setSplitRatio((clientX - rect.left) / rect.width),
+      onEnd: () => writeWorkflowSplitPreference(workspacePath, workspaceSplitRatioRef.current, reportPreviewPreference),
+    })
+  }, [reportPreviewPreference, setSplitRatio, startSplitDrag, workspacePath])
 
   const collapseWorkspaceFromRail = useCallback(() => {
     setShowWorkspacePane(false)

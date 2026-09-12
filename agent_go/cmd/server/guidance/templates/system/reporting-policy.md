@@ -20,8 +20,8 @@ generation step.
   `updateFields` (see below). Do not bake changing run results into the
   document or add a step that regenerates it each run.
 - A user action button can offer a contextual workflow-agent request through
-  `window.report.sendChatMessage`. The app reviews/sends it to an existing or
-  new chat. For report-owned approvals, save first and then offer the request;
+  `window.report.sendChatMessage`. The app sends it directly to an existing automation chat,
+  creating one only if none exists. For report-owned approvals, save first and then offer the request;
   see "Sending a report request to the workflow agent" below.
 - A markdown file under `db/` renders inline with
   `el.innerHTML = await window.report.getHtml('db/notes/brief.md')`; a
@@ -40,7 +40,11 @@ generation step.
   row with `fileUrl`. `fileUrl` remains appropriate for ordinary downloadable
   files and backward-compatible reports, but `mediaUrl` is the explicit
   contract for new audio/video report code. Show playback errors and let a
-  retry request a fresh URL.
+  retry request a fresh URL. Preserve the existing media element and its source
+  during data refresh when the recording has not changed. Compare the workspace
+  path plus a run/version identifier, not the expiring signed URL; repeated
+  `innerHTML` replacement or `src` assignment resets playback. Initialize the
+  player once after data is ready, and ignore stale asynchronous media responses.
 - Theme off the app, not the OS: dark styles under `:root.dark` /
   `[data-theme="dark"]` (or the injected `hsl(var(--token))` palette), with
   `report:theme` for live re-styling. `prefers-color-scheme` alone follows
@@ -175,10 +179,10 @@ checkpoint, and an agent request, read
 `read_skill(skills=[{"name":"builder-reference","path":"references/human-in-the-loop.md"}])`.
 The API details below implement the report-to-chat pattern.
 
-`await window.report.sendChatMessage(message, { requestId })` opens the app's
-**Send to agent** panel. The user reviews/edits the message and chooses whether
-to **Start a new chat**. On Send, the app uses the same workflow-scoped chat
-queue as the human-decision panel's **Ask in chat**: reuse an interactive chat,
+`await window.report.sendChatMessage(message, { requestId })` sends directly
+from the report action, without a second popup or chat-choice step. The app
+uses the same workflow-scoped chat queue as the human-decision panel's
+**Ask in chat**: reuse an interactive chat,
 queue behind its running foreground turn, or create a chat if none exists.
 Scheduled/view-only/bot tabs are excluded. This sends a conversational request;
 it does not directly execute a route or trigger the scheduler.
@@ -198,31 +202,29 @@ message when it would repeat collection/audit or another approval gate.
 ```js
 // In a user click handler, with the button disabled until finally.
 await window.report.updateField('audit_findings', row.id, 'status', 'approved');
-showStatus('Approval saved. Review the action request to send it.');
+showStatus('Approval saved. Sending action request…');
 const result = await window.report.sendChatMessage(
   `Apply only approved audit_findings row ${row.id}, proposal version ${row.proposal_version}. ` +
   `Re-read its current approval and proposed fix from the database; skip it if already applied. ` +
   `Use the existing remediation route for this item, then verify and refresh the report.`,
   { requestId: `finding:${row.id}:${row.proposal_version}:apply` }
 );
-showStatus(result.status === 'cancelled'
-  ? 'Approval saved; no action request sent.'
-  : result.queuedBehindRunningTurn
-    ? 'Request queued behind the current chat turn.'
-    : 'Request queued in chat.');
+showStatus(result.queuedBehindRunningTurn
+  ? 'Request queued behind the current chat turn.'
+  : 'Request queued in chat.');
 ```
 
 Use real schema fields/versions and actual route or step IDs, never copy
-placeholder names into a workflow that lacks them. The result is either
-`{ status: 'cancelled' }` or `{ status: 'queued', tabId, reused,
+placeholder names into a workflow that lacks them. The successful result is
+`{ status: 'queued', tabId, reused,
 queuedBehindRunningTurn }`. Queued is not proof that work started or completed;
 show applied/verified outcomes only from fresh execution evidence.
 
-The approval write and chat enqueue are separate operations. Cancelling the
-send panel does not undo the saved approval (a later scheduled consumer can
-still read it). On failure, keep that approval visible and offer **Send action
-request** again without rewriting it. Catch errors locally and re-enable the
-button in `finally`. Repeated clicks while reviewing/sending share one request;
+The approval write and chat enqueue are separate operations. A failed enqueue
+does not undo the saved approval (a later scheduled consumer can still read it).
+On failure, keep that approval visible and offer **Send action request** again
+without rewriting it. Catch errors locally and re-enable the
+button in `finally`. Repeated clicks while sending share one request;
 an optional stable `requestId` (max 200 characters) reuses a successful receipt
 for the same message in the current report view (up to 100 receipts). Reloads,
 different views, and later sessions still require the consumer's durable
@@ -263,3 +265,79 @@ See "Writing back" and "Sending a report request" above.
 For typed route rows, `summary_text` contains only the shared lead; `message`
 remains the complete rendered digest for older reports. Render the lead plus
 route entries once, or the complete message as a fallback, never both.
+
+### Goal progress: shared data and an optional ready-made widget
+
+Reports can show the same primary metric, supporting metrics, and measured history
+as Pulse. No additional collector, table, chart library, or custom CSS is needed:
+
+```html
+<section id="goal-progress"></section>
+<script>
+window.report.ready(async function () {
+  await window.report.renderGoalProgress('#goal-progress');
+});
+</script>
+```
+
+The optional widget renders primary/supporting cards, targets, change since the
+previous measurement, trends, freshness, and expandable definitions/evidence/history.
+It inherits the report's text color, fits the available width, and replaces its
+contents on refresh. Use an empty `div` or `section` as the container. Keep the
+returned promise inside `ready` so preview_report can observe loading/errors.
+
+For a custom layout, `await window.report.getGoalMetrics()` returns
+`{ metrics, observations, progress }`. Each progress item contains `metric`,
+`current`, `delta`, `state`, `stale`, `targetMet`, `latest`, `history`, and `numeric`.
+`current` can be undefined: never turn missing data into zero. The latest failed
+measurement remains unavailable rather than falling back to an older good value.
+History includes up to 120 comparable observations per active metric, with scope,
+unit, and evidence preserved. Use `window.report.query` against
+`workflow_goal_metrics` and `pulse_goal_observations` for a longer/custom history;
+check `sqlite_master` first for workflows that have not configured measurements.
+These are platform-owned, read-only tables for reports; use the managed goal tools
+for changes, not `updateField`/`updateFields` or direct SQL writes. Run `/setup-goals`
+when definitions or collection are missing. Do not invent targets or samples.
+
+Adding this section is optional and does not replace the report's own navigation
+or layout. Offer it when a user wants goal tracking in their dashboard. Validate
+and preview the report using the normal report tools after adding it.
+
+### Evaluations and costs: matching report helpers
+
+Use the existing stored evaluations and canonical cost ledger without creating
+report-owned copies. Both helpers work in the app and `preview_report`:
+
+```html
+<section id="evaluations"></section>
+<section id="costs"></section>
+<script>
+window.report.ready(async function () {
+  await Promise.all([
+    window.report.renderEvaluations('#evaluations'),
+    window.report.renderCosts('#costs', { days: 30 })
+  ]);
+});
+</script>
+```
+
+The widgets include their own responsive styling and expandable details. No chart
+library or design work is required. Add them only when useful to the user's report.
+
+For custom layouts, call `getEvaluations()` and `getCosts({ days: 30 })`:
+- Evaluations returns `{ results, criteria, run_count, result_limit, possibly_truncated }`.
+  Each criterion has `id`, `title`, `historical`, `latest`, and `history`. Results
+  include captured/skipped flags, raw scores, reasoning, evidence, and run/date.
+  The current reader supplies up to 200 rows; this is recent history, not an
+  all-time run count. Uncaptured and skipped scores are not zeros or failures.
+  Keep criteria separate; do not invent a blended score or a pass threshold.
+- Costs returns `{ summary, history, window_total_usd, state }`. `summary.total` and `summary.by_scope` are **all-time** recorded amounts.
+  `summary.by_model`, `summary.by_date`, and `window_total_usd` cover only the requested UTC date window.
+  `summary` is null and `state` is `unavailable` if the ledger is unavailable.
+  Options support `days` (1–90, default 30) and `before` (exclusive YYYY-MM-DD).
+  Read older daily pages using `history.next_before` when `history.has_more` is true.
+  Do not add the repeated all-time total across pages. USD costs are recorded ledger
+  amounts and do not prove every call was priced. No model prices are guessed.
+
+Continue using `window.report.ready` for loading and refresh. Returned promises
+reject on read failures, which the host exposes in the report's error surface.

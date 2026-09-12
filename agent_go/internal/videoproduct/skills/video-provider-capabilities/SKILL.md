@@ -89,14 +89,15 @@ bullets. Minimize independent generations and stitch points.
 2. If the endpoint supports multi-shot prompts, use one request with deliberate
    internal shots when that preserves the scene. Record the exact prompt-array
    or timestamp contract; do not flatten it into prose.
-3. If multiple requests are unavoidable, prefer extension or reference-video
-   continuation. Otherwise pass the previous accepted final frame as the next
-   start frame, and a planned end frame when supported.
-4. Reuse the same approved character, wardrobe, object, location, style, audio,
-   provider, model, seed, and reference order across the continuous arc when
-   the schema supports them. Label every reference's semantic role.
-5. Use independent clips only for intentional discontinuity: montage,
-   faceless illustration, location/time jump, or a user-approved hard cut.
+3. If multiple requests are unavoidable, choose conditioning for the actual
+   handoff. Use predecessor media when its state is needed; use identity-only
+   references and text for a new shot whose composition or motion must change.
+4. Preserve required character, wardrobe, object, location, style and audio
+   invariants. Reuse approved identity deliberately, but do not copy every
+   reference into every request. Label each supplied reference's semantic role.
+5. Independent requests can support planned editorial cuts with recurring
+   identity. Inspect the intended continuity; do not claim an uninterrupted
+   take. Follow cinematic-visual-development before expanding references.
 
 For every seam, record the preceding output, extracted boundary frame, next
 input/reference, overlapping action in both prompts, expected transition, and

@@ -133,7 +133,11 @@ func (hcpo *StepBasedWorkflowOrchestrator) appendSupplementaryPrompts(
 		supplements = append(supplements, downloadsPrompt)
 		hcpo.GetLogger().Info(fmt.Sprintf("🌐 Added workflow browser downloads guidance to agent: %s", browserDownloadsPath))
 	}
-	if attachedFolders := workflowFolderAccessPrompt(hcpo.GetWorkspacePath()); attachedFolders != "" {
+	sharedKBPrompt := ""
+	if session := common.GetSessionShellConfig(config.MCPSessionID); session != nil && session.Env["WORKFLOW_KB_ACCESS"] == "read" {
+		sharedKBPrompt = workflowKnowledgebaseSourcesPrompt(hcpo.GetWorkspacePath())
+	}
+	if attachedFolders := workflowFolderAccessPrompt(hcpo.GetWorkspacePath()) + "\n" + sharedKBPrompt; strings.TrimSpace(attachedFolders) != "" {
 		supplements = append(supplements, attachedFolders)
 	}
 	if err := baseAgent.ApplyIdentity(ctx, identitySkills, supplements...); err != nil {

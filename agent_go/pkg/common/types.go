@@ -278,7 +278,7 @@ func ApplySessionWorkflowFolderAccess(sessionID, workflowPath string, readRoots,
 	updateSessionShellConfig(sessionID, func(cfg *SessionShellConfig) {
 		previous := make(map[string]struct{})
 		for key, value := range cfg.Env {
-			if strings.HasPrefix(key, "WORKFLOW_FOLDER_") {
+			if workflowCapabilityEnv(key) && key != "WORKFLOW_KB_ACCESS" {
 				previous[filepath.Clean(strings.TrimSpace(value))] = struct{}{}
 			}
 		}
@@ -299,7 +299,7 @@ func ApplySessionWorkflowFolderAccess(sessionID, workflowPath string, readRoots,
 			cfg.Env = make(map[string]string)
 		}
 		for key := range cfg.Env {
-			if strings.HasPrefix(key, "WORKFLOW_FOLDER_") {
+			if workflowCapabilityEnv(key) {
 				delete(cfg.Env, key)
 			}
 		}
@@ -463,17 +463,11 @@ func SetSessionShellEnv(sessionID string, env map[string]string) {
 // GetSessionShellEnv returns a copy of the session's shell env vars (nil if none),
 // safe to read without holding the config lock.
 func GetSessionShellEnv(sessionID string) map[string]string {
-	sessionShellConfigsMu.RLock()
-	defer sessionShellConfigsMu.RUnlock()
-	cfg := sessionShellConfigs[sessionID]
-	if cfg == nil || len(cfg.Env) == 0 {
+	cfg := GetSessionShellConfig(sessionID)
+	if cfg == nil {
 		return nil
 	}
-	out := make(map[string]string, len(cfg.Env))
-	for k, v := range cfg.Env {
-		out[k] = v
-	}
-	return out
+	return cloneStringMap(cfg.Env)
 }
 
 // SetSessionBrowserMode stores configured browser intent for a session
@@ -525,7 +519,7 @@ func CopySessionFolderGuard(fromSessionID, toSessionID string) bool {
 	}
 	folderEnv := make(map[string]string)
 	for key, value := range src.Env {
-		if strings.HasPrefix(key, "WORKFLOW_FOLDER_") {
+		if workflowCapabilityEnv(key) {
 			folderEnv[key] = value
 		}
 	}
@@ -548,14 +542,58 @@ func ClearSessionShellConfig(sessionID string) {
 }
 
 // GetSessionShellConfig looks up the shell config for a session.
+// SessionWorkflowCapabilityResolver is installed once by the workflow runtime.
+// It resolves current manifests outside the session lock and must not call back
+// into session getters. Every shell/file read gets current grants, not a cached
+// authorization snapshot. Existing subprocesses retain their launch-time policy.
+var SessionWorkflowCapabilityResolver func(workflowPath string, kbRead bool) (reads, writes, readOnly []string, env map[string]string)
+
 func GetSessionShellConfig(sessionID string) *SessionShellConfig {
 	sessionShellConfigsMu.RLock()
-	defer sessionShellConfigsMu.RUnlock()
-	cfg := sessionShellConfigs[sessionID]
-	if cfg == nil {
+	original := sessionShellConfigs[sessionID]
+	if original == nil {
+		sessionShellConfigsMu.RUnlock()
 		return nil
 	}
-	return cloneSessionShellConfig(cfg)
+	cfg := cloneSessionShellConfig(original)
+	sessionShellConfigsMu.RUnlock()
+	if cfg.WorkflowPath != "" && SessionWorkflowCapabilityResolver != nil {
+		reads, writes, blocked, env := SessionWorkflowCapabilityResolver(cfg.WorkflowPath, cfg.Env["WORKFLOW_KB_ACCESS"] != "none")
+		previous := map[string]bool{}
+		for key, value := range cfg.Env {
+			if workflowCapabilityEnv(key) && key != "WORKFLOW_KB_ACCESS" {
+				previous[filepath.Clean(value)] = true
+			}
+		}
+		remove := func(paths []string) []string {
+			out := []string{}
+			for _, path := range paths {
+				if !previous[filepath.Clean(path)] {
+					out = append(out, path)
+				}
+			}
+			return out
+		}
+		cfg.ReadPaths = DeduplicateStrings(append(remove(cfg.ReadPaths), reads...))
+		cfg.WritePaths = DeduplicateStrings(append(remove(cfg.WritePaths), writes...))
+		cfg.BlockedWritePaths = DeduplicateStrings(append(remove(cfg.BlockedWritePaths), blocked...))
+		if cfg.Env == nil {
+			cfg.Env = map[string]string{}
+		}
+		for key := range cfg.Env {
+			if workflowCapabilityEnv(key) {
+				delete(cfg.Env, key)
+			}
+		}
+		for key, value := range env {
+			cfg.Env[key] = value
+		}
+	}
+	return cfg
+}
+
+func workflowCapabilityEnv(key string) bool {
+	return strings.HasPrefix(key, "WORKFLOW_FOLDER_") || strings.HasPrefix(key, "WORKFLOW_KB_")
 }
 
 // ResolveBrowserSessionID returns the effective browser session to use for browser tools.

@@ -14,6 +14,8 @@ import (
 	"github.com/google/uuid"
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/browser"
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/common"
+	stepworkflow "github.com/manishiitg/coding-agent-loop/agent_go/pkg/orchestrator/agents/workflow/step_based_workflow"
+	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/workflowkb"
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/workflowtypes"
 )
 
@@ -179,6 +181,7 @@ func (api *StreamingAPI) handleCreateWorkflowManifest(w http.ResponseWriter, r *
 // --- Update manifest ---
 
 type UpdateWorkflowManifestRequest struct {
+	KnowledgebaseSources *[]workflowtypes.KnowledgebaseSource         `json:"knowledgebase_sources,omitempty"`
 	WorkspacePath        string                                       `json:"workspace_path"`
 	Label                *string                                      `json:"label,omitempty"`
 	Capabilities         *WorkflowCapabilities                        `json:"capabilities,omitempty"`
@@ -299,6 +302,13 @@ func (api *StreamingAPI) handleUpdateWorkflowManifest(w http.ResponseWriter, r *
 	if level := workflowAccessForManifest(GetUserFromContext(r.Context()), manifest); level != WorkflowAccessOwner && level != WorkflowAccessWrite {
 		writeWorkflowPermissionDenied(w, "owner")
 		return
+	}
+	if req.KnowledgebaseSources != nil {
+		if err := workflowkb.Validate(stepworkflow.GetPromptDocsRoot(), req.WorkspacePath, *req.KnowledgebaseSources); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		manifest.KnowledgebaseSources = append([]workflowtypes.KnowledgebaseSource{}, (*req.KnowledgebaseSources)...)
 	}
 	previousFolderAccess := append([]workflowtypes.WorkflowFolderGrant(nil), manifest.FolderAccess...)
 

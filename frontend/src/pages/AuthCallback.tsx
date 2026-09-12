@@ -1,3 +1,4 @@
+import { sharedReturnPath, SHARE_RETURN_KEY } from '../utils/sharedLinks'
 import { useEffect, useState } from 'react'
 import { useAuthStore } from '../stores/useAuthStore'
 
@@ -35,7 +36,9 @@ export function AuthCallback() {
   // Redirect on successful authentication
   useEffect(() => {
     if (isAuthenticated) {
-      window.location.href = '/'
+      const returnTo = sharedReturnPath(sessionStorage.getItem(SHARE_RETURN_KEY))
+      sessionStorage.removeItem(SHARE_RETURN_KEY)
+      window.location.href = returnTo || '/'
     }
   }, [isAuthenticated])
 

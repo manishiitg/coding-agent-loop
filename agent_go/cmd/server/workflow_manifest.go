@@ -90,14 +90,15 @@ const (
 
 // WorkflowManifest is the top-level workflow.json structure that lives in each workspace.
 type WorkflowManifest struct {
-	CodeLayoutVersion int                       `json:"code_layout_version,omitempty"` // 0: legacy learnings; 1: persistent code tree
-	SchemaVersion     int                       `json:"schema_version"`
-	ID                string                    `json:"id"`
-	Version           string                    `json:"version,omitempty"`
-	Label             string                    `json:"label"`
-	Capabilities      WorkflowCapabilities      `json:"capabilities"`
-	ExecutionDefs     WorkflowExecutionDefaults `json:"execution_defaults"`
-	Schedules         []WorkflowSchedule        `json:"schedules"`
+	KnowledgebaseSources []workflowtypes.KnowledgebaseSource `json:"knowledgebase_sources,omitempty"`
+	CodeLayoutVersion    int                                 `json:"code_layout_version,omitempty"` // 0: legacy learnings; 1: persistent code tree
+	SchemaVersion        int                                 `json:"schema_version"`
+	ID                   string                              `json:"id"`
+	Version              string                              `json:"version,omitempty"`
+	Label                string                              `json:"label"`
+	Capabilities         WorkflowCapabilities                `json:"capabilities"`
+	ExecutionDefs        WorkflowExecutionDefaults           `json:"execution_defaults"`
+	Schedules            []WorkflowSchedule                  `json:"schedules"`
 	// CreatedBy is the user ID that created this workflow, stamped once at
 	// creation time (handleCreateWorkflowManifest) from the authenticated
 	// request. Scheduled/cron runs have no logged-in user of their own --
@@ -556,6 +557,11 @@ func validateScheduleRuntimePolicy(schedule WorkflowSchedule) error {
 
 // ValidateManifest checks that a WorkflowManifest has required fields and valid values.
 func ValidateManifest(m *WorkflowManifest) error {
+	if m != nil {
+		if err := workflowtypes.ValidateKnowledgebaseSources(m.KnowledgebaseSources, m.ID); err != nil {
+			return err
+		}
+	}
 	if m.CodeLayoutVersion < 0 || m.CodeLayoutVersion > 1 {
 		return fmt.Errorf("unsupported code_layout_version %d", m.CodeLayoutVersion)
 	}

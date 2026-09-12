@@ -5,6 +5,22 @@ sending account can do — "give this workflow Drive access", "why can't it
 read my Google Sheet", "increase the scope for gmail_001", "add Calendar
 read-only".
 
+### Direct terminal use
+
+Builder and workflow terminals can run the real `gog` directly through
+`execute_shell_command`, including pipes and scripts. `GOG_HOME` is supplied by
+the execution environment and identifies the shared credential store. Use
+`gog auth list --json` to discover the exact account/client pair, then run
+`gog --account '<email>' --client '<client-name>' <command>`. No hardcoded host
+path or workflow `VAR_GOG_HOME` is needed. Use `gog <command> --help` for the
+installed command syntax. A missing or inaccessible configured store is a runtime
+configuration issue; it does not by itself mean Google authorization expired.
+Restricted agent profiles may intentionally lack terminal credential access.
+
+New or migrated connections use gog for token storage and refresh. Legacy gws
+connections remain supported until migrated; do not uninstall gws or reconnect
+an otherwise working account merely because both binaries exist.
+
 ### The two things that determine what an account can actually do
 
 1. **The stored request** — `GmailConnection.AllowReadAccess` (Gmail read,

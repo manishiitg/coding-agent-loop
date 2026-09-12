@@ -1,3 +1,5 @@
+import { WorkspaceImage } from './WorkspaceImage'
+import { sharedLink } from '../../utils/sharedLinks'
 import React, { lazy, Suspense, useEffect, useRef, useState, useCallback } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
@@ -7,7 +9,7 @@ import { useModeStore } from '../../stores/useModeStore'
 import { useWorkflowStore } from '../../stores/useWorkflowStore'
 import { useProductSurfaceStore } from '../../stores/useProductSurfaceStore'
 import { useGlobalPresetStore } from '../../stores/useGlobalPresetStore'
-import { workspaceApi, agentApi, getApiBaseUrl } from '../../services/api'
+import { workspaceApi, agentApi } from '../../services/api'
 
 const SyntaxHighlightedCode = lazy(() => import('./SyntaxHighlightedCode'))
 
@@ -28,6 +30,7 @@ interface MarkdownRendererProps {
   compactImages?: boolean
   basePath?: string
   onLinkClick?: (filepath: string) => void
+  workspaceLinkHref?: (filepath: string) => string
   // When provided, a ```report-widget fenced block whose body is a widget JSON
   // spec is replaced by a live, db-bound report widget. Supplied by the report
   // viewer (MarkdownWidget / FileWidget) so a generated .md document can embed
@@ -583,6 +586,7 @@ const MarkdownRendererImpl: React.FC<MarkdownRendererProps> = ({
   compactImages = false,
   basePath,
   onLinkClick,
+  workspaceLinkHref,
   renderEmbeddedWidget
 }) => {
   const containerClasses = `prose prose-sm max-w-none dark:prose-invert ${className}`
@@ -1187,6 +1191,7 @@ const MarkdownRendererImpl: React.FC<MarkdownRendererProps> = ({
             const externalHref = resolveSafeExternalHref(href)
 
             if (workspaceTarget) {
+              if (workspaceLinkHref) return <a href={workspaceLinkHref(workspaceTarget.filepath)} className="text-blue-600 dark:text-blue-400 underline">{children}</a>
               return (
                 <a
                   href={href}
@@ -1232,14 +1237,12 @@ const MarkdownRendererImpl: React.FC<MarkdownRendererProps> = ({
           },
           img: ({ src, alt }) => {
             const workspacePrefixes = ['Chats/', 'Downloads/', 'skills/', 'Workflow/', 'knowledgebase/', '_users/', 'learnings/']
-            const workspaceFilepath = src?.startsWith('#workspace/')
-              ? decodeURIComponent(src.replace('#workspace/', ''))
-              : (src && workspacePrefixes.some(p => src.startsWith(p)) ? src : null)
+            const workspaceFilepath = resolveWorkspaceHref(src)?.filepath || (src && workspacePrefixes.some(p => src.startsWith(p)) ? src : null)
             const resolvedSrc = workspaceFilepath
-              ? `${getApiBaseUrl()}/api/public/file?path=${btoa(workspaceFilepath)}`
+              ? sharedLink(window.location.origin, 'file', workspaceFilepath)
               : src
             console.log(`[IMAGE_RENDER] MarkdownRenderer src="${src}" workspaceFilepath="${workspaceFilepath}" resolvedSrc="${resolvedSrc}"`)
-            const image = (
+            const image = workspaceFilepath ? <WorkspaceImage path={workspaceFilepath} alt={alt} className="max-w-full h-auto max-h-[75vh] rounded-lg my-3" /> : (
               <img
                 src={resolvedSrc}
                 alt={alt}
@@ -1251,7 +1254,7 @@ const MarkdownRendererImpl: React.FC<MarkdownRendererProps> = ({
             if (!compactImages || !resolvedSrc) return image
             return (
               <a
-                href={resolvedSrc}
+                href={workspaceFilepath ? sharedLink(window.location.origin, 'file', workspaceFilepath) : resolvedSrc}
                 target="_blank"
                 rel="noopener noreferrer"
                 className="inline-block max-w-full"

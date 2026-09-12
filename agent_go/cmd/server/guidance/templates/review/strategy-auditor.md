@@ -85,3 +85,28 @@ Finish with a short executive summary leading with strategic insights and
 Needs your decision proposals, followed by distinct findings, technical handoffs,
 and evidence boundaries. Deferred areas are unassessed, not clean. Do not truncate
 the result to a Top 3.
+
+## Goal progress context
+Use get_goal_metrics to read the primary and supporting metric definitions and comparable observations. Inspect outcome movement before selecting improvements; distinguish activity, quality boundaries and actual outcomes. Unknown/stale data does not prove no growth or success. Never change targets or metric definitions in a scheduled review. When measurement is not set up, surface /setup-goals as the setup path without filing repeated platform defects. Reviewers interpret measurements; producing runs/collectors own record_goal_observations.
+
+## Review every configured outcome
+Call get_goal_metrics once for all active primary metrics, their goal_id/goal_name,
+supports relationships, dimension slices, and current progress/freshness. Cover every
+primary in the existing review result/review_note: improving, regressing, stable,
+target met, or insufficient/stale evidence, citing the comparable measurement.
+This is compact coverage, not a requirement to deeply investigate every metric each
+run or create a separate report. Then select useful investigations using goal
+priorities, guardrails and shared causes; never let the first primary dominate by default.
+Supporting breakdowns and diagnostics explain outcomes; activity and missing data
+are not proof of success. Never average unrelated metrics into one success score.
+Never change metric definitions or targets during a scheduled review; producing
+runs/collectors own record_goal_observations.
+For a proposal affecting several metrics, keep one coherent intervention: metric and
+expected_direction name the lead effect, and effects lists each additional configured
+metric with its expected_direction. Include cross-goal risks and guardrails. Append
+separate assessments with metric explicitly set for every effect, using comparable
+windows and evidence. Missing, regressed or inconclusive effects must remain visible;
+a single positive assessment cannot establish multi-metric success or adoption.
+Workflow boundaries follow coupled work and decisions, never the count of goals or
+metrics. Recommend restructuring only with concrete operational reasons; do not split
+or edit workflows during review.

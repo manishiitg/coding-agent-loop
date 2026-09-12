@@ -1,0 +1,247 @@
+# Shared knowledge bases through workflow references
+
+Status: implemented locally; deployment and real-workflow attachments pending. Updated 2026-09-12.
+
+## Purpose
+
+Let a workflow use knowledge maintained by other workflows through the same shell
+and file access it uses for its local knowledge base. Builders, execution agents,
+and reviewers should discover the attached knowledge and have appropriate access.
+
+Workflow boundaries follow work that needs to be planned, executed, and evaluated
+together. A need for common knowledge should not force otherwise independent work
+into one workflow.
+
+For example, RTS performance, security, and cost workflows could read architecture,
+service descriptions, and API contracts maintained by an existing RTS workflow.
+Each consumer would retain its own local investigation notes.
+
+## Decisions
+
+- Configure attachments in the consuming workflow's `workflow.json`.
+- Reference source workflows by stable ID, not a copied host path or display name.
+- Allow multiple sources, each with a unique alias.
+- Keep the source workflow's files canonical. Read them directly without copying,
+  syncing, merging indexes, or requiring a new KB query tool.
+- Make source knowledge accessible to the builder as well as eligible execution
+  and review agents. Preserve ordinary shell use, including `cat`, `rg`, and scripts.
+- Attach only the source workflow's own KB. Attachments are not transitive.
+- Start with read-only attachments on the same execution host. Shared contribution
+  and access across servers are later extensions.
+- Existing workflows retain their current local knowledge and behavior when the
+  new configuration field is absent.
+
+## Configuration
+
+Configure `workflow.json` through the workflow configuration API or builder tool (the IDs below are illustrative):
+
+```json
+{
+  "knowledgebase_sources": [
+    {
+      "workflow_id": "wf_rts",
+      "alias": "rts",
+      "access": "read"
+    },
+    {
+      "workflow_id": "wf_security",
+      "alias": "security",
+      "access": "read"
+    }
+  ]
+}
+```
+
+| Field | Meaning |
+| --- | --- |
+| `workflow_id` | Stable ID of the source workflow, resolved through the authorized workflow registry |
+| `alias` | Local name for this attachment; use lowercase letters, digits, and underscores, starting with a letter |
+| `access` | `read` in the first release; unknown access modes are rejected |
+
+Reject duplicate aliases, duplicate source IDs, self-references, inaccessible source
+workflows, and sources on another execution host. Do not accept arbitrary filesystem
+paths in this field. Validate IDs against the application's existing ownership and
+access rules; editing JSON alone must not grant access to another owner's data.
+
+A workflow may attach up to 20 sources. Aliases are at most 48 characters; `access`
+is reserved because `WORKFLOW_KB_ACCESS` tracks the session’s KB access mode.
+
+Access is checked for the entire consuming workflow audience: its owners and
+readers must be allowed to read the source. A broadly visible consumer cannot
+attach a private source merely because its current editor owns both. Legacy
+workflows without an effective owner remain account-visible under existing rules.
+
+The source workflow can itself have attachments, but resolving a reference stops
+at that workflow's local `knowledgebase/`. Even mutual references must not trigger
+recursive resolution or expand either workflow's access.
+
+## Implementation
+
+`getKnowledgebasePath(workspaceRoot)` resolves
+`<workflow>/knowledgebase/`. That folder persists across runs of the same workflow.
+It contains user-owned `context/` and workflow-maintained `notes/`, including
+`notes/_index.json`. Local contribution and maintenance rules remain unchanged.
+
+The existing attached-folder mechanism that resolves canonical host paths,
+adds read/write permissions, exposes `WORKFLOW_FOLDER_*` environment variables,
+and describes available folders in agent context. Live builder sessions can refresh
+those grants. KB sources reuse this permission plumbing while retaining workflow
+references as the saved configuration.
+
+Relevant implementation entry points:
+
+- `agent_go/pkg/orchestrator/agents/workflow/step_based_workflow/controller_execution.go`:
+  local KB path and access mode resolution.
+- `agent_go/pkg/orchestrator/agents/workflow/step_based_workflow/controller_agent_factory.go`:
+  agent read/write paths and KB access.
+- `agent_go/pkg/orchestrator/agents/workflow/step_based_workflow/workflow_folder_access.go`:
+  attached-folder resolution, environment variables, prompts, and session refresh.
+- `agent_go/pkg/common/types.go`: shell session grant reconciliation.
+- `agent_go/pkg/workflowtypes/knowledgebase_sources.go`: configuration and syntax validation.
+- `agent_go/pkg/workflowkb/`: local ID discovery, audience checks, canonical resolution, and confined file reads.
+- `agent_go/cmd/server/workflow_knowledgebase_routes.go`: consumer-scoped browsing API.
+- `frontend/src/components/workflow/KnowledgebaseView.tsx`: knowledge browsing UI.
+
+Session grant reconciliation recognizes both `WORKFLOW_FOLDER_*` and
+`WORKFLOW_KB_*`. Each subsequent session policy lookup rebuilds these grants from
+the saved configuration, removing stale KB paths while preserving independently
+authorized folder access. Copied child sessions retain grant provenance too.
+
+## Runtime access
+
+At session creation, resolve every authorized source ID to its current canonical
+KB folder on the execution host. Add only that folder to the relevant read grants
+and explicitly keep it out of write grants. Expose one environment variable per
+attachment:
+
+```text
+WORKFLOW_KB_RTS=<resolved RTS workflow>/knowledgebase
+WORKFLOW_KB_SECURITY=<resolved security workflow>/knowledgebase
+```
+
+Then the agent can use the shell normally:
+
+```bash
+cat "$WORKFLOW_KB_RTS/notes/_index.json"
+rg -n "livekit" "$WORKFLOW_KB_RTS/notes"
+```
+
+The runtime applies these grants to the command path guard, session shell
+environment, and operating-system sandbox. An environment variable alone is not
+a permission grant. Explicit KB opt-out removes both source grants and variables.
+
+| Consumer | Access in the first release |
+| --- | --- |
+| Builder | Read every authorized attached KB through shell and supported file reads |
+| Execution agent | Read attached KBs when its KB access mode permits reading; explicit `knowledgebase_access: none` opts out |
+| Scripted execution | Receive the same eligible read grants and environment variables as agent execution |
+| Strategic and architecture reviewers | Discover and read attached KBs within their review profile; no additional write authority |
+| KB maintenance/consolidation | Continue maintaining local notes only; do not reorganize source KBs |
+
+Shell reads, supported file-read tools, and subprocesses use the session grants.
+The Knowledge UI reads through `GET /api/workflows/knowledgebase-sources`, scoped
+to the consumer's `workspace_path`. With no alias it returns attachment statuses;
+with `alias` and a relative `path`, it reads a regular file inside the authorized
+source KB (maximum 2 MB). It rechecks current attachments and access on each call.
+Generic report endpoints do not acquire access to other workflows.
+
+Only `knowledgebase/` is attached. This does not expose the source workflow's
+`soul/`, `learnings/`, database, run outputs, credentials, or plan. Canonical path
+validation and sandbox rules must prevent symlink escapes into those locations.
+
+## Discovery and freshness
+
+Agent context contains a compact source list: alias, workflow name/ID,
+access, availability, environment variable, and index location. Agents read the
+relevant index and selected documents when needed; do not inject every attached
+document into every prompt.
+
+Keep sources distinguishable. References to facts should name the source alias and
+document, preserve available evidence and verification dates, and retain environment
+or other applicability constraints. Shared documents are reference data, not a new
+source of execution instructions or permissions.
+
+Consumers see newly saved source content on subsequent reads. This is live file
+access, not a frozen snapshot across an entire run. Source writers should use atomic
+file replacement where appropriate, and readers should surface or retry a transient
+index read failure rather than treating it as an empty KB.
+
+Do not silently prefer local over shared knowledge, or one attachment over another,
+when facts conflict. Use source evidence, scope, and verification dates; retain the
+uncertainty when it cannot be resolved. Reading a source must not mark its content
+fresh or rewrite the source workflow's freshness ledger.
+
+## Attach, update, and detach
+
+The Knowledge UI shows Local knowledge and a selector for attached sources.
+Workflow editors can use **Attach knowledge**, choose a source and alias, and
+remove an attachment with **Detach**. Readers can browse but cannot manage sources.
+Unavailable attachments retain their reason and can be repaired or detached.
+
+Builders use `get_workflow_config` to inspect attachments and discover eligible
+source IDs. `update_workflow_config(knowledgebase_sources=[...])` replaces the
+complete attachment list; preserve existing entries when adding one, and pass `[]`
+to detach all. The workflow manifest update API accepts the same field. Both paths
+validate sources before saving. Open builder sessions refresh their grants.
+
+New execution and review sessions use the same resolver. A source rename or move
+within the same host works through its stable ID without changing consumer config.
+
+On detach, rename, or permission revocation, remove stale environment variables,
+prompt entries, and KB-derived grants. Rebuild affected sandbox profiles before the
+next command. Do not claim that changing session metadata retroactively revokes
+access from an already-running subprocess; handle running processes explicitly when
+immediate revocation is required.
+
+If an existing source is deleted, becomes inaccessible, or is unavailable after a
+restore, mark the attachment unavailable with a specific reason. Preserve the
+reference for repair and never substitute an unrelated folder or create an empty
+KB that appears valid. Agents may continue independent work, but must report a
+blocked knowledge dependency when their task requires the missing source.
+
+## Validation and rollout
+
+Local validation passes for resolver and manifest checks, attachment API reads and
+detach, session refresh and copied sessions, builder prompt discovery, and execution
+KB opt-out. A native macOS sandbox test verifies shell reads, blocked shared writes,
+blocked sibling reads, and blocked reads through a cached path after detach. Four
+frontend tests cover attach, detach, reader controls, source browsing and errors;
+TypeScript compilation passes.
+
+The implementation has not been deployed to RTS and no real workflows have been
+attached automatically. After deployment, select sources in Knowledge or through
+the builder configuration tool. No bulk note migration is required: consumers read
+the existing source KB immediately. Reorganizing notes remains a separate operation
+that preserves evidence and updates references.
+
+## Acceptance checks
+
+- A builder can attach two sources, inspect both indexes using shell commands, and
+  read an update saved by the source without copying files.
+- Eligible agent and scripted runs, plus both reviewer types, discover the same
+  sources; a step with KB access disabled receives no KB-derived grants.
+- Writes to attached KBs fail even if the consumer has write access to its local KB.
+- A source attachment never grants its sibling folders or transitive attachments.
+- Invalid IDs, aliases, ownership, host placement, and symlink escapes are rejected.
+- Detach and revocation refresh live sessions and remove obsolete KB-derived access
+  while preserving unrelated authorized folder grants.
+- Missing sources and conflicting facts remain visible instead of becoming empty,
+  current, or successful knowledge.
+- Source rename/move preserves references; old workflow configurations still work.
+- Concurrent source updates do not cause consumers to mistake a read failure for
+  an empty index or silently overwrite shared knowledge.
+
+## Later extensions
+
+Shared contribution would require an explicit contribution mode, eligible writers,
+notes-only write paths, provenance, conflict handling, and serialization keyed to
+the source KB across workflows. Do not expose unrestricted shared writes before
+those semantics exist; the source workflow maintains its KB in the first release.
+
+Cross-server sharing needs an authenticated transport or shared storage with defined
+freshness and access semantics. A workflow ID pointing to another server is not
+enough to make its files readable by the local shell.
+
+Standalone named KBs can be added later if knowledge should outlive its source
+workflow. The first release uses existing workflow-owned KBs and does not require
+a new storage service.

@@ -100,7 +100,7 @@ func gmailOAuthCallbackHandler(api *StreamingAPI) http.HandlerFunc {
 			return
 		}
 
-		connectionID, err := services.CompleteGmailOAuth(r.Context(), state, code)
+		connectionID, email, err := services.CompleteGmailOAuth(r.Context(), state, code)
 		if err != nil {
 			log.Printf("[GMAIL] OAuth callback failed: %v", err)
 			writeGmailOAuthPage(w, false, "Sign-in failed", html.EscapeString(err.Error()))
@@ -113,36 +113,9 @@ func gmailOAuthCallbackHandler(api *StreamingAPI) http.HandlerFunc {
 			return
 		}
 
-		// The cached status was computed while this connection had no
-		// credential; without dropping it the read below returns that stale
-		// "not authenticated, no address" answer and the account appears
-		// connected but unnamed.
-		svc.InvalidateConnectionAuthCache(connectionID)
-
-		// Resolve and persist the address now, so the account is named
-		// everywhere immediately rather than after the next auth refresh.
-		email := ""
-		if st, found := svc.AuthStatusForConnectionBlocking(r.Context(), connectionID); found {
-			email = st.Email
-		}
-		updated, updateErr := svc.MarkConnectionConnected(r.Context(), connectionID, email)
-		if updateErr != nil {
-			log.Printf("[GMAIL] connected %s but could not update the connection: %v", connectionID, updateErr)
-		}
-
-		// Best-effort: also register this refresh token with gog directly
-		// under (email, client_name), so an agent's own `gog <service>...`
-		// shell commands can use this connection independently of this
-		// server's per-call --access-token path. Never blocks or fails the
-		// sign-in the user is watching — that already succeeded above.
-		if email != "" && updateErr == nil && strings.TrimSpace(updated.ClientName) != "" {
-			if refreshToken, ok := services.StoredRefreshToken(connectionID); ok {
-				if err := services.ImportRefreshTokenIntoGog(r.Context(), email, updated.ClientName, refreshToken); err != nil {
-					log.Printf("[GMAIL] connected %s but could not register it with gog for direct agent use: %v", connectionID, err)
-				} else {
-					log.Printf("[GMAIL] registered %s with gog (client=%s) for direct agent use", email, updated.ClientName)
-				}
-			}
+		if err := svc.CompleteGogConnection(r.Context(), connectionID, email); err != nil {
+			writeGmailOAuthPage(w, false, "Sign-in failed", html.EscapeString(err.Error()))
+			return
 		}
 
 		log.Printf("[GMAIL] Connection %s authorized as %s", connectionID, email)

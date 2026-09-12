@@ -267,7 +267,14 @@ func createCustomTools(workflowMode bool, sessionInfo ...string) ([]llmtypes.Too
 		if !humanToolAllowed[name] {
 			continue
 		}
-		allExecutors[name] = executor
+		if name == "notify_user" && workflowMode {
+			allExecutors[name] = func(ctx context.Context, args map[string]interface{}) (string, error) {
+				return executor(virtualtools.WithGoalProgressProvider(ctx, loadGoalProgressNotificationSections), args)
+			}
+		} else {
+			allExecutors[name] = executor
+		}
+
 		toolCategories[name] = "human_tools"
 	}
 
@@ -313,6 +320,15 @@ func createCustomTools(workflowMode bool, sessionInfo ...string) ([]llmtypes.Too
 			allExecutors[name] = executor
 		}
 		for name, category := range reportHumanInputCategories {
+			toolCategories[name] = category
+		}
+
+		goalTools, goalExecutors, goalCategories := createGoalMetricTools()
+		allTools = append(allTools, goalTools...)
+		for name, executor := range goalExecutors {
+			allExecutors[name] = executor
+		}
+		for name, category := range goalCategories {
 			toolCategories[name] = category
 		}
 

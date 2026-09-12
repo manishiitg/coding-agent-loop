@@ -182,3 +182,6 @@ AGENTS.md
 .codex/
 .local/
 transcript.txt
+
+# Generated private Playwright fixture distributions
+/agent_go/packages/

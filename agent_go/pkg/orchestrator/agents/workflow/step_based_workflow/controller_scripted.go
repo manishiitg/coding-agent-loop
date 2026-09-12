@@ -848,7 +848,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) resolveScriptedShellGuard(
 	learningsAccess := resolveExecutionLearningsAccess(stepConfig, step, hcpo.isEvaluationMode)
 
 	readPaths, writePaths := hcpo.setupExecutionFolderGuard(stepPath, step.GetID(), kbAccess, learningsAccess, resolveDBAccess(stepConfig), stepConfig)
-	_, _, readOnlyPaths, _ := appendWorkflowFolderAccess(hcpo.GetWorkspacePath(), nil, nil)
+	_, _, readOnlyPaths, _ := appendWorkflowFolderAccess(hcpo.GetWorkspacePath(), nil, nil, kbAccessAllowsRead(resolveKnowledgebaseAccess(getAgentConfigs(step), hcpo.UseKnowledgebase())))
 	if includeCodeDir && len(writePaths) > 0 {
 		writePaths = append(writePaths, writePaths[0]+"/code")
 	}
@@ -941,7 +941,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) execScriptedScript(
 		"PYTHONDONTWRITEBYTECODE": "1",
 		"SCRIPT_VERBOSE":          "1", // Enable verbose logging in scripts — stdout is only read on failure
 	}
-	_, _, _, folderEnv := appendWorkflowFolderAccess(hcpo.GetWorkspacePath(), nil, nil)
+	_, _, _, folderEnv := appendWorkflowFolderAccess(hcpo.GetWorkspacePath(), nil, nil, kbAccessAllowsRead(resolveKnowledgebaseAccess(getAgentConfigs(step), hcpo.UseKnowledgebase())))
 	for key, value := range folderEnv {
 		extraEnv[key] = value
 	}

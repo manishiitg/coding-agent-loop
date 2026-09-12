@@ -145,7 +145,7 @@ func CreateOAuthClient(ctx context.Context, name string, secretJSON []byte, repl
 	}
 
 	existing, hadExisting := loadGmailOAuthClientMeta(name)
-	if hadExisting && !replace {
+	if (hadExisting || OAuthClientExists(name)) && !replace {
 		return GmailOAuthClient{}, fmt.Errorf(
 			"an OAuth client named %q already exists — choose a new name, or explicitly replace it (this invalidates every connection currently using it)",
 			name,
@@ -156,8 +156,8 @@ func CreateOAuthClient(ctx context.Context, name string, secretJSON []byte, repl
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return GmailOAuthClient{}, fmt.Errorf("gmail oauth client: create directory: %w", err)
 	}
-	if err := os.WriteFile(gmailOAuthClientSecretPath(name), secretJSON, 0o600); err != nil {
-		return GmailOAuthClient{}, fmt.Errorf("gmail oauth client: write client_secret.json: %w", err)
+	if err := storeGogClient(ctx, name, secretJSON); err != nil {
+		return GmailOAuthClient{}, err
 	}
 
 	now := time.Now().UTC()
@@ -208,6 +208,13 @@ func OAuthClientExists(name string) bool {
 	if name == "" {
 		return false
 	}
+	if path, err := gogClientCredentialsPath(name); err == nil {
+		if _, err := os.Stat(path); err == nil {
+			return true
+		}
+	} else {
+		return false
+	}
 	_, err := os.Stat(gmailOAuthClientSecretPath(name))
 	return err == nil
 }
@@ -219,6 +226,26 @@ func GetOAuthClientSecret(name string) (clientID, clientSecret string, err error
 	if name == "" {
 		return "", "", fmt.Errorf("gmail oauth client: name is required")
 	}
+	path, err := gogClientCredentialsPath(name)
+	if err != nil {
+		return "", "", err
+	}
+	if raw, err := os.ReadFile(path); err == nil {
+		var stored struct {
+			ID     string `json:"client_id"`
+			Secret string `json:"client_secret"`
+		}
+		if err := json.Unmarshal(raw, &stored); err != nil {
+			return "", "", err
+		}
+		if stored.ID == "" || stored.Secret == "" {
+			return "", "", fmt.Errorf("gog client %q has incomplete credentials", name)
+		}
+		return stored.ID, stored.Secret, nil
+	} else if !os.IsNotExist(err) {
+		return "", "", err
+	}
+	// Read-only compatibility for clients not yet migrated.
 	raw, err := os.ReadFile(gmailOAuthClientSecretPath(name))
 	if err != nil {
 		return "", "", fmt.Errorf("gmail oauth client %q not found: %w", name, err)
@@ -242,6 +269,14 @@ func DeleteOAuthClient(name string) error {
 		}
 		return err
 	}
+	path, err := gogClientCredentialsPath(name)
+	if err != nil {
+		return err
+	}
+	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+
 	return os.RemoveAll(dir)
 }
 

@@ -170,3 +170,12 @@ When an orchestrator route should reuse an orphan step:
 - On that orphan step, set `shared_with.orchestrator_ids` to the IDs of the orchestrator orchestrators allowed to reuse it.
 - On the route, set `orphan_step_ref` to the orphan step ID instead of embedding an inline `sub_agent_step`.
 - Use inline `sub_agent_step` only when the route needs its own dedicated definition.
+
+### Workflow boundaries and metrics
+A workflow groups work that needs to be planned, executed, and evaluated together.
+Multiple goals or primary metrics do not require multiple workflows. Keep work together
+when investigations, changes or routine tradeoff decisions overlap. Suggest splitting
+when work operates independently, especially across owners or permission boundaries;
+sharing a server alone is insufficient. Different schedules can use separate routes.
+Use /setup-goals to configure primary metrics and linked supporting measurements;
+explain boundary recommendations and preserve existing boundaries unless authorized.

@@ -1742,6 +1742,25 @@ else
     echo "✅ agent-browser updated: $(agent-browser --version 2>&1)"
 fi
 
+# Serve the same private Playwright fixtures as server releases. Build these
+# from source on every local start so archive contents match this checkout.
+# An explicit override belongs to the caller and must not be overwritten.
+if [ -z "${AGENTWORKS_PLAYWRIGHT_PACKAGES_DIR:-}" ]; then
+    export AGENTWORKS_PLAYWRIGHT_PACKAGES_DIR="$SCRIPT_DIR/packages"
+    echo "📦 Building AgentWorks Playwright fixture packages..."
+    if ! python3 "$SCRIPT_DIR/../scripts/build-playwright-packages.py" "$AGENTWORKS_PLAYWRIGHT_PACKAGES_DIR"; then
+        echo "❌ Failed to build Playwright fixture packages; check Python 3 and package sources"
+        exit 1
+    fi
+fi
+for fixture_archive in agentworks-playwright.tgz agentworks-playwright-python.zip; do
+    if [ ! -r "$AGENTWORKS_PLAYWRIGHT_PACKAGES_DIR/$fixture_archive" ]; then
+        echo "❌ Missing Playwright fixture archive: $AGENTWORKS_PLAYWRIGHT_PACKAGES_DIR/$fixture_archive"
+        exit 1
+    fi
+done
+export AGENTWORKS_PLAYWRIGHT_PACKAGES_DIR
+
 # Build mcpbridge binary (required for CLI provider MCP bridge)
 # Install from local source to pick up latest fixes (e.g., virtual tool scoping)
 echo "🔨 Building mcpbridge binary from local source..."

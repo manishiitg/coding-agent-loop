@@ -2,6 +2,7 @@ package security
 
 import (
 	"github.com/manishiitg/coding-agent-loop/workspace/browserconfig"
+	"github.com/manishiitg/coding-agent-loop/workspace/gogconfig"
 	"os"
 	"path/filepath"
 	"strings"
@@ -27,7 +28,7 @@ func BuildSafeEnvironment() []string {
 		}
 		env = append(clean, browserconfig.ProfileEnv+"="+browserconfig.SharedProfile(), "AGENT_BROWSER_SOCKET_DIR=/tmp/.agent-browser", "TZ=UTC")
 	}
-	return env
+	return gogconfig.Environment(env, false)
 }
 
 // buildDockerEnvironment returns a strict whitelist for Docker containers.

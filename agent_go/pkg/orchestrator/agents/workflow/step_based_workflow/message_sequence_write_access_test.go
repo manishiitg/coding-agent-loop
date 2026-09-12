@@ -342,19 +342,17 @@ func TestMessageSequenceItemUsesManagedDBToolsWithoutRawDBFilesystemAccess(t *te
 		DB: true, Knowledgebase: true, Learnings: true,
 	})
 	allPaths := strings.Join(append(append([]string{}, readPaths...), writePaths...), "\n")
-	// The actual concern (commit a960df20, not PLAT-169 -- that ticket is
-	// unrelated, an earlier version of this comment mislabeled it) was
-	// db/db.sqlite reachable via shell (Landlock can't allow the parent and
-	// deny just that one file). db/assets/ is a sibling, not a child, of
-	// db.sqlite, and is deliberately granted below (PLAT-175) -- so the guard
-	// here is specifically the sqlite file and any other db/ path OUTSIDE
-	// assets/, not "db/" as a substring.
 	if strings.Contains(allPaths, "db.sqlite") {
 		t.Fatalf("message-sequence item unexpectedly received raw db.sqlite filesystem access: %v", writePaths)
 	}
-	for _, p := range append(append([]string{}, readPaths...), writePaths...) {
+	for _, p := range readPaths {
+		if strings.Contains(p, "/db/") && !strings.Contains(p, "/db/assets") && !strings.HasSuffix(p, "/db/README.md") {
+			t.Fatalf("unexpected DB read grant: %q", p)
+		}
+	}
+	for _, p := range writePaths {
 		if strings.Contains(p, "/db/") && !strings.Contains(p, "/db/assets") {
-			t.Fatalf("message-sequence item received a db/ path outside assets/: %q (full sets: read=%v write=%v)", p, readPaths, writePaths)
+			t.Fatalf("unexpected DB write grant: %q", p)
 		}
 	}
 	joined := strings.Join(writePaths, "\n")

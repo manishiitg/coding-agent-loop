@@ -30,6 +30,54 @@ func (hcpo *StepBasedWorkflowOrchestrator) getOrchestratorStepExecutionPath(step
 	return getExecutionFolderPath(hcpo.getOrchestratorExecutionWorkspacePath(), stepID, stepPath)
 }
 
+// setupOrchestratorFolderGuard is used for both enforcement and prompt text.
+func (hcpo *StepBasedWorkflowOrchestrator) setupOrchestratorFolderGuard(step PlanStepInterface) (readPaths, writePaths []string) {
+	baseWorkspacePath := hcpo.GetWorkspacePath()
+	executionWorkspacePath := hcpo.getOrchestratorExecutionWorkspacePath()
+	skillStepConfig := getAgentConfigs(step)
+	kbAccessForGuard := resolveKnowledgebaseAccess(skillStepConfig, hcpo.UseKnowledgebase())
+	learningsAccessForGuard := resolveExecutionLearningsAccess(skillStepConfig, step, hcpo.isEvaluationMode)
+
+	// READ: current group's execution folder + DB documentation/assets, plus KB/learnings only when
+	// the step config grants those stores. WRITE: current group's execution
+	// folder + DB assets, plus KB notes only for direct KB writes.
+	// Do not grant the workflow root here. That would expose workflow.json, variables/,
+	// planning/, and sibling groups to a nested todo_task orchestrator whose job is
+	// to coordinate work inside the current run, not inspect global workflow state.
+	readPaths = []string{executionWorkspacePath}
+	writePaths = []string{executionWorkspacePath}
+	readPaths, writePaths = appendManagedDBFileAccess(baseWorkspacePath, readPaths, writePaths)
+	if learningsAccessForGuard != LearningsAccessNone {
+		globalLearningsPath := filepath.Join(baseWorkspacePath, "learnings", GlobalLearningID)
+		readPaths = append(readPaths, globalLearningsPath)
+		// Unlike regular steps (which write learnings in a dedicated post-step turn),
+		// the orchestrator writes its stores directly via the folder guard — same as it
+		// does for knowledgebase/notes below. Grant learnings write when access is read-write
+		// and the step's single access mode permits writes.
+		if learningsAccessForGuard == LearningsAccessReadWrite {
+			writePaths = append(writePaths, globalLearningsPath)
+		}
+	}
+	if kbAccessAllowsRead(kbAccessForGuard) {
+		readPaths = append(readPaths, getKnowledgebasePath(baseWorkspacePath))
+	}
+	if kbAccessAllowsWrite(kbAccessForGuard) {
+		writePaths = append(writePaths, filepath.Join(getKnowledgebasePath(baseWorkspacePath), "notes"))
+	}
+	readPaths = appendAdditionalWorkflowReadPaths(readPaths, baseWorkspacePath, skillStepConfig)
+	readPaths = common.DeduplicateStrings(readPaths)
+
+	// Add skill folder paths to read paths (skills are read-only)
+	effectiveSkills := GetEffectiveSkills(skillStepConfig, hcpo.BaseOrchestrator)
+	if len(effectiveSkills) > 0 {
+		skillReadPaths, _ := BuildSkillFolderGuardPaths(effectiveSkills)
+		readPaths = append(readPaths, skillReadPaths...)
+		hcpo.GetLogger().Info(fmt.Sprintf("🎯 Added skill folder paths to todo task folder guard: %v", skillReadPaths))
+	}
+
+	return common.DeduplicateStrings(readPaths), common.DeduplicateStrings(writePaths)
+}
+
 // executeOrchestratorStep executes a todo task step by:
 //  1. The orchestrator LLM delegates to sub-agents and/or executes directly
 //  2. Processing tool calls:
@@ -68,7 +116,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeOrchestratorStep(
 
 	// Setup folder guard for todo task orchestrator agent
 	// The orchestrator needs to read/write output files and access workspace files
-	baseWorkspacePath := hcpo.GetWorkspacePath()
 	stepID := step.GetID()
 	if stepID == "" {
 		stepID = fmt.Sprintf("step-%d", stepIndex+1)
@@ -77,53 +124,8 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeOrchestratorStep(
 	// Build paths for folder guard
 	// All paths should include the workspace prefix (e.g., Workflow/codeanalysis/...)
 
-	executionWorkspacePath := hcpo.getOrchestratorExecutionWorkspacePath()
 	stepExecutionPath := hcpo.getOrchestratorStepExecutionPath(stepID, orchestratorStepPath)
-	// DB folder: Workflow/codeanalysis/db/ (structured JSON data, always enabled, shared across runs)
-	dbPath := getDBPath(baseWorkspacePath)
-	skillStepConfig := getAgentConfigs(step)
-	dbAccessForGuard := resolveEffectiveDBAccess(skillStepConfig, hcpo.isEvaluationMode, false)
-	kbAccessForGuard := resolveKnowledgebaseAccess(skillStepConfig, hcpo.UseKnowledgebase())
-	learningsAccessForGuard := resolveExecutionLearningsAccess(skillStepConfig, step, hcpo.isEvaluationMode)
-
-	// READ: current group's execution folder + db, plus KB/learnings only when
-	// the step config grants those stores. WRITE: current group's execution
-	// folder + db, plus KB notes only for direct KB writes.
-	// Do not grant the workflow root here. That would expose workflow.json, variables/,
-	// planning/, and sibling groups to a nested todo_task orchestrator whose job is
-	// to coordinate work inside the current run, not inspect global workflow state.
-	readPaths := []string{executionWorkspacePath, dbPath}
-	writePaths := []string{executionWorkspacePath}
-	if dbAccessForGuard == DBAccessReadWrite {
-		writePaths = append(writePaths, dbPath)
-	}
-	if learningsAccessForGuard != LearningsAccessNone {
-		globalLearningsPath := filepath.Join(baseWorkspacePath, "learnings", GlobalLearningID)
-		readPaths = append(readPaths, globalLearningsPath)
-		// Unlike regular steps (which write learnings in a dedicated post-step turn),
-		// the orchestrator writes its stores directly via the folder guard — same as it
-		// does for knowledgebase/notes below. Grant learnings write when access is read-write
-		// and the step's single access mode permits writes.
-		if learningsAccessForGuard == LearningsAccessReadWrite {
-			writePaths = append(writePaths, globalLearningsPath)
-		}
-	}
-	if kbAccessAllowsRead(kbAccessForGuard) {
-		readPaths = append(readPaths, getKnowledgebasePath(baseWorkspacePath))
-	}
-	if kbAccessAllowsWrite(kbAccessForGuard) {
-		writePaths = append(writePaths, filepath.Join(getKnowledgebasePath(baseWorkspacePath), "notes"))
-	}
-	readPaths = appendAdditionalWorkflowReadPaths(readPaths, baseWorkspacePath, skillStepConfig)
-	readPaths = common.DeduplicateStrings(readPaths)
-
-	// Add skill folder paths to read paths (skills are read-only)
-	effectiveSkills := GetEffectiveSkills(skillStepConfig, hcpo.BaseOrchestrator)
-	if len(effectiveSkills) > 0 {
-		skillReadPaths, _ := BuildSkillFolderGuardPaths(effectiveSkills)
-		readPaths = append(readPaths, skillReadPaths...)
-		hcpo.GetLogger().Info(fmt.Sprintf("🎯 Added skill folder paths to todo task folder guard: %v", skillReadPaths))
-	}
+	readPaths, writePaths := hcpo.setupOrchestratorFolderGuard(step)
 
 	// Snapshot the shared orchestrator-level guard and restore it on exit. The
 	// todo_task orchestrator still enforces via this shared guard (unlike
@@ -408,28 +410,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) buildOrchestratorTemplateVars(
 	fgGlobalLearningsPath := filepath.Join(baseWorkspacePath, "learnings", GlobalLearningID)
 	fgKnowledgebasePath := getKnowledgebasePath(baseWorkspacePath)
 	fgDBPath := getDBPath(baseWorkspacePath)
-	fgSoulPath := filepath.Join(baseWorkspacePath, "soul")
-	fgBuilderPath := filepath.Join(baseWorkspacePath, "builder")
-	fgReadPaths := []string{fgExecPath, fgDBPath, fgSoulPath, fgBuilderPath}
-	fgWritePaths := []string{fgExecPath}
-	if dbAccessForGuard == DBAccessReadWrite {
-		fgWritePaths = append(fgWritePaths, fgDBPath)
-	}
-	if learningsAccess != LearningsAccessNone {
-		fgReadPaths = append(fgReadPaths, fgGlobalLearningsPath)
-		// Orchestrator writes its stores directly via the folder guard (mirrors KB below).
-		if learningsAccess == LearningsAccessReadWrite {
-			fgWritePaths = append(fgWritePaths, fgGlobalLearningsPath)
-		}
-	}
-	if kbAccessAllowsRead(kbAccess) {
-		fgReadPaths = append(fgReadPaths, fgKnowledgebasePath)
-	}
-	if kbAccessAllowsWrite(kbAccess) {
-		fgWritePaths = append(fgWritePaths, filepath.Join(fgKnowledgebasePath, "notes"))
-	}
-	fgReadPaths = appendAdditionalWorkflowReadPaths(fgReadPaths, baseWorkspacePath, stepConfig)
-	fgReadPaths = common.DeduplicateStrings(fgReadPaths)
+	fgReadPaths, fgWritePaths := hcpo.setupOrchestratorFolderGuard(step)
 
 	templateVars := map[string]string{
 		// Resolve variables in step metadata

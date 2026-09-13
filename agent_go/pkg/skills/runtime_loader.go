@@ -160,7 +160,7 @@ func loadOneAttachable(workspaceAPIURL, workspacePath, folderName string) (*llmt
 
 	// Walk the skill folder for supporting files. Failures here are
 	// non-fatal — SKILL.md alone is still a valid attach.
-	skill.SupportingFiles = loadSkillSupportingFiles(workspaceAPIURL, folderName)
+	skill.SupportingFiles = loadSkillSupportingFilesIn(workspaceAPIURL, workspacePath, folderName)
 	return skill, nil
 }
 
@@ -195,21 +195,27 @@ func lazySkillBody(filePath, folderName, body string) string {
 		lazySkillExcerptLines, len(lines), filePath, path.Dir(filePath))
 }
 
-// loadSkillSupportingFiles walks workspace/skills/<folder>/ and returns
+// loadSkillSupportingFilesIn walks <workspace>/skills/<folder>/ and returns
 // every non-SKILL.md file under it as a SkillFile. Binary files are
 // skipped — the workspace ReadFile API refuses to return them as
 // text, and the supporting-file payload is intended for text artifacts
 // (scripts, references, supporting markdown). When binary asset
 // support becomes necessary a parallel ReadBinaryFile API is the right
 // hook, not text-coercion here.
-func loadSkillSupportingFiles(workspaceAPIURL, folderName string) []llmtypes.SkillFile {
+func loadSkillSupportingFilesIn(workspaceAPIURL, workspacePath, folderName string) []llmtypes.SkillFile {
 	client := NewWorkspaceAPIClient(workspaceAPIURL)
-	root := path.Join(SkillsBasePath, folderName)
-	entries, err := client.ListFiles(root)
-	if err != nil {
-		return nil
+	roots := make([]string, 0, 2)
+	if strings.TrimSpace(workspacePath) != "" {
+		roots = append(roots, path.Join(workspacePath, SkillsBasePath, folderName))
 	}
-	return collectSupportingFiles(client, root, "", entries)
+	roots = append(roots, path.Join(SkillsBasePath, folderName))
+	for _, root := range roots {
+		entries, err := client.ListFiles(root)
+		if err == nil {
+			return collectSupportingFiles(client, root, "", entries)
+		}
+	}
+	return nil
 }
 
 func collectSupportingFiles(client *WorkspaceAPIClient, root, rel string, entries []DocumentEntry) []llmtypes.SkillFile {

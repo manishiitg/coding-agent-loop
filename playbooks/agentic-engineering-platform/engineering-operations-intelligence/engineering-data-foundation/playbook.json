@@ -1,0 +1,34 @@
+{
+  "metadata_version": 1,
+  "content_schema": "agentworks-playbook/v1",
+  "id": "engineering-data-foundation",
+  "version": "0.1.0",
+  "title": "Engineering Data Foundation",
+  "description": "Connect and normalize engineering delivery, quality, release, and incident data with durable identity, freshness, and provenance.",
+  "hierarchy": [
+    "AgentWorks",
+    "Agentic Engineering Platform",
+    "Engineering Operations Intelligence"
+  ],
+  "order": 1,
+  "entrypoint": "SKILL.md",
+  "audience": "workflow_builder",
+  "setup_prompt": "Use Engineering Data Foundation for my engineering systems. Preserve my source-of-truth and access policies, connect only authorized sources, normalize and link records with provenance, validate completeness and freshness, and create a durable data-quality report.",
+  "setup_inputs": [
+    {"id": "scope", "label": "Organizations, teams, repositories, projects, and environments", "required": true},
+    {"id": "sources", "label": "Authorized issue, SCM, CI, deployment, QA, and incident sources", "required": true},
+    {"id": "history", "label": "History window, refresh frequency, and timezone", "required": true},
+    {"id": "identity", "label": "Source-of-truth precedence and identity mappings", "required": true},
+    {"id": "governance", "label": "Retention, restricted fields, and metric ownership", "required": true},
+    {"id": "vocabulary", "label": "Customer workflow states and metric definitions", "required": true}
+  ],
+  "required_capabilities": ["engineering_source_ingestion", "durable_workflow_storage", "workflow_reporting", "scheduled_workflow_execution"],
+  "recommended_tools": [
+    {"id": "source-control", "name": "GitHub or GitLab MCP", "type": "mcp", "purpose": "Read authorized repositories, commits, pull requests, reviews, and checks", "capability": "source_control_data", "optional": true},
+    {"id": "issue-tracker", "name": "Issue-tracker MCP", "type": "mcp", "purpose": "Read authorized work items, projects, states, and relationships", "capability": "work_management_data", "optional": true},
+    {"id": "ci-deployment", "name": "CI and deployment MCP", "type": "mcp", "purpose": "Read authorized pipeline, build, deployment, and rollback events", "capability": "delivery_system_data", "optional": true},
+    {"id": "observability", "name": "Observability and incident MCP", "type": "mcp", "purpose": "Read authorized incidents, alerts, service identity, and recovery events", "capability": "reliability_system_data", "optional": true}
+  ],
+  "outputs": ["Versioned engineering operations schema", "Authorized source and identity map", "Normalized source-linked engineering records", "Sync cursors and reconciliation history", "Data-quality findings", "Live freshness and lineage report"],
+  "next_playbooks": ["delivery-quality-reliability-intelligence"]
+}

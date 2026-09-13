@@ -131,6 +131,14 @@ export const UI_CONTROL_CONTRACT = {
       "targets": []
     },
     {
+      "id": "playbooks",
+      "label": "Workflow playbooks",
+      "actions": [
+        "open"
+      ],
+      "targets": []
+    },
+    {
       "id": "skills",
       "label": "Workflow skills",
       "actions": [

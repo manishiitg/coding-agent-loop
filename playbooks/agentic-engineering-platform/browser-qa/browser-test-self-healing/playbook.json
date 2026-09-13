@@ -1,0 +1,60 @@
+{
+  "metadata_version": 1,
+  "content_schema": "agentworks-playbook/v1",
+  "id": "browser-test-self-healing",
+  "version": "0.3.0",
+  "title": "Browser Test Self-Healing",
+  "description": "Diagnose browser-test failures with preserved video and console/network evidence, verify test-only repairs, obtain review, and update canonical tests and knowledge.",
+  "hierarchy": [
+    "AgentWorks",
+    "Agentic Engineering Platform",
+    "Browser QA"
+  ],
+  "order": 6,
+  "entrypoint": "SKILL.md",
+  "audience": "workflow_builder",
+  "setup_prompt": "Use Browser Test Self-Healing with my existing browser QA foundation. Preserve original video and console/network evidence, classify the failure, propose only eligible test-automation repairs, verify candidates in isolation with new evidence, require review, apply the exact approved patch, rerun canonical tests, and update knowledge and reporting.",
+  "setup_inputs": [
+    {"id": "foundation", "label": "Browser foundation and application QA knowledge", "required": true},
+    {"id": "finding", "label": "Failure with original source and evidence", "required": true},
+    {"id": "test_source", "label": "Canonical test source and expected base revision", "required": true},
+    {"id": "repair_scope", "label": "Permitted test/config paths and related journeys", "required": true},
+    {"id": "approval", "label": "Reviewer and approval policy", "required": true, "default": "human_required"},
+    {"id": "recording_policy", "label": "Original and verification video, console/network evidence policy", "required": false, "default": "reuse_foundation"},
+    {"id": "publication", "label": "Optional patch or pull-request destination", "required": false}
+  ],
+  "required_capabilities": [
+    "browser_test_execution",
+    "browser_recording",
+    "browser_diagnostic_capture",
+    "test_source_patch",
+    "durable_workflow_storage",
+    "workflow_reporting",
+    "human_decision"
+  ],
+  "recommended_tools": [
+    {"id": "playwright", "name": "Playwright CLI", "type": "cli", "purpose": "Reproduce and verify the original and related browser journeys", "capability": "browser_test_execution", "optional": true},
+    {"id": "managed-agent-browser", "name": "AgentWorks managed agent-browser", "type": "builtin", "purpose": "Investigate page state and collect supported video, console, network, error, screenshot, and trace evidence", "capability": "browser_interaction", "optional": true},
+    {"id": "agentworks-browser-recording", "name": "AgentWorks browser recording", "type": "builtin", "purpose": "Retain original, candidate, and canonical video plus redacted console/network evidence", "capability": "browser_recording", "optional": true},
+    {"id": "github", "name": "GitHub CLI or MCP", "type": "cli_or_mcp", "purpose": "Optionally publish an authorized reviewed repair as a branch or pull request", "capability": "source_change_publication", "optional": true},
+    {"id": "issue-tracker", "name": "Issue-tracker MCP", "type": "mcp", "purpose": "Route product defects or environment blockers to the customer's chosen tracker", "capability": "issue_reporting", "optional": true}
+  ],
+  "outputs": [
+    "Evidence-backed failure classification",
+    "Reviewable test-only candidate patch",
+    "Isolated and canonical verification results",
+    "Original and verification video, console/network logs, and other evidence references",
+    "Approval and optional publication receipts",
+    "Updated application QA knowledge after healing",
+    "Live repair history and evidence dashboard"
+  ],
+  "setup_playbooks": [
+    "basic-browser-setup",
+    "critical-journey-validation"
+  ],
+  "accepts_equivalent_setup": true,
+  "next_playbooks": [
+    "scheduled-regression-synthetic-monitoring",
+    "release-pr-quality-gate"
+  ]
+}

@@ -3162,6 +3162,18 @@ export interface WorkflowManifest {
   knowledgebase_sources?: KnowledgebaseSource[]
   folder_access?: WorkflowFolderGrant[]
   folder_access_requests?: WorkflowFolderAccessRequest[]
+  installed_playbooks?: InstalledPlaybook[]
+}
+
+export interface InstalledPlaybook {
+  id: string
+  title: string
+  version: string
+  category: string
+  skill_name: string
+  source_hash: string
+  status: 'draft' | 'ready' | 'blocked' | 'outdated' | 'disabled'
+  installed_at: string
 }
 
 export interface WorkflowFolderGrant {

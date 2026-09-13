@@ -2578,6 +2578,9 @@ func runServer(cmd *cobra.Command, args []string) {
 	apiRouter.HandleFunc("/workflows/manifest", requireWorkflowWriteAccess(api.handleDeleteWorkflowManifest)).Methods("DELETE", "OPTIONS")
 	apiRouter.HandleFunc("/workflows/folder", requireWorkflowWriteAccess(api.handleDeleteWorkflowFolder)).Methods("DELETE", "OPTIONS")
 	apiRouter.HandleFunc("/workflows/manifest/duplicate", requireWorkflowCreateAccess(api.handleDuplicateWorkflowManifest)).Methods("POST", "OPTIONS")
+	apiRouter.HandleFunc("/playbooks", api.handleListPlaybooks).Methods("GET", "OPTIONS")
+	apiRouter.HandleFunc("/workflows/playbooks", api.handleListInstalledPlaybooks).Methods("GET", "OPTIONS")
+	apiRouter.HandleFunc("/workflows/playbooks/install", requireWorkflowWriteAccess(api.handleInstallPlaybook)).Methods("POST", "OPTIONS")
 
 	// Skills API routes (from skill_routes.go)
 	RegisterSkillRoutes(apiRouter, api)
@@ -5848,6 +5851,18 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 					if globalSkill := skills.LoadGlobalSkill(getWorkspaceAPIURL(), phaseWorkspacePath); globalSkill != nil {
 						_ = llmAgent.AttachSkill(globalSkill)
 						log.Printf("[SKILLS] Auto-attached workflow global skill (_global) from learnings/_global/SKILL.md")
+					}
+					// Playbooks are workflow-local skills for Builder setup. They are
+					// intentionally attached here, after the definitive workflow path is
+					// known, and never added to the workflow execution skill defaults.
+					if workflowPhaseID == workflowtypes.WorkflowStatusWorkflowBuilder {
+						if manifest, found, readErr := ReadWorkflowManifest(r.Context(), phaseWorkspacePath); readErr == nil && found {
+							builderSkills := installedBuilderSkillNames(manifest.InstalledPlaybooks)
+							for _, playbookSkill := range skills.LoadAttachableIn(getWorkspaceAPIURL(), phaseWorkspacePath, builderSkills) {
+								_ = llmAgent.AttachSkill(playbookSkill)
+								log.Printf("[PLAYBOOKS] Attached %s to Workflow Builder", playbookSkill.Name)
+							}
+						}
 					}
 				}
 

@@ -651,7 +651,7 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
             label="Setup"
             open={openGroups.setup}
             onToggle={() => toggleGroup('setup')}
-            title={openGroups.setup ? 'Hide setup' : 'Show setup: skills, secrets, MCP servers, LLM, bots, folders, sharing, users'}
+            title={openGroups.setup ? 'Hide setup' : 'Show setup: playbooks, skills, secrets, MCP servers, LLM, bots, folders, sharing, users'}
           >
           <div className="inline-flex items-center gap-0.5">
             {capabilityViewDefinitions.map(({ id, icon: Icon, label }) => {

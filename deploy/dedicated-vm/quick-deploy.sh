@@ -46,6 +46,8 @@ if [[ "$TARGET" == "all" || "$TARGET" == "agent" ]]; then
   echo "    Syncing agent_go..."
   rsync -az --delete --exclude='.git' --exclude='node_modules' --exclude='*.db' --exclude='logs/' --exclude='bin/' --exclude='tmp/' \
     -e "$RSYNC_SSH" "$REPO_ROOT/agent_go/" "root@$VM:$REMOTE/src/agent_go/" &
+  echo "    Syncing playbooks..."
+  rsync -az --delete -e "$RSYNC_SSH" "$REPO_ROOT/playbooks/" "root@$VM:$REMOTE/src/playbooks/" &
 fi
 
 if [[ "$TARGET" == "all" || "$TARGET" == "workspace" ]]; then

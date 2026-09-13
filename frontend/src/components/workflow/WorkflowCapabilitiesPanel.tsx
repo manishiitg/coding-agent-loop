@@ -4,6 +4,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { LoaderCircle, RefreshCw, Save, Settings2, X } from 'lucide-react'
 import { ToolSelectionSection } from '../ToolSelectionSection'
 import SkillsManagerPanel from '../skills/SkillsManagerPanel'
+import PlaybooksPanel from '../playbooks/PlaybooksPanel'
 import { SecretSelectionSection } from '../secrets/SecretSelectionSection'
 import BrowserAutomationSettings, { type BrowserAutomationMode } from '../BrowserAutomationSettings'
 import WorkflowLLMConfigurationPanel from './WorkflowLLMConfigurationPanel'
@@ -40,6 +41,11 @@ const EMPTY_CAPABILITIES: WorkflowCapabilities = {
 // Save footer. Sections that write straight to shared state (bots routing and
 // credentials) never touch the manifest, so the footer would save nothing.
 const SECTION_COPY: Record<WorkflowCapabilitySection, { title: string; description: string; savesViaManifest: boolean }> = {
+  playbooks: {
+    title: 'Workflow playbooks',
+    description: 'Apply proven AgentWorks setups to this workflow with the Builder.',
+    savesViaManifest: false,
+  },
   skills: {
     title: 'Workflow skills',
     description: 'Select reusable skills for this workflow’s builder context.',
@@ -115,6 +121,7 @@ export default function WorkflowCapabilitiesPanel({ section, workspacePath }: Wo
   // each message here is a real, complete first message it delivers (not a
   // prefilled fragment), ending by inviting the agent to ask what's needed.
   const ASK_CHAT_MESSAGE: Partial<Record<WorkflowCapabilitySection, string>> = {
+    playbooks: "Help me choose an AgentWorks playbook for this workflow. Ask what outcome I need, compare the relevant playbooks, and explain the setup before changing my workflow.",
     mcp: "Help me add an MCP server to this workflow. Ask me which app or service I want to connect, then search the catalog and official provider documentation on the web and help me connect it.",
     skills: "I want a skill this workflow doesn't have yet. Ask me what it should cover, then find an existing one or write a new one.",
     secrets: "I need to add a secret this workflow doesn't have yet. Ask me which credential it is and where it should come from.",
@@ -261,6 +268,9 @@ export default function WorkflowCapabilitiesPanel({ section, workspacePath }: Wo
         ) : (
           <>
             {error && <p className="mb-4 rounded-md border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive">{error}</p>}
+            {section === 'playbooks' && (
+              <PlaybooksPanel workspacePath={workspacePath} />
+            )}
             {section === 'skills' && (
               <div className="flex min-h-0 flex-1 flex-col">
                 <SkillsManagerPanel

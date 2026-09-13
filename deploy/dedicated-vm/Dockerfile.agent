@@ -25,6 +25,7 @@ RUN cd agent_go && \
     go mod download
 
 COPY agent_go/ ./agent_go/
+COPY playbooks/ ./playbooks/
 
 # Fix replace directives again (COPY overwrites go.mod)
 RUN cd /app/agent_go && \
@@ -36,6 +37,8 @@ RUN cd /app/agent_go && \
 FROM runtime
 
 COPY --from=builder /app/agent_go/mcp-agent .
+COPY --from=builder /app/playbooks ./playbooks
+ENV AGENTWORKS_PLAYBOOKS_DIR=/app/playbooks
 
 # Copy Go for code execution
 COPY --from=builder /usr/local/go /usr/local/go

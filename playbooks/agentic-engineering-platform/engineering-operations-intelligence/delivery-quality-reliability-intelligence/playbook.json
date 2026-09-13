@@ -1,0 +1,35 @@
+{
+  "metadata_version": 1,
+  "content_schema": "agentworks-playbook/v1",
+  "id": "delivery-quality-reliability-intelligence",
+  "version": "0.1.0",
+  "title": "Delivery, Quality, and Reliability Intelligence",
+  "description": "Calculate governed engineering metrics and identify evidence-backed bottlenecks, regressions, recurring risks, and improvement opportunities.",
+  "hierarchy": [
+    "AgentWorks",
+    "Agentic Engineering Platform",
+    "Engineering Operations Intelligence"
+  ],
+  "order": 2,
+  "entrypoint": "SKILL.md",
+  "audience": "workflow_builder",
+  "setup_prompt": "Use Delivery, Quality, and Reliability Intelligence with my reconciled engineering data. Apply my metric definitions and team boundaries, calculate reproducible trends, investigate only supported changes, and produce evidence-backed findings without individual productivity scoring.",
+  "setup_inputs": [
+    {"id": "foundation", "label": "Reconciled Engineering Data Foundation or equivalent model", "required": true},
+    {"id": "scope", "label": "Teams, repositories, services, and environments", "required": true},
+    {"id": "windows", "label": "Analysis and comparison windows plus business calendar", "required": true},
+    {"id": "metrics", "label": "Customer metric definitions, targets, and exclusions", "required": true},
+    {"id": "quality_gate", "label": "Minimum freshness, coverage, and confidence policy", "required": true},
+    {"id": "audience", "label": "Reporting audience and decision owners", "required": true}
+  ],
+  "required_capabilities": ["engineering_metrics_computation", "cross_source_analysis", "durable_workflow_storage", "workflow_reporting"],
+  "recommended_tools": [
+    {"id": "workflow-database", "name": "AgentWorks workflow database", "type": "builtin", "purpose": "Read normalized engineering records and persist reproducible metric snapshots and findings", "capability": "engineering_metrics_computation", "optional": true},
+    {"id": "source-control", "name": "Source-control MCP", "type": "mcp", "purpose": "Verify authorized PR, review, commit, and check evidence behind a finding", "capability": "source_control_data", "optional": true},
+    {"id": "work-and-reliability", "name": "Issue, CI, deployment, and incident MCPs", "type": "mcp", "purpose": "Verify authorized source records when normalized evidence is incomplete or ambiguous", "capability": "cross_source_analysis", "optional": true}
+  ],
+  "outputs": ["Versioned engineering metric policy", "Reproducible metric snapshots and trends", "Evidence-backed bottleneck and risk findings", "Recommendations with owners and confidence", "Follow-up outcome history", "Live engineering intelligence report"],
+  "setup_playbook": "engineering-data-foundation",
+  "accepts_equivalent_setup": true,
+  "next_playbooks": ["engineering-operations-review"]
+}

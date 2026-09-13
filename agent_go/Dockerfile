@@ -48,6 +48,7 @@ RUN for i in 1 2 3; do GOFLAGS=-mod=mod GOWORK=off go mod download && break || e
 WORKDIR /app
 COPY workspace/ ./workspace/
 COPY agent_go/ ./agent_go/
+COPY playbooks/ ./playbooks/
 
 # Full COPY overwrote the patched go.mod — re-drop the local-dev replaces before build.
 RUN cd /app/agent_go && \
@@ -160,6 +161,8 @@ WORKDIR /app
 # Copy the binaries from builder stage
 COPY --from=builder /app/agent_go/mcp-agent .
 COPY --from=builder /app/agent_go/mcpbridge /usr/local/bin/mcpbridge
+COPY --from=builder /app/playbooks ./playbooks
+ENV AGENTWORKS_PLAYBOOKS_DIR=/app/playbooks
 
 # Copy Python scripts (PDF extraction, etc.)
 COPY agent_go/scripts/extract_pdf_text.py /app/scripts/

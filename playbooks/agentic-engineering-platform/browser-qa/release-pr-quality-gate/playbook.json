@@ -1,0 +1,30 @@
+{
+  "metadata_version": 1,
+  "content_schema": "agentworks-playbook/v1",
+  "id": "release-pr-quality-gate",
+  "version": "0.1.0",
+  "title": "Release and PR Quality Gate",
+  "description": "Bind an exact change or build to required Browser QA suites and publish an auditable pass, fail, or needs-review decision.",
+  "hierarchy": ["AgentWorks", "Agentic Engineering Platform", "Browser QA"],
+  "order": 8,
+  "entrypoint": "SKILL.md",
+  "audience": "workflow_builder",
+  "setup_prompt": "Use Release and PR Quality Gate with my proven Browser QA suites. Bind the exact change and tested build, require complete selected suite results, derive the decision from my policy, and publish only to authorized destinations with real receipts.",
+  "setup_inputs": [
+    {"id": "trigger", "label": "Manual, authenticated API, PR, or release trigger", "required": true},
+    {"id": "identity", "label": "Repository change, build, and environment identity mapping", "required": true},
+    {"id": "required_suites", "label": "Required suites, routes, and groups", "required": true},
+    {"id": "policy", "label": "Blocking, incomplete, rerun, and review policy", "required": true},
+    {"id": "evidence_policy", "label": "Gate and suite evidence retention", "required": true},
+    {"id": "delivery", "label": "Authorized status, report, and notification destinations", "required": false}
+  ],
+  "required_capabilities": ["workflow_trigger", "browser_test_execution", "durable_workflow_storage", "workflow_reporting", "quality_gate_decision"],
+  "recommended_tools": [
+    {"id": "agentworks-api-trigger", "name": "AgentWorks API trigger", "type": "builtin", "purpose": "Start the saved gate route from an authenticated CI or repository event", "capability": "workflow_trigger", "optional": true},
+    {"id": "github", "name": "GitHub CLI or MCP", "type": "cli_or_mcp", "purpose": "Resolve authorized change context and publish an approved check or summary", "capability": "change_context_and_reporting", "optional": true},
+    {"id": "notification-destination", "name": "Notification MCP", "type": "mcp", "purpose": "Deliver explicitly configured gate outcomes", "capability": "notifications", "optional": true}
+  ],
+  "outputs": ["Versioned release-gate policy", "Exact trigger/change/build mapping", "Complete required-suite result set", "Auditable pass/fail/needs-review decision", "Gate report and evidence links", "External delivery receipts when configured"],
+  "setup_playbooks": ["critical-journey-validation"],
+  "accepts_equivalent_setup": true
+}

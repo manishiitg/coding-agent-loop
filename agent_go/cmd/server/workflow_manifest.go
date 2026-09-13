@@ -121,6 +121,10 @@ type WorkflowManifest struct {
 	RunRetentionCount    *int                                        `json:"run_retention_count,omitempty"`
 	FolderAccess         []workflowtypes.WorkflowFolderGrant         `json:"folder_access,omitempty"`
 	FolderAccessRequests []workflowtypes.WorkflowFolderAccessRequest `json:"folder_access_requests,omitempty"`
+	// InstalledPlaybooks are Builder-only setup guides materialized as
+	// workflow-local skills. Execution agents continue to use the workflow and
+	// per-step runtime skill selections.
+	InstalledPlaybooks []InstalledPlaybook `json:"installed_playbooks,omitempty"`
 
 	// Auto-improvement framework fields. See docs/workflow/auto_improvement_framework.md.
 	//
@@ -165,6 +169,17 @@ type WorkflowManifest struct {
 	// (never serialized): set during ReadWorkflowManifest, used to avoid clobbering
 	// the on-disk config on write-back and to flag the issue.
 	MalformedConfig []string `json:"-"`
+}
+
+type InstalledPlaybook struct {
+	ID          string `json:"id"`
+	Title       string `json:"title"`
+	Version     string `json:"version"`
+	Category    string `json:"category"`
+	SkillName   string `json:"skill_name"`
+	SourceHash  string `json:"source_hash"`
+	Status      string `json:"status"`
+	InstalledAt string `json:"installed_at"`
 }
 
 type WorkflowPulseConfig struct {

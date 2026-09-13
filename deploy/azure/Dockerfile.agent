@@ -21,6 +21,7 @@ COPY agent_go/go.mod agent_go/go.sum ./agent_go/
 RUN cd agent_go && go mod download
 
 COPY agent_go/ ./agent_go/
+COPY playbooks/ ./playbooks/
 
 RUN cd /app/agent_go && CGO_ENABLED=1 GOOS=linux go build -ldflags="-w -s" -o /app/agent_go/mcp-agent .
 
@@ -29,6 +30,8 @@ FROM runtime
 
 # Copy the binary from builder stage
 COPY --from=builder /app/agent_go/mcp-agent .
+COPY --from=builder /app/playbooks ./playbooks
+ENV AGENTWORKS_PLAYBOOKS_DIR=/app/playbooks
 
 # Copy Go from builder for code execution mode (run Go snippets)
 COPY --from=builder /usr/local/go /usr/local/go

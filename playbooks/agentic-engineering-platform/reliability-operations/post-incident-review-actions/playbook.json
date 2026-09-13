@@ -1,0 +1,28 @@
+{
+  "metadata_version": 1,
+  "content_schema": "agentworks-playbook/v1",
+  "id": "post-incident-review-actions",
+  "version": "0.1.0",
+  "title": "Post-Incident Review and Actions",
+  "description": "Produce a sourced post-incident review, create governed follow-up work, and verify improvements through completion.",
+  "hierarchy": ["AgentWorks", "Agentic Engineering Platform", "Reliability Operations"],
+  "order": 4,
+  "entrypoint": "SKILL.md",
+  "audience": "workflow_builder",
+  "setup_prompt": "Use Post-Incident Review and Actions with my resolved incident data. Configure the review snapshot, impact and milestone definitions, evidence-backed analysis, review/publication path, action ownership and issue integration, verification, Slack collaboration, and dashboard.",
+  "setup_inputs": [
+    {"id": "incident_record", "label": "Resolved incident, timeline, evidence, remediation, and recovery records", "required": true},
+    {"id": "review_policy", "label": "Review scope, audience, template, approval, and sensitive-data policy", "required": true},
+    {"id": "metrics", "label": "Impact and response milestone definitions", "required": true},
+    {"id": "actions", "label": "Action taxonomy, ownership, due-date, and verification contract", "required": true},
+    {"id": "destinations", "label": "Issue, publication, and Slack destinations with authorization", "required": true}
+  ],
+  "required_capabilities": ["incident_analysis", "durable_workflow_storage", "workflow_reporting", "human_decision", "work_item_tracking"],
+  "recommended_tools": [
+    {"id": "workflow-database", "name": "AgentWorks workflow database", "type": "builtin", "purpose": "Freeze review snapshots and persist findings, actions, verification, and receipts", "capability": "durable_workflow_storage", "optional": true},
+    {"id": "issue-tracker", "name": "Issue-tracker MCP", "type": "mcp", "purpose": "Create approved follow-up work and synchronize identity and status", "capability": "work_item_tracking", "optional": true},
+    {"id": "agentworks-slack-bot", "name": "AgentWorks Slack bot", "type": "builtin", "purpose": "Discuss the review and query durable follow-up action state", "capability": "interactive_reliability_collaboration", "optional": true},
+    {"id": "notification-destination", "name": "Notification MCP", "type": "mcp", "purpose": "Publish an approved review or action reminder and retain delivery receipts", "capability": "notifications", "optional": true}
+  ],
+  "outputs": ["Versioned review and action policy", "Immutable incident review snapshot", "Approved evidence-backed post-incident review", "Created action and publication receipts", "Verified follow-up action state", "Review and action dashboard"]
+}

@@ -242,6 +242,7 @@ function InspectorBody({ workspacePath, presetQueryId }: { workspacePath: string
         return <WorkflowNotificationView workspacePath={workspacePath} headerAction={askAIHeaderAction} />
       case 'access':
         return <WorkflowAccessView workspacePath={workspacePath} headerAction={askAIHeaderAction} />
+      case 'playbooks':
       case 'skills':
       case 'mcp':
       case 'secrets':

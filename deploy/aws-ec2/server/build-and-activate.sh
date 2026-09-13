@@ -50,7 +50,7 @@ trap cleanup_build EXIT
 # All commands below run on this Linux server; there is no artifact upload.
 run_local() { if [[ $# == 1 ]]; then bash -c "$1"; else "$@"; fi; }
 SSH=(run_local)
-mkdir -p "$BUILD_DIR/bin" "$BUILD_DIR/frontend" "$BUILD_DIR/configs" "$BUILD_DIR/systemd" "$BUILD_DIR/claude-skills" "$BUILD_DIR/browser"
+mkdir -p "$BUILD_DIR/bin" "$BUILD_DIR/frontend" "$BUILD_DIR/configs" "$BUILD_DIR/systemd" "$BUILD_DIR/claude-skills" "$BUILD_DIR/browser" "$BUILD_DIR/playbooks"
 python3 "$REPO_ROOT/scripts/build-playwright-packages.py" "$BUILD_DIR/packages"
 # Build exactly the requested checkout while resolving the shared sibling
 # modules from the declared workspace root. The checked-in go.work may point
@@ -100,6 +100,7 @@ install -m 0755 "$SCRIPT_DIR/server/update-coding-clis.sh" "$BUILD_DIR/bin/updat
 install -m 0644 "$SCRIPT_DIR/rootless/video-studio-cli-update.service" "$BUILD_DIR/systemd/video-studio-cli-update.service"
 install -m 0644 "$SCRIPT_DIR/rootless/video-studio-cli-update.timer" "$BUILD_DIR/systemd/video-studio-cli-update.timer"
 cp -R "$REPO_ROOT/agent_go/internal/videoproduct/skills/." "$BUILD_DIR/claude-skills/"
+cp -R "$REPO_ROOT/playbooks/." "$BUILD_DIR/playbooks/"
 
 REMOTE_TOOLS_DIR="/var/lib/video-studio/.local"
 "${SSH[@]}" "command -v python3 >/dev/null"

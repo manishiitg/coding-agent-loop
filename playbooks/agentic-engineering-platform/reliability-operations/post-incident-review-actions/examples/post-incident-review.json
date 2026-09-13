@@ -1,0 +1,12 @@
+{
+  "example": true,
+  "review_id": "pir-example-001",
+  "incident_id": "inc-example-001",
+  "snapshot_revision": "snapshot-example",
+  "status": "draft",
+  "impact": {"summary": "Example only", "evidence": []},
+  "contributing_factors": [],
+  "unknowns": [],
+  "actions": [{"action_id": "action-example-001", "owner": null, "status": "proposed", "verification": null}],
+  "publication": {"status": "not_published", "receipt": null}
+}

@@ -1,0 +1,29 @@
+{
+  "metadata_version": 1,
+  "content_schema": "agentworks-playbook/v1",
+  "id": "incident-investigation-coordination",
+  "version": "0.2.0",
+  "title": "Incident Investigation and Coordination",
+  "description": "Receive reliability errors, correlate incident signals, perform basic evidence-backed RCA, establish impact and severity, and coordinate current status.",
+  "hierarchy": ["AgentWorks", "Agentic Engineering Platform", "Reliability Operations"],
+  "order": 2,
+  "entrypoint": "SKILL.md",
+  "audience": "workflow_builder",
+  "setup_prompt": "Use Incident Investigation and Coordination with my service operations process. Configure authenticated alert/manual/Slack intake, severity and role policy, evidence sources, hypothesis and timeline management, status delivery, dashboard reporting, and remediation handoff.",
+  "setup_inputs": [
+    {"id": "service_scope", "label": "Services, environments, topology, ownership, and SLOs", "required": true},
+    {"id": "incident_policy", "label": "Severity, roles, escalation, update, and closure policy", "required": true},
+    {"id": "signal_sources", "label": "Alert, monitoring, log, trace, deployment, and incident sources", "required": true},
+    {"id": "intake", "label": "Webhook, manual, and Slack intake mappings", "required": true},
+    {"id": "collaboration", "label": "On-call targets, Slack routing, audiences, and restricted-data rules", "required": true}
+  ],
+  "required_capabilities": ["workflow_trigger", "observability_read", "durable_workflow_storage", "workflow_reporting", "incident_analysis", "notifications"],
+  "recommended_tools": [
+    {"id": "agentworks-webhook-trigger", "name": "AgentWorks API trigger", "type": "builtin", "purpose": "Start the saved incident route from authenticated monitoring or incident events", "capability": "workflow_trigger", "optional": true},
+    {"id": "observability-provider", "name": "Observability MCP or CLI", "type": "mcp", "purpose": "Read scoped metrics, logs, traces, alerts, and service health", "capability": "observability_read", "optional": true},
+    {"id": "agentworks-slack-bot", "name": "AgentWorks Slack bot", "type": "builtin", "purpose": "Coordinate one incident thread, questions, decisions, and status", "capability": "interactive_reliability_collaboration", "optional": true},
+    {"id": "incident-provider", "name": "Incident-management MCP", "type": "mcp", "purpose": "Read or update authorized incident records and on-call state", "capability": "incident_management", "optional": true}
+  ],
+  "outputs": ["Versioned incident and integration policy", "Canonical correlated incident record", "Impact/severity decision and timeline", "Basic RCA with evidence, confidence, and unknowns", "Role, escalation, and status receipts", "Incident dashboard and history"],
+  "next_playbooks": ["governed-remediation-recovery", "post-incident-review-actions"]
+}

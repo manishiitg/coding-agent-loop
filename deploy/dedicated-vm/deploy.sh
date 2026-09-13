@@ -78,6 +78,11 @@ if [[ "$STAGE" == "build" || "$STAGE" == "all" ]]; then
     -e "ssh $SSH_OPTS" \
     "$REPO_ROOT/agent_go/" "$SSH_USER@$VM_HOST:$REMOTE_DIR/src/agent_go/"
 
+  echo "    Syncing playbooks/..."
+  rsync -az --delete \
+    -e "ssh $SSH_OPTS" \
+    "$REPO_ROOT/playbooks/" "$SSH_USER@$VM_HOST:$REMOTE_DIR/src/playbooks/"
+
   echo "    Syncing workspace/..."
   rsync -az --delete \
     --exclude='.git' --exclude='node_modules' --exclude='*.db' \

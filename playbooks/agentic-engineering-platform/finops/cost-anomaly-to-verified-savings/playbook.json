@@ -1,0 +1,53 @@
+{
+  "metadata_version": 1,
+  "content_schema": "agentworks-playbook/v1",
+  "id": "cost-anomaly-to-verified-savings",
+  "version": "0.2.0",
+  "title": "Cost Anomaly to Verified Savings",
+  "description": "Detect cloud-cost anomalies, propose evidence-backed rightsizing, prepare approved IaC changes, and verify realized savings and service health.",
+  "hierarchy": [
+    "AgentWorks",
+    "Agentic Engineering Platform",
+    "FinOps"
+  ],
+  "order": 1,
+  "entrypoint": "SKILL.md",
+  "audience": "workflow_builder",
+  "setup_prompt": "Use Cost Anomaly to Verified Savings for my authorized cloud scope. Preserve my billing basis, ownership, reliability limits, IaC workflow, and approval policy; detect and explain anomalies, prepare a concrete rightsizing diff, apply only after approval, and verify actual savings and service health.",
+  "setup_inputs": [
+    {"id": "cloud_scope", "label": "Authorized cloud accounts, projects, subscriptions, and environments", "required": true},
+    {"id": "cost_policy", "label": "Billing basis, currency, attribution, budgets, and baseline policy", "required": true},
+    {"id": "telemetry", "label": "Utilization, demand, capacity, and service-health signals", "required": true},
+    {"id": "ownership", "label": "Service, team, and resource ownership mapping", "required": true},
+    {"id": "iac", "label": "IaC repositories, state ownership, validation, deployment, and rollback path", "required": true},
+    {"id": "change_policy", "label": "Allowed optimizations, risk limits, approvals, and maintenance windows", "required": true},
+    {"id": "verification", "label": "Post-change health and savings verification window", "required": true}
+  ],
+  "required_capabilities": [
+    "cloud_cost_ingestion",
+    "cloud_inventory_and_utilization",
+    "infrastructure_as_code_change",
+    "source_control_change",
+    "human_decision",
+    "scheduled_workflow_execution",
+    "durable_workflow_storage",
+    "workflow_reporting"
+  ],
+  "recommended_tools": [
+    {"id": "cloud-billing", "name": "Cloud billing MCP", "type": "mcp", "purpose": "Read authorized cost, usage, pricing, commitment, credit, and attribution data", "capability": "cloud_cost_ingestion", "optional": true},
+    {"id": "cloud-observability", "name": "Cloud monitoring MCP", "type": "mcp", "purpose": "Read authorized utilization, demand, capacity, error, latency, and service-health signals", "capability": "cloud_inventory_and_utilization", "optional": true},
+    {"id": "terraform-opentofu", "name": "Terraform or OpenTofu CLI", "type": "cli", "purpose": "Prepare and validate reviewable infrastructure-as-code rightsizing changes", "capability": "infrastructure_as_code_change", "optional": true},
+    {"id": "source-control", "name": "Source-control MCP or CLI", "type": "cli_or_mcp", "purpose": "Create an authorized branch or pull request and retain review/change receipts", "capability": "source_control_change", "optional": true},
+    {"id": "agentworks-schedules", "name": "AgentWorks schedules", "type": "builtin", "purpose": "Run anomaly detection and post-change verification at approved intervals", "capability": "scheduled_workflow_execution", "optional": true}
+  ],
+  "outputs": [
+    "Versioned FinOps scope, baseline, and change policy",
+    "Service-specific cost-driver and utilization analysis",
+    "Evidence-backed cost anomaly and cause classification",
+    "Rightsizing candidate with cost, utilization, capacity, and risk evidence",
+    "Reviewable validated IaC diff",
+    "Approval, deployment, and rollback receipts",
+    "Projected and verified savings with post-change service-health evidence",
+    "Live FinOps report"
+  ]
+}

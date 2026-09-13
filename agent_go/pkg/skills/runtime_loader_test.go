@@ -108,6 +108,31 @@ func TestLoadAttachableBuildsSkillFromWorkspace(t *testing.T) {
 	}
 }
 
+func TestLoadAttachableInLoadsWorkspaceScopedSupportingFiles(t *testing.T) {
+	files := map[string]string{
+		"Workflow/demo/skills/basic-browser-setup/SKILL.md":            "---\nname: basic-browser-setup\ndescription: Configure browser QA\n---\nbody\n",
+		"Workflow/demo/skills/basic-browser-setup/references/setup.md": "# Setup\n",
+	}
+	listings := map[string][]DocumentEntry{
+		"Workflow/demo/skills/basic-browser-setup": {
+			{Filepath: "Workflow/demo/skills/basic-browser-setup/SKILL.md", Type: "file"},
+			{Filepath: "Workflow/demo/skills/basic-browser-setup/references", Type: "folder", Children: []DocumentEntry{
+				{Filepath: "Workflow/demo/skills/basic-browser-setup/references/setup.md", Type: "file"},
+			}},
+		},
+	}
+	srv := fakeWorkspaceServer(t, files, listings)
+	defer srv.Close()
+
+	got := LoadAttachableIn(srv.URL, "Workflow/demo", []string{"basic-browser-setup"})
+	if len(got) != 1 || len(got[0].SupportingFiles) != 1 {
+		t.Fatalf("workspace playbook bundle was not attached: %+v", got)
+	}
+	if got[0].SupportingFiles[0].RelPath != "references/setup.md" {
+		t.Fatalf("supporting path = %q", got[0].SupportingFiles[0].RelPath)
+	}
+}
+
 func TestLoadAttachableLoadsAgentBrowserSkill(t *testing.T) {
 	got := LoadAttachable("http://unused.example", []string{"agent-browser"})
 	if len(got) != 1 {

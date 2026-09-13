@@ -1,0 +1,35 @@
+{
+  "metadata_version": 1,
+  "content_schema": "agentworks-playbook/v1",
+  "id": "engineering-operations-review",
+  "version": "0.1.0",
+  "title": "Engineering Operations Review",
+  "description": "Produce recurring evidence-backed engineering reviews with material changes, tracked actions, governed delivery, and historical outcomes.",
+  "hierarchy": [
+    "AgentWorks",
+    "Agentic Engineering Platform",
+    "Engineering Operations Intelligence"
+  ],
+  "order": 3,
+  "entrypoint": "SKILL.md",
+  "audience": "workflow_builder",
+  "setup_prompt": "Use Engineering Operations Review with my governed intelligence data. Freeze the selected period, verify material changes and prior actions, draft audience-appropriate recommendations with evidence, require configured approval, and persist the report and delivery receipts.",
+  "setup_inputs": [
+    {"id": "intelligence", "label": "Governed engineering metrics and findings", "required": true},
+    {"id": "period", "label": "Review cadence, period, and comparison window", "required": true},
+    {"id": "scope", "label": "Teams, repositories, services, and environments", "required": true},
+    {"id": "audience", "label": "Audience, required sections, and sensitive-data rules", "required": true},
+    {"id": "actions", "label": "Action ownership and prior-review follow-up policy", "required": true},
+    {"id": "delivery", "label": "Destinations, notification conditions, and approval policy", "required": true}
+  ],
+  "required_capabilities": ["engineering_intelligence_analysis", "durable_workflow_storage", "workflow_reporting", "human_decision", "scheduled_workflow_execution", "notifications"],
+  "recommended_tools": [
+    {"id": "workflow-database", "name": "AgentWorks workflow database", "type": "builtin", "purpose": "Freeze period snapshots and persist reviews, decisions, actions, follow-ups, and receipts", "capability": "engineering_intelligence_analysis", "optional": true},
+    {"id": "agentworks-schedules", "name": "AgentWorks schedules", "type": "builtin", "purpose": "Run a proven review workflow at the approved cadence", "capability": "scheduled_workflow_execution", "optional": true},
+    {"id": "notification-destination", "name": "Notification MCP", "type": "mcp", "purpose": "Deliver an approved review to the configured audience", "capability": "notifications", "optional": true},
+    {"id": "issue-tracker", "name": "Issue-tracker MCP", "type": "mcp", "purpose": "Create explicitly approved follow-up work and persist its receipt", "capability": "work_item_creation", "optional": true}
+  ],
+  "outputs": ["Versioned review policy", "Frozen period snapshot", "Evidence-backed engineering operations review", "Recommendations and approval decisions", "Tracked actions and follow-up outcomes", "Delivery and optional schedule receipts"],
+  "setup_playbook": "delivery-quality-reliability-intelligence",
+  "accepts_equivalent_setup": true
+}

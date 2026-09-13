@@ -1,6 +1,7 @@
 import {
   Activity,
   BellRing,
+  BookMarked,
   BookOpen,
   Bot,
   BrainCircuit,
@@ -98,6 +99,7 @@ const VIEWS = [
   // in the toolbar because its visibility is permission-gated.
   { id: 'access', kind: 'inspector', label: 'Access', icon: ShieldCheck, toolbarGroup: 'pulse', pane: true },
   // -- capability sections (WorkflowCapabilitiesPanel), then folders -------
+  { id: 'playbooks', kind: 'capability', label: 'Workflow playbooks', icon: BookMarked, toolbarGroup: 'capabilities', pane: true, managesOwnScroll: true },
   { id: 'skills', kind: 'capability', label: 'Workflow skills', icon: Puzzle, toolbarGroup: 'capabilities', pane: true, managesOwnScroll: true },
   { id: 'secrets', kind: 'capability', label: 'Workflow secrets', icon: KeyRound, toolbarGroup: 'capabilities', pane: true },
   { id: 'mcp', kind: 'capability', label: 'Workflow MCP servers', icon: Server, toolbarGroup: 'capabilities', pane: true, managesOwnScroll: true },

@@ -2,6 +2,7 @@ package step_based_workflow
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -12,6 +13,40 @@ import (
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/orchestrator"
 	loggerv2 "github.com/manishiitg/mcpagent/logger/v2"
 )
+
+func TestDirectExecutionLoadsCodeLayoutWithoutBuilder(t *testing.T) {
+	for _, version := range []int{0, 1, 99} {
+		t.Run(fmt.Sprint(version), func(t *testing.T) {
+			base := newFakeWorkspaceAPIWithContent(t, map[string]string{
+				"Workflow/instagram/workflow.json":      fmt.Sprintf(`{"code_layout_version":%d}`, version),
+				"Workflow/instagram/planning/plan.json": `{"steps":[]}`,
+			})
+			c := &StepBasedWorkflowOrchestrator{BaseOrchestrator: base, variableManager: NewVariableManager(base)}
+			// Exercise the real entry point; deliberately stop at an empty plan,
+			// before agents are created. No Builder/ReadCurrentPlan warm-up.
+			_, err := c.CreateTodoList(context.Background(), "test", "Workflow/instagram")
+			if version == 99 {
+				if err == nil || !strings.Contains(err.Error(), "unsupported code_layout_version") {
+					t.Fatalf("unknown layout accepted: %v", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), "no steps") {
+				t.Fatalf("did not reach plan validation: %v", err)
+			}
+			want := "learnings/auth"
+			if version == 1 {
+				want = "code/auth"
+			}
+			if got := c.scriptedSourceDir("auth"); got != want {
+				t.Fatalf("direct execution selected %s, want %s", got, want)
+			}
+			if env := c.codeRuntimeEnv(nil); version == 1 && (env["WORKFLOW_CODE_DEPS"] == "" || env["PYTHONPATH"] == "") {
+				t.Fatal("direct execution lost dependency paths")
+			}
+		})
+	}
+}
 
 func codeLayoutController(t *testing.T, version int32) *StepBasedWorkflowOrchestrator {
 	t.Helper()

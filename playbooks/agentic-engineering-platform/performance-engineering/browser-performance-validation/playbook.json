@@ -2,8 +2,9 @@
   "metadata_version": 1,
   "content_schema": "agentworks-playbook/v1",
   "id": "browser-performance-validation",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "changelog": [
+    {"version": "0.5.0", "summary": "Scopes setup to small engineering teams and defaults to one workflow unless access or lifecycle boundaries require a split."},
     {"version": "0.4.0", "summary": "Defaults human approvals to durable asynchronous review: preparation ends pending review and a later action validates the recorded decision and current state."},
     {"version": "0.3.0", "summary": "Adds an explicit inspect-first discovery step, focused customer questions, recorded user direction, and a clear boundary that installation is not approval."},
     {
@@ -17,6 +18,7 @@
   "order": 1,
   "entrypoint": "SKILL.md",
   "audience": "workflow_builder",
+  "team_scope": "small_team",
   "setup_prompt": "Use Browser Performance Validation with my browser foundation. Preserve my environment and budgets, collect comparable samples for approved pages or journeys, retain redacted diagnostics, and report regressions without changing thresholds.",
   "setup_inputs": [
     {"id": "foundation", "label": "Browser foundation or equivalent setup", "required": true},

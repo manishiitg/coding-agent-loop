@@ -2,8 +2,9 @@
   "metadata_version": 1,
   "content_schema": "agentworks-playbook/v1",
   "id": "basic-browser-setup",
-  "version": "0.8.0",
+  "version": "0.9.0",
   "changelog": [
+    {"version": "0.9.0", "summary": "Scopes setup to small engineering teams and defaults to one workflow unless access or lifecycle boundaries require a split."},
     {"version": "0.8.0", "summary": "Defaults human approvals to durable asynchronous review: preparation ends pending review and a later action validates the recorded decision and current state."},
     {"version": "0.7.0", "summary": "Adds an explicit inspect-first discovery step, focused customer questions, recorded user direction, and a clear boundary that installation is not approval."}
   ],
@@ -17,6 +18,7 @@
   "order": 1,
   "entrypoint": "SKILL.md",
   "audience": "workflow_builder",
+  "team_scope": "small_team",
   "setup_prompt": "Use Basic Browser Setup for my application. Reuse existing configuration, discover and save verified locators, configure Playwright or my chosen runner, execute a saved smoke test from a fresh context, retain redacted video and console/network evidence, and produce a reusable profile and live report.",
   "setup_inputs": [
     {

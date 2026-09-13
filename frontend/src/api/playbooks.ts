@@ -11,6 +11,7 @@ type ServerPlaybook = {
   changelog?: PlaybookChangelogEntry[]
   category: string
   order: number
+  team_scope?: 'small_team'
   setup_prompt?: string
   setup_inputs?: PlaybookSetupInput[]
   required_capabilities?: string[]
@@ -36,6 +37,7 @@ const normalize = (item: ServerPlaybook): PlaybookCatalogItem => ({
   order: item.order,
   inputCount: item.setup_inputs?.length || 0,
   toolCount: item.recommended_tools?.length || 0,
+  teamScope: item.team_scope,
   setupPrompt: item.setup_prompt,
   setupInputs: item.setup_inputs || [],
   requiredCapabilities: item.required_capabilities || [],

@@ -1,0 +1,164 @@
+{
+  "metadata_version": 1,
+  "content_schema": "agentworks-playbook/v1",
+  "id": "engineering-operations-intelligence",
+  "version": "0.1.0",
+  "changelog": [
+    {
+      "version": "0.1.0",
+      "summary": "Combines engineering data foundation, delivery/quality/reliability intelligence, and recurring operations review into one small-team workflow playbook."
+    }
+  ],
+  "title": "Engineering Operations Intelligence",
+  "description": "Connect engineering data, calculate governed delivery, quality, and reliability intelligence, and run evidence-backed reviews in one small-team workflow.",
+  "hierarchy": [
+    "AgentWorks",
+    "Agentic Engineering Platform",
+    "Engineering Operations Intelligence"
+  ],
+  "order": 1,
+  "entrypoint": "SKILL.md",
+  "audience": "workflow_builder",
+  "team_scope": "small_team",
+  "replaces_playbooks": [
+    "engineering-data-foundation",
+    "delivery-quality-reliability-intelligence",
+    "engineering-operations-review"
+  ],
+  "setup_prompt": "Use Engineering Operations Intelligence for my small engineering team. Build one workflow that connects only authorized sources, preserves provenance and customer metric definitions, calculates reproducible delivery, quality, and reliability signals, produces a recurring evidence-backed review, and tracks approved actions and outcomes.",
+  "setup_inputs": [
+    {
+      "id": "scope_sources",
+      "label": "Team, repositories, services, environments, and authorized engineering sources",
+      "required": true
+    },
+    {
+      "id": "history_identity",
+      "label": "History, freshness, timezone, identity, and workflow-state mappings",
+      "required": true
+    },
+    {
+      "id": "goals_metrics",
+      "label": "Engineering goals, metric definitions, targets, exclusions, and data-quality minimums",
+      "required": true
+    },
+    {
+      "id": "review",
+      "label": "Review audience, cadence, comparison window, and required sections",
+      "required": true
+    },
+    {
+      "id": "actions_delivery",
+      "label": "Action owners, approval policy, delivery destinations, and notification conditions",
+      "required": true
+    },
+    {
+      "id": "governance",
+      "label": "Retention, restricted fields, access policy, and source-of-truth precedence",
+      "required": true
+    }
+  ],
+  "required_capabilities": [
+    "engineering_source_ingestion",
+    "engineering_metrics_computation",
+    "cross_source_analysis",
+    "durable_workflow_storage",
+    "workflow_reporting",
+    "human_decision",
+    "scheduled_workflow_execution",
+    "notifications"
+  ],
+  "recommended_tools": [
+    {
+      "id": "source-control",
+      "name": "GitHub or GitLab MCP",
+      "type": "mcp",
+      "purpose": "Read authorized repositories, pull requests, reviews, commits, and checks",
+      "capability": "source_control_data",
+      "optional": true
+    },
+    {
+      "id": "issue-tracker",
+      "name": "Issue-tracker MCP",
+      "type": "mcp",
+      "purpose": "Read work items and create explicitly approved follow-up work",
+      "capability": "work_management_data",
+      "optional": true
+    },
+    {
+      "id": "ci-deployment",
+      "name": "CI and deployment MCP",
+      "type": "mcp",
+      "purpose": "Read build, deployment, rollback, and release events",
+      "capability": "delivery_system_data",
+      "optional": true
+    },
+    {
+      "id": "observability",
+      "name": "Observability and incident MCP",
+      "type": "mcp",
+      "purpose": "Read incidents, alerts, service identity, and recovery evidence",
+      "capability": "reliability_system_data",
+      "optional": true
+    },
+    {
+      "id": "workflow-database",
+      "name": "AgentWorks workflow database",
+      "type": "builtin",
+      "purpose": "Persist normalized records, metric snapshots, findings, reviews, decisions, actions, and receipts",
+      "capability": "durable_workflow_storage",
+      "optional": true
+    },
+    {
+      "id": "agentworks-schedules",
+      "name": "AgentWorks schedules and triggers",
+      "type": "builtin",
+      "purpose": "Refresh sources and run a proven review route at the approved cadence",
+      "capability": "scheduled_workflow_execution",
+      "optional": true
+    }
+  ],
+  "pulse_focus": [
+    {
+      "module": "technical_review",
+      "label": "Technical review",
+      "focus_areas": [
+        "Source freshness, normalization, metric reproducibility, and evidence quality",
+        "Review completeness, decision state, and action receipts"
+      ],
+      "review_when": [
+        "A sync or review fails, evidence is incomplete, or a key metric becomes unreliable"
+      ]
+    },
+    {
+      "module": "architecture_review",
+      "label": "Architecture review",
+      "focus_areas": [
+        "Whether one workflow still fits the team's sources, stores, routes, and permissions",
+        "Identity, history, metric, dashboard, and notification design"
+      ],
+      "review_when": [
+        "Team scope, integrations, access boundaries, volume, or operating lifecycle changes materially"
+      ]
+    },
+    {
+      "module": "strategic_review",
+      "label": "Strategic review",
+      "focus_areas": [
+        "Whether the intelligence supports the team's important engineering decisions",
+        "Actionability, unintended incentives, operating cost, and measured outcomes"
+      ],
+      "review_when": [
+        "Outcomes regress, priorities change, or recurring reviews stop producing useful actions"
+      ]
+    }
+  ],
+  "outputs": [
+    "Authorized source and identity map",
+    "Normalized source-linked engineering records and freshness status",
+    "Versioned delivery, quality, and reliability metric snapshots",
+    "Evidence-backed findings and recommendations",
+    "Recurring engineering operations review and dashboard",
+    "Durable decisions, tracked actions, outcomes, and delivery receipts"
+  ]
+}

@@ -33,6 +33,7 @@ REQUIRED_MANIFEST_FIELDS = [
     "order",
     "entrypoint",
     "audience",
+    "team_scope",
     "setup_prompt",
     "setup_inputs",
     "required_capabilities",
@@ -142,6 +143,8 @@ def validate_package(package: Path, errors: list[str]) -> dict[str, object] | No
         fail(errors, manifest_path, "entrypoint must be SKILL.md")
     if manifest.get("audience") != "workflow_builder":
         fail(errors, manifest_path, "audience must be workflow_builder")
+    if manifest.get("team_scope") != "small_team":
+        fail(errors, manifest_path, "team_scope must be small_team for the current catalog")
     hierarchy = manifest.get("hierarchy")
     if not isinstance(hierarchy, list) or not hierarchy or hierarchy[0] != "AgentWorks":
         fail(errors, manifest_path, "hierarchy must be a non-empty list starting with AgentWorks")

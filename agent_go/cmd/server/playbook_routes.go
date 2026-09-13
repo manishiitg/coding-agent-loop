@@ -31,6 +31,7 @@ type playbookCatalogItem struct {
 	Order                int                      `json:"order"`
 	Entrypoint           string                   `json:"entrypoint"`
 	Audience             string                   `json:"audience"`
+	TeamScope            string                   `json:"team_scope"`
 	SetupPrompt          string                   `json:"setup_prompt"`
 	SetupInputs          []map[string]interface{} `json:"setup_inputs"`
 	RequiredCapabilities []string                 `json:"required_capabilities"`

@@ -12,8 +12,15 @@ func TestLoadPlaybookCatalogFindsEngineeringPlaybooks(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(items) != 19 {
-		t.Fatalf("catalog has %d playbooks, want 19", len(items))
+	if len(items) != 17 {
+		t.Fatalf("catalog has %d playbooks, want 17", len(items))
+	}
+	intelligence, err := findPlaybook("engineering-operations-intelligence")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if intelligence.TeamScope != "small_team" || intelligence.Category != "Engineering Operations Intelligence" {
+		t.Fatalf("engineering intelligence = %+v", intelligence)
 	}
 	item, err := findPlaybook("application-security-assessment-remediation")
 	if err != nil {

@@ -2,8 +2,9 @@
   "metadata_version": 1,
   "content_schema": "agentworks-playbook/v1",
   "id": "browser-test-self-healing",
-  "version": "0.5.1",
+  "version": "0.6.0",
   "changelog": [
+    {"version": "0.6.0", "summary": "Scopes setup to small engineering teams and defaults to one workflow unless access or lifecycle boundaries require a split."},
     {"version": "0.5.1", "summary": "Makes the Report dashboard the primary asynchronous review surface, with Ask in chat for discussion and separate durable approval and application."},
     {"version": "0.5.0", "summary": "Separates repair preparation from application: verified candidates become durable pending reviews, and a later action route validates approval and current source state before applying."},
     {"version": "0.4.0", "summary": "Adds an explicit inspect-first discovery step, focused customer questions, recorded user direction, and a clear boundary that installation is not approval."}
@@ -18,6 +19,7 @@
   "order": 6,
   "entrypoint": "SKILL.md",
   "audience": "workflow_builder",
+  "team_scope": "small_team",
   "setup_prompt": "Use Browser Test Self-Healing with my existing browser QA foundation. Preserve original video and console/network evidence, classify the failure, propose only eligible test-automation repairs, and verify candidates in isolation with new evidence. End preparation with a durable pending review in the dashboard. Configure a separate later action route that validates the recorded approval, exact patch, and current source before applying, rerunning canonical tests, and updating knowledge and reporting.",
   "setup_inputs": [
     {"id": "foundation", "label": "Browser foundation and application QA knowledge", "required": true},

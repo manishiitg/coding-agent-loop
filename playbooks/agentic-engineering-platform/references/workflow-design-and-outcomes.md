@@ -20,11 +20,11 @@ Never invent a target after observing results. When no approved threshold exists
 
 ## Current or separate workflow
 
-Prefer the current workflow when the capability shares its objective, owner, access boundary, environment, trigger or cadence, durable data, and lifecycle, and can be expressed as a coherent route or step group.
+The current catalog targets small engineering teams. Prefer one understandable workflow with coherent routes when the capability shares its objective, owner, access boundary, environment, durable data, and operating lifecycle. Minimize connectors, stores, dashboards, schedules, and approval paths the team must maintain.
 
 Recommend a separate workflow when it has an independent objective or owner; a materially different trigger, cadence, environment, tenant, credential or permission boundary; an approval or blast-radius boundary; distinct scaling, retention, deployment, or reliability needs; or a lifecycle that should succeed and fail independently.
 
-Do not split merely because a playbook has several steps, and do not force unrelated operations into one workflow for convenience. For separate workflows, define the supported handoff, stable identifiers, data contract, permissions, retry/idempotency behavior, and reporting ownership. Do not copy secrets or rely on another workflow's private paths.
+Do not split because a playbook has several stages, a source refreshes more frequently, or a route has its own trigger. Use a separate workflow only when the boundary must succeed, fail, deploy, retain data, or restrict access independently. For separate workflows, define the supported handoff, stable identifiers, data contract, permissions, retry/idempotency behavior, and reporting ownership. Do not copy secrets or rely on another workflow's private paths.
 
 ## Triggers and schedules
 

@@ -1,4 +1,4 @@
-# Engineering operations review workflow
+# Recurring engineering operations review stage
 
 ## Define the review contract
 

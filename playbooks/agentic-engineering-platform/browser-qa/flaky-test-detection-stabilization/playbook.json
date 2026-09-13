@@ -2,8 +2,9 @@
   "metadata_version": 1,
   "content_schema": "agentworks-playbook/v1",
   "id": "flaky-test-detection-stabilization",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "changelog": [
+    {"version": "0.4.0", "summary": "Scopes setup to small engineering teams and defaults to one workflow unless access or lifecycle boundaries require a split."},
     {"version": "0.3.0", "summary": "Defaults human approvals to durable asynchronous review: preparation ends pending review and a later action validates the recorded decision and current state."},
     {"version": "0.2.0", "summary": "Adds an explicit inspect-first discovery step, focused customer questions, recorded user direction, and a clear boundary that installation is not approval."}
   ],
@@ -13,6 +14,7 @@
   "order": 5,
   "entrypoint": "SKILL.md",
   "audience": "workflow_builder",
+  "team_scope": "small_team",
   "setup_prompt": "Use Flaky-Test Detection and Stabilization for this browser test. Repeat the exact case under controlled profiles, preserve passing and failing evidence, classify the instability, and verify only reviewed stabilization changes without quarantining or weakening the test.",
   "setup_inputs": [
     {"id": "test", "label": "Canonical test and source revision", "required": true},

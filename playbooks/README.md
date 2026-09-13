@@ -2,7 +2,7 @@
 
 Versioned, authorable skill packages for AgentWorks' workflow builder.
 
-Playbooks provide concise outcome guidance, decision criteria, and proven patterns. They do not override the user's requested process or require one fixed workflow graph. The builder inspects the existing workflow and current AgentWorks capabilities, preserves explicit user choices, and adapts only the relevant guidance.
+Playbooks provide concise outcome guidance, decision criteria, and proven patterns for small engineering teams. They do not override the user's requested process or require one fixed workflow graph. The builder starts with one understandable workflow, preserves explicit user choices, and adds a separate workflow only for incompatible access or lifecycle boundaries.
 
 ```text
 AgentWorks
@@ -23,9 +23,7 @@ AgentWorks
     │   ├── Browser Performance Validation
     │   └── API Performance Validation
     ├── Engineering Operations Intelligence
-    │   ├── Engineering Data Foundation
-    │   ├── Delivery, Quality, and Reliability Intelligence
-    │   └── Engineering Operations Review
+    │   └── Engineering Operations Intelligence
     ├── FinOps
     │   └── Cost Anomaly to Verified Savings
     └── Reliability Operations
@@ -65,11 +63,9 @@ AgentWorks
 
 | Playbook | Outcome |
 | --- | --- |
-| [Engineering Data Foundation](agentic-engineering-platform/engineering-operations-intelligence/engineering-data-foundation/SKILL.md) | Connect and normalize issues, code changes, CI, builds, deployments, QA, security, performance, and incidents with provenance. |
-| [Delivery, Quality, and Reliability Intelligence](agentic-engineering-platform/engineering-operations-intelligence/delivery-quality-reliability-intelligence/SKILL.md) | Calculate governed team/system metrics and identify evidence-backed bottlenecks, regressions, and recurring risks. |
-| [Engineering Operations Review](agentic-engineering-platform/engineering-operations-intelligence/engineering-operations-review/SKILL.md) | Produce recurring evidence-backed reviews with tracked actions, governed approval, and delivery receipts. |
+| [Engineering Operations Intelligence](agentic-engineering-platform/engineering-operations-intelligence/engineering-operations-intelligence/SKILL.md) | Connect authorized engineering data, calculate governed delivery/quality/reliability signals, and run evidence-backed reviews with tracked actions in one workflow. |
 
-Engineering Operations Intelligence shares the [operations data model](agentic-engineering-platform/engineering-operations-intelligence/references/operations-data-model.md) for identity, lineage, metric definitions, and data-quality rules.
+Engineering Operations Intelligence uses the shared [operations data model](agentic-engineering-platform/engineering-operations-intelligence/references/operations-data-model.md) for identity, lineage, metric definitions, and data-quality rules.
 
 ### FinOps
 
@@ -111,6 +107,8 @@ Installation does not create schedules, connect accounts, install recommended pu
 Human review is asynchronous by default. A preparation route saves the exact proposal and evidence, creates a nonblocking `create_human_input_request`, shows it in the Report dashboard and Pulse decision panel, and ends without applying the change. The user may ask about it in chat, then approve, reject, or defer later. Discussion does not decide; deciding does not apply. A separate action reads that durable answer, revalidates the proposal and current target state, uses the executor authorized for that target, and records the outcome. Blocking in-run human branches are reserved for explicitly attended bounded runs.
 
 ## Foundation and reuse
+
+The catalog currently targets small engineering teams. Each playbook defaults to extending one workflow with routes that share its goal, access, durable data, dashboard, and lifecycle. Recommend another workflow only when access, ownership, deployment, retention, scale, or failure isolation creates a boundary the team must operate independently.
 
 Basic Browser Setup produces a versioned, non-secret `browser-foundation/v1` profile pointing to canonical suite/config/locator sources. The other Browser QA playbooks reuse these sources and add outcome-specific coverage or operations. Each accepts an equivalent verified configuration where declared and preserves an explicitly chosen compatible runner; a prerequisite need not have been installed by name.
 

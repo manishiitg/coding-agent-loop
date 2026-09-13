@@ -19,6 +19,7 @@
   "order": 1,
   "entrypoint": "SKILL.md",
   "audience": "workflow_builder",
+  "team_scope": "small_team",
   "setup_prompt": "Use Example Playbook to adapt my existing workflow and create the requested capability.",
   "setup_inputs": [
     {

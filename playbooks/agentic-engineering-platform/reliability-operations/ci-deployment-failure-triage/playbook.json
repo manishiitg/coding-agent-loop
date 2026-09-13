@@ -2,8 +2,9 @@
   "metadata_version": 1,
   "content_schema": "agentworks-playbook/v1",
   "id": "ci-deployment-failure-triage",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "changelog": [
+    {"version": "0.4.0", "summary": "Scopes setup to small engineering teams and defaults to one workflow unless access or lifecycle boundaries require a split."},
     {"version": "0.3.0", "summary": "Defaults human approvals to durable asynchronous review: preparation ends pending review and a later action validates the recorded decision and current state."},
     {"version": "0.2.0", "summary": "Adds an explicit inspect-first discovery step, focused customer questions, recorded user direction, and a clear boundary that installation is not approval."}
   ],
@@ -13,6 +14,7 @@
   "order": 1,
   "entrypoint": "SKILL.md",
   "audience": "workflow_builder",
+  "team_scope": "small_team",
   "setup_prompt": "Use CI and Deployment Failure Triage with my delivery systems. Configure authenticated event intake, exact run/change identity, evidence collection and redaction, classification, safe rerun/escalation rules, dashboard reporting, and Slack collaboration where selected.",
   "setup_inputs": [
     {"id": "delivery_sources", "label": "CI/CD providers, repositories, services, and environments", "required": true},

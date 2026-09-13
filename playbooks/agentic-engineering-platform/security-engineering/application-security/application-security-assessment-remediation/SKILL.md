@@ -11,11 +11,11 @@ Create one governed AppSec workflow that inventories authorized attack surface, 
 
 ## When to use
 
-Use for authorized application assessment, CI security gates, bounded pentests, vulnerability intake, and remediation. Select only relevant routes. Browser assessment may reuse verified Browser QA setup; code-only work does not require it.
+Use for authorized application assessment, CI security gates, bounded pentests, vulnerability intake, and remediation. Reuse verified Browser QA setup when applicable.
 
 ## Discovery and user direction
 
-Inspect the current workflow, goals, metrics, configuration, capabilities, stores, reports, and triggers before proposing changes. Summarize reusable design and gaps, then ask focused questions for unresolved customer choices such as scope, success, approvals, thresholds, ownership, and budgets. Record the answers as customer direction. Installation alone does not approve workflow changes or execution.
+Inspect the current workflow, goals, metrics, configuration, capabilities, stores, reports, and triggers before proposing changes. Summarize reusable design and gaps, then ask focused questions for unresolved customer choices such as scope, success, approvals, thresholds, ownership, and budgets. Record the answers as customer direction. Installation alone does not approve workflow changes or execution. Default to one small-team workflow; split only for incompatible access or lifecycle boundaries.
 
 ## Required inputs
 

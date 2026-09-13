@@ -2,7 +2,7 @@
 
 ## Purpose
 
-An AgentWorks playbook is a small, versioned skill package that helps the workflow builder adapt proven operating guidance to a customer's process. It is guidance for building or improving a workflow, not an executable workflow definition.
+An AgentWorks playbook is a small, versioned skill package that helps the workflow builder adapt proven operating guidance to a customer's process. It is guidance for building or improving a workflow, not an executable workflow definition. The current catalog targets small engineering teams: default to one understandable workflow and introduce separate workflows only for incompatible access or lifecycle boundaries.
 
 The user's request, durable preferences, existing workflow, and live platform capabilities take precedence. Installation records how the builder adapted the source package; it does not silently replace the customer's plan.
 
@@ -79,6 +79,7 @@ The name must match `playbook.json.id` and the package directory. Put triggering
 | `order` | Sibling display order. |
 | `entrypoint` | `SKILL.md`. |
 | `audience` | `workflow_builder`. |
+| `team_scope` | Current catalog value is `small_team`; setup should minimize operational overhead and workflow count. |
 | `setup_prompt` | User-visible instruction used to start an installation or adaptation. |
 | `setup_inputs` | Input descriptors with stable IDs, labels, and required/default conditions. |
 | `required_capabilities` | Capability names the builder must resolve or explicitly mark unavailable. |
@@ -103,7 +104,7 @@ The builder consumes a playbook progressively:
 2. Inspect the existing plan, goals, metrics, workflow configuration, selected capabilities, durable stores, report, and triggers. Summarize what can be reused and what is missing.
 3. Resolve required inputs and distinguish known values, reasonable reversible defaults, customer decisions, and blockers. Ask focused questions for material unresolved choices before changing the workflow, then record the answers as customer direction.
 4. Map the requested outcome to existing goals and metrics; recommend missing definitions without inventing customer targets.
-5. Recommend whether to extend the current workflow, add a route, or create a separate workflow, with concrete reasons and tradeoffs.
+5. Default to extending one small-team workflow with a route. Recommend a separate workflow only for incompatible access, ownership, trigger, deployment, retention, or failure lifecycles, with concrete reasons and tradeoffs.
 6. Recommend how it starts: manual action, workflow handoff, webhook or event, release gate, or schedule. Define scope, cadence and timezone or event filters, concurrency, retries, budget, notification behavior, and proof of completion without enabling an unapproved trigger.
 7. Compare the playbook's Technical, Architecture, and Strategic Pulse focus with existing review coverage. Recommend only useful lenses and keep Plan Drift generic.
 8. Load only the references relevant to the current operation.

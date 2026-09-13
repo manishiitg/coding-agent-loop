@@ -2,8 +2,9 @@
   "metadata_version": 1,
   "content_schema": "agentworks-playbook/v1",
   "id": "role-permission-validation",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "changelog": [
+    {"version": "0.4.0", "summary": "Scopes setup to small engineering teams and defaults to one workflow unless access or lifecycle boundaries require a split."},
     {"version": "0.3.0", "summary": "Defaults human approvals to durable asynchronous review: preparation ends pending review and a later action validates the recorded decision and current state."},
     {"version": "0.2.0", "summary": "Adds an explicit inspect-first discovery step, focused customer questions, recorded user direction, and a clear boundary that installation is not approval."}
   ],
@@ -13,6 +14,7 @@
   "order": 3,
   "entrypoint": "SKILL.md",
   "audience": "workflow_builder",
+  "team_scope": "small_team",
   "setup_prompt": "Use Role and Permission Validation with my authenticated browser foundation. Build an approved actor-resource-action matrix, verify allowed and denied paths including direct navigation, and retain redacted evidence without changing permissions.",
   "setup_inputs": [
     {"id": "foundation", "label": "Browser and authentication foundation", "required": true},

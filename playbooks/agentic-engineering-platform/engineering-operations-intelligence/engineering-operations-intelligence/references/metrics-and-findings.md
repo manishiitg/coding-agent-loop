@@ -1,4 +1,4 @@
-# Delivery, quality, and reliability intelligence workflow
+# Engineering metrics and findings stage
 
 ## Freeze the analysis contract
 
@@ -18,7 +18,7 @@ A scripted snapshot step validates input quality, selects the declared populatio
 
 One message sequence investigates candidates. It reopens supporting records, checks mapping and denominator changes, looks for seasonality or scope changes, considers competing explanations, and produces findings with confidence, evidence, impact, and a bounded recommended action. Correlation remains correlation unless stronger evidence supports causation.
 
-A scripted finalizer accounts for every expected metric, persists accepted findings/recommendations, and generates the report data snapshot. External publication or work-item creation uses configured approval and a separate deterministic action/receipt boundary.
+A scripted finalizer accounts for every expected metric, persists accepted findings/recommendations, and generates the review input snapshot in the same workflow. External publication or work-item creation uses configured approval and a separate deterministic action/receipt boundary.
 
 ## Report and follow-up
 

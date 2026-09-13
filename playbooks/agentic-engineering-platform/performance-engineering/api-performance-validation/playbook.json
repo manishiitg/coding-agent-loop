@@ -2,8 +2,9 @@
   "metadata_version": 1,
   "content_schema": "agentworks-playbook/v1",
   "id": "api-performance-validation",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "changelog": [
+    {"version": "0.4.0", "summary": "Scopes setup to small engineering teams and defaults to one workflow unless access or lifecycle boundaries require a split."},
     {"version": "0.3.0", "summary": "Defaults human approvals to durable asynchronous review: preparation ends pending review and a later action validates the recorded decision and current state."},
     {"version": "0.2.0", "summary": "Adds an explicit inspect-first discovery step, focused customer questions, recorded user direction, and a clear boundary that installation is not approval."}
   ],
@@ -17,6 +18,7 @@
   "order": 2,
   "entrypoint": "SKILL.md",
   "audience": "workflow_builder",
+  "team_scope": "small_team",
   "setup_prompt": "Use API Performance Validation for my authorized service environment. Preserve the exact target, authentication, scenarios, load limits, and budgets; run a bounded repeatable profile; retain sanitized measurements and diagnostics; and report regressions without changing policy.",
   "setup_inputs": [
     {

@@ -1,4 +1,4 @@
-# Engineering data foundation workflow
+# Engineering operations data stage
 
 ## Inspect and map before ingestion
 
@@ -28,6 +28,6 @@ Validate initial and incremental sync, pagination boundary, duplicate delivery, 
 
 Build a live data-quality view showing source status, last successful and attempted sync, lag, records by entity, coverage window, cursor, errors, unmapped/conflicting identities, relationship coverage, reconciliation samples, and downstream readiness. No dashboard metric should appear trusted when its declared source quality gate fails.
 
-## Handoff
+## Continue in the same workflow
 
-Delivery/Quality/Reliability Intelligence consumes the schema and a frozen data-quality snapshot. Return table contracts, source/mapping versions, usable coverage intervals, known exclusions, and query examples. Do not require downstream agents to reconstruct meaning from connector payloads or chat history.
+The metric stage consumes the schema and a frozen data-quality snapshot from the same workflow database. Persist table contracts, source/mapping versions, usable coverage intervals, known exclusions, and query examples. Do not require later steps to reconstruct meaning from connector payloads or chat history.

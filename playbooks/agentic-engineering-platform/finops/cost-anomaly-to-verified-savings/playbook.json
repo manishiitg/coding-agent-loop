@@ -2,8 +2,9 @@
   "metadata_version": 1,
   "content_schema": "agentworks-playbook/v1",
   "id": "cost-anomaly-to-verified-savings",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "changelog": [
+    {"version": "0.5.0", "summary": "Scopes setup to small engineering teams and defaults to one workflow unless access or lifecycle boundaries require a split."},
     {"version": "0.4.0", "summary": "Defaults human approvals to durable asynchronous review: preparation ends pending review and a later action validates the recorded decision and current state."},
     {"version": "0.3.0", "summary": "Adds an explicit inspect-first discovery step, focused customer questions, recorded user direction, and a clear boundary that installation is not approval."}
   ],
@@ -17,6 +18,7 @@
   "order": 1,
   "entrypoint": "SKILL.md",
   "audience": "workflow_builder",
+  "team_scope": "small_team",
   "setup_prompt": "Use Cost Anomaly to Verified Savings for my authorized cloud scope. Preserve my billing basis, ownership, reliability limits, IaC workflow, and approval policy; detect and explain anomalies, prepare a concrete rightsizing diff, apply only after approval, and verify actual savings and service health.",
   "setup_inputs": [
     {"id": "cloud_scope", "label": "Authorized cloud accounts, projects, subscriptions, and environments", "required": true},

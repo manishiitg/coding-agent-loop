@@ -2,7 +2,7 @@
   "metadata_version": 1,
   "content_schema": "agentworks-playbook/v1",
   "id": "browser-performance-validation",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "title": "Browser Performance Validation",
   "description": "Measure approved browser pages and journeys against customer-defined budgets with comparable samples and durable diagnostics.",
   "hierarchy": ["AgentWorks", "Agentic Engineering Platform", "Performance Engineering"],

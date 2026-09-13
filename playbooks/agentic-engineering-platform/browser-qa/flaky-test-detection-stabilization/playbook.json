@@ -2,7 +2,7 @@
   "metadata_version": 1,
   "content_schema": "agentworks-playbook/v1",
   "id": "flaky-test-detection-stabilization",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "title": "Flaky-Test Detection and Stabilization",
   "description": "Detect inconsistent browser-test outcomes through bounded repeated runs and verify reviewed stabilization without hiding failures.",
   "hierarchy": ["AgentWorks", "Agentic Engineering Platform", "Browser QA"],

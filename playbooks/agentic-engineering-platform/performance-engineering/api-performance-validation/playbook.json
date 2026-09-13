@@ -2,7 +2,7 @@
   "metadata_version": 1,
   "content_schema": "agentworks-playbook/v1",
   "id": "api-performance-validation",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "title": "API Performance Validation",
   "description": "Measure approved API scenarios under bounded load against customer-defined latency, throughput, error, and capacity policies.",
   "hierarchy": [

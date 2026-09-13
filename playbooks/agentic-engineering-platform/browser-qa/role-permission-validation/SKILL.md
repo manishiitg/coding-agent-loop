@@ -35,6 +35,7 @@ Do not infer permission policy from the current UI, use production identities wi
 
 ## Read details when needed
 
+- [Workflow design and outcomes](../../references/workflow-design-and-outcomes.md): goals, metrics, and current-versus-separate workflow decisions.
 - [AgentWorks plan and tools](../references/agentworks-plan-and-tools.md): step and platform-tool choices.
 - [Evidence capture](../references/evidence-capture.md): durable, redacted attempt evidence.
 - [Permission guide](references/permission-workflow.md): matrix design, execution, and acceptance cases.

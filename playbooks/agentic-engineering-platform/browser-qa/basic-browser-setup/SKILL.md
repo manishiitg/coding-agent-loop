@@ -35,6 +35,7 @@ Preserve user preferences, secrets boundaries, existing compatible configuration
 
 ## Read details when needed
 
+- [Workflow design and outcomes](../../references/workflow-design-and-outcomes.md): goals, metrics, and current-versus-separate workflow decisions.
 - [AgentWorks plan and tools](../references/agentworks-plan-and-tools.md): step boundaries, platform tools, stores, and execution.
 - [Evidence capture](../references/evidence-capture.md): video, console/network logs, redaction, storage, and dashboard behavior.
 - [Setup and handoff](references/setup-and-handoff.md): builder wiring, KB persistence, reporting, and reuse.

@@ -35,6 +35,7 @@ Never exceed scope, infer production permission, perform credential attacks, den
 
 ## Read details when needed
 
+- [Workflow design and outcomes](../../../references/workflow-design-and-outcomes.md): goals, metrics, and current-versus-separate workflow decisions.
 - [Scope and authorization](references/scope-and-authorization.md): rules of engagement and scope gate.
 - [Assessment routes](references/assessment-routes.md): choose browser, API, code, dependency, secret, and configuration paths.
 - [Findings and remediation](references/findings-remediation-verification.md): validate, fix, approve, deploy, and retest.

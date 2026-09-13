@@ -2,7 +2,7 @@
   "metadata_version": 1,
   "content_schema": "agentworks-playbook/v1",
   "id": "delivery-quality-reliability-intelligence",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "title": "Delivery, Quality, and Reliability Intelligence",
   "description": "Calculate governed engineering metrics and identify evidence-backed bottlenecks, regressions, recurring risks, and improvement opportunities.",
   "hierarchy": [

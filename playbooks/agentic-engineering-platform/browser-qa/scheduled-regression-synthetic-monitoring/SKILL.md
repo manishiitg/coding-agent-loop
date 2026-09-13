@@ -35,6 +35,7 @@ Do not schedule an unproven route, wait indefinitely for humans, auto-approve ch
 
 ## Read details when needed
 
+- [Workflow design and outcomes](../../references/workflow-design-and-outcomes.md): goals, metrics, and current-versus-separate workflow decisions.
 - [AgentWorks plan and tools](../references/agentworks-plan-and-tools.md): execution and persistence choices.
 - [Evidence capture](../references/evidence-capture.md): unattended evidence handling.
 - [Scheduling guide](references/scheduling-workflow.md): readiness, AgentWorks tools, history, and notifications.

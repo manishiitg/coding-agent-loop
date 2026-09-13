@@ -35,6 +35,7 @@ Do not automatically quarantine, skip, weaken assertions, inflate waits/timeouts
 
 ## Read details when needed
 
+- [Workflow design and outcomes](../../references/workflow-design-and-outcomes.md): goals, metrics, and current-versus-separate workflow decisions.
 - [AgentWorks plan and tools](../references/agentworks-plan-and-tools.md): step and platform-tool choices.
 - [Evidence capture](../references/evidence-capture.md): comparable attempt evidence.
 - [Flake guide](references/flake-workflow.md): experiment design, classification, and stabilization.

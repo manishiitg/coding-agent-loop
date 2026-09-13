@@ -35,6 +35,7 @@ Default integrations to read-only. Do not infer people or repository mappings si
 
 ## Read details when needed
 
+- [Workflow design and outcomes](../../references/workflow-design-and-outcomes.md): goals, metrics, and current-versus-separate workflow decisions.
 - [Operations data model](../references/operations-data-model.md): shared entities, lineage, identity, and metric governance.
 - [Foundation workflow](references/data-foundation-workflow.md): ingestion, AgentWorks steps, persistence, and acceptance cases.
 - [Example source map](examples/source-map.json): fictional integration and mapping shape.

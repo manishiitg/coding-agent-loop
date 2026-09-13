@@ -169,6 +169,9 @@ def validate_package(package: Path, errors: list[str]) -> dict[str, object] | No
             r"^## (.+?)\s*\n(.*?)(?=^## |\Z)", text, re.MULTILINE | re.DOTALL
         )
     }
+    design_guidance = section_bodies.get("Read details when needed", "")
+    if "workflow-design-and-outcomes.md" not in design_guidance:
+        fail(errors, skill_path, "Read details when needed must link the shared workflow design and outcomes guide")
     plan_guidance = section_bodies.get("Plan and AgentWorks tools", "")
     if not re.search(r"\b(?:step|steps|route|routes)\b", plan_guidance, re.IGNORECASE):
         fail(errors, skill_path, "Plan and AgentWorks tools must explain plan steps or routes")

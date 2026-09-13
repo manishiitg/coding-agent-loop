@@ -35,6 +35,7 @@ Do not expose secrets from logs, rerun deterministic failures repeatedly, deploy
 
 ## Read details when needed
 
+- [Workflow design and outcomes](../../references/workflow-design-and-outcomes.md): goals, metrics, and current-versus-separate workflow decisions.
 - [Triage workflow](references/triage-workflow.md): evidence collection, classification, actions, and test cases.
 - [Reliability event contract](../references/reliability-event-contract.md): shared identity, evidence, state, and metrics.
 - [Triggers, webhooks, and Slack](../references/triggers-webhooks-and-slack.md): integration and interaction rules.

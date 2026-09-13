@@ -35,6 +35,7 @@ Do not weaken assertions, silently change approved outcomes, hide missing covera
 
 ## Read details when needed
 
+- [Workflow design and outcomes](../../references/workflow-design-and-outcomes.md): goals, metrics, and current-versus-separate workflow decisions.
 - [AgentWorks plan and tools](../references/agentworks-plan-and-tools.md): step boundaries, platform tools, stores, and execution.
 - [Evidence capture](../references/evidence-capture.md): video, console/network logs, redaction, storage, and dashboard behavior.
 - [Execution and results](references/execution-and-results.md): builder wiring, KB updates, classifications, and status rules.

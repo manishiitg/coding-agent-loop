@@ -2,7 +2,7 @@
   "metadata_version": 1,
   "content_schema": "agentworks-playbook/v1",
   "id": "basic-browser-setup",
-  "version": "0.6.0",
+  "version": "0.6.1",
   "title": "Basic Browser Setup",
   "description": "Configure browser access and Playwright, save verified locators, capture video plus console/network evidence, and establish reporting.",
   "hierarchy": [

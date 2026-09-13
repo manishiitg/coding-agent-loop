@@ -88,6 +88,11 @@ func (api *StreamingAPI) installWorkflowPhaseTools(
 	}
 	switch workflowPhaseID {
 	case workflowtypes.WorkflowStatusWorkflowBuilder:
+		if policy.allows("plan_authoring") {
+			if err := api.registerPlaybookSearchTool(definitionAgent, phaseWorkspacePath); err != nil {
+				return fmt.Errorf("register search_playbooks: %w", err)
+			}
+		}
 		// Keep the definition stable across persistent CLI turns. The executor
 		// reads current workflow intent on every call, including disabled mode.
 		if phaseWorkspacePath != "" {

@@ -2,7 +2,7 @@
   "metadata_version": 1,
   "content_schema": "agentworks-playbook/v1",
   "id": "ci-deployment-failure-triage",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "title": "CI and Deployment Failure Triage",
   "description": "Ingest CI and deployment failures, classify likely cause with evidence, perform safe policy actions, and route the result.",
   "hierarchy": ["AgentWorks", "Agentic Engineering Platform", "Reliability Operations"],

@@ -35,6 +35,7 @@ Do not trigger unapproved lockouts, recovery messages, enrollment changes, accou
 
 ## Read details when needed
 
+- [Workflow design and outcomes](../../references/workflow-design-and-outcomes.md): goals, metrics, and current-versus-separate workflow decisions.
 - [AgentWorks plan and tools](../references/agentworks-plan-and-tools.md): step and platform-tool choices.
 - [Evidence capture](../references/evidence-capture.md): durable, redacted attempt evidence.
 - [Authentication guide](references/authentication-workflow.md): scope, flow, storage, and acceptance cases.

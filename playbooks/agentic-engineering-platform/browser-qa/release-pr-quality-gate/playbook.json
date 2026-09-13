@@ -2,7 +2,7 @@
   "metadata_version": 1,
   "content_schema": "agentworks-playbook/v1",
   "id": "release-pr-quality-gate",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "title": "Release and PR Quality Gate",
   "description": "Bind an exact change or build to required Browser QA suites and publish an auditable pass, fail, or needs-review decision.",
   "hierarchy": ["AgentWorks", "Agentic Engineering Platform", "Browser QA"],

@@ -39,8 +39,8 @@ func TestRewriteExternalPlaybookLinksMaterializesSharedReferences(t *testing.T) 
 	if strings.Contains(rewritten, "](../references/") {
 		t.Fatalf("shared links were not rewritten:\n%s", rewritten)
 	}
-	if len(external) != 2 {
-		t.Fatalf("materialized references = %v, want two", external)
+	if len(external) != 3 {
+		t.Fatalf("materialized references = %v, want three", external)
 	}
 }
 

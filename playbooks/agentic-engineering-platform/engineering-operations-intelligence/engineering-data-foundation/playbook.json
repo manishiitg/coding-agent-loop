@@ -2,7 +2,7 @@
   "metadata_version": 1,
   "content_schema": "agentworks-playbook/v1",
   "id": "engineering-data-foundation",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "title": "Engineering Data Foundation",
   "description": "Connect and normalize engineering delivery, quality, release, and incident data with durable identity, freshness, and provenance.",
   "hierarchy": [

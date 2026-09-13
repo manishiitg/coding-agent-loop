@@ -2,7 +2,7 @@
   "metadata_version": 1,
   "content_schema": "agentworks-playbook/v1",
   "id": "incident-investigation-coordination",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "title": "Incident Investigation and Coordination",
   "description": "Receive reliability errors, correlate incident signals, perform basic evidence-backed RCA, establish impact and severity, and coordinate current status.",
   "hierarchy": ["AgentWorks", "Agentic Engineering Platform", "Reliability Operations"],

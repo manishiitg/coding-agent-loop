@@ -322,11 +322,11 @@ func rewriteExternalPlaybookLinks(content, sourcePath, sourceRoot string, extern
 		if info, statErr := os.Stat(resolved); statErr != nil || info.IsDir() {
 			return match
 		}
-		_, catalogRoot, _, _ := runtime.Caller(0)
-		catalogRoot = filepath.Join(filepath.Dir(catalogRoot), "..", "..", "..", "playbooks", "agentic-engineering-platform")
-		if configured := strings.TrimSpace(os.Getenv("AGENTWORKS_PLAYBOOKS_DIR")); configured != "" {
-			catalogRoot = filepath.Join(configured, "agentic-engineering-platform")
+		playbookRoot, rootErr := playbooksRoot()
+		if rootErr != nil {
+			return match
 		}
+		catalogRoot := filepath.Join(playbookRoot, "agentic-engineering-platform")
 		relToCatalog, relErr := filepath.Rel(filepath.Clean(catalogRoot), resolved)
 		if relErr != nil || strings.HasPrefix(relToCatalog, "..") {
 			return match

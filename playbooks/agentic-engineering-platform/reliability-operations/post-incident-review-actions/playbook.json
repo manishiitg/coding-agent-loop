@@ -2,7 +2,7 @@
   "metadata_version": 1,
   "content_schema": "agentworks-playbook/v1",
   "id": "post-incident-review-actions",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "title": "Post-Incident Review and Actions",
   "description": "Produce a sourced post-incident review, create governed follow-up work, and verify improvements through completion.",
   "hierarchy": ["AgentWorks", "Agentic Engineering Platform", "Reliability Operations"],

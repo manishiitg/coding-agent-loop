@@ -2,7 +2,7 @@
   "metadata_version": 1,
   "content_schema": "agentworks-playbook/v1",
   "id": "scheduled-regression-synthetic-monitoring",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "title": "Scheduled Regression and Synthetic Monitoring",
   "description": "Run approved browser journeys on a schedule, retain comparable history, and notify only on actionable changes.",
   "hierarchy": ["AgentWorks", "Agentic Engineering Platform", "Browser QA"],

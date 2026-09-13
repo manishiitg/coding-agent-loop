@@ -35,6 +35,7 @@ Do not infer approval from silence or emoji, broaden target scope, execute stale
 
 ## Read details when needed
 
+- [Workflow design and outcomes](../../references/workflow-design-and-outcomes.md): goals, metrics, and current-versus-separate workflow decisions.
 - [Remediation workflow](references/remediation-workflow.md): proposal, approval, execution, rollback, and recovery checks.
 - [Error webhook to recovery](../references/error-webhook-to-recovery.md): end-to-end trigger, basic RCA, resolution, and closure path.
 - [Reliability event contract](../references/reliability-event-contract.md): shared action, evidence, and receipt fields.

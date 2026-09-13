@@ -35,6 +35,7 @@ Do not blame or rank individuals, fabricate certainty, rewrite the incident reco
 
 ## Read details when needed
 
+- [Workflow design and outcomes](../../references/workflow-design-and-outcomes.md): goals, metrics, and current-versus-separate workflow decisions.
 - [Review workflow](references/post-incident-workflow.md): snapshot, analysis, publication, and action verification.
 - [Reliability event contract](../references/reliability-event-contract.md): shared evidence, state, action, and metric definitions.
 - [Triggers, webhooks, and Slack](../references/triggers-webhooks-and-slack.md): follow-up events and collaboration rules.

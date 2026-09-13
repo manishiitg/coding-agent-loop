@@ -35,6 +35,7 @@ Do not test repository HEAD when a different build is under review, reuse result
 
 ## Read details when needed
 
+- [Workflow design and outcomes](../../references/workflow-design-and-outcomes.md): goals, metrics, and current-versus-separate workflow decisions.
 - [AgentWorks plan and tools](../references/agentworks-plan-and-tools.md): plan, execution, and persistence choices.
 - [Evidence capture](../references/evidence-capture.md): gate evidence provenance.
 - [Release gate guide](references/release-gate-workflow.md): trigger, aggregation, verdict, and delivery.

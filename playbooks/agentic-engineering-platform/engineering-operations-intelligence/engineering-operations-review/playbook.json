@@ -2,7 +2,7 @@
   "metadata_version": 1,
   "content_schema": "agentworks-playbook/v1",
   "id": "engineering-operations-review",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "title": "Engineering Operations Review",
   "description": "Produce recurring evidence-backed engineering reviews with material changes, tracked actions, governed delivery, and historical outcomes.",
   "hierarchy": [

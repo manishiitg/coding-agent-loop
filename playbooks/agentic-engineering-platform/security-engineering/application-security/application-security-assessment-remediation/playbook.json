@@ -2,7 +2,7 @@
   "metadata_version": 1,
   "content_schema": "agentworks-playbook/v1",
   "id": "application-security-assessment-remediation",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "title": "Application Security Assessment and Remediation",
   "description": "Run authorized web, API, code, dependency, secret, and configuration assessment through reviewed remediation and verified closure.",
   "hierarchy": ["AgentWorks", "Agentic Engineering Platform", "Security Engineering", "Application Security"],

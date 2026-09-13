@@ -35,6 +35,7 @@ Do not infer causation from correlation, expose restricted evidence, silently ch
 
 ## Read details when needed
 
+- [Workflow design and outcomes](../../references/workflow-design-and-outcomes.md): goals, metrics, and current-versus-separate workflow decisions.
 - [Incident workflow](references/incident-workflow.md): intake, investigation, coordination, updates, and acceptance cases.
 - [Error webhook to recovery](../references/error-webhook-to-recovery.md): default external-error, RCA, resolution, and verification route.
 - [Reliability event contract](../references/reliability-event-contract.md): shared identity, evidence, state, and metrics.

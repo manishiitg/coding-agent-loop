@@ -35,6 +35,7 @@ Do not claim production performance from an uncontrolled test environment, mix i
 
 ## Read details when needed
 
+- [Workflow design and outcomes](../../references/workflow-design-and-outcomes.md): goals, metrics, and current-versus-separate workflow decisions.
 - [Performance measurement](../references/performance-measurement.md): shared provenance, sampling, budgets, and comparison rules.
 - [Browser QA plan and tools](../../browser-qa/references/agentworks-plan-and-tools.md): browser step and platform-tool choices.
 - [Evidence capture](../../browser-qa/references/evidence-capture.md): durable browser diagnostic artifacts.

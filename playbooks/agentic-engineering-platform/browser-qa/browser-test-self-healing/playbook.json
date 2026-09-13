@@ -2,7 +2,7 @@
   "metadata_version": 1,
   "content_schema": "agentworks-playbook/v1",
   "id": "browser-test-self-healing",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "title": "Browser Test Self-Healing",
   "description": "Diagnose browser-test failures with preserved video and console/network evidence, verify test-only repairs, obtain review, and update canonical tests and knowledge.",
   "hierarchy": [

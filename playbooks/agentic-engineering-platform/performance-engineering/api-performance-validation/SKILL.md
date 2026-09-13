@@ -35,6 +35,7 @@ Do not load-test production by assumption, exceed approved rate/concurrency/dura
 
 ## Read details when needed
 
+- [Workflow design and outcomes](../../references/workflow-design-and-outcomes.md): goals, metrics, and current-versus-separate workflow decisions.
 - [Performance measurement](../references/performance-measurement.md): shared provenance, sampling, budgets, and reporting.
 - [API performance workflow](references/api-performance-workflow.md): scenarios, plan, safety, storage, and acceptance cases.
 - [Example policy](examples/api-performance-policy.json): fictional measurement and load shape.

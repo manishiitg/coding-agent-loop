@@ -2,7 +2,7 @@
   "metadata_version": 1,
   "content_schema": "agentworks-playbook/v1",
   "id": "authentication-session-validation",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "title": "Authentication and Session Validation",
   "description": "Validate login, logout, MFA, recovery, expiry, refresh, and invalid-session behavior with durable evidence.",
   "hierarchy": ["AgentWorks", "Agentic Engineering Platform", "Browser QA"],

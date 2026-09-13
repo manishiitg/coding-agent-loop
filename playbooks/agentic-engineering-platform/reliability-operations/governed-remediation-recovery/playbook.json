@@ -2,7 +2,7 @@
   "metadata_version": 1,
   "content_schema": "agentworks-playbook/v1",
   "id": "governed-remediation-recovery",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "title": "Governed Remediation and Recovery",
   "description": "Prepare exact operational remediation, validate and approve it, execute through authorized paths, and verify sustained recovery or rollback.",
   "hierarchy": ["AgentWorks", "Agentic Engineering Platform", "Reliability Operations"],

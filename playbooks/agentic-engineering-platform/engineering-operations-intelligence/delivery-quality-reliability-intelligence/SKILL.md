@@ -35,6 +35,7 @@ Do not rank individuals, use commits or lines of code as productivity, infer cau
 
 ## Read details when needed
 
+- [Workflow design and outcomes](../../references/workflow-design-and-outcomes.md): goals, metrics, and current-versus-separate workflow decisions.
 - [Operations data model](../references/operations-data-model.md): shared entities, lineage, identity, and metric governance.
 - [Intelligence workflow](references/intelligence-workflow.md): metrics, analysis, reporting, and acceptance cases.
 - [Example metric policy](examples/metric-policy.json): fictional definitions and decision rules.

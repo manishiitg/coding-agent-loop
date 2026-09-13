@@ -35,6 +35,7 @@ Do not invent explanations, shame or rank individuals, omit negative trends, res
 
 ## Read details when needed
 
+- [Workflow design and outcomes](../../references/workflow-design-and-outcomes.md): goals, metrics, and current-versus-separate workflow decisions.
 - [Operations data model](../references/operations-data-model.md): identity, lineage, and metric governance.
 - [Review workflow](references/review-workflow.md): snapshot, synthesis, approval, delivery, and acceptance cases.
 - [Example review policy](examples/review-policy.json): fictional cadence and content contract.

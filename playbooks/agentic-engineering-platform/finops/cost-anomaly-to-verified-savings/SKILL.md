@@ -35,6 +35,7 @@ Do not change infrastructure from anomaly output alone, apply unapproved product
 
 ## Read details when needed
 
+- [Workflow design and outcomes](../../references/workflow-design-and-outcomes.md): goals, metrics, and current-versus-separate workflow decisions.
 - [FinOps workflow](references/finops-workflow.md): data contract, anomaly analysis, rightsizing, IaC, approval, and verification.
 - [Service cost analysis](references/service-cost-analysis.md): choose and load detailed cost checks for the affected service family.
 - [Example candidate](examples/optimization-candidate.json): fictional optimization record.

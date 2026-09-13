@@ -3867,10 +3867,10 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 
 	// Handle workflow mode - use workflow orchestrator.
 	// Deprecated: agent_mode "workflow" is the headless run-without-chat path.
-	// The supported path is the Workflow Builder chat (agent_mode
-	// "workflow_phase"). Retained for backward compatibility with existing
-	// schedules/tools that still dispatch this mode.
+	// Direct plan execution is used by webhooks and workflow-run tools.
+	// Interactive authoring uses the separate workflow_phase Builder path.
 	if req.AgentMode == "workflow" {
+		directWebhookOptions, _ := r.Context().Value(directWebhookExecutionKey{}).(*todo_creation_human.ExecutionOptions)
 
 		// Check if preset_id is provided and workflow is approved (in-memory runtime state)
 		if req.PresetQueryID != "" {
@@ -4169,7 +4169,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		// wrapper, so deriving from r.Context() lets stop_workflow_run/terminate_agent
 		// cancel the actual orchestrator context instead of only the wrapper waiter.
 		workflowBaseCtx := context.Background()
-		if req.TriggeredBy == "chat_tool" && strings.HasPrefix(sessionID, "wfrun_") {
+		if directWebhookOptions != nil || (req.TriggeredBy == "chat_tool" && strings.HasPrefix(sessionID, "wfrun_")) {
 			workflowBaseCtx = r.Context()
 		}
 		workflowCtx, workflowCancel := context.WithCancel(workflowBaseCtx)
@@ -4279,7 +4279,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			workflowStatus := workflowtypes.WorkflowStatusPreVerification // Default status
 			var selectedOptions *workflowtypes.WorkflowSelectedOptions
 			var stepID string
-			if req.PresetQueryID != "" {
+			if req.PresetQueryID != "" && directWebhookOptions == nil {
 				if wfState := getWorkflowRuntime(req.PresetQueryID); wfState != nil {
 					workflowStatus = wfState.WorkflowStatus
 					selectedOptions = wfState.SelectedOptions
@@ -4383,6 +4383,9 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			if req.TriggeredBy != "" {
 				activeExec.TriggeredBy = req.TriggeredBy
 			}
+			if directWebhookOptions != nil {
+				activeExec.RunFolder = directWebhookOptions.SelectedRunFolder
+			}
 			api.registerRunningWorkflow(activeExec)
 
 			// Prepare options for the Execute method
@@ -4397,8 +4400,12 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			// Pass execution options from frontend if provided
 			log.Printf("[EXECUTION_OPTIONS_DEBUG] [Backend] Received request - req.ExecutionOptions is nil: %v", req.ExecutionOptions == nil)
 			if req.ExecutionOptions != nil {
-				// Always run in iteration-0 — controller handles backup of previous iteration-0
-				req.ExecutionOptions.SelectedRunFolder = "iteration-0"
+				// Interactive runs rotate iteration-0; webhooks retain their bound folder.
+				if directWebhookOptions != nil {
+					req.ExecutionOptions.SelectedRunFolder = directWebhookOptions.SelectedRunFolder
+				} else {
+					req.ExecutionOptions.SelectedRunFolder = "iteration-0"
+				}
 
 				log.Printf("[EXECUTION_OPTIONS_DEBUG] [Backend] Execution options received: %+v", req.ExecutionOptions)
 				log.Printf("[WORKFLOW EXECUTION] Frontend execution options provided: strategy=%s, run_folder=%s, resume_from_step=%d, enabled_group_names=%v, save_validation_responses=%v",
@@ -4414,8 +4421,11 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 					RouteSelections:   req.ExecutionOptions.RouteSelections,
 				}
 
-				// Set execution options on the workflow orchestrator
-				log.Printf("[EXECUTION_OPTIONS_DEBUG] [Backend] Setting execution options on orchestrator: %+v", controllerOpts)
+				// Internal webhook bindings cannot be supplied by public request JSON.
+				if directWebhookOptions != nil {
+					controllerOpts = directWebhookOptions
+				}
+				log.Printf("[WORKFLOW EXECUTION] Setting strategy=%s folder=%s", controllerOpts.ExecutionStrategy, controllerOpts.SelectedRunFolder)
 				workflowOrchestrator.SetExecutionOptions(controllerOpts)
 				log.Printf("[EXECUTION_OPTIONS_DEBUG] [Backend] Execution options set on orchestrator successfully")
 			} else {

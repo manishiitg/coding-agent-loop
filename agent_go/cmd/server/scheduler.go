@@ -3588,6 +3588,9 @@ func scheduledWorkshopMessages(sctx *ScheduleContext) []string {
 // executeJob builds a session request from the manifest and runs it.
 // Returns (sessionID, runFolder, error).
 func (s *SchedulerService) executeJob(ctx context.Context, sctx *ScheduleContext, runID string) (string, string, error) {
+	if sctx.WebhookInput != nil {
+		return s.executeWebhookJob(ctx, sctx, runID)
+	}
 	if mode := strings.TrimSpace(sctx.Schedule.Mode); mode != "" && mode != "workshop" {
 		s.logf(sctx, "[SCHEDULER] Schedule %s uses legacy mode=%s; executing through workshop mode", sctx.Schedule.ID, mode)
 	}

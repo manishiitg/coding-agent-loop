@@ -82,3 +82,9 @@ native videos/traces remain controlled by the test configuration.
   chosen group and changed input through a step result, inspect progress and
   download an artifact. Also verify an unauthorized group/variable is rejected.
   A GitHub ping checks authentication only; it cannot prove envelope execution.
+
+### Direct route execution
+
+Webhook deliveries dispatch directly to the workflow plan executor with the saved route selections and validated group/variable inputs. They do not start a Builder chat or ask an agent to call `run_full_workflow`. Plan prerequisites and agent steps still run normally. An empty route selection runs the full plan. Scheduled jobs retain their existing execution path.
+
+Prepare and upgrade the workflow in Builder before testing the trigger; a webhook never edits or upgrades the plan. Poll the returned status URL (or use `manage_workflow_webhook` action `status`) for progress, step outputs, final success/failure and artifact links. The isolated `iteration-<n>-hook` folders, last-10 retention, cancellation, authentication, idempotency and no-Pulse policy still apply.

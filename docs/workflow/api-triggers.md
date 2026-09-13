@@ -223,3 +223,9 @@ assets promptly. The same trigger remains serialized (503 while busy); hooks and
 schedules otherwise share provider capacity but have separate run locks. Shared
 KB/scripts, database semantics and external effects are not isolated by folders:
 use transactional DB tools, existing resource locks and idempotent route actions.
+
+### Direct route execution
+
+Webhook deliveries dispatch directly to the workflow plan executor with the saved route selections and validated group/variable inputs. They do not start a Builder chat or ask an agent to call `run_full_workflow`. Plan prerequisites and agent steps still run normally. An empty route selection runs the full plan. Scheduled jobs retain their existing execution path.
+
+Prepare and upgrade the workflow in Builder before testing the trigger; a webhook never edits or upgrades the plan. Poll the returned status URL (or use `manage_workflow_webhook` action `status`) for progress, step outputs, final success/failure and artifact links. The isolated `iteration-<n>-hook` folders, last-10 retention, cancellation, authentication, idempotency and no-Pulse policy still apply.

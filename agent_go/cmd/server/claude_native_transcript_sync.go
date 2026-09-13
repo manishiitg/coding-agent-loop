@@ -346,9 +346,36 @@ func (api *StreamingAPI) refreshLatestBuilderConversationFromNativeTranscript(ct
 	}
 
 	persistedHistory := conv.ConversationHistory
+	originalHistory := persistedHistory
+	if end := trimNativeTranscriptStaleTail(persistedHistory, nativeMessages); end < len(persistedHistory) {
+		// Check the raw shape before removing text-only replay rows: the readable
+		// projection intentionally omits tool metadata.
+		if rawHistory, valid := builderConversationRawHistory(record); valid && len(rawHistory) == len(persistedHistory) {
+			plain := true
+			for _, raw := range rawHistory[end:] {
+				var message map[string]json.RawMessage
+				if json.Unmarshal(raw, &message) != nil {
+					plain = false
+					break
+				}
+				var parts []map[string]json.RawMessage
+				if json.Unmarshal(message["Parts"], &parts) != nil || len(parts) != 1 || len(parts[0]) != 1 || parts[0]["Text"] == nil {
+					plain = false
+					break
+				}
+			}
+			if plain {
+				persistedHistory = persistedHistory[:end]
+				record["conversation_history"] = rawHistory[:end]
+			}
+		}
+	}
+	// Report native additions relative to the repaired base. Comparing against
+	// the original length can produce a misleading negative "missing message"
+	// count when two stale replay rows are removed and one reply is restored.
 	previousCount := len(persistedHistory)
 	merged := mergeBuilderConversationHistory(persistedHistory, nativeMessages)
-	if builderConversationHistoriesEqual(merged, persistedHistory) {
+	if builderConversationHistoriesEqual(merged, originalHistory) {
 		return conv
 	}
 	conv.ConversationHistory = merged

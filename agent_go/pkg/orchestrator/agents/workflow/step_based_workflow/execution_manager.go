@@ -211,6 +211,10 @@ func (em *ExecutionManager) PrepareExecution(
 		orch.GetLogger().Warn(fmt.Sprintf("⚠️ Unknown execution strategy '%s', defaulting to mode: %s", opts.ExecutionStrategy, setup.Mode))
 	}
 
+	if opts.WebhookStepID != "" {
+		setup.Context.SkipHumanInput = true
+	}
+
 	// Propagate human input overrides for human_input steps
 	if len(opts.HumanInputs) > 0 {
 		setup.Context.HumanInputs = opts.HumanInputs
@@ -263,7 +267,7 @@ func (em *ExecutionManager) PrepareForBatchGroup(
 
 		// Only use resume step for the first group
 		// All subsequent groups start from the beginning
-		if isFirstGroup && isResumeStrategy && orch.executionOptions.ResumeFromStep > 0 {
+		if (isFirstGroup || orch.executionOptions.WebhookStepID != "") && isResumeStrategy && orch.executionOptions.ResumeFromStep > 0 {
 			resumeStep = orch.executionOptions.ResumeFromStep
 		} else if !isFirstGroup {
 			// Subsequent groups always start from beginning

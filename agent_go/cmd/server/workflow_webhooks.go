@@ -28,6 +28,7 @@ const maxWebhookBodyBytes = 1024 * 1024
 // The plaintext secret is returned only on creation/rotation. Ciphertext uses
 // the existing server secrets key, bound to this workflow and trigger.
 type WorkflowWebhookConfig struct {
+	StepID           string   `json:"step_id,omitempty"`
 	InputMode        string   `json:"input_mode,omitempty"`
 	AllowedVariables []string `json:"allowed_variables,omitempty"`
 	AuthMode         string   `json:"auth_mode"`
@@ -67,6 +68,7 @@ type webhookRouteOption struct {
 }
 
 type workflowWebhookResponse struct {
+	StepID           string            `json:"step_id,omitempty"`
 	InputMode        string            `json:"input_mode,omitempty"`
 	AllowedVariables []string          `json:"allowed_variables,omitempty"`
 	ID               string            `json:"id"`
@@ -80,6 +82,7 @@ type workflowWebhookResponse struct {
 }
 
 type workflowWebhookRequest struct {
+	StepID           *string           `json:"step_id,omitempty"`
 	InputMode        string            `json:"input_mode,omitempty"`
 	AllowedVariables []string          `json:"allowed_variables,omitempty"`
 	WorkspacePath    string            `json:"workspace_path"`
@@ -133,6 +136,7 @@ func workflowWebhookDTO(s WorkflowSchedule) workflowWebhookResponse {
 	}
 	out := workflowWebhookResponse{ID: s.ID, Name: s.Name, Enabled: s.Enabled, AuthMode: authMode, Path: "/api/hooks/workflow/" + s.ID, RouteSelections: s.RouteSelections, GroupNames: s.GroupNames}
 	if s.Webhook != nil {
+		out.StepID = s.Webhook.StepID
 		out.InputMode = s.Webhook.InputMode
 		out.AllowedVariables = s.Webhook.AllowedVariables
 	}
@@ -221,6 +225,7 @@ func (s *SchedulerService) listWorkflowWebhooks(w http.ResponseWriter, r *http.R
 		routeError = routeErr.Error()
 		routes = []webhookRouteOption{}
 	}
+	steps, _ := workflowWebhookSteps(r.Context(), path)
 	groups := []string{}
 	variableNames := []string{}
 	content, exists, err := readFileFromWorkspace(r.Context(), path+"/variables/variables.json")
@@ -236,7 +241,7 @@ func (s *SchedulerService) listWorkflowWebhooks(w http.ResponseWriter, r *http.R
 		}
 	}
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]interface{}{"triggers": hooks, "routes": routes, "groups": groups, "declared_variables": variableNames, "route_error": routeError})
+	_ = json.NewEncoder(w).Encode(map[string]interface{}{"triggers": hooks, "routes": routes, "groups": groups, "declared_variables": variableNames, "route_error": routeError, "steps": steps})
 }
 
 func (s *SchedulerService) saveWorkflowWebhook(w http.ResponseWriter, r *http.Request) {
@@ -263,10 +268,6 @@ func (s *SchedulerService) saveWorkflowWebhook(w http.ResponseWriter, r *http.Re
 	groups := normalizeScheduleGroupNames(req.GroupNames)
 	var err error
 	if req.Enabled {
-		if err = validateWebhookRoutes(r.Context(), req.WorkspacePath, req.RouteSelections); err != nil {
-			http.Error(w, err.Error(), 400)
-			return
-		}
 		groups, err = validateScheduleGroupNamesForWorkspace(r.Context(), req.WorkspacePath, groups)
 		if err != nil {
 			http.Error(w, err.Error(), 400)
@@ -308,6 +309,19 @@ func (s *SchedulerService) saveWorkflowWebhook(w http.ResponseWriter, r *http.Re
 		}
 		if err != nil {
 			http.Error(w, "cannot generate trigger secret", 500)
+			return
+		}
+	}
+	if req.StepID != nil {
+		cfg.StepID = strings.TrimSpace(*req.StepID)
+	}
+	if cfg.StepID != "" && len(req.RouteSelections) != 0 {
+		http.Error(w, "choose a step or route selections, not both", 400)
+		return
+	}
+	if req.Enabled {
+		if err := validateWebhookTarget(r.Context(), req.WorkspacePath, cfg.StepID, req.RouteSelections); err != nil {
+			http.Error(w, err.Error(), 400)
 			return
 		}
 	}

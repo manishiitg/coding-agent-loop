@@ -2,6 +2,7 @@ import axios from 'axios'
 import { getApiBaseUrl, getAuthToken } from '../services/api'
 
 export interface WorkflowAPITrigger {
+  step_id?: string
   id: string
   name: string
   enabled: boolean
@@ -13,6 +14,7 @@ export interface WorkflowAPITrigger {
 }
 
 export interface APITriggerOptions {
+  steps?: { step_id: string; title: string }[]
   triggers: WorkflowAPITrigger[]
   routes: { step_id: string; step_title: string; route_id: string; route_name: string }[]
   groups: string[]
@@ -21,6 +23,7 @@ export interface APITriggerOptions {
 
 export type APITriggerRequest = Pick<WorkflowAPITrigger, 'name' | 'enabled' | 'auth_mode' | 'route_selections' | 'group_names'> & {
   workspace_path: string
+  step_id?: string
   rotate_secret?: boolean
 }
 

@@ -75,3 +75,17 @@ describe('plan triggers', () => {
     expect(flow.nodes.find(node => node.type === 'workflow-trigger-heading')?.data.error).toBe('Unavailable')
   })
 })
+
+
+it('connects a step webhook only to its target and does not trace successors', () => {
+  const planNodes = nodes.map(node => node.id === 'review' ? { ...node, data: { ...node.data, step: { id: 'review-step' } } } : node) as WorkflowNode[]
+  const stepJob = { ...job, step_id: 'review-step', route_selections: {} }
+  const result = appendTriggerCards(planNodes, edges, [stepJob], { loading: false, selectedID: job.id, onSelect: vi.fn(), onSettings: vi.fn(), onRefresh: vi.fn() })
+  expect(result.edges.filter(edge => edge.source === `workflow-trigger-${job.id}`).map(edge => edge.target)).toEqual(['review'])
+  expect(triggerRouteSummary(stepJob, planNodes).label).toBe('Step only: Review')
+  const traced = traceTriggerGraph(result.nodes, result.edges, stepJob)
+  expect(traced.nodes.find(node => node.id === 'review')?.style?.opacity).toBe(1)
+  expect(traced.nodes.find(node => node.id === 'prepare')?.style?.opacity).toBe(0.14)
+  expect(traced.nodes.find(node => node.id === 'end')?.style?.opacity).toBe(0.14)
+  expect(triggerRouteSummary({ ...stepJob, step_id: 'deleted' }, planNodes).canTrace).toBe(false)
+})

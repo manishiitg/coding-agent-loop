@@ -19,7 +19,7 @@ func (api *StreamingAPI) registerWebhookTools(reg definitionToolRegistrar, userI
 	if policy.Mode != "builder" || policy.Origin != "interactive" || !policy.allows("plan_authoring") {
 		return nil
 	}
-	return reg.RegisterCustomTool("manage_workflow_webhook", "Create and manage inbound route webhooks directly in Builder chat. First list to discover valid routes and groups. The platform generates/encrypts the secret; the UI displays existing triggers but has no creation form. Create/update require a complete name, enabled, auth_mode, route_selections and group_names configuration. Create/rotation returns a one-time secret: provide it only to the requesting user or their explicitly requested secret store, never shell logs. Bearer is for CI POSTs; github verifies signed GitHub webhooks. action=test sends an authenticated internal delivery through the receiver and executes the route; use only when the user requested testing. It does not verify public DNS/gateway connectivity. Configure input_mode=raw (default, native event JSON) or envelope (group/variables/payload), and allowed_variables for declared non-secret string overrides. group_names bounds caller group selection. action=status with id and run_id reads step progress, outputs and artifact links without revealing the trigger secret. Retains 10 finished hook folders plus active runs; hooks can overlap schedules but the same trigger remains serialized. All calls enforce current workflow permissions.", map[string]interface{}{
+	return reg.RegisterCustomTool("manage_workflow_webhook", "Create and manage inbound route webhooks directly in Builder chat. First list to discover valid steps, routes and groups. Set step_id and route_selections={} to run only a saved step directly, without Builder. The platform generates/encrypts the secret; the UI displays existing triggers but has no creation form. Create/update require a complete name, enabled, auth_mode, route_selections and group_names configuration. Create/rotation returns a one-time secret: provide it only to the requesting user or their explicitly requested secret store, never shell logs. Bearer is for CI POSTs; github verifies signed GitHub webhooks. action=test sends an authenticated internal delivery through the receiver and executes the route; use only when the user requested testing. It does not verify public DNS/gateway connectivity. Configure input_mode=raw (default, native event JSON) or envelope (group/variables/payload), and allowed_variables for declared non-secret string overrides. group_names bounds caller group selection. action=status with id and run_id reads step progress, outputs and artifact links without revealing the trigger secret. Retains 10 finished hook folders plus active runs; hooks can overlap schedules but the same trigger remains serialized. All calls enforce current workflow permissions.", map[string]interface{}{
 		"type": "object", "additionalProperties": false, "required": []string{"action"}, "properties": map[string]interface{}{
 			"action":      map[string]interface{}{"type": "string", "enum": []string{"list", "create", "update", "delete", "test", "status"}},
 			"payload":     map[string]interface{}{"type": "object", "description": "JSON test event. test executes the saved route and can have external effects."},
@@ -30,6 +30,7 @@ func (api *StreamingAPI) registerWebhookTools(reg definitionToolRegistrar, userI
 			"input_mode":        map[string]interface{}{"type": "string", "enum": []string{"raw", "envelope"}},
 			"allowed_variables": map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "string"}},
 			"auth_mode":         map[string]interface{}{"type": "string", "enum": []string{"bearer", "github"}},
+			"step_id":           map[string]interface{}{"type": "string", "description": "Optional single-step target from list.steps; requires empty route_selections. Empty selects route/full workflow; omission preserves an existing target on update. Only this step runs; prior outputs must not be assumed."},
 			"route_selections":  map[string]interface{}{"type": "object", "additionalProperties": map[string]interface{}{"type": "string"}, "description": "Map routing step IDs to saved route IDs, obtained from list."},
 			"group_names":       map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "string"}}, "rotate_secret": map[string]interface{}{"type": "boolean"},
 		}}, func(ctx context.Context, args map[string]interface{}) (string, error) {
@@ -60,7 +61,7 @@ func (api *StreamingAPI) registerWebhookTools(reg definitionToolRegistrar, userI
 				}
 				payload[key] = v
 			}
-			for _, key := range []string{"input_mode", "allowed_variables"} {
+			for _, key := range []string{"input_mode", "allowed_variables", "step_id"} {
 				if v, ok := args[key]; ok {
 					payload[key] = v
 				}

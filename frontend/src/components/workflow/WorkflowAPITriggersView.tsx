@@ -85,7 +85,7 @@ export default function WorkflowAPITriggersView({ workspacePath }: { workspacePa
         </div>
         <button type="button" aria-label="Refresh API triggers" className={buttonClass} onClick={() => { setError(''); void refresh() }}><RefreshCw size={14} /></button>
       </div>
-      <p className="text-xs leading-relaxed text-muted-foreground">Time triggers run on a schedule. API triggers run when their endpoint receives a request. Both use the saved plan and its route, including prerequisite steps. <button type="button" className="underline text-foreground" onClick={() => useWorkflowStore.getState().openWorkspaceView('schedules')}>View trigger runs</button></p>
+      <p className="text-xs leading-relaxed text-muted-foreground">Time triggers run on a schedule. API triggers run when their endpoint receives a request. API triggers can run the full workflow, a route with prerequisites, or one standalone step. <button type="button" className="underline text-foreground" onClick={() => useWorkflowStore.getState().openWorkspaceView('schedules')}>View trigger runs</button></p>
       <p className="text-xs text-muted-foreground">Create webhooks and change their routes or authentication through the workflow builder chat.</p>
       {error && <p role="alert" className="rounded-md border border-destructive/30 p-3 text-sm text-destructive">{error}</p>}
       {issued?.secret && (
@@ -103,7 +103,7 @@ export default function WorkflowAPITriggersView({ workspacePath }: { workspacePa
             <div className="flex justify-between gap-2"><h3 className="text-sm font-medium">{trigger.name}</h3><span className="text-xs text-muted-foreground">{trigger.enabled ? 'Enabled' : 'Disabled'}</span></div>
             <div className="flex items-start gap-2"><code className="min-w-0 flex-1 break-all text-xs select-all">{apiTriggerURL(trigger.path)}</code><button type="button" aria-label={`Copy endpoint for ${trigger.name}`} className={buttonClass} onClick={() => void copy(apiTriggerURL(trigger.path), 'Endpoint copied')}><Copy size={13} /></button></div>
             <p className="text-xs text-muted-foreground">{trigger.auth_mode === 'github' ? 'GitHub signature' : 'Bearer token'} · Groups: {trigger.group_names.join(', ')}</p>
-            <ul className="text-xs space-y-1">{Object.entries(trigger.route_selections).map(([stepId, routeId]) => {
+            <ul className="text-xs space-y-1">{trigger.step_id && <li>Step only: {options.steps?.find(step => step.step_id === trigger.step_id)?.title || trigger.step_id}</li>}{!trigger.step_id && Object.keys(trigger.route_selections).length === 0 && <li>Full workflow</li>}{Object.entries(trigger.route_selections).map(([stepId, routeId]) => {
               const route = options.routes.find(option => option.step_id === stepId && option.route_id === routeId)
               return <li key={stepId}>{route ? `${route.step_title} → ${route.route_name || routeId}` : `${stepId} → ${routeId} (route unavailable)`}</li>
             })}</ul>

@@ -85,4 +85,35 @@ func TestBuilderWebhookToolCreatesAndTestsSignedPing(t *testing.T) {
 	if len(run.tools) != 0 {
 		t.Fatal("Run received management tool")
 	}
+	// Single-step targets survive updates that omit the target.
+	args["action"] = "create"
+	args["step_id"] = "work"
+	args["route_selections"] = map[string]string{}
+	stepOutput, stepErr := tool.exec(context.Background(), args)
+	if stepErr != nil {
+		t.Fatal(stepErr)
+	}
+	var stepTrigger workflowWebhookResponse
+	if err := json.Unmarshal([]byte(stepOutput), &stepTrigger); err != nil || stepTrigger.StepID != "work" {
+		t.Fatal("step target lost")
+	}
+	args["action"] = "update"
+	args["id"] = stepTrigger.ID
+	delete(args, "step_id")
+	stepOutput, stepErr = tool.exec(context.Background(), args)
+	if stepErr != nil {
+		t.Fatal(stepErr)
+	}
+	if err := json.Unmarshal([]byte(stepOutput), &stepTrigger); err != nil || stepTrigger.StepID != "work" {
+		t.Fatal("update cleared step target")
+	}
+	args["step_id"] = "missing"
+	if _, err := tool.exec(context.Background(), args); err == nil {
+		t.Fatal("missing step accepted")
+	}
+	args["step_id"] = "route"
+	if _, err := tool.exec(context.Background(), args); err == nil {
+		t.Fatal("routing node accepted as standalone step")
+	}
+
 }

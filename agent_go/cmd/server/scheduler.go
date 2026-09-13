@@ -1289,7 +1289,7 @@ func (s *SchedulerService) triggerSavedSchedule(workspacePath, scheduleID, origi
 		if err := validateWebhookSchedule(*sched); err != nil {
 			return "", err
 		}
-		if err := validateWebhookRoutes(ctx, workspacePath, sched.RouteSelections); err != nil {
+		if err := validateWebhookTarget(ctx, workspacePath, sched.Webhook.StepID, sched.RouteSelections); err != nil {
 			return "", err
 		}
 		sctx.TriggerSource = "webhook"

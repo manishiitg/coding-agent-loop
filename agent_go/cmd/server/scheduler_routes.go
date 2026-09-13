@@ -20,6 +20,7 @@ import (
 // ScheduledJobResponse is the API response for a scheduled job.
 // Designed to be backward-compatible with the old DB-based ScheduledJob shape.
 type ScheduledJobResponse struct {
+	StepID               string                 `json:"step_id,omitempty"`
 	ID                   string                 `json:"id"`
 	Name                 string                 `json:"name"`
 	Description          string                 `json:"description"`
@@ -137,6 +138,7 @@ type TriggerPulseRequest struct {
 
 func buildJobResponse(workspacePath string, manifest *WorkflowManifest, sched WorkflowSchedule, state ScheduleRuntimeState, missed WorkflowScheduleMissedStatus) ScheduledJobResponse {
 	return ScheduledJobResponse{
+		StepID:               workflowWebhookDTO(sched).StepID,
 		ID:                   sched.ID,
 		Name:                 sched.Name,
 		Description:          sched.Description,

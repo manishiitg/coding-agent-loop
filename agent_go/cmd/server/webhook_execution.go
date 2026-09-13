@@ -36,6 +36,9 @@ func configureDirectWebhookRequest(req map[string]interface{}, sctx *ScheduleCon
 	}
 	opts.SelectedRunFolder = runFolder
 	opts.RouteSelections = sctx.Schedule.RouteSelections
+	if sctx.Schedule.Webhook != nil {
+		opts.WebhookStepID = sctx.Schedule.Webhook.StepID
+	}
 	opts.EnabledGroupNames = sctx.Schedule.GroupNames
 	opts.WebhookInputFile = webhookInputPath(sctx.WorkspacePath, sctx.WebhookInput.RunID)
 	opts.WebhookVariables = sctx.WebhookInput.Variables

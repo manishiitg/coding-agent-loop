@@ -2994,6 +2994,7 @@ export interface ScheduledJob {
   // Deterministic route choices for a workflow schedule. The scheduler passes
   // these to the canonical full-workflow run; they are useful schedule context
   // in the history UI too.
+  step_id?: string
   route_selections?: Record<string, string>
   mode?: 'workshop' | 'multi-agent'
   messages?: string[]  // predefined messages for workflow workshop schedules

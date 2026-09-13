@@ -9,6 +9,10 @@ export const triggerNodeID = (id: string) => `workflow-trigger-${id}`
 export function triggerRouteSummary(job: ScheduledJob, nodes: WorkflowNode[]) {
   if (job.pulse_review_only) return { label: 'Pulse review · does not run plan steps', canTrace: false }
   if (job.workshop_mode === 'optimizer') return { label: 'Optimizer · workflow maintenance', canTrace: false }
+  if (job.step_id) {
+    const node = nodes.find(node => (node.data.step as { id?: string } | undefined)?.id === job.step_id)
+    return { label: `Step only: ${node?.data.title || job.step_id}${node ? '' : ' (unavailable)'}`, canTrace: !!node }
+  }
   const choices = Object.entries(job.route_selections || {})
   if (!choices.length) return { label: 'Full workflow · routes chosen during execution', canTrace: true }
   let missing = false
@@ -52,6 +56,10 @@ export function appendTriggerCards(nodes: WorkflowNode[], edges: WorkflowEdge[],
     const labelStyle = { fill: 'hsl(var(--muted-foreground))', fontSize: 11 }
     const labelBgStyle = { fill: 'hsl(var(--background))', fillOpacity: 0.9 }
     const markerEnd = active ? { type: MarkerType.ArrowClosed, color, width: 12, height: 12 } : undefined
+    if (job.step_id) {
+      const target = nodes.find(node => (node.data.step as { id?: string } | undefined)?.id === job.step_id)!
+      return [{ id: `trigger-entry-${job.id}`, source: triggerNodeID(job.id), target: target.id, type: 'smoothstep', label: active ? 'Step only' : undefined, ariaLabel: `${job.name}: Step only`, style, labelStyle, labelBgStyle, markerEnd } as WorkflowEdge]
+    }
     const choices = Object.entries(job.route_selections || {})
     const entry: WorkflowEdge = {
       id: `trigger-entry-${job.id}`, source: triggerNodeID(job.id), target: 'start', targetHandle: 'trigger-input', type: 'smoothstep',
@@ -89,7 +97,7 @@ export function traceTriggerGraph(nodes: WorkflowNode[], edges: WorkflowEdge[], 
   }
   const selectedNodes = new Set<string>(['variables', triggerNodeID(job.id), 'workflow-trigger-heading'])
   const selectedEdges = new Set(edges.filter(edge => edge.source === triggerNodeID(job.id)).map(edge => edge.id))
-  const queue = ['start']
+  const queue = [job.step_id ? nodes.find(node => (node.data.step as { id?: string } | undefined)?.id === job.step_id)!.id : 'start']
   for (let i = 0; i < queue.length; i++) {
     const id = queue[i]
     if (selectedNodes.has(id)) continue
@@ -97,6 +105,7 @@ export function traceTriggerGraph(nodes: WorkflowNode[], edges: WorkflowEdge[], 
     const node = byID.get(id)
     const stepID = (node?.data.step as { id?: string } | undefined)?.id
     const choice = stepID && job.route_selections?.[stepID]
+    if (job.step_id) continue
     for (const edge of outgoing.get(id) || []) {
       if (choice && (node?.type === 'routing' || node?.type === 'branch') && edge.sourceHandle !== `route-${choice}` && edge.sourceHandle !== `handoff-${choice}`) continue
       selectedEdges.add(edge.id)
@@ -106,7 +115,7 @@ export function traceTriggerGraph(nodes: WorkflowNode[], edges: WorkflowEdge[], 
   for (const node of nodes) {
     if (node.data.isEvaluationStep) {
       const gates = (node.data.step as EvaluationStep).applies_to_routes || []
-      const matches = gates.every(gate => !job.route_selections?.[gate.routing_step_id] || gate.route_ids.includes(job.route_selections[gate.routing_step_id]))
+      const matches = !job.step_id && gates.every(gate => !job.route_selections?.[gate.routing_step_id] || gate.route_ids.includes(job.route_selections[gate.routing_step_id]))
       if (matches) { selectedNodes.add(node.id); if (typeof node.data.evaluationGroupId === 'string') selectedNodes.add(node.data.evaluationGroupId) }
       else selectedNodes.delete(node.id)
     }

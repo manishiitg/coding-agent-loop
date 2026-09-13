@@ -788,6 +788,9 @@ func (hcpo *StepBasedWorkflowOrchestrator) CreateTodoList(ctx context.Context, o
 		}
 	}
 	breakdownSteps := existingPlan.Steps // Use PlanStepInterface directly
+	if err := bindWebhookStep(hcpo.executionOptions, breakdownSteps); err != nil {
+		return "", err
+	}
 	hcpo.GetLogger().Info(fmt.Sprintf("✅ Prepared existing plan: %d steps with runtime fields populated", len(breakdownSteps)))
 
 	// Pin this execution to its loaded plan; builder reads cannot replace it.

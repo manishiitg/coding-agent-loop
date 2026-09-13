@@ -88,3 +88,11 @@ native videos/traces remain controlled by the test configuration.
 Webhook deliveries dispatch directly to the workflow plan executor with the saved route selections and validated group/variable inputs. They do not start a Builder chat or ask an agent to call `run_full_workflow`. Plan prerequisites and agent steps still run normally. An empty route selection runs the full plan. Scheduled jobs retain their existing execution path.
 
 Prepare and upgrade the workflow in Builder before testing the trigger; a webhook never edits or upgrades the plan. Poll the returned status URL (or use `manage_workflow_webhook` action `status`) for progress, step outputs, final success/failure and artifact links. The isolated `iteration-<n>-hook` folders, last-10 retention, cancellation, authentication, idempotency and no-Pulse policy still apply.
+
+### Single-step targets
+
+Use `manage_workflow_webhook` action `list` to discover `steps`. To create or update a single-step trigger, set `step_id` to that saved ID and `route_selections={}`. Empty `step_id` selects the existing route/full-workflow behavior. The Webhooks and Plan views show the target; creation stays in Builder chat.
+
+Supported targets are top-level executable plan steps (agent/script, message sequence, or an orchestrator with its own child work). Human-input and routing/branch nodes are not standalone targets; select a route instead. Nested steps must be exposed as a top-level step to bind directly. Single-step webhooks skip prior and subsequent plan steps, automatic evaluation, and Pulse. They run the chosen step once for each configured or envelope-selected group. Supply all required inputs through that group, allowed variables, or payload; never rely on outputs from a previous invocation. IDs are checked again against the loaded plan, so deletion fails clearly and reordering does not run another step.
+
+Test using action `test`, then poll action `status`. Verify only the chosen step (and its internal work, if any) produces progress and outputs, and that failures produce a failed terminal result. Authentication, folder isolation, retention, and artifact download behavior are unchanged.

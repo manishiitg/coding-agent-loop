@@ -16,9 +16,11 @@ describe('gatewayLoginTarget', () => {
     expect(gatewayLoginTarget(401, '//example.com/login')).toBeNull()
   })
 
-  it('does not redirect when the login page receives a late 401', () => {
+  it('does not redirect when an auth-flow page receives a late 401', () => {
     expect(isGatewayLoginPath('/login')).toBe(true)
     expect(isGatewayLoginPath('/login/')).toBe(true)
+    expect(isGatewayLoginPath('/auth/callback')).toBe(true)
+    expect(isGatewayLoginPath('/auth/callback/')).toBe(true)
     expect(isGatewayLoginPath('/projects/123')).toBe(false)
   })
 })

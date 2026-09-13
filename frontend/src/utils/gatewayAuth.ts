@@ -11,7 +11,15 @@ export function gatewayLoginTarget(status: number | undefined, headerValue: unkn
 let redirectInProgress = false
 
 export function isGatewayLoginPath(pathname: string): boolean {
-  return pathname === '/login' || pathname.startsWith('/login/')
+  // /login suppresses redirects to itself; /auth/callback is likewise an
+  // auth-flow page that resolves on its own (success navigates away, failure
+  // renders its own error UI). Without this, background requests the shell
+  // fires while still logged out 401 at the gateway and bounce the page to
+  // /login?next=... mid-exchange, orphaning the OAuth flow after the server
+  // already issued the token. (Bites on password-gate-disabled deployments,
+  // where no gateway cookie covers those requests; Cognito is affected too.)
+  return pathname === '/login' || pathname.startsWith('/login/') ||
+    pathname === '/auth/callback' || pathname.startsWith('/auth/callback/')
 }
 
 export function redirectToGatewayLogin(target: string | null): boolean {

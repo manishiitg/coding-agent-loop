@@ -55,6 +55,22 @@ function getAndClearOAuthState(): { state: string; provider: string } | null {
   }
 }
 
+// Peek at the stored OAuth state without clearing it. Supabase social login
+// does not echo our CSRF state back to /auth/callback (only ?code=...), so
+// the callback page falls back to this when the URL carries no state. The
+// binding still holds: the value lives in per-tab sessionStorage, and the
+// server additionally requires the PKCE verifier created for this flow to
+// exchange the code.
+export function peekStoredOAuthState(): string | null {
+  const data = sessionStorage.getItem(OAUTH_STATE_KEY)
+  if (!data) return null
+  try {
+    return (JSON.parse(data) as { state: string }).state ?? null
+  } catch {
+    return null
+  }
+}
+
 export const useAuthStore = create<AuthState>()(
     persist(
       (set) => ({

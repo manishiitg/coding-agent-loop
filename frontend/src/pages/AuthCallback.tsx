@@ -1,6 +1,6 @@
 import { sharedReturnPath, SHARE_RETURN_KEY } from '../utils/sharedLinks'
 import { useEffect, useState } from 'react'
-import { useAuthStore } from '../stores/useAuthStore'
+import { useAuthStore, peekStoredOAuthState } from '../stores/useAuthStore'
 
 export function AuthCallback() {
   const { handleOAuthCallback, error, isAuthenticated } = useAuthStore()
@@ -9,7 +9,9 @@ export function AuthCallback() {
   useEffect(() => {
     const params = new URLSearchParams(window.location.search)
     const code = params.get('code')
-    const state = params.get('state')
+    // Supabase social login returns only ?code=... without echoing our
+    // state; fall back to the state this tab stored when it started the flow.
+    const state = params.get('state') ?? peekStoredOAuthState()
     const errorParam = params.get('error')
     const errorDescription = params.get('error_description')
 

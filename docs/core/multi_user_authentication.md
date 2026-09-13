@@ -57,9 +57,10 @@ The system supports multiple authentication providers that can be enabled simult
 
 | Provider | Type | Description |
 |----------|------|-------------|
-| `simple` | Credentials | Username/password from environment variable |
+| `simple` | Credentials | Username/password from the user directory / environment variable |
 | `cognito` | OAuth | AWS Cognito User Pool with hosted UI |
-| `supabase` | OAuth | Supabase Auth |
+| `supabase` | Credentials | Email/password verified against Supabase Auth |
+| `supabase-google` | OAuth | Sign in with Google, hosted by Supabase Auth (PKCE) |
 
 ### Simple Provider
 
@@ -135,17 +136,42 @@ AWS_REGION=us-east-1
 
 ### Supabase Provider
 
-OAuth authentication via Supabase Auth.
+Supabase Auth, in two flavors that can be enabled independently:
 
-**Configuration:**
+| Provider name | Type | Login UI |
+|---|---|---|
+| `supabase` | Credentials | Email/password form, verified against Supabase Auth |
+| `supabase-google` | OAuth | "Sign in with Google" button (Supabase-hosted Google OAuth, PKCE) |
+
+**Email/password configuration:**
 ```bash
 AUTH_PROVIDERS=supabase
 SUPABASE_URL=https://xxx.supabase.co
 SUPABASE_ANON_KEY=eyJxxx
 ```
 
+**Google sign-in setup** (once per deployment):
+
+1. Supabase dashboard → create a project → copy its Project URL and anon public key.
+2. Supabase dashboard → Authentication → Providers → enable Google. It asks for a Google OAuth client:
+   - Google Cloud Console → APIs & Services → Credentials → Create OAuth client ID (Web application).
+   - Authorized redirect URI: `https://<your-project-ref>.supabase.co/auth/v1/callback` (Supabase's callback, not the app's).
+   - Paste the client ID/secret back into Supabase's Google provider settings.
+3. Supabase dashboard → Authentication → URL Configuration → Redirect URLs: add `https://<your-app-host>/auth/callback` (plus `http://localhost:<port>/auth/callback` for local dev). Set Site URL to the app origin.
+4. Server env:
+```bash
+MULTI_USER_MODE=true
+AUTH_PROVIDERS=supabase-google   # add simple and/or supabase to keep password options
+SUPABASE_URL=https://xxx.supabase.co
+SUPABASE_ANON_KEY=eyJxxx
+AUTH_SECRET=<long random value>
+ADMIN_USERS=you@gmail.com        # your first Google login becomes admin
+```
+
+The first Google login auto-creates the account in `config/users.json` with nothing enabled (unless `ADMIN_USERS` names the Gmail address); an admin then sets role/products in Users & access. The Supabase user id is the stable identity, so someone using both Google and Supabase email/password lands on the same account. Unlike Cognito, Supabase does not echo our CSRF state back — the callback falls back to its session-stored state, and the server-side PKCE verifier still binds the code to the flow that started it.
+
 **Features:**
-- Multiple social login options
+- Social login via Supabase-hosted Google OAuth
 - Email/password authentication
 - Row-level security integration
 

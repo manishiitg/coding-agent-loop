@@ -68,7 +68,7 @@ data:
   BOT_MANAGER_EMAILS: "manish.prakash@citymall.live"
 
   # --- Multi-Provider Authentication ---
-  # Enabled auth providers (comma-separated): simple, cognito, supabase
+  # Enabled auth providers (comma-separated): simple, cognito, supabase, supabase-google
   AUTH_PROVIDERS: "cognito"
 
   # AWS Cognito Configuration (for OAuth authentication)

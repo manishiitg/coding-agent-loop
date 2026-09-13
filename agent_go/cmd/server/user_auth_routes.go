@@ -407,7 +407,7 @@ func (api *StreamingAPI) handleAuthCallback(w http.ResponseWriter, r *http.Reque
 	}
 
 	// Exchange code for user info
-	extUser, err := provider.ExchangeCode(r.Context(), code, stateEntry.RedirectURI)
+	extUser, err := provider.ExchangeCode(r.Context(), code, stateEntry.RedirectURI, state)
 	if err != nil {
 		log.Printf("[AUTH] Failed to exchange code for provider %s: %v", stateEntry.Provider, err)
 		http.Error(w, `{"error": "Failed to authenticate with provider"}`, http.StatusInternalServerError)

@@ -10,7 +10,8 @@ The application supports multiple authentication providers:
 |----------|------|-------------|
 | `simple` | Credentials | Username/password from `AUTH_USERS` env var |
 | `cognito` | OAuth | AWS Cognito Hosted UI |
-| `supabase` | OAuth/Credentials | Supabase Auth |
+| `supabase` | Credentials | Supabase Auth email/password |
+| `supabase-google` | OAuth | Sign in with Google via Supabase Auth |
 
 ## Configuration
 
@@ -23,7 +24,7 @@ Authentication is configured via environment variables in `shared/configmap.yaml
 MULTI_USER_MODE: "true"
 
 # Comma-separated list of enabled providers
-AUTH_PROVIDERS: "cognito"  # Options: simple, cognito, supabase
+AUTH_PROVIDERS: "cognito"  # Options: simple, cognito, supabase, supabase-google
 ```
 
 ### Simple Provider (AUTH_USERS)
@@ -50,10 +51,14 @@ AWS_REGION: "ap-south-1"
 ### Supabase Provider
 
 ```yaml
-AUTH_PROVIDERS: "supabase"
+AUTH_PROVIDERS: "supabase"  # email/password; use "supabase-google" for Sign in with Google
 SUPABASE_URL: "https://xxx.supabase.co"
 SUPABASE_ANON_KEY: "eyJxxx..."
 ```
+
+For Google sign-in, enable the Google provider in the Supabase dashboard and
+allowlist `https://<app-host>/auth/callback` in Supabase's Redirect URLs —
+full steps in `docs/core/multi_user_authentication.md`.
 
 ### Multiple Providers
 

@@ -24,6 +24,7 @@ type playbookCatalogItem struct {
 	ContentSchema        string                   `json:"content_schema"`
 	ID                   string                   `json:"id"`
 	Version              string                   `json:"version"`
+	Changelog            []playbookChangelogEntry `json:"changelog,omitempty"`
 	Title                string                   `json:"title"`
 	Description          string                   `json:"description"`
 	Hierarchy            []string                 `json:"hierarchy"`
@@ -38,6 +39,11 @@ type playbookCatalogItem struct {
 	Outputs              []string                 `json:"outputs"`
 	Category             string                   `json:"category"`
 	SourceDir            string                   `json:"-"`
+}
+
+type playbookChangelogEntry struct {
+	Version string `json:"version"`
+	Summary string `json:"summary"`
 }
 
 func playbooksRoot() (string, error) {

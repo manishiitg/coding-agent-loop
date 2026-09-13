@@ -3,6 +3,12 @@
   "content_schema": "agentworks-playbook/v1",
   "id": "browser-performance-validation",
   "version": "0.2.1",
+  "changelog": [
+    {
+      "version": "0.2.1",
+      "summary": "Adds workflow goal, metric, and workflow-boundary guidance plus Technical, Architecture, and Strategic Pulse focus recommendations."
+    }
+  ],
   "title": "Browser Performance Validation",
   "description": "Measure approved browser pages and journeys against customer-defined budgets with comparable samples and durable diagnostics.",
   "hierarchy": ["AgentWorks", "Agentic Engineering Platform", "Performance Engineering"],

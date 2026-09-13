@@ -3,6 +3,12 @@
   "content_schema": "agentworks-playbook/v1",
   "id": "example-playbook",
   "version": "0.1.0",
+  "changelog": [
+    {
+      "version": "0.1.0",
+      "summary": "Initial playbook release."
+    }
+  ],
   "title": "Example Playbook",
   "description": "Replace this with the durable outcome and intended use.",
   "hierarchy": [

@@ -83,6 +83,7 @@ The name must match `playbook.json.id` and the package directory. Put triggering
 | `recommended_tools` | Optional recommendations, never implicit installation or authorization. |
 | `pulse_focus` | Advisory focus definitions for Technical, Architecture, and Strategic Review. Plan Drift is intentionally excluded. |
 | `outputs` | Durable completion artifacts and results. |
+| `changelog` | Short release summaries keyed by playbook version. Add an entry for each new version so Builder can explain an update without inferring from version numbers. |
 
 Topic-specific relationship fields such as `setup_playbook`, `setup_playbooks`, `accepts_equivalent_setup`, and `next_playbooks` are optional. Unknown extension fields should be ignored by compatible readers.
 
@@ -131,6 +132,8 @@ An installed playbook is a customer-specific snapshot and adaptation record. The
 ```
 
 Source updates never silently rewrite an installed workflow. The product compares versions/digests, shows relevant changes, and lets the builder merge them while preserving customer overrides.
+
+Each catalog release adds one concise `changelog` entry with `version` and `summary`. The UI and `search_playbooks` show entries newer than the workflow's installed version. Builder uses these authored summaries to answer what an upgrade contains and states when release notes are unavailable rather than guessing from a version number.
 
 When the catalog version is newer, the installed-playbook UI shows both versions and an update action. Updating refreshes the workflow-local playbook package and resets its setup status to `draft`; it does not edit the plan, goals, metrics, thresholds, triggers, schedules, capabilities, reports, or customer preferences. Builder then reviews the new guidance against the current workflow, proposes only applicable changes, and revalidates affected routes before the setup can return to `ready`.
 

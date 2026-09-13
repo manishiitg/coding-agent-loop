@@ -12,11 +12,11 @@ func TestSearchPlaybooksFindsIntentAndReportsInstalledStatus(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	matches := searchPlaybooks(items, []InstalledPlaybook{{ID: "browser-performance-validation", Status: "draft"}}, "browser performance budgets", 3)
+	matches := searchPlaybooks(items, []InstalledPlaybook{{ID: "browser-performance-validation", Version: "0.2.0", Status: "draft"}}, "browser performance budgets", 3)
 	if len(matches) == 0 || matches[0].ID != "browser-performance-validation" {
 		t.Fatalf("matches = %+v", matches)
 	}
-	if !matches[0].Installed || matches[0].InstalledStatus != "draft" || len(matches[0].Outputs) == 0 || len(matches[0].SetupAreas) == 0 || len(matches[0].PulseFocus) != 3 {
+	if !matches[0].Installed || matches[0].InstalledStatus != "draft" || matches[0].InstalledVersion != "0.2.0" || !matches[0].UpdateAvailable || len(matches[0].Changelog) == 0 || len(matches[0].Outputs) == 0 || len(matches[0].SetupAreas) == 0 || len(matches[0].PulseFocus) != 3 {
 		t.Fatalf("incomplete result = %+v", matches[0])
 	}
 }

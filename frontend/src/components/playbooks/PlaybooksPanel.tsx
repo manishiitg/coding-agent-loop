@@ -71,6 +71,11 @@ export default function PlaybooksPanel({ workspacePath }: PlaybooksPanelProps) {
 
   const installedSelection = selected ? installed.find(item => item.id === selected.id) : undefined
   const updateAvailable = Boolean(installedSelection && selected && isNewerPlaybookVersion(selected.version, installedSelection.version))
+  const applicableChangelog = installedSelection && selected
+    ? (selected.changelog || []).filter(entry =>
+      isNewerPlaybookVersion(entry.version, installedSelection.version)
+      && !isNewerPlaybookVersion(entry.version, selected.version))
+    : []
   const installSelected = async () => {
     if (!workspacePath || !selected || !canWrite) return
     setInstalling(true)
@@ -188,6 +193,14 @@ export default function PlaybooksPanel({ workspacePath }: PlaybooksPanelProps) {
                 {updateAvailable && (
                   <div className="mt-3 rounded-md border border-amber-500/30 bg-amber-500/10 p-3">
                     <div className="text-xs font-semibold text-amber-800 dark:text-amber-200">Update available · v{selected.version}</div>
+                    {applicableChangelog.length > 0 && (
+                      <div className="mt-2 rounded-md border border-amber-500/20 bg-background/70 p-2.5">
+                        <div className="text-xs font-medium text-foreground">What changed</div>
+                        <ul className="mt-1 space-y-1 text-xs leading-5 text-muted-foreground">
+                          {applicableChangelog.map(entry => <li key={entry.version}><span className="font-medium text-foreground">v{entry.version}:</span> {entry.summary}</li>)}
+                        </ul>
+                      </div>
+                    )}
                     <p className="mt-1 text-xs leading-5 text-muted-foreground">Updating refreshes the installed guidance and marks its setup as draft. Builder should review the new instructions against the current workflow and revalidate affected routes. Workflow steps, goals, metrics, thresholds, schedules, tools, and customer preferences are not changed automatically.</p>
                     <button type="button" disabled={!canWrite || installing} title={!canWrite ? READ_ONLY_TITLE : undefined} onClick={() => void installSelected()} className="mt-2 inline-flex items-center gap-1.5 rounded-md border border-amber-500/40 bg-background px-2.5 py-1.5 text-xs font-medium text-foreground disabled:cursor-not-allowed disabled:opacity-50">{installing && <Loader2 className="h-3.5 w-3.5 animate-spin" />}{installing ? 'Updating…' : 'Update playbook'}</button>
                   </div>

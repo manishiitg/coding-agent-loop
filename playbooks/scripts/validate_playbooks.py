@@ -125,6 +125,18 @@ def validate_package(package: Path, errors: list[str]) -> dict[str, object] | No
         fail(errors, manifest_path, "content_schema must be agentworks-playbook/v1")
     if not isinstance(manifest.get("version"), str) or not SEMVER.fullmatch(manifest["version"]):
         fail(errors, manifest_path, "version must use MAJOR.MINOR.PATCH")
+    changelog = manifest.get("changelog", [])
+    if not isinstance(changelog, list):
+        fail(errors, manifest_path, "changelog must be a list")
+    else:
+        for index, entry in enumerate(changelog):
+            if not isinstance(entry, dict) or set(entry) != {"version", "summary"}:
+                fail(errors, manifest_path, f"changelog[{index}] needs only version and summary")
+                continue
+            if not isinstance(entry["version"], str) or not SEMVER.fullmatch(entry["version"]):
+                fail(errors, manifest_path, f"changelog[{index}].version must use MAJOR.MINOR.PATCH")
+            if not isinstance(entry["summary"], str) or not entry["summary"].strip():
+                fail(errors, manifest_path, f"changelog[{index}].summary must be non-empty")
     if manifest.get("entrypoint") != "SKILL.md":
         fail(errors, manifest_path, "entrypoint must be SKILL.md")
     if manifest.get("audience") != "workflow_builder":

@@ -3,6 +3,7 @@ export type PlaybookCatalogItem = {
   title: string
   description: string
   version: string
+  changelog?: PlaybookChangelogEntry[]
   category: string
   order: number
   inputCount: number
@@ -13,6 +14,11 @@ export type PlaybookCatalogItem = {
   recommendedTools?: PlaybookRecommendedTool[]
   pulseFocus?: PlaybookPulseFocus[]
   outputs?: string[]
+}
+
+export type PlaybookChangelogEntry = {
+  version: string
+  summary: string
 }
 
 export type PlaybookSetupInput = {
@@ -50,7 +56,7 @@ export const PLAYBOOK_CATALOG: readonly PlaybookCatalogItem[] = [
   { id: 'scheduled-regression-synthetic-monitoring', title: 'Scheduled Regression and Synthetic Monitoring', description: 'Run approved browser journeys on a schedule, retain comparable history, and notify only on actionable changes.', version: '0.1.1', category: 'Browser QA', order: 7, inputCount: 6, toolCount: 3 },
   { id: 'release-pr-quality-gate', title: 'Release and PR Quality Gate', description: 'Bind an exact change or build to required Browser QA suites and publish an auditable decision.', version: '0.1.1', category: 'Browser QA', order: 8, inputCount: 6, toolCount: 3 },
   { id: 'application-security-assessment-remediation', title: 'Application Security Assessment and Remediation', description: 'Run authorized web, API, code, dependency, secret, and configuration assessment through verified closure.', version: '0.2.1', category: 'Security Engineering', order: 1, inputCount: 6, toolCount: 14 },
-  { id: 'browser-performance-validation', title: 'Browser Performance Validation', description: 'Measure approved browser pages and journeys against customer-defined budgets with comparable samples.', version: '0.2.1', category: 'Performance Engineering', order: 1, inputCount: 6, toolCount: 3 },
+  { id: 'browser-performance-validation', title: 'Browser Performance Validation', description: 'Measure approved browser pages and journeys against customer-defined budgets with comparable samples.', version: '0.2.1', changelog: [{ version: '0.2.1', summary: 'Adds workflow goal, metric, and workflow-boundary guidance plus Technical, Architecture, and Strategic Pulse focus recommendations.' }], category: 'Performance Engineering', order: 1, inputCount: 6, toolCount: 3 },
   { id: 'api-performance-validation', title: 'API Performance Validation', description: 'Measure approved API scenarios under bounded load against latency, throughput, error, and capacity policies.', version: '0.1.1', category: 'Performance Engineering', order: 2, inputCount: 7, toolCount: 3 },
   { id: 'ci-deployment-failure-triage', title: 'CI and Deployment Failure Triage', description: 'Ingest CI and deployment failures, classify likely cause with evidence, and route the result.', version: '0.1.1', category: 'Reliability Operations', order: 1, inputCount: 5, toolCount: 4 },
   { id: 'incident-investigation-coordination', title: 'Incident Investigation and Coordination', description: 'Correlate incident signals, perform evidence-backed RCA, establish impact, and coordinate status.', version: '0.2.1', category: 'Reliability Operations', order: 2, inputCount: 5, toolCount: 4 },

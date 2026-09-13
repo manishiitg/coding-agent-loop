@@ -9,6 +9,7 @@ vi.mock('../../api/playbooks', () => ({
   playbooksApi: {
     list: vi.fn().mockResolvedValue([{
       id: 'basic-browser-setup', title: 'Basic Browser Setup', description: 'Configure browser access.', version: '0.6.0',
+      changelog: [{ version: '0.6.0', summary: 'Adds stable locator and evidence retention guidance.' }],
       category: 'Browser QA', order: 1, inputCount: 2, toolCount: 1,
       setupInputs: [
         { id: 'environment', label: 'Application and environment', required: true },
@@ -114,6 +115,8 @@ it('shows an available version and refreshes the installed playbook without clai
     await click([...container.querySelectorAll('button')].find(button => button.textContent?.includes('Basic Browser Setup')) || null)
     expect(container.textContent).toContain('Installed v0.5.0 · ready')
     expect(container.textContent).toContain('Update available · v0.6.0')
+    expect(container.textContent).toContain('What changed')
+    expect(container.textContent).toContain('v0.6.0: Adds stable locator and evidence retention guidance.')
     expect(container.textContent).toContain('not changed automatically')
     await click([...container.querySelectorAll('button')].find(button => button.textContent?.includes('Update playbook')) || null)
     expect(playbooksApi.install).toHaveBeenCalledWith('Workflow/demo', 'basic-browser-setup')

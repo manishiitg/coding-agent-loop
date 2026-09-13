@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 )
 
@@ -14,6 +15,7 @@ type playbookSearchResult struct {
 	Category             string                   `json:"category"`
 	Description          string                   `json:"description"`
 	Version              string                   `json:"version"`
+	Changelog            []playbookChangelogEntry `json:"changelog,omitempty"`
 	SetupAreas           []string                 `json:"setup_areas"`
 	RequiredCapabilities []string                 `json:"required_capabilities"`
 	Outputs              []string                 `json:"outputs"`
@@ -21,7 +23,27 @@ type playbookSearchResult struct {
 	PulseFocus           []map[string]interface{} `json:"pulse_focus,omitempty"`
 	Installed            bool                     `json:"installed"`
 	InstalledStatus      string                   `json:"installed_status,omitempty"`
+	InstalledVersion     string                   `json:"installed_version,omitempty"`
+	UpdateAvailable      bool                     `json:"update_available"`
 	Score                int                      `json:"-"`
+}
+
+func isNewerPlaybookVersion(candidate, installed string) bool {
+	nextParts, currentParts := strings.Split(candidate, "."), strings.Split(installed, ".")
+	if len(nextParts) != 3 || len(currentParts) != 3 {
+		return candidate != installed
+	}
+	for index := 0; index < 3; index++ {
+		next, nextErr := strconv.Atoi(nextParts[index])
+		current, currentErr := strconv.Atoi(currentParts[index])
+		if nextErr != nil || currentErr != nil {
+			return candidate != installed
+		}
+		if next != current {
+			return next > current
+		}
+	}
+	return false
 }
 
 func searchPlaybooks(items []playbookCatalogItem, installed []InstalledPlaybook, query string, limit int) []playbookSearchResult {
@@ -93,9 +115,10 @@ func searchPlaybooks(items []playbookCatalogItem, installed []InstalledPlaybook,
 		installedItem, isInstalled := installedByID[item.ID]
 		results = append(results, playbookSearchResult{
 			ID: item.ID, Title: item.Title, Category: item.Category, Description: item.Description,
-			Version: item.Version, SetupAreas: setupAreas, RequiredCapabilities: item.RequiredCapabilities,
+			Version: item.Version, Changelog: item.Changelog, SetupAreas: setupAreas, RequiredCapabilities: item.RequiredCapabilities,
 			Outputs: item.Outputs, RecommendedTools: item.RecommendedTools, PulseFocus: item.PulseFocus, Installed: isInstalled,
-			InstalledStatus: installedItem.Status, Score: score,
+			InstalledStatus: installedItem.Status, InstalledVersion: installedItem.Version,
+			UpdateAvailable: isInstalled && isNewerPlaybookVersion(item.Version, installedItem.Version), Score: score,
 		})
 	}
 	sort.SliceStable(results, func(i, j int) bool {
@@ -114,7 +137,7 @@ func searchPlaybooks(items []playbookCatalogItem, installed []InstalledPlaybook,
 }
 
 func (api *StreamingAPI) registerPlaybookSearchTool(registrar definitionToolRegistrar, workspacePath string) error {
-	description := "Search the AgentWorks playbook catalog by the user's intent, operating area, capability, tool, expected outcome, or Pulse review focus. Use this before improvising a generic workflow setup when a reusable engineering playbook may fit. Results include setup areas, deliverables, recommended tools, Technical/Architecture/Strategic Pulse focus, and whether the playbook is already installed in this workflow. Recommend only relevant matches and explain the fit. This tool never installs anything: ask the user to install the chosen playbook, and use open_workspace_view(view=\"playbooks\") to show the catalog when available."
+	description := "Search the AgentWorks playbook catalog by the user's intent, operating area, capability, tool, expected outcome, or Pulse review focus. Use this before improvising a generic workflow setup when a reusable engineering playbook may fit. Results include setup areas, deliverables, recommended tools, Technical/Architecture/Strategic Pulse focus, installed and latest versions, update availability, and the catalog changelog. When asked about an upgrade, compare the versions and explain only the supplied changelog; do not infer changes from version numbers. This tool never installs anything: ask the user to install or update the chosen playbook, and use open_workspace_view(view=\"playbooks\") to show it when available."
 	params := map[string]interface{}{
 		"type": "object",
 		"properties": map[string]interface{}{

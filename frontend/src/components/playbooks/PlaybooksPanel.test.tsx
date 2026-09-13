@@ -56,7 +56,10 @@ it('opens a catalog playbook and installs it for Builder setup', async () => {
     })
     expect(container.textContent).toContain('Catalog 1')
     expect(container.textContent).toContain('Basic Browser Setup')
-    expect(container.textContent).toContain('AgentWorks / Agentic Engineering Platform')
+    expect(container.textContent).toContain('AgentWorks')
+    expect(container.textContent).toContain('Agentic Engineering Platform 1 playbooks')
+    expect(container.textContent).toContain('Browser QA1')
+    expect(container.querySelector('[aria-label="Playbook catalog hierarchy"]')).not.toBeNull()
 
     await click([...container.querySelectorAll('button')].find(button => button.textContent?.includes('Basic Browser Setup')) || null)
     expect(container.textContent).toContain('Setup with Builder')

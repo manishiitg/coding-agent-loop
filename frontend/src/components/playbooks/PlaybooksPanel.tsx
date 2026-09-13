@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
-import { ArrowLeft, BookMarked, CheckCircle2, ChevronRight, CircleDot, Layers3, Loader2, PackageCheck, Search, Settings2, Wrench } from 'lucide-react'
-import { PLAYBOOK_CATALOG, type PlaybookCatalogItem } from './playbookCatalog'
+import { ArrowLeft, BookMarked, CheckCircle2, ChevronDown, ChevronRight, CircleDot, FolderTree, Layers3, Loader2, PackageCheck, Search, Settings2, Wrench } from 'lucide-react'
+import { PLAYBOOK_CATALOG, PLAYBOOK_CATEGORIES, type PlaybookCatalogItem } from './playbookCatalog'
 import { playbooksApi } from '../../api/playbooks'
 import type { InstalledPlaybook } from '../../services/api-types'
 import { useCanWriteWorkflow, READ_ONLY_TITLE } from '../../hooks/useCanWriteWorkflow'
@@ -20,7 +20,7 @@ const tabClass = (active: boolean) => `rounded-md px-3 py-1.5 text-xs font-mediu
 export default function PlaybooksPanel({ workspacePath }: PlaybooksPanelProps) {
   const [tab, setTab] = useState<Tab>('catalog')
   const [query, setQuery] = useState('')
-  const [category, setCategory] = useState<string>('All')
+  const [expandedCategories, setExpandedCategories] = useState<Set<string>>(() => new Set(PLAYBOOK_CATEGORIES))
   const [selected, setSelected] = useState<PlaybookCatalogItem | null>(null)
   const [catalog, setCatalog] = useState<readonly PlaybookCatalogItem[]>(PLAYBOOK_CATALOG)
   const [installed, setInstalled] = useState<InstalledPlaybook[]>([])
@@ -52,10 +52,22 @@ export default function PlaybooksPanel({ workspacePath }: PlaybooksPanelProps) {
   const visible = useMemo(() => {
     const needle = query.trim().toLowerCase()
     return catalog
-      .filter(playbook => category === 'All' || playbook.category === category)
-      .filter(playbook => !needle || `${playbook.title} ${playbook.description} ${playbook.category}`.toLowerCase().includes(needle))
+      .filter(playbook => !needle || `${playbook.title} ${playbook.description} ${playbook.category} ${(playbook.setupInputs || []).map(input => input.label).join(' ')} ${(playbook.outputs || []).join(' ')}`.toLowerCase().includes(needle))
       .sort((a, b) => a.category.localeCompare(b.category) || a.order - b.order)
-  }, [catalog, category, query])
+  }, [catalog, query])
+
+  const visibleGroups = useMemo(() => categories
+    .map(groupCategory => ({ category: groupCategory, playbooks: visible.filter(playbook => playbook.category === groupCategory) }))
+    .filter(group => group.playbooks.length > 0), [categories, visible])
+
+  const toggleCategory = (groupCategory: string) => {
+    setExpandedCategories(current => {
+      const next = new Set(current)
+      if (next.has(groupCategory)) next.delete(groupCategory)
+      else next.add(groupCategory)
+      return next
+    })
+  }
 
   const installedSelection = selected ? installed.find(item => item.id === selected.id) : undefined
   const installSelected = async () => {
@@ -184,21 +196,37 @@ export default function PlaybooksPanel({ workspacePath }: PlaybooksPanelProps) {
               <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
               <input value={query} onChange={event => setQuery(event.target.value)} placeholder="Search playbooks" aria-label="Search playbooks" className="w-full rounded-lg border border-border bg-background py-2 pl-9 pr-3 text-sm outline-none focus:border-primary focus:ring-1 focus:ring-primary" />
             </div>
-            <div className="flex gap-1.5 overflow-x-auto pb-1">
-              {['All', ...categories].map(value => <button key={value} type="button" onClick={() => setCategory(value)} className={`whitespace-nowrap rounded-full border px-2.5 py-1 text-[11px] font-medium ${category === value ? 'border-primary/40 bg-primary/10 text-primary' : 'border-border text-muted-foreground hover:text-foreground'}`}>{value}</button>)}
+            <div className="rounded-lg border border-border bg-muted/20 px-3 py-2.5" aria-label="Playbook catalog hierarchy">
+              <div className="flex items-center gap-2 text-xs font-medium text-muted-foreground"><FolderTree className="h-4 w-4" /> AgentWorks</div>
+              <div className="ml-2 mt-2 border-l border-border pl-4 text-xs font-semibold text-foreground">Agentic Engineering Platform <span className="ml-1 font-normal text-muted-foreground">{visible.length} playbooks</span></div>
             </div>
-            <div className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">AgentWorks / Agentic Engineering Platform</div>
           </div>
           <div className="mt-3 min-h-0 flex-1 overflow-y-auto">
             {visible.length === 0 ? <p className="py-10 text-center text-sm text-muted-foreground">No playbooks match this search.</p> : (
-              <div className="space-y-2">
-                {visible.map(playbook => (
-                  <button key={playbook.id} type="button" onClick={() => setSelected(playbook)} className="group flex w-full items-start gap-3 rounded-lg border border-border bg-card p-3 text-left transition-colors hover:border-primary/40 hover:bg-muted/20">
-                    <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-muted text-muted-foreground group-hover:text-primary"><BookMarked className="h-4 w-4" /></div>
-                    <div className="min-w-0 flex-1"><div className="flex items-center gap-2"><span className="truncate text-sm font-medium text-foreground">{playbook.title}</span><span className="shrink-0 text-[10px] text-muted-foreground">v{playbook.version}</span></div><div className="mt-0.5 text-[11px] font-medium text-primary/80">{playbook.category}</div><p className="mt-1 line-clamp-2 text-xs leading-5 text-muted-foreground">{playbook.description}</p></div>
-                    <ChevronRight className="mt-2 h-4 w-4 shrink-0 text-muted-foreground" />
-                  </button>
-                ))}
+              <div className="space-y-3">
+                {visibleGroups.map(group => {
+                  const expanded = query.trim() !== '' || expandedCategories.has(group.category)
+                  return (
+                    <section key={group.category} className="rounded-lg border border-border bg-card/50">
+                      <button type="button" aria-expanded={expanded} onClick={() => toggleCategory(group.category)} className="flex w-full items-center gap-2 px-3 py-2.5 text-left hover:bg-muted/30">
+                        {expanded ? <ChevronDown className="h-4 w-4 text-muted-foreground" /> : <ChevronRight className="h-4 w-4 text-muted-foreground" />}
+                        <span className="flex-1 text-sm font-semibold text-foreground">{group.category}</span>
+                        <span className="rounded-full bg-muted px-2 py-0.5 text-[10px] font-medium text-muted-foreground">{group.playbooks.length}</span>
+                      </button>
+                      {expanded && (
+                        <div className="ml-5 space-y-2 border-l border-border px-3 pb-3">
+                          {group.playbooks.map(playbook => (
+                            <button key={playbook.id} type="button" onClick={() => setSelected(playbook)} className="group flex w-full items-start gap-3 rounded-lg border border-border bg-card p-3 text-left transition-colors hover:border-primary/40 hover:bg-muted/20">
+                              <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-muted text-muted-foreground group-hover:text-primary"><BookMarked className="h-4 w-4" /></div>
+                              <div className="min-w-0 flex-1"><div className="flex items-center gap-2"><span className="truncate text-sm font-medium text-foreground">{playbook.title}</span><span className="shrink-0 text-[10px] text-muted-foreground">v{playbook.version}</span></div><p className="mt-1 line-clamp-2 text-xs leading-5 text-muted-foreground">{playbook.description}</p></div>
+                              <ChevronRight className="mt-2 h-4 w-4 shrink-0 text-muted-foreground" />
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </section>
+                  )
+                })}
               </div>
             )}
           </div>

@@ -21,7 +21,9 @@ import (
 const playwrightReplayLimit = 32 << 20
 const playwrightReplayTTL = time.Hour
 
-var playwrightEncoders = make(chan struct{}, 1)
+// Encoding is CPU-bounded and each worker uses one ffmpeg thread. Two workers
+// keep short test replays responsive when a suite finishes several cases at once.
+var playwrightEncoders = make(chan struct{}, 2)
 var playwrightReplaySweep sync.Once
 
 func sweepAbandonedPlaywrightReplays() {
@@ -199,13 +201,14 @@ capture:
 	}
 	_, _ = fmt.Fprintf(manifest, "duration %.3f\nfile '%06d.jpg'\n", duration, count-1)
 	_ = manifest.Close()
-	rec.setState("saving", "")
+	rec.setState("queued", "")
 	select {
 	case playwrightEncoders <- struct{}{}:
 	case <-rec.ctx.Done():
 		return
 	}
 	defer func() { <-playwrightEncoders }()
+	rec.setState("saving", "")
 	encodeCtx, cancel := context.WithTimeout(rec.ctx, 5*time.Minute)
 	defer cancel()
 	cmd := exec.CommandContext(encodeCtx, "ffmpeg", "-hide_banner", "-loglevel", "error", "-nostdin", "-y", "-f", "concat", "-safe", "1", "-i", filepath.Join(rec.dir, "frames.txt"), "-vf", "scale=1280:720:force_original_aspect_ratio=decrease,pad=1280:720:(ow-iw)/2:(oh-ih)/2", "-filter_threads", "1", "-r", "4", "-c:v", "libx264", "-preset", "ultrafast", "-crf", "28", "-threads", "1", "-pix_fmt", "yuv420p", "-movflags", "+faststart", filepath.Join(rec.dir, "replay.mp4"))

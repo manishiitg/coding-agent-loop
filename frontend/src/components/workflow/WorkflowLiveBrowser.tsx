@@ -59,7 +59,6 @@ export default function WorkflowLiveBrowser({ workspacePath, toolbar }: { worksp
       useChatStore.getState().addToast('Unable to copy recording path', 'error')
     }
   }
-  const [fit, setFit] = useState<'width' | 'page'>('width')
   const pendingTab = useRef('')
   const socket = useRef<WebSocket | null>(null)
   const viewport = useRef({ width: 1280, height: 720 })
@@ -77,6 +76,9 @@ export default function WorkflowLiveBrowser({ workspacePath, toolbar }: { worksp
   const sourceCompleted = currentBrowser?.state === 'completed'
   const completed = sourceCompleted || Boolean(retainedFrame && !session)
   const recordingState = currentBrowser?.recording_state
+  const replayQueued = sourceCompleted && recordingState === 'queued'
+  const replayPreparing = sourceCompleted && (recordingState === 'recording' || recordingState === 'saving')
+  const replayFailed = sourceCompleted && recordingState === 'error'
 
   useEffect(() => {
     if (!workspacePath) return
@@ -299,7 +301,6 @@ export default function WorkflowLiveBrowser({ workspacePath, toolbar }: { worksp
               {recordingBusy ? recording.recording ? 'Saving recording…' : 'Starting recording…' : recording.recording ? 'Stop recording' : 'Start recording'}
             </button>
           )}
-          <select aria-label="Browser sizing" value={fit} onChange={event => setFit(event.target.value as 'width' | 'page')} className="rounded border border-border bg-background px-1 text-xs"><option value="width">Fill width</option><option value="page">Fit page</option></select>
           {replayURL && <a href={replayURL} download="playwright-replay.mp4" className="rounded border border-border px-3 py-1 text-xs">Download video</a>}
           {toolbar}
         </div>
@@ -325,14 +326,13 @@ export default function WorkflowLiveBrowser({ workspacePath, toolbar }: { worksp
       )}
       {(readOnly || sessions.some(item => item.recording_state)) && <p className="shrink-0 border-b border-border bg-muted/30 px-3 py-2 text-xs">Closing this panel deletes its Playwright recordings. Download any videos you want to keep. Temporary recordings expire after 1 hour.</p>}
       {currentBrowser?.recording_error && <p className="px-3 py-2 text-xs text-destructive" role="alert">{currentBrowser.recording_error}</p>}
-      {sourceCompleted && recordingState === 'saving' && <p className="px-3 py-2 text-xs">Preparing video replay…</p>}
       {error && <p className="p-3 text-xs text-destructive" role="alert">{error}</p>}
       {tabs.length > 0 && <div className="flex shrink-0 gap-1 overflow-x-auto border-b border-border px-2 py-1" aria-label="Browser tabs">
         {tabs.map(tab => <button key={tab.tabId} disabled={!canControl || tab.active} aria-pressed={tab.active} title={controlling ? tab.url : 'Switch tab and take control'} onClick={() => { if (controlling) send({ type: 'switch_tab', tab: tab.tabId }); else { pendingTab.current = tab.tabId; send({ type: 'take_control' }) } }} className={`max-w-52 shrink-0 truncate rounded px-3 py-1.5 text-xs ${tab.active ? 'bg-muted font-medium' : 'text-muted-foreground'} disabled:cursor-default`}>{tab.title || tab.url || tab.tabId}</button>)}
       </div>}
-      {replayURL ? <video controls preload="metadata" src={replayURL} aria-label="Playwright test recording" className="min-h-0 flex-1 bg-black object-contain" /> : displayFrame ? <div className="relative min-h-0 flex-1 bg-muted/20"><div className={`absolute inset-0 ${fit === 'width' ? 'overflow-auto' : 'flex items-center justify-center'}`}>
-        <img ref={screen} src={displayFrame} alt={retainedFrame ? "Last Playwright test frame" : "Live server browser viewport"} draggable={false} tabIndex={controlling ? 0 : -1} className={`block h-auto select-none outline-none focus:ring-2 focus:ring-inset focus:ring-ring ${fit === 'width' ? 'w-full max-w-none' : 'max-h-full w-auto max-w-full'}`} onMouseDown={event => mouse(event, 'mousePressed')} onMouseUp={event => mouse(event, 'mouseReleased')} onMouseMove={event => mouse(event, 'mouseMoved')} onContextMenu={event => event.preventDefault()} onKeyDown={event => keyboard(event, 'keyDown')} onKeyUp={event => keyboard(event, 'keyUp')} />
-      </div>{retainedFrame && <span className="pointer-events-none absolute bottom-3 right-3 rounded bg-background/90 px-3 py-1 text-xs shadow">{completed ? 'Completed' : 'Disconnected'} · Last frame</span>}</div> : <div className="flex min-h-0 flex-1 items-center justify-center px-6 py-12 text-center text-sm text-muted-foreground">{session ? 'Waiting for the browser’s live view…' : followingPlaywright ? 'Waiting for a Playwright test. Tests using the AgentWorks fixture will appear here automatically.' : 'When this workflow opens a managed browser, its live view will appear here.'}</div>}
+      {replayURL ? <video controls preload="metadata" src={replayURL} aria-label="Playwright test recording" className="min-h-0 flex-1 bg-black object-contain" /> : displayFrame ? <div className="relative min-h-0 flex-1 bg-muted/20"><div className="absolute inset-0 flex items-center justify-center overflow-hidden">
+        <img ref={screen} src={displayFrame} alt={retainedFrame ? "Last Playwright test frame" : "Live server browser viewport"} draggable={false} tabIndex={controlling ? 0 : -1} className="block h-auto max-h-full w-auto max-w-full select-none outline-none focus:ring-2 focus:ring-inset focus:ring-ring" onMouseDown={event => mouse(event, 'mousePressed')} onMouseUp={event => mouse(event, 'mouseReleased')} onMouseMove={event => mouse(event, 'mouseMoved')} onContextMenu={event => event.preventDefault()} onKeyDown={event => keyboard(event, 'keyDown')} onKeyUp={event => keyboard(event, 'keyUp')} />
+      </div>{retainedFrame && <span className="pointer-events-none absolute bottom-3 right-3 rounded bg-background/90 px-3 py-1 text-xs shadow">{completed ? 'Completed' : 'Disconnected'} · Last frame</span>}</div> : <div className="flex min-h-0 flex-1 items-center justify-center px-6 py-12 text-center text-sm text-muted-foreground">{replayQueued ? <span className="inline-flex items-center gap-2"><Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />Replay queued for processing…</span> : replayPreparing ? <span className="inline-flex items-center gap-2"><Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />Preparing video replay…</span> : replayFailed ? 'Replay unavailable. See the recording error above.' : sourceCompleted ? 'Replay is no longer available.' : session ? 'Waiting for the browser’s live view…' : followingPlaywright ? 'Waiting for a Playwright test. Tests using the AgentWorks fixture will appear here automatically.' : 'When this workflow opens a managed browser, its live view will appear here.'}</div>}
       <p className="shrink-0 border-t border-border px-3 py-1 text-[11px] text-muted-foreground">{readOnly ? 'Playwright test · Watch-only. Video replay is recorded automatically.' : session === 'shared-browser' ? 'Shared browser · everyone uses the same tabs and sign-ins. Coordinate before making changes.' : controlling ? 'Browser automation is paused while you interact. Return control or press Escape to let it continue.' : 'Live server browser · Take control to interact.'}</p>
     </section>
   )

@@ -40,6 +40,7 @@ it('shows both browser types but makes Playwright watch-only even for workflow w
   expect(host.textContent).toContain('Watch-only')
   expect(buttons()).not.toContain('Take control')
   expect(buttons()).not.toContain('Start recording')
+  expect(host.querySelector('select[aria-label="Browser sizing"]')).toBeNull()
   expect(api.post).not.toHaveBeenCalled()
   await act(async () => {
     FakeSocket.instances[0].onmessage?.({ data: JSON.stringify({ type: 'frame', data: '/9j/', metadata: { deviceWidth: 640, deviceHeight: 480 } }) })
@@ -52,6 +53,17 @@ it('shows both browser types but makes Playwright watch-only even for workflow w
   await act(async () => { selector.value = 'agent-test'; selector.dispatchEvent(new Event('change', { bubbles: true })) })
   expect(buttons()).toContain('Take control')
   expect(buttons()).toContain('Start recording')
+})
+
+it('fits the browser automatically while preserving its aspect ratio', async () => {
+  api.get.mockResolvedValue({ data: { sessions: [testBrowser('pw-aspect')] } })
+  const { host } = await mountBrowser()
+  await act(async () => { FakeSocket.instances.at(-1)?.onmessage?.({ data: JSON.stringify({ type: 'frame', data: '/9j/', metadata: { deviceWidth: 900, deviceHeight: 1600 } }) }) })
+  const image = host.querySelector('img')!
+  expect(image.className).toContain('max-h-full')
+  expect(image.className).toContain('max-w-full')
+  expect(image.className).toContain('h-auto')
+  expect(image.className).toContain('w-auto')
 })
 
 const shared = { browser_session: 'shared-browser', workflow_session: 'shared', label: 'Shared browser · all users' }
@@ -178,6 +190,16 @@ it('continues following live tests when an older completed replay remains', asyn
   await pollBrowsers([{ ...testBrowser('pw-first'), state: 'completed', recording_state: 'saving' }, testBrowser('pw-next')])
   expect(selector.value).toBe('playwright-tests')
   expect(String(FakeSocket.instances.at(-1)?.url)).toContain('/pw-next/stream')
+})
+
+it('shows replay processing state instead of waiting for a completed browser live view', async () => {
+  api.get.mockResolvedValue({ data: { sessions: [{ ...testBrowser('pw-queued'), state: 'completed', recording_state: 'queued' }] } })
+  const { host } = await mountBrowser()
+  expect(host.textContent).toContain('Replay queued for processing')
+  expect(host.textContent).not.toContain('Waiting for the browser’s live view')
+  await pollBrowsers([{ ...testBrowser('pw-queued'), state: 'completed', recording_state: 'saving' }])
+  expect(host.textContent).toContain('Preparing video replay')
+  expect(host.textContent).not.toContain('Waiting for the browser’s live view')
 })
 
 

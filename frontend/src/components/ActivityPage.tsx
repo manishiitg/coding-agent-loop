@@ -1,12 +1,14 @@
 import { lazy, Suspense, useState } from 'react'
-import { CalendarDays, LayoutDashboard, MessageSquare } from 'lucide-react'
+import { BookMarked, CalendarDays, LayoutDashboard, MessageSquare } from 'lucide-react'
 import { EmployeeDashboard } from './EmployeeDashboard'
 import { useLLMStore } from '../stores/useLLMStore'
 import { useAppStore } from '../stores/useAppStore'
 
 const Schedules = lazy(() => import('./scheduler/WorkflowScheduleRunsPanel'))
+const PlaybookOperations = lazy(() => import('./playbooks/PlaybookOperationsOverview'))
 const tabs = [
   { id: 'updates', label: 'Updates', icon: MessageSquare },
+  { id: 'playbooks', label: 'Engineering Ops', icon: BookMarked },
   { id: 'schedules', label: 'Schedules', icon: CalendarDays },
 ] as const
 
@@ -18,9 +20,11 @@ export default function ActivityPage() {
   const showProviders = useLLMStore(state => state.showLLMModal)
   const [activeTab, setActiveTab] = useState<ActivityTab>('updates')
   const [openedSchedules, setOpenedSchedules] = useState(false)
+  const [openedPlaybooks, setOpenedPlaybooks] = useState(false)
   const setShowWorkflowsOverview = useAppStore(state => state.setShowWorkflowsOverview)
   const selectTab = (tab: ActivityTab) => {
     if (tab === 'schedules') setOpenedSchedules(true)
+    if (tab === 'playbooks') setOpenedPlaybooks(true)
     setActiveTab(tab)
   }
 
@@ -70,6 +74,9 @@ export default function ActivityPage() {
         {openedSchedules && <Suspense fallback={<div className="p-6 text-sm text-muted-foreground">Loading schedules…</div>}>
           <Schedules embedded active={showActivity && !showProviders && activeTab === 'schedules'} onClose={() => setShowWorkflowsOverview(false)} />
         </Suspense>}
+      </div>
+      <div id="activity-panel-playbooks" role="tabpanel" aria-labelledby="activity-tab-playbooks" hidden={activeTab !== 'playbooks'} className="min-h-0 flex-1">
+        {openedPlaybooks && <Suspense fallback={<div className="p-6 text-sm text-muted-foreground">Loading engineering operations…</div>}><PlaybookOperations /></Suspense>}
       </div>
     </section>
   )

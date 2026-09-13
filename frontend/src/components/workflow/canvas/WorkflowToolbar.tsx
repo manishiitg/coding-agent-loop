@@ -6,6 +6,7 @@ import {
   ShieldCheck,
   Activity,
   BellRing,
+  BookMarked,
   CalendarClock,
   ChevronDown,
   ChevronRight,
@@ -180,7 +181,7 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
   // always present, including for a new workflow with no steps yet.
   const workspaceViewDefinitions = PRIMARY_WORKSPACE_TOOLBAR_VIEWS.filter(view => view.id !== 'report')
   const capabilityViewDefinitions = useMemo(
-    () => WORKSPACE_VIEWS.filter(view => view.toolbarGroup === 'capabilities'),
+    () => WORKSPACE_VIEWS.filter(view => view.toolbarGroup === 'capabilities' && view.id !== 'playbooks'),
     [],
   )
 
@@ -485,7 +486,7 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
       {/* Right side - View controls */}
       <div data-tour="workflow-tools" data-testid="tour-workflow-tools" className="ml-auto flex shrink-0 items-center gap-1">
         <TooltipProvider delayDuration={150}>
-          {/* Report and Pulse are primary views, always visible outside the groups. */}
+          {/* Report, Pulse, and Playbooks are primary views, always visible outside the groups. */}
           {workspacePath && (
             <Tooltip>
               <TooltipTrigger asChild>
@@ -520,6 +521,23 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
                 </button>
               </TooltipTrigger>
               <TooltipContent side="bottom"><p>{pendingDecisionCount > 0 ? `Pulse · ${pendingDecisionCount} ${pendingDecisionCount === 1 ? 'decision needs' : 'decisions need'} your input` : 'Pulse'}</p></TooltipContent>
+            </Tooltip>
+          )}
+
+          {workspacePath && (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button
+                  type="button"
+                  onClick={() => openWorkspaceView('playbooks')}
+                  className={`flex h-8 w-8 items-center justify-center rounded-lg border border-border transition-colors ${activeWorkspaceView === 'playbooks' ? 'bg-muted text-foreground shadow-sm' : 'bg-muted/60 text-muted-foreground hover:bg-muted hover:text-foreground'}`}
+                  aria-label="Playbooks"
+                  aria-pressed={activeWorkspaceView === 'playbooks'}
+                >
+                  <BookMarked className="h-3.5 w-3.5" />
+                </button>
+              </TooltipTrigger>
+              <TooltipContent side="bottom"><p>Playbooks</p></TooltipContent>
             </Tooltip>
           )}
 
@@ -640,7 +658,7 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
             label="Setup"
             open={openGroups.setup}
             onToggle={() => toggleGroup('setup')}
-            title={openGroups.setup ? 'Hide setup' : 'Show setup: playbooks, skills, secrets, MCP servers, LLM, bots, folders, sharing, users'}
+            title={openGroups.setup ? 'Hide setup' : 'Show setup: skills, secrets, MCP servers, LLM, bots, folders, sharing, users'}
           >
           <div className="inline-flex items-center gap-0.5">
             {capabilityViewDefinitions.map(({ id, icon: Icon, label }) => {

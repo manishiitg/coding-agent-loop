@@ -7,6 +7,7 @@ import {
   X,
 } from 'lucide-react'
 import { agentApi } from '../../services/api'
+import { playbooksApi } from '../../api/playbooks'
 import type {
   PulseFinalCommandState,
   PulseFindingLifecycle,
@@ -21,7 +22,7 @@ import type {
 import { ReportHumanInputPanel } from './ReportHumanInputPanel'
 import { WORKFLOW_LOG_REFRESH_EVENT } from './workflowEvents'
 import { mergePulseReviewCoverage } from './pulseReviewCoverage'
-import { PulseReviewOverview } from './PulseReviewOverview'
+import { PulseReviewOverview, type InstalledPlaybookReviewFocus } from './PulseReviewOverview'
 import { SoulViewer, WORKFLOW_SOUL_REFRESH_EVENT } from './SoulViewer'
 import { PulseFindingCard } from './PulseFindingCard'
 import { pulseFindingPresentation, type PulseFindingQueue } from './pulseFindingPresentation'
@@ -129,6 +130,7 @@ export function PulseWorkspace({
   const [reports, setReports] = useState<PulseReviewReport[]>([])
   const [impact, setImpact] = useState<PulseImpactLedger>({ interventions: [], observations: [], assessments: [] })
   const [contextRecords, setContextRecords] = useState<PulseContextRecord[]>([])
+  const [playbookFocuses, setPlaybookFocuses] = useState<InstalledPlaybookReviewFocus[]>([])
   const [focus, setFocus] = useState<PulseFocus>('all')
   const [moduleFilter, setModuleFilter] = useState<string | null>('technical_review')
   const [expandedFinding, setExpandedFinding] = useState<string | null>(null)
@@ -141,11 +143,12 @@ export function PulseWorkspace({
     const version = ++loadVersion.current
     if (showLoading) setLoading(true)
     if (showLoading) setError(null)
-    const [findingResult, reviewResult, impactResult, contextResult] = await Promise.allSettled([
+    const [findingResult, reviewResult, impactResult, contextResult, playbookResult] = await Promise.allSettled([
       agentApi.getPulseFindings(workspacePath),
       agentApi.getPulseReviews(workspacePath),
       agentApi.getPulseImpact(workspacePath),
       agentApi.getPulseContext(workspacePath),
+      Promise.all([playbooksApi.list(), playbooksApi.listInstalled(workspacePath)]),
     ])
     if (version !== loadVersion.current) return
     const errors: string[] = []
@@ -195,6 +198,23 @@ export function PulseWorkspace({
           : contextResult.value.error || 'Could not load user context.',
       )
     }
+    if (playbookResult.status === 'fulfilled') {
+      const [catalog, installed] = playbookResult.value
+      const installedIDs = new Set(installed.filter(item => item.status !== 'disabled').map(item => item.id))
+      setPlaybookFocuses(catalog.filter(playbook => installedIDs.has(playbook.id)).flatMap(playbook =>
+        (playbook.pulseFocus || []).map(focus => ({
+          playbookId: playbook.id,
+          playbookTitle: playbook.title,
+          module: focus.module,
+          label: focus.label,
+          focusAreas: focus.focus_areas,
+          reviewWhen: focus.review_when,
+        })),
+      ))
+    } else {
+      // Playbook guidance supplements Pulse history, so a catalog outage should not hide review results.
+      setPlaybookFocuses([])
+    }
     setError(errors.length > 0 ? errors.join(' ') : null)
     setLoading(false)
   }, [workspacePath])
@@ -211,6 +231,7 @@ export function PulseWorkspace({
     setReviews([])
     setImpact({ interventions: [], observations: [], assessments: [] })
     setContextRecords([])
+    setPlaybookFocuses([])
     void load()
   }, [load])
 
@@ -310,6 +331,7 @@ export function PulseWorkspace({
 
       <PulseReviewOverview moduleStates={moduleStates} coverage={mergePulseReviewCoverage(coverage, reviewFocuses, reviewFocusSelections)}
         audits={audits} reports={reports} findings={findings} moduleFilter={moduleFilter} reviewFocusSelections={reviewFocusSelections}
+        playbookFocuses={playbookFocuses}
         onSelectModule={module => {
           const counts = pulseWorkspaceQueueCounts(findings.filter(item => pulseFindingReviewAreas(item, reviewFocusSelections).includes(module)))
           setModuleFilter(module)

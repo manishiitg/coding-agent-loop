@@ -10,6 +10,9 @@ vi.mock('../../services/api', () => ({
     getPulseFindings: vi.fn(), getPulseReviews: vi.fn(), getPulseImpact: vi.fn(), getPulseContext: vi.fn(),
   },
 }))
+vi.mock('../../api/playbooks', () => ({
+  playbooksApi: { list: vi.fn(), listInstalled: vi.fn() },
+}))
 vi.mock('./SoulViewer', () => ({
   SoulViewer: () => null,
   WORKFLOW_SOUL_REFRESH_EVENT: 'workflow-soul-refresh',
@@ -17,6 +20,7 @@ vi.mock('./SoulViewer', () => ({
 vi.mock('./ReportHumanInputPanel', () => ({ ReportHumanInputPanel: () => null }))
 
 import { agentApi } from '../../services/api'
+import { playbooksApi } from '../../api/playbooks'
 import { PulseWorkspace } from './PulseWorkspace'
 import { WORKFLOW_LOG_REFRESH_EVENT } from './workflowEvents'
 
@@ -59,6 +63,17 @@ describe('Pulse workspace filter interactions', () => {
     vi.mocked(agentApi.getPulseReviews).mockResolvedValue({ success: true, reviews: [] })
     vi.mocked(agentApi.getPulseImpact).mockResolvedValue({ success: true, impact: { interventions: [], observations: [], assessments: [] } })
     vi.mocked(agentApi.getPulseContext).mockResolvedValue({ success: true, records: [], total: 0 })
+    vi.mocked(playbooksApi.list).mockResolvedValue([{
+      id: 'browser-performance-validation', title: 'Browser Performance Validation', description: 'Measure journeys.', version: '0.2.1',
+      category: 'Performance Engineering', order: 1, inputCount: 6, toolCount: 3, pulseFocus: [
+        { module: 'architecture_review', label: 'Performance architecture', focus_areas: ['Sampling remains comparable across routes'], review_when: ['A route or browser foundation changes'] },
+        { module: 'strategic_review', label: 'Performance strategy', focus_areas: ['Budgets align with the workflow goal'], review_when: ['A customer goal or budget changes'] },
+      ],
+    }])
+    vi.mocked(playbooksApi.listInstalled).mockResolvedValue([{
+      id: 'browser-performance-validation', title: 'Browser Performance Validation', version: '0.2.1', category: 'Performance Engineering',
+      skill_name: 'agentworks-playbook-browser-performance-validation', source_hash: 'test', status: 'ready', installed_at: '2026-09-13',
+    }])
     container = document.createElement('div')
     document.body.append(container)
     root = createRoot(container)
@@ -120,6 +135,8 @@ describe('Pulse workspace filter interactions', () => {
 
   it('shows evidence waits, resets category on every area switch, and removes only the area', async () => {
     await click('Strategy')
+    expect(container.textContent).toContain('Budgets align with the workflow goal')
+    expect(container.textContent).toContain('Browser Performance Validation · Performance strategy')
     expect(button('Current').getAttribute('aria-pressed')).toBe('true')
     expect(count('Waiting for evidence')).toBe(4)
     expect(count('Ideas')).toBe(0)
@@ -140,6 +157,13 @@ describe('Pulse workspace filter interactions', () => {
     await act(async () => (container.querySelector('[aria-label="Clear review area filter"]') as HTMLButtonElement).click())
     expect(button('Platform repair pending').getAttribute('aria-pressed')).toBe('true')
     shownCount(4)
+  })
+
+  it('shows installed playbook focus on architecture before a review is recorded', async () => {
+    expect(button('Architecture').textContent).toContain('Sampling remains comparable across routes')
+    await click('Architecture')
+    expect(container.textContent).toContain('Playbook focus areas')
+    expect(container.textContent).toContain('A route or browser foundation changes')
   })
 
 

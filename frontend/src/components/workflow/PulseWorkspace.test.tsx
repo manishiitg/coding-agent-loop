@@ -2,6 +2,7 @@ import React from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it, vi } from 'vitest'
 vi.mock('../../services/api', () => ({ agentApi: {}, getApiBaseUrl: () => 'http://127.0.0.1:99999' }))
+vi.mock('../../api/playbooks', () => ({ playbooksApi: { list: vi.fn(), listInstalled: vi.fn() } }))
 vi.mock('./ReportHumanInputPanel', () => ({ ReportHumanInputPanel: () => <section>Needs your decision</section> }))
 import { PulseWorkspace } from './PulseWorkspace'
 

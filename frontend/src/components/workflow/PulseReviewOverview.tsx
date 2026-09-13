@@ -8,6 +8,15 @@ import { PulseReviewReportReader } from './PulseReviewReportReader'
 const labels: Record<string, string> = { technical_review: 'Health', architecture_review: 'Architecture', strategic_review: 'Strategic review', plan_drift_review: 'Drift check', done: 'Completed', changed: 'Changes made', timed_out: 'Timed out' }
 const readable = (text?: string) => labels[text || ''] || (text ? text.charAt(0).toUpperCase() + text.slice(1).replaceAll('_', ' ') : 'Recorded')
 
+export type InstalledPlaybookReviewFocus = {
+  playbookId: string
+  playbookTitle: string
+  module: 'technical_review' | 'architecture_review' | 'strategic_review'
+  label: string
+  focusAreas: string[]
+  reviewWhen: string[]
+}
+
 function Evidence({ items, title = 'Evidence' }: { items?: string[]; title?: string }) {
   if (!items?.length) return null
   return <div className="mt-3"><h5 className="font-medium text-foreground">{title}</h5>
@@ -56,10 +65,11 @@ function FocusDetails({ items, reports, findings }: { items: PulseReviewFocus[];
   </div>
 }
 
-export function PulseReviewOverview({ moduleStates, coverage, audits, reports, findings, moduleFilter, onSelectModule, reviewFocusSelections = [] }: {
+export function PulseReviewOverview({ moduleStates, coverage, audits, reports, findings, moduleFilter, onSelectModule, reviewFocusSelections = [], playbookFocuses = [] }: {
   moduleStates: PulseModuleState[]; coverage: PulseReviewFocus[]; audits: PulseReviewAudit[];
   reports: PulseReviewReport[]; findings: PulseFindingLifecycle[]; moduleFilter: string | null;
   onSelectModule: (module: string) => void; reviewFocusSelections?: PulseReviewFocus[];
+  playbookFocuses?: InstalledPlaybookReviewFocus[];
 }) {
   const areas = [
     { id: 'plan_drift_review', label: 'Drift check', description: 'Changes to the plan and their follow-up checks.', Icon: GitCompare },
@@ -71,6 +81,7 @@ export function PulseReviewOverview({ moduleStates, coverage, audits, reports, f
   const latestAuditFor = (module: string) => audits.find(item => normalizePulseWorkspaceModule(item.module) === module && item.result !== 'skipped')
   const stateFor = (module: string) => moduleStates.find(item => normalizePulseWorkspaceModule(item.module) === module)
   const coverageFor = (module: string) => coverage.filter(item => normalizePulseWorkspaceModule(item.module) === module)
+  const playbookFocusFor = (module: string) => playbookFocuses.filter(item => item.module === module)
   const latestCoverageFor = (module: string) => [...coverageFor(module)].sort((a, b) => (b.last_reviewed_at || '').localeCompare(a.last_reviewed_at || ''))[0]
   const drift = stateFor('plan_drift_review')
   const driftAudit = latestAuditFor('plan_drift_review')
@@ -83,6 +94,7 @@ export function PulseReviewOverview({ moduleStates, coverage, audits, reports, f
   const selectedCoverage = selected ? coverageFor(selected.id) : []
   const latestCoverage = selected && latestCoverageFor(selected.id)
   const selectedReports = reports.filter(item => normalizePulseWorkspaceModule(item.module) === moduleFilter)
+  const selectedPlaybookFocuses = selected ? playbookFocusFor(selected.id) : []
   const visibleAudits = audits.filter(item => item.result !== 'skipped' && (!moduleFilter || normalizePulseWorkspaceModule(item.module) === moduleFilter))
   const driftCounts = pulseWorkspaceQueueCounts(findings.filter(item => pulseFindingReviewAreas(item, reviewFocusSelections).includes('plan_drift_review')))
   return <section className="space-y-4" aria-label="Pulse reviews">
@@ -91,11 +103,17 @@ export function PulseReviewOverview({ moduleStates, coverage, audits, reports, f
       {areas.filter(area => area.id !== 'plan_drift_review').map(area => {
         const audit = latestAuditFor(area.id)
         const lastReviewed = audit?.recorded_at || latestCoverageFor(area.id)?.last_reviewed_at
+        const recommendedFocus = playbookFocusFor(area.id)
         const active = moduleFilter === area.id
         return <button key={area.id} type="button" aria-pressed={active} onClick={() => onSelectModule(area.id)}
           className={`rounded-xl border p-3 text-left transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary ${active ? 'border-primary/40 bg-primary/10' : 'bg-background hover:bg-muted/40'}`}>
           <span className="flex items-center gap-2 text-xs font-semibold"><area.Icon className="h-4 w-4 shrink-0" />{area.label}</span>
           <span className="mt-2 block text-[11px] leading-5 text-muted-foreground">{area.id === 'plan_drift_review' ? driftStatus : lastReviewed ? `Last reviewed ${pulseReviewDate(lastReviewed)}` : 'No review recorded'}</span>
+          <span className="mt-1.5 block text-[11px] leading-4 text-foreground/80">
+            <span className="font-medium">Playbook focus:</span> {recommendedFocus.length > 0
+              ? recommendedFocus.flatMap(item => item.focusAreas).slice(0, 2).join(' · ')
+              : 'None configured'}
+          </span>
         </button>
       })}
     </nav>
@@ -112,6 +130,16 @@ export function PulseReviewOverview({ moduleStates, coverage, audits, reports, f
       </div> : <div className="text-xs leading-5 text-muted-foreground">
         <p className="font-medium text-foreground">{selectedAudit?.reason || latestCoverage?.last_verdict || 'No review outcome recorded yet.'}</p>
         {selectedState?.last_gate_decision === 'skipped' && <details className="mt-2"><summary className="cursor-pointer">Why no new review ran</summary><p className="mt-2">{selectedState.last_reason}</p></details>}
+      </div>}
+      {selected.id !== 'plan_drift_review' && <div>
+        <h5 className="mb-2 text-xs font-semibold">Playbook focus areas</h5>
+        {selectedPlaybookFocuses.length === 0 ? <p className="rounded-lg border border-dashed p-3 text-xs text-muted-foreground">No installed playbook defines a focus for this review area.</p> : <div className="divide-y rounded-lg border">
+          {selectedPlaybookFocuses.map(item => <div key={`${item.playbookId}:${item.module}:${item.label}`} className="px-3 py-3 text-xs">
+            <p className="font-medium text-foreground">{item.playbookTitle} · {item.label}</p>
+            <ul className="mt-2 list-disc space-y-1 pl-4 leading-5 text-muted-foreground">{item.focusAreas.map(area => <li key={area}>{area}</li>)}</ul>
+            {item.reviewWhen.length > 0 && <p className="mt-2 leading-5 text-muted-foreground"><span className="font-medium text-foreground/80">Review when:</span> {item.reviewWhen.join(' · ')}</p>}
+          </div>)}
+        </div>}
       </div>}
       {['technical_review', 'architecture_review'].includes(selected.id) && <div><h5 className="mb-2 text-xs font-semibold">Review coverage</h5><div className="divide-y rounded-lg border">
         {(selected.id === 'architecture_review' ? ARCHITECTURE_REVIEW_AREAS : TECHNICAL_REVIEW_AREAS).map(area => {

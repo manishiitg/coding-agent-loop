@@ -11,11 +11,11 @@ Define a versioned load profile with worker location, virtual users/concurrency 
 A typical workflow uses:
 
 1. **Preflight — scripted.** Verify exact origin/environment/build, DNS/TLS reachability through the supported runner, credentials, fixture ownership, limits, and policy. Initialize expected scenario/sample rows.
-2. **Trial gate — branch when needed.** Require approval for high-load, production, or state-changing profiles after the concrete target and request envelope are known.
-3. **Execute profile — scripted.** Run the checked-in workload, enforce abort/timeout limits, preserve functional assertions and all errors, finalize cleanup, and save machine-readable output.
+2. **Queue trial review — scripted when needed.** For high-load, production, or state-changing profiles, save the exact target, profile, request envelope, limits, and evidence through `create_human_input_request` with approve/reject/defer options, then end preparation without sending the gated traffic.
+3. **Load approval and execute — separate scripted action route.** Read the durable decision by stable ID, verify the reviewer, expiry, exact profile/target identity, and current environment, then run the checked-in workload. Enforce abort/timeout limits, preserve functional assertions and all errors, finalize cleanup, and save machine-readable output. Missing, rejected, deferred, expired, or stale approval remains held.
 4. **Aggregate and compare — scripted.** Account for planned scenarios/samples, calculate configured distributions and throughput/error metrics, compare only compatible baselines, and apply the frozen budget policy.
 5. **Investigate — message sequence when warranted.** Correlate sanitized request timings with authorized service metrics/logs/traces and state confidence and alternative explanations.
-6. **Finalize — scripted.** Persist lifecycle and decision, including incomplete, incomparable, blocked, warning, or failed states.
+6. **Finalize — scripted.** Persist lifecycle and decision, including pending review, answered, executed, incomplete, incomparable, blocked, warning, or failed states.
 
 Do not create one workflow step per endpoint or virtual user. Split profiles when target, authorization, side effects, load limits, or retry/failure domains differ.
 

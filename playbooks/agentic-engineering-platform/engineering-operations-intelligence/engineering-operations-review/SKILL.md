@@ -23,7 +23,7 @@ Resolve review cadence/period, audience, team/repository/service scope, comparis
 
 ## Plan and AgentWorks tools
 
-Use a scripted step to freeze the period snapshot, expected sections, data-quality status, and prior actions. Use one message sequence to verify material findings, explain evidence and limits, and draft actions. Use a human branch before external delivery or issue creation when required, followed by deterministic delivery and receipt persistence.
+Use a scripted step to freeze the period snapshot, expected sections, data-quality status, and prior actions. Use one message sequence to verify material findings, explain evidence and limits, and draft actions. Persist required delivery or issue-creation review as pending, then let a later action route validate the durable decision before deterministic delivery and receipt persistence.
 
 ## Knowledge and persistence
 

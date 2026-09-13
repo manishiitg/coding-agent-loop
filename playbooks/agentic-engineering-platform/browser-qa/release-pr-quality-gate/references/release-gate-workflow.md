@@ -10,7 +10,7 @@ The policy predeclares required suite or security-assessment IDs, route selectio
 
 Use a deterministic preparation step to validate trigger payload and identity, initialize the gate and expected suite/group set, and reject duplicate/incompatible dispatch. Execute existing saved routes; do not copy their browser tests into the gate. Persist each child run reference and terminal state.
 
-Use deterministic finalization to compare expected versus observed suite/group keys, verify build/source identity and evidence, and derive `pass`, `fail`, or `needs_review` from the frozen policy. A human branch may resolve only policy-defined review cases. Reruns create new attempts linked to the same gate and do not delete earlier results.
+Use deterministic finalization to compare expected versus observed suite/group keys, verify build/source identity and evidence, and derive `pass`, `fail`, or `needs_review` from the frozen policy. Persist policy-defined review cases for a later decision; a separate finalization action validates and consumes that durable decision. Reruns create new attempts linked to the same gate and do not delete earlier results.
 
 Configure authenticated webhook/API triggers through the supported AgentWorks Setup surface. A schedule is appropriate for time-based deployment checks; PR/change events use the supported API-trigger contract. GitHub or another SCM/CI integration is optional and must be explicitly selected and authorized.
 

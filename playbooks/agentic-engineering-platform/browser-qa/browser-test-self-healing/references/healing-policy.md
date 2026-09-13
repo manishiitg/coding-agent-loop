@@ -43,9 +43,9 @@ Verified means the intended behavior is still asserted, the original case passes
 
 ## Approval and application
 
-The initial policy is human review for every candidate. Present the diff, original failure, verification results, affected tests, and recordings. The choices are approve, reject, or defer. Unattended execution defaults to defer.
+The initial policy is asynchronous human review for every candidate. The preparation route persists the diff, original failure, verification results, affected tests, recordings, patch hash, and base revision as `pending_review`, exposes approve/reject/defer in the durable review surface, and ends without changing canonical tests. Do not require a reviewer to remain present while diagnosis or verification runs.
 
-On approval, recheck the canonical base revision and apply the exact verified patch idempotently. A mismatch returns to proposal/verification; do not fuzzy-apply. If configured and authorized, create a branch or PR using the customer's chosen integration. Otherwise save the reviewed patch for the customer to apply. External publication is not implied by installing the playbook.
+After a reviewer decides, a separately started apply route loads the stable repair and decision IDs. It verifies reviewer authority, decision status and time, exact approved patch hash, allowed scope, and unchanged canonical base revision before applying once. A mismatch returns to review; do not fuzzy-apply. If configured and authorized, create a branch or PR using the customer's chosen integration. Otherwise retain the reviewed patch. External publication is not implied by installing the playbook.
 
 After application, rerun the canonical source. Only then mark the repair `healed`. `verified_candidate`, `approved`, `applied`, and `healed` are distinct states. Rejection or deferral never changes the original QA finding.
 

@@ -2,7 +2,7 @@
 
 ## Prove unattended readiness first
 
-The selected route must already complete manually with the exact groups, secret references, fixtures, cleanup, evidence policy, and report persistence intended for unattended runs. Resolve all human inputs in advance. Every human branch needs a safe `default_route_id`; schedules must not wait for approval or auto-approve a consequential action.
+The selected route must already complete manually with the exact groups, secret references, fixtures, cleanup, evidence policy, and report persistence intended for unattended runs. Resolve required values in advance. Scheduled work persists consequential proposals as pending review and ends; a separately started action route consumes a later durable approval. Schedules must not wait for approval or auto-approve an action.
 
 Confirm environment authorization, expected load, concurrency, maintenance windows, account ownership, retention/storage limits, notification owner, and pause procedure. Monitoring a production environment does not authorize destructive test data or unrestricted capture.
 

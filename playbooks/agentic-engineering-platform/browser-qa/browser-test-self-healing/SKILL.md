@@ -23,7 +23,7 @@ Resolve the foundation and application knowledge, original finding and evidence,
 
 ## Plan and AgentWorks tools
 
-Use a message sequence for evidence-based diagnosis and repair proposal, scripted steps for isolated verification, approved patch application, and canonical reruns, and a human branch when review is required. Keep safe hold/reject behavior for unattended runs. Follow the shared plan/tool guide and current platform schemas.
+Use a preparation route to diagnose, propose, verify in isolation, persist `pending_review`, and end without changing canonical tests. A separate apply route validates the later decision, exact patch, and current base before applying once and rerunning canonical tests. Use a blocking human branch only for an explicitly attended run.
 
 ## Knowledge and persistence
 

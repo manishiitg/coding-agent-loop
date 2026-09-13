@@ -18,7 +18,7 @@ Use one or a few scripted ingestion steps per credential/rate-limit/failure doma
 6. advance the cursor only after successful persistence;
 7. reconcile counts/samples and finalize success, partial, blocked, or failed.
 
-Use a message sequence only for mapping ambiguity or data-quality investigation that needs judgment. Its output proposes a mapping with evidence; it does not silently mutate the authoritative map. Use a human branch when the customer must choose between conflicting identities.
+Use a message sequence only for mapping ambiguity or data-quality investigation that needs judgment. Its output proposes a mapping with evidence; it does not silently mutate the authoritative map. Resolve conflicts during Builder setup when practical. Otherwise persist the proposed mapping as a durable pending review, finish the sync without changing the authoritative map, and let a later mapping-update route consume the saved decision. Use a blocking human branch only for an explicitly attended bounded run.
 
 For recurring refresh, prove an on-demand sync first, then configure the current AgentWorks schedule tools with explicit groups, route selection, timezone, overlap behavior, and notification conditions.
 

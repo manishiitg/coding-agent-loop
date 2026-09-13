@@ -23,7 +23,7 @@ Resolve accounts/projects/subscriptions, environments, billing basis/currency, a
 
 ## Plan and AgentWorks tools
 
-Use scripted steps for cost ingestion, normalization, anomaly scoring, candidate calculations, IaC validation, approved application, and savings measurement. Use message sequences for evidence-based cause and risk analysis. Present the concrete candidate and diff before a human approval branch; unattended default is defer.
+Use scripted steps for cost ingestion, normalization, anomaly scoring, candidate calculations, IaC validation, approved application, and savings measurement. Use message sequences for evidence-based cause and risk analysis. Persist the concrete candidate and diff as pending review; a later action route validates the durable approval and current IaC/resource state before application.
 
 ## Knowledge and persistence
 

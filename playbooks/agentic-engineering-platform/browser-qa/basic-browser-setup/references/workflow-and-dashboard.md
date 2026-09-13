@@ -31,7 +31,7 @@ With only smoke verification, no mode router is needed. If setup verification an
 
 Use `branch` for readiness, skip/continue, and fixed approval decisions. A route/branch consumes an explicit selection such as `{"select_route":"attention"}`; it does not reason over test output. Its `routes` entries have stable `route_id`, `route_name`, `condition`, and existing `next_step_id`. Leave deterministic switch `description` and `context_output` empty. Create targets before wiring them, and set explicit terminal jumps to avoid falling through into an unselected sibling.
 
-The caller can select known modes through `route_selections`; don't ask again for a supplied choice. For a new fixed human decision, use `add_branch_step(route_source="human", ...)`; for a free-form missing value, use `add_human_input_step` with text input. Unattended runs must use an explicit hold/defer policy rather than auto-approve or wait indefinitely. Read `builder-reference/references/routing.md`, `branch.md`, and `human-in-the-loop.md` for current mechanics.
+The caller can select known modes through `route_selections`; don't ask again for a supplied choice. Persist approvals that may outlive a run, finish preparation, and consume the later decision in a separate action route. Use `add_branch_step(route_source="human", ...)` only for an explicitly attended bounded choice; use `add_human_input_step` for a free-form value needed during an attended run. Unattended runs must hold or defer rather than auto-approve. Read `builder-reference/references/routing.md`, `branch.md`, and `human-in-the-loop.md` for current mechanics.
 
 ## Dashboard authoring sequence
 

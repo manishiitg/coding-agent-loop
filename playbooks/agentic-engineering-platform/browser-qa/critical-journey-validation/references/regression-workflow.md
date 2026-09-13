@@ -45,7 +45,7 @@ For `readiness-gate`, `ready` means prerequisites were verified; otherwise persi
 
 Wire terminal steps with explicit `next_step_id` so execution cannot fall through into an unselected sibling. Create targets before references; remove/reroute incoming edges before deleting a target. Use caller `route_selections` for a known requested mode rather than ask the same question again.
 
-Do not branch once between application bug / stale test / environment issue for the entire suite: one run can contain all three. Investigation processes every case and saves classifications individually. Add a case-specific action branch only when a later authorized remediation workflow actually needs it. New fixed human choices use `branch` with `route_source="human"`; free-form missing values use text `human_input`. Unattended runs defer unresolved decisions rather than auto-approve.
+Do not branch once between application bug / stale test / environment issue for the entire suite: one run can contain all three. Investigation processes every case and saves classifications individually. Persist case-specific review decisions and let a later authorized remediation route consume them. Use `branch` with `route_source="human"` only for an explicitly attended bounded choice; free-form missing values use text `human_input`. Unattended runs defer unresolved decisions rather than auto-approve.
 
 ## Browser recording and diagnostics
 

@@ -31,7 +31,7 @@ Do not recommend a change when telemetry is stale, missing representative peaks,
 
 Resolve the canonical IaC repository, module/resource address, state/workspace, base revision, formatting/lint/test commands, plan behavior, CODEOWNERS/review requirements, deployment pipeline, and rollback procedure. Prepare the smallest candidate diff in an isolated branch/worktree. Run syntax, formatting, policy, module, and plan checks without applying.
 
-Present the exact diff, plan, projected savings, evidence window, capacity/SLO risk, rollout, health checks, rollback, and reviewer before a human branch offers approve, reject, or defer. Unattended default is defer. Apply only the approved diff through the authorized pipeline; verify commit, plan, deployment, resource/configuration, and rollback receipts. Direct-console changes are allowed only when the customer's explicit operating policy makes them canonical and auditable.
+Persist the exact diff, plan, projected savings, evidence window, capacity/SLO risk, rollout, health checks, rollback, and reviewer as pending review, then finish preparation. A reviewer may later approve, reject, or defer. A separate action route verifies the decision, exact diff, and current IaC/resource state before applying through the authorized pipeline; verify commit, plan, deployment, resource/configuration, and rollback receipts. Direct-console changes are allowed only when the customer's explicit operating policy makes them canonical and auditable.
 
 ## Verify savings and health
 
@@ -54,8 +54,8 @@ A compact plan may use:
 1. `ingest-and-detect` — scripted cost/utilization sync and anomaly candidates;
 2. `investigate-anomaly` — message sequence for cause, evidence, and candidate;
 3. `prepare-iac-change` — scripted isolated diff, validation, and plan;
-4. `optimization-approval` — human branch with approve/reject/defer;
-5. `apply-approved-change` — scripted exact-change application and receipts;
+4. `queue-optimization-review` — persist a pending decision and end preparation;
+5. `apply-approved-change` — separate action route that validates durable approval and current state;
 6. `verify-health-and-savings` — scheduled or delayed scripted measurements plus agentic interpretation only when evidence conflicts;
 7. `finalize-optimization` — scripted completeness, accounting, and report state.
 

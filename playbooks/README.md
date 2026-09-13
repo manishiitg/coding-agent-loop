@@ -108,6 +108,8 @@ The Installed view compares the receipt version with the current catalog. A newe
 
 Installation does not create schedules, connect accounts, install recommended public software, or execute tests. Builder first inspects the existing workflow, summarizes reusable design and gaps, and asks focused questions for material unresolved customer choices. It records answers as customer direction before proposing changes. Runtime steps receive only workflow-selected or per-step `enabled_skills`; installed Builder playbooks do not cascade into execution.
 
+Human review is asynchronous by default. A preparation route saves the exact proposal and evidence, creates a nonblocking `create_human_input_request`, shows it in the Pulse/report decision panel, and ends without applying the change. The user may approve, reject, or defer later. A separate action route reads that durable answer, revalidates the proposal and current target state, applies it once when valid, and records the outcome. Blocking in-run human branches are reserved for explicitly attended bounded runs.
+
 ## Foundation and reuse
 
 Basic Browser Setup produces a versioned, non-secret `browser-foundation/v1` profile pointing to canonical suite/config/locator sources. The other Browser QA playbooks reuse these sources and add outcome-specific coverage or operations. Each accepts an equivalent verified configuration where declared and preserves an explicitly chosen compatible runner; a prerequisite need not have been installed by name.

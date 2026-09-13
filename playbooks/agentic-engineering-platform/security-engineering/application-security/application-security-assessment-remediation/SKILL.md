@@ -23,7 +23,7 @@ Resolve written scope, targets/environments/repositories/APIs, rules of engageme
 
 ## Plan and AgentWorks tools
 
-Use webhook/manual/Slack intake and a scripted scope gate. Route to browser/API dynamic checks, code analysis, or dependency/secret/configuration checks. Use scripted steps for repeatable tools, normalization, policy checks, fix validation, and retest; use a message sequence for attack-surface reasoning and evidence-based triage. Branch to dismiss, remediate, accept risk, escalate, or hold. Require configured decisions before intrusive tests, external writes, and protected changes.
+Use webhook/manual/Slack intake and a scripted scope gate. Route to browser/API dynamic checks, code analysis, or dependency/secret/configuration checks. Use scripted steps for repeatable tools, normalization, policy checks, fix validation, and retest; use a message sequence for attack-surface reasoning and evidence-based triage. Persist intrusive-test, remediation, risk-acceptance, and protected-change proposals as durable decisions, then use separate action routes to revalidate and execute approved work.
 
 ## Knowledge and persistence
 

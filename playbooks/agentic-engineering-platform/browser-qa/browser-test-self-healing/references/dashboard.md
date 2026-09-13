@@ -40,7 +40,7 @@ Display a patch through a safe text or markdown view from the durable asset; do 
 
 ## Review and actions
 
-The authoritative approval is the configured human branch. The report may expose **Open review**, **Request investigation**, or **Rerun verification** using `window.report.sendChatMessage` only from a user click, with the exact repair/candidate version and a stable request ID. It must tell the workflow agent to reread current approval/base state and skip work already applied.
+The authoritative approval is the durable `create_human_input_request` record linked to the exact repair ID, patch hash, and base revision. The preparation run creates or refreshes it and ends. The existing Pulse/report decision panel supplies **Approve**, **Reject**, and **Defer** and stores the answer for later use. The repair report may expose **Apply approved repair**, **Request investigation**, or **Rerun verification** only through supported user-initiated action controls with stable request IDs. Applying starts the separate action route, which must call `get_human_input_request`, reread current base state, and skip work already applied.
 
 Do not duplicate the platform's approval state with an unrelated report field. Show queued separately from running, verified, applied, and healed. No repair, approval, publication, rerun, or notification occurs during render or refresh. Omit an action when no supported workflow route exists.
 

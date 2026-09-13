@@ -23,7 +23,7 @@ Resolve the canonical test/source revision, exact build and environment, fixture
 
 ## Plan and AgentWorks tools
 
-Use scripted steps for repeated isolated runs, completeness checks, evidence hashing, statistics, candidate verification, and approved application. Use a message sequence for cross-attempt diagnosis. Use a human branch for stabilization approval and safe defer defaults.
+Use scripted steps for repeated isolated runs, completeness checks, evidence hashing, statistics, candidate verification, and approved application. Use a message sequence for cross-attempt diagnosis. Persist verified candidates as pending review, then use a separate action route to validate the later approval and apply the exact stabilization.
 
 ## Knowledge and persistence
 

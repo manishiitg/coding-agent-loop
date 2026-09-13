@@ -17,7 +17,7 @@ A scripted step initializes the expected attempts, runs the exact case in isolat
 - mixed causes; or
 - insufficient evidence.
 
-If a test-only stabilization is eligible, create a candidate outside canonical source, verify it against the original and related cases, present its diff and evidence, and use a human branch for approve/reject/defer. Apply only the exact approved patch and run a new bounded post-change experiment. Self-healing may consume the confirmed eligible finding rather than repeating diagnosis.
+If a test-only stabilization is eligible, create a candidate outside canonical source, verify it against the original and related cases, and persist its diff and evidence as pending review. End preparation without changing canonical source. A separate action route validates the later durable approval, applies only the exact approved patch, and runs a new bounded post-change experiment. Self-healing may consume the confirmed eligible finding rather than repeating diagnosis.
 
 ## Persist and report
 

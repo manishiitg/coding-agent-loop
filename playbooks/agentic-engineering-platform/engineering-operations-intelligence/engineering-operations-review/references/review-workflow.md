@@ -11,8 +11,8 @@ Useful sections are current health, material changes, delivery flow, quality, re
 1. **Freeze review snapshot — scripted.** Resolve the period once, bind source/metric-policy revisions, copy expected section IDs and prior action IDs, validate data quality, and persist immutable input references.
 2. **Analyze and draft — message sequence.** Account for each section, inspect material findings and their evidence, compare alternative explanations, state confidence/limitations, assess prior actions, and propose concrete actions with owners and expected outcomes.
 3. **Finalize draft — scripted.** Check section/action completeness, evidence links, sensitive-data rules, and stable review identity. Populate durable report data; do not generate a new HTML file per run.
-4. **Review decision — human branch when configured.** Present the actual draft and destinations. Approve, reject, or defer; unattended default is defer when approval is required.
-5. **Deliver — scripted.** Send only the approved revision through configured tools, persist receipts, and distinguish queued, attempted, delivered, and failed.
+4. **Queue review — durable decision.** Persist the actual draft, destinations, and stable identity as pending review, then end preparation. The reviewer may approve, reject, or defer later.
+5. **Deliver — separate scripted action route.** Validate the durable decision and unchanged draft/destination identity, send only approved revisions through configured tools, persist receipts, and distinguish queued, attempted, delivered, and failed.
 
 Run on demand until the full flow succeeds. Then use current AgentWorks schedule tools for a cadence, explicit groups, timezone, overlap behavior, safe branch defaults, and meaningful-change notifications.
 

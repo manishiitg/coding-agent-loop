@@ -23,7 +23,7 @@ Resolve trigger type, repository/change/build/environment identity, required sui
 
 ## Plan and AgentWorks tools
 
-Use deterministic preparation and finalization for identity, expected-suite set, completeness, and verdict derivation. Run existing suite routes rather than copying their tests. Use a human branch only for an explicit `needs_review` policy. Configure authenticated API triggers through the supported Setup surface and integrations.
+Use deterministic preparation and finalization for identity, expected-suite set, completeness, and verdict derivation. Run existing suite routes rather than copying their tests. Persist `needs_review` decisions for later review and let a separate finalization action consume the durable decision. Configure authenticated API triggers through the supported Setup surface and integrations.
 
 ## Knowledge and persistence
 

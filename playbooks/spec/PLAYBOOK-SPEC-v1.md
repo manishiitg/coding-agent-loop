@@ -113,6 +113,8 @@ The builder consumes a playbook progressively:
 
 The builder must not copy the reference graph mechanically, add a step per tool call, attach every recommended tool, overwrite user preferences, or edit system-managed plan files directly. Dashboard widgets and drill-downs must read the same durable records used for validation; reporting is part of installation, not a separate optional workflow.
 
+Design human review as a durable asynchronous lifecycle by default. A preparation route saves the exact proposal, evidence, hashes, and a `pending_review` decision record, exposes them in reporting, and ends successfully without applying the change. A reviewer may decide later. A separate action route accepts only that recorded decision, rechecks its proposal identity, authorization, target state, and expiry, then applies or publishes the approved change. Use a blocking human branch only when the customer explicitly chooses an attended run and its bounded wait is acceptable. Never assume a reviewer will be online during execution.
+
 ## Installed playbook record
 
 An installed playbook is a customer-specific snapshot and adaptation record. The product should persist at least:

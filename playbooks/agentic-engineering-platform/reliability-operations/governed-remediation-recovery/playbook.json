@@ -2,8 +2,9 @@
   "metadata_version": 1,
   "content_schema": "agentworks-playbook/v1",
   "id": "governed-remediation-recovery",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "changelog": [
+    {"version": "0.3.0", "summary": "Defaults human approvals to durable asynchronous review: preparation ends pending review and a later action validates the recorded decision and current state."},
     {"version": "0.2.0", "summary": "Adds an explicit inspect-first discovery step, focused customer questions, recorded user direction, and a clear boundary that installation is not approval."}
   ],
   "title": "Governed Remediation and Recovery",

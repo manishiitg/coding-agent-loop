@@ -34,6 +34,15 @@ For every proposed trigger or schedule, define the route or workflow it starts, 
 
 Never invent cadence, enable a schedule, or attach a webhook without the user's approved operating policy. When cadence is unknown, recommend options with their cost and detection-delay tradeoffs. Preserve existing schedules, thresholds, notification preferences, and budgets unless the user changes them explicitly.
 
+## Durable human decisions
+
+Do not assume a reviewer is present while a workflow runs. For consequential changes, prefer two independently runnable phases:
+
+1. A preparation route produces and verifies the exact proposal, persists its identity, evidence, target/base revision, expiry, and a `pending_review` decision, exposes it in the dashboard, then ends without applying anything.
+2. A later action route loads an approved decision by stable ID, verifies reviewer authority and that the approved proposal hash, target, base revision, scope, and policy still match, then applies it once and records the receipt. Stale or changed state returns to review.
+
+The reviewer may approve, reject, or defer from the supported durable decision surface after the preparation run finishes. A dashboard refresh never constitutes approval and does not execute the action route. Use a blocking human branch only when the customer explicitly chooses a bounded attended run; do not use it as the default for scheduled, webhook, long-running, or variable-duration work.
+
 ## Pulse review focus
 
 Read the playbook manifest's `pulse_focus` recommendations for Technical, Architecture, and Strategic Review. Compare them with current Pulse configuration and retained review coverage. Recommend only lenses that answer a useful question:

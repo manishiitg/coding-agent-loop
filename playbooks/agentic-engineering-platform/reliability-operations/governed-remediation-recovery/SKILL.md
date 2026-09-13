@@ -23,7 +23,7 @@ Resolve incident/failure identity, target resource/service/environment, current 
 
 ## Plan and AgentWorks tools
 
-Use a message sequence to compare options and prepare an evidence-backed proposal. Use scripted steps for preflight, exact diff/command/parameters, policy validation, approved execution, verification, and receipts. Place a human branch immediately before protected action. Route failure to rollback or hold. Carry approval through AgentWorks UI or the configured Slack bot.
+Use a message sequence to compare options and prepare an evidence-backed proposal. Persist the exact action, preflight, target state, risk, and rollback as pending review, then end preparation. A separate execution route validates the later durable approval and current target state before protected action, verification, and receipts. Carry review through AgentWorks UI or the configured Slack bot.
 
 ## Knowledge and persistence
 

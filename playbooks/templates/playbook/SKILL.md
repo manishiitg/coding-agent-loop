@@ -27,6 +27,8 @@ Explain how to compose this into the plan: important scripted steps, message seq
 
 Recommend whether this route should start manually, from a workflow handoff, webhook or product event, release event, or schedule. Define the proposed scope, filters or cadence and timezone, concurrency, retries, budget, notifications, and durable completion evidence. Do not enable an unapproved trigger or invent cadence.
 
+Keep review asynchronous unless the customer explicitly requests an attended run: persist a concrete `pending_review` proposal and end preparation, then use a separate action route that validates the later approval and current target state before applying it.
+
 ## Knowledge and persistence
 
 State what belongs in workflow context, knowledgebase notes, learnings, database tables, and durable assets.

@@ -38,6 +38,14 @@
     "approval": "human_required",
     "unattended_default": "defer"
   },
+  "review": {
+    "decision_id": null,
+    "status": "pending_review",
+    "candidate_patch_hash": null,
+    "base_revision": null,
+    "reviewed_by": null,
+    "reviewed_at": null
+  },
   "status": "example_only",
   "unresolved": [
     "Bind an actual finding, approved expectation, source revision, allowed paths, and original evidence before use"

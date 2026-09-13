@@ -2,8 +2,9 @@
   "metadata_version": 1,
   "content_schema": "agentworks-playbook/v1",
   "id": "browser-test-self-healing",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "changelog": [
+    {"version": "0.5.0", "summary": "Separates repair preparation from application: verified candidates become durable pending reviews, and a later action route validates approval and current source state before applying."},
     {"version": "0.4.0", "summary": "Adds an explicit inspect-first discovery step, focused customer questions, recorded user direction, and a clear boundary that installation is not approval."}
   ],
   "title": "Browser Test Self-Healing",
@@ -16,7 +17,7 @@
   "order": 6,
   "entrypoint": "SKILL.md",
   "audience": "workflow_builder",
-  "setup_prompt": "Use Browser Test Self-Healing with my existing browser QA foundation. Preserve original video and console/network evidence, classify the failure, propose only eligible test-automation repairs, verify candidates in isolation with new evidence, require review, apply the exact approved patch, rerun canonical tests, and update knowledge and reporting.",
+  "setup_prompt": "Use Browser Test Self-Healing with my existing browser QA foundation. Preserve original video and console/network evidence, classify the failure, propose only eligible test-automation repairs, and verify candidates in isolation with new evidence. End preparation with a durable pending review in the dashboard. Configure a separate later action route that validates the recorded approval, exact patch, and current source before applying, rerunning canonical tests, and updating knowledge and reporting.",
   "setup_inputs": [
     {"id": "foundation", "label": "Browser foundation and application QA knowledge", "required": true},
     {"id": "finding", "label": "Failure with original source and evidence", "required": true},
@@ -82,7 +83,7 @@
     "Reviewable test-only candidate patch",
     "Isolated and canonical verification results",
     "Original and verification video, console/network logs, and other evidence references",
-    "Approval and optional publication receipts",
+    "Durable pending review plus approval and optional publication receipts",
     "Updated application QA knowledge after healing",
     "Live repair history and evidence dashboard"
   ],

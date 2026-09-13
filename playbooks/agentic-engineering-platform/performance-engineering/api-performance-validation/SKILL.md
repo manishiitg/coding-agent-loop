@@ -23,7 +23,7 @@ Resolve endpoints and protocol, environment/build, authentication and secret ref
 
 ## Plan and AgentWorks tools
 
-Use scripted steps for preflight, the saved load runner, deterministic parsing, aggregation, persistence, and policy decisions. Use a message sequence to correlate supported regressions with metrics/traces. Put high-load or state-changing phases behind configured human approval and fail closed on target mismatch.
+Use scripted steps for preflight, the saved load runner, deterministic parsing, aggregation, persistence, and policy decisions. Use a message sequence to correlate supported regressions with metrics/traces. Persist high-load or state-changing proposals for durable review, end preparation, and let a separate execution route validate the saved approval and exact target before sending traffic.
 
 ## Knowledge and persistence
 

@@ -6,7 +6,17 @@ import PlaybooksPanel from './PlaybooksPanel'
 
 vi.mock('../../api/playbooks', () => ({
   playbooksApi: {
-    list: vi.fn().mockResolvedValue([]),
+    list: vi.fn().mockResolvedValue([{
+      id: 'basic-browser-setup', title: 'Basic Browser Setup', description: 'Configure browser access.', version: '0.6.0',
+      category: 'Browser QA', order: 1, inputCount: 2, toolCount: 1,
+      setupInputs: [
+        { id: 'environment', label: 'Application and environment', required: true },
+        { id: 'reporting', label: 'Reporting preference', required: false },
+      ],
+      requiredCapabilities: ['browser_test_execution', 'workflow_reporting'],
+      recommendedTools: [{ id: 'playwright', name: 'Playwright', type: 'cli', purpose: 'Run repeatable browser tests', capability: 'browser_test_execution', optional: true }],
+      outputs: ['Reusable browser foundation', 'Live workflow report'],
+    }]),
     listInstalled: vi.fn().mockResolvedValue([]),
     install: vi.fn().mockResolvedValue({
       id: 'basic-browser-setup', title: 'Basic Browser Setup', version: '0.6.0',
@@ -44,13 +54,20 @@ it('opens a catalog playbook and installs it for Builder setup', async () => {
       root.render(<PlaybooksPanel workspacePath="Workflow/demo" />)
       await Promise.resolve()
     })
-    expect(container.textContent).toContain('Catalog 19')
+    expect(container.textContent).toContain('Catalog 1')
     expect(container.textContent).toContain('Basic Browser Setup')
     expect(container.textContent).toContain('AgentWorks / Agentic Engineering Platform')
 
     await click([...container.querySelectorAll('button')].find(button => button.textContent?.includes('Basic Browser Setup')) || null)
     expect(container.textContent).toContain('Setup with Builder')
-    expect(container.textContent).toContain('7 inputs guide adaptation')
+    expect(container.textContent).toContain('2 inputs guide adaptation')
+    expect(container.textContent).toContain('What this playbook covers')
+    expect(container.textContent).toContain('Application and environment')
+    expect(container.textContent).toContain('Reporting preference(optional)')
+    expect(container.textContent).toContain('browser test execution')
+    expect(container.textContent).toContain('What you’ll get')
+    expect(container.textContent).toContain('Reusable browser foundation')
+    expect(container.textContent).toContain('Run repeatable browser tests')
 
     await click([...container.querySelectorAll('button')].find(button => button.textContent?.includes('Use playbook')) || null)
     expect(container.textContent).toContain('Installed · draft')

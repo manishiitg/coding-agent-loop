@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { ArrowLeft, BookMarked, CheckCircle2, ChevronRight, Loader2, Search, Settings2, Wrench } from 'lucide-react'
+import { ArrowLeft, BookMarked, CheckCircle2, ChevronRight, CircleDot, Layers3, Loader2, PackageCheck, Search, Settings2, Wrench } from 'lucide-react'
 import { PLAYBOOK_CATALOG, type PlaybookCatalogItem } from './playbookCatalog'
 import { playbooksApi } from '../../api/playbooks'
 import type { InstalledPlaybook } from '../../services/api-types'
@@ -74,6 +74,10 @@ export default function PlaybooksPanel({ workspacePath }: PlaybooksPanelProps) {
   }
 
   if (selected) {
+    const setupInputs = selected.setupInputs || []
+    const requiredCapabilities = selected.requiredCapabilities || []
+    const recommendedTools = selected.recommendedTools || []
+    const outputs = selected.outputs || []
     return (
       <div className="min-h-0 flex-1 overflow-y-auto">
         <button type="button" onClick={() => setSelected(null)} className="mb-4 inline-flex items-center gap-1.5 text-xs font-medium text-muted-foreground hover:text-foreground">
@@ -93,6 +97,53 @@ export default function PlaybooksPanel({ workspacePath }: PlaybooksPanelProps) {
             <div className="rounded-lg border border-border bg-muted/20 p-3"><div className="flex items-center gap-2 text-sm font-medium"><Settings2 className="h-4 w-4 text-muted-foreground" /> Setup inputs</div><p className="mt-1 text-xs text-muted-foreground">{selected.inputCount} inputs guide adaptation to the company and workflow.</p></div>
             <div className="rounded-lg border border-border bg-muted/20 p-3"><div className="flex items-center gap-2 text-sm font-medium"><Wrench className="h-4 w-4 text-muted-foreground" /> Recommended tools</div><p className="mt-1 text-xs text-muted-foreground">{selected.toolCount} built-in, CLI, MCP, or skill recommendations.</p></div>
           </div>
+          {(setupInputs.length > 0 || requiredCapabilities.length > 0) && (
+            <section className="mt-5 rounded-lg border border-border p-4">
+              <div className="flex items-center gap-2 text-sm font-semibold text-foreground"><Layers3 className="h-4 w-4 text-primary" /> What this playbook covers</div>
+              {setupInputs.length > 0 && (
+                <div className="mt-3">
+                  <div className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">Setup areas</div>
+                  <div className="mt-2 grid gap-2 sm:grid-cols-2">
+                    {setupInputs.map(input => (
+                      <div key={input.id} className="flex items-start gap-2 text-xs leading-5 text-foreground/90">
+                        <CircleDot className="mt-1 h-3 w-3 shrink-0 text-primary/70" />
+                        <span>{input.label}{!input.required && <span className="ml-1 text-muted-foreground">(optional)</span>}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+              {requiredCapabilities.length > 0 && (
+                <div className="mt-4">
+                  <div className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">Capabilities configured</div>
+                  <div className="mt-2 flex flex-wrap gap-1.5">
+                    {requiredCapabilities.map(capability => <span key={capability} className="rounded-full border border-border bg-muted/30 px-2 py-1 text-[11px] text-muted-foreground">{capability.replaceAll('_', ' ')}</span>)}
+                  </div>
+                </div>
+              )}
+            </section>
+          )}
+          {outputs.length > 0 && (
+            <section className="mt-4 rounded-lg border border-border p-4">
+              <div className="flex items-center gap-2 text-sm font-semibold text-foreground"><PackageCheck className="h-4 w-4 text-primary" /> What you’ll get</div>
+              <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                {outputs.map(output => <div key={output} className="flex items-start gap-2 text-xs leading-5 text-foreground/90"><CheckCircle2 className="mt-0.5 h-3.5 w-3.5 shrink-0 text-emerald-600" /><span>{output}</span></div>)}
+              </div>
+            </section>
+          )}
+          {recommendedTools.length > 0 && (
+            <section className="mt-4 rounded-lg border border-border p-4">
+              <div className="flex items-center gap-2 text-sm font-semibold text-foreground"><Wrench className="h-4 w-4 text-primary" /> Recommended tools</div>
+              <div className="mt-3 space-y-2">
+                {recommendedTools.map(tool => (
+                  <div key={tool.id} className="rounded-md bg-muted/30 px-3 py-2">
+                    <div className="flex flex-wrap items-center gap-2"><span className="text-xs font-medium text-foreground">{tool.name}</span><span className="rounded border border-border px-1.5 py-0.5 text-[10px] uppercase text-muted-foreground">{tool.type}</span></div>
+                    <p className="mt-1 text-xs leading-5 text-muted-foreground">{tool.purpose}</p>
+                  </div>
+                ))}
+              </div>
+            </section>
+          )}
           {error && <p className="mt-4 rounded-md border border-destructive/30 bg-destructive/10 p-3 text-xs text-destructive">{error}</p>}
           <div className="mt-5 rounded-lg border border-dashed border-border p-4">
             <div className="flex items-center gap-2 text-sm font-medium"><CheckCircle2 className="h-4 w-4 text-muted-foreground" /> Setup with Builder</div>

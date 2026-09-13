@@ -1,7 +1,7 @@
 import axios from 'axios'
 import { getApiBaseUrl, getAuthToken } from '../services/api'
 import type { InstalledPlaybook } from '../services/api-types'
-import type { PlaybookCatalogItem } from '../components/playbooks/playbookCatalog'
+import type { PlaybookCatalogItem, PlaybookRecommendedTool, PlaybookSetupInput } from '../components/playbooks/playbookCatalog'
 
 type ServerPlaybook = {
   id: string
@@ -11,8 +11,10 @@ type ServerPlaybook = {
   category: string
   order: number
   setup_prompt?: string
-  setup_inputs?: unknown[]
-  recommended_tools?: unknown[]
+  setup_inputs?: PlaybookSetupInput[]
+  required_capabilities?: string[]
+  recommended_tools?: PlaybookRecommendedTool[]
+  outputs?: string[]
 }
 
 const api = axios.create({ baseURL: getApiBaseUrl(), headers: { 'Content-Type': 'application/json' } })
@@ -32,6 +34,10 @@ const normalize = (item: ServerPlaybook): PlaybookCatalogItem => ({
   inputCount: item.setup_inputs?.length || 0,
   toolCount: item.recommended_tools?.length || 0,
   setupPrompt: item.setup_prompt,
+  setupInputs: item.setup_inputs || [],
+  requiredCapabilities: item.required_capabilities || [],
+  recommendedTools: item.recommended_tools || [],
+  outputs: item.outputs || [],
 })
 
 export const playbooksApi = {

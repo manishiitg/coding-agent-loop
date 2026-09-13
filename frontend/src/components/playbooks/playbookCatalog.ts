@@ -8,6 +8,26 @@ export type PlaybookCatalogItem = {
   inputCount: number
   toolCount: number
   setupPrompt?: string
+  setupInputs?: PlaybookSetupInput[]
+  requiredCapabilities?: string[]
+  recommendedTools?: PlaybookRecommendedTool[]
+  outputs?: string[]
+}
+
+export type PlaybookSetupInput = {
+  id: string
+  label: string
+  required: boolean
+  default?: unknown
+}
+
+export type PlaybookRecommendedTool = {
+  id: string
+  name: string
+  type: string
+  purpose: string
+  capability: string
+  optional: boolean
 }
 
 // Read-only catalog projection of the first-party playbook manifests. The API

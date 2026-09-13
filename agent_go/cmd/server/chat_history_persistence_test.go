@@ -1135,6 +1135,9 @@ func TestPersistChatConversationUpdatesMetadataIndex(t *testing.T) {
 	if entry.SourceSize != int64(len(conversationData)) {
 		t.Fatalf("source size = %d, want %d", entry.SourceSize, len(conversationData))
 	}
+	if !entry.AttributionVerified {
+		t.Fatal("newly persisted conversation must have verified attribution")
+	}
 }
 
 // Reproduces the confida-login/apollo-mcp incident: a session's first save
@@ -1198,6 +1201,9 @@ func TestRepairStaleChatHistoryAttributionFixesFrozenDefaultFromRealConversation
 	if entry.Session.UserID != "e697742fc7eab8bc1cf3b7658885b8c2" || entry.Session.Username != "saurabh" {
 		t.Fatalf("persisted index entry not repaired: %#v", entry.Session)
 	}
+	if !entry.AttributionVerified {
+		t.Fatal("repaired index entry must remember that attribution was checked")
+	}
 }
 
 // A conversation file that also genuinely has no real user (true legacy data,
@@ -1209,8 +1215,23 @@ func TestRepairStaleChatHistoryAttributionLeavesGenuineLegacySessionsAlone(t *te
 	t.Setenv("WORKSPACE_API_URL", server.URL)
 
 	conversationPath := "Workflow/old-workflow/builder/conversation/2026-01-01/session-legacy-conversation.json"
+	indexPath := "Workflow/old-workflow/builder/conversation/" + chatHistoryIndexFileName
 	workspace.mu.Lock()
 	workspace.files[conversationPath] = `{"session_id":"legacy","conversation_history":[]}`
+	indexJSON, _ := json.Marshal(chatHistoryIndex{
+		Version: chatHistoryIndexVersion,
+		Entries: map[string]chatHistoryIndexEntry{
+			conversationPath: {
+				Session: ChatHistorySession{
+					SessionID:        "legacy",
+					UserID:           "default",
+					Username:         "System / legacy",
+					ConversationPath: conversationPath,
+				},
+			},
+		},
+	})
+	workspace.files[indexPath] = string(indexJSON)
 	workspace.mu.Unlock()
 
 	session := ChatHistorySession{
@@ -1223,6 +1244,35 @@ func TestRepairStaleChatHistoryAttributionLeavesGenuineLegacySessionsAlone(t *te
 
 	if session.UserID != "default" || session.Username != "System / legacy" {
 		t.Fatalf("genuinely legacy session should stay unchanged: %#v", session)
+	}
+	if !session.attributionVerified {
+		t.Fatal("genuinely legacy session must be marked verified after the first check")
+	}
+
+	workspace.mu.Lock()
+	indexData := workspace.files[indexPath]
+	workspace.mu.Unlock()
+	var index chatHistoryIndex
+	if err := json.Unmarshal([]byte(indexData), &index); err != nil {
+		t.Fatalf("decode verified legacy index: %v", err)
+	}
+	entry := index.Entries[conversationPath]
+	if !entry.AttributionVerified {
+		t.Fatal("genuinely legacy attribution must be persisted as verified")
+	}
+
+	// A later page load reconstructs the row from the index. Even if the full
+	// transcript is temporarily unavailable, the verified row must not reopen it.
+	reloaded := chatHistorySessionsFromIndex(index, "default", "Workflow/old-workflow")
+	if len(reloaded) != 1 || !reloaded[0].attributionVerified {
+		t.Fatalf("verified state not restored from index: %#v", reloaded)
+	}
+	workspace.mu.Lock()
+	delete(workspace.files, conversationPath)
+	workspace.mu.Unlock()
+	repairStaleChatHistoryAttribution(&reloaded[0])
+	if !reloaded[0].attributionVerified || reloaded[0].UserID != "default" {
+		t.Fatalf("verified legacy session changed on repeat check: %#v", reloaded[0])
 	}
 }
 

@@ -39,6 +39,10 @@ type ChatHistorySession struct {
 	UpdatedAt        string                      `json:"updated_at"`
 	MessageCount     int                         `json:"message_count"`
 	PreviewMessages  []ChatHistoryPreviewMessage `json:"preview_messages,omitempty"`
+	// attributionVerified is internal list metadata. It prevents the legacy
+	// attribution repair from reopening a complete transcript after the index
+	// has already confirmed that "default" really does mean legacy data.
+	attributionVerified bool
 }
 
 // ChatHistoryAgentRuntime records enough information to reopen a previous chat
@@ -127,6 +131,7 @@ type chatHistoryIndexEntry struct {
 	Session                  ChatHistorySession `json:"session"`
 	SourceSize               int64              `json:"source_size"`
 	SourceModifiedAtUnixNano int64              `json:"source_modified_at_unix_nano,omitempty"`
+	AttributionVerified      bool               `json:"attribution_verified,omitempty"`
 }
 
 var chatHistoryIndexLocks [64]sync.Mutex
@@ -263,7 +268,8 @@ func updatePersistedChatHistoryIndex(userID, sessionID, agentMode string, histor
 			MessageCount:     len(history),
 			PreviewMessages:  chatHistoryPreviewMessages(history),
 		},
-		SourceSize: sourceSize,
+		SourceSize:          sourceSize,
+		AttributionVerified: true,
 	}
 	index.Version = chatHistoryIndexVersion
 	index.UpdatedAt = now.Format(time.RFC3339)
@@ -1433,6 +1439,7 @@ func chatHistorySessionsFromIndex(index chatHistoryIndex, userID, workflowPath s
 	bySessionID := make(map[string]ChatHistorySession)
 	for conversationPath, entry := range index.Entries {
 		session := entry.Session
+		session.attributionVerified = entry.AttributionVerified
 		sessionID := sanitizeChatHistorySessionID(session.SessionID)
 		if sessionID == "" {
 			continue
@@ -1470,6 +1477,7 @@ func indexedLocalChatHistorySession(index chatHistoryIndex, file localChatHistor
 	}
 	session := entry.Session
 	session.ConversationPath = file.workspacePath
+	session.attributionVerified = entry.AttributionVerified
 	return session, true
 }
 
@@ -1480,6 +1488,7 @@ func putLocalChatHistoryIndexEntry(index *chatHistoryIndex, file localChatHistor
 		Session:                  session,
 		SourceSize:               file.size,
 		SourceModifiedAtUnixNano: file.modTime.UnixNano(),
+		AttributionVerified:      true,
 	}
 	index.Version = chatHistoryIndexVersion
 	index.UpdatedAt = time.Now().Format(time.RFC3339)
@@ -1756,20 +1765,21 @@ func parseLocalChatHistorySession(userID, workspaceRoot, workflowPath, fallbackS
 	}
 
 	return ChatHistorySession{
-		SessionID:        raw.SessionID,
-		AgentMode:        raw.AgentMode,
-		Runtime:          raw.Runtime,
-		WorkshopMode:     raw.Mode,
-		Status:           raw.Status,
-		Query:            query,
-		UserID:           ownerID,
-		Username:         chatHistoryUsername(ownerID, raw.Username),
-		WorkspacePath:    workflowPath,
-		ConversationPath: pathpkg.Join(workspaceRoot, raw.SessionID, "conversation.json"),
-		CreatedAt:        raw.CreatedAt,
-		UpdatedAt:        raw.UpdatedAt,
-		MessageCount:     len(raw.History),
-		PreviewMessages:  chatHistoryPreviewMessages(raw.History),
+		SessionID:           raw.SessionID,
+		AgentMode:           raw.AgentMode,
+		Runtime:             raw.Runtime,
+		WorkshopMode:        raw.Mode,
+		Status:              raw.Status,
+		Query:               query,
+		UserID:              ownerID,
+		Username:            chatHistoryUsername(ownerID, raw.Username),
+		WorkspacePath:       workflowPath,
+		ConversationPath:    pathpkg.Join(workspaceRoot, raw.SessionID, "conversation.json"),
+		CreatedAt:           raw.CreatedAt,
+		UpdatedAt:           raw.UpdatedAt,
+		MessageCount:        len(raw.History),
+		PreviewMessages:     chatHistoryPreviewMessages(raw.History),
+		attributionVerified: true,
 	}, true
 }
 
@@ -1808,7 +1818,7 @@ func chatHistoryUsername(userID, stored string) string {
 // A no-op for genuinely legacy sessions (the conversation file itself also has
 // no real user_id) -- those are correctly labeled "System / legacy".
 func repairStaleChatHistoryAttribution(session *ChatHistorySession) {
-	if session == nil {
+	if session == nil || session.attributionVerified {
 		return
 	}
 	userID := strings.TrimSpace(session.UserID)
@@ -1819,27 +1829,10 @@ func repairStaleChatHistoryAttribution(session *ChatHistorySession) {
 	if convPath == "" {
 		return
 	}
-	data, exists, err := readFileFromWorkspace(context.Background(), convPath)
-	if err != nil || !exists {
-		return
-	}
-	var attribution struct {
-		UserID   string `json:"user_id"`
-		Username string `json:"username"`
-	}
-	if err := json.Unmarshal([]byte(data), &attribution); err != nil {
-		return
-	}
-	realUserID := strings.TrimSpace(attribution.UserID)
-	if realUserID == "" || realUserID == "default" || realUserID == userID {
-		return
-	}
-
-	realUsername := chatHistoryUsername(realUserID, attribution.Username)
-	session.UserID = realUserID
-	session.Username = realUsername
-
-	indexPath := chatHistoryIndexWorkspacePath(realUserID, convPath)
+	// Serialize verification per index. The Recent panel issues overlapping
+	// list requests; without taking this lock before the transcript read, both
+	// requests can reopen the same large legacy files during migration.
+	indexPath := chatHistoryIndexWorkspacePath(userID, convPath)
 	if indexPath == "" {
 		return
 	}
@@ -1858,12 +1851,40 @@ func repairStaleChatHistoryAttribution(session *ChatHistorySession) {
 	index.normalize()
 	entry, ok := index.Entries[convPath]
 	if !ok || strings.TrimSpace(entry.Session.UserID) != userID {
-		// Someone else already changed this entry since we read the listing;
-		// leave it alone rather than clobber a concurrent, possibly different, update.
 		return
 	}
-	entry.Session.UserID = realUserID
-	entry.Session.Username = realUsername
+	if entry.AttributionVerified {
+		session.UserID = entry.Session.UserID
+		session.Username = entry.Session.Username
+		session.attributionVerified = true
+		return
+	}
+
+	data, exists, err := readFileFromWorkspace(context.Background(), convPath)
+	if err != nil || !exists {
+		return
+	}
+	var attribution struct {
+		UserID   string `json:"user_id"`
+		Username string `json:"username"`
+	}
+	if err := json.Unmarshal([]byte(data), &attribution); err != nil {
+		return
+	}
+	realUserID := strings.TrimSpace(attribution.UserID)
+	session.attributionVerified = true
+	attributionChanged := realUserID != "" && realUserID != "default" && realUserID != userID
+	if attributionChanged {
+		realUsername := chatHistoryUsername(realUserID, attribution.Username)
+		session.UserID = realUserID
+		session.Username = realUsername
+	}
+
+	if attributionChanged {
+		entry.Session.UserID = session.UserID
+		entry.Session.Username = session.Username
+	}
+	entry.AttributionVerified = true
 	index.Entries[convPath] = entry
 	index.UpdatedAt = time.Now().Format(time.RFC3339)
 

@@ -300,41 +300,35 @@ func TestSendGogPropagatesAuthError(t *testing.T) {
 	}
 }
 
-func TestSendRawGogPipesMIMEOnStdin(t *testing.T) {
-	// A script that dumps stdin to a file, so the test can assert the exact
-	// bytes buildGmailMIME produced were what reached the CLI.
-	stdinFile := filepath.Join(t.TempDir(), "stdin.log")
+func TestSendComposedGogSendsHTMLOnlyForRichEmail(t *testing.T) {
 	argvFile := filepath.Join(t.TempDir(), "argv.log")
-	path := filepath.Join(t.TempDir(), "gog")
-	script := "#!/bin/sh\n" +
-		"for a in \"$@\"; do echo \"$a\" >> " + shellQuote(argvFile) + "; done\n" +
-		"cat > " + shellQuote(stdinFile) + "\n" +
-		"echo '{\"id\":\"msg-raw-1\"}'\n"
-	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
+	path := fakeGog(t, "", argvFile)
+	attachment := filepath.Join(t.TempDir(), "report.txt")
+	if err := os.WriteFile(attachment, []byte("report"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
 	cfg := &GmailConfig{Token: "tok-raw"}
 	g := &GmailService{}
-	msgID, err := g.sendRawGog(context.Background(), path, cfg, "to@example.com", []string{"cc@example.com"}, "Subject", "plain body", "<b>html</b>", nil)
+	msgID, err := g.sendComposedGog(context.Background(), path, cfg, "to@example.com", []string{"cc@example.com"}, "Subject", "plain body", "<b>html</b>", []string{attachment})
 	if err != nil {
-		t.Fatalf("sendRawGog: %v", err)
+		t.Fatalf("sendComposedGog: %v", err)
 	}
-	if msgID != "msg-raw-1" {
-		t.Fatalf("msgID = %q, want msg-raw-1", msgID)
-	}
-
-	stdin, err := os.ReadFile(stdinFile)
-	if err != nil {
-		t.Fatalf("read captured stdin: %v", err)
-	}
-	if !strings.Contains(string(stdin), "To: to@example.com") || !strings.Contains(string(stdin), "html") {
-		t.Errorf("stdin did not look like the built MIME message: %q", string(stdin))
+	if msgID != "msg-fake-1" {
+		t.Fatalf("msgID = %q, want msg-fake-1", msgID)
 	}
 
 	argv := strings.Join(readArgvLines(t, argvFile), " ")
-	if !strings.Contains(argv, "--raw-file -") {
-		t.Errorf("argv %q missing --raw-file -", argv)
+	for _, want := range []string{"--body-html <b>html</b>", "--cc cc@example.com", "--attach " + attachment} {
+		if !strings.Contains(argv, want) {
+			t.Errorf("argv %q missing %q", argv, want)
+		}
+	}
+	if strings.Contains(argv, "--body plain body") {
+		t.Errorf("rich Gmail must not include a plain-text alternative: %q", argv)
+	}
+	if strings.Contains(argv, "--raw-file") {
+		t.Errorf("rich Gmail must use gog's native composer: %q", argv)
 	}
 }
 

@@ -266,32 +266,49 @@ func (g *GmailService) sendGog(ctx context.Context, gogPath string, cfg *GmailCo
 	return parseGwsMessageID(stdout.Bytes()), nil
 }
 
-// sendRawGog is the gog counterpart of GmailService.sendRaw. gog accepts an
-// exact RFC822 message via --raw-file (stdin with "-"), so the existing
-// buildGmailMIME output feeds it unchanged — no re-encoding for the switch
-// from gws's raw users.messages.send call.
-func (g *GmailService) sendRawGog(ctx context.Context, gogPath string, cfg *GmailConfig, to string, cc []string, subject, body, htmlBody string, attachments []string) (string, error) {
+// sendComposedGog delegates MIME construction to gog. Rich notifications send
+// only --body-html: supplying both --body and --body-html creates a MIME
+// alternative, which some recipients rendered as duplicate visible content.
+func (g *GmailService) sendComposedGog(ctx context.Context, gogPath string, cfg *GmailConfig, to string, cc []string, subject, body, htmlBody string, attachments []string) (string, error) {
 	if gogPath == "" {
 		gogPath = "gog"
-	}
-	mimeBytes, err := buildGmailMIME(to, cc, subject, body, htmlBody, attachments)
-	if err != nil {
-		return "", fmt.Errorf("build email: %w", err)
 	}
 	authArgs, err := gogArgsForAuth(cfg)
 	if err != nil {
 		return "", err
 	}
 	args := gogBaseArgs(authArgs)
-	args = append(args, "gmail", "send", "--raw-file", "-", "--json")
+	args = append(args, "gmail", "send",
+		"--to", to,
+		"--subject", subject)
+	if len(cc) > 0 {
+		args = append(args, "--cc", strings.Join(normalizeEmailList(cc), ","))
+	}
+	if strings.TrimSpace(htmlBody) != "" {
+		args = append(args, "--body-html", htmlBody)
+	} else {
+		args = append(args, "--body", body)
+	}
+	var total int64
+	for _, attachment := range attachments {
+		info, statErr := os.Stat(attachment)
+		if statErr != nil {
+			return "", fmt.Errorf("attachment %q: %w", attachment, statErr)
+		}
+		total += info.Size()
+		if total > maxGmailAttachmentBytes {
+			return "", fmt.Errorf("attachments exceed the %d MB limit", maxGmailAttachmentBytes/(1024*1024))
+		}
+		args = append(args, "--attach", attachment)
+	}
+	args = append(args, "--json")
 	cmd := exec.CommandContext(ctx, gogPath, args...)
-	cmd.Stdin = bytes.NewReader(mimeBytes)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
 		detail := strings.TrimSpace(stderr.String() + " " + stdout.String())
-		return "", fmt.Errorf("gog gmail send --raw-file failed: %w: %s", err, detail)
+		return "", fmt.Errorf("gog gmail send failed: %w: %s", err, detail)
 	}
 	return parseGwsMessageID(stdout.Bytes()), nil
 }

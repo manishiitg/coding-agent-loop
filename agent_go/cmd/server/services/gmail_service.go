@@ -797,7 +797,7 @@ func (g *GmailService) sendRaw(ctx context.Context, cfg *GmailConfig, to string,
 	useGog, gogPath := g.useGog, g.gogPath
 	g.mu.RUnlock()
 	if useGog || (cfg != nil && cfg.UseGogBackend) {
-		return g.sendRawGog(ctx, gogPath, cfg, to, cc, subject, body, htmlBody, attachments)
+		return g.sendComposedGog(ctx, gogPath, cfg, to, cc, subject, body, htmlBody, attachments)
 	}
 	if strings.TrimSpace(gwsPath) == "" {
 		gwsPath = "gws"
@@ -828,30 +828,16 @@ func (g *GmailService) sendRaw(ctx context.Context, cfg *GmailConfig, to string,
 	return parseGwsMessageID(stdout.Bytes()), nil
 }
 
-// buildGmailMIME assembles a multipart/mixed RFC 2822 message: a UTF-8 text
-// body plus one base64 part per attachment. Attachment paths are read from the
-// host filesystem (the same host gws runs on), so any file type is supported.
+// buildGmailMIME assembles a multipart/mixed RFC 2822 message: one UTF-8 body
+// plus one base64 part per attachment. Rich notifications contain only the
+// HTML body so clients cannot display a duplicate plain-text alternative.
 func buildGmailMIME(to string, cc []string, subject, body, htmlBody string, attachments []string) ([]byte, error) {
 	parts := &bytes.Buffer{}
 	mw := multipart.NewWriter(parts)
 
-	// Body part: a bare text/plain, or — when HTML is supplied — a
-	// multipart/alternative carrying both the plain fallback and the rich HTML
-	// (so clients without HTML rendering still show the text).
+	// Body part: HTML only when supplied, otherwise plain text.
 	if strings.TrimSpace(htmlBody) != "" {
-		altBuf := &bytes.Buffer{}
-		altW := multipart.NewWriter(altBuf)
-		ptw, err := altW.CreatePart(textproto.MIMEHeader{
-			"Content-Type":              {"text/plain; charset=UTF-8"},
-			"Content-Transfer-Encoding": {"8bit"},
-		})
-		if err != nil {
-			return nil, err
-		}
-		if _, err := io.WriteString(ptw, body); err != nil {
-			return nil, err
-		}
-		htw, err := altW.CreatePart(textproto.MIMEHeader{
+		htw, err := mw.CreatePart(textproto.MIMEHeader{
 			"Content-Type":              {"text/html; charset=UTF-8"},
 			"Content-Transfer-Encoding": {"8bit"},
 		})
@@ -859,18 +845,6 @@ func buildGmailMIME(to string, cc []string, subject, body, htmlBody string, atta
 			return nil, err
 		}
 		if _, err := io.WriteString(htw, htmlBody); err != nil {
-			return nil, err
-		}
-		if err := altW.Close(); err != nil {
-			return nil, err
-		}
-		aw, err := mw.CreatePart(textproto.MIMEHeader{
-			"Content-Type": {fmt.Sprintf("multipart/alternative; boundary=%q", altW.Boundary())},
-		})
-		if err != nil {
-			return nil, err
-		}
-		if _, err := aw.Write(altBuf.Bytes()); err != nil {
 			return nil, err
 		}
 	} else {

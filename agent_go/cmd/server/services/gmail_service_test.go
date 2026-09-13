@@ -74,17 +74,14 @@ func TestBuildGmailMIMEHTML(t *testing.T) {
 		t.Fatalf("buildGmailMIME html: %v", err)
 	}
 	s := string(raw)
-	if !strings.Contains(s, "multipart/alternative") {
-		t.Error("HTML email should use multipart/alternative")
-	}
 	if !strings.Contains(s, "text/html; charset=UTF-8") {
 		t.Error("missing text/html part")
 	}
 	if !strings.Contains(s, "<h1>Hello</h1>") {
 		t.Error("missing HTML body content")
 	}
-	if !strings.Contains(s, "plain fallback") {
-		t.Error("missing plain-text fallback part")
+	if strings.Contains(s, "plain fallback") {
+		t.Error("HTML email must not include a plain-text alternative")
 	}
 }
 
@@ -358,7 +355,7 @@ func TestAuthStatusCachedPrefersStaleOverPending(t *testing.T) {
 	}
 }
 
-func TestGmailRichBodyDoesNotAppendPlainAlternative(t *testing.T) {
+func TestGmailRichBodyContainsOnlyHTML(t *testing.T) {
 	raw, err := buildGmailMIME("user@example.com", nil, "Pulse", "PLAIN_ONLY fallback", "<p>RICH_ONLY summary</p>", nil)
 	if err != nil {
 		t.Fatal(err)
@@ -373,31 +370,18 @@ func TestGmailRichBodyDoesNotAppendPlainAlternative(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	kind, alt, err := mime.ParseMediaType(part.Header.Get("Content-Type"))
-	if err != nil || kind != "multipart/alternative" {
-		t.Fatal("plain and HTML are not alternatives")
+	kind, _, err := mime.ParseMediaType(part.Header.Get("Content-Type"))
+	if err != nil || kind != "text/html" {
+		t.Fatalf("expected a single HTML body, got %q", kind)
 	}
-	alternatives := multipart.NewReader(part, alt["boundary"])
-	plain, err := alternatives.NextPart()
-	if err != nil {
-		t.Fatal(err)
-	}
-	body, _ := io.ReadAll(plain)
-	if string(body) != "PLAIN_ONLY fallback" {
-		t.Fatal("unexpected plain alternative")
-	}
-	rich, err := alternatives.NextPart()
-	if err != nil {
-		t.Fatal(err)
-	}
-	body, _ = io.ReadAll(rich)
+	body, _ := io.ReadAll(part)
 	if string(body) != "<p>RICH_ONLY summary</p>" {
-		t.Fatal("plain fallback duplicated into HTML")
+		t.Fatalf("unexpected HTML body %q", string(body))
 	}
-	if _, err := alternatives.NextPart(); err != io.EOF {
-		t.Fatal("extra body alternative")
+	if strings.Contains(message, "PLAIN_ONLY fallback") {
+		t.Fatal("plain fallback was included in rich email")
 	}
 	if _, err := outer.NextPart(); err != io.EOF {
-		t.Fatal("extra visible body outside alternatives")
+		t.Fatal("extra visible body part")
 	}
 }

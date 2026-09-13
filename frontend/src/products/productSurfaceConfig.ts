@@ -18,15 +18,16 @@ function isProductSurface(value: unknown): value is ProductSurface {
 
 /**
  * Returns the products intentionally exposed by this deployment.  Leaving the
- * runtime setting out preserves the full product suite for desktop and normal
- * AgentWorks installs; it is an allowlist only when explicitly configured.
+ * runtime setting out is the ordinary AgentWorks localhost case, so it must
+ * expose AgentWorks alone. Other desktop shells and multi-product deployments
+ * opt in explicitly with their own allowlist.
  */
 export function enabledProductSurfaces(): ProductSurface[] {
   const configured = runtimeConfig()?.enabledProductSurfaces
-  if (!Array.isArray(configured)) return [...PRODUCT_SURFACES]
+  if (!Array.isArray(configured)) return ['agentworks']
 
   const enabled = configured.filter(isProductSurface)
-  return enabled.length > 0 ? [...new Set(enabled)] : [...PRODUCT_SURFACES]
+  return enabled.length > 0 ? [...new Set(enabled)] : ['agentworks']
 }
 
 export function deploymentDefaultProductSurface(): ProductSurface {

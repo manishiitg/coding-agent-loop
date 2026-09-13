@@ -69,6 +69,8 @@ import { VoiceSettings } from './voice/VoiceSettings'
 import { readReminderSoundPref, persistReminderSoundPref } from './notifySound'
 import { readVoiceAutoSendPref, persistVoiceAutoSendPref } from './voiceAutoSend'
 import { ChatMarkdown as SharedChatMarkdown } from '../../../shared/chat/ChatRenderer'
+import { ProductSurfaceSwitcher } from '../../components/ProductSurfaceSwitcher'
+import { isSingleProductDeployment } from '../productSurfaceConfig'
 
 // The child/file viewer iframe is deliberately sandbox="allow-scripts" with
 // NO allow-same-origin (adding that would let a srcDoc page's script escape
@@ -2277,6 +2279,7 @@ export default function LearningApp() {
                 <button className="fl-icon-btn fl-rail-toggle" type="button" aria-label={chatsRailOpen ? 'Hide chats' : 'Show chats'} title={chatsRailOpen ? 'Hide chats' : 'Show chats'} aria-pressed={chatsRailOpen} onClick={toggleChatsRail}>
                   {chatsRailOpen ? <PanelLeftClose size={18} /> : <PanelLeftOpen size={18} />}
                 </button>
+                {!isSingleProductDeployment() && <ProductSurfaceSwitcher />}
                 <img className="fl-header-logo" src="/sparkquill-mark.svg" alt="" width={30} height={30} />
                 <div className="fl-toolbar-title">
                   <strong className="fl-brand-word">Spark<span>Quill</span></strong>
@@ -3339,6 +3342,7 @@ export default function LearningApp() {
               <header className="fl-child-top">
                 <div className="fl-child-top-row">
                   <div className="fl-child-id">
+                    {!isSingleProductDeployment() && <ProductSurfaceSwitcher />}
                     <img className="fl-header-logo" src="/sparkquill-mark.svg" alt="" width={22} height={22} />
                     {/* The subtitle is a welcome line for an empty header; once an
                         assignment pill is showing, the room it took is worth more
@@ -3611,6 +3615,7 @@ export default function LearningApp() {
     <main className="learning-app" data-theme={theme}>
       <header className="learning-header">
         <div className="learning-brand">
+          {!isSingleProductDeployment() && <ProductSurfaceSwitcher />}
           <img className="brand-mark" src="/sparkquill-mark.svg" alt="" width={30} height={30} />
           <span className="brand-word">Spark<strong>Quill</strong></span>
         </div>

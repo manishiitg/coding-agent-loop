@@ -12,10 +12,10 @@ afterEach(() => {
 })
 
 describe('product surface deployment configuration', () => {
-  it('keeps the complete product suite when no deployment allowlist is configured', () => {
-    expect(enabledProductSurfaces()).toEqual(['agentworks', 'video-studio', 'dominion', 'sparkquill'])
+  it('defaults to AgentWorks only when no deployment allowlist is configured', () => {
+    expect(enabledProductSurfaces()).toEqual(['agentworks'])
     expect(deploymentDefaultProductSurface()).toBe('agentworks')
-    expect(isSingleProductDeployment()).toBe(false)
+    expect(isSingleProductDeployment()).toBe(true)
   })
 
   it('constrains the dedicated host to AgentWorks and Video Studio', () => {

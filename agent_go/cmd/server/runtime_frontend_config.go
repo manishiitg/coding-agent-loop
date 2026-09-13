@@ -12,22 +12,26 @@ import (
 // script every frontend page loads before anything else (runtime-config.js,
 // registered in runServer). apiBaseUrl/workspaceApiBaseUrl are always
 // present; cdpEnabled advertises the deployment-level browser capability; the
-// product-surface and branding keys are opt-in via env — see
-// docs/design/sparkquill_desktop_on_platform_plan.md P0. A desktop shell
-// running a single product (e.g. SparkQuill) sets
+// product-surface and branding keys can be overridden via env — see
+// docs/design/sparkquill_desktop_on_platform_plan.md P0. A plain AgentWorks
+// server exposes only AgentWorks; a shell or deployment running a different
+// product (e.g. SparkQuill) sets
 // AGENTWORKS_ENABLED_PRODUCT_SURFACES/AGENTWORKS_DEFAULT_PRODUCT_SURFACE so
-// the frontend's product-surface switcher pins to that surface instead of
-// showing AgentWorks by default.
+// the frontend's product-surface switcher pins to its intended surface(s).
 func runtimeFrontendConfigJS(actualPort int, workspaceURL string) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "window.__APP_RUNTIME_CONFIG__ = {\n  apiBaseUrl: \"http://localhost:%d\",\n  workspaceApiBaseUrl: %q", actualPort, workspaceURL)
 	fmt.Fprintf(&b, ",\n  cdpEnabled: %t", browser.CDPEnabled())
-	if surfaces := splitAndTrimCommaList(os.Getenv("AGENTWORKS_ENABLED_PRODUCT_SURFACES")); len(surfaces) > 0 {
-		fmt.Fprintf(&b, ",\n  enabledProductSurfaces: %s", jsStringArrayLiteral(surfaces))
+	surfaces := splitAndTrimCommaList(os.Getenv("AGENTWORKS_ENABLED_PRODUCT_SURFACES"))
+	if len(surfaces) == 0 {
+		surfaces = []string{"agentworks"}
 	}
-	if v := strings.TrimSpace(os.Getenv("AGENTWORKS_DEFAULT_PRODUCT_SURFACE")); v != "" {
-		fmt.Fprintf(&b, ",\n  defaultProductSurface: %q", v)
+	fmt.Fprintf(&b, ",\n  enabledProductSurfaces: %s", jsStringArrayLiteral(surfaces))
+	defaultSurface := strings.TrimSpace(os.Getenv("AGENTWORKS_DEFAULT_PRODUCT_SURFACE"))
+	if defaultSurface == "" {
+		defaultSurface = "agentworks"
 	}
+	fmt.Fprintf(&b, ",\n  defaultProductSurface: %q", defaultSurface)
 	if v := strings.TrimSpace(os.Getenv("AGENTWORKS_APP_NAME")); v != "" {
 		fmt.Fprintf(&b, ",\n  appName: %q", v)
 	}

@@ -24,5 +24,40 @@
     {"id": "agentworks-slack-bot", "name": "AgentWorks Slack bot", "type": "builtin", "purpose": "Discuss the review and query durable follow-up action state", "capability": "interactive_reliability_collaboration", "optional": true},
     {"id": "notification-destination", "name": "Notification MCP", "type": "mcp", "purpose": "Publish an approved review or action reminder and retain delivery receipts", "capability": "notifications", "optional": true}
   ],
+  "pulse_focus": [
+    {
+      "module": "technical_review",
+      "label": "Technical review",
+      "focus_areas": [
+        "Timeline and causal evidence quality",
+        "Action ownership, status, and verification integrity"
+      ],
+      "review_when": [
+        "A run fails, produces incomplete evidence, or a key metric becomes unreliable"
+      ]
+    },
+    {
+      "module": "architecture_review",
+      "label": "Architecture review",
+      "focus_areas": [
+        "Review data model, action lifecycle, handoffs, and reporting",
+        "Linkage between incidents, changes, and verified outcomes"
+      ],
+      "review_when": [
+        "The workflow, integration, environment, scale, or operating policy changes materially"
+      ]
+    },
+    {
+      "module": "strategic_review",
+      "label": "Strategic review",
+      "focus_areas": [
+        "Recurring causes, systemic risk, and investment priorities",
+        "Whether follow-up work reduces future impact"
+      ],
+      "review_when": [
+        "Outcome metrics regress, priorities change, or the current approach needs periodic challenge"
+      ]
+    }
+  ],
   "outputs": ["Versioned review and action policy", "Immutable incident review snapshot", "Approved evidence-backed post-incident review", "Created action and publication receipts", "Verified follow-up action state", "Review and action dashboard"]
 }

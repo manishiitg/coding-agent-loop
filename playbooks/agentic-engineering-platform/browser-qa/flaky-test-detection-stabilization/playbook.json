@@ -24,6 +24,41 @@
     {"id": "managed-agent-browser", "name": "AgentWorks managed agent-browser", "type": "builtin", "purpose": "Investigate differing states and collect supported diagnostics", "capability": "browser_interaction", "optional": true},
     {"id": "github", "name": "GitHub CLI or MCP", "type": "cli_or_mcp", "purpose": "Read change context or publish an explicitly authorized stabilization review", "capability": "change_context_and_reporting", "optional": true}
   ],
+  "pulse_focus": [
+    {
+      "module": "technical_review",
+      "label": "Technical review",
+      "focus_areas": [
+        "Reproduction rate, variance, and stabilization proof",
+        "Retry and quarantine integrity"
+      ],
+      "review_when": [
+        "A run fails, produces incomplete evidence, or a key metric becomes unreliable"
+      ]
+    },
+    {
+      "module": "architecture_review",
+      "label": "Architecture review",
+      "focus_areas": [
+        "Sources of nondeterminism, test isolation, and fixture design",
+        "Ownership of flaky-test history and evidence"
+      ],
+      "review_when": [
+        "The workflow, integration, environment, scale, or operating policy changes materially"
+      ]
+    },
+    {
+      "module": "strategic_review",
+      "label": "Strategic review",
+      "focus_areas": [
+        "Business cost of instability and prioritization policy",
+        "Whether stabilization effort improves delivery confidence"
+      ],
+      "review_when": [
+        "Outcome metrics regress, priorities change, or the current approach needs periodic challenge"
+      ]
+    }
+  ],
   "outputs": ["Bounded flake experiment", "Complete passing/failing attempt history", "Evidence-backed classification and confidence", "Reviewed stabilization candidate when eligible", "Post-change stability verification", "Live reliability report"],
   "setup_playbook": "critical-journey-validation",
   "accepts_equivalent_setup": true,

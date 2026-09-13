@@ -28,6 +28,41 @@
     {"id": "source-control", "name": "Source-control MCP", "type": "mcp", "purpose": "Verify authorized PR, review, commit, and check evidence behind a finding", "capability": "source_control_data", "optional": true},
     {"id": "work-and-reliability", "name": "Issue, CI, deployment, and incident MCPs", "type": "mcp", "purpose": "Verify authorized source records when normalized evidence is incomplete or ambiguous", "capability": "cross_source_analysis", "optional": true}
   ],
+  "pulse_focus": [
+    {
+      "module": "technical_review",
+      "label": "Technical review",
+      "focus_areas": [
+        "Metric calculation, freshness, denominator, and segmentation integrity",
+        "Finding reproducibility and evidence quality"
+      ],
+      "review_when": [
+        "A run fails, produces incomplete evidence, or a key metric becomes unreliable"
+      ]
+    },
+    {
+      "module": "architecture_review",
+      "label": "Architecture review",
+      "focus_areas": [
+        "Metric model, source joins, history, and dashboard architecture",
+        "Ownership of definitions and downstream consumers"
+      ],
+      "review_when": [
+        "The workflow, integration, environment, scale, or operating policy changes materially"
+      ]
+    },
+    {
+      "module": "strategic_review",
+      "label": "Strategic review",
+      "focus_areas": [
+        "Whether metrics explain delivery and reliability outcomes",
+        "Actionability, unintended incentives, and decision value"
+      ],
+      "review_when": [
+        "Outcome metrics regress, priorities change, or the current approach needs periodic challenge"
+      ]
+    }
+  ],
   "outputs": ["Versioned engineering metric policy", "Reproducible metric snapshots and trends", "Evidence-backed bottleneck and risk findings", "Recommendations with owners and confidence", "Follow-up outcome history", "Live engineering intelligence report"],
   "setup_playbook": "engineering-data-foundation",
   "accepts_equivalent_setup": true,

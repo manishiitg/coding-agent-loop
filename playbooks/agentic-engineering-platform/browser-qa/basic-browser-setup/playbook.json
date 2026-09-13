@@ -96,6 +96,41 @@
       "optional": true
     }
   ],
+  "pulse_focus": [
+    {
+      "module": "technical_review",
+      "label": "Technical review",
+      "focus_areas": [
+        "Browser connectivity and Playwright execution",
+        "Locator stability and evidence completeness"
+      ],
+      "review_when": [
+        "A run fails, produces incomplete evidence, or a key metric becomes unreliable"
+      ]
+    },
+    {
+      "module": "architecture_review",
+      "label": "Architecture review",
+      "focus_areas": [
+        "Browser profiles, session boundaries, and reusable test helpers",
+        "Evidence storage and reporting design"
+      ],
+      "review_when": [
+        "The workflow, integration, environment, scale, or operating policy changes materially"
+      ]
+    },
+    {
+      "module": "strategic_review",
+      "label": "Strategic review",
+      "focus_areas": [
+        "Coverage of business-critical browser journeys",
+        "Fitness of browser evidence for release decisions"
+      ],
+      "review_when": [
+        "Outcome metrics regress, priorities change, or the current approach needs periodic challenge"
+      ]
+    }
+  ],
   "outputs": [
     "Reusable browser-foundation/v1 profile",
     "Verified reusable locator helpers",

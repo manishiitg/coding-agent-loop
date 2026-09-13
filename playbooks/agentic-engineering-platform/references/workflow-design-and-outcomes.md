@@ -34,6 +34,16 @@ For every proposed trigger or schedule, define the route or workflow it starts, 
 
 Never invent cadence, enable a schedule, or attach a webhook without the user's approved operating policy. When cadence is unknown, recommend options with their cost and detection-delay tradeoffs. Preserve existing schedules, thresholds, notification preferences, and budgets unless the user changes them explicitly.
 
+## Pulse review focus
+
+Read the playbook manifest's `pulse_focus` recommendations for Technical, Architecture, and Strategic Review. Compare them with current Pulse configuration and retained review coverage. Recommend only lenses that answer a useful question:
+
+- Technical Review checks execution correctness, validation, evidence, data, reports, and operational quality.
+- Architecture Review checks whether the workflow, routes, tools, stores, models, and handoffs implement the current approach well.
+- Strategic Review checks whether the capability and measurements advance the customer's goals and whether a materially different approach deserves consideration.
+
+Keep Plan Drift Review generic; playbooks do not specialize it. A focus refines the review but does not replace its canonical behavior or lightweight safety scan. Recommend manual, event-driven, or scheduled review based on risk and evidence volume. Do not activate persistent specialization or a schedule without the user's approved policy.
+
 ## Builder recommendation
 
 Before structural changes, present:

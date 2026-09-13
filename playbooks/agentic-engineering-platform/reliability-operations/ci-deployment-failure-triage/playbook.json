@@ -24,6 +24,41 @@
     {"id": "agentworks-slack-bot", "name": "AgentWorks Slack bot", "type": "builtin", "purpose": "Support threaded failure investigation, decisions, and status questions", "capability": "interactive_reliability_collaboration", "optional": true},
     {"id": "workflow-database", "name": "AgentWorks workflow database", "type": "builtin", "purpose": "Persist normalized failures, evidence, actions, and receipts", "capability": "durable_workflow_storage", "optional": true}
   ],
+  "pulse_focus": [
+    {
+      "module": "technical_review",
+      "label": "Technical review",
+      "focus_areas": [
+        "Failure ingestion, classification, deduplication, and evidence quality",
+        "Routing accuracy and unresolved-state handling"
+      ],
+      "review_when": [
+        "A run fails, produces incomplete evidence, or a key metric becomes unreliable"
+      ]
+    },
+    {
+      "module": "architecture_review",
+      "label": "Architecture review",
+      "focus_areas": [
+        "Webhook boundaries, provider adapters, ownership routing, and durable incident data",
+        "Retry, notification, and escalation design"
+      ],
+      "review_when": [
+        "The workflow, integration, environment, scale, or operating policy changes materially"
+      ]
+    },
+    {
+      "module": "strategic_review",
+      "label": "Strategic review",
+      "focus_areas": [
+        "Impact of recurring failure classes on delivery outcomes",
+        "Triage value, response priorities, and automation scope"
+      ],
+      "review_when": [
+        "Outcome metrics regress, priorities change, or the current approach needs periodic challenge"
+      ]
+    }
+  ],
   "outputs": ["Versioned triage and integration policy", "Validated trigger/source mappings", "Evidence-backed failure classification", "Safe action or incident escalation", "Triage dashboard and history", "Action and delivery receipts"],
   "next_playbooks": ["incident-investigation-coordination", "governed-remediation-recovery"]
 }

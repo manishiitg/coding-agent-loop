@@ -44,6 +44,41 @@
     {"id": "fix-review", "name": "Security Fix Review", "publisher": "Trail of Bits", "source": "https://github.com/trailofbits/skills", "install_hint": "npx skills add https://github.com/trailofbits/skills --skill fix-review", "purpose": "Review whether a proposed fix addresses the finding without regression", "optional": true},
     {"id": "supply-chain-risk-auditor", "name": "Supply Chain Risk Auditor", "publisher": "Trail of Bits", "source": "https://github.com/trailofbits/skills", "install_hint": "npx skills add https://github.com/trailofbits/skills --skill supply-chain-risk-auditor", "purpose": "Assess dependency maintenance and takeover risk when supply-chain review is in scope", "optional": true}
   ],
+  "pulse_focus": [
+    {
+      "module": "technical_review",
+      "label": "Technical review",
+      "focus_areas": [
+        "Finding validity, scope, severity, and remediation verification",
+        "Sensitive evidence and authorization controls"
+      ],
+      "review_when": [
+        "A run fails, produces incomplete evidence, or a key metric becomes unreliable"
+      ]
+    },
+    {
+      "module": "architecture_review",
+      "label": "Architecture review",
+      "focus_areas": [
+        "Assessment boundaries, tool isolation, approval gates, and evidence chain",
+        "Remediation ownership and rollback design"
+      ],
+      "review_when": [
+        "The workflow, integration, environment, scale, or operating policy changes materially"
+      ]
+    },
+    {
+      "module": "strategic_review",
+      "label": "Strategic review",
+      "focus_areas": [
+        "Risk-based coverage and remediation priorities",
+        "Security investment, residual risk, and release policy"
+      ],
+      "review_when": [
+        "Outcome metrics regress, priorities change, or the current approach needs periodic challenge"
+      ]
+    }
+  ],
   "outputs": ["Versioned authorization and AppSec policy", "Attack-surface and selected-route inventory", "Complete assessment results and restricted evidence", "Reviewed findings with severity and confidence", "Approved remediation and delivery receipts", "Deployed retest and verified closure", "Restricted AppSec dashboard and history"],
   "next_playbooks": ["release-pr-quality-gate"]
 }

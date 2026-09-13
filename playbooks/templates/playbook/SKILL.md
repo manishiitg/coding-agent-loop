@@ -37,7 +37,7 @@ List the few constraints that must survive customer adaptation.
 
 ## Read details when needed
 
-- [Workflow design and outcomes](../../agentic-engineering-platform/references/workflow-design-and-outcomes.md): goals, metrics, and current-versus-separate workflow decisions.
+- [Workflow design and outcomes](../../agentic-engineering-platform/references/workflow-design-and-outcomes.md): goals, metrics, workflow boundaries, activation, and Pulse focus decisions.
 - [Implementation guide](references/implementation.md): topic-specific decisions and examples.
 - [Example output](examples/output.json): illustrative shape only.
 - [Catalog metadata](playbook.json): UI presentation and optional tool recommendations.

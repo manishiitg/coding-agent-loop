@@ -18,6 +18,7 @@ type playbookSearchResult struct {
 	RequiredCapabilities []string                 `json:"required_capabilities"`
 	Outputs              []string                 `json:"outputs"`
 	RecommendedTools     []map[string]interface{} `json:"recommended_tools,omitempty"`
+	PulseFocus           []map[string]interface{} `json:"pulse_focus,omitempty"`
 	Installed            bool                     `json:"installed"`
 	InstalledStatus      string                   `json:"installed_status,omitempty"`
 	Score                int                      `json:"-"`
@@ -56,6 +57,22 @@ func searchPlaybooks(items []playbookCatalogItem, installed []InstalledPlaybook,
 				}
 			}
 		}
+		for _, focus := range item.PulseFocus {
+			for _, key := range []string{"module", "label"} {
+				if value, _ := focus[key].(string); value != "" {
+					searchable = append(searchable, value)
+				}
+			}
+			for _, key := range []string{"focus_areas", "review_when"} {
+				if values, ok := focus[key].([]interface{}); ok {
+					for _, raw := range values {
+						if value, ok := raw.(string); ok {
+							searchable = append(searchable, value)
+						}
+					}
+				}
+			}
+		}
 		corpus := strings.ToLower(strings.Join(searchable, " "))
 		score := 0
 		if strings.Contains(strings.ToLower(item.Title), query) || strings.Contains(strings.ToLower(item.ID), query) {
@@ -77,7 +94,7 @@ func searchPlaybooks(items []playbookCatalogItem, installed []InstalledPlaybook,
 		results = append(results, playbookSearchResult{
 			ID: item.ID, Title: item.Title, Category: item.Category, Description: item.Description,
 			Version: item.Version, SetupAreas: setupAreas, RequiredCapabilities: item.RequiredCapabilities,
-			Outputs: item.Outputs, RecommendedTools: item.RecommendedTools, Installed: isInstalled,
+			Outputs: item.Outputs, RecommendedTools: item.RecommendedTools, PulseFocus: item.PulseFocus, Installed: isInstalled,
 			InstalledStatus: installedItem.Status, Score: score,
 		})
 	}
@@ -97,7 +114,7 @@ func searchPlaybooks(items []playbookCatalogItem, installed []InstalledPlaybook,
 }
 
 func (api *StreamingAPI) registerPlaybookSearchTool(registrar definitionToolRegistrar, workspacePath string) error {
-	description := "Search the AgentWorks playbook catalog by the user's intent, operating area, capability, tool, or expected outcome. Use this before improvising a generic workflow setup when a reusable engineering playbook may fit. Results include setup areas, deliverables, recommended tools, and whether the playbook is already installed in this workflow. Recommend only relevant matches and explain the fit. This tool never installs anything: ask the user to install the chosen playbook, and use open_workspace_view(view=\"playbooks\") to show the catalog when available."
+	description := "Search the AgentWorks playbook catalog by the user's intent, operating area, capability, tool, expected outcome, or Pulse review focus. Use this before improvising a generic workflow setup when a reusable engineering playbook may fit. Results include setup areas, deliverables, recommended tools, Technical/Architecture/Strategic Pulse focus, and whether the playbook is already installed in this workflow. Recommend only relevant matches and explain the fit. This tool never installs anything: ask the user to install the chosen playbook, and use open_workspace_view(view=\"playbooks\") to show the catalog when available."
 	params := map[string]interface{}{
 		"type": "object",
 		"properties": map[string]interface{}{

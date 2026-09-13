@@ -15,6 +15,11 @@ vi.mock('../../api/playbooks', () => ({
       ],
       requiredCapabilities: ['browser_test_execution', 'workflow_reporting'],
       recommendedTools: [{ id: 'playwright', name: 'Playwright', type: 'cli', purpose: 'Run repeatable browser tests', capability: 'browser_test_execution', optional: true }],
+      pulseFocus: [
+        { module: 'technical_review', label: 'Technical review', focus_areas: ['Browser execution and evidence'], review_when: ['A browser run fails'] },
+        { module: 'architecture_review', label: 'Architecture review', focus_areas: ['Browser foundation design'], review_when: ['The environment changes'] },
+        { module: 'strategic_review', label: 'Strategic review', focus_areas: ['Coverage of critical journeys'], review_when: ['Business priorities change'] },
+      ],
       outputs: ['Reusable browser foundation', 'Live workflow report'],
     }]),
     listInstalled: vi.fn().mockResolvedValue([]),
@@ -71,6 +76,11 @@ it('opens a catalog playbook and installs it for Builder setup', async () => {
     expect(container.textContent).toContain('What you’ll get')
     expect(container.textContent).toContain('Reusable browser foundation')
     expect(container.textContent).toContain('Run repeatable browser tests')
+    expect(container.textContent).toContain('Pulse review focus')
+    expect(container.textContent).toContain('Browser execution and evidence')
+    expect(container.textContent).toContain('Browser foundation design')
+    expect(container.textContent).toContain('Coverage of critical journeys')
+    expect(container.textContent).not.toContain('Plan drift review')
 
     await click([...container.querySelectorAll('button')].find(button => button.textContent?.includes('Use playbook')) || null)
     expect(container.textContent).toContain('Installed · draft')

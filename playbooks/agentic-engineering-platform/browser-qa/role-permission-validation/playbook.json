@@ -23,6 +23,41 @@
     {"id": "managed-agent-browser", "name": "AgentWorks managed agent-browser", "type": "builtin", "purpose": "Investigate permission mismatches and collect supported diagnostics", "capability": "browser_interaction", "optional": true},
     {"id": "identity-provider", "name": "Identity-provider MCP", "type": "mcp", "purpose": "Read explicitly authorized non-secret role configuration when available", "capability": "identity_provider_access", "optional": true}
   ],
+  "pulse_focus": [
+    {
+      "module": "technical_review",
+      "label": "Technical review",
+      "focus_areas": [
+        "Authorization outcomes across roles, resources, and tenants",
+        "False-positive, evidence, and coverage integrity"
+      ],
+      "review_when": [
+        "A run fails, produces incomplete evidence, or a key metric becomes unreliable"
+      ]
+    },
+    {
+      "module": "architecture_review",
+      "label": "Architecture review",
+      "focus_areas": [
+        "Permission model, test identity isolation, and scenario reuse",
+        "Tenant and ownership boundary design"
+      ],
+      "review_when": [
+        "The workflow, integration, environment, scale, or operating policy changes materially"
+      ]
+    },
+    {
+      "module": "strategic_review",
+      "label": "Strategic review",
+      "focus_areas": [
+        "Risk-based coverage of valuable actions and data",
+        "Fitness of access-control signals for release decisions"
+      ],
+      "review_when": [
+        "Outcome metrics regress, priorities change, or the current approach needs periodic challenge"
+      ]
+    }
+  ],
   "outputs": ["Approved permission matrix", "Canonical permission tests", "Complete matrix execution history", "Attempt-scoped video and console/network evidence", "Permission findings and live report", "Verified non-secret application knowledge"],
   "setup_playbooks": ["basic-browser-setup", "authentication-session-validation"],
   "accepts_equivalent_setup": true,

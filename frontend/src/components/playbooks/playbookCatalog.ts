@@ -11,6 +11,7 @@ export type PlaybookCatalogItem = {
   setupInputs?: PlaybookSetupInput[]
   requiredCapabilities?: string[]
   recommendedTools?: PlaybookRecommendedTool[]
+  pulseFocus?: PlaybookPulseFocus[]
   outputs?: string[]
 }
 
@@ -28,6 +29,13 @@ export type PlaybookRecommendedTool = {
   purpose: string
   capability: string
   optional: boolean
+}
+
+export type PlaybookPulseFocus = {
+  module: 'technical_review' | 'architecture_review' | 'strategic_review'
+  label: string
+  focus_areas: string[]
+  review_when: string[]
 }
 
 // Read-only catalog projection of the first-party playbook manifests. The API

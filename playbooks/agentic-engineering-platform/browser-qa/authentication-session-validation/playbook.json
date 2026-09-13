@@ -24,6 +24,41 @@
     {"id": "managed-agent-browser", "name": "AgentWorks managed agent-browser", "type": "builtin", "purpose": "Investigate authorized authentication states and collect supported diagnostics", "capability": "browser_interaction", "optional": true},
     {"id": "identity-provider", "name": "Identity-provider MCP", "type": "mcp", "purpose": "Use an explicitly configured provider integration for approved setup or evidence", "capability": "identity_provider_access", "optional": true}
   ],
+  "pulse_focus": [
+    {
+      "module": "technical_review",
+      "label": "Technical review",
+      "focus_areas": [
+        "Authentication behavior, expiry, refresh, and recovery correctness",
+        "Sensitive evidence redaction and failure classification"
+      ],
+      "review_when": [
+        "A run fails, produces incomplete evidence, or a key metric becomes unreliable"
+      ]
+    },
+    {
+      "module": "architecture_review",
+      "label": "Architecture review",
+      "focus_areas": [
+        "Session-state model, identity boundaries, and reusable authentication setup",
+        "Isolation of credentials, roles, and environments"
+      ],
+      "review_when": [
+        "The workflow, integration, environment, scale, or operating policy changes materially"
+      ]
+    },
+    {
+      "module": "strategic_review",
+      "label": "Strategic review",
+      "focus_areas": [
+        "Alignment of authentication coverage with customer and business risk",
+        "Usefulness of session metrics and release policy"
+      ],
+      "review_when": [
+        "Outcome metrics regress, priorities change, or the current approach needs periodic challenge"
+      ]
+    }
+  ],
   "outputs": ["Approved authentication scenario manifest", "Canonical authentication tests", "Actor/scenario run history", "Attempt-scoped video and console/network evidence", "Authentication findings and live report", "Verified non-secret application knowledge"],
   "setup_playbook": "basic-browser-setup",
   "accepts_equivalent_setup": true,

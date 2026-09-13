@@ -81,11 +81,14 @@ The name must match `playbook.json.id` and the package directory. Put triggering
 | `setup_inputs` | Input descriptors with stable IDs, labels, and required/default conditions. |
 | `required_capabilities` | Capability names the builder must resolve or explicitly mark unavailable. |
 | `recommended_tools` | Optional recommendations, never implicit installation or authorization. |
+| `pulse_focus` | Advisory focus definitions for Technical, Architecture, and Strategic Review. Plan Drift is intentionally excluded. |
 | `outputs` | Durable completion artifacts and results. |
 
 Topic-specific relationship fields such as `setup_playbook`, `setup_playbooks`, `accepts_equivalent_setup`, and `next_playbooks` are optional. Unknown extension fields should be ignored by compatible readers.
 
 Each recommended tool contains `id`, `name`, `type`, `purpose`, `capability`, and `optional`. A recommendation improves discovery and UI presentation; the builder still checks current availability and preserves an explicitly selected compatible alternative.
+
+`pulse_focus` contains exactly one entry for each of `technical_review`, `architecture_review`, and `strategic_review`. Each entry has a human-readable `label`, concise `focus_areas`, and evidence-based `review_when` conditions. These are workflow-specific lenses layered onto canonical Pulse behavior; they do not enable a module, schedule a review, replace its general checks, or modify thresholds. Do not add `plan_drift_review`: plan drift remains a generic structural review.
 
 `recommended_skills` is an optional UI/discovery list. Each item contains `id`, `name`, `publisher`, `source`, `install_hint`, `purpose`, and `optional: true`. The source and install hint are informational and may change independently of the playbook. Before import, resolve the current source, inspect the complete skill package and license, check compatibility, record the source revision/digest, and use the supported AgentWorks skill-import flow. Never execute an install hint or attach a skill automatically.
 
@@ -99,10 +102,11 @@ The builder consumes a playbook progressively:
 4. Map the requested outcome to existing goals and metrics; recommend missing definitions without inventing customer targets.
 5. Recommend whether to extend the current workflow, add a route, or create a separate workflow, with concrete reasons and tradeoffs.
 6. Recommend how it starts: manual action, workflow handoff, webhook or event, release gate, or schedule. Define scope, cadence and timezone or event filters, concurrency, retries, budget, notification behavior, and proof of completion without enabling an unapproved trigger.
-7. Load only the references relevant to the current operation.
-8. Map the guidance onto the chosen workflow using supported AgentWorks plan/config tools. Reuse or revise compatible steps before adding new ones.
-9. Show concrete human decisions only after the draft, evidence, or proposed change is ready for review.
-10. Trial the affected step or route, validate durable output and the report, then record the installed snapshot.
+7. Compare the playbook's Technical, Architecture, and Strategic Pulse focus with existing review coverage. Recommend only useful lenses and keep Plan Drift generic.
+8. Load only the references relevant to the current operation.
+9. Map the guidance onto the chosen workflow using supported AgentWorks plan/config tools. Reuse or revise compatible steps before adding new ones.
+10. Show concrete human decisions only after the draft, evidence, or proposed change is ready for review.
+11. Trial the affected step or route, validate durable output and the report, then record the installed snapshot.
 
 The builder must not copy the reference graph mechanically, add a step per tool call, attach every recommended tool, overwrite user preferences, or edit system-managed plan files directly. Dashboard widgets and drill-downs must read the same durable records used for validation; reporting is part of installation, not a separate optional workflow.
 

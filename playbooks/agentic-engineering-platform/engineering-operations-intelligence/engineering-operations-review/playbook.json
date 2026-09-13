@@ -29,6 +29,41 @@
     {"id": "notification-destination", "name": "Notification MCP", "type": "mcp", "purpose": "Deliver an approved review to the configured audience", "capability": "notifications", "optional": true},
     {"id": "issue-tracker", "name": "Issue-tracker MCP", "type": "mcp", "purpose": "Create explicitly approved follow-up work and persist its receipt", "capability": "work_item_creation", "optional": true}
   ],
+  "pulse_focus": [
+    {
+      "module": "technical_review",
+      "label": "Technical review",
+      "focus_areas": [
+        "Review completeness, metric comparability, and action tracking",
+        "Freshness and evidence integrity"
+      ],
+      "review_when": [
+        "A run fails, produces incomplete evidence, or a key metric becomes unreliable"
+      ]
+    },
+    {
+      "module": "architecture_review",
+      "label": "Architecture review",
+      "focus_areas": [
+        "Review cadence, aggregation, ownership, notification, and history design",
+        "Handoffs from findings to governed action"
+      ],
+      "review_when": [
+        "The workflow, integration, environment, scale, or operating policy changes materially"
+      ]
+    },
+    {
+      "module": "strategic_review",
+      "label": "Strategic review",
+      "focus_areas": [
+        "Whether reviews improve delivery, quality, and reliability decisions",
+        "Priority, operating cost, and stakeholder usefulness"
+      ],
+      "review_when": [
+        "Outcome metrics regress, priorities change, or the current approach needs periodic challenge"
+      ]
+    }
+  ],
   "outputs": ["Versioned review policy", "Frozen period snapshot", "Evidence-backed engineering operations review", "Recommendations and approval decisions", "Tracked actions and follow-up outcomes", "Delivery and optional schedule receipts"],
   "setup_playbook": "delivery-quality-reliability-intelligence",
   "accepts_equivalent_setup": true

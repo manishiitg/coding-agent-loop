@@ -100,6 +100,41 @@
       "optional": true
     }
   ],
+  "pulse_focus": [
+    {
+      "module": "technical_review",
+      "label": "Technical review",
+      "focus_areas": [
+        "Journey correctness, assertions, diagnostics, and failure classification",
+        "Coverage and evidence completeness"
+      ],
+      "review_when": [
+        "A run fails, produces incomplete evidence, or a key metric becomes unreliable"
+      ]
+    },
+    {
+      "module": "architecture_review",
+      "label": "Architecture review",
+      "focus_areas": [
+        "Journey composition, shared setup, locator reuse, and route boundaries",
+        "Test data and reporting architecture"
+      ],
+      "review_when": [
+        "The workflow, integration, environment, scale, or operating policy changes materially"
+      ]
+    },
+    {
+      "module": "strategic_review",
+      "label": "Strategic review",
+      "focus_areas": [
+        "Whether selected journeys represent customer and business outcomes",
+        "Usefulness of journey results for release decisions"
+      ],
+      "review_when": [
+        "Outcome metrics regress, priorities change, or the current approach needs periodic challenge"
+      ]
+    }
+  ],
   "outputs": [
     "Approved journey configuration",
     "Journey tests reusing canonical locator helpers",

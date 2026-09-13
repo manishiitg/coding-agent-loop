@@ -1,7 +1,7 @@
 import axios from 'axios'
 import { getApiBaseUrl, getAuthToken } from '../services/api'
 import type { InstalledPlaybook } from '../services/api-types'
-import type { PlaybookCatalogItem, PlaybookRecommendedTool, PlaybookSetupInput } from '../components/playbooks/playbookCatalog'
+import type { PlaybookCatalogItem, PlaybookPulseFocus, PlaybookRecommendedTool, PlaybookSetupInput } from '../components/playbooks/playbookCatalog'
 
 type ServerPlaybook = {
   id: string
@@ -14,6 +14,7 @@ type ServerPlaybook = {
   setup_inputs?: PlaybookSetupInput[]
   required_capabilities?: string[]
   recommended_tools?: PlaybookRecommendedTool[]
+  pulse_focus?: PlaybookPulseFocus[]
   outputs?: string[]
 }
 
@@ -37,6 +38,7 @@ const normalize = (item: ServerPlaybook): PlaybookCatalogItem => ({
   setupInputs: item.setup_inputs || [],
   requiredCapabilities: item.required_capabilities || [],
   recommendedTools: item.recommended_tools || [],
+  pulseFocus: item.pulse_focus || [],
   outputs: item.outputs || [],
 })
 

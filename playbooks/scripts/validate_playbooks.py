@@ -36,9 +36,12 @@ REQUIRED_MANIFEST_FIELDS = [
     "setup_inputs",
     "required_capabilities",
     "recommended_tools",
+    "pulse_focus",
     "outputs",
 ]
 REQUIRED_TOOL_FIELDS = {"id", "name", "type", "purpose", "capability", "optional"}
+REQUIRED_PULSE_FOCUS_FIELDS = {"module", "label", "focus_areas", "review_when"}
+PULSE_FOCUS_MODULES = {"technical_review", "architecture_review", "strategic_review"}
 REQUIRED_SKILL_RECOMMENDATION_FIELDS = {
     "id",
     "name",
@@ -140,6 +143,22 @@ def validate_package(package: Path, errors: list[str]) -> dict[str, object] | No
             fail(errors, manifest_path, f"recommended_tools[{index}] has an incomplete shape")
         elif tool.get("optional") is not True:
             fail(errors, manifest_path, f"recommended_tools[{index}].optional must be true")
+    pulse_focus = manifest.get("pulse_focus", [])
+    if not isinstance(pulse_focus, list):
+        fail(errors, manifest_path, "pulse_focus must be a list")
+    else:
+        modules: set[object] = set()
+        for index, focus in enumerate(pulse_focus):
+            if not isinstance(focus, dict) or not REQUIRED_PULSE_FOCUS_FIELDS.issubset(focus):
+                fail(errors, manifest_path, f"pulse_focus[{index}] has an incomplete shape")
+                continue
+            modules.add(focus.get("module"))
+            if not isinstance(focus.get("focus_areas"), list) or not focus["focus_areas"]:
+                fail(errors, manifest_path, f"pulse_focus[{index}].focus_areas must be a non-empty list")
+            if not isinstance(focus.get("review_when"), list) or not focus["review_when"]:
+                fail(errors, manifest_path, f"pulse_focus[{index}].review_when must be a non-empty list")
+        if modules != PULSE_FOCUS_MODULES:
+            fail(errors, manifest_path, "pulse_focus must define technical_review, architecture_review, and strategic_review only")
     recommended_skills = manifest.get("recommended_skills", [])
     if not isinstance(recommended_skills, list):
         fail(errors, manifest_path, "recommended_skills must be a list")

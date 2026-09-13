@@ -16,7 +16,7 @@ func TestSearchPlaybooksFindsIntentAndReportsInstalledStatus(t *testing.T) {
 	if len(matches) == 0 || matches[0].ID != "browser-performance-validation" {
 		t.Fatalf("matches = %+v", matches)
 	}
-	if !matches[0].Installed || matches[0].InstalledStatus != "draft" || len(matches[0].Outputs) == 0 || len(matches[0].SetupAreas) == 0 {
+	if !matches[0].Installed || matches[0].InstalledStatus != "draft" || len(matches[0].Outputs) == 0 || len(matches[0].SetupAreas) == 0 || len(matches[0].PulseFocus) != 3 {
 		t.Fatalf("incomplete result = %+v", matches[0])
 	}
 }

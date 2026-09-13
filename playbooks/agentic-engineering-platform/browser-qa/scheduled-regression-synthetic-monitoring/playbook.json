@@ -24,6 +24,41 @@
     {"id": "notification-destination", "name": "Notification MCP", "type": "mcp", "purpose": "Deliver explicitly configured actionable alerts to the customer's chosen destination", "capability": "notifications", "optional": true},
     {"id": "issue-tracker", "name": "Issue-tracker MCP", "type": "mcp", "purpose": "Create or update authorized recurring-failure records", "capability": "issue_reporting", "optional": true}
   ],
+  "pulse_focus": [
+    {
+      "module": "technical_review",
+      "label": "Technical review",
+      "focus_areas": [
+        "Run completeness, alert correctness, and diagnostic retention",
+        "Noise, missed detection, and recovery behavior"
+      ],
+      "review_when": [
+        "A run fails, produces incomplete evidence, or a key metric becomes unreliable"
+      ]
+    },
+    {
+      "module": "architecture_review",
+      "label": "Architecture review",
+      "focus_areas": [
+        "Schedule, concurrency, environment, and synthetic identity design",
+        "History, notification, and escalation architecture"
+      ],
+      "review_when": [
+        "The workflow, integration, environment, scale, or operating policy changes materially"
+      ]
+    },
+    {
+      "module": "strategic_review",
+      "label": "Strategic review",
+      "focus_areas": [
+        "Monitoring coverage of important customer journeys",
+        "Detection delay, operating cost, and alert usefulness"
+      ],
+      "review_when": [
+        "Outcome metrics regress, priorities change, or the current approach needs periodic challenge"
+      ]
+    }
+  ],
   "outputs": ["Saved schedule bound to an exact route and groups", "Safe unattended decision policy", "Controlled trigger result", "Scheduled run and evidence history", "Trend report", "Notification and ownership policy"],
   "setup_playbook": "critical-journey-validation",
   "accepts_equivalent_setup": true,

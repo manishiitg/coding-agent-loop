@@ -29,6 +29,41 @@
     {"id": "ci-deployment", "name": "CI and deployment MCP", "type": "mcp", "purpose": "Read authorized pipeline, build, deployment, and rollback events", "capability": "delivery_system_data", "optional": true},
     {"id": "observability", "name": "Observability and incident MCP", "type": "mcp", "purpose": "Read authorized incidents, alerts, service identity, and recovery events", "capability": "reliability_system_data", "optional": true}
   ],
+  "pulse_focus": [
+    {
+      "module": "technical_review",
+      "label": "Technical review",
+      "focus_areas": [
+        "Connector health, freshness, normalization, and lineage",
+        "Missing, duplicate, and conflicting data handling"
+      ],
+      "review_when": [
+        "A run fails, produces incomplete evidence, or a key metric becomes unreliable"
+      ]
+    },
+    {
+      "module": "architecture_review",
+      "label": "Architecture review",
+      "focus_areas": [
+        "Source contracts, identity model, storage, retention, and access design",
+        "Schema evolution and consumer boundaries"
+      ],
+      "review_when": [
+        "The workflow, integration, environment, scale, or operating policy changes materially"
+      ]
+    },
+    {
+      "module": "strategic_review",
+      "label": "Strategic review",
+      "focus_areas": [
+        "Whether collected data supports important engineering decisions",
+        "Collection cost, coverage, and measurement priorities"
+      ],
+      "review_when": [
+        "Outcome metrics regress, priorities change, or the current approach needs periodic challenge"
+      ]
+    }
+  ],
   "outputs": ["Versioned engineering operations schema", "Authorized source and identity map", "Normalized source-linked engineering records", "Sync cursors and reconciliation history", "Data-quality findings", "Live freshness and lineage report"],
   "next_playbooks": ["delivery-quality-reliability-intelligence"]
 }

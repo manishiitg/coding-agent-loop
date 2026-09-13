@@ -85,6 +85,41 @@
       "optional": true
     }
   ],
+  "pulse_focus": [
+    {
+      "module": "technical_review",
+      "label": "Technical review",
+      "focus_areas": [
+        "Load profile execution, sample validity, and error classification",
+        "Latency, throughput, capacity, and budget calculations"
+      ],
+      "review_when": [
+        "A run fails, produces incomplete evidence, or a key metric becomes unreliable"
+      ]
+    },
+    {
+      "module": "architecture_review",
+      "label": "Architecture review",
+      "focus_areas": [
+        "Scenario design, traffic isolation, data setup, and result storage",
+        "Environment, load-generation, and release-gate boundaries"
+      ],
+      "review_when": [
+        "The workflow, integration, environment, scale, or operating policy changes materially"
+      ]
+    },
+    {
+      "module": "strategic_review",
+      "label": "Strategic review",
+      "focus_areas": [
+        "Whether scenarios represent production demand and customer impact",
+        "Capacity risk, performance policy, and testing cost"
+      ],
+      "review_when": [
+        "Outcome metrics regress, priorities change, or the current approach needs periodic challenge"
+      ]
+    }
+  ],
   "outputs": [
     "Versioned API performance policy and load profile",
     "Canonical saved API performance runner",

@@ -34,6 +34,7 @@ type playbookCatalogItem struct {
 	SetupInputs          []map[string]interface{} `json:"setup_inputs"`
 	RequiredCapabilities []string                 `json:"required_capabilities"`
 	RecommendedTools     []map[string]interface{} `json:"recommended_tools"`
+	PulseFocus           []map[string]interface{} `json:"pulse_focus"`
 	Outputs              []string                 `json:"outputs"`
 	Category             string                   `json:"category"`
 	SourceDir            string                   `json:"-"`

@@ -40,6 +40,41 @@
     {"id": "source-control", "name": "Source-control MCP or CLI", "type": "cli_or_mcp", "purpose": "Create an authorized branch or pull request and retain review/change receipts", "capability": "source_control_change", "optional": true},
     {"id": "agentworks-schedules", "name": "AgentWorks schedules", "type": "builtin", "purpose": "Run anomaly detection and post-change verification at approved intervals", "capability": "scheduled_workflow_execution", "optional": true}
   ],
+  "pulse_focus": [
+    {
+      "module": "technical_review",
+      "label": "Technical review",
+      "focus_areas": [
+        "Cost data freshness, allocation, anomaly validity, and savings verification",
+        "Recommendation and IaC change evidence"
+      ],
+      "review_when": [
+        "A run fails, produces incomplete evidence, or a key metric becomes unreliable"
+      ]
+    },
+    {
+      "module": "architecture_review",
+      "label": "Architecture review",
+      "focus_areas": [
+        "Cloud account boundaries, cost model, approvals, IaC workflow, and rollback",
+        "Baseline, attribution, and reporting architecture"
+      ],
+      "review_when": [
+        "The workflow, integration, environment, scale, or operating policy changes materially"
+      ]
+    },
+    {
+      "module": "strategic_review",
+      "label": "Strategic review",
+      "focus_areas": [
+        "Whether optimization supports business priorities without harming service goals",
+        "Savings quality, opportunity cost, and risk appetite"
+      ],
+      "review_when": [
+        "Outcome metrics regress, priorities change, or the current approach needs periodic challenge"
+      ]
+    }
+  ],
   "outputs": [
     "Versioned FinOps scope, baseline, and change policy",
     "Service-specific cost-driver and utilization analysis",

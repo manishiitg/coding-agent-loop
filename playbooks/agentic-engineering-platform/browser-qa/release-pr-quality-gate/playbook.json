@@ -24,6 +24,41 @@
     {"id": "github", "name": "GitHub CLI or MCP", "type": "cli_or_mcp", "purpose": "Resolve authorized change context and publish an approved check or summary", "capability": "change_context_and_reporting", "optional": true},
     {"id": "notification-destination", "name": "Notification MCP", "type": "mcp", "purpose": "Deliver explicitly configured gate outcomes", "capability": "notifications", "optional": true}
   ],
+  "pulse_focus": [
+    {
+      "module": "technical_review",
+      "label": "Technical review",
+      "focus_areas": [
+        "Change-to-test binding, gate calculation, and evidence integrity",
+        "Failure, override, and stale-result handling"
+      ],
+      "review_when": [
+        "A run fails, produces incomplete evidence, or a key metric becomes unreliable"
+      ]
+    },
+    {
+      "module": "architecture_review",
+      "label": "Architecture review",
+      "focus_areas": [
+        "Gate placement, required suite composition, and provider integration",
+        "Approval, retry, and audit architecture"
+      ],
+      "review_when": [
+        "The workflow, integration, environment, scale, or operating policy changes materially"
+      ]
+    },
+    {
+      "module": "strategic_review",
+      "label": "Strategic review",
+      "focus_areas": [
+        "Alignment of gate policy with release risk and delivery speed",
+        "Value of required checks and override policy"
+      ],
+      "review_when": [
+        "Outcome metrics regress, priorities change, or the current approach needs periodic challenge"
+      ]
+    }
+  ],
   "outputs": ["Versioned release-gate policy", "Exact trigger/change/build mapping", "Complete required-suite result set", "Auditable pass/fail/needs-review decision", "Gate report and evidence links", "External delivery receipts when configured"],
   "setup_playbooks": ["critical-journey-validation"],
   "accepts_equivalent_setup": true

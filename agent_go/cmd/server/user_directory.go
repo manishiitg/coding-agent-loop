@@ -422,6 +422,26 @@ func isConfiguredAdmin(rec *UserRecord) bool {
 	return admins[strings.ToLower(rec.Username)] || (rec.Email != "" && admins[strings.ToLower(rec.Email)])
 }
 
+// externalAuthEmailAllowed applies an optional exact email allowlist to every
+// OAuth provider. An empty list preserves existing deployments; a configured
+// list also rejects providers that do not return a verified email address.
+func externalAuthEmailAllowed(email string) bool {
+	raw := strings.TrimSpace(os.Getenv("AUTH_ALLOWED_EMAILS"))
+	if raw == "" {
+		return true
+	}
+	email = strings.ToLower(strings.TrimSpace(email))
+	if email == "" {
+		return false
+	}
+	for _, candidate := range strings.Split(raw, ",") {
+		if strings.ToLower(strings.TrimSpace(candidate)) == email {
+			return true
+		}
+	}
+	return false
+}
+
 // hardcodedUsersSource is GetHardcodedUsers, swappable in tests (the real
 // one is guarded by a sync.Once over the environment).
 var hardcodedUsersSource = GetHardcodedUsers
@@ -484,7 +504,24 @@ func ensureDirectoryUserForExternal(userID string, ext *ExternalUser) *UserRecor
 		return nil
 	}
 	if rec := dir.find(userID, ext.Username, ext.Email); rec != nil {
-		return rec
+		recordID := rec.ID
+		changed := false
+		if rec.Email == "" && strings.TrimSpace(ext.Email) != "" {
+			rec.Email = strings.ToLower(strings.TrimSpace(ext.Email))
+			changed = true
+		}
+		if rec.SSO == nil {
+			rec.SSO = &UserSSO{Provider: ext.Provider, ExternalID: ext.ExternalID}
+			changed = true
+		}
+		if changed {
+			rec.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
+			if err := saveUserDirectory(dir); err != nil {
+				log.Printf("[USERS] cannot link SSO identity for %s: %v", rec.Username, err)
+				return dir.byID(recordID)
+			}
+		}
+		return dir.byID(recordID)
 	}
 	now := time.Now().UTC().Format(time.RFC3339)
 	rec := UserRecord{

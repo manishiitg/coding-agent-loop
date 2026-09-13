@@ -413,6 +413,11 @@ func (api *StreamingAPI) handleAuthCallback(w http.ResponseWriter, r *http.Reque
 		http.Error(w, `{"error": "Failed to authenticate with provider"}`, http.StatusInternalServerError)
 		return
 	}
+	if !externalAuthEmailAllowed(extUser.Email) {
+		log.Printf("[AUTH] OAuth login refused for email outside AUTH_ALLOWED_EMAILS via provider %s", stateEntry.Provider)
+		http.Error(w, `{"error": "This account is not approved for this workspace"}`, http.StatusForbidden)
+		return
+	}
 
 	// Generate a deterministic user ID if not provided
 	userID := extUser.ExternalID
@@ -423,10 +428,15 @@ func (api *StreamingAPI) handleAuthCallback(w http.ResponseWriter, r *http.Reque
 
 	// First SSO login creates the account record with nothing enabled
 	// (unless ADMIN_USERS names it); an admin switches it on.
-	if rec := ensureDirectoryUserForExternal(userID, extUser); rec != nil && rec.Disabled {
-		log.Printf("[AUTH] OAuth login refused for disabled user %s", extUser.Username)
-		http.Error(w, `{"error": "This account is disabled"}`, http.StatusForbidden)
-		return
+	if rec := ensureDirectoryUserForExternal(userID, extUser); rec != nil {
+		if rec.Disabled {
+			log.Printf("[AUTH] OAuth login refused for disabled user %s", extUser.Username)
+			http.Error(w, `{"error": "This account is disabled"}`, http.StatusForbidden)
+			return
+		}
+		// A pre-provisioned password account keeps its stable id, projects,
+		// history, and permissions when the same email first signs in with SSO.
+		userID = rec.ID
 	}
 	// Generate JWT token with provider information
 	token, err := GenerateJWTWithProvider(userID, extUser.Username, extUser.Email, extUser.Provider)

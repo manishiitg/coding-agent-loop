@@ -169,6 +169,34 @@ func TestBootstrapImportsAuthUsersAndAdmins(t *testing.T) {
 	}
 }
 
+func TestExternalAuthEmailAllowlist(t *testing.T) {
+	t.Setenv("AUTH_ALLOWED_EMAILS", " Manish.Prakash@realtrainingsys.com, rob.rubin@realtrainingsys.com ")
+	if !externalAuthEmailAllowed("manish.prakash@realtrainingsys.com") || !externalAuthEmailAllowed("ROB.RUBIN@realtrainingsys.com") {
+		t.Fatal("configured email was rejected")
+	}
+	if externalAuthEmailAllowed("other@realtrainingsys.com") || externalAuthEmailAllowed("") {
+		t.Fatal("unapproved or empty email was accepted")
+	}
+	t.Setenv("AUTH_ALLOWED_EMAILS", "")
+	if !externalAuthEmailAllowed("") {
+		t.Fatal("empty allowlist must preserve existing OAuth behavior")
+	}
+}
+
+func TestExternalLoginLinksExistingAccountAndKeepsStableID(t *testing.T) {
+	content := withMemoryUserDirectory(t, `{"users":[{"id":"existing-manish","username":"manish","email":"manish.prakash@realtrainingsys.com","admin":true,"can_create":true,"products":[]}]}`)
+	rec := ensureDirectoryUserForExternal("supabase-user-id", &ExternalUser{
+		ExternalID: "supabase-user-id", Email: "MANISH.PRAKASH@realtrainingsys.com", Username: "Manish Prakash", Provider: "supabase-google",
+	})
+	if rec == nil || rec.ID != "existing-manish" || rec.SSO == nil || rec.SSO.Provider != "supabase-google" || rec.SSO.ExternalID != "supabase-user-id" {
+		t.Fatalf("existing account was not linked: %+v", rec)
+	}
+	var saved userDirectoryFile
+	if err := json.Unmarshal([]byte(*content), &saved); err != nil || len(saved.Users) != 1 || saved.Users[0].ID != "existing-manish" {
+		t.Fatalf("linked directory changed identity: err=%v users=%+v", err, saved.Users)
+	}
+}
+
 func adminRequest(method, path, body string, claims *UserClaims, vars map[string]string) *http.Request {
 	req := httptest.NewRequest(method, path, bytes.NewBufferString(body))
 	req = req.WithContext(context.WithValue(req.Context(), UserContextKey, claims))

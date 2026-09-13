@@ -166,9 +166,10 @@ SUPABASE_URL=https://xxx.supabase.co
 SUPABASE_ANON_KEY=eyJxxx
 AUTH_SECRET=<long random value>
 ADMIN_USERS=you@gmail.com        # your first Google login becomes admin
+AUTH_ALLOWED_EMAILS=you@gmail.com,teammate@example.com  # optional exact OAuth allowlist
 ```
 
-The first Google login auto-creates the account in `config/users.json` with nothing enabled (unless `ADMIN_USERS` names the Gmail address); an admin then sets role/products in Users & access. The Supabase user id is the stable identity, so someone using both Google and Supabase email/password lands on the same account. Unlike Cognito, Supabase does not echo our CSRF state back — the callback falls back to its session-stored state, and the server-side PKCE verifier still binds the code to the flow that started it.
+When `AUTH_ALLOWED_EMAILS` is set, OAuth sign-in accepts only those exact email addresses and rejects providers that return no email. A pre-provisioned account with a matching email keeps its existing AgentWorks user ID, projects, history, and permissions; its first successful Google login links the SSO identity to that account. Otherwise, the first Google login auto-creates an account with nothing enabled unless `ADMIN_USERS` names the email, and an admin then sets role/products in Users & access. Unlike Cognito, Supabase does not echo our CSRF state back — the callback falls back to its session-stored state, and the server-side PKCE verifier still binds the code to the flow that started it.
 
 **Features:**
 - Social login via Supabase-hosted Google OAuth

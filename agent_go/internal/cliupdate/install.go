@@ -3,130 +3,88 @@ package cliupdate
 import (
 	"bytes"
 	"context"
-	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
-	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"regexp"
 	"strings"
 	"syscall"
 	"time"
 )
 
-var releaseVersion = regexp.MustCompile(`^[0-9][0-9A-Za-z.+-]*$`)
+var errCLINotInstalled = errors.New("CLI not installed")
 
-// Install into a fresh prefix; native "update" commands may target Homebrew,
-// npm's shared global prefix, or ~/.local. Use an explicit npm prefix for the
-// npm-distributed CLIs and an isolated HOME for Cursor's official installer.
-func installRelease(ctx context.Context, p Provider, releases string, previous Result) (string, string, error) {
-	dir, err := os.MkdirTemp(releases, p.Name+"-*")
+// updateGlobalCLI invokes the updater supplied by the user's installed CLI.
+// It never downloads or selects an AgentWorks-owned copy.
+func updateGlobalCLI(ctx context.Context, p Provider, _ string, _ Result) (string, string, error) {
+	executable, err := findGlobalCLI(p)
 	if err != nil {
 		return "", "", err
 	}
-	keep := false
-	defer func() {
-		if !keep {
-			_ = os.RemoveAll(dir)
-		}
-	}()
-	home := filepath.Join(dir, "home")
-	if err := os.MkdirAll(home, 0700); err != nil {
-		return "", "", err
+	args, ok := map[string][]string{
+		"codex":        {"update"},
+		"claude":       {"update"},
+		"cursor-agent": {"update"},
+		"pi":           {"update", "--self"},
+	}[p.Name]
+	if !ok {
+		return "", "", fmt.Errorf("no global update command for %s", p.Name)
 	}
-	env := installEnv(home)
-	var binary, version string
-	if p.Package != "" {
-		out, err := run(ctx, dir, env, "npm", "view", p.Package+"@latest", "version", "--json", "--registry=https://registry.npmjs.org")
-		if err != nil {
-			return "", "", fmt.Errorf("check %s: %w", p.Name, err)
-		}
-		if err := json.Unmarshal(out, &version); err != nil || !releaseVersion.MatchString(version) {
-			return "", "", fmt.Errorf("invalid registry version for %s", p.Name)
-		}
-		if version == previous.Version && strings.HasPrefix(previous.Executable, releases+string(os.PathSeparator)) {
-			if observed, err := smoke(ctx, previous.Executable, env, p); err == nil && containsVersion(observed, version) {
-				return previous.Executable, version, nil
-			}
-		}
-		args := []string{"install", "--global", "--prefix", dir, "--no-audit", "--no-fund", "--registry=https://registry.npmjs.org", p.Package + "@" + version}
-		// Pi's optional lifecycle scripts are not needed by its coding CLI.
-		if p.Name == "pi" {
-			args = append(args, "--ignore-scripts")
-		}
-		if _, err := run(ctx, dir, env, "npm", args...); err != nil {
-			return "", "", fmt.Errorf("install %s: %w", p.Name, err)
-		}
-		binary = filepath.Join(dir, "bin", p.Name)
-	} else {
-		req, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://cursor.com/install", nil)
-		if err != nil {
-			return "", "", err
-		}
-		client := &http.Client{Timeout: time.Minute}
-		resp, err := client.Do(req)
-		if err != nil {
-			return "", "", fmt.Errorf("fetch Cursor installer: %w", err)
-		}
-		defer resp.Body.Close()
-		if resp.StatusCode != http.StatusOK {
-			return "", "", fmt.Errorf("Cursor installer HTTP %d", resp.StatusCode)
-		}
-		data, err := io.ReadAll(io.LimitReader(resp.Body, 1024*1024+1))
-		if err != nil || len(data) > 1024*1024 {
-			return "", "", fmt.Errorf("cannot read Cursor installer")
-		}
-		script := filepath.Join(dir, "install.sh")
-		if err := os.WriteFile(script, data, 0600); err != nil {
-			return "", "", err
-		}
-		if _, err := run(ctx, dir, env, "bash", script); err != nil {
-			return "", "", fmt.Errorf("install cursor-agent: %w", err)
-		}
-		binary = filepath.Join(home, ".local", "bin", "cursor-agent")
+	env := updateEnv()
+	if _, err := run(ctx, updateWorkingDir(executable), env, executable, args...); err != nil {
+		return "", "", fmt.Errorf("update %s: %w", p.Name, err)
 	}
-	// Resolve the candidate symlink once. A chat's pin points directly at this
-	// release, never through a mutable "current" or ~/.local/bin link.
-	binary, err = filepath.EvalSymlinks(binary)
+
+	// Self-updaters commonly replace a symlink or launcher, so discover it
+	// again instead of retaining the pre-update path.
+	executable, err = findGlobalCLI(p)
 	if err != nil {
-		return "", "", err
+		return "", "", fmt.Errorf("find updated %s: %w", p.Name, err)
 	}
-	if !strings.HasPrefix(binary, dir+string(os.PathSeparator)) {
-		return "", "", fmt.Errorf("installer escaped private release directory")
-	}
-	observed, err := smoke(ctx, binary, env, p)
+	version, err := smoke(ctx, executable, env, p)
 	if err != nil {
-		return "", "", fmt.Errorf("verify %s: %w", p.Name, err)
+		return "", "", fmt.Errorf("verify updated %s: %w", p.Name, err)
 	}
-	if version == "" {
-		version = observed
-	}
-	if p.Package != "" && !containsVersion(observed, version) {
-		return "", "", fmt.Errorf("%s reported a different version than %s", p.Name, version)
-	}
-	if version == previous.Version {
-		if oldObserved, err := smoke(ctx, previous.Executable, env, p); err == nil {
-			if (p.Package == "" && oldObserved == version) || (p.Package != "" && containsVersion(oldObserved, version)) {
-				return previous.Executable, version, nil
-			}
-		}
-	}
-	if p.Package != "" {
-		_ = os.RemoveAll(home)
-	} // discard install cache/logs
-	keep = true
-	return binary, version, nil
+	return executable, version, nil
 }
 
-func containsVersion(output, version string) bool {
-	for _, field := range strings.Fields(output) {
-		if strings.Trim(field, "v()") == version {
-			return true
+func findGlobalCLI(p Provider) (string, error) {
+	if p.Name == "pi" {
+		if configured := strings.TrimSpace(os.Getenv("PI_BIN")); configured != "" {
+			if !filepath.IsAbs(configured) {
+				return "", errors.New("PI_BIN must be absolute")
+			}
+			if info, err := os.Stat(configured); err != nil || info.IsDir() || info.Mode()&0111 == 0 {
+				return "", errCLINotInstalled
+			}
+			return filepath.Clean(configured), nil
 		}
 	}
-	return false
+	names := []string{p.Name}
+	if p.Name == "cursor-agent" {
+		names = append(names, "agent")
+	}
+	for _, name := range names {
+		path, err := exec.LookPath(name)
+		if err != nil {
+			continue
+		}
+		absolute, err := filepath.Abs(path)
+		if err != nil {
+			return "", err
+		}
+		return filepath.Clean(absolute), nil
+	}
+	return "", errCLINotInstalled
+}
+
+func updateWorkingDir(executable string) string {
+	if home, err := os.UserHomeDir(); err == nil && filepath.IsAbs(home) {
+		return home
+	}
+	return filepath.Dir(executable)
 }
 
 func smoke(ctx context.Context, binary string, env []string, p Provider) (string, error) {
@@ -136,24 +94,33 @@ func smoke(ctx context.Context, binary string, env []string, p Provider) (string
 	if p.Name == "cursor-agent" {
 		args = append([]string{"--disable-auto-update"}, args...)
 	}
-	out, err := run(ctx, filepath.Dir(binary), env, binary, args...)
+	out, err := run(ctx, updateWorkingDir(binary), env, binary, args...)
 	if err != nil {
 		return "", err
 	}
-	version := strings.TrimSpace(string(out))
+	version := strings.SplitN(strings.TrimSpace(string(out)), "\n", 2)[0]
 	if version == "" || len(version) > 200 {
-		return "", fmt.Errorf("invalid --version response")
+		return "", errors.New("invalid --version response")
 	}
 	return version, nil
 }
 
-// Installers receive no provider tokens, workflow secrets, or user's npmrc.
-// Proxy/CA configuration is retained for servers using a corporate network.
-func installEnv(home string) []string {
-	env := []string{"HOME=" + home, "XDG_CONFIG_HOME=" + filepath.Join(home, ".config"), "XDG_CACHE_HOME=" + filepath.Join(home, ".cache"), "SHELL=/bin/bash", "CI=1", "DISABLE_AUTOUPDATER=1", "DISABLE_UPDATES=1", "npm_config_userconfig=/dev/null", "npm_config_cache=" + filepath.Join(home, ".npm"), "PI_TELEMETRY=0", "PI_OFFLINE=1"}
-	for _, k := range []string{"PATH", "TMPDIR", "HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "http_proxy", "https_proxy", "no_proxy", "SSL_CERT_FILE", "SSL_CERT_DIR", "NODE_EXTRA_CA_CERTS"} {
-		if value := os.Getenv(k); value != "" {
-			env = append(env, k+"="+value)
+// Updaters need the user's real installation/config directories, but they do
+// not receive workflow/provider secrets. Proxy and CA settings are retained.
+func updateEnv() []string {
+	allowed := map[string]bool{
+		"HOME": true, "USER": true, "LOGNAME": true, "PATH": true,
+		"SHELL": true, "TMPDIR": true, "XDG_CONFIG_HOME": true,
+		"XDG_DATA_HOME": true, "XDG_CACHE_HOME": true,
+		"HTTP_PROXY": true, "HTTPS_PROXY": true, "NO_PROXY": true,
+		"http_proxy": true, "https_proxy": true, "no_proxy": true,
+		"SSL_CERT_FILE": true, "SSL_CERT_DIR": true, "NODE_EXTRA_CA_CERTS": true,
+	}
+	var env []string
+	for _, entry := range os.Environ() {
+		key, _, _ := strings.Cut(entry, "=")
+		if allowed[key] || key == "LANG" || strings.HasPrefix(key, "LC_") {
+			env = append(env, entry)
 		}
 	}
 	return env
@@ -184,7 +151,7 @@ func run(ctx context.Context, dir string, env []string, executable string, args 
 		if ctx.Err() != nil {
 			return nil, ctx.Err()
 		}
-		// Package-manager output may contain credentials embedded in proxy URLs.
+		// Update output can contain credentials embedded in proxy URLs.
 		return nil, fmt.Errorf("%s: %w", filepath.Base(executable), err)
 	}
 	return out.Bytes(), nil

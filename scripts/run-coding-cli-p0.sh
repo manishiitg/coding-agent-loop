@@ -78,26 +78,9 @@ if [[ -f "$ROOT_DIR/agent_go/.env" ]]; then
   set +a
 fi
 
-# Match the coding-CLI release selected by the live AgentWorks server. The
-# server prepends this private shim directory during startup, but a separately
-# launched P0 shell cannot inherit environment changes from that process.
-# Without this, P0 can silently exercise an older CLI from the developer's
-# PATH while the application is using the current managed release.
-if [[ -z "${AGENTWORKS_MANAGED_CLI_BIN:-}" ]]; then
-  if [[ -n "${AGENTWORKS_STATE_ROOT:-}" ]]; then
-    managed_cli_bin="$AGENTWORKS_STATE_ROOT/cli-updates/bin"
-  elif [[ "$(uname -s)" == "Darwin" ]]; then
-    managed_cli_bin="$HOME/Library/Application Support/agentworks/cli-updates/bin"
-  else
-    managed_cli_bin="${XDG_CONFIG_HOME:-$HOME/.config}/agentworks/cli-updates/bin"
-  fi
-  if [[ -d "$managed_cli_bin" ]]; then
-    export AGENTWORKS_MANAGED_CLI_BIN="$managed_cli_bin"
-  fi
-fi
-if [[ -n "${AGENTWORKS_MANAGED_CLI_BIN:-}" ]]; then
-  export PATH="$AGENTWORKS_MANAGED_CLI_BIN:$PATH"
-fi
+# AgentWorks and this acceptance runner both use the single global CLI from
+# the normal user PATH. Ignore any override inherited from an older build.
+unset AGENTWORKS_MANAGED_CLI_BIN
 
 # Keep release certification on the same Go line required by AgentWorks.
 # Developer machines may have a newer auto-selected toolchain installed; a

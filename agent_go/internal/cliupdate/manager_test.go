@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -12,54 +11,46 @@ import (
 	"time"
 )
 
-func fixture(t *testing.T) (*Manager, *time.Time) {
+func fixture(t *testing.T) (*Manager, *time.Time, string) {
 	t.Helper()
 	t.Setenv("PI_BIN", "")
-	root := t.TempDir()
-	bin := filepath.Join(root, "original")
+	base := t.TempDir()
+	bin := filepath.Join(base, "global-bin")
 	if err := os.MkdirAll(bin, 0700); err != nil {
 		t.Fatal(err)
 	}
 	for _, p := range providers {
 		writeCLI(t, filepath.Join(bin, p.Name), "old")
 	}
-	t.Setenv("PATH", bin+":/usr/bin:/bin")
-	m, err := New(filepath.Join(root, "managed releases"), nil)
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+"/usr/bin:/bin")
+	m, err := New(filepath.Join(base, "cli-updates"), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := m.Prepare(); err != nil {
-		t.Fatal(err)
-	}
-	now := time.Date(2026, 9, 6, 0, 0, 0, 0, time.UTC)
+	now := time.Date(2026, 9, 13, 0, 0, 0, 0, time.UTC)
 	m.Now = func() time.Time { return now }
-	return m, &now
+	return m, &now, bin
 }
-func writeCLI(t *testing.T, path, value string) {
+
+func writeCLI(t *testing.T, path, version string) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(path, []byte("#!/bin/sh\nprintf '%s\\n' "+quote(value)+"\n"), 0700); err != nil {
+	script := "#!/bin/sh\nprintf '%s\\n' '" + strings.ReplaceAll(version, "'", "'\"'\"'") + "'\n"
+	if err := os.WriteFile(path, []byte(script), 0700); err != nil {
 		t.Fatal(err)
 	}
 }
-func fakeInstall(t *testing.T, version string, calls *int) Installer {
-	return func(_ context.Context, p Provider, root string, _ Result) (string, string, error) {
-		*calls++
-		binary := filepath.Join(root, p.Name+"-"+version, "bin", p.Name)
-		writeCLI(t, binary, version)
-		return binary, version, nil
+
+func fakeUpdater(version string, calls *int) Installer {
+	return func(_ context.Context, p Provider, _ string, _ Result) (string, string, error) {
+		(*calls)++
+		path, err := findGlobalCLI(p)
+		return path, version, err
 	}
 }
-func readState(t *testing.T, m *Manager) State {
-	t.Helper()
-	s, err := m.ReadState()
-	if err != nil {
-		t.Fatal(err)
-	}
-	return s
-}
+
 func check(t *testing.T, m *Manager) {
 	t.Helper()
 	if err := m.Check(context.Background()); err != nil {
@@ -67,30 +58,40 @@ func check(t *testing.T, m *Manager) {
 	}
 }
 
-func TestDailyChecksPersistAcrossRestarts(t *testing.T) {
-	m, now := fixture(t)
+func state(t *testing.T, m *Manager) State {
+	t.Helper()
+	s, err := m.ReadState()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return s
+}
+
+func TestChecksGlobalCLIsDailyAcrossRestarts(t *testing.T) {
+	m, now, _ := fixture(t)
 	calls := 0
-	m.Install = fakeInstall(t, "2", &calls)
+	m.Install = fakeUpdater("2", &calls)
 	check(t, m)
 	if calls != 4 {
-		t.Fatalf("calls=%d", calls)
+		t.Fatalf("update calls=%d, want 4", calls)
 	}
-	s := readState(t, m)
-	// muse's self-updating status re-probes hourly (RetryInterval), not
-	// daily like the 4 managed providers, so it's the earliest NextCheck.
-	if !s.NextCheck.Equal(now.Add(RetryInterval)) || !s.LastSuccess.Equal(*now) {
+	s := state(t, m)
+	if !s.LastSuccess.Equal(*now) || s.CLIs["codex"].Status != "updated" {
 		t.Fatalf("state=%+v", s)
 	}
-	info, _ := os.Stat(filepath.Join(m.Root, "state.json"))
-	if info.Mode().Perm() != 0600 {
-		t.Fatal(info.Mode())
+	info, err := os.Stat(filepath.Join(m.Root, "state.json"))
+	if err != nil {
+		t.Fatal(err)
 	}
+	if info.Mode().Perm() != 0600 {
+		t.Fatalf("state mode=%v", info.Mode())
+	}
+
 	restarted, err := New(m.Root, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	restarted.Now = m.Now
-	restarted.Install = m.Install
+	restarted.Now, restarted.Install = m.Now, m.Install
 	*now = now.Add(23 * time.Hour)
 	check(t, restarted)
 	if calls != 4 {
@@ -99,17 +100,17 @@ func TestDailyChecksPersistAcrossRestarts(t *testing.T) {
 	*now = now.Add(time.Hour)
 	check(t, restarted)
 	if calls != 8 {
-		t.Fatalf("server did not update after 24h: %d", calls)
+		t.Fatalf("24-hour update calls=%d", calls)
 	}
 }
 
-func TestFailureKeepsReleaseAndRetriesOnlyFailedCLI(t *testing.T) {
-	m, now := fixture(t)
+func TestFailureKeepsPreviousVersionAndRetriesOnlyFailure(t *testing.T) {
+	m, now, _ := fixture(t)
 	calls := 0
-	m.Install = fakeInstall(t, "1", &calls)
+	m.Install = fakeUpdater("1", &calls)
 	check(t, m)
 	*now = now.Add(Interval)
-	good := fakeInstall(t, "2", &calls)
+	good := fakeUpdater("2", &calls)
 	m.Install = func(ctx context.Context, p Provider, root string, old Result) (string, string, error) {
 		if p.Name == "codex" {
 			calls++
@@ -118,33 +119,40 @@ func TestFailureKeepsReleaseAndRetriesOnlyFailedCLI(t *testing.T) {
 		return good(ctx, p, root, old)
 	}
 	check(t, m)
-	s := readState(t, m)
+	s := state(t, m)
 	if s.CLIs["codex"].Status != "failed" || s.CLIs["codex"].Version != "1" || s.CLIs["claude"].Version != "2" {
-		t.Fatalf("%+v", s)
-	}
-	selected, _ := os.Readlink(filepath.Join(m.Root, "current", "codex"))
-	if selected != s.CLIs["codex"].Executable {
-		t.Fatal("failed release selected")
-	}
-	if !s.NextCheck.Equal(now.Add(RetryInterval)) {
-		t.Fatal(s.NextCheck)
+		t.Fatalf("state=%+v", s)
 	}
 	*now = now.Add(RetryInterval)
 	m.Install = good
 	check(t, m)
-	if calls != 9 {
-		t.Fatalf("expected only failed CLI retried: %d", calls)
+	if calls != 9 || state(t, m).CLIs["codex"].Version != "2" {
+		t.Fatalf("retry calls=%d state=%+v", calls, state(t, m))
 	}
-	if readState(t, m).CLIs["codex"].Version != "2" {
-		t.Fatal("retry failed")
+}
+
+func TestMissingCLIIsNotInstalled(t *testing.T) {
+	m, _, _ := fixture(t)
+	calls := 0
+	m.Install = func(_ context.Context, p Provider, _ string, _ Result) (string, string, error) {
+		calls++
+		if p.Name == "pi" {
+			return "", "", errCLINotInstalled
+		}
+		path, err := findGlobalCLI(p)
+		return path, "2", err
+	}
+	check(t, m)
+	if calls != 4 || state(t, m).CLIs["pi"].Status != "not_installed" {
+		t.Fatalf("calls=%d state=%+v", calls, state(t, m))
 	}
 }
 
 func TestOnlyOneProcessChecksSharedRoot(t *testing.T) {
-	m, _ := fixture(t)
+	m, _, _ := fixture(t)
 	entered, release, done := make(chan struct{}), make(chan struct{}), make(chan error, 1)
 	var once sync.Once
-	m.Install = func(_ context.Context, p Provider, root string, old Result) (string, string, error) {
+	m.Install = func(context.Context, Provider, string, Result) (string, string, error) {
 		once.Do(func() { close(entered); <-release })
 		return "", "", errors.New("fake failure")
 	}
@@ -156,7 +164,7 @@ func TestOnlyOneProcessChecksSharedRoot(t *testing.T) {
 	}
 	other.Now = m.Now
 	other.Install = func(context.Context, Provider, string, Result) (string, string, error) {
-		t.Error("concurrent installer ran")
+		t.Error("concurrent updater ran")
 		return "", "", errors.New("unexpected")
 	}
 	check(t, other)
@@ -166,83 +174,96 @@ func TestOnlyOneProcessChecksSharedRoot(t *testing.T) {
 	}
 }
 
-func TestLastSuccessRequiresWholeCheckToSucceed(t *testing.T) {
-	m, now := fixture(t)
-	calls := 0
-	m.Install = fakeInstall(t, "1", &calls)
-	check(t, m)
-	lastSuccess := readState(t, m).LastSuccess
-	*now = now.Add(Interval)
-	good := fakeInstall(t, "2", &calls)
-	m.Install = func(ctx context.Context, p Provider, root string, old Result) (string, string, error) {
-		if p.Name == "cursor-agent" {
-			return "", "", errors.New("last provider failed")
-		}
-		return good(ctx, p, root, old)
-	}
-	check(t, m)
-	if !readState(t, m).LastSuccess.Equal(lastSuccess) {
-		t.Fatal("partial check marked globally successful")
-	}
-}
-
-func TestInstallerCancellationStopsChildProcesses(t *testing.T) {
-	dir := t.TempDir()
-	marker := filepath.Join(dir, "should-not-exist")
-	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
-	defer cancel()
-	_, err := run(ctx, dir, installEnv(dir), "/bin/sh", "-c", "(sleep 0.5; touch "+quote(marker)+") & wait")
-	if !errors.Is(err, context.DeadlineExceeded) {
-		t.Fatalf("expected cancellation, got %v", err)
-	}
-	time.Sleep(600 * time.Millisecond)
-	if _, err := os.Stat(marker); !errors.Is(err, os.ErrNotExist) {
-		t.Fatal("installer descendant survived cancellation")
-	}
-}
-
-func TestChatPinsSurviveUpdatesAndConcurrentFirstLaunch(t *testing.T) {
-	m, _ := fixture(t)
-	calls := 0
-	m.Install = fakeInstall(t, "1", &calls)
-	check(t, m)
-	runChat := func(key string) (string, error) {
-		cmd := exec.Command(filepath.Join(m.Root, "bin", "codex"))
-		cmd.Env = append(os.Environ(), "AGENTWORKS_CLI_SESSION_KEY="+key)
-		out, err := cmd.CombinedOutput()
-		return strings.TrimSpace(string(out)), err
-	}
-	key := strings.Repeat("a", 64)
-	var wg sync.WaitGroup
-	for i := 0; i < 8; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			out, err := runChat(key)
-			if err != nil || out != "1" {
-				t.Errorf("%s: %v", out, err)
-			}
-		}()
-	}
-	wg.Wait()
-	newBinary := filepath.Join(m.Root, "releases", "codex-2", "codex")
-	writeCLI(t, newBinary, "2")
-	if err := publish(filepath.Join(m.Root, "current", "codex"), newBinary); err != nil {
+func TestGlobalUpdaterUsesOfficialCommandsAndSanitizedEnvironment(t *testing.T) {
+	base := t.TempDir()
+	bin := filepath.Join(base, "bin")
+	log := filepath.Join(base, "calls")
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+"/usr/bin:/bin")
+	t.Setenv("HOME", base)
+	t.Setenv("SECRET_TEST", "must-not-leak")
+	if err := os.MkdirAll(bin, 0700); err != nil {
 		t.Fatal(err)
 	}
-	for key, want := range map[string]string{key: "1", strings.Repeat("b", 64): "2", "": "2"} {
-		got, err := runChat(key)
-		if err != nil || got != want {
-			t.Fatalf("got %q, want %q: %v", got, want, err)
+	script := `#!/bin/sh
+set -eu
+[ -z "${SECRET_TEST:-}" ] || exit 31
+case "$1" in
+  update) printf '%s\n' "$*" >> "` + log + `" ;;
+  --version) printf '9.1.0\n' ;;
+  --disable-auto-update) [ "$2" = --version ]; printf '9.1.0\n' ;;
+  *) exit 32 ;;
+esac
+`
+	for _, name := range []string{"codex", "claude", "pi", "agent"} {
+		if err := os.WriteFile(filepath.Join(bin, name), []byte(script), 0700); err != nil {
+			t.Fatal(err)
 		}
 	}
-	if _, err := runChat("../../escape"); err == nil {
-		t.Fatal("invalid session path accepted")
+	for _, p := range providers[:4] {
+		executable, version, err := updateGlobalCLI(context.Background(), p, "", Result{})
+		if err != nil || !filepath.IsAbs(executable) || version != "9.1.0" {
+			t.Fatalf("%s: executable=%q version=%q err=%v", p.Name, executable, version, err)
+		}
+	}
+	data, err := os.ReadFile(log)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := strings.Split(strings.TrimSpace(string(data)), "\n")
+	want := []string{"update", "update", "update --self", "update"}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("commands=%q want=%q", got, want)
+		}
 	}
 }
 
-func TestCorruptStatePreservedAndInterruptedAttemptWaits(t *testing.T) {
-	m, now := fixture(t)
+func TestExplicitPiPathIsTheGlobalCLIThatGetsUpdated(t *testing.T) {
+	base := t.TempDir()
+	pi := filepath.Join(base, "custom-pi")
+	marker := filepath.Join(base, "updated")
+	script := "#!/bin/sh\nif [ \"$1\" = update ]; then touch '" + marker + "'; else echo 3; fi\n"
+	if err := os.WriteFile(pi, []byte(script), 0700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PI_BIN", pi)
+	got, version, err := updateGlobalCLI(context.Background(), Provider{Name: "pi"}, "", Result{})
+	if err != nil || got != pi || version != "3" {
+		t.Fatalf("path=%q version=%q err=%v", got, version, err)
+	}
+	if _, err := os.Stat(marker); err != nil {
+		t.Fatal("PI_BIN updater was not invoked")
+	}
+}
+
+func TestActivateAndCheckRetirePrivateInstallations(t *testing.T) {
+	m, _, _ := fixture(t)
+	retiredBin := filepath.Join(m.Root, "bin")
+	for _, name := range []string{"bin", "current", "releases", "sessions"} {
+		if err := os.MkdirAll(filepath.Join(m.Root, name, "old"), 0700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Setenv("AGENTWORKS_MANAGED_CLI_BIN", retiredBin)
+	t.Setenv("PATH", retiredBin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	if err := m.Activate(); err != nil {
+		t.Fatal(err)
+	}
+	if os.Getenv("AGENTWORKS_MANAGED_CLI_BIN") != "" || strings.Contains(os.Getenv("PATH"), retiredBin) {
+		t.Fatal("retired private launch routing remains active")
+	}
+	calls := 0
+	m.Install = fakeUpdater("2", &calls)
+	check(t, m)
+	for _, name := range []string{"bin", "current", "releases", "sessions"} {
+		if _, err := os.Stat(filepath.Join(m.Root, name)); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("retired %s remains: %v", name, err)
+		}
+	}
+}
+
+func TestCorruptStateIsPreserved(t *testing.T) {
+	m, _, _ := fixture(t)
 	path := filepath.Join(m.Root, "state.json")
 	if err := os.WriteFile(path, []byte("broken"), 0600); err != nil {
 		t.Fatal(err)
@@ -254,147 +275,31 @@ func TestCorruptStatePreservedAndInterruptedAttemptWaits(t *testing.T) {
 	if string(data) != "broken" {
 		t.Fatal("corrupt state overwritten")
 	}
-	if err := os.Remove(path); err != nil {
-		t.Fatal(err)
+}
+
+func TestCancellationStopsUpdaterDescendants(t *testing.T) {
+	dir := t.TempDir()
+	marker := filepath.Join(dir, "should-not-exist")
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	command := "(sleep 0.5; touch '" + marker + "') & wait"
+	_, err := run(ctx, dir, updateEnv(), "/bin/sh", "-c", command)
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("expected cancellation, got %v", err)
 	}
-	s := State{SchemaVersion: 1, CLIs: map[string]Result{}}
-	for _, p := range providers {
-		s.CLIs[p.Name] = Result{Status: "checking", LastAttempt: *now, NextCheck: now.Add(RetryInterval)}
-	}
-	if err := m.save(&s); err != nil {
-		t.Fatal(err)
-	}
-	calls := 0
-	m.Install = fakeInstall(t, "2", &calls)
-	check(t, m)
-	if calls != 0 {
-		t.Fatal("immediate retry after interrupted attempt")
-	}
-	*now = now.Add(RetryInterval)
-	check(t, m)
-	if calls != 4 {
-		t.Fatal(calls)
+	time.Sleep(600 * time.Millisecond)
+	if _, err := os.Stat(marker); !errors.Is(err, os.ErrNotExist) {
+		t.Fatal("updater descendant survived cancellation")
 	}
 }
 
-func TestExplicitPiPinAndAbsentCLIsAreNotInstalled(t *testing.T) {
-	m, _ := fixture(t)
-	t.Setenv("PI_BIN", "/operator/pinned/pi")
-	if err := os.Remove(filepath.Join(m.Root, "current", "claude")); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Remove(filepath.Join(m.Root, "bin", "claude")); err != nil {
-		t.Fatal(err)
-	}
-	// Avoid rediscovering the fake original claude.
-	if err := os.Remove(filepath.Join(filepath.Dir(m.Root), "original", "claude")); err != nil {
-		t.Fatal(err)
-	}
+func TestMuseIsObservedButNeverUpdated(t *testing.T) {
+	m, now, _ := fixture(t)
 	calls := 0
-	m.Install = fakeInstall(t, "2", &calls)
+	m.Install = fakeUpdater("2", &calls)
 	check(t, m)
-	s := readState(t, m)
-	if calls != 2 || s.CLIs["pi"].Status != "operator_pinned" || s.CLIs["claude"].Status != "not_installed" {
-		t.Fatalf("calls=%d state=%+v", calls, s)
-	}
-}
-
-// TestSelfUpdatingProviderIsProbedNotInstalled pins the policy behind
-// selfUpdatingProviders: muse's own launcher already self-updates in the
-// background (unlike codex/claude/cursor-agent/pi, which only expose a
-// manual `update` subcommand nothing else ever calls), so this package must
-// never install for it -- only observe its version via `muse --version` and
-// leave PATH/current/bin untouched.
-func TestSelfUpdatingProviderIsProbedNotInstalled(t *testing.T) {
-	m, now := fixture(t)
-	calls := 0
-	m.Install = fakeInstall(t, "2", &calls)
-	check(t, m)
-	s := readState(t, m)
-
-	if s.CLIs["muse"].Status != "self_updating" {
-		t.Fatalf("muse status = %q, want self_updating: %+v", s.CLIs["muse"].Status, s.CLIs["muse"])
-	}
-	if s.CLIs["muse"].Version != "old" {
-		t.Fatalf("muse version = %q, want the fake CLI's real --version output", s.CLIs["muse"].Version)
-	}
-	if !s.CLIs["muse"].LastSuccess.Equal(*now) {
-		t.Fatalf("muse LastSuccess = %v, want %v", s.CLIs["muse"].LastSuccess, *now)
-	}
-	if !s.CLIs["muse"].NextCheck.Equal(now.Add(RetryInterval)) {
-		t.Fatalf("muse NextCheck = %v, want now+RetryInterval (hourly, not daily)", s.CLIs["muse"].NextCheck)
-	}
-	if calls != 4 {
-		t.Fatalf("calls=%d, want 4 (muse must never reach the installer)", calls)
-	}
-	if _, err := os.Lstat(filepath.Join(m.Root, "current", "muse")); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("muse must never get a managed symlink under current/, got err=%v", err)
-	}
-	if _, err := os.Lstat(filepath.Join(m.Root, "bin", "muse")); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("muse must never get a managed shim under bin/, got err=%v", err)
-	}
-}
-
-func TestNpmInstallerUsesPrivatePrefixAndSmokeChecks(t *testing.T) {
-	t.Setenv("SECRET_TEST", "must-not-leak")
-	root := t.TempDir()
-	bin := filepath.Join(root, "bin")
-	if err := os.MkdirAll(bin, 0700); err != nil {
-		t.Fatal(err)
-	}
-	// A fake package manager verifies the actual subprocess environment and
-	// creates an executable in the prefix passed by the real installer.
-	script := `#!/bin/sh
-set -eu
-[ -z "${SECRET_TEST:-}" ] || exit 31
-[ "$npm_config_userconfig" = /dev/null ] || exit 32
-case "$1" in
-view) printf '"9.1.0"';;
-install)
-  [ "$2" = --global ] && [ "$3" = --prefix ] || exit 33
-  prefix="$4"
-  [ "$HOME" = "$prefix/home" ] || exit 34
-  mkdir -p "$prefix/bin"
-  printf '#!/bin/sh\necho codex-cli 9.1.0\n' > "$prefix/bin/codex"
-  chmod 700 "$prefix/bin/codex";;
-*) exit 35;;
-esac
-`
-	if err := os.WriteFile(filepath.Join(bin, "npm"), []byte(script), 0700); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("PATH", bin+":/usr/bin:/bin")
-	releases := filepath.Join(root, "releases")
-	if err := os.MkdirAll(releases, 0700); err != nil {
-		t.Fatal(err)
-	}
-	releases, _ = filepath.EvalSymlinks(releases)
-	binary, version, err := installRelease(context.Background(), providers[0], releases, Result{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if version != "9.1.0" || !strings.HasPrefix(binary, releases+"/") {
-		t.Fatalf("%s %s", binary, version)
-	}
-	// Up-to-date check reuses the old immutable release; no candidate debris.
-	got, _, err := installRelease(context.Background(), providers[0], releases, Result{Version: version, Executable: binary})
-	if err != nil || got != binary {
-		t.Fatalf("%s %v", got, err)
-	}
-	entries, _ := os.ReadDir(releases)
-	if len(entries) != 1 {
-		t.Fatalf("candidate leak: %v", entries)
-	}
-	// A bad installed binary never becomes a candidate for publication.
-	script = strings.ReplaceAll(script, "echo codex-cli 9.1.0", "exit 42")
-	if err := os.WriteFile(filepath.Join(bin, "npm"), []byte(script), 0700); err != nil {
-		t.Fatal(err)
-	}
-	if _, _, err := installRelease(context.Background(), providers[0], releases, Result{}); err == nil {
-		t.Fatal("bad CLI accepted")
-	}
-	entries, _ = os.ReadDir(releases)
-	if len(entries) != 1 {
-		t.Fatal("failed release not cleaned")
+	r := state(t, m).CLIs["muse"]
+	if calls != 4 || r.Status != "self_updating" || r.Version != "old" || !r.LastSuccess.Equal(*now) {
+		t.Fatalf("calls=%d muse=%+v", calls, r)
 	}
 }

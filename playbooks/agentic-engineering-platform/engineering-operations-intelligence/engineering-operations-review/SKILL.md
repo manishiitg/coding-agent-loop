@@ -13,6 +13,10 @@ Create a repeatable engineering review that explains material changes, highlight
 
 Use after governed engineering metrics and findings are available. Run on demand first; add a schedule only after the same scope, review, report, and delivery behavior succeeds unattended.
 
+## Discovery and user direction
+
+Inspect the current workflow, goals, metrics, configuration, capabilities, stores, reports, and triggers before proposing changes. Summarize reusable design and gaps, then ask focused questions for unresolved customer choices such as scope, success, approvals, thresholds, ownership, and budgets. Record the answers as customer direction. Installation alone does not approve workflow changes or execution.
+
 ## Required inputs
 
 Resolve review cadence/period, audience, team/repository/service scope, comparison window, required sections, significance rules, action owners, prior-review follow-up policy, sensitive-data rules, delivery destinations, notification conditions, and approval policy.

@@ -13,6 +13,10 @@ Create repeatable, role-aware tests for the application's approved authenticatio
 
 Use after Basic Browser Setup when authentication behavior needs coverage beyond establishing one working test session. Include only flows enabled and authorized for the customer environment.
 
+## Discovery and user direction
+
+Inspect the current workflow, goals, metrics, configuration, capabilities, stores, reports, and triggers before proposing changes. Summarize reusable design and gaps, then ask focused questions for unresolved customer choices such as scope, success, approvals, thresholds, ownership, and budgets. Record the answers as customer direction. Installation alone does not approve workflow changes or execution.
+
 ## Required inputs
 
 Resolve authentication methods, actor roles, approved expectations, account ownership, MFA/recovery channels, session lifetime rules, lockout limits, allowed state changes, evidence retention, and cleanup/reset procedures.

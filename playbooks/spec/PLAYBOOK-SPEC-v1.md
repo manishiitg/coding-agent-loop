@@ -26,18 +26,20 @@ Every playbook `SKILL.md` uses these H2 headings exactly and in this order:
 
 1. `Outcome`
 2. `When to use`
-3. `Required inputs`
-4. `Plan and AgentWorks tools`
-5. `Knowledge and persistence`
-6. `Validation and reporting`
-7. `Guardrails`
-8. `Read details when needed`
-9. `Completion contract`
+3. `Discovery and user direction`
+4. `Required inputs`
+5. `Plan and AgentWorks tools`
+6. `Knowledge and persistence`
+7. `Validation and reporting`
+8. `Guardrails`
+9. `Read details when needed`
+10. `Completion contract`
 
 These headings are the stable UI and builder-consumption contract. Keep each section concise:
 
 - **Outcome:** the durable behavior or capability the installed workflow should provide.
 - **When to use:** positive triggers, scope, and important exclusions.
+- **Discovery and user direction:** inspect the current workflow before proposing changes, summarize reusable design and gaps, ask focused questions only for material unresolved customer choices, and record the answers. Installation is guidance, not approval to edit or execute the workflow.
 - **Required inputs:** information, access, policy, and existing artifacts the builder must resolve. Mark unavailable required inputs as blockers rather than inventing them.
 - **Plan and AgentWorks tools:** explain how the builder maps the playbook into a plan: which behavior belongs in scripted steps, message sequences, routes, branches, schedules, or approvals; what existing steps to reuse; and which AgentWorks capabilities to resolve. Link to shared or topic-specific detail.
 - **Workflow design and outcomes:** inspect existing goals and metrics, recommend measurable additions when needed, decide whether to extend the current workflow or propose a separate workflow, and recommend manual, event, webhook, release, or scheduled activation using ownership, access, lifecycle, budget, and operational boundaries.
@@ -98,8 +100,8 @@ Each recommended tool contains `id`, `name`, `type`, `purpose`, `capability`, an
 The builder consumes a playbook progressively:
 
 1. Read `SKILL.md` and the manifest.
-2. Inspect the existing plan, workflow configuration, selected capabilities, durable stores, and report.
-3. Resolve required inputs and distinguish known values, reasonable reversible defaults, and blockers.
+2. Inspect the existing plan, goals, metrics, workflow configuration, selected capabilities, durable stores, report, and triggers. Summarize what can be reused and what is missing.
+3. Resolve required inputs and distinguish known values, reasonable reversible defaults, customer decisions, and blockers. Ask focused questions for material unresolved choices before changing the workflow, then record the answers as customer direction.
 4. Map the requested outcome to existing goals and metrics; recommend missing definitions without inventing customer targets.
 5. Recommend whether to extend the current workflow, add a route, or create a separate workflow, with concrete reasons and tradeoffs.
 6. Recommend how it starts: manual action, workflow handoff, webhook or event, release gate, or schedule. Define scope, cadence and timezone or event filters, concurrency, retries, budget, notification behavior, and proof of completion without enabling an unapproved trigger.
@@ -123,7 +125,10 @@ An installed playbook is a customer-specific snapshot and adaptation record. The
   "installed_at": "ISO-8601 timestamp",
   "source_digest": "content digest",
   "status": "draft|ready|blocked|outdated",
-  "customer_overrides": {},
+  "customer_overrides": {
+    "direction": {},
+    "unresolved_questions": []
+  },
   "capability_resolution": {},
   "plan_step_ids": [],
   "artifacts": {},

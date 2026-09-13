@@ -13,6 +13,10 @@ Create an evidence-backed workflow that detects inconsistent browser-test behavi
 
 Use when the same test and approved expectation produce intermittent outcomes. Run before self-healing when instability is suspected; use self-healing only after evidence supports an eligible test-automation defect.
 
+## Discovery and user direction
+
+Inspect the current workflow, goals, metrics, configuration, capabilities, stores, reports, and triggers before proposing changes. Summarize reusable design and gaps, then ask focused questions for unresolved customer choices such as scope, success, approvals, thresholds, ownership, and budgets. Record the answers as customer direction. Installation alone does not approve workflow changes or execution.
+
 ## Required inputs
 
 Resolve the canonical test/source revision, exact build and environment, fixtures, browser profile, repetition and concurrency policy, classification thresholds, allowed stabilization paths, related cases, evidence retention, and review policy.

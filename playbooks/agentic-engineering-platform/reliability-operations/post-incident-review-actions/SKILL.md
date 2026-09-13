@@ -13,6 +13,10 @@ Create a blameless, evidence-backed review that reconstructs impact and response
 
 Use after the incident meets its recovery/stability contract or for an approved retrospective of a near miss. Keep unresolved operational work in the active incident workflow.
 
+## Discovery and user direction
+
+Inspect the current workflow, goals, metrics, configuration, capabilities, stores, reports, and triggers before proposing changes. Summarize reusable design and gaps, then ask focused questions for unresolved customer choices such as scope, success, approvals, thresholds, ownership, and budgets. Record the answers as customer direction. Installation alone does not approve workflow changes or execution.
+
 ## Required inputs
 
 Resolve incident/evidence records, review policy and audience, impact and metric definitions, timeline, participating roles, remediation outcomes, sensitive-data rules, review/approval process, action taxonomy, owners/dates, issue destination, verification requirements, and publication destination.

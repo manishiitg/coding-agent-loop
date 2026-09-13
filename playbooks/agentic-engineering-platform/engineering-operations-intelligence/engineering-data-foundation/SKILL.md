@@ -13,6 +13,10 @@ Create a durable, refreshable engineering data model that links work items, code
 
 Use before engineering operations metrics, reviews, or cross-system automation. Reuse an existing governed warehouse/model when it provides equivalent identity, freshness, and provenance.
 
+## Discovery and user direction
+
+Inspect the current workflow, goals, metrics, configuration, capabilities, stores, reports, and triggers before proposing changes. Summarize reusable design and gaps, then ask focused questions for unresolved customer choices such as scope, success, approvals, thresholds, ownership, and budgets. Record the answers as customer direction. Installation alone does not approve workflow changes or execution.
+
 ## Required inputs
 
 Resolve organizations, teams, repositories, projects, environments, source systems and read scopes, history window, refresh policy, source-of-truth precedence, identity mappings, retention, timezone, metric vocabulary, and restricted fields.

@@ -13,6 +13,10 @@ Create a reusable browser QA foundation with managed browser access, canonical l
 
 Use when onboarding an application or repairing an incomplete browser QA foundation. Preserve a compatible existing setup and an explicitly chosen Playwright alternative.
 
+## Discovery and user direction
+
+Inspect the current workflow, goals, metrics, configuration, capabilities, stores, reports, and triggers before proposing changes. Summarize reusable design and gaps, then ask focused questions for unresolved customer choices such as scope, success, approvals, thresholds, ownership, and budgets. Record the answers as customer direction. Installation alone does not approve workflow changes or execution.
+
 ## Required inputs
 
 Resolve the application and environment, authorized account roles, authentication approach, approved smoke expectation, test-data and cleanup boundaries, test project, recording policy, and reporting preference. Keep missing required access or behavior as an explicit blocker.

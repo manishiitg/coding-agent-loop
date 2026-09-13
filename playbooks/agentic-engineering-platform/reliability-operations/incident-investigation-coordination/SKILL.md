@@ -13,6 +13,10 @@ Create a governed incident workflow that receives reliability errors, correlates
 
 Use for alerts, customer-impact reports, deployment regressions, or manually declared incidents. Use lighter failure triage when there is no service impact and no incident policy trigger.
 
+## Discovery and user direction
+
+Inspect the current workflow, goals, metrics, configuration, capabilities, stores, reports, and triggers before proposing changes. Summarize reusable design and gaps, then ask focused questions for unresolved customer choices such as scope, success, approvals, thresholds, ownership, and budgets. Record the answers as customer direction. Installation alone does not approve workflow changes or execution.
+
 ## Required inputs
 
 Resolve services/environments, incident taxonomy and severity policy, SLOs, monitoring/log/trace/deployment/topology sources, on-call and incident roles, trigger mappings, Slack channels, update cadence/audience, evidence access, escalation rules, and closure criteria.

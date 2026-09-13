@@ -13,6 +13,10 @@ Create an auditable FinOps workflow that detects and explains cost anomalies, pr
 
 Use for authorized cloud accounts and services with trustworthy billing, inventory, utilization, ownership, and IaC sources. Use investigation-only mode when changes or sufficient telemetry are unavailable.
 
+## Discovery and user direction
+
+Inspect the current workflow, goals, metrics, configuration, capabilities, stores, reports, and triggers before proposing changes. Summarize reusable design and gaps, then ask focused questions for unresolved customer choices such as scope, success, approvals, thresholds, ownership, and budgets. Record the answers as customer direction. Installation alone does not approve workflow changes or execution.
+
 ## Required inputs
 
 Resolve accounts/projects/subscriptions, environments, billing basis/currency, attribution and owner mapping, budgets/baselines, utilization and service-health signals, IaC repositories/state, allowed resource/change types, risk/SLO limits, approval/deployment/rollback policy, and verification window.

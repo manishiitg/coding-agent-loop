@@ -13,6 +13,10 @@ Create repeatable regression coverage for agreed critical journeys using the app
 
 Use after Basic Browser Setup or with an equivalent verified configuration. Use it to add, execute, and investigate approved journeys while preserving the customer's runner, process, and approval rules.
 
+## Discovery and user direction
+
+Inspect the current workflow, goals, metrics, configuration, capabilities, stores, reports, and triggers before proposing changes. Summarize reusable design and gaps, then ask focused questions for unresolved customer choices such as scope, success, approvals, thresholds, ownership, and budgets. Record the answers as customer direction. Installation alone does not approve workflow changes or execution.
+
 ## Required inputs
 
 Resolve the application profile, canonical suite and locator helpers, journeys and expected outcomes, account/test-data boundaries, execution and diagnostic limits, recording retention, and reporting preferences.

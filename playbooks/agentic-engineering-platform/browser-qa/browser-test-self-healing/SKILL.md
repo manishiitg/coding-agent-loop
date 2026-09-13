@@ -13,6 +13,10 @@ Create an auditable workflow that classifies a browser-test failure, proposes an
 
 Use for stale or flaky browser automation backed by an existing Browser QA foundation and preserved failure evidence. Product defects, environment blockers, uncertain behavior, and requested product changes remain outside automated healing.
 
+## Discovery and user direction
+
+Inspect the current workflow, goals, metrics, configuration, capabilities, stores, reports, and triggers before proposing changes. Summarize reusable design and gaps, then ask focused questions for unresolved customer choices such as scope, success, approvals, thresholds, ownership, and budgets. Record the answers as customer direction. Installation alone does not approve workflow changes or execution.
+
 ## Required inputs
 
 Resolve the foundation and application knowledge, original finding and evidence, canonical test source and base revision, allowed test/config paths, affected journeys, approval policy, recording retention, and optional publication destination.

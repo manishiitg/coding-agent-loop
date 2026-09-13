@@ -183,12 +183,12 @@ export default function PlaybooksPanel({ workspacePath }: PlaybooksPanelProps) {
           {error && <p className="mt-4 rounded-md border border-destructive/30 bg-destructive/10 p-3 text-xs text-destructive">{error}</p>}
           <div className="mt-5 rounded-lg border border-dashed border-border p-4">
             <div className="flex items-center gap-2 text-sm font-medium"><CheckCircle2 className="h-4 w-4 text-muted-foreground" /> Setup with Builder</div>
-            <p className="mt-1 text-xs leading-5 text-muted-foreground">Installation copies this guide into the workflow, attaches it to Builder chat, and creates a workflow-specific setup record.</p>
+            <p className="mt-1 text-xs leading-5 text-muted-foreground">Installation copies this guide into the workflow, attaches it to Builder chat, and creates a workflow-specific setup record. Builder first inspects the current workflow, shows what can be reused and what is missing, then asks focused questions before proposing changes. Installing guidance is not approval to edit or run the workflow.</p>
             {installedSelection ? (
               <>
                 <div className="mt-3 flex flex-wrap items-center gap-2">
                   <span className="inline-flex items-center gap-1.5 rounded-md border border-emerald-500/30 bg-emerald-500/10 px-2.5 py-2 text-xs font-medium text-emerald-700 dark:text-emerald-300"><CheckCircle2 className="h-3.5 w-3.5" /> Installed v{installedSelection.version} · {installedSelection.status}</span>
-                  <AskAIButton workspacePath={workspacePath} label="Continue setup in Builder" message={`Read the installed skill ${installedSelection.skill_name} with read_skill, then follow it to configure this workflow. ${selected.setupPrompt || 'Inspect the existing workflow first and ask only for required inputs that are missing.'}`} className="flex items-center gap-1.5 rounded-md bg-primary px-3 py-2 text-xs font-medium text-primary-foreground hover:bg-primary/90" />
+                  <AskAIButton workspacePath={workspacePath} label="Continue setup in Builder" message={`Read the installed skill ${installedSelection.skill_name} with read_skill, then follow it to configure this workflow. First inspect the existing workflow and summarize what can be reused and what is missing. Ask focused questions for unresolved customer choices before changing the workflow, record the answers as customer direction, and treat installation as guidance rather than approval. ${selected.setupPrompt || ''}`.trim()} className="flex items-center gap-1.5 rounded-md bg-primary px-3 py-2 text-xs font-medium text-primary-foreground hover:bg-primary/90" />
                 </div>
                 {updateAvailable && (
                   <div className="mt-3 rounded-md border border-amber-500/30 bg-amber-500/10 p-3">

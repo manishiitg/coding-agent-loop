@@ -13,6 +13,7 @@ ROOT = Path(__file__).resolve().parents[1]
 REQUIRED_SECTIONS = [
     "Outcome",
     "When to use",
+    "Discovery and user direction",
     "Required inputs",
     "Plan and AgentWorks tools",
     "Knowledge and persistence",

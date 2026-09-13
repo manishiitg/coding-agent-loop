@@ -96,7 +96,7 @@ All Browser QA playbooks share an [AgentWorks plan and tool guide](agentic-engin
 
 [Playbook Specification v1](spec/PLAYBOOK-SPEC-v1.md) defines the package, fixed entrypoint sections, manifest, builder-consumption behavior, installation record, and versioning rules. Start a new package from the [playbook template](templates/playbook/SKILL.md), then replace its fictional metadata, reference, and example.
 
-Every playbook entrypoint uses the same concise sections: Outcome, When to use, Required inputs, Plan and AgentWorks tools, Knowledge and persistence, Validation and reporting, Guardrails, Read details when needed, and Completion contract. Detailed references remain topic-specific so entrypoint skills stay small.
+Every playbook entrypoint uses the same concise sections: Outcome, When to use, Discovery and user direction, Required inputs, Plan and AgentWorks tools, Knowledge and persistence, Validation and reporting, Guardrails, Read details when needed, and Completion contract. Detailed references remain topic-specific so entrypoint skills stay small.
 
 ## Package and integration boundary
 
@@ -106,7 +106,7 @@ Installing a playbook copies its complete package to `<workflow>/skills/agentwor
 
 The Installed view compares the receipt version with the current catalog. A newer catalog version is labeled `Update available` with installed/latest versions, its short authored changelog, and upgrade instructions. `search_playbooks` returns the same comparison so Builder can explain the upgrade without guessing from version numbers. Updating refreshes only the installed guidance and marks setup `draft`; Builder reviews it against the existing workflow and no operational configuration changes automatically.
 
-Installation does not create schedules, connect accounts, install recommended public software, or execute tests. The Builder follows the installed guidance through its existing chat tools and asks for missing access or decisions. Runtime steps receive only workflow-selected or per-step `enabled_skills`; installed Builder playbooks do not cascade into execution.
+Installation does not create schedules, connect accounts, install recommended public software, or execute tests. Builder first inspects the existing workflow, summarizes reusable design and gaps, and asks focused questions for material unresolved customer choices. It records answers as customer direction before proposing changes. Runtime steps receive only workflow-selected or per-step `enabled_skills`; installed Builder playbooks do not cascade into execution.
 
 ## Foundation and reuse
 

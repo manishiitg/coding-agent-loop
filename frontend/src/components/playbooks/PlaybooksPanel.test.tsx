@@ -39,7 +39,7 @@ vi.mock('../../hooks/useCanWriteWorkflow', () => ({
 }))
 
 vi.mock('../workflow/AskAIButton', () => ({
-  AskAIButton: ({ label }: { label: string }) => <button type="button">{label}</button>,
+  AskAIButton: ({ label, message }: { label: string; message: string }) => <button type="button" data-message={message}>{label}</button>,
 }))
 
 vi.mock('../../stores/useWorkflowManifestStore', () => ({
@@ -87,6 +87,12 @@ it('opens a catalog playbook and installs it for Builder setup', async () => {
     await click([...container.querySelectorAll('button')].find(button => button.textContent?.includes('Use playbook')) || null)
     expect(container.textContent).toContain('Installed v0.6.0 · draft')
     expect(container.textContent).toContain('Continue setup in Builder')
+    expect(container.textContent).toContain('Builder first inspects the current workflow')
+    expect(container.textContent).toContain('Installing guidance is not approval')
+    const setupButton = [...container.querySelectorAll('button')].find(button => button.textContent?.includes('Continue setup in Builder'))
+    expect(setupButton?.getAttribute('data-message')).toContain('summarize what can be reused and what is missing')
+    expect(setupButton?.getAttribute('data-message')).toContain('Ask focused questions for unresolved customer choices')
+    expect(setupButton?.getAttribute('data-message')).toContain('record the answers as customer direction')
 
     await click([...container.querySelectorAll('button')].find(button => button.textContent?.includes('Back to catalog')) || null)
     await click([...container.querySelectorAll('[role="tab"]')].find(button => button.textContent?.includes('Installed')) || null)

@@ -13,6 +13,10 @@ Create one governed AppSec workflow that inventories authorized attack surface, 
 
 Use for authorized application assessment, CI security gates, bounded pentests, vulnerability intake, and remediation. Select only relevant routes. Browser assessment may reuse verified Browser QA setup; code-only work does not require it.
 
+## Discovery and user direction
+
+Inspect the current workflow, goals, metrics, configuration, capabilities, stores, reports, and triggers before proposing changes. Summarize reusable design and gaps, then ask focused questions for unresolved customer choices such as scope, success, approvals, thresholds, ownership, and budgets. Record the answers as customer direction. Installation alone does not approve workflow changes or execution.
+
 ## Required inputs
 
 Resolve written scope, targets/environments/repositories/APIs, rules of engagement, allowed techniques and side effects, credentials/test data, rate/time limits, stop conditions, control/severity policy, source and deployment identity, evidence restrictions, owners, approval/risk-acceptance policy, and retest/closure requirements.

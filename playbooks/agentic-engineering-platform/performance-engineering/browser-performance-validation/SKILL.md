@@ -13,6 +13,10 @@ Create repeatable browser performance measurements for approved pages and journe
 
 Use after browser setup for performance budgets, trend tracking, or release checks. Treat results as environment-specific observations unless the customer provides a controlled benchmark environment.
 
+## Discovery and user direction
+
+Inspect the current workflow, goals, metrics, configuration, capabilities, stores, reports, and triggers before proposing changes. Summarize reusable design and gaps, then ask focused questions for unresolved customer choices such as scope, success, approvals, thresholds, ownership, and budgets. Record the answers as customer direction. Installation alone does not approve workflow changes or execution.
+
 ## Required inputs
 
 Resolve target pages/journeys, tested build, browser/device/network profile, cold/warm-cache policy, sample count, metrics, budgets or baseline, acceptable variance, evidence retention, and pass/fail policy.

@@ -13,6 +13,10 @@ Create a repeatable actor-by-resource-by-action permission matrix that verifies 
 
 Use after browser and authentication setup when customers have multiple roles, workspaces, tenants, ownership rules, or privileged operations. Skip dimensions the application does not support.
 
+## Discovery and user direction
+
+Inspect the current workflow, goals, metrics, configuration, capabilities, stores, reports, and triggers before proposing changes. Summarize reusable design and gaps, then ask focused questions for unresolved customer choices such as scope, success, approvals, thresholds, ownership, and budgets. Record the answers as customer direction. Installation alone does not approve workflow changes or execution.
+
 ## Required inputs
 
 Resolve authorized actors, role definitions, resource ownership states, allowed and denied actions, tenant boundaries, direct-URL expectations, safe test data, cleanup, and the approved source of permission truth.

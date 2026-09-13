@@ -13,6 +13,10 @@ Create a controlled workflow that turns incident evidence into an exact remediat
 
 Use when a CI/deployment failure or incident has a supported corrective action. Use investigation-only mode when identity, authorization, rollback, or health evidence is insufficient.
 
+## Discovery and user direction
+
+Inspect the current workflow, goals, metrics, configuration, capabilities, stores, reports, and triggers before proposing changes. Summarize reusable design and gaps, then ask focused questions for unresolved customer choices such as scope, success, approvals, thresholds, ownership, and budgets. Record the answers as customer direction. Installation alone does not approve workflow changes or execution.
+
 ## Required inputs
 
 Resolve incident/failure identity, target resource/service/environment, current configuration and revision, allowed action/runbooks, access boundaries, blast radius, SLO/health checks, approval matrix, change window, execution path, rollback, stabilization window, and communication policy.

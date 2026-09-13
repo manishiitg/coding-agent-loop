@@ -13,6 +13,10 @@ Create a repeatable workflow that receives CI/deployment failures, establishes e
 
 Use for failed, cancelled, stuck, or unhealthy build, test, release, and deployment events. Escalate active customer impact into the Incident Investigation playbook rather than treating it only as pipeline failure.
 
+## Discovery and user direction
+
+Inspect the current workflow, goals, metrics, configuration, capabilities, stores, reports, and triggers before proposing changes. Summarize reusable design and gaps, then ask focused questions for unresolved customer choices such as scope, success, approvals, thresholds, ownership, and budgets. Record the answers as customer direction. Installation alone does not approve workflow changes or execution.
+
 ## Required inputs
 
 Resolve CI/CD providers, repositories/services/environments, event schemas, trigger and polling paths, pipeline/stage identity, log/artifact access, ownership, retry policy, failure taxonomy, severity/escalation rules, retention, notification destinations, and restricted-data policy.

@@ -137,7 +137,7 @@ func searchPlaybooks(items []playbookCatalogItem, installed []InstalledPlaybook,
 }
 
 func (api *StreamingAPI) registerPlaybookSearchTool(registrar definitionToolRegistrar, workspacePath string) error {
-	description := "Search the AgentWorks playbook catalog by the user's intent, operating area, capability, tool, expected outcome, or Pulse review focus. Use this before improvising a generic workflow setup when a reusable engineering playbook may fit. Results include setup areas, deliverables, recommended tools, Technical/Architecture/Strategic Pulse focus, installed and latest versions, update availability, and the catalog changelog. When asked about an upgrade, compare the versions and explain only the supplied changelog; do not infer changes from version numbers. This tool never installs anything: ask the user to install or update the chosen playbook, and use open_workspace_view(view=\"playbooks\") to show it when available."
+	description := "Search the AgentWorks playbook catalog by the user's intent, operating area, capability, tool, expected outcome, or Pulse review focus. Use this before improvising a generic workflow setup when a reusable engineering playbook may fit. Results include setup areas, deliverables, recommended tools, Technical/Architecture/Strategic Pulse focus, installed and latest versions, update availability, and the catalog changelog. When asked about an upgrade, compare the versions and explain only the supplied changelog; do not infer changes from version numbers. This tool never installs anything: ask the user to install or update the chosen playbook, and use open_workspace_view(view=\"playbooks\") to show it when available. After installation, inspect the current workflow, summarize reuse and gaps, and ask focused questions for material unresolved customer choices before proposing changes; installation is not approval to edit or run the workflow."
 	params := map[string]interface{}{
 		"type": "object",
 		"properties": map[string]interface{}{
@@ -171,7 +171,7 @@ func (api *StreamingAPI) registerPlaybookSearchTool(registrar definitionToolRegi
 		matches := searchPlaybooks(items, installed, query, limit)
 		payload := map[string]interface{}{
 			"query": query, "matches": matches, "total": len(matches),
-			"next_action": "Recommend the best-fitting playbook with reasons. If it is not installed, ask the user to install it and open the Playbooks view. Do not claim installation or mutate the workflow.",
+			"next_action": "Recommend the best-fitting playbook with reasons. If it is not installed, ask the user to install it and open the Playbooks view. After installation, inspect the current workflow, summarize reuse and gaps, ask focused questions for material unresolved customer choices, and record the answers before proposing changes. Installation is not approval to mutate or run the workflow.",
 		}
 		encoded, err := json.Marshal(payload)
 		if err != nil {

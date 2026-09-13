@@ -13,6 +13,10 @@ Create a repeatable API performance workflow that exercises approved scenarios u
 
 Use for service-level performance baselines, regressions, release checks, or controlled capacity experiments. Require explicit authorization before meaningful load; production is never assumed to be an acceptable target.
 
+## Discovery and user direction
+
+Inspect the current workflow, goals, metrics, configuration, capabilities, stores, reports, and triggers before proposing changes. Summarize reusable design and gaps, then ask focused questions for unresolved customer choices such as scope, success, approvals, thresholds, ownership, and budgets. Record the answers as customer direction. Installation alone does not approve workflow changes or execution.
+
 ## Required inputs
 
 Resolve endpoints and protocol, environment/build, authentication and secret references, scenarios/payload classes, test-data cleanup, load shape, worker location, connection behavior, sample duration, budgets/baseline, stop limits, observability access, evidence retention, and owner.

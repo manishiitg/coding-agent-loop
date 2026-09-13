@@ -2,7 +2,10 @@
   "metadata_version": 1,
   "content_schema": "agentworks-playbook/v1",
   "id": "cost-anomaly-to-verified-savings",
-  "version": "0.2.1",
+  "version": "0.3.0",
+  "changelog": [
+    {"version": "0.3.0", "summary": "Adds an explicit inspect-first discovery step, focused customer questions, recorded user direction, and a clear boundary that installation is not approval."}
+  ],
   "title": "Cost Anomaly to Verified Savings",
   "description": "Detect cloud-cost anomalies, propose evidence-backed rightsizing, prepare approved IaC changes, and verify realized savings and service health.",
   "hierarchy": [

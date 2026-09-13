@@ -2,7 +2,10 @@
   "metadata_version": 1,
   "content_schema": "agentworks-playbook/v1",
   "id": "role-permission-validation",
-  "version": "0.1.1",
+  "version": "0.2.0",
+  "changelog": [
+    {"version": "0.2.0", "summary": "Adds an explicit inspect-first discovery step, focused customer questions, recorded user direction, and a clear boundary that installation is not approval."}
+  ],
   "title": "Role and Permission Validation",
   "description": "Validate page, action, and data permissions across roles, ownership states, and tenant boundaries.",
   "hierarchy": ["AgentWorks", "Agentic Engineering Platform", "Browser QA"],

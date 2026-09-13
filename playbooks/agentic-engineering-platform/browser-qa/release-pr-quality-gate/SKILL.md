@@ -13,6 +13,10 @@ Create an auditable decision workflow that binds an exact change/build to requir
 
 Use after the required suites have passed independently and can run unattended against a uniquely identified preview or release candidate. Use scheduled monitoring for time-based deployed-health checks.
 
+## Discovery and user direction
+
+Inspect the current workflow, goals, metrics, configuration, capabilities, stores, reports, and triggers before proposing changes. Summarize reusable design and gaps, then ask focused questions for unresolved customer choices such as scope, success, approvals, thresholds, ownership, and budgets. Record the answers as customer direction. Installation alone does not approve workflow changes or execution.
+
 ## Required inputs
 
 Resolve trigger type, repository/change/build/environment identity, required suites and groups, route selections, blocking and review rules, timeout/cancellation behavior, evidence retention, duplicate-run policy, and authorized status/report destinations.

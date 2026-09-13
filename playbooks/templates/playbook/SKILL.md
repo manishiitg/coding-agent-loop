@@ -13,6 +13,10 @@ State the durable workflow capability and the result the customer receives.
 
 State positive triggers, scope, and any important exclusion.
 
+## Discovery and user direction
+
+Inspect the current workflow, goals, metrics, configuration, capabilities, stores, reports, and triggers before proposing changes. Summarize reusable design and gaps, then ask focused questions for unresolved customer choices such as scope, success, approvals, thresholds, ownership, and budgets. Record the answers as customer direction. Installation alone does not approve workflow changes or execution.
+
 ## Required inputs
 
 List the minimum information, access, policies, and existing artifacts the builder must resolve. Treat unavailable required inputs as explicit blockers.

@@ -2,7 +2,10 @@
   "metadata_version": 1,
   "content_schema": "agentworks-playbook/v1",
   "id": "critical-journey-validation",
-  "version": "0.6.1",
+  "version": "0.7.0",
+  "changelog": [
+    {"version": "0.7.0", "summary": "Adds an explicit inspect-first discovery step, focused customer questions, recorded user direction, and a clear boundary that installation is not approval."}
+  ],
   "title": "Critical Journey Validation",
   "description": "Reuse browser setup and locator helpers to run critical journeys, investigate failures, and retain video plus console/network evidence.",
   "hierarchy": [

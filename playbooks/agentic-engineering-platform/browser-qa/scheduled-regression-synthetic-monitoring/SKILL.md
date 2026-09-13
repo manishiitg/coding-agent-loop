@@ -13,6 +13,10 @@ Create an unattended schedule that runs a saved browser QA route for explicit gr
 
 Use only after the selected browser suite and its unattended authentication, fixtures, cleanup, evidence, and report behavior have passed manually. Synthetic checks must target an authorized environment.
 
+## Discovery and user direction
+
+Inspect the current workflow, goals, metrics, configuration, capabilities, stores, reports, and triggers before proposing changes. Summarize reusable design and gaps, then ask focused questions for unresolved customer choices such as scope, success, approvals, thresholds, ownership, and budgets. Record the answers as customer direction. Installation alone does not approve workflow changes or execution.
+
 ## Required inputs
 
 Resolve the exact saved route, groups, cadence/calendar and timezone, environment, concurrency and timeout limits, unattended human-decision defaults, retention, notification conditions/destinations, ownership, and pause/escalation policy.

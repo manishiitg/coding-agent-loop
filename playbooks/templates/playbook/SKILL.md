@@ -21,6 +21,8 @@ List the minimum information, access, policies, and existing artifacts the build
 
 Explain how to compose this into the plan: important scripted steps, message sequences, routes, branches, schedules, or approvals; existing steps to reuse; and AgentWorks capabilities to resolve. Preserve the user's process and link to detailed guidance.
 
+Recommend whether this route should start manually, from a workflow handoff, webhook or product event, release event, or schedule. Define the proposed scope, filters or cadence and timezone, concurrency, retries, budget, notifications, and durable completion evidence. Do not enable an unapproved trigger or invent cadence.
+
 ## Knowledge and persistence
 
 State what belongs in workflow context, knowledgebase notes, learnings, database tables, and durable assets.

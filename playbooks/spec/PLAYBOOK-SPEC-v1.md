@@ -40,7 +40,7 @@ These headings are the stable UI and builder-consumption contract. Keep each sec
 - **When to use:** positive triggers, scope, and important exclusions.
 - **Required inputs:** information, access, policy, and existing artifacts the builder must resolve. Mark unavailable required inputs as blockers rather than inventing them.
 - **Plan and AgentWorks tools:** explain how the builder maps the playbook into a plan: which behavior belongs in scripted steps, message sequences, routes, branches, schedules, or approvals; what existing steps to reuse; and which AgentWorks capabilities to resolve. Link to shared or topic-specific detail.
-- **Workflow design and outcomes:** inspect existing goals and metrics, recommend measurable additions when needed, and decide whether to extend the current workflow or propose a separate workflow using ownership, trigger, access, lifecycle, and operational boundaries.
+- **Workflow design and outcomes:** inspect existing goals and metrics, recommend measurable additions when needed, decide whether to extend the current workflow or propose a separate workflow, and recommend manual, event, webhook, release, or scheduled activation using ownership, access, lifecycle, budget, and operational boundaries.
 - **Knowledge and persistence:** what belongs in context, knowledgebase notes, learnings, database tables, and durable assets.
 - **Validation and reporting:** define machine-checkable readiness and the reporting dashboard: primary status and metrics, useful filters/dimensions, evidence drill-down, history/trends, incomplete states, and any restricted data. Keep the dashboard backed by durable workflow data rather than message text.
 - **Guardrails:** constraints that must survive adaptation.
@@ -98,10 +98,11 @@ The builder consumes a playbook progressively:
 3. Resolve required inputs and distinguish known values, reasonable reversible defaults, and blockers.
 4. Map the requested outcome to existing goals and metrics; recommend missing definitions without inventing customer targets.
 5. Recommend whether to extend the current workflow, add a route, or create a separate workflow, with concrete reasons and tradeoffs.
-6. Load only the references relevant to the current operation.
-7. Map the guidance onto the chosen workflow using supported AgentWorks plan/config tools. Reuse or revise compatible steps before adding new ones.
-8. Show concrete human decisions only after the draft, evidence, or proposed change is ready for review.
-9. Trial the affected step or route, validate durable output and the report, then record the installed snapshot.
+6. Recommend how it starts: manual action, workflow handoff, webhook or event, release gate, or schedule. Define scope, cadence and timezone or event filters, concurrency, retries, budget, notification behavior, and proof of completion without enabling an unapproved trigger.
+7. Load only the references relevant to the current operation.
+8. Map the guidance onto the chosen workflow using supported AgentWorks plan/config tools. Reuse or revise compatible steps before adding new ones.
+9. Show concrete human decisions only after the draft, evidence, or proposed change is ready for review.
+10. Trial the affected step or route, validate durable output and the report, then record the installed snapshot.
 
 The builder must not copy the reference graph mechanically, add a step per tool call, attach every recommended tool, overwrite user preferences, or edit system-managed plan files directly. Dashboard widgets and drill-downs must read the same durable records used for validation; reporting is part of installation, not a separate optional workflow.
 

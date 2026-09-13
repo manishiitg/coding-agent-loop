@@ -26,6 +26,14 @@ Recommend a separate workflow when it has an independent objective or owner; a m
 
 Do not split merely because a playbook has several steps, and do not force unrelated operations into one workflow for convenience. For separate workflows, define the supported handoff, stable identifiers, data contract, permissions, retry/idempotency behavior, and reporting ownership. Do not copy secrets or rely on another workflow's private paths.
 
+## Triggers and schedules
+
+Decide how the capability should start: manual request, workflow handoff, webhook or product event, pull request or deployment event, or recurring schedule. Reuse a compatible existing trigger when it has the same scope and policy. Recommend a separate trigger or schedule when the playbook needs an independent cadence, event source, environment, owner, budget, or failure lifecycle.
+
+For every proposed trigger or schedule, define the route or workflow it starts, event filters or cadence and timezone, enabled environments, overlap and concurrency policy, idempotency and retry behavior, execution budget, notification and escalation behavior, and the durable result that proves completion. State whether it runs the full workflow or a bounded route. Use event-driven execution when the source can emit a reliable event; use schedules for recurring assurance, monitoring, aggregation, and review.
+
+Never invent cadence, enable a schedule, or attach a webhook without the user's approved operating policy. When cadence is unknown, recommend options with their cost and detection-delay tradeoffs. Preserve existing schedules, thresholds, notification preferences, and budgets unless the user changes them explicitly.
+
 ## Builder recommendation
 
 Before structural changes, present:
@@ -34,6 +42,7 @@ Before structural changes, present:
 2. the recommended placement: extend the current workflow, create a route, or create a separate workflow;
 3. the concrete reasons and tradeoffs;
 4. proposed goal/metric additions or changes, with missing customer decisions;
-5. the plan, data, reporting, trigger, integration, and permission changes that follow.
+5. the recommended manual, event, webhook, release, or scheduled activation model;
+6. the plan, data, reporting, trigger, integration, and permission changes that follow.
 
 Proceed with the user's chosen structure. Record the decision and customer overrides in the installed playbook setup record.

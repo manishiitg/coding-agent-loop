@@ -7,7 +7,6 @@ import {
   Activity,
   BellRing,
   CalendarClock,
-  Webhook,
   ChevronDown,
   ChevronRight,
   Gauge,
@@ -575,7 +574,7 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
                   <TooltipTrigger asChild>
                     <button
                       type="button"
-                      onClick={() => openWorkspaceView('schedules')}
+                      onClick={() => openWorkspaceView('schedules', 'schedules')}
                       className={`relative flex h-6 w-7 items-center justify-center rounded transition-colors ${activeWorkspaceView === 'schedules' ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:bg-background/70 hover:text-foreground'}`}
                       aria-label="Schedules"
                       aria-pressed={activeWorkspaceView === 'schedules'}
@@ -584,17 +583,7 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
                       <span className={`absolute right-1.5 top-1.5 h-1.5 w-1.5 rounded-full border border-background ${scheduleStatusDotClass}`} />
                     </button>
                   </TooltipTrigger>
-                  <TooltipContent side="bottom"><p>{scheduleTooltip}</p></TooltipContent>
-                </Tooltip>
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <button type="button" onClick={() => openWorkspaceView('api-triggers')}
-                      className={`flex h-6 w-7 items-center justify-center rounded transition-colors ${activeWorkspaceView === 'api-triggers' ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:bg-background/70 hover:text-foreground'}`}
-                      aria-label="Webhooks" aria-pressed={activeWorkspaceView === 'api-triggers'}>
-                      <Webhook className="h-3.5 w-3.5" />
-                    </button>
-                  </TooltipTrigger>
-                  <TooltipContent side="bottom"><p>Webhooks</p></TooltipContent>
+                  <TooltipContent side="bottom"><p>{scheduleTooltip} · Webhooks</p></TooltipContent>
                 </Tooltip>
               </div>
               <span className="mx-0.5 h-4 w-px bg-border" aria-hidden="true" />

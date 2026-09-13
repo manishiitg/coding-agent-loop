@@ -22,7 +22,7 @@ export const WorkflowTriggerNode = memo(({ data }: NodeProps) => {
     {webhook && <div className="max-h-28 overflow-auto"><WebhookEndpoint id={job.id} name={job.name} /></div>}
     <div className="mt-auto flex items-center gap-2 border-t border-border pt-2">
       <button type="button" onClick={onSelect} disabled={!routeSummary?.canTrace} aria-pressed={!!active} className="rounded border border-border px-2 py-1 text-xs hover:bg-muted disabled:opacity-40">{active ? 'Clear highlight' : 'Highlight path'}</button>
-      <button type="button" onClick={() => onSettings?.(webhook ? 'api-triggers' : 'schedules')} className="ml-auto rounded p-1.5 text-muted-foreground hover:bg-muted" aria-label={`Open settings for ${job.name}`} title="Open settings"><Settings className="h-4 w-4" /></button>
+      <button type="button" onClick={() => onSettings?.(webhook ? 'webhooks' : 'schedules')} className="ml-auto rounded p-1.5 text-muted-foreground hover:bg-muted" aria-label={`Open settings for ${job.name}`} title="Open settings"><Settings className="h-4 w-4" /></button>
     </div>
     {routeSummary?.canTrace && <Handle type="source" position={Position.Bottom} className="!h-2 !w-2 !bg-muted-foreground" />}
   </article>
@@ -34,7 +34,7 @@ export const WorkflowTriggerHeading = memo(({ data }: NodeProps) => {
   return <div className="nodrag nopan h-16 space-y-1 text-foreground">
     <div className="flex items-center gap-2 text-sm font-semibold"><span>Triggers</span><button type="button" onClick={onRefresh} aria-label="Refresh triggers" className="rounded p-1 hover:bg-muted"><RefreshCw className={`h-3 w-3 ${loading ? 'animate-spin' : ''}`} /></button></div>
     <p className="text-xs text-muted-foreground">{error || (loading ? 'Loading schedules and webhooks…' : count ? 'Solid lines start the workflow; dashed lines select routes.' : 'No automatic triggers. This workflow can be started manually.')}</p>
-    <div className="flex gap-3 text-xs"><button type="button" className="hover:underline" onClick={() => onSettings?.('schedules')}>Schedules</button><button type="button" className="hover:underline" onClick={() => onSettings?.('api-triggers')}>Webhooks</button></div>
+    <div className="flex gap-3 text-xs"><button type="button" className="hover:underline" onClick={() => onSettings?.('schedules')}>Schedules</button><button type="button" className="hover:underline" onClick={() => onSettings?.('webhooks')}>Webhooks</button></div>
   </div>
 })
 WorkflowTriggerHeading.displayName = 'WorkflowTriggerHeading'

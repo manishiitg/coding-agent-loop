@@ -166,7 +166,7 @@ export interface WorkflowTriggerNodeData extends Record<string, unknown> {
   error?: string
   count?: number
   onSelect?: () => void
-  onSettings?: (kind: 'schedules' | 'api-triggers') => void
+  onSettings?: (kind: 'schedules' | 'webhooks') => void
   onRefresh?: () => void
 }
 

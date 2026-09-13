@@ -1340,7 +1340,7 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
   // Current step and status from store (set by ChatArea polling when step_progress_updated events arrive)
   const [selectedTrigger, setSelectedTrigger] = React.useState<{ workspace: string | null; id: string } | null>(null)
   const selectedTriggerJob = selectedTrigger?.workspace === workspacePath ? triggers.jobs.find(job => job.id === selectedTrigger.id) : undefined
-  const openTriggerSettings = useCallback((view: 'schedules' | 'api-triggers') => useWorkflowStore.getState().openWorkspaceView(view), [])
+  const openTriggerSettings = useCallback((section: 'schedules' | 'webhooks') => useWorkflowStore.getState().openWorkspaceView('schedules', section), [])
   const stepStatusMap = useWorkflowStore(state => state.stepStatusMap)
 
   // React Flow state (need to define before usePlanToFlow to use in callbacks)

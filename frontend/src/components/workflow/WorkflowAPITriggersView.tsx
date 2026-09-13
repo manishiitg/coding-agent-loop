@@ -14,7 +14,7 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : 'Unable to update API triggers'
 }
 
-export default function WorkflowAPITriggersView({ workspacePath }: { workspacePath: string | null }) {
+export default function WorkflowAPITriggersView({ workspacePath, onViewRuns, headerAction }: { workspacePath: string | null; onViewRuns?: () => void; headerAction?: React.ReactNode }) {
   const canWrite = useCanWriteWorkflow(workspacePath)
   const [options, setOptions] = useState<APITriggerOptions>(emptyOptions)
   const [issued, setIssued] = useState<WorkflowAPITrigger | null>(null)
@@ -83,9 +83,12 @@ export default function WorkflowAPITriggersView({ workspacePath }: { workspacePa
           <h2 className="flex items-center gap-2 text-base font-semibold"><Webhook size={17} />Webhooks</h2>
           <p className="mt-1 text-xs text-muted-foreground">Start a saved workflow route when an external service sends a webhook.</p>
         </div>
-        <button type="button" aria-label="Refresh API triggers" className={buttonClass} onClick={() => { setError(''); void refresh() }}><RefreshCw size={14} /></button>
+        <div className="flex items-center gap-2">
+          <button type="button" aria-label="Refresh API triggers" className={buttonClass} onClick={() => { setError(''); void refresh() }}><RefreshCw size={14} /></button>
+          {headerAction}
+        </div>
       </div>
-      <p className="text-xs leading-relaxed text-muted-foreground">Time triggers run on a schedule. API triggers run when their endpoint receives a request. API triggers can run the full workflow, a route with prerequisites, or one standalone step. <button type="button" className="underline text-foreground" onClick={() => useWorkflowStore.getState().openWorkspaceView('schedules')}>View trigger runs</button></p>
+      <p className="text-xs leading-relaxed text-muted-foreground">Time triggers run on a schedule. API triggers run when their endpoint receives a request. API triggers can run the full workflow, a route with prerequisites, or one standalone step. <button type="button" className="underline text-foreground" onClick={() => onViewRuns ? onViewRuns() : useWorkflowStore.getState().openWorkspaceView('schedules', 'schedules')}>View trigger runs</button></p>
       <p className="text-xs text-muted-foreground">Create webhooks and change their routes or authentication through the workflow builder chat.</p>
       {error && <p role="alert" className="rounded-md border border-destructive/30 p-3 text-sm text-destructive">{error}</p>}
       {issued?.secret && (

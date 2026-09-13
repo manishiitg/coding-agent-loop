@@ -28,7 +28,7 @@ export function triggerRouteSummary(job: ScheduledJob, nodes: WorkflowNode[]) {
 // Presentation nodes are added after saved plan positions are restored. They
 // never become editable steps or persisted custom layout positions.
 export function appendTriggerCards(nodes: WorkflowNode[], edges: WorkflowEdge[], jobs: ScheduledJob[], options: {
-  loading: boolean; error?: string; selectedID?: string; onSelect: (id: string) => void; onSettings: (kind: 'schedules' | 'api-triggers') => void; onRefresh: () => void
+  loading: boolean; error?: string; selectedID?: string; onSelect: (id: string) => void; onSettings: (kind: 'schedules' | 'webhooks') => void; onRefresh: () => void
 }) {
   const start = nodes.find(node => node.id === 'start')
   if (!start) return { nodes, edges }

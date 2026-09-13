@@ -19,7 +19,7 @@ it('shows a paused webhook, its real URL, path highlighting and settings control
     await act(async () => [...host.querySelectorAll('button')].find(b => b.textContent === 'Highlight path')!.click())
     expect(onSelect).toHaveBeenCalledOnce()
     await act(async () => host.querySelector<HTMLButtonElement>('[aria-label="Open settings for Review PR"]')!.click())
-    expect(onSettings).toHaveBeenCalledWith('api-triggers')
+    expect(onSettings).toHaveBeenCalledWith('webhooks')
   } finally { await act(async () => root.unmount()) }
 })
 it('explains manual execution when there are no automatic triggers', async () => {

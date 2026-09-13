@@ -197,6 +197,12 @@ func validateUIAction(view, action, target string) error {
 			switch v.TargetKind {
 			case "plan_step_id", "report_tab":
 				return nil
+			case "view_section":
+				for _, t := range v.Targets {
+					if t == target {
+						return nil
+					}
+				}
 			case "workspace_file_path":
 				cleaned := path.Clean(strings.TrimSpace(target))
 				if cleaned != "." && cleaned != ".." && !strings.HasPrefix(cleaned, "../") && !strings.HasPrefix(cleaned, "/") && !strings.Contains(cleaned, "\\") {

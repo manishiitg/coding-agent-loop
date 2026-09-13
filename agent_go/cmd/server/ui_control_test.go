@@ -101,7 +101,7 @@ func boundUI(t *testing.T) (*uiControlBroker, *uiBinding) {
 	return b, c
 }
 func TestUIControlOnlyAdvertisesActualActions(t *testing.T) {
-	if len(uiControlContract.Views) != 24 {
+	if len(uiControlContract.Views) != 23 {
 		t.Fatal("registry coverage changed")
 	}
 	for _, v := range uiControlContract.Views {
@@ -120,6 +120,14 @@ func TestUIControlOnlyAdvertisesActualActions(t *testing.T) {
 	}
 	if validateUIAction("files", "open", "code/shared/helpers.py") != nil {
 		t.Fatal("workspace-relative file target missing")
+	}
+	for _, section := range []string{"schedules", "webhooks"} {
+		if validateUIAction("schedules", "open", section) != nil {
+			t.Fatalf("schedule section missing: %q", section)
+		}
+	}
+	if validateUIAction("schedules", "open", "guessed") == nil {
+		t.Fatal("unknown schedule section accepted")
 	}
 	for _, invalid := range []string{"/etc/passwd", "../other/file", `code\\file.py`} {
 		if err := validateUIAction("files", "open", invalid); err == nil {

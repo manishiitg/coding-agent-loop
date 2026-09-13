@@ -97,7 +97,7 @@ When setting up Pulse for a new workflow, use get_workflow_command_guidance(kind
 
 ### API triggers (inbound webhooks)
 
-An API trigger runs a saved route on an authenticated JSON POST instead of a clock tick. Open **Setup → API triggers** (workspace view `api-triggers`) to add a route/group binding, copy its endpoint, select generic bearer-token or GitHub signature authentication, and generate/rotate its secret. Multiple API and time triggers can target the same route. Creation uses `/api/workflow-webhooks`, not `create_schedule`; never invent a token or handwrite encrypted credentials.
+An API trigger runs a saved route on an authenticated JSON POST instead of a clock tick. Open the workflow **Schedules** view and select **Webhooks** to add a route/group binding, copy its endpoint, select generic bearer-token or GitHub signature authentication, and generate/rotate its secret. Multiple API and time triggers can target the same route. Creation uses `/api/workflow-webhooks`, not `create_schedule`; never invent a token or handwrite encrypted credentials.
 
 API triggers are stored under `schedules` with `schedule_type="webhook"`, typed `route_selections`, `group_names`, `workshop_mode="run"`, and encrypted `webhook` authentication configuration. They have no cron expression, messages, trigger_payload request overrides, session resume, or clock queue. They appear in existing trigger run history. `trigger_schedule` cannot fire an API trigger without authenticated delivery input.
 

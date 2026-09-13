@@ -63,7 +63,6 @@ const DatabaseView = lazy(() => import('../DatabaseView'))
 const PulseEvalSummary = lazy(() => import('../PulseEvalSummary').then(module => ({ default: module.PulseEvalSummary })))
 const WorkflowScheduleRunsPanel = lazy(() => import('../../scheduler/WorkflowScheduleRunsPanel'))
 const WorkflowCapabilitiesPanel = lazy(() => import('../WorkflowCapabilitiesPanel'))
-const WorkflowAPITriggersView = lazy(() => import('../WorkflowAPITriggersView'))
 const WorkflowFolderAccessView = lazy(() => import('../WorkflowFolderAccessView'))
 const PulseView = lazy(() => import('../PulseView'))
 const WorkflowBackupView = lazy(() => import('../WorkflowBackupView'))
@@ -125,7 +124,7 @@ function FilesBody() {
 // section message fits better there than a generic one here), so they're
 // deliberately absent from this map to avoid a second, redundant button.
 const INSPECTOR_ASK_AI_MESSAGE: Partial<Record<InspectorViewId, string>> = {
-  schedules: "I want to set up or change a schedule for this workflow. Ask me what should run, how often, and starting when.",
+  schedules: "I want to set up or change a schedule or webhook for this workflow. Ask me what should run, what should trigger it, and any timing, route, or authentication requirements.",
   notify: "I want to change who or where this workflow notifies (email, Slack, WhatsApp). Ask me what event and who should be notified.",
   backup: "I want to set up or change a backup destination for this workflow. Ask me what should be backed up and where.",
   publish: "I want to publish this workflow somewhere it isn't published yet. Ask me what the target is.",
@@ -213,8 +212,6 @@ function InspectorBody({ workspacePath, presetQueryId }: { workspacePath: string
             headerAction={askAIHeaderAction}
           />
         )
-      case 'api-triggers':
-        return <WorkflowAPITriggersView key={workspacePath} workspacePath={workspacePath} />
       case 'folders':
         return <WorkflowFolderAccessView workspacePath={workspacePath} headerAction={askAIHeaderAction} />
       case 'pulse':

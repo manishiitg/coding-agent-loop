@@ -72,10 +72,14 @@ export const UI_CONTROL_CONTRACT = {
     {
       "id": "schedules",
       "label": "Schedules",
+      "target_kind": "view_section",
       "actions": [
         "open"
       ],
-      "targets": []
+      "targets": [
+        "schedules",
+        "webhooks"
+      ]
     },
     {
       "id": "files",
@@ -181,14 +185,6 @@ export const UI_CONTROL_CONTRACT = {
     {
       "id": "bots",
       "label": "Workflow bots",
-      "actions": [
-        "open"
-      ],
-      "targets": []
-    },
-    {
-      "id": "api-triggers",
-      "label": "Webhooks",
       "actions": [
         "open"
       ],

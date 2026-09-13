@@ -1,5 +1,5 @@
-import React from 'react'
-import { Clock, Search, MessageSquare } from 'lucide-react'
+import React, { useEffect, useState } from 'react'
+import { CalendarClock, Clock, Search, MessageSquare, Webhook } from 'lucide-react'
 import ModalPortal from '../ui/ModalPortal'
 import type { ScheduledJob } from '../../services/api-types'
 import { TooltipProvider } from '../ui/tooltip'
@@ -11,6 +11,8 @@ import { ScheduleCalendarView } from './scheduleRuns/ScheduleCalendarView'
 import { ScheduleGroupsView } from './scheduleRuns/ScheduleGroupsView'
 import { ScheduleListView } from './scheduleRuns/ScheduleListView'
 import { ScheduleTableView } from './scheduleRuns/ScheduleTableView'
+import WorkflowAPITriggersView from '../workflow/WorkflowAPITriggersView'
+import { useWorkflowStore } from '../../stores/useWorkflowStore'
 
 interface WorkflowScheduleRunsPanelProps {
   onClose: () => void
@@ -23,6 +25,17 @@ interface WorkflowScheduleRunsPanelProps {
 
 const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ onClose, onJobsLoaded, workflowScope, embedded = false, active = true, headerAction }) => {
   const panel = useScheduleRunsData({ onClose, onJobsLoaded, workflowScope, active })
+  const workspaceViewTarget = useWorkflowStore(state => state.workspaceViewTarget)
+  const hasWorkflowWebhooks = Boolean(workflowScope?.workspacePath)
+  const [automationSection, setAutomationSection] = useState<'schedules' | 'webhooks'>(() =>
+    hasWorkflowWebhooks && workspaceViewTarget?.view === 'schedules' && workspaceViewTarget.target === 'webhooks'
+      ? 'webhooks'
+      : 'schedules',
+  )
+  useEffect(() => {
+    if (workspaceViewTarget?.view !== 'schedules') return
+    setAutomationSection(hasWorkflowWebhooks && workspaceViewTarget.target === 'webhooks' ? 'webhooks' : 'schedules')
+  }, [hasWorkflowWebhooks, workspaceViewTarget])
   const {
     isLoading,
     error,
@@ -73,6 +86,31 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
       <div className={embedded
         ? 'flex h-full min-h-0 w-full flex-col bg-card text-card-foreground'
         : 'mx-4 flex max-h-[85vh] w-full max-w-6xl flex-col rounded-xl border border-border bg-card text-card-foreground shadow-2xl'}>
+
+        {hasWorkflowWebhooks && (
+          <div className="flex shrink-0 items-center gap-1 border-b border-border px-4 py-2 sm:px-6" role="tablist" aria-label="Workflow triggers">
+            <button type="button" role="tab" aria-selected={automationSection === 'schedules'}
+              onClick={() => setAutomationSection('schedules')}
+              className={`inline-flex items-center gap-2 rounded-md px-3 py-1.5 text-xs font-medium transition-colors ${automationSection === 'schedules' ? 'bg-muted text-foreground' : 'text-muted-foreground hover:bg-muted/60 hover:text-foreground'}`}>
+              <CalendarClock className="h-3.5 w-3.5" />Schedules
+            </button>
+            <button type="button" role="tab" aria-selected={automationSection === 'webhooks'}
+              onClick={() => setAutomationSection('webhooks')}
+              className={`inline-flex items-center gap-2 rounded-md px-3 py-1.5 text-xs font-medium transition-colors ${automationSection === 'webhooks' ? 'bg-muted text-foreground' : 'text-muted-foreground hover:bg-muted/60 hover:text-foreground'}`}>
+              <Webhook className="h-3.5 w-3.5" />Webhooks
+            </button>
+          </div>
+        )}
+
+        {automationSection === 'webhooks' && workflowScope?.workspacePath ? (
+          <div className="min-h-0 flex-1">
+            <WorkflowAPITriggersView
+              workspacePath={workflowScope.workspacePath}
+              onViewRuns={() => setAutomationSection('schedules')}
+              headerAction={headerAction}
+            />
+          </div>
+        ) : <>
 
         {/* Header */}
         <ScheduleRunsHeader panel={panel} onClose={onClose} showClose={!embedded} headerAction={headerAction}
@@ -206,6 +244,7 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
             compact ? <ScheduleTableView panel={panel} /> : <ScheduleListView panel={panel} />
           )}
         </div>
+        </>}
       </div>
 
     </div>

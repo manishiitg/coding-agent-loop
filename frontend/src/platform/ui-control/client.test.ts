@@ -5,7 +5,7 @@ import { UI_CONTROL_CONTRACT } from './contract.generated'
 const base = { request_id: 'test', expires_at: '2030-01-01T00:00:00Z' }
 describe('closed semantic UI control contract', () => {
   it('accounts for all views but never advertises placeholder deep actions', () => {
-    expect(UI_CONTROL_CONTRACT.views).toHaveLength(22)
+    expect(UI_CONTROL_CONTRACT.views).toHaveLength(23)
     for (const { id } of UI_CONTROL_CONTRACT.views) {
       expect(supportedAction({ ...base, view: id, action: 'open' })).toBe(true)
       expect(supportedAction({ ...base, view: id, action: 'send' })).toBe(false)
@@ -18,6 +18,11 @@ describe('closed semantic UI control contract', () => {
   })
   it('advertises a workspace file target', () => {
     expect(supportedAction({ ...base, view: 'files', action: 'open', target: 'code/shared/helpers.py' })).toBe(true)
+  })
+  it('opens either section of the combined schedules view', () => {
+    expect(supportedAction({ ...base, view: 'schedules', action: 'open', target: 'schedules' })).toBe(true)
+    expect(supportedAction({ ...base, view: 'schedules', action: 'open', target: 'webhooks' })).toBe(true)
+    expect(supportedAction({ ...base, view: 'schedules', action: 'open', target: 'guessed' })).toBe(false)
   })
   it('only expands the two known notification instruction disclosures', () => {
     expect(supportedAction({ ...base, view: 'notify', action: 'expand', target: 'run_summary' })).toBe(true)

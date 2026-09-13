@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { PRIMARY_WORKSPACE_TOOLBAR_VIEWS, WORKSPACE_VIEWS } from './workspaceViews'
+import { normalizeWorkspaceViewId, PRIMARY_WORKSPACE_TOOLBAR_VIEWS, WORKSPACE_VIEWS } from './workspaceViews'
 import { UI_CONTROL_CONTRACT } from '../../platform/ui-control/contract.generated'
 
 // The agent's open_workspace_view tool (agent_go/cmd/server/workflow_view_tool.go)
@@ -30,5 +30,10 @@ describe('primary workspace toolbar views', () => {
       'files',
       'browser',
     ])
+  })
+
+  it('folds the former webhook panel into schedules', () => {
+    expect(WORKSPACE_VIEWS.map(view => view.id)).not.toContain('api-triggers')
+    expect(normalizeWorkspaceViewId('api-triggers')).toBe('schedules')
   })
 })

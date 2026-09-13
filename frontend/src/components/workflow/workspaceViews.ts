@@ -22,7 +22,6 @@ import {
   Server,
   ShieldCheck,
   Table2,
-  Webhook,
   type LucideIcon,
 } from 'lucide-react'
 
@@ -106,7 +105,6 @@ const VIEWS = [
   { id: 'browser', kind: 'capability', label: 'Browser', icon: Monitor, toolbarGroup: 'views', pane: true },
   { id: 'llm', kind: 'capability', label: 'Workflow LLM configuration', icon: BrainCircuit, toolbarGroup: 'capabilities', pane: true },
   { id: 'bots', kind: 'capability', label: 'Workflow bots', icon: Bot, toolbarGroup: 'capabilities', pane: true },
-  { id: 'api-triggers', kind: 'inspector', label: 'Webhooks', icon: Webhook, toolbarGroup: 'views', pane: true },
   { id: 'folders', kind: 'inspector', label: 'Attached folders', icon: FolderOpen, toolbarGroup: 'capabilities', pane: true },
 ] as const satisfies readonly WorkspaceViewDef[]
 
@@ -124,7 +122,7 @@ export const WORKSPACE_VIEWS: readonly WorkspaceView[] = VIEWS
  * the existing "No Plan Yet" / "Build Plan" state. Evaluation and schedules
  * are rendered separately because their buttons carry status affordances. */
 export const PRIMARY_WORKSPACE_TOOLBAR_VIEWS = WORKSPACE_VIEWS.filter(
-  view => view.toolbarGroup === 'views' && view.id !== 'evaluation' && view.id !== 'schedules' && view.id !== 'api-triggers',
+  view => view.toolbarGroup === 'views' && view.id !== 'evaluation' && view.id !== 'schedules',
 )
 
 type ViewOfKind<K extends WorkspaceViewKind> = Extract<typeof VIEWS[number], { kind: K }>['id']
@@ -188,6 +186,7 @@ const LEGACY_VIEW_IDS: Record<string, WorkspaceViewId | null> = {
   log: 'report',
   plan: 'flow',
   builder: null,
+  'api-triggers': 'schedules',
 }
 
 /** Coerce a persisted/unknown value to a view id, or null. Legacy ids are

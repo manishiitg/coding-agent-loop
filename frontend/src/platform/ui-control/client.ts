@@ -18,7 +18,9 @@ export function supportedAction(a: UIAction): boolean {
   if (!view || !(view.actions as readonly string[]).includes(a.action)) return false
   const targetKind = 'target_kind' in view ? view.target_kind : undefined
   return a.action === 'open'
-    ? (!a.target || ((targetKind === 'plan_step_id' || targetKind === 'report_tab' || targetKind === 'workspace_file_path') && !!a.target.trim() && a.target.length <= 1024))
+    ? (!a.target || (targetKind === 'view_section'
+      ? (view.targets as readonly string[]).includes(a.target)
+      : ((targetKind === 'plan_step_id' || targetKind === 'report_tab' || targetKind === 'workspace_file_path') && !!a.target.trim() && a.target.length <= 1024)))
     : (view.targets as readonly string[]).includes(a.target ?? '')
 }
 

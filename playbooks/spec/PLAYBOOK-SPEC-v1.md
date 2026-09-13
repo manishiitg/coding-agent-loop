@@ -115,6 +115,8 @@ The builder must not copy the reference graph mechanically, add a step per tool 
 
 Design human review as a durable asynchronous lifecycle by default. A preparation route saves the exact proposal, evidence, hashes, and a `pending_review` decision record, exposes them in reporting, and ends successfully without applying the change. A reviewer may decide later. A separate action route accepts only that recorded decision, rechecks its proposal identity, authorization, target state, and expiry, then applies or publishes the approved change. Use a blocking human branch only when the customer explicitly chooses an attended run and its bounded wait is acceptable. Never assume a reviewer will be online during execution.
 
+Use the Report dashboard as the primary review surface. Runtime producers create or refresh a structured `create_human_input_request` linked to the proposal and evidence. **Ask in chat** opens discussion without deciding; **Approve**, **Reject**, and **Defer** save the human decision without applying it. After approval, dispatch the action to the executor authorized for the target surface: a writable code/folder route, typed Builder or Fixer tools for plan/configuration changes, or an approved external integration. Record answered, running, applied, verified, rejected, deferred, stale, and failed as distinct states.
+
 ## Installed playbook record
 
 An installed playbook is a customer-specific snapshot and adaptation record. The product should persist at least:

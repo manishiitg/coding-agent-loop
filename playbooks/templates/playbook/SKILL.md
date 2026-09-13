@@ -29,6 +29,8 @@ Recommend whether this route should start manually, from a workflow handoff, web
 
 Keep review asynchronous unless the customer explicitly requests an attended run: persist a concrete `pending_review` proposal and end preparation, then use a separate action route that validates the later approval and current target state before applying it.
 
+Publish review requests with `create_human_input_request` so they appear in the Report dashboard. Treat Ask in chat as discussion and Approve/Reject/Defer as saved decisions. Choose the later executor by target: a writable runtime code/folder route, typed Builder/Fixer tools for plan or configuration, or an approved external integration.
+
 ## Knowledge and persistence
 
 State what belongs in workflow context, knowledgebase notes, learnings, database tables, and durable assets.

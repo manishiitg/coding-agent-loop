@@ -11,6 +11,13 @@ describe('open report stability', () => {
     expect(source).not.toContain('report_plan.json')
   })
 
+  it('shows durable workflow decisions with the report dashboard', () => {
+    const source = readFileSync('src/components/workflow/ReportViewer.tsx', 'utf8')
+
+    expect(source).toContain('ReportHumanInputPanel')
+    expect(source).toContain('historyMode="collapsed"')
+  })
+
   it('keeps report reload behind the explicit toolbar refresh action', () => {
     const canvas = readFileSync('src/components/workflow/canvas/WorkflowCanvas.tsx', 'utf8')
     const viewer = readFileSync('src/components/workflow/ReportViewer.tsx', 'utf8')

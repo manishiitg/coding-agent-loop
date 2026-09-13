@@ -2,8 +2,9 @@
   "metadata_version": 1,
   "content_schema": "agentworks-playbook/v1",
   "id": "browser-test-self-healing",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "changelog": [
+    {"version": "0.5.1", "summary": "Makes the Report dashboard the primary asynchronous review surface, with Ask in chat for discussion and separate durable approval and application."},
     {"version": "0.5.0", "summary": "Separates repair preparation from application: verified candidates become durable pending reviews, and a later action route validates approval and current source state before applying."},
     {"version": "0.4.0", "summary": "Adds an explicit inspect-first discovery step, focused customer questions, recorded user direction, and a clear boundary that installation is not approval."}
   ],

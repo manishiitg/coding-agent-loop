@@ -21,6 +21,7 @@ import { allowedReportPath, normalizeReportSource, renderReportMarkdown, reportM
 import { useReportChat } from './reportWidgets/useReportChat'
 
 import { WORKFLOW_REPORT_REFRESH_EVENT } from './reportRefreshEvent'
+import { ReportHumanInputPanel } from './ReportHumanInputPanel'
 
 function debugReportView(event: string, detail?: Record<string, unknown>) {
   if (!import.meta.env.DEV) return
@@ -211,6 +212,12 @@ function ReportViewComponent({ workspacePath, onClose, focusTier }: ReportViewPr
           className="min-h-0 flex-1 overflow-y-auto overscroll-y-contain"
         >
           <div className={shellClass}>
+            <ReportHumanInputPanel
+              workspacePath={workspacePath}
+              contentMode="all"
+              historyMode="collapsed"
+              className="m-3"
+            />
             {loading && !report && <div className="flex min-h-64 items-center justify-center gap-2 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" /> Loading report…</div>}
             {error && <div className="m-3 rounded-md border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive">Failed to load report: {error}</div>}
             {!loading && !error && !report && (

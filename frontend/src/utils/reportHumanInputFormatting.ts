@@ -13,18 +13,13 @@ export type ReportHumanInputContextSection = {
 
 export function reportHumanInputStatusLabel(input: ReportHumanInput): string {
 	if (input.status === 'answered') {
-		if (['technical_review', 'engineering_review', 'ops_review'].includes(input.source)) return 'Waiting for Technical Review'
-		if (['strategic_review', 'strategy_auditor', 'goal_advisor'].includes(input.source)) return 'Waiting for Strategic Review'
-		if (input.source === 'architecture_review') return 'Waiting for approved improvement to be applied'
-		if (input.source === 'plan_drift_review') return 'Waiting for Plan Drift Review'
-		return 'Waiting for Pulse'
+		if (input.selected_option_id === 'approve') return 'Approved · waiting for action'
+		if (input.selected_option_id === 'reject') return 'Rejected · waiting for closure'
+		if (input.selected_option_id === 'defer' || input.selected_option_id === 'wait') return 'Deferred'
+		return 'Decision saved · waiting for action'
 	}
 	if (input.status === 'claimed') {
-		if (['technical_review', 'engineering_review', 'ops_review'].includes(input.source)) return 'Technical Review is working'
-		if (['strategic_review', 'strategy_auditor', 'goal_advisor'].includes(input.source)) return 'Strategic Review is working'
-		if (input.source === 'architecture_review') return 'Applying approved improvement'
-		if (input.source === 'plan_drift_review') return 'Plan Drift Review is working'
-		return 'Pulse is working'
+		return 'Decision action is running'
 	}
   if (input.status === 'consumed') return 'Action completed'
   if (input.status === 'dismissed') return 'Dismissed'

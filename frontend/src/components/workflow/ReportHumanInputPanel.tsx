@@ -35,6 +35,7 @@ function keepPreviousInputsWhenUnchanged(
 function sourceLabel(source?: string): string {
   if (source && ['technical_review', 'engineering_review', 'ops_review'].includes(source)) return 'Technical Review'
   if (source && ['strategic_review', 'strategy_auditor', 'goal_advisor'].includes(source)) return 'Strategic Review'
+  if (source === 'architecture_review') return 'Architecture Review'
   if (source === 'plan_drift_review') return 'Plan Drift Review'
   return 'Pulse'
 }
@@ -60,10 +61,6 @@ function selectedOptionTitle(input: ReportHumanInput): string {
 function consumedActorLabel(input: ReportHumanInput): string {
   const actor = input.consumed_by?.trim()
   if (actor && actor.toLowerCase() !== 'agent') return actor
-  return sourceLabel(input.source)
-}
-
-function answerHandlerLabel(input: ReportHumanInput): string {
   return sourceLabel(input.source)
 }
 
@@ -223,7 +220,7 @@ export function ReportHumanInputPanel({
         selected_option_id: selectedOptionId,
         note,
       })
-      useChatStore.getState().addToast(`Answer saved for the next ${answerHandlerLabel(input)} run.`, 'success')
+      useChatStore.getState().addToast('Decision saved. Any approved action will run separately.', 'success')
 		setHistoryOpen(historyMode === 'expanded')
 		requestRefresh()
     } catch (err) {
@@ -338,7 +335,7 @@ export function ReportHumanInputPanel({
 			{(input.status === 'answered' || input.status === 'claimed') && (
                   <div className="flex items-center gap-1.5 rounded-md border border-amber-400/20 bg-amber-400/[0.06] px-2 py-1.5 text-amber-100">
                     <Clock3 className="h-3.5 w-3.5 shrink-0" />
-				<span>{input.status === 'claimed' ? `${answerHandlerLabel(input)} is working on this answer.` : `Answer received — waiting for ${answerHandlerLabel(input)} to act.`}</span>
+				<span>{input.status === 'claimed' ? 'The saved decision is being processed.' : 'Decision saved — any approved action runs separately.'}</span>
                   </div>
                 )}
                 {input.outcome_summary && (
@@ -450,7 +447,7 @@ export function ReportHumanInputPanel({
             </div>
             <div className="text-xs text-muted-foreground">
               {pending.length > 0
-				? `Your answer will be used by the next ${sourceLabel(source)} run.`
+				? 'Review the evidence, ask questions in chat, then approve, reject, or defer.'
                 : 'Previous questions, your answers, and their outcomes.'}
             </div>
           </div>

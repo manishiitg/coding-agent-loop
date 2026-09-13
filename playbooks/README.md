@@ -104,6 +104,8 @@ Each folder is a self-contained skill package: `SKILL.md`, supporting references
 
 Installing a playbook copies its complete package to `<workflow>/skills/agentworks-playbook-<playbook-id>/` and writes an `installed_playbooks` receipt to the workflow manifest with its version, source hash, status, and skill name. The prefix prevents a playbook from overwriting a customer skill with the same ID. The interactive Workflow Builder attaches these workflow-local playbook skills after resolving the workflow path. Supporting references and examples remain available through progressive skill disclosure.
 
+The Installed view compares the receipt version with the current catalog. A newer catalog version is labeled `Update available` with installed/latest versions and upgrade instructions. Updating refreshes only the installed guidance and marks setup `draft`; Builder reviews it against the existing workflow and no operational configuration changes automatically.
+
 Installation does not create schedules, connect accounts, install recommended public software, or execute tests. The Builder follows the installed guidance through its existing chat tools and asks for missing access or decisions. Runtime steps receive only workflow-selected or per-step `enabled_skills`; installed Builder playbooks do not cascade into execution.
 
 ## Foundation and reuse

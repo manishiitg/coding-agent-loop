@@ -63,3 +63,14 @@ export const PLAYBOOK_CATALOG: readonly PlaybookCatalogItem[] = [
 ] as const
 
 export const PLAYBOOK_CATEGORIES = [...new Set(PLAYBOOK_CATALOG.map(playbook => playbook.category))]
+
+export function isNewerPlaybookVersion(candidate: string, installed: string): boolean {
+  const parse = (value: string) => value.split('.').map(part => Number.parseInt(part, 10))
+  const next = parse(candidate)
+  const current = parse(installed)
+  if (next.length !== 3 || current.length !== 3 || [...next, ...current].some(Number.isNaN)) return candidate !== installed
+  for (let index = 0; index < 3; index += 1) {
+    if (next[index] !== current[index]) return next[index] > current[index]
+  }
+  return false
+}

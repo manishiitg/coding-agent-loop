@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Activity, ArrowLeft, BookMarked, CheckCircle2, ChevronDown, ChevronRight, CircleDot, FolderTree, Layers3, Loader2, PackageCheck, Search, Settings2, Wrench } from 'lucide-react'
-import { PLAYBOOK_CATALOG, PLAYBOOK_CATEGORIES, type PlaybookCatalogItem } from './playbookCatalog'
+import { isNewerPlaybookVersion, PLAYBOOK_CATALOG, PLAYBOOK_CATEGORIES, type PlaybookCatalogItem } from './playbookCatalog'
 import { playbooksApi } from '../../api/playbooks'
 import type { InstalledPlaybook } from '../../services/api-types'
 import { useCanWriteWorkflow, READ_ONLY_TITLE } from '../../hooks/useCanWriteWorkflow'
@@ -70,6 +70,7 @@ export default function PlaybooksPanel({ workspacePath }: PlaybooksPanelProps) {
   }
 
   const installedSelection = selected ? installed.find(item => item.id === selected.id) : undefined
+  const updateAvailable = Boolean(installedSelection && selected && isNewerPlaybookVersion(selected.version, installedSelection.version))
   const installSelected = async () => {
     if (!workspacePath || !selected || !canWrite) return
     setInstalling(true)
@@ -179,10 +180,19 @@ export default function PlaybooksPanel({ workspacePath }: PlaybooksPanelProps) {
             <div className="flex items-center gap-2 text-sm font-medium"><CheckCircle2 className="h-4 w-4 text-muted-foreground" /> Setup with Builder</div>
             <p className="mt-1 text-xs leading-5 text-muted-foreground">Installation copies this guide into the workflow, attaches it to Builder chat, and creates a workflow-specific setup record.</p>
             {installedSelection ? (
-              <div className="mt-3 flex flex-wrap items-center gap-2">
-                <span className="inline-flex items-center gap-1.5 rounded-md border border-emerald-500/30 bg-emerald-500/10 px-2.5 py-2 text-xs font-medium text-emerald-700 dark:text-emerald-300"><CheckCircle2 className="h-3.5 w-3.5" /> Installed · {installedSelection.status}</span>
-                <AskAIButton workspacePath={workspacePath} label="Continue setup in Builder" message={`Read the installed skill ${installedSelection.skill_name} with read_skill, then follow it to configure this workflow. ${selected.setupPrompt || 'Inspect the existing workflow first and ask only for required inputs that are missing.'}`} className="flex items-center gap-1.5 rounded-md bg-primary px-3 py-2 text-xs font-medium text-primary-foreground hover:bg-primary/90" />
-              </div>
+              <>
+                <div className="mt-3 flex flex-wrap items-center gap-2">
+                  <span className="inline-flex items-center gap-1.5 rounded-md border border-emerald-500/30 bg-emerald-500/10 px-2.5 py-2 text-xs font-medium text-emerald-700 dark:text-emerald-300"><CheckCircle2 className="h-3.5 w-3.5" /> Installed v{installedSelection.version} · {installedSelection.status}</span>
+                  <AskAIButton workspacePath={workspacePath} label="Continue setup in Builder" message={`Read the installed skill ${installedSelection.skill_name} with read_skill, then follow it to configure this workflow. ${selected.setupPrompt || 'Inspect the existing workflow first and ask only for required inputs that are missing.'}`} className="flex items-center gap-1.5 rounded-md bg-primary px-3 py-2 text-xs font-medium text-primary-foreground hover:bg-primary/90" />
+                </div>
+                {updateAvailable && (
+                  <div className="mt-3 rounded-md border border-amber-500/30 bg-amber-500/10 p-3">
+                    <div className="text-xs font-semibold text-amber-800 dark:text-amber-200">Update available · v{selected.version}</div>
+                    <p className="mt-1 text-xs leading-5 text-muted-foreground">Updating refreshes the installed guidance and marks its setup as draft. Builder should review the new instructions against the current workflow and revalidate affected routes. Workflow steps, goals, metrics, thresholds, schedules, tools, and customer preferences are not changed automatically.</p>
+                    <button type="button" disabled={!canWrite || installing} title={!canWrite ? READ_ONLY_TITLE : undefined} onClick={() => void installSelected()} className="mt-2 inline-flex items-center gap-1.5 rounded-md border border-amber-500/40 bg-background px-2.5 py-1.5 text-xs font-medium text-foreground disabled:cursor-not-allowed disabled:opacity-50">{installing && <Loader2 className="h-3.5 w-3.5 animate-spin" />}{installing ? 'Updating…' : 'Update playbook'}</button>
+                  </div>
+                )}
+              </>
             ) : (
               <button type="button" disabled={!workspacePath || !canWrite || installing} title={!canWrite ? READ_ONLY_TITLE : undefined} onClick={() => void installSelected()} className="mt-3 inline-flex items-center gap-1.5 rounded-md bg-primary px-3 py-2 text-xs font-medium text-primary-foreground disabled:cursor-not-allowed disabled:opacity-50">{installing && <Loader2 className="h-3.5 w-3.5 animate-spin" />}{installing ? 'Installing…' : 'Use playbook'}</button>
             )}
@@ -200,7 +210,7 @@ export default function PlaybooksPanel({ workspacePath }: PlaybooksPanelProps) {
       </div>
 
       {loading ? <div className="flex flex-1 items-center justify-center gap-2 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" /> Loading playbooks…</div> : tab === 'installed' ? (
-        installed.length > 0 ? <div className="mt-3 min-h-0 flex-1 space-y-2 overflow-y-auto">{installed.map(item => <button key={item.id} type="button" onClick={() => { const playbook = catalog.find(value => value.id === item.id); if (playbook) setSelected(playbook) }} className="flex w-full items-center gap-3 rounded-lg border border-border bg-card p-3 text-left hover:border-primary/40"><div className="flex h-8 w-8 items-center justify-center rounded-md bg-emerald-500/10 text-emerald-600"><CheckCircle2 className="h-4 w-4" /></div><div className="min-w-0 flex-1"><div className="truncate text-sm font-medium">{item.title}</div><div className="mt-0.5 text-xs text-muted-foreground">{item.category} · v{item.version} · {item.status}</div></div><ChevronRight className="h-4 w-4 text-muted-foreground" /></button>)}</div> : (
+        installed.length > 0 ? <div className="mt-3 min-h-0 flex-1 space-y-2 overflow-y-auto">{installed.map(item => { const latest = catalog.find(value => value.id === item.id); const hasUpdate = Boolean(latest && isNewerPlaybookVersion(latest.version, item.version)); return <button key={item.id} type="button" onClick={() => { if (latest) setSelected(latest) }} className="flex w-full items-center gap-3 rounded-lg border border-border bg-card p-3 text-left hover:border-primary/40"><div className="flex h-8 w-8 items-center justify-center rounded-md bg-emerald-500/10 text-emerald-600"><CheckCircle2 className="h-4 w-4" /></div><div className="min-w-0 flex-1"><div className="flex items-center gap-2"><span className="truncate text-sm font-medium">{item.title}</span>{hasUpdate && <span className="shrink-0 rounded-full bg-amber-500/15 px-2 py-0.5 text-[10px] font-medium text-amber-700 dark:text-amber-300">Update available</span>}</div><div className="mt-0.5 text-xs text-muted-foreground">{item.category} · v{item.version} · {item.status}{hasUpdate ? ` · latest v${latest?.version}` : ''}</div></div><ChevronRight className="h-4 w-4 text-muted-foreground" /></button>})}</div> : (
         <div className="flex min-h-0 flex-1 flex-col items-center justify-center px-6 text-center">
           <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-muted text-muted-foreground"><BookMarked className="h-5 w-5" /></div>
           <h3 className="mt-3 text-sm font-semibold text-foreground">No playbooks installed</h3>

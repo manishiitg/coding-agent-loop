@@ -3,6 +3,7 @@ import { act } from 'react'
 import { createRoot } from 'react-dom/client'
 import { expect, it, vi } from 'vitest'
 import PlaybooksPanel from './PlaybooksPanel'
+import { playbooksApi } from '../../api/playbooks'
 
 vi.mock('../../api/playbooks', () => ({
   playbooksApi: {
@@ -83,13 +84,40 @@ it('opens a catalog playbook and installs it for Builder setup', async () => {
     expect(container.textContent).not.toContain('Plan drift review')
 
     await click([...container.querySelectorAll('button')].find(button => button.textContent?.includes('Use playbook')) || null)
-    expect(container.textContent).toContain('Installed · draft')
+    expect(container.textContent).toContain('Installed v0.6.0 · draft')
     expect(container.textContent).toContain('Continue setup in Builder')
 
     await click([...container.querySelectorAll('button')].find(button => button.textContent?.includes('Back to catalog')) || null)
     await click([...container.querySelectorAll('[role="tab"]')].find(button => button.textContent?.includes('Installed')) || null)
     expect(container.textContent).toContain('Basic Browser Setup')
     expect(container.textContent).toContain('Browser QA · v0.6.0 · draft')
+  } finally {
+    await act(async () => root.unmount())
+  }
+})
+
+it('shows an available version and refreshes the installed playbook without claiming workflow changes', async () => {
+  vi.mocked(playbooksApi.listInstalled).mockResolvedValueOnce([{
+    id: 'basic-browser-setup', title: 'Basic Browser Setup', version: '0.5.0', category: 'Browser QA',
+    skill_name: 'agentworks-playbook-basic-browser-setup', source_hash: 'sha256:old', status: 'ready', installed_at: '2026-09-01T00:00:00Z',
+  }])
+  const container = document.createElement('div')
+  const root = createRoot(container)
+  try {
+    await act(async () => {
+      root.render(<PlaybooksPanel workspacePath="Workflow/demo" />)
+      await Promise.resolve()
+    })
+    await click([...container.querySelectorAll('[role="tab"]')].find(button => button.textContent?.includes('Installed')) || null)
+    expect(container.textContent).toContain('Update available')
+    expect(container.textContent).toContain('latest v0.6.0')
+    await click([...container.querySelectorAll('button')].find(button => button.textContent?.includes('Basic Browser Setup')) || null)
+    expect(container.textContent).toContain('Installed v0.5.0 · ready')
+    expect(container.textContent).toContain('Update available · v0.6.0')
+    expect(container.textContent).toContain('not changed automatically')
+    await click([...container.querySelectorAll('button')].find(button => button.textContent?.includes('Update playbook')) || null)
+    expect(playbooksApi.install).toHaveBeenCalledWith('Workflow/demo', 'basic-browser-setup')
+    expect(container.textContent).toContain('Installed v0.6.0 · draft')
   } finally {
     await act(async () => root.unmount())
   }

@@ -132,6 +132,8 @@ An installed playbook is a customer-specific snapshot and adaptation record. The
 
 Source updates never silently rewrite an installed workflow. The product compares versions/digests, shows relevant changes, and lets the builder merge them while preserving customer overrides.
 
+When the catalog version is newer, the installed-playbook UI shows both versions and an update action. Updating refreshes the workflow-local playbook package and resets its setup status to `draft`; it does not edit the plan, goals, metrics, thresholds, triggers, schedules, capabilities, reports, or customer preferences. Builder then reviews the new guidance against the current workflow, proposes only applicable changes, and revalidates affected routes before the setup can return to `ready`.
+
 ## Versioning
 
 - **Patch:** wording, examples, or corrections without changing expected behavior.

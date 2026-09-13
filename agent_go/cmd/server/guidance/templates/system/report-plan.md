@@ -6,6 +6,11 @@ platform-generated page navigation.
 
 - The HTML decides whether to use tabs, a sidebar, anchored sections,
   expandable panels, or one scrolling briefing.
+- Design tablet-first for the default ~768px Report pane: one or two primary
+  columns, 44px touch targets, wrapping/scroll-safe tabs, and tables that reflow
+  or scroll within their own labeled region. Verify 480px mobile and 1280px
+  laptop as required secondary widths; wider layouts progressively enhance the
+  tablet composition rather than defining it.
 - Read current durable data through `window.report.query`, `get`, `getText`,
   `getHtml`, `renderMarkdown`, `fileUrl`, and `openFile`. Write a plain field
   on an existing row (e.g. an inline Approve button) with
@@ -31,6 +36,7 @@ platform-generated page navigation.
   approval buttons are supported through `updateField`/`updateFields` followed
   by an optional `sendChatMessage` request; do not duplicate the platform's
   decision store or write its records through the business-field API.
-- After editing, call `validate_report_html()` and repair every error.
+- After editing, call `validate_report_html()` and repair every error, then call
+  `preview_report()` and inspect tablet, mobile, and desktop screenshots.
 
 Load `references/reporting-policy.md` for the complete authoring contract.

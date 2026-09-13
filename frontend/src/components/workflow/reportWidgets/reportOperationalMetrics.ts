@@ -108,10 +108,11 @@ const styles = `
 .grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin-top:12px}article{min-width:0;padding:20px;border:1px solid color-mix(in srgb,currentColor 18%,transparent);border-radius:14px}
 .value{font-size:30px;font-weight:600;font-variant-numeric:tabular-nums;margin-top:12px}.meta{font-size:12px;opacity:.7;margin-top:8px}
 .eyebrow{font-size:11px;text-transform:uppercase;letter-spacing:.07em;opacity:.65;margin-bottom:4px}
-details{margin-top:16px}summary{cursor:pointer;font-size:12px}details p{font-size:12px;white-space:pre-wrap;margin-top:10px}
-.scroll{overflow:auto;max-height:360px;margin-top:12px}table{width:100%;border-collapse:collapse;text-align:left;font-size:12px}th,td{padding:9px 14px 9px 0;vertical-align:top;border-bottom:1px solid color-mix(in srgb,currentColor 12%,transparent)}
+details{margin-top:16px}summary{cursor:pointer;font-size:12px;min-height:44px;padding:12px 0}details p{font-size:12px;white-space:pre-wrap;margin-top:10px}
+.scroll{overflow:auto;overscroll-behavior-inline:contain;max-height:360px;margin-top:12px}table{width:100%;border-collapse:collapse;text-align:left;font-size:12px}th,td{padding:9px 14px 9px 0;vertical-align:top;border-bottom:1px solid color-mix(in srgb,currentColor 12%,transparent)}
 .message{padding:20px;border:1px dashed color-mix(in srgb,currentColor 25%,transparent);border-radius:14px}
 svg{height:120px;width:100%;color:#0ea5e9;display:block;margin-top:16px}.dates{display:flex;justify-content:space-between;font-size:11px;opacity:.7}
+@container(max-width:800px){article,.message{padding:16px}.value{font-size:28px}}
 @container(max-width:620px){.grid{grid-template-columns:1fr}}
 `;
 const versions = new WeakMap<Element, number>();

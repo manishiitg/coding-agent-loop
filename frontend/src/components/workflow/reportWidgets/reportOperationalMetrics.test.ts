@@ -98,6 +98,9 @@ it("keeps criteria separate, with latest results and explicit history bounds", a
   expect(evaluations.possibly_truncated).toBe(false);
   const container = host();
   await renderReportEvaluations(document, data, container);
+  const css = container.shadowRoot!.querySelector("style")!.textContent;
+  expect(css).toContain("@container(max-width:800px)");
+  expect(css).toContain("min-height:44px");
   expect(container.shadowRoot!.textContent).toContain("Score not captured");
   expect(container.shadowRoot!.textContent).toContain(
     "Previous evaluation criteria",

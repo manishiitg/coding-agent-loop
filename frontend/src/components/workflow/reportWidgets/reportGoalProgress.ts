@@ -133,10 +133,11 @@ header{display:flex;justify-content:space-between;align-items:flex-start;flex-wr
 .unit{font-size:14px;font-weight:400;opacity:.65;margin-left:8px}.meta{font-size:12px;opacity:.7;margin-top:8px}
 svg{width:100%;height:90px;display:block;color:#0ea5e9;margin-top:16px}.primary svg{height:140px}
 .dates{display:flex;justify-content:space-between;font-size:11px;opacity:.65}
-details{margin-top:16px;font-size:12px}summary{cursor:pointer;opacity:.75}dl{margin:12px 0}dt{font-weight:600;margin-top:8px}dd{margin:0;opacity:.7}
-.history{max-height:260px;overflow:auto}table{width:100%;border-collapse:collapse;text-align:left;font-size:12px}th,td{padding:8px 12px 8px 0;vertical-align:top;border-bottom:1px solid color-mix(in srgb,currentColor 12%,transparent)}
-@container (max-width:620px){.grid{grid-template-columns:1fr}}
+details{margin-top:16px;font-size:12px}summary{cursor:pointer;opacity:.75;min-height:44px;padding:12px 0}dl{margin:12px 0}dt{font-weight:600;margin-top:8px}dd{margin:0;opacity:.7}
+.history{max-height:260px;overflow:auto;overscroll-behavior-inline:contain}table{width:100%;border-collapse:collapse;text-align:left;font-size:12px}th,td{padding:8px 12px 8px 0;vertical-align:top;border-bottom:1px solid color-mix(in srgb,currentColor 12%,transparent)}
 .message{padding:20px;border:1px dashed color-mix(in srgb,currentColor 25%,transparent);border-radius:14px}
+@container (max-width:800px){article,.message{padding:16px}.value{font-size:28px}.primary .value{font-size:34px}}
+@container (max-width:620px){.grid{grid-template-columns:1fr}}
 `;
 
 // Shadow DOM contains the default styling without making report authors copy CSS.

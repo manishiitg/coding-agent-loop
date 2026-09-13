@@ -109,6 +109,9 @@ describe("report goal metrics", () => {
     expect(host.shadowRoot!.textContent).toContain("400");
     expect(host.shadowRoot!.textContent).toContain("db/sample.json");
     expect(host.shadowRoot!.querySelectorAll("svg")).toHaveLength(1);
+    const css = host.shadowRoot!.querySelector("style")!.textContent;
+    expect(css).toContain("@container (max-width:800px)");
+    expect(css).toContain("min-height:44px");
     await renderReportGoalProgress(document, fixture("error", null), host);
     expect(host.shadowRoot!.querySelectorAll("article")).toHaveLength(1);
     expect(host.shadowRoot!.querySelector(".value")!.textContent).toBe("—ms");

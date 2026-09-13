@@ -1,7 +1,11 @@
 # Reusable report data and widgets
 
 Workflow reports can read existing platform data or render optional prebuilt sections.
-The widgets include responsive styles; authors only choose where to place them.
+The widgets are tablet-first and include responsive styles; authors only choose
+where to place them. They use at most two columns in the default tablet pane,
+collapse to one column in narrower containers, and keep expandable controls
+touch-safe. Reports must still preview the full composition at tablet, mobile,
+and desktop widths.
 
 | Data function | Optional widget | Source |
 | --- | --- | --- |

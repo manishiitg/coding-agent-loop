@@ -14,6 +14,12 @@ generation step.
   report has multiple views or sections.
 - Keep CSS and JavaScript inline. Do not pin body height or create a nested
   scroll container.
+- Design for the default Tablet report pane first (~768px). Use one or two
+  primary columns, responsive spacing/type, 44px minimum touch targets, no
+  hover-only interactions, and tabs that wrap or scroll without clipping.
+  Tables must reflow or stay inside an intentional horizontal scroller; the
+  page itself must never overflow. Treat 480px mobile and 1280px laptop as
+  required secondary widths, with laptop as progressive enhancement.
 - Read durable live data with `window.report.query`, `get`, `getText`,
   `getHtml`, `renderMarkdown`, `fileUrl`, `mediaUrl`, and `openFile`. Write a business
   field on an already-existing row with `window.report.updateField`/
@@ -58,7 +64,8 @@ generation step.
   visual review is requested: it opens the report in a real headless browser
   through the same runtime the Report tab uses, waits for it to settle, and
   returns whether it errored, its script/data-fetch errors, its tab labels,
-  any `Loading…` placeholder still on screen, and screenshots per theme/width
+  any `Loading…` placeholder still on screen, and screenshots at tablet
+  (primary), mobile, and desktop widths in both themes
   under `db/reports/preview/` — open them with `read_image`. Prefer it over
   asking the user to open the Report tab for you.
 - Always include one section, as its own top-level tab (not a subsection

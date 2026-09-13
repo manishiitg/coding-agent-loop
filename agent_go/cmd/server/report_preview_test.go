@@ -5,6 +5,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -129,6 +130,25 @@ func TestReportPreviewChoices(t *testing.T) {
 	}
 	if got := reportPreviewChoices("sepia", both); len(got) != 2 {
 		t.Fatalf("unknown -> both, got %v", got)
+	}
+}
+
+func TestReportPreviewWidthsDefaultTabletFirstAndPreserveLegacyBoth(t *testing.T) {
+	t.Parallel()
+	if got := reportPreviewWidthChoices(nil); !reflect.DeepEqual(got, []string{"tablet", "mobile", "desktop"}) {
+		t.Fatalf("default widths = %v", got)
+	}
+	if got := reportPreviewWidthChoices("tablet"); !reflect.DeepEqual(got, []string{"tablet"}) {
+		t.Fatalf("tablet width = %v", got)
+	}
+	if got := reportPreviewWidthChoices("both"); !reflect.DeepEqual(got, []string{"desktop", "mobile"}) {
+		t.Fatalf("legacy both widths = %v", got)
+	}
+	if got := reportPreviewWidthChoices("unknown"); !reflect.DeepEqual(got, []string{"tablet", "mobile", "desktop"}) {
+		t.Fatalf("unknown widths = %v", got)
+	}
+	if reportPreviewWidthPixels("tablet") != 768 || reportPreviewWidthPixels("mobile") != 480 || reportPreviewWidthPixels("desktop") != 1280 {
+		t.Fatal("preview width pixel contract changed")
 	}
 }
 

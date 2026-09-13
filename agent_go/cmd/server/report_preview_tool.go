@@ -25,6 +25,7 @@ const (
 	reportPreviewSettleTimeout = 20 * time.Second
 	reportPreviewPollInterval  = 500 * time.Millisecond
 	reportPreviewDesktopWidth  = 1280
+	reportPreviewTabletWidth   = 768
 	reportPreviewMobileWidth   = 480
 	reportPreviewScreenshotDir = "db/reports/preview"
 )
@@ -65,8 +66,8 @@ func (api *StreamingAPI) registerReportPreviewTool(registrar definitionToolRegis
 			},
 			"width": map[string]interface{}{
 				"type":        "string",
-				"enum":        []string{"desktop", "mobile", "both"},
-				"description": "Viewport width(s): desktop (1280px), mobile (480px), or both. Default both.",
+				"enum":        []string{"tablet", "mobile", "desktop", "all", "both"},
+				"description": "Viewport width(s): tablet (768px, primary), mobile (480px), desktop (1280px), or all. Default all. Legacy both means desktop + mobile.",
 			},
 		},
 		"additionalProperties": false,
@@ -82,6 +83,31 @@ func (api *StreamingAPI) registerReportPreviewTool(registrar definitionToolRegis
 		3*time.Minute,
 		"workflow",
 	)
+}
+
+func reportPreviewWidthChoices(value interface{}) []string {
+	choice := strings.ToLower(strings.TrimSpace(fmt.Sprint(value)))
+	switch choice {
+	case "", "all", "<nil>":
+		return []string{"tablet", "mobile", "desktop"}
+	case "both":
+		return []string{"desktop", "mobile"}
+	case "tablet", "mobile", "desktop":
+		return []string{choice}
+	default:
+		return []string{"tablet", "mobile", "desktop"}
+	}
+}
+
+func reportPreviewWidthPixels(width string) int {
+	switch width {
+	case "mobile":
+		return reportPreviewMobileWidth
+	case "desktop":
+		return reportPreviewDesktopWidth
+	default:
+		return reportPreviewTabletWidth
+	}
 }
 
 func reportPreviewChoices(value interface{}, both []string) []string {
@@ -104,7 +130,7 @@ func (api *StreamingAPI) runReportPreview(ctx context.Context, sessionID, userID
 		return "", fmt.Errorf("preview_report needs a workflow workspace")
 	}
 	themes := reportPreviewChoices(args["theme"], []string{"dark", "light"})
-	widths := reportPreviewChoices(args["width"], []string{"desktop", "mobile"})
+	widths := reportPreviewWidthChoices(args["width"])
 
 	token, err := mintReportPreviewToken(&UserClaims{UserID: userID, Username: userID}, workspacePath)
 	if err != nil {
@@ -112,7 +138,7 @@ func (api *StreamingAPI) runReportPreview(ctx context.Context, sessionID, userID
 	}
 	pageURL := fmt.Sprintf("%s%s?workspace=%s&token=%s&theme=%s&width=%d",
 		strings.TrimRight(api.GetCodeExecAPIURL(), "/"), reportPreviewPagePath,
-		url.QueryEscape(workspacePath), url.QueryEscape(token), themes[0], reportPreviewDesktopWidth)
+		url.QueryEscape(workspacePath), url.QueryEscape(token), themes[0], reportPreviewTabletWidth)
 
 	// Always headless and always its own session: the preview must never take
 	// over the user's CDP Chrome or a browser session the workflow is using.
@@ -192,10 +218,7 @@ func (api *StreamingAPI) runReportPreview(ctx context.Context, sessionID, userID
 				log.Printf("[REPORT_PREVIEW] set theme %s: %v", theme, err)
 			}
 			for _, width := range widths {
-				px := reportPreviewDesktopWidth
-				if width == "mobile" {
-					px = reportPreviewMobileWidth
-				}
+				px := reportPreviewWidthPixels(width)
 				if _, err := eval(fmt.Sprintf("window.__reportPreview.setWidth(%d)", px)); err != nil {
 					log.Printf("[REPORT_PREVIEW] set width %d: %v", px, err)
 				}

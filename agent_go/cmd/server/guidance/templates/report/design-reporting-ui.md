@@ -77,6 +77,18 @@ first; include the exact item/version and intended route, and distinguish
 approval saved, request queued, and evidence of actual completion. Never
 send during rendering or polling.
 
+**Design tablet-first.** AgentWorks opens a new workflow report in the Tablet
+preview by default, normally as roughly half of the application canvas. Treat a
+768px-wide report pane as the primary composition—not a shrunken laptop page.
+Lead with one or two columns, let dense secondary content progressively expand
+on wider laptop panes, and stack cleanly at mobile width. Avoid four-card KPI
+rows, fixed-width sidebars, hover-only interactions, and controls that depend on
+a mouse. Tabs and action controls must wrap or scroll safely and provide at
+least a 44px touch target. Tables must reflow to a readable card/list treatment
+or use an explicitly labeled horizontal scroller without making the page itself
+overflow. Use responsive padding/type so 480px remains readable without making
+the tablet view sparse.
+
 1. Decide the reader's questions and the durable DB/asset evidence that answers
    them. Design one coherent reporting experience; use internal views only for
    genuinely distinct questions.
@@ -144,12 +156,13 @@ send during rendering or polling.
 6. Call `preview_report` after validation passes. It renders the report in a
    real headless browser through the same runtime the Report tab uses and
    reports whether it settled, its script/fetch errors, its tab labels, any
-   `Loading…` text never replaced, and screenshots per theme/width — open
+   `Loading…` text never replaced, and screenshots at tablet (primary), mobile,
+   and desktop widths in both themes — open
    them with `read_image` and judge layout, contrast, and empty states
    directly, rather than asking the user to check.
-7. When deeper visual review is requested beyond what `preview_report`
-   already covers, also inspect the Report tab at desktop/tablet/mobile
-   widths and both themes; otherwise stop after `preview_report`.
+7. Tablet/mobile/desktop verification is required for every authored or revised
+   report. When deeper visual review is requested beyond `preview_report`, also
+   inspect those device modes in the live Report tab.
 
 Before writing a large report, briefly state the sections/views you will create
 and what each answers, including the required activity/actions section above.

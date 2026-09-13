@@ -332,6 +332,24 @@ func TestSendComposedGogSendsHTMLOnlyForRichEmail(t *testing.T) {
 	}
 }
 
+func TestSendComposedGogConvertsPlainBodyToHTMLOnly(t *testing.T) {
+	argvFile := filepath.Join(t.TempDir(), "argv.log")
+	path := fakeGog(t, "", argvFile)
+
+	g := &GmailService{}
+	_, err := g.sendComposedGog(context.Background(), path, &GmailConfig{Token: "tok"}, "to@example.com", nil, "Subject", "hello <team>\nnext", "", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	argv := strings.Join(readArgvLines(t, argvFile), " ")
+	if !strings.Contains(argv, `--body-html <div style="white-space: pre-wrap;">hello &lt;team&gt;`) {
+		t.Fatalf("plain content was not safely converted to HTML: %q", argv)
+	}
+	if strings.Contains(argv, "--body hello") {
+		t.Fatalf("plain MIME body must not be sent: %q", argv)
+	}
+}
+
 func TestImportRefreshTokenIntoGogRegistersClientBeforeToken(t *testing.T) {
 	binDir := t.TempDir()
 	argvFile := filepath.Join(t.TempDir(), "argv.log")

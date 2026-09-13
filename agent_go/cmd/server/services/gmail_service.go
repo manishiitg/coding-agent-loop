@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"html"
 	"io"
 	"log"
 	"mime"
@@ -693,44 +694,11 @@ func (g *GmailService) SendUserNotification(ctx context.Context, message string,
 	return g.deliver(ctx, destGmailConnectionIDs(dest), destWorkflowName(dest), to, cc, subject, body, htmlBody, attachments)
 }
 
-// send shells out to `gws gmail +send` (or gog gmail send, see gmail_gog.go)
-// and returns the sent message ID.
-func (g *GmailService) send(ctx context.Context, cfg *GmailConfig, to, subject, body string) (string, error) {
-	g.mu.RLock()
-	gwsPath := g.gwsPath
-	useGog, gogPath := g.useGog, g.gogPath
-	g.mu.RUnlock()
-	if useGog || (cfg != nil && cfg.UseGogBackend) {
-		return g.sendGog(ctx, gogPath, cfg, to, subject, body)
-	}
-	if strings.TrimSpace(gwsPath) == "" {
-		gwsPath = "gws"
-	}
-
-	// RFC 2047-encode the subject so non-ASCII (em dash, emoji, accents) renders
-	// correctly. gws passes --subject verbatim into the header and does NOT encode
-	// it, so a raw "Trading workflow — test" shows a broken character in the client.
-	// mime.QEncoding.Encode is a no-op for pure-ASCII subjects. (The attachment path,
-	// buildGmailMIME, already encodes — this brings the plain path in line.)
-	args := []string{"gmail", "+send", "--to", to, "--subject", mime.QEncoding.Encode("UTF-8", subject), "--body", body, "--format", "json"}
-	cmd := exec.CommandContext(ctx, gwsPath, args...)
-	cmd.Env = gmailChildEnv(cfg)
-
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-	if err := cmd.Run(); err != nil {
-		return "", fmt.Errorf("gws gmail +send failed: %w: %s", err, strings.TrimSpace(stderr.String()))
-	}
-	return parseGwsMessageID(stdout.Bytes()), nil
-}
-
 // maxGmailAttachmentBytes caps the total attachment payload per message to keep
 // well under Gmail's raw-send limit and avoid pathological memory use.
 const maxGmailAttachmentBytes = 20 * 1024 * 1024 // 20 MB
 
-// deliver routes to the simple `+send` helper for plain text, or to the raw
-// MIME path when attachments are present (gws `+send` can't attach files).
+// deliver sends every notification through the HTML-capable path.
 func (g *GmailService) deliver(ctx context.Context, connectionIDs []string, workflowName, to string, cc []string, subject, body, htmlBody string, attachments []string) (string, error) {
 	// No senders named means "the default connection" — expressed as a
 	// single-element run so the fan-out path below is the only send path and
@@ -753,14 +721,9 @@ func (g *GmailService) deliver(ctx context.Context, connectionIDs []string, work
 			continue
 		}
 
-		var msgID string
-		// The plain gws --body path can't carry HTML or attachments, so route
-		// through the raw-MIME path whenever either is present.
-		if htmlBody == "" && len(attachments) == 0 && len(cc) == 0 && !strings.Contains(to, ",") {
-			msgID, err = g.send(ctx, cfg, to, subject, body)
-		} else {
-			msgID, err = g.sendRaw(ctx, cfg, to, cc, subject, body, htmlBody, attachments)
-		}
+		// All outbound notifications use the rich-message path. When a caller
+		// supplies only text, sendRaw safely converts it to a single HTML body.
+		msgID, err := g.sendRaw(ctx, cfg, to, cc, subject, body, htmlBody, attachments)
 		g.recordSend("send", resolvedID, workflowName, to, cc, msgID, err)
 		if err != nil {
 			failures = append(failures, fmt.Sprintf("%s: %v", senderLabel(resolvedID), err))
@@ -792,6 +755,7 @@ func senderLabel(resolvedID string) string {
 // `gws gmail users messages send --json '{"raw": <base64url>}'` (or gog's
 // `gmail send --raw-file`, see gmail_gog.go).
 func (g *GmailService) sendRaw(ctx context.Context, cfg *GmailConfig, to string, cc []string, subject, body, htmlBody string, attachments []string) (string, error) {
+	htmlBody = gmailHTMLBody(body, htmlBody)
 	g.mu.RLock()
 	gwsPath := g.gwsPath
 	useGog, gogPath := g.useGog, g.gogPath
@@ -826,6 +790,13 @@ func (g *GmailService) sendRaw(ctx context.Context, cfg *GmailConfig, to string,
 		return "", fmt.Errorf("gws gmail users messages send failed: %w: %s", err, detail)
 	}
 	return parseGwsMessageID(stdout.Bytes()), nil
+}
+
+func gmailHTMLBody(body, htmlBody string) string {
+	if strings.TrimSpace(htmlBody) != "" {
+		return htmlBody
+	}
+	return `<div style="white-space: pre-wrap;">` + html.EscapeString(body) + `</div>`
 }
 
 // buildGmailMIME assembles a multipart/mixed RFC 2822 message: one UTF-8 body
@@ -977,7 +948,7 @@ func (g *GmailService) sendTest(ctx context.Context, connectionID, to string, bl
 	if conn, ok := g.GetConnection(connectionID); ok {
 		body += fmt.Sprintf("\n\nSent via connection %s (%s).", conn.ID, conn.DisplayName)
 	}
-	msgID, sendErr := g.send(ctx, cfg, to, "[Agent] Gmail test message", body)
+	msgID, sendErr := g.sendRaw(ctx, cfg, to, nil, "[Agent] Gmail test message", body, "", nil)
 	g.recordSend("test_send", resolvedID, "", to, nil, msgID, sendErr)
 	return msgID, sendErr
 }

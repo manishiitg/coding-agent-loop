@@ -277,6 +277,7 @@ func (g *GmailService) sendComposedGog(ctx context.Context, gogPath string, cfg 
 	if err != nil {
 		return "", err
 	}
+	htmlBody = gmailHTMLBody(body, htmlBody)
 	args := gogBaseArgs(authArgs)
 	args = append(args, "gmail", "send",
 		"--to", to,
@@ -284,11 +285,7 @@ func (g *GmailService) sendComposedGog(ctx context.Context, gogPath string, cfg 
 	if len(cc) > 0 {
 		args = append(args, "--cc", strings.Join(normalizeEmailList(cc), ","))
 	}
-	if strings.TrimSpace(htmlBody) != "" {
-		args = append(args, "--body-html", htmlBody)
-	} else {
-		args = append(args, "--body", body)
-	}
+	args = append(args, "--body-html", htmlBody)
 	var total int64
 	for _, attachment := range attachments {
 		info, statErr := os.Stat(attachment)

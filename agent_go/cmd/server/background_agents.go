@@ -33,6 +33,10 @@ const (
 	// Give the builder's current turn time to receive the execute_step result and
 	// establish context before its completion is injected as an auto-notification.
 	minimumWorkflowStepAutoNotificationAge = 20 * time.Second
+	// Completion/failure notifications remain durable, but once delivery is this
+	// late the message must say when the work actually finished rather than
+	// presenting stale state as new.
+	delayedAutoNotificationAfter = 5 * time.Minute
 )
 
 // HistoryEntry represents a single message from the sub-agent's conversation history
@@ -121,6 +125,7 @@ const (
 	completionNotificationNone completionNotificationState = iota
 	completionNotificationInFlight
 	completionNotificationDelivered
+	completionNotificationSuperseded
 )
 
 func (a *BackgroundAgent) beginCompletionNotification() bool {
@@ -145,6 +150,12 @@ func (a *BackgroundAgent) finishCompletionNotification(delivered bool) {
 	if a.completionNotification == completionNotificationInFlight {
 		a.completionNotification = completionNotificationNone
 	}
+}
+
+func (a *BackgroundAgent) supersedeCompletionNotification() {
+	a.mu.Lock()
+	a.completionNotification = completionNotificationSuperseded
+	a.mu.Unlock()
 }
 
 // MarkStartNotified records that the main agent has been notified about this
@@ -420,7 +431,7 @@ func (a *BackgroundAgent) GetSnapshot() BackgroundAgentSnapshot {
 		ReasoningLevel:     a.ReasoningLevel,
 		ModelID:            a.ModelID,
 		Metadata:           a.Metadata,
-		CompletionNotified: a.completionNotification == completionNotificationDelivered,
+		CompletionNotified: a.completionNotification == completionNotificationDelivered || a.completionNotification == completionNotificationSuperseded,
 	}
 	if a.CompletedAt != nil {
 		t := *a.CompletedAt
@@ -1111,6 +1122,13 @@ func (api *StreamingAPI) hasActiveTurnCancel(sessionID string) bool {
 	return ok
 }
 
+func (api *StreamingAPI) storedAgentTurnInProgress(sessionID string) bool {
+	api.sessionAgentsMux.RLock()
+	llmAgent := api.sessionAgents[sessionID]
+	api.sessionAgentsMux.RUnlock()
+	return llmAgent != nil && llmAgent.TurnInProgress()
+}
+
 // clearStaleBusyIfNeeded atomically checks whether the busy flag is stale and,
 // if so, clears it. It holds sessionBusyMu.Lock() for the entire read-and-clear
 // sequence so two concurrent callers cannot both pass the staleness check and
@@ -1135,8 +1153,9 @@ func (api *StreamingAPI) clearStaleBusyIfNeeded(sessionID string) bool {
 // isSessionBusyForAutoNotification is intentionally narrower than isSessionBusy.
 // Auto-notifications must be serialized behind real user/synthetic turns, but a
 // stale busy flag should not permanently strand workflow step start/completion
-// notifications. If the busy flag has no active cancel function behind it and
-// has aged out, clear it so the synthetic turn can resume the provider session.
+// notifications. Only when the flag has aged out and every authoritative turn
+// signal (lane, durable session lifecycle, cancel handle, tmux) is absent may it
+// be cleared so a stranded notification can resume the provider session.
 func (api *StreamingAPI) isSessionBusyForAutoNotification(sessionID string) bool {
 	// PLAT-113: the input lane is the authority for "a turn is occupying this
 	// session"; sessionBusy below is a display flag and is deliberately never set
@@ -1153,7 +1172,7 @@ func (api *StreamingAPI) isSessionBusyForAutoNotification(sessionID string) bool
 	if !api.isSessionBusy(sessionID) {
 		return false
 	}
-	if api.isSyntheticTurn(sessionID) || api.hasActiveTurnCancel(sessionID) {
+	if api.isSyntheticTurn(sessionID) || api.hasActiveTurnCancel(sessionID) || api.storedAgentTurnInProgress(sessionID) {
 		return true
 	}
 	if api.terminalStore != nil && api.terminalStore.SessionHasBusyCodingTmux(sessionID) {
@@ -1807,10 +1826,79 @@ func autoNotificationDisplayPath(value string) string {
 	return path
 }
 
+func completionSupersessionKey(snap BackgroundAgentSnapshot) string {
+	if snap.Metadata == nil {
+		return ""
+	}
+	stepID := strings.TrimSpace(snap.Metadata["step_id"])
+	if stepID == "" {
+		return ""
+	}
+	return strings.Join([]string{
+		strings.TrimSpace(snap.Metadata["workflow_path"]),
+		stepID,
+		strings.TrimSpace(snap.Metadata["item_id"]),
+	}, "\x00")
+}
+
+func completionFinishedAt(snap BackgroundAgentSnapshot) time.Time {
+	if snap.CompletedAt != nil {
+		return *snap.CompletedAt
+	}
+	return snap.CreatedAt
+}
+
+// filterSupersededCompletions drops an undelivered execution only when a newer
+// terminal execution exists for the same workflow step/item. Progress is a
+// snapshot, so replaying the older state after the newer result is available
+// is misleading; unrelated agents and message-sequence items remain distinct.
+func (api *StreamingAPI) filterSupersededCompletions(sessionID string, agentIDs []string) []string {
+	if api.bgAgentRegistry == nil || len(agentIDs) == 0 {
+		return agentIDs
+	}
+	all := api.bgAgentRegistry.GetAll(sessionID)
+	filtered := make([]string, 0, len(agentIDs))
+	for _, agentID := range agentIDs {
+		agent := api.bgAgentRegistry.Get(sessionID, agentID)
+		if agent == nil {
+			continue
+		}
+		snap := agent.GetSnapshot()
+		key := completionSupersessionKey(snap)
+		if key == "" {
+			filtered = append(filtered, agentID)
+			continue
+		}
+		finishedAt := completionFinishedAt(snap)
+		supersededBy := ""
+		for _, candidate := range all {
+			if candidate == nil || candidate.ID == agentID {
+				continue
+			}
+			candidateSnap := candidate.GetSnapshot()
+			if !isTerminalBackgroundAgentStatus(candidateSnap.Status) || candidateSnap.Status == BGAgentCanceled {
+				continue
+			}
+			if completionSupersessionKey(candidateSnap) == key && completionFinishedAt(candidateSnap).After(finishedAt) {
+				supersededBy = candidateSnap.ID
+				break
+			}
+		}
+		if supersededBy == "" {
+			filtered = append(filtered, agentID)
+			continue
+		}
+		agent.supersedeCompletionNotification()
+		log.Printf("[BG AGENT] Suppressed stale completion %s for session %s; newer execution %s owns the same workflow step", agentID, sessionID, supersededBy)
+	}
+	return filtered
+}
+
 // processBatchedBackgroundAgentCompletions builds a single [AUTO-NOTIFICATION] message for one or more
 // completed agents and fires ONE synthetic turn. Subsequent drained completions are chained via
 // the synthetic turn's own defer, avoiding concurrent StreamWithEvents calls.
 func (api *StreamingAPI) processBatchedBackgroundAgentCompletions(sessionID string, agentIDs []string) {
+	agentIDs = api.filterSupersededCompletions(sessionID, agentIDs)
 	if len(agentIDs) == 0 {
 		return
 	}
@@ -1902,7 +1990,8 @@ func (api *StreamingAPI) processBatchedBackgroundAgentCompletions(sessionID stri
 		}
 		actionHint := buildWorkshopActionHint(workshopMode, isLockCode, lockCodeConsecutiveFailures, lockCodeNeedsReview, snap.Status == BGAgentFailed)
 		batchContext := autoNotificationBracketContext(snap.Metadata)
-		parts = append(parts, fmt.Sprintf("- **%s**%s: %s\n  Result: %s%s", strings.TrimSpace(snap.Name), batchContext, snap.Status, resultText, actionHint))
+		delayContext := autoNotificationDelayContext(snap, time.Now())
+		parts = append(parts, fmt.Sprintf("- **%s**%s: %s%s\n  Result: %s%s", strings.TrimSpace(snap.Name), batchContext, snap.Status, delayContext, resultText, actionHint))
 		if batchWorkflowRunDirective == "" {
 			batchWorkflowRunDirective = workflowRunCompletionDirective(snap)
 		}
@@ -1924,12 +2013,27 @@ func (api *StreamingAPI) processBatchedBackgroundAgentCompletions(sessionID stri
 		api.emitSyntheticTurnReady(sessionID, agentID, "", "completed", "Background agents completed. The main agent will process the results.")
 	}
 
-	// Mark notified=true only for agents whose turn was actually dispatched.
-	dispatched := api.executeSyntheticTurn(sessionID, syntheticMsg, commonBackgroundParentExecutionID(agentRefs))
-	for _, a := range agentRefs {
-		a.finishCompletionNotification(dispatched)
-	}
+	// A channel opening is not delivery: Session.Run can reject the turn later
+	// (for example when a retained CLI turn still owns the agent). Commit the
+	// notification only after the stream reports a successful terminal outcome.
+	dispatched := api.executeSyntheticTurnWithOutcome(sessionID, syntheticMsg, commonBackgroundParentExecutionID(agentRefs), func(turnErr error) {
+		delivered := turnErr == nil
+		for _, a := range agentRefs {
+			a.finishCompletionNotification(delivered)
+		}
+		if delivered || api.autoNotificationSessionUnreachable(sessionID) {
+			return
+		}
+		for _, agentID := range emittedIDs {
+			api.queuePendingCompletion(sessionID, agentID)
+		}
+		api.schedulePendingCompletionRetry(sessionID)
+		log.Printf("[BG AGENT] Batched synthetic turn for session %s failed asynchronously for %d agent(s): %v — queued for retry", sessionID, len(emittedIDs), turnErr)
+	})
 	if !dispatched && !api.autoNotificationSessionUnreachable(sessionID) {
+		for _, a := range agentRefs {
+			a.finishCompletionNotification(false)
+		}
 		// Dispatch failed but the session is still reachable. Leave every batched
 		// agent notified=false and arm the retry backstop so they are redelivered
 		// rather than dropped (no-stored-agent / stream-error drop fix).
@@ -1987,6 +2091,9 @@ func (api *StreamingAPI) processBackgroundAgentCompletion(sessionID, agentID str
 	if api.deferWorkflowStepAutoNotification(sessionID, agentID) {
 		return
 	}
+	if len(api.filterSupersededCompletions(sessionID, []string{agentID})) == 0 {
+		return
+	}
 
 	// Snapshot once; reused below to avoid a second lock acquisition that could
 	// observe inconsistent state (LOW bug fix: single-item-two-snapshot).
@@ -2015,11 +2122,21 @@ func (api *StreamingAPI) processBackgroundAgentCompletion(sessionID, agentID str
 	api.emitSyntheticTurnReady(sessionID, snap.ID, snap.Name, string(snap.Status),
 		fmt.Sprintf("Background agent '%s' %s. The main agent will process the results.", snap.Name, statusLabel))
 
-	// Trigger a synthetic turn using the stored QueryRequest.
-	// Set notified=true only when the turn was actually dispatched.
-	dispatched := api.executeSyntheticTurn(sessionID, syntheticMsg, snap.ParentExecutionID)
-	agent.finishCompletionNotification(dispatched)
+	// Trigger a synthetic turn using the stored QueryRequest. A successfully
+	// opened stream is still only in flight; mark delivered after its terminal
+	// outcome so asynchronous occupancy/provider errors remain retryable.
+	dispatched := api.executeSyntheticTurnWithOutcome(sessionID, syntheticMsg, snap.ParentExecutionID, func(turnErr error) {
+		delivered := turnErr == nil
+		agent.finishCompletionNotification(delivered)
+		if delivered || api.autoNotificationSessionUnreachable(sessionID) {
+			return
+		}
+		api.queuePendingCompletion(sessionID, agentID)
+		api.schedulePendingCompletionRetry(sessionID)
+		log.Printf("[BG AGENT] Synthetic turn for session %s failed asynchronously for agent %s: %v — queued for retry", sessionID, agentID, turnErr)
+	})
 	if !dispatched && !api.autoNotificationSessionUnreachable(sessionID) {
+		agent.finishCompletionNotification(false)
 		// Dispatch failed but the session is still reachable (no stored agent yet,
 		// or StreamWithEvents errored). Leave notified=false and arm the retry
 		// backstop so requeueUnnotifiedCompletions redelivers this completion
@@ -2101,9 +2218,10 @@ func (api *StreamingAPI) buildAutoNotificationMessage(sessionID string, snap Bac
 	// multi-line user-message into a "[Pasted text +N lines]" placeholder,
 	// which hides the actual notification text from the operator.
 	contextInfo := autoNotificationInlineContext(snap.Metadata)
+	delayContext := autoNotificationDelayContext(snap, time.Now())
 	syntheticMsg := fmt.Sprintf(
-		"[AUTO-NOTIFICATION] Agent '%s' completed — status=%s%s.\nResult: %s%s%s",
-		strings.TrimSpace(snap.Name), snap.Status, contextInfo, resultText, actionHint, workflowRunCompletionDirective(snap))
+		"[AUTO-NOTIFICATION] Agent '%s' completed — status=%s%s%s.\nResult: %s%s%s",
+		strings.TrimSpace(snap.Name), snap.Status, contextInfo, delayContext, resultText, actionHint, workflowRunCompletionDirective(snap))
 	if presentationOnly {
 		syntheticMsg += "\n\n[PRESENTATION-ONLY COMPLETION] The background agent above is the authoritative owner of this task's evidence collection and durable writes. Present its result to the user now. Do not call any tool, reload Pulse/SQLite/workspace state, inspect the child conversation, or independently revalidate the result. Do not start more work."
 	}
@@ -2121,6 +2239,17 @@ func (api *StreamingAPI) buildAutoNotificationMessage(sessionID string, snap Bac
 	}
 
 	return syntheticMsg
+}
+
+func autoNotificationDelayContext(snap BackgroundAgentSnapshot, now time.Time) string {
+	if snap.CompletedAt == nil || now.Before(*snap.CompletedAt) {
+		return ""
+	}
+	age := now.Sub(*snap.CompletedAt)
+	if age < delayedAutoNotificationAfter {
+		return ""
+	}
+	return fmt.Sprintf(", delayed (finished %s ago)", age.Round(time.Second))
 }
 
 const scheduledAutoNotificationResultMaxRunes = 4000
@@ -2396,6 +2525,18 @@ func commonBackgroundParentExecutionID(agents []*BackgroundAgent) string {
 }
 
 func (api *StreamingAPI) executeSyntheticTurn(sessionID, syntheticMsg string, parentExecutionIDs ...string) bool {
+	parentExecutionID := ""
+	if len(parentExecutionIDs) > 0 {
+		parentExecutionID = strings.TrimSpace(parentExecutionIDs[0])
+	}
+	return api.executeSyntheticTurnWithOutcome(sessionID, syntheticMsg, parentExecutionID, nil)
+}
+
+// executeSyntheticTurnWithOutcome starts a synthetic turn and invokes
+// onComplete with its true asynchronous terminal result. Returning true means
+// only that the turn started; durable notification delivery must be committed
+// by onComplete after it receives nil.
+func (api *StreamingAPI) executeSyntheticTurnWithOutcome(sessionID, syntheticMsg, parentExecutionID string, onComplete func(error)) bool {
 	if api.autoNotificationSessionUnreachable(sessionID) {
 		log.Printf("[BG AGENT] Session %s is stopped/inactive, suppressing synthetic turn", sessionID)
 		return false
@@ -2412,10 +2553,7 @@ func (api *StreamingAPI) executeSyntheticTurn(sessionID, syntheticMsg string, pa
 		log.Printf("[BG AGENT] No stored agent for session %s, cannot trigger synthetic turn", sessionID)
 		return false
 	}
-	parentExecutionID := ""
-	if len(parentExecutionIDs) > 0 {
-		parentExecutionID = strings.TrimSpace(parentExecutionIDs[0])
-	}
+	parentExecutionID = strings.TrimSpace(parentExecutionID)
 	if parentExecutionID == "" {
 		parentExecutionID = api.currentConversationTurnExecutionID(sessionID)
 	}
@@ -2491,14 +2629,11 @@ func (api *StreamingAPI) executeSyntheticTurn(sessionID, syntheticMsg string, pa
 
 	log.Printf("[BG AGENT] Executing synthetic turn for session %s via stored agent", sessionID)
 
-	// Start the stream SYNCHRONOUSLY so the bool we return reflects whether the
-	// turn actually dispatched. Previously StreamWithEvents ran inside the goroutine
-	// and we returned true on spawn; a stream error there left the caller having
-	// already committed notified=true, so the completion was permanently lost
-	// (notified-only-after-stream-start fix). On error we undo the busy/synthetic
-	// setup and return false; the caller leaves notified=false and arms the retry
-	// backstop so requeueUnnotifiedCompletions redelivers it.
-	textChan, err := llmAgent.StreamWithEvents(agentCtx, syntheticMsg)
+	// Start the stream synchronously so setup errors can undo the busy/synthetic
+	// state before returning. A nil setup error is not delivery success: the
+	// Session.Run result arrives later on outcomeChan, and notification callers
+	// commit their durable state only from that terminal outcome.
+	textChan, outcomeChan, err := llmAgent.StreamWithEventsAndOutcome(agentCtx, syntheticMsg)
 	if err != nil {
 		log.Printf("[BG AGENT] StreamWithEvents error for synthetic turn on session %s: %v", sessionID, err)
 		agentCancel()
@@ -2520,6 +2655,7 @@ func (api *StreamingAPI) executeSyntheticTurn(sessionID, syntheticMsg string, pa
 	go func() {
 		syntheticStatus := trackedExecutionStatusCanceled
 		syntheticError := "synthetic turn ended before completion was recorded"
+		var terminalErr error
 		defer func() {
 			unregisterRunningAgent()
 
@@ -2535,11 +2671,20 @@ func (api *StreamingAPI) executeSyntheticTurn(sessionID, syntheticMsg string, pa
 			api.setSessionBusy(sessionID, false)
 			releaseInputLane()
 			api.completeTrackedExecution(syntheticExecutionID, syntheticStatus, syntheticError, nil)
+			if onComplete != nil {
+				onComplete(terminalErr)
+			}
 
 			// If the session was explicitly stopped while this synthetic turn was running,
 			// do not chain any queued completions. That would re-enter the stopped session.
 			if api.autoNotificationSessionUnreachable(sessionID) {
 				log.Printf("[BG AGENT] Session %s stopped/inactive after synthetic turn, skipping pending completion drain", sessionID)
+				return
+			}
+			if terminalErr != nil {
+				// The completion callback has restored the notification claim and
+				// armed the bounded retry timer. Draining synchronously here would
+				// immediately start the same rejected turn again in a tight loop.
 				return
 			}
 
@@ -2567,6 +2712,10 @@ func (api *StreamingAPI) executeSyntheticTurn(sessionID, syntheticMsg string, pa
 			agentCancel()
 			discardAbandonedSyntheticStream(sessionID, textChan)
 		}
+		turnErr, outcomeOpen := <-outcomeChan
+		if !outcomeOpen {
+			turnErr = fmt.Errorf("synthetic turn ended without a terminal outcome")
+		}
 
 		// A stopped/canceled synthetic turn must not "complete" afterward, otherwise
 		// it can resurrect the stored agent and reopen stateful MCP connections after Esc/stop.
@@ -2579,13 +2728,27 @@ func (api *StreamingAPI) executeSyntheticTurn(sessionID, syntheticMsg string, pa
 				// rather than the cause. A stall is a failure, not a user stop.
 				syntheticStatus = trackedExecutionStatusFailed
 				syntheticError = abandonReason
+				terminalErr = fmt.Errorf("%s", abandonReason)
 			case agentCtx.Err() != nil:
 				syntheticError = agentCtx.Err().Error()
+				terminalErr = agentCtx.Err()
 			default:
 				syntheticError = "session stopped"
+				terminalErr = fmt.Errorf("session stopped")
 			}
 			log.Printf("[BG AGENT] Synthetic turn aborted for session %s after stream end (ctx_err=%v stopped=%v)",
 				sessionID, agentCtx.Err(), api.isSessionStoppedOrInactive(sessionID))
+			return
+		}
+		if turnErr != nil {
+			terminalErr = turnErr
+			syntheticStatus = trackedExecutionStatusFailed
+			syntheticError = turnErr.Error()
+			api.updateSessionStatus(sessionID, "error")
+			if api.terminalStore != nil {
+				api.terminalStore.MarkTurnFailed(mainTerminalID)
+			}
+			log.Printf("[BG AGENT] Synthetic turn failed for session %s after stream start: %v", sessionID, turnErr)
 			return
 		}
 		syntheticStatus = trackedExecutionStatusCompleted

@@ -1058,6 +1058,17 @@ func (w *LLMAgentWrapper) currentTurnID(fallback string) string {
 	return fallback
 }
 
+// TurnInProgress reports whether the durable session is currently owned by a
+// normal Run or a retained coding-CLI turn. The latter can outlive the HTTP
+// request and therefore is not reliably represented by the server's display
+// busy flag, cancel map, or input-lane bookkeeping.
+func (w *LLMAgentWrapper) TurnInProgress() bool {
+	w.mu.RLock()
+	session := w.session
+	w.mu.RUnlock()
+	return session != nil && session.ActiveTurnID() != ""
+}
+
 func buildSessionTurn(prompt string, history []llmtypes.MessageContent, policy mcpagent.ToolPolicy, streamingCallback func(llmtypes.StreamChunk)) mcpagent.Turn {
 	return mcpagent.Turn{
 		ID:                newPlatformTurnID(),
@@ -1071,25 +1082,40 @@ func buildSessionTurn(prompt string, history []llmtypes.MessageContent, policy m
 // StreamWithEvents streams text chunks from the agent during execution
 // Events are handled separately via the EventObserver and polling API
 func (w *LLMAgentWrapper) StreamWithEvents(ctx context.Context, prompt string) (<-chan string, error) {
+	textChan, _, err := w.StreamWithEventsAndOutcome(ctx, prompt)
+	return textChan, err
+}
+
+// StreamWithEventsAndOutcome is StreamWithEvents plus a one-shot terminal
+// outcome channel. StreamWithEvents historically reports only setup failures;
+// errors returned later by Session.Run are rendered as a user-visible chunk and
+// otherwise disappear behind a normally closed text channel. Callers that must
+// commit durable delivery state (notably background auto-notifications) need the
+// actual terminal outcome before marking the message delivered.
+func (w *LLMAgentWrapper) StreamWithEventsAndOutcome(ctx context.Context, prompt string) (<-chan string, <-chan error, error) {
 	if err := w.FinalizeDefinition(ctx); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	w.mu.RLock()
 	if w.closed {
 		w.mu.RUnlock()
-		return nil, errors.New("agent is closed")
+		return nil, nil, errors.New("agent is closed")
 	}
 	w.mu.RUnlock()
 
 	// Create channel for text chunks only
 	textChan := make(chan string, 50)
+	outcomeChan := make(chan error, 1)
 
 	// Start streaming in a goroutine
 	go func() {
+		var turnErr error
 		var chanClosed atomic.Bool
 		defer func() {
 			chanClosed.Store(true)
 			close(textChan)
+			outcomeChan <- turnErr
+			close(outcomeChan)
 		}()
 
 		// Set up real-time streaming callback to forward content chunks as they arrive.
@@ -1197,6 +1223,7 @@ func (w *LLMAgentWrapper) StreamWithEvents(ctx context.Context, prompt string) (
 		runtimeSession := w.session
 		w.mu.RUnlock()
 		if runtimeSession == nil {
+			turnErr = errors.New("agent session is not initialized")
 			select {
 			case <-ctx.Done():
 			case textChan <- "agent session is not initialized":
@@ -1210,6 +1237,7 @@ func (w *LLMAgentWrapper) StreamWithEvents(ctx context.Context, prompt string) (
 		// because this branch derives the tool surface at registration instead
 		// (6c4a8908), so there is no per-turn policy to thread.
 		result, err := runtimeSession.Run(ctx, turn)
+		turnErr = err
 		response := result.Text
 		updatedMessages := result.History
 
@@ -1322,5 +1350,5 @@ func (w *LLMAgentWrapper) StreamWithEvents(ctx context.Context, prompt string) (
 		}
 	}()
 
-	return textChan, nil
+	return textChan, outcomeChan, nil
 }

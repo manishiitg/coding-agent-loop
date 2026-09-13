@@ -23,9 +23,9 @@ func TestSyntheticTurnRegistersOnlyAfterAcquiringTheLane(t *testing.T) {
 	}
 	body := string(source)
 
-	start := strings.Index(body, "func (api *StreamingAPI) executeSyntheticTurn(")
+	start := strings.Index(body, "func (api *StreamingAPI) executeSyntheticTurnWithOutcome(")
 	if start < 0 {
-		t.Fatal("executeSyntheticTurn not found; update this test with the new name")
+		t.Fatal("executeSyntheticTurnWithOutcome not found; update this test with the new name")
 	}
 	fn := body[start:]
 	if end := strings.Index(fn, "\nfunc "); end > 0 {
@@ -40,6 +40,60 @@ func TestSyntheticTurnRegistersOnlyAfterAcquiringTheLane(t *testing.T) {
 	if trackAt < lockAt {
 		t.Fatal("executeSyntheticTurn registers the execution before acquiring the input lane; " +
 			"a turn blocked on the lane would again be counted as a running child of the turn blocking it")
+	}
+}
+
+// P0 regression: a retained coding-CLI turn is not guaranteed to own the HTTP
+// cancel handle, input lane, or terminal-store busy signal. The durable agent
+// session is therefore an authoritative occupancy source and must be checked
+// before the 15-second display-busy recovery is allowed to clear anything.
+func TestP0AutoNotificationChecksDurableAgentTurnBeforeClearingStaleBusy(t *testing.T) {
+	source, err := os.ReadFile("background_agents.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := string(source)
+	start := strings.Index(body, "func (api *StreamingAPI) isSessionBusyForAutoNotification(")
+	if start < 0 {
+		t.Fatal("isSessionBusyForAutoNotification not found")
+	}
+	fn := body[start:]
+	if end := strings.Index(fn, "\nfunc "); end > 0 {
+		fn = fn[:end]
+	}
+	activeAt := strings.Index(fn, "storedAgentTurnInProgress(sessionID)")
+	clearAt := strings.Index(fn, "clearStaleBusyIfNeeded(sessionID)")
+	if activeAt < 0 || clearAt < 0 || activeAt > clearAt {
+		t.Fatalf("durable agent occupancy must be checked before stale clear: active=%d clear=%d", activeAt, clearAt)
+	}
+}
+
+func TestP0CompletionDeliveryCommitsOnlyAfterAsynchronousOutcome(t *testing.T) {
+	source, err := os.ReadFile("background_agents.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := string(source)
+	start := strings.Index(body, "func (api *StreamingAPI) processBackgroundAgentCompletion(")
+	if start < 0 {
+		t.Fatal("processBackgroundAgentCompletion not found")
+	}
+	fn := body[start:]
+	if end := strings.Index(fn, "\nfunc "); end > 0 {
+		fn = fn[:end]
+	}
+	for _, required := range []string{
+		"executeSyntheticTurnWithOutcome(",
+		"delivered := turnErr == nil",
+		"agent.finishCompletionNotification(delivered)",
+		"api.queuePendingCompletion(sessionID, agentID)",
+	} {
+		if !strings.Contains(fn, required) {
+			t.Fatalf("completion path no longer waits/retries on terminal outcome; missing %q", required)
+		}
+	}
+	if strings.Contains(fn, "finishCompletionNotification(dispatched)") {
+		t.Fatal("completion is again being marked delivered when the stream merely opens")
 	}
 }
 

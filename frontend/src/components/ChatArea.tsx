@@ -2688,6 +2688,7 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
     const hasOneShotContext = Boolean(
       currentTab.config?.restoredConversationPath?.trim() ||
       currentTab.config?.fileContext?.length ||
+      currentTab.config?.workflowContext?.length ||
       executionOptions ||
       currentTab.metadata?.agentProfileRuntimeDirty
     )
@@ -3224,6 +3225,7 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
       hasOneShotContext: Boolean(
         sourceTab?.config?.restoredConversationPath?.trim() ||
         sourceTab?.config?.fileContext?.length ||
+        sourceTab?.config?.workflowContext?.length ||
         executionOptions ||
         sourceTab?.metadata?.agentProfileRuntimeDirty
       ),

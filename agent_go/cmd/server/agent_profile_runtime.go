@@ -512,6 +512,11 @@ func (api *StreamingAPI) registerAgentProfileTools(registrar definitionToolRegis
 			return err
 		}
 	}
+	if resolved.Definition.ID == "work" && agentprofiles.HasFeature(resolved.Definition, "workflow-references") {
+		if err := api.registerWorkWorkflowReferenceTools(registrar, userID, sessionID, workspacePath); err != nil {
+			return err
+		}
+	}
 	if resolved.Definition.ID == "work" && agentprofiles.HasFeature(resolved.Definition, "schedules") {
 		if err := api.registerWorkScheduleTools(registrar, userID, workspacePath); err != nil {
 			return err

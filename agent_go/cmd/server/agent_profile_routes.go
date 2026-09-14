@@ -434,6 +434,7 @@ func (api *StreamingAPI) handleAgentProfileChatQuery(w http.ResponseWriter, r *h
 		_, restartNeeded, err := defaultProductConversationRegistryStore().bindRuntimeConfiguration(
 			r.Context(), productWorkspaceUserID(r.Context()), profile, conversation.ConversationKey,
 			query.Provider, query.ModelID, query.ReasoningEffort, query.EnabledServers, query.SelectedSkills,
+			query.WorkflowContextPaths,
 		)
 		if err != nil {
 			writeAgentProfileError(w, http.StatusUnprocessableEntity, err.Error())

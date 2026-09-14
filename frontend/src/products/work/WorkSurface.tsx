@@ -22,7 +22,7 @@ import { usePointerDrag } from '../../hooks/usePointerDrag'
 import { WorkspaceSplitCollapseControls, WorkspaceSplitDivider } from '../../components/workspace/WorkspaceSplitDivider'
 import { WorkspaceTopToolbar } from '../../components/workspace/WorkspaceTopToolbar'
 import { loadAgentProfileUIPanels } from '../../utils/agentProfileCapabilities'
-import { belongsToWorkProject, setWorkProjectRuntimeSelection, visibleWorkProjectTabs, type ProductEngineSelectionDetail, type WorkRuntimeSelection } from './workTabs'
+import { belongsToWorkProject, markWorkProjectRuntimeDirty, setWorkProjectRuntimeSelection, visibleWorkProjectTabs, type ProductEngineSelectionDetail, type WorkRuntimeSelection } from './workTabs'
 import { updateProductProjectLLMConfig, updateProductProjectSelections } from '../../platform/chat/productProjects'
 import { CreateWorkProjectDialog } from './CreateWorkProjectDialog'
 
@@ -360,18 +360,19 @@ export function WorkSurface() {
     await updateLLMConfig(selected.id, selection)
   }, [selected, updateLLMConfig])
   const { tabId, tabs, error: chatError } = useWorkChatTabs(selected, persistLegacyRuntime)
-  const identityRefreshToken = useChatStore(state => tabs
+  const projectConfigRefreshToken = useChatStore(state => tabs
     .flatMap(tab => tab.sessionId ? state.tabEvents[tab.sessionId] || [] : [])
-    .filter(event => event.type === 'work_identity_updated')
+    .filter(event => event.type === 'work_identity_updated' || event.type === 'work_workflow_references_updated')
     .map(event => event.id || event.timestamp || '')
     .join('|'))
-  const handledIdentityRefreshToken = useRef('')
+  const handledProjectConfigRefreshToken = useRef('')
 
   useEffect(() => {
-    if (!identityRefreshToken || identityRefreshToken === handledIdentityRefreshToken.current) return
-    handledIdentityRefreshToken.current = identityRefreshToken
+    if (!projectConfigRefreshToken || projectConfigRefreshToken === handledProjectConfigRefreshToken.current) return
+    handledProjectConfigRefreshToken.current = projectConfigRefreshToken
+    if (selected?.id) markWorkProjectRuntimeDirty(selected.id)
     void refresh()
-  }, [identityRefreshToken, refresh])
+  }, [projectConfigRefreshToken, refresh, selected?.id])
   const [creating, setCreating] = useState(false)
   const [createOpen, setCreateOpen] = useState(false)
   const [chatOpen, setChatOpen] = useState(true)
@@ -656,7 +657,10 @@ export function WorkSurface() {
                       onRuntimeChange={changeWorkRuntime}
                       onSelectedServersChange={servers => updateSelections(selected.id, { selectedServers: servers })}
                       onSelectedSkillsChange={skills => updateSelections(selected.id, { selectedSkills: skills })}
-                      onWorkflowContextPathsChange={paths => updateSelections(selected.id, { workflowContextPaths: paths })}
+                      onWorkflowContextPathsChange={async paths => {
+                        await updateSelections(selected.id, { workflowContextPaths: paths })
+                        markWorkProjectRuntimeDirty(selected.id)
+                      }}
                     />
                   ) : (
                     <div className="grid h-full place-items-center text-sm text-muted-foreground">Opening workspace…</div>

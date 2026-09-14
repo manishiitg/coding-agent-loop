@@ -222,6 +222,7 @@ func (api *StreamingAPI) botProfileTurn(ctx context.Context, userID string, msg 
 		_, restartNeeded, err := defaultProductConversationRegistryStore().bindRuntimeConfiguration(
 			ctx, workspaceUserID, profile, conversation.ConversationKey,
 			query.Provider, query.ModelID, query.ReasoningEffort, query.EnabledServers, query.SelectedSkills,
+			query.WorkflowContextPaths,
 		)
 		if err != nil {
 			return nil, "", false, err

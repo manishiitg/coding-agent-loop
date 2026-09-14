@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { ChatTab } from '../../stores/useChatStore'
-import { applyWorkProjectRuntimeSelection, setWorkProjectRuntimeSelection, visibleWorkProjectTabs } from './workTabs'
+import { applyWorkProjectRuntimeSelection, markWorkProjectRuntimeDirty, setWorkProjectRuntimeSelection, visibleWorkProjectTabs } from './workTabs'
 import { useChatStore } from '../../stores/useChatStore'
 
 function tab(overrides: Partial<ChatTab> & Pick<ChatTab, 'tabId'>): ChatTab {
@@ -45,6 +45,17 @@ describe('visibleWorkProjectTabs', () => {
 })
 
 describe('setWorkProjectRuntimeSelection', () => {
+
+  it('marks retained project chats dirty after durable context changes', () => {
+    const current = tab({ tabId: 'current' })
+    const other = tab({ tabId: 'other', metadata: { mode: 'multi-agent', agentProfileId: 'work', agentProfileProjectId: 'project-2' } })
+    useChatStore.setState({ chatTabs: { current, other } })
+
+    markWorkProjectRuntimeDirty('project-1')
+
+    expect(useChatStore.getState().chatTabs.current.metadata?.agentProfileRuntimeDirty).toBe(true)
+    expect(useChatStore.getState().chatTabs.other.metadata?.agentProfileRuntimeDirty).toBeUndefined()
+  })
   it('keeps every chat in a Work project on the same saved runtime', () => {
     const builder = tab({ tabId: 'builder', name: 'Builder', metadata: { mode: 'multi-agent', agentProfileId: 'work', agentProfileProjectId: 'project-1', agentProfileBuilder: true } })
     const chat = tab({ tabId: 'chat', metadata: { mode: 'multi-agent', agentProfileId: 'work', agentProfileProjectId: 'project-1', agentProfileConversationKey: 'project-1:chat-1' } })

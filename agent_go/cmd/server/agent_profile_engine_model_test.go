@@ -197,26 +197,32 @@ func TestConversationRuntimeChangeReportsRestartForMCPAndSkills(t *testing.T) {
 	if _, err := store.resolveOrCreate(ctx, "u", profile, binding, ""); err != nil {
 		t.Fatalf("resolveOrCreate: %v", err)
 	}
-	bind := func(servers, skills []string) bool {
-		_, restart, err := store.bindRuntimeConfiguration(ctx, "u", profile, "main", "muse-cli", "muse-spark-1.3-contributor", "", servers, skills)
+	bind := func(servers, skills, workflowContextPaths []string) bool {
+		_, restart, err := store.bindRuntimeConfiguration(ctx, "u", profile, "main", "muse-cli", "muse-spark-1.3-contributor", "", servers, skills, workflowContextPaths)
 		if err != nil {
 			t.Fatal(err)
 		}
 		return restart
 	}
-	if bind([]string{"NO_SERVERS"}, nil) {
+	if bind([]string{"NO_SERVERS"}, nil, nil) {
 		t.Fatal("first runtime binding requested a restart")
 	}
-	if bind([]string{"NO_SERVERS"}, nil) {
+	if bind([]string{"NO_SERVERS"}, nil, nil) {
 		t.Fatal("unchanged MCP selection requested a restart")
 	}
-	if !bind([]string{"google_sheets"}, nil) {
+	if !bind([]string{"google_sheets"}, nil, nil) {
 		t.Fatal("changed MCP selection did not request a restart")
 	}
-	if bind([]string{"GOOGLE_SHEETS", "google_sheets"}, nil) {
+	if bind([]string{"GOOGLE_SHEETS", "google_sheets"}, nil, nil) {
 		t.Fatal("equivalent MCP selection requested a restart")
 	}
-	if !bind([]string{"google_sheets"}, []string{"work-dashboard"}) {
+	if !bind([]string{"google_sheets"}, []string{"work-dashboard"}, nil) {
 		t.Fatal("changed skill selection did not request a restart")
+	}
+	if !bind([]string{"google_sheets"}, []string{"work-dashboard"}, []string{"Workflow/research"}) {
+		t.Fatal("changed workflow reference selection did not request a restart")
+	}
+	if bind([]string{"google_sheets"}, []string{"work-dashboard"}, []string{"workflow/RESEARCH", "Workflow/research"}) {
+		t.Fatal("equivalent workflow reference selection requested a restart")
 	}
 }

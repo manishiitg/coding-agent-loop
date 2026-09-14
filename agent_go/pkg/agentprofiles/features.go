@@ -139,8 +139,10 @@ var featureCatalog = map[string]featureDefinition{
 		PromptExtension: "Administrator-authorized attached folders are enabled. Read the attached `work-integrations` skill before managing folder grants. Use the least access required and inspect the current grants before changing them.",
 	},
 	"workflow-references": {
+		Tools:           []string{"list_accessible_workflows", "attach_workflow_reference", "detach_workflow_reference"},
+		Skills:          []string{"work-integrations"},
 		Capabilities:    map[string]CapabilityRequirement{"workflow_references": CapabilityPreferred},
-		PromptExtension: "Read-only AgentWorks workflow references are enabled. A # selection applies to one message; a workflow linked under Attached folders is durable for the project. Treat both as context only, and never edit or execute the referenced workflow from this product.",
+		PromptExtension: "Read-only AgentWorks workflow references are enabled. Read the attached `work-integrations` skill before discovering or managing them. A # selection applies to one message; a workflow linked under Attached folders is durable for the project. Treat both as context only, and never edit or execute the referenced workflow from this product.",
 	},
 	"terminal": {
 		Capabilities:    map[string]CapabilityRequirement{"raw_terminal": CapabilityPreferred},

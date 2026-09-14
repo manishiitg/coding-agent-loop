@@ -54,10 +54,11 @@ type ProductConversationRecord struct {
 	// process. bindRuntime compares against these to know when the caller
 	// must close the tmux session so the next turn relaunches with the new
 	// flags.
-	ModelID         string   `json:"model_id,omitempty"`
-	ReasoningEffort string   `json:"reasoning_effort,omitempty"`
-	EnabledServers  []string `json:"enabled_servers,omitempty"`
-	SelectedSkills  []string `json:"selected_skills,omitempty"`
+	ModelID              string   `json:"model_id,omitempty"`
+	ReasoningEffort      string   `json:"reasoning_effort,omitempty"`
+	EnabledServers       []string `json:"enabled_servers,omitempty"`
+	SelectedSkills       []string `json:"selected_skills,omitempty"`
+	WorkflowContextPaths []string `json:"workflow_context_paths,omitempty"`
 	// ProjectLLMConfig is loaded from product.json for this request. It is not
 	// duplicated into the conversation registry.
 	ProjectLLMConfig            *workflowtypes.PresetLLMConfig `json:"-"`
@@ -490,7 +491,7 @@ func (store productConversationRegistryStore) bindRuntime(
 	conversationKey string,
 	provider, modelID, reasoningEffort string,
 ) (boundProvider string, restartNeeded bool, err error) {
-	return store.bindRuntimeConfiguration(ctx, userID, profile, conversationKey, provider, modelID, reasoningEffort, nil, nil)
+	return store.bindRuntimeConfiguration(ctx, userID, profile, conversationKey, provider, modelID, reasoningEffort, nil, nil, nil)
 }
 
 func (store productConversationRegistryStore) bindRuntimeConfiguration(
@@ -499,13 +500,14 @@ func (store productConversationRegistryStore) bindRuntimeConfiguration(
 	profile agentprofiles.Profile,
 	conversationKey string,
 	provider, modelID, reasoningEffort string,
-	enabledServers, selectedSkills []string,
+	enabledServers, selectedSkills, workflowContextPaths []string,
 ) (boundProvider string, restartNeeded bool, err error) {
 	provider = strings.TrimSpace(provider)
 	modelID = strings.TrimSpace(modelID)
 	reasoningEffort = strings.TrimSpace(reasoningEffort)
 	enabledServers = canonicalRuntimeSelection(enabledServers)
 	selectedSkills = canonicalRuntimeSelection(selectedSkills)
+	workflowContextPaths = canonicalRuntimeSelection(workflowContextPaths)
 	path := productConversationRegistryPath(userID)
 	mutex := productConversationRegistryMutex(path)
 	mutex.Lock()
@@ -534,7 +536,8 @@ func (store productConversationRegistryStore) bindRuntimeConfiguration(
 			(modelID != "" && !strings.EqualFold(strings.TrimSpace(record.ModelID), modelID)) ||
 			(reasoningEffort != "" && !strings.EqualFold(strings.TrimSpace(record.ReasoningEffort), reasoningEffort)) ||
 			!sameRuntimeSelection(record.EnabledServers, enabledServers) ||
-			!sameRuntimeSelection(record.SelectedSkills, selectedSkills)
+			!sameRuntimeSelection(record.SelectedSkills, selectedSkills) ||
+			!sameRuntimeSelection(record.WorkflowContextPaths, workflowContextPaths)
 	}
 	record.Provider = provider
 	if modelID != "" {
@@ -545,6 +548,7 @@ func (store productConversationRegistryStore) bindRuntimeConfiguration(
 	}
 	record.EnabledServers = enabledServers
 	record.SelectedSkills = selectedSkills
+	record.WorkflowContextPaths = workflowContextPaths
 	record.UpdatedAt = store.now().UTC().Format(time.RFC3339Nano)
 	document.Version = productConversationRegistryVersion
 	document.Entries[entryKey] = record

@@ -21,6 +21,15 @@ export function belongsToWorkProject(tab: ChatTab, projectId: string): boolean {
   ))
 }
 
+/** Mark every retained chat in a Work project for relaunch on its next turn. */
+export function markWorkProjectRuntimeDirty(projectId: string): void {
+  const store = useChatStore.getState()
+  for (const tab of Object.values(store.chatTabs)) {
+    if (!belongsToWorkProject(tab, projectId)) continue
+    store.setTabMetadata(tab.tabId, { agentProfileRuntimeDirty: Boolean(tab.sessionId) })
+  }
+}
+
 function workTabIdentity(tab: ChatTab): string {
   if (tab.metadata?.agentProfileBuilder === true) return 'builder'
   const conversationKey = tab.metadata?.agentProfileConversationKey?.trim()

@@ -226,9 +226,10 @@ Work should not introduce its own transcript renderer, file viewer, terminal, br
 Keep product defaults separate from session identity:
 
 - `product.yaml` owns Work-wide runtime choices, tool and MCP allowlists, built-in skills, capabilities, sandbox policy, and UI flags.
-- Each project's `product.json` owns its durable project/session identity and
-  selected `capabilities.llm_config`. It does not copy MCP definitions, skill
-  contents, prompts, server paths, runtime installations, or credentials.
+- Each project's `product.json` owns its durable project/session identity plus
+  stable selections for its LLM, MCP servers, skills, and read-only workflow
+  references. It does not copy MCP definitions, skill contents, prompts,
+  server paths, runtime installations, or credentials.
 - User-installed MCPs and skills continue to use the platform's existing user/deployment stores. A future session-specific selection should store only stable references to those records, not duplicate their definitions.
 - Secret values always remain in the existing encrypted server-side secret store; neither YAML nor `product.json` contains them.
 
@@ -343,6 +344,12 @@ All visible copy in Work should use server, workspace, session, task, tool, or s
   shortcuts and the project-root overflow menu.
 - MCP and skill selection use the existing AgentWorks selectors and catalogs. Their stable references are accepted only because the Work profile explicitly declares those capabilities; fixed-purpose product profiles keep rejecting them.
 - Folder grants are stored per user. Ordinary users can add only existing absolute directories within administrator-assigned roots. Paths are canonicalized server-side and enforced by execution guards rather than trusted from browser input.
+- Work can search the same permission-filtered workflow catalog used by the
+  AgentWorks picker, suggest name matches, and attach or detach an exact
+  `Workflow/<folder>` as durable read-only context in `product.json`. Transient
+  `#` references force the full turn path instead of being dropped by retained
+  live input. Any durable reference change refreshes the project and relaunches
+  retained chats before their next turn so mounted context cannot go stale.
 - User identity lookup checks user ID, username, and email so existing assignments continue to resolve when all claim fields are present.
 - Narrowing or removing assigned roots prunes stale grants, every read revalidates grants against current roots, and affected live CLI sessions are denied and closed so revoked access cannot remain cached.
 - Concurrent folder updates are serialized to avoid lost grants.

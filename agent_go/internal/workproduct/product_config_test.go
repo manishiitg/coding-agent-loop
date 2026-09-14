@@ -103,6 +103,9 @@ func TestWorkManifestDeclaresProjectScopeAndCodingAllowlist(t *testing.T) {
 		"list_work_folders":                 false,
 		"attach_work_folder":                false,
 		"detach_work_folder":                false,
+		"list_accessible_workflows":         false,
+		"attach_workflow_reference":         false,
+		"detach_workflow_reference":         false,
 		"list_project_schedules":            false,
 		"create_project_schedule":           false,
 		"update_project_schedule":           false,
@@ -175,7 +178,7 @@ func TestWorkPlatformSkillsRegisterAndLoad(t *testing.T) {
 		t.Fatalf("RegisterProductSkills: %v", err)
 	}
 	checks := map[string][]string{
-		"work-integrations":       {"list_mcp_servers", "Setup > MCP servers", "set_workflow_secret", "list_work_folders", "Setup > Models"},
+		"work-integrations":       {"list_mcp_servers", "Setup > MCP servers", "set_workflow_secret", "list_work_folders", "list_accessible_workflows", "attach_workflow_reference", "Setup > Models"},
 		"work-skills":             {"list_skills", "search_skills", "skill-creator", "Setup > Skills"},
 		"work-schedules-and-bots": {"list_project_schedules", "five-field cron", "list_project_triggers", "Project webhook triggers", "Setup > Bots", "Slack", "WhatsApp"},
 		"work-dashboard":          {"db/reports/index.html", "window.report.sendChatMessage", "query_workflow_db", "validate_report_html"},

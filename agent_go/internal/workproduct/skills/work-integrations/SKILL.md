@@ -42,6 +42,12 @@ from selection for this project.
 
 ## Referenced AgentWorks workflows
 
+- Use `list_accessible_workflows` to search by name before suggesting a
+  reference. It returns only workflows the current user may read.
+- If the user explicitly asks to keep one attached, pass the exact returned
+  `workspace_path` to `attach_workflow_reference`. If several names match,
+  show the matches and let the user choose. Use
+  `detach_workflow_reference` with the exact saved path to remove one.
 - The user can type `#` in the Work composer to attach another AgentWorks
   workflow to one message, using the same picker as AgentWorks chat.
 - The user can instead link a workflow under **Setup > Attached folders** when

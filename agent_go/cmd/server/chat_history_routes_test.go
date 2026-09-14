@@ -20,7 +20,7 @@ func TestDecorateSharedBuilderHistoryShowsAuthorAndProtectsResume(t *testing.T) 
 		{SessionID: "theirs", UserID: "owner-1"},
 		{SessionID: "legacy", UserID: "default"},
 	}
-	decorateChatHistorySessions(sessions, "member-1", WorkflowAccessWrite, true)
+	decorateChatHistorySessions(sessions, "member-1", false, true)
 
 	if sessions[0].Username != "laxmi" || !sessions[0].CanResume || !sessions[0].CanDelete {
 		t.Fatalf("own session decoration = %#v", sessions[0])
@@ -32,30 +32,34 @@ func TestDecorateSharedBuilderHistoryShowsAuthorAndProtectsResume(t *testing.T) 
 		t.Fatalf("legacy session decoration = %#v", sessions[2])
 	}
 
-	decorateChatHistorySessions(sessions, "member-1", WorkflowAccessOwner, true)
+	decorateChatHistorySessions(sessions, "admin-1", true, true)
 	if sessions[1].CanResume || !sessions[1].CanDelete || !sessions[2].CanResume {
-		t.Fatalf("workflow owner policy not applied: other=%#v legacy=%#v", sessions[1], sessions[2])
+		t.Fatalf("platform admin policy not applied: other=%#v legacy=%#v", sessions[1], sessions[2])
 	}
 }
 
-func TestVisibleSharedBuilderHistoryIsOwnerWideButMemberPrivate(t *testing.T) {
+func TestVisibleSharedBuilderHistoryIsAdminWideButWorkflowOwnerPrivate(t *testing.T) {
 	sessions := []ChatHistorySession{
 		{SessionID: "mine", UserID: "member-1"},
 		{SessionID: "theirs", UserID: "member-2"},
 		{SessionID: "legacy", UserID: "default"},
 	}
 
-	memberView := visibleChatHistorySessions(sessions, "member-1", WorkflowAccessWrite)
+	memberView := visibleChatHistorySessions(sessions, "member-1", false)
 	if len(memberView) != 1 || memberView[0].SessionID != "mine" {
 		t.Fatalf("member view = %#v, want only own chat", memberView)
 	}
-	readerView := visibleChatHistorySessions(sessions, "member-2", WorkflowAccessRead)
+	readerView := visibleChatHistorySessions(sessions, "member-2", false)
 	if len(readerView) != 1 || readerView[0].SessionID != "theirs" {
 		t.Fatalf("reader view = %#v, want only own chat", readerView)
 	}
-	ownerView := visibleChatHistorySessions(sessions, "owner-1", WorkflowAccessOwner)
-	if len(ownerView) != len(sessions) {
-		t.Fatalf("owner view count = %d, want %d", len(ownerView), len(sessions))
+	workflowOwnerView := visibleChatHistorySessions(sessions, "owner-1", false)
+	if len(workflowOwnerView) != 0 {
+		t.Fatalf("workflow owner saw %d other-user chats, want none", len(workflowOwnerView))
+	}
+	adminView := visibleChatHistorySessions(sessions, "admin-1", true)
+	if len(adminView) != len(sessions) {
+		t.Fatalf("admin view count = %d, want %d", len(adminView), len(sessions))
 	}
 }
 

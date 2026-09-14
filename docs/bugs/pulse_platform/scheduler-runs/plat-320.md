@@ -5,7 +5,7 @@
 | Coordination | Value |
 |---|---|
 | Assigned agent | Codex |
-| Ticket state | `implementation in progress; immutable schedule-run core implemented and locally verified` |
+| Ticket state | `implemented on main; live acceptance and comprehensive legacy evidence mismatch coverage remain open` |
 | Last synchronized | `2026-09-14` |
 
 - **Priority:** P0 schedule evidence isolation and identity integrity. This is
@@ -17,15 +17,17 @@
   occurrences. The follow-up design exposed that allowing those schedules to run
   concurrently would make each one rotate or reuse the same `iteration-0` tree.
 - **Related:** [PLAT-047](plat-047.md), [PLAT-089](plat-089.md),
-  [PLAT-031](plat-031.md), [PLAT-070](plat-070.md),
-  [PLAT-071](plat-071.md), [PLAT-084](plat-084.md),
-  [PLAT-101](plat-101.md), [PLAT-136](plat-136.md),
+  [PLAT-031](../cost-telemetry/plat-031.md), [PLAT-070](plat-070.md),
+  [PLAT-071](plat-071.md), [PLAT-084](../pulse-governance/plat-084.md),
+  [PLAT-101](../coding-agent-bridge/plat-101.md),
+  [PLAT-136](../cost-telemetry/plat-136.md),
   [PLAT-145](plat-145.md), [PLAT-165](plat-165.md),
   [PLAT-176](plat-176.md), [PLAT-182](plat-182.md),
   [PLAT-194](plat-194.md), [PLAT-241](plat-241.md),
-  [PLAT-242](plat-242.md), [PLAT-254](plat-254.md),
-  [PLAT-296](plat-296.md), [PLAT-304](plat-304.md),
-  [PLAT-309](plat-309.md), and [PLAT-321](plat-321.md).
+  [PLAT-242](plat-242.md), [PLAT-254](../frontend-chat/plat-254.md),
+  [PLAT-296](../security-sandbox/plat-296.md),
+  [PLAT-304](../security-sandbox/plat-304.md),
+  [PLAT-309](../integrations/plat-309.md), and [PLAT-321](plat-321.md).
 
 ## Decision
 
@@ -69,7 +71,7 @@ an external action.
 
 ## Implementation status (2026-09-14)
 
-Implemented and locally verified:
+Implemented, verified, and pushed to `main` in `70660472b` and `53e5a0cc0`:
 
 - pre-agent, restart-idempotent `iteration-N-sched` allocation and durable
   schedule-run binding;
@@ -93,43 +95,43 @@ Still required before this ticket closes:
 - identity stamping and mismatch quarantine coverage for every legacy evidence
   document family.
 
-## Confirmed current behavior and failure boundaries
+## Confirmed pre-implementation behavior and failure boundaries
 
-The pre-migration audit covered all 318 `plat-*.md` ticket files and the current
-working tree. Seventy-seven tickets directly mention run folders, logs,
+The pre-migration audit covered all 318 `plat-*.md` ticket files and the then-current
+working tree. Seventy-seven tickets directly mentioned run folders, logs,
 schedule history, retention or current/latest-run resolution. The following
-code behavior makes a local folder-name substitution unsafe:
+code behavior made a local folder-name substitution unsafe:
 
-1. Normal schedules start with `runFolder := "iteration-0"`; only webhooks call
+1. Normal schedules started with `runFolder := "iteration-0"`; only webhooks called
    an immutable allocator. The scheduler records that value in schedule history
    and then guesses the physical run by comparing pre/post folder listings and
    timestamps.
-2. `run_full_workflow` rotates the previous `iteration-0` for full runs and
-   reuses it for partial-group runs. The only trusted custom-folder exception is
-   currently a webhook with an `iteration-N-hook` folder.
-3. `execute_step` independently constructs `iteration-0/<group>`. A schedule
-   agent can therefore bypass a change made only to `run_full_workflow` and
+2. `run_full_workflow` rotated the previous `iteration-0` for full runs and
+   reused it for partial-group runs. The only trusted custom-folder exception was
+   a webhook with an `iteration-N-hook` folder.
+3. `execute_step` independently constructed `iteration-0/<group>`. A schedule
+   agent could therefore bypass a change made only to `run_full_workflow` and
    still mix evidence in the Builder slot.
-4. Evaluation normalizes every non-webhook target back to
+4. Evaluation normalized every non-webhook target back to
    `evaluation/runs/iteration-0[/group]`. A scheduled workflow and its
    evaluation would lose their physical pairing unless evaluation accepts the
    exact `-sched` target.
 5. Attempt, conversation, prompt, timing, validation and final-summary
-   documents do not all carry the immutable scheduler/execution identity.
-   Several readers still select evidence by folder name, timestamp or local
+   documents did not all carry the immutable scheduler/execution identity.
+   Several readers selected evidence by folder name, timestamp or local
    attempt/loop counters. This is the PLAT-089/176/182/241 class of defect.
 6. Run provenance, retention, debug-tool validation and frontend path filters
-   know plain iterations and selected `-hook` variants, but not a typed
+   knew plain iterations and selected `-hook` variants, but not a typed
    scheduled-run family.
-7. System/AgentWorks instructions still say that all new executions land in
+7. System/AgentWorks instructions said that all new executions landed in
    `iteration-0` and that `iteration-0` always contains the latest run.
    `run_full_workflow` repeats the same claim. Pulse intake understands only one
    active iteration and plain retained iterations. These contracts would direct
    Builder, Run, Pulse Gate and Pulse Architecture to the wrong evidence after
    the storage change.
-8. Manual Pulse uses the scheduler path but intentionally reviews an existing
+8. Manual Pulse used the scheduler path but intentionally reviewed an existing
    retained folder. Treating every scheduler session as a producing `-sched`
-   run would create empty phantom runs and corrupt Pulse coverage/recency.
+   run would have created empty phantom runs and corrupted Pulse coverage/recency.
 
 ## Required identity contract
 

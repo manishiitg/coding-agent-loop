@@ -31,9 +31,10 @@ existing evidence rather than creating empty workflow runs. The ticket covers ex
 identity, direct `execute_step`, paired evaluation, logs and validation
 evidence, cost/history attribution, retention, APIs/UI, AgentWorks guidance and
 Pulse awareness. Existing plain iterations and `-hook` runs remain readable.
-The core implementation is locally verified, including uniform per-family
-retention from `workflow.json::run_retention_count`; the ticket remains open for
-live linkage and comprehensive evidence mismatch handling.
+The core implementation is on `main` in `70660472b` and `53e5a0cc0`, including
+uniform per-family retention from `workflow.json::run_retention_count`; the
+ticket remains open for live linkage and comprehensive evidence mismatch
+handling.
 Agent-declared resource/file claims are explicitly not a safety mechanism.
 [PLAT-321](pulse_platform/scheduler-runs/plat-321.md) now has the runtime/schema/guidance core:
 schedules remain sequential by default, while an independently approved schedule

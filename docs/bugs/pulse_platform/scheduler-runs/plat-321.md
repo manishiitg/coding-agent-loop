@@ -5,7 +5,7 @@
 | Coordination | Value |
 |---|---|
 | Assigned agent | Codex |
-| Ticket state | `implementation in progress; runtime/schema/guidance core implemented and locally verified` |
+| Ticket state | `implemented on main; authenticated approval provenance, complete UI confirmation, and live acceptance remain open` |
 | Last synchronized | `2026-09-14` |
 
 - **Priority:** P1 throughput after PLAT-320.
@@ -62,7 +62,7 @@ approval rules.
 
 ## Implementation status (2026-09-14)
 
-Implemented and locally verified:
+Implemented, verified, and pushed to `main` in `70660472b`:
 
 - `concurrency_mode` (`sequential` default / `parallel`) and
   `parallel_risk_acknowledged` in manifests, REST responses, schedule history,

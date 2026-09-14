@@ -31,6 +31,8 @@ import { usePendingDecisionCount } from '../hooks/usePendingDecisionCount'
 import { useCanWriteWorkflow } from '../../../hooks/useCanWriteWorkflow'
 import { WorkspaceToolbarGroup as ToolbarGroup } from '../../workspace/WorkspaceToolbarGroup'
 import { WorkspaceTopToolbar } from '../../workspace/WorkspaceTopToolbar'
+import { AskAIButton } from '../AskAIButton'
+import { getWorkspaceAskAIMessage } from '../workspaceAskAI'
 
 // Execution phase ID - special phase that should be displayed separately
 const EXECUTION_PHASE_ID = 'execution'
@@ -637,6 +639,14 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
           </ToolbarGroup>
         )}
           </div>
+          )}
+
+          {workspacePath && (
+            <AskAIButton
+              workspacePath={workspacePath}
+              message={getWorkspaceAskAIMessage(activeWorkspaceView)}
+              className="ml-1 flex h-8 shrink-0 items-center gap-1.5 rounded-lg border border-border bg-muted/60 px-2.5 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-primary"
+            />
           )}
 
         </TooltipProvider>

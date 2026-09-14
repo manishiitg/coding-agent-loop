@@ -70,6 +70,15 @@ cp -R "$REPO_ROOT/frontend/dist/." "$BUILD_DIR/frontend/"
 cp "$REPO_ROOT/frontend/scripts/check-release-assets.mjs" "$BUILD_DIR/check-release-assets.mjs"
 cp "$REPO_ROOT/deploy/common/prune-releases.py" "$BUILD_DIR/prune-releases.py"
 cp "$SCRIPT_DIR/deployment_checks.py" "$BUILD_DIR/deployment_checks.py"
+# The playbook API loads its catalog at runtime from AGENTWORKS_PLAYBOOKS_DIR.
+# Validate the source before packaging, copy the complete catalog into the
+# immutable release, then validate the packaged copy. Any missing or malformed
+# playbook therefore fails this release before the current symlink is changed.
+python3 "$REPO_ROOT/playbooks/scripts/validate_playbooks.py"
+mkdir -p "$BUILD_DIR/playbooks"
+cp -R "$REPO_ROOT/playbooks/." "$BUILD_DIR/playbooks/"
+test -f "$BUILD_DIR/playbooks/agentic-engineering-platform/browser-qa/basic-browser-setup/playbook.json"
+python3 "$BUILD_DIR/playbooks/scripts/validate_playbooks.py"
 # frontend's build:report-preview step (part of `npm run build` above) writes
 # report-preview.js to agent_go/cmd/server/static/ in the source checkout,
 # never into the release. confida-agent, like RTS's video-studio-agent and
@@ -147,6 +156,7 @@ printf '%s\n' '[Service]' "Environment=PATH=$runtime_path" > "$HOME/.config/syst
 printf '%s\n' '[Service]' 'Environment=AGENTWORKS_MCP_STATE_DIR=/srv/confida/state/mcp' > "$HOME/.config/systemd/user/confida-agent.service.d/30-durable-mcp.conf"
 printf '%s\n' '[Service]' 'Environment=AGENT_BROWSER_CDP_ENABLED=false' > "$HOME/.config/systemd/user/confida-agent.service.d/20-disable-cdp.conf"
 printf '%s\n' '[Service]' 'Environment=AGENTWORKS_BROWSER_SESSION_PREFIX=confida' 'Environment=AGENTWORKS_BROWSER_STAGING_NAMESPACE=confida' > "$HOME/.config/systemd/user/confida-agent.service.d/40-browser-isolation.conf"
+printf '%s\n' '[Service]' 'Environment=AGENTWORKS_PLAYBOOKS_DIR=/srv/confida/current/playbooks' > "$HOME/.config/systemd/user/confida-agent.service.d/50-playbook-catalog.conf"
 mkdir -p "$HOME/.config/systemd/user/confida-workspace.service.d"
 printf '%s\n' '[Service]' "Environment=PATH=$runtime_path" > "$HOME/.config/systemd/user/confida-workspace.service.d/zz-runtime-tools.conf"
 printf '%s\n' '[Service]' 'Environment=AGENT_BROWSER_CDP_ENABLED=false' > "$HOME/.config/systemd/user/confida-workspace.service.d/20-disable-cdp.conf"
@@ -169,6 +179,10 @@ for unit in confida-agent confida-workspace; do
   tr '\0' '\n' < "/proc/$pid/environ" | grep -Fqx "PATH=$runtime_path"
   tr '\0' '\n' < "/proc/$pid/environ" | grep -Fqx 'AGENTWORKS_BROWSER_SESSION_PREFIX=confida'
   tr '\0' '\n' < "/proc/$pid/environ" | grep -Fqx 'AGENTWORKS_BROWSER_STAGING_NAMESPACE=confida'
+  if [[ "$unit" == confida-agent ]]; then
+    tr '\0' '\n' < "/proc/$pid/environ" | grep -Fqx 'AGENTWORKS_PLAYBOOKS_DIR=/srv/confida/current/playbooks'
+    test -f "/proc/$pid/cwd/playbooks/agentic-engineering-platform/browser-qa/basic-browser-setup/playbook.json"
+  fi
 done
 [[ "$(node --version)" == v24.* ]]
 

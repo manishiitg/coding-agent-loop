@@ -55,6 +55,28 @@ class ConfidaRuntimeDependenciesTest(unittest.TestCase):
         self.assertIn("confida-agent.service.d/40-browser-isolation.conf", activate)
         self.assertIn("confida-workspace.service.d/40-browser-isolation.conf", activate)
 
+    def test_playbook_catalog_is_a_validated_release_dependency(self) -> None:
+        activate = (CF_DIR / "server-build-and-activate.sh").read_text()
+
+        self.assertGreaterEqual(
+            activate.count('python3 "$REPO_ROOT/playbooks/scripts/validate_playbooks.py"'),
+            1,
+        )
+        self.assertIn('cp -R "$REPO_ROOT/playbooks/." "$BUILD_DIR/playbooks/"', activate)
+        self.assertIn(
+            'python3 "$BUILD_DIR/playbooks/scripts/validate_playbooks.py"',
+            activate,
+        )
+        self.assertIn(
+            "AGENTWORKS_PLAYBOOKS_DIR=/srv/confida/current/playbooks",
+            activate,
+        )
+        self.assertIn("confida-agent.service.d/50-playbook-catalog.conf", activate)
+        self.assertIn(
+            'test -f "/proc/$pid/cwd/playbooks/agentic-engineering-platform/browser-qa/basic-browser-setup/playbook.json"',
+            activate,
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

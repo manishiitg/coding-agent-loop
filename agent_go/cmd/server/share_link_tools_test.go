@@ -44,6 +44,9 @@ func TestGetFileLinkToolCreatesAuthenticatedFileAndFolderLinks(t *testing.T) {
 		if err != nil || preview.Path != "/"+tc.kind {
 			t.Fatalf("%s preview = %v err=%v", tc.path, preview, err)
 		}
+		if result["url"] != result["preview_url"] {
+			t.Fatalf("%s primary URL and compatibility alias differ: %#v", tc.path, result)
+		}
 		decoded, err := base64.StdEncoding.DecodeString(preview.Query().Get("path"))
 		if err != nil || string(decoded) != "Workflow/invoices/"+tc.path {
 			t.Fatalf("%s encoded path = %q err=%v", tc.path, decoded, err)
@@ -82,6 +85,9 @@ func TestGetFileLinkToolScopesWorkLinksToProjectOwner(t *testing.T) {
 		preview, err := url.Parse(result["preview_url"].(string))
 		if err != nil || preview.Path != "/"+tc.kind || preview.Query().Get("uid") != userID {
 			t.Fatalf("Work preview = %v err=%v", preview, err)
+		}
+		if result["url"] != result["preview_url"] {
+			t.Fatalf("Work primary URL and compatibility alias differ: %#v", result)
 		}
 		decoded, err := base64.StdEncoding.DecodeString(preview.Query().Get("path"))
 		if err != nil || string(decoded) != "Chats/Work/projects/demo/"+tc.path {

@@ -18,7 +18,11 @@ it is a file or folder, and returns the correct `/file` or `/folder` preview URL
 Do not manually Base64-encode paths or construct these URLs in a prompt or
 script.
 
-The returned `preview_url` contains no password, token, or access grant. A
+Present the returned `url` value verbatim as the clickable link. Do not rewrite
+it into `/file/<base64>` or `/folder/<base64>` and do not manually encode a
+path. `preview_url` is retained as a compatibility alias for `url`.
+
+The returned URL contains no password, token, or access grant. A
 recipient must sign in to AgentWorks and already have access to the workflow.
 Removing that access also removes their ability to open the link. Never claim
 that creating the link shared the workflow with a recipient.
@@ -39,7 +43,7 @@ curl --fail-with-body -sS --json "$payload" -H "$MCP_AUTH" "$MCP_CUSTOM/get_file
 ```
 
 Check the bridge response's `success` field before using its `result`. Parse the
-tool result as JSON and use `preview_url`. Persist or send that URL only when the
+tool result as JSON and use `url` (or legacy `preview_url`). Persist or send that URL only when the
 workflow contract requires it. A scripted step must pass the artifact's current
 workflow-relative path; it cannot create links for another workflow or for an
 arbitrary web URL.

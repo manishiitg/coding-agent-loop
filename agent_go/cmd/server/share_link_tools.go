@@ -21,7 +21,7 @@ func (api *StreamingAPI) registerShareLinkTools(reg definitionToolRegistrar, use
 	if strings.TrimSpace(workspace) == "" {
 		return nil
 	}
-	return reg.RegisterCustomTool("get_file_link", "Create an authenticated AgentWorks preview link for an existing file or folder in the active workflow. Pass a canonical workflow-relative path such as db/reports/index.html or runs/latest; the server validates current workflow access, existence, protected-path rules, and whether the target is a file or folder. The returned URL contains no credential and grants no access: every recipient must sign in and already have access to this workflow. Use this instead of manually building /file or /folder URLs. This is not publishing and cannot create anonymous links or share arbitrary web URLs.", map[string]interface{}{
+	return reg.RegisterCustomTool("get_file_link", "Create an authenticated AgentWorks preview link for an existing file or folder in the active workflow. Pass a canonical workflow-relative path such as db/reports/index.html or runs/latest; the server validates current workflow access, existence, protected-path rules, and whether the target is a file or folder. Present the returned url value verbatim; never manually build, rewrite, or Base64-encode a /file or /folder URL. The URL contains no credential and grants no access: every recipient must sign in and already have access to this workflow. This is not publishing and cannot create anonymous links or share arbitrary web URLs.", map[string]interface{}{
 		"type":                 "object",
 		"additionalProperties": false,
 		"required":             []string{"path"},
@@ -60,7 +60,7 @@ func (api *StreamingAPI) registerWorkShareLinkTool(reg definitionToolRegistrar, 
 		return fmt.Errorf("Work share links require an active Work project")
 	}
 	physicalRoot := agentProfileRuntimeWorkspace(userID, cleanWorkspace)
-	return reg.RegisterCustomTool("get_file_link", "Create an authenticated preview link for an existing file or folder in the active Work project. Pass a canonical project-relative path; the server validates existence, protected-path rules, and whether the target is a file or folder. The returned URL contains no credential and grants no access. Work projects are personal: the link can currently be opened only by the same signed-in Work account. Use this instead of manually building /file or /folder URLs. This is not public publishing and cannot share arbitrary web URLs or files outside this project.", map[string]interface{}{
+	return reg.RegisterCustomTool("get_file_link", "Create an authenticated preview link for an existing file or folder in the active Work project. Pass a canonical project-relative path; the server validates existence, protected-path rules, and whether the target is a file or folder. Present the returned url value verbatim; never manually build, rewrite, or Base64-encode a /file or /folder URL. The URL contains no credential and grants no access. Work projects are personal: the link can currently be opened only by the same signed-in Work account. This is not public publishing and cannot share arbitrary web URLs or files outside this project.", map[string]interface{}{
 		"type":                 "object",
 		"additionalProperties": false,
 		"required":             []string{"path"},
@@ -96,7 +96,9 @@ func createSecureShareLink(ctx context.Context, metadataRoot, linkRoot, relative
 	}
 	metadata["path"] = relative
 	metadata["kind"] = kind
-	metadata["preview_url"] = sharedAssetPublicURLForUser(publicURL, kind, path.Join(linkRoot, relative), userID)
+	previewURL := sharedAssetPublicURLForUser(publicURL, kind, path.Join(linkRoot, relative), userID)
+	metadata["url"] = previewURL
+	metadata["preview_url"] = previewURL
 	metadata["authentication"] = authentication
 	encoded, err := json.Marshal(metadata)
 	if err != nil {

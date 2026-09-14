@@ -13,7 +13,11 @@ const SHARE_RETURN_OAUTH_PREFIX = `${SHARE_RETURN_KEY}:oauth:`
 export function sharedReturnPath(value: string | null): string | null {
   if (!value || !value.startsWith('/') || value.startsWith('//') || value.includes('\\')) return null
   const url = new URL(value, 'https://agentworks.invalid')
-  if (url.origin !== 'https://agentworks.invalid' || !['/file', '/folder', '/report'].includes(url.pathname) || !url.searchParams.has('path')) return null
+  if (url.origin !== 'https://agentworks.invalid') return null
+  const kinds = ['file', 'folder', 'report']
+  const queryRoute = kinds.some(kind => url.pathname === `/${kind}`) && url.searchParams.has('path')
+  const legacyRoute = kinds.some(kind => url.pathname.startsWith(`/${kind}/`) && url.pathname.length > kind.length + 2)
+  if (!queryRoute && !legacyRoute) return null
   return url.pathname + url.search
 }
 

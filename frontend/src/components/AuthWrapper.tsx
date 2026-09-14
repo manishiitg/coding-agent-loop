@@ -44,33 +44,41 @@ export function AuthWrapper({ children }: AuthWrapperProps) {
       const params = new URLSearchParams(window.location.search)
       const uidParam = params.get('uid')
 
-      // Check for shared file: /file?path=BASE64&uid=OWNER_ID
-      if (path === '/file') {
-        const encodedPath = params.get('path')
-        if (encodedPath) {
-          setSharedFilePath(encodedPath)
-          if (uidParam) setSharedUid(uidParam)
-          return
+      // Current links use /file?path=BASE64. Older agents sometimes surfaced
+      // /file/BASE64 instead, so accept that shape too rather than falling
+      // through to the normal workflow shell.
+      const encodedPathFor = (kind: 'file' | 'folder' | 'report') => {
+        if (path === `/${kind}`) return params.get('path')
+        const prefix = `/${kind}/`
+        if (!path.startsWith(prefix) || path.length === prefix.length) return null
+        try {
+          return decodeURIComponent(path.slice(prefix.length))
+        } catch {
+          return null
         }
       }
 
-      // Check for shared folder: /folder?path=BASE64&uid=OWNER_ID
-      if (path === '/folder') {
-        const encodedPath = params.get('path')
-        if (encodedPath) {
-          setSharedFolderPath(encodedPath)
-          if (uidParam) setSharedUid(uidParam)
-          return
-        }
+      // Check for shared file: /file?path=BASE64 or legacy /file/BASE64
+      const filePath = encodedPathFor('file')
+      if (filePath) {
+        setSharedFilePath(filePath)
+        if (uidParam) setSharedUid(uidParam)
+        return
       }
 
-      // Check for dedicated workflow report URL: /report?path=BASE64_WORKSPACE_PATH
-      if (path === '/report') {
-        const encodedPath = params.get('path')
-        if (encodedPath) {
-          setReportWorkspacePath(encodedPath)
-          return
-        }
+      // Check for shared folder: /folder?path=BASE64 or legacy /folder/BASE64
+      const folderPath = encodedPathFor('folder')
+      if (folderPath) {
+        setSharedFolderPath(folderPath)
+        if (uidParam) setSharedUid(uidParam)
+        return
+      }
+
+      // Check for dedicated workflow report URL.
+      const reportPath = encodedPathFor('report')
+      if (reportPath) {
+        setReportWorkspacePath(reportPath)
+        return
       }
 
       // Check for OAuth callback

@@ -33,4 +33,23 @@ describe('Shared asset sign in', () => {
       expect(host.textContent).toContain('Shared asset ZGVm')
     } finally { await act(async () => root.unmount());host.remove();window.history.replaceState({}, '', '/') }
   })
+
+  it('opens legacy path-style file links in the file-only viewer', async () => {
+    window.history.replaceState({}, '', '/file/V29ya2Zsb3cvY29uZmlkYS1sb2dpbi9yZXBvcnQuaHRtbA==')
+    vi.mocked(useAuthStore).mockReturnValue({
+      isMultiUserMode: true,
+      isMultiUserModeChecked: true,
+      isAuthenticated: true,
+      isLoading: false,
+      checkAuth: vi.fn(),
+      checkAuthMode: vi.fn(),
+      login: vi.fn(),
+    } as ReturnType<typeof useAuthStore>)
+    const host = document.createElement('div'); document.body.append(host); const root = createRoot(host)
+    try {
+      await act(async () => root.render(<AuthWrapper>Generic workflow with hints</AuthWrapper>))
+      expect(host.textContent).toContain('Shared asset V29ya2Zsb3cvY29uZmlkYS1sb2dpbi9yZXBvcnQuaHRtbA==')
+      expect(host.textContent).not.toContain('Generic workflow with hints')
+    } finally { await act(async () => root.unmount()); host.remove(); window.history.replaceState({}, '', '/') }
+  })
 })

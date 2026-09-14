@@ -43,11 +43,16 @@ from selection for this project.
 ## Referenced AgentWorks workflows
 
 - The user can type `#` in the Work composer to attach another AgentWorks
-  workflow as context, using the same picker as AgentWorks chat.
+  workflow to one message, using the same picker as AgentWorks chat.
+- The user can instead link a workflow under **Setup > Attached folders** when
+  it should remain available to every chat, schedule, bot, and background turn
+  in this project. Durable links are stored in `product.json`; workflow-owned
+  links use the same field in `workflow.json`.
 - Treat every referenced workflow as read-only evidence. Use its files and
   current state when relevant, but do not edit or execute it from Work.
-- Never infer access from a typed name. Only paths selected by the picker and
-  authorized by the server are available to the turn.
+- Never infer access from a typed name. The server re-authorizes both temporary
+  and durable references on every turn; a removed permission makes the link
+  unavailable rather than preserving stale access.
 
 ## Browser and models
 

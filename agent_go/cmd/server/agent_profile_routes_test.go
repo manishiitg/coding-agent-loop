@@ -143,6 +143,26 @@ func TestQueryRequestForAgentProfileChatAcceptsDeclaredChatExtras(t *testing.T) 
 	}
 }
 
+func TestProjectChatMergesDurableAndMessageWorkflowReferences(t *testing.T) {
+	profile := routeTestProfile("work", true, "")
+	profile.Runtime.Capabilities.WorkflowReferences = agentprofiles.CapabilityPreferred
+	query, err := queryRequestForAgentProfileChat(profile, AgentProfileChatRequest{
+		Message:              "compare them",
+		WorkflowContextPaths: []string{"Workflow/temporary", "Workflow/saved"},
+	}, ProductConversationRecord{
+		SessionID:                   "session-1",
+		WorkspacePath:               "Chats/Work/projects/demo",
+		ResourceID:                  "demo",
+		ProjectWorkflowContextPaths: []string{"Workflow/saved"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Join(query.WorkflowContextPaths, ","); got != "Workflow/saved,Workflow/temporary" {
+		t.Fatalf("workflow references = %q, want durable first and deduplicated", got)
+	}
+}
+
 func TestProjectChatUsesManifestMCPAndSkillsInsteadOfBrowserInput(t *testing.T) {
 	profile := routeTestProfile("work", true, "")
 	profile.Runtime.Capabilities.MCPSelection = agentprofiles.CapabilityPreferred

@@ -58,6 +58,22 @@ func TestValidateManifestFolderAccessRequest(t *testing.T) {
 	}
 }
 
+func TestValidateManifestWorkflowContextPaths(t *testing.T) {
+	manifest := NewWorkflowManifest("Linked workflows")
+	manifest.WorkflowContextPaths = []string{"Workflow/reference"}
+	if err := ValidateManifest(manifest); err != nil {
+		t.Fatalf("valid workflow reference rejected: %v", err)
+	}
+	manifest.WorkflowContextPaths = []string{"Workflow/reference", "Workflow/reference"}
+	if err := ValidateManifest(manifest); err == nil || !strings.Contains(err.Error(), "duplicate") {
+		t.Fatalf("duplicate workflow reference should be rejected, got %v", err)
+	}
+	manifest.WorkflowContextPaths = []string{"Chats/not-a-workflow"}
+	if err := ValidateManifest(manifest); err == nil || !strings.Contains(err.Error(), "Workflow/<folder>") {
+		t.Fatalf("non-workflow reference should be rejected, got %v", err)
+	}
+}
+
 func TestNormalizeWorkflowFolderGrantsCanonicalizesAndPreservesCreation(t *testing.T) {
 	realRoot := t.TempDir()
 	linkParent := t.TempDir()

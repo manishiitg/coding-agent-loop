@@ -121,6 +121,10 @@ type WorkflowManifest struct {
 	RunRetentionCount    *int                                        `json:"run_retention_count,omitempty"`
 	FolderAccess         []workflowtypes.WorkflowFolderGrant         `json:"folder_access,omitempty"`
 	FolderAccessRequests []workflowtypes.WorkflowFolderAccessRequest `json:"folder_access_requests,omitempty"`
+	// WorkflowContextPaths are durable links to other workflows. They are
+	// resolved through the same authorization boundary as transient # references
+	// and are always mounted read-only.
+	WorkflowContextPaths []string `json:"workflow_context_paths,omitempty"`
 	// InstalledPlaybooks are Builder-only setup guides materialized as
 	// workflow-local skills. Execution agents continue to use the workflow and
 	// per-step runtime skill selections.
@@ -733,6 +737,18 @@ func ValidateManifest(m *WorkflowManifest) error {
 				return fmt.Errorf("folder_access_requests[%d].requested_path cannot be a filesystem root", i)
 			}
 		}
+	}
+	seenWorkflowContexts := make(map[string]struct{}, len(m.WorkflowContextPaths))
+	for i, raw := range m.WorkflowContextPaths {
+		path := strings.TrimSuffix(strings.TrimSpace(raw), "/")
+		parts := strings.Split(path, "/")
+		if len(parts) != 2 || parts[0] != "Workflow" || parts[1] == "" || parts[1] == "." || parts[1] == ".." || strings.ContainsAny(path, "\\\x00") {
+			return fmt.Errorf("workflow_context_paths[%d] must be a Workflow/<folder> path", i)
+		}
+		if _, exists := seenWorkflowContexts[path]; exists {
+			return fmt.Errorf("duplicate workflow_context_paths entry %q", path)
+		}
+		seenWorkflowContexts[path] = struct{}{}
 	}
 	if m.Pulse != nil && m.Pulse.AdvisorSpecialization != nil {
 		specialization := m.Pulse.AdvisorSpecialization

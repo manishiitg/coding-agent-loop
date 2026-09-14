@@ -3194,6 +3194,8 @@ export interface WorkflowManifest {
   knowledgebase_sources?: KnowledgebaseSource[]
   folder_access?: WorkflowFolderGrant[]
   folder_access_requests?: WorkflowFolderAccessRequest[]
+  /** Durable read-only workflow attachments, re-authorized on every run. */
+  workflow_context_paths?: string[]
   installed_playbooks?: InstalledPlaybook[]
 }
 
@@ -3350,6 +3352,7 @@ export interface UpdateWorkflowManifestRequest {
   knowledgebase_sources?: KnowledgebaseSource[]
   folder_access?: WorkflowFolderGrant[]
   folder_access_requests?: WorkflowFolderAccessRequest[]
+  workflow_context_paths?: string[]
 }
 
 export interface DuplicateWorkflowManifestRequest {

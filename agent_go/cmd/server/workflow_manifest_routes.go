@@ -189,6 +189,7 @@ type UpdateWorkflowManifestRequest struct {
 	RunRetentionCount    *int                                         `json:"run_retention_count,omitempty"`
 	FolderAccess         *[]workflowtypes.WorkflowFolderGrant         `json:"folder_access,omitempty"`
 	FolderAccessRequests *[]workflowtypes.WorkflowFolderAccessRequest `json:"folder_access_requests,omitempty"`
+	WorkflowContextPaths *[]string                                    `json:"workflow_context_paths,omitempty"`
 	PulseEnabled         *bool                                        `json:"pulse_enabled,omitempty"`
 	// Notification instruction fields are standalone patches so the Notify
 	// popup can update content guidance without replacing workflow capabilities.
@@ -339,6 +340,21 @@ func (api *StreamingAPI) handleUpdateWorkflowManifest(w http.ResponseWriter, r *
 	}
 	if req.FolderAccessRequests != nil {
 		manifest.FolderAccessRequests = append([]workflowtypes.WorkflowFolderAccessRequest(nil), (*req.FolderAccessRequests)...)
+	}
+	if req.WorkflowContextPaths != nil {
+		normalized, contextErr := authorizeWorkflowContextPaths(r.Context(), *req.WorkflowContextPaths)
+		if contextErr != nil {
+			http.Error(w, contextErr.Error(), http.StatusForbidden)
+			return
+		}
+		self := strings.TrimSuffix(strings.TrimSpace(req.WorkspacePath), "/")
+		for _, path := range normalized {
+			if path == self {
+				http.Error(w, "a workflow cannot attach itself", http.StatusBadRequest)
+				return
+			}
+		}
+		manifest.WorkflowContextPaths = normalized
 	}
 	if req.PulseEnabled != nil {
 		setWorkflowPulseEnabled(manifest, *req.PulseEnabled)

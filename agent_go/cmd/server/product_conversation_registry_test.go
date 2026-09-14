@@ -216,7 +216,7 @@ func TestWorkProjectBindingUsesCreatedProjectFolder(t *testing.T) {
 			return []string{manifestPath}, true, nil
 		},
 		read: func(context.Context, string) (string, bool, error) {
-			return `{"schema_version":1,"product":"work","id":"task-1","title":"Task","session_id":"work:task-1","capabilities":{"llm_config":{"schema_version":2,"mode":"explicit","builder_llm":{"provider":"muse-cli","model_id":"muse-spark-1.3-contributor"}}}}`, true, nil
+			return `{"schema_version":1,"product":"work","id":"task-1","title":"Task","session_id":"work:task-1","capabilities":{"workflow_context_paths":["Workflow/reference"],"llm_config":{"schema_version":2,"mode":"explicit","builder_llm":{"provider":"muse-cli","model_id":"muse-spark-1.3-contributor"}}}}`, true, nil
 		},
 	}
 	binding, err := resolveProductProjectBindingWithStore(context.Background(), "user-1", profile, "task-1", store)
@@ -228,6 +228,9 @@ func TestWorkProjectBindingUsesCreatedProjectFolder(t *testing.T) {
 	}
 	if binding.ProjectLLMConfig == nil || binding.ProjectLLMConfig.BuilderLLM == nil || binding.ProjectLLMConfig.BuilderLLM.Provider != "muse-cli" {
 		t.Fatalf("project LLM configuration was not loaded: %+v", binding.ProjectLLMConfig)
+	}
+	if got := strings.Join(binding.ProjectWorkflowContextPaths, ","); got != "Workflow/reference" {
+		t.Fatalf("project workflow references were not loaded: %v", binding.ProjectWorkflowContextPaths)
 	}
 }
 

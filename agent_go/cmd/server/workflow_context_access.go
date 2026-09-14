@@ -35,3 +35,18 @@ func authorizeWorkflowContextPaths(ctx context.Context, paths []string) ([]strin
 	}
 	return result, nil
 }
+
+// mergeDurableWorkflowContextPaths adds workflow.json links to the transient
+// # references supplied by a client. Authorization intentionally remains in
+// authorizeWorkflowContextPaths so saved links are rechecked on every turn.
+func mergeDurableWorkflowContextPaths(ctx context.Context, selectedFolder string, transient []string) []string {
+	selected := strings.TrimSuffix(strings.TrimSpace(selectedFolder), "/")
+	if !strings.HasPrefix(selected, "Workflow/") {
+		return appendUniqueStrings(nil, transient...)
+	}
+	manifest, exists, err := ReadWorkflowManifest(ctx, selected)
+	if err != nil || !exists || manifest == nil {
+		return appendUniqueStrings(nil, transient...)
+	}
+	return appendUniqueStrings(manifest.WorkflowContextPaths, transient...)
+}

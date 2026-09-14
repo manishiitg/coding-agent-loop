@@ -48,6 +48,7 @@ describe('parseSessionManifest', () => {
     capabilities: {
       selected_servers: ['github'],
       selected_skills: ['code-reviewer'],
+      workflow_context_paths: ['Workflow/reference'],
       llm_config: {
         schema_version: 2,
         mode: 'explicit',
@@ -64,6 +65,7 @@ describe('parseSessionManifest', () => {
     expect(session?.llmConfig?.builder_llm?.provider).toBe('muse-cli')
     expect(session?.selectedServers).toEqual(['github'])
     expect(session?.selectedSkills).toEqual(['code-reviewer'])
+    expect(session?.workflowContextPaths).toEqual(['Workflow/reference'])
   })
 
   it('rejects other products and incomplete manifests', () => {
@@ -88,6 +90,7 @@ describe('createWorkSession', () => {
     })
     expect(manifest.capabilities.selected_servers).toEqual([])
     expect(manifest.capabilities.selected_skills).toEqual([])
+    expect(manifest.capabilities.workflow_context_paths).toEqual([])
     expect(createPlannerFolder).toHaveBeenCalledWith(
       `${session.workspacePath}/code`,
       expect.stringContaining('Initialize Work project code folder'),
@@ -96,7 +99,7 @@ describe('createWorkSession', () => {
 })
 
 describe('updateProductProjectSelections', () => {
-  it('persists MCP servers and skills in product.json while preserving other capabilities', async () => {
+  it('persists MCP servers, skills, and workflow references in product.json while preserving other capabilities', async () => {
     const project = parseSessionManifest(JSON.stringify({
       schema_version: 1,
       product: 'work',
@@ -120,15 +123,18 @@ describe('updateProductProjectSelections', () => {
     const updated = await updateProductProjectSelections(project, {
       selectedServers: ['google_sheets', 'google_sheets'],
       selectedSkills: ['work-dashboard'],
+      workflowContextPaths: ['Workflow/reference', 'Workflow/reference'],
     }, 'Update integrations')
 
     expect(updated.selectedServers).toEqual(['google_sheets'])
     expect(updated.selectedSkills).toEqual(['work-dashboard'])
+    expect(updated.workflowContextPaths).toEqual(['Workflow/reference'])
     const [, content] = updatePlannerFile.mock.calls.at(-1)!
     const manifest = JSON.parse(content as string)
     expect(manifest.capabilities.custom_feature).toEqual({ enabled: true })
     expect(manifest.capabilities.selected_servers).toEqual(['google_sheets'])
     expect(manifest.capabilities.selected_skills).toEqual(['work-dashboard'])
+    expect(manifest.capabilities.workflow_context_paths).toEqual(['Workflow/reference'])
   })
 })
 

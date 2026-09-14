@@ -7,6 +7,7 @@ import { KnowledgebaseSources } from './KnowledgebaseSources'
 import { aliasFromPath } from '../../utils/folderAlias'
 import { READ_ONLY_TITLE, useCanWriteWorkflow } from '../../hooks/useCanWriteWorkflow'
 import { FolderGrantList } from '../folders/FolderGrantList'
+import { WorkflowReferenceAccess } from '../folders/WorkflowReferenceAccess'
 
 interface WorkflowFolderAccessViewProps {
   workspacePath: string | null
@@ -38,6 +39,7 @@ export default function WorkflowFolderAccessView({ workspacePath, headerAction }
   const canWriteWorkflow = useCanWriteWorkflow(workspacePath)
   const [grants, setGrants] = useState<WorkflowFolderGrant[]>([])
   const [requests, setRequests] = useState<WorkflowFolderAccessRequest[]>([])
+  const [workflowContextPaths, setWorkflowContextPaths] = useState<string[]>([])
   const [loading, setLoading] = useState(false)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -55,6 +57,7 @@ export default function WorkflowFolderAccessView({ workspacePath, headerAction }
       const response = await workflowManifestApi.getWorkflowManifest(workspacePath)
       setGrants(response.manifest.folder_access || [])
       setRequests(response.manifest.folder_access_requests || [])
+      setWorkflowContextPaths(response.manifest.workflow_context_paths || [])
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'Unable to load attached folders')
     } finally {
@@ -161,6 +164,21 @@ export default function WorkflowFolderAccessView({ workspacePath, headerAction }
     await persist(grants.map(candidate => candidate.id === grant.id ? { ...candidate, access, updated_at: now } : candidate))
   }, [grants, persist])
 
+  const persistWorkflowReferences = useCallback(async (paths: string[]) => {
+    if (!canWriteWorkflow || !workspacePath) return
+    setSaving(true)
+    setError(null)
+    try {
+      const response = await workflowManifestApi.updateWorkflowManifest({ workspace_path: workspacePath, workflow_context_paths: paths })
+      setWorkflowContextPaths(response.manifest.workflow_context_paths || paths)
+      await useWorkflowManifestStore.getState().refreshWorkflows()
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'Unable to update linked workflows')
+    } finally {
+      setSaving(false)
+    }
+  }, [canWriteWorkflow, workspacePath])
+
   return (
         <div className="flex h-full min-h-0 w-full max-w-none flex-col bg-background">
           <div className="flex items-start justify-between border-b border-border px-5 py-4">
@@ -176,6 +194,7 @@ export default function WorkflowFolderAccessView({ workspacePath, headerAction }
 
           <div className="min-h-0 flex-1 space-y-5 overflow-y-auto p-5">
             {workspacePath && <KnowledgebaseSources key={workspacePath} workspacePath={workspacePath} variant="folders" />}
+            <WorkflowReferenceAccess selectedPaths={workflowContextPaths} onChange={persistWorkflowReferences} excludeWorkspacePath={workspacePath} disabled={!canWriteWorkflow || saving} />
             <h3 className="text-sm font-semibold text-foreground">External folders</h3>
             {error && <div className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive">{error}</div>}
             {loading ? (

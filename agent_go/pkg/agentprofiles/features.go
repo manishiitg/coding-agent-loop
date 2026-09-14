@@ -140,7 +140,7 @@ var featureCatalog = map[string]featureDefinition{
 	},
 	"workflow-references": {
 		Capabilities:    map[string]CapabilityRequirement{"workflow_references": CapabilityPreferred},
-		PromptExtension: "Read-only AgentWorks workflow references are enabled. Treat a workflow selected with # as context only; do not edit or execute it from this product.",
+		PromptExtension: "Read-only AgentWorks workflow references are enabled. A # selection applies to one message; a workflow linked under Attached folders is durable for the project. Treat both as context only, and never edit or execute the referenced workflow from this product.",
 	},
 	"terminal": {
 		Capabilities:    map[string]CapabilityRequirement{"raw_terminal": CapabilityPreferred},

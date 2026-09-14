@@ -60,11 +60,12 @@ type ProductConversationRecord struct {
 	SelectedSkills  []string `json:"selected_skills,omitempty"`
 	// ProjectLLMConfig is loaded from product.json for this request. It is not
 	// duplicated into the conversation registry.
-	ProjectLLMConfig       *workflowtypes.PresetLLMConfig `json:"-"`
-	ProjectSelectedServers []string                       `json:"-"`
-	ProjectSelectedSkills  []string                       `json:"-"`
-	CreatedAt              string                         `json:"created_at"`
-	UpdatedAt              string                         `json:"updated_at"`
+	ProjectLLMConfig            *workflowtypes.PresetLLMConfig `json:"-"`
+	ProjectSelectedServers      []string                       `json:"-"`
+	ProjectSelectedSkills       []string                       `json:"-"`
+	ProjectWorkflowContextPaths []string                       `json:"-"`
+	CreatedAt                   string                         `json:"created_at"`
+	UpdatedAt                   string                         `json:"updated_at"`
 }
 
 type productConversationRegistryDocument struct {
@@ -261,16 +262,17 @@ func (store productConversationRegistryStore) forget(ctx context.Context, userID
 }
 
 type productConversationBinding struct {
-	ConversationKey        string
-	WorkspacePath          string
-	ManifestPath           string
-	ResourceID             string
-	Title                  string
-	Description            string
-	AuthoritativeSessionID string
-	ProjectLLMConfig       *workflowtypes.PresetLLMConfig
-	ProjectSelectedServers []string
-	ProjectSelectedSkills  []string
+	ConversationKey             string
+	WorkspacePath               string
+	ManifestPath                string
+	ResourceID                  string
+	Title                       string
+	Description                 string
+	AuthoritativeSessionID      string
+	ProjectLLMConfig            *workflowtypes.PresetLLMConfig
+	ProjectSelectedServers      []string
+	ProjectSelectedSkills       []string
+	ProjectWorkflowContextPaths []string
 }
 
 type productConversationRegistryStore struct {
@@ -366,6 +368,7 @@ func (store productConversationRegistryStore) resolveOrCreate(
 		existing.ProjectLLMConfig = binding.ProjectLLMConfig
 		existing.ProjectSelectedServers = append([]string(nil), binding.ProjectSelectedServers...)
 		existing.ProjectSelectedSkills = append([]string(nil), binding.ProjectSelectedSkills...)
+		existing.ProjectWorkflowContextPaths = append([]string(nil), binding.ProjectWorkflowContextPaths...)
 		return existing, nil
 	}
 
@@ -377,20 +380,21 @@ func (store productConversationRegistryStore) resolveOrCreate(
 		sessionID = "product-" + store.newID()
 	}
 	record := ProductConversationRecord{
-		ConversationID:         "conversation-" + store.newID(),
-		ConversationKey:        binding.ConversationKey,
-		ProfileID:              profile.ID,
-		ProfileVersion:         profile.Version,
-		SessionID:              sessionID,
-		WorkspacePath:          binding.WorkspacePath,
-		ResourceID:             binding.ResourceID,
-		Title:                  binding.Title,
-		Description:            binding.Description,
-		CreatedAt:              now,
-		UpdatedAt:              now,
-		ProjectLLMConfig:       binding.ProjectLLMConfig,
-		ProjectSelectedServers: append([]string(nil), binding.ProjectSelectedServers...),
-		ProjectSelectedSkills:  append([]string(nil), binding.ProjectSelectedSkills...),
+		ConversationID:              "conversation-" + store.newID(),
+		ConversationKey:             binding.ConversationKey,
+		ProfileID:                   profile.ID,
+		ProfileVersion:              profile.Version,
+		SessionID:                   sessionID,
+		WorkspacePath:               binding.WorkspacePath,
+		ResourceID:                  binding.ResourceID,
+		Title:                       binding.Title,
+		Description:                 binding.Description,
+		CreatedAt:                   now,
+		UpdatedAt:                   now,
+		ProjectLLMConfig:            binding.ProjectLLMConfig,
+		ProjectSelectedServers:      append([]string(nil), binding.ProjectSelectedServers...),
+		ProjectSelectedSkills:       append([]string(nil), binding.ProjectSelectedSkills...),
+		ProjectWorkflowContextPaths: append([]string(nil), binding.ProjectWorkflowContextPaths...),
 	}
 	document.Version = productConversationRegistryVersion
 	document.Entries[entryKey] = record
@@ -437,20 +441,21 @@ func (store productConversationRegistryStore) rotate(
 		createdAt = existing.CreatedAt
 	}
 	record := ProductConversationRecord{
-		ConversationID:         "conversation-" + store.newID(),
-		ConversationKey:        binding.ConversationKey,
-		ProfileID:              profile.ID,
-		ProfileVersion:         profile.Version,
-		SessionID:              "product-" + store.newID(),
-		WorkspacePath:          binding.WorkspacePath,
-		ResourceID:             binding.ResourceID,
-		Title:                  binding.Title,
-		Description:            binding.Description,
-		ProjectLLMConfig:       binding.ProjectLLMConfig,
-		ProjectSelectedServers: append([]string(nil), binding.ProjectSelectedServers...),
-		ProjectSelectedSkills:  append([]string(nil), binding.ProjectSelectedSkills...),
-		CreatedAt:              createdAt,
-		UpdatedAt:              now,
+		ConversationID:              "conversation-" + store.newID(),
+		ConversationKey:             binding.ConversationKey,
+		ProfileID:                   profile.ID,
+		ProfileVersion:              profile.Version,
+		SessionID:                   "product-" + store.newID(),
+		WorkspacePath:               binding.WorkspacePath,
+		ResourceID:                  binding.ResourceID,
+		Title:                       binding.Title,
+		Description:                 binding.Description,
+		ProjectLLMConfig:            binding.ProjectLLMConfig,
+		ProjectSelectedServers:      append([]string(nil), binding.ProjectSelectedServers...),
+		ProjectSelectedSkills:       append([]string(nil), binding.ProjectSelectedSkills...),
+		ProjectWorkflowContextPaths: append([]string(nil), binding.ProjectWorkflowContextPaths...),
+		CreatedAt:                   createdAt,
+		UpdatedAt:                   now,
 	}
 
 	// A project manifest is an authoritative runtime binding. Update it before
@@ -632,9 +637,10 @@ type productProjectManifest struct {
 	Schedules     []productschedule.Schedule `json:"schedules,omitempty"`
 	Triggers      []productWebhookTrigger    `json:"triggers,omitempty"`
 	Capabilities  struct {
-		LLMConfig       *workflowtypes.PresetLLMConfig `json:"llm_config,omitempty"`
-		SelectedServers []string                       `json:"selected_servers,omitempty"`
-		SelectedSkills  []string                       `json:"selected_skills,omitempty"`
+		LLMConfig            *workflowtypes.PresetLLMConfig `json:"llm_config,omitempty"`
+		SelectedServers      []string                       `json:"selected_servers,omitempty"`
+		SelectedSkills       []string                       `json:"selected_skills,omitempty"`
+		WorkflowContextPaths []string                       `json:"workflow_context_paths,omitempty"`
 	} `json:"capabilities,omitempty"`
 }
 
@@ -731,16 +737,17 @@ func resolveProductProjectBindingWithStore(
 		}
 		workspacePath := filepath.ToSlash(filepath.Dir(candidate))
 		matched = &productConversationBinding{
-			ConversationKey:        conversationKey,
-			WorkspacePath:          workspacePath,
-			ManifestPath:           candidate,
-			ResourceID:             resourceProjectID,
-			Title:                  strings.TrimSpace(manifest.Title),
-			Description:            strings.TrimSpace(manifest.Description),
-			AuthoritativeSessionID: strings.TrimSpace(manifest.SessionID),
-			ProjectLLMConfig:       manifest.Capabilities.LLMConfig,
-			ProjectSelectedServers: append([]string(nil), manifest.Capabilities.SelectedServers...),
-			ProjectSelectedSkills:  append([]string(nil), manifest.Capabilities.SelectedSkills...),
+			ConversationKey:             conversationKey,
+			WorkspacePath:               workspacePath,
+			ManifestPath:                candidate,
+			ResourceID:                  resourceProjectID,
+			Title:                       strings.TrimSpace(manifest.Title),
+			Description:                 strings.TrimSpace(manifest.Description),
+			AuthoritativeSessionID:      strings.TrimSpace(manifest.SessionID),
+			ProjectLLMConfig:            manifest.Capabilities.LLMConfig,
+			ProjectSelectedServers:      append([]string(nil), manifest.Capabilities.SelectedServers...),
+			ProjectSelectedSkills:       append([]string(nil), manifest.Capabilities.SelectedSkills...),
+			ProjectWorkflowContextPaths: append([]string(nil), manifest.Capabilities.WorkflowContextPaths...),
 		}
 		// Only the legacy/default project chat is tied to product.json's one
 		// session_id. Additional tabs are independent and live solely in the

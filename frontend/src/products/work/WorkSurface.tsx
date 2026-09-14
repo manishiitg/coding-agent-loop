@@ -122,7 +122,7 @@ function useWorkSessions() {
     return updated
   }, [sessions])
 
-  const updateSelections = useCallback(async (projectId: string, patch: { selectedServers?: string[]; selectedSkills?: string[] }) => {
+  const updateSelections = useCallback(async (projectId: string, patch: { selectedServers?: string[]; selectedSkills?: string[]; workflowContextPaths?: string[] }) => {
     const project = sessions.find(item => item.id === projectId)
     if (!project) throw new Error('This Work project is no longer available.')
     const updated = await updateProductProjectSelections(project, patch, `Update Work project integrations ${project.title}`)
@@ -629,9 +629,11 @@ export function WorkSurface() {
                       onViewChange={setWorkspaceView}
                       enabledPanels={enabledWorkspacePanels}
                       projectLLMConfig={selected.llmConfig}
+                      workflowContextPaths={selected.workflowContextPaths}
                       onRuntimeChange={changeWorkRuntime}
                       onSelectedServersChange={servers => updateSelections(selected.id, { selectedServers: servers })}
                       onSelectedSkillsChange={skills => updateSelections(selected.id, { selectedSkills: skills })}
+                      onWorkflowContextPathsChange={paths => updateSelections(selected.id, { workflowContextPaths: paths })}
                     />
                   ) : (
                     <div className="grid h-full place-items-center text-sm text-muted-foreground">Opening workspace…</div>

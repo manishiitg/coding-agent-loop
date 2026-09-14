@@ -15,6 +15,7 @@ export type ProductProject<P extends string = string> = {
   llmConfig?: PresetLLMConfig
   selectedServers: string[]
   selectedSkills: string[]
+  workflowContextPaths: string[]
   selectionConfigInitialized: boolean
 }
 
@@ -44,7 +45,7 @@ function manifestLLMConfig(raw: ProductManifest): PresetLLMConfig | undefined {
   return parseProductLLMConfig((raw.capabilities as { llm_config?: unknown }).llm_config)
 }
 
-function manifestStringList(raw: ProductManifest, key: 'selected_servers' | 'selected_skills'): string[] {
+function manifestStringList(raw: ProductManifest, key: 'selected_servers' | 'selected_skills' | 'workflow_context_paths'): string[] {
   if (!raw.capabilities || typeof raw.capabilities !== 'object') return []
   const value = (raw.capabilities as Record<string, unknown>)[key]
   if (!Array.isArray(value)) return []
@@ -87,6 +88,7 @@ export function parseProductProjectManifest<P extends string>(
     llmConfig: manifestLLMConfig(raw),
     selectedServers: manifestStringList(raw, 'selected_servers'),
     selectedSkills: manifestStringList(raw, 'selected_skills'),
+    workflowContextPaths: manifestStringList(raw, 'workflow_context_paths'),
     selectionConfigInitialized: manifestHasSelectionConfig(raw),
   }
 }
@@ -144,6 +146,7 @@ export async function createProductProject<P extends string>(options: {
     capabilities: {
       selected_servers: [],
       selected_skills: [],
+      workflow_context_paths: [],
       ...(options.llmConfig ? { llm_config: options.llmConfig } : {}),
     },
   }
@@ -165,6 +168,7 @@ export async function createProductProject<P extends string>(options: {
     llmConfig: options.llmConfig,
     selectedServers: [],
     selectedSkills: [],
+    workflowContextPaths: [],
     selectionConfigInitialized: true,
   }
 }
@@ -198,7 +202,7 @@ export async function updateProductProjectLLMConfig<P extends string>(
 
 export async function updateProductProjectSelections<P extends string>(
   project: ProductProject<P>,
-  patch: { selectedServers?: string[]; selectedSkills?: string[] },
+  patch: { selectedServers?: string[]; selectedSkills?: string[]; workflowContextPaths?: string[] },
   commitLabel: string,
 ): Promise<ProductProject<P>> {
   const manifestPath = `${project.workspacePath}/product.json`
@@ -218,11 +222,13 @@ export async function updateProductProjectSelections<P extends string>(
   const normalize = (values: string[]) => [...new Set(values.map(value => value.trim()).filter(Boolean))]
   const selectedServers = patch.selectedServers === undefined ? project.selectedServers : normalize(patch.selectedServers)
   const selectedSkills = patch.selectedSkills === undefined ? project.selectedSkills : normalize(patch.selectedSkills)
+  const workflowContextPaths = patch.workflowContextPaths === undefined ? project.workflowContextPaths : normalize(patch.workflowContextPaths)
   capabilities.selected_servers = selectedServers
   capabilities.selected_skills = selectedSkills
+  capabilities.workflow_context_paths = workflowContextPaths
   const updatedAt = new Date().toISOString()
   manifest.capabilities = capabilities
   manifest.updated_at = updatedAt
   await agentApi.updatePlannerFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, commitLabel)
-  return { ...project, selectedServers, selectedSkills, selectionConfigInitialized: true, updatedAt }
+  return { ...project, selectedServers, selectedSkills, workflowContextPaths, selectionConfigInitialized: true, updatedAt }
 }

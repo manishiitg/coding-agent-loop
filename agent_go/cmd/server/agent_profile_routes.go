@@ -112,7 +112,8 @@ func queryRequestForAgentProfileChat(profile agentprofiles.Profile, input AgentP
 		return QueryRequest{}, fmt.Errorf("profile %q does not accept user-selected skills", profile.ID)
 	}
 	if profile.Runtime.Capabilities.WorkflowReferences != "" && profile.Runtime.Capabilities.WorkflowReferences != agentprofiles.CapabilityDisabled {
-		req.WorkflowContextPaths = appendUniqueStrings(nil, input.WorkflowContextPaths...)
+		req.WorkflowContextPaths = appendUniqueStrings(nil, conversation.ProjectWorkflowContextPaths...)
+		req.WorkflowContextPaths = appendUniqueStrings(req.WorkflowContextPaths, input.WorkflowContextPaths...)
 	} else if len(input.WorkflowContextPaths) > 0 {
 		return QueryRequest{}, fmt.Errorf("profile %q does not accept workflow references", profile.ID)
 	}

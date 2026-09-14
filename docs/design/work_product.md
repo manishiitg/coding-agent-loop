@@ -79,6 +79,14 @@ Work reuses AgentWorks' `#` automation picker so the user can attach another
 workflow as read-only context. The server authorizes every selected workflow;
 selection does not let Work edit or execute that workflow.
 
+For ongoing relationships, the shared Attached folders view can persist
+another workflow as a read-only link. Workflow-owned links are stored in
+`workflow.json.workflow_context_paths`; product-owned links are stored in
+`product.json.capabilities.workflow_context_paths`. These are stable references,
+not copied files or raw host-folder grants. Every turn resolves them through
+the same authorization and read-only folder guard as a temporary `#` reference,
+so revoked access takes effect without rewriting the source manifest.
+
 A session is assembled from these instruction layers:
 
 1. **Platform policy:** Security boundaries, access rules, audit requirements, and product behavior users cannot override.

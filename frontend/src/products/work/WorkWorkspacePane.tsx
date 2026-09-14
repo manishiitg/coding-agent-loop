@@ -27,6 +27,7 @@ import type { PresetLLMConfig, WorkFolderGrant } from '../../services/api-types'
 import { useChatStore } from '../../stores/useChatStore'
 import { useMCPStore } from '../../stores/useMCPStore'
 import { FolderGrantList } from '../../components/folders/FolderGrantList'
+import { WorkflowReferenceAccess } from '../../components/folders/WorkflowReferenceAccess'
 import { WorkModelsPanel } from './WorkModelsPanel'
 import { BrowserWorkspacePanel } from '../../components/workflow/BrowserWorkspacePanel'
 import WorkflowBotsPanel from '../../components/workflow/WorkflowBotsPanel'
@@ -110,7 +111,7 @@ export function WorkWorkspaceToolbar({ view, onViewChange, enabledPanels }: { vi
   )
 }
 
-function WorkFoldersPanel() {
+function WorkFoldersPanel({ workflowContextPaths, onWorkflowContextPathsChange }: { workflowContextPaths: string[]; onWorkflowContextPathsChange: (paths: string[]) => Promise<unknown> }) {
   const [folders, setFolders] = useState<WorkFolderGrant[]>([])
   const [roots, setRoots] = useState<string[]>([])
   const [path, setPath] = useState('')
@@ -167,6 +168,7 @@ function WorkFoldersPanel() {
       <h2 className="text-sm font-semibold text-foreground">Attached folders</h2>
       <p className="mt-1 text-xs text-muted-foreground">Give Work access to an existing server folder in addition to this project.</p>
       {roots.length > 0 && <p className="mt-2 text-[11px] text-muted-foreground">Allowed roots: {roots.join(', ')}</p>}
+      <div className="mt-4"><WorkflowReferenceAccess selectedPaths={workflowContextPaths} onChange={onWorkflowContextPathsChange} /></div>
       <div className="mt-4 grid gap-2 rounded-lg border border-border p-3">
         <input value={path} onChange={(event) => setPath(event.target.value)} placeholder="Absolute folder path" className="rounded-md border border-border bg-background px-3 py-2 text-sm" />
         <div className="grid grid-cols-[1fr_auto_auto] gap-2">
@@ -186,7 +188,6 @@ function WorkFoldersPanel() {
 
 function WorkMCPPanel({ tabId, workspacePath, onSelectedServersChange }: { tabId: string; workspacePath: string; onSelectedServersChange: (servers: string[]) => Promise<unknown> }) {
   const selectedServers = useChatStore(state => state.chatTabs[tabId]?.config.selectedServers || [])
-  const setTabConfig = useChatStore(state => state.setTabConfig)
   const toolList = useMCPStore(state => state.toolList)
   const availableServers = [...new Set(toolList
     .filter(tool => tool.connection === 'connected' && tool.server)
@@ -323,7 +324,7 @@ function WorkBrowserPanel({ tabId, workspacePath }: { tabId: string; workspacePa
   )
 }
 
-export function WorkWorkspacePane({ workspacePath, projectId, projectTitle, tabId, onClose, view, onViewChange, enabledPanels, projectLLMConfig, onRuntimeChange, onSelectedServersChange, onSelectedSkillsChange }: { workspacePath: string; projectId: string; projectTitle: string; tabId: string; onClose: () => void; view: WorkWorkspaceView; onViewChange: (view: WorkWorkspaceView) => void; enabledPanels?: Set<string>; projectLLMConfig?: PresetLLMConfig; onRuntimeChange: (selection: WorkRuntimeSelection) => void | Promise<void>; onSelectedServersChange: (servers: string[]) => Promise<unknown>; onSelectedSkillsChange: (skills: string[]) => Promise<unknown> }) {
+export function WorkWorkspacePane({ workspacePath, projectId, projectTitle, tabId, onClose, view, onViewChange, enabledPanels, projectLLMConfig, workflowContextPaths, onRuntimeChange, onSelectedServersChange, onSelectedSkillsChange, onWorkflowContextPathsChange }: { workspacePath: string; projectId: string; projectTitle: string; tabId: string; onClose: () => void; view: WorkWorkspaceView; onViewChange: (view: WorkWorkspaceView) => void; enabledPanels?: Set<string>; projectLLMConfig?: PresetLLMConfig; workflowContextPaths: string[]; onRuntimeChange: (selection: WorkRuntimeSelection) => void | Promise<void>; onSelectedServersChange: (servers: string[]) => Promise<unknown>; onSelectedSkillsChange: (skills: string[]) => Promise<unknown>; onWorkflowContextPathsChange: (paths: string[]) => Promise<unknown> }) {
   const selectedSkills = useChatStore(state => state.chatTabs[tabId]?.config.selectedSkills || [])
 
   const toggleSkill = async (folderName: string) => {
@@ -367,7 +368,7 @@ export function WorkWorkspacePane({ workspacePath, projectId, projectTitle, tabI
           workspaceSecretsAlwaysEnabled
           allowGlobalPromotion={false}
         /></div>}
-        {view === 'folders' && <WorkFoldersPanel />}
+        {view === 'folders' && <WorkFoldersPanel workflowContextPaths={workflowContextPaths} onWorkflowContextPathsChange={onWorkflowContextPathsChange} />}
         {view === 'models' && <WorkModelsPanel tabId={tabId} workspacePath={workspacePath} onAsk={message => queueWorkMessage(tabId, message)} projectLLMConfig={projectLLMConfig} onRuntimeChange={onRuntimeChange} />}
         {view === 'bots' && <div className="h-full overflow-y-auto p-4"><WorkflowBotsPanel
           workspacePath={workspacePath}

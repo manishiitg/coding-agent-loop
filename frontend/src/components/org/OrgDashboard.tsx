@@ -101,12 +101,26 @@ const SummaryDetail: React.FC<{ title: string; summary: OrgDashboardNotification
       {summary.title && <h4 className="text-sm font-semibold text-foreground">{summary.title}</h4>}
       <p className="text-sm leading-6 text-foreground/90">{summary.message}</p>
       {!!summary.fields?.length && <div className="grid gap-2 sm:grid-cols-2">{summary.fields.map((field, index) => <div key={`${field.label}:${index}`} className="rounded-md border border-border bg-background/70 px-3 py-2"><div className="font-runloop-mono text-[10px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">{field.label}</div><div className="mt-1 text-sm text-foreground">{field.value}</div></div>)}</div>}
-      {!!summary.sections?.length && <div className="space-y-3">{summary.sections.map((section, index) => <div key={`${section.heading}:${index}`}><div className="font-runloop-mono text-[10px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">{section.heading}</div><p className="mt-1 whitespace-pre-wrap text-sm leading-6 text-foreground/90">{section.body}</p></div>)}</div>}
-      {!!summary.routes?.length && <div className="space-y-3">{summary.routes.map(route => <SummaryDetail
-        key={JSON.stringify([route.routing_step_id, route.route_id])}
-        title={route.label || route.route_id}
-        summary={{ ...summary, ...route, route: undefined, routes: undefined }}
-      />)}</div>}
+      {!!summary.sections?.length && <details aria-label="Evidence and metric details" className="group overflow-hidden rounded-md border border-border bg-background/50">
+        <summary className="flex cursor-pointer list-none items-center gap-2 px-3 py-2.5 text-xs font-medium text-foreground transition-colors hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary">
+          <ChevronRight className="h-3.5 w-3.5 shrink-0 text-muted-foreground transition-transform group-open:rotate-90" />
+          <span>Evidence and metric details</span>
+          <span className="ml-auto text-muted-foreground">{summary.sections.length} section{summary.sections.length === 1 ? '' : 's'}</span>
+        </summary>
+        <div className="divide-y divide-border border-t border-border">{summary.sections.map((section, index) => <div key={`${section.heading}:${index}`} className="px-3 py-3"><div className="font-runloop-mono text-[10px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">{section.heading}</div><p className="mt-1 whitespace-pre-wrap break-words text-xs leading-5 text-foreground/85">{section.body}</p></div>)}</div>
+      </details>}
+      {!!summary.routes?.length && <details aria-label="Route update details" className="group overflow-hidden rounded-md border border-border bg-background/50">
+        <summary className="flex cursor-pointer list-none items-center gap-2 px-3 py-2.5 text-xs font-medium text-foreground transition-colors hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary">
+          <ChevronRight className="h-3.5 w-3.5 shrink-0 text-muted-foreground transition-transform group-open:rotate-90" />
+          <span>Route updates</span>
+          <span className="ml-auto text-muted-foreground">{summary.routes.length}</span>
+        </summary>
+        <div className="space-y-3 border-t border-border p-3">{summary.routes.map(route => <SummaryDetail
+          key={JSON.stringify([route.routing_step_id, route.route_id])}
+          title={route.label || route.route_id}
+          summary={{ ...summary, ...route, route: undefined, routes: undefined }}
+        />)}</div>
+      </details>}
     </div> : <p className="text-sm text-muted-foreground">No {title.toLowerCase()} notification has been recorded yet.</p>}
   </section>
 )

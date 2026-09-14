@@ -11,6 +11,36 @@ import { agentApi } from '../../services/api'
 import { OrgDashboard } from './OrgDashboard'
 
 describe('Activity route summaries', () => {
+  it('keeps verbose Pulse evidence collapsed until requested', async () => {
+    Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true })
+    const pulse: OrgDashboardNotification = { id: 'pulse-digest', workspace_path: 'Workflow/demo', kind: 'pulse_summary',
+      status: 'monitoring', title: 'Pulse · healthy', message: 'No active issues; watch the next cost run.', created_at: '2026-09-05T00:00:00Z',
+      fields: [{ label: 'Verdict', value: 'Healthy' }], sections: [
+        { heading: 'Measure AWS cost', body: 'Account finalized daily AWS cost: 55.8621009693 USD · observed at a raw collection timestamp.' },
+        { heading: 'Infrastructure health', body: 'Supporting evidence and provenance.' },
+      ] }
+    vi.mocked(agentApi.listReportHumanInputsAggregate).mockResolvedValue({ success: true, inputs: [] })
+    vi.mocked(agentApi.getOrgDashboardNotifications).mockResolvedValue({ success: true, workflows: [{
+      workspace_path: 'Workflow/demo', pulse_summary: pulse, recent: [pulse],
+    }] })
+    const container = document.createElement('div')
+    document.body.append(container)
+    const root = createRoot(container)
+    try {
+      await act(async () => root.render(<OrgDashboard workflows={[{ workspacePath: 'Workflow/demo', label: 'Demo' }]} onOpenWorkflow={vi.fn()} />))
+      const pulseButton = Array.from(container.querySelectorAll('button')).find(button => button.textContent?.includes('Pulse'))!
+      await act(async () => pulseButton.click())
+      const evidence = container.querySelector<HTMLDetailsElement>('[aria-label="Evidence and metric details"]')!
+      expect(evidence.open).toBe(false)
+      expect(evidence.querySelector('summary')?.textContent).toContain('2 sections')
+      evidence.open = true
+      expect(evidence.textContent).toContain('55.8621009693 USD')
+    } finally {
+      await act(async () => root.unmount())
+      container.remove()
+    }
+  })
+
   it.each(['failed', 'blocked', 'waiting_for_user', 'waiting_for_platform', 'no_run'] as const)('keeps a %s route visible without flagging a pending decision', async (status) => {
     Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true })
     const quiet: OrgDashboardNotification = { id: 'old-digest', workspace_path: 'Workflow/demo', kind: 'run_summary',

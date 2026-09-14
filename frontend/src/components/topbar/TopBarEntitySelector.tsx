@@ -15,6 +15,7 @@ type TopBarEntitySelectorProps = {
   addDisabled?: boolean
   addTestId?: string
   badge?: ReactNode
+  leading?: ReactNode
   middleControl?: ReactNode
   children: ReactNode
   dataTour?: string
@@ -36,6 +37,7 @@ export function TopBarEntitySelector({
   addDisabled = false,
   addTestId,
   badge,
+  leading,
   middleControl,
   children,
   dataTour,
@@ -74,7 +76,7 @@ export function TopBarEntitySelector({
           className="flex min-w-0 items-center gap-2 px-3 py-1 transition-colors hover:bg-gray-100 dark:hover:bg-slate-700"
           title={title}
         >
-          <div className={`h-2 w-2 shrink-0 rounded-full ${active ? 'bg-green-500' : 'bg-gray-400'}`} />
+          {leading ?? <div className={`h-2 w-2 shrink-0 rounded-full ${active ? 'bg-green-500' : 'bg-gray-400'}`} />}
           <span className={`block max-w-[190px] truncate whitespace-nowrap text-sm font-medium ${active ? 'text-gray-700 dark:text-gray-300' : 'text-gray-500 dark:text-gray-400'}`}>
             {label || placeholder}
           </span>

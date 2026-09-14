@@ -2637,28 +2637,6 @@ func (m *BotConversationManager) resolveChannelWorkflow(platform, channelID stri
 	return nil
 }
 
-// readManifestWorkshopMode reads workflow.json for the given workspace path and returns
-// execution_defaults.workshop_mode. Returns "" if not set or on any error.
-func (m *BotConversationManager) readManifestWorkshopMode(workspacePath string) string {
-	if workspacePath == "" || m.workspaceURL == "" {
-		return ""
-	}
-	filePath := workspacePath + "/workflow.json"
-	content, exists, err := readWorkspaceFile(context.Background(), m.workspaceURL, filePath)
-	if err != nil || !exists || content == "" {
-		return ""
-	}
-	var manifest struct {
-		ExecutionDefs struct {
-			WorkshopMode string `json:"workshop_mode"`
-		} `json:"execution_defaults"`
-	}
-	if err := json.Unmarshal([]byte(content), &manifest); err != nil {
-		return ""
-	}
-	return manifest.ExecutionDefs.WorkshopMode
-}
-
 // buildQueryRequest constructs a request map for startSessionInternal.
 // userID is the workspace user ID used for loading per-user secrets.
 // channelID is used for Slack-style channel→workflow routing: pass the

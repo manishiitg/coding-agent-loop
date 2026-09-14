@@ -51,14 +51,21 @@ func TestWorkIdentityToolPersistsAndPromptVariablesReloadIt(t *testing.T) {
 	if err := RegisterAgentProfileRuntime(registry, server.URL); err != nil {
 		t.Fatalf("register Work runtime: %v", err)
 	}
+	var emitted []map[string]interface{}
 	tool, err := registry.BuildTool(agentprofiles.ToolBinding{ID: "work.set-identity"}, agentprofiles.ToolRuntimeContext{
 		UserID: "user-1", SessionID: "session-1", WorkspacePath: projectPath,
+		Emit: func(event any) {
+			if payload, ok := event.(map[string]interface{}); ok {
+				emitted = append(emitted, payload)
+			}
+		},
 	})
 	if err != nil {
 		t.Fatalf("build Work identity tool: %v", err)
 	}
 	result, err := tool.Execute(context.Background(), map[string]interface{}{
 		"operation": "set",
+		"icon":      "🛠️",
 		"name":      "Nova",
 		"role":      "Engineering partner",
 	})
@@ -80,8 +87,11 @@ func TestWorkIdentityToolPersistsAndPromptVariablesReloadIt(t *testing.T) {
 		t.Fatalf("project metadata was not preserved/updated: %+v", saved)
 	}
 	identity, _ := saved["identity"].(map[string]interface{})
-	if identity["name"] != "Nova" || identity["role"] != "Engineering partner" {
+	if identity["icon"] != "🛠️" || identity["name"] != "Nova" || identity["role"] != "Engineering partner" {
 		t.Fatalf("identity was not saved: %+v", identity)
+	}
+	if len(emitted) != 1 || emitted[0]["type"] != "work_identity_updated" {
+		t.Fatalf("identity update event was not emitted: %+v", emitted)
 	}
 
 	variables, err := registry.PromptVariables(context.Background(), "work", agentprofiles.RuntimeContext{
@@ -90,7 +100,7 @@ func TestWorkIdentityToolPersistsAndPromptVariablesReloadIt(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load Work prompt variables: %v", err)
 	}
-	if got := variables["WORK_IDENTITY"]; !strings.Contains(got, "Name: Nova") || !strings.Contains(got, "Role: Engineering partner") {
+	if got := variables["WORK_IDENTITY"]; !strings.Contains(got, "Icon: 🛠️") || !strings.Contains(got, "Name: Nova") || !strings.Contains(got, "Role: Engineering partner") {
 		t.Fatalf("prompt identity was not reloaded: %q", got)
 	}
 

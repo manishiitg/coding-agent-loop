@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/agentprofiles"
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/workspace"
@@ -49,6 +50,7 @@ func RegisterProductSkills() error {
 }
 
 type workIdentity struct {
+	Icon         string `json:"icon,omitempty"`
 	Name         string `json:"name,omitempty"`
 	Role         string `json:"role,omitempty"`
 	Instructions string `json:"instructions,omitempty"`
@@ -60,6 +62,7 @@ type workProjectManifest struct {
 }
 
 func normalizeWorkIdentity(identity workIdentity) workIdentity {
+	identity.Icon = strings.TrimSpace(identity.Icon)
 	identity.Name = strings.TrimSpace(identity.Name)
 	identity.Role = strings.TrimSpace(identity.Role)
 	identity.Instructions = strings.TrimSpace(identity.Instructions)
@@ -68,10 +71,13 @@ func normalizeWorkIdentity(identity workIdentity) workIdentity {
 
 func renderWorkIdentity(identity workIdentity) string {
 	identity = normalizeWorkIdentity(identity)
-	if identity.Name == "" && identity.Role == "" && identity.Instructions == "" {
+	if identity.Icon == "" && identity.Name == "" && identity.Role == "" && identity.Instructions == "" {
 		return ""
 	}
 	var lines []string
+	if identity.Icon != "" {
+		lines = append(lines, "Icon: "+identity.Icon)
+	}
 	if identity.Name != "" {
 		lines = append(lines, "Name: "+identity.Name)
 	}
@@ -105,6 +111,7 @@ func workIdentityFactory(workspaceAPIURL string) agentprofiles.ToolFactory {
 						"type": "string", "enum": []string{"set", "clear"},
 						"description": "Use set to create or update the identity, or clear to remove it.",
 					},
+					"icon":         map[string]interface{}{"type": "string", "description": "A single emoji or short text glyph shown with the selected Work project. Omit to preserve it; pass an empty string to remove it."},
 					"name":         map[string]interface{}{"type": "string", "description": "The bot's display name. Omit to preserve the current name."},
 					"role":         map[string]interface{}{"type": "string", "description": "The bot's role or purpose. Omit to preserve the current role."},
 					"instructions": map[string]interface{}{"type": "string", "description": "Concise behavior, tone, domain, and working preferences. Omit to preserve the current instructions."},
@@ -133,6 +140,9 @@ func workIdentityFactory(workspaceAPIURL string) agentprofiles.ToolFactory {
 					if value, ok := args["name"].(string); ok {
 						identity.Name = value
 					}
+					if value, ok := args["icon"].(string); ok {
+						identity.Icon = value
+					}
 					if value, ok := args["role"].(string); ok {
 						identity.Role = value
 					}
@@ -140,8 +150,11 @@ func workIdentityFactory(workspaceAPIURL string) agentprofiles.ToolFactory {
 						identity.Instructions = value
 					}
 					identity = normalizeWorkIdentity(identity)
+					if utf8.RuneCountInString(identity.Icon) > 8 {
+						return "The identity icon must be one emoji or a short text glyph (at most 8 characters).", nil
+					}
 					if renderWorkIdentity(identity) == "" {
-						return "At least one of name, role, or instructions is required to set the identity.", nil
+						return "At least one of icon, name, role, or instructions is required to set the identity.", nil
 					}
 					manifest["identity"] = identity
 				} else {
@@ -156,11 +169,17 @@ func workIdentityFactory(workspaceAPIURL string) agentprofiles.ToolFactory {
 					return "", fmt.Errorf("save Work identity: %w", err)
 				}
 				if operation == "clear" {
+					if runtime.Emit != nil {
+						runtime.Emit(map[string]interface{}{"type": "work_identity_updated"})
+					}
 					return "The Work bot identity was removed. Use the base Work identity from now on.", nil
 				}
 				var saved workIdentity
 				encodedIdentity, _ := json.Marshal(manifest["identity"])
 				_ = json.Unmarshal(encodedIdentity, &saved)
+				if runtime.Emit != nil {
+					runtime.Emit(map[string]interface{}{"type": "work_identity_updated"})
+				}
 				return "The project bot identity is saved. Adopt it immediately in this chat. It will be included automatically in generated provider project instructions on future provider sessions.\n\n" + renderWorkIdentity(saved), nil
 			},
 		}, nil

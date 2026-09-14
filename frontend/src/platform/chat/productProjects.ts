@@ -8,6 +8,7 @@ export type ProductProject<P extends string = string> = {
   id: string
   title: string
   description: string
+  identity?: ProductIdentity
   sessionId: string
   workspacePath: string
   createdAt: string
@@ -19,12 +20,20 @@ export type ProductProject<P extends string = string> = {
   selectionConfigInitialized: boolean
 }
 
+export type ProductIdentity = {
+  icon?: string
+  name?: string
+  role?: string
+  instructions?: string
+}
+
 type ProductManifest = {
   schema_version?: unknown
   product?: unknown
   id?: unknown
   title?: unknown
   description?: unknown
+  identity?: unknown
   session_id?: unknown
   created_at?: unknown
   updated_at?: unknown
@@ -32,6 +41,18 @@ type ProductManifest = {
 }
 
 const asString = (value: unknown): string => typeof value === 'string' ? value.trim() : ''
+
+function parseProductIdentity(value: unknown): ProductIdentity | undefined {
+  if (!value || typeof value !== 'object') return undefined
+  const raw = value as Record<string, unknown>
+  const identity = {
+    icon: asString(raw.icon),
+    name: asString(raw.name),
+    role: asString(raw.role),
+    instructions: asString(raw.instructions),
+  }
+  return Object.values(identity).some(Boolean) ? identity : undefined
+}
 
 function parseProductLLMConfig(value: unknown): PresetLLMConfig | undefined {
   if (!value || typeof value !== 'object') return undefined
@@ -81,6 +102,7 @@ export function parseProductProjectManifest<P extends string>(
     id,
     title,
     description: asString(raw.description),
+    identity: parseProductIdentity(raw.identity),
     sessionId,
     workspacePath,
     createdAt,

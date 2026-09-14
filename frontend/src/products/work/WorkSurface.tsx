@@ -85,6 +85,13 @@ function useWorkSessions() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
+  const refresh = useCallback(async () => {
+    const listed = await loadWorkSessions()
+    setSessions(listed)
+    setSelectedId((current) => current && listed.some(item => item.id === current) ? current : listed[0]?.id ?? null)
+    return listed
+  }, [])
+
   useEffect(() => {
     let cancelled = false
     void loadWorkSessions()
@@ -137,6 +144,7 @@ function useWorkSessions() {
     create,
     updateLLMConfig,
     updateSelections,
+    refresh,
     loading,
     error,
   }
@@ -300,6 +308,7 @@ function WorkTopBarControl({
   return (
     <TopBarEntitySelector
       label={selected?.title}
+      leading={selected?.identity?.icon ? <span className="shrink-0 text-base leading-none" title={`Bot identity: ${selected.identity.name || selected.identity.role || selected.identity.icon}`}>{selected.identity.icon}</span> : undefined}
       placeholder="New project"
       open={open}
       onToggle={() => setOpen(current => !current)}
@@ -332,7 +341,9 @@ function WorkTopBarControl({
             className={`w-full rounded-md p-2 text-left text-sm transition-colors ${session.id === selected?.id ? 'bg-blue-100 text-blue-900 dark:bg-blue-900/30 dark:text-blue-100' : 'text-gray-700 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-slate-700'}`}
           >
             <span className="flex items-center gap-2">
-              <span className="h-2 w-2 shrink-0 rounded-full bg-green-500" />
+              {session.identity?.icon
+                ? <span className="w-5 shrink-0 text-center text-base leading-none" aria-hidden="true">{session.identity.icon}</span>
+                : <span className="h-2 w-2 shrink-0 rounded-full bg-green-500" />}
               <span className="truncate font-medium">{session.title}</span>
             </span>
           </button>
@@ -343,12 +354,24 @@ function WorkTopBarControl({
 }
 
 export function WorkSurface() {
-  const { sessions, selected, select, create, updateLLMConfig, updateSelections, loading: sessionsLoading, error: sessionsError } = useWorkSessions()
+  const { sessions, selected, select, create, updateLLMConfig, updateSelections, refresh, loading: sessionsLoading, error: sessionsError } = useWorkSessions()
   const persistLegacyRuntime = useCallback(async (selection: WorkRuntimeSelection) => {
     if (!selected) return
     await updateLLMConfig(selected.id, selection)
   }, [selected, updateLLMConfig])
   const { tabId, tabs, error: chatError } = useWorkChatTabs(selected, persistLegacyRuntime)
+  const identityRefreshToken = useChatStore(state => tabs
+    .flatMap(tab => tab.sessionId ? state.tabEvents[tab.sessionId] || [] : [])
+    .filter(event => event.type === 'work_identity_updated')
+    .map(event => event.id || event.timestamp || '')
+    .join('|'))
+  const handledIdentityRefreshToken = useRef('')
+
+  useEffect(() => {
+    if (!identityRefreshToken || identityRefreshToken === handledIdentityRefreshToken.current) return
+    handledIdentityRefreshToken.current = identityRefreshToken
+    void refresh()
+  }, [identityRefreshToken, refresh])
   const [creating, setCreating] = useState(false)
   const [createOpen, setCreateOpen] = useState(false)
   const [chatOpen, setChatOpen] = useState(true)

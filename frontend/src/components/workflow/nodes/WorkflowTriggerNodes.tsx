@@ -1,6 +1,6 @@
 import { memo } from 'react'
 import { Handle, Position, type NodeProps } from '@xyflow/react'
-import { CalendarClock, RefreshCw, Settings, Webhook } from 'lucide-react'
+import { CalendarClock, GitBranch, RefreshCw, Settings, Webhook } from 'lucide-react'
 import type { WorkflowTriggerNodeData } from '../hooks/usePlanToFlow'
 import { describeCron } from '../../scheduler/scheduleRuns/cron'
 import { formatLocalScheduleTime } from '../../scheduler/scheduleRuns/helpers'
@@ -12,17 +12,28 @@ export const WorkflowTriggerNode = memo(({ data }: NodeProps) => {
   const webhook = job.schedule_type === 'webhook'
   const Icon = webhook ? Webhook : CalendarClock
   const cadence = webhook ? 'On request' : job.schedule_type === 'calendar' ? `${job.calendar_items?.length || 0} calendar dates` : describeCron(job.cron_expression)
-  return <article className={`nodrag nopan flex h-[320px] w-[320px] flex-col gap-2 rounded-xl border bg-card p-3 text-card-foreground shadow-sm ${active ? 'border-primary ring-2 ring-primary/30' : 'border-border'}`} aria-label={`${webhook ? 'Webhook' : 'Schedule'}: ${job.name}`}>
-    <div className="flex items-center gap-2 text-[11px] text-muted-foreground"><Icon className="h-4 w-4" /><span>{webhook ? 'Webhook' : 'Schedule'}</span><span className="ml-auto rounded border border-border px-1.5 py-0.5">{job.enabled ? 'Enabled' : 'Paused'}</span></div>
-    <h3 className="line-clamp-2 text-sm font-semibold" title={job.name}>{job.name}</h3>
-    <p className="line-clamp-2 text-xs text-muted-foreground" title={cadence}>{cadence}</p>
-    {!webhook && <p className="text-[11px] text-muted-foreground">{job.enabled ? `Next: ${formatLocalScheduleTime(job.next_run_at)}` : 'Schedule paused'} · {job.timezone || 'UTC'}</p>}
-    <p className="line-clamp-2 text-xs" title={routeSummary?.label}>{routeSummary?.label}</p>
-    {!!job.group_names?.length && <p className="truncate text-[11px] text-muted-foreground" title={job.group_names.join(', ')}>Groups: {job.group_names.join(', ')}</p>}
-    {webhook && <div className="max-h-28 overflow-auto"><WebhookEndpoint id={job.id} name={job.name} /></div>}
-    <div className="mt-auto flex items-center gap-2 border-t border-border pt-2">
-      <button type="button" onClick={onSelect} disabled={!routeSummary?.canTrace} aria-pressed={!!active} className="rounded border border-border px-2 py-1 text-xs hover:bg-muted disabled:opacity-40">{active ? 'Clear highlight' : 'Highlight path'}</button>
-      <button type="button" onClick={() => onSettings?.(webhook ? 'webhooks' : 'schedules')} className="ml-auto rounded p-1.5 text-muted-foreground hover:bg-muted" aria-label={`Open settings for ${job.name}`} title="Open settings"><Settings className="h-4 w-4" /></button>
+  const accent = webhook ? 'border-sky-500/35 bg-sky-500/10 text-sky-600 dark:text-sky-300' : 'border-amber-500/35 bg-amber-500/10 text-amber-600 dark:text-amber-300'
+  return <article className={`nodrag nopan flex h-[236px] w-[288px] flex-col overflow-hidden rounded-2xl border bg-gradient-to-br p-3 text-card-foreground shadow-md backdrop-blur-sm ${webhook ? 'from-sky-500/10 via-card to-card' : 'from-amber-500/10 via-card to-card'} ${active ? 'border-primary ring-2 ring-primary/30' : 'border-border/80'}`} aria-label={`${webhook ? 'Webhook' : 'Schedule'}: ${job.name}`}>
+    <div className="flex min-w-0 items-start gap-2.5">
+      <span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border ${accent}`}><Icon className="h-4 w-4" /></span>
+      <div className="min-w-0 flex-1">
+        <div className="flex items-center gap-2 text-[10px] font-medium uppercase tracking-wide text-muted-foreground"><span>{webhook ? 'Webhook event' : 'Scheduled event'}</span><span className={`ml-auto h-2 w-2 rounded-full ${job.enabled ? 'bg-emerald-500' : 'bg-muted-foreground/50'}`} aria-hidden="true" /><span className="normal-case tracking-normal">{job.enabled ? 'Active' : 'Paused'}</span></div>
+        <h3 className="mt-0.5 truncate text-sm font-semibold" title={job.name}>{job.name}</h3>
+      </div>
+    </div>
+    <div className="mt-3 rounded-xl border border-border/70 bg-background/55 px-2.5 py-2">
+      <p className="truncate text-xs font-medium" title={cadence}>{cadence}</p>
+      {!webhook && <p className="mt-0.5 truncate text-[10px] text-muted-foreground">{job.enabled ? `Next: ${formatLocalScheduleTime(job.next_run_at)}` : 'Schedule paused'} · {job.timezone || 'UTC'}</p>}
+      {webhook && <div className="mt-1 max-h-10 overflow-auto"><WebhookEndpoint id={job.id} name={job.name} /></div>}
+    </div>
+    <div className="mt-2 flex min-w-0 items-start gap-2 px-1">
+      <GitBranch className="mt-0.5 h-3.5 w-3.5 shrink-0 text-primary" />
+      <div className="min-w-0"><p className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">Starts</p><p className="line-clamp-2 text-xs" title={routeSummary?.label}>{routeSummary?.label}</p></div>
+    </div>
+    {!!job.group_names?.length && <p className="mt-1 truncate px-1 text-[10px] text-muted-foreground" title={job.group_names.join(', ')}>Access: {job.group_names.join(', ')}</p>}
+    <div className="mt-auto flex items-center gap-2 border-t border-border/70 pt-2">
+      <button type="button" onClick={onSelect} disabled={!routeSummary?.canTrace} aria-pressed={!!active} className="rounded-lg px-2 py-1 text-xs font-medium text-primary hover:bg-primary/10 disabled:text-muted-foreground disabled:opacity-50">{active ? 'Clear path' : 'View path'}</button>
+      <button type="button" onClick={() => onSettings?.(webhook ? 'webhooks' : 'schedules')} className="ml-auto rounded-lg p-1.5 text-muted-foreground hover:bg-muted hover:text-foreground" aria-label={`Open settings for ${job.name}`} title="Open settings"><Settings className="h-4 w-4" /></button>
     </div>
     {routeSummary?.canTrace && <Handle type="source" position={Position.Bottom} className="!h-2 !w-2 !bg-muted-foreground" />}
   </article>

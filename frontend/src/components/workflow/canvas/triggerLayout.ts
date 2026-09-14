@@ -2,8 +2,8 @@ import { MarkerType } from '@xyflow/react'
 import type { ScheduledJob, EvaluationStep } from '../../../services/api-types'
 import type { WorkflowNode, WorkflowEdge, RoutingStepNodeData } from '../hooks/usePlanToFlow'
 
-export const TRIGGER_CARD_WIDTH = 320
-export const TRIGGER_CARD_HEIGHT = 320
+export const TRIGGER_CARD_WIDTH = 288
+export const TRIGGER_CARD_HEIGHT = 236
 export const triggerNodeID = (id: string) => `workflow-trigger-${id}`
 
 export function triggerRouteSummary(job: ScheduledJob, nodes: WorkflowNode[]) {

@@ -78,18 +78,20 @@ Implemented and locally verified:
 - Builder rotation/pruning protection for `-sched`/`-hook`, shared numeric
   discovery, run-index v2, Pulse intake, backend/frontend path recognition and
   schedule history folder/concurrency snapshots;
-- schedule/tool/system/Builder/Run/Pulse guidance for the new identity; and
+- schedule/tool/system/Builder/Run/Pulse guidance for the new identity;
 - PLAT-321's default-sequential, explicit acknowledged parallel lane, including
-  dependency precedence and same-schedule exclusion.
+  dependency precedence and same-schedule exclusion; and
+- uniform `workflow.json::run_retention_count` enforcement for plain Builder,
+  `-sched`, and `-hook` families, with independent per-family counts, paired
+  workflow/evaluation deletion, durable expired-artifact markers, and run-index
+  cleanup.
 
 Still required before this ticket closes:
 
 - live Social Media occurrence → folder → logs → costs → evaluation → Pulse
   acceptance evidence;
 - identity stamping and mismatch quarantine coverage for every legacy evidence
-  document family; and
-- an explicit scheduled-run retention/expiry implementation that deletes paired
-  workflow/evaluation artifacts without corrupting durable history.
+  document family.
 
 ## Confirmed current behavior and failure boundaries
 

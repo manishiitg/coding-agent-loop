@@ -85,6 +85,7 @@ export function ScheduleRunCard({
           <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] text-muted-foreground">
             {triggerLabel && <span className="rounded border border-border px-1.5 py-0.5" aria-label={`Trigger: ${triggerLabel}`}>{triggerLabel}</span>}
             {run.run_folder && <span>{run.run_folder}</span>}
+            {run.artifacts_expired && <span className="rounded border border-border px-1.5 py-0.5">Artifacts expired</span>}
             {run.webhook?.event && <span>{run.webhook.event}</span>}
             {slotLabel && <span className="font-medium text-foreground/75">{slotLabel}</span>}
             <span>Started {formatScheduleRunTime(run.started_at)}</span>

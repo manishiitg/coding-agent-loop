@@ -5092,7 +5092,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 					"type":        "integer",
 					"minimum":     1,
 					"maximum":     maxRunRetentionCount,
-					"description": "Number of backup run/eval iterations to keep, excluding active iteration-0. Defaults to 3 when omitted. Raise this for workflows whose Pulse or Goal Advisor reviews need a wider evidence window.",
+					"description": "Number of completed run/eval folders to keep independently for plain Builder archives, saved-schedule -sched runs, and webhook -hook runs, excluding active iteration-0. Defaults to 10 when omitted. Raise this for workflows whose Pulse or Goal Advisor reviews need a wider evidence window.",
 				},
 				"disable_parallel_tool_execution": map[string]interface{}{
 					"type":        "boolean",
@@ -6083,7 +6083,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				}
 
 				anyChanged = true
-				sb.WriteString(fmt.Sprintf("\n### Run Retention (updated)\nKeeping %d backup run/eval iteration(s), excluding active iteration-0.\n", count))
+				sb.WriteString(fmt.Sprintf("\n### Run Retention (updated)\nKeeping %d completed run/eval folder(s) independently for Builder archives, saved schedules, and webhooks, excluding active iteration-0.\n", count))
 				logger.Info(fmt.Sprintf("Updated workflow run_retention_count=%d", count))
 			}
 

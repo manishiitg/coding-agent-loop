@@ -2141,6 +2141,8 @@ func (s *SchedulerService) endQueuedLaunch(key string) {
 func (s *SchedulerService) runJob(ctx context.Context, sctx *ScheduleContext, runID string) (string, error) {
 	if sctx.WebhookInput != nil {
 		defer s.pruneWebhookRuns(sctx.WorkspacePath)
+	} else if !sctx.PulseOnly {
+		defer s.pruneScheduledRuns(sctx.WorkspacePath)
 	}
 	defer s.releaseScheduleRunContext(runID)
 	defer s.maintainRunLease(ctx, runID)()

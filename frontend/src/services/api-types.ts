@@ -3129,6 +3129,7 @@ export interface ScheduledJobRun {
   run_folder?: string
   concurrency_mode?: 'sequential' | 'parallel'
   parallel_risk_acknowledged?: boolean
+  artifacts_expired?: boolean
   session_id?: string
   status: 'running' | 'success' | 'error' | 'failed' | 'partial' | 'stopped' | 'interrupted' | 'waiting_for_capacity' | 'waiting_for_workflow'
   error?: string

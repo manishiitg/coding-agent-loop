@@ -1134,6 +1134,7 @@ func getScheduledJobRunsHandler(svc *SchedulerService) http.HandlerFunc {
 			RunFolder                string              `json:"run_folder,omitempty"`
 			ConcurrencyMode          string              `json:"concurrency_mode,omitempty"`
 			ParallelRiskAcknowledged bool                `json:"parallel_risk_acknowledged,omitempty"`
+			ArtifactsExpired         bool                `json:"artifacts_expired,omitempty"`
 			SessionID                string              `json:"session_id,omitempty"`
 			Status                   string              `json:"status"`
 			Error                    string              `json:"error,omitempty"`
@@ -1154,6 +1155,7 @@ func getScheduledJobRunsHandler(svc *SchedulerService) http.HandlerFunc {
 				RunFolder:                run.RunFolder,
 				ConcurrencyMode:          run.ConcurrencyMode,
 				ParallelRiskAcknowledged: run.ParallelRiskAcknowledged,
+				ArtifactsExpired:         scheduleArtifactsExpired(workspacePath, run.ID) || webhookArtifactsExpired(workspacePath, run.ID),
 				SessionID:                run.SessionID,
 				Status:                   run.Status,
 				Error:                    run.Error,

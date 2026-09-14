@@ -46,8 +46,9 @@ native videos/traces remain controlled by the test configuration.
 
 ### Retention, concurrency, progress and runtime inputs
 
-- The server retains the latest 10 terminal webhook run folders per workflow,
-  independently of normal schedule retention. Active hooks are never pruned.
+- The server uses `workflow.json::run_retention_count` (default 10) for webhook
+  runs too, retaining that many terminal `-hook` folders independently of the
+  same-sized Builder and saved-schedule families. Active hooks are never pruned.
   Older run history remains; status shows artifacts_expired=true and downloads
   return 410 Gone. Do not promise permanent video/artifact storage; CI should
   download and archive artifacts before retention removes them.

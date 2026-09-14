@@ -19,7 +19,7 @@ func TestBuilderWebhookToolCreatesAndTestsSignedPing(t *testing.T) {
 	raw, _ := json.Marshal(manifest)
 	mock := &mockWorkspaceAPI{files: map[string]string{
 		manifestPath("Workflow/test"):            string(raw),
-		"Workflow/test/planning/plan.json":       `{"steps":[{"type":"routing","id":"route","title":"Choose","routing_question":"Which?","routes":[{"route_id":"issue","route_name":"Issue","next_step_id":"work"},{"route_id":"other","route_name":"Other","next_step_id":"work"}]},{"type":"regular","id":"work","title":"Work","description":"Work"}]}`,
+		"Workflow/test/planning/plan.json":       `{"steps":[{"type":"routing","id":"route","title":"Choose","routing_question":"Which?","routes":[{"route_id":"issue","route_name":"Issue","next_step_id":"component-branch"},{"route_id":"other","route_name":"Other","next_step_id":"work"}]},{"type":"branch","id":"component-branch","title":"Choose component","routes":[{"route_id":"review","route_name":"Review","next_step_id":"work"},{"route_id":"other-component","route_name":"Other","next_step_id":"work"}]},{"type":"regular","id":"work","title":"Work","description":"Work"}]}`,
 		"Workflow/test/variables/variables.json": `{"variables":[{"name":"base_url"}],"groups":[{"name":"default"}]}`,
 	}}
 	ws := httptest.NewServer(mock)
@@ -66,6 +66,21 @@ func TestBuilderWebhookToolCreatesAndTestsSignedPing(t *testing.T) {
 	output, err = tool.exec(context.Background(), map[string]interface{}{"action": "list"})
 	if err != nil || strings.Contains(output, created.Secret) {
 		t.Fatal("list exposed secret or failed")
+	}
+	mappedOutput, mappedErr := tool.exec(context.Background(), map[string]interface{}{
+		"action": "create", "name": "Mapped raw delivery", "enabled": true, "auth_mode": "bearer", "input_mode": "raw",
+		"group_names": []string{"default"}, "route_selections": map[string]string{"route": "issue"},
+		"payload_mappings": map[string]interface{}{
+			"group":  map[string]interface{}{"source": "env", "values": map[string]string{"prod": "default"}},
+			"routes": map[string]interface{}{"component-branch": map[string]interface{}{"source": "component", "values": map[string]string{"service/review": "review"}}},
+		},
+	})
+	if mappedErr != nil {
+		t.Fatal(mappedErr)
+	}
+	var mapped workflowWebhookResponse
+	if json.Unmarshal([]byte(mappedOutput), &mapped) != nil || mapped.PayloadMappings == nil || mapped.PayloadMappings.Group == nil || mapped.PayloadMappings.Routes["component-branch"].Values["service/review"] != "review" {
+		t.Fatalf("payload mappings were not saved: %s", mappedOutput)
 	}
 	output, err = tool.exec(context.Background(), map[string]interface{}{"action": "test", "id": created.ID, "event": "ping", "payload": map[string]interface{}{}})
 	if err != nil || !strings.Contains(output, "pong") || strings.Contains(output, created.Secret) {

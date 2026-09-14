@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 )
 
@@ -19,6 +20,14 @@ func keysWebhookVariables(values map[string]string) []string {
 }
 
 func resolveWebhookDeliveryOptions(s WorkflowSchedule, input *WorkflowWebhookDelivery) error {
+	if s.Webhook != nil && s.Webhook.PayloadMappings != nil {
+		if s.Webhook.InputMode == "envelope" {
+			return fmt.Errorf("payload mappings require raw input mode")
+		}
+		if err := resolveWebhookPayloadMappings(s.Webhook.PayloadMappings, input); err != nil {
+			return err
+		}
+	}
 	if s.Webhook.InputMode != "envelope" {
 		return nil
 	}
@@ -54,6 +63,96 @@ func resolveWebhookDeliveryOptions(s WorkflowSchedule, input *WorkflowWebhookDel
 		input.Payload = envelope.Payload
 	}
 	return nil
+}
+
+func webhookMappingValue(payload json.RawMessage, mapping WorkflowWebhookValueMapping) (string, error) {
+	var root interface{}
+	decoder := json.NewDecoder(bytes.NewReader(payload))
+	decoder.UseNumber()
+	if err := decoder.Decode(&root); err != nil {
+		return "", fmt.Errorf("cannot read payload mapping source %q", mapping.Source)
+	}
+	path := strings.TrimSpace(mapping.Source)
+	path = strings.TrimPrefix(path, "$.")
+	path = strings.TrimPrefix(path, ".")
+	if path == "" {
+		return "", fmt.Errorf("payload mapping source is required")
+	}
+	current := root
+	for _, segment := range strings.Split(path, ".") {
+		object, ok := current.(map[string]interface{})
+		if !ok {
+			return "", fmt.Errorf("payload mapping source %q was not found", mapping.Source)
+		}
+		current, ok = object[segment]
+		if !ok {
+			return "", fmt.Errorf("payload mapping source %q was not found", mapping.Source)
+		}
+	}
+	var sourceValue string
+	switch value := current.(type) {
+	case string:
+		sourceValue = value
+	case json.Number:
+		sourceValue = value.String()
+	case bool:
+		sourceValue = strconv.FormatBool(value)
+	default:
+		return "", fmt.Errorf("payload mapping source %q must be a string, number, or boolean", mapping.Source)
+	}
+	if selected, ok := mapping.Values[sourceValue]; ok && strings.TrimSpace(selected) != "" {
+		return strings.TrimSpace(selected), nil
+	}
+	if fallback := strings.TrimSpace(mapping.Default); fallback != "" {
+		return fallback, nil
+	}
+	return "", fmt.Errorf("payload mapping source %q has no configured value for %q", mapping.Source, sourceValue)
+}
+
+func resolveWebhookPayloadMappings(mappings *WorkflowWebhookPayloadMappings, input *WorkflowWebhookDelivery) error {
+	if mappings == nil {
+		return nil
+	}
+	if mappings.Group != nil {
+		group, err := webhookMappingValue(input.Payload, *mappings.Group)
+		if err != nil {
+			return fmt.Errorf("group mapping: %w", err)
+		}
+		input.Group = group
+	}
+	if len(mappings.Routes) > 0 {
+		input.RouteSelections = make(map[string]string, len(mappings.Routes))
+		for stepID, mapping := range mappings.Routes {
+			routeID, err := webhookMappingValue(input.Payload, mapping)
+			if err != nil {
+				return fmt.Errorf("route mapping for step %q: %w", stepID, err)
+			}
+			input.RouteSelections[stepID] = routeID
+		}
+	}
+	if mappings.Step != nil {
+		stepID, err := webhookMappingValue(input.Payload, *mappings.Step)
+		if err != nil {
+			return fmt.Errorf("step mapping: %w", err)
+		}
+		input.StepID = stepID
+	}
+	return nil
+}
+
+func resolvedWebhookExecutionTarget(s WorkflowSchedule, input *WorkflowWebhookDelivery) (string, map[string]string) {
+	routes := make(map[string]string, len(s.RouteSelections)+len(input.RouteSelections))
+	for stepID, routeID := range s.RouteSelections {
+		routes[stepID] = routeID
+	}
+	for stepID, routeID := range input.RouteSelections {
+		routes[stepID] = routeID
+	}
+	stepID := s.Webhook.StepID
+	if input.StepID != "" {
+		stepID = input.StepID
+	}
+	return stepID, routes
 }
 
 func validateWebhookVariableNames(ctx context.Context, workspace string, names []string) error {

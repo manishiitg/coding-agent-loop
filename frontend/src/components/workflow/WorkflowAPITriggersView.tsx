@@ -110,6 +110,11 @@ export default function WorkflowAPITriggersView({ workspacePath, onViewRuns, hea
               const route = options.routes.find(option => option.step_id === stepId && option.route_id === routeId)
               return <li key={stepId}>{route ? `${route.step_title} → ${route.route_name || routeId}` : `${stepId} → ${routeId} (route unavailable)`}</li>
             })}</ul>
+            {trigger.payload_mappings && <ul className="space-y-1 rounded bg-muted/40 p-2 text-xs text-muted-foreground">
+              {trigger.payload_mappings.group && <li>Payload {trigger.payload_mappings.group.source} → group ({Object.entries(trigger.payload_mappings.group.values).map(([value, group]) => `${value} → ${group}`).join(', ')})</li>}
+              {Object.entries(trigger.payload_mappings.routes || {}).map(([stepId, mapping]) => <li key={stepId}>Payload {mapping.source} → {stepId} branch ({Object.entries(mapping.values).map(([value, route]) => `${value} → ${route}`).join(', ')})</li>)}
+              {trigger.payload_mappings.step && <li>Payload {trigger.payload_mappings.step.source} → single step ({Object.entries(trigger.payload_mappings.step.values).map(([value, step]) => `${value} → ${step}`).join(', ')})</li>}
+            </ul>}
             {canWrite && <div className="flex flex-wrap gap-2">
               <button type="button" disabled={busy} className={buttonClass} onClick={() => void save({ ...trigger, enabled: !trigger.enabled })}>{trigger.enabled ? 'Disable' : 'Enable'}</button>
               <button type="button" disabled={busy} className={buttonClass} onClick={() => void save(trigger, true)}>Rotate secret</button>

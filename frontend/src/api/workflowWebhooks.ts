@@ -10,7 +10,20 @@ export interface WorkflowAPITrigger {
   path: string
   route_selections: Record<string, string>
   group_names: string[]
+  payload_mappings?: WebhookPayloadMappings
   secret?: string
+}
+
+export interface WebhookValueMapping {
+  source: string
+  values: Record<string, string>
+  default?: string
+}
+
+export interface WebhookPayloadMappings {
+  group?: WebhookValueMapping
+  routes?: Record<string, WebhookValueMapping>
+  step?: WebhookValueMapping
 }
 
 export interface APITriggerOptions {
@@ -24,6 +37,7 @@ export interface APITriggerOptions {
 export type APITriggerRequest = Pick<WorkflowAPITrigger, 'name' | 'enabled' | 'auth_mode' | 'route_selections' | 'group_names'> & {
   workspace_path: string
   step_id?: string
+  payload_mappings?: WebhookPayloadMappings
   rotate_secret?: boolean
 }
 

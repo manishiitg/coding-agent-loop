@@ -1297,9 +1297,6 @@ func (s *SchedulerService) triggerSavedSchedule(workspacePath, scheduleID, origi
 		if err := validateWebhookSchedule(*sched); err != nil {
 			return "", err
 		}
-		if err := validateWebhookTarget(ctx, workspacePath, sched.Webhook.StepID, sched.RouteSelections); err != nil {
-			return "", err
-		}
 		sctx.TriggerSource = "webhook"
 		sctx.WebhookInput = input
 		if input.Group != "" && !slices.Contains(sched.GroupNames, input.Group) {
@@ -1312,6 +1309,14 @@ func (s *SchedulerService) triggerSavedSchedule(workspacePath, scheduleID, origi
 		}
 		if input.Group != "" {
 			sctx.Schedule.GroupNames = []string{input.Group}
+		}
+		resolvedStepID, resolvedRoutes := resolvedWebhookExecutionTarget(*sched, input)
+		sctx.Schedule.RouteSelections = resolvedRoutes
+		webhookConfig := *sched.Webhook
+		webhookConfig.StepID = resolvedStepID
+		sctx.Schedule.Webhook = &webhookConfig
+		if err := validateWebhookTarget(ctx, workspacePath, resolvedStepID, resolvedRoutes); err != nil {
+			return "", err
 		}
 		if err := validateWebhookVariableNames(ctx, workspacePath, keysWebhookVariables(input.Variables)); err != nil {
 			return "", err

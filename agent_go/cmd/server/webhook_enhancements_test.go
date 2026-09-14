@@ -36,6 +36,63 @@ func TestWebhookEnvelopeOptions(t *testing.T) {
 		t.Fatal("raw event interpreted as config")
 	}
 }
+
+func TestWebhookRawPayloadMappingsSelectGroupAndNestedBranch(t *testing.T) {
+	s := WorkflowSchedule{
+		GroupNames:      []string{"confida-prod", "confida-staging"},
+		RouteSelections: map[string]string{"workflow-route": "regression"},
+		Webhook: &WorkflowWebhookConfig{InputMode: "raw", PayloadMappings: &WorkflowWebhookPayloadMappings{
+			Group: &WorkflowWebhookValueMapping{Source: "$.env", Values: map[string]string{"prod": "confida-prod", "staging": "confida-staging"}},
+			Routes: map[string]WorkflowWebhookValueMapping{
+				"regression-component-branch": {Source: "component", Values: map[string]string{"service/review": "review"}},
+			},
+		}},
+	}
+	payload := `{"component":"service/review","env":"prod","commit_sha":"test-commit-abc123"}`
+	delivery := &WorkflowWebhookDelivery{Payload: json.RawMessage(payload)}
+	if err := resolveWebhookDeliveryOptions(s, delivery); err != nil {
+		t.Fatal(err)
+	}
+	if delivery.Group != "confida-prod" {
+		t.Fatalf("group = %q, want confida-prod", delivery.Group)
+	}
+	if got := delivery.RouteSelections["regression-component-branch"]; got != "review" {
+		t.Fatalf("mapped branch = %q, want review", got)
+	}
+	stepID, routes := resolvedWebhookExecutionTarget(s, delivery)
+	if stepID != "" || routes["workflow-route"] != "regression" || routes["regression-component-branch"] != "review" {
+		t.Fatalf("resolved target = step %q routes %#v", stepID, routes)
+	}
+	if string(delivery.Payload) != payload {
+		t.Fatalf("raw payload was changed: %s", delivery.Payload)
+	}
+}
+
+func TestWebhookRawPayloadMappingsCanSelectSingleStep(t *testing.T) {
+	s := WorkflowSchedule{Webhook: &WorkflowWebhookConfig{InputMode: "raw", PayloadMappings: &WorkflowWebhookPayloadMappings{
+		Step: &WorkflowWebhookValueMapping{Source: "component", Values: map[string]string{"service/review": "run-review-tests"}},
+	}}}
+	delivery := &WorkflowWebhookDelivery{Payload: json.RawMessage(`{"component":"service/review"}`)}
+	if err := resolveWebhookDeliveryOptions(s, delivery); err != nil {
+		t.Fatal(err)
+	}
+	stepID, routes := resolvedWebhookExecutionTarget(s, delivery)
+	if stepID != "run-review-tests" || len(routes) != 0 {
+		t.Fatalf("resolved target = step %q routes %#v", stepID, routes)
+	}
+}
+
+func TestWebhookRawPayloadMappingsRejectUnknownOrMissingValues(t *testing.T) {
+	s := WorkflowSchedule{Webhook: &WorkflowWebhookConfig{InputMode: "raw", PayloadMappings: &WorkflowWebhookPayloadMappings{
+		Group: &WorkflowWebhookValueMapping{Source: "env", Values: map[string]string{"prod": "confida-prod"}},
+	}}}
+	for _, payload := range []string{`{"env":"qa"}`, `{"component":"service/review"}`} {
+		delivery := &WorkflowWebhookDelivery{Payload: json.RawMessage(payload)}
+		if err := resolveWebhookDeliveryOptions(s, delivery); err == nil {
+			t.Fatalf("payload %s unexpectedly accepted", payload)
+		}
+	}
+}
 func TestWebhookLeasesIndependentFromSchedules(t *testing.T) {
 	store, err := schedulerstate.Open(filepath.Join(t.TempDir(), "state.sqlite"))
 	if err != nil {

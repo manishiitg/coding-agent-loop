@@ -854,6 +854,10 @@ else
     echo "ℹ️  First local run: creating a minimal .env with a secure AUTH_SECRET."
 fi
 
+# Keep managed browser cookies and logins across local server restarts. Workflow
+# isolation is added beneath this root by the browser launcher.
+export AGENT_BROWSER_SHARED_PROFILE="${AGENT_BROWSER_SHARED_PROFILE:-$HOME/.agentworks/browser-profile}"
+
 # Runtime diagnostics are controlled only by the explicit command-line switch.
 # Clear inherited or legacy .env values during ordinary product runs so a stale
 # local setting cannot expose the child/step terminal rail unexpectedly.

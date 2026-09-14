@@ -27,7 +27,7 @@ func GetToolDefinition() llmtypes.Tool {
 					},
 					"session": map[string]interface{}{
 						"type":        "string",
-						"description": "Compatibility session label; use default. Managed headless browsing uses one browser per signed-in user across chats, builder, workflow steps and groups. Different names do not create browsers. Tabs are optional: reuse the current tab or select/create one as needed. Coordinate parallel work and take a fresh snapshot before interacting. Never close/reset the browser merely because your step finished.",
+						"description": "Compatibility session label; use default. Managed headless browsing uses one persistent browser per workflow, shared by its authorized users, builder, runs and groups; unrelated workflows use separate browsers. Different names do not create browsers. Tabs are optional: reuse the current tab or select/create one as needed. Coordinate parallel work and take a fresh snapshot before interacting. Never close/reset the browser merely because your step finished.",
 					},
 				},
 				"required": []string{"command", "session"},

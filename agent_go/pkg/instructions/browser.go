@@ -87,7 +87,7 @@ func BuildBrowserInstructions(cfg BrowserConfig) string {
 	}
 
 	// Add session limits — applies to all browser types
-	result += "\n\n## Managed Browser Ownership\nOne headless browser per signed-in user is shared by builder, chats, workflow steps and groups. Session labels do not create separate browsers. Tabs are optional: reuse the current/existing tab or create one when useful. Browser commands are serialized; coordinate parallel tasks and re-snapshot before interaction. Preserve the browser and sign-ins when a step finishes. During capture, wait for another run’s recording to stop. In CDP mode keep the existing owned-tab and cleanup rules.\n"
+	result += "\n\n## Managed Browser Ownership\nOne persistent headless browser per workflow is shared by its authorized users, builder, runs, steps and groups. Unrelated workflows use separate browsers; non-workflow chats retain the user's personal browser. Session labels do not create separate browsers. Tabs are optional: reuse the current/existing tab or create one when useful. Browser commands are serialized; coordinate parallel tasks and re-snapshot before interaction. Preserve the browser and sign-ins when a step finishes. During capture, wait for another run’s recording to stop. In CDP mode keep the existing owned-tab and cleanup rules.\n"
 
 	return result
 }
@@ -178,7 +178,7 @@ func GetHeadlessModeInstructions() string {
 You are controlling a **headless Chromium browser** running inside a container.
 
 **Key behaviors:**
-- Managed headless browsing shares one browser across the signed-in user’s chats and workflow steps. Other users have separate browsers. Session labels do not create browsers.
+- Managed headless browsing uses one persistent browser per workflow, shared by its authorized users, runs and steps. Unrelated workflows have separate browsers. Session labels do not create browsers.
 - Tabs are optional. Inspect existing tabs; reuse one or create one when useful. Coordinate parallel work, take fresh snapshots, and preserve the browser/sign-ins when a step finishes.
 - Users can watch and interact in the workflow Browser view. Use workspace view tools to show that view when appropriate.
 - Verify login from page content; never assume a session is authenticated.
@@ -287,7 +287,7 @@ Key commands: skills (version-matched docs), open, snapshot, click, fill, type, 
 Before the first browser action, load the core skill with agent_browser(command="skills", args=["get", "core"], session="default"). Use args=["list"] to discover specialized skills and load only those relevant to the task (for example dogfood for exploratory QA).
 
 ### Headless-Specific Behaviors
-- Managed headless browsing shares one browser across the signed-in user’s chats and workflow steps. Other users have separate browsers. Session labels do not create browsers.
+- Managed headless browsing uses one persistent browser per workflow, shared by its authorized users, runs and steps. Unrelated workflows have separate browsers. Session labels do not create browsers.
 - Tabs are optional. Inspect existing tabs; reuse one or create one when useful. Coordinate parallel work, take fresh snapshots, and preserve the browser/sign-ins when a step finishes.
 - Users can watch and interact in the workflow Browser view. Use workspace view tools to show that view when appropriate.
 - Verify login from page content; never assume a session is authenticated.

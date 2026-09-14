@@ -276,7 +276,7 @@ func (e *Executor) liveBrowserStatus(ctx context.Context) browserRuntimeStatus {
 		status.Instruction = "Browser configuration is invalid; update the workflow browser_mode."
 	}
 	if status.EffectiveMode == "headless" {
-		status.Instruction += " Managed browsing is shared across the signed-in user’s chats and workflow steps. Session labels do not create separate browsers. Reuse an existing tab or open a new tab only when useful; preserve tabs and sign-ins at step completion."
+		status.Instruction += " Managed browsing is persistent per workflow and shared by its authorized users, runs and steps. Unrelated workflows use separate browsers. Session labels do not create browsers. Reuse an existing tab or open a new tab only when useful; preserve tabs and sign-ins at step completion."
 	}
 	return status
 }

@@ -22,11 +22,13 @@ func SharedProfile() string {
 func SharedEnabled() bool { return SharedProfile() != "" }
 
 // HeadlessArgs must be used for automation, viewer actions and recording alike.
-// Shared Chrome keeps its native user agent and uses one persistent profile.
+// Managed Chrome keeps its native user agent and uses a persistent profile.
 func HeadlessArgs() []string { return HeadlessArgsForSession("") }
 
-// IsUserSession recognizes canonical managed user/guest browsers, including a deployment prefix.
-var userSession = regexp.MustCompile(`^(?:[A-Za-z0-9_-]+--)?(?:user|guest)-[a-f0-9]{16}--browser$`)
+// IsUserSession recognizes persistent managed user, guest and workflow browsers,
+// including an optional deployment prefix. The name is retained for compatibility.
+var userSession = regexp.MustCompile(`^(?:[A-Za-z0-9_-]+--)?(?:user|guest|workflow)-[a-f0-9]{16}--browser$`)
+var workflowSession = regexp.MustCompile(`^(?:[A-Za-z0-9_-]+--)?workflow-[a-f0-9]{16}--browser$`)
 
 func IsUserSession(session string) bool { return userSession.MatchString(session) }
 
@@ -36,7 +38,11 @@ func HeadlessArgsForSession(session string) []string {
 	const mediaArgs = ",--use-fake-device-for-media-stream,--use-fake-ui-for-media-stream"
 	if profile := SharedProfile(); profile != "" {
 		if IsUserSession(session) {
-			profile = filepath.Join(profile+"-users", session)
+			profileRoot := profile + "-users"
+			if workflowSession.MatchString(session) {
+				profileRoot = profile + "-workflows"
+			}
+			profile = filepath.Join(profileRoot, session)
 		}
 		return []string{"--profile", profile, "--idle-timeout", "0", "--args", "--no-sandbox,--disable-gpu,--disable-blink-features=AutomationControlled,--lang=en-US,--restore-last-session" + mediaArgs}
 	}

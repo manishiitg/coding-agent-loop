@@ -198,7 +198,7 @@ HAR files and videos can capture credentials or other visible secrets. Create th
 
 ## Headless Rules
 
-- Managed headless browsing shares one browser across the signed-in user’s chats, builder and workflow steps/groups. Other users have separate browsers. Session labels do not create browsers.
+- Managed headless browsing uses one persistent browser per workflow. Its authorized users, builder, runs and steps/groups share it; unrelated workflows have separate browsers. Session labels do not create browsers.
 - Tabs are optional: reuse the current/existing tab or create one when useful. Coordinate parallel tasks and re-snapshot before interacting. Do not close/reset the browser, clear storage, or sign out merely because your step finished.
 - During capture, other runs wait until the recording stops. Preserve the browser and sign-ins at completion.
 - Users can watch and interact in the workflow Browser view. Use workspace view tools to show that view when appropriate.

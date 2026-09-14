@@ -490,10 +490,10 @@ func (t *SessionTracker) CaptureConflict(session, owner, workspace, command stri
 		return ""
 	}
 	if command == "close" || command == "quit" || command == "exit" || command == "reset" {
-		return "Stop the active capture before closing or resetting the user browser."
+		return "Stop the active capture before closing or resetting the workflow browser."
 	}
 	if (s.captureOwner != "" && owner != s.captureOwner) || (s.captureWorkspace != "" && workspace != s.captureWorkspace) {
-		return "The user browser is recording another run. Wait until that capture stops before using this browser."
+		return "The workflow browser is recording another run. Wait until that capture stops before using this browser."
 	}
 	return ""
 }

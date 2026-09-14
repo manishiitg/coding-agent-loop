@@ -154,10 +154,10 @@ workflow must replace it.
 ## State and isolation
 
 - CDP mode uses the user's real Chrome cookies and login state.
-- Managed headless mode shares one browser per signed-in user across chats and workflow groups. Other users are isolated. Tabs are optional; reuse the current tab or create one when useful.
+- Managed headless mode uses one persistent browser per workflow. Authorized users, builder sessions, runs and groups for that workflow share it; unrelated workflows are isolated. Tabs are optional; reuse the current tab or create one when useful.
 - Shared CDP concurrency is isolated by real tab IDs plus a per-port
   select-and-act lock; labels are aliases, not durable tab identities.
-- Delegated agents inherit the user browser. Explicit session labels do not create independent browsers. Preserve it at workflow completion. Configured CDP profiles retain their separate specialized login behavior.
+- Delegated agents inherit the workflow browser. Explicit session labels do not create independent browsers. Preserve it at workflow completion. Configured CDP profiles retain their separate specialized login behavior.
 - Workflow-created CDP tabs are closed automatically one hour after the final
   run releases its lease; reused user tabs are preserved.
 

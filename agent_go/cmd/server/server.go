@@ -3429,10 +3429,21 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 	// this point. Resolve it for backend delivery and strip it from agent env.
 	api.resolveNotificationSecretForRequest(r.Context(), currentUserID, req.SelectedFolder, &req)
 	// Browser names supplied by an agent (including the conventional "default")
-	// are public aliases. Bind them to this authenticated user (guests remain chat-scoped)
-	// before any browser executor can run so accounts never share cookies, tabs,
-	// recordings, or a browser process when working in the same workflow.
-	common.BindSessionBrowserIsolation(sessionID, currentUserID)
+	// are public aliases. Workflow sessions bind to a durable browser owned by
+	// the workflow, so all authorized users and runs retain its site state while
+	// unrelated workflows never share cookies, tabs, recordings or a process.
+	// Non-workflow chats retain the existing user boundary; guests remain chat-scoped.
+	browserWorkflowPath := ""
+	selected := strings.Trim(strings.TrimSpace(req.SelectedFolder), "/")
+	if selected == "" && strings.TrimSpace(req.PresetQueryID) != "" {
+		if resolved, resolveErr := api.resolveWorkspacePathFromPreset(r.Context(), req.PresetQueryID); resolveErr == nil {
+			selected = strings.Trim(strings.TrimSpace(resolved), "/")
+		}
+	}
+	if strings.HasPrefix(selected, "Workflow/") {
+		browserWorkflowPath = selected
+	}
+	common.BindSessionBrowserIsolationForWorkflow(sessionID, currentUserID, browserWorkflowPath)
 	common.SetSessionBrowserMode(sessionID, getBrowserMode(req))
 	// Keep configured browser intent on the request. In auto mode,
 	// agent_browser queries current CDP reachability at tool-call time.

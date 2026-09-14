@@ -148,7 +148,7 @@ func BrowserRecording(c *gin.Context) {
 		}
 	}
 	if liveErr != nil && req.Action == "start" {
-		c.JSON(404, gin.H{"error": "Open the user browser before starting a fresh capture"})
+		c.JSON(404, gin.H{"error": "Open the workflow browser before starting a fresh capture"})
 		return
 	}
 	if req.Action == "status" {

@@ -348,25 +348,6 @@ func (s *ProductScheduleService) loadState(ctx context.Context, userID string) (
 	return out, nil
 }
 
-// updateState applies fn to one schedule's state under the state-file lock.
-func (s *ProductScheduleService) updateState(ctx context.Context, userID, profileID, scheduleID string, fn func(*productScheduleUserState)) error {
-	s.stateMu.Lock()
-	defer s.stateMu.Unlock()
-	all, err := s.loadState(ctx, userID)
-	if err != nil {
-		return err
-	}
-	key := productScheduleStateKey(profileID, scheduleID)
-	st := all[key]
-	fn(&st)
-	all[key] = st
-	data, err := json.MarshalIndent(all, "", "  ")
-	if err != nil {
-		return err
-	}
-	return s.writeFile(ctx, productScheduleStatePath(userID), string(data))
-}
-
 // JobsForUser lists every product schedule visible to one user.
 func (s *ProductScheduleService) JobsForUser(ctx context.Context, userID string) ([]productScheduleJob, error) {
 	if s == nil || strings.TrimSpace(userID) == "" {

@@ -663,8 +663,7 @@ func (api *StreamingAPI) executeDelegatedTask(ctx context.Context, parentReq Que
 	}
 
 	// Determine sub-agent session ID: isolated when share_browser=false, shared otherwise
-	subAgentSessionID := sessionID
-	subAgentSessionID = fmt.Sprintf("%s-isolated-%d", sessionID, time.Now().UnixNano())
+	subAgentSessionID := fmt.Sprintf("%s-isolated-%d", sessionID, time.Now().UnixNano())
 	log.Printf("[DELEGATION] Browser isolation: sub-agent gets new session ID %s (parent: %s)", subAgentSessionID, sessionID)
 	runtimeID := delegationID
 	if backgroundAgentID != "" {

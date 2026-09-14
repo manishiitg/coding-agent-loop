@@ -207,22 +207,6 @@ func workFolderGrantsForClaims(ctx context.Context, claims *UserClaims) []workfl
 	return grants
 }
 
-// workFolderGrantByIDForClaims resolves a browser-visible workspace id only
-// after applying the caller's current roots. The stored absolute path never
-// becomes a client-supplied session binding.
-func workFolderGrantByIDForClaims(ctx context.Context, claims *UserClaims, id string) (workflowtypes.WorkflowFolderGrant, bool) {
-	id = strings.TrimSpace(id)
-	if id == "" {
-		return workflowtypes.WorkflowFolderGrant{}, false
-	}
-	for _, grant := range workFolderGrantsForClaims(ctx, claims) {
-		if strings.TrimSpace(grant.ID) == id && workproduct.FolderGrantAvailable(grant.Path) {
-			return grant, true
-		}
-	}
-	return workflowtypes.WorkflowFolderGrant{}, false
-}
-
 // workFolderRootsForClaims returns the canonical allowed roots for the
 // calling identity. An unknown identity gets none.
 func workFolderRootsForClaims(ctx context.Context, claims *UserClaims) []string {

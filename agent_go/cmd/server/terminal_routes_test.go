@@ -127,6 +127,55 @@ func TestGetMainTerminalReturnsOnlyMainAgentPane(t *testing.T) {
 	}
 }
 
+func TestLatestOwnedCodingTmuxSessionSelectsNewestMatchingPane(t *testing.T) {
+	original := runTerminalTmuxOutputCommand
+	defer func() { runTerminalTmuxOutputCommand = original }()
+	runTerminalTmuxOutputCommand = func(_ context.Context, args ...string) (string, error) {
+		return strings.Join([]string{
+			"mlp-claude-code-old\t100\tsession-1",
+			"unrelated-shell\t300\tsession-1",
+			"mlp-claude-code-other\t400\tsession-2",
+			"mlp-claude-code-new\t200\tsession-1",
+		}, "\n"), nil
+	}
+
+	if got := latestOwnedCodingTmuxSession(context.Background(), "session-1"); got != "mlp-claude-code-new" {
+		t.Fatalf("latest pane = %q, want mlp-claude-code-new", got)
+	}
+}
+
+func TestMainTerminalForSessionRecoversReplacementPane(t *testing.T) {
+	store := terminals.NewStore()
+	api := &StreamingAPI{terminalStore: store}
+	sessionID := "session-retry-replacement"
+	_, ok := store.UpsertStaticSnapshot(sessionID, terminals.Snapshot{
+		OwnerID:       "main:" + sessionID,
+		ExecutionKind: "main_agent",
+		Scope:         "main_agent",
+		Content:       "screen retained from the failed pane",
+	})
+	if !ok {
+		t.Fatal("expected static main terminal")
+	}
+
+	original := runTerminalTmuxOutputCommand
+	defer func() { runTerminalTmuxOutputCommand = original }()
+	runTerminalTmuxOutputCommand = func(_ context.Context, args ...string) (string, error) {
+		return "mlp-claude-code-replacement\t200\t" + sessionID + "\n", nil
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/sessions/"+sessionID+"/main-terminal", nil)
+	req = mux.SetURLVars(req, map[string]string{"session_id": sessionID})
+	rec := httptest.NewRecorder()
+	snapshot, found := api.mainTerminalForSession(rec, req)
+	if !found {
+		t.Fatalf("main terminal not found: status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if snapshot.TmuxSession != "mlp-claude-code-replacement" || !snapshot.Active || snapshot.ProcessState != "live" {
+		t.Fatalf("recovered terminal = tmux %q active=%v process=%q", snapshot.TmuxSession, snapshot.Active, snapshot.ProcessState)
+	}
+}
+
 func TestTerminalSizeHintIgnoresTinyGeometry(t *testing.T) {
 	store := terminals.NewStore()
 	api := &StreamingAPI{terminalStore: store}

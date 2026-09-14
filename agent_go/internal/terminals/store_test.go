@@ -1989,6 +1989,32 @@ func TestStoreDoesNotImmediatelySelfCompleteMainAgentFromIdlePromptStatus(t *tes
 	}
 }
 
+func TestRebindLiveTmuxReplacesClosedMainPane(t *testing.T) {
+	store := NewStore()
+	store.HandleEvent("session-1", terminalEventWithMetadata(
+		"main:session-1",
+		"retained old screen",
+		1,
+		map[string]interface{}{
+			"execution_kind": "main_agent",
+			"tmux_session":   "mlp-claude-code-old",
+		},
+		time.Now(),
+	))
+	store.MarkProcessClosed("session-1:main:session-1", "old pane exited during retry")
+
+	rebound, ok := store.RebindLiveTmux("session-1:main:session-1", "mlp-claude-code-new")
+	if !ok {
+		t.Fatal("expected terminal to be rebound")
+	}
+	if rebound.TmuxSession != "mlp-claude-code-new" || !rebound.Active || rebound.ProcessState != "live" {
+		t.Fatalf("rebound terminal = tmux %q active=%v process=%q", rebound.TmuxSession, rebound.Active, rebound.ProcessState)
+	}
+	if rebound.Content != "retained old screen" {
+		t.Fatalf("content = %q, want retained screen until fresh capture", rebound.Content)
+	}
+}
+
 func TestStoreCanonicalizesCurrentMainAgentOwner(t *testing.T) {
 	store := NewStore()
 	now := time.Now()

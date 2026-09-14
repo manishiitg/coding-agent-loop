@@ -145,11 +145,59 @@ func (api *StreamingAPI) mainTerminalForSession(w http.ResponseWriter, r *http.R
 	}
 	for _, snapshot := range api.terminalStore.List(sessionID) {
 		if terminalSnapshotIsMainAgent(snapshot) {
+			// A provider retry can replace its tmux pane before a new screen event
+			// reaches the terminal store. If the prior pane has already been
+			// reconciled as closed, recover the newest live pane carrying this
+			// chat's tmux-native owner tag. This prevents the product Terminal view
+			// from reconnecting forever to the pre-retry pane while chat continues
+			// successfully on its replacement.
+			if strings.TrimSpace(snapshot.TmuxSession) == "" {
+				if tmuxSession := latestOwnedCodingTmuxSession(r.Context(), sessionID); tmuxSession != "" {
+					if rebound, reboundOK := api.terminalStore.RebindLiveTmux(snapshot.TerminalID, tmuxSession); reboundOK {
+						snapshot = rebound
+					}
+				}
+			}
 			return snapshot, true
 		}
 	}
 	http.Error(w, "Main terminal not found", http.StatusNotFound)
 	return terminals.Snapshot{}, false
+}
+
+func latestOwnedCodingTmuxSession(parent context.Context, sessionID string) string {
+	sessionID = strings.TrimSpace(sessionID)
+	if sessionID == "" {
+		return ""
+	}
+	ctx, cancel := context.WithTimeout(parent, terminalTmuxActionTimeout)
+	defer cancel()
+	out, err := runTerminalTmuxOutputCommand(ctx, "list-sessions", "-F",
+		"#{session_name}\t#{session_created}\t#{@runloop_owner_session_id}")
+	if err != nil {
+		return ""
+	}
+	var latestName string
+	var latestCreated int64
+	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
+		fields := strings.Split(line, "\t")
+		if len(fields) < 3 || strings.TrimSpace(fields[2]) != sessionID {
+			continue
+		}
+		name := strings.TrimSpace(fields[0])
+		if !isCodingAgentTmuxSessionName(name) {
+			continue
+		}
+		created, parseErr := strconv.ParseInt(strings.TrimSpace(fields[1]), 10, 64)
+		if parseErr != nil {
+			continue
+		}
+		if latestName == "" || created > latestCreated {
+			latestName = name
+			latestCreated = created
+		}
+	}
+	return latestName
 }
 
 func terminalSnapshotIsMainAgent(snapshot terminals.Snapshot) bool {

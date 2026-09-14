@@ -1778,8 +1778,8 @@ func TestBuildWorkshopRequestDisablesLiveInputDeliveryForSchedulerTurns(t *testi
 	if !ok {
 		t.Fatalf("execution_options missing or wrong type: %#v", reqMap["execution_options"])
 	}
-	if got := execOpts["workshop_mode"]; got != "run" {
-		t.Fatalf("workshop_mode = %#v, want run for normal scheduled work", got)
+	if got := execOpts["workshop_mode"]; got != "workshop" {
+		t.Fatalf("workshop_mode = %#v, want workshop for writable scheduled work", got)
 	}
 }
 
@@ -1789,7 +1789,7 @@ func TestScheduledTurnsUseLeastPrivilegedWorkshopMode(t *testing.T) {
 		turn scheduledWorkshopTurn
 		want string
 	}{
-		{name: "normal schedule message", turn: scheduledWorkshopTurn{label: "schedule-message-1"}, want: "run"},
+		{name: "normal schedule message", turn: scheduledWorkshopTurn{label: "schedule-message-1"}, want: "workshop"},
 		{name: "contract upgrade", turn: scheduledWorkshopTurn{upgradeTarget: "1.2.3"}, want: "workshop"},
 		{name: "decision drain", turn: scheduledWorkshopTurn{decisionDrain: true}, want: "workshop"},
 	}
@@ -1805,21 +1805,21 @@ func TestScheduledTurnsUseLeastPrivilegedWorkshopMode(t *testing.T) {
 func TestRequestWithWorkshopModeDoesNotLeakElevationAcrossTurns(t *testing.T) {
 	base := map[string]interface{}{
 		"execution_options": map[string]interface{}{
-			"workshop_mode":      "run",
+			"workshop_mode":      "workshop",
 			"execution_strategy": "start_from_beginning_no_human",
 		},
 	}
 
 	maintenance := requestWithWorkshopMode(base, "workshop")
-	normal := requestWithWorkshopMode(base, "run")
+	normal := requestWithWorkshopMode(base, "workshop")
 
 	if got := maintenance["execution_options"].(map[string]interface{})["workshop_mode"]; got != "workshop" {
 		t.Fatalf("maintenance mode = %#v, want workshop", got)
 	}
-	if got := normal["execution_options"].(map[string]interface{})["workshop_mode"]; got != "run" {
-		t.Fatalf("normal mode = %#v, want run", got)
+	if got := normal["execution_options"].(map[string]interface{})["workshop_mode"]; got != "workshop" {
+		t.Fatalf("normal mode = %#v, want workshop", got)
 	}
-	if got := base["execution_options"].(map[string]interface{})["workshop_mode"]; got != "run" {
+	if got := base["execution_options"].(map[string]interface{})["workshop_mode"]; got != "workshop" {
 		t.Fatalf("base mode was mutated to %#v", got)
 	}
 
@@ -1827,7 +1827,7 @@ func TestRequestWithWorkshopModeDoesNotLeakElevationAcrossTurns(t *testing.T) {
 	if got := normal["execution_options"].(map[string]interface{})["workshop_mode"]; got != "workshop" {
 		t.Fatalf("Pulse mode = %#v, want workshop", got)
 	}
-	if got := base["execution_options"].(map[string]interface{})["workshop_mode"]; got != "run" {
+	if got := base["execution_options"].(map[string]interface{})["workshop_mode"]; got != "workshop" {
 		t.Fatalf("Pulse elevation leaked into base request: %#v", got)
 	}
 }
@@ -2127,7 +2127,7 @@ func TestMaybeResumeLatestWorkflowThreadUsesPreviousScheduledSessionOnly(t *test
 	workspacePath := "Workflow/rtslatency"
 	scheduleID := "schedule-1"
 	writeWorkflowChatRuntime(t, root, workspacePath, "normal-user-chat", "claude-code", "run", true)
-	writeWorkflowChatRuntime(t, root, workspacePath, "previous-schedule-chat", "claude-code", "run", true)
+	writeWorkflowChatRuntime(t, root, workspacePath, "previous-schedule-chat", "claude-code", "workshop", true)
 	writeScheduleRunsForTest(t, root, workspacePath, []ScheduleRunEntry{
 		{
 			ID:         "current-run",
@@ -2188,21 +2188,19 @@ func TestMaybeResumeLatestWorkflowThreadDoesNotCrossModeBoundary(t *testing.T) {
 
 	workspacePath := "Workflow/rtslatency"
 	scheduleID := "schedule-1"
-	writeWorkflowChatRuntime(t, root, workspacePath, "previous-workshop-chat", "claude-code", "workshop", true)
+	writeWorkflowChatRuntime(t, root, workspacePath, "previous-run-chat", "claude-code", "run", true)
 	writeScheduleRunsForTest(t, root, workspacePath, []ScheduleRunEntry{{
 		ID:         "previous-run",
 		ScheduleID: scheduleID,
-		SessionID:  "previous-workshop-chat",
+		SessionID:  "previous-run-chat",
 		Status:     "success",
 		StartedAt:  time.Now().Add(-time.Hour).UTC(),
 	}})
 
-	reqMap := map[string]interface{}{
-		"execution_options": map[string]interface{}{"workshop_mode": "run"},
-	}
+	reqMap := map[string]interface{}{}
 	resumed := (&SchedulerService{}).maybeResumeLatestWorkflowThread(context.Background(), resumeTestScheduleContext(workspacePath, scheduleID), reqMap, "current-schedule-chat")
 	if resumed != "" {
-		t.Fatalf("resumed session = %q, want fresh Run session for Workshop-only history", resumed)
+		t.Fatalf("resumed session = %q, want fresh Workshop session for legacy Run history", resumed)
 	}
 	if _, ok := reqMap["restored_conversation_session_id"]; ok {
 		t.Fatalf("restored_conversation_session_id crossed Workshop/Run boundary: %#v", reqMap)

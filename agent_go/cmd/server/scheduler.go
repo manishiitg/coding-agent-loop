@@ -1446,7 +1446,7 @@ func (s *SchedulerService) TriggerPulseNow(workspacePath string) (string, error)
 		CronExpression: "",
 		Timezone:       "UTC",
 		Mode:           "workshop",
-		WorkshopMode:   "run",
+		WorkshopMode:   "workshop",
 	}
 	sctx := buildScheduleContext(workspacePath, manifest, sched)
 	sctx.TriggerSource = "manual"
@@ -3455,16 +3455,12 @@ type scheduledWorkshopTurn struct {
 	failureBlocksRun bool
 }
 
-// workshopMode returns the least-privileged workflow phase needed by this
-// scheduled turn. Normal schedule work is deployed workflow execution and runs
-// with the smaller Run prompt/tool/skill surface. Contract upgrades and
-// approved-decision application edit workflow-owned artifacts, so those
-// bounded maintenance turns run in Workshop mode.
+// workshopMode returns the workflow phase for a scheduler-owned conversation.
+// All writable scheduled turns use Workshop because the same session owns
+// migrations, approved decisions, and execution. Read-only access is pinned to
+// Run later by the server's workflow access policy.
 func (turn scheduledWorkshopTurn) workshopMode() string {
-	if turn.upgradeTarget != "" || turn.decisionDrain {
-		return "workshop"
-	}
-	return "run"
+	return "workshop"
 }
 
 func scheduledDecisionApplyMode(input ReportHumanInput) string {
@@ -3752,6 +3748,11 @@ func (s *SchedulerService) executeWorkshopJob(ctx context.Context, sctx *Schedul
 	sctx.ProducedRunEvidence = false
 
 	sessionID := s.newScheduleSessionID(sctx)
+	// Mark the complete scheduled-session lifetime in server-owned state so a
+	// late contract migration cannot stamp the workflow after its owning
+	// scheduled session has ended.
+	contractupgrade.MarkScheduled(sessionID)
+	defer contractupgrade.ClearScheduled(sessionID)
 	if sctx.WebhookInput == nil && !sctx.PulseOnly && sctx.ScheduledRunFolder != "" {
 		s.api.scheduleInvocations.Store(sessionID, &stepworkflow.ScheduleInvocation{
 			RunID: runID, ScheduleID: sctx.Schedule.ID, RunFolder: sctx.ScheduledRunFolder,
@@ -4192,7 +4193,7 @@ const maxWorkflowResumeScan = 5
 
 // maybeResumeLatestWorkflowThread wires restored_conversation_session_id into reqMap
 // so an opt-in scheduled workflow run continues the schedule's most recent
-// scheduled chat in the same Workshop/Run mode instead of starting fresh.
+// scheduled chat with the same access-derived authority instead of starting fresh.
 //
 // We look at schedule-runs.json for this exact schedule_id first, then validate
 // the referenced chat runtime. This deliberately excludes normal user/builder
@@ -4232,14 +4233,14 @@ func (s *SchedulerService) maybeResumeLatestScheduledThread(sctx *ScheduleContex
 	if currentProvider == "" {
 		return ""
 	}
-	currentWorkshopMode := "run"
+	currentWorkshopMode := "workshop"
 	if execOpts, ok := reqMap["execution_options"].(map[string]interface{}); ok {
 		if requested, ok := execOpts["workshop_mode"].(string); ok {
 			currentWorkshopMode = normalizeChatHistoryWorkshopMode(requested)
 		}
 	}
 	if currentWorkshopMode == "" {
-		currentWorkshopMode = "run"
+		currentWorkshopMode = "workshop"
 	}
 
 	// Runs are newest-first. Within the latest maxWorkflowResumeScan scheduled
@@ -4452,8 +4453,8 @@ func markPulseLifecycleTurn(reqMap map[string]interface{}) {
 }
 
 // buildWorkshopRequest creates the base request map for scheduled workflow
-// execution. Normal turns default to Run mode; bounded preflight and Pulse
-// callers explicitly elevate only their own turn to Workshop mode.
+// execution. Writable scheduled turns use Workshop; the server pins read-only
+// workflow access to Run.
 func (s *SchedulerService) buildWorkshopRequest(ctx context.Context, sctx *ScheduleContext) map[string]interface{} {
 	reqMap := map[string]interface{}{
 		"agent_mode":                  "workflow_phase",
@@ -4469,8 +4470,6 @@ func (s *SchedulerService) buildWorkshopRequest(ctx context.Context, sctx *Sched
 		"use_code_execution_mode":     sctx.Capabilities.UseCodeExecutionMode,
 		"disable_live_input_delivery": true,
 		// Retain the coding CLI across consecutive turns with the same authority.
-		// A Run↔Workshop transition is detected by the server and deliberately
-		// relaunches in the mode-specific private runtime and prompt projection.
 		"keep_native_session_alive": true,
 	}
 	if len(sctx.Capabilities.CDPPorts) > 0 {
@@ -4491,10 +4490,10 @@ func (s *SchedulerService) buildWorkshopRequest(ctx context.Context, sctx *Sched
 	execOpts := map[string]interface{}{
 		"selected_run_folder": runFolder,
 		"execution_strategy":  "start_from_beginning_no_human",
-		// A normal schedule is an unattended workflow run. Keep its prompt,
-		// tools, projected skills, and private CLI working directory on the Run
-		// surface. Maintenance callers elevate their individual turns explicitly.
-		"workshop_mode": "run",
+		// Scheduled turns act for the workflow owner and may need to migrate the
+		// workflow or apply an approved decision before launching existing work.
+		// Read-only access is pinned back to Run by the server policy.
+		"workshop_mode": "workshop",
 	}
 	if sctx.CapacityResumeFromStep > 0 {
 		// Resume exactly where the capacity wall stopped this run. Resume-from-step

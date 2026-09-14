@@ -6101,6 +6101,11 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				// installWorkflowPhaseTools's doc comment.
 				if currentUserIsReadOnly {
 					phaseTemplateVars["WorkshopMode"] = "run"
+				} else {
+					// Workshop/Run is permission-derived. Ignore stale saved modes or
+					// client requests that attempt to put a writable workflow user on
+					// the read-only prompt and tool surface.
+					phaseTemplateVars["WorkshopMode"] = "workshop"
 				}
 				activeForCapabilities, _ := api.getActiveSession(sessionID)
 				phasePolicy := resolveWorkflowChatPolicy(phaseTemplateVars["WorkshopMode"], sessionID, req, activeForCapabilities, currentUserIsReadOnly)

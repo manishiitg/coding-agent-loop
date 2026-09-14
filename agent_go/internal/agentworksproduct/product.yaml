@@ -37,8 +37,8 @@ workflows:
   selected_skills: []
   browser_mode: ""
 
-# Mode is distinct from origin. Scheduled execution resolves to run; specialized
-# children retain their existing role-specific authority checks as well.
+# Mode is distinct from origin. Writable users and server-owned turns use the
+# Builder surface; read-only access is the sole reason to select Run mode.
 chat_policy:
   modes:
     builder: &builder_capabilities
@@ -53,12 +53,12 @@ chat_policy:
     run: [workspace_ui]
   origins:
     interactive: *builder_capabilities
-    scheduled: []
+    scheduled: *builder_capabilities
     # Pulse coordinates approved improvements through its existing typed roles.
     pulse: [plan_authoring, report_authoring, secret_management, knowledgebase_maintenance, improvement_proposals]
     child: [plan_authoring, report_authoring, secret_management, knowledgebase_maintenance, improvement_proposals]
-    bot: [plan_authoring, report_authoring, secret_management, knowledgebase_maintenance, improvement_proposals]
-    notification: []
+    bot: *builder_capabilities
+    notification: *builder_capabilities
   read_only: [workspace_ui]
 
 # Prompt text stays in Markdown. Includes contain named Go-template definitions;

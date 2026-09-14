@@ -116,8 +116,8 @@ type ChannelRoute struct {
 	ProfileID       string `json:"profile_id,omitempty"`
 	ConversationKey string `json:"conversation_key,omitempty"`
 	ProfileLabel    string `json:"profile_label,omitempty"`
-	// WorkshopMode overrides whatever is set in the workflow manifest. Valid:
-	// "builder" | "optimizer" | "run". Empty means "use workflow default".
+	// WorkshopMode is retained for persisted-route compatibility. Runtime
+	// authority is derived from the routed user's workflow permission.
 	WorkshopMode    string `json:"workshop_mode,omitempty"`
 	SendFullDetails bool   `json:"send_full_details,omitempty"`
 }
@@ -2703,21 +2703,11 @@ func (m *BotConversationManager) buildQueryRequest(query string, userID string, 
 			req["bot_send_full_details"] = true
 		}
 
-		// Prefer a per-channel override on the route; fall back to the
-		// workflow manifest's workshop_mode when the route doesn't pin one,
-		// then use Run mode for deployed bot workflow traffic.
-		workshopMode := route.WorkshopMode
-		if workshopMode == "" {
-			workshopMode = m.readManifestWorkshopMode(route.WorkspacePath)
-		}
-		if workshopMode == "" && platform != "" {
-			// Deployed bot workflows route through the conversational Workflow
-			// workshop in Run mode by default: channel questions should execute
-			// the existing workflow and return an answer, not enter workflow
-			// design. Routes/manifests can still pin Builder or another
-			// workshop mode explicitly.
-			workshopMode = "run"
-		}
+		// Bot workflow chats act with the routed user's workflow permission.
+		// Writable users receive Workshop; the server's access check pins a
+		// read-only user back to Run. Persisted route mode is a legacy field and
+		// no longer weakens or expands that user-derived authority.
+		workshopMode := "workshop"
 		via := "channel " + channelID
 		if presetRoute != nil {
 			via = "preset (workflow " + route.WorkflowID + ")"
@@ -2853,6 +2843,11 @@ func (m *BotConversationManager) buildQueryRequestForActive(active *activeBotSes
 	workspacePath := strings.TrimSpace(active.WorkspacePath)
 	phaseID := strings.TrimSpace(active.PhaseID)
 	workshopMode := strings.TrimSpace(active.WorkshopMode)
+	if agentMode == "workflow_phase" && workspacePath != "" {
+		// Do not perpetuate a legacy Run route across turns. The server applies
+		// the actual user's read-only pin after receiving this request.
+		workshopMode = "workshop"
+	}
 	active.mu.Unlock()
 
 	if agentMode != "" {

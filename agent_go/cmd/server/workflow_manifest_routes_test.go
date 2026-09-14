@@ -2,10 +2,11 @@ package server
 
 import (
 	"context"
-	loggerv2 "github.com/manishiitg/mcpagent/logger/v2"
-	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 	"strings"
 	"testing"
+
+	loggerv2 "github.com/manishiitg/mcpagent/logger/v2"
+	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 )
 
 func TestMCPManagementRegistrationFollowsChatPolicy(t *testing.T) {
@@ -17,17 +18,17 @@ func TestMCPManagementRegistrationFollowsChatPolicy(t *testing.T) {
 	}{
 		{name: "Builder", mode: "workshop", want: true},
 		{name: "legacy Builder", want: true},
-		{name: "Run chat", mode: "run"},
+		{name: "legacy Run request by writable user", mode: "run", want: true},
 		{name: "manual workflow execution", req: QueryRequest{AgentMode: "workflow"}},
-		{name: "cron shares builder mode", mode: "workshop", req: QueryRequest{TriggeredBy: "cron"}},
-		{name: "retained schedule", mode: "workshop", session: "schedule-digest_123"},
-		{name: "restored origin", mode: "workshop", active: &ActiveSessionInfo{TriggeredBy: "cron"}},
+		{name: "cron shares builder mode", mode: "workshop", req: QueryRequest{TriggeredBy: "cron"}, want: true},
+		{name: "retained schedule", mode: "workshop", session: "schedule-digest_123", want: true},
+		{name: "restored origin", mode: "workshop", active: &ActiveSessionInfo{TriggeredBy: "cron"}, want: true},
 		{name: "read only Builder", mode: "workshop", readOnly: true},
 		{name: "Pulse maintenance", mode: "workshop", req: QueryRequest{TriggeredBy: "cron", PulseLifecycleTurn: true}},
 		{name: "Pulse reviewer", mode: "workshop", req: QueryRequest{SessionKind: "pulse_reviewer", ParentSessionID: "parent"}},
 		{name: "restored child", mode: "workshop", active: &ActiveSessionInfo{ParentSessionID: "parent"}},
-		{name: "notification", mode: "workshop", req: QueryRequest{IsAutoNotification: true}},
-		{name: "bot", mode: "workshop", req: QueryRequest{BotPlatform: "slack"}},
+		{name: "notification", mode: "workshop", req: QueryRequest{IsAutoNotification: true}, want: true},
+		{name: "bot", mode: "workshop", req: QueryRequest{BotPlatform: "slack"}, want: true},
 		{name: "promoted schedule", mode: "workshop", session: "schedule-digest_123", req: QueryRequest{UserInteractiveContinuation: true}, want: true},
 		{name: "promotion cannot elevate child", mode: "workshop", req: QueryRequest{UserInteractiveContinuation: true, SessionKind: "pulse_reviewer"}},
 	} {
@@ -62,6 +63,13 @@ func TestPulseMaintenanceRetainsApprovedImprovementAuthority(t *testing.T) {
 	}
 }
 
+func TestWritableScheduledTurnsGetBuilderAuthority(t *testing.T) {
+	p := resolveWorkflowChatPolicy("workshop", "schedule-maintenance_123", QueryRequest{TriggeredBy: "cron"}, nil, false)
+	if p.Mode != "builder" || p.Origin != "scheduled" || !p.allows("plan_authoring") {
+		t.Fatalf("writable scheduled turn lacks Builder authority: %+v", p)
+	}
+}
+
 // Exercise the production phase setup entry point. Stop before opening a live
 // workflow controller: admission and registration must already be complete.
 type chatPolicyTestDefinition struct{ recordingRegistrar }
@@ -81,6 +89,27 @@ func TestBuilderPhaseActuallyRegistersMCPManagement(t *testing.T) {
 			_, exists := reg.tools[name]
 			if exists == readOnly {
 				t.Fatalf("phase setup %s present=%v readOnly=%v", name, exists, readOnly)
+			}
+		}
+	}
+}
+
+func TestScheduledBuilderActuallyRegistersPlanMigrationTools(t *testing.T) {
+	for _, readOnly := range []bool{false, true} {
+		api := &StreamingAPI{logger: loggerv2.NewNoop(), stoppedSessions: map[string]bool{"schedule-policy-chat": true}}
+		reg := &chatPolicyTestDefinition{}
+		err := api.installWorkflowPhaseTools(
+			context.Background(), reg, "schedule-policy-chat", "test-user", "workflow-builder", "", "",
+			map[string]string{"WorkshopMode": "workshop"}, nil, nil, nil, nil, nil,
+			QueryRequest{TriggeredBy: "cron"}, readOnly,
+		)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, name := range []string{"migrate_orchestrator_step_type"} {
+			_, exists := reg.tools[name]
+			if exists == readOnly {
+				t.Fatalf("scheduled phase tool %s present=%v readOnly=%v", name, exists, readOnly)
 			}
 		}
 	}

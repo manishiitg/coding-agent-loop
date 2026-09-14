@@ -136,9 +136,9 @@ Run mode consumes existing attachments; configuration changes require Workshop.
     "enabled": true, "trigger_payload": {},
     "pulse_mode": "basic", "pulse_mode_reason": "Routine daily processing needs backup and a summary; no review is needed on every occurrence.",
     "group_names": ["confida-prod"],
-    "mode": "workshop", "workshop_mode": "run" }
+    "mode": "workshop", "workshop_mode": "workshop" }
   ```
-  Fields: `id` (auto-assigned), `name` (display label), `description` (optional), `cron_expression` (standard 5-field cron), `timezone` (IANA tz e.g. `America/New_York`), `enabled` (bool), `trigger_payload` (arbitrary JSON passed to the run), `group_names` (required array of one or more explicit group names from `variables/variables.json`), `mode` (`workshop` for workflow schedules), `workshop_mode` (`run` for normal recurring workflow runs).
+  Fields: `id` (auto-assigned), `name` (display label), `description` (optional), `cron_expression` (standard 5-field cron), `timezone` (IANA tz e.g. `America/New_York`), `enabled` (bool), `trigger_payload` (arbitrary JSON passed to the run), `group_names` (required array of one or more explicit group names from `variables/variables.json`), `mode` (`workshop` for workflow schedules), `workshop_mode` (`workshop` for writable scheduled sessions; the server derives `run` only for read-only access).
 - Schedule management is available in **Workshop mode**. If the user asks in Run mode, tell them to switch.
 
 ### Two schedule types: cron vs calendar
@@ -155,7 +155,7 @@ Every schedule in `workflow.json` has a `schedule_type` — `"cron"` (default) o
 ```
 { "name": "March content calendar", "timezone": "Asia/Kolkata",
   "pulse_mode": "full", "pulse_mode_reason": "Each infrequent launch batch creates new outcome evidence that warrants review.",
-  "group_names": ["group-1"], "mode": "workshop", "workshop_mode": "run",
+  "group_names": ["group-1"], "mode": "workshop", "workshop_mode": "workshop",
   "calendar_items": [
     { "date": "2026-03-03", "time": "09:00", "description": "Optional note" },
     { "date": "2026-03-07", "time": "18:30" }
@@ -171,7 +171,7 @@ Every schedule in `workflow.json` has a `schedule_type` — `"cron"` (default) o
 
 Workflow schedules always use the workshop builder execution path. Do not create direct `mode="workflow"` schedules; legacy manifests with that value are normalized to workshop execution.
 
-- **Run** (`mode=workshop`, `workshop_mode=run`) — LLM-driven execution. Prefer an empty queue plus `group_names`/`route_selections` for durable workflow behavior: canonical steps receive their normal learning, validation/retry, repair, and Pulse attribution lifecycle. Direct messages remain valid for genuinely schedule-specific conversation, but require `direct_messages_reason` and do not automatically gain that step-level lifecycle.
+- **Workshop** (`mode=workshop`, `workshop_mode=workshop`) — writable scheduled execution, including contract migrations and approved human-decision application before normal workflow execution. Prefer an empty queue plus `group_names`/`route_selections` for durable workflow behavior: canonical steps receive their normal learning, validation/retry, repair, and Pulse attribution lifecycle. The server pins read-only workflow users to Run.
 
 **Default mode rule:** create workflow schedules with `mode="workshop"`. New schedules should never use `mode="workflow"`.
 

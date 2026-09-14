@@ -35,7 +35,7 @@ type ScheduledJobResponse struct {
 	Mode                 string                 `json:"mode,omitempty"`
 	Messages             []string               `json:"messages,omitempty"` // Predefined messages for workshop schedules
 	DirectMessagesReason string                 `json:"direct_messages_reason,omitempty"`
-	WorkshopMode         string                 `json:"workshop_mode,omitempty"`   // run (default) or optimizer
+	WorkshopMode         string                 `json:"workshop_mode,omitempty"`   // workshop for writable users; Run is access-derived
 	ResumePrevious       bool                   `json:"resume_previous,omitempty"` // Coding-agent CLI only: opt in to resume latest prior thread instead of fresh session
 	ScheduleType         string                 `json:"schedule_type,omitempty"`
 	CalendarItems        []CalendarScheduleItem `json:"calendar_items,omitempty"`
@@ -96,7 +96,7 @@ type CreateScheduleRequest struct {
 	Mode                     string                 `json:"mode,omitempty"`
 	Messages                 []string               `json:"messages,omitempty"` // Predefined messages for workshop schedules
 	DirectMessagesReason     string                 `json:"direct_messages_reason,omitempty"`
-	WorkshopMode             string                 `json:"workshop_mode,omitempty"`   // run (default) or optimizer
+	WorkshopMode             string                 `json:"workshop_mode,omitempty"`   // workshop for writable users; Run is access-derived
 	ResumePrevious           *bool                  `json:"resume_previous,omitempty"` // Coding-agent CLI only: explicit true resumes latest prior thread; nil/false starts fresh
 	ExecutionMode            string                 `json:"execution_mode,omitempty"`
 	CollisionPolicy          string                 `json:"collision_policy,omitempty"`
@@ -128,7 +128,7 @@ type UpdateScheduleRequest struct {
 	Mode                     string                 `json:"mode,omitempty"`
 	Messages                 []string               `json:"messages,omitempty"` // Predefined messages for workshop schedules
 	DirectMessagesReason     *string                `json:"direct_messages_reason,omitempty"`
-	WorkshopMode             string                 `json:"workshop_mode,omitempty"`   // run (default) or optimizer
+	WorkshopMode             string                 `json:"workshop_mode,omitempty"`   // workshop for writable users; Run is access-derived
 	ResumePrevious           *bool                  `json:"resume_previous,omitempty"` // Coding-agent CLI only: explicit true resumes latest prior thread; nil/false starts fresh
 	ExecutionMode            *string                `json:"execution_mode,omitempty"`
 	CollisionPolicy          *string                `json:"collision_policy,omitempty"`

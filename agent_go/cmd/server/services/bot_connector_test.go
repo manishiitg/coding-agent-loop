@@ -277,8 +277,8 @@ func TestBuildQueryRequestForActivePreservesWorkflowMetadata(t *testing.T) {
 		t.Fatalf("request did not preserve workflow metadata: %#v", req)
 	}
 	execOpts, ok := req["execution_options"].(map[string]interface{})
-	if !ok || execOpts["workshop_mode"] != "run" {
-		t.Fatalf("execution_options = %#v, want workshop_mode run", req["execution_options"])
+	if !ok || execOpts["workshop_mode"] != "workshop" {
+		t.Fatalf("execution_options = %#v, want workshop_mode workshop", req["execution_options"])
 	}
 }
 

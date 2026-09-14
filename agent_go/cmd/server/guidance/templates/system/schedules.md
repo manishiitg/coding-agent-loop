@@ -13,9 +13,9 @@ For the operational cheat sheet on creating / editing / deleting schedules
     "pulse_mode": "basic", "pulse_mode_reason": "Routine daily processing needs backup and a summary; no review is needed on every occurrence.",
     "concurrency_mode": "sequential", "parallel_risk_acknowledged": false,
     "group_names": ["confida-prod"],
-    "mode": "workshop", "workshop_mode": "run" }
+    "mode": "workshop", "workshop_mode": "workshop" }
   ```
-  Fields: `id` (auto-assigned), `name` (display label), `description` (optional), `cron_expression` (standard 5-field cron), `timezone` (IANA tz e.g. `America/New_York`), `enabled` (bool), `trigger_payload` (arbitrary JSON passed to the run), `group_names` (required array of one or more explicit group names from `variables/variables.json`), `mode` (`workshop` for workflow schedules), `workshop_mode` (`run` for normal recurring workflow runs), `concurrency_mode` (`sequential` default or `parallel`), and `parallel_risk_acknowledged`.
+  Fields: `id` (auto-assigned), `name` (display label), `description` (optional), `cron_expression` (standard 5-field cron), `timezone` (IANA tz e.g. `America/New_York`), `enabled` (bool), `trigger_payload` (arbitrary JSON passed to the run), `group_names` (required array of one or more explicit group names from `variables/variables.json`), `mode` (`workshop` for workflow schedules), `workshop_mode` (`workshop` for writable scheduled sessions; the server derives `run` only for read-only access), `concurrency_mode` (`sequential` default or `parallel`), and `parallel_risk_acknowledged`.
 - Schedule management is available in **Workshop mode**. If the user asks in Run mode, tell them to switch.
 
 ### Time and API triggers
@@ -32,7 +32,7 @@ Every schedule in `workflow.json` has a `schedule_type` — `"cron"` (default), 
 ```
 { "name": "March content calendar", "timezone": "Asia/Kolkata",
   "pulse_mode": "full", "pulse_mode_reason": "Each infrequent launch batch creates new outcome evidence that warrants review.",
-  "group_names": ["group-1"], "mode": "workshop", "workshop_mode": "run",
+  "group_names": ["group-1"], "mode": "workshop", "workshop_mode": "workshop",
   "calendar_items": [
     { "date": "2026-03-03", "time": "09:00", "description": "Optional note" },
     { "date": "2026-03-07", "time": "18:30" }
@@ -52,7 +52,7 @@ Every workflow-producing cron/calendar occurrence is bound by the server to one 
 
 `workflow.json::run_retention_count` applies uniformly: the server keeps that many completed plain Builder archives, that many completed `-sched` runs, and that many completed `-hook` runs as independent families (default 10). Schedule/webhook pruning removes the paired `runs/` and `evaluation/runs/` folder and preserves durable history with `artifacts_expired=true`; active runs are never pruned.
 
-- **Run** (`mode=workshop`, `workshop_mode=run`) — LLM-driven execution. Prefer an empty queue plus `group_names`/`route_selections` for durable workflow behavior: canonical steps receive their normal learning, validation/retry, repair, and Pulse attribution lifecycle. Direct messages remain valid for genuinely schedule-specific conversation, but require `direct_messages_reason` and do not automatically gain that step-level lifecycle.
+- **Workshop** (`mode=workshop`, `workshop_mode=workshop`) — writable scheduled execution. It includes the Builder tools needed for contract migrations and approved human-decision application before normal workflow execution. Prefer an empty queue plus `group_names`/`route_selections` for durable workflow behavior: canonical steps receive their normal learning, validation/retry, repair, and Pulse attribution lifecycle. Direct messages remain valid for genuinely schedule-specific conversation, but require `direct_messages_reason` and do not automatically gain that step-level lifecycle. The server pins read-only workflow users to Run.
 
 **Default mode rule:** create workflow schedules with `mode="workshop"`. New schedules should never use `mode="workflow"`.
 
@@ -86,7 +86,7 @@ Honor an existing user-approved disabled/off backup policy without asking again.
 
 - Write each message as a plain instruction, like you would type in chat: `"Run the full workflow"`, `"Generate the final report"`.
 - **Route-backed mode (default)**: select planned work through `group_names` plus optional `route_selections`, and keep `messages` empty. Use this for durable workflow behavior so one canonical plan owns its lifecycle.
-- **Direct-sequence mode (supported exception)**: use one or more messages when the conversation itself is genuinely schedule-specific and should not become reusable plan behavior. Set `direct_messages_reason` with the concrete tradeoff. These turns use the workshop execution path with Run authority (`workshop_mode="run"`), but are not canonical steps, so step learnings, validation/retry, repair, and Pulse attribution are weaker or unavailable unless the sequence explicitly invokes planned work.
+- **Direct-sequence mode (supported exception)**: use one or more messages when the conversation itself is genuinely schedule-specific and should not become reusable plan behavior. Set `direct_messages_reason` with the concrete tradeoff. These turns use the same access-derived Workshop authority, but are not canonical steps, so step learnings, validation/retry, repair, and Pulse attribution are weaker or unavailable unless the sequence explicitly invokes planned work.
 - Never choose solely from message length. Compare behavior, inputs/outputs, external side effects, approval boundaries, failure behavior, and expected reuse.
 - Read `variables/variables.json` for available group names and include them explicitly in the message if needed.
 
@@ -103,7 +103,7 @@ Pulse module cadence is not encoded in schedule JSON. Pulse Gate stores module s
 
 Do not create new `workshop_mode="optimizer"` schedules. Existing saved legacy
 values are handled by migration/backend compatibility; new continuous
-improvement uses normal Run mode plus Pulse.
+improvement uses normal Workshop mode plus Pulse.
 
 ## Goal measurement setup
 When setting up Pulse for a new workflow, use get_workflow_command_guidance(kind="setup-goals") before enabling it. Propose outcomes, one or more primary metrics per goal, linked supporting measurements and boundaries using existing context. Ask only unresolved user decisions. Connect collection to producing runs or appropriate delayed refreshes, independently of Pulse review cadence. Existing workflows without configured metrics keep running; recommend /setup-goals without repeatedly raising technical bugs for missing setup.

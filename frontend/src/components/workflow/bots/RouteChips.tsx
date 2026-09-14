@@ -46,19 +46,7 @@ export function RouteChip({ bots, route }: { bots: RouteChipBots; route: Workflo
       </span>
       {expanded && (
         <div className="mt-1.5 flex flex-wrap items-center gap-3 rounded-md border border-border bg-muted/20 px-3 py-2 text-xs">
-          <label className="flex items-center gap-1.5 text-muted-foreground">
-            Mode
-            <select
-              value={route.kind === 'slack' ? (route.workshop_mode || '') : 'run'}
-              onChange={e => void updateRoute(route, { workshop_mode: e.target.value })}
-              disabled={readOnly || saving || route.kind === 'whatsapp'}
-              className="px-1.5 py-1 text-xs bg-secondary border border-border rounded focus:outline-none focus:ring-1 focus:ring-primary disabled:opacity-60"
-              title="Bot channels always run in Run mode. 'Default' uses the automation manifest's setting (which is also Run for bot deployments)."
-            >
-              {route.kind === 'slack' && <option value="">Default</option>}
-              <option value="run">Run</option>
-            </select>
-          </label>
+          <span className="text-muted-foreground">Access follows the routed user’s workflow permission.</span>
           <label className="flex items-center gap-1.5 text-muted-foreground" title="Send detailed automation step/runtime messages to this channel">
             <input
               type="checkbox"

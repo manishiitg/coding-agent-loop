@@ -722,7 +722,6 @@ export function useWorkflowBots(workspacePath: string | null, target?: BotRouteT
     setAddError(e => ({ ...e, whatsapp: undefined }))
     void withRouteSaving(`whatsapp:${slug}`, async () => {
       const route: WaRoute = { ...routeForTarget() }
-      if (!target) route.workshop_mode = 'run'
       await saveWaRouting({ ...waRouting, [slug]: route })
       setNewWaSlug('')
     })

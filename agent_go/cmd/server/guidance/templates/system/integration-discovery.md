@@ -31,10 +31,11 @@ State plainly which avenue you're recommending and why (e.g. "ClickUp has an off
 
 ### Builder installation and availability
 
-MCP installation is a writable, interactive Builder capability, declared in the
-AgentWorks product manifest. Run, scheduled execution, Pulse maintenance and
-child agents cannot configure host integrations. Reading this reference does
-not grant those tools. If an interactive writable Builder lacks
+MCP installation is a writable Builder capability declared in the AgentWorks
+product manifest. Read-only Run sessions, Pulse maintenance and child agents
+cannot configure host integrations; writable bot, scheduled and notification
+turns share the Builder capability set. Reading this reference does not grant
+those tools. If an interactive writable Builder lacks
 `search_mcp_catalog` / `install_mcp_server`, report the missing tool registration;
 do not claim that server deployments inherently require an operator or manually
 edit a host config to work around the missing tool.

@@ -477,7 +477,7 @@ type WorkflowSchedule struct {
 	// DirectMessagesReason records why a schedule-local conversation is preferable
 	// to a canonical route despite its weaker step-level lifecycle.
 	DirectMessagesReason string `json:"direct_messages_reason,omitempty"`
-	WorkshopMode         string `json:"workshop_mode,omitempty"`   // Normal scheduled work runs with the constrained "run" prompt/tool/skill surface. New schedules require "run"; legacy values remain parseable for migration.
+	WorkshopMode         string `json:"workshop_mode,omitempty"`   // Writable scheduled work uses Workshop; read-only access is pinned to Run. Legacy values remain parseable.
 	Query                string `json:"query,omitempty"`           // Message to execute (multi-agent mode)
 	ResumePrevious       *bool  `json:"resume_previous,omitempty"` // Coding-agent CLI only: resume the latest prior thread (same provider) instead of a fresh session each run. nil = default (fresh session); explicit true opts in.
 	// PulseReviewOnly is a legacy compatibility field. On read, an enabled

@@ -6358,7 +6358,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 		// PLAT-262: skip create_schedule registration for read-only access
 	} else if err := mcpAgent.RegisterCustomTool(
 		"create_schedule",
-		"Create a new cron schedule for this workflow. Workflow schedules use mode='workshop' with workshop_mode='run'. Messages are optional; when omitted, the scheduler asks Run mode to execute the full workflow. Before adding, inspect existing schedules and choose review frequency using token cost and accumulated-run evidence. Require pulse_mode and pulse_mode_reason for every schedule: off has no Pulse actions, basic finalizes backup/report/notification only, and full includes Gate, drift review, review+fix, and finalization. For the full contract (collision/dependency policy design, when direct messages vs. route_selections is correct, resume_previous tradeoffs): read_skill(skills=[{\"name\":\"builder-reference\",\"path\":\"references/schedules.md\"}]).",
+		"Create a new cron schedule for this workflow. Workflow schedules use mode='workshop' with workshop_mode='workshop'; read-only access is pinned to Run by the server. Messages are optional; when omitted, the scheduler asks the Builder to execute the full workflow. Before adding, inspect existing schedules and choose review frequency using token cost and accumulated-run evidence. Require pulse_mode and pulse_mode_reason for every schedule: off has no Pulse actions, basic finalizes backup/report/notification only, and full includes Gate, drift review, review+fix, and finalization. For the full contract (collision/dependency policy design, when direct messages vs. route_selections is correct, resume_previous tradeoffs): read_skill(skills=[{\"name\":\"builder-reference\",\"path\":\"references/schedules.md\"}]).",
 		map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
@@ -6400,8 +6400,8 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				},
 				"workshop_mode": map[string]interface{}{
 					"type":        "string",
-					"description": "Run mode is the only supported value for new schedules. Pulse selects maintenance and Goal Advisor work after runs.",
-					"enum":        []string{"run"},
+					"description": "Workshop is the supported value for writable scheduled sessions; read-only access is pinned to Run by the server.",
+					"enum":        []string{"workshop"},
 				},
 				"resume_previous": map[string]interface{}{
 					"type":        "boolean",
@@ -6499,6 +6499,9 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				}
 			}
 			workshopMode, _ := args["workshop_mode"].(string)
+			if strings.TrimSpace(workshopMode) == "" {
+				workshopMode = "workshop"
+			}
 			directMessagesReason, _ := args["direct_messages_reason"].(string)
 			var resumePrevious *bool
 			if raw, ok := args["resume_previous"]; ok && raw != nil {
@@ -6550,7 +6553,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 		// PLAT-262: skip create_calendar_schedule registration for read-only access
 	} else if err := mcpAgent.RegisterCustomTool(
 		"create_calendar_schedule",
-		"Create a dated calendar schedule for this workflow, such as a full-month Instagram content calendar. Inspect existing schedules and choose pulse_mode and pulse_mode_reason using review frequency, token cost and accumulated-run evidence. Use this when the user provides specific dates/times instead of a repeating cron pattern. Workflow calendar schedules use mode='workshop' for the workflow-phase transport and workshop_mode='run' for normal execution. For the full contract: read_skill(skills=[{\"name\":\"builder-reference\",\"path\":\"references/schedules.md\"}]).",
+		"Create a dated calendar schedule for this workflow, such as a full-month Instagram content calendar. Inspect existing schedules and choose pulse_mode and pulse_mode_reason using review frequency, token cost and accumulated-run evidence. Use this when the user provides specific dates/times instead of a repeating cron pattern. Workflow calendar schedules use mode='workshop' and workshop_mode='workshop'; read-only access is pinned to Run by the server. For the full contract: read_skill(skills=[{\"name\":\"builder-reference\",\"path\":\"references/schedules.md\"}]).",
 		map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
@@ -6575,7 +6578,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				"direct_messages_reason":     map[string]interface{}{"type": "string", "description": "Required when default or per-item messages form a direct procedure; explain why it is schedule-specific."},
 				"mode":                       map[string]interface{}{"type": "string", "description": "Execution mode. Only 'workshop' is supported for workflow schedules; legacy 'workflow' input is normalized to 'workshop'.", "enum": []string{"workshop"}},
 				"messages":                   map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "string"}, "description": "Optional default workshop messages for all items. Omit for the default full-workflow run message."},
-				"workshop_mode":              map[string]interface{}{"type": "string", "description": "Run mode is the only supported value for new schedules; Pulse selects maintenance after runs.", "enum": []string{"run"}},
+				"workshop_mode":              map[string]interface{}{"type": "string", "description": "Workshop is the supported value for writable scheduled sessions; read-only access is pinned to Run by the server.", "enum": []string{"workshop"}},
 				"collision_policy":           map[string]interface{}{"type": "string", "enum": []string{"skip", "queue_latest", "retry", "coalesce"}, "description": "What to do if the workflow is busy when a calendar item is due."},
 				"concurrency_mode":           map[string]interface{}{"type": "string", "enum": []string{"sequential", "parallel"}, "description": "Defaults to sequential. Parallel requires explicit human approval after disclosing shared-state overwrite and duplicate-action risks."},
 				"parallel_risk_acknowledged": map[string]interface{}{"type": "boolean", "description": "Required true with concurrency_mode=parallel; set only after explicit human approval."},
@@ -6639,6 +6642,9 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				}
 			}
 			workshopMode, _ := args["workshop_mode"].(string)
+			if strings.TrimSpace(workshopMode) == "" {
+				workshopMode = "workshop"
+			}
 			directMessagesReason, _ := args["direct_messages_reason"].(string)
 			policy := ScheduleRuntimePolicy{}
 			policy.PulseMode, _ = args["pulse_mode"].(string)
@@ -6708,8 +6714,8 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				},
 				"workshop_mode": map[string]interface{}{
 					"type":        "string",
-					"description": "Use 'run'. Omit this field to preserve an existing legacy schedule value.",
-					"enum":        []string{"run"},
+					"description": "Use 'workshop'. Omit this field to preserve an existing legacy schedule value.",
+					"enum":        []string{"workshop"},
 				},
 				"resume_previous": map[string]interface{}{
 					"type":        "boolean",

@@ -1,0 +1,78 @@
+{
+  "metadata_version": 1,
+  "content_schema": "agentworks-playbook/v1",
+  "id": "activation-retention-intelligence",
+  "version": "0.1.0",
+  "changelog": [
+    {
+      "version": "0.1.0",
+      "summary": "Initial playbook release."
+    }
+  ],
+  "title": "Activation and Retention Intelligence",
+  "description": "Find the behaviors that predict customer success, explain why cohorts retain or churn differently, and measure feature adoption impact on retention and revenue — your AI Growth Analyst's lifecycle readout.",
+  "hierarchy": [
+    "AgentWorks",
+    "Agentic Engineering Platform",
+    "Growth Analytics"
+  ],
+  "order": 3,
+  "entrypoint": "SKILL.md",
+  "audience": "workflow_builder",
+  "team_scope": "small_team",
+  "setup_prompt": "Use Activation and Retention Intelligence for my AI Growth Analyst. With my reconciled growth data, apply my activation definition and cohort rules, compare retaining and churning cohorts with evidence, measure feature adoption impact on retention and revenue, correlate supporting feedback, and produce evidence-backed findings without claiming unproven causes.",
+  "setup_inputs": [
+    {"id": "foundation", "label": "Reconciled Growth Data Foundation or equivalent model", "required": true},
+    {"id": "lifecycle", "label": "Activation definition, cohort keys, and retention windows", "required": true},
+    {"id": "features", "label": "Feature and flag inventory with launch dates", "required": true},
+    {"id": "revenue", "label": "Revenue linkage scope and plan mapping", "required": false, "default": "subscription_revenue_only"},
+    {"id": "feedback", "label": "Support, chat, review, and survey sources", "required": false, "default": "authorized_sources_only"},
+    {"id": "quality_gate", "label": "Minimum freshness, coverage, and confidence policy", "required": true},
+    {"id": "audience", "label": "Reporting audience and decision owners", "required": true}
+  ],
+  "required_capabilities": ["cohort_analysis", "behavior_correlation_analysis", "feedback_correlation", "durable_workflow_storage", "workflow_reporting"],
+  "recommended_tools": [
+    {"id": "product-analytics", "name": "PostHog, Mixpanel, or Amplitude MCP", "type": "mcp", "purpose": "Read authorized cohorts, retention curves, and feature-adoption breakdowns behind a finding", "capability": "product_analytics_data", "optional": true},
+    {"id": "feedback-support", "name": "Intercom, Zendesk, or app-review MCP", "type": "mcp", "purpose": "Read authorized support conversations, reviews, and survey responses correlated with lifecycle analysis", "capability": "feedback_system_data", "optional": true},
+    {"id": "workflow-database", "name": "AgentWorks workflow database", "type": "builtin", "purpose": "Persist lifecycle snapshots, cohorts, findings, and follow-up outcomes", "capability": "durable_workflow_storage", "optional": true}
+  ],
+  "pulse_focus": [
+    {
+      "module": "technical_review",
+      "label": "Technical review",
+      "focus_areas": [
+        "Activation, cohort, censoring, and revenue-join integrity",
+        "Finding reproducibility and feedback-evidence quality"
+      ],
+      "review_when": [
+        "A run fails, produces incomplete evidence, or a key metric becomes unreliable"
+      ]
+    },
+    {
+      "module": "architecture_review",
+      "label": "Architecture review",
+      "focus_areas": [
+        "Lifecycle model, cohort joins, history, feedback linkage, and dashboard architecture",
+        "Ownership of definitions and downstream consumers"
+      ],
+      "review_when": [
+        "The workflow, integration, environment, scale, or operating policy changes materially"
+      ]
+    },
+    {
+      "module": "strategic_review",
+      "label": "Strategic review",
+      "focus_areas": [
+        "Whether lifecycle insight explains retention and revenue outcomes",
+        "Actionability, measurement cost, and decision value"
+      ],
+      "review_when": [
+        "Outcome metrics regress, priorities change, or the current approach needs periodic challenge"
+      ]
+    }
+  ],
+  "outputs": ["Versioned lifecycle and adoption policy", "Reproducible activation and retention snapshots", "Cohort divergence findings with attributed differences", "Feature adoption and revenue-impact analysis", "Correlated feedback themes", "Live lifecycle intelligence report"],
+  "setup_playbook": "growth-data-foundation",
+  "accepts_equivalent_setup": true,
+  "next_playbooks": ["growth-experimentation-follow-through"]
+}

@@ -26,11 +26,18 @@ AgentWorks
     │   └── Engineering Operations Intelligence
     ├── FinOps
     │   └── Cost Anomaly to Verified Savings
-    └── Reliability Operations
-        ├── CI and Deployment Failure Triage
-        ├── Incident Investigation and Coordination
-        ├── Governed Remediation and Recovery
-        └── Post-Incident Review and Actions
+    ├── Reliability Operations
+    │   ├── CI and Deployment Failure Triage
+    │   ├── Incident Investigation and Coordination
+    │   ├── Governed Remediation and Recovery
+    │   └── Post-Incident Review and Actions
+    └── Growth Analytics
+        ├── Growth Data Foundation
+        ├── Funnel and Conversion Intelligence
+        ├── Activation and Retention Intelligence
+        ├── Growth Experimentation and Follow-Through
+        ├── SEO Intelligence
+        └── AI Visibility Intelligence
 ```
 
 ### Browser QA
@@ -87,6 +94,19 @@ Reliability Operations shares a [reliability event and evidence contract](agenti
 The default [error webhook to recovery](agentic-engineering-platform/reliability-operations/references/error-webhook-to-recovery.md) path connects an external reliability system to AgentWorks, validates and groups errors, performs basic RCA, selects an approved resolution or escalation path, verifies service recovery, and updates the dashboard, Slack thread, and authorized source system.
 
 All Browser QA playbooks share an [AgentWorks plan and tool guide](agentic-engineering-platform/browser-qa/references/agentworks-plan-and-tools.md) and an [evidence capture contract](agentic-engineering-platform/browser-qa/references/evidence-capture.md). They define step/tool choices plus durable, redacted video, console/network, screenshot, and trace evidence.
+
+### Growth Analytics
+
+| Playbook | Outcome |
+| --- | --- |
+| [Growth Data Foundation](agentic-engineering-platform/growth-analytics/growth-data-foundation/SKILL.md) | Connect and normalize traffic, product, billing, and feedback data with durable customer identity, event quality, freshness, and provenance. |
+| [Funnel and Conversion Intelligence](agentic-engineering-platform/growth-analytics/funnel-conversion-intelligence/SKILL.md) | Analyze signup-to-purchase funnels, detect conversion changes, and attribute them to segments, pages, devices, or sources with session evidence. |
+| [Activation and Retention Intelligence](agentic-engineering-platform/growth-analytics/activation-retention-intelligence/SKILL.md) | Find success-predicting behaviors, explain cohort retention divergence, and measure feature adoption impact on retention and revenue. |
+| [Growth Experimentation and Follow-Through](agentic-engineering-platform/growth-analytics/growth-experimentation-follow-through/SKILL.md) | Prioritize evidence-backed experiments, create tracked actions, and verify shipped changes against pre-registered KPI targets. |
+| [SEO Intelligence](agentic-engineering-platform/growth-analytics/seo-intelligence/SKILL.md) | Find winnable keywords, diagnose technical SEO issues, close content gaps, and track rankings with page-level briefs. |
+| [AI Visibility Intelligence](agentic-engineering-platform/growth-analytics/ai-visibility-intelligence/SKILL.md) | Track AI-assistant brand citations against competitors and close gaps with content and authority changes. |
+
+Growth Analytics shares the [growth data model](agentic-engineering-platform/growth-analytics/references/growth-data-model.md) for identity, lineage, metric definitions, and data-quality rules.
 
 ## Authoring contract
 

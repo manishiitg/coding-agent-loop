@@ -1,0 +1,77 @@
+{
+  "metadata_version": 1,
+  "content_schema": "agentworks-playbook/v1",
+  "id": "ai-visibility-intelligence",
+  "version": "0.1.0",
+  "changelog": [
+    {
+      "version": "0.1.0",
+      "summary": "Initial playbook release."
+    }
+  ],
+  "title": "AI Visibility Intelligence",
+  "description": "Track whether ChatGPT, Perplexity, Gemini, and Google AI Overviews cite your brand, compare competitors, and close citation gaps — your AI Growth Analyst's AI-search readout.",
+  "hierarchy": [
+    "AgentWorks",
+    "Agentic Engineering Platform",
+    "Growth Analytics"
+  ],
+  "order": 6,
+  "entrypoint": "SKILL.md",
+  "audience": "workflow_builder",
+  "team_scope": "small_team",
+  "setup_prompt": "Use AI Visibility Intelligence for my AI Growth Analyst. With my reconciled traffic data, run my versioned prompt set across selected assistants, track brand citations against competitors with disclosed sampling limits, diagnose citation gaps with evidence, and recommend content and authority changes without manipulation.",
+  "setup_inputs": [
+    {"id": "foundation", "label": "Reconciled Growth Data Foundation or equivalent model", "required": true},
+    {"id": "prompts", "label": "Prompt set with personas and locales", "required": true},
+    {"id": "assistants", "label": "Assistant scope and sampling policy", "required": true},
+    {"id": "competitors", "label": "Competitor brand set and citation definitions", "required": true},
+    {"id": "quality_gate", "label": "Minimum freshness, coverage, and confidence policy", "required": true},
+    {"id": "audience", "label": "Reporting audience and decision owners", "required": true}
+  ],
+  "required_capabilities": ["ai_citation_tracking", "citation_gap_analysis", "competitor_visibility_analysis", "durable_workflow_storage", "workflow_reporting"],
+  "recommended_tools": [
+    {"id": "visibility-tracker", "name": "AI-visibility tracker CLI or MCP", "type": "cli_or_mcp", "purpose": "Run versioned prompts across assistants and extract brand citations with provenance", "capability": "ai_citation_tracking", "optional": true},
+    {"id": "search-console", "name": "Google Search Console MCP", "type": "mcp", "purpose": "Read authorized queries and pages that corroborate topics worth winning in AI answers", "capability": "search_console_data", "optional": true},
+    {"id": "workflow-database", "name": "AgentWorks workflow database", "type": "builtin", "purpose": "Persist prompt sets, citation snapshots, comparisons, and follow-up outcomes", "capability": "durable_workflow_storage", "optional": true}
+  ],
+  "pulse_focus": [
+    {
+      "module": "technical_review",
+      "label": "Technical review",
+      "focus_areas": [
+        "Prompt versioning, sample integrity, and citation-attribution rules",
+        "Finding reproducibility and recommendation-evidence quality"
+      ],
+      "review_when": [
+        "A run fails, produces incomplete evidence, or a key metric becomes unreliable"
+      ]
+    },
+    {
+      "module": "architecture_review",
+      "label": "Architecture review",
+      "focus_areas": [
+        "Prompt-set model, tracking architecture, history, and dashboard design",
+        "Ownership of targets and downstream consumers"
+      ],
+      "review_when": [
+        "The workflow, integration, environment, scale, or operating policy changes materially"
+      ]
+    },
+    {
+      "module": "strategic_review",
+      "label": "Strategic review",
+      "focus_areas": [
+        "Whether visibility insight explains AI-search presence outcomes",
+        "Actionability, measurement cost, and decision value"
+      ],
+      "review_when": [
+        "Outcome metrics regress, priorities change, or the current approach needs periodic challenge"
+      ]
+    }
+  ],
+  "outputs": ["Versioned visibility prompt set", "Reproducible citation snapshots and trends", "Competitor citation comparison", "Citation-gap findings with likely causes", "Content and authority recommendations", "Live AI visibility report"],
+  "setup_playbook": "growth-data-foundation",
+  "accepts_equivalent_setup": true,
+  "next_playbooks": ["growth-experimentation-follow-through"]
+}

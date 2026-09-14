@@ -1,4 +1,4 @@
-import { sharedReturnPath, SHARE_RETURN_KEY } from '../utils/sharedLinks'
+import { rememberSharedReturnPath, sharedReturnPath } from '../utils/sharedLinks'
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import { authApi, getAuthToken, setAuthToken, clearAuthToken } from '../services/api'
@@ -132,10 +132,10 @@ export const useAuthStore = create<AuthState>()(
           try {
             const returnTo = sharedReturnPath(window.location.pathname + window.location.search)
               || sharedReturnPath(new URLSearchParams(window.location.search).get('next'))
-            if (returnTo) sessionStorage.setItem(SHARE_RETURN_KEY, returnTo)
-            else sessionStorage.removeItem(SHARE_RETURN_KEY)
             const redirectUri = getOAuthRedirectUri()
             const response = await authApi.startOAuth(provider, redirectUri)
+
+            rememberSharedReturnPath(returnTo, response.state)
 
             // Save state to sessionStorage for verification on callback
             saveOAuthState(response.state, provider)

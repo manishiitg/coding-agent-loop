@@ -1,10 +1,11 @@
-import { sharedReturnPath, SHARE_RETURN_KEY } from '../utils/sharedLinks'
+import { consumeSharedReturnPath } from '../utils/sharedLinks'
 import { useEffect, useState } from 'react'
 import { useAuthStore, peekStoredOAuthState } from '../stores/useAuthStore'
 
 export function AuthCallback() {
   const { handleOAuthCallback, error, isAuthenticated } = useAuthStore()
   const [callbackError, setCallbackError] = useState<string | null>(null)
+  const [callbackState, setCallbackState] = useState<string | null>(null)
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search)
@@ -28,6 +29,7 @@ export function AuthCallback() {
     }
 
     // Process the callback
+    setCallbackState(state)
     handleOAuthCallback(code, state)
       .catch((err) => {
         console.error('OAuth callback failed:', err)
@@ -37,12 +39,11 @@ export function AuthCallback() {
 
   // Redirect on successful authentication
   useEffect(() => {
-    if (isAuthenticated) {
-      const returnTo = sharedReturnPath(sessionStorage.getItem(SHARE_RETURN_KEY))
-      sessionStorage.removeItem(SHARE_RETURN_KEY)
+    if (isAuthenticated && callbackState) {
+      const returnTo = consumeSharedReturnPath(callbackState)
       window.location.href = returnTo || '/'
     }
-  }, [isAuthenticated])
+  }, [isAuthenticated, callbackState])
 
   const displayError = callbackError || error
 

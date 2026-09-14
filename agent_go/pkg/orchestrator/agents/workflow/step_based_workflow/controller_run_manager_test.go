@@ -2,6 +2,7 @@ package step_based_workflow
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 )
 
@@ -40,6 +41,24 @@ func TestRetainedIterationNamesExcludesActiveAndSortsNumerically(t *testing.T) {
 		if got[index] != want[index] {
 			t.Fatalf("retained iterations = %v, want %v", got, want)
 		}
+	}
+}
+
+func TestCategorizedIterationNamesSeparatesBuilderScheduleAndWebhookRuns(t *testing.T) {
+	all, builder, scheduled, webhook := categorizedIterationNames([]string{
+		"iteration-0", "iteration-9-sched", "iteration-4", "iteration-7-hook",
+	})
+	if strings.Join(all, ",") != "iteration-4,iteration-7-hook,iteration-9-sched" {
+		t.Fatalf("all = %v", all)
+	}
+	if strings.Join(builder, ",") != "iteration-4" || strings.Join(scheduled, ",") != "iteration-9-sched" || strings.Join(webhook, ",") != "iteration-7-hook" {
+		t.Fatalf("categorized = builder:%v scheduled:%v webhook:%v", builder, scheduled, webhook)
+	}
+}
+
+func TestParseWorkshopIterationNumberAcceptsScheduledRun(t *testing.T) {
+	if got := parseWorkshopIterationNumber("iteration-421-sched"); got != 421 {
+		t.Fatalf("scheduled iteration number = %d, want 421", got)
 	}
 }
 

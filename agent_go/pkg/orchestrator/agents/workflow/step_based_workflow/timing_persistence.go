@@ -577,12 +577,21 @@ func (hcpo *StepBasedWorkflowOrchestrator) upsertRunMetadata(ctx context.Context
 
 //nolint:unused // staged for the run-metadata timing persistence rollout.
 func (hcpo *StepBasedWorkflowOrchestrator) markRunMetadataStarted(ctx context.Context, runFolder string) error {
+	return hcpo.markRunMetadataStartedForExecution(ctx, runFolder, "")
+}
+
+func (hcpo *StepBasedWorkflowOrchestrator) markRunMetadataStartedForExecution(ctx context.Context, runFolder, executionID string) error {
 	planRevision, err := hcpo.ensureExecutablePlanRevision(ctx)
 	if err != nil {
 		return err
 	}
 	now := time.Now().UTC()
-	executionID := fmt.Sprintf("run-%d", now.UnixNano())
+	if strings.TrimSpace(executionID) == "" {
+		executionID = fmt.Sprintf("run-%d", now.UnixNano())
+		if opts := hcpo.GetExecutionOptions(); opts != nil && opts.ExecutionID != "" {
+			executionID = opts.ExecutionID
+		}
+	}
 	if err := hcpo.upsertRunMetadata(ctx, runFolder, func(meta map[string]interface{}) {
 		if _, ok := meta["created_at"]; !ok {
 			meta["created_at"] = formatRFC3339UTC(now)
@@ -599,8 +608,21 @@ func (hcpo *StepBasedWorkflowOrchestrator) markRunMetadataStarted(ctx context.Co
 		meta["execution_id"] = executionID
 		meta["active_slot_at_start"] = currentWorkflowRunFolder
 		meta["plan_revision"] = planRevision
+		meta["run_folder"] = runFolder
+		if opts := hcpo.GetExecutionOptions(); opts != nil && opts.RunKind == "schedule" {
+			meta["run_kind"] = "schedule"
+			meta["schedule_run_id"] = opts.ScheduleRunID
+			meta["schedule_id"] = opts.ScheduleID
+			meta["trigger_source"] = opts.TriggerSource
+			if !opts.ScheduledFor.IsZero() {
+				meta["scheduled_for"] = formatRFC3339UTC(opts.ScheduledFor)
+			}
+		}
 	}); err != nil {
 		return fmt.Errorf("persist run identity: %w", err)
+	}
+	if err := hcpo.writeRunIndex(ctx, "run_started"); err != nil {
+		hcpo.GetLogger().Warn(fmt.Sprintf("Could not refresh run provenance index for %s: %v", runFolder, err))
 	}
 	return nil
 }

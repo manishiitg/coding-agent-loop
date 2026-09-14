@@ -130,6 +130,12 @@ func TestScheduleToolsDoNotExposeGenericRunDurationLimit(t *testing.T) {
 		if _, exists := properties["after_schedule_ids"]; !exists {
 			t.Fatalf("%s lost schedule dependency fan-in while removing the run-duration limit", name)
 		}
+		if _, exists := properties["concurrency_mode"]; !exists {
+			t.Fatalf("%s does not expose schedule concurrency mode", name)
+		}
+		if _, exists := properties["parallel_risk_acknowledged"]; !exists {
+			t.Fatalf("%s does not expose parallel risk acknowledgement", name)
+		}
 	}
 }
 

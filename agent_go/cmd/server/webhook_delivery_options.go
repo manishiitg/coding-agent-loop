@@ -115,3 +115,18 @@ func webhookInvocationFolders(folders []RunFolderInfo, folder string, hook bool)
 	}
 	return result
 }
+
+// scheduleInvocationFolders isolates reconciliation to the immutable folder
+// bound to this occurrence so a concurrent schedule cannot donate its result.
+func scheduleInvocationFolders(folders []RunFolderInfo, folder string, scheduled bool) []RunFolderInfo {
+	if !scheduled {
+		return folders
+	}
+	result := []RunFolderInfo{}
+	for _, candidate := range folders {
+		if strings.Split(candidate.Name, "/")[0] == folder {
+			result = append(result, candidate)
+		}
+	}
+	return result
+}

@@ -9,7 +9,8 @@ func TestPulseRolesUnderstandScheduleCoordinationPolicy(t *testing.T) {
 	wants := map[string][]string{
 		"pulse-gate": {
 			"do not infer safety or throughput from cron spacing",
-			"workflow-wide active-execution lock",
+			"Schedules are sequential unless their saved policy explicitly enables parallel execution",
+			"`parallel_risk_acknowledged=true`",
 			"`after_schedule_ids`",
 			"same local calendar date",
 			"Architecture Review",
@@ -18,7 +19,8 @@ func TestPulseRolesUnderstandScheduleCoordinationPolicy(t *testing.T) {
 		},
 		"architecture-review": {
 			"Schedule topology and throughput",
-			"workflow-wide active-execution lock",
+			"schedules are sequential unless their saved policy explicitly opts into parallel execution",
+			"`concurrency_mode=\"parallel\"`",
 			"two schedules work together through a directional chain",
 			"fan-in",
 			"this review remains read-only",
@@ -26,10 +28,10 @@ func TestPulseRolesUnderstandScheduleCoordinationPolicy(t *testing.T) {
 		},
 		"technical-review": {
 			"load `references/schedules.md`",
-			"Preserve the workflow-wide single-active-execution safety lock",
+			"Preserve sequential execution unless an explicit approved parallel policy exists",
 			"directional all-of edges",
 			"typed schedule tools",
-			"recorded human approval",
+			"recording human approval",
 		},
 		"pulse-fixer-practices": {
 			"Cron spacing is not a concurrency guarantee",

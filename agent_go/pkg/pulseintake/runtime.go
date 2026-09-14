@@ -60,22 +60,32 @@ type runMetadata struct {
 	ExecutionID       string `json:"execution_id"`
 	PlanRevision      string `json:"plan_revision"`
 	ActiveSlotAtStart string `json:"active_slot_at_start"`
+	RunKind           string `json:"run_kind"`
+	ScheduleRunID     string `json:"schedule_run_id"`
+	ScheduleID        string `json:"schedule_id"`
 }
 
 type RunIndex struct {
-	Version               int      `json:"version"`
-	ActiveIteration       string   `json:"active_iteration"`
-	RetainedIterations    []string `json:"retained_iterations"`
-	LastTransition        string   `json:"last_transition"`
-	FullRunPolicy         string   `json:"full_run_policy"`
-	PartialGroupRunPolicy string   `json:"partial_group_policy"`
-	UpdatedAt             string   `json:"updated_at"`
+	Version                   int      `json:"version"`
+	ActiveIteration           string   `json:"active_iteration"`
+	RetainedIterations        []string `json:"retained_iterations"`
+	BuilderActiveIteration    string   `json:"builder_active_iteration,omitempty"`
+	BuilderRetainedIterations []string `json:"builder_retained_iterations,omitempty"`
+	ScheduledIterations       []string `json:"scheduled_iterations,omitempty"`
+	WebhookIterations         []string `json:"webhook_iterations,omitempty"`
+	LastTransition            string   `json:"last_transition"`
+	FullRunPolicy             string   `json:"full_run_policy"`
+	PartialGroupRunPolicy     string   `json:"partial_group_policy"`
+	UpdatedAt                 string   `json:"updated_at"`
 }
 
 type RunIdentity struct {
 	RunFolder        string `json:"run_folder"`
 	LifecycleRole    string `json:"lifecycle_role"`
 	ExecutionID      string `json:"execution_id,omitempty"`
+	RunKind          string `json:"run_kind,omitempty"`
+	ScheduleRunID    string `json:"schedule_run_id,omitempty"`
+	ScheduleID       string `json:"schedule_id,omitempty"`
 	PlanRevision     string `json:"plan_revision"`
 	ProvenanceStatus string `json:"provenance_status"`
 }
@@ -189,16 +199,29 @@ func inspectRunIdentity(run runCandidate, index *RunIndex) (RunIdentity, error) 
 	topLevel := strings.Split(filepath.ToSlash(run.rel), "/")[0]
 	role := "unknown"
 	if index != nil {
-		if topLevel == index.ActiveIteration {
+		if index.Version < 2 && topLevel == index.ActiveIteration {
 			role = "active"
+		} else if topLevel == index.BuilderActiveIteration {
+			role = "builder_active"
+		} else if containsString(index.ScheduledIterations, topLevel) {
+			role = "scheduled"
+		} else if containsString(index.WebhookIterations, topLevel) {
+			role = "webhook"
+		} else if containsString(index.BuilderRetainedIterations, topLevel) {
+			role = "builder_retained"
 		} else {
 			for _, retained := range index.RetainedIterations {
 				if topLevel == retained {
-					role = "retained"
+					if index.Version < 2 {
+						role = "retained"
+					}
 					break
 				}
 			}
 		}
+	}
+	if metadata.RunKind == "schedule" {
+		role = "scheduled"
 	}
 	planRevision := strings.TrimSpace(metadata.PlanRevision)
 	status := "verified"
@@ -210,9 +233,19 @@ func inspectRunIdentity(run runCandidate, index *RunIndex) (RunIdentity, error) 
 	}
 	return RunIdentity{
 		RunFolder: run.rel, LifecycleRole: role,
-		ExecutionID: strings.TrimSpace(metadata.ExecutionID), PlanRevision: planRevision,
+		ExecutionID: strings.TrimSpace(metadata.ExecutionID), RunKind: strings.TrimSpace(metadata.RunKind),
+		ScheduleRunID: strings.TrimSpace(metadata.ScheduleRunID), ScheduleID: strings.TrimSpace(metadata.ScheduleID), PlanRevision: planRevision,
 		ProvenanceStatus: status,
 	}, nil
+}
+
+func containsString(values []string, target string) bool {
+	for _, value := range values {
+		if value == target {
+			return true
+		}
+	}
+	return false
 }
 
 func resolveRunsRoot(workspacePath string) (string, error) {

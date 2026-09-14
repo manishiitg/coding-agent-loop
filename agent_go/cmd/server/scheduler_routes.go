@@ -52,87 +52,93 @@ type ScheduledJobResponse struct {
 	ConsecutiveFailures  int                    `json:"consecutive_failures"`
 	// DeferredReason is set while a due product schedule is held back by its
 	// quiet rule (the user is active); empty otherwise.
-	DeferredReason       string     `json:"deferred_reason,omitempty"`
-	ExecutionMode        string     `json:"execution_mode,omitempty"`
-	CollisionPolicy      string     `json:"collision_policy,omitempty"`
-	MaxStartDelayMinutes int        `json:"max_start_delay_minutes,omitempty"`
-	AfterScheduleID      string     `json:"after_schedule_id,omitempty"`
-	AfterScheduleIDs     []string   `json:"after_schedule_ids,omitempty"`
-	AfterTerminalStatus  string     `json:"after_terminal_status,omitempty"`
-	AfterDelayMinutes    int        `json:"after_delay_minutes,omitempty"`
-	DependencyDeadline   string     `json:"dependency_deadline,omitempty"`
-	WaitingSince         *time.Time `json:"waiting_since,omitempty"`
-	WaitingUntil         *time.Time `json:"waiting_until,omitempty"`
-	WaitingReason        string     `json:"waiting_reason,omitempty"`
-	QueuedOccurrences    int        `json:"queued_occurrences,omitempty"`
-	MissedRunCount       int        `json:"missed_run_count,omitempty"`
-	LatestMissedRunAt    *time.Time `json:"latest_missed_run_at,omitempty"`
-	MissedRunReason      string     `json:"missed_run_reason,omitempty"`
-	PulseReviewOnly      bool       `json:"pulse_review_only,omitempty"`
-	PulseMode            string     `json:"pulse_mode,omitempty"`
-	PulseModeReason      string     `json:"pulse_mode_reason,omitempty"`
-	CreatedAt            string     `json:"created_at,omitempty"`
-	UpdatedAt            string     `json:"updated_at,omitempty"`
+	DeferredReason           string     `json:"deferred_reason,omitempty"`
+	ExecutionMode            string     `json:"execution_mode,omitempty"`
+	CollisionPolicy          string     `json:"collision_policy,omitempty"`
+	ConcurrencyMode          string     `json:"concurrency_mode,omitempty"`
+	ParallelRiskAcknowledged bool       `json:"parallel_risk_acknowledged,omitempty"`
+	MaxStartDelayMinutes     int        `json:"max_start_delay_minutes,omitempty"`
+	AfterScheduleID          string     `json:"after_schedule_id,omitempty"`
+	AfterScheduleIDs         []string   `json:"after_schedule_ids,omitempty"`
+	AfterTerminalStatus      string     `json:"after_terminal_status,omitempty"`
+	AfterDelayMinutes        int        `json:"after_delay_minutes,omitempty"`
+	DependencyDeadline       string     `json:"dependency_deadline,omitempty"`
+	WaitingSince             *time.Time `json:"waiting_since,omitempty"`
+	WaitingUntil             *time.Time `json:"waiting_until,omitempty"`
+	WaitingReason            string     `json:"waiting_reason,omitempty"`
+	QueuedOccurrences        int        `json:"queued_occurrences,omitempty"`
+	MissedRunCount           int        `json:"missed_run_count,omitempty"`
+	LatestMissedRunAt        *time.Time `json:"latest_missed_run_at,omitempty"`
+	MissedRunReason          string     `json:"missed_run_reason,omitempty"`
+	PulseReviewOnly          bool       `json:"pulse_review_only,omitempty"`
+	PulseMode                string     `json:"pulse_mode,omitempty"`
+	PulseModeReason          string     `json:"pulse_mode_reason,omitempty"`
+	CreatedAt                string     `json:"created_at,omitempty"`
+	UpdatedAt                string     `json:"updated_at,omitempty"`
 }
 
 // CreateScheduleRequest is the request body for creating a schedule.
 type CreateScheduleRequest struct {
-	WorkspacePath        string                 `json:"workspace_path"` // Required for workflow/workshop mode
-	Name                 string                 `json:"name"`
-	Description          string                 `json:"description,omitempty"`
-	ScheduleType         string                 `json:"schedule_type,omitempty"`
-	CronExpression       string                 `json:"cron_expression"`
-	Timezone             string                 `json:"timezone"`
-	CalendarItems        []CalendarScheduleItem `json:"calendar_items,omitempty"`
-	Enabled              bool                   `json:"enabled"`
-	TriggerPayload       json.RawMessage        `json:"trigger_payload,omitempty"`
-	GroupNames           []string               `json:"group_names,omitempty"`
-	RouteSelections      map[string]string      `json:"route_selections,omitempty"`
-	Mode                 string                 `json:"mode,omitempty"`
-	Messages             []string               `json:"messages,omitempty"` // Predefined messages for workshop schedules
-	DirectMessagesReason string                 `json:"direct_messages_reason,omitempty"`
-	WorkshopMode         string                 `json:"workshop_mode,omitempty"`   // run (default) or optimizer
-	ResumePrevious       *bool                  `json:"resume_previous,omitempty"` // Coding-agent CLI only: explicit true resumes latest prior thread; nil/false starts fresh
-	ExecutionMode        string                 `json:"execution_mode,omitempty"`
-	CollisionPolicy      string                 `json:"collision_policy,omitempty"`
-	MaxStartDelayMinutes int                    `json:"max_start_delay_minutes,omitempty"`
-	AfterScheduleID      string                 `json:"after_schedule_id,omitempty"`
-	AfterScheduleIDs     []string               `json:"after_schedule_ids,omitempty"`
-	AfterTerminalStatus  string                 `json:"after_terminal_status,omitempty"`
-	AfterDelayMinutes    int                    `json:"after_delay_minutes,omitempty"`
-	DependencyDeadline   string                 `json:"dependency_deadline,omitempty"`
-	PulseReviewOnly      bool                   `json:"pulse_review_only,omitempty"`
-	PulseMode            string                 `json:"pulse_mode,omitempty"`
-	PulseModeReason      string                 `json:"pulse_mode_reason,omitempty"`
+	WorkspacePath            string                 `json:"workspace_path"` // Required for workflow/workshop mode
+	Name                     string                 `json:"name"`
+	Description              string                 `json:"description,omitempty"`
+	ScheduleType             string                 `json:"schedule_type,omitempty"`
+	CronExpression           string                 `json:"cron_expression"`
+	Timezone                 string                 `json:"timezone"`
+	CalendarItems            []CalendarScheduleItem `json:"calendar_items,omitempty"`
+	Enabled                  bool                   `json:"enabled"`
+	TriggerPayload           json.RawMessage        `json:"trigger_payload,omitempty"`
+	GroupNames               []string               `json:"group_names,omitempty"`
+	RouteSelections          map[string]string      `json:"route_selections,omitempty"`
+	Mode                     string                 `json:"mode,omitempty"`
+	Messages                 []string               `json:"messages,omitempty"` // Predefined messages for workshop schedules
+	DirectMessagesReason     string                 `json:"direct_messages_reason,omitempty"`
+	WorkshopMode             string                 `json:"workshop_mode,omitempty"`   // run (default) or optimizer
+	ResumePrevious           *bool                  `json:"resume_previous,omitempty"` // Coding-agent CLI only: explicit true resumes latest prior thread; nil/false starts fresh
+	ExecutionMode            string                 `json:"execution_mode,omitempty"`
+	CollisionPolicy          string                 `json:"collision_policy,omitempty"`
+	ConcurrencyMode          string                 `json:"concurrency_mode,omitempty"`
+	ParallelRiskAcknowledged bool                   `json:"parallel_risk_acknowledged,omitempty"`
+	MaxStartDelayMinutes     int                    `json:"max_start_delay_minutes,omitempty"`
+	AfterScheduleID          string                 `json:"after_schedule_id,omitempty"`
+	AfterScheduleIDs         []string               `json:"after_schedule_ids,omitempty"`
+	AfterTerminalStatus      string                 `json:"after_terminal_status,omitempty"`
+	AfterDelayMinutes        int                    `json:"after_delay_minutes,omitempty"`
+	DependencyDeadline       string                 `json:"dependency_deadline,omitempty"`
+	PulseReviewOnly          bool                   `json:"pulse_review_only,omitempty"`
+	PulseMode                string                 `json:"pulse_mode,omitempty"`
+	PulseModeReason          string                 `json:"pulse_mode_reason,omitempty"`
 }
 
 // UpdateScheduleRequest is the request body for updating a schedule.
 type UpdateScheduleRequest struct {
-	Name                 string                 `json:"name,omitempty"`
-	Description          string                 `json:"description,omitempty"`
-	ScheduleType         string                 `json:"schedule_type,omitempty"`
-	CronExpression       string                 `json:"cron_expression,omitempty"`
-	Timezone             string                 `json:"timezone,omitempty"`
-	CalendarItems        []CalendarScheduleItem `json:"calendar_items,omitempty"`
-	Enabled              *bool                  `json:"enabled,omitempty"`
-	TriggerPayload       json.RawMessage        `json:"trigger_payload,omitempty"`
-	GroupNames           []string               `json:"group_names,omitempty"`
-	RouteSelections      map[string]string      `json:"route_selections,omitempty"`
-	Mode                 string                 `json:"mode,omitempty"`
-	Messages             []string               `json:"messages,omitempty"` // Predefined messages for workshop schedules
-	DirectMessagesReason *string                `json:"direct_messages_reason,omitempty"`
-	WorkshopMode         string                 `json:"workshop_mode,omitempty"`   // run (default) or optimizer
-	ResumePrevious       *bool                  `json:"resume_previous,omitempty"` // Coding-agent CLI only: explicit true resumes latest prior thread; nil/false starts fresh
-	ExecutionMode        *string                `json:"execution_mode,omitempty"`
-	CollisionPolicy      *string                `json:"collision_policy,omitempty"`
-	MaxStartDelayMinutes *int                   `json:"max_start_delay_minutes,omitempty"`
-	AfterScheduleID      *string                `json:"after_schedule_id,omitempty"`
-	AfterScheduleIDs     []string               `json:"after_schedule_ids,omitempty"`
-	AfterTerminalStatus  *string                `json:"after_terminal_status,omitempty"`
-	AfterDelayMinutes    *int                   `json:"after_delay_minutes,omitempty"`
-	DependencyDeadline   *string                `json:"dependency_deadline,omitempty"`
-	PulseMode            *string                `json:"pulse_mode,omitempty"`
-	PulseModeReason      *string                `json:"pulse_mode_reason,omitempty"`
+	Name                     string                 `json:"name,omitempty"`
+	Description              string                 `json:"description,omitempty"`
+	ScheduleType             string                 `json:"schedule_type,omitempty"`
+	CronExpression           string                 `json:"cron_expression,omitempty"`
+	Timezone                 string                 `json:"timezone,omitempty"`
+	CalendarItems            []CalendarScheduleItem `json:"calendar_items,omitempty"`
+	Enabled                  *bool                  `json:"enabled,omitempty"`
+	TriggerPayload           json.RawMessage        `json:"trigger_payload,omitempty"`
+	GroupNames               []string               `json:"group_names,omitempty"`
+	RouteSelections          map[string]string      `json:"route_selections,omitempty"`
+	Mode                     string                 `json:"mode,omitempty"`
+	Messages                 []string               `json:"messages,omitempty"` // Predefined messages for workshop schedules
+	DirectMessagesReason     *string                `json:"direct_messages_reason,omitempty"`
+	WorkshopMode             string                 `json:"workshop_mode,omitempty"`   // run (default) or optimizer
+	ResumePrevious           *bool                  `json:"resume_previous,omitempty"` // Coding-agent CLI only: explicit true resumes latest prior thread; nil/false starts fresh
+	ExecutionMode            *string                `json:"execution_mode,omitempty"`
+	CollisionPolicy          *string                `json:"collision_policy,omitempty"`
+	ConcurrencyMode          *string                `json:"concurrency_mode,omitempty"`
+	ParallelRiskAcknowledged *bool                  `json:"parallel_risk_acknowledged,omitempty"`
+	MaxStartDelayMinutes     *int                   `json:"max_start_delay_minutes,omitempty"`
+	AfterScheduleID          *string                `json:"after_schedule_id,omitempty"`
+	AfterScheduleIDs         []string               `json:"after_schedule_ids,omitempty"`
+	AfterTerminalStatus      *string                `json:"after_terminal_status,omitempty"`
+	AfterDelayMinutes        *int                   `json:"after_delay_minutes,omitempty"`
+	DependencyDeadline       *string                `json:"dependency_deadline,omitempty"`
+	PulseMode                *string                `json:"pulse_mode,omitempty"`
+	PulseModeReason          *string                `json:"pulse_mode_reason,omitempty"`
 }
 
 type TriggerPulseRequest struct {
@@ -141,56 +147,58 @@ type TriggerPulseRequest struct {
 
 func buildJobResponse(workspacePath string, manifest *WorkflowManifest, sched WorkflowSchedule, state ScheduleRuntimeState, missed WorkflowScheduleMissedStatus) ScheduledJobResponse {
 	return ScheduledJobResponse{
-		StepID:               workflowWebhookDTO(sched).StepID,
-		ID:                   sched.ID,
-		Name:                 sched.Name,
-		Description:          sched.Description,
-		EntityType:           "workflow",
-		WorkspacePath:        workspacePath,
-		WorkflowID:           manifest.ID,
-		WorkflowLabel:        manifest.Label,
-		PresetQueryID:        manifest.ID,
-		TriggerPayload:       sched.TriggerPayload,
-		GroupNames:           sched.GroupNames,
-		RouteSelections:      sched.RouteSelections,
-		Mode:                 "workshop",
-		Messages:             sched.Messages,
-		DirectMessagesReason: sched.DirectMessagesReason,
-		WorkshopMode:         sched.WorkshopMode,
-		ResumePrevious:       sched.ShouldResumePrevious(),
-		ScheduleType:         scheduleTypeOrDefault(sched.ScheduleType),
-		CalendarItems:        sched.CalendarItems,
-		CronExpression:       sched.CronExpression,
-		Timezone:             sched.Timezone,
-		Enabled:              sched.Enabled,
-		LastRunAt:            state.LastRunAt,
-		NextRunAt:            state.NextRunAt,
-		LastSessionID:        state.LastSessionID,
-		LastStatus:           state.LastStatus,
-		LastError:            state.LastError,
-		LastDurationMs:       state.LastDurationMs,
-		RunCount:             state.RunCount,
-		ConsecutiveFailures:  state.ConsecutiveFailures,
-		ExecutionMode:        sched.ExecutionMode,
-		CollisionPolicy:      sched.CollisionPolicy,
-		MaxStartDelayMinutes: sched.MaxStartDelayMinutes,
-		AfterScheduleID:      sched.AfterScheduleID,
-		AfterScheduleIDs:     sched.AfterScheduleIDs,
-		AfterTerminalStatus:  sched.AfterTerminalStatus,
-		AfterDelayMinutes:    sched.AfterDelayMinutes,
-		DependencyDeadline:   sched.DependencyDeadline,
-		WaitingSince:         state.WaitingSince,
-		WaitingUntil:         state.WaitingUntil,
-		WaitingReason:        state.WaitingReason,
-		QueuedOccurrences:    state.QueuedOccurrences,
-		MissedRunCount:       missed.MissedRunCount,
-		LatestMissedRunAt:    missed.LatestMissedRunAt,
-		MissedRunReason:      missed.MissedRunReason,
-		PulseReviewOnly:      sched.PulseReviewOnly,
-		PulseMode:            sched.PulseMode,
-		PulseModeReason:      sched.PulseModeReason,
-		CreatedAt:            manifest.CreatedAt,
-		UpdatedAt:            manifest.UpdatedAt,
+		StepID:                   workflowWebhookDTO(sched).StepID,
+		ID:                       sched.ID,
+		Name:                     sched.Name,
+		Description:              sched.Description,
+		EntityType:               "workflow",
+		WorkspacePath:            workspacePath,
+		WorkflowID:               manifest.ID,
+		WorkflowLabel:            manifest.Label,
+		PresetQueryID:            manifest.ID,
+		TriggerPayload:           sched.TriggerPayload,
+		GroupNames:               sched.GroupNames,
+		RouteSelections:          sched.RouteSelections,
+		Mode:                     "workshop",
+		Messages:                 sched.Messages,
+		DirectMessagesReason:     sched.DirectMessagesReason,
+		WorkshopMode:             sched.WorkshopMode,
+		ResumePrevious:           sched.ShouldResumePrevious(),
+		ScheduleType:             scheduleTypeOrDefault(sched.ScheduleType),
+		CalendarItems:            sched.CalendarItems,
+		CronExpression:           sched.CronExpression,
+		Timezone:                 sched.Timezone,
+		Enabled:                  sched.Enabled,
+		LastRunAt:                state.LastRunAt,
+		NextRunAt:                state.NextRunAt,
+		LastSessionID:            state.LastSessionID,
+		LastStatus:               state.LastStatus,
+		LastError:                state.LastError,
+		LastDurationMs:           state.LastDurationMs,
+		RunCount:                 state.RunCount,
+		ConsecutiveFailures:      state.ConsecutiveFailures,
+		ExecutionMode:            sched.ExecutionMode,
+		CollisionPolicy:          sched.CollisionPolicy,
+		ConcurrencyMode:          sched.ConcurrencyMode,
+		ParallelRiskAcknowledged: sched.ParallelRiskAcknowledged,
+		MaxStartDelayMinutes:     sched.MaxStartDelayMinutes,
+		AfterScheduleID:          sched.AfterScheduleID,
+		AfterScheduleIDs:         sched.AfterScheduleIDs,
+		AfterTerminalStatus:      sched.AfterTerminalStatus,
+		AfterDelayMinutes:        sched.AfterDelayMinutes,
+		DependencyDeadline:       sched.DependencyDeadline,
+		WaitingSince:             state.WaitingSince,
+		WaitingUntil:             state.WaitingUntil,
+		WaitingReason:            state.WaitingReason,
+		QueuedOccurrences:        state.QueuedOccurrences,
+		MissedRunCount:           missed.MissedRunCount,
+		LatestMissedRunAt:        missed.LatestMissedRunAt,
+		MissedRunReason:          missed.MissedRunReason,
+		PulseReviewOnly:          sched.PulseReviewOnly,
+		PulseMode:                sched.PulseMode,
+		PulseModeReason:          sched.PulseModeReason,
+		CreatedAt:                manifest.CreatedAt,
+		UpdatedAt:                manifest.UpdatedAt,
 	}
 }
 
@@ -567,33 +575,35 @@ func createScheduledJobHandler(svc *SchedulerService) http.HandlerFunc {
 
 		// Create new schedule
 		newSched := WorkflowSchedule{
-			ID:                   uuid.New().String(),
-			Name:                 req.Name,
-			Description:          req.Description,
-			ScheduleType:         scheduleTypeOrDefault(req.ScheduleType),
-			CronExpression:       req.CronExpression,
-			Timezone:             req.Timezone,
-			CalendarItems:        normalizeCalendarScheduleItems(req.CalendarItems),
-			Enabled:              req.Enabled,
-			TriggerPayload:       req.TriggerPayload,
-			GroupNames:           req.GroupNames,
-			RouteSelections:      req.RouteSelections,
-			Mode:                 mode,
-			Messages:             req.Messages,
-			DirectMessagesReason: req.DirectMessagesReason,
-			WorkshopMode:         req.WorkshopMode,
-			ResumePrevious:       req.ResumePrevious,
-			ExecutionMode:        strings.TrimSpace(req.ExecutionMode),
-			CollisionPolicy:      strings.TrimSpace(req.CollisionPolicy),
-			MaxStartDelayMinutes: req.MaxStartDelayMinutes,
-			AfterScheduleID:      strings.TrimSpace(req.AfterScheduleID),
-			AfterScheduleIDs:     normalizeScheduleDependencyIDs(req.AfterScheduleIDs),
-			AfterTerminalStatus:  strings.TrimSpace(req.AfterTerminalStatus),
-			AfterDelayMinutes:    req.AfterDelayMinutes,
-			DependencyDeadline:   strings.TrimSpace(req.DependencyDeadline),
-			PulseReviewOnly:      req.PulseReviewOnly,
-			PulseMode:            strings.ToLower(strings.TrimSpace(req.PulseMode)),
-			PulseModeReason:      strings.TrimSpace(req.PulseModeReason),
+			ID:                       uuid.New().String(),
+			Name:                     req.Name,
+			Description:              req.Description,
+			ScheduleType:             scheduleTypeOrDefault(req.ScheduleType),
+			CronExpression:           req.CronExpression,
+			Timezone:                 req.Timezone,
+			CalendarItems:            normalizeCalendarScheduleItems(req.CalendarItems),
+			Enabled:                  req.Enabled,
+			TriggerPayload:           req.TriggerPayload,
+			GroupNames:               req.GroupNames,
+			RouteSelections:          req.RouteSelections,
+			Mode:                     mode,
+			Messages:                 req.Messages,
+			DirectMessagesReason:     req.DirectMessagesReason,
+			WorkshopMode:             req.WorkshopMode,
+			ResumePrevious:           req.ResumePrevious,
+			ExecutionMode:            strings.TrimSpace(req.ExecutionMode),
+			CollisionPolicy:          strings.TrimSpace(req.CollisionPolicy),
+			ConcurrencyMode:          strings.TrimSpace(req.ConcurrencyMode),
+			ParallelRiskAcknowledged: req.ParallelRiskAcknowledged,
+			MaxStartDelayMinutes:     req.MaxStartDelayMinutes,
+			AfterScheduleID:          strings.TrimSpace(req.AfterScheduleID),
+			AfterScheduleIDs:         normalizeScheduleDependencyIDs(req.AfterScheduleIDs),
+			AfterTerminalStatus:      strings.TrimSpace(req.AfterTerminalStatus),
+			AfterDelayMinutes:        req.AfterDelayMinutes,
+			DependencyDeadline:       strings.TrimSpace(req.DependencyDeadline),
+			PulseReviewOnly:          req.PulseReviewOnly,
+			PulseMode:                strings.ToLower(strings.TrimSpace(req.PulseMode)),
+			PulseModeReason:          strings.TrimSpace(req.PulseModeReason),
 		}
 
 		if err := schedulepolicy.ValidatePulse(newSched.PulseMode, newSched.PulseModeReason); err != nil {
@@ -784,6 +794,15 @@ func updateScheduledJobHandler(svc *SchedulerService) http.HandlerFunc {
 		}
 		if req.CollisionPolicy != nil {
 			sched.CollisionPolicy = strings.TrimSpace(*req.CollisionPolicy)
+		}
+		if req.ConcurrencyMode != nil {
+			sched.ConcurrencyMode = strings.TrimSpace(*req.ConcurrencyMode)
+			if sched.ConcurrencyMode != "parallel" && req.ParallelRiskAcknowledged == nil {
+				sched.ParallelRiskAcknowledged = false
+			}
+		}
+		if req.ParallelRiskAcknowledged != nil {
+			sched.ParallelRiskAcknowledged = *req.ParallelRiskAcknowledged
 		}
 		if req.MaxStartDelayMinutes != nil {
 			sched.MaxStartDelayMinutes = *req.MaxStartDelayMinutes
@@ -1107,37 +1126,41 @@ func getScheduledJobRunsHandler(svc *SchedulerService) http.HandlerFunc {
 
 		// Map to response format compatible with frontend ScheduledJobRun
 		type RunResponse struct {
-			ID            string              `json:"id"`
-			JobID         string              `json:"job_id"`
-			TriggerSource string              `json:"trigger_source,omitempty"`
-			Webhook       *WebhookRunMetadata `json:"webhook,omitempty"`
-			ScheduledFor  *time.Time          `json:"scheduled_for,omitempty"`
-			RunFolder     string              `json:"run_folder,omitempty"`
-			SessionID     string              `json:"session_id,omitempty"`
-			Status        string              `json:"status"`
-			Error         string              `json:"error,omitempty"`
-			DurationMs    *int64              `json:"duration_ms,omitempty"`
-			GroupNames    []string            `json:"group_names,omitempty"`
-			StartedAt     time.Time           `json:"started_at"`
-			CompletedAt   *time.Time          `json:"completed_at,omitempty"`
+			ID                       string              `json:"id"`
+			JobID                    string              `json:"job_id"`
+			TriggerSource            string              `json:"trigger_source,omitempty"`
+			Webhook                  *WebhookRunMetadata `json:"webhook,omitempty"`
+			ScheduledFor             *time.Time          `json:"scheduled_for,omitempty"`
+			RunFolder                string              `json:"run_folder,omitempty"`
+			ConcurrencyMode          string              `json:"concurrency_mode,omitempty"`
+			ParallelRiskAcknowledged bool                `json:"parallel_risk_acknowledged,omitempty"`
+			SessionID                string              `json:"session_id,omitempty"`
+			Status                   string              `json:"status"`
+			Error                    string              `json:"error,omitempty"`
+			DurationMs               *int64              `json:"duration_ms,omitempty"`
+			GroupNames               []string            `json:"group_names,omitempty"`
+			StartedAt                time.Time           `json:"started_at"`
+			CompletedAt              *time.Time          `json:"completed_at,omitempty"`
 		}
 
 		var respRuns []RunResponse
 		for _, run := range runs {
 			respRuns = append(respRuns, RunResponse{
-				ID:            run.ID,
-				JobID:         id,
-				TriggerSource: run.TriggerSource,
-				Webhook:       run.Webhook,
-				ScheduledFor:  run.ScheduledFor,
-				RunFolder:     run.RunFolder,
-				SessionID:     run.SessionID,
-				Status:        run.Status,
-				Error:         run.Error,
-				DurationMs:    run.DurationMs,
-				GroupNames:    run.GroupNames,
-				StartedAt:     run.StartedAt,
-				CompletedAt:   run.CompletedAt,
+				ID:                       run.ID,
+				JobID:                    id,
+				TriggerSource:            run.TriggerSource,
+				Webhook:                  run.Webhook,
+				ScheduledFor:             run.ScheduledFor,
+				RunFolder:                run.RunFolder,
+				ConcurrencyMode:          run.ConcurrencyMode,
+				ParallelRiskAcknowledged: run.ParallelRiskAcknowledged,
+				SessionID:                run.SessionID,
+				Status:                   run.Status,
+				Error:                    run.Error,
+				DurationMs:               run.DurationMs,
+				GroupNames:               run.GroupNames,
+				StartedAt:                run.StartedAt,
+				CompletedAt:              run.CompletedAt,
 			})
 		}
 

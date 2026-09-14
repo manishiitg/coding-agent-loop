@@ -30,15 +30,17 @@ type ScheduleRunEntry struct {
 	// ScheduledFor is the durable identity of the cron/calendar occurrence.
 	// It is intentionally nil for manual runs, whose start time is not a
 	// scheduled slot.
-	ScheduledFor *time.Time `json:"scheduled_for,omitempty"`
-	RunFolder    string     `json:"run_folder,omitempty"`
-	SessionID    string     `json:"session_id,omitempty"`
-	Status       string     `json:"status"` // running, success, error, stopped, partial, interrupted
-	Error        string     `json:"error,omitempty"`
-	DurationMs   *int64     `json:"duration_ms,omitempty"`
-	GroupNames   []string   `json:"group_names,omitempty"`
-	StartedAt    time.Time  `json:"started_at"`
-	CompletedAt  *time.Time `json:"completed_at,omitempty"`
+	ScheduledFor             *time.Time `json:"scheduled_for,omitempty"`
+	RunFolder                string     `json:"run_folder,omitempty"`
+	ConcurrencyMode          string     `json:"concurrency_mode,omitempty"`
+	ParallelRiskAcknowledged bool       `json:"parallel_risk_acknowledged,omitempty"`
+	SessionID                string     `json:"session_id,omitempty"`
+	Status                   string     `json:"status"` // running, success, error, stopped, partial, interrupted
+	Error                    string     `json:"error,omitempty"`
+	DurationMs               *int64     `json:"duration_ms,omitempty"`
+	GroupNames               []string   `json:"group_names,omitempty"`
+	StartedAt                time.Time  `json:"started_at"`
+	CompletedAt              *time.Time `json:"completed_at,omitempty"`
 }
 
 const maxScheduleRuns = 200

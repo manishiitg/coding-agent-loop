@@ -867,6 +867,23 @@ func (s *Store) ActiveRunByLockKey(ctx context.Context, lockKey string) (Run, er
 	return s.GetRun(ctx, runID)
 }
 
+// ActiveRunForSchedule resolves an active occurrence by durable schedule
+// identity, independent of which concurrency lane supplied its lock key. This
+// is used after restart when the in-memory run ID is unavailable.
+func (s *Store) ActiveRunForSchedule(ctx context.Context, scopeType, scopeID, scheduleID string) (Run, error) {
+	var runID string
+	err := s.db.QueryRowContext(ctx, `SELECT run_id FROM schedule_runs
+		WHERE scope_type = ? AND scope_id = ? AND schedule_id = ? AND completed_at IS NULL
+		ORDER BY started_at DESC LIMIT 1`, scopeType, scopeID, scheduleID).Scan(&runID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return Run{}, ErrRunNotFound
+	}
+	if err != nil {
+		return Run{}, err
+	}
+	return s.GetRun(ctx, runID)
+}
+
 func (s *Store) ListEvents(ctx context.Context, runID string) ([]Event, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT sequence, run_id, from_state, to_state, reason, created_at
 		FROM schedule_run_events WHERE run_id = ? ORDER BY sequence`, runID)

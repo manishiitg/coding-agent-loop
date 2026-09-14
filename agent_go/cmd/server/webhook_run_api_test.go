@@ -18,12 +18,15 @@ func TestWebhookRunOutputsAndDownloads(t *testing.T) {
 	docs := t.TempDir()
 	t.Setenv("WORKSPACE_DOCS_PATH", docs)
 	workspace := "Workflow/test"
-	if err := os.MkdirAll(filepath.Join(docs, workspace), 0700); err != nil {
+	if err := os.MkdirAll(filepath.Join(docs, workspace, "runs", "iteration-4-sched"), 0700); err != nil {
 		t.Fatal(err)
 	}
 	folder, err := allocateWebhookRunFolder(workspace, "run-1")
 	if err != nil {
 		t.Fatal(err)
+	}
+	if folder != "iteration-5-hook" {
+		t.Fatalf("webhook folder = %q, want shared namespace allocation iteration-5-hook", folder)
 	}
 	again, err := allocateWebhookRunFolder(workspace, "run-1")
 	if err != nil || again != folder {

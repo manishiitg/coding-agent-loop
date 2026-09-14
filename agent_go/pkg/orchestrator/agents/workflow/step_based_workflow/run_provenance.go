@@ -6,25 +6,39 @@ import (
 	"encoding/json"
 	"fmt"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 )
 
 const (
-	runIndexVersion       = 1
+	runIndexVersion       = 2
 	runIndexRelativePath  = "runs/run_index.json"
 	planRevisionDirectory = "planning/revisions"
 )
 
 type workflowRunIndex struct {
-	Version               int      `json:"version"`
-	ActiveIteration       string   `json:"active_iteration"`
-	RetainedIterations    []string `json:"retained_iterations"`
-	LastTransition        string   `json:"last_transition"`
-	FullRunPolicy         string   `json:"full_run_policy"`
-	PartialGroupRunPolicy string   `json:"partial_group_policy"`
-	UpdatedAt             string   `json:"updated_at"`
+	Version                   int      `json:"version"`
+	ActiveIteration           string   `json:"active_iteration"`
+	RetainedIterations        []string `json:"retained_iterations"`
+	BuilderActiveIteration    string   `json:"builder_active_iteration,omitempty"`
+	BuilderRetainedIterations []string `json:"builder_retained_iterations,omitempty"`
+	ScheduledIterations       []string `json:"scheduled_iterations,omitempty"`
+	WebhookIterations         []string `json:"webhook_iterations,omitempty"`
+	LastTransition            string   `json:"last_transition"`
+	FullRunPolicy             string   `json:"full_run_policy"`
+	PartialGroupRunPolicy     string   `json:"partial_group_policy"`
+	UpdatedAt                 string   `json:"updated_at"`
+}
+
+var runIndexWriteLocks sync.Map
+var indexedIterationFolderPattern = regexp.MustCompile(`^iteration-([0-9]+)(?:-(hook|sched))?$`)
+
+func runIndexWriteLock(workspacePath string) *sync.Mutex {
+	lock, _ := runIndexWriteLocks.LoadOrStore(filepath.Clean(workspacePath), &sync.Mutex{})
+	return lock.(*sync.Mutex)
 }
 
 type executablePlanRevision struct {
@@ -124,40 +138,71 @@ func (hcpo *StepBasedWorkflowOrchestrator) ensureExecutablePlanRevision(ctx cont
 }
 
 func retainedIterationNames(folders []string) []string {
-	retained := make([]string, 0, len(folders))
+	all, _, _, _ := categorizedIterationNames(folders)
+	return all
+}
+
+func categorizedIterationNames(folders []string) (all, builder, scheduled, webhook []string) {
 	for _, folder := range folders {
 		folder = strings.TrimSpace(folder)
 		if folder == "" || folder == currentWorkflowRunFolder {
 			continue
 		}
-		var number int
-		if _, err := fmt.Sscanf(folder, "iteration-%d", &number); err == nil && number > 0 {
-			retained = append(retained, folder)
+		match := indexedIterationFolderPattern.FindStringSubmatch(folder)
+		if len(match) == 3 {
+			var number int
+			_, _ = fmt.Sscanf(match[1], "%d", &number)
+			if number <= 0 {
+				continue
+			}
+			all = append(all, folder)
+			switch match[2] {
+			case "sched":
+				scheduled = append(scheduled, folder)
+			case "hook":
+				webhook = append(webhook, folder)
+			default:
+				builder = append(builder, folder)
+			}
 		}
 	}
-	sort.Slice(retained, func(i, j int) bool {
-		var left, right int
-		_, _ = fmt.Sscanf(retained[i], "iteration-%d", &left)
-		_, _ = fmt.Sscanf(retained[j], "iteration-%d", &right)
-		return left < right
-	})
-	return retained
+	sortIterations := func(values []string) {
+		sort.Slice(values, func(i, j int) bool {
+			var left, right int
+			_, _ = fmt.Sscanf(values[i], "iteration-%d", &left)
+			_, _ = fmt.Sscanf(values[j], "iteration-%d", &right)
+			return left < right
+		})
+	}
+	sortIterations(all)
+	sortIterations(builder)
+	sortIterations(scheduled)
+	sortIterations(webhook)
+	return all, builder, scheduled, webhook
 }
 
 func (hcpo *StepBasedWorkflowOrchestrator) writeRunIndex(ctx context.Context, transition string) error {
+	lock := runIndexWriteLock(hcpo.GetWorkspacePath())
+	lock.Lock()
+	defer lock.Unlock()
 	runsPath := filepath.ToSlash(filepath.Join(hcpo.GetWorkspacePath(), "runs"))
 	folders, err := hcpo.listRunFolders(ctx, runsPath)
 	if err != nil {
 		return fmt.Errorf("list run folders for provenance index: %w", err)
 	}
+	retained, builderRetained, scheduled, webhooks := categorizedIterationNames(folders)
 	index := workflowRunIndex{
-		Version:               runIndexVersion,
-		ActiveIteration:       currentWorkflowRunFolder,
-		RetainedIterations:    retainedIterationNames(folders),
-		LastTransition:        strings.TrimSpace(transition),
-		FullRunPolicy:         "rotate_iteration_0_to_next_available_iteration",
-		PartialGroupRunPolicy: "reuse_iteration_0",
-		UpdatedAt:             time.Now().UTC().Format(time.RFC3339Nano),
+		Version:                   runIndexVersion,
+		ActiveIteration:           currentWorkflowRunFolder,
+		RetainedIterations:        retained,
+		BuilderActiveIteration:    currentWorkflowRunFolder,
+		BuilderRetainedIterations: builderRetained,
+		ScheduledIterations:       scheduled,
+		WebhookIterations:         webhooks,
+		LastTransition:            strings.TrimSpace(transition),
+		FullRunPolicy:             "rotate_iteration_0_to_next_available_iteration",
+		PartialGroupRunPolicy:     "reuse_iteration_0",
+		UpdatedAt:                 time.Now().UTC().Format(time.RFC3339Nano),
 	}
 	encoded, err := json.MarshalIndent(index, "", "  ")
 	if err != nil {

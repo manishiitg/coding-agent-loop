@@ -16,7 +16,7 @@ func workshopInternalRunFolderForTarget(targetRunFolder string) string {
 		return "iteration-0"
 	}
 	parts := strings.Split(targetRunFolder, "/")
-	if regexp.MustCompile(`^iteration-[0-9]+-hook$`).MatchString(parts[0]) && len(parts) <= 2 && filepath.Clean(targetRunFolder) == targetRunFolder {
+	if regexp.MustCompile(`^iteration-[0-9]+-(?:hook|sched)$`).MatchString(parts[0]) && len(parts) <= 2 && filepath.Clean(targetRunFolder) == targetRunFolder {
 		return targetRunFolder
 	}
 	if len(parts) >= 2 && strings.TrimSpace(parts[len(parts)-1]) != "" {

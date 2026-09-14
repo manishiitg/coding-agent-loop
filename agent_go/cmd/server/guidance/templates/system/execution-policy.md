@@ -1,5 +1,10 @@
 ## Execution Policy — Run ONE group at a time by default
 
+This reference controls group fan-out inside workflow execution. Cross-schedule
+concurrency is a separate policy documented in `references/schedules.md`.
+Scheduled occurrences use their server-bound immutable `iteration-N-sched`
+folder; they do not rotate or share Builder's `iteration-0` output slot.
+
 When calling `run_full_workflow` for a multi-group workflow, **default
 to sequential per-group execution** — pass
 `group_name="<single-group>"` and wait for that group to finish before

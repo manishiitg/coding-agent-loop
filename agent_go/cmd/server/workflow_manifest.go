@@ -495,6 +495,10 @@ type WorkflowSchedule struct {
 	// by another scheduled/execution run. Empty/"skip" preserves the default;
 	// "queue_latest" durably retains the newest occurrence for a later retry.
 	CollisionPolicy string `json:"collision_policy,omitempty"`
+	// ConcurrencyMode is sequential by default. Parallel is an explicit,
+	// human-approved risk opt-in for an independently runnable schedule.
+	ConcurrencyMode          string `json:"concurrency_mode,omitempty"`
+	ParallelRiskAcknowledged bool   `json:"parallel_risk_acknowledged,omitempty"`
 	// MaxStartDelayMinutes bounds a queued occurrence. Zero uses the platform
 	// default. It prevents a stale market-hours or notification run from firing
 	// much later with obsolete assumptions.
@@ -571,6 +575,18 @@ func validateScheduleRuntimePolicy(schedule WorkflowSchedule) error {
 	default:
 		return fmt.Errorf("collision_policy must be skip, queue_latest, retry, or coalesce")
 	}
+	switch strings.TrimSpace(schedule.ConcurrencyMode) {
+	case "", "sequential":
+	case "parallel":
+		if !schedule.ParallelRiskAcknowledged {
+			return fmt.Errorf("parallel_risk_acknowledged=true is required when concurrency_mode=parallel")
+		}
+		if schedule.ScheduleType == "webhook" || schedule.PulseReviewOnly {
+			return fmt.Errorf("concurrency_mode=parallel is only supported for producing cron/calendar schedules")
+		}
+	default:
+		return fmt.Errorf("concurrency_mode must be sequential or parallel")
+	}
 	if schedule.MaxStartDelayMinutes < 0 {
 		return fmt.Errorf("max_start_delay_minutes cannot be negative")
 	}
@@ -602,6 +618,17 @@ func validateScheduleRuntimePolicy(schedule WorkflowSchedule) error {
 		return fmt.Errorf("after_terminal_status, after_delay_minutes, and dependency_deadline require after_schedule_id or after_schedule_ids")
 	}
 	return nil
+}
+
+func scheduleAllowsParallel(schedule WorkflowSchedule) bool {
+	return strings.TrimSpace(schedule.ConcurrencyMode) == "parallel" && schedule.ParallelRiskAcknowledged && schedule.ScheduleType != "webhook" && !schedule.PulseReviewOnly
+}
+
+func effectiveScheduleConcurrencyMode(schedule WorkflowSchedule) string {
+	if scheduleAllowsParallel(schedule) {
+		return "parallel"
+	}
+	return "sequential"
 }
 
 // --- Validation ---

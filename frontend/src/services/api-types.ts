@@ -3017,6 +3017,8 @@ export interface ScheduledJob {
   consecutive_failures: number
   execution_mode?: 'close_only'
   collision_policy?: 'skip' | 'queue_latest' | 'retry' | 'coalesce'
+  concurrency_mode?: 'sequential' | 'parallel'
+  parallel_risk_acknowledged?: boolean
   max_start_delay_minutes?: number
   after_schedule_id?: string
   after_schedule_ids?: string[]
@@ -3056,6 +3058,8 @@ export interface CreateScheduledJobRequest {
   resume_previous?: boolean
   execution_mode?: 'close_only'
   collision_policy?: 'skip' | 'queue_latest' | 'retry' | 'coalesce'
+  concurrency_mode?: 'sequential' | 'parallel'
+  parallel_risk_acknowledged?: boolean
   max_start_delay_minutes?: number
   after_schedule_id?: string
   after_schedule_ids?: string[]
@@ -3085,6 +3089,8 @@ export interface UpdateScheduledJobRequest {
   resume_previous?: boolean
   execution_mode?: 'close_only' | ''
   collision_policy?: 'skip' | 'queue_latest' | 'retry' | 'coalesce'
+  concurrency_mode?: 'sequential' | 'parallel'
+  parallel_risk_acknowledged?: boolean
   max_start_delay_minutes?: number
   after_schedule_id?: string
   after_schedule_ids?: string[]
@@ -3121,6 +3127,8 @@ export interface ScheduledJobRun {
   trigger_source?: 'manual' | 'cron' | 'calendar' | string
   scheduled_for?: string
   run_folder?: string
+  concurrency_mode?: 'sequential' | 'parallel'
+  parallel_risk_acknowledged?: boolean
   session_id?: string
   status: 'running' | 'success' | 'error' | 'failed' | 'partial' | 'stopped' | 'interrupted' | 'waiting_for_capacity' | 'waiting_for_workflow'
   error?: string

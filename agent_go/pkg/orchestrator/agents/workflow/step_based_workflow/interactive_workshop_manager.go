@@ -63,7 +63,8 @@ func parseWorkshopIterationNumber(iteration string) int {
 		return 0
 	}
 	trimmed := strings.TrimSpace(iteration)
-	trimmed = strings.TrimSuffix(strings.TrimPrefix(trimmed, "iteration-"), "-hook")
+	trimmed = strings.TrimPrefix(trimmed, "iteration-")
+	trimmed = strings.TrimSuffix(strings.TrimSuffix(trimmed, "-hook"), "-sched")
 	if n, err := strconv.Atoi(trimmed); err == nil {
 		return n
 	}
@@ -2317,6 +2318,9 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 			}
 
 			iteration := "iteration-0"
+			if iwm.workshopConfig != nil && iwm.workshopConfig.ScheduleInvocation != nil {
+				iteration = iwm.workshopConfig.ScheduleInvocation.RunFolder
+			}
 
 			// Build run_folder from iteration + group folder name
 			// Refresh manifest from file to avoid stale group data
@@ -2454,6 +2458,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 			}
 
 			execID := fmt.Sprintf("exec-%s-%d", stepID, time.Now().UnixNano())
+			execOpts.ExecutionID = execID
 			execCtx, cancel, ctxErr := iwm.newExecContext(ctx)
 			if ctxErr != nil {
 				return "Session was stopped — execution skipped", nil
@@ -3103,7 +3108,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 					"description": "Character offset into the saved scripted execution log; use next_log_offset to read more.",
 				},
 				"iteration": map[string]interface{}{
-					"type": "string", "pattern": "^iteration-[0-9]+(-hook)?$",
+					"type": "string", "pattern": "^iteration-[0-9]+(?:-(?:hook|sched))?$",
 					"description": "Run iteration to inspect, default iteration-0.",
 				},
 				"step_id": map[string]interface{}{
@@ -3132,7 +3137,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 
 			iteration := "iteration-0"
 			if value, ok := args["iteration"].(string); ok && value != "" {
-				if !regexp.MustCompile(`^iteration-[0-9]+(-hook)?$`).MatchString(value) {
+				if !regexp.MustCompile(`^iteration-[0-9]+(?:-(?:hook|sched))?$`).MatchString(value) {
 					return "iteration must be iteration-<number>", nil
 				}
 				iteration = value
@@ -6428,6 +6433,13 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 					"type": "string", "enum": []string{"skip", "queue_latest", "retry", "coalesce"},
 					"description": "What to do if this workflow is already running: skip discards; queue_latest keeps only the newest; retry preserves the first blocked occurrence; coalesce combines repeated occurrences into one catch-up run.",
 				},
+				"concurrency_mode": map[string]interface{}{
+					"type": "string", "enum": []string{"sequential", "parallel"},
+					"description": "Defaults to sequential. Set parallel only after the human explicitly accepts that shared workflow DB/KB/learnings/reports/planning/browser state may conflict or be overwritten and external actions may be duplicated.",
+				},
+				"parallel_risk_acknowledged": map[string]interface{}{
+					"type": "boolean", "description": "Required true with concurrency_mode=parallel. Set only after explicitly disclosing the shared-state overwrite and duplicate-action risks and receiving human approval.",
+				},
 				"max_start_delay_minutes": map[string]interface{}{
 					"type": "integer", "minimum": 1,
 					"description": "Maximum age of a queued occurrence before it expires.",
@@ -6523,6 +6535,8 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 			policy.PulseModeReason, _ = args["pulse_mode_reason"].(string)
 			policy.ExecutionMode, _ = args["execution_mode"].(string)
 			policy.CollisionPolicy, _ = args["collision_policy"].(string)
+			policy.ConcurrencyMode, _ = args["concurrency_mode"].(string)
+			policy.ParallelRiskAcknowledged, _ = args["parallel_risk_acknowledged"].(bool)
 			policy.AfterScheduleID, _ = args["after_schedule_id"].(string)
 			policy.AfterScheduleIDs, _ = stringSliceArgument(args, "after_schedule_ids")
 			policy.AfterTerminalStatus, _ = args["after_terminal_status"].(string)
@@ -6567,11 +6581,13 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 						"required": []string{"date", "time"},
 					},
 				},
-				"direct_messages_reason": map[string]interface{}{"type": "string", "description": "Required when default or per-item messages form a direct procedure; explain why it is schedule-specific."},
-				"mode":                   map[string]interface{}{"type": "string", "description": "Execution mode. Only 'workshop' is supported for workflow schedules; legacy 'workflow' input is normalized to 'workshop'.", "enum": []string{"workshop"}},
-				"messages":               map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "string"}, "description": "Optional default workshop messages for all items. Omit for the default full-workflow run message."},
-				"workshop_mode":          map[string]interface{}{"type": "string", "description": "Run mode is the only supported value for new schedules; Pulse selects maintenance after runs.", "enum": []string{"run"}},
-				"collision_policy":       map[string]interface{}{"type": "string", "enum": []string{"skip", "queue_latest", "retry", "coalesce"}, "description": "What to do if the workflow is busy when a calendar item is due."},
+				"direct_messages_reason":     map[string]interface{}{"type": "string", "description": "Required when default or per-item messages form a direct procedure; explain why it is schedule-specific."},
+				"mode":                       map[string]interface{}{"type": "string", "description": "Execution mode. Only 'workshop' is supported for workflow schedules; legacy 'workflow' input is normalized to 'workshop'.", "enum": []string{"workshop"}},
+				"messages":                   map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "string"}, "description": "Optional default workshop messages for all items. Omit for the default full-workflow run message."},
+				"workshop_mode":              map[string]interface{}{"type": "string", "description": "Run mode is the only supported value for new schedules; Pulse selects maintenance after runs.", "enum": []string{"run"}},
+				"collision_policy":           map[string]interface{}{"type": "string", "enum": []string{"skip", "queue_latest", "retry", "coalesce"}, "description": "What to do if the workflow is busy when a calendar item is due."},
+				"concurrency_mode":           map[string]interface{}{"type": "string", "enum": []string{"sequential", "parallel"}, "description": "Defaults to sequential. Parallel requires explicit human approval after disclosing shared-state overwrite and duplicate-action risks."},
+				"parallel_risk_acknowledged": map[string]interface{}{"type": "boolean", "description": "Required true with concurrency_mode=parallel; set only after explicit human approval."},
 				"max_start_delay_minutes": map[string]interface{}{
 					"type": "integer", "minimum": 1, "description": "Maximum age of a queued calendar occurrence before it expires.",
 				},
@@ -6637,6 +6653,8 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 			policy.PulseMode, _ = args["pulse_mode"].(string)
 			policy.PulseModeReason, _ = args["pulse_mode_reason"].(string)
 			policy.CollisionPolicy, _ = args["collision_policy"].(string)
+			policy.ConcurrencyMode, _ = args["concurrency_mode"].(string)
+			policy.ParallelRiskAcknowledged, _ = args["parallel_risk_acknowledged"].(bool)
 			policy.AfterScheduleIDs, _ = stringSliceArgument(args, "after_schedule_ids")
 			policy.AfterTerminalStatus, _ = args["after_terminal_status"].(string)
 			policy.DependencyDeadline, _ = args["dependency_deadline"].(string)
@@ -6729,6 +6747,12 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				},
 				"collision_policy": map[string]interface{}{
 					"type": "string", "description": "Set skip, queue_latest, retry, or coalesce. Empty resets to the default skip behavior.",
+				},
+				"concurrency_mode": map[string]interface{}{
+					"type": "string", "enum": []string{"sequential", "parallel"}, "description": "Set sequential (default) or parallel. Parallel requires explicit human approval after the shared-state overwrite and duplicate-action warning.",
+				},
+				"parallel_risk_acknowledged": map[string]interface{}{
+					"type": "boolean", "description": "Set true only when the human explicitly approved parallel risk; set false when returning to sequential.",
 				},
 				"max_start_delay_minutes": map[string]interface{}{
 					"type": "integer", "minimum": 0, "description": "Maximum queued age. Zero restores the platform default.",
@@ -6848,6 +6872,12 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 			if _, ok2 := args["collision_policy"]; ok2 && policy == nil {
 				policy = &ScheduleRuntimePolicy{}
 			}
+			if _, ok := args["concurrency_mode"]; ok && policy == nil {
+				policy = &ScheduleRuntimePolicy{}
+			}
+			if _, ok := args["parallel_risk_acknowledged"]; ok && policy == nil {
+				policy = &ScheduleRuntimePolicy{}
+			}
 			if _, ok3 := args["max_start_delay_minutes"]; ok3 && policy == nil {
 				policy = &ScheduleRuntimePolicy{}
 			}
@@ -6879,6 +6909,8 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				policy.PulseModeReason, _ = args["pulse_mode_reason"].(string)
 				_, policy.SetExecutionMode = args["execution_mode"]
 				_, policy.SetCollisionPolicy = args["collision_policy"]
+				_, policy.SetConcurrencyMode = args["concurrency_mode"]
+				_, policy.SetParallelRiskAcknowledged = args["parallel_risk_acknowledged"]
 				_, policy.SetMaxStartDelayMinutes = args["max_start_delay_minutes"]
 				_, policy.SetAfterScheduleID = args["after_schedule_id"]
 				policy.AfterScheduleIDs, policy.SetAfterScheduleIDs = stringSliceArgument(args, "after_schedule_ids")
@@ -6887,6 +6919,8 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				_, policy.SetDependencyDeadline = args["dependency_deadline"]
 				policy.ExecutionMode, _ = args["execution_mode"].(string)
 				policy.CollisionPolicy, _ = args["collision_policy"].(string)
+				policy.ConcurrencyMode, _ = args["concurrency_mode"].(string)
+				policy.ParallelRiskAcknowledged, _ = args["parallel_risk_acknowledged"].(bool)
 				policy.AfterScheduleID, _ = args["after_schedule_id"].(string)
 				policy.AfterTerminalStatus, _ = args["after_terminal_status"].(string)
 				policy.DependencyDeadline, _ = args["dependency_deadline"].(string)

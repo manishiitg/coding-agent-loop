@@ -4,8 +4,8 @@
 
 | Coordination | Value |
 |---|---|
-| Assigned agent | unassigned |
-| Ticket state | `design confirmed; implementation not started` |
+| Assigned agent | Codex |
+| Ticket state | `implementation in progress; runtime/schema/guidance core implemented and locally verified` |
 | Last synchronized | `2026-09-14` |
 
 - **Priority:** P1 throughput after PLAT-320.
@@ -59,6 +59,28 @@ The exact approval transport may reuse the platform's existing human-input
 lifecycle or a UI confirmation, but it must produce one durable approval record
 that both paths consume. Do not create separate, inconsistent chat and UI
 approval rules.
+
+## Implementation status (2026-09-14)
+
+Implemented and locally verified:
+
+- `concurrency_mode` (`sequential` default / `parallel`) and
+  `parallel_risk_acknowledged` in manifests, REST responses, schedule history,
+  frontend types and create/update tool schemas;
+- validation that rejects parallel without acknowledgement and excludes webhook
+  and Pulse-only schedules;
+- a schedule-specific durable parallel lane, same-schedule exclusion, coexistence
+  with the sequential lane in either start order, and dependency checks before
+  admission; and
+- fixed shared-state/external-action risk language in AgentWorks, schedule,
+  Run, Pulse Gate, Architecture, Technical Review and Fixer guidance.
+
+Remaining before closure:
+
+- authenticated approval actor/timestamp/disclosure-version provenance shared
+  by chat and UI, rather than the current persisted acknowledgement boolean;
+- a complete UI create/edit confirmation flow; and
+- end-to-end pairwise/restart/stop/live Social Media acceptance evidence.
 
 ## Scheduler admission
 

@@ -5,7 +5,7 @@
 | Coordination | Value |
 |---|---|
 | Assigned agent | Codex |
-| Ticket state | `design confirmed; implementation not started` |
+| Ticket state | `implementation in progress; immutable schedule-run core implemented and locally verified` |
 | Last synchronized | `2026-09-14` |
 
 - **Priority:** P0 schedule evidence isolation and identity integrity. This is
@@ -54,21 +54,42 @@ lifecycle identity and binds its evidence target to the exact existing run it
 reviews. This exception prevents a review occurrence from appearing as new
 workflow production.
 
-This ticket does **not** enable two schedules to execute concurrently. The
-workflow-wide durable lease stays in force during this migration.
-Schedule dependencies, terminal policies and collision queues coordinate
-schedules sequentially. An agent-authored declaration of files, resources or
-side effects is not a safe concurrency boundary: a run can discover another
-write target at runtime, omit a shared file, overwrite workflow databases,
-knowledge bases, learnings, reports or planning state, contend for shared
-browser/CDP state, or duplicate an external action. This ticket does not add a
-schedule flag that bypasses the workflow-wide lease.
+Folder isolation alone does **not** authorize two schedules to execute
+concurrently. PLAT-321 now owns the separate runtime policy: sequential by
+default, with an explicit human-approved parallel opt-in after a fixed risk
+disclosure. It does not rely on resource claims. Schedule dependencies,
+terminal policies and collision queues still coordinate the default sequential
+lane; `after_schedule_ids` always forces waiting.
 
-PLAT-321 owns the separate, deliberately simpler concurrency policy: sequential
-by default, with an explicit human-approved parallel opt-in after a fixed risk
-disclosure. It does not rely on resource claims and is not implemented by this
-ticket. Until PLAT-321 ships, "schedules work together" means directional
-dependency/fan-in, not concurrent workflow production.
+An agent-authored declaration of files, resources or side effects is not a safe
+concurrency boundary: a run can discover another write target at runtime, omit
+a shared file, overwrite workflow databases, knowledge bases, learnings,
+reports or planning state, contend for shared browser/CDP state, or duplicate
+an external action.
+
+## Implementation status (2026-09-14)
+
+Implemented and locally verified:
+
+- pre-agent, restart-idempotent `iteration-N-sched` allocation and durable
+  schedule-run binding;
+- trusted routing for full runs, partial groups, direct `execute_step`, paired
+  evaluation and exact-folder scheduler reconciliation;
+- Builder rotation/pruning protection for `-sched`/`-hook`, shared numeric
+  discovery, run-index v2, Pulse intake, backend/frontend path recognition and
+  schedule history folder/concurrency snapshots;
+- schedule/tool/system/Builder/Run/Pulse guidance for the new identity; and
+- PLAT-321's default-sequential, explicit acknowledged parallel lane, including
+  dependency precedence and same-schedule exclusion.
+
+Still required before this ticket closes:
+
+- live Social Media occurrence → folder → logs → costs → evaluation → Pulse
+  acceptance evidence;
+- identity stamping and mismatch quarantine coverage for every legacy evidence
+  document family; and
+- an explicit scheduled-run retention/expiry implementation that deletes paired
+  workflow/evaluation artifacts without corrupting durable history.
 
 ## Confirmed current behavior and failure boundaries
 
@@ -212,11 +233,12 @@ run index. They should not independently reconstruct recency from suffixes.
 4. Stamp and validate immutable identity across every log/evidence writer and
    reader.
 5. Update retention, APIs, UI and all generated prompts/guidance.
-6. Switch saved schedules to `-sched`, keep the workflow-wide lease, and verify
-   live schedule, Run now, capacity-resume, failure, stop and evaluation cases.
-7. Keep workflow-producing schedules exclusive in this rollout. Do not add a
-   resource-claim system. Implement the separate explicit human-approved
-   parallel opt-in only under PLAT-321 after this identity migration passes.
+6. Switch saved schedules to `-sched`, preserve sequential admission by default,
+   and verify live schedule, Run now, capacity-resume, failure, stop and
+   evaluation cases.
+7. Keep workflow-producing schedules sequential by default. Do not add a
+   resource-claim system. PLAT-321 may admit only the separately acknowledged
+   parallel schedule lane after this identity binding is active.
 
 ## Acceptance criteria
 
@@ -248,8 +270,9 @@ run index. They should not independently reconstruct recency from suffixes.
   or deleting an immutable `-sched` or `-hook` run.
 - AgentWorks, schedule Run mode, Pulse Gate, Pulse Architecture, Technical
   Review and Fixer all select run evidence through the typed identity contract.
-- The workflow-wide schedule lease remains enabled; no acceptance result from
-  this ticket is treated as authorization for parallel shared-state execution.
+- Sequential schedule admission remains the default; no acceptance result from
+  this ticket alone is treated as authorization for parallel shared-state
+  execution. Only PLAT-321's explicit acknowledged policy may change admission.
 - Builder, Run and Pulse guidance state that resource/file claims cannot make
   schedule overlap safe; any later parallel opt-in requires explicit human
   approval after the fixed shared-state risk disclosure.

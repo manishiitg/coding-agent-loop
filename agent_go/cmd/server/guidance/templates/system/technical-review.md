@@ -33,16 +33,18 @@ belong to Architecture unless they repair a concrete correctness failure.
 For a concrete missed fire, incorrect wait/skip/expiry transition, runaway run,
 or unsafe schedule configuration, load `references/schedules.md` before deciding
 or applying a repair. Read `list_schedules` plus targeted `get_schedule_runs` or
-`schedule-runs.json`; do not infer behavior from cron spacing. Preserve the
-workflow-wide single-active-execution safety lock. Schedule prerequisites are
+`schedule-runs.json`; do not infer behavior from cron spacing. Preserve
+sequential execution unless an explicit approved parallel policy exists. Schedule prerequisites are
 directional all-of edges through `after_schedule_ids` on the same local calendar
 date, not permission for two runs to overlap. Repair with typed schedule tools,
 preserve unrelated fields and explicit user policy, and validate the scheduler
 transition rather than only the displayed configuration. Never treat a
 resource/file list as proof that overlap is safe. Preserve sequential behavior
-unless the live platform has an explicit parallel opt-in with recorded human
-approval after the shared-state overwrite and duplicate-action risks were
-disclosed.
+unless the schedule has `concurrency_mode="parallel"` and
+`parallel_risk_acknowledged=true`, recording human approval after the
+shared-state overwrite and duplicate-action risks were disclosed. A separate
+`iteration-N-sched` folder isolates output/logs only; dependencies, self-overlap,
+manual work and Pulse remain serialized.
 
 Use `get_pulse_state(view="backlog", detail="compact")` and semantic issue IDs.
 A failed child call alone is not a failed outcome. Establish required-output

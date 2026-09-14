@@ -42,9 +42,17 @@ type ExecutionOptions struct {
 	WebhookVariables  map[string]string `json:"-"`
 	WebhookInputFile  string            `json:"-"`                             // Internal API delivery file; cannot be supplied by tool JSON.
 	SelectedRunFolder string            `json:"selected_run_folder,omitempty"` // Current run slot (iteration-0) for full workflow runs
-	ExecutionStrategy string            `json:"execution_strategy"`            // Execution strategy (see constants below)
-	ResumeFromStep    int               `json:"resume_from_step,omitempty"`    // 1-based step number to resume from (for top-level steps)
-	PlanChangeAction  string            `json:"plan_change_action,omitempty"`  // "keep_old_progress" or "delete_old_progress"
+	// Trusted scheduled-run identity. These fields are server-owned and never
+	// decoded from public tool/API JSON.
+	RunKind           string    `json:"-"`
+	ScheduleRunID     string    `json:"-"`
+	ScheduleID        string    `json:"-"`
+	TriggerSource     string    `json:"-"`
+	ScheduledFor      time.Time `json:"-"`
+	ExecutionID       string    `json:"-"`
+	ExecutionStrategy string    `json:"execution_strategy"`           // Execution strategy (see constants below)
+	ResumeFromStep    int       `json:"resume_from_step,omitempty"`   // 1-based step number to resume from (for top-level steps)
+	PlanChangeAction  string    `json:"plan_change_action,omitempty"` // "keep_old_progress" or "delete_old_progress"
 
 	// CapacityAccountKey identifies the provider account this run draws on, as
 	// a hash of its credential. The orchestrator cannot resolve credentials

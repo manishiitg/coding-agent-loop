@@ -39,7 +39,7 @@ func webhookWorkspaceRoot(workspace string) (*os.Root, error) {
 
 // Exclusive mkdir is the final arbiter, including across concurrent processes.
 func allocateWebhookRunFolder(workspace, runID string) (string, error) {
-	lock := scheduleRunFileLock(workspace + "/hook-allocation")
+	lock := scheduleRunFileLock(workspace + "/run-folder-allocation")
 	lock.Lock()
 	defer lock.Unlock()
 	root, err := webhookWorkspaceRoot(workspace)
@@ -66,8 +66,10 @@ func allocateWebhookRunFolder(workspace, runID string) (string, error) {
 			if e == nil && string(raw) == runID {
 				return entry.Name(), nil
 			}
-			i, e := strconv.Atoi(m[1])
-			if e == nil && i > n {
+		}
+		if m := numberedRunFolderPattern.FindStringSubmatch(entry.Name()); len(m) > 0 {
+			i, parseErr := strconv.Atoi(m[1])
+			if parseErr == nil && i > n {
 				n = i
 			}
 		}

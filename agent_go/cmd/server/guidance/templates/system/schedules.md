@@ -11,10 +11,11 @@ For the operational cheat sheet on creating / editing / deleting schedules
     "cron_expression": "0 9 * * 1-5", "timezone": "UTC",
     "enabled": true, "trigger_payload": {},
     "pulse_mode": "basic", "pulse_mode_reason": "Routine daily processing needs backup and a summary; no review is needed on every occurrence.",
+    "concurrency_mode": "sequential", "parallel_risk_acknowledged": false,
     "group_names": ["confida-prod"],
     "mode": "workshop", "workshop_mode": "run" }
   ```
-  Fields: `id` (auto-assigned), `name` (display label), `description` (optional), `cron_expression` (standard 5-field cron), `timezone` (IANA tz e.g. `America/New_York`), `enabled` (bool), `trigger_payload` (arbitrary JSON passed to the run), `group_names` (required array of one or more explicit group names from `variables/variables.json`), `mode` (`workshop` for workflow schedules), `workshop_mode` (`run` for normal recurring workflow runs).
+  Fields: `id` (auto-assigned), `name` (display label), `description` (optional), `cron_expression` (standard 5-field cron), `timezone` (IANA tz e.g. `America/New_York`), `enabled` (bool), `trigger_payload` (arbitrary JSON passed to the run), `group_names` (required array of one or more explicit group names from `variables/variables.json`), `mode` (`workshop` for workflow schedules), `workshop_mode` (`run` for normal recurring workflow runs), `concurrency_mode` (`sequential` default or `parallel`), and `parallel_risk_acknowledged`.
 - Schedule management is available in **Workshop mode**. If the user asks in Run mode, tell them to switch.
 
 ### Time and API triggers
@@ -47,6 +48,8 @@ Every schedule in `workflow.json` has a `schedule_type` — `"cron"` (default), 
 
 Workflow schedules always use the workshop builder execution path. Do not create direct `mode="workflow"` schedules; legacy manifests with that value are normalized to workshop execution.
 
+Every workflow-producing cron/calendar occurrence is bound by the server to one immutable `runs/iteration-N-sched` folder before its agent starts. Builder chats and interactive runs continue to own `iteration-0`; webhooks own `iteration-N-hook`. Agents must use the server-bound folder and must never rotate or substitute `iteration-0` during a scheduled invocation. This prevents scheduled run outputs and logs from overwriting one another, but it does not isolate shared DB/KB/learnings/planning/browser/external state.
+
 - **Run** (`mode=workshop`, `workshop_mode=run`) — LLM-driven execution. Prefer an empty queue plus `group_names`/`route_selections` for durable workflow behavior: canonical steps receive their normal learning, validation/retry, repair, and Pulse attribution lifecycle. Direct messages remain valid for genuinely schedule-specific conversation, but require `direct_messages_reason` and do not automatically gain that step-level lifecycle.
 
 **Default mode rule:** create workflow schedules with `mode="workshop"`. New schedules should never use `mode="workflow"`.
@@ -63,7 +66,7 @@ Workflow schedules always use the workshop builder execution path. Do not create
 - `after_terminal_status="completed"` is the safe default. Use `any_terminal` only when downstream work remains valid after a failed, partial, stopped, or interrupted prerequisite. `after_delay_minutes` applies to every prerequisite, and `dependency_deadline` (`HH:MM` local time) expires a stale dependent occurrence visibly.
 - Dependency lists must contain existing schedule IDs and cannot contain the schedule itself or form a cycle. Because matching is date-aware, do not make a daily schedule depend on a weekly schedule unless the dependent has the same active dates.
 - Dependencies express prerequisite completion; `collision_policy` still decides whether a due occurrence queues or is discarded while the workflow is busy. Use `queue_latest` with a bounded `max_start_delay_minutes` when the latest delayed occurrence remains useful.
-- Workflow-producing schedules are sequential by default under the workflow-wide active-execution lock. The current tool schema has no supported parallel-schedule field, so do not invent one. A resource/file claim list is not part of the design and cannot prove safety. If the live platform later exposes an explicit parallel opt-in, enable it only after the human approves the fixed risk disclosure: separate run folders do not isolate the shared workflow database, knowledge base, learnings, reports, planning/browser state or external actions, so parallel runs may conflict, overwrite data or duplicate actions. Otherwise model schedules that "work together" with directional `after_schedule_ids` chains/fan-in and collision queues.
+- Workflow-producing schedules are sequential by default. To opt one cron/calendar schedule into overlapping other schedules, set `concurrency_mode="parallel"` and `parallel_risk_acknowledged=true` through `create_schedule`, `create_calendar_schedule`, or `update_schedule`. Do this only after telling the human that `iteration-N-sched` isolates run output/log folders but not the shared workflow database, knowledge base, learnings, reports, planning/browser state or external actions; overlap may conflict, overwrite shared data, or duplicate actions. A resource/file claim list is not proof of safety. The same schedule never overlaps itself, manual workflow execution and Pulse remain exclusive, and `after_schedule_ids` always forces that occurrence to wait for all prerequisites. Without the explicit acknowledgement, preserve sequential behavior. Model schedules that must work in order with directional dependency chains/fan-in and collision queues.
 
 ### Back up scheduled workflows
 

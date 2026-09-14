@@ -197,6 +197,71 @@ func TestScheduleStateLockKeyFromRuntimeKey(t *testing.T) {
 	}
 }
 
+func TestScheduleStateScopeUsesIndependentParallelLane(t *testing.T) {
+	sequential := &ScheduleContext{WorkspacePath: "Workflow/demo", Schedule: WorkflowSchedule{ID: "growth"}}
+	parallel := &ScheduleContext{WorkspacePath: "Workflow/demo", Schedule: WorkflowSchedule{
+		ID: "measurement", ConcurrencyMode: "parallel", ParallelRiskAcknowledged: true,
+	}}
+	_, _, sequentialKey := scheduleStateScope(sequential)
+	_, _, parallelKey := scheduleStateScope(parallel)
+	if sequentialKey == parallelKey {
+		t.Fatalf("parallel schedule reused sequential workflow lane: %q", parallelKey)
+	}
+	if !strings.Contains(parallelKey, "workflow-parallel") || !strings.Contains(parallelKey, "measurement") {
+		t.Fatalf("parallel lock key lacks schedule-local identity: %q", parallelKey)
+	}
+}
+
+func TestValidateScheduleRuntimePolicyRequiresParallelRiskAcknowledgement(t *testing.T) {
+	schedule := WorkflowSchedule{ID: "measurement", ScheduleType: "cron", ConcurrencyMode: "parallel"}
+	if err := validateScheduleRuntimePolicy(schedule); err == nil || !strings.Contains(err.Error(), "parallel_risk_acknowledged") {
+		t.Fatalf("parallel schedule without acknowledgement error = %v", err)
+	}
+	schedule.ParallelRiskAcknowledged = true
+	if err := validateScheduleRuntimePolicy(schedule); err != nil {
+		t.Fatalf("approved parallel cron schedule rejected: %v", err)
+	}
+	schedule.ScheduleType = "webhook"
+	if err := validateScheduleRuntimePolicy(schedule); err == nil {
+		t.Fatal("parallel webhook schedule was accepted")
+	}
+}
+
+func TestParallelScheduleOverlapsOnlyTrustedScheduleExecutions(t *testing.T) {
+	api := &StreamingAPI{trackedWorkflowExecutions: map[string]*TrackedWorkflowExecution{}}
+	svc := &SchedulerService{api: api}
+	workspace := "Workflow/demo"
+	put := func(sessionID, triggeredBy string) {
+		api.trackedWorkflowExecutions = map[string]*TrackedWorkflowExecution{
+			"exec": {ExecutionID: "exec", SessionID: sessionID, WorkspacePath: workspace, Kind: "full_workflow", Status: trackedExecutionStatusRunning, TriggeredBy: triggeredBy, StartedAt: time.Now()},
+		}
+	}
+
+	put("manual-session", "manual")
+	if got := svc.findActiveExecutionBlockingSchedule(workspace, true); got == nil {
+		t.Fatal("parallel schedule was allowed to overlap manual workflow execution")
+	}
+
+	put("schedule-cron--measurement_1", "cron")
+	api.scheduleInvocations.Store("schedule-cron--measurement_1", &todo_creation_human.ScheduleInvocation{AllowParallel: false})
+	if got := svc.findActiveExecutionBlockingSchedule(workspace, true); got != nil {
+		t.Fatalf("parallel schedule was blocked by another trusted schedule: %+v", got)
+	}
+	if got := svc.findActiveExecutionBlockingSchedule(workspace, false); got == nil {
+		t.Fatal("sequential schedule ignored another sequential schedule")
+	}
+
+	api.scheduleInvocations.Store("schedule-cron--measurement_1", &todo_creation_human.ScheduleInvocation{AllowParallel: true})
+	if got := svc.findActiveExecutionBlockingSchedule(workspace, false); got != nil {
+		t.Fatalf("sequential lane was blocked by approved parallel schedule: %+v", got)
+	}
+
+	api.scheduleInvocations.Delete("schedule-cron--measurement_1")
+	if got := svc.findActiveExecutionBlockingSchedule(workspace, true); got == nil {
+		t.Fatal("parallel schedule ignored unbound scheduled/Pulse-like execution")
+	}
+}
+
 // TestBuildScheduleContextThreadsOwnerUserID is the regression test for a
 // real production incident on the Dominion deployment 2026-08-31/09-01:
 // scheduled/cron runs always passed an empty user ID to startSessionInternal,

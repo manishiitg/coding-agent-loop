@@ -578,8 +578,9 @@ type StreamingAPI struct {
 	workshopChatSessions sync.Map
 
 	// Cron scheduler service for scheduled workflow executions
-	scheduler          *SchedulerService
-	webhookInvocations sync.Map // session ID -> *step_based_workflow.WebhookInvocation; internal only
+	scheduler           *SchedulerService
+	webhookInvocations  sync.Map // session ID -> *step_based_workflow.WebhookInvocation; internal only
+	scheduleInvocations sync.Map // session ID -> *step_based_workflow.ScheduleInvocation; internal only
 
 	// Background completion loop tracking — prevents multiple loops per session
 	completionLoopStarted   map[string]bool
@@ -9642,6 +9643,9 @@ func (api *StreamingAPI) buildWorkshopConfig(
 	if invocation, ok := api.webhookInvocations.Load(sessionID); ok {
 		cfg.WebhookInvocation = invocation.(*todo_creation_human.WebhookInvocation)
 	}
+	if invocation, ok := api.scheduleInvocations.Load(sessionID); ok {
+		cfg.ScheduleInvocation = invocation.(*todo_creation_human.ScheduleInvocation)
+	}
 	cfg.ScheduleCollisionCheck = api.scheduleCollisionCheck(cfg.WorkspacePath, sessionID, req.TriggeredBy)
 	cfg.SkillFuncs = api.buildSkillCallbacks()
 	cfg.LLMToolsFuncs = api.buildLLMToolsCallbacks()
@@ -9770,6 +9774,11 @@ func (api *StreamingAPI) buildSchedulerCallbacks() *todo_creation_human.Schedule
 				if strings.TrimSpace(sched.CollisionPolicy) != "" {
 					sb.WriteString(fmt.Sprintf("- **Collision policy**: %s\n", sched.CollisionPolicy))
 				}
+				concurrencyMode := strings.TrimSpace(sched.ConcurrencyMode)
+				if concurrencyMode == "" {
+					concurrencyMode = "sequential"
+				}
+				sb.WriteString(fmt.Sprintf("- **Concurrency mode**: %s\n", concurrencyMode))
 				if sched.MaxStartDelayMinutes > 0 {
 					sb.WriteString(fmt.Sprintf("- **Maximum start delay**: %d minutes\n", sched.MaxStartDelayMinutes))
 				}
@@ -9824,29 +9833,31 @@ func (api *StreamingAPI) buildSchedulerCallbacks() *todo_creation_human.Schedule
 				}
 			}
 			newSched := WorkflowSchedule{
-				ID:                   generateScheduleID(),
-				Name:                 name,
-				CronExpression:       cronExpr,
-				Timezone:             timezone,
-				GroupNames:           groupNames,
-				RouteSelections:      routeSelections,
-				Enabled:              true,
-				Mode:                 mode,
-				Messages:             messages,
-				DirectMessagesReason: directMessagesReason,
-				WorkshopMode:         workshopMode,
-				ResumePrevious:       resumePrevious,
-				PulseReviewOnly:      pulseReviewOnly,
-				PulseMode:            strings.ToLower(strings.TrimSpace(policy.PulseMode)),
-				PulseModeReason:      strings.TrimSpace(policy.PulseModeReason),
-				ExecutionMode:        strings.TrimSpace(policy.ExecutionMode),
-				CollisionPolicy:      strings.TrimSpace(policy.CollisionPolicy),
-				MaxStartDelayMinutes: policy.MaxStartDelayMinutes,
-				AfterScheduleID:      strings.TrimSpace(policy.AfterScheduleID),
-				AfterScheduleIDs:     normalizeScheduleDependencyIDs(policy.AfterScheduleIDs),
-				AfterTerminalStatus:  strings.TrimSpace(policy.AfterTerminalStatus),
-				AfterDelayMinutes:    policy.AfterDelayMinutes,
-				DependencyDeadline:   strings.TrimSpace(policy.DependencyDeadline),
+				ID:                       generateScheduleID(),
+				Name:                     name,
+				CronExpression:           cronExpr,
+				Timezone:                 timezone,
+				GroupNames:               groupNames,
+				RouteSelections:          routeSelections,
+				Enabled:                  true,
+				Mode:                     mode,
+				Messages:                 messages,
+				DirectMessagesReason:     directMessagesReason,
+				WorkshopMode:             workshopMode,
+				ResumePrevious:           resumePrevious,
+				PulseReviewOnly:          pulseReviewOnly,
+				PulseMode:                strings.ToLower(strings.TrimSpace(policy.PulseMode)),
+				PulseModeReason:          strings.TrimSpace(policy.PulseModeReason),
+				ExecutionMode:            strings.TrimSpace(policy.ExecutionMode),
+				CollisionPolicy:          strings.TrimSpace(policy.CollisionPolicy),
+				ConcurrencyMode:          strings.TrimSpace(policy.ConcurrencyMode),
+				ParallelRiskAcknowledged: policy.ParallelRiskAcknowledged,
+				MaxStartDelayMinutes:     policy.MaxStartDelayMinutes,
+				AfterScheduleID:          strings.TrimSpace(policy.AfterScheduleID),
+				AfterScheduleIDs:         normalizeScheduleDependencyIDs(policy.AfterScheduleIDs),
+				AfterTerminalStatus:      strings.TrimSpace(policy.AfterTerminalStatus),
+				AfterDelayMinutes:        policy.AfterDelayMinutes,
+				DependencyDeadline:       strings.TrimSpace(policy.DependencyDeadline),
 			}
 			if err := validateScheduleRuntimePolicy(newSched); err != nil {
 				return "", err
@@ -9911,25 +9922,27 @@ func (api *StreamingAPI) buildSchedulerCallbacks() *todo_creation_human.Schedule
 				return "", err
 			}
 			newSched := WorkflowSchedule{
-				ID:                   generateScheduleID(),
-				Name:                 name,
-				ScheduleType:         "calendar",
-				Timezone:             timezone,
-				CalendarItems:        calendarItems,
-				GroupNames:           groupNames,
-				Enabled:              true,
-				Mode:                 mode,
-				Messages:             messages,
-				DirectMessagesReason: directMessagesReason,
-				WorkshopMode:         workshopMode,
-				PulseMode:            strings.ToLower(strings.TrimSpace(policy.PulseMode)),
-				PulseModeReason:      strings.TrimSpace(policy.PulseModeReason),
-				CollisionPolicy:      strings.TrimSpace(policy.CollisionPolicy),
-				MaxStartDelayMinutes: policy.MaxStartDelayMinutes,
-				AfterScheduleIDs:     normalizeScheduleDependencyIDs(policy.AfterScheduleIDs),
-				AfterTerminalStatus:  strings.TrimSpace(policy.AfterTerminalStatus),
-				AfterDelayMinutes:    policy.AfterDelayMinutes,
-				DependencyDeadline:   strings.TrimSpace(policy.DependencyDeadline),
+				ID:                       generateScheduleID(),
+				Name:                     name,
+				ScheduleType:             "calendar",
+				Timezone:                 timezone,
+				CalendarItems:            calendarItems,
+				GroupNames:               groupNames,
+				Enabled:                  true,
+				Mode:                     mode,
+				Messages:                 messages,
+				DirectMessagesReason:     directMessagesReason,
+				WorkshopMode:             workshopMode,
+				PulseMode:                strings.ToLower(strings.TrimSpace(policy.PulseMode)),
+				PulseModeReason:          strings.TrimSpace(policy.PulseModeReason),
+				CollisionPolicy:          strings.TrimSpace(policy.CollisionPolicy),
+				ConcurrencyMode:          strings.TrimSpace(policy.ConcurrencyMode),
+				ParallelRiskAcknowledged: policy.ParallelRiskAcknowledged,
+				MaxStartDelayMinutes:     policy.MaxStartDelayMinutes,
+				AfterScheduleIDs:         normalizeScheduleDependencyIDs(policy.AfterScheduleIDs),
+				AfterTerminalStatus:      strings.TrimSpace(policy.AfterTerminalStatus),
+				AfterDelayMinutes:        policy.AfterDelayMinutes,
+				DependencyDeadline:       strings.TrimSpace(policy.DependencyDeadline),
 			}
 			if err := validateScheduleRuntimePolicy(newSched); err != nil {
 				return "", err
@@ -10049,6 +10062,15 @@ func (api *StreamingAPI) buildSchedulerCallbacks() *todo_creation_human.Schedule
 				}
 				if policy.SetCollisionPolicy {
 					sched.CollisionPolicy = strings.TrimSpace(policy.CollisionPolicy)
+				}
+				if policy.SetConcurrencyMode {
+					sched.ConcurrencyMode = strings.TrimSpace(policy.ConcurrencyMode)
+					if sched.ConcurrencyMode != "parallel" && !policy.SetParallelRiskAcknowledged {
+						sched.ParallelRiskAcknowledged = false
+					}
+				}
+				if policy.SetParallelRiskAcknowledged {
+					sched.ParallelRiskAcknowledged = policy.ParallelRiskAcknowledged
 				}
 				if policy.SetMaxStartDelayMinutes {
 					sched.MaxStartDelayMinutes = policy.MaxStartDelayMinutes

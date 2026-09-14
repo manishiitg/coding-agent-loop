@@ -95,14 +95,20 @@ function WorkToolbarButton({ active, icon: Icon, label, onClick }: { active: boo
 export function WorkWorkspaceToolbar({ view, onViewChange, enabledPanels }: { view: WorkWorkspaceView; onViewChange: (view: WorkWorkspaceView) => void; enabledPanels?: Set<string> }) {
   const visibleViews = enabledPanels ? VIEW_BUTTONS.filter(item => enabledPanels.has(item.id)) : VIEW_BUTTONS
   const visibleSetup = enabledPanels ? SETUP_BUTTONS.filter(item => enabledPanels.has(item.id)) : SETUP_BUTTONS
+  const [openGroup, setOpenGroup] = useState<'views' | 'setup'>(() => SETUP_BUTTONS.some(item => item.id === view) ? 'setup' : 'views')
+
+  useEffect(() => {
+    setOpenGroup(SETUP_BUTTONS.some(item => item.id === view) ? 'setup' : 'views')
+  }, [view])
+
   return (
     <div data-tour="work-tools" className="ml-auto flex shrink-0 items-center gap-1">
       <TooltipProvider delayDuration={150}>
         <div className="inline-flex h-8 items-center divide-x divide-border rounded-lg border border-border bg-muted/60 py-0.5 shadow-sm">
-          <WorkspaceToolbarGroup label="Views" open title="Views: dashboard, database, browser, costs, schedules and files">
+          <WorkspaceToolbarGroup label="Views" open={openGroup === 'views'} onToggle={() => setOpenGroup('views')} title="Views: dashboard, database, browser, costs, schedules and files">
             <div className="inline-flex items-center gap-0.5">{visibleViews.map((item) => <WorkToolbarButton key={item.id} {...item} active={view === item.id} onClick={() => onViewChange(item.id)} />)}</div>
           </WorkspaceToolbarGroup>
-          <WorkspaceToolbarGroup label="Setup" open title="Setup: skills, secrets, MCP servers, models, bots and folders">
+          <WorkspaceToolbarGroup label="Setup" open={openGroup === 'setup'} onToggle={() => setOpenGroup('setup')} title="Setup: skills, secrets, MCP servers, models, bots and folders">
             <div className="inline-flex items-center gap-0.5">{visibleSetup.map((item) => <WorkToolbarButton key={item.id} {...item} active={view === item.id} onClick={() => onViewChange(item.id)} />)}</div>
           </WorkspaceToolbarGroup>
         </div>

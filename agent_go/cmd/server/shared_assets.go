@@ -104,8 +104,7 @@ func sharedAssetRequest(r *http.Request, root, p, operation string) (*http.Respo
 	return workspaceHTTPClient.Do(req)
 }
 func sharedAssetURL(r *http.Request, full string) string {
-	q := url.Values{"path": {base64.StdEncoding.EncodeToString([]byte(full))}}
-	return strings.TrimRight(getBaseURL(r), "/") + "/file?" + q.Encode()
+	return sharedAssetPublicURL(getBaseURL(r), "file", full)
 }
 func serveSharedAsset(w http.ResponseWriter, r *http.Request, root, p, operation string) {
 	response, err := sharedAssetRequest(r, root, p, operation)
@@ -218,10 +217,16 @@ func (api *StreamingAPI) externalAssetLink(w http.ResponseWriter, r *http.Reques
 	}
 	metadata["workflow_id"] = workflow.Manifest.ID
 	metadata["path"] = relative
-	metadata["preview_url"] = sharedAssetURL(r, path.Join(root, relative))
-	q := url.Values{"workflow_id": {workflow.Manifest.ID}, "path": {relative}, "download": {"true"}}
-	metadata["download_url"] = strings.TrimRight(getBaseURL(r), "/") + "/api/external/v1/files/content?" + q.Encode()
-	metadata["authentication"] = map[string]string{"preview": "Sign in to AgentWorks with workflow access.", "download": "Send your PAT in the Authorization Bearer header; never put it in the URL."}
+	kind, _ := metadata["type"].(string)
+	if kind == "folder" {
+		metadata["preview_url"] = sharedAssetPublicURL(getBaseURL(r), kind, path.Join(root, relative))
+		metadata["authentication"] = map[string]string{"preview": "Sign in to AgentWorks with workflow access."}
+	} else {
+		metadata["preview_url"] = sharedAssetURL(r, path.Join(root, relative))
+		q := url.Values{"workflow_id": {workflow.Manifest.ID}, "path": {relative}, "download": {"true"}}
+		metadata["download_url"] = strings.TrimRight(getBaseURL(r), "/") + "/api/external/v1/files/content?" + q.Encode()
+		metadata["authentication"] = map[string]string{"preview": "Sign in to AgentWorks with workflow access.", "download": "Send your PAT in the Authorization Bearer header; never put it in the URL."}
+	}
 	externalJSON(w, metadata)
 }
 func (api *StreamingAPI) handleExternalAssetContent(w http.ResponseWriter, r *http.Request) {

@@ -81,6 +81,7 @@ func TestWorkManifestDeclaresProjectScopeAndCodingAllowlist(t *testing.T) {
 	// Work reuses platform coding tools plus its deliberately small,
 	// project-scoped schedule surface. Workflow routes and execution remain out.
 	wantEnabled := map[string]bool{
+		"get_file_link":                     false,
 		"diff_patch_workspace_file":         false,
 		"execute_shell_command":             false,
 		"agent_browser":                     false,
@@ -189,7 +190,7 @@ func TestWorkPlatformSkillsRegisterAndLoad(t *testing.T) {
 	}
 	checks := map[string][]string{
 		"work-integrations":       {"list_mcp_servers", "Setup > MCP servers", "set_workflow_secret", "list_work_folders", "Setup > Models"},
-		"work-workflow-files":     {"list_accessible_workflows", "WORK_FOLDER_<ALIAS>", "workflow.json", "knowledgebase/", "learnings/", "db/db.sqlite", "db/reports/", "runs/run_index.json", "sqlite3 -readonly"},
+		"work-workflow-files":     {"list_accessible_workflows", "WORK_FOLDER_<ALIAS>", "workflow.json", "knowledgebase/", "learnings/", "db/db.sqlite", "db/reports/", "runs/run_index.json", "sqlite3 -readonly", "get_file_link", "same signed-in Work account"},
 		"work-skills":             {"list_skills", "search_skills", "skills/custom/<skill-name>/SKILL.md", "skill authoring is a capability", "Setup > Skills"},
 		"work-schedules-and-bots": {"list_project_schedules", "five-field cron", "list_project_triggers", "Project webhook triggers", "Setup > Bots", "Slack", "WhatsApp", "list_gmail_connections", "google_workspace_cli", "gmail.readonly"},
 		"work-dashboard":          {"db/reports/index.html", "window.report.sendChatMessage", "query_workflow_db", "validate_report_html"},

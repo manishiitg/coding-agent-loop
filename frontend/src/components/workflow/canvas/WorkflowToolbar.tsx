@@ -12,7 +12,7 @@ import {
   LayoutDashboard,
 } from 'lucide-react'
 import { useWorkflowStore, type RunFolder } from '../../../stores/useWorkflowStore'
-import { PRIMARY_WORKSPACE_TOOLBAR_VIEWS, WORKSPACE_VIEWS, type WorkspaceViewId } from '../workspaceViews'
+import { getWorkspaceView, PRIMARY_WORKSPACE_TOOLBAR_VIEWS, WORKSPACE_VIEWS, type WorkspaceViewId } from '../workspaceViews'
 import { useChatStore } from '../../../stores/useChatStore'
 import { useAuthStore } from '../../../stores/useAuthStore'
 import type { ScheduledJob, VariablesManifest } from '../../../services/api-types'
@@ -31,8 +31,6 @@ import { usePendingDecisionCount } from '../hooks/usePendingDecisionCount'
 import { useCanWriteWorkflow } from '../../../hooks/useCanWriteWorkflow'
 import { WorkspaceToolbarGroup as ToolbarGroup } from '../../workspace/WorkspaceToolbarGroup'
 import { WorkspaceTopToolbar } from '../../workspace/WorkspaceTopToolbar'
-import { AskAIButton } from '../AskAIButton'
-import { getWorkspaceAskAIMessage } from '../workspaceAskAI'
 
 // Execution phase ID - special phase that should be displayed separately
 const EXECUTION_PHASE_ID = 'execution'
@@ -135,6 +133,18 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
 
   // No explicit view means the pane is on whichever canvas view was last open.
   const activeWorkspaceView: WorkspaceViewId = workflowWorkspaceView ?? lastCanvasView
+  const [openToolbarGroup, setOpenToolbarGroup] = useState<'views' | 'setup'>(() =>
+    getWorkspaceView(activeWorkspaceView).toolbarGroup === 'capabilities' ? 'setup' : 'views'
+  )
+
+  // Keep the selected view visible while preserving the compact, mutually
+  // exclusive Views/Setup control. Primary actions such as Pulse do not force
+  // either group to change.
+  useEffect(() => {
+    const group = getWorkspaceView(activeWorkspaceView).toolbarGroup
+    if (group === 'capabilities') setOpenToolbarGroup('setup')
+    if (group === 'views') setOpenToolbarGroup('views')
+  }, [activeWorkspaceView])
 
   // Button clusters come from the view registry, in registry order. Plan is
   // always present, including for a new workflow with no steps yet.
@@ -489,7 +499,8 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
           {workspacePath && (
             <ToolbarGroup
               label="Views"
-              open
+              open={openToolbarGroup === 'views'}
+              onToggle={() => setOpenToolbarGroup('views')}
               title="Views: plan, evidence, data, browser, schedules, webhooks, files and operations"
             >
               <div className="inline-flex items-center gap-0.5">
@@ -596,7 +607,8 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
         {workspacePath && (
           <ToolbarGroup
             label="Setup"
-            open
+            open={openToolbarGroup === 'setup'}
+            onToggle={() => setOpenToolbarGroup('setup')}
             title="Setup: skills, secrets, MCP servers, LLM, bots, folders, sharing and users"
           >
           <div className="inline-flex items-center gap-0.5">
@@ -639,14 +651,6 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
           </ToolbarGroup>
         )}
           </div>
-          )}
-
-          {workspacePath && (
-            <AskAIButton
-              workspacePath={workspacePath}
-              message={getWorkspaceAskAIMessage(activeWorkspaceView)}
-              className="ml-1 flex h-8 shrink-0 items-center gap-1.5 rounded-lg border border-border bg-muted/60 px-2.5 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-primary"
-            />
           )}
 
         </TooltipProvider>

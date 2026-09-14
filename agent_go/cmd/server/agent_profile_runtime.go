@@ -522,6 +522,11 @@ func (api *StreamingAPI) registerAgentProfileTools(registrar definitionToolRegis
 			return err
 		}
 	}
+	if resolved.Definition.ID == "work" && agentprofiles.HasFeature(resolved.Definition, "files") {
+		if err := api.registerWorkShareLinkTool(registrar, userID, workspacePath); err != nil {
+			return err
+		}
+	}
 	if resolved.Definition.ID == "work" && agentprofiles.HasFeature(resolved.Definition, "schedules") {
 		if err := api.registerWorkScheduleTools(registrar, userID, workspacePath); err != nil {
 			return err

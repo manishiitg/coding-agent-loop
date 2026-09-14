@@ -1,9 +1,22 @@
 ---
 name: work-workflow-files
-description: Read and interpret files from attached folders or read-only AgentWorks workflow references in Work. Use when the user asks what an attached workflow contains, requests data or reports from it, or wants files compared across workflows.
+description: Read and interpret files from attached folders or read-only AgentWorks workflow references in Work, and securely link files from the active Work project. Use when the user asks what an attached workflow contains, requests data or reports from it, wants files compared across workflows, or asks for a share link to a Work project file or folder.
 ---
 
 # Read attached workflow files
+
+## Share an active Work project file or folder
+
+Call `get_file_link` with the path relative to the active Work project. The
+server verifies that the target exists, rejects private or escaping paths,
+detects file versus folder, and returns the correct authenticated
+`preview_url`. Never construct `/file` or `/folder` URLs manually.
+
+Work projects are personal. The URL contains no credentials and grants no
+access; it can currently be opened only by the same signed-in Work account.
+Do not describe it as public publishing or as a way to grant another user
+access. Use a publishing workflow when the user explicitly needs public or
+cross-user distribution.
 
 Resolve the authorized root before reading:
 

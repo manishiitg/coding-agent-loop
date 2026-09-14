@@ -15,6 +15,8 @@ import { ReactFlowProvider } from '@xyflow/react'
 import { FileWorkspacePane } from '../../FileWorkspacePane'
 import { useChatStore } from '../../../stores/useChatStore'
 import { WorkflowToolbar } from './WorkflowToolbar'
+import { AskAIButton } from '../AskAIButton'
+import { getWorkspaceAskAIMessage } from '../workspaceAskAI'
 import { ReportView } from '../ReportViewer'
 import { usePlanData } from '../hooks/usePlanData'
 import { useEvaluationPlanData } from '../hooks/useEvaluationPlanData'
@@ -662,9 +664,19 @@ export const WorkspaceViewHost = React.memo(forwardRef<WorkflowCanvasRef, Workfl
           data-ui-workspace={embeddedPlanOnly ? undefined : workspacePath ?? undefined}
           data-ui-view={effectiveView}
           data-testid="tour-workflow-canvas-pane"
-          className={`${gridToolbar ? 'flex-1 col-start-1 row-start-2 md:col-start-2' : 'flex-1'} ${paneClassName} min-h-0 ${isInspectorKind ? 'overflow-hidden border-l border-border' : ''}`}
+          className={`${gridToolbar ? 'flex-1 col-start-1 row-start-2 md:col-start-2' : 'flex-1'} ${paneClassName} flex min-h-0 flex-col ${isInspectorKind ? 'overflow-hidden border-l border-border' : ''}`}
         >
-          {body}
+          {workspacePath && !toolbarOnly && !embeddedPlanOnly && (
+            <div data-ui-view-assistant className="flex h-9 shrink-0 items-center justify-between gap-3 border-b border-border bg-background px-3">
+              <span className="truncate text-xs font-medium text-muted-foreground">{getWorkspaceView(effectiveView).label}</span>
+              <AskAIButton
+                workspacePath={workspacePath}
+                message={getWorkspaceAskAIMessage(effectiveView)}
+                className="flex shrink-0 items-center gap-1.5 rounded-md border border-border px-2.5 py-1 text-xs font-medium text-muted-foreground transition-colors hover:border-primary/40 hover:text-primary"
+              />
+            </div>
+          )}
+          <div className="min-h-0 flex-1">{body}</div>
           {!isInspectorKind && !toolbarOnly && <span hidden data-ui-view-mounted />}
         </div>
       </div>

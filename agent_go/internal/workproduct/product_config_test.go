@@ -134,8 +134,8 @@ func TestWorkManifestDeclaresProjectScopeAndCodingAllowlist(t *testing.T) {
 			t.Fatalf("expected tool_policy.enabled to include %q", name)
 		}
 	}
-	if len(manifest.Profile.Tools) != 0 {
-		t.Fatalf("work ships no custom product tools, got %+v", manifest.Profile.Tools)
+	if len(manifest.Profile.Tools) != 1 || manifest.Profile.Tools[0].ID != "work.set-identity" {
+		t.Fatalf("work must expose its chat-configurable identity tool, got %+v", manifest.Profile.Tools)
 	}
 	if !manifest.Profile.UIPanels.Schedules {
 		t.Fatal("Work must expose its project schedule panel")
@@ -253,13 +253,34 @@ func TestRenderPromptSucceedsAgainstAPromptContext(t *testing.T) {
 	}
 }
 
-func TestRegisterAgentProfileRuntimeRegistersNothing(t *testing.T) {
-	// Work ships no custom product tools, so runtime registration is a
-	// no-op that must keep succeeding (server.go calls it for every
-	// product). If a custom tool is ever added, this test must grow a
-	// BuildTool assertion like Dominion's.
+func TestRegisterAgentProfileRuntimeRegistersIdentityTool(t *testing.T) {
 	registry := agentprofiles.NewRegistry()
 	if err := RegisterAgentProfileRuntime(registry, "http://127.0.0.1:0"); err != nil {
 		t.Fatalf("RegisterAgentProfileRuntime failed: %v", err)
+	}
+	tool, err := registry.BuildTool(agentprofiles.ToolBinding{ID: "work.set-identity"}, agentprofiles.ToolRuntimeContext{
+		UserID: "user-1", SessionID: "session-1", WorkspacePath: "Chats/Work/projects/demo",
+	})
+	if err != nil {
+		t.Fatalf("BuildTool failed: %v", err)
+	}
+	if tool.Name != "set_work_identity" || tool.Execute == nil {
+		t.Fatalf("unexpected identity tool: %+v", tool)
+	}
+}
+
+func TestWorkPromptIncludesConfiguredIdentity(t *testing.T) {
+	profile := BuiltinAgentProfile()
+	rendered, err := agentprofiles.RenderPrompt(profile, agentprofiles.PromptContext{
+		ProjectTitle: "Demo",
+		Product:      map[string]string{"WORK_IDENTITY": "Name: Nova\nRole: Engineering partner"},
+	})
+	if err != nil {
+		t.Fatalf("render Work prompt: %v", err)
+	}
+	for _, required := range []string{"## Project bot identity", "Name: Nova", "Role: Engineering partner", "generated project instruction"} {
+		if !strings.Contains(rendered, required) {
+			t.Fatalf("rendered Work prompt is missing %q", required)
+		}
 	}
 }

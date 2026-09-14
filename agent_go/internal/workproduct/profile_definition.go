@@ -1,9 +1,16 @@
 package workproduct
 
 import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"path"
+	"strings"
 	"sync"
+	"time"
 
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/agentprofiles"
+	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/workspace"
 )
 
 // BuiltinAgentProfile returns the work profile. Brand new, so only one
@@ -41,8 +48,150 @@ func RegisterProductSkills() error {
 	return registerProductSkillsErr
 }
 
-// Background execution is registered by the server because it reuses the
-// server-owned background-agent registry; Work has no separate ToolFactory.
-func RegisterAgentProfileRuntime(_ *agentprofiles.Registry, _ string) error {
-	return nil
+type workIdentity struct {
+	Name         string `json:"name,omitempty"`
+	Role         string `json:"role,omitempty"`
+	Instructions string `json:"instructions,omitempty"`
+}
+
+type workProjectManifest struct {
+	Identity  *workIdentity `json:"identity,omitempty"`
+	UpdatedAt string        `json:"updated_at,omitempty"`
+}
+
+func normalizeWorkIdentity(identity workIdentity) workIdentity {
+	identity.Name = strings.TrimSpace(identity.Name)
+	identity.Role = strings.TrimSpace(identity.Role)
+	identity.Instructions = strings.TrimSpace(identity.Instructions)
+	return identity
+}
+
+func renderWorkIdentity(identity workIdentity) string {
+	identity = normalizeWorkIdentity(identity)
+	if identity.Name == "" && identity.Role == "" && identity.Instructions == "" {
+		return ""
+	}
+	var lines []string
+	if identity.Name != "" {
+		lines = append(lines, "Name: "+identity.Name)
+	}
+	if identity.Role != "" {
+		lines = append(lines, "Role: "+identity.Role)
+	}
+	if identity.Instructions != "" {
+		lines = append(lines, "Instructions:\n"+identity.Instructions)
+	}
+	return strings.Join(lines, "\n")
+}
+
+func workIdentityFactory(workspaceAPIURL string) agentprofiles.ToolFactory {
+	return func(runtime agentprofiles.ToolRuntimeContext, _ json.RawMessage) (agentprofiles.ToolSpec, error) {
+		client := workspace.NewClient(
+			workspaceAPIURL,
+			workspace.WithUserID(runtime.UserID),
+			workspace.WithExtraEnv(map[string]string{"MCP_SESSION_ID": runtime.SessionID}),
+		)
+		manifestPath := path.Join(runtime.WorkspacePath, "product.json")
+		return agentprofiles.ToolSpec{
+			Name:     "set_work_identity",
+			Category: "work_identity",
+			Description: "Set, update, or clear this Work project's bot identity when the user asks through chat. " +
+				"The identity is stored with the project and is injected into the coding provider's generated project instructions (including AGENTS.md for Codex/Muse and Claude's project instructions) on future provider sessions. " +
+				"Do not invent an identity: preserve omitted fields on update and use clear only when the user asks to remove it.",
+			Parameters: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"operation": map[string]interface{}{
+						"type": "string", "enum": []string{"set", "clear"},
+						"description": "Use set to create or update the identity, or clear to remove it.",
+					},
+					"name":         map[string]interface{}{"type": "string", "description": "The bot's display name. Omit to preserve the current name."},
+					"role":         map[string]interface{}{"type": "string", "description": "The bot's role or purpose. Omit to preserve the current role."},
+					"instructions": map[string]interface{}{"type": "string", "description": "Concise behavior, tone, domain, and working preferences. Omit to preserve the current instructions."},
+				},
+				"required": []string{"operation"},
+			},
+			Execute: func(ctx context.Context, args map[string]interface{}) (string, error) {
+				read, err := client.ReadWorkspaceFile(ctx, workspace.ReadWorkspaceFileParams{Filepath: manifestPath})
+				if err != nil {
+					return "", fmt.Errorf("read Work project configuration: %w", err)
+				}
+				var manifest map[string]interface{}
+				if err := json.Unmarshal([]byte(read.Content), &manifest); err != nil {
+					return "", fmt.Errorf("decode Work project configuration: %w", err)
+				}
+				operation, _ := args["operation"].(string)
+				operation = strings.ToLower(strings.TrimSpace(operation))
+				if operation == "clear" {
+					delete(manifest, "identity")
+				} else if operation == "set" {
+					identity := workIdentity{}
+					if current, ok := manifest["identity"]; ok {
+						encoded, _ := json.Marshal(current)
+						_ = json.Unmarshal(encoded, &identity)
+					}
+					if value, ok := args["name"].(string); ok {
+						identity.Name = value
+					}
+					if value, ok := args["role"].(string); ok {
+						identity.Role = value
+					}
+					if value, ok := args["instructions"].(string); ok {
+						identity.Instructions = value
+					}
+					identity = normalizeWorkIdentity(identity)
+					if renderWorkIdentity(identity) == "" {
+						return "At least one of name, role, or instructions is required to set the identity.", nil
+					}
+					manifest["identity"] = identity
+				} else {
+					return "operation must be set or clear.", nil
+				}
+				manifest["updated_at"] = time.Now().UTC().Format(time.RFC3339)
+				encoded, err := json.MarshalIndent(manifest, "", "  ")
+				if err != nil {
+					return "", fmt.Errorf("encode Work project configuration: %w", err)
+				}
+				if _, err := client.UpdateWorkspaceFile(ctx, workspace.UpdateWorkspaceFileParams{Filepath: manifestPath, Content: string(encoded) + "\n"}); err != nil {
+					return "", fmt.Errorf("save Work identity: %w", err)
+				}
+				if operation == "clear" {
+					return "The Work bot identity was removed. Use the base Work identity from now on.", nil
+				}
+				var saved workIdentity
+				encodedIdentity, _ := json.Marshal(manifest["identity"])
+				_ = json.Unmarshal(encodedIdentity, &saved)
+				return "The project bot identity is saved. Adopt it immediately in this chat. It will be included automatically in generated provider project instructions on future provider sessions.\n\n" + renderWorkIdentity(saved), nil
+			},
+		}, nil
+	}
+}
+
+// RegisterAgentProfileRuntime connects Work's durable chat-configurable
+// identity to both the provider prompt and its one product-owned tool.
+func RegisterAgentProfileRuntime(registry *agentprofiles.Registry, workspaceAPIURL string) error {
+	if err := registry.RegisterToolFactory("work.set-identity", workIdentityFactory(workspaceAPIURL)); err != nil {
+		return err
+	}
+	return registry.RegisterPromptVariables("work", func(ctx context.Context, runtime agentprofiles.RuntimeContext) (map[string]string, error) {
+		client := workspace.NewClient(
+			workspaceAPIURL,
+			workspace.WithUserID(runtime.UserID),
+			workspace.WithExtraEnv(map[string]string{"MCP_SESSION_ID": runtime.SessionID}),
+		)
+		result, err := client.ReadWorkspaceFile(ctx, workspace.ReadWorkspaceFileParams{Filepath: path.Join(runtime.WorkspacePath, "product.json")})
+		if err != nil {
+			return nil, fmt.Errorf("read Work identity: %w", err)
+		}
+		var manifest workProjectManifest
+		if err := json.Unmarshal([]byte(result.Content), &manifest); err != nil {
+			return nil, fmt.Errorf("decode Work identity: %w", err)
+		}
+		identity := ""
+		if manifest.Identity != nil {
+			identity = renderWorkIdentity(*manifest.Identity)
+		}
+		// Always return the key because the Work prompt uses missingkey=error.
+		return map[string]string{"WORK_IDENTITY": identity}, nil
+	})
 }

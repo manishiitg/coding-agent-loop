@@ -14,6 +14,7 @@ func TestPulseRolesUnderstandScheduleCoordinationPolicy(t *testing.T) {
 			"same local calendar date",
 			"Architecture Review",
 			"Technical Review",
+			"resource or file list does not prove overlap safe",
 		},
 		"architecture-review": {
 			"Schedule topology and throughput",
@@ -21,17 +22,20 @@ func TestPulseRolesUnderstandScheduleCoordinationPolicy(t *testing.T) {
 			"two schedules work together through a directional chain",
 			"fan-in",
 			"this review remains read-only",
+			"explicit human approval",
 		},
 		"technical-review": {
 			"load `references/schedules.md`",
 			"Preserve the workflow-wide single-active-execution safety lock",
 			"directional all-of edges",
 			"typed schedule tools",
+			"recorded human approval",
 		},
 		"pulse-fixer-practices": {
 			"Cron spacing is not a concurrency guarantee",
 			"directional `after_schedule_ids` edges",
 			"never introduce a cycle",
+			"Sequential remains the default",
 		},
 	}
 

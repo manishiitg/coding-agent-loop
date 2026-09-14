@@ -8,8 +8,8 @@
 | Ticket state | `design confirmed; implementation not started` |
 | Last synchronized | `2026-09-14` |
 
-- **Priority:** P0 prerequisite for parallel schedule execution; P1 evidence
-  integrity while schedules remain serialized.
+- **Priority:** P0 schedule evidence isolation and identity integrity. This is
+  not a prerequisite that automatically authorizes parallel schedules.
 - **Owner:** scheduler occurrence identity, workflow run allocation, execution
   evidence, evaluation pairing, retention, Pulse intake and run-selection UI.
 - **Origin:** Social Media throughput investigation. One 00:30 run lasted 517
@@ -24,8 +24,8 @@
   [PLAT-176](plat-176.md), [PLAT-182](plat-182.md),
   [PLAT-194](plat-194.md), [PLAT-241](plat-241.md),
   [PLAT-242](plat-242.md), [PLAT-254](plat-254.md),
-  [PLAT-296](plat-296.md), [PLAT-304](plat-304.md), and
-  [PLAT-309](plat-309.md).
+  [PLAT-296](plat-296.md), [PLAT-304](plat-304.md),
+  [PLAT-309](plat-309.md), and [PLAT-321](plat-321.md).
 
 ## Decision
 
@@ -55,11 +55,20 @@ reviews. This exception prevents a review occurrence from appearing as new
 workflow production.
 
 This ticket does **not** enable two schedules to execute concurrently. The
-workflow-wide durable lease stays in force during the migration. Schedule
-dependencies, terminal policies and collision queues can coordinate schedules
-sequentially today. Parallel execution requires a later resource-ownership
-design for shared databases, knowledge bases, learnings, reports, browser/CDP
-state and external side effects.
+workflow-wide durable lease stays in force during this migration.
+Schedule dependencies, terminal policies and collision queues coordinate
+schedules sequentially. An agent-authored declaration of files, resources or
+side effects is not a safe concurrency boundary: a run can discover another
+write target at runtime, omit a shared file, overwrite workflow databases,
+knowledge bases, learnings, reports or planning state, contend for shared
+browser/CDP state, or duplicate an external action. This ticket does not add a
+schedule flag that bypasses the workflow-wide lease.
+
+PLAT-321 owns the separate, deliberately simpler concurrency policy: sequential
+by default, with an explicit human-approved parallel opt-in after a fixed risk
+disclosure. It does not rely on resource claims and is not implemented by this
+ticket. Until PLAT-321 ships, "schedules work together" means directional
+dependency/fan-in, not concurrent workflow production.
 
 ## Confirmed current behavior and failure boundaries
 
@@ -205,8 +214,9 @@ run index. They should not independently reconstruct recency from suffixes.
 5. Update retention, APIs, UI and all generated prompts/guidance.
 6. Switch saved schedules to `-sched`, keep the workflow-wide lease, and verify
    live schedule, Run now, capacity-resume, failure, stop and evaluation cases.
-7. Consider parallel schedule execution only under a separate approved
-   resource-ownership ticket.
+7. Keep workflow-producing schedules exclusive in this rollout. Do not add a
+   resource-claim system. Implement the separate explicit human-approved
+   parallel opt-in only under PLAT-321 after this identity migration passes.
 
 ## Acceptance criteria
 
@@ -240,6 +250,9 @@ run index. They should not independently reconstruct recency from suffixes.
   Review and Fixer all select run evidence through the typed identity contract.
 - The workflow-wide schedule lease remains enabled; no acceptance result from
   this ticket is treated as authorization for parallel shared-state execution.
+- Builder, Run and Pulse guidance state that resource/file claims cannot make
+  schedule overlap safe; any later parallel opt-in requires explicit human
+  approval after the fixed shared-state risk disclosure.
 
 ## Verification matrix
 

@@ -47,6 +47,15 @@ edge; two schedules work together through a directional chain, and several can
 join through fan-in. It does not permit overlap, and dependency cycles or
 daily-to-weekly cadence mismatches are invalid designs.
 
+Do not propose an agent-authored resource/file claim as proof that concurrency
+is safe. Workflow writes are dynamic and shared across the database, knowledge
+base, learnings, reports, planning state, browser/CDP state and external actions;
+an omitted or newly discovered target can be overwritten or duplicated.
+Sequential is the default. If the live platform exposes a parallel opt-in,
+Architecture may recommend it only with the fixed risks stated plainly and an
+explicit human approval; it must not imply that separate run folders isolate
+the other shared state.
+
 Assess `collision_policy`, `max_start_delay_minutes`, `after_terminal_status`, `after_delay_minutes`, and
 `dependency_deadline` together against observed durations, missed fires,
 queued/expired occurrences, side effects, and the next operationally important

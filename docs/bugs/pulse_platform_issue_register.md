@@ -20,8 +20,12 @@ existing evidence rather than creating empty workflow runs. The ticket covers ex
 identity, direct `execute_step`, paired evaluation, logs and validation
 evidence, cost/history attribution, retention, APIs/UI, AgentWorks guidance and
 Pulse awareness. Existing plain iterations and `-hook` runs remain readable.
-The workflow-wide schedule lease stays enabled; parallel shared-state execution
-is explicitly outside this ticket.
+The workflow-wide schedule lease stays enabled during this migration.
+Agent-declared resource/file claims are explicitly not a safety mechanism.
+Cooperating schedules use ordered dependency/fan-in today. [PLAT-321](pulse_platform/plat-321.md)
+owns the simpler future policy: sequential by default, with parallel overlap
+available only as an explicit human-approved opt-in after a fixed warning that
+shared workflow state and external actions may conflict, overwrite or duplicate.
 
 ## Notification duplicate rendering
 

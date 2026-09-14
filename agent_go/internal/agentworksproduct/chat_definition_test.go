@@ -1,6 +1,7 @@
 package agentworksproduct
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/agentprofiles"
@@ -20,6 +21,18 @@ func TestChatDefinitions(t *testing.T) {
 	}
 	if ChatDefinitionKey("builder") == ChatDefinitionKey("run") {
 		t.Fatal("mode definitions must differ")
+	}
+	for _, mode := range []string{"builder", "run"} {
+		prompt := ChatPromptTemplate(mode)
+		for _, want := range []string{
+			"Workflow-producing schedules are sequential by default",
+			"resource/file list does not prove overlap safe",
+			"receiving explicit human approval",
+		} {
+			if !strings.Contains(prompt, want) {
+				t.Errorf("%s prompt missing schedule parallel-risk contract %q", mode, want)
+			}
+		}
 	}
 	for _, names := range [][]string{{"missing"}, {"system-tools", "system-tools"}, {}} {
 		copy := m

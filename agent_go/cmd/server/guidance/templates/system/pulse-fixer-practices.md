@@ -378,6 +378,11 @@ assume the applied fix holds unless the defect is reproduced.
   dependent waits for all prerequisites on the same local calendar date; never
   introduce a cycle, a cadence mismatch, or treat the edge as permission to
   overlap runs.
+- Never treat a resource/file list as proof that parallel schedules are safe.
+  Workflow DB, KB, learning, report, planning, browser and external-action
+  writes can be dynamic or omitted. Sequential remains the default; use a live
+  platform parallel opt-in only after the fixed overwrite/duplicate-action
+  risks were disclosed and the human explicitly approved it.
 - Reconcile collision queue/discard behavior, `max_start_delay_minutes`,
   terminal-status release, delay, and dependency
   deadline as one transition policy. Preserve unrelated schedule fields when

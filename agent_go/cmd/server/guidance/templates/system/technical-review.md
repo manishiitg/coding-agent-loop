@@ -38,7 +38,11 @@ workflow-wide single-active-execution safety lock. Schedule prerequisites are
 directional all-of edges through `after_schedule_ids` on the same local calendar
 date, not permission for two runs to overlap. Repair with typed schedule tools,
 preserve unrelated fields and explicit user policy, and validate the scheduler
-transition rather than only the displayed configuration.
+transition rather than only the displayed configuration. Never treat a
+resource/file list as proof that overlap is safe. Preserve sequential behavior
+unless the live platform has an explicit parallel opt-in with recorded human
+approval after the shared-state overwrite and duplicate-action risks were
+disclosed.
 
 Use `get_pulse_state(view="backlog", detail="compact")` and semantic issue IDs.
 A failed child call alone is not a failed outcome. Establish required-output

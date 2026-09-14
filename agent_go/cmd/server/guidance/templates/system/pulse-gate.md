@@ -82,7 +82,12 @@ Read each relevant schedule's `collision_policy`, `max_start_delay_minutes`,
 The workflow-wide active-execution lock still prevents overlapping workflow
 runs. A directional dependency means the dependent occurrence waits for all
 listed prerequisite occurrences on the same local calendar date; it does not
-enable concurrent execution. Route a working but inefficient topology to
+enable concurrent execution. A resource or file list does not prove overlap
+safe: workflow DB, KB, learning, report, planning, browser and external-action
+writes may be dynamic, omitted, overwritten or duplicated. Any explicit
+parallel opt-in must have recorded human approval after those fixed risks were
+disclosed; otherwise sequential execution remains authoritative.
+Route a working but inefficient topology to
 Architecture Review, and a concrete missed-run, incorrect transition, or unsafe
 configuration repair to Technical Review. Load `references/schedules.md` in the
 selected reviewer before reasoning about or changing schedule policy.

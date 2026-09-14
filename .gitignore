@@ -183,5 +183,9 @@ AGENTS.md
 .local/
 transcript.txt
 
+# Local dependency and server-generated runtime caches
+/node_modules/
+/agent_go/cmd/server/cache/
+
 # Generated private Playwright fixture distributions
 /agent_go/packages/

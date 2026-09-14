@@ -149,7 +149,7 @@ def load_register_ids(repo_root: Path) -> set:
         ids |= {m.upper() for m in PLAT_ID_RE.findall(register.read_text(errors="replace"))}
     frag_dir = repo_root / "docs" / "bugs" / "pulse_platform"
     if frag_dir.exists():
-        for f in frag_dir.glob("plat-*.md"):
+        for f in frag_dir.rglob("plat-*.md"):
             ids |= {m.upper() for m in PLAT_ID_RE.findall(f.read_text(errors="replace"))}
     return ids
 

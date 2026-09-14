@@ -231,7 +231,7 @@ func guardCDPTabCreation(port int, ownerID string) error {
 	// can never collide with a real workflow's count -- but that same
 	// freshness means countCDPTabAliasesForOwner always reads 0 for it,
 	// silently bypassing the limit entirely rather than merely miscounting
-	// it (PLAT-181 review). Refuse outright instead: an unenforceable quota
+	// it (PLAT-322 review). Refuse outright instead: an unenforceable quota
 	// must fail loud, not fail open.
 	if isCDPUnidentifiedOwner(ownerID) {
 		return fmt.Errorf(

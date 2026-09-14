@@ -149,7 +149,7 @@ func TestGuardCDPTabCreationEnforcesLimit(t *testing.T) {
 	}
 }
 
-// PLAT-181 review. cdpUnidentifiedOwnerID returns a fresh, never-before-seen
+// PLAT-322 review. cdpUnidentifiedOwnerID returns a fresh, never-before-seen
 // value on every call so it never collides with a real workflow's count --
 // but that same freshness means countCDPTabAliasesForOwner always reads 0
 // for it, which would silently bypass the limit entirely (unlimited tab

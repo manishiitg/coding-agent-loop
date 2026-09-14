@@ -3,7 +3,7 @@
 **Status:** design agreed 2026-09-02; all four phases built and deployed to the
 RTS Video Studio box the same day. Kept as the reference for the model.
 **Related:** `docs/core/multi_user_authentication.md` (current auth),
-`docs/bugs/pulse_platform/plat-262.md` (read-only enforcement, reused as is),
+`docs/bugs/pulse_platform/security-sandbox/plat-262.md` (read-only enforcement, reused as is),
 `deploy/aws-ec2/server/auth-gateway.go` (Video Studio gateway).
 
 ## What this changes, in one paragraph

@@ -176,10 +176,10 @@ Use `{{.RunFolder}}` as the primary run folder.{{end}}
      concurrency: another session sharing the same CDP port can switch its
      own tab to the foreground between this session's switch and its actual
      capture, and creating a dedicated labeled tab does not prevent that race
-     — it only fixes tab *identity* (PLAT-181's concern), not tab
+     — it only fixes tab *identity* (PLAT-322's concern), not tab
      *foreground*. Treat a null `lcp_ms` under concurrent CDP sharing as a
      known, structural limitation of the current shared-browser architecture
-     (see PLAT-181 for the sibling ownership-collision issue on the same
+     (see PLAT-322 for the sibling ownership-collision issue on the same
      root cause), not a new platform bug to keep re-filing every cycle. A
      real fix requires giving performance-sensitive steps a dedicated,
      non-shared CDP browser instance — a deliberately out-of-scope

@@ -595,7 +595,7 @@ func TestCDPOwnerIDUsesStableBrowserSessionOverride(t *testing.T) {
 	}
 }
 
-// PLAT-181. When no per-workflow browser session was ever bound (no
+// PLAT-322. When no per-workflow browser session was ever bound (no
 // SetSessionBrowserSessionID call for either candidate), cdpOwnerID must not
 // fall back to returning the shared connection identity that every workflow
 // on the same CDP port has by construction (sharedCDPSessionName) -- doing

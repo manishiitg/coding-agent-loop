@@ -73,6 +73,9 @@ describe('CodingProvidersPanel', () => {
   })
 
   it('shows coding agents only and renders server status plus the four-step usage path', async () => {
+    vi.mocked(llmConfigService.startProviderSetup).mockResolvedValue({
+      id: 'usage-1', provider: 'codex-cli', action: 'usage', status: 'running',
+    } as Awaited<ReturnType<typeof llmConfigService.startProviderSetup>>)
     vi.mocked(llmConfigService.getProviderManifest).mockResolvedValue({
       providers: [
         provider({}),
@@ -121,9 +124,14 @@ describe('CodingProvidersPanel', () => {
       expect(dialog.textContent).toContain('Authentication detected via Codex home')
       expect(dialog.textContent).toContain('Change sign-in')
       expect(dialog.textContent).toContain('Open terminal')
+      expect(dialog.textContent).toContain('Check usage')
       expect(dialog.textContent).toContain('Type /status')
       expect(dialog.querySelector('[aria-label="Codex CLI is connected"]')).not.toBeNull()
       expect(Array.from(dialog.querySelectorAll('span')).filter(span => span.textContent === 'Connected')).toHaveLength(1)
+
+      await act(async () => Array.from(dialog.querySelectorAll('button')).find(button => button.textContent?.includes('Check usage'))!.click())
+      expect(llmConfigService.startProviderSetup).toHaveBeenCalledWith('codex-cli', 'usage', 100, 24)
+      expect(dialog.querySelector('[data-testid="guided-terminal"]')?.textContent).toBe('Terminal usage-1')
     } finally {
       await act(async () => root.unmount())
       host.remove()

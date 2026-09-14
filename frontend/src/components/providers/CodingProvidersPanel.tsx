@@ -86,10 +86,15 @@ const PROVIDER_INSPECTION: Record<string, { label: string; note: string }> = {
   },
 }
 
+const PROVIDER_USAGE_COMMAND: Record<string, string> = {
+  'claude-code': '/usage',
+  'codex-cli': '/status',
+  'muse-cli': '/usage',
+}
+
 const providerUsageNote = (providerId: string): string => {
-  if (providerId === 'claude-code' || providerId === 'codex-cli') return 'Current provider usage windows appear in workflow status as the CLI reports them during real runs.'
+  if (providerId === 'claude-code' || providerId === 'codex-cli' || providerId === 'muse-cli') return 'Check the connected account’s current usage without starting a workflow run.'
   if (providerId === 'cursor-cli') return 'Cursor does not expose subscription quota through a safe CLI status command. AgentWorks still reports any limit response returned during a run.'
-  if (providerId === 'muse-cli') return 'Muse reports usage-limit and reset information during runs. AgentWorks shows those provider messages directly when they occur.'
   if (providerId === 'pi-cli') return 'Pi connects several model providers. Usage and billing remain separate for each connected provider; the live model inventory is shown below.'
   return 'AgentWorks reports provider usage and limits when the provider exposes them.'
 }
@@ -642,15 +647,28 @@ export default function CodingProvidersPanel({ isOpen, onClose, embedded = false
                             <p className="mt-2 text-xs leading-5 text-gray-500 dark:text-gray-400">{PROVIDER_INSPECTION[selectedProvider.id].note}</p>
                           )}
                           {PROVIDER_INSPECTION[selectedProvider.id] && canRunGuidedSetup && (
-                            <button
-                              type="button"
-                              onClick={() => void startGuidedSetup('inspect')}
-                              disabled={guidedStarting !== null || guidedSession?.status === 'running'}
-                              className="mt-3 inline-flex items-center gap-2 rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm font-medium text-gray-700 transition-colors hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-200 dark:hover:bg-gray-700"
-                            >
-                              {guidedStarting === 'inspect' ? <Loader2 className="h-4 w-4 animate-spin" /> : <Terminal className="h-4 w-4" />}
-                              {PROVIDER_INSPECTION[selectedProvider.id].label}
-                            </button>
+                            <div className="mt-3 flex flex-wrap gap-2">
+                              {PROVIDER_USAGE_COMMAND[selectedProvider.id] && (
+                                <button
+                                  type="button"
+                                  onClick={() => void startGuidedSetup('usage')}
+                                  disabled={guidedStarting !== null || guidedSession?.status === 'running'}
+                                  className="inline-flex items-center gap-2 rounded-lg bg-violet-600 px-3 py-2 text-sm font-medium text-white transition-colors hover:bg-violet-500 disabled:cursor-not-allowed disabled:opacity-50"
+                                >
+                                  {guidedStarting === 'usage' ? <Loader2 className="h-4 w-4 animate-spin" /> : <Gauge className="h-4 w-4" />}
+                                  Check usage
+                                </button>
+                              )}
+                              <button
+                                type="button"
+                                onClick={() => void startGuidedSetup('inspect')}
+                                disabled={guidedStarting !== null || guidedSession?.status === 'running'}
+                                className="inline-flex items-center gap-2 rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm font-medium text-gray-700 transition-colors hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-200 dark:hover:bg-gray-700"
+                              >
+                                {guidedStarting === 'inspect' ? <Loader2 className="h-4 w-4 animate-spin" /> : <Terminal className="h-4 w-4" />}
+                                {PROVIDER_INSPECTION[selectedProvider.id].label}
+                              </button>
+                            </div>
                           )}
                           {PROVIDER_INSPECTION[selectedProvider.id] && !canRunGuidedSetup && (
                             <p className="mt-2 text-xs text-gray-500 dark:text-gray-400">Only an administrator can open the shared server account view.</p>

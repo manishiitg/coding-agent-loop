@@ -125,7 +125,7 @@ export interface GetModelMetadataResponse {
   models: ModelMetadata[]
 }
 
-export type ProviderSetupAction = 'authenticate' | 'inspect'
+export type ProviderSetupAction = 'authenticate' | 'inspect' | 'usage'
 
 export interface ProviderSetupSession {
   id: string

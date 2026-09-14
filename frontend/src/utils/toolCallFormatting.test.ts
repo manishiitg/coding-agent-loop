@@ -119,6 +119,22 @@ describe('formatToolCallResult', () => {
     })
   })
 
+  it('marks a Claude native Bash non-zero exit as an error', () => {
+    expect(formatToolCallResult('Exit code 1\nls: missing: No such file or directory')).toEqual({
+      format: 'text',
+      text: 'Exit code 1\nls: missing: No such file or directory',
+      isError: true,
+    })
+  })
+
+  it('keeps a Claude native Bash zero exit successful', () => {
+    expect(formatToolCallResult('Exit code 0\nfile.txt')).toEqual({
+      format: 'text',
+      text: 'Exit code 0\nfile.txt',
+      isError: false,
+    })
+  })
+
   it('marks a non-zero nested shell exit as an error and preserves stderr', () => {
     const result = JSON.stringify({
       content: [{

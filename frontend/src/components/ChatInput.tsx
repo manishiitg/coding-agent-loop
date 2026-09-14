@@ -407,10 +407,12 @@ const MainAgentRuntimeStatusIndicator = React.memo(function MainAgentRuntimeStat
   state,
   label,
   activityLabel,
+  showRunningSpinner = true,
 }: {
   state: 'running' | 'waiting' | 'ready'
   label: string
   activityLabel: string
+  showRunningSpinner?: boolean
 }) {
   return (
     <Tooltip>
@@ -420,7 +422,7 @@ const MainAgentRuntimeStatusIndicator = React.memo(function MainAgentRuntimeStat
           role="status"
           aria-label={`${label} — ${state}`}
         >
-          {state === 'running' ? (
+          {state === 'running' && showRunningSpinner ? (
             <Loader2 className="h-3 w-3 shrink-0 animate-spin text-lime-300" aria-hidden="true" />
           ) : state === 'waiting' ? (
             <span className="h-2 w-2 shrink-0 rounded-full bg-amber-400" aria-hidden="true" />
@@ -3446,6 +3448,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
                     state={mainAgentRuntimeStatus.state}
                     label={mainAgentRuntimeStatus.label}
                     activityLabel={mainAgentRuntimeStatus.activityLabel}
+                    showRunningSpinner={!showCompactRuntimeLoading}
                   />
                 )}
                 {chatInputStatusLine && (

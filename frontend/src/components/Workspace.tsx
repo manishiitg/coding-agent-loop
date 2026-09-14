@@ -1,6 +1,6 @@
 import { useEffect, useCallback, useRef, useMemo, useState } from 'react'
 import { useShallow } from 'zustand/react/shallow'
-import { Plus, Upload, FolderPlus, ChevronDown, CheckSquare, X, Trash2, PanelRightClose, Loader2 } from 'lucide-react'
+import { Plus, Upload, FolderPlus, ChevronDown, CheckSquare, X, Trash2, PanelRightClose, Loader2, Eye, EyeOff } from 'lucide-react'
 import { agentApi, workspaceApi } from '../services/api'
 import type { PlannerFile } from '../services/api-types'
 import PlannerFileList from './workspace/PlannerFileList'
@@ -24,6 +24,7 @@ import {
   collectFolderPaths,
   EXPAND_FIRST_LEVEL_FOLDERS_BY_DEFAULT,
   getInitialExpandedWorkspaceFolders,
+  hideManagedWorkspaceRootEntries,
   restoreExpandedFolders,
   getOriginalPath,
   isPathWithinFolder,
@@ -46,6 +47,8 @@ interface WorkspaceProps {
   hideRootActions?: boolean
   /** Opt in to opening direct child folders when the workspace is first shown. */
   expandFirstLevelFolders?: boolean
+  /** Hide platform-owned root files/folders until the user reveals them. */
+  hideManagedEntriesByDefault?: boolean
   title?: string
 }
 
@@ -102,6 +105,7 @@ export default function Workspace({
   hideAddToChat = false,
   hideRootActions = false,
   expandFirstLevelFolders = EXPAND_FIRST_LEVEL_FOLDERS_BY_DEFAULT,
+  hideManagedEntriesByDefault = false,
   title = 'Workspace',
 }: WorkspaceProps) {
   // Get mode-specific file context and handlers
@@ -175,6 +179,7 @@ export default function Workspace({
 
   // Server refresh search state (re-fetch file tree when local search finds nothing)
   const [serverSearchLoading, setServerSearchLoading] = useState(false)
+  const [showHiddenFiles, setShowHiddenFiles] = useState(false)
 
   // Multi-file upload state
   const [pendingFiles, setPendingFiles] = useState<File[]>([])
@@ -403,11 +408,12 @@ export default function Workspace({
   // This matches the logic in filteredFiles useMemo to ensure paths are consistent
   const applyFilteringAndPathAdjustment = useCallback((filesToProcess: PlannerFile[]): PlannerFile[] => {
     let result = filesToProcess
+    const scopedHiddenRootFolders = hideManagedEntriesByDefault && showHiddenFiles ? [] : hiddenRootFolders
 
     // Only filter if we're in workflow mode and have a workflow folder path
     // When in multi-agent mode, show all files regardless of preset
     if (scopedWorkspacePath) {
-      result = scopeFilesToWorkspace(result, scopedWorkspacePath, hiddenRootFolders)
+      result = scopeFilesToWorkspace(result, scopedWorkspacePath, scopedHiddenRootFolders)
     } else if (selectedModeCategory === 'workflow' && effectiveWorkflowFolderPath) {
       // Files are already scoped to the workflow folder by the API (folder param)
       // Just adjust filepaths to show workflow folder as root
@@ -428,7 +434,7 @@ export default function Workspace({
     }
 
     return result
-  }, [scopedWorkspacePath, hiddenRootFolders, selectedModeCategory, effectiveWorkflowFolderPath, currentUserFolder])
+  }, [scopedWorkspacePath, hiddenRootFolders, selectedModeCategory, effectiveWorkflowFolderPath, currentUserFolder, hideManagedEntriesByDefault, showHiddenFiles])
 
   // Fetch capabilities on mount
   useEffect(() => {
@@ -630,11 +636,12 @@ export default function Workspace({
   // Get filtered files - first filter to workflow folder if preset is active, then apply search
   const filteredFiles = useMemo(() => {
     let result = files
+    const scopedHiddenRootFolders = hideManagedEntriesByDefault && showHiddenFiles ? [] : hiddenRootFolders
 
     // Only filter if we're in workflow mode and have a workflow folder path
     // When in multi-agent mode, show all files regardless of preset
     if (scopedWorkspacePath) {
-      result = scopeFilesToWorkspace(result, scopedWorkspacePath, hiddenRootFolders)
+      result = scopeFilesToWorkspace(result, scopedWorkspacePath, scopedHiddenRootFolders)
     } else if (selectedModeCategory === 'workflow' && effectiveWorkflowFolderPath) {
       // The API returns the workflow folder itself AND its children as flat top-level siblings.
       // e.g., [Workflow/codeanalysis, Workflow/codeanalysis/knowledgebase, Workflow/codeanalysis/learnings, ...]
@@ -687,11 +694,15 @@ export default function Workspace({
       })
     }
 
+    if (hideManagedEntriesByDefault && !showHiddenFiles) {
+      result = hideManagedWorkspaceRootEntries(result, hiddenRootFolders)
+    }
+
     // Apply search filter
     result = filterFiles(result, searchQuery)
 
     return result
-  }, [files, scopedWorkspacePath, hiddenRootFolders, effectiveWorkflowFolderPath, searchQuery, selectedModeCategory, effectiveDisplayedIteration, currentUserFolder, pruneRunsToIteration])
+  }, [files, scopedWorkspacePath, hiddenRootFolders, effectiveWorkflowFolderPath, searchQuery, selectedModeCategory, effectiveDisplayedIteration, currentUserFolder, pruneRunsToIteration, hideManagedEntriesByDefault, showHiddenFiles])
 
   // Reveal search matches by opening the folders on their path, without permanently
   // forcing every folder open: only newly-matched folders get expanded, so a folder
@@ -2072,6 +2083,27 @@ export default function Workspace({
                   </TooltipTrigger>
                   <TooltipContent>
                     <p>Refresh files</p>
+                  </TooltipContent>
+                </Tooltip>
+              )}
+
+              {hideManagedEntriesByDefault && !isSelectionMode && (
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <button
+                      type="button"
+                      onClick={() => setShowHiddenFiles(current => !current)}
+                      aria-pressed={showHiddenFiles}
+                      aria-label={showHiddenFiles ? 'Hide internal files' : 'Show hidden files'}
+                      className={`p-2 transition-colors ${showHiddenFiles
+                        ? 'text-blue-600 dark:text-blue-400'
+                        : 'text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200'}`}
+                    >
+                      {showHiddenFiles ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                    </button>
+                  </TooltipTrigger>
+                  <TooltipContent>
+                    <p>{showHiddenFiles ? 'Hide internal files' : 'Show hidden files'}</p>
                   </TooltipContent>
                 </Tooltip>
               )}

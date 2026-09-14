@@ -67,6 +67,11 @@ func startGmailOAuthHandler(api *StreamingAPI) http.HandlerFunc {
 			http.Error(w, fmt.Sprintf("gmail connection %q not found", id), http.StatusNotFound)
 			return
 		}
+		conn, err := svc.EnsureConnectionOAuthClient(r.Context(), id)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
 
 		redirectURI := gmailOAuthRedirectURI(r)
 		extraScopes := services.GoogleServiceScopeURIs(conn.Services)

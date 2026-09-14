@@ -21,8 +21,9 @@ import { WorkWorkspacePane, WorkWorkspaceToolbar, type WorkWorkspaceView } from 
 import { usePointerDrag } from '../../hooks/usePointerDrag'
 import { WorkspaceSplitCollapseControls, WorkspaceSplitDivider } from '../../components/workspace/WorkspaceSplitDivider'
 import { WorkspaceTopToolbar } from '../../components/workspace/WorkspaceTopToolbar'
-import { loadAgentProfileUIPanels } from '../../utils/agentProfileCapabilities'
-import { belongsToWorkProject, markWorkProjectRuntimeDirty, setWorkProjectRuntimeSelection, visibleWorkProjectTabs, type ProductEngineSelectionDetail, type WorkRuntimeSelection } from './workTabs'
+import { loadAgentProfileInteractionKinds, loadAgentProfileUIPanels } from '../../utils/agentProfileCapabilities'
+import { parseProductInteraction } from '../../../shared/session/interactions'
+import { belongsToWorkProject, markWorkProjectRuntimeDirty, preferredWorkProjectTabId, setWorkProjectRuntimeSelection, visibleWorkProjectTabs, type ProductEngineSelectionDetail, type WorkRuntimeSelection } from './workTabs'
 import { updateProductProjectLLMConfig, updateProductProjectSelections } from '../../platform/chat/productProjects'
 import { CreateWorkProjectDialog } from './CreateWorkProjectDialog'
 
@@ -238,12 +239,12 @@ function useWorkChatTabs(
         chatStore.setTabConfig(builder.tabId, { selectedServers: savedServers, selectedSkills: savedSkills })
         chatStore.setTabMetadata(builder.tabId, { agentProfileMCPSelectionInitialized: true })
 
-        const currentlySelected = chatStore.activeTabId
-          ? chatStore.chatTabs[chatStore.activeTabId]
-          : undefined
-        if (!currentlySelected || !belongsToWorkProject(currentlySelected, session.id)) {
-          activateTab(chats[0]?.tabId ?? builder.tabId)
-        }
+        const preferredTabId = preferredWorkProjectTabId(
+          chatStore.chatTabs,
+          session.id,
+          chatStore.activeTabId,
+        )
+        if (preferredTabId && preferredTabId !== chatStore.activeTabId) activateTab(preferredTabId)
         if (!savedRuntime && legacyRuntime) {
           await onLegacyRuntimeDiscovered(legacyRuntime)
         }
@@ -257,7 +258,10 @@ function useWorkChatTabs(
   }, [onLegacyRuntimeDiscovered, session])
 
   const projectTabs = session ? visibleWorkProjectTabs(chatTabs, session.id, activeTabId) : []
-  const activeProjectTab = projectTabs.find(tab => tab.tabId === activeTabId) ?? projectTabs[0]
+  const preferredTabId = session
+    ? preferredWorkProjectTabId(chatTabs, session.id, activeTabId)
+    : null
+  const activeProjectTab = projectTabs.find(tab => tab.tabId === preferredTabId) ?? projectTabs[0]
 
   return { tabId: ready ? activeProjectTab?.tabId ?? null : null, tabs: projectTabs, error }
 }
@@ -355,14 +359,36 @@ function WorkTopBarControl({
 
 export function WorkSurface() {
   const { sessions, selected, select, create, updateLLMConfig, updateSelections, refresh, loading: sessionsLoading, error: sessionsError } = useWorkSessions()
+  const workflowContextSignature = selected?.workflowContextPaths.join('\u0000') || ''
   const persistLegacyRuntime = useCallback(async (selection: WorkRuntimeSelection) => {
     if (!selected) return
     await updateLLMConfig(selected.id, selection)
   }, [selected, updateLLMConfig])
   const { tabId, tabs, error: chatError } = useWorkChatTabs(selected, persistLegacyRuntime)
+
+  // A browser reload loses transient tab metadata while the durable references
+  // remain in product.json. Force the first follow-up through the full profile
+  // route so an old retained CLI cannot bypass the current read-only grants.
+  useEffect(() => {
+    if (selected?.id && workflowContextSignature) markWorkProjectRuntimeDirty(selected.id)
+  }, [selected?.id, workflowContextSignature])
+  const [projectRefreshInteractionKinds, setProjectRefreshInteractionKinds] = useState<Set<string>>(() => new Set())
+  useEffect(() => {
+    let cancelled = false
+    void loadAgentProfileInteractionKinds(WORK_PROFILE_ID, 'product.refresh', WORK_PROFILE_VERSION).then(kinds => {
+      if (cancelled) return
+      setProjectRefreshInteractionKinds(kinds)
+    })
+    return () => { cancelled = true }
+  }, [])
   const projectConfigRefreshToken = useChatStore(state => tabs
     .flatMap(tab => tab.sessionId ? state.tabEvents[tab.sessionId] || [] : [])
-    .filter(event => event.type === 'work_identity_updated' || event.type === 'work_workflow_references_updated')
+    .filter(event => {
+      const interaction = parseProductInteraction(event)
+      return (interaction?.product === 'work' && projectRefreshInteractionKinds.has(interaction.kind)) ||
+        // Backward compatibility for events persisted before typed product interactions.
+        event.type === 'work_identity_updated' || event.type === 'work_workflow_references_updated'
+    })
     .map(event => event.id || event.timestamp || '')
     .join('|'))
   const handledProjectConfigRefreshToken = useRef('')
@@ -370,9 +396,8 @@ export function WorkSurface() {
   useEffect(() => {
     if (!projectConfigRefreshToken || projectConfigRefreshToken === handledProjectConfigRefreshToken.current) return
     handledProjectConfigRefreshToken.current = projectConfigRefreshToken
-    if (selected?.id) markWorkProjectRuntimeDirty(selected.id)
     void refresh()
-  }, [projectConfigRefreshToken, refresh, selected?.id])
+  }, [projectConfigRefreshToken, refresh])
   const [creating, setCreating] = useState(false)
   const [createOpen, setCreateOpen] = useState(false)
   const [chatOpen, setChatOpen] = useState(true)

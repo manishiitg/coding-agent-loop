@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http/httptest"
 	"os"
@@ -10,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/manishiitg/coding-agent-loop/agent_go/internal/workproduct"
+	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/common"
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/workflowtypes"
 )
 
@@ -263,12 +265,68 @@ func TestWorkFolderStoreSerializesConcurrentUpdates(t *testing.T) {
 
 func TestRegisterWorkFolderToolsUsesSharedGrantLifecycle(t *testing.T) {
 	registrar := &recordingRegistrar{}
-	if err := (&StreamingAPI{}).registerWorkFolderTools(registrar, "alice"); err != nil {
+	if err := (&StreamingAPI{}).registerWorkFolderTools(registrar, "alice", "work-folder-test-session"); err != nil {
 		t.Fatal(err)
 	}
 	for _, name := range []string{"list_work_folders", "attach_work_folder", "detach_work_folder"} {
 		if _, ok := registrar.tools[name]; !ok {
 			t.Fatalf("Work folder tool %q was not registered", name)
 		}
+	}
+}
+
+func TestWorkFolderToolsRefreshLiveGuardAndAliasEnvironment(t *testing.T) {
+	root := t.TempDir()
+	folder := filepath.Join(root, "finance")
+	if err := os.Mkdir(folder, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	withWorkFolderAccessFile(t, fmt.Sprintf(`{"assignments":{"alice":{"roots":[%q]}},"grants":{"alice":[]}}`, root))
+
+	const sessionID = "work-folder-live-refresh"
+	defer common.ClearSessionShellConfig(sessionID)
+	common.SetSessionFolderGuard(sessionID, []string{"project"}, []string{"project"})
+	common.SetSessionShellEnv(sessionID, map[string]string{"DB_PATH": "/db", "WORK_FOLDER_STALE": "/stale"})
+
+	registrar := &recordingRegistrar{}
+	if err := (&StreamingAPI{}).registerWorkFolderTools(registrar, "alice", sessionID); err != nil {
+		t.Fatal(err)
+	}
+	result, err := registrar.tools["attach_work_folder"].exec(context.Background(), map[string]interface{}{
+		"path": folder, "alias": "finance", "access": "read_only",
+	})
+	if err != nil {
+		t.Fatalf("attach failed: %v", err)
+	}
+	var attached struct {
+		Folder workflowtypes.WorkflowFolderGrant `json:"folder"`
+	}
+	if err := json.Unmarshal([]byte(result), &attached); err != nil {
+		t.Fatalf("decode attach result: %v", err)
+	}
+	cfg := common.GetSessionShellConfig(sessionID)
+	canonicalFolder := attached.Folder.Path
+	if !containsString(cfg.ReadPaths, canonicalFolder) || !containsString(cfg.BlockedWritePaths, canonicalFolder) {
+		t.Fatalf("read-only folder missing from live guard: %#v", cfg)
+	}
+	if cfg.Env["WORK_FOLDER_FINANCE"] != canonicalFolder {
+		t.Fatalf("live alias env = %#v, want WORK_FOLDER_FINANCE=%q", cfg.Env, canonicalFolder)
+	}
+	if _, exists := cfg.Env["WORK_FOLDER_STALE"]; exists {
+		t.Fatal("stale Work folder alias survived live refresh")
+	}
+	if cfg.Env["DB_PATH"] != "/db" {
+		t.Fatal("live folder refresh removed an unrelated environment variable")
+	}
+
+	if _, err := registrar.tools["detach_work_folder"].exec(context.Background(), map[string]interface{}{"id": attached.Folder.ID}); err != nil {
+		t.Fatalf("detach failed: %v", err)
+	}
+	cfg = common.GetSessionShellConfig(sessionID)
+	if containsString(cfg.ReadPaths, canonicalFolder) || containsString(cfg.BlockedWritePaths, canonicalFolder) {
+		t.Fatalf("detached folder remained in live guard: %#v", cfg)
+	}
+	if _, exists := cfg.Env["WORK_FOLDER_FINANCE"]; exists {
+		t.Fatal("detached folder alias remained in live environment")
 	}
 }

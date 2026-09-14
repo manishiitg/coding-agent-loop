@@ -7,6 +7,7 @@ func TestIsAllowedShellExtraEnvKey(t *testing.T) {
 		"MCP_API_URL",
 		"SECRET_TOKEN",
 		"WORKFLOW_FOLDER_RTS_SOURCE",
+		"WORK_FOLDER_FINANCE",
 		"VAR_GROUP_NAME",
 		"STEP_OUTPUT_DIR",
 		"SCRIPT_VERBOSE",

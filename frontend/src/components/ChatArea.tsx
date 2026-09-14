@@ -48,6 +48,7 @@ import {
   createUserMessageEvent,
   validateExecutionGroups,
   isChatCompatiblePhase,
+  remainingWorkflowContextAfterSubmission,
 } from '../utils/chatSubmitHelpers'
 import { shouldKeepWorkflowSessionSubscribed } from '../utils/workflowSessionSubscription'
 import { activateTab } from '../utils/activateTab'
@@ -492,8 +493,9 @@ interface ChatAreaProps {
   showConversationUsage?: boolean
   // Product deployments with one fixed runtime can omit a redundant badge.
   hideRuntimeStatus?: boolean
-  // Show AgentWorks' compact running spinner beside the microphone without a
-  // provider/model label. Work uses this because model selection lives in Setup.
+  // Show AgentWorks' compact running spinner beside the microphone. When this
+  // is enabled the model badge stays a stable status dot, so the composer never
+  // renders two activity spinners for the same turn.
   showCompactRuntimeLoading?: boolean
   // Work reuses AgentWorks' queued-message UI and exposes an explicit Steer
   // action even though the underlying provider is a coding CLI.
@@ -2630,6 +2632,7 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
 
     // Get fresh tab state from store to avoid stale closure issues
     let freshActiveTab = submissionTab?.tabId ? chatStore.chatTabs[submissionTab.tabId] : submissionTab
+    const oneShotWorkflowContextSourceTabId = freshActiveTab?.tabId
 
     // Early validation
     if (!trimmedQuery) {
@@ -2684,6 +2687,24 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
     if (!resolved) return false
     let { tab: currentTab, sessionId: tabSessionId } = resolved
     chatSubmissionLane.link(currentTab.tabId, tabSessionId)
+
+    // Capture # references before constructing the request. They are consumed
+    // only after the backend accepts this message; failed submissions retain
+    // them for retry. A blank Builder may have copied them into a new chat, so
+    // clear the accepted references from both tabs without removing anything
+    // the user attached while this request was starting.
+    const submittedWorkflowContext = [...(currentTab.config?.workflowContext ?? [])]
+    const consumeSubmittedWorkflowContext = () => {
+      if (submittedWorkflowContext.length === 0) return
+      const ownerTabIds = new Set([currentTab.tabId, oneShotWorkflowContextSourceTabId].filter((id): id is string => Boolean(id)))
+      for (const ownerTabId of ownerTabIds) {
+        const latest = useChatStore.getState().getTabConfig(ownerTabId)?.workflowContext ?? []
+        const remaining = remainingWorkflowContextAfterSubmission(latest, submittedWorkflowContext)
+        if (remaining.length !== latest.length) {
+          useChatStore.getState().setTabConfig(ownerTabId, { workflowContext: remaining })
+        }
+      }
+    }
 
     const hasOneShotContext = Boolean(
       currentTab.config?.restoredConversationPath?.trim() ||
@@ -3126,6 +3147,8 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
           return false
         }
 
+        consumeSubmittedWorkflowContext()
+
         console.log('[WF_DEBUG] 3. Before updateTabSessionId', { old: tabSessionId, new: responseSessionId, changed: responseSessionId !== tabSessionId, oldEvents: chatStore.getTabEvents(tabSessionId).length, newEvents: chatStore.getTabEvents(responseSessionId).length })
         chatStore.setSessionId(responseSessionId)
         chatStore.updateTabSessionId(currentTab.tabId, responseSessionId)
@@ -3175,6 +3198,7 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
         // clears the spinner. Do NOT resetStreamingState here (that would stop the
         // spinner mid-turn).
         const sid = response.session_id || tabSessionId
+        consumeSubmittedWorkflowContext()
         chatStore.setTabStreaming(currentTab.tabId, true)
         chatStore.setTabCompleted(currentTab.tabId, false)
         if (sid && shouldRefreshSessionEventStream(

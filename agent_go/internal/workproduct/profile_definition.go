@@ -11,6 +11,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/agentprofiles"
+	orchestratorevents "github.com/manishiitg/coding-agent-loop/agent_go/pkg/orchestrator/events"
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/workspace"
 )
 
@@ -33,6 +34,7 @@ var registerProductSkillsErr error
 
 var productSkills = []agentprofiles.SkillFileBinding{
 	{Name: "work-integrations", Description: "Connect and manage Work MCP servers, secrets, browser access, models, and administrator-authorized server folders.", Path: "skills/work-integrations/SKILL.md"},
+	{Name: "work-workflow-files", Description: "Read and interpret attached folders and read-only AgentWorks workflow references in Work.", Path: "skills/work-workflow-files/SKILL.md"},
 	{Name: "work-skills", Description: "Discover, install, import, create, select, and remove reusable skills in Work.", Path: "skills/work-skills/SKILL.md"},
 	{Name: "work-schedules-and-bots", Description: "Manage Work's message-only schedules, authenticated webhook triggers, and Slack or WhatsApp project-chat bots.", Path: "skills/work-schedules-and-bots/SKILL.md"},
 	{Name: "work-dashboard", Description: "Create and maintain a general-purpose visual dashboard for a Work project.", Path: "skills/work-dashboard/SKILL.md"},
@@ -124,6 +126,24 @@ func workIdentityFactory(workspaceAPIURL string) agentprofiles.ToolFactory {
 			workspace.WithExtraEnv(map[string]string{"MCP_SESSION_ID": runtime.SessionID}),
 		)
 		manifestPath := path.Join(runtime.WorkspacePath, "product.json")
+		emitIdentityUpdated := func(operation string) {
+			if runtime.Emit == nil {
+				return
+			}
+			kind := "identity_updated"
+			if runtime.Interaction != nil && strings.TrimSpace(runtime.Interaction.Kind) != "" {
+				kind = strings.TrimSpace(runtime.Interaction.Kind)
+			}
+			product := strings.TrimSpace(runtime.Product)
+			if product == "" {
+				product = "work"
+			}
+			runtime.Emit(&orchestratorevents.ProductInteractionEvent{
+				Product: product,
+				Kind:    kind,
+				Payload: map[string]interface{}{"operation": operation},
+			})
+		}
 		return agentprofiles.ToolSpec{
 			Name:     "set_work_identity",
 			Category: "work_identity",
@@ -195,17 +215,13 @@ func workIdentityFactory(workspaceAPIURL string) agentprofiles.ToolFactory {
 					return "", fmt.Errorf("save Work identity: %w", err)
 				}
 				if operation == "clear" {
-					if runtime.Emit != nil {
-						runtime.Emit(map[string]interface{}{"type": "work_identity_updated"})
-					}
+					emitIdentityUpdated(operation)
 					return "The project agent identity was removed. Use the base Work identity from now on.", nil
 				}
 				var saved workIdentity
 				encodedIdentity, _ := json.Marshal(manifest["identity"])
 				_ = json.Unmarshal(encodedIdentity, &saved)
-				if runtime.Emit != nil {
-					runtime.Emit(map[string]interface{}{"type": "work_identity_updated"})
-				}
+				emitIdentityUpdated(operation)
 				return "The project bot identity is saved. Adopt it immediately in this chat. It will be included automatically in generated provider project instructions on future provider sessions.\n\n" + renderWorkIdentity(saved), nil
 			},
 		}, nil

@@ -66,6 +66,41 @@ func newProductToolGate(resolved *resolvedAgentProfile) *productToolGate {
 // enforcing reports whether the gate filters. False means observe mode.
 func (g *productToolGate) enforcing() bool { return g != nil && g.allowed != nil }
 
+// Declare admits the public name produced by a tool binding in profile.tools.
+//
+// A binding names its registered factory (for example "work.set-identity"),
+// while the factory owns the public tool name exposed to the model (for
+// example "set_work_identity"). Requiring that second name to also be copied
+// into tool_policy.enabled creates two sources of truth and lets them drift.
+// The binding is already an explicit product capability declaration, so once
+// its registered factory has resolved successfully, its public name belongs
+// to the same effective allowlist as feature-projected tools.
+func (g *productToolGate) Declare(name string) {
+	if g == nil {
+		return
+	}
+	trimmed := strings.TrimSpace(name)
+	if trimmed == "" {
+		return
+	}
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if g.allowed == nil {
+		return
+	}
+	g.allowed[trimmed] = struct{}{}
+	// If another registration path attempted this public name before its
+	// profile binding was built, the final diagnostic should reflect the
+	// effective surface rather than retain a stale filtered entry.
+	kept := g.filtered[:0]
+	for _, filtered := range g.filtered {
+		if strings.TrimSpace(filtered) != trimmed {
+			kept = append(kept, filtered)
+		}
+	}
+	g.filtered = kept
+}
+
 // Admit is the hook handed to the agent wrapper. It is called while the wrapper
 // holds its own lock, so it must never call back into the wrapper.
 func (g *productToolGate) Admit(name string) bool {

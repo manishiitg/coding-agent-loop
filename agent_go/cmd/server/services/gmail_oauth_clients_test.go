@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -178,6 +179,34 @@ func TestImportLegacyOAuthClientWithNoConnectionsToBackfill(t *testing.T) {
 	}
 	if !OAuthClientExists("legacy") {
 		t.Error("expected the imported client to be registered")
+	}
+}
+
+func TestImportLegacyOAuthClientDerivesStableNameForReconnect(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", "")
+	t.Setenv("GMAIL_CLIENT_SECRET_FILE", "")
+	t.Setenv("GOOGLE_WORKSPACE_CLI_CLIENT_ID", "")
+	t.Setenv("GOOGLE_WORKSPACE_CLI_CLIENT_SECRET", "")
+	t.Setenv("GMAIL_OAUTH_CLIENTS_DIR", t.TempDir())
+	isolateGogClientStore(t)
+	writeClientSecretFile(t, filepath.Join(home, ".config", "gws", "client_secret.json"), "legacy-id", "legacy-secret")
+
+	g := &GmailService{}
+	first, _, err := g.ImportLegacyOAuthClient(context.Background(), "")
+	if err != nil {
+		t.Fatalf("automatic legacy import: %v", err)
+	}
+	if !strings.HasPrefix(first.Name, "legacy-") {
+		t.Fatalf("automatic legacy client name = %q", first.Name)
+	}
+	second, _, err := g.ImportLegacyOAuthClient(context.Background(), "")
+	if err != nil {
+		t.Fatalf("idempotent automatic legacy import: %v", err)
+	}
+	if second.Name != first.Name || second.ClientID != first.ClientID {
+		t.Fatalf("automatic legacy import drifted: first=%+v second=%+v", first, second)
 	}
 }
 

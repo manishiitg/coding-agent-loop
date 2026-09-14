@@ -4928,7 +4928,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			cliWritePaths = append(cliWritePaths, chatWorkingDir)
 		}
 		if resolvedProfile != nil && resolvedProfile.Definition.ID == "work" {
-			grantRead, grantWrite, _ := workFolderGuardInputs(r.Context())
+			grantRead, grantWrite, _, _ := workFolderGuardInputs(r.Context())
 			cliReadPaths = appendUniqueStrings(cliReadPaths, grantRead...)
 			cliWritePaths = appendUniqueStrings(cliWritePaths, grantWrite...)
 		}
@@ -5283,13 +5283,15 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 					profileReadOnly := agentProfileReadOnlyFolders(sandbox, workflowReadOnlyFolders)
 					chatHistoryGrants := agentProfileChatHistoryGrants(sandbox, perUserChatHistory)
 					workGrantWrite := []string(nil)
+					workGrantReadOnly := []string(nil)
 					if resolvedProfile.Definition.ID == "work" {
 						// Owner-attached external folders: readable always,
 						// writable for read_write grants, exposed to tools
 						// as WORK_FOLDER_<ALIAS> session env.
-						grantRead, grantWrite, grantEnv := workFolderGuardInputs(r.Context())
+						grantRead, grantWrite, grantReadOnly, grantEnv := workFolderGuardInputs(r.Context())
 						profileReadOnly = append(profileReadOnly, grantRead...)
 						workGrantWrite = grantWrite
+						workGrantReadOnly = grantReadOnly
 						if len(grantEnv) > 0 {
 							common.SetSessionShellEnv(sessionID, grantEnv)
 						}
@@ -5302,6 +5304,9 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 						append(append([]string{profileWrite}, chatHistoryGrants...), profileReadOnly...),
 						append(append([]string{profileWrite}, chatHistoryGrants...), workGrantWrite...),
 					)
+					if len(workGrantReadOnly) > 0 {
+						workspace.SetSessionFolderGuardBlockedWritePaths(sessionID, workGrantReadOnly)
+					}
 					if resolvedProfile.Definition.ID == "work" {
 						// Work uses the shared managed database boundary: migrations and
 						// row tools are allowed, while raw SQLite/WAL/SHM access is denied.
@@ -5384,6 +5389,11 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				todo_creation_human.RefreshWorkflowFolderAccessSession(sessionID, workflowPhaseFolder)
 				log.Printf("[WORKFLOW PHASE FOLDER GUARD] Applied workflow folder restriction (workflow writes: %v, chats read-only: %s, read-only: %v, blocked-write: %v)", writePaths, perUserChatsWrite, workflowReadOnlyFolders, fileContextBlockedWriteFolders)
 			}
+
+			// Coding-agent adapters project system instructions, selected skills,
+			// MCP config and provider metadata into the working directory. Keep
+			// those readable for the CLI but outside the agent's write authority.
+			protectManagedCodingAgentProjectionWrites(sessionID, chatWorkingFolder)
 
 			// Report the selected filesystem skills, not a restriction. Every
 			// branch above grants "skills/" wholesale, and this list is used
@@ -5588,7 +5598,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			}
 			log.Printf("[CUSTOM TOOLS] Registered %d custom tools with agent", registeredCount)
 
-			if err := api.registerAgentProfileTools(llmAgent, resolvedProfile, currentUserID, sessionID, req.SelectedFolder); err != nil {
+			if err := api.registerAgentProfileTools(llmAgent, toolGate, resolvedProfile, currentUserID, sessionID, req.SelectedFolder); err != nil {
 				logfWithContext(queryLogCtx, "[AGENT PROFILE] Failed to register tools: %v", err)
 				sendError(fmt.Sprintf("Failed to register agent profile tools: %v", err), true)
 				return
@@ -5631,9 +5641,13 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				}
 				logfWithContext(queryLogCtx, "[LLM TOOLS] Registered multi-agent LLM tools")
 
+				skillProductID := ""
+				if resolvedProfile != nil {
+					skillProductID = resolvedProfile.Definition.ID
+				}
 				if err := api.registerMultiAgentSkillTools(llmAgent, func(toolName string) bool {
 					return profileDisablesVirtualTool(resolvedProfile, toolName)
-				}); err != nil {
+				}, skillProductID); err != nil {
 					logfWithContext(queryLogCtx, "[SKILL TOOLS] Failed to register multi-agent skill tools: %v", err)
 					sendError(fmt.Sprintf("Failed to register multi-agent skill tools: %v", err), true)
 					return
@@ -5765,8 +5779,8 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				// read_skill can also serve a skill installed in this workspace
 				// but not attached, so a router skill names the specialists and
 				// the agent asks by name instead of shelling out to a path.
-				if underlying := llmAgent.GetUnderlyingAgent(); underlying != nil {
-					underlying.SetInstalledSkillResolver(installedSkillResolver(req.SelectedFolder))
+				if err := llmAgent.SetInstalledSkillResolver(installedSkillResolver(req.SelectedFolder)); err != nil {
+					logfWithContext(queryLogCtx, "[SKILLS] Failed to configure installed-skill resolver: %v", err)
 				}
 				if attached := skills.LoadAttachableIn(getWorkspaceAPIURL(), req.SelectedFolder, identitySkillNames); len(attached) > 0 {
 					attachedNames := make([]string, 0, len(attached))
@@ -10322,6 +10336,17 @@ func (api *StreamingAPI) buildSchedulerCallbacks() *todo_creation_human.Schedule
 // buildSkillCallbacks creates SkillCallbacks that bridge the workshop tools
 // to the workspace skills API. Returns nil-safe callbacks.
 func (api *StreamingAPI) buildSkillCallbacks() *todo_creation_human.SkillCallbacks {
+	return api.buildSkillCallbacksForProduct("")
+}
+
+func skillSelectionHint(productID, skillNames string) string {
+	if strings.EqualFold(strings.TrimSpace(productID), "work") {
+		return fmt.Sprintf("%s can be loaded immediately with read_skill. To attach it automatically on future Work turns, select it in Setup > Skills; Work persists that selection in product.json.", skillNames)
+	}
+	return fmt.Sprintf("Use update_workflow_config to add %s to the workflow's selected skills.", skillNames)
+}
+
+func (api *StreamingAPI) buildSkillCallbacksForProduct(productID string) *todo_creation_human.SkillCallbacks {
 	wsURL := getWorkspaceAPIURL() // workspace container URL, not backend URL
 	return &todo_creation_human.SkillCallbacks{
 		ListSkills: func(ctx context.Context) (string, error) {
@@ -10355,7 +10380,7 @@ func (api *StreamingAPI) buildSkillCallbacks() *todo_creation_human.SkillCallbac
 			if !resp.Success {
 				return fmt.Sprintf("Failed to import skill: %s", resp.Error), nil
 			}
-			return fmt.Sprintf("Successfully imported skill **%s**. Use update_workflow_config to add it to the workflow's selected skills.", resp.SkillName), nil
+			return fmt.Sprintf("Successfully imported skill **%s**. %s", resp.SkillName, skillSelectionHint(productID, "It")), nil
 		},
 		DeleteSkill: func(ctx context.Context, folderName string) error {
 			err := skills.DeleteSkill(wsURL, folderName)
@@ -10388,15 +10413,19 @@ func (api *StreamingAPI) buildSkillCallbacks() *todo_creation_human.SkillCallbac
 			if len(result.InstalledSkills) == 0 {
 				return "No skills were installed. Check the source format (e.g., 'owner/repo@skill-name').", nil
 			}
-			return fmt.Sprintf("Successfully installed: %s. Use update_workflow_config to add to workflow's selected skills.", strings.Join(result.InstalledSkills, ", ")), nil
+			return fmt.Sprintf("Successfully installed: %s. %s", strings.Join(result.InstalledSkills, ", "), skillSelectionHint(productID, "These skills")), nil
 		},
 	}
 }
 
 func (api *StreamingAPI) registerMultiAgentSkillTools(registrar interface {
 	RegisterCustomTool(string, string, map[string]interface{}, func(context.Context, map[string]interface{}) (string, error), string) error
-}, disabled func(string) bool) error {
-	skillFuncs := api.buildSkillCallbacks()
+}, disabled func(string) bool, productID ...string) error {
+	activeProductID := ""
+	if len(productID) > 0 {
+		activeProductID = productID[0]
+	}
+	skillFuncs := api.buildSkillCallbacksForProduct(activeProductID)
 	if skillFuncs == nil {
 		return fmt.Errorf("skill callbacks unavailable")
 	}

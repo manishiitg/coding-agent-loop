@@ -1,12 +1,31 @@
 package server
 
 import (
+	"context"
 	"reflect"
 	"testing"
+	"time"
 
 	"github.com/manishiitg/coding-agent-loop/agent_go/internal/videoproduct"
+	"github.com/manishiitg/coding-agent-loop/agent_go/internal/workproduct"
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/agentprofiles"
 )
+
+type gateRecordingRegistrar struct {
+	gate     *productToolGate
+	admitted []string
+}
+
+func (r *gateRecordingRegistrar) RegisterCustomTool(name, _ string, _ map[string]interface{}, _ func(context.Context, map[string]interface{}) (string, error), _ string) error {
+	if r.gate.Admit(name) {
+		r.admitted = append(r.admitted, name)
+	}
+	return nil
+}
+
+func (r *gateRecordingRegistrar) RegisterCustomToolWithTimeout(name, description string, parameters map[string]interface{}, execute func(context.Context, map[string]interface{}) (string, error), _ time.Duration, category string) error {
+	return r.RegisterCustomTool(name, description, parameters, execute, category)
+}
 
 func profileWithPolicy(id string, policy agentprofiles.ToolPolicy) *resolvedAgentProfile {
 	return &resolvedAgentProfile{Definition: agentprofiles.Profile{ID: id, ToolPolicy: policy}}
@@ -76,6 +95,55 @@ func TestProductToolGateAllowlistFiltersUnlistedTools(t *testing.T) {
 	// debuggable: a missing capability shows up here, not as agent confusion.
 	if !reflect.DeepEqual(filtered, []string{"image_gen"}) {
 		t.Fatalf("filtered = %v", filtered)
+	}
+}
+
+func TestProductToolGateAdmitsProfileDeclaredToolWithoutDuplicatedPolicyEntry(t *testing.T) {
+	gate := newProductToolGate(&resolvedAgentProfile{Definition: agentprofiles.Profile{
+		ID: "work",
+		Tools: []agentprofiles.ToolBinding{
+			{ID: "work.set-identity"},
+		},
+		ToolPolicy: agentprofiles.ToolPolicy{
+			Mode:    agentprofiles.ToolPolicyModeAllowlist,
+			Enabled: []string{"execute_shell_command"},
+		},
+	}})
+
+	// BuildTool resolves work.set-identity to this public name. Registration
+	// declares it to the gate before the wrapper's admission callback runs.
+	gate.Declare("set_work_identity")
+	if !gate.Admit("set_work_identity") {
+		t.Fatal("a tool explicitly declared by profile.tools was filtered")
+	}
+	if gate.Admit("unrelated_tool") {
+		t.Fatal("declaring a profile tool must not widen the rest of the allowlist")
+	}
+}
+
+func TestRegisterAgentProfileToolsDeclaresResolvedPublicNameToGate(t *testing.T) {
+	registry := agentprofiles.NewRegistry()
+	if err := workproduct.RegisterAgentProfileRuntime(registry, "http://127.0.0.1:0"); err != nil {
+		t.Fatalf("register Work profile runtime: %v", err)
+	}
+	profile := workproduct.BuiltinAgentProfile()
+	resolved := &resolvedAgentProfile{Definition: profile}
+	gate := newProductToolGate(resolved)
+	registrar := &gateRecordingRegistrar{gate: gate}
+	api := &StreamingAPI{agentProfiles: registry}
+
+	if err := api.registerAgentProfileTools(registrar, gate, resolved, "user-1", "session-1", "Chats/Work/projects/demo"); err != nil {
+		t.Fatalf("register profile tools: %v", err)
+	}
+	foundIdentity := false
+	for _, name := range registrar.admitted {
+		if name == "set_work_identity" {
+			foundIdentity = true
+			break
+		}
+	}
+	if !foundIdentity {
+		t.Fatalf("admitted profile tools = %v, missing set_work_identity", registrar.admitted)
 	}
 }
 

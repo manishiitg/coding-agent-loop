@@ -121,9 +121,9 @@ func ValidateGrantForUser(path, alias, access string, roots []string, isAdmin bo
 // WORK_FOLDER_<ALIAS> session env. Stored paths are trusted
 // (canonicalized at write time); use FolderGrantAvailable to report
 // liveness separately.
-func ResolveGrants(grants []FolderGrant) (read, write []string, env map[string]string) {
-	read, write, _, env = workflowtypes.ResolveFolderGrants(grants, "WORK_FOLDER_")
-	return read, write, env
+func ResolveGrants(grants []FolderGrant) (read, write, readOnly []string, env map[string]string) {
+	read, write, readOnly, env = workflowtypes.ResolveFolderGrants(grants, "WORK_FOLDER_")
+	return read, write, readOnly, env
 }
 
 // FolderGrantAvailable reports whether a stored grant path still resolves

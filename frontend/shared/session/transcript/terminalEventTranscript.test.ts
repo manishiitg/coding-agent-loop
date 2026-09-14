@@ -1286,4 +1286,10 @@ describe('product side-channel events', () => {
       data: { type: 'product_interaction', data: { product: 'sparkquill', kind: 'suggestions', payload: { actions: [] } } } } as unknown as PollingEvent
     expect(selectTerminalEvents([ev], null, [])).toEqual([])
   })
+
+  it('keeps legacy Work state events out of restored transcripts', () => {
+    const identity = { id: 'identity-1', type: 'work_identity_updated', session_id: 's1', data: {} } as unknown as PollingEvent
+    const references = { id: 'refs-1', type: 'work_workflow_references_updated', session_id: 's1', data: {} } as unknown as PollingEvent
+    expect(selectTerminalEvents([identity, references], null, [])).toEqual([])
+  })
 })

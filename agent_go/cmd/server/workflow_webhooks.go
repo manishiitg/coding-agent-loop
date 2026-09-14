@@ -192,10 +192,64 @@ func WorkflowWebhookRoutes(router *mux.Router, svc *SchedulerService) {
 	router.HandleFunc("/api/workflow-webhooks", requireWorkflowWriteAccess(svc.saveWorkflowWebhook)).Methods("POST")
 	router.HandleFunc("/api/workflow-webhooks/{id}", requireWorkflowWriteAccess(svc.saveWorkflowWebhook)).Methods("PUT")
 	router.HandleFunc("/api/workflow-webhooks/{id}", requireWorkflowWriteAccess(svc.deleteWorkflowWebhook)).Methods("DELETE")
+	router.HandleFunc("/api/workflow-webhooks/{id}/runs/{run}/payload", svc.getWorkflowWebhookPayload).Methods("GET")
 	receiver := webhookReceiver{find: findScheduleByIDAny, start: svc.triggerSavedSchedule, existing: svc.existingWebhookRun}
 	router.HandleFunc("/api/hooks/workflow/{id}", receiver.receive).Methods("POST")
 	router.HandleFunc("/api/hooks/workflow/{id}/runs/{run}", svc.pollWebhookRun).Methods("GET")
 	router.HandleFunc("/api/hooks/workflow/{id}/runs/{run}/artifact", svc.downloadWebhookArtifact).Methods("GET", "HEAD")
+}
+
+func (s *SchedulerService) getWorkflowWebhookPayload(w http.ResponseWriter, r *http.Request) {
+	id := mux.Vars(r)["id"]
+	runID := mux.Vars(r)["run"]
+	result, err := findScheduleByIDAny(r.Context(), id)
+	if err != nil || result.Manifest == nil || result.Index < 0 || result.Index >= len(result.Manifest.Schedules) {
+		http.Error(w, "webhook not found", http.StatusNotFound)
+		return
+	}
+	if !requireWorkflowVisible(w, r, result.WorkspacePath) {
+		return
+	}
+	schedule := result.Manifest.Schedules[result.Index]
+	if schedule.ScheduleType != "webhook" {
+		http.Error(w, "webhook not found", http.StatusNotFound)
+		return
+	}
+
+	runs, _, err := ListScheduleRuns(r.Context(), result.WorkspacePath, id, maxScheduleRuns, 0)
+	if err != nil {
+		http.Error(w, "could not read webhook history", http.StatusInternalServerError)
+		return
+	}
+	found := false
+	for _, run := range runs {
+		if run.ID == runID && run.Webhook != nil {
+			found = true
+			break
+		}
+	}
+	if !found {
+		http.Error(w, "webhook run not found", http.StatusNotFound)
+		return
+	}
+
+	content, exists, err := readFileFromWorkspace(r.Context(), webhookInputPath(result.WorkspacePath, runID))
+	if err != nil {
+		http.Error(w, "could not read webhook payload", http.StatusInternalServerError)
+		return
+	}
+	if !exists {
+		http.Error(w, "webhook payload is no longer available", http.StatusNotFound)
+		return
+	}
+	var delivery WorkflowWebhookDelivery
+	if err := json.Unmarshal([]byte(content), &delivery); err != nil || !json.Valid(delivery.Payload) {
+		http.Error(w, "stored webhook payload is invalid", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]string{"raw_payload": string(delivery.Payload)})
 }
 
 func (s *SchedulerService) listWorkflowWebhooks(w http.ResponseWriter, r *http.Request) {

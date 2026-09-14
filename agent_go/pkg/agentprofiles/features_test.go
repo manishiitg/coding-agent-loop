@@ -109,6 +109,26 @@ func TestTriggersReuseSchedulesAndAddProductTools(t *testing.T) {
 	}
 }
 
+func TestBotsProjectSharedGmailTools(t *testing.T) {
+	profile := Profile{ToolPolicy: ToolPolicy{Mode: ToolPolicyModeAllowlist}, Features: []FeatureBinding{{ID: "bots"}}}
+	if err := ResolveFeatures(&profile); err != nil {
+		t.Fatal(err)
+	}
+	for _, tool := range []string{"google_workspace_cli", "list_gmail_connections", "update_gmail_connection_grants"} {
+		if !containsString(profile.ToolPolicy.Enabled, tool) {
+			t.Fatalf("bots feature omitted %s: %v", tool, profile.ToolPolicy.Enabled)
+		}
+	}
+	for _, skill := range []string{"work-schedules-and-bots"} {
+		if !containsString(profile.Skills, skill) {
+			t.Fatalf("bots feature omitted operating skill %q: %v", skill, profile.Skills)
+		}
+	}
+	if got := strings.Join(FeaturePromptExtensions(profile), "\n"); !strings.Contains(got, "install_skill") || !strings.Contains(got, "https://github.com/openclaw/gogcli") {
+		t.Fatalf("bots feature does not tell the agent how to install versioned gog guidance on demand: %q", got)
+	}
+}
+
 func containsString(values []string, want string) bool {
 	for _, value := range values {
 		if value == want {

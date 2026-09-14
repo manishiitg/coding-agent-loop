@@ -14,11 +14,11 @@ func TestAgentProfileReadOnlyFolders(t *testing.T) {
 		t.Fatalf("default read-only set = %v", got)
 	}
 	got = agentProfileReadOnlyFolders(agentprofiles.SandboxPolicy{ReadOnly: []string{"Downloads", " reports/ ", ""}}, workflowRO)
-	if strings.Join(got, ",") != "Downloads/,reports/" {
+	if strings.Join(got, ",") != "Downloads/,reports/,Workflow/demo/planning/" {
 		t.Fatalf("declared read-only set = %v", got)
 	}
 	got = agentProfileReadOnlyFolders(agentprofiles.SandboxPolicy{ReadOnly: []string{}}, workflowRO)
-	if len(got) != 0 {
-		t.Fatalf("an explicit empty list must grant nothing extra: %v", got)
+	if strings.Join(got, ",") != "Workflow/demo/planning/" {
+		t.Fatalf("an explicit empty ambient list must retain authorized workflow context: %v", got)
 	}
 }

@@ -6,6 +6,8 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/common"
 )
 
 func TestWorkWorkflowReferenceToolsDiscoverAndPersistAuthorizedWorkflows(t *testing.T) {
@@ -31,6 +33,8 @@ func TestWorkWorkflowReferenceToolsDiscoverAndPersistAuthorizedWorkflows(t *test
 
 	api := &StreamingAPI{}
 	registrar := &recordingRegistrar{}
+	common.SetSessionFolderGuard("session-1", []string{"_users/reader/Chats/Work/projects/banking"}, []string{"_users/reader/Chats/Work/projects/banking"})
+	t.Cleanup(func() { common.ClearSessionShellConfig("session-1") })
 	if err := api.registerWorkWorkflowReferenceTools(registrar, "reader", "session-1", "_users/reader/Chats/Work/projects/banking"); err != nil {
 		t.Fatal(err)
 	}
@@ -51,6 +55,9 @@ func TestWorkWorkflowReferenceToolsDiscoverAndPersistAuthorizedWorkflows(t *test
 	if err != nil || !strings.Contains(out, "read-only project context") {
 		t.Fatalf("attach out=%s err=%v", out, err)
 	}
+	if cfg := common.GetSessionShellConfig("session-1"); cfg == nil || !containsWorkReferencePath(cfg.ReadPaths, "Workflow/hdfc-personal") || containsWorkReferencePath(cfg.WritePaths, "Workflow/hdfc-personal") {
+		t.Fatalf("attached workflow was not granted immediately as read-only: %+v", cfg)
+	}
 	workspace.mu.Lock()
 	saved := workspace.files[productPath]
 	workspace.mu.Unlock()
@@ -68,4 +75,16 @@ func TestWorkWorkflowReferenceToolsDiscoverAndPersistAuthorizedWorkflows(t *test
 	if err != nil || len(paths) != 0 {
 		t.Fatalf("paths after detach=%v err=%v", paths, err)
 	}
+	if cfg := common.GetSessionShellConfig("session-1"); cfg == nil || containsWorkReferencePath(cfg.ReadPaths, "Workflow/hdfc-personal") {
+		t.Fatalf("detached workflow remained in active read guard: %+v", cfg)
+	}
+}
+
+func containsWorkReferencePath(values []string, want string) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
 }

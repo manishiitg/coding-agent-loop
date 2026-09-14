@@ -536,8 +536,7 @@ func (store productConversationRegistryStore) bindRuntimeConfiguration(
 			(modelID != "" && !strings.EqualFold(strings.TrimSpace(record.ModelID), modelID)) ||
 			(reasoningEffort != "" && !strings.EqualFold(strings.TrimSpace(record.ReasoningEffort), reasoningEffort)) ||
 			!sameRuntimeSelection(record.EnabledServers, enabledServers) ||
-			!sameRuntimeSelection(record.SelectedSkills, selectedSkills) ||
-			!sameRuntimeSelection(record.WorkflowContextPaths, workflowContextPaths)
+			!sameRuntimeSelection(record.SelectedSkills, selectedSkills)
 	}
 	record.Provider = provider
 	if modelID != "" {

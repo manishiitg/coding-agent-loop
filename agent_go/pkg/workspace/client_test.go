@@ -55,7 +55,7 @@ func TestValidatePathAgainstGuard_BlockedWritePaths(t *testing.T) {
 	guard := &FolderGuardConfig{
 		Enabled:           true,
 		WritePaths:        []string{"Workflow/test-ops"},
-		BlockedWritePaths: []string{"Workflow/test-ops/planning"},
+		BlockedWritePaths: []string{"Workflow/test-ops/planning", "Workflow/test-ops/AGENTS.md"},
 	}
 
 	cases := []struct {
@@ -85,6 +85,22 @@ func TestValidatePathAgainstGuard_BlockedWritePaths(t *testing.T) {
 			path:      "Workflow/test-ops/planning/nested/deep.json",
 			isWrite:   true,
 			wantError: "blocked for writes",
+		},
+		{
+			name:      "write to exact blocked-write file is denied",
+			path:      "Workflow/test-ops/AGENTS.md",
+			isWrite:   true,
+			wantError: "blocked for writes",
+		},
+		{
+			name:    "read of exact blocked-write file is allowed",
+			path:    "Workflow/test-ops/AGENTS.md",
+			isWrite: false,
+		},
+		{
+			name:    "similarly prefixed sibling of exact file remains writable",
+			path:    "Workflow/test-ops/AGENTS.md.notes",
+			isWrite: true,
 		},
 		{
 			name:    "write to sibling under same workflow root is allowed",

@@ -751,6 +751,12 @@ else
 fi
 export AGENT_PORT
 export MCP_AGENT_SERVER_URL="${LOCALHOST_BASE_URL}:${AGENT_PORT}"
+# Chat-driven OAuth actions do not have an incoming HTTP request from which to
+# infer their callback origin. For local runs the selected agent-server URL is
+# the correct callback base. Preserve an explicit PUBLIC_URL for hosted setups.
+if [ -z "${PUBLIC_URL:-}" ]; then
+    export PUBLIC_URL="$MCP_AGENT_SERVER_URL"
+fi
 echo "✅ Using agent server port: $AGENT_PORT"
 
 generate_auth_secret() {

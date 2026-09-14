@@ -1,7 +1,24 @@
 import { describe, expect, it } from 'vitest'
 import type { AgentQueryRequest } from '../services/api-types'
 import type { ChatTab } from '../stores/useChatStore'
-import { applyAgentProfileBinding, buildAgentProfileChatRequest } from './chatSubmitHelpers'
+import { applyAgentProfileBinding, buildAgentProfileChatRequest, remainingWorkflowContextAfterSubmission } from './chatSubmitHelpers'
+
+describe('one-shot workflow references', () => {
+  const hdfc = { presetId: 'hdfc', label: 'HDFC', workspacePath: 'Workflow/HDFC' }
+  const icici = { presetId: 'icici', label: 'ICICI', workspacePath: 'Workflow/ICICI' }
+
+  it('consumes references captured by an accepted submission', () => {
+    expect(remainingWorkflowContextAfterSubmission([hdfc, icici], [hdfc, icici])).toEqual([])
+  })
+
+  it('preserves references added while the accepted submission was starting', () => {
+    expect(remainingWorkflowContextAfterSubmission([hdfc, icici], [hdfc])).toEqual([icici])
+  })
+
+  it('does nothing before a submission has been accepted', () => {
+    expect(remainingWorkflowContextAfterSubmission([hdfc], [])).toEqual([hdfc])
+  })
+})
 
 describe('agent profile query binding', () => {
   it('pins a product query to its profile version and workspace', () => {

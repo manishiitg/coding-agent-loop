@@ -71,6 +71,29 @@ export function visibleWorkProjectTabs(
 }
 
 /**
+ * Pick the chat Work should show when a project is opened or reloaded.
+ * Preserve an active tab that already belongs to the project; otherwise use
+ * the most recently accessed durable chat. The permanent blank Builder is a
+ * launch surface, so it is only the fallback when the project has no chats.
+ */
+export function preferredWorkProjectTabId(
+  tabs: Record<string, ChatTab>,
+  projectId: string,
+  activeTabId: string | null,
+): string | null {
+  const active = activeTabId ? tabs[activeTabId] : undefined
+  if (active && belongsToWorkProject(active, projectId)) return active.tabId
+
+  const projectTabs = visibleWorkProjectTabs(tabs, projectId, activeTabId)
+  const recentChat = projectTabs
+    .filter(tab => tab.metadata?.agentProfileBuilder !== true)
+    .sort((left, right) =>
+      (right.lastAccessedAt ?? right.createdAt) - (left.lastAccessedAt ?? left.createdAt),
+    )[0]
+  return recentChat?.tabId ?? projectTabs.find(tab => tab.metadata?.agentProfileBuilder === true)?.tabId ?? null
+}
+
+/**
  * Apply a Work project's runtime selection to its tabs. Same-provider model
  * changes can update retained conversations. A coding-agent provider change is
  * a native conversation boundary, so `newChatsOnly` updates only the permanent

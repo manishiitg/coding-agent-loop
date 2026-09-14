@@ -7,7 +7,28 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/common"
 )
+
+func updateWorkSessionWorkflowGuard(sessionID string, add []string, remove ...string) {
+	cfg := common.GetSessionShellConfig(sessionID)
+	if cfg == nil {
+		return
+	}
+	removeSet := map[string]bool{}
+	for _, path := range remove {
+		removeSet[strings.TrimSuffix(strings.TrimSpace(path), "/")] = true
+	}
+	reads := make([]string, 0, len(cfg.ReadPaths)+len(add))
+	for _, path := range cfg.ReadPaths {
+		if !removeSet[strings.TrimSuffix(strings.TrimSpace(path), "/")] {
+			reads = append(reads, path)
+		}
+	}
+	reads = appendUniqueStrings(reads, add...)
+	common.SetSessionFolderGuard(sessionID, reads, cfg.WritePaths)
+}
 
 // registerWorkWorkflowReferenceTools lets the Work assistant discover the
 // same authorized workflow set as the AgentWorks picker and persist an exact
@@ -96,10 +117,11 @@ func (api *StreamingAPI) registerWorkWorkflowReferenceTools(registrar definition
 		if err != nil {
 			return "", err
 		}
+		updateWorkSessionWorkflowGuard(sessionID, paths)
 		api.emitAgentProfileEvent(sessionID, map[string]interface{}{"type": "work_workflow_references_updated", "workflow_context_paths": paths})
 		encoded, err := json.MarshalIndent(map[string]interface{}{
 			"workflow_context_paths": paths,
-			"note":                   "The workflow is saved as read-only project context and is available on the next turn.",
+			"note":                   "The workflow is saved as read-only project context and file access is active now.",
 		}, "", "  ")
 		return string(encoded), err
 	}); err != nil {
@@ -134,8 +156,9 @@ func (api *StreamingAPI) registerWorkWorkflowReferenceTools(registrar definition
 		if err != nil {
 			return "", err
 		}
+		updateWorkSessionWorkflowGuard(sessionID, paths, path)
 		api.emitAgentProfileEvent(sessionID, map[string]interface{}{"type": "work_workflow_references_updated", "workflow_context_paths": paths})
-		return "Workflow reference detached. Native CLI access updates on the next turn.", nil
+		return "Workflow reference detached. Access is revoked now.", nil
 	})
 }
 

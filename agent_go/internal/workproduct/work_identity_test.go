@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/agentprofiles"
+	orchestratorevents "github.com/manishiitg/coding-agent-loop/agent_go/pkg/orchestrator/events"
 )
 
 func TestWorkIdentityToolPersistsAndPromptVariablesReloadIt(t *testing.T) {
@@ -51,11 +52,12 @@ func TestWorkIdentityToolPersistsAndPromptVariablesReloadIt(t *testing.T) {
 	if err := RegisterAgentProfileRuntime(registry, server.URL); err != nil {
 		t.Fatalf("register Work runtime: %v", err)
 	}
-	var emitted []map[string]interface{}
-	tool, err := registry.BuildTool(agentprofiles.ToolBinding{ID: "work.set-identity"}, agentprofiles.ToolRuntimeContext{
-		UserID: "user-1", SessionID: "session-1", WorkspacePath: projectPath,
+	var emitted []*orchestratorevents.ProductInteractionEvent
+	interaction := &agentprofiles.InteractionBinding{Kind: "identity_updated", Render: "product.refresh"}
+	tool, err := registry.BuildTool(agentprofiles.ToolBinding{ID: "work.set-identity", Interaction: interaction}, agentprofiles.ToolRuntimeContext{
+		UserID: "user-1", SessionID: "session-1", WorkspacePath: projectPath, Product: "work", Interaction: interaction,
 		Emit: func(event any) {
-			if payload, ok := event.(map[string]interface{}); ok {
+			if payload, ok := event.(*orchestratorevents.ProductInteractionEvent); ok {
 				emitted = append(emitted, payload)
 			}
 		},
@@ -90,7 +92,7 @@ func TestWorkIdentityToolPersistsAndPromptVariablesReloadIt(t *testing.T) {
 	if identity["icon"] != "🛠️" || identity["name"] != "Nova" || identity["role"] != "Engineering partner" {
 		t.Fatalf("identity was not saved: %+v", identity)
 	}
-	if len(emitted) != 1 || emitted[0]["type"] != "work_identity_updated" {
+	if len(emitted) != 1 || emitted[0].Product != "work" || emitted[0].Kind != "identity_updated" || emitted[0].Payload["operation"] != "set" {
 		t.Fatalf("identity update event was not emitted: %+v", emitted)
 	}
 
@@ -106,6 +108,9 @@ func TestWorkIdentityToolPersistsAndPromptVariablesReloadIt(t *testing.T) {
 
 	if _, err := tool.Execute(context.Background(), map[string]interface{}{"operation": "clear"}); err != nil {
 		t.Fatalf("clear Work identity: %v", err)
+	}
+	if len(emitted) != 2 || emitted[1].Payload["operation"] != "clear" {
+		t.Fatalf("identity clear interaction was not emitted: %+v", emitted)
 	}
 	variables, err = registry.PromptVariables(context.Background(), "work", agentprofiles.RuntimeContext{
 		UserID: "user-1", SessionID: "session-1", WorkspacePath: projectPath,

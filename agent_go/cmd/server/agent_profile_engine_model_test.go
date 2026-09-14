@@ -219,8 +219,8 @@ func TestConversationRuntimeChangeReportsRestartForMCPAndSkills(t *testing.T) {
 	if !bind([]string{"google_sheets"}, []string{"work-dashboard"}, nil) {
 		t.Fatal("changed skill selection did not request a restart")
 	}
-	if !bind([]string{"google_sheets"}, []string{"work-dashboard"}, []string{"Workflow/research"}) {
-		t.Fatal("changed workflow reference selection did not request a restart")
+	if bind([]string{"google_sheets"}, []string{"work-dashboard"}, []string{"Workflow/research"}) {
+		t.Fatal("changed workflow reference selection requested a runtime restart")
 	}
 	if bind([]string{"google_sheets"}, []string{"work-dashboard"}, []string{"workflow/RESEARCH", "Workflow/research"}) {
 		t.Fatal("equivalent workflow reference selection requested a restart")

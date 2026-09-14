@@ -471,6 +471,33 @@ func SetSessionShellEnv(sessionID string, env map[string]string) {
 	log.Printf("[SHELL] Set %d shell env var(s) for session %s", len(env), sessionID)
 }
 
+// ReplaceSessionShellEnvPrefix atomically replaces one managed namespace in a
+// session's shell environment while preserving variables owned by other
+// features. This is used when a live attachment set changes: merging alone
+// cannot remove the alias of a detached folder.
+func ReplaceSessionShellEnvPrefix(sessionID, prefix string, env map[string]string) {
+	prefix = strings.TrimSpace(prefix)
+	if prefix == "" {
+		return
+	}
+	updateSessionShellConfig(sessionID, func(cfg *SessionShellConfig) {
+		if cfg.Env == nil {
+			cfg.Env = make(map[string]string, len(env))
+		}
+		for key := range cfg.Env {
+			if strings.HasPrefix(key, prefix) {
+				delete(cfg.Env, key)
+			}
+		}
+		for key, value := range env {
+			if strings.HasPrefix(key, prefix) {
+				cfg.Env[key] = value
+			}
+		}
+	})
+	log.Printf("[SHELL] Replaced %s shell env namespace with %d var(s) for session %s", prefix, len(env), sessionID)
+}
+
 // GetSessionShellEnv returns a copy of the session's shell env vars (nil if none),
 // safe to read without holding the config lock.
 func GetSessionShellEnv(sessionID string) map[string]string {

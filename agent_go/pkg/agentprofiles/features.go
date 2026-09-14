@@ -129,20 +129,20 @@ var featureCatalog = map[string]featureDefinition{
 		Skills:          []string{"work-skills"},
 		UIPanels:        []string{"skills"},
 		Capabilities:    map[string]CapabilityRequirement{"skill_selection": CapabilityPreferred},
-		PromptExtension: "Reusable skills are enabled. Read the attached `work-skills` skill before managing skills. Discover and select an existing skill when possible, and load a selected skill only when its description matches the task.",
+		PromptExtension: "Reusable skills are enabled. Read the attached `work-skills` skill before managing skills. Discover and select an existing skill when possible. When the user explicitly asks to preserve or improve a repeated procedure, the normal Work agent may create or update a focused skill under `skills/custom/`; do not switch its identity to Skill Builder.",
 	},
 	"attached-folders": {
 		Dependencies:    []string{"files"},
 		Tools:           []string{"list_work_folders", "attach_work_folder", "detach_work_folder"},
-		Skills:          []string{"work-integrations"},
+		Skills:          []string{"work-integrations", "work-workflow-files"},
 		UIPanels:        []string{"folders"},
-		PromptExtension: "Administrator-authorized attached folders are enabled. Read the attached `work-integrations` skill before managing folder grants. Use the least access required and inspect the current grants before changing them.",
+		PromptExtension: "Administrator-authorized attached folders are enabled. Read `work-integrations` before managing grants and `work-workflow-files` before reading attached content. Use the least access required and inspect the current grants before changing them.",
 	},
 	"workflow-references": {
 		Tools:           []string{"list_accessible_workflows", "attach_workflow_reference", "detach_workflow_reference"},
-		Skills:          []string{"work-integrations"},
+		Skills:          []string{"work-workflow-files"},
 		Capabilities:    map[string]CapabilityRequirement{"workflow_references": CapabilityPreferred},
-		PromptExtension: "Read-only AgentWorks workflow references are enabled. Read the attached `work-integrations` skill before discovering or managing them. A # selection applies to one message; a workflow linked under Attached folders is durable for the project. Treat both as context only, and never edit or execute the referenced workflow from this product.",
+		PromptExtension: "Read-only AgentWorks workflow references are enabled. Read the attached `work-workflow-files` skill before discovering, managing, or reading them. A # selection applies to one message; a workflow linked under Attached folders is durable for the project. Treat both as context only, and never edit or execute the referenced workflow from this product.",
 	},
 	"terminal": {
 		Capabilities:    map[string]CapabilityRequirement{"raw_terminal": CapabilityPreferred},
@@ -170,10 +170,11 @@ var featureCatalog = map[string]featureDefinition{
 		PromptExtension: "Authenticated webhook triggers are enabled. Read the attached `work-schedules-and-bots` skill before managing triggers. A trigger stores one instruction in product.json and sends it to the project chat with the authenticated delivery payload; it does not run workflow routes.",
 	},
 	"bots": {
+		Tools:           []string{"google_workspace_cli", "list_gmail_connections", "update_gmail_connection_grants"},
 		Skills:          []string{"work-schedules-and-bots"},
 		UIPanels:        []string{"bots"},
 		Capabilities:    map[string]CapabilityRequirement{"whatsapp": CapabilityPreferred},
-		PromptExtension: "Project-chat bots are enabled through the shared connector infrastructure. Read the attached `work-schedules-and-bots` skill before managing bots; bots inherit this project's authorization boundary.",
+		PromptExtension: "Slack and WhatsApp project-chat bots plus connected Gmail/Google Workspace accounts are enabled through the shared connector infrastructure. Read `work-schedules-and-bots` before using them. For Google Workspace, check installed skills and install `https://github.com/openclaw/gogcli` with `install_skill` only when its current CLI guidance is needed; then load `gog` and the relevant `gog-*` service skill with `read_skill`. Invoke that syntax through `google_workspace_cli` without the `gog` binary or account/auth flags because the server supplies those securely. Check existing Gmail connections before searching for an MCP server; mailbox reads require an observed Gmail read grant.",
 	},
 	"database": {
 		Tools:           []string{"query_workflow_db", "mutate_workflow_db", "apply_workflow_db_migration", "create_workflow_database_snapshot"},

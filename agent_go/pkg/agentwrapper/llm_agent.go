@@ -41,6 +41,10 @@ type LLMAgentWrapper struct {
 	finalized  bool
 	definition mcpagent.AgentDefinition
 	observers  []mcpagent.AgentEventListener
+	// installedSkillResolver belongs to the finalized agent, not the temporary
+	// bootstrap agent created by NewLLMAgentWrapper. Keeping it on the wrapper
+	// lets FinalizeDefinition carry progressive skill reads across replacement.
+	installedSkillResolver mcpagent.InstalledSkillResolver
 	// admitTool, when set, decides whether a tool may join the definition at
 	// all. Fixed at construction from LLMAgentConfig.AdmitTool.
 	admitTool func(string) bool
@@ -629,6 +633,19 @@ func (w *LLMAgentWrapper) GetUnderlyingAgent() *mcpagent.Agent {
 	return w.agent
 }
 
+// SetInstalledSkillResolver configures read_skill fallback resolution for the
+// immutable agent that this wrapper will finalize. Setting it only on
+// GetUnderlyingAgent() is incorrect: FinalizeDefinition replaces that draft.
+func (w *LLMAgentWrapper) SetInstalledSkillResolver(resolver mcpagent.InstalledSkillResolver) error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if err := w.ensureDefinitionMutable(); err != nil {
+		return err
+	}
+	w.installedSkillResolver = resolver
+	return nil
+}
+
 func (w *LLMAgentWrapper) AddInstructions(instructions ...string) error {
 	w.mu.Lock()
 	defer w.mu.Unlock()
@@ -801,6 +818,7 @@ func (w *LLMAgentWrapper) FinalizeDefinition(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("finalize immutable agent definition: %w", err)
 	}
+	next.SetInstalledSkillResolver(w.installedSkillResolver)
 	nextSession, err := next.Start(ctx)
 	if err != nil {
 		_ = next.Close()

@@ -78,6 +78,17 @@ type ConditionalWriteGrant struct {
 // filesystem I/O) are registered separately via registerWorkflowCreatorTool.
 var conditionalGrants = []ConditionalWriteGrant{
 	{
+		Name: "work-custom-skills",
+		Trigger: func(req QueryRequest) bool {
+			return req.AgentProfileID == "work"
+		},
+		WriteFolders: []string{"skills/custom/"},
+		PromptSection: func() string {
+			return `## Custom skill authoring
+When the user explicitly asks to preserve or improve a reusable procedure, the Work agent may create or update a focused custom skill under skills/custom/<skill-name>/. Keep the normal Work identity. Inspect existing skills first, update rather than duplicate when appropriate, and never store secrets in a skill.`
+		},
+	},
+	{
 		Name: "skill-creator",
 		Trigger: func(req QueryRequest) bool {
 			for _, s := range req.SelectedSkills {

@@ -10,6 +10,7 @@ type FileWorkspacePaneProps = {
   hideAddToChat?: boolean
   hideRootActions?: boolean
   expandFirstLevelFolders?: boolean
+  hideManagedEntriesByDefault?: boolean
   hideMinimizeControl?: boolean
   showMinimizeShortcut?: boolean
   onClose: () => void
@@ -29,6 +30,7 @@ export function FileWorkspacePane({
   hideAddToChat = false,
   hideRootActions = false,
   expandFirstLevelFolders = EXPAND_FIRST_LEVEL_FOLDERS_BY_DEFAULT,
+  hideManagedEntriesByDefault = false,
   hideMinimizeControl = true,
   showMinimizeShortcut = true,
   onClose,
@@ -49,6 +51,7 @@ export function FileWorkspacePane({
           hideAddToChat={hideAddToChat}
           hideRootActions={hideRootActions}
           expandFirstLevelFolders={expandFirstLevelFolders}
+          hideManagedEntriesByDefault={hideManagedEntriesByDefault}
           title={title}
         />
       </div>

@@ -34,7 +34,7 @@ profile:
     - id: triggers
       options: {mode: message_only}
     - id: bots
-      options: {channels: "slack,whatsapp"}
+      options: {channels: "slack,whatsapp,gmail"}
     - database
     - dashboard
     - costs
@@ -47,6 +47,9 @@ profile:
   scope: project
   tools:
     - id: work.set-identity
+      interaction:
+        kind: identity_updated
+        render: product.refresh
   # Work reuses the platform coding and background-agent surfaces (shell,
   # guarded file patching, browser, secrets, web research, run_in_background).
   # Its only product-specific wrappers are folder grants and message-only

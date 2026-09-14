@@ -42,6 +42,10 @@ export const workflowWebhooksApi = {
   delete: (workspacePath: string, id: string) => axios.delete(`/api/workflow-webhooks/${encodeURIComponent(id)}`, {
     ...config(), params: { workspace_path: workspacePath },
   }),
+  getPayload: (id: string, runId: string) => axios.get<{ raw_payload: string }>(
+    `/api/workflow-webhooks/${encodeURIComponent(id)}/runs/${encodeURIComponent(runId)}/payload`,
+    config(),
+  ).then(r => r.data),
 }
 
 export function apiTriggerURL(path: string): string {

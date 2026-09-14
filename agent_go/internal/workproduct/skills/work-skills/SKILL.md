@@ -10,9 +10,16 @@ description: Discover, install, import, create, select, and remove reusable skil
 - Use `install_skill` for a discovered skill and `import_skill` for a supplied
   skill source. Installation is account-level; selecting it for this project is
   a separate action in **Setup > Skills**.
-- Use `skill-creator` when the user asks to create or update a custom skill.
-  Prefer a focused reusable skill over adding product-specific instructions to
-  the system prompt.
+- When the user explicitly asks to preserve or improve a repeatable procedure,
+  create or update a focused custom skill under
+  `skills/custom/<skill-name>/SKILL.md`. Inspect existing custom skills first
+  and update a matching skill instead of creating a duplicate. Keep the normal Work
+  identity; skill authoring is a capability, not a separate chat persona.
+- A custom skill needs concise YAML frontmatter with `name` and `description`,
+  followed by only the non-obvious instructions that improve future work. Add
+  scripts or references only when they provide concrete reusable value.
+- Never store credentials or secret values in a skill. Document required secret
+  names and use the Secrets system at runtime.
 - Before removing a skill, identify the exact installed name and explain that
   `uninstall_skill` removes the account-level installation, not only this
   project's selection.

@@ -50,6 +50,8 @@ export function buildAgentProfileEngineGroups(
 
 type AgentProfileResponse = {
   resolved_features?: AgentProfileFeature[]
+  tools?: Array<{ interaction?: AgentProfileInteractionBinding }>
+  interactions?: AgentProfileInteractionBinding[]
   runtime?: {
     provider?: string
     model_id?: string
@@ -57,6 +59,12 @@ type AgentProfileResponse = {
     capabilities?: Record<string, unknown>
     provider_options?: AgentProfileProviderOption[]
   }
+}
+
+export type AgentProfileInteractionBinding = {
+  kind: string
+  render: string
+  message?: string
 }
 
 export type AgentProfileFeature = {
@@ -179,4 +187,37 @@ export async function loadAgentProfileFeatures(profileId: string, version?: numb
 export async function loadAgentProfileUIPanels(profileId: string, version?: number): Promise<Set<string>> {
   const features = await loadAgentProfileFeatures(profileId, version)
   return new Set(features.flatMap(feature => Array.isArray(feature.ui_panels) ? feature.ui_panels : []))
+}
+
+/** Returns interaction kinds whose UI behavior is declared by the profile. */
+export async function loadAgentProfileInteractionKinds(
+  profileId: string,
+  render: string,
+  version?: number,
+): Promise<Set<string>> {
+  if (!profileId || !render) return new Set()
+  try {
+    const profile = await loadAgentProfile(profileId, version)
+    return new Set([...(profile.tools || []).map(tool => tool?.interaction), ...(profile.interactions || [])]
+      .filter((binding): binding is AgentProfileInteractionBinding => (
+        !!binding && binding.render === render && typeof binding.kind === 'string' && binding.kind.trim() !== ''
+      ))
+      .map(binding => binding.kind.trim()))
+  } catch {
+    return new Set()
+  }
+}
+
+/** Returns complete declarative interaction bindings for product-owned UI. */
+export async function loadAgentProfileInteractions(profileId: string, version?: number): Promise<AgentProfileInteractionBinding[]> {
+  if (!profileId) return []
+  try {
+    const profile = await loadAgentProfile(profileId, version)
+    return [...(profile.tools || []).map(tool => tool?.interaction), ...(profile.interactions || [])]
+      .filter((binding): binding is AgentProfileInteractionBinding => Boolean(
+        binding && typeof binding.kind === 'string' && binding.kind.trim() && typeof binding.render === 'string' && binding.render.trim(),
+      ))
+  } catch {
+    return []
+  }
 }

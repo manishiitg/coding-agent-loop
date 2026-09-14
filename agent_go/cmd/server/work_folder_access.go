@@ -218,7 +218,7 @@ func workFolderRootsForClaims(ctx context.Context, claims *UserClaims) []string 
 // into folder-guard paths plus WORK_FOLDER_<ALIAS> session env. A folder that
 // later becomes unavailable remains in the guard but is reported as unavailable
 // by the folders API; current assigned roots are revalidated before this point.
-func workFolderGuardInputs(ctx context.Context) (read, write []string, env map[string]string) {
+func workFolderGuardInputs(ctx context.Context) (read, write, readOnly []string, env map[string]string) {
 	return workproduct.ResolveGrants(workFolderGrantsForClaims(ctx, GetUserFromContext(ctx)))
 }
 
@@ -558,7 +558,7 @@ func (api *StreamingAPI) handlePutWorkRoots(w http.ResponseWriter, r *http.Reque
 // registerWorkFolderTools exposes the same user-scoped grant store as the
 // Work Setup panel. Authorization remains server-side; the model cannot grant
 // a path outside the administrator-assigned roots.
-func (api *StreamingAPI) registerWorkFolderTools(registrar definitionToolRegistrar, userID string) error {
+func (api *StreamingAPI) registerWorkFolderTools(registrar definitionToolRegistrar, userID, sessionID string) error {
 	register := func(name, description string, parameters map[string]interface{}, execute func(context.Context, map[string]interface{}) (string, error)) error {
 		return registrar.RegisterCustomTool(name, description, parameters, execute, "work_folder_tools")
 	}
@@ -591,16 +591,33 @@ func (api *StreamingAPI) registerWorkFolderTools(registrar definitionToolRegistr
 		access, _ := args["access"].(string)
 		reason, _ := args["reason"].(string)
 		var added workflowtypes.WorkflowFolderGrant
+		var folderEnv map[string]string
 		err := workFolderAccessStore.update(ctx, func(doc *workFolderAccessDoc) error {
 			key := workFolderAccessKeyForClaims(*doc, claims)
 			grant, addErr := applyWorkFolderAdd(doc, key, workFolderAddInput{Path: path, Alias: alias, Access: access, Reason: reason}, workFolderClaimsAreAdmin(claims))
 			added = grant
+			if addErr == nil {
+				_, _, _, folderEnv = workproduct.ResolveGrants(doc.Grants[key])
+			}
 			return addErr
 		})
 		if err != nil {
 			return "", err
 		}
-		encoded, err := json.MarshalIndent(map[string]interface{}{"folder": added, "note": "The folder is attached. Native CLI access begins on the next turn."}, "", "  ")
+		if cfg := common.GetSessionShellConfig(sessionID); cfg != nil {
+			reads := appendUniqueStrings(cfg.ReadPaths, added.Path)
+			writes := cfg.WritePaths
+			blockedWrites := cfg.BlockedWritePaths
+			if added.Access == "read_write" {
+				writes = appendUniqueStrings(writes, added.Path)
+			} else {
+				blockedWrites = appendUniqueStrings(blockedWrites, added.Path)
+			}
+			common.SetSessionFolderGuard(sessionID, reads, writes)
+			common.SetSessionFolderGuardBlockedWritePaths(sessionID, blockedWrites)
+		}
+		common.ReplaceSessionShellEnvPrefix(sessionID, "WORK_FOLDER_", folderEnv)
+		encoded, err := json.MarshalIndent(map[string]interface{}{"folder": added, "note": "The folder is attached and available now."}, "", "  ")
 		return string(encoded), err
 	}); err != nil {
 		return err
@@ -612,14 +629,48 @@ func (api *StreamingAPI) registerWorkFolderTools(registrar definitionToolRegistr
 	}, func(ctx context.Context, args map[string]interface{}) (string, error) {
 		id, _ := args["id"].(string)
 		key := ""
+		removedPath := ""
+		var folderEnv map[string]string
 		err := workFolderAccessStore.update(ctx, func(doc *workFolderAccessDoc) error {
 			key = workFolderAccessKeyForClaims(*doc, claims)
-			return applyWorkFolderDelete(doc, key, strings.TrimSpace(id))
+			for _, grant := range doc.Grants[key] {
+				if grant.ID == strings.TrimSpace(id) {
+					removedPath = grant.Path
+					break
+				}
+			}
+			if deleteErr := applyWorkFolderDelete(doc, key, strings.TrimSpace(id)); deleteErr != nil {
+				return deleteErr
+			}
+			_, _, _, folderEnv = workproduct.ResolveGrants(doc.Grants[key])
+			return nil
 		})
 		if err != nil {
 			return "", err
 		}
-		invalidateWorkFolderSessions(ctx, key, "Work folder access was revoked")
+		if cfg := common.GetSessionShellConfig(sessionID); cfg != nil {
+			reads := make([]string, 0, len(cfg.ReadPaths))
+			writes := make([]string, 0, len(cfg.WritePaths))
+			blockedWrites := make([]string, 0, len(cfg.BlockedWritePaths))
+			for _, path := range cfg.ReadPaths {
+				if path != removedPath {
+					reads = append(reads, path)
+				}
+			}
+			for _, path := range cfg.WritePaths {
+				if path != removedPath {
+					writes = append(writes, path)
+				}
+			}
+			for _, path := range cfg.BlockedWritePaths {
+				if path != removedPath {
+					blockedWrites = append(blockedWrites, path)
+				}
+			}
+			common.SetSessionFolderGuard(sessionID, reads, writes)
+			common.SetSessionFolderGuardBlockedWritePaths(sessionID, blockedWrites)
+		}
+		common.ReplaceSessionShellEnvPrefix(sessionID, "WORK_FOLDER_", folderEnv)
 		return "Folder detached from Work.", nil
 	})
 }

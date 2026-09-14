@@ -283,8 +283,9 @@ type ToolBinding struct {
 
 // InteractionBinding is a tool's declared in-chat rendering.
 type InteractionBinding struct {
-	Kind   string `json:"kind" yaml:"kind"`
-	Render string `json:"render" yaml:"render"`
+	Kind    string `json:"kind" yaml:"kind"`
+	Render  string `json:"render" yaml:"render"`
+	Message string `json:"message,omitempty" yaml:"message,omitempty"`
 }
 
 // PresentationBinding names the presentation kind a tool produces and the
@@ -370,12 +371,16 @@ type Profile struct {
 	ResolvedFeatures []ResolvedFeature `json:"resolved_features,omitempty" yaml:"-"`
 	Skills           []string          `json:"skills,omitempty" yaml:"skills,omitempty"`
 	Tools            []ToolBinding     `json:"tools,omitempty" yaml:"tools,omitempty"`
-	Commands         []CommandBinding  `json:"commands,omitempty" yaml:"commands,omitempty"`
-	Secrets          []SecretBinding   `json:"secrets,omitempty" yaml:"secrets,omitempty"`
-	ToolPolicy       ToolPolicy        `json:"tool_policy,omitempty" yaml:"tool_policy,omitempty"`
-	Runtime          RuntimePolicy     `json:"runtime" yaml:"runtime"`
-	BuiltIn          bool              `json:"built_in" yaml:"built_in"`
-	OwnerID          string            `json:"owner_id,omitempty" yaml:"owner_id,omitempty"`
+	// Interactions declare product events emitted by feature tools that are
+	// registered outside the profile tool factory. This keeps their UI behavior
+	// in product.yaml too, rather than hardcoding product copy in React.
+	Interactions []InteractionBinding `json:"interactions,omitempty" yaml:"interactions,omitempty"`
+	Commands     []CommandBinding     `json:"commands,omitempty" yaml:"commands,omitempty"`
+	Secrets      []SecretBinding      `json:"secrets,omitempty" yaml:"secrets,omitempty"`
+	ToolPolicy   ToolPolicy           `json:"tool_policy,omitempty" yaml:"tool_policy,omitempty"`
+	Runtime      RuntimePolicy        `json:"runtime" yaml:"runtime"`
+	BuiltIn      bool                 `json:"built_in" yaml:"built_in"`
+	OwnerID      string               `json:"owner_id,omitempty" yaml:"owner_id,omitempty"`
 	// Product names which product surface this builtin profile belongs to
 	// (e.g. "dominion", "video-studio", "sparkquill") -- set by each product's
 	// registration call in server.go, never by the product package itself.

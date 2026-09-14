@@ -68,6 +68,11 @@ var googleServiceCatalog = map[string]googleServiceDef{
 	},
 }
 
+// GmailReadonlyScope is the mailbox-read grant used by the shared Google CLI
+// tool. Gmail stays outside googleServiceCatalog because its opt-in is stored
+// as GmailConnection.AllowReadAccess rather than as an additional service.
+const GmailReadonlyScope = "https://www.googleapis.com/auth/gmail.readonly"
+
 // GoogleServiceCatalog lists the services the connect UI may offer, keyed by
 // the identifier a GoogleServiceGrant.Service names, to display name.
 func GoogleServiceCatalog() map[string]string {
@@ -206,10 +211,6 @@ func (g *GmailService) GoogleCLIAccessForConnection(ctx context.Context, connect
 	if !conn.Enabled {
 		return GoogleCLIAccess{}, fmt.Errorf("Google account connection %q (%s) is disabled — reconnect it before use", conn.ID, conn.DisplayName)
 	}
-	if len(conn.Services) == 0 {
-		return GoogleCLIAccess{}, fmt.Errorf("connection %q (%s) is not authorized for any service beyond Gmail — enable one in workflow bots settings", conn.ID, conn.DisplayName)
-	}
-
 	var token string
 	if conn.AuthBackend != "gog" {
 		var err error
@@ -233,13 +234,24 @@ func (g *GmailService) GoogleCLIAccessForConnection(ctx context.Context, connect
 	for _, grant := range conn.Services {
 		grants[grant.Service] = grant.Write
 	}
+	// Mailbox reads are always forced through gog's --readonly runtime mode.
+	// Check Google's observed scopes, not only the stored opt-in, so a user who
+	// has not completed reconnect cannot accidentally receive a misleading
+	// "authorized" result.
+	if conn.AllowReadAccess && GoogleScopesGrant(conn.Scopes, GmailReadonlyScope) {
+		grants["gmail"] = false
+	}
+	if len(grants) == 0 {
+		return GoogleCLIAccess{}, fmt.Errorf("connection %q (%s) has no Google read/service grant available to agents — enable Gmail read access or another service in Bots settings and reconnect", conn.ID, conn.DisplayName)
+	}
 	return GoogleCLIAccess{GogPath: gogPath, Token: token, Account: conn.Email, Client: conn.ClientName, Grants: grants}, nil
 }
 
 // sortedGoogleServiceNames lists catalog keys for an error message enumerating
 // valid choices.
 func sortedGoogleServiceNames() []string {
-	out := make([]string, 0, len(googleServiceCatalog))
+	out := make([]string, 0, len(googleServiceCatalog)+1)
+	out = append(out, "gmail")
 	for key := range googleServiceCatalog {
 		out = append(out, key)
 	}
@@ -258,7 +270,7 @@ var googleCLIDisallowedArgs = []string{"--access-token", "--account", "-a", "--c
 const googleCLITimeout = 60 * time.Second
 
 // googleCLIOutputLimit truncates output before it reaches the agent's
-// context — a `drive files list` on a large folder or a `sheets values get`
+// context — a `drive ls` on a large folder or a `sheets values get`
 // on a big range can otherwise return megabytes.
 const googleCLIOutputLimit = 20000
 
@@ -279,7 +291,7 @@ func RunGoogleCLI(ctx context.Context, connectionID string, args []string) (stri
 		}
 	}
 	if len(trimmed) == 0 {
-		return "", fmt.Errorf("args must start with a service name, e.g. [\"drive\",\"files\",\"list\",\"--json\"]")
+		return "", fmt.Errorf("args must start with a supported Google service name; read the installed gog service skill for current syntax")
 	}
 	for _, a := range trimmed {
 		lower := strings.ToLower(a)
@@ -291,8 +303,10 @@ func RunGoogleCLI(ctx context.Context, connectionID string, args []string) (stri
 	}
 
 	service := strings.ToLower(trimmed[0])
-	if _, ok := googleServiceCatalog[service]; !ok {
-		return "", fmt.Errorf("unknown Google service %q — the first argument must be one of: %s", service, strings.Join(sortedGoogleServiceNames(), ", "))
+	if service != "gmail" {
+		if _, ok := googleServiceCatalog[service]; !ok {
+			return "", fmt.Errorf("unknown Google service %q — the first argument must be one of: %s", service, strings.Join(sortedGoogleServiceNames(), ", "))
+		}
 	}
 
 	svc := GetGmailService()
@@ -316,6 +330,12 @@ func RunGoogleCLI(ctx context.Context, connectionID string, args []string) (stri
 	}
 	if !writeAllowed {
 		finalArgs = append(finalArgs, "--readonly")
+	}
+	if service == "gmail" {
+		// Gmail is exposed to project agents for mailbox search/read only. Keep
+		// gog's Gmail-specific send guard on as defense in depth in addition to
+		// the general read-only mode above.
+		finalArgs = append(finalArgs, "--gmail-no-send")
 	}
 
 	cmdCtx, cancel := context.WithTimeout(ctx, googleCLITimeout)

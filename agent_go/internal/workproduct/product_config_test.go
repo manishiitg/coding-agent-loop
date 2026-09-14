@@ -16,6 +16,9 @@ func TestWorkManifestDeclaresProjectScopeAndCodingAllowlist(t *testing.T) {
 	if manifest.Profile.ID != "work" {
 		t.Fatalf("unexpected profile id: %q", manifest.Profile.ID)
 	}
+	if len(manifest.Dependencies.Skills) != 0 {
+		t.Fatalf("Work must not install external skills merely because a project opens: %+v", manifest.Dependencies.Skills)
+	}
 	// Project, not global -- same reasoning as Finance/Dominion: global
 	// scope makes provider_options non-authoritative and skips this
 	// profile's own prompt.file in favor of the dynamic delegation
@@ -24,7 +27,7 @@ func TestWorkManifestDeclaresProjectScopeAndCodingAllowlist(t *testing.T) {
 	if manifest.Profile.Scope != agentprofiles.ProfileScopeProject {
 		t.Fatalf("work must declare scope: project, got %q", manifest.Profile.Scope)
 	}
-	for _, want := range []string{"agent-browser", "code-reviewer", "work-integrations", "work-skills", "work-schedules-and-bots", "work-dashboard", "background-work"} {
+	for _, want := range []string{"agent-browser", "code-reviewer", "work-integrations", "work-workflow-files", "work-skills", "work-schedules-and-bots", "work-dashboard", "background-work"} {
 		if !contains(manifest.Profile.Skills, want) {
 			t.Fatalf("work feature bundles omitted skill %q: %v", want, manifest.Profile.Skills)
 		}
@@ -115,6 +118,9 @@ func TestWorkManifestDeclaresProjectScopeAndCodingAllowlist(t *testing.T) {
 		"create_project_trigger":            false,
 		"update_project_trigger":            false,
 		"delete_project_trigger":            false,
+		"google_workspace_cli":              false,
+		"list_gmail_connections":            false,
+		"update_gmail_connection_grants":    false,
 		"query_workflow_db":                 false,
 		"mutate_workflow_db":                false,
 		"apply_workflow_db_migration":       false,
@@ -139,6 +145,10 @@ func TestWorkManifestDeclaresProjectScopeAndCodingAllowlist(t *testing.T) {
 	}
 	if len(manifest.Profile.Tools) != 1 || manifest.Profile.Tools[0].ID != "work.set-identity" {
 		t.Fatalf("work must expose its chat-configurable identity tool, got %+v", manifest.Profile.Tools)
+	}
+	identityInteraction := manifest.Profile.Tools[0].Interaction
+	if identityInteraction == nil || identityInteraction.Kind != "identity_updated" || identityInteraction.Render != "product.refresh" {
+		t.Fatalf("work identity interaction must be declared in product.yaml, got %+v", identityInteraction)
 	}
 	if !manifest.Profile.UIPanels.Schedules {
 		t.Fatal("Work must expose its project schedule panel")
@@ -178,9 +188,10 @@ func TestWorkPlatformSkillsRegisterAndLoad(t *testing.T) {
 		t.Fatalf("RegisterProductSkills: %v", err)
 	}
 	checks := map[string][]string{
-		"work-integrations":       {"list_mcp_servers", "Setup > MCP servers", "set_workflow_secret", "list_work_folders", "list_accessible_workflows", "attach_workflow_reference", "Setup > Models"},
-		"work-skills":             {"list_skills", "search_skills", "skill-creator", "Setup > Skills"},
-		"work-schedules-and-bots": {"list_project_schedules", "five-field cron", "list_project_triggers", "Project webhook triggers", "Setup > Bots", "Slack", "WhatsApp"},
+		"work-integrations":       {"list_mcp_servers", "Setup > MCP servers", "set_workflow_secret", "list_work_folders", "Setup > Models"},
+		"work-workflow-files":     {"list_accessible_workflows", "WORK_FOLDER_<ALIAS>", "workflow.json", "knowledgebase/", "learnings/", "db/db.sqlite", "db/reports/", "runs/run_index.json", "sqlite3 -readonly"},
+		"work-skills":             {"list_skills", "search_skills", "skills/custom/<skill-name>/SKILL.md", "skill authoring is a capability", "Setup > Skills"},
+		"work-schedules-and-bots": {"list_project_schedules", "five-field cron", "list_project_triggers", "Project webhook triggers", "Setup > Bots", "Slack", "WhatsApp", "list_gmail_connections", "google_workspace_cli", "gmail.readonly"},
 		"work-dashboard":          {"db/reports/index.html", "window.report.sendChatMessage", "query_workflow_db", "validate_report_html"},
 		"background-work":         {"run_in_background", "[AUTO-NOTIFICATION]", "query_agent"},
 	}

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { ChatTab } from '../../stores/useChatStore'
-import { applyWorkProjectRuntimeSelection, markWorkProjectRuntimeDirty, setWorkProjectRuntimeSelection, visibleWorkProjectTabs } from './workTabs'
+import { applyWorkProjectRuntimeSelection, markWorkProjectRuntimeDirty, preferredWorkProjectTabId, setWorkProjectRuntimeSelection, visibleWorkProjectTabs } from './workTabs'
 import { useChatStore } from '../../stores/useChatStore'
 
 function tab(overrides: Partial<ChatTab> & Pick<ChatTab, 'tabId'>): ChatTab {
@@ -41,6 +41,28 @@ describe('visibleWorkProjectTabs', () => {
     const current = tab({ tabId: 'current' })
     const other = tab({ tabId: 'other', metadata: { mode: 'multi-agent', agentProfileId: 'work', agentProfileProjectId: 'project-2' } })
     expect(visibleWorkProjectTabs({ current, other }, 'project-1', null).map(item => item.tabId)).toEqual(['current'])
+  })
+})
+
+describe('preferredWorkProjectTabId', () => {
+  it('preserves the active project tab', () => {
+    const builder = tab({ tabId: 'builder', metadata: { mode: 'multi-agent', agentProfileId: 'work', agentProfileProjectId: 'project-1', agentProfileBuilder: true } })
+    const older = tab({ tabId: 'older', lastAccessedAt: 10 })
+    const newer = tab({ tabId: 'newer', lastAccessedAt: 20 })
+    expect(preferredWorkProjectTabId({ builder, older, newer }, 'project-1', 'older')).toBe('older')
+  })
+
+  it('opens the most recently accessed chat when the saved active tab is unrelated', () => {
+    const builder = tab({ tabId: 'builder', metadata: { mode: 'multi-agent', agentProfileId: 'work', agentProfileProjectId: 'project-1', agentProfileBuilder: true }, lastAccessedAt: 30 })
+    const older = tab({ tabId: 'older', lastAccessedAt: 10 })
+    const newer = tab({ tabId: 'newer', lastAccessedAt: 20 })
+    const unrelated = tab({ tabId: 'unrelated', metadata: { mode: 'multi-agent', agentProfileId: 'work', agentProfileProjectId: 'other-project' }, lastAccessedAt: 40 })
+    expect(preferredWorkProjectTabId({ builder, older, newer, unrelated }, 'project-1', 'unrelated')).toBe('newer')
+  })
+
+  it('falls back to Builder when the project has no durable chat', () => {
+    const builder = tab({ tabId: 'builder', metadata: { mode: 'multi-agent', agentProfileId: 'work', agentProfileProjectId: 'project-1', agentProfileBuilder: true } })
+    expect(preferredWorkProjectTabId({ builder }, 'project-1', null)).toBe('builder')
   })
 })
 

@@ -484,7 +484,7 @@ func stampEventData(data unifiedevents.EventData, now time.Time) {
 	}
 }
 
-func (api *StreamingAPI) registerAgentProfileTools(registrar definitionToolRegistrar, resolved *resolvedAgentProfile, userID, sessionID, workspacePath string) error {
+func (api *StreamingAPI) registerAgentProfileTools(registrar definitionToolRegistrar, gate *productToolGate, resolved *resolvedAgentProfile, userID, sessionID, workspacePath string) error {
 	if resolved == nil {
 		return nil
 	}
@@ -503,12 +503,17 @@ func (api *StreamingAPI) registerAgentProfileTools(registrar definitionToolRegis
 		if category == "" {
 			category = "agent_profile_tools"
 		}
+		// profile.tools is itself an explicit capability declaration. The
+		// binding uses a factory id while tool_policy uses public tool names,
+		// so admit the factory's resolved name instead of requiring products
+		// to duplicate it in a second list that can drift out of sync.
+		gate.Declare(tool.Name)
 		if err := registrar.RegisterCustomTool(tool.Name, tool.Description, tool.Parameters, tool.Execute, category); err != nil {
 			return fmt.Errorf("register profile tool %q: %w", tool.Name, err)
 		}
 	}
 	if resolved.Definition.ID == "work" && agentprofiles.HasFeature(resolved.Definition, "attached-folders") {
-		if err := api.registerWorkFolderTools(registrar, userID); err != nil {
+		if err := api.registerWorkFolderTools(registrar, userID, sessionID); err != nil {
 			return err
 		}
 	}
@@ -519,6 +524,11 @@ func (api *StreamingAPI) registerAgentProfileTools(registrar definitionToolRegis
 	}
 	if resolved.Definition.ID == "work" && agentprofiles.HasFeature(resolved.Definition, "schedules") {
 		if err := api.registerWorkScheduleTools(registrar, userID, workspacePath); err != nil {
+			return err
+		}
+	}
+	if resolved.Definition.ID == "work" && agentprofiles.HasFeature(resolved.Definition, "bots") {
+		if err := api.registerGmailConnectionManagementTools(registrar, sessionID, workspacePath); err != nil {
 			return err
 		}
 	}
@@ -558,7 +568,11 @@ func agentProfileReadOnlyFolders(sandbox agentprofiles.SandboxPolicy, workflowRe
 	if sandbox.ReadOnly == nil {
 		return append([]string{"skills/", "subagents/", "Downloads/"}, workflowReadOnlyFolders...)
 	}
-	out := make([]string, 0, len(sandbox.ReadOnly))
+	// sandbox.read_only controls the product's ambient/default read roots. An
+	// authorized # workflow reference is request/project context, not an ambient
+	// default, and must remain readable even when the product deliberately uses
+	// `read_only: []` to disable those defaults.
+	out := make([]string, 0, len(sandbox.ReadOnly)+len(workflowReadOnlyFolders))
 	for _, folder := range sandbox.ReadOnly {
 		clean := strings.Trim(strings.TrimSpace(folder), "/")
 		if clean == "" {
@@ -566,5 +580,5 @@ func agentProfileReadOnlyFolders(sandbox agentprofiles.SandboxPolicy, workflowRe
 		}
 		out = append(out, clean+"/")
 	}
-	return out
+	return appendUniqueStrings(out, workflowReadOnlyFolders...)
 }

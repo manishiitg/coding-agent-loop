@@ -115,7 +115,7 @@ function FilesBody() {
   const handleCloseFiles = useCallback(() => {
     useWorkflowStore.getState().openWorkspaceView(lastCanvasView)
   }, [lastCanvasView])
-  return <FileWorkspacePane onClose={handleCloseFiles} />
+  return <FileWorkspacePane hideManagedEntriesByDefault onClose={handleCloseFiles} />
 }
 
 function InspectorBody({ workspacePath, presetQueryId }: { workspacePath: string | null; presetQueryId: string | null }) {

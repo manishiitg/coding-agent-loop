@@ -5,11 +5,13 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { PreviousChatHistoryPanel } from './PreviousChatHistoryPanel'
 import { agentApi } from '../services/api'
 import { schedulerApi } from '../api/scheduler'
+import { workflowWebhooksApi } from '../api/workflowWebhooks'
 import type { ScheduledJob, ScheduledJobRun } from '../services/api-types'
 import { scheduleRunSlotLabel } from '../utils/scheduleRunSlot'
 
 vi.mock('../services/api', () => ({ agentApi: { listChatHistorySessions: vi.fn() } }))
 vi.mock('../api/scheduler', () => ({ schedulerApi: { listJobs: vi.fn(), getJobRuns: vi.fn() } }))
+vi.mock('../api/workflowWebhooks', () => ({ workflowWebhooksApi: { getPayload: vi.fn() } }))
 vi.mock('../stores/useChatStore', () => {
   const state = { addToast: vi.fn() }
   return { useChatStore: (select: (value: typeof state) => unknown) => select(state) }
@@ -29,6 +31,7 @@ beforeEach(() => {
   vi.mocked(agentApi.listChatHistorySessions).mockResolvedValue({ sessions: [] })
   vi.mocked(schedulerApi.listJobs).mockResolvedValue({ jobs: [hook, cron], total: 2, limit: 100, offset: 0 })
   vi.mocked(schedulerApi.getJobRuns).mockImplementation(async id => ({ runs: id === hook.id ? [webhookRun] : [cronRun], total: 1, limit: 30, offset: 0 }))
+  vi.mocked(workflowWebhooksApi.getPayload).mockResolvedValue({ raw_payload: '{"action":"opened","number":42}' })
 })
 afterEach(() => { cleanups.splice(0).forEach(clean => clean()); vi.useRealTimers(); vi.clearAllMocks() })
 async function mount(compact = false) {
@@ -79,4 +82,17 @@ it('refreshes the visible feed when a webhook finishes', async () => {
 })
 it('does not interpret a webhook received time as a cron slot', () => {
   expect(scheduleRunSlotLabel(hook, webhookRun)).toBeUndefined()
+})
+
+it('loads and formats the webhook body when delivery details are opened', async () => {
+  const { host } = await mount()
+  await select(host, 'Webhooks')
+  const details = host.querySelector('details')!
+  await act(async () => {
+    details.open = true
+    details.dispatchEvent(new Event('toggle'))
+  })
+  expect(workflowWebhooksApi.getPayload).toHaveBeenCalledWith(hook.id, webhookRun.id)
+  expect(host.textContent).toContain('"action": "opened"')
+  expect(host.textContent).toContain('"number": 42')
 })

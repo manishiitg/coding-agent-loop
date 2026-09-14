@@ -359,11 +359,18 @@ func ImportRefreshTokenIntoGog(ctx context.Context, email, clientName, refreshTo
 		"--email", email,
 		"--client", clientName,
 		"--refresh-token-file", refreshPath,
-		"--no-input")
+		// Reconnect replaces the existing token for this exact account/client.
+		// gog refuses an existing entry with exit status 2 unless --force is
+		// explicit, even though replacing it is the purpose of this flow.
+		"--no-input", "--force")
 	cmd := exec.CommandContext(ctx, gogPath, args...)
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
+		detail := strings.TrimSpace(stderr.String())
+		if detail != "" {
+			return fmt.Errorf("gog auth import: %w: %s", err, detail)
+		}
 		return fmt.Errorf("gog auth import: %w", err)
 	}
 	return nil

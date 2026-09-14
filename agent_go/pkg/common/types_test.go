@@ -183,6 +183,30 @@ func TestSetSessionShellEnvMergesAndCopies(t *testing.T) {
 	}
 }
 
+func TestReplaceSessionShellEnvPrefixReplacesOnlyManagedNamespace(t *testing.T) {
+	sid := "sess-env-prefix"
+	defer ClearSessionShellConfig(sid)
+
+	SetSessionShellEnv(sid, map[string]string{
+		"DB_PATH":           "/db",
+		"WORK_FOLDER_OLD":   "/old",
+		"WORKFLOW_FOLDER_X": "/workflow",
+	})
+	ReplaceSessionShellEnvPrefix(sid, "WORK_FOLDER_", map[string]string{"WORK_FOLDER_NEW": "/new"})
+
+	env := GetSessionShellEnv(sid)
+	if _, exists := env["WORK_FOLDER_OLD"]; exists {
+		t.Fatal("stale Work folder alias remained after namespace replacement")
+	}
+	if env["WORK_FOLDER_NEW"] != "/new" || env["DB_PATH"] != "/db" || env["WORKFLOW_FOLDER_X"] != "/workflow" {
+		t.Fatalf("namespace replacement damaged unrelated env or omitted new alias: %#v", env)
+	}
+	ReplaceSessionShellEnvPrefix(sid, "WORK_FOLDER_", nil)
+	if _, exists := GetSessionShellEnv(sid)["WORK_FOLDER_NEW"]; exists {
+		t.Fatal("empty replacement did not remove managed namespace")
+	}
+}
+
 func TestReconcileSessionWorkflowFolderAccessIsWorkflowScoped(t *testing.T) {
 	const first = "folder-reconcile-first"
 	const second = "folder-reconcile-second"

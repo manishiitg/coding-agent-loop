@@ -352,7 +352,7 @@ export function WorkWorkspacePane({ workspacePath, projectId, projectTitle, tabI
   return (
     <div className="flex h-full min-h-0 flex-col bg-background">
       <div className="min-h-0 flex-1 overflow-hidden">
-        {view === 'files' && <FileWorkspacePane workspacePath={workspacePath} hiddenRootFolders={['.git', 'node_modules', 'product.json']} title="Workspace" hideAddToChat hideRootActions onClose={onClose} testId="work-files-panel" />}
+        {view === 'files' && <FileWorkspacePane workspacePath={workspacePath} hiddenRootFolders={['.git', 'node_modules', 'product.json']} hideManagedEntriesByDefault title="Workspace" hideAddToChat hideRootActions onClose={onClose} testId="work-files-panel" />}
         {view === 'skills' && <div className="flex h-full min-h-0 flex-col p-4"><SkillsManagerPanel compact workspacePath={workspacePath} selectedSkills={selectedSkills} onToggleSkill={folderName => { void toggleSkill(folderName) }} selectionLabel="Skills for this project" emptySelectionText="No project skills yet — pick one below." selectionScopeLabel="project" /></div>}
         {view === 'mcp' && <WorkMCPPanel tabId={tabId} workspacePath={workspacePath} onSelectedServersChange={onSelectedServersChange} />}
         {view === 'secrets' && <div className="h-full overflow-y-auto p-4"><SecretSelectionSection

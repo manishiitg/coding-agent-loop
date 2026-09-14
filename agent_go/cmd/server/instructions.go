@@ -718,32 +718,31 @@ Use this access to create and update custom sub-agent templates.
 	return instructions
 }
 
-// buildWorkflowContextPrompt builds rich context about selected workflows for injection into chat system prompt.
-// Provides comprehensive context about the workflow.
-// Includes full plan.json, step config, variables, execution history with step-level detail,
-// file location guide with step naming conventions, and learnings.
-func buildWorkflowContextPrompt(paths []string, workspaceAPIURL string) string {
-	if len(paths) == 0 || workspaceAPIURL == "" {
+// buildWorkflowContextPrompt grants discoverable read-only workflow context
+// without copying whole workflows into the system prompt. The folder guard is
+// the authority and the model reads only the files relevant to the user's
+// question. Previously this eagerly embedded workflow.json, the full plan,
+// step config, variables, history and learnings for every # reference; two
+// ordinary workflows could inflate a projected AGENTS.md beyond 100 KB and
+// that stale snapshot was less reliable than reading the source files.
+func buildWorkflowContextPrompt(paths []string, _ string) string {
+	if len(paths) == 0 {
 		return ""
 	}
 
-	client := skills.NewWorkspaceAPIClient(workspaceAPIURL)
-	var sections []string
-
-	sections = append(sections, "\n## Workflow Context (Read-Only)\n\nThe following workflow(s) have been selected as reference context for this conversation. You have **read-only** access to these workflow folders — you can read files and list directories but cannot modify them. Use the information below to answer questions about workflow structure, compare approaches, or reference patterns from these workflows.\n")
-
+	var references []string
 	for _, wsPath := range paths {
-		section := buildSingleWorkflowContext(client, wsPath)
-		if section != "" {
-			sections = append(sections, section)
+		wsPath = strings.TrimSpace(strings.TrimSuffix(wsPath, "/"))
+		if wsPath != "" {
+			references = append(references, fmt.Sprintf("- **%s:** `%s/`", path.Base(wsPath), wsPath))
 		}
 	}
-
-	if len(sections) <= 1 {
-		return "" // No workflow context was actually built
+	if len(references) == 0 {
+		return ""
 	}
-
-	return strings.Join(sections, "\n")
+	return "\n## Workflow Context (Read-Only)\n\n" +
+		"The following exact workflow folders are authorized as reference context for this message. Read only the files needed for the user's request; do not modify or execute these workflows. The coding CLI starts inside another working directory, so resolve each listed path from the workspace root—for shell calls use `$WORKSPACE_DOCS_PATH/<listed-path>/...`, not `<listed-path>/...` relative to the current directory. Do not list or probe the parent `Workflow/` directory: it is intentionally not granted, and failure to list that parent does not mean the attached child folders are inaccessible. Verify access against an exact listed folder or file before reporting it unavailable. Start with `workflow.json`, `soul/soul.md`, `planning/plan.json`, or `planning/step_config.json` when relevant, and inspect other files on demand. Treat the files as the source of truth rather than relying on a copied prompt snapshot.\n\n" +
+		strings.Join(references, "\n") + "\n"
 }
 
 // buildSingleWorkflowContext builds comprehensive context for a single workflow path

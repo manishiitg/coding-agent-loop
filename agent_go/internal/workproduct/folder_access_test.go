@@ -47,9 +47,12 @@ func TestResolveGrantsTrustsStoredPaths(t *testing.T) {
 		{ID: "1", Alias: "proj", Path: dir, Access: AccessReadWrite},
 		{ID: "2", Alias: "docs", Path: dir, Access: AccessReadOnly},
 	}
-	read, write, env := ResolveGrants(grants)
+	read, write, readOnly, env := ResolveGrants(grants)
 	if len(read) != 1 || len(write) != 1 {
 		t.Fatalf("expected deduped read+write paths, got read=%v write=%v", read, write)
+	}
+	if len(readOnly) != 1 || readOnly[0] != filepath.Clean(dir) {
+		t.Fatalf("expected read-only path to be preserved for write-deny enforcement, got %v", readOnly)
 	}
 	if env["WORK_FOLDER_PROJ"] == "" || env["WORK_FOLDER_DOCS"] == "" {
 		t.Fatalf("expected WORK_FOLDER_ env vars, got %v", env)

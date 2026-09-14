@@ -4972,7 +4972,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 		// PLAT-262: skip update_workflow_config registration for read-only access
 	} else if err := mcpAgent.RegisterCustomTool(
 		"update_workflow_config",
-		"Update workflow configuration: add/remove MCP servers, workflow-level tool allowlist entries, skills and secrets; save workflow-scoped notification content instructions; configure a one-way Slack Incoming Webhook by encrypted secret name; set browser mode and optional specialized multi-profile CDP ports; set run retention; or activate an owner-approved Strategy Auditor + Goal Advisor specialization. Use get_workflow_config to inspect current workflow settings and list_skills to discover installed skill folder names. Most changes take effect immediately for subsequent steps; changing cdp_ports or Slack webhook configuration takes effect on the next workflow execution.",
+		"Update workflow configuration: add/remove MCP servers, workflow-level tool allowlist entries, skills and secrets; save workflow-scoped notification content instructions; configure a one-way Slack Incoming Webhook by encrypted secret name; set browser mode and optional specialized multi-profile CDP ports; set run retention; disable selected Pulse reviewers; or activate an owner-approved Strategy Auditor + Goal Advisor specialization. Use get_workflow_config to inspect current workflow settings and list_skills to discover installed skill folder names. Most changes take effect immediately for subsequent steps; changing cdp_ports, Pulse reviewer selection, or Slack webhook configuration takes effect on the next workflow execution.",
 		map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
@@ -5084,6 +5084,12 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 					"minimum":     1,
 					"maximum":     maxRunRetentionCount,
 					"description": "Number of completed run/eval folders to keep independently for plain Builder archives, saved-schedule -sched runs, and webhook -hook runs, excluding active iteration-0. Defaults to 10 when omitted. Raise this for workflows whose Pulse or Goal Advisor reviews need a wider evidence window.",
+				},
+				"pulse_disabled_review_modules": map[string]interface{}{
+					"type":        "array",
+					"items":       map[string]interface{}{"type": "string", "enum": []string{"technical_review", "architecture_review", "strategic_review"}},
+					"uniqueItems": true,
+					"description": "Replace the complete list of Pulse reviewers disabled by the workflow owner. Disabled reviewers are skipped in future full Pulse runs while their history remains visible. Use technical_review for Health, architecture_review for Architecture, and strategic_review for Strategy. Pass [] to enable all three. This does not turn Pulse itself off or change per-schedule off/basic/full policy.",
 				},
 				"disable_parallel_tool_execution": map[string]interface{}{
 					"type":        "boolean",
@@ -6150,6 +6156,44 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				logger.Info(fmt.Sprintf("Updated workflow execution_defaults: %v", summary))
 			}
 
+			if _, provided := args["pulse_disabled_review_modules"]; provided {
+				disabled := extractStringArray("pulse_disabled_review_modules")
+				allowed := map[string]bool{"technical_review": true, "architecture_review": true, "strategic_review": true}
+				for _, module := range disabled {
+					if !allowed[module] {
+						return fmt.Sprintf("Error: unsupported Pulse reviewer %q; choose technical_review, architecture_review, or strategic_review.", module), nil
+					}
+				}
+				content, err := iwm.controller.ReadWorkspaceFile(ctx, "workflow.json")
+				if err != nil {
+					return "", err
+				}
+				var manifest map[string]interface{}
+				if err := json.Unmarshal([]byte(content), &manifest); err != nil {
+					return fmt.Sprintf("Failed to parse workflow.json: %v", err), nil
+				}
+				pulse, _ := manifest["pulse"].(map[string]interface{})
+				if pulse == nil {
+					pulse = map[string]interface{}{}
+				}
+				if len(disabled) == 0 {
+					delete(pulse, "disabled_review_modules")
+				} else {
+					pulse["disabled_review_modules"] = disabled
+				}
+				manifest["pulse"] = pulse
+				manifest["updated_at"] = time.Now().UTC().Format(time.RFC3339)
+				updated, err := json.MarshalIndent(manifest, "", "  ")
+				if err != nil {
+					return "", err
+				}
+				if err := iwm.controller.WriteWorkspaceFile(ctx, "workflow.json", string(updated)); err != nil {
+					return "", err
+				}
+				anyChanged = true
+				sb.WriteString(fmt.Sprintf("\n### Pulse reviewers (updated)\n- Disabled: %v\n- The change applies to future full Pulse runs; prior review history remains available.\n", disabled))
+			}
+
 			// --- Owner-approved advisor specialization ---
 			if raw, ok := args["advisor_specialization_approval_input_id"]; ok && raw != nil {
 				inputID, _ := raw.(string)
@@ -6208,7 +6252,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 			}
 
 			if !anyChanged {
-				return "No changes applied. Provide at least one of: knowledgebase_sources, add_servers, remove_servers, add_tools, remove_tools, add_skills, remove_skills, add_secrets, remove_secrets, run_notification_instructions, pulse_notification_instructions, run_notification_channels, pulse_notification_channels, slack_webhook_secret_name, browser_mode, cdp_ports, run_retention_count, advisor_specialization_approval_input_id.", nil
+				return "No changes applied. Provide at least one of: knowledgebase_sources, add_servers, remove_servers, add_tools, remove_tools, add_skills, remove_skills, add_secrets, remove_secrets, run_notification_instructions, pulse_notification_instructions, run_notification_channels, pulse_notification_channels, slack_webhook_secret_name, browser_mode, cdp_ports, run_retention_count, pulse_disabled_review_modules, advisor_specialization_approval_input_id.", nil
 			}
 
 			// Persist config changes to workflow.json manifest (file-backed)

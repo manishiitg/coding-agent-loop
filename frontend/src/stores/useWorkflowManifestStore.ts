@@ -7,6 +7,7 @@ import type {
   WorkflowExecutionDefaults,
   WorkflowOwnership,
   WorkflowScheduleEntry,
+  PulseReviewerModule,
 } from '../services/api-types'
 import { normalizeWorkspacePath } from '../utils/workspacePathUtils'
 
@@ -37,6 +38,7 @@ export interface WorkflowManifestState {
     ownership?: WorkflowOwnership
     schedules?: WorkflowScheduleEntry[]
     pulse_enabled?: boolean
+    pulse_disabled_review_modules?: PulseReviewerModule[]
   }) => Promise<WorkflowManifest>
   deleteWorkflow: (workspacePath: string) => Promise<void>
   duplicateWorkflow: (sourceWorkspacePath: string, targetWorkspacePath: string, newLabel?: string) => Promise<WorkflowManifest>

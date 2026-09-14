@@ -179,18 +179,19 @@ func (api *StreamingAPI) handleCreateWorkflowManifest(w http.ResponseWriter, r *
 // --- Update manifest ---
 
 type UpdateWorkflowManifestRequest struct {
-	KnowledgebaseSources *[]workflowtypes.KnowledgebaseSource         `json:"knowledgebase_sources,omitempty"`
-	WorkspacePath        string                                       `json:"workspace_path"`
-	Label                *string                                      `json:"label,omitempty"`
-	Capabilities         *WorkflowCapabilities                        `json:"capabilities,omitempty"`
-	ExecutionDefaults    *WorkflowExecutionDefaults                   `json:"execution_defaults,omitempty"`
-	Schedules            *[]WorkflowSchedule                          `json:"schedules,omitempty"`
-	WorkshopMode         *string                                      `json:"workshop_mode,omitempty"` // Standalone patch — avoids zeroing out other ExecutionDefaults fields
-	RunRetentionCount    *int                                         `json:"run_retention_count,omitempty"`
-	FolderAccess         *[]workflowtypes.WorkflowFolderGrant         `json:"folder_access,omitempty"`
-	FolderAccessRequests *[]workflowtypes.WorkflowFolderAccessRequest `json:"folder_access_requests,omitempty"`
-	WorkflowContextPaths *[]string                                    `json:"workflow_context_paths,omitempty"`
-	PulseEnabled         *bool                                        `json:"pulse_enabled,omitempty"`
+	KnowledgebaseSources       *[]workflowtypes.KnowledgebaseSource         `json:"knowledgebase_sources,omitempty"`
+	WorkspacePath              string                                       `json:"workspace_path"`
+	Label                      *string                                      `json:"label,omitempty"`
+	Capabilities               *WorkflowCapabilities                        `json:"capabilities,omitempty"`
+	ExecutionDefaults          *WorkflowExecutionDefaults                   `json:"execution_defaults,omitempty"`
+	Schedules                  *[]WorkflowSchedule                          `json:"schedules,omitempty"`
+	WorkshopMode               *string                                      `json:"workshop_mode,omitempty"` // Standalone patch — avoids zeroing out other ExecutionDefaults fields
+	RunRetentionCount          *int                                         `json:"run_retention_count,omitempty"`
+	FolderAccess               *[]workflowtypes.WorkflowFolderGrant         `json:"folder_access,omitempty"`
+	FolderAccessRequests       *[]workflowtypes.WorkflowFolderAccessRequest `json:"folder_access_requests,omitempty"`
+	WorkflowContextPaths       *[]string                                    `json:"workflow_context_paths,omitempty"`
+	PulseEnabled               *bool                                        `json:"pulse_enabled,omitempty"`
+	PulseDisabledReviewModules *[]string                                    `json:"pulse_disabled_review_modules,omitempty"`
 	// Notification instruction fields are standalone patches so the Notify
 	// popup can update content guidance without replacing workflow capabilities.
 	RunNotificationInstructions   *string   `json:"run_notification_instructions,omitempty"`
@@ -358,6 +359,17 @@ func (api *StreamingAPI) handleUpdateWorkflowManifest(w http.ResponseWriter, r *
 	}
 	if req.PulseEnabled != nil {
 		setWorkflowPulseEnabled(manifest, *req.PulseEnabled)
+	}
+	if req.PulseDisabledReviewModules != nil {
+		disabled, disabledErr := normalizeDisabledPulseReviewModules(*req.PulseDisabledReviewModules)
+		if disabledErr != nil {
+			http.Error(w, disabledErr.Error(), http.StatusBadRequest)
+			return
+		}
+		if manifest.Pulse == nil {
+			manifest.Pulse = &WorkflowPulseConfig{}
+		}
+		manifest.Pulse.DisabledReviewModules = disabled
 	}
 	if req.RunNotificationInstructions != nil || req.PulseNotificationInstructions != nil ||
 		req.RunNotificationChannels != nil || req.PulseNotificationChannels != nil ||

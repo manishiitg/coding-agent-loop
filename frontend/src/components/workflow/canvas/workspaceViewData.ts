@@ -7,6 +7,7 @@ import type {
   PulseFinalCommandState,
   PulseModuleState,
   PulseReviewFocus,
+  PulseReviewerModule,
   VariablesManifest,
 } from '../../../services/api-types'
 import type { PulseOverview } from '../PulseView'
@@ -20,6 +21,9 @@ export interface PulseData {
   monitorOn: boolean
   monitorSaving: boolean
   toggleMonitor: () => void
+  disabledReviewModules: PulseReviewerModule[]
+  reviewModuleSaving: PulseReviewerModule | null
+  toggleReviewModule: (module: PulseReviewerModule) => void
   moduleStates: PulseModuleState[]
   finalCommandStates: PulseFinalCommandState[]
   reviewFocuses: PulseReviewFocus[]

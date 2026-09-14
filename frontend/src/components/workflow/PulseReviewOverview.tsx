@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { FileText, GitCompare, Lightbulb, Maximize2, Wrench, Blocks } from 'lucide-react'
-import type { PulseFindingLifecycle, PulseModuleState, PulseReviewAudit, PulseReviewFocus, PulseReviewReport } from '../../services/api-types'
+import type { PulseFindingLifecycle, PulseModuleState, PulseReviewAudit, PulseReviewFocus, PulseReviewReport, PulseReviewerModule } from '../../services/api-types'
 import { normalizePulseWorkspaceModule, pulseFindingReviewAreas, pulseWorkspaceQueueCounts } from './pulseWorkspaceUtils'
 import { pulseReviewDate, reviewCoverageForArea, TECHNICAL_REVIEW_AREAS, ARCHITECTURE_REVIEW_AREAS } from './pulseReviewCoverage'
 
@@ -65,11 +65,13 @@ function FocusDetails({ items, reports, findings }: { items: PulseReviewFocus[];
   </div>
 }
 
-export function PulseReviewOverview({ moduleStates, coverage, audits, reports, findings, moduleFilter, onSelectModule, reviewFocusSelections = [], playbookFocuses = [] }: {
+export function PulseReviewOverview({ moduleStates, coverage, audits, reports, findings, moduleFilter, onSelectModule, reviewFocusSelections = [], playbookFocuses = [], disabledReviewModules = [], reviewModuleSaving = null, onToggleReviewModule }: {
   moduleStates: PulseModuleState[]; coverage: PulseReviewFocus[]; audits: PulseReviewAudit[];
   reports: PulseReviewReport[]; findings: PulseFindingLifecycle[]; moduleFilter: string | null;
   onSelectModule: (module: string) => void; reviewFocusSelections?: PulseReviewFocus[];
   playbookFocuses?: InstalledPlaybookReviewFocus[];
+  disabledReviewModules?: PulseReviewerModule[]; reviewModuleSaving?: PulseReviewerModule | null;
+  onToggleReviewModule?: (module: PulseReviewerModule) => void;
 }) {
   const areas = [
     { id: 'plan_drift_review', label: 'Drift check', description: 'Changes to the plan and their follow-up checks.', Icon: GitCompare },
@@ -101,25 +103,35 @@ export function PulseReviewOverview({ moduleStates, coverage, audits, reports, f
     <div><h3 className="text-sm font-semibold">Work areas</h3><p className="mt-1 text-xs text-muted-foreground">Choose an area to see its review, reports, checks, and findings below.</p></div>
     <nav className="grid gap-2 md:grid-cols-3" aria-label="Pulse work areas">
       {areas.filter(area => area.id !== 'plan_drift_review').map(area => {
+        const module = area.id as PulseReviewerModule
+        const disabled = disabledReviewModules.includes(module)
         const audit = latestAuditFor(area.id)
         const lastReviewed = audit?.recorded_at || latestCoverageFor(area.id)?.last_reviewed_at
         const recommendedFocus = playbookFocusFor(area.id)
         const active = moduleFilter === area.id
-        return <button key={area.id} type="button" aria-pressed={active} onClick={() => onSelectModule(area.id)}
-          className={`rounded-xl border p-3 text-left transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary ${active ? 'border-primary/40 bg-primary/10' : 'bg-background hover:bg-muted/40'}`}>
-          <span className="flex items-center gap-2 text-xs font-semibold"><area.Icon className="h-4 w-4 shrink-0" />{area.label}</span>
-          <span className="mt-2 block text-[11px] leading-5 text-muted-foreground">{area.id === 'plan_drift_review' ? driftStatus : lastReviewed ? `Last reviewed ${pulseReviewDate(lastReviewed)}` : 'No review recorded'}</span>
-          <span className="mt-1.5 block text-[11px] leading-4 text-foreground/80">
-            <span className="font-medium">Playbook focus:</span> {recommendedFocus.length > 0
-              ? recommendedFocus.flatMap(item => item.focusAreas).slice(0, 2).join(' · ')
-              : 'None configured'}
-          </span>
-        </button>
+        return <div key={area.id} className={`overflow-hidden rounded-xl border transition-colors ${active ? 'border-primary/40 bg-primary/10' : disabled ? 'bg-muted/20' : 'bg-background'}`}>
+          <button type="button" aria-pressed={active} onClick={() => onSelectModule(area.id)} className="w-full p-3 text-left hover:bg-muted/30 focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary">
+            <span className="flex items-center gap-2 text-xs font-semibold"><area.Icon className="h-4 w-4 shrink-0" />{area.label}{disabled && <span className="ml-auto rounded-full border border-border bg-muted px-1.5 py-0.5 text-[9px] font-medium uppercase tracking-wide text-muted-foreground">Off</span>}</span>
+            <span className="mt-2 block text-[11px] leading-5 text-muted-foreground">{disabled ? 'Reviewer disabled for future Pulse runs' : lastReviewed ? `Last reviewed ${pulseReviewDate(lastReviewed)}` : 'No review recorded'}</span>
+            <span className="mt-1.5 block text-[11px] leading-4 text-foreground/80">
+              <span className="font-medium">Playbook focus:</span> {recommendedFocus.length > 0
+                ? recommendedFocus.flatMap(item => item.focusAreas).slice(0, 2).join(' · ')
+                : 'None configured'}
+            </span>
+          </button>
+          <div className="flex items-center justify-between border-t border-border/70 px-3 py-2">
+            <span className="text-[10px] text-muted-foreground">Include in Pulse reviews</span>
+            <button type="button" role="switch" aria-label={`Include ${area.label} reviewer in Pulse reviews`} aria-checked={!disabled} disabled={!!reviewModuleSaving || !onToggleReviewModule} onClick={() => onToggleReviewModule?.(module)} className={`relative inline-flex h-4 w-7 items-center rounded-full transition-colors disabled:opacity-50 ${disabled ? 'bg-muted-foreground/30' : 'bg-primary'}`}>
+              <span className={`h-3 w-3 rounded-full bg-white shadow-sm transition-transform ${disabled ? 'translate-x-0.5' : 'translate-x-3.5'}`} />
+            </button>
+          </div>
+        </div>
       })}
     </nav>
     <button type="button" onClick={() => onSelectModule('plan_drift_review')} aria-pressed={moduleFilter === 'plan_drift_review'} className="flex items-center gap-2 text-xs text-muted-foreground hover:text-foreground"><GitCompare className="h-3.5 w-3.5" />Drift check · {driftStatus}</button>
     {selected && <section key={selected.id} aria-label={`${selected.label} content`} className="space-y-4 rounded-xl border bg-background p-4">
       <div><h4 className="text-sm font-semibold">{selected.label}</h4><p className="mt-1 text-xs text-muted-foreground">{selected.description}</p></div>
+      {selected.id !== 'plan_drift_review' && disabledReviewModules.includes(selected.id as PulseReviewerModule) && <p className="rounded-lg border border-border bg-muted/40 px-3 py-2 text-xs text-muted-foreground">This reviewer is off. Future Pulse runs will skip it; previous findings, coverage, and reports remain below.</p>}
       {selected.id === 'plan_drift_review' ? <div className="space-y-2 text-xs leading-5 text-muted-foreground">
         <p className="font-medium text-foreground">{driftStatus}</p>
         <p>{driftCounts.all ? `${driftCounts.all} current drift finding${driftCounts.all === 1 ? '' : 's'}.` : 'No current drift findings.'}

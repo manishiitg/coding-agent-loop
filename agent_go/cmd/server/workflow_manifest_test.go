@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	step_based_workflow "github.com/manishiitg/coding-agent-loop/agent_go/pkg/orchestrator/agents/workflow/step_based_workflow"
+	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/pulsemodules"
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/workflowtypes"
 )
 
@@ -185,6 +186,22 @@ func TestValidateManifestAdvisorSpecialization(t *testing.T) {
 	manifest.Pulse.AdvisorSpecialization.GoalAdvisor = ""
 	if err := ValidateManifest(manifest); err == nil || !strings.Contains(err.Error(), "goal_advisor") {
 		t.Fatalf("missing Goal Advisor specialization should be rejected, got %v", err)
+	}
+}
+
+func TestValidateManifestPulseDisabledReviewModules(t *testing.T) {
+	manifest := NewWorkflowManifest("Selective Pulse reviews")
+	manifest.Pulse = &WorkflowPulseConfig{DisabledReviewModules: []string{
+		pulsemodules.StrategicReviewID,
+		pulsemodules.ArchitectureReviewID,
+	}}
+	if err := ValidateManifest(manifest); err != nil {
+		t.Fatalf("valid disabled Pulse reviewers rejected: %v", err)
+	}
+
+	manifest.Pulse.DisabledReviewModules = []string{pulsemodules.PlanDriftReviewID}
+	if err := ValidateManifest(manifest); err == nil || !strings.Contains(err.Error(), "unsupported reviewer") {
+		t.Fatalf("plan drift should not be accepted as a configurable reviewer, got %v", err)
 	}
 }
 

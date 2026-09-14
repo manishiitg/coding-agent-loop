@@ -14,6 +14,7 @@ import (
 	"time"
 
 	step_based_workflow "github.com/manishiitg/coding-agent-loop/agent_go/pkg/orchestrator/agents/workflow/step_based_workflow"
+	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/pulsemodules"
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/schedulepolicy"
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/workflowtypes"
 
@@ -191,6 +192,46 @@ type WorkflowPulseConfig struct {
 	// does not own a separate recurring cron; the completed run is its trigger.
 	Enabled               bool                           `json:"enabled,omitempty"`
 	AdvisorSpecialization *WorkflowAdvisorSpecialization `json:"advisor_specialization,omitempty"`
+	// DisabledReviewModules is the owner-controlled denylist for optional Pulse
+	// reviewers. Gate still records these modules in each worklist for an
+	// auditable skip, but the scheduler never launches their review agents.
+	DisabledReviewModules []string `json:"disabled_review_modules,omitempty"`
+}
+
+var configurablePulseReviewModules = map[string]bool{
+	pulsemodules.TechnicalReviewID:    true,
+	pulsemodules.ArchitectureReviewID: true,
+	pulsemodules.StrategicReviewID:    true,
+}
+
+func normalizeDisabledPulseReviewModules(modules []string) ([]string, error) {
+	seen := map[string]bool{}
+	result := make([]string, 0, len(modules))
+	for _, raw := range modules {
+		module := strings.ToLower(strings.TrimSpace(raw))
+		if !configurablePulseReviewModules[module] {
+			return nil, fmt.Errorf("pulse.disabled_review_modules contains unsupported reviewer %q", raw)
+		}
+		if seen[module] {
+			continue
+		}
+		seen[module] = true
+		result = append(result, module)
+	}
+	return result, nil
+}
+
+func (m *WorkflowManifest) PulseReviewModuleDisabled(module string) bool {
+	if m == nil || m.Pulse == nil {
+		return false
+	}
+	module = strings.ToLower(strings.TrimSpace(module))
+	for _, disabled := range m.Pulse.DisabledReviewModules {
+		if strings.ToLower(strings.TrimSpace(disabled)) == module {
+			return true
+		}
+	}
+	return false
 }
 
 type WorkflowAdvisorSpecialization struct {
@@ -760,6 +801,11 @@ func ValidateManifest(m *WorkflowManifest) error {
 		}
 		if strings.TrimSpace(specialization.GoalAdvisor) == "" {
 			return fmt.Errorf("pulse.advisor_specialization.goal_advisor is required")
+		}
+	}
+	if m.Pulse != nil {
+		if _, err := normalizeDisabledPulseReviewModules(m.Pulse.DisabledReviewModules); err != nil {
+			return err
 		}
 	}
 

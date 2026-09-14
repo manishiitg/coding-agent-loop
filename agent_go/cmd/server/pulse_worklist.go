@@ -1057,6 +1057,10 @@ func recordPulseWorklistWithMode(ctx context.Context, workspacePath, pulseRunID,
 	if err != nil {
 		return nil, err
 	}
+	decisions, err = applyDisabledPulseReviewModules(ctx, workspacePath, decisions)
+	if err != nil {
+		return nil, err
+	}
 	if err := validatePulseWorklistDecisions(decisions); err != nil {
 		return nil, err
 	}
@@ -1259,6 +1263,33 @@ func forcePendingPulseReviewRecoveries(ctx context.Context, workspacePath string
 	return forced, nil
 }
 
+// applyDisabledPulseReviewModules makes the owner's durable reviewer choice
+// authoritative over Gate cadence and recovery routing. Disabled reviewers
+// retain a skipped worklist row so the decision is visible and finalization
+// still sees a structurally complete worklist.
+func applyDisabledPulseReviewModules(ctx context.Context, workspacePath string, decisions []PulseWorklistDecision) ([]PulseWorklistDecision, error) {
+	manifest, exists, err := ReadWorkflowManifest(ctx, workspacePath)
+	if err != nil || !exists || manifest.Pulse == nil || len(manifest.Pulse.DisabledReviewModules) == 0 {
+		return decisions, nil
+	}
+	updated := append([]PulseWorklistDecision(nil), decisions...)
+	for index := range updated {
+		module := normalizePulseModule(updated[index].Module)
+		if !manifest.PulseReviewModuleDisabled(module) {
+			continue
+		}
+		updated[index].Due = false
+		updated[index].Reason = "Disabled by the workflow owner in Pulse review settings."
+		updated[index].Evidence = []string{"workflow.json:pulse.disabled_review_modules:" + module}
+		updated[index].NextCheckAt = ""
+		updated[index].NextCheckAfterRunID = ""
+		// A positive boundary satisfies the generic skipped-row contract; the
+		// owner setting is reapplied on every pass until explicitly enabled.
+		updated[index].CooldownRuns = 1
+	}
+	return updated, nil
+}
+
 func markPulseReviewRecovery(ctx context.Context, workspacePath, module, sourcePulseRunID, checkpointPath, reason string) error {
 	module = normalizePulseModule(module)
 	if !validPulseModules[module] {
@@ -1353,6 +1384,9 @@ func forcePulseModuleDueForLateRepairDebt(ctx context.Context, workspacePath, pu
 	module = normalizePulseModule(module)
 	if !validPulseModules[module] {
 		return fmt.Errorf("module %q is not a valid Pulse module", module)
+	}
+	if manifest, exists, readErr := ReadWorkflowManifest(ctx, workspacePath); readErr == nil && exists && manifest.PulseReviewModuleDisabled(module) {
+		return nil
 	}
 	reason = strings.TrimSpace(reason)
 	if reason == "" {
@@ -1466,6 +1500,9 @@ func validateDeterministicIntakeRouting(ctx context.Context, workspacePath strin
 	if len(reasons) == 0 {
 		return nil
 	}
+	if manifest, exists, err := ReadWorkflowManifest(ctx, workspacePath); err == nil && exists && manifest.PulseReviewModuleDisabled(pulseModuleTechnicalReview) {
+		return nil
+	}
 	for _, decision := range decisions {
 		if normalizePulseModule(decision.Module) == pulseModuleTechnicalReview && decision.Due {
 			return nil
@@ -1536,6 +1573,10 @@ func recordPulseWorklistOnceAfter(ctx context.Context, workspacePath, pulseRunID
 	// rejected before the backend got its chance to make it mandatory due.
 	var err error
 	decisions, err = forcePendingPulseReviewRecoveries(ctx, workspacePath, decisions)
+	if err != nil {
+		return nil, err
+	}
+	decisions, err = applyDisabledPulseReviewModules(ctx, workspacePath, decisions)
 	if err != nil {
 		return nil, err
 	}

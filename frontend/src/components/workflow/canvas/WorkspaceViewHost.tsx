@@ -29,6 +29,7 @@ import type {
   PulseFinalCommandState,
   PulseModuleState,
   PulseReviewFocus,
+  PulseReviewerModule,
   PulseShadowSignalObservation,
   VariablesManifest,
 } from '../../../services/api-types'
@@ -183,6 +184,9 @@ function InspectorBody({ workspacePath, presetQueryId }: { workspacePath: string
             monitorOn={pulse.monitorOn}
             monitorSaving={pulse.monitorSaving}
             onToggleMonitor={pulse.toggleMonitor}
+            disabledReviewModules={pulse.disabledReviewModules}
+            reviewModuleSaving={pulse.reviewModuleSaving}
+            onToggleReviewModule={pulse.toggleReviewModule}
             moduleStates={pulse.moduleStates}
             finalCommandStates={pulse.finalCommandStates}
             reviewFocuses={pulse.reviewFocuses}
@@ -297,6 +301,7 @@ export const WorkspaceViewHost = React.memo(forwardRef<WorkflowCanvasRef, Workfl
     const wf = state.workflows.find(w => w.workspace_path === workspacePath)
     return {
       enabled: wf?.manifest.pulse?.enabled,
+      disabledReviewModules: wf?.manifest.pulse?.disabled_review_modules || [],
       legacyEnabled: wf?.manifest.schedules?.some(schedule => schedule.pulse_review_only && schedule.enabled),
     }
   }))
@@ -305,6 +310,18 @@ export const WorkspaceViewHost = React.memo(forwardRef<WorkflowCanvasRef, Workfl
   const { monitorSaving, toggleMonitor } = usePulseToggle(
     workspacePath, monitorOn, updateWorkflowManifest, useChatStore.getState().addToast,
   )
+  const [reviewModuleSaving, setReviewModuleSaving] = useState<PulseReviewerModule | null>(null)
+  const toggleReviewModule = useCallback((module: PulseReviewerModule) => {
+    if (!workspacePath || reviewModuleSaving) return
+    const disabled = new Set(pulseConfig.disabledReviewModules)
+    const enabling = disabled.delete(module)
+    if (!enabling) disabled.add(module)
+    setReviewModuleSaving(module)
+    void updateWorkflowManifest(workspacePath, { pulse_disabled_review_modules: [...disabled] })
+      .then(() => useChatStore.getState().addToast(`${module === 'technical_review' ? 'Health' : module === 'architecture_review' ? 'Architecture' : 'Strategy'} reviewer turned ${enabling ? 'on' : 'off'}`, 'success'))
+      .catch(error => useChatStore.getState().addToast(error instanceof Error ? error.message : 'Could not update Pulse reviewers', 'error'))
+      .finally(() => setReviewModuleSaving(null))
+  }, [workspacePath, reviewModuleSaving, pulseConfig.disabledReviewModules, updateWorkflowManifest])
 
   const [pulseModuleStates, setPulseModuleStates] = useState<PulseModuleState[]>([])
   const [pulseFinalCommandStates, setPulseFinalCommandStates] = useState<PulseFinalCommandState[]>([])
@@ -401,6 +418,9 @@ export const WorkspaceViewHost = React.memo(forwardRef<WorkflowCanvasRef, Workfl
     monitorOn,
     monitorSaving,
     toggleMonitor,
+    disabledReviewModules: pulseConfig.disabledReviewModules,
+    reviewModuleSaving,
+    toggleReviewModule,
     moduleStates: pulseModuleStates,
     finalCommandStates: pulseFinalCommandStates,
     reviewFocuses: pulseReviewFocuses,
@@ -410,7 +430,7 @@ export const WorkspaceViewHost = React.memo(forwardRef<WorkflowCanvasRef, Workfl
     overview: pulseOverview,
     refresh: refreshPulseModuleStates,
   }), [
-    monitorOn, monitorSaving, toggleMonitor, pulseModuleStates, pulseFinalCommandStates,
+    monitorOn, monitorSaving, toggleMonitor, pulseConfig.disabledReviewModules, reviewModuleSaving, toggleReviewModule, pulseModuleStates, pulseFinalCommandStates,
     pulseReviewFocuses, pulseReviewFocusSelections, pulseStatusError, pulseStatusLoading,
     pulseOverview, refreshPulseModuleStates,
   ])

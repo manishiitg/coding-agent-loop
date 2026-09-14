@@ -3232,7 +3232,10 @@ export interface WorkflowFolderAccessRequest {
 export interface WorkflowPulseConfig {
   enabled?: boolean
   advisor_specialization?: WorkflowAdvisorSpecialization
+  disabled_review_modules?: PulseReviewerModule[]
 }
+
+export type PulseReviewerModule = 'technical_review' | 'architecture_review' | 'strategic_review'
 
 export interface WorkflowAdvisorSpecialization {
   version: number
@@ -3335,6 +3338,7 @@ export interface UpdateWorkflowManifestRequest {
   workshop_mode?: string // Standalone patch — avoids zeroing out other execution_defaults fields
   run_retention_count?: number
   pulse_enabled?: boolean
+  pulse_disabled_review_modules?: PulseReviewerModule[]
   run_notification_instructions?: string
   pulse_notification_instructions?: string
   run_notification_channels?: string[]

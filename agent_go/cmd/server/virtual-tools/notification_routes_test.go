@@ -75,9 +75,9 @@ func TestNotificationRouteInputAndChannelRendering(t *testing.T) {
 		t.Fatal(err)
 	}
 	gc := &services.GmailContent{HTMLBody: "<body>Shared work</body>"}
-	text := appendNotificationRouteContent("Shared work", routes, gc)
-	if !strings.Contains(text, "Publishing — Awaiting approval") || !strings.Contains(text, "Review <draft>") || !strings.Contains(gc.HTMLBody, "Review &lt;draft&gt;") || !strings.HasSuffix(gc.HTMLBody, "</body>") {
-		t.Fatalf("channel-neutral route content missing or HTML not escaped: %s / %s", text, gc.HTMLBody)
+	text := appendNotificationRouteContent("Shared work", routes)
+	if !strings.Contains(text, "Publishing — Awaiting approval") || !strings.Contains(text, "Review <draft>") || gc.HTMLBody != "<body>Shared work</body>" {
+		t.Fatalf("channel-neutral route content missing or custom Gmail HTML was changed: %s / %s", text, gc.HTMLBody)
 	}
 	if _, err := notificationRoutesFromArg(append(raw, raw[0])); err == nil {
 		t.Fatal("duplicate route identities accepted")

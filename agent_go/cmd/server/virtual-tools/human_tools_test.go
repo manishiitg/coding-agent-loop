@@ -773,6 +773,10 @@ func TestHandleNotifyUserAddsWorkflowNameToRichEmail(t *testing.T) {
 		"notification_kind": "pulse_summary",
 		"email_subject":     "Pulse summary",
 		"email_html":        `<div>Three findings remain pending.</div>`,
+		"summary_routes": []interface{}{map[string]interface{}{
+			"routing_step_id": "review_router", "route_id": "security", "label": "Security",
+			"title": "Review complete", "status": "completed", "message": "route facts already rendered by the email card",
+		}},
 	}); err != nil {
 		t.Fatalf("Pulse notification: %v", err)
 	}
@@ -788,6 +792,9 @@ func TestHandleNotifyUserAddsWorkflowNameToRichEmail(t *testing.T) {
 		}
 		if !strings.Contains(gmail.HTMLBody, "Workflow: <strong") || !strings.Contains(gmail.HTMLBody, "rtslatency</strong>") {
 			t.Fatalf("email body missing workflow header: %s", gmail.HTMLBody)
+		}
+		if strings.Contains(gmail.HTMLBody, "route facts already rendered") || strings.Count(gmail.HTMLBody, "Three findings remain pending.") != 1 {
+			t.Fatalf("email body duplicated route or card content: %s", gmail.HTMLBody)
 		}
 	case <-time.After(time.Second):
 		t.Fatal("expected Gmail notification")

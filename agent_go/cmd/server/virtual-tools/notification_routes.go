@@ -3,7 +3,6 @@ package virtualtools
 import (
 	"encoding/json"
 	"fmt"
-	"html"
 	"strings"
 
 	"github.com/manishiitg/coding-agent-loop/agent_go/cmd/server/services"
@@ -12,7 +11,7 @@ import (
 func notificationRoutesSchema(fields, sections interface{}) map[string]interface{} {
 	return map[string]interface{}{
 		"type": "array", "maxItems": 20,
-		"description": "Route-specific Run or Pulse summaries in one notification. Use exact routing_step_id plus route_id from major routing steps, never branch choices. Include only routes whose run/review evidence you inspected; a route not reviewed is not clean. Keep shared work in the top-level message/sections. Do not repeat these route bodies in message_for_user or rich channel fields: the backend renders them for delivery. Prefer this over legacy summary_route even for one route.",
+		"description": "Route-specific Run or Pulse summaries in one notification. Use exact routing_step_id plus route_id from major routing steps, never branch choices. Include only routes whose run/review evidence you inspected; a route not reviewed is not clean. Keep shared work in the top-level message/sections. Do not repeat these route bodies in message_for_user: the backend adds them to the channel-neutral delivery text. When supplying a custom rich-channel body, render each intended fact exactly once. Prefer this over legacy summary_route even for one route.",
 		"items": map[string]interface{}{
 			"type": "object", "additionalProperties": false,
 			"required": []string{"routing_step_id", "route_id", "title", "status", "message"},
@@ -64,9 +63,12 @@ func notificationRoutesFromArg(raw interface{}) ([]services.NotificationRouteSum
 	return routes, nil
 }
 
-// Every delivery receives the same route facts; callers do not author another
-// copy for each channel. Rich Gmail escapes data; Slack uses its normal renderer.
-func appendNotificationRouteContent(message string, routes []services.NotificationRouteSummary, gmail *services.GmailContent) string {
+// Append route facts to the channel-neutral delivery text. A caller-supplied
+// Gmail HTML body is already the complete email presentation and must remain
+// untouched; appending this text as another HTML section duplicates the same
+// facts below designed run-summary cards. When there is no custom HTML body,
+// Gmail converts this completed channel-neutral text into one HTML body later.
+func appendNotificationRouteContent(message string, routes []services.NotificationRouteSummary) string {
 	for _, route := range routes {
 		label := route.Label
 		if label == "" {
@@ -81,14 +83,6 @@ func appendNotificationRouteContent(message string, routes []services.Notificati
 			body += "\n\n" + section.Heading + "\n" + section.Body
 		}
 		message += "\n\n" + heading + "\n" + body
-		if gmail != nil && gmail.HTMLBody != "" {
-			block := `<section style="margin-top:16px"><h3>` + html.EscapeString(heading) + `</h3><div style="white-space:pre-wrap">` + html.EscapeString(body) + `</div></section>`
-			if closing := strings.LastIndex(strings.ToLower(gmail.HTMLBody), "</body>"); closing >= 0 {
-				gmail.HTMLBody = gmail.HTMLBody[:closing] + block + gmail.HTMLBody[closing:]
-			} else {
-				gmail.HTMLBody += block
-			}
-		}
 	}
 	return message
 }

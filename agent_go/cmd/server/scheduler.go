@@ -16,7 +16,6 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/contractupgrade"
-	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/costledger"
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/fsutil"
 	stepworkflow "github.com/manishiitg/coding-agent-loop/agent_go/pkg/orchestrator/agents/workflow/step_based_workflow"
 	orchestratorevents "github.com/manishiitg/coding-agent-loop/agent_go/pkg/orchestrator/events"
@@ -2496,8 +2495,6 @@ func (s *SchedulerService) runPulseLifecycle(ctx context.Context, sctx *Schedule
 		return pulseLifecycleNotRun
 	}
 	pulseResult = pulseLifecyclePartial
-	var reviewFixStartedAt, reviewFixCompletedAt time.Time
-
 	// Resume the SAME session the workflow run just used, so Pulse continues in the
 	// run's chat thread — the user sees the run and its post-run steward as one
 	// conversation, not a fresh session spun up out of nowhere. Fall back to a new id
@@ -2554,9 +2551,6 @@ func (s *SchedulerService) runPulseLifecycle(ctx context.Context, sctx *Schedule
 		reqMap := cloneStringInterfaceMap(baseReqMap)
 		markPulseLifecycleTurn(reqMap)
 		query := st.query
-		if st.label == "finalize" {
-			query += pulseReviewFixCostContext(s.api.costLedger, sctx.WorkspacePath, reviewFixStartedAt, reviewFixCompletedAt)
-		}
 		includesIntro := false
 		if !introSent {
 			priorFailureContext := ""
@@ -2716,9 +2710,6 @@ func (s *SchedulerService) runPulseLifecycle(ctx context.Context, sctx *Schedule
 				handleStepFailure(st, result, i < len(steps)-1)
 				continue
 			}
-			if reviewFixStartedAt.IsZero() {
-				reviewFixStartedAt = time.Now().UTC()
-			}
 		}
 		result := runStep(st)
 		contractupgrade.Revoke(sessionID)
@@ -2760,7 +2751,6 @@ func (s *SchedulerService) runPulseLifecycle(ctx context.Context, sctx *Schedule
 			}
 		}
 		if isImprovementReview {
-			reviewFixCompletedAt = time.Now().UTC()
 			// This is intentionally scheduler-owned. A child can write a useful
 			// checkpoint and then time out or exit before its final tool call; an
 			// instruction telling the parent agent to remember that fact is not a
@@ -2838,32 +2828,6 @@ func workflowBackupRequiresDatabaseSnapshot(config *WorkflowBackupConfig, trigge
 		}
 	}
 	return false
-}
-
-func pulseReviewFixCostContext(ledger *costledger.Ledger, workspacePath string, startedAt, completedAt time.Time) string {
-	if startedAt.IsZero() && completedAt.IsZero() {
-		return "\n\nREVIEWER/FIXER COST. Review+Fix was not run in this pass, so its cost is $0.00. Include that compact fact in Operations; do not substitute Gate, Finalize, workflow, builder, or prior-pass cost."
-	}
-	const unavailable = "\n\nREVIEWER/FIXER COST. Cost evidence is unavailable for this pass. Say that plainly in Operations; do not estimate or reuse a prior run's amount."
-	if ledger == nil || startedAt.IsZero() || completedAt.IsZero() || !completedAt.After(startedAt) {
-		return unavailable
-	}
-	summary, err := ledger.SummarizeWorkflowScopeWindow(workspacePath, "pulse", startedAt, completedAt)
-	if err != nil {
-		return unavailable
-	}
-	total := summary.Total
-	if total.AccountingEventCount == 0 {
-		return "\n\nREVIEWER/FIXER COST. Review+Fix ran, but no LLM cost events were recorded in its measured window. Report the measurement gap in Operations; do not present it as $0.00 or substitute another cost bucket."
-	}
-	costLabel := "accounted cost"
-	if total.SubscriptionShadowUSD > 0 && total.ProviderActualCostUSD == 0 && total.TokenEstimateCostUSD == 0 {
-		costLabel = "estimated token-equivalent cost (subscription-backed coding CLI)"
-	}
-	return fmt.Sprintf(
-		"\n\nREVIEWER/FIXER COST (backend-measured after Review+Fix completed at %s). Include this exact, compact line in the notification's Operations section: Reviewers + Fixer %s: $%.2f across %d LLM call(s). This covers the parent Review+Fix turn, its background reviewer/fixer agents, and any receipt continuation inside that stage. It excludes Gate, Finalize, workflow execution, builder activity, and prior Pulse passes.",
-		completedAt.UTC().Format(time.RFC3339), costLabel, total.TotalCostUSD, total.CallCount,
-	)
 }
 
 type pulseLifecycleStep struct{ label, query string }

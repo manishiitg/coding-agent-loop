@@ -13,7 +13,6 @@ import (
 	"time"
 
 	"github.com/manishiitg/coding-agent-loop/agent_go/internal/terminals"
-	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/costledger"
 	todo_creation_human "github.com/manishiitg/coding-agent-loop/agent_go/pkg/orchestrator/agents/workflow/step_based_workflow"
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/schedulerstate"
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/workflowtypes"
@@ -53,42 +52,6 @@ func TestBuildScheduleCronExpressionAlwaysSetsTimezone(t *testing.T) {
 				t.Fatalf("buildScheduleCronExpression() = %q, want %q", got, tt.want)
 			}
 		})
-	}
-}
-
-func TestPulseReviewFixCostContextUsesOnlyReviewFixWindow(t *testing.T) {
-	ledger, err := costledger.NewSQLiteLedger(filepath.Join(t.TempDir(), "costs.sqlite"))
-	if err != nil {
-		t.Fatalf("NewSQLiteLedger() error = %v", err)
-	}
-	defer ledger.Close()
-	start := time.Date(2026, 8, 15, 1, 0, 0, 0, time.UTC)
-	for _, entry := range []costledger.Entry{
-		{EventID: "prior", IdempotencyKey: "prior", Timestamp: start.Add(-time.Second), WorkflowID: "Workflow/demo", Scope: "pulse", LLMCallCount: 1, TotalCostUSD: 90},
-		{EventID: "gate", IdempotencyKey: "gate", Timestamp: start.Add(time.Second), WorkflowID: "Workflow/demo", Scope: "pulse", LLMCallCount: 1, TotalCostUSD: 1.25, BillingBasis: "subscription_shadow"},
-		{EventID: "review", IdempotencyKey: "review", Timestamp: start.Add(2 * time.Second), WorkflowID: "Workflow/demo", Scope: "pulse", LLMCallCount: 2, TotalCostUSD: 2.75, BillingBasis: "subscription_shadow"},
-		{EventID: "run", IdempotencyKey: "run", Timestamp: start.Add(2 * time.Second), WorkflowID: "Workflow/demo", Scope: "workflow_execution", LLMCallCount: 1, TotalCostUSD: 80},
-	} {
-		if err := ledger.Append(entry); err != nil {
-			t.Fatalf("Append(%q) error = %v", entry.EventID, err)
-		}
-	}
-
-	got := pulseReviewFixCostContext(ledger, "Workflow/demo", start, start.Add(3*time.Second))
-	for _, want := range []string{"$4.00", "3 LLM call(s)", "estimated token-equivalent cost", "excludes Gate, Finalize"} {
-		if !strings.Contains(got, want) {
-			t.Fatalf("pulseReviewFixCostContext() missing %q: %s", want, got)
-		}
-	}
-	if strings.Contains(got, "$90") || strings.Contains(got, "$80") {
-		t.Fatalf("pulseReviewFixCostContext() mixed prior/workflow cost: %s", got)
-	}
-}
-
-func TestPulseReviewFixCostContextReportsSkippedStageAsZero(t *testing.T) {
-	got := pulseReviewFixCostContext(nil, "Workflow/demo", time.Time{}, time.Time{})
-	if !strings.Contains(got, "not run") || !strings.Contains(got, "$0.00") {
-		t.Fatalf("skipped Review+Fix cost context = %q", got)
 	}
 }
 
@@ -1625,6 +1588,11 @@ func TestPulseFinalBackupRunsOnlyInParentTurn(t *testing.T) {
 	}
 	if strings.Contains(string(raw), "publish unbacked changes after backup failure") {
 		t.Fatalf("finalizer still couples publish eligibility to backup success")
+	}
+	for _, forbidden := range []string{"REVIEWER/FIXER COST", "Reviewers + Fixer"} {
+		if strings.Contains(finalizer, forbidden) || strings.Contains(string(raw), forbidden) {
+			t.Fatalf("Pulse notification still requires reviewer/fixer cost field %q", forbidden)
+		}
 	}
 }
 

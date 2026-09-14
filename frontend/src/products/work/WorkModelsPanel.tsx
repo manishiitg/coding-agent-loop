@@ -160,6 +160,7 @@ export function WorkModelsPanel({
           allowedProviderIds={workProviderIds}
           splitPiProviders={false}
           showModelsPerRole={false}
+          configurationSource="agent_profile"
         />
         <section className="mt-4 rounded-xl border border-border bg-card p-4">
           <h3 className="text-sm font-semibold text-foreground">Model</h3>

@@ -2,6 +2,7 @@
 import React, { act } from 'react'
 import { createRoot } from 'react-dom/client'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import type { SavedLLM } from '../../services/api-types'
 import type { ProviderManifestEntry } from '../../services/llm-config-api'
 
 const { storeState } = vi.hoisted(() => ({
@@ -16,7 +17,7 @@ const { storeState } = vi.hoisted(() => ({
     isProviderSupported: vi.fn(() => true),
     llmConfigLocked: false,
     lockedProviders: [],
-    savedLLMs: [],
+    savedLLMs: [] as SavedLLM[],
     bedrockConfig: {},
     openaiConfig: {},
     vertexConfig: {},
@@ -76,6 +77,8 @@ const provider = (overrides: Partial<ProviderManifestEntry>): ProviderManifestEn
 
 afterEach(() => {
   storeState.providerManifest = []
+  storeState.llmConfigLocked = false
+  storeState.savedLLMs = []
   document.body.innerHTML = ''
 })
 
@@ -151,6 +154,40 @@ describe('WorkflowLLMConfigurationPanel coding-agent rows', () => {
       expect(host.textContent).toContain('Pi CLI')
       expect(host.textContent).toContain('Muse')
       expect(Array.from(host.querySelectorAll('button')).filter(button => button.textContent?.trim() === 'Use')).toHaveLength(5)
+    } finally {
+      await act(async () => root.unmount())
+      host.remove()
+    }
+  })
+
+  it('keeps a project profile selection editable under the global workflow lock', async () => {
+    storeState.llmConfigLocked = true
+    storeState.savedLLMs = [{ id: 'default', name: 'Cursor', provider: 'cursor-cli', model_id: 'auto' }]
+    storeState.providerManifest = [
+      provider({}),
+      provider({ id: 'cursor-cli', display_name: 'Cursor CLI', default_model_id: 'auto' }),
+    ]
+
+    const host = document.createElement('div')
+    document.body.append(host)
+    const root = createRoot(host)
+    try {
+      await act(async () => root.render(
+        <WorkflowLLMConfigurationPanel
+          workspacePath="/work-project"
+          llmConfig={{ schema_version: 2, mode: 'provider_profile', provider: 'claude-code' }}
+          onChange={vi.fn()}
+          scopeNoun="project"
+          canWriteOverride
+          allowedProviderIds={['claude-code', 'cursor-cli']}
+          configurationSource="agent_profile"
+        />,
+      ))
+      await act(async () => Promise.resolve())
+
+      expect(host.textContent).toContain('This project runs onClaude Code')
+      expect(host.textContent).not.toContain('Set by your administrator')
+      expect(Array.from(host.querySelectorAll('button')).some(button => button.textContent?.trim() === 'Change provider')).toBe(true)
     } finally {
       await act(async () => root.unmount())
       host.remove()

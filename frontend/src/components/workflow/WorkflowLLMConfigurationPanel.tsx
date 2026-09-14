@@ -98,6 +98,9 @@ type WorkflowLLMConfigurationPanelProps = {
   splitPiProviders?: boolean
   showModelsPerRole?: boolean
   readOnlyReason?: string
+  /** Product-profile bindings remain authoritative under the deployment-wide
+   * workflow/chat lock, matching the server's agent-profile resolution. */
+  configurationSource?: 'agent_profile'
 }
 
 const hasOptions = (options?: Record<string, unknown>) => Boolean(options && Object.keys(options).length > 0)
@@ -169,6 +172,7 @@ export default function WorkflowLLMConfigurationPanel({
   splitPiProviders = true,
   showModelsPerRole = true,
   readOnlyReason,
+  configurationSource,
 }: WorkflowLLMConfigurationPanelProps) {
   const {
     availableLLMs,
@@ -225,8 +229,9 @@ export default function WorkflowLLMConfigurationPanel({
   // disabled: the published provider reads "In use", every other row is
   // visible for reference but cannot be tested, selected or configured.
   const workflowCanWrite = useCanWriteWorkflow(workspacePath)
-  const readOnly = !(canWriteOverride ?? workflowCanWrite) || llmConfigLocked
-  const disabledTitle = llmConfigLocked ? 'Set by your administrator for this deployment' : readOnlyReason || READ_ONLY_TITLE
+  const globalLockApplies = llmConfigLocked && configurationSource !== 'agent_profile'
+  const readOnly = !(canWriteOverride ?? workflowCanWrite) || globalLockApplies
+  const disabledTitle = globalLockApplies ? 'Set by your administrator for this deployment' : readOnlyReason || READ_ONLY_TITLE
   const [activeProviderId, setActiveProviderId] = useState<string | null>(null)
   const [query, setQuery] = useState('')
   const [tokenOpen, setTokenOpen] = useState(false)
@@ -371,7 +376,7 @@ export default function WorkflowLLMConfigurationPanel({
 
   // Which row the current config corresponds to, if any.
   const selectedRowId = useMemo<string | null>(() => {
-    if (llmConfigLocked) {
+    if (globalLockApplies) {
       // What actually runs under the lock (server: resolveLockedLLM), whatever
       // this workflow saved -- so the published provider is the one "In use".
       const effective = effectiveLLMUnderLock(
@@ -419,7 +424,7 @@ export default function WorkflowLLMConfigurationPanel({
     // that provider: match its row so the compact status line and the
     // Models per role section show instead of "custom per-role setup".
     return manifestEntries.some(entry => entry.id === provider && entry.integration_kind === 'coding_agent') ? provider : null
-  }, [llmConfig, llmConfigLocked, manifestEntries, piRowFor, publishedLLMs])
+  }, [globalLockApplies, llmConfig, manifestEntries, piRowFor, publishedLLMs])
 
   const visibleRows = useMemo(() => {
     const q = query.trim().toLowerCase()
@@ -689,12 +694,12 @@ export default function WorkflowLLMConfigurationPanel({
           {selectedRow.groupFilter && selectedRow.modelId && (
             <span className="truncate font-mono text-[11px] text-muted-foreground">{selectedRow.modelId}</span>
           )}
-          {llmConfigLocked && (
+          {globalLockApplies && (
             <span className="inline-flex items-center gap-1 rounded-full border border-border px-2 py-0.5 text-[11px] text-muted-foreground" title={`Every ${scopeNoun} on this deployment uses this provider`}>
               <Lock className="h-3 w-3" /> Set by your administrator
             </span>
           )}
-          {!usable && !llmConfigLocked && (
+          {!usable && !globalLockApplies && (
             <>
               <span className={`text-xs font-medium ${tone.text}`} title={statusTitle(status.label)}>
                 {statusActionText(status.label) ?? status.label}
@@ -1059,9 +1064,9 @@ export default function WorkflowLLMConfigurationPanel({
         {renderTokenLine()}
       </div>
 
-      {((!selectedRow && !advanced) || changing || llmConfigLocked) && (
+      {((!selectedRow && !advanced) || changing || globalLockApplies) && (
       <>
-      {llmConfigLocked && (
+      {globalLockApplies && (
         <p className="text-xs text-muted-foreground">
           Every {scopeNoun} on this deployment uses the provider marked “In use”. The others are shown for reference and cannot be selected here — ask your administrator to enable one.
         </p>

@@ -25,7 +25,7 @@ func TestScheduleCollisionGuardLiveForceAndRestart(t *testing.T) {
 	if err := s.BeginRun(ctx, r); err != nil {
 		t.Fatal(err)
 	}
-	if err := check(ctx, "execute_step", nil); err == nil || !strings.Contains(err.Error(), "schedule_running") {
+	if err := check(ctx, "execute_step", nil); err == nil || !strings.Contains(err.Error(), "schedule_running") || !strings.Contains(err.Error(), "Stop the current workflow-mutation batch") {
 		t.Fatalf("missing warning: %v", err)
 	}
 	if err := check(ctx, "execute_step", map[string]interface{}{"force": "true"}); err == nil {

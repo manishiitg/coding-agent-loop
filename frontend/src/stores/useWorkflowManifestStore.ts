@@ -8,6 +8,7 @@ import type {
   WorkflowOwnership,
   WorkflowScheduleEntry,
 } from '../services/api-types'
+import { normalizeWorkspacePath } from '../utils/workspacePathUtils'
 
 export interface WorkflowManifestState {
   // Discovered workflows from manifest scan
@@ -24,6 +25,7 @@ export interface WorkflowManifestState {
   setActiveWorkflowId: (id: string | null) => void
   getWorkflowByPath: (workspacePath: string) => DiscoveredWorkflow | undefined
   getWorkflowById: (workflowId: string) => DiscoveredWorkflow | undefined
+  replaceWorkflowManifest: (workspacePath: string, manifest: WorkflowManifest) => void
 
   // CRUD
   createWorkflow: (label: string, workspacePath: string, capabilities?: Partial<WorkflowCapabilities>) => Promise<WorkflowManifest>
@@ -72,11 +74,31 @@ export const useWorkflowManifestStore = create<WorkflowManifestState>((set, get)
   },
 
   getWorkflowByPath: (workspacePath: string) => {
-    return get().workflows.find(w => w.workspace_path === workspacePath)
+    const normalized = normalizeWorkspacePath(workspacePath)
+    return get().workflows.find(w => normalizeWorkspacePath(w.workspace_path) === normalized)
   },
 
   getWorkflowById: (workflowId: string) => {
     return get().workflows.find(w => w.manifest.id === workflowId)
+  },
+
+  replaceWorkflowManifest: (workspacePath, manifest) => {
+    const normalized = normalizeWorkspacePath(workspacePath)
+    set(state => {
+      const exists = state.workflows.some(
+        workflow => normalizeWorkspacePath(workflow.workspace_path) === normalized,
+      )
+      return {
+        workflows: exists
+          ? state.workflows.map(workflow =>
+              normalizeWorkspacePath(workflow.workspace_path) === normalized
+                ? { ...workflow, manifest }
+                : workflow,
+            )
+          : [...state.workflows, { workspace_path: normalized, manifest }],
+        lastRefreshed: Date.now(),
+      }
+    })
   },
 
   createWorkflow: async (label, workspacePath, capabilities) => {

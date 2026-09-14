@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/gorilla/mux"
@@ -59,7 +60,7 @@ func TestQueryRequestForAgentProfileChatUsesOnlyServerOwnedProfileConfiguration(
 	if query.RestoredConversationPath != "" || query.RestoredConversationSessionID != "" {
 		t.Fatalf("browser-controlled restore leaked into query: path=%q session=%q", query.RestoredConversationPath, query.RestoredConversationSessionID)
 	}
-	if query.AgentMode != "multi-agent" || !query.DisableLiveInputDelivery {
+	if query.AgentMode != "multi-agent" || query.DisableLiveInputDelivery {
 		t.Fatalf("unexpected runner configuration: mode=%q disable_live_input=%v", query.AgentMode, query.DisableLiveInputDelivery)
 	}
 }
@@ -117,6 +118,88 @@ func TestQueryRequestForAgentProfileChatRejectsUndeclaredEngine(t *testing.T) {
 	}, ProductConversationRecord{SessionID: "session-1", WorkspacePath: "Chats/SparkQuill"})
 	if err == nil {
 		t.Fatal("an engine id not declared in the profile's provider_options must be rejected, never silently ignored or passed through")
+	}
+}
+
+func TestQueryRequestForAgentProfileChatAcceptsDeclaredChatExtras(t *testing.T) {
+	profile := routeTestProfile("work", true, "")
+	profile.Runtime.Capabilities.MCPSelection = agentprofiles.CapabilityPreferred
+	profile.Runtime.Capabilities.SkillSelection = agentprofiles.CapabilityPreferred
+	profile.Runtime.Capabilities.WorkflowReferences = agentprofiles.CapabilityPreferred
+	query, err := queryRequestForAgentProfileChat(profile, AgentProfileChatRequest{
+		Message:              "hello",
+		EnabledServers:       []string{"github", "github"},
+		SelectedSkills:       []string{"code-reviewer", "code-reviewer"},
+		WorkflowContextPaths: []string{"Workflow/customer-research", "Workflow/customer-research"},
+	}, ProductConversationRecord{SessionID: "session-1", WorkspacePath: "Chats/Work/projects/demo"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(query.EnabledServers, ",") != "github" || strings.Join(query.SelectedSkills, ",") != "code-reviewer" {
+		t.Fatalf("chat extras not applied or deduplicated: servers=%v skills=%v", query.EnabledServers, query.SelectedSkills)
+	}
+	if strings.Join(query.WorkflowContextPaths, ",") != "Workflow/customer-research" {
+		t.Fatalf("workflow references not applied or deduplicated: %v", query.WorkflowContextPaths)
+	}
+}
+
+func TestProjectChatUsesManifestMCPAndSkillsInsteadOfBrowserInput(t *testing.T) {
+	profile := routeTestProfile("work", true, "")
+	profile.Runtime.Capabilities.MCPSelection = agentprofiles.CapabilityPreferred
+	profile.Runtime.Capabilities.SkillSelection = agentprofiles.CapabilityPreferred
+	query, err := queryRequestForAgentProfileChat(profile, AgentProfileChatRequest{
+		Message:        "hello",
+		EnabledServers: []string{"browser-leaked-server"},
+		SelectedSkills: []string{"browser-leaked-skill"},
+	}, ProductConversationRecord{
+		SessionID:              "session-1",
+		WorkspacePath:          "Chats/Work/projects/demo",
+		ResourceID:             "demo",
+		ProjectSelectedServers: []string{"github"},
+		ProjectSelectedSkills:  []string{"code-reviewer"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(query.EnabledServers, ",") != "github" || strings.Join(query.SelectedSkills, ",") != "code-reviewer" {
+		t.Fatalf("project manifest was not authoritative: servers=%v skills=%v", query.EnabledServers, query.SelectedSkills)
+	}
+	empty, err := queryRequestForAgentProfileChat(profile, AgentProfileChatRequest{
+		Message:        "hello",
+		EnabledServers: []string{"browser-leaked-server"},
+	}, ProductConversationRecord{
+		SessionID:     "session-2",
+		WorkspacePath: "Chats/Work/projects/empty",
+		ResourceID:    "empty",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(empty.EnabledServers, ",") != "NO_SERVERS" {
+		t.Fatalf("an empty project selection was not preserved as none: %v", empty.EnabledServers)
+	}
+}
+
+func TestQueryRequestForAgentProfileChatRejectsUndeclaredChatExtras(t *testing.T) {
+	profile := routeTestProfile("dominion", true, "")
+	_, err := queryRequestForAgentProfileChat(profile, AgentProfileChatRequest{
+		Message:              "hello",
+		EnabledServers:       []string{"github"},
+		WorkflowContextPaths: []string{"Workflow/customer-research"},
+	}, ProductConversationRecord{SessionID: "session-1", WorkspacePath: "Chats"})
+	if err == nil {
+		t.Fatal("expected a fixed-purpose profile to reject user-selected MCP servers")
+	}
+}
+
+func TestQueryRequestForAgentProfileChatRejectsUndeclaredWorkflowReferences(t *testing.T) {
+	profile := routeTestProfile("dominion", true, "")
+	_, err := queryRequestForAgentProfileChat(profile, AgentProfileChatRequest{
+		Message:              "hello",
+		WorkflowContextPaths: []string{"Workflow/customer-research"},
+	}, ProductConversationRecord{SessionID: "session-1", WorkspacePath: "Chats"})
+	if err == nil || !strings.Contains(err.Error(), "does not accept workflow references") {
+		t.Fatalf("expected a fixed-purpose profile to reject workflow references, got %v", err)
 	}
 }
 

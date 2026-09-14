@@ -57,7 +57,7 @@ const STEPS: WalkthroughStep[] = [
   {
     selector: '[data-tour="workflow-view-switcher"]',
     title: 'Automation views',
-    body: 'Chat is the main place to build and change an automation. Plan shows the step structure. Report shows the output view.',
+    body: 'Chat is the main place to build and change an automation. Plan shows the step structure. Dashboard shows the output view.',
   },
   {
     selector: '[data-tour="workflow-chat-pane"]',
@@ -67,7 +67,7 @@ const STEPS: WalkthroughStep[] = [
   {
     selector: '[data-tour="workflow-canvas-pane"]',
     title: 'Plan and report',
-    body: 'This area shows the plan graph or report preview, so you can inspect the automation without leaving chat.',
+    body: 'This area shows the plan graph or dashboard preview, so you can inspect the automation without leaving chat.',
   },
   {
     selector: '[data-tour="workflow-status"]',

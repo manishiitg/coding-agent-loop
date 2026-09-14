@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useMemo, useSyncExternalStore, useId } from 'react'
 import { Terminal, Pencil, Trash2 } from 'lucide-react'
 import type { ModeCategory } from '../stores/useModeStore'
-import { findCommand, getCommands, type CommandDefinition, type WorkshopMode } from '../commands'
+import { findCommand, findProductCommand, getCommands, getProductCommands, type CommandDefinition, type WorkshopMode } from '../commands'
 import { loadAndRegisterUserCommands } from '../commands'
 
 import { subscribeCommands, getCommandRevision } from '../commands/registry'
@@ -42,16 +42,19 @@ export const CommandSelectionDialog: React.FC<CommandSelectionDialogProps> = ({
   const dialogRef = useRef<HTMLDivElement>(null)
   const listRef = useRef<HTMLDivElement>(null)
 
-  // Load user commands when dialog opens
+  // Profile-backed products expose only commands shipped by their product.yaml.
+  // User/global commands belong to AgentWorks' generic composer, not a product.
   useEffect(() => {
-    if (isOpen) {
+    if (isOpen && !agentProfileId) {
       loadAndRegisterUserCommands().catch(() => {})
     }
-  }, [isOpen])
+  }, [agentProfileId, isOpen])
 
   // Filter commands based on search query and current mode
   const filteredCommands = useMemo(() => {
-    const allCommands = getCommands(modeCategory, workshopMode, canWriteWorkflow)
+    const allCommands = agentProfileId
+      ? getProductCommands(modeCategory, workshopMode, canWriteWorkflow)
+      : getCommands(modeCategory, workshopMode, canWriteWorkflow)
 
     if (!searchQuery.trim()) {
       return allCommands
@@ -80,7 +83,7 @@ export const CommandSelectionDialog: React.FC<CommandSelectionDialogProps> = ({
     })
 
     return filtered
-  }, [searchQuery, modeCategory, workshopMode, canWriteWorkflow, revision])
+  }, [agentProfileId, searchQuery, modeCategory, workshopMode, canWriteWorkflow, revision])
 
   useEffect(() => { setSelectedIndex(0) }, [searchQuery, isOpen, filteredCommands])
   useEffect(() => {
@@ -102,7 +105,9 @@ export const CommandSelectionDialog: React.FC<CommandSelectionDialogProps> = ({
         event.preventDefault()
         // Exact retained shortcuts remain directly executable even though the
         // search results point to the consolidated command's focus picker.
-        const shortcut = findCommand(searchQuery.trim(), modeCategory, workshopMode, canWriteWorkflow)
+        const shortcut = agentProfileId
+          ? findProductCommand(searchQuery.trim(), modeCategory, workshopMode, canWriteWorkflow)
+          : findCommand(searchQuery.trim(), modeCategory, workshopMode, canWriteWorkflow)
         if (selectedIndex === 0 && shortcut?.menuHidden) {
           onSelectCommand(shortcut.command)
           return
@@ -121,7 +126,7 @@ export const CommandSelectionDialog: React.FC<CommandSelectionDialogProps> = ({
 
     document.addEventListener('keydown', handleKeyDown)
     return () => document.removeEventListener('keydown', handleKeyDown)
-  }, [isOpen, onClose, onSelectCommand, filteredCommands, selectedIndex, searchQuery, modeCategory, workshopMode, canWriteWorkflow, inputRef])
+  }, [agentProfileId, isOpen, onClose, onSelectCommand, filteredCommands, selectedIndex, searchQuery, modeCategory, workshopMode, canWriteWorkflow, inputRef])
 
   // Scroll selected item into view
   useEffect(() => {

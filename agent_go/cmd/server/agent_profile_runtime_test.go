@@ -435,7 +435,7 @@ func TestResolveProfileRuntimeModelUsesOnlyYAMLProviderOptions(t *testing.T) {
 		Provider: "claude-code", ModelID: "claude-sonnet-5",
 		ProviderOptions: []agentprofiles.ProviderOption{
 			{ID: "claude-code", Label: "Claude Code", Provider: "claude-code", ModelID: "claude-sonnet-5", Default: true},
-			{ID: "codex", Label: "Codex", Provider: "codex-cli", ModelID: "gpt-5.6-terra"},
+			{ID: "codex", Label: "Codex", Provider: "codex-cli", ModelID: "gpt-5.6-terra", Models: []string{"gpt-5.6-terra"}},
 			{ID: "cursor", Label: "Cursor", Provider: "cursor-cli", ModelID: "auto"},
 		},
 	}
@@ -444,6 +444,18 @@ func TestResolveProfileRuntimeModelUsesOnlyYAMLProviderOptions(t *testing.T) {
 	}
 	if provider, model := resolveProfileRuntimeModel(runtime, "codex-cli", "gpt-5.6-sol"); provider != "claude-code" || model != "claude-sonnet-5" {
 		t.Fatalf("unapproved provider/model escaped profile allow-list: provider=%q model=%q", provider, model)
+	}
+}
+
+func TestResolveProfileRuntimeModelAcceptsCatalogModelsWhenUncurated(t *testing.T) {
+	runtime := agentprofiles.RuntimePolicy{
+		Provider: "claude-code", ModelID: "claude-sonnet-5",
+		ProviderOptions: []agentprofiles.ProviderOption{
+			{ID: "codex", Label: "Codex", Provider: "codex-cli", ModelID: "gpt-5.6-terra"},
+		},
+	}
+	if provider, model := resolveProfileRuntimeModel(runtime, "codex-cli", "gpt-5.6-sol"); provider != "codex-cli" || model != "gpt-5.6-sol" {
+		t.Fatalf("catalog model was not accepted: provider=%q model=%q", provider, model)
 	}
 }
 

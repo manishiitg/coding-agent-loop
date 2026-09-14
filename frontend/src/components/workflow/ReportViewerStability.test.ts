@@ -23,7 +23,7 @@ describe('open report stability', () => {
     const viewer = readFileSync('src/components/workflow/ReportViewer.tsx', 'utf8')
 
     expect(viewer).toContain('onClick={refresh}')
-    expect(viewer).toContain('aria-label="Refresh report"')
+    expect(viewer).toContain('aria-label="Refresh dashboard"')
     expect(canvas).not.toContain('window.dispatchEvent(new CustomEvent(WORKFLOW_REPORT_REFRESH_EVENT))')
   })
 
@@ -56,7 +56,7 @@ describe('open report stability', () => {
   it('does not fight native scrolling with a corrective reset loop', () => {
     const viewer = readFileSync('src/components/workflow/ReportViewer.tsx', 'utf8')
 
-    expect(viewer).toContain('aria-label="Report content"')
+    expect(viewer).toContain('aria-label="Dashboard content"')
     expect(viewer).not.toContain('unexpected scroll reset restored')
     expect(viewer).not.toContain('onScroll={handleReportScroll}')
   })

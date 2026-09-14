@@ -12,12 +12,12 @@ func TestWorkflowBuilderSetupAppliesManagedDBBoundaryAfterEveryGuardReset(t *tes
 		t.Fatalf("read server.go: %v", err)
 	}
 
-	// handleQuery configures the workflow session once in the common folder-
+	// handleQuery configures Work once and the workflow session once in the common folder-
 	// guard branch and once again in the workflow-phase setup/restore branch.
 	// Both reset the base guard, so both must reapply the logical DB grant and
 	// raw db.sqlite/WAL/SHM deny.
 	const call = "todo_creation_human.ConfigureManagedWorkflowDBSession("
-	if got := strings.Count(string(source), call); got != 2 {
-		t.Fatalf("managed Workflow Builder DB boundary call count = %d, want 2", got)
+	if got := strings.Count(string(source), call); got != 3 {
+		t.Fatalf("managed project DB boundary call count = %d, want 3", got)
 	}
 }

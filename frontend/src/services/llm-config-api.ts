@@ -39,6 +39,7 @@ export interface ProviderManifestEntry {
   auth_description: string
   runtime_command?: string
   runtime_available?: boolean
+  install_command?: string
   auth_configured: boolean
   auth_source?: string
   usable: boolean
@@ -215,6 +216,7 @@ export const llmConfigService = {
     cols?: number,
     rows?: number,
     workspacePath?: string,
+    replaceRunning?: boolean,
   ): Promise<ProviderSetupSession> => {
     const response = await llmConfigApi.post('/api/provider-setup/sessions', {
       provider,
@@ -222,6 +224,7 @@ export const llmConfigService = {
       cols,
       rows,
       workspace_path: workspacePath,
+      replace_running: replaceRunning || undefined,
     })
     return response.data.session
   },

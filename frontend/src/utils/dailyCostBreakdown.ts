@@ -54,7 +54,7 @@ export interface DailyStepCostEntry {
 export const formatPhaseTitle = (phaseID: string) => {
   const phaseTitles: Record<string, string> = {
     'workflow-builder': 'Automation Builder',
-    'report-execution': 'Report Execution',
+    'report-execution': 'Dashboard Execution',
     planning: 'Planning',
     'plan-improvement': 'Plan Improvement',
     'evaluation-builder': 'Evaluation Builder',

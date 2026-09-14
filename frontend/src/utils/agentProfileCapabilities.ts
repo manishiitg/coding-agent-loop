@@ -1,4 +1,5 @@
 import { getApiBaseUrl, getAuthToken } from '../services/api'
+import type { ModelMetadata } from '../services/llm-config-api'
 
 // Reads a capability declared on an agent profile's runtime.capabilities block
 // (agentprofiles.RuntimeCapabilities in agent_go/pkg/agentprofiles/types.go).
@@ -20,7 +21,35 @@ export type AgentProfileProviderOption = {
   reasoning_efforts?: string[]
 }
 
+export type AgentProfileEngineGroup = {
+  option: AgentProfileProviderOption
+  models: Array<{ id: string; label: string }>
+  reasoningLevels: Array<{ id: string; label: string }>
+}
+
+/** Shared profile-to-picker adapter used by product composers and settings. */
+export function buildAgentProfileEngineGroups(
+  options: AgentProfileProviderOption[],
+  modelCatalog: ModelMetadata[],
+): AgentProfileEngineGroup[] {
+  const pseudo = new Set(['high', 'medium', 'low'])
+  return options.map((option) => {
+    const provider = (option.provider ?? '').trim()
+    const catalogByID = new Map(modelCatalog.filter((model) => model.provider === provider).map((model) => [model.model_id, model]))
+    const models = option.models && option.models.length > 0
+      ? option.models.map((id) => ({ id, label: catalogByID.get(id)?.model_name || id }))
+      : modelCatalog
+          .filter((model) => model.provider === provider && model.model_id !== provider && !pseudo.has(model.model_id))
+          .map((model) => ({ id: model.model_id, label: model.model_name || model.model_id }))
+    const own = (option.model_id ?? '').trim()
+    if (own && !models.some((model) => model.id === own)) models.unshift({ id: own, label: catalogByID.get(own)?.model_name || own })
+    const reasoningLevels = (option.reasoning_efforts ?? []).map((id) => ({ id, label: id.charAt(0).toUpperCase() + id.slice(1) }))
+    return { option, models, reasoningLevels }
+  })
+}
+
 type AgentProfileResponse = {
+  resolved_features?: AgentProfileFeature[]
   runtime?: {
     provider?: string
     model_id?: string
@@ -28,6 +57,22 @@ type AgentProfileResponse = {
     capabilities?: Record<string, unknown>
     provider_options?: AgentProfileProviderOption[]
   }
+}
+
+export type AgentProfileFeature = {
+  id: string
+  dependencies?: string[]
+  tools?: string[]
+  skills?: string[]
+  prompt_extension?: string
+  ui_panels?: string[]
+  capabilities?: Record<string, unknown>
+  options?: Record<string, string>
+}
+
+export type AgentProfileRuntime = {
+  provider: string
+  model_id: string
 }
 
 const capabilityCache = new Map<string, Promise<boolean>>()
@@ -55,14 +100,13 @@ function loadAgentProfile(profileId: string, version?: number): Promise<AgentPro
 export async function loadAgentProfileRuntime(
   profileId: string,
   version?: number,
-): Promise<{ provider: string; model_id: string; transport?: string } | null> {
+): Promise<AgentProfileRuntime | null> {
   if (!profileId) return null
   try {
     const profile = await loadAgentProfile(profileId, version)
     const provider = profile.runtime?.provider?.trim() || ''
     const modelId = profile.runtime?.model_id?.trim() || ''
-    const transport = profile.runtime?.transport?.trim() || undefined
-    return provider && modelId ? { provider, model_id: modelId, transport } : null
+    return provider && modelId ? { provider, model_id: modelId } : null
   } catch {
     return null
   }
@@ -113,4 +157,26 @@ export async function loadAgentProfileProviderOptions(profileId: string, version
   } catch {
     return []
   }
+}
+
+/**
+ * Returns the backend-resolved feature bundles for a product. Surfaces use the
+ * declared ui_panels rather than maintaining another hardcoded feature list.
+ */
+export async function loadAgentProfileFeatures(profileId: string, version?: number): Promise<AgentProfileFeature[]> {
+  if (!profileId) return []
+  try {
+    const profile = await loadAgentProfile(profileId, version)
+    if (!Array.isArray(profile.resolved_features)) return []
+    return profile.resolved_features.filter((feature): feature is AgentProfileFeature => (
+      !!feature && typeof feature.id === 'string' && feature.id.trim() !== ''
+    ))
+  } catch {
+    return []
+  }
+}
+
+export async function loadAgentProfileUIPanels(profileId: string, version?: number): Promise<Set<string>> {
+  const features = await loadAgentProfileFeatures(profileId, version)
+  return new Set(features.flatMap(feature => Array.isArray(feature.ui_panels) ? feature.ui_panels : []))
 }

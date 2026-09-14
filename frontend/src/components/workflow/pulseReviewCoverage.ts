@@ -8,7 +8,7 @@ export const TECHNICAL_REVIEW_AREAS = [
   { key: 'store_integrity', label: 'Data and stored knowledge' },
   { key: 'learnings', label: 'Learnings', scope: /(?:^|[\s/_.-])learnings?(?:$|[\s/_.-])/i },
   { key: 'knowledge_base', label: 'Knowledge base', scope: /(?:^|[\s/_.-])(?:kb|knowledge[_ -]?base)(?:$|[\s/_.-])/i },
-  { key: 'report_quality_truth', label: 'Report accuracy' },
+  { key: 'report_quality_truth', label: 'Dashboard accuracy' },
   { key: 'evaluation_quality_truth', label: 'Evaluation quality' },
   { key: 'model_cost_fitness', label: 'Models, cost and efficiency' },
 ]

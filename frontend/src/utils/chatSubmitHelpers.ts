@@ -212,6 +212,9 @@ export function buildAgentProfileChatRequest(payload: AgentQueryRequest, convers
     ...(engine ? { engine } : {}),
     ...(engine && modelId ? { model_id: modelId } : {}),
     ...(engine && reasoningEffort ? { reasoning_effort: reasoningEffort } : {}),
+    ...(payload.enabled_servers?.length ? { enabled_servers: payload.enabled_servers } : {}),
+    ...(payload.selected_skills?.length ? { selected_skills: payload.selected_skills } : {}),
+    ...(payload.workflow_context_paths?.length ? { workflow_context_paths: payload.workflow_context_paths } : {}),
   }
 }
 

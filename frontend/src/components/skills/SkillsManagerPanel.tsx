@@ -17,9 +17,21 @@ interface SkillsManagerPanelProps {
   selectedSkills?: string[]
   onToggleSkill?: (folderName: string) => void
   workspacePath?: string | null
+  /** Product surfaces use the same manager with project terminology. */
+  selectionLabel?: string
+  emptySelectionText?: string
+  selectionScopeLabel?: string
 }
 
-export default function SkillsManagerPanel({ compact = false, selectedSkills, onToggleSkill, workspacePath }: SkillsManagerPanelProps) {
+export default function SkillsManagerPanel({
+  compact = false,
+  selectedSkills,
+  onToggleSkill,
+  workspacePath,
+  selectionLabel = 'Skills for this workflow',
+  emptySelectionText = 'No skills yet — pick one below.',
+  selectionScopeLabel = 'workflow',
+}: SkillsManagerPanelProps) {
   const [skills, setSkills] = useState<Skill[]>([])
   const [query, setQuery] = useState('')
   const [isLoading, setIsLoading] = useState(false)
@@ -100,9 +112,9 @@ export default function SkillsManagerPanel({ compact = false, selectedSkills, on
     <div className={`flex min-h-0 flex-1 flex-col ${compact ? 'gap-2' : 'gap-3'}`}>
       {onToggleSkill && (
         <div className="shrink-0">
-          <div className="mb-1.5 text-sm font-medium text-muted-foreground">Skills for this workflow</div>
+          <div className="mb-1.5 text-sm font-medium text-muted-foreground">{selectionLabel}</div>
           {(selectedSkills || []).length === 0 ? (
-            <p className="text-xs text-gray-500 dark:text-gray-400">No skills yet — pick one below.</p>
+            <p className="text-xs text-gray-500 dark:text-gray-400">{emptySelectionText}</p>
           ) : (
             <div className="flex flex-wrap gap-1.5">
               {(selectedSkills || []).map(folderName => {
@@ -124,7 +136,7 @@ export default function SkillsManagerPanel({ compact = false, selectedSkills, on
                       disabled={readOnly}
                       title={readOnly ? READ_ONLY_TITLE : undefined}
                       className="rounded-full p-0.5 text-primary/70 transition-colors hover:bg-red-500/15 hover:text-red-500 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-transparent disabled:hover:text-primary/70"
-                      aria-label={`Remove ${label} from this workflow`}
+                      aria-label={`Remove ${label} from this ${selectionScopeLabel}`}
                     >
                       <X className="h-3 w-3" />
                     </button>
@@ -220,6 +232,7 @@ export default function SkillsManagerPanel({ compact = false, selectedSkills, on
                 selected={onToggleSkill ? (selectedSkills || []).includes(skill.folder_name) : undefined}
                 onToggleSelect={onToggleSkill ? () => onToggleSkill(skill.folder_name) : undefined}
                 readOnly={readOnly}
+                selectionScopeLabel={selectionScopeLabel}
               />
             ))}
           </div>

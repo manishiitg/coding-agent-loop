@@ -8,8 +8,6 @@ import {
   BellRing,
   BookMarked,
   CalendarClock,
-  ChevronDown,
-  ChevronRight,
   Gauge,
   LayoutDashboard,
 } from 'lucide-react'
@@ -31,6 +29,8 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '../../
 import { hasWorkflowOwnerAccess } from '../../../utils/workflowPermissions'
 import { usePendingDecisionCount } from '../hooks/usePendingDecisionCount'
 import { useCanWriteWorkflow } from '../../../hooks/useCanWriteWorkflow'
+import { WorkspaceToolbarGroup as ToolbarGroup } from '../../workspace/WorkspaceToolbarGroup'
+import { WorkspaceTopToolbar } from '../../workspace/WorkspaceTopToolbar'
 
 // Execution phase ID - special phase that should be displayed separately
 const EXECUTION_PHASE_ID = 'execution'
@@ -39,51 +39,8 @@ const WORKFLOW_SCHEDULE_TOOLBAR_LIMIT = 10_000
 // Product-tour / test hooks on specific toolbar buttons. Kept here rather
 // than in the view registry because they describe this toolbar's buttons,
 // not the views themselves.
-// Report and Pulse are always visible. Other workspace tools are grouped
-// under Views; configuration stays under Setup. Which expandable
-// group is open is a per-browser preference shared by all workflows.
-const TOOLBAR_OPEN_GROUPS_KEY = 'workflow-toolbar-open-groups'
-type ToolbarGroupId = 'views' | 'setup'
-const readOpenGroups = (): Record<ToolbarGroupId, boolean> => {
-  const fallback: Record<ToolbarGroupId, boolean> = { views: false, setup: false }
-  try {
-    const raw = localStorage.getItem(TOOLBAR_OPEN_GROUPS_KEY)
-    if (!raw) return fallback
-    const stored = JSON.parse(raw) as Partial<Record<ToolbarGroupId | 'pulse', boolean>>
-    // Preserve the expanded state of the former Pulse group as Views.
-    // Setup wins if an older malformed
-    // preference has more than one group open.
-    if (stored.setup) return { views: false, setup: true }
-    if (stored.pulse || stored.views) return { views: true, setup: false }
-    return fallback
-  } catch {
-    return fallback
-  }
-}
-
-function ToolbarGroup({ label, open, onToggle, title, children, ...rest }: {
-  label: string
-  open: boolean
-  onToggle: () => void
-  title: string
-  children: React.ReactNode
-} & Record<`data-${string}`, string | undefined>) {
-  return (
-    <div {...rest} className="inline-flex h-full items-center gap-0.5 px-1 first:pl-0.5 last:pr-0.5">
-      <button
-        type="button"
-        onClick={onToggle}
-        aria-expanded={open}
-        title={title}
-        className={`inline-flex h-6 items-center gap-1 rounded px-2 text-[11px] font-medium outline-none transition-colors hover:bg-background/70 ${open ? 'text-foreground' : 'text-muted-foreground hover:text-foreground'}`}
-      >
-        <span>{label}</span>
-        {open ? <ChevronDown className="h-3 w-3" aria-hidden="true" /> : <ChevronRight className="h-3 w-3" aria-hidden="true" />}
-      </button>
-      {open && children}
-    </div>
-  )
-}
+// Dashboard and Pulse are always visible. The small remaining sets of workspace
+// views and setup controls stay expanded so their icons are directly available.
 
 const CAPABILITY_BUTTON_ATTRS: Partial<Record<WorkspaceViewId, { 'data-tour': string; 'data-testid': string }>> = {
   bots: { 'data-tour': 'bot-connector', 'data-testid': 'tour-bot-connector' },
@@ -193,19 +150,6 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
   // Share is for this workflow's owners (or an admin), multi-user mode only.
   const isMultiUser = useAuthStore(state => state.isMultiUserMode)
   const [workflowScheduleStats, setWorkflowScheduleStats] = useState<WorkflowScheduleStats>(EMPTY_WORKFLOW_SCHEDULE_STATS)
-  const [openGroups, setOpenGroups] = useState<Record<ToolbarGroupId, boolean>>(() => readOpenGroups())
-  // One group open at a time. Opening one closes the other; clicking the open
-  // one closes it, so both collapsed is a valid state.
-  const toggleGroup = useCallback((group: ToolbarGroupId) => {
-    setOpenGroups(current => {
-      const opening = !current[group]
-      const next = { views: false, setup: false } as Record<ToolbarGroupId, boolean>
-      if (opening) next[group] = true
-      try { localStorage.setItem(TOOLBAR_OPEN_GROUPS_KEY, JSON.stringify(next)) } catch { /* preference only */ }
-      return next
-    })
-  }, [])
-
   const updateWorkflowScheduleStats = useCallback((jobs: ScheduledJob[]) => {
     const normalizedWorkspacePath = normalizeWorkspacePath(workspacePath)
     const matchingJobs = jobs.filter((job) => {
@@ -453,12 +397,7 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
 
   return (
     <>
-    <div className={`
-      flex min-h-10 min-w-0 flex-nowrap items-center gap-3 overflow-visible px-3 py-1.5
-      bg-background border-b border-border
-      relative z-10
-      ${className}
-    `}>
+    <WorkspaceTopToolbar className={className}>
       {/* Left side - chat tab strip (grows). Per-tab status dot + Stop live
           inside each tab pill (WorkflowChatTabs), not as a separate badge here.
           No separate "New Chat" action here: the Builder tab (WorkflowChatTabs)
@@ -494,13 +433,13 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
                   type="button"
                   onClick={() => openWorkspaceView('report')}
                   className={`flex h-8 w-8 items-center justify-center rounded-lg border border-border transition-colors ${activeWorkspaceView === 'report' ? 'bg-muted text-foreground shadow-sm' : 'bg-muted/60 text-muted-foreground hover:bg-muted hover:text-foreground'}`}
-                  aria-label="Report"
+                  aria-label="Dashboard"
                   aria-pressed={activeWorkspaceView === 'report'}
                 >
                   <LayoutDashboard className="h-3.5 w-3.5" />
                 </button>
               </TooltipTrigger>
-              <TooltipContent side="bottom"><p>Report</p></TooltipContent>
+              <TooltipContent side="bottom"><p>Dashboard</p></TooltipContent>
             </Tooltip>
           )}
 
@@ -548,9 +487,8 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
           {workspacePath && (
             <ToolbarGroup
               label="Views"
-              open={openGroups.views}
-              onToggle={() => toggleGroup('views')}
-              title={openGroups.views ? 'Hide views' : 'Show views: plan, evidence, data, browser, schedules, webhooks, files and operations'}
+              open
+              title="Views: plan, evidence, data, browser, schedules, webhooks, files and operations"
             >
               <div className="inline-flex items-center gap-0.5">
                 {workspaceViewDefinitions.map(({ id: view, icon: Icon, label }) => {
@@ -656,9 +594,8 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
         {workspacePath && (
           <ToolbarGroup
             label="Setup"
-            open={openGroups.setup}
-            onToggle={() => toggleGroup('setup')}
-            title={openGroups.setup ? 'Hide setup' : 'Show setup: skills, secrets, MCP servers, LLM, bots, folders, sharing, users'}
+            open
+            title="Setup: skills, secrets, MCP servers, LLM, bots, folders, sharing and users"
           >
           <div className="inline-flex items-center gap-0.5">
             {capabilityViewDefinitions.map(({ id, icon: Icon, label }) => {
@@ -704,7 +641,7 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
 
         </TooltipProvider>
       </div>
-    </div>
+    </WorkspaceTopToolbar>
     {/* Access: this workflow's sharing + (admins) the deployment's users */}
     </>
   )

@@ -9,7 +9,7 @@ import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { rewriteReportMarkdownReferences } from './reportMarkdownLinks'
 
-export const REPORT_ALLOWED_ROOTS = ['db/', 'knowledgebase/', 'docs/', 'planning/', 'evaluation/', 'costs/', 'variables/']
+export const REPORT_ALLOWED_ROOTS = ['db/', 'dashboard/', 'knowledgebase/', 'docs/', 'planning/', 'evaluation/', 'costs/', 'variables/']
 const REPORT_ALLOWED_FILES = ['soul.md', 'workflow.json']
 
 export function normalizeReportSource(path: string): string {

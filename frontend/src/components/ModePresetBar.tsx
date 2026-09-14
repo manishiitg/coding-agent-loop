@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react'
 import { workflowTriggerLabel } from '../utils/workflowSessionKinds'
 import { useShallow } from 'zustand/react/shallow'
-import { Settings, Copy, LayoutDashboard, ArrowLeft, Eye, Plus } from 'lucide-react'
+import { Settings, Copy, LayoutDashboard, ArrowLeft, Eye, CalendarClock } from 'lucide-react'
 import { useAuthStore } from '../stores/useAuthStore'
 import { isWorkflowReadOnly } from '../utils/workflowPermissions'
 import { useModeStore } from '../stores/useModeStore'
@@ -24,6 +24,7 @@ import WorkflowWalkthrough from './workflow/WorkflowWalkthrough'
 import { ProductSurfaceSwitcher } from './ProductSurfaceSwitcher'
 import WorkspaceTopBarControls from './WorkspaceTopBarControls'
 import ProvidersControl from './topbar/ProvidersControl'
+import { TopBarEntitySelector } from './topbar/TopBarEntitySelector'
 import ConfirmationDialog from './ui/ConfirmationDialog'
 import {
   LLM_DISCOVERY_ONBOARDING_CLEARED_EVENT,
@@ -66,7 +67,14 @@ const workflowManifestToPreset = (manifest: WorkflowManifest, workspacePath: str
  * Global Mode & Preset Bar - always visible at the top level
  * Allows users to select mode (multi-agent/workflow) and presets regardless of active tabs
  */
-export const ModePresetBar: React.FC = () => {
+interface ModePresetBarProps {
+  /** Product-owned control rendered in the same slot as AgentWorks' automation selector. */
+  productControl?: React.ReactNode
+  /** Keep the AgentWorks bar and shared controls while omitting automation-only actions. */
+  reduced?: boolean
+}
+
+export const ModePresetBar: React.FC<ModePresetBarProps> = ({ productControl, reduced = false }) => {
   const { selectedModeCategory, setModeCategory, getAgentModeFromCategory } = useModeStore(useShallow(state => ({
     selectedModeCategory: state.selectedModeCategory,
     setModeCategory: state.setModeCategory,
@@ -134,11 +142,13 @@ export const ModePresetBar: React.FC = () => {
   const evaluatedAutoWalkthroughRef = useRef(false)
   const showWorkflowsOverview = useAppStore(s => s.showWorkflowsOverview)
   const setShowWorkflowsOverview = useAppStore(s => s.setShowWorkflowsOverview)
+  const showSchedulesOverview = useAppStore(s => s.showSchedulesOverview)
+  const setShowSchedulesOverview = useAppStore(s => s.setShowSchedulesOverview)
   const setSelectedFile = useWorkspaceStore(state => state.setSelectedFile)
   const setShowFileContent = useWorkspaceStore(state => state.setShowFileContent)
   const showProviders = useLLMStore(state => state.showLLMModal)
   const isOrganizationView = showWorkflowsOverview
-  const isGlobalPage = showWorkflowsOverview || showProviders
+  const isGlobalPage = showWorkflowsOverview || showProviders || showSchedulesOverview
 
   // GlobalActivityMonitor excludes only the current session from its pills.
   // A simultaneous scheduled run for the same workflow remains a separate
@@ -167,12 +177,14 @@ export const ModePresetBar: React.FC = () => {
   }, [])
 
   useEffect(() => {
+    if (reduced) return
     const handleOpenWalkthrough = () => openWorkflowWalkthrough()
     window.addEventListener('open-workflow-walkthrough', handleOpenWalkthrough)
     return () => window.removeEventListener('open-workflow-walkthrough', handleOpenWalkthrough)
-  }, [openWorkflowWalkthrough])
+  }, [openWorkflowWalkthrough, reduced])
 
   useEffect(() => {
+    if (reduced) return
     const handleLLMDiscoveryOpened = () => {
       setShowWorkflowWalkthrough(false)
     }
@@ -191,9 +203,10 @@ export const ModePresetBar: React.FC = () => {
       window.removeEventListener(LLM_DISCOVERY_ONBOARDING_OPENED_EVENT, handleLLMDiscoveryOpened)
       window.removeEventListener(LLM_DISCOVERY_ONBOARDING_CLEARED_EVENT, handleLLMDiscoveryCleared)
     }
-  }, [openWorkflowWalkthrough])
+  }, [openWorkflowWalkthrough, reduced])
 
   useEffect(() => {
+    if (reduced) return
     if (evaluatedAutoWalkthroughRef.current) return
     evaluatedAutoWalkthroughRef.current = true
     if (isWorkflowWalkthroughDismissed()) return
@@ -205,12 +218,13 @@ export const ModePresetBar: React.FC = () => {
     }
 
     pendingAutoWalkthroughAfterLLMDiscoveryRef.current = true
-  }, [openWorkflowWalkthrough])
+  }, [openWorkflowWalkthrough, reduced])
 
   const returnToWorkspace = useCallback(() => {
     useLLMStore.getState().setShowLLMModal(false)
     setShowWorkflowsOverview(false)
-  }, [setShowWorkflowsOverview])
+    setShowSchedulesOverview(false)
+  }, [setShowWorkflowsOverview, setShowSchedulesOverview])
 
   // Handle ESC and Enter keys for shortcuts modal
   useEffect(() => {
@@ -489,27 +503,6 @@ export const ModePresetBar: React.FC = () => {
     }
   }, [showPresetDropdown, selectedModeCategory, presetsLoading, refreshPresets, getPresetsForMode])
 
-  // Close dropdowns when clicking outside
-  useEffect(() => {
-    const onMouseDown = (event: MouseEvent) => {
-      const target = event.target as Element
-      if (!target.closest('.preset-dropdown')) {
-        setShowPresetDropdown(false)
-      }
-    }
-    const onKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        setShowPresetDropdown(false)
-      }
-    }
-    document.addEventListener('mousedown', onMouseDown)
-    document.addEventListener('keydown', onKeyDown)
-    return () => {
-      document.removeEventListener('mousedown', onMouseDown)
-      document.removeEventListener('keydown', onKeyDown)
-    }
-  }, [])
-
   useEffect(() => {
     if (isOrganizationView && showPresetDropdown) {
       setShowPresetDropdown(false)
@@ -524,6 +517,8 @@ export const ModePresetBar: React.FC = () => {
           <div className="flex min-w-0 items-center gap-3">
             {/* Product-level navigation stays separate from AgentWorks modes. */}
             <ProductSurfaceSwitcher className="mr-1" />
+
+            {productControl}
 
             {isGlobalPage && (
               <button
@@ -561,86 +556,41 @@ export const ModePresetBar: React.FC = () => {
                 // Chat mode no longer supports presets
                 if (selectedModeCategory === 'workflow') {
                   return (
-                    <div className="relative flex min-w-0 items-center">
-                      <div
-                        data-tour="workflow-add-edit"
-                        data-testid="tour-workflow-add-edit"
-                        className="flex min-w-0 items-center bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-600 rounded-md overflow-hidden"
-                      >
-                        <button
-                          onClick={() => {
-                            if (isGlobalPage) returnToWorkspace()
-                            handlePresetDropdownToggle()
-                          }}
-                          className="flex min-w-0 items-center gap-2 px-3 py-1 hover:bg-gray-100 dark:hover:bg-slate-700 transition-colors"
-                          title={currentSessionStatusLabel ? `${activePreset?.label ?? ''} · ${currentSessionStatusLabel}` : undefined}
-                        >
-                          {activePreset ? (
-                            <>
-                              {/* Live run status is Global Monitor's job, not this
-                                  selector's — it was the same information in two
-                                  places. The status text stays in this button's
-                                  tooltip (title) for anyone who wants it here. */}
-                              <div className="w-2 h-2 shrink-0 bg-green-500 rounded-full"></div>
-                              <span className="block max-w-[190px] truncate whitespace-nowrap text-sm font-medium text-gray-700 dark:text-gray-300">
-                                {activePreset.label}
-                              </span>
-                              {currentTriggerLabel && <span className="rounded border border-border px-1 text-[10px] text-muted-foreground">{currentTriggerLabel}</span>}
-                            </>
-                          ) : (
-                            <>
-                              <div className="w-2 h-2 shrink-0 bg-gray-400 rounded-full"></div>
-                              <span className="block max-w-[190px] truncate whitespace-nowrap text-sm font-medium text-gray-500 dark:text-gray-400">
-                                Select Automation
-                              </span>
-                            </>
-                          )}
-                        </button>
-
-                        {/* Settings gear icon - separate clickable element.
-                            Hidden for read-only users (PLAT-262): opens the
-                            automation's edit settings, which the backend
-                            won't let a read-only session mutate anyway. */}
-                        {activePreset && !isEffectiveReadOnly && (
-                          <button
-                            onClick={(e) => {
-                              e.stopPropagation()
-                              handleEditWorkflowPreset(activePreset as CustomPreset)
-                              setWorkspaceMinimized(true)
-                            }}
-                            className="px-2 py-1 border-l border-gray-200 dark:border-gray-600 hover:bg-gray-100 dark:hover:bg-slate-700 transition-colors"
-                            title="Edit automation"
-                          >
-                            <Settings className="w-3 h-3 text-gray-400" />
-                          </button>
-                        )}
-
-                        {/* Settings gear icon for when no preset is selected */}
-                        {!activePreset && !isReadOnlyUser && (
-                          <div className="px-2 py-1 border-l border-gray-200 dark:border-gray-600">
-                            <Settings className="w-3 h-3 text-gray-300" />
-                          </div>
-                        )}
-
-                        {/* Keep creation discoverable next to the selected
-                            automation for every role. Account-level readers
-                            see the affordance but cannot submit a new one. */}
+                    <TopBarEntitySelector
+                      label={activePreset?.label}
+                      placeholder="Select Automation"
+                      title={currentSessionStatusLabel ? `${activePreset?.label ?? ''} · ${currentSessionStatusLabel}` : undefined}
+                      open={showPresetDropdown}
+                      onToggle={() => {
+                        if (isGlobalPage) returnToWorkspace()
+                        handlePresetDropdownToggle()
+                      }}
+                      onClose={() => setShowPresetDropdown(false)}
+                      onAdd={handleAddWorkflow}
+                      addLabel="Add automation"
+                      addTitle={isReadOnlyUser ? 'Read-only users cannot create automations' : 'Add automation'}
+                      addDisabled={isReadOnlyUser}
+                      addTestId="add-workflow-button"
+                      dataTour="workflow-add-edit"
+                      testId="tour-workflow-add-edit"
+                      badge={currentTriggerLabel && <span className="rounded border border-border px-1 text-[10px] text-muted-foreground">{currentTriggerLabel}</span>}
+                      middleControl={activePreset && !isEffectiveReadOnly ? (
                         <button
                           type="button"
-                          data-testid="add-workflow-button"
-                          aria-label="Add automation"
-                          onClick={handleAddWorkflow}
-                          disabled={isReadOnlyUser}
-                          title={isReadOnlyUser ? 'Read-only users cannot create automations' : 'Add automation'}
-                          className="border-l border-gray-200 px-2 py-1 text-gray-500 transition-colors hover:bg-gray-100 hover:text-gray-700 disabled:cursor-not-allowed disabled:opacity-50 dark:border-gray-600 dark:text-gray-400 dark:hover:bg-slate-700 dark:hover:text-gray-200"
+                          onClick={(event) => {
+                            event.stopPropagation()
+                            handleEditWorkflowPreset(activePreset as CustomPreset)
+                            setWorkspaceMinimized(true)
+                          }}
+                          className="border-l border-gray-200 px-2 py-1 transition-colors hover:bg-gray-100 dark:border-gray-600 dark:hover:bg-slate-700"
+                          title="Edit automation"
                         >
-                          <Plus className="h-3 w-3" />
+                          <Settings className="h-3 w-3 text-gray-400" />
                         </button>
-                      </div>
-
-                      {/* Preset Dropdown */}
-                      {showPresetDropdown && (
-                        <div className="preset-dropdown absolute top-full left-0 mt-1 w-64 bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 rounded-lg shadow-lg z-50">
+                      ) : !activePreset && !isReadOnlyUser ? (
+                        <div className="border-l border-gray-200 px-2 py-1 dark:border-gray-600"><Settings className="h-3 w-3 text-gray-300" /></div>
+                      ) : null}
+                    >
                           <div className="p-2 space-y-1 max-h-96 overflow-y-auto">
                             {/* Add New Workflow Option */}
                             <button
@@ -721,9 +671,7 @@ export const ModePresetBar: React.FC = () => {
                                 </div>
                               ))}
                           </div>
-                        </div>
-                      )}
-                    </div>
+                    </TopBarEntitySelector>
                   )
                 }
                 return null
@@ -734,35 +682,58 @@ export const ModePresetBar: React.FC = () => {
           {/* Right: icons */}
           <TooltipProvider delayDuration={400}>
             <div className="flex shrink-0 items-center gap-2">
-              <GlobalActivityMonitor />
+              {!reduced && <GlobalActivityMonitor />}
 
               <ProvidersControl />
 
-              <Tooltip>
+              {!reduced && <Tooltip>
                 <TooltipTrigger asChild>
                   <button
                     type="button"
                     onClick={() => {
                       useLLMStore.getState().setShowLLMModal(false)
+                      setShowSchedulesOverview(false)
                       setShowWorkflowsOverview(true)
                     }}
                     data-tour="global-activity"
                     aria-label="Activity"
-                    aria-pressed={showWorkflowsOverview && !showProviders}
-                    className={`rounded-md p-1.5 transition-colors ${showWorkflowsOverview && !showProviders
+                    aria-pressed={showWorkflowsOverview && !showProviders && !showSchedulesOverview}
+                    className={`rounded-md p-1.5 transition-colors ${showWorkflowsOverview && !showProviders && !showSchedulesOverview
                       ? 'bg-primary/10 text-primary'
                       : 'text-muted-foreground hover:bg-muted hover:text-foreground'}`}
                   >
                     <LayoutDashboard className="h-4 w-4" />
                   </button>
                 </TooltipTrigger>
-                <TooltipContent side="bottom">Activity · Updates and schedules</TooltipContent>
-              </Tooltip>
+                <TooltipContent side="bottom">Activity · Updates</TooltipContent>
+              </Tooltip>}
+
+              {!reduced && <Tooltip>
+                <TooltipTrigger asChild>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      useLLMStore.getState().setShowLLMModal(false)
+                      setShowWorkflowsOverview(false)
+                      setShowSchedulesOverview(true)
+                    }}
+                    data-tour="global-schedules"
+                    aria-label="Schedules"
+                    aria-pressed={showSchedulesOverview && !showProviders && !showWorkflowsOverview}
+                    className={`rounded-md p-1.5 transition-colors ${showSchedulesOverview && !showProviders && !showWorkflowsOverview
+                      ? 'bg-primary/10 text-primary'
+                      : 'text-muted-foreground hover:bg-muted hover:text-foreground'}`}
+                  >
+                    <CalendarClock className="h-4 w-4" />
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent side="bottom">Schedules</TooltipContent>
+              </Tooltip>}
 
               <span className="mx-0.5 h-5 w-px bg-gray-200 dark:bg-gray-700" />
               <WorkspaceTopBarControls
-                onOpenWalkthrough={openWorkflowWalkthrough}
-                onOpenShortcuts={() => setShowShortcuts(true)}
+                onOpenWalkthrough={reduced ? undefined : openWorkflowWalkthrough}
+                onOpenShortcuts={reduced ? undefined : () => setShowShortcuts(true)}
               />
 
             </div>

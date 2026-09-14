@@ -5,7 +5,7 @@ export const UI_CONTROL_CONTRACT = {
   "views": [
     {
       "id": "report",
-      "label": "Report",
+      "label": "Dashboard",
       "target_kind": "report_tab",
       "actions": [
         "open"

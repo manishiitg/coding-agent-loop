@@ -261,7 +261,6 @@ export default function ChildPlatformChat({ activityDir, title, childName, theme
             landingContent={null}
             contentRenderer={ChildConversation}
             inputVariant="product"
-            fullTurnStreaming
             hideRuntimeStatus
             composerPlaceholder={`Type your answer or ask for help, ${childName || 'friend'}…`}
           />

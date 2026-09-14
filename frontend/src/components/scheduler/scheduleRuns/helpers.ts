@@ -4,6 +4,13 @@ import { normalizeWorkspacePath } from '../../../utils/workspacePathUtils'
 export type JobFilter = 'running' | 'enabled' | 'paused' | 'missed' | 'issues' | 'all'
 export type SchedulePanelView = 'overview' | 'calendar' | 'by-workflow' | 'schedules'
 
+/** Global views open on the per-workflow grouping with drill-down into each
+ *  workflow's schedules; a workflow-scoped view already identifies one
+ *  workflow, so it opens on the schedule list directly. */
+export function defaultSchedulePanelView(isWorkflowScoped: boolean): SchedulePanelView {
+  return isWorkflowScoped ? 'schedules' : 'by-workflow'
+}
+
 export type WorkflowScope = {
   presetQueryId?: string | null
   workspacePath?: string | null

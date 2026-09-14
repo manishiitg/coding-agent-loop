@@ -403,6 +403,7 @@ export default function CodingProvidersPanel({ isOpen, onClose, embedded = false
   const [guidedSession, setGuidedSession] = useState<ProviderSetupSession | null>(null)
   const [guidedStarting, setGuidedStarting] = useState<ProviderSetupAction | null>(null)
   const [guidedError, setGuidedError] = useState<string | null>(null)
+  const [guidedConflictAction, setGuidedConflictAction] = useState<ProviderSetupAction | null>(null)
   const isMultiUserMode = useAuthStore(state => state.isMultiUserMode)
   const isAdmin = useAuthStore(state => state.user?.is_admin === true)
   const canRunGuidedSetup = !isMultiUserMode || isAdmin
@@ -461,16 +462,19 @@ export default function CodingProvidersPanel({ isOpen, onClose, embedded = false
   const selectedProvider = orderedProviders.find(provider => provider.id === selectedId) ?? orderedProviders[0]
   const guide = selectedProvider ? CODING_PROVIDER_GUIDES[selectedProvider.id] : undefined
 
-  const startGuidedSetup = async (action: ProviderSetupAction) => {
+  const startGuidedSetup = async (action: ProviderSetupAction, replaceRunning = false) => {
     if (!selectedProvider || !GUIDED_SETUP_PROVIDERS.has(selectedProvider.id)) return
     setGuidedStarting(action)
     setGuidedError(null)
+    setGuidedConflictAction(null)
     try {
-      const session = await llmConfigService.startProviderSetup(selectedProvider.id, action, 100, 24)
+      const session = await llmConfigService.startProviderSetup(selectedProvider.id, action, 100, 24, undefined, replaceRunning)
       setGuidedSession(session)
     } catch (setupError) {
+      const status = (setupError as { response?: { status?: number } })?.response?.status
       const responseMessage = (setupError as { response?: { data?: { error?: string } } })?.response?.data?.error
       setGuidedError(responseMessage || (setupError instanceof Error ? setupError.message : 'Could not start guided setup'))
+      if (status === 409) setGuidedConflictAction(action)
     } finally {
       setGuidedStarting(null)
     }
@@ -613,7 +617,24 @@ export default function CodingProvidersPanel({ isOpen, onClose, embedded = false
 
                   {guidedError && (
                     <div className="mb-5 flex items-start gap-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700 dark:border-red-500/30 dark:bg-red-500/10 dark:text-red-300">
-                      <CircleAlert className="mt-0.5 h-4 w-4 shrink-0" /> {guidedError}
+                      <CircleAlert className="mt-0.5 h-4 w-4 shrink-0" />
+                      <div className="flex-1">
+                        <p>{guidedError}</p>
+                        {guidedConflictAction && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              if (window.confirm(`End the existing ${selectedProvider.display_name} setup session and start a new one?`)) {
+                                void startGuidedSetup(guidedConflictAction, true)
+                              }
+                            }}
+                            disabled={guidedStarting !== null}
+                            className="mt-2 rounded-lg border border-red-300 bg-white px-3 py-1.5 text-xs font-semibold text-red-700 hover:bg-red-100 disabled:opacity-50 dark:border-red-500/50 dark:bg-gray-900 dark:text-red-300 dark:hover:bg-red-500/10"
+                          >
+                            End existing session and start new
+                          </button>
+                        )}
+                      </div>
                     </div>
                   )}
 
@@ -726,9 +747,15 @@ export default function CodingProvidersPanel({ isOpen, onClose, embedded = false
                         <CheckCircle2 className="h-4 w-4" /> Installed and maintained by AgentWorks
                       </p>
                     ) : (
-                      <p className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800 dark:border-red-500/30 dark:bg-red-500/10 dark:text-red-200">
-                        This CLI is missing from the AgentWorks installation. A platform administrator must repair or update the deployment.
-                      </p>
+                      <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800 dark:border-red-500/30 dark:bg-red-500/10 dark:text-red-200">
+                        <p>This CLI is missing from the AgentWorks installation. A platform administrator must repair or update the deployment.</p>
+                        {canRunGuidedSetup && selectedProvider.install_command && (
+                          <div className="mt-3">
+                            <p className="text-xs font-semibold uppercase tracking-wide text-red-700/80 dark:text-red-200/80">Run on the backend server</p>
+                            <pre className="mt-1 overflow-x-auto rounded-md bg-gray-950 px-3 py-2 text-xs text-gray-100"><code>{selectedProvider.install_command}</code></pre>
+                          </div>
+                        )}
+                      </div>
                     )}
                   </SetupStep>
 

@@ -14,8 +14,8 @@ import (
 // present; cdpEnabled advertises the deployment-level browser capability; the
 // product-surface and branding keys can be overridden via env — see
 // docs/design/sparkquill_desktop_on_platform_plan.md P0. A plain AgentWorks
-// server exposes only AgentWorks; a shell or deployment running a different
-// product (e.g. SparkQuill) sets
+// server exposes AgentWorks and its built-in Work coding surface; a shell or
+// deployment running a different product (e.g. SparkQuill) sets
 // AGENTWORKS_ENABLED_PRODUCT_SURFACES/AGENTWORKS_DEFAULT_PRODUCT_SURFACE so
 // the frontend's product-surface switcher pins to its intended surface(s).
 func runtimeFrontendConfigJS(actualPort int, workspaceURL string) string {
@@ -24,7 +24,7 @@ func runtimeFrontendConfigJS(actualPort int, workspaceURL string) string {
 	fmt.Fprintf(&b, ",\n  cdpEnabled: %t", browser.CDPEnabled())
 	surfaces := splitAndTrimCommaList(os.Getenv("AGENTWORKS_ENABLED_PRODUCT_SURFACES"))
 	if len(surfaces) == 0 {
-		surfaces = []string{"agentworks"}
+		surfaces = []string{"agentworks", "work"}
 	}
 	fmt.Fprintf(&b, ",\n  enabledProductSurfaces: %s", jsStringArrayLiteral(surfaces))
 	defaultSurface := strings.TrimSpace(os.Getenv("AGENTWORKS_DEFAULT_PRODUCT_SURFACE"))

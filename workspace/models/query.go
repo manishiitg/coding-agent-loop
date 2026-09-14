@@ -56,7 +56,9 @@ type MutationResponse struct {
 // never arbitrary agent SQL.
 type InitializeDatabaseRequest struct {
 	DBPath     string   `json:"db_path" binding:"required"`
-	Migrations []string `json:"migrations" binding:"required"`
+	// An empty list is the platform initializer's explicit request to create a
+	// valid, empty managed SQLite database before the first product task runs.
+	Migrations []string `json:"migrations"`
 	// MigrationFile is the optional source filename this batch of statements
 	// came from (e.g. "2026-08-06-action-outcome-measurement.sql"), recorded
 	// in the durable _schema_migration_log ledger for audit. A caller that

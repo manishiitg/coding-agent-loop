@@ -20,7 +20,7 @@ function testBrowserLabel(browser: BrowserSession): string {
 
 type BrowserTab = { tabId: string; title: string; url: string; active: boolean }
 
-export default function WorkflowLiveBrowser({ workspacePath, toolbar }: { workspacePath: string | null; toolbar?: ReactNode }) {
+export default function WorkflowLiveBrowser({ workspacePath, toolbar, scopeNoun = 'workflow' }: { workspacePath: string | null; toolbar?: ReactNode; scopeNoun?: 'workflow' | 'project' }) {
   const [sessions, setSessions] = useState<BrowserSession[]>([])
   const [session, setSession] = useState('')
   const [selection, setSelection] = useState('')
@@ -142,13 +142,13 @@ export default function WorkflowLiveBrowser({ workspacePath, toolbar }: { worksp
           ? activeTests.find(item => item.browser_session === current)?.browser_session || activeTests[0]?.browser_session || tests.find(item => item.browser_session === current)?.browser_session || tests[0]?.browser_session || ''
           : choice || nextSessions[0]?.browser_session || '')
       } catch {
-        if (!cancelled) setError('Unable to load workflow browser sessions.')
+        if (!cancelled) setError(`Unable to load ${scopeNoun} browser sessions.`)
       } finally { polling = false }
     }
     void poll()
     const timer = window.setInterval(() => { void poll() }, 1000)
     return () => { cancelled = true; controller.abort(); window.clearInterval(timer) }
-  }, [workspacePath])
+  }, [scopeNoun, workspacePath])
 
   useEffect(() => {
     pendingTab.current = ''
@@ -283,7 +283,7 @@ export default function WorkflowLiveBrowser({ workspacePath, toolbar }: { worksp
   }
 
   return (
-    <section className="flex min-h-0 flex-1 flex-col overflow-hidden bg-background" aria-label="Live workflow browser">
+    <section className="flex min-h-0 flex-1 flex-col overflow-hidden bg-background" aria-label={`Live ${scopeNoun} browser`}>
       <div className="flex shrink-0 flex-wrap items-center gap-2 border-b border-border px-3 py-2">
         <h3 className="text-sm font-medium">Browser</h3>
         <span className="text-xs text-muted-foreground" role="status">{controlling ? 'You have control' : connected ? 'Watching' : completed ? 'Completed' : retainedFrame ? 'Disconnected' : 'Not connected'}</span>
@@ -332,7 +332,7 @@ export default function WorkflowLiveBrowser({ workspacePath, toolbar }: { worksp
       </div>}
       {replayURL ? <video controls preload="metadata" src={replayURL} aria-label="Playwright test recording" className="min-h-0 flex-1 bg-black object-contain" /> : displayFrame ? <div className="relative min-h-0 flex-1 bg-muted/20"><div className="absolute inset-0 flex items-center justify-center overflow-hidden">
         <img ref={screen} src={displayFrame} alt={retainedFrame ? "Last Playwright test frame" : "Live server browser viewport"} draggable={false} tabIndex={controlling ? 0 : -1} className="block h-auto max-h-full w-auto max-w-full select-none outline-none focus:ring-2 focus:ring-inset focus:ring-ring" onMouseDown={event => mouse(event, 'mousePressed')} onMouseUp={event => mouse(event, 'mouseReleased')} onMouseMove={event => mouse(event, 'mouseMoved')} onContextMenu={event => event.preventDefault()} onKeyDown={event => keyboard(event, 'keyDown')} onKeyUp={event => keyboard(event, 'keyUp')} />
-      </div>{retainedFrame && <span className="pointer-events-none absolute bottom-3 right-3 rounded bg-background/90 px-3 py-1 text-xs shadow">{completed ? 'Completed' : 'Disconnected'} · Last frame</span>}</div> : <div className="flex min-h-0 flex-1 items-center justify-center px-6 py-12 text-center text-sm text-muted-foreground">{replayQueued ? <span className="inline-flex items-center gap-2"><Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />Replay queued for processing…</span> : replayPreparing ? <span className="inline-flex items-center gap-2"><Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />Preparing video replay…</span> : replayFailed ? 'Replay unavailable. See the recording error above.' : sourceCompleted ? 'Replay is no longer available.' : session ? 'Waiting for the browser’s live view…' : followingPlaywright ? 'Waiting for a Playwright test. Tests using the AgentWorks fixture will appear here automatically.' : 'When this workflow opens a managed browser, its live view will appear here.'}</div>}
+      </div>{retainedFrame && <span className="pointer-events-none absolute bottom-3 right-3 rounded bg-background/90 px-3 py-1 text-xs shadow">{completed ? 'Completed' : 'Disconnected'} · Last frame</span>}</div> : <div className="flex min-h-0 flex-1 items-center justify-center px-6 py-12 text-center text-sm text-muted-foreground">{replayQueued ? <span className="inline-flex items-center gap-2"><Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />Replay queued for processing…</span> : replayPreparing ? <span className="inline-flex items-center gap-2"><Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />Preparing video replay…</span> : replayFailed ? 'Replay unavailable. See the recording error above.' : sourceCompleted ? 'Replay is no longer available.' : session ? 'Waiting for the browser’s live view…' : followingPlaywright ? 'Waiting for a Playwright test. Tests using the AgentWorks fixture will appear here automatically.' : `When this ${scopeNoun} opens a managed browser, its live view will appear here.`}</div>}
       <p className="shrink-0 border-t border-border px-3 py-1 text-[11px] text-muted-foreground">{readOnly ? 'Playwright test · Watch-only. Video replay is recorded automatically.' : session === 'shared-browser' ? 'Shared browser · everyone uses the same tabs and sign-ins. Coordinate before making changes.' : controlling ? 'Browser automation is paused while you interact. Return control or press Escape to let it continue.' : 'Live server browser · Take control to interact.'}</p>
     </section>
   )

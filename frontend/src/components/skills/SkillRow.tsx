@@ -13,9 +13,11 @@ interface SkillRowProps {
   onToggleSelect?: () => void
   /** Disables the toggle and delete for a user without write access. */
   readOnly?: boolean
+  /** Keeps this shared row's action copy correct outside Workflow. */
+  selectionScopeLabel?: string
 }
 
-export default function SkillRow({ skill, onDelete, selected, onToggleSelect, readOnly = false }: SkillRowProps) {
+export default function SkillRow({ skill, onDelete, selected, onToggleSelect, readOnly = false, selectionScopeLabel = 'workflow' }: SkillRowProps) {
   const [expanded, setExpanded] = useState(false)
   const { frontmatter, folder_name, source_url } = skill
 
@@ -47,8 +49,8 @@ export default function SkillRow({ skill, onDelete, selected, onToggleSelect, re
                 ? 'border-primary/40 bg-primary/15 text-primary hover:border-red-500/40 hover:bg-red-500/15 hover:text-red-500'
                 : 'border-gray-300 text-gray-500 hover:bg-gray-100 hover:text-gray-900 dark:border-gray-600 dark:text-gray-400 dark:hover:bg-gray-800 dark:hover:text-gray-100'
             }`}
-            title={readOnly ? READ_ONLY_TITLE : `${selected ? 'Remove' : 'Add'} ${frontmatter.name} for this workflow`}
-            aria-label={`${selected ? 'Remove' : 'Add'} ${frontmatter.name} for this workflow`}
+            title={readOnly ? READ_ONLY_TITLE : `${selected ? 'Remove' : 'Add'} ${frontmatter.name} for this ${selectionScopeLabel}`}
+            aria-label={`${selected ? 'Remove' : 'Add'} ${frontmatter.name} for this ${selectionScopeLabel}`}
           >
             {selected ? <Check className="h-3.5 w-3.5" /> : <Plus className="h-3.5 w-3.5" />}
           </button>

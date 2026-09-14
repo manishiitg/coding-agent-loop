@@ -59,6 +59,72 @@ func TestInitializeWorkflowDBCreatesManagedSchemaIdempotently(t *testing.T) {
 	}
 }
 
+func TestInitializeWorkflowDBCreatesEmptyManagedDatabase(t *testing.T) {
+	rel, abs, router := setupWorkflowDBTest(t)
+	recorder := postWorkflowDBTest(t, router, "/api/db/initialize", models.InitializeDatabaseRequest{
+		DBPath: rel,
+	})
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("empty initialize failed: status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+	if info, err := os.Stat(abs); err != nil || info.IsDir() {
+		t.Fatalf("valid SQLite file was not created: info=%v err=%v", info, err)
+	}
+	db, err := sql.Open("sqlite", abs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	var integrity string
+	if err := db.QueryRow("PRAGMA integrity_check").Scan(&integrity); err != nil || integrity != "ok" {
+		t.Fatalf("created database is invalid: integrity=%q err=%v", integrity, err)
+	}
+	var tables int
+	if err := db.QueryRow("SELECT COUNT(*) FROM sqlite_master WHERE type='table'").Scan(&tables); err != nil {
+		t.Fatal(err)
+	}
+	if tables != 0 {
+		t.Fatalf("empty initializer invented %d placeholder tables", tables)
+	}
+}
+
+func TestWorkDatabaseAcceptsCurrentRuntimePathAndRejectsAnotherUser(t *testing.T) {
+	docs := t.TempDir()
+	old := viper.GetString("docs-dir")
+	viper.Set("docs-dir", docs)
+	t.Cleanup(func() { viper.Set("docs-dir", old) })
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	router.POST("/api/db/initialize", InitializeWorkflowDB)
+	router.POST("/api/query", QueryWorkflowDB)
+
+	ownPath := "_users/alice/Chats/Work/projects/demo/db/db.sqlite"
+	request := models.InitializeDatabaseRequest{DBPath: ownPath, Migrations: []string{"CREATE TABLE IF NOT EXISTS notes (id TEXT PRIMARY KEY)"}}
+	reqBody, _ := json.Marshal(request)
+	req := httptest.NewRequest(http.MethodPost, "/api/db/initialize", bytes.NewReader(reqBody))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-User-ID", "alice")
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, req)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("current user's runtime path rejected: status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+	if _, err := os.Stat(filepath.Join(docs, "_users", "alice", "Chats", "Work", "projects", "demo", "db", "db.sqlite")); err != nil {
+		t.Fatal(err)
+	}
+
+	foreign := models.QueryRequest{DBPath: "_users/bob/Chats/Work/projects/demo/db/db.sqlite", SQL: "SELECT 1"}
+	foreignBody, _ := json.Marshal(foreign)
+	foreignReq := httptest.NewRequest(http.MethodPost, "/api/query", bytes.NewReader(foreignBody))
+	foreignReq.Header.Set("Content-Type", "application/json")
+	foreignReq.Header.Set("X-User-ID", "alice")
+	foreignRecorder := httptest.NewRecorder()
+	router.ServeHTTP(foreignRecorder, foreignReq)
+	if foreignRecorder.Code == http.StatusOK {
+		t.Fatalf("foreign runtime path accepted: %s", foreignRecorder.Body.String())
+	}
+}
+
 func TestInitializeWorkflowDBRejectsNonIdempotentOrStackedSQL(t *testing.T) {
 	rel, _, router := setupWorkflowDBTest(t)
 	for _, migration := range []string{

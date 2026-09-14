@@ -20,7 +20,7 @@ export const pulseReviewFocuses: PulseReviewFocus[] = [
     instructions: 'Manual Pulse review focus: plan_orchestration_integrity. Run the complete prompt-contract review: call read_skill(skills=[{"name":"builder-reference","path":"references/step-description.md"}]), call get_plan_prompt_health, and assess the authored step descriptions and validation schemas against that guide. Report semantic prompt-quality failures separately from mechanical size or exact-duplication signals; a short prompt can still be poor and a long prompt can be justified.' },
   { id: 'validation', label: 'Validation contracts', description: 'Checks that protect real outcomes without unnecessary gates.',
     legacyCommand: 'pulse-review-validation-contract', argumentNames: ['validation', 'validation-contract'], instructions: technicalFocus('validation_contract_health') },
-  { id: 'reports', label: 'Report quality', description: 'Accuracy and trustworthiness of the reports users receive.',
+  { id: 'reports', label: 'Dashboard quality', description: 'Accuracy and trustworthiness of the dashboard users receive.',
     legacyCommand: 'pulse-review-report-quality', argumentNames: ['reports', 'report', 'report-quality'], instructions: technicalFocus('report_quality_truth') },
   { id: 'evaluation', label: 'Evaluation quality', description: 'Whether evaluations measure the intended outcomes correctly.',
     legacyCommand: 'pulse-review-evaluation-quality', argumentNames: ['evaluation', 'evaluations', 'evaluation-quality'], instructions: technicalFocus('evaluation_quality_truth') },

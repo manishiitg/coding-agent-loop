@@ -324,7 +324,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) bindWorkshopBrowserSession(toolSessio
 // switchWorkshopGroupSession ensures workshop step execution uses a stable MCP
 // session per group name instead of the controller's "default-group" placeholder.
 // Reusing a cached per-group session preserves browser/login state across steps
-// for the same group. All groups inherit the owning user’s browser.
+// for the same group. All groups inherit the workflow's browser.
 func (hcpo *StepBasedWorkflowOrchestrator) switchWorkshopGroupSession(groupName string) (func(), error) {
 	groupName = strings.TrimSpace(groupName)
 	if groupName == "" {

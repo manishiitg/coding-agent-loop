@@ -96,6 +96,17 @@ Reuse existing project folders for follow-up work on the same topic.
 `
 }
 
+// GetWorkWorkspaceMap describes the primary host workspace without leaking
+// AgentWorks' internal Chats/Workflow storage model into the Work product.
+func GetWorkWorkspaceMap(workspacePath string) string {
+	workspacePath = strings.TrimSpace(workspacePath)
+	if workspacePath == "" {
+		return ""
+	}
+	return "\n## Workspace\n\nYour selected primary workspace is `" + workspacePath +
+		"/`. The native coding CLI starts in this directory. Use paths relative to that working directory, or this exact authorized absolute path. Access levels for it and any additional attached folders are listed below; never infer access to another host path.\n"
+}
+
 // GetWorkflowPhaseWorkspaceMap returns workflow-phase-specific workspace instructions.
 // Unlike chat mode, workflow-phase work should treat the active workflow folder as the
 // primary writable root and avoid surfacing internal per-user Chats paths.

@@ -1,20 +1,16 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react'
-import { FolderOpen, LoaderCircle, Plus, Trash2 } from 'lucide-react'
+import { FolderOpen, LoaderCircle, Plus } from 'lucide-react'
 import { workflowManifestApi } from '../../services/api'
 import type { WorkflowFolderAccessRequest, WorkflowFolderGrant } from '../../services/api-types'
 import { useWorkflowManifestStore } from '../../stores/useWorkflowManifestStore'
 import { KnowledgebaseSources } from './KnowledgebaseSources'
+import { aliasFromPath } from '../../utils/folderAlias'
 import { READ_ONLY_TITLE, useCanWriteWorkflow } from '../../hooks/useCanWriteWorkflow'
+import { FolderGrantList } from '../folders/FolderGrantList'
 
 interface WorkflowFolderAccessViewProps {
   workspacePath: string | null
   headerAction?: React.ReactNode
-}
-
-function aliasFromPath(path: string): string {
-  const base = path.split(/[\\/]/).filter(Boolean).pop() || 'attached-folder'
-  const normalized = base.replace(/[^a-zA-Z0-9_-]+/g, '-').replace(/^-+|-+$/g, '')
-  return normalized || 'attached-folder'
 }
 
 function grantID(): string {
@@ -185,29 +181,7 @@ export default function WorkflowFolderAccessView({ workspacePath, headerAction }
             {loading ? (
               <div className="flex justify-center py-8"><LoaderCircle className="h-5 w-5 animate-spin text-muted-foreground" /></div>
             ) : (
-              <div className="space-y-2">
-                {grants.length === 0 && <div className="rounded-lg border border-dashed border-border px-4 py-5 text-center text-xs text-muted-foreground">No external folders attached.</div>}
-                {grants.map(grant => (
-                  <div key={grant.id} className="rounded-lg border border-border bg-muted/20 p-3">
-                    <div className="flex items-start gap-3">
-                      <FolderOpen className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
-                      <div className="min-w-0 flex-1">
-                        <div className="flex flex-wrap items-center gap-2">
-                          <span className="text-sm font-medium text-foreground">{grant.alias}</span>
-                          <code className="rounded bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">linked://{grant.alias}/</code>
-                        </div>
-                        <div className="mt-1 truncate text-xs text-muted-foreground" title={grant.path}>{grant.path}</div>
-                        {grant.reason && <div className="mt-1 text-xs text-muted-foreground">{grant.reason}</div>}
-                      </div>
-                      <select value={grant.access} disabled={!canWriteWorkflow || saving} title={!canWriteWorkflow ? READ_ONLY_TITLE : undefined} onChange={event => void changeAccess(grant, event.target.value as 'read_only' | 'read_write')} className="rounded-md border border-border bg-background px-2 py-1 text-xs text-foreground disabled:cursor-not-allowed disabled:opacity-50">
-                        <option value="read_only">Read only</option>
-                        <option value="read_write">Read & write</option>
-                      </select>
-                      <button type="button" disabled={!canWriteWorkflow || saving} title={!canWriteWorkflow ? READ_ONLY_TITLE : undefined} onClick={() => void removeGrant(grant)} className="rounded-md p-1.5 text-muted-foreground hover:bg-destructive/10 hover:text-destructive disabled:cursor-not-allowed disabled:opacity-50" aria-label={`Remove ${grant.alias}`}><Trash2 className="h-3.5 w-3.5" /></button>
-                    </div>
-                  </div>
-                ))}
-              </div>
+              <FolderGrantList grants={grants} disabled={!canWriteWorkflow || saving} onAccessChange={changeAccess} onRemove={removeGrant} />
             )}
 
             {!loading && requests.length > 0 && (

@@ -459,6 +459,12 @@ interface ChatAreaProps {
   // chat sits in the narrow rail; labeled tabs when it fills the pane (org panel
   // minimized). The panel always renders in fill mode so it scrolls in both.
   previousChatsCompact?: boolean
+  // Scope the shared previous-chat landing panel to one product/workflow
+  // workspace. Without this, the panel intentionally shows the user's global
+  // AgentWorks history, which is not appropriate inside a project surface.
+  previousChatsWorkspacePath?: string
+  // Product surfaces can reuse AgentWorks history without automation tabs.
+  previousChatsRecentOnly?: boolean
   // Workflow landing previous-chats panel. WorkflowLayout owns the panel + its
   // resume handler (so the workflow-scoped history logic isn't duplicated here)
   // and passes the rendered node only when a fresh automation chat should show
@@ -486,6 +492,14 @@ interface ChatAreaProps {
   showConversationUsage?: boolean
   // Product deployments with one fixed runtime can omit a redundant badge.
   hideRuntimeStatus?: boolean
+  // Show AgentWorks' compact running spinner beside the microphone without a
+  // provider/model label. Work uses this because model selection lives in Setup.
+  showCompactRuntimeLoading?: boolean
+  // Work reuses AgentWorks' queued-message UI and exposes an explicit Steer
+  // action even though the underlying provider is a coding CLI.
+  showProductSteerAction?: boolean
+  // Product surfaces normally hide the retained terminal; Work exposes it.
+  showProductTerminalControl?: boolean
   // Product chats otherwise have no generic header in which to start fresh.
   showNewChatAction?: boolean
   /** Product-specific composer placeholder (the product variant otherwise says "Describe what you want to create…"). */
@@ -509,7 +523,7 @@ let globalHasRestored = false
 
 // Inner component for chat area
 const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAreaRef>) => {
-  const { onNewChat, hideInput = false, compact = false, tabId, previousChatsCompact = false, workflowPreviousChatsPanel, landingContent, contentRenderer: ContentRenderer, inputVariant = 'default', fullTurnStreaming = false, showConversationUsage = false, hideRuntimeStatus = false, showNewChatAction = false , composerPlaceholder} = props
+  const { onNewChat, hideInput = false, compact = false, tabId, previousChatsCompact = false, previousChatsWorkspacePath, previousChatsRecentOnly = false, workflowPreviousChatsPanel, landingContent, contentRenderer: ContentRenderer, inputVariant = 'default', fullTurnStreaming = false, showConversationUsage = false, hideRuntimeStatus = false, showCompactRuntimeLoading = false, showProductSteerAction = false, showProductTerminalControl = false, showNewChatAction = false , composerPlaceholder} = props
   // Product mode is a complete shared surface, not just a simplified composer.
   // Products may still supply a renderer for domain-specific presentation, but
   // every new product gets the durable transcript and normalized error UI by
@@ -614,8 +628,10 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
       ? activeTab.config.selectedServers
       : selectedServers).filter((server): server is string => typeof server === 'string')
 
-    // If no servers are selected (empty array), default to all connected servers
+    // Product profiles are explicit opt-in: an empty project selection means
+    // no MCP servers. It must never inherit every account-connected server.
     if (tabSelectedServers.length === 0) {
+      if (activeTab?.metadata?.agentProfileId) return ["NO_SERVERS"]
       const all = Array.from(connectedServers)
       return all.length > 0 ? all : ["NO_SERVERS"]
     }
@@ -628,7 +644,8 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
     currentPresetServers,
     selectedServers,
     connectedServers,
-    activeTab?.config
+    activeTab?.config,
+    activeTab?.metadata?.agentProfileId
   ])
 
   // Filter tools to only include those from effective servers
@@ -2640,6 +2657,23 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
       freshActiveTab = useChatStore.getState().chatTabs[chatTabId]
     }
 
+    if (freshActiveTab?.metadata?.agentProfileBuilder) {
+      const normalized = trimmedQuery.replace(/\s+/g, ' ').trim()
+      const chatName = normalized.length > 110 ? `${normalized.slice(0, 110)}...` : normalized
+      const builderConfig = freshActiveTab.config
+      const projectId = freshActiveTab.metadata.agentProfileProjectId
+      if (!projectId) return false
+      const chatTabId = await chatStore.createChatTab(chatName, {
+        ...freshActiveTab.metadata,
+        agentProfileBuilder: false,
+        agentProfileConversationKey: `${projectId}:${globalThis.crypto.randomUUID()}`,
+        agentProfileConversationId: undefined,
+      })
+      if (builderConfig) chatStore.setTabConfig(chatTabId, { ...builderConfig })
+      activateTab(chatTabId)
+      freshActiveTab = useChatStore.getState().chatTabs[chatTabId]
+    }
+
     if (submitModeCategory === 'workflow' && !isRequiredFolderSelected) {
       logger.error('ChatArea', 'Workflow folder required for workflow mode')
       return false
@@ -2654,7 +2688,8 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
     const hasOneShotContext = Boolean(
       currentTab.config?.restoredConversationPath?.trim() ||
       currentTab.config?.fileContext?.length ||
-      executionOptions
+      executionOptions ||
+      currentTab.metadata?.agentProfileRuntimeDirty
     )
     const useRetainedLiveInput = shouldUseRetainedLiveInput({
       requested: options?.preferLiveInput === true,
@@ -3093,6 +3128,9 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
         console.log('[WF_DEBUG] 3. Before updateTabSessionId', { old: tabSessionId, new: responseSessionId, changed: responseSessionId !== tabSessionId, oldEvents: chatStore.getTabEvents(tabSessionId).length, newEvents: chatStore.getTabEvents(responseSessionId).length })
         chatStore.setSessionId(responseSessionId)
         chatStore.updateTabSessionId(currentTab.tabId, responseSessionId)
+        if (currentTab.metadata?.agentProfileRuntimeDirty) {
+          chatStore.setTabMetadata(currentTab.tabId, { agentProfileRuntimeDirty: false })
+        }
         console.log('[WF_DEBUG] 4. After updateTabSessionId', { events: chatStore.getTabEvents(responseSessionId).length, activeTabSession: useChatStore.getState().chatTabs[currentTab.tabId]?.sessionId })
         chatStore.setTabStreaming(currentTab.tabId, true)
         chatStore.setTabCompleted(currentTab.tabId, false)
@@ -3186,7 +3224,8 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
       hasOneShotContext: Boolean(
         sourceTab?.config?.restoredConversationPath?.trim() ||
         sourceTab?.config?.fileContext?.length ||
-        executionOptions
+        executionOptions ||
+        sourceTab?.metadata?.agentProfileRuntimeDirty
       ),
     })
     if (useRetainedLiveInput) {
@@ -3706,6 +3745,8 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
             {multiAgentSurface === 'landing' && (
               landingContent ?? (
                 <PreviousChatHistoryPanel
+                  workspacePath={previousChatsWorkspacePath}
+                  recentOnly={previousChatsRecentOnly}
                   activeSessionId={hasConversationContent ? activeTab?.sessionId ?? undefined : undefined}
                   title="Previous chats"
                   actionLabel="Resume"
@@ -3763,6 +3804,9 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
           restoredConversationPending={resumePending && !hasRestoredLiveContent}
           surfaceVariant={inputVariant}
           hideRuntimeStatus={hideRuntimeStatus}
+          showCompactRuntimeLoading={showCompactRuntimeLoading}
+          showProductSteerAction={showProductSteerAction}
+          showProductTerminalControl={showProductTerminalControl}
           showNewChatAction={showNewChatAction}
           placeholderOverride={composerPlaceholder}
         />

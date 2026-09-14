@@ -160,6 +160,9 @@ func resolveProfileRuntimeModel(runtime agentprofiles.RuntimePolicy, requestedPr
 				return strings.TrimSpace(option.Provider), requestedModelID
 			}
 		}
+		if len(option.Models) == 0 && providerOffersModel(option.Provider, requestedModelID) {
+			return strings.TrimSpace(option.Provider), requestedModelID
+		}
 	}
 	return provider, modelID
 }
@@ -235,6 +238,19 @@ func (api *StreamingAPI) resolveAgentProfileForQuery(ctx context.Context, req *Q
 		return nil, err
 	}
 	req.SelectedFolder = workspacePath
+	if profile.ID == "work" {
+		conversationKey := strings.TrimSpace(req.AgentProfileConversationKey)
+		if conversationKey == "" {
+			return nil, fmt.Errorf("agent_profile_conversation_key is required for Work")
+		}
+		binding, bindingErr := resolveProductConversationBinding(ctx, userID, profile, conversationKey)
+		if bindingErr != nil {
+			return nil, fmt.Errorf("resolve Work workspace: %w", bindingErr)
+		}
+		if filepath.Clean(binding.WorkspacePath) != filepath.Clean(workspacePath) {
+			return nil, fmt.Errorf("Work conversation does not match the selected session")
+		}
+	}
 
 	promptContext := req.AgentProfileContext
 	promptContext.ProjectTitle = strings.TrimSpace(promptContext.ProjectTitle)
@@ -489,6 +505,16 @@ func (api *StreamingAPI) registerAgentProfileTools(registrar definitionToolRegis
 		}
 		if err := registrar.RegisterCustomTool(tool.Name, tool.Description, tool.Parameters, tool.Execute, category); err != nil {
 			return fmt.Errorf("register profile tool %q: %w", tool.Name, err)
+		}
+	}
+	if resolved.Definition.ID == "work" && agentprofiles.HasFeature(resolved.Definition, "attached-folders") {
+		if err := api.registerWorkFolderTools(registrar, userID); err != nil {
+			return err
+		}
+	}
+	if resolved.Definition.ID == "work" && agentprofiles.HasFeature(resolved.Definition, "schedules") {
+		if err := api.registerWorkScheduleTools(registrar, userID, workspacePath); err != nil {
+			return err
 		}
 	}
 	return nil

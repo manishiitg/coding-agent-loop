@@ -4608,16 +4608,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 			}
 
 			// --- Owner-approved external folders ---
-			sb.WriteString("\n### Attached Folders\n")
-			grants := workflowFolderAccess(ctrl.GetWorkspacePath())
-			if len(grants) == 0 {
-				sb.WriteString("No external folders are attached. Use Workflow toolbar → Attached folders; an agent cannot approve a host path for itself.\n")
-			} else {
-				for _, grant := range grants {
-					key := strings.Trim(workflowFolderEnvUnsafe.ReplaceAllString(strings.ToUpper(strings.TrimSpace(grant.Alias)), "_"), "_")
-					sb.WriteString(fmt.Sprintf("- **%s** (`%s`) — %s — `$WORKFLOW_FOLDER_%s`\n", grant.Alias, grant.ID, grant.Access, key))
-				}
-			}
+			sb.WriteString(workflowtypes.FolderGrantsPrompt(workflowFolderAccess(ctrl.GetWorkspacePath()), "WORKFLOW_FOLDER_", "No external folders are attached. Use Workflow toolbar → Attached folders; an agent cannot approve a host path for itself.\n"))
 			if requests := workflowFolderAccessRequests(ctrl.GetWorkspacePath()); len(requests) > 0 {
 				sb.WriteString("Pending requests:\n")
 				for _, request := range requests {

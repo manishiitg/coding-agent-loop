@@ -39,6 +39,22 @@ func TestResolveLinkedFolderPathUsesTrustedSessionAlias(t *testing.T) {
 	}
 }
 
+func TestResolveLinkedFolderPathFallsBackToWorkFolderEnv(t *testing.T) {
+	sessionID := "linked-folder-work-test"
+	root := t.TempDir()
+	common.SetSessionFolderGuard(sessionID, []string{root}, []string{root})
+	common.SetSessionShellEnv(sessionID, map[string]string{"WORK_FOLDER_SITE": root})
+	t.Cleanup(func() { common.ClearSessionShellConfig(sessionID) })
+
+	client := NewClient("http://unused")
+	ctx := context.WithValue(context.Background(), common.ChatSessionIDKey, sessionID)
+	got := client.resolveLinkedFolderPath(ctx, "linked://site/index.html")
+	want := filepath.Join(root, "index.html")
+	if got != want {
+		t.Fatalf("resolved path = %q, want %q", got, want)
+	}
+}
+
 func TestAbsoluteDottedDirectoryGrantAllowsChildPath(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "source.v2")
 	if err := os.MkdirAll(root, 0o755); err != nil {

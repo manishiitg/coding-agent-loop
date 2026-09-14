@@ -486,6 +486,7 @@ export function useCostsData({ active, workspacePath, selectedRunFolder }: UseCo
   return {
     loading,
     error,
+    scopedCosts,
     runCosts,
     phaseCostSummary,
     phaseDailyCostSummaries,

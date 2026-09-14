@@ -123,58 +123,24 @@ func TestCodingAgentPersistentInteractiveFlagsCoverTmuxContracts(t *testing.T) {
 
 func TestCodingAgentUsesStructuredTransportForChat(t *testing.T) {
 	tests := []struct {
-		name            string
-		provider        string
-		policy          string
-		workflowBuilder bool
-		wantStructured  bool
+		name           string
+		provider       string
+		interactive    bool
+		wantStructured bool
 	}{
-		{name: "Cursor ordinary chat stays structured", provider: "cursor-cli", wantStructured: true},
-		{name: "Cursor workflow builder uses tmux", provider: "cursor-cli", workflowBuilder: true},
-		{name: "Cursor workflow builder overrides structured profile", provider: "cursor-cli", policy: "structured", workflowBuilder: true},
-		{name: "Muse ordinary chat stays structured", provider: "muse-cli", wantStructured: true},
-		{name: "Muse workflow builder uses tmux", provider: "muse-cli", workflowBuilder: true},
-		{name: "Muse workflow builder overrides structured profile", provider: "muse-cli", policy: "structured", workflowBuilder: true},
-		{name: "Claude workflow builder keeps provider default", provider: "claude-code", workflowBuilder: true},
-		{name: "explicit structured Claude remains structured", provider: "claude-code", policy: "structured", workflowBuilder: true, wantStructured: true},
+		{name: "Cursor interactive chat uses tmux", provider: "cursor-cli", interactive: true},
+		{name: "Muse interactive chat uses tmux", provider: "muse-cli", interactive: true},
+		{name: "Claude interactive chat uses tmux", provider: "claude-code", interactive: true},
+		{name: "Codex interactive chat uses tmux", provider: "codex-cli", interactive: true},
+		{name: "Pi interactive chat uses tmux", provider: "pi-cli", interactive: true},
+		{name: "non-interactive Cursor uses structured JSON", provider: "cursor-cli", wantStructured: true},
+		{name: "non-interactive Claude uses structured JSON", provider: "claude-code", wantStructured: true},
+		{name: "API provider is not a structured coding CLI", provider: "openai"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := codingAgentUsesStructuredTransportForChat(tc.provider, tc.policy, tc.workflowBuilder); got != tc.wantStructured {
+			if got := codingAgentUsesStructuredTransportForChat(tc.provider, tc.interactive); got != tc.wantStructured {
 				t.Fatalf("structured = %v, want %v", got, tc.wantStructured)
-			}
-		})
-	}
-}
-
-func TestCodingAgentUsesStructuredTransport(t *testing.T) {
-	if !codingAgentUsesStructuredTransport(string(llm.ProviderCursorCLI)) {
-		t.Fatal("Cursor must use structured transport")
-	}
-	if codingAgentUsesStructuredTransport(string(llm.ProviderClaudeCode)) {
-		t.Fatal("Claude Code must retain its configured transport")
-	}
-	// Muse is exec-lane only until its tmux lane lands: structured even
-	// though the provider contract declares tmux.
-	if !codingAgentUsesStructuredTransport(string(llm.ProviderMuseCLI)) {
-		t.Fatal("Muse must use structured transport while exec-only")
-	}
-}
-
-func TestCodingAgentUsesStructuredTransportForPolicy(t *testing.T) {
-	for _, tc := range []struct {
-		name, provider, policy string
-		want                   bool
-	}{
-		{"auto keeps Cursor structured default", "cursor-cli", "auto", true},
-		{"auto keeps Claude tmux default", "claude-code", "auto", false},
-		{"Video Studio policy structures Claude", "claude-code", "structured", true},
-		{"Video Studio policy structures Codex", "codex-cli", "structured", true},
-		{"explicit tmux overrides Cursor default", "cursor-cli", "tmux", false},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			if got := codingAgentUsesStructuredTransportForPolicy(tc.provider, tc.policy); got != tc.want {
-				t.Fatalf("codingAgentUsesStructuredTransportForPolicy(%q, %q) = %v, want %v", tc.provider, tc.policy, got, tc.want)
 			}
 		})
 	}

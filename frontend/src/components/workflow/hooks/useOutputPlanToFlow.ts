@@ -103,14 +103,14 @@ export function useOutputPlanToFlow(plan: WorkflowOutputPlan | null): UseOutputP
         position: { x: 0, y: 0 },
         data: {
           id: stepId,
-          title: step.title || 'Final Report',
+          title: step.title || 'Final Dashboard',
           description: step.instructions,
           output_filename: step.output_filename,
           status: step.enabled ? 'completed' : 'pending',
           stepIndex: 0,
           step: {
             id: stepId,
-            title: step.title || 'Final Report',
+            title: step.title || 'Final Dashboard',
             description: step.instructions,
             context_dependencies: [],
             context_output: step.output_filename

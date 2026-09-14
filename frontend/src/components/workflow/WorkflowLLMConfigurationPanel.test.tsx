@@ -120,4 +120,40 @@ describe('WorkflowLLMConfigurationPanel coding-agent rows', () => {
       host.remove()
     }
   })
+
+  it('can show the complete coding CLI set while keeping Pi as one provider row', async () => {
+    storeState.getProviderDynamicModels.mockResolvedValue({ models: [], groups: [] })
+    storeState.providerManifest = [
+      provider({}),
+      provider({ id: 'codex-cli', display_name: 'OpenAI Codex CLI' }),
+      provider({ id: 'cursor-cli', display_name: 'Cursor CLI' }),
+      provider({ id: 'pi-cli', display_name: 'Pi CLI', supports_dynamic_models: true, model_selection_mode: 'dynamic' }),
+      provider({ id: 'muse-cli', display_name: 'Muse' }),
+    ]
+
+    const host = document.createElement('div')
+    document.body.append(host)
+    const root = createRoot(host)
+    try {
+      await act(async () => root.render(
+        <WorkflowLLMConfigurationPanel
+          workspacePath="/work-project"
+          onChange={vi.fn()}
+          allowedProviderIds={['claude-code', 'codex-cli', 'cursor-cli', 'pi-cli', 'muse-cli']}
+          splitPiProviders={false}
+        />,
+      ))
+      await act(async () => Promise.resolve())
+
+      expect(host.textContent).toContain('Claude Code')
+      expect(host.textContent).toContain('OpenAI Codex CLI')
+      expect(host.textContent).toContain('Cursor CLI')
+      expect(host.textContent).toContain('Pi CLI')
+      expect(host.textContent).toContain('Muse')
+      expect(Array.from(host.querySelectorAll('button')).filter(button => button.textContent?.trim() === 'Use')).toHaveLength(5)
+    } finally {
+      await act(async () => root.unmount())
+      host.remove()
+    }
+  })
 })

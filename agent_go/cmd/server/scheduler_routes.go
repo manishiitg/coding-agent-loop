@@ -79,6 +79,9 @@ type ScheduledJobResponse struct {
 
 // CreateScheduleRequest is the request body for creating a schedule.
 type CreateScheduleRequest struct {
+	EntityType               string                 `json:"entity_type,omitempty"`
+	ProductProfileID         string                 `json:"product_profile_id,omitempty"`
+	ProductProjectID         string                 `json:"product_project_id,omitempty"`
 	WorkspacePath            string                 `json:"workspace_path"` // Required for workflow/workshop mode
 	Name                     string                 `json:"name"`
 	Description              string                 `json:"description,omitempty"`
@@ -343,12 +346,12 @@ func SchedulerRoutes(router *mux.Router, svc *SchedulerService) {
 	apiRouter.HandleFunc("/config", getSchedulerConfigHandler(svc)).Methods("GET", "OPTIONS")
 	apiRouter.HandleFunc("/config", requireWorkflowWriteAccess(updateSchedulerConfigHandler(svc))).Methods("PUT", "OPTIONS")
 	apiRouter.HandleFunc("/jobs", listScheduledJobsHandler(svc)).Methods("GET", "OPTIONS")
-	apiRouter.HandleFunc("/jobs", requireWorkflowWriteAccess(createScheduledJobHandler(svc))).Methods("POST", "OPTIONS")
+	apiRouter.HandleFunc("/jobs", createScheduledJobHandler(svc)).Methods("POST", "OPTIONS")
 	apiRouter.HandleFunc("/jobs/{id}", getScheduledJobHandler(svc)).Methods("GET", "OPTIONS")
-	apiRouter.HandleFunc("/jobs/{id}", requireWorkflowWriteAccess(updateScheduledJobHandler(svc))).Methods("PUT", "OPTIONS")
-	apiRouter.HandleFunc("/jobs/{id}", requireWorkflowWriteAccess(deleteScheduledJobHandler(svc))).Methods("DELETE", "OPTIONS")
-	apiRouter.HandleFunc("/jobs/{id}/enable", requireWorkflowWriteAccess(enableScheduledJobHandler(svc))).Methods("POST", "OPTIONS")
-	apiRouter.HandleFunc("/jobs/{id}/disable", requireWorkflowWriteAccess(disableScheduledJobHandler(svc))).Methods("POST", "OPTIONS")
+	apiRouter.HandleFunc("/jobs/{id}", updateScheduledJobHandler(svc)).Methods("PUT", "OPTIONS")
+	apiRouter.HandleFunc("/jobs/{id}", deleteScheduledJobHandler(svc)).Methods("DELETE", "OPTIONS")
+	apiRouter.HandleFunc("/jobs/{id}/enable", enableScheduledJobHandler(svc)).Methods("POST", "OPTIONS")
+	apiRouter.HandleFunc("/jobs/{id}/disable", disableScheduledJobHandler(svc)).Methods("POST", "OPTIONS")
 	apiRouter.HandleFunc("/jobs/{id}/trigger", triggerScheduledJobHandler(svc)).Methods("POST", "OPTIONS")
 	apiRouter.HandleFunc("/workflows/pulse-run", requireWorkflowWriteAccess(triggerWorkflowPulseHandler(svc))).Methods("POST", "OPTIONS")
 	apiRouter.HandleFunc("/jobs/{id}/stop", stopScheduledJobHandler(svc)).Methods("POST", "OPTIONS")
@@ -535,6 +538,29 @@ func createScheduledJobHandler(svc *SchedulerService) http.HandlerFunc {
 		}
 		if err := validateScheduleRequest(scheduleTypeOrDefault(req.ScheduleType), req.CronExpression, req.CalendarItems); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		if req.EntityType == "product" {
+			if svc == nil || svc.api == nil || svc.api.productSchedules == nil {
+				http.Error(w, "product schedules are not available", http.StatusNotFound)
+				return
+			}
+			if len(req.Messages) != 1 || strings.TrimSpace(req.Messages[0]) == "" {
+				http.Error(w, "a Work project schedule requires exactly one message", http.StatusBadRequest)
+				return
+			}
+			job, err := svc.api.productSchedules.CreateProjectSchedule(r.Context(), productWorkspaceUserID(r.Context()), req.ProductProfileID, req.ProductProjectID, productschedule.Schedule{
+				Name: req.Name, Description: req.Description, Enabled: req.Enabled,
+				CronExpression: req.CronExpression, Timezone: scheduleTimezoneOrDefault(req.Timezone), Messages: req.Messages,
+			})
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+			runsWorkspace, _ := svc.api.productSchedules.RunsWorkspace(r.Context(), job)
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusCreated)
+			_ = json.NewEncoder(w).Encode(svc.api.productSchedules.jobResponse(job, runsWorkspace))
 			return
 		}
 		if req.WorkspacePath != "" && !requireWorkflowOwner(w, r, req.WorkspacePath) {
@@ -1206,7 +1232,9 @@ func productScheduleJobResponses(r *http.Request, svc *SchedulerService, enabled
 // schedule ids ("product:<profile>:<schedule>"); false means the id is a
 // workflow schedule and the caller continues as before.
 func handleProductScheduleJob(w http.ResponseWriter, r *http.Request, svc *SchedulerService, id, action string) bool {
-	if _, _, ok := parseProductScheduleJobID(id); !ok {
+	_, _, productOK := parseProductScheduleJobID(id)
+	_, _, _, projectOK := parseProjectScheduleJobID(id)
+	if !productOK && !projectOK {
 		return false
 	}
 	w.Header().Set("Content-Type", "application/json")
@@ -1286,6 +1314,52 @@ func handleProductScheduleJob(w http.ResponseWriter, r *http.Request, svc *Sched
 			return true
 		}
 		_ = json.NewEncoder(w).Encode(map[string]interface{}{"runs": runs, "total": total, "limit": limit, "offset": offset})
+	case "update":
+		if !projectOK {
+			http.Error(w, "product schedules are declared by the product and cannot be edited here", http.StatusMethodNotAllowed)
+			return true
+		}
+		var req UpdateScheduleRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return true
+		}
+		updated, err := ps.UpdateProjectSchedule(ctx, userID, id, func(schedule *productschedule.Schedule) {
+			if req.Name != "" {
+				schedule.Name = req.Name
+			}
+			if req.Description != "" {
+				schedule.Description = req.Description
+			}
+			if req.CronExpression != "" {
+				schedule.CronExpression = req.CronExpression
+			}
+			if req.Timezone != "" {
+				schedule.Timezone = req.Timezone
+			}
+			if req.Enabled != nil {
+				schedule.Enabled = *req.Enabled
+			}
+			if req.Messages != nil {
+				schedule.Messages = req.Messages
+			}
+		})
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return true
+		}
+		runsWorkspace, _ := ps.RunsWorkspace(ctx, updated)
+		_ = json.NewEncoder(w).Encode(ps.jobResponse(updated, runsWorkspace))
+	case "delete":
+		if !projectOK {
+			http.Error(w, "product schedules are declared by the product and cannot be deleted here", http.StatusMethodNotAllowed)
+			return true
+		}
+		if err := ps.DeleteProjectSchedule(ctx, userID, id); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return true
+		}
+		w.WriteHeader(http.StatusNoContent)
 	default:
 		// A product declares its schedules in product.yaml; users only
 		// enable, disable and trigger them.

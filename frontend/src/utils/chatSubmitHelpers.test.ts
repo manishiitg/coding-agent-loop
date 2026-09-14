@@ -31,7 +31,7 @@ describe('agent profile query binding', () => {
     expect(payload.agent_profile_id).toBeUndefined()
   })
 
-  it('reduces a broad AgentWorks request to the minimal profile-chat wire contract', () => {
+  it('keeps only the product-supported chat extras from the broad request', () => {
     const payload = {
       query: 'Explain today\'s portfolio changes',
       agent_mode: 'multi-agent',
@@ -39,13 +39,17 @@ describe('agent profile query binding', () => {
       model_id: 'gpt-5.6-sol',
       selected_folder: 'a/browser/chosen/path',
       enabled_servers: ['workspace_advanced'],
-      selected_skills: [{ name: 'builder-reference', path: 'SKILL.md' }],
+      selected_skills: ['builder-reference'],
+      workflow_context_paths: ['Workflow/customer-research'],
       restored_conversation_path: 'Chats/dominion-history.json',
     } as unknown as AgentQueryRequest
 
     expect(buildAgentProfileChatRequest(payload, 'project-123')).toEqual({
       message: 'Explain today\'s portfolio changes',
       conversation_key: 'project-123',
+      enabled_servers: ['workspace_advanced'],
+      selected_skills: ['builder-reference'],
+      workflow_context_paths: ['Workflow/customer-research'],
     })
   })
 

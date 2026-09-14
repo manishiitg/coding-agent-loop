@@ -123,6 +123,10 @@ func (c *Client) resolveLinkedFolderPath(ctx context.Context, input string) stri
 	root := ""
 	if session != nil {
 		root = strings.TrimSpace(session.Env["WORKFLOW_FOLDER_"+aliasKey])
+		if root == "" {
+			// Work product attached folders use the WORK_FOLDER_ prefix.
+			root = strings.TrimSpace(session.Env["WORK_FOLDER_"+aliasKey])
+		}
 	}
 	relative := filepath.Clean(filepath.FromSlash(parts[1]))
 	if root == "" || relative == "." || relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) || filepath.IsAbs(relative) {

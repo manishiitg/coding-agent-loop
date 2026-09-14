@@ -26,6 +26,22 @@ func TestProductScheduleJobIDRoundTrip(t *testing.T) {
 	}
 }
 
+func TestProjectScheduleJobIDRoundTrip(t *testing.T) {
+	id := projectScheduleJobID("work", "project-1", "daily-checkin")
+	if id != "product-project:work:project-1:daily-checkin" {
+		t.Fatalf("id = %q", id)
+	}
+	profile, project, sched, ok := parseProjectScheduleJobID(id)
+	if !ok || profile != "work" || project != "project-1" || sched != "daily-checkin" {
+		t.Fatalf("parse = %q %q %q %v", profile, project, sched, ok)
+	}
+	for _, bad := range []string{"daily-checkin", "product-project:", "product-project:work:project-1", "product-project:work::daily"} {
+		if _, _, _, ok := parseProjectScheduleJobID(bad); ok {
+			t.Fatalf("%q should not parse", bad)
+		}
+	}
+}
+
 func TestUsersWithProductFollowsDirectoryAccess(t *testing.T) {
 	t.Setenv("MULTI_USER_MODE", "true")
 	withMemoryUserDirectory(t, `{"users":[

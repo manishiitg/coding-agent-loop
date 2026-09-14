@@ -1,5 +1,12 @@
 import type { PlannerFile } from '../services/api-types'
 
+/** Shared Files policy: the workspace root opens, its child folders do not. */
+export const EXPAND_FIRST_LEVEL_FOLDERS_BY_DEFAULT = false
+
+export function getInitialExpandedWorkspaceFolders(rootFolder?: PlannerFile | null): Set<string> {
+  return new Set(rootFolder?.type === 'folder' ? [rootFolder.filepath] : [])
+}
+
 /**
  * Utility functions for handling workspace paths in different modes (chat vs workflow)
  * Handles path normalization, adjustment, and mapping between original and adjusted paths

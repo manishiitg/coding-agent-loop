@@ -13,8 +13,15 @@ export function normalizedActivityStatus(status?: string): string {
  * recognition structural rather than hard-coding Video Studio so future
  * project-based products inherit the boundary automatically.
  */
-export function isProductProjectSession(session: Pick<ActiveSessionInfo, 'session_id'>): boolean {
-  return /^[a-z][a-z0-9-]*:project:/i.test(session.session_id.trim())
+export function isProductProjectSession(session: Pick<ActiveSessionInfo, 'session_id' | 'workspace_path'>): boolean {
+  if (/^[a-z][a-z0-9-]*:project:/i.test(session.session_id.trim())) return true
+
+  // Product conversations created through the older UUID session path still
+  // carry their authoritative product scope in workspace_path. Recognize both
+  // the user-relative and canonical `_users/<id>/...` forms so product activity
+  // never leaks into AgentWorks' global monitor.
+  const workspacePath = (session.workspace_path || '').trim().replace(/\\/g, '/').replace(/^\/+|\/+$/g, '')
+  return /(?:^|\/)chats\/[^/]+\/projects\/[^/]+(?:\/|$)/i.test(workspacePath)
 }
 
 export function isTerminalActivityStatus(status?: string): boolean {

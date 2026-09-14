@@ -202,6 +202,7 @@ export const GlobalActivityMonitor: React.FC = () => {
   const fallbackBuilderTabs = useMemo(
     () => Object.values(chatTabs).filter(tab =>
       tab.tabId !== activeTabId &&
+      !tab.metadata?.agentProfileId &&
       isLocalActivityFallbackTab(tab) &&
       !activityKeysForTab(tab).some(key => visibleActivityKeys.has(key))
     ),

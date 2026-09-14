@@ -238,7 +238,7 @@ export function DominionSurface() {
       <div className="flex min-h-0 flex-1">
         <aside className="flex w-[420px] shrink-0 flex-col border-r border-white/10 bg-[#070a12]">
           {chatTabId ? (
-            <ChatArea tabId={chatTabId} onNewChat={() => {}} landingContent={<DominionChatWelcome />} fullTurnStreaming inputVariant="product" hideRuntimeStatus showNewChatAction />
+            <ChatArea tabId={chatTabId} onNewChat={() => {}} landingContent={<DominionChatWelcome />} inputVariant="product" hideRuntimeStatus showNewChatAction />
           ) : (
             <div className="grid h-full place-items-center text-xs text-slate-500">Connecting…</div>
           )}

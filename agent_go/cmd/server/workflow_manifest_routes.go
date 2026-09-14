@@ -6,8 +6,6 @@ import (
 	"fmt"
 	"log"
 	"net/http"
-	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -435,35 +433,7 @@ func (api *StreamingAPI) handleUpdateWorkflowManifest(w http.ResponseWriter, r *
 }
 
 func normalizeWorkflowFolderGrants(requested, previous []workflowtypes.WorkflowFolderGrant) ([]workflowtypes.WorkflowFolderGrant, error) {
-	previousByID := make(map[string]workflowtypes.WorkflowFolderGrant, len(previous))
-	for _, grant := range previous {
-		previousByID[grant.ID] = grant
-	}
-	now := time.Now().UTC().Format(time.RFC3339)
-	normalized := make([]workflowtypes.WorkflowFolderGrant, 0, len(requested))
-	for i, grant := range requested {
-		canonical, err := filepath.EvalSymlinks(filepath.Clean(strings.TrimSpace(grant.Path)))
-		if err != nil {
-			return nil, fmt.Errorf("folder_access[%d] is unavailable: %w", i, err)
-		}
-		info, err := os.Stat(canonical)
-		if err != nil || !info.IsDir() {
-			return nil, fmt.Errorf("folder_access[%d] must reference an existing directory", i)
-		}
-		grant.Path = filepath.Clean(canonical)
-		grant.ID = strings.TrimSpace(grant.ID)
-		grant.Alias = strings.TrimSpace(grant.Alias)
-		grant.Access = strings.TrimSpace(grant.Access)
-		grant.Reason = strings.TrimSpace(grant.Reason)
-		if prior, exists := previousByID[grant.ID]; exists && strings.TrimSpace(prior.CreatedAt) != "" {
-			grant.CreatedAt = prior.CreatedAt
-		} else {
-			grant.CreatedAt = now
-		}
-		grant.UpdatedAt = now
-		normalized = append(normalized, grant)
-	}
-	return normalized, nil
+	return workflowtypes.NormalizeFolderGrants(requested, previous, "folder_access", time.Now().UTC().Format(time.RFC3339))
 }
 
 func normalizeNotificationChannels(channels []string) []string {

@@ -4,12 +4,12 @@ import { RunloopMark } from './branding/RunloopLogo'
 import { VideoStudioMark } from '../products/video-studio/VideoStudioMark'
 import { DominionMark } from '../products/dominion/DominionMark'
 import { SparkQuillMark } from '../products/sparkquill/SparkQuillMark'
+import { WorkMark } from '../products/work/WorkMark'
 import { useProductSurfaceStore, type ProductSurface } from '../stores/useProductSurfaceStore'
 import { useAppStore } from '../stores/useAppStore'
 import { useAuthStore } from '../stores/useAuthStore'
 import { isEnabledProductSurface, intersectAllowedProductSurfaces } from '../products/productSurfaceConfig'
 import { cn } from '../lib/utils'
-import { APP_VERSION } from '../version'
 
 type ProductSurfaceSwitcherProps = {
   className?: string
@@ -29,6 +29,7 @@ const products: Array<{
   { id: 'video-studio', label: 'Video Studio', description: 'Projects and video production', icon: VideoStudioMark },
   { id: 'dominion', label: 'Dominion', description: 'Paper-trading watchlist and portfolio', icon: DominionMark },
   { id: 'sparkquill', label: 'SparkQuill', description: 'Family learning with Quill', icon: SparkQuillMark },
+  { id: 'work', label: 'Work', description: 'Coding agents in server workspaces', icon: WorkMark },
 ]
 
 export function visibleProductSurfaceIDs(allowedProducts?: string[] | null): ProductSurface[] {
@@ -85,7 +86,7 @@ export function ProductSurfaceSwitcher({ className }: ProductSurfaceSwitcherProp
         aria-label="Switch product"
         aria-haspopup="menu"
         aria-expanded={open}
-        title={`${currentProduct.label} v${APP_VERSION}`}
+        title={currentProduct.label}
         className="flex items-center gap-2.5 rounded-xl border border-slate-200 bg-white px-2 py-1.5 text-left text-slate-900 shadow-sm transition hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100 dark:hover:bg-slate-800"
       >
         <CurrentIcon className="h-7 w-7 shrink-0" title="" />
@@ -114,10 +115,7 @@ export function ProductSurfaceSwitcher({ className }: ProductSurfaceSwitcherProp
               >
                 <Icon className="h-8 w-8 shrink-0" title="" />
                 <span className="min-w-0 flex-1">
-                  <span className="flex items-baseline gap-1.5">
-                    <strong className={cn('block text-xs', active ? 'text-violet-800 dark:text-violet-200' : 'text-slate-900 dark:text-slate-100')}>{product.label}</strong>
-                    <span className="text-[8px] leading-none text-slate-300 dark:text-slate-600">v{APP_VERSION}</span>
-                  </span>
+                  <strong className={cn('block text-xs', active ? 'text-violet-800 dark:text-violet-200' : 'text-slate-900 dark:text-slate-100')}>{product.label}</strong>
                   <small className={cn('mt-0.5 block text-[10px]', active ? 'text-violet-500 dark:text-violet-400' : 'text-slate-400')}>
                     {product.description}
                   </small>

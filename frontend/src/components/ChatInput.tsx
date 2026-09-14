@@ -1,6 +1,6 @@
 import { routeForQueuedMessage, splitQueuedMessages } from '../utils/queuedMessageDelivery'
 import { resolvePiModelGroup } from '../utils/llmDisplay'
-import React, { useRef, useCallback, useMemo, useState, useEffect, useLayoutEffect } from 'react'
+import React, { useRef, useCallback, useMemo, useState, useEffect, useLayoutEffect, useSyncExternalStore } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { useShallow } from 'zustand/react/shallow'
 
@@ -11,13 +11,12 @@ import { SessionStopButton } from './SessionStopButton'
 import { Textarea } from './ui/Textarea'
 import FileContextDisplay from './FileContextDisplay'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from './ui/tooltip'
-import ServerSelectionDropdown from './ServerSelectionDropdown'
-import SkillSelectionDropdown from './skills/SkillSelectionDropdown'
 import FileSelectionDialog from './FileSelectionDialog'
 import CommandSelectionDialog from './CommandSelectionDialog'
 import { CommandEditorDialog } from './commands/CommandEditorDialog'
 import { PulseReviewFocusDialog } from './commands/PulseReviewFocusDialog'
-import { findCommand, findCommandAnyMode, loadAndRegisterUserCommands, type CommandContext, type CommandDefinition } from '../commands'
+import { findCommand, findProductCommand, findCommandAnyMode, getProductCommands, loadAndRegisterUserCommands, type CommandContext, type CommandDefinition } from '../commands'
+import { getCommandRevision, subscribeCommands } from '../commands/registry'
 import { commandsApi } from '../api/commands'
 import WorkflowSelectionDialog from './WorkflowSelectionDialog'
 import { isChatCompatiblePhase } from '../utils/chatSubmitHelpers'
@@ -28,7 +27,7 @@ import { useAuthStore } from '../stores/useAuthStore'
 import { isWorkflowReadOnly } from '../utils/workflowPermissions'
 import { chromeCdpInstallCommand, chromeCdpLaunchCommand, chromeCdpVerifyCommand, chromeCdpZipUrl } from '../utils/cdpSetup'
 import { CHAT_TOOL_COMMAND_EVENT, chatToolCommandFromEvent } from '../utils/chatToolEvents'
-import { loadAgentProfileCapabilityEnabled, loadAgentProfileProviderOptions, loadAgentProfileRuntime, type AgentProfileProviderOption } from '../utils/agentProfileCapabilities'
+import { buildAgentProfileEngineGroups, loadAgentProfileCapabilityEnabled, loadAgentProfileProviderOptions, loadAgentProfileRuntime, type AgentProfileProviderOption, type AgentProfileRuntime } from '../utils/agentProfileCapabilities'
 import { llmConfigService, type ModelMetadata } from '../services/llm-config-api'
 import ModelReasoningControl from './ui/ModelReasoningControl'
 import NewChatControl from './ui/NewChatControl'
@@ -40,7 +39,7 @@ import { headerStatusLabel, statusTone } from '../utils/globalActivityMonitorSta
 import { shouldClearAcceptedChatDraft } from '../utils/chatSubmissionDraft'
 import { liveTerminalControlKey } from '../utils/liveTerminalKeys'
 import { chatUsesStructuredTransport, shouldRouteChatInputToLiveTransport, shouldShowLiveTerminalControl } from '../utils/liveInputSubmission'
-import { effectiveLLMUnderLock, effectiveProviderUnderLock } from '../utils/effectiveLLM'
+import { effectiveLLMUnderLock, effectiveProviderUnderLock, runtimeStatusLLMChoice } from '../utils/effectiveLLM'
 import { normalizeEventViewMode, type ChatTabConfig } from '../stores/useChatStore'
 import { getComposerTrigger, replaceComposerTrigger, formatFileReference, removeFileReferences, reconcileFileReferences, isPlainPickerKey, type ComposerTrigger } from '../utils/composerReferences'
 
@@ -139,10 +138,7 @@ import { isMainAgentTerminal } from '../utils/terminalIdentity'
 
 const AUTO_NOTIFICATION_PREFIX = '[AUTO-NOTIFICATION]'
 const FALLBACK_CODING_AGENT_PROVIDERS = new Set(['claude-code', 'codex-cli', 'cursor-cli', 'pi-cli', 'muse-cli'])
-// Providers whose chat turns never have a tmux pane (server: codingAgentUsesStructuredTransport).
-// Muse is exec-lane only until its tmux lane lands.
-const STRUCTURED_TRANSPORT_PROVIDERS = new Set(['cursor-cli', 'muse-cli'])
-const FALLBACK_LIVE_INPUT_PROVIDERS = new Set(['claude-code', 'codex-cli', 'cursor-cli', 'pi-cli'])
+const FALLBACK_LIVE_INPUT_PROVIDERS = FALLBACK_CODING_AGENT_PROVIDERS
 
 interface ChatInputProps {
   // Handlers (callbacks only)
@@ -165,6 +161,9 @@ interface ChatInputProps {
   placeholderOverride?: string
   showNewChatAction?: boolean
   hideRuntimeStatus?: boolean
+  showCompactRuntimeLoading?: boolean
+  showProductSteerAction?: boolean
+  showProductTerminalControl?: boolean
 }
 
 function isAutoNotificationMessage(msg: string): boolean {
@@ -448,6 +447,9 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
   placeholderOverride,
   showNewChatAction = false,
   hideRuntimeStatus = false,
+  showCompactRuntimeLoading = false,
+  showProductSteerAction = false,
+  showProductTerminalControl = false,
   onNewChat,
 }) => {
   const isProductSurface = surfaceVariant === 'product'
@@ -494,11 +496,17 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
   const activeWorkflowPresetId = useGlobalPresetStore(state => state.activePresetIds.workflow)
   // Read Builder LLM from workflow manifest (source of truth), not the global preset.
   // Subscribe to the manifest store so the provider/model badge updates without reopening the chat.
-  const workflowPhaseWorkspacePath = isWorkflowPhaseChat ? workflowPhasePreset?.selectedFolder?.filepath : undefined
-  const manifestBuilderLLM = useWorkflowManifestStore(state => {
+  const workflowPhaseWorkspacePath = useWorkflowManifestStore(state => {
+    if (!isWorkflowPhaseChat) return undefined
+    const manifestPath = activeWorkflowPresetId
+      ? state.workflows.find(workflow => workflow.manifest.id === activeWorkflowPresetId)?.workspace_path
+      : undefined
+    return manifestPath || workflowPhasePreset?.selectedFolder?.filepath
+  })
+  const manifestLLMConfig = useWorkflowManifestStore(state => {
     if (!workflowPhaseWorkspacePath) return null
-    const wf = state.workflows.find(item => item.workspace_path === workflowPhaseWorkspacePath)
-    return wf?.manifest?.capabilities?.llm_config?.builder_llm ?? null
+    const wf = state.getWorkflowByPath(workflowPhaseWorkspacePath)
+    return wf?.manifest?.capabilities?.llm_config ?? null
   })
   // Hide extras (servers, skills, agent mode, etc.) in workflow mode but show in multi-agent
   const hideExtras = isWorkflowMode
@@ -512,6 +520,11 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
   const agentProfileWorkspace = activeTab?.metadata?.agentProfileWorkspace
   const agentProfileId = activeTab?.metadata?.agentProfileId
   const agentProfileVersion = activeTab?.metadata?.agentProfileVersion
+  // Product identity comes from the tab contract, not the visual composer
+  // variant. Work deliberately keeps AgentWorks' composer layout while still
+  // being a profile-backed product; coupling runtime behavior to
+  // surfaceVariant made it ignore the project's saved provider/model.
+  const isProductProfile = Boolean(agentProfileId)
   // SparkQuill's own composer groups controls the opposite way from every
   // other product: attachment/commands/model on the left, mic+send on the
   // right. Scoped to its two profiles so AgentWorks and Video Studio keep
@@ -525,19 +538,18 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
   // build): the mic never appears where it would only answer 503.
   const platformVoiceAvailable = useCapabilitiesStore(state => state.capabilities?.voice?.available ?? false)
   const [profileVoiceEnabled, setProfileVoiceEnabled] = useState(false)
-  const voiceCapabilityEnabled = isProductSurface ? profileVoiceEnabled : platformVoiceAvailable
+  const voiceCapabilityEnabled = isProductProfile ? profileVoiceEnabled : platformVoiceAvailable
   // Model switcher for product surfaces. The profile declares its runtimes
   // (product.yaml runtime.provider_options: Claude Code, Codex…); the
-  // platform's model catalog supplies the models each of those offers. The
-  // provider is chosen for a new chat and locked once the chat has a turn —
-  // a Codex thread and a Claude Code session are separate CLI state, so the
-  // other runtime would start blank — while the model can change any time.
-  // A choice lands on the tab (sent as `engine` + `model_id` on every
-  // profile query) and is announced for the product to persist.
+  // platform's model catalog supplies the models each of those offers. A
+  // choice lands on the tab (sent as `engine` + `model_id` on every profile
+  // query) and is announced for the product to persist. Products may allow
+  // provider changes after a turn; the shared runner relaunches the retained
+  // conversation on the selected CLI when necessary.
   const [engineOptions, setEngineOptions] = useState<AgentProfileProviderOption[]>([])
   const [modelCatalog, setModelCatalog] = useState<ModelMetadata[]>([])
   useEffect(() => {
-    if (!isProductSurface || !agentProfileId) {
+    if (!isProductProfile || !agentProfileId) {
       setEngineOptions([])
       return
     }
@@ -549,47 +561,52 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
       if (!cancelled) setModelCatalog(Array.isArray(r?.models) ? r.models : [])
     }).catch(() => undefined)
     return () => { cancelled = true }
-  }, [isProductSurface, agentProfileId, agentProfileVersion])
-  const currentEngine = activeTab?.metadata?.agentProfileEngine
+  }, [isProductProfile, agentProfileId, agentProfileVersion])
+
+  // Product slash commands are registered from that product's product.yaml.
+  // The revision makes the composer react when an owning surface loads or
+  // clears its manifest commands.
+  useSyncExternalStore(subscribeCommands, getCommandRevision)
+  const productCommandsAvailable = !isProductProfile || getProductCommands().length > 0
+  const chatHasTurns = useMemo(() => (activeTabEvents ?? []).some((e) => e.type === 'user_message'), [activeTabEvents])
+  const profileSessionRuntime = useChatStore(state => activeTab?.sessionId
+    ? state.activeSessionsCache.find(session => session.session_id === activeTab.sessionId)?.runtime
+    : undefined)
+  const runtimeEngine = engineOptions.find((option) => option.provider === profileSessionRuntime?.provider)?.id
+  const metadataEngine = activeTab?.metadata?.agentProfileEngine
+  const currentEngine = metadataEngine
+    || runtimeEngine
     || engineOptions.find((o) => o.default)?.id
     || engineOptions[0]?.id
     || ''
   const engineGroups = useMemo(() => {
-    // The catalog carries a few pseudo-entries per coding CLI (its own name,
-    // reasoning levels); only real model ids are offered.
-    const pseudo = new Set(['high', 'medium', 'low'])
-    return engineOptions.map((option) => {
-      const provider = (option.provider ?? '').trim()
-      const catalogByID = new Map(modelCatalog.filter((m) => m.provider === provider).map((m) => [m.model_id, m]))
-      // An engine that curates its own Models offers exactly those, in that
-      // order; otherwise every model the catalog lists for its provider.
-      const models = option.models && option.models.length > 0
-        ? option.models.map((id) => ({ id, label: catalogByID.get(id)?.model_name || id }))
-        : modelCatalog
-            .filter((m) => m.provider === provider && m.model_id !== provider && !pseudo.has(m.model_id))
-            .map((m) => ({ id: m.model_id, label: m.model_name || m.model_id }))
-      const own = (option.model_id ?? '').trim()
-      if (own && !models.some((m) => m.id === own)) models.unshift({ id: own, label: own })
-      const reasoningLevels = (option.reasoning_efforts ?? []).map((id) => ({ id, label: id.charAt(0).toUpperCase() + id.slice(1) }))
-      return { option, models, reasoningLevels }
-    })
+    return buildAgentProfileEngineGroups(engineOptions, modelCatalog)
   }, [engineOptions, modelCatalog])
   const currentGroup = engineGroups.find((g) => g.option.id === currentEngine)
-  const currentModel = activeTab?.metadata?.agentProfileModelID || (currentGroup?.option.model_id ?? '') || currentGroup?.models[0]?.id || ''
+  const currentModel = activeTab?.metadata?.agentProfileModelID
+    || profileSessionRuntime?.model_id
+    || (currentGroup?.option.model_id ?? '')
+    || currentGroup?.models[0]?.id
+    || ''
   const defaultReasoningEffort = typeof currentGroup?.option.options?.reasoning_effort === 'string' ? currentGroup.option.options.reasoning_effort : undefined
-  const currentReasoningEffort = activeTab?.metadata?.agentProfileReasoningEffort || defaultReasoningEffort || currentGroup?.reasoningLevels[0]?.id || ''
-  const chatHasTurns = useMemo(() => (activeTabEvents ?? []).some((e) => e.type === 'user_message'), [activeTabEvents])
+  const metadataMatchesEngine = metadataEngine === currentEngine
+  const currentReasoningEffort = (metadataMatchesEngine ? activeTab?.metadata?.agentProfileReasoningEffort : undefined)
+    || defaultReasoningEffort
+    || currentGroup?.reasoningLevels[0]?.id
+    || ''
   const selectProductEngine = useCallback((engine: string, modelId: string, reasoningEffort?: string) => {
     if (!activeTabId || !agentProfileId) return
     useChatStore.getState().setTabMetadata(activeTabId, { agentProfileEngine: engine, agentProfileModelID: modelId, ...(reasoningEffort ? { agentProfileReasoningEffort: reasoningEffort } : {}) })
-    window.dispatchEvent(new CustomEvent('agentworks:product-engine-selected', { detail: { profileId: agentProfileId, engine, modelId, reasoningEffort } }))
-  }, [activeTabId, agentProfileId])
+    window.dispatchEvent(new CustomEvent('agentworks:product-engine-selected', {
+      detail: { profileId: agentProfileId, tabId: activeTabId, engine, provider: engineGroups.find(group => group.option.id === engine)?.option.provider, modelId, reasoningEffort },
+    }))
+  }, [activeTabId, agentProfileId, engineGroups])
 
   // "New chat" for product surfaces, offered when the profile declares
   // runtime.capabilities.new_conversation; the product owns what happens.
   const [newConversationEnabled, setNewConversationEnabled] = useState(false)
   useEffect(() => {
-    if (!isProductSurface || !agentProfileId) {
+    if (!isProductProfile || !agentProfileId) {
       setNewConversationEnabled(false)
       return
     }
@@ -598,14 +615,14 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
       if (!cancelled) setNewConversationEnabled(enabled)
     })
     return () => { cancelled = true }
-  }, [isProductSurface, agentProfileId, agentProfileVersion])
+  }, [isProductProfile, agentProfileId, agentProfileVersion])
   const requestNewConversation = useCallback((engine: string) => {
     if (!agentProfileId) return
     window.dispatchEvent(new CustomEvent('agentworks:product-new-conversation', { detail: { profileId: agentProfileId, engine } }))
   }, [agentProfileId])
 
   useEffect(() => {
-    if (!isProductSurface || !agentProfileId) {
+    if (!isProductProfile || !agentProfileId) {
       setProfileVoiceEnabled(false)
       return
     }
@@ -614,16 +631,17 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
       if (!cancelled) setProfileVoiceEnabled(enabled)
     })
     return () => { cancelled = true }
-  }, [isProductSurface, agentProfileId, agentProfileVersion])
+  }, [isProductProfile, agentProfileId, agentProfileVersion])
 
-  // Product-owned chats display the provider/model declared by their profile,
-  // not the stale model config a durable tab may have inherited before the
-  // profile contract existed. The running session still wins below so a real
-  // server-selected fallback remains visible while it is active.
-  const [agentProfileRuntime, setAgentProfileRuntime] = useState<{ provider: string; model_id: string; transport?: string } | null>(null)
-  const llmConfigSource = agentProfileRuntime ? 'agent_profile' as const : undefined
+  // Load the profile fallback for product-owned chats. A manifest-backed tab
+  // selection wins when present; the profile default fills only an unbound
+  // project, and the attached runtime remains the fallback for ordinary chat.
+  const [agentProfileRuntime, setAgentProfileRuntime] = useState<AgentProfileRuntime | null>(null)
+  const llmConfigSource = agentProfileRuntime?.provider && agentProfileRuntime.model_id
+    ? 'agent_profile' as const
+    : undefined
   useEffect(() => {
-    if (!isProductSurface || !agentProfileId) {
+    if (!isProductProfile || !agentProfileId) {
       setAgentProfileRuntime(null)
       return
     }
@@ -632,7 +650,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
       if (!cancelled) setAgentProfileRuntime(runtime)
     })
     return () => { cancelled = true }
-  }, [agentProfileId, agentProfileVersion, isProductSurface])
+  }, [agentProfileId, agentProfileVersion, isProductProfile])
 
   // Memoize tabConfig to prevent unnecessary re-renders
   const tabConfig = useMemo(() => activeTab?.config, [activeTab?.config])
@@ -769,6 +787,17 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
   const multiAgentEffectiveLLMConfig = useMemo(() => {
     if (!isMultiAgentMode) return null
 
+    // A product's saved project selection is its source of truth. It must win
+    // while an older retained session is being relaunched with a new model.
+    const selectedProfileProvider = currentGroup?.option.provider?.trim()
+    const selectedProfileModel = currentModel.trim()
+    if (isProductProfile && activeTab?.metadata?.agentProfileEngine && selectedProfileProvider && selectedProfileModel) {
+      return {
+        provider: selectedProfileProvider as LLMProvider,
+        model_id: selectedProfileModel,
+      }
+    }
+
     const runtimeProvider = activeSessionRuntime?.provider?.trim()
     const runtimeModel = activeSessionRuntime?.model_id?.trim()
     if (runtimeProvider && runtimeModel) {
@@ -789,9 +818,13 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
   }, [
     activeSessionRuntime?.model_id,
     activeSessionRuntime?.provider,
+    activeTab?.metadata?.agentProfileEngine,
     agentProfileRuntime?.model_id,
     agentProfileRuntime?.provider,
+    currentGroup?.option.provider,
+    currentModel,
     isMultiAgentMode,
+    isProductProfile,
     primaryConfig,
   ])
 
@@ -801,7 +834,8 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     // misclassify Claude as structured Cursor and queue live follow-ups.
     const saved = (() => {
       if (isWorkflowPhaseChat) {
-        return manifestBuilderLLM?.provider
+        return manifestLLMConfig?.builder_llm?.provider
+          || manifestLLMConfig?.provider
           || workflowPhasePreset?.llmConfig?.builder_llm?.provider
           || workflowPhasePreset?.llmConfig?.provider
           || tabConfig?.llmConfig?.provider
@@ -815,27 +849,27 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     isWorkflowPhaseChat,
     llmConfigSource,
     llmConfigLocked,
-    manifestBuilderLLM?.provider,
+    manifestLLMConfig?.builder_llm?.provider,
+    manifestLLMConfig?.provider,
     multiAgentEffectiveLLMConfig?.provider,
     publishedLLMs,
     tabConfig?.llmConfig?.provider,
     workflowPhasePreset?.llmConfig?.builder_llm?.provider,
     workflowPhasePreset?.llmConfig?.provider])
-  // Cursor normally runs on structured JSON, while Workflow Builder uses a
-  // retained tmux pane for terminal inspection and live steering. Prefer the
-  // backend-reported transport once a session exists; this fallback keeps the
-  // control correct before the first runtime event arrives.
+  // Interactive coding-agent chats use the shared retained tmux path. Prefer
+  // the backend-reported transport once a session exists so restored
+  // background/structured executions still render correctly.
   const activeReportedTransport = (activeSession?.runtime?.transport || '').trim().toLowerCase()
-  const profileReportedTransport = (agentProfileRuntime?.transport || '').trim().toLowerCase()
   const reportedTransport = ['structured', 'tmux'].includes(activeReportedTransport)
     ? activeReportedTransport
-    : ['structured', 'tmux'].includes(profileReportedTransport)
-      ? profileReportedTransport
-      : ''
+    : ''
   const currentChatUsesStructuredTransport = chatUsesStructuredTransport({
     isInteractiveWorkflowBuilder: isInteractiveWorkflowBuilderChat,
     reportedTransport,
-    providerUsesStructuredTransport: STRUCTURED_TRANSPORT_PROVIDERS.has((effectiveProviderForSteer || '').trim().toLowerCase()),
+    // The shared server policy selects retained tmux for every interactive
+    // coding-agent chat. Actual session metadata still wins when this tab is
+    // displaying a restored structured/background execution.
+    providerUsesStructuredTransport: false,
   })
   const liveTerminalOffered = mainTerminalAvailable && !currentChatUsesStructuredTransport
   useEffect(() => {
@@ -949,14 +983,6 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     setTabConfig(activeTabId, { inputText: nextInputText, pastedAttachments: [] })
   }, [activeTabId, chatPastedAttachments, inputText, setTabConfig])
 
-  const addFileToContext = useCallback((file: { name: string; path: string; type: 'file' | 'folder' }) => {
-    if (activeTabId && activeTab) {
-      const existingContext = useChatStore.getState().getTabConfig(activeTabId)?.fileContext || chatFileContext
-      if (existingContext.some((item: { path: string }) => item.path === file.path)) return
-      setTabConfig(activeTabId, { fileContext: [...existingContext, file] })
-    }
-  }, [activeTabId, activeTab, chatFileContext, setTabConfig])
-  
   const {
     toolList: mcpToolList,
     setChatSelectedServers
@@ -1036,7 +1062,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
   useEffect(() => {
     const handleChatToolCommand = (event: Event) => {
       const command = chatToolCommandFromEvent(event)
-      if (command !== 'browser' || hideExtras) return
+      if (command !== 'browser' || hideExtras || isProductSurface) return
 
       if (!activeTabId) {
         addToast('No active chat tab yet.', 'info')
@@ -1052,7 +1078,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
 
     window.addEventListener(CHAT_TOOL_COMMAND_EVENT, handleChatToolCommand)
     return () => window.removeEventListener(CHAT_TOOL_COMMAND_EVENT, handleChatToolCommand)
-  }, [activeTabId, addToast, browserMode, hideExtras, setBrowserMode, setWorkspaceMinimized])
+  }, [activeTabId, addToast, browserMode, hideExtras, isProductSurface, setBrowserMode, setWorkspaceMinimized])
 
   // Get preset info for multi-agent mode
   const { getActivePreset, activePresetIds } = usePresetApplication()
@@ -1178,6 +1204,27 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     }
   }, [activeTabId, addToast, canShowSteer, effectiveProviderForSteer, removeQueuedMessageAtIndex, scheduleLiveMessageDeliveryClear, tabSessionId])
 
+  const handleProductSteerQueuedMessage = useCallback(async (index: number, msg: string) => {
+    if (!showProductSteerAction || !tabSessionId) return
+    setSteeringIndex(index)
+    removeQueuedMessageAtIndex(index)
+    try {
+      const accepted = await onSubmit(msg.trim(), { preferLiveInput: true, sourceTabId: activeTabId || undefined })
+      if (accepted === false) {
+        const current = useChatStore.getState().getTabConfig(activeTabId || '')?.queuedMessages || []
+        if (activeTabId) setTabConfig(activeTabId, { queuedMessages: [...current, msg] })
+      }
+    } finally {
+      setSteeringIndex(null)
+    }
+  }, [activeTabId, onSubmit, removeQueuedMessageAtIndex, setTabConfig, showProductSteerAction, tabSessionId])
+
+  const queuedSteerHandler = showProductSteerAction && tabSessionId
+    ? handleProductSteerQueuedMessage
+    : canShowSteer && tabSessionId
+      ? handleSteerQueuedMessage
+      : undefined
+
   const queuedDisplayItems = useMemo(() => {
     const items: Array<
       | { type: 'message'; index: number; msg: string }
@@ -1295,10 +1342,9 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
   const primaryLLM = useMemo(() => {
     if (isWorkflowPhaseChat) {
       // Show the Builder model from workflow manifest (source of truth for backend).
-      const manifestConfig = useWorkflowManifestStore.getState().getWorkflowByPath(workflowPhaseWorkspacePath || '')?.manifest?.capabilities?.llm_config
-      const builderLLM = manifestBuilderLLM ?? (() => {
-        if (manifestConfig?.mode !== 'provider_profile' || !manifestConfig.provider) return null
-        return providerManifest.find(provider => provider.id === manifestConfig.provider)?.default_tier_models?.builder ?? null
+      const builderLLM = manifestLLMConfig?.builder_llm ?? (() => {
+        if (manifestLLMConfig?.mode !== 'provider_profile' || !manifestLLMConfig.provider) return null
+        return providerManifest.find(provider => provider.id === manifestLLMConfig.provider)?.default_tier_models?.builder ?? null
       })()
       if (builderLLM?.provider && builderLLM?.model_id) {
         const found = availableLLMs.find(llm =>
@@ -1379,7 +1425,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     multiAgentEffectiveLLMConfig?.model_id,
     multiAgentEffectiveLLMConfig?.provider,
     activeSessionRuntime?.provider,
-    manifestBuilderLLM,
+    manifestLLMConfig,
     workflowPhasePreset,
     providerManifest,
     workflowPhaseWorkspacePath,
@@ -1426,11 +1472,26 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
   // still working.
   const mainAgentRuntimeStatus = useMemo(() => {
     // Match resolveLockedLLM, including the product-profile binding exception.
-    const effective = effectiveLLMUnderLock(
+    // A manifest-backed Builder selection wins over a retained session's
+    // cached runtime. This is shared by Work projects and AgentWorks workflow
+    // Builder chats; ordinary chats continue to report their attached runtime.
+    const configuredSelectionIsAuthoritative = (
+      isProductProfile && Boolean(activeTab?.metadata?.agentProfileEngine && activeTab.metadata.agentProfileModelID)
+    ) || (
+      isWorkflowPhaseChat
+      && Boolean(primaryLLM?.provider && primaryLLM.model)
+      && Boolean(manifestLLMConfig || workflowPhasePreset?.llmConfig)
+    )
+    const statusChoice = runtimeStatusLLMChoice(
+      { provider: primaryLLM?.provider, model_id: primaryLLM?.model },
       {
-        provider: activeSession?.runtime?.provider?.trim() || primaryLLM?.provider?.trim() || '',
-        model_id: activeSession?.runtime?.model_id?.trim() || primaryLLM?.model?.trim() || '',
+        provider: activeSession?.runtime?.provider,
+        model_id: activeSession?.runtime?.model_id,
       },
+      configuredSelectionIsAuthoritative,
+    )
+    const effective = effectiveLLMUnderLock(
+      statusChoice,
       llmConfigLocked,
       publishedLLMs,
       llmConfigSource,
@@ -1467,9 +1528,15 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     activeSession?.running_background_agent_count,
     activeSession?.needs_user_input,
     activeTab?.isCompleted,
+    activeTab?.metadata?.agentProfileEngine,
+    activeTab?.metadata?.agentProfileModelID,
     isTurnInFlight,
+    isProductProfile,
+    isWorkflowPhaseChat,
+    manifestLLMConfig,
     primaryLLM?.model,
     primaryLLM?.provider,
+    workflowPhasePreset?.llmConfig,
     llmConfigLocked,
     publishedLLMs,
     llmConfigSource,
@@ -1929,6 +1996,10 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     commandPaletteRef.current = null
     let trigger = composingRef.current ? null : getComposerTrigger(textarea.value, textarea.selectionStart, textarea.selectionEnd)
     if (isWorkflowPhaseChat && (trigger?.kind === '!' || trigger?.kind === '$')) trigger = null
+    // Profile products configure MCP servers and skills in their right-side
+    // Setup panels. Their slash menu is likewise manifest-owned: a product
+    // with no product.yaml commands must not fall through to legacy globals.
+    if (isProductProfile && (trigger?.kind === '!' || trigger?.kind === '$' || (trigger?.kind === '/' && !productCommandsAvailable))) trigger = null
     if (trigger && JSON.stringify(trigger) === dismissedTriggerRef.current) trigger = null
     else dismissedTriggerRef.current = null
     composerTriggerRef.current = trigger
@@ -1954,7 +2025,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
       case '$':
         setDollarPosition(trigger.start); setServerPopupSearchQuery(trigger.query); setServerPopupPosition(position); break
     }
-  }, [isWorkflowPhaseChat])
+  }, [isProductProfile, isWorkflowPhaseChat, productCommandsAvailable])
 
   // Memoized handlers to prevent re-creation
   const handleTextChange = useCallback((e: React.ChangeEvent<HTMLTextAreaElement>) => {
@@ -2210,8 +2281,10 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     const commandArgs = (firstSpace >= 0 ? withoutSlash.slice(firstSpace + 1) : '').trim()
     if (!commandName) return false
 
-    const cmd = findCommand(commandName, commandModeCategory, getEffectiveWorkflowModes().workshopMode, canWriteCommandWorkflow)
-    if (!cmd) {
+    const cmd = isProductProfile
+      ? findProductCommand(commandName, commandModeCategory, getEffectiveWorkflowModes().workshopMode, canWriteCommandWorkflow)
+      : findCommand(commandName, commandModeCategory, getEffectiveWorkflowModes().workshopMode, canWriteCommandWorkflow)
+    if (!cmd && !isProductProfile) {
       const modeScopedCommand = findCommandAnyMode(commandName)
       if (modeScopedCommand && commandModeCategory) {
         if (commandModeCategory === 'workflow' && modeScopedCommand.modes?.includes('workflow')) {
@@ -2227,6 +2300,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
       }
       return false
     }
+    if (!cmd) return false
 
     const validationError = getCommandValidationError(cmd, commandArgs)
     if (validationError) {
@@ -2248,7 +2322,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     clearInputState()
     cmd.execute(ctx)
     return true
-  }, [activeTabId, addToast, applyWorkflowCommandRequirements, buildCommandContext, clearInputState, getCommandValidationError, commandModeCategory, commandWorkflowPath, getEffectiveWorkflowModes, canWriteCommandWorkflow])
+  }, [activeTabId, addToast, applyWorkflowCommandRequirements, buildCommandContext, clearInputState, getCommandValidationError, commandModeCategory, commandWorkflowPath, getEffectiveWorkflowModes, canWriteCommandWorkflow, isProductProfile])
 
   const getSubmitBlockReason = useCallback((): string | null => {
     if (!queryToSubmit?.trim()) return null
@@ -2505,8 +2579,10 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     closeComposerPickers()
 
     // Look up and execute the command from the registry
-    const cmd = findCommand(command, commandModeCategory, getEffectiveWorkflowModes().workshopMode, canWriteCommandWorkflow)
-    if (!cmd && findCommandAnyMode(command)) {
+    const cmd = isProductProfile
+      ? findProductCommand(command, commandModeCategory, getEffectiveWorkflowModes().workshopMode, canWriteCommandWorkflow)
+      : findCommand(command, commandModeCategory, getEffectiveWorkflowModes().workshopMode, canWriteCommandWorkflow)
+    if (!cmd && !isProductProfile && findCommandAnyMode(command)) {
       addToast('This command is unavailable for your current mode or workflow access.', 'info')
       return
     }
@@ -2540,7 +2616,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
 
     // Focus back to textarea
     setTimeout(() => textareaRef.current?.focus(), 0)
-  }, [inputText, activeTabId, addToast, clearInputState, writeComposerText, applyWorkflowCommandRequirements, buildCommandContext, getCommandValidationError, commandModeCategory, commandWorkflowPath, getEffectiveWorkflowModes, canWriteCommandWorkflow, closeComposerPickers])
+  }, [inputText, activeTabId, addToast, clearInputState, writeComposerText, applyWorkflowCommandRequirements, buildCommandContext, getCommandValidationError, commandModeCategory, commandWorkflowPath, getEffectiveWorkflowModes, canWriteCommandWorkflow, closeComposerPickers, isProductProfile])
 
   // Command management callbacks
   const handleEditCommand = useCallback((cmd: CommandDefinition) => {
@@ -2912,6 +2988,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
   const placeholder = useMemo(() => {
     if (isViewOnly) return "View only — cannot continue this conversation"
     if (isProductSurface) return isStreaming ? 'Add a message…' : (placeholderOverride || 'Describe what you want to create…')
+    if (placeholderOverride) return placeholderOverride
     if (agentProfileWorkspace) return 'Describe the video you want to make… (@ files, / commands)'
     if (isWorkflowPhaseChat) {
       return 'Chat with the automation builder... (@ files, / commands, # automations)'
@@ -2920,7 +2997,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     if (!tabSessionId && (canBootstrapMultiAgentTab || canBootstrapWorkflowPhaseTab)) return `Ask anything... chat will initialize on send (${baseHints})`
     if (isMultiAgentMode) return `Ask anything... (${baseHints})`
     return `Ask anything... (${baseHints})`
-  }, [agentProfileWorkspace, isProductSurface, isStreaming, isViewOnly, isMultiAgentMode, isWorkflowPhaseChat, tabSessionId, canBootstrapMultiAgentTab, canBootstrapWorkflowPhaseTab])
+  }, [agentProfileWorkspace, isProductSurface, isStreaming, isViewOnly, isMultiAgentMode, isWorkflowPhaseChat, placeholderOverride, tabSessionId, canBootstrapMultiAgentTab, canBootstrapWorkflowPhaseTab])
 
   const liveDeliveryProviderLabel = formatLiveInputProviderLabel(liveMessageDelivery?.provider || effectiveProviderForSteer, primaryLLM?.model)
   const liveDeliveryText = liveMessageDelivery
@@ -3007,7 +3084,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
   const micEl = voiceCapabilityEnabled && (
     <MicButton
       ref={micRef}
-      profileId={isProductSurface ? (agentProfileId ?? '') : ''}
+      profileId={isProductProfile ? (agentProfileId ?? '') : ''}
       onText={handleVoiceText}
       onStateChange={handleMicStateChange}
       bannerHost={micBannerHost}
@@ -3016,7 +3093,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
       autoSubmitOnStop={sparkQuillComposerLayout ? () => readVoiceAutoSendPref() : undefined}
     />
   )
-  const sparkleEl = (
+  const sparkleEl = productCommandsAvailable ? (
     <Tooltip>
       <TooltipTrigger asChild>
         <Button
@@ -3037,7 +3114,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
         <p>Browse commands</p>
       </TooltipContent>
     </Tooltip>
-  )
+  ) : null
   const attachmentEl = (
     <Tooltip>
       <TooltipTrigger asChild>
@@ -3274,9 +3351,8 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
                 The product surface used to collapse this to a bare "N messages
                 queued" count with no visible content -- reported directly: a
                 message typed mid-turn "doesn't show up anywhere". Reusing the
-                same list the developer surface uses (minus the Steer button,
-                which assumes CLI/live-run concepts this audience shouldn't need)
-                means what was actually typed stays visible while it waits. */}
+                same list the developer surface uses means what was actually
+                typed stays visible while it waits. */}
             {queuedMessages.length > 0 && (
               <div className="space-y-1">
                 {queuedDisplayItems.map((item, index) => {
@@ -3286,7 +3362,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
                         key={`auto-group-${item.items[0]?.index ?? index}`}
                         items={item.items}
                         onDelete={removeQueuedMessageAtIndex}
-                        onSteer={canShowSteer && tabSessionId ? handleSteerQueuedMessage : undefined}
+                        onSteer={queuedSteerHandler}
                         steeringIndex={steeringIndex}
                       />
                     )
@@ -3302,7 +3378,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
                       preview={preview}
                       isLong={isLong}
                       onDelete={() => removeQueuedMessageAtIndex(item.index)}
-                      onSteer={canShowSteer && tabSessionId ? () => handleSteerQueuedMessage(item.index, item.msg) : undefined}
+                      onSteer={queuedSteerHandler ? () => queuedSteerHandler(item.index, item.msg) : undefined}
                       isSteering={steeringIndex === item.index}
                     />
                   )
@@ -3393,6 +3469,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
                   liveTerminalOffered,
                   isProductSurface,
                   isInteractiveWorkflowBuilderChat,
+                  showProductTerminalControl,
                 ) && (
                   <Tooltip>
                     <TooltipTrigger asChild>
@@ -3425,6 +3502,20 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
                         </>
                       )}
                       {!sparkQuillComposerLayout && micEl}
+                      {showCompactRuntimeLoading && isTurnInFlight && (
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <div
+                              className="flex h-7 w-7 items-center justify-center text-lime-300"
+                              role="status"
+                              aria-label="Agent is working"
+                            >
+                              <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
+                            </div>
+                          </TooltipTrigger>
+                          <TooltipContent><p>Agent is working</p></TooltipContent>
+                        </Tooltip>
+                      )}
                       {isProductSurface && newConversationEnabled && (
                         <NewChatControl
                           engines={engineGroups.map((g) => ({ id: g.option.id, label: g.option.label || g.option.id }))}
@@ -3437,7 +3528,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
                           engines={engineGroups.map((g) => ({ id: g.option.id, label: g.option.label || g.option.id, models: g.models }))}
                           currentEngineId={currentEngine}
                           currentModelId={currentModel}
-                          engineChangeable={!chatHasTurns}
+                          engineChangeable={agentProfileId === 'work' || !chatHasTurns}
                           reasoningLevels={currentGroup?.reasoningLevels ?? []}
                           currentReasoningEffort={currentReasoningEffort}
                           defaultReasoningEffort={defaultReasoningEffort}
@@ -3445,30 +3536,6 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
                           onSelect={selectProductEngine}
                         />
                       )}
-                      <>
-                        {!hideExtras && !isMultiAgentMode && (
-                        <ServerSelectionDropdown
-                          availableServers={availableServers}
-                          selectedServers={manualSelectedServers}
-                          onServerToggle={onManualServerToggle}
-                          onSelectAll={onSelectAllServers}
-                          onClearAll={onClearAllServers}
-                          disabled={isStreaming || isSummarizing}
-                          agentMode={agentMode}
-                        />
-                        )}
-                        {!hideExtras && !isMultiAgentMode && (
-                          <SkillSelectionDropdown
-                            selectedSkills={selectedSkills}
-                            onSkillToggle={onSkillToggle}
-                            onSelectAll={onSelectAllSkills}
-                            onClearAll={onClearAllSkills}
-                            disabled={isStreaming || isSummarizing}
-                            onImportClick={() => openDialog('skillImport')}
-                          />
-                        )}
-                      </>
-
                     {/* Browser access lives in the chat header for multi-agent mode. */}
                     {!hideExtras && !isMultiAgentMode && <button
                       type="button"

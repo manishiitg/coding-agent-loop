@@ -227,7 +227,7 @@ export default function PlaybooksPanel({ workspacePath }: PlaybooksPanelProps) {
         <div className="flex min-h-0 flex-1 flex-col items-center justify-center px-6 text-center">
           <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-muted text-muted-foreground"><BookMarked className="h-5 w-5" /></div>
           <h3 className="mt-3 text-sm font-semibold text-foreground">No playbooks installed</h3>
-          <p className="mt-1 max-w-sm text-xs leading-5 text-muted-foreground">Choose a playbook from the catalog to guide this workflow’s plan, capabilities, and reporting.</p>
+          <p className="mt-1 max-w-sm text-xs leading-5 text-muted-foreground">Choose a playbook from the catalog to guide this workflow’s plan, capabilities, and dashboard.</p>
           <button type="button" onClick={() => setTab('catalog')} className="mt-4 rounded-md bg-primary px-3 py-2 text-xs font-medium text-primary-foreground">Browse catalog</button>
         </div>)
       ) : (

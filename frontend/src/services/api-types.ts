@@ -213,8 +213,10 @@ export interface AgentQueryResponse {
   provider?: string
 }
 
-// Minimal product-chat wire contract. Profile-owned model, prompt, tools,
-// skills and workspace configuration are deliberately absent.
+// Minimal product-chat wire contract. Profile-owned prompt, tools and
+// workspace remain server-owned. Work may add user-selected MCP servers and
+// skills from the same shared controls as AgentWorks; the server accepts those
+// fields only for profiles that explicitly support them.
 export interface AgentProfileChatRequest {
   message: string
   conversation_key?: string
@@ -227,6 +229,12 @@ export interface AgentProfileChatRequest {
   // A reasoning level from the engine's declared reasoning_efforts; omitted
   // keeps whatever the engine's own runtime options declare.
   reasoning_effort?: string
+  enabled_servers?: string[]
+  selected_skills?: string[]
+  // Workspace paths selected through the shared # automation picker. The
+  // profile must explicitly enable workflow_references; the server authorizes
+  // every path and exposes it read-only.
+  workflow_context_paths?: string[]
 }
 
 export interface AgentProfileConversationRequest {
@@ -896,8 +904,11 @@ export interface CompactContextResponse {
 // ChannelRoute maps a Slack channel ID to a specific workflow, including the workspace path
 // so the bot can read the workflow manifest (e.g. workshop_mode) without scanning all workspaces.
 export interface ChannelRoute {
-  workflow_id: string
+  workflow_id?: string
   workspace_path: string
+  profile_id?: string
+  conversation_key?: string
+  profile_label?: string
   // Override the manifest's workshop_mode for this channel. Empty = use manifest.
   workshop_mode?: 'workshop' | 'run'
   // Opt in to detailed workflow runtime messages in the bot channel.
@@ -907,8 +918,11 @@ export interface ChannelRoute {
 // Shape of GET/PUT /api/whatsapp/routing entries. Same idea as ChannelRoute
 // but workshop_mode is an untyped string on this endpoint.
 export interface WhatsAppRoute {
-  workflow_id: string
+  workflow_id?: string
   workspace_path?: string
+  profile_id?: string
+  conversation_key?: string
+  profile_label?: string
   workshop_mode?: string
   send_full_details?: boolean
 }
@@ -1598,6 +1612,10 @@ export interface UpdateRunningWorkflowRequest {
 
 // Global cost ledger summary — mirror of pkg/costledger.Summary.
 export interface CostAggregate {
+  // Present on per-model buckets. Overall totals intentionally leave this
+  // blank when several providers contributed.
+  provider?: string
+  pricing_model_id?: string
   prompt_tokens: number
   completion_tokens: number
   reasoning_tokens: number
@@ -3046,7 +3064,9 @@ export interface CreateScheduledJobRequest {
   pulse_mode_reason?: string
   name: string
   description?: string
-  entity_type: 'workflow' | 'chat' | 'multi-agent'
+  entity_type: 'workflow' | 'chat' | 'multi-agent' | 'product'
+  product_profile_id?: string
+  product_project_id?: string
   preset_query_id?: string
   workspace_path?: string
   trigger_payload?: Record<string, unknown>
@@ -3433,5 +3453,28 @@ export interface KnowledgebaseSourceStatus extends KnowledgebaseSource {
   label?: string
   workspace_path?: string
   available: boolean
+  reason?: string
+}
+
+export interface WorkFolderGrant {
+  id: string
+  alias: string
+  path: string
+  access: 'read_only' | 'read_write'
+  reason?: string
+  created_at?: string
+  updated_at?: string
+  available?: boolean
+}
+
+export interface WorkFolderListResponse {
+  folders: WorkFolderGrant[]
+  roots?: string[]
+}
+
+export interface WorkFolderAddRequest {
+  path: string
+  alias: string
+  access: 'read_only' | 'read_write'
   reason?: string
 }

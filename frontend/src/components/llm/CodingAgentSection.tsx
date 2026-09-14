@@ -37,6 +37,8 @@ interface CodingAgentSectionProps {
   inUse?: boolean
   /** Renders the "Use in this workflow" action (workflow variant). */
   onUseInWorkflow?: () => void | Promise<void>
+  /** User-facing owner of the provider choice. */
+  scopeNoun?: string
 }
 
 type PiTopLevelProviderKey =
@@ -187,7 +189,7 @@ function piAuthValue(keys: StoredProviderKeys | undefined, spec: PiAuthSpec): st
   return ''
 }
 
-export function CodingAgentSection({ provider, onPublished, groupFilter, readOnly = false, variant = 'library', initialModelId, inUse = false, onUseInWorkflow }: CodingAgentSectionProps) {
+export function CodingAgentSection({ provider, onPublished, groupFilter, readOnly = false, variant = 'library', initialModelId, inUse = false, onUseInWorkflow, scopeNoun = 'workflow' }: CodingAgentSectionProps) {
   const saveLLM = useLLMStore(state => state.saveLLM)
   const savedLLMs = useLLMStore(state => state.savedLLMs)
   const workflowMode = variant === 'workflow'
@@ -550,16 +552,16 @@ export function CodingAgentSection({ provider, onPublished, groupFilter, readOnl
         </div>
       </Card>
 
-      {/* Use in this workflow (workflow variant): the one decision this
+      {/* Use in this scope (workflow variant): the one decision this
           drill-in exists for. Test first is recommended but not enforced --
           a provider the status line already reports Ready needs no test. */}
       {workflowMode && onUseInWorkflow && (
       <Card className="p-4">
-        <h4 className="font-medium text-foreground mb-3">Use in this workflow</h4>
+        <h4 className="font-medium text-foreground mb-3">Use in this {scopeNoun}</h4>
         {inUse ? (
           <div className="flex items-center gap-2 text-sm text-green-600 dark:text-green-400">
             <CheckCircle className="w-4 h-4" />
-            This workflow already runs on {displayName}.
+            This {scopeNoun} already runs on {displayName}.
           </div>
         ) : (
           <div className="space-y-3">
@@ -572,7 +574,7 @@ export function CodingAgentSection({ provider, onPublished, groupFilter, readOnl
               disabled={readOnly || using || (piAuthSpec !== null && !piAuthKey.trim() && piAuthStatus !== 'saved')}
               title={readOnly ? READ_ONLY_TITLE : piAuthSpec && !piAuthKey.trim() && piAuthStatus !== 'saved' ? 'Save the provider key first' : undefined}
             >
-              {using ? <><Loader2 className="w-4 h-4 mr-2 animate-spin" />Saving…</> : 'Use in this workflow'}
+              {using ? <><Loader2 className="w-4 h-4 mr-2 animate-spin" />Saving…</> : `Use in this ${scopeNoun}`}
             </Button>
             {piAuthSpec && !piAuthKey.trim() && piAuthStatus !== 'saved' && (
               <p className="text-xs text-muted-foreground">Save a provider key above to enable this.</p>

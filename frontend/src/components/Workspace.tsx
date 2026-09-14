@@ -22,6 +22,8 @@ import { usePresetApplication } from '../stores/useGlobalPresetStore'
 import { useActiveWorkflowPreset } from '../hooks/useActiveWorkflowPreset'
 import {
   collectFolderPaths,
+  EXPAND_FIRST_LEVEL_FOLDERS_BY_DEFAULT,
+  getInitialExpandedWorkspaceFolders,
   restoreExpandedFolders,
   getOriginalPath,
   isPathWithinFolder,
@@ -33,10 +35,17 @@ interface WorkspaceProps {
   minimized: boolean
   onToggleMinimize: () => void
   hideMinimizeControl?: boolean
+  showMinimizeShortcut?: boolean
   /** Restrict the reusable Files experience to one trusted workspace root. */
   scopedWorkspacePath?: string
   /** Provider/runtime directories to keep out of a creator-facing file tree. */
   hiddenRootFolders?: string[]
+  /** Hide the per-row shortcut that adds a file or folder to chat context. */
+  hideAddToChat?: boolean
+  /** Hide actions for the scoped workspace root while retaining child actions. */
+  hideRootActions?: boolean
+  /** Opt in to opening direct child folders when the workspace is first shown. */
+  expandFirstLevelFolders?: boolean
   title?: string
 }
 
@@ -87,8 +96,12 @@ export default function Workspace({
   minimized,
   onToggleMinimize,
   hideMinimizeControl = false,
+  showMinimizeShortcut = true,
   scopedWorkspacePath,
   hiddenRootFolders = [],
+  hideAddToChat = false,
+  hideRootActions = false,
+  expandFirstLevelFolders = EXPAND_FIRST_LEVEL_FOLDERS_BY_DEFAULT,
   title = 'Workspace',
 }: WorkspaceProps) {
   // Get mode-specific file context and handlers
@@ -96,6 +109,7 @@ export default function Workspace({
   const authUser = useAuthStore(state => state.user)
   const currentUserFolder = `_users/${authUser?.id || 'default'}`
   const showWorkflowsOverview = useAppStore(state => state.showWorkflowsOverview)
+  const showSchedulesOverview = useAppStore(state => state.showSchedulesOverview)
   const getActiveTab = useChatStore(state => state.getActiveTab)
   const setTabConfig = useChatStore(state => state.setTabConfig)
   const { getActivePreset } = usePresetApplication()
@@ -322,7 +336,6 @@ export default function Workspace({
   const autoExpandedWorkflowRef = useRef<string | null>(null)
   // Track whether we've auto-expanded Chats/ for multi-agent mode
   const autoExpandedChatRef = useRef(false)
-  const autoExpandedMultiAgentRef = useRef(false)
   // Track workflow folders that already have a full tree in memory
   const fullyLoadedWorkflowFoldersRef = useRef<Set<string>>(new Set())
   // Tracks which iterations have been lazy-loaded, keyed by workflowFolder
@@ -356,20 +369,20 @@ export default function Workspace({
 
   const effectiveWorkflowFolderPath = useMemo(() => {
     if (selectedModeCategory !== 'workflow') return null
-    if (showWorkflowsOverview) return null
+    if (showWorkflowsOverview || showSchedulesOverview) return null
     return workflowFolderPath
-  }, [selectedModeCategory, showWorkflowsOverview, workflowFolderPath])
+  }, [selectedModeCategory, showWorkflowsOverview, showSchedulesOverview, workflowFolderPath])
 
   // Determine which folder to pass to the API based on mode
   const activeFolder = useMemo(() => {
     if (scopedWorkspacePath) return scopedWorkspacePath
-    if (showWorkflowsOverview) return 'Workflow'
+    if (showWorkflowsOverview || showSchedulesOverview) return 'Workflow'
     if (selectedModeCategory === 'workflow') {
       if (effectiveWorkflowFolderPath) return effectiveWorkflowFolderPath
     }
     // For multi-agent mode and default, fetch root (Chats + skills are at root level)
     return undefined
-  }, [scopedWorkspacePath, showWorkflowsOverview, selectedModeCategory, effectiveWorkflowFolderPath])
+  }, [scopedWorkspacePath, showWorkflowsOverview, showSchedulesOverview, selectedModeCategory, effectiveWorkflowFolderPath])
 
   // Raw workspace axios instance
   const wsRawApi = workspaceApi
@@ -757,11 +770,17 @@ export default function Workspace({
             ? workflowFolder.children
             : filteredFiles
 
-          // Expand only the first-level folders inside the workflow root.
-          // filesToExpand is already workflowFolder.children, so level 0 means direct children only.
-          const additionalFolders = workflowFolder ? [workflowFolder.filepath] : undefined
-          const excludeFolders = scopedWorkspacePath ? [] : ['planning', 'variables', 'learnings', 'logs', 'runs']
-          expandFoldersToLevel(filesToExpand, 0, additionalFolders, excludeFolders)
+          if (expandFirstLevelFolders) {
+            // filesToExpand is already workflowFolder.children, so level 0 means
+            // direct children only.
+            const additionalFolders = workflowFolder ? [workflowFolder.filepath] : undefined
+            const excludeFolders = scopedWorkspacePath ? [] : ['planning', 'variables', 'learnings', 'logs', 'runs']
+            expandFoldersToLevel(filesToExpand, 0, additionalFolders, excludeFolders)
+          } else {
+            // Across every product, keep the workspace root open while every
+            // direct child folder starts closed.
+            setExpandedFolders(getInitialExpandedWorkspaceFolders(workflowFolder))
+          }
 
           // Mark this workflow as auto-expanded
           autoExpandedWorkflowRef.current = workflowPresetId
@@ -774,7 +793,7 @@ export default function Workspace({
       autoExpandedWorkflowRef.current = null
     }
 
-  }, [scopedWorkspacePath, selectedModeCategory, effectiveWorkflowFolderPath, filteredFiles, expandFoldersToLevel, activeWorkflowPreset?.id])
+  }, [scopedWorkspacePath, selectedModeCategory, effectiveWorkflowFolderPath, filteredFiles, expandFoldersToLevel, setExpandedFolders, expandFirstLevelFolders, activeWorkflowPreset?.id])
 
   // In multi-agent mode, auto-expand Chats/ folder by default (skills/ stays closed)
   useEffect(() => {
@@ -786,19 +805,6 @@ export default function Workspace({
       }
     } else if (selectedModeCategory !== 'multi-agent') {
       autoExpandedChatRef.current = false
-    }
-  }, [scopedWorkspacePath, selectedModeCategory, filteredFiles, setExpandedFolders])
-
-  // In multi-agent mode, auto-expand Chats/ by default.
-  useEffect(() => {
-    if (!scopedWorkspacePath && selectedModeCategory === 'multi-agent' && filteredFiles.length > 0 && !autoExpandedMultiAgentRef.current) {
-      const hasChatsFolder = filteredFiles.some(f => f.filepath === 'Chats' || f.filepath === 'Chats/')
-      if (hasChatsFolder) {
-        autoExpandedMultiAgentRef.current = true
-        setExpandedFolders(new Set(['Chats']))
-      }
-    } else if (selectedModeCategory !== 'multi-agent') {
-      autoExpandedMultiAgentRef.current = false
     }
   }, [scopedWorkspacePath, selectedModeCategory, filteredFiles, setExpandedFolders])
 
@@ -2133,7 +2139,7 @@ export default function Workspace({
               {/* Minimize button - Hidden in selection mode */}
               {!isSelectionMode && !hideMinimizeControl && (
                 <div className="flex items-center gap-1">
-                  <span className="text-xs text-gray-400 dark:text-gray-500 font-mono">⌘6</span>
+                  {showMinimizeShortcut && <span className="text-xs text-gray-400 dark:text-gray-500 font-mono">⌘6</span>}
                   <Tooltip>
                     <TooltipTrigger asChild>
                       <button
@@ -2257,7 +2263,8 @@ export default function Workspace({
                 onFolderRename={handleFolderRename}
                 onFileDownload={handleFileDownload}
                 downloadingFilePath={downloadStatus?.path}
-                hideAddToChat={selectedModeCategory === 'workflow' && !!effectiveWorkflowFolderPath}
+                hideAddToChat={hideAddToChat || (selectedModeCategory === 'workflow' && !!effectiveWorkflowFolderPath)}
+                hideRootActions={hideRootActions}
                 onExportBackup={handleExportBackup}
                 onImportBackup={handleImportBackupClick}
                 workflowFolderPath={effectiveWorkflowFolderPath}

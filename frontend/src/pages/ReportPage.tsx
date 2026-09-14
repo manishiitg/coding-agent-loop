@@ -33,9 +33,9 @@ export function ReportPage({ encodedPath, onBack }: ReportPageProps) {
       <div className="flex min-h-screen items-center justify-center bg-background px-4 text-foreground">
         <div className="w-full max-w-md rounded-lg border border-border bg-card p-6 text-center shadow-sm">
           <BarChart3 className="mx-auto mb-4 h-10 w-10 text-muted-foreground" />
-          <h1 className="mb-2 text-lg font-semibold">Invalid report URL</h1>
+          <h1 className="mb-2 text-lg font-semibold">Invalid dashboard URL</h1>
           <p className="mb-4 text-sm text-muted-foreground">
-            The report URL must include a valid encoded workflow path.
+            The dashboard URL must include a valid encoded workflow path.
           </p>
           {onBack && (
             <button
@@ -71,13 +71,13 @@ export function ReportPage({ encodedPath, onBack }: ReportPageProps) {
           <BarChart3 className="h-5 w-5 flex-shrink-0 text-primary" />
           <div className="min-w-0">
             <h1 className="truncate text-sm font-semibold text-foreground sm:text-base">
-              {workflowName} Report
+              {workflowName} Dashboard
             </h1>
             <p className="truncate text-xs text-muted-foreground">{workspacePath}</p>
           </div>
         </div>
         <span className="hidden rounded-md border border-border bg-muted px-2 py-1 text-xs font-medium text-muted-foreground sm:inline-flex">
-          Live Report
+          Live Dashboard
         </span>
       </div>
       <div className="min-h-0 flex-1">

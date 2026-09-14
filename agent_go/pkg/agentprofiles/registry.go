@@ -30,6 +30,9 @@ func (r *Registry) RegisterProfile(profile Profile) error {
 	if r == nil {
 		return fmt.Errorf("profile registry is nil")
 	}
+	if err := ResolveFeatures(&profile); err != nil {
+		return err
+	}
 	if err := Validate(profile); err != nil {
 		return err
 	}
@@ -256,6 +259,25 @@ func (r *Registry) BuildTool(binding ToolBinding, runtime ToolRuntimeContext) (T
 
 func cloneProfile(profile Profile) Profile {
 	cloned := profile
+	cloned.Features = make([]FeatureBinding, len(profile.Features))
+	for i, binding := range profile.Features {
+		cloned.Features[i] = binding
+		cloned.Features[i].Options = cloneStringMap(binding.Options)
+		if binding.Enabled != nil {
+			enabled := *binding.Enabled
+			cloned.Features[i].Enabled = &enabled
+		}
+	}
+	cloned.ResolvedFeatures = make([]ResolvedFeature, len(profile.ResolvedFeatures))
+	for i, feature := range profile.ResolvedFeatures {
+		cloned.ResolvedFeatures[i] = feature
+		cloned.ResolvedFeatures[i].Dependencies = cloneStrings(feature.Dependencies)
+		cloned.ResolvedFeatures[i].Tools = cloneStrings(feature.Tools)
+		cloned.ResolvedFeatures[i].Skills = cloneStrings(feature.Skills)
+		cloned.ResolvedFeatures[i].UIPanels = cloneStrings(feature.UIPanels)
+		cloned.ResolvedFeatures[i].Capabilities = cloneCapabilities(feature.Capabilities)
+		cloned.ResolvedFeatures[i].Options = cloneStringMap(feature.Options)
+	}
 	cloned.Skills = append([]string(nil), profile.Skills...)
 	cloned.Commands = append([]CommandBinding(nil), profile.Commands...)
 	cloned.Secrets = append([]SecretBinding(nil), profile.Secrets...)

@@ -164,6 +164,33 @@ describe('CodingProvidersPanel', () => {
     } finally { await act(async () => root.unmount()); host.remove() }
   })
 
+  it('offers to replace a setup session after a conflict', async () => {
+    vi.mocked(llmConfigService.getProviderManifest).mockResolvedValue({ providers: [provider({})], provider_order: ['codex-cli'], integration_kinds: {} })
+    vi.mocked(llmConfigService.startProviderSetup)
+      .mockRejectedValueOnce({ response: { status: 409, data: { error: 'a codex-cli setup session is already running' } } })
+      .mockResolvedValueOnce({ id: 'setup-2', provider: 'codex-cli', action: 'authenticate', status: 'running' } as Awaited<ReturnType<typeof llmConfigService.startProviderSetup>>)
+    Object.defineProperty(window, 'confirm', { configurable: true, value: vi.fn(() => true) })
+    const host = document.createElement('div'); document.body.append(host); const root = createRoot(host)
+    try {
+      await act(async () => root.render(<CodingProvidersPanel isOpen onClose={vi.fn()} />))
+      await act(async () => Promise.resolve())
+      await act(async () => Array.from(document.querySelectorAll('button')).find(button => button.textContent?.includes('Change sign-in'))!.click())
+      await act(async () => Promise.resolve())
+
+      const replaceButton = Array.from(document.querySelectorAll('button')).find(button => button.textContent?.includes('End existing session and start new'))
+      expect(replaceButton).toBeTruthy()
+      await act(async () => replaceButton!.click())
+      await act(async () => Promise.resolve())
+
+      expect(window.confirm).toHaveBeenCalled()
+      expect(llmConfigService.startProviderSetup).toHaveBeenLastCalledWith('codex-cli', 'authenticate', 100, 24, undefined, true)
+      expect(document.querySelector('[data-testid="guided-terminal"]')?.textContent).toBe('Terminal setup-2')
+    } finally {
+      await act(async () => root.unmount())
+      host.remove()
+    }
+  })
+
   it('expects deployment-installed Muse and offers guided sign-in only', async () => {
     vi.mocked(llmConfigService.getProviderManifest).mockResolvedValue({
       providers: [
@@ -172,6 +199,7 @@ describe('CodingProvidersPanel', () => {
           display_name: 'Muse Code',
           runtime_command: 'muse',
           runtime_available: false,
+          install_command: "curl --proto '=https' --proto-redir '=https' --tlsv1.2 https://dev.meta.ai/install.sh | bash",
           auth_configured: false,
           auth_source: undefined,
           usable: false,
@@ -192,8 +220,8 @@ describe('CodingProvidersPanel', () => {
       const dialog = document.querySelector('[role="dialog"]')!
       expect(dialog.textContent).toContain('Muse Code')
       expect(dialog.textContent).toContain('missing from the AgentWorks installation')
-      expect(dialog.textContent).not.toContain('https://dev.meta.ai/install.sh')
-      expect(dialog.textContent).not.toContain('Install on server')
+      expect(dialog.textContent).toContain('Run on the backend server')
+      expect(dialog.textContent).toContain("curl --proto '=https' --proto-redir '=https' --tlsv1.2 https://dev.meta.ai/install.sh | bash")
 
       vi.mocked(llmConfigService.getProviderManifest).mockResolvedValue({
         providers: [provider({

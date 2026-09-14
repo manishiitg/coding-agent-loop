@@ -281,7 +281,6 @@ export default function PlatformChat({ title, childName, theme, commands, landin
             landingContent={landing}
             contentRenderer={SparkQuillConversation}
             inputVariant="product"
-            fullTurnStreaming
             hideRuntimeStatus
             composerPlaceholder={`Ask anything about ${childName || 'your child'}’s learning…`}
           />

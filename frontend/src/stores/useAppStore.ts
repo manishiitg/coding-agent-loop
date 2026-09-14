@@ -16,6 +16,7 @@ interface AppState {
   workspaceMinimized: boolean
   workspaceMinimizedByMode: Record<'workflow' | 'multi-agent', boolean>
   showWorkflowsOverview: boolean
+  showSchedulesOverview: boolean
   
   // Code execution mode (for multi-agent mode when no preset is active)
   useCodeExecutionMode: boolean
@@ -37,6 +38,7 @@ interface AppState {
   setWorkspaceMinimized: (minimized: boolean) => void
   setWorkspaceMinimizedForLayout: (minimized: boolean) => void
   setShowWorkflowsOverview: (show: boolean) => void
+  setShowSchedulesOverview: (show: boolean) => void
   setUseCodeExecutionMode: (enabled: boolean) => void
   // Last-used tab settings — inherited by new tabs
   lastSelectedSkills: string[]
@@ -62,6 +64,7 @@ export const useAppStore = create<AppState>()(
           'multi-agent': false,
         },
         showWorkflowsOverview: false,
+        showSchedulesOverview: false,
         useCodeExecutionMode: true, // Default to enabled
         // Actions
         setAgentMode: (mode) => {
@@ -144,6 +147,10 @@ export const useAppStore = create<AppState>()(
           set({ showWorkflowsOverview: show })
         },
 
+        setShowSchedulesOverview: (show) => {
+          set({ showSchedulesOverview: show })
+        },
+
         setUseCodeExecutionMode: (enabled) => {
           set({ useCodeExecutionMode: enabled })
         },
@@ -163,6 +170,7 @@ export const useAppStore = create<AppState>()(
         workspaceMinimized: state.workspaceMinimized,
         workspaceMinimizedByMode: state.workspaceMinimizedByMode,
         showWorkflowsOverview: state.showWorkflowsOverview,
+        showSchedulesOverview: state.showSchedulesOverview,
         selectedPresetId: state.selectedPresetId,
         useCodeExecutionMode: state.useCodeExecutionMode,
         lastSelectedSkills: state.lastSelectedSkills,
@@ -178,6 +186,9 @@ export const useAppStore = create<AppState>()(
         delete state.lastSelectedSubAgents
         if (state.showWorkflowsOverview === undefined) {
           state.showWorkflowsOverview = false
+        }
+        if (state.showSchedulesOverview === undefined) {
+          state.showSchedulesOverview = false
         }
         if (!state.workspaceMinimizedByMode || typeof state.workspaceMinimizedByMode !== 'object') {
           const legacyWorkspaceMinimized = Boolean(state.workspaceMinimized)

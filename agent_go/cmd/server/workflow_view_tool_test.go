@@ -35,7 +35,7 @@ func TestOpenWorkspaceViewToolOpensAKnownViewAndRefusesOthers(t *testing.T) {
 		t.Fatal(err)
 	}
 	open, ok := reg.tools["open_workspace_view"]
-	if !ok || !strings.Contains(open.desc, "report — Report") || !strings.Contains(open.desc, "schedules — Schedules") || !strings.Contains(open.desc, "refresh_workspace_view") {
+	if !ok || !strings.Contains(open.desc, "report — Dashboard") || !strings.Contains(open.desc, "schedules — Schedules") || !strings.Contains(open.desc, "refresh_workspace_view") {
 		t.Fatalf("open tool = %+v", open)
 	}
 	if !strings.Contains(open.desc, "pulse — Pulse (Needs your decision cards") {

@@ -47,6 +47,9 @@ interface ReportViewProps {
   onClose?: () => void
   focusTier?: 'mobile'
   reserveTopControlsSpace?: boolean
+  documentPath?: string
+  emptyDescription?: string
+  sendChatMessage?: ReportDataApi['sendChatMessage']
 }
 
 const normalizeSource = normalizeReportSource
@@ -140,15 +143,17 @@ function useReportDataApi(workspacePath: string, sendChatMessage: ReportDataApi[
   }, [workspacePath, sendChatMessage])
 }
 
-async function loadReportDocument(workspacePath: string): Promise<ReportDocument | null> {
-  const path = `${normalizeSource(workspacePath)}/db/reports/index.html`
+async function loadReportDocument(workspacePath: string, documentPath = 'db/reports/index.html'): Promise<ReportDocument | null> {
+  const allowedDocumentPath = allowedReportPath(documentPath)
+  if (!allowedDocumentPath) return null
+  const path = `${normalizeSource(workspacePath)}/${allowedDocumentPath}`
   const html = await readWorkspaceText(path)
   if (html == null) return null
   const title = html.match(/<title[^>]*>\s*([^<]+?)\s*<\/title>/i)?.[1]?.trim()
-  return { path, html, label: title || 'Report' }
+  return { path, html, label: title || 'Dashboard' }
 }
 
-function ReportViewComponent({ workspacePath, onClose, focusTier }: ReportViewProps) {
+function ReportViewComponent({ workspacePath, onClose, focusTier, documentPath, emptyDescription, sendChatMessage }: ReportViewProps) {
   const [report, setReport] = useState<ReportDocument | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -161,7 +166,7 @@ function ReportViewComponent({ workspacePath, onClose, focusTier }: ReportViewPr
     : undefined, [viewTarget])
   const [previewPreference, setPreviewPreference] = useState<ReportPreviewDevice>(() => readReportPreviewPreference(workspacePath))
   const reportChat = useReportChat(workspacePath)
-  const dataApi = useReportDataApi(workspacePath, reportChat.request)
+  const dataApi = useReportDataApi(workspacePath, sendChatMessage ?? reportChat.request)
 
   const refresh = useCallback(() => setRefreshNonce(value => value + 1), [])
   useEffect(() => {
@@ -179,14 +184,14 @@ function ReportViewComponent({ workspacePath, onClose, focusTier }: ReportViewPr
     let cancelled = false
     setLoading(true)
     setError(null)
-    void loadReportDocument(workspacePath).then(next => {
+    void loadReportDocument(workspacePath, documentPath).then(next => {
       if (cancelled) return
       setReport(next)
     }).catch(reason => {
       if (!cancelled) setError(reason instanceof Error ? reason.message : 'Failed to load report.')
     }).finally(() => { if (!cancelled) setLoading(false) })
     return () => { cancelled = true }
-  }, [refreshNonce, workspacePath])
+  }, [documentPath, refreshNonce, workspacePath])
 
   useEffect(() => {
     debugReportView('mounted', { workspacePath })
@@ -201,14 +206,14 @@ function ReportViewComponent({ workspacePath, onClose, focusTier }: ReportViewPr
     <ReportEmbedProvider value={runtime}>
       <div className="relative flex h-full w-full flex-col overflow-hidden bg-background text-foreground">
         <div className="absolute right-3 top-3 z-20 flex gap-1">
-          <button type="button" onClick={refresh} aria-label="Refresh report" title="Refresh report" className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-border bg-background/95 text-muted-foreground shadow-sm backdrop-blur-sm transition-colors hover:bg-muted hover:text-foreground">
+          <button type="button" onClick={refresh} aria-label="Refresh dashboard" title="Refresh dashboard" className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-border bg-background/95 text-muted-foreground shadow-sm backdrop-blur-sm transition-colors hover:bg-muted hover:text-foreground">
             <RefreshCw className="h-3.5 w-3.5" />
           </button>
-          {onClose && <button type="button" onClick={onClose} aria-label="Close report" className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-border bg-background/95 text-lg text-muted-foreground shadow-sm backdrop-blur-sm transition-colors hover:bg-muted hover:text-foreground">×</button>}
+          {onClose && <button type="button" onClick={onClose} aria-label="Close dashboard" className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-border bg-background/95 text-lg text-muted-foreground shadow-sm backdrop-blur-sm transition-colors hover:bg-muted hover:text-foreground">×</button>}
         </div>
         <div
           tabIndex={0}
-          aria-label="Report content"
+          aria-label="Dashboard content"
           className="min-h-0 flex-1 overflow-y-auto overscroll-y-contain"
         >
           <div className={shellClass}>
@@ -218,14 +223,14 @@ function ReportViewComponent({ workspacePath, onClose, focusTier }: ReportViewPr
               historyMode="collapsed"
               className="m-3"
             />
-            {loading && !report && <div className="flex min-h-64 items-center justify-center gap-2 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" /> Loading report…</div>}
+            {loading && !report && <div className="flex min-h-64 items-center justify-center gap-2 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" /> Loading dashboard…</div>}
             {error && <div className="m-3 rounded-md border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive">Failed to load report: {error}</div>}
             {!loading && !error && !report && (
               <div className="m-3 flex flex-col items-center gap-3 rounded-xl border border-dashed border-border p-8 text-center">
                 <BarChart3 className="h-8 w-8 text-muted-foreground" />
                 <div>
-                  <div className="font-semibold">Reporting isn’t set up yet</div>
-                  <p className="mt-1 text-sm text-muted-foreground">Run the workflow or ask the Builder to set up its report. It will appear here when it is ready.</p>
+                  <div className="font-semibold">Dashboard isn’t set up yet</div>
+                  <p className="mt-1 text-sm text-muted-foreground">{emptyDescription ?? 'Run the workflow or ask the Builder to set up its dashboard. It will appear here when it is ready.'}</p>
                 </div>
                 <button type="button" onClick={refresh} className="inline-flex items-center gap-1.5 rounded-md border border-border px-3 py-1.5 text-sm hover:bg-muted">
                   <RefreshCw className="h-3.5 w-3.5" /> Check again

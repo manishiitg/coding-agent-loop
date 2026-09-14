@@ -109,8 +109,13 @@ func multiAgentChatPrimaryLLM(preset *workflowtypes.PresetLLMConfig) *workflowty
 // ChannelRoute maps a Slack channel to a specific workflow, including the workspace path
 // so the bot can read the workflow manifest without scanning all workspaces.
 type ChannelRoute struct {
-	WorkflowID    string `json:"workflow_id"`
+	WorkflowID    string `json:"workflow_id,omitempty"`
 	WorkspacePath string `json:"workspace_path"`
+	// Product routes share the connector and conversation manager with
+	// workflow routes, but enter a keyed product conversation directly.
+	ProfileID       string `json:"profile_id,omitempty"`
+	ConversationKey string `json:"conversation_key,omitempty"`
+	ProfileLabel    string `json:"profile_label,omitempty"`
 	// WorkshopMode overrides whatever is set in the workflow manifest. Valid:
 	// "builder" | "optimizer" | "run". Empty means "use workflow default".
 	WorkshopMode    string `json:"workshop_mode,omitempty"`
@@ -1942,6 +1947,19 @@ func (m *BotConversationManager) HandleMessageSync(ctx context.Context, msg BotI
 // native coding-agent runtime from the previous persisted session.
 func (m *BotConversationManager) startNewSessionDirect(msg BotIncomingMessage, threadID ThreadID, resumeSessionID ...string) {
 	workspaceUserID := m.resolveWorkspaceUserID(msg)
+	if route := msg.PresetWorkflow; route != nil && strings.TrimSpace(route.ProfileID) != "" {
+		label := strings.TrimSpace(route.ProfileLabel)
+		if label == "" {
+			label = strings.TrimSpace(route.ProfileID)
+		}
+		msg.PresetProfile = &ProfileRoute{
+			ProfileID:       strings.TrimSpace(route.ProfileID),
+			ConversationKey: strings.TrimSpace(route.ConversationKey),
+			UploadFolder:    strings.TrimSpace(route.WorkspacePath),
+			Label:           label,
+		}
+		msg.PresetWorkflow = nil
+	}
 
 	sessionID := newBotSessionID(msg.Platform)
 	if len(resumeSessionID) > 0 && resumeSessionID[0] != "" {
@@ -2613,7 +2631,7 @@ func (m *BotConversationManager) resolveChannelWorkflow(platform, channelID stri
 	if err := json.Unmarshal([]byte(routing), &channelMap); err != nil {
 		return nil
 	}
-	if route, ok := channelMap[channelID]; ok && route.WorkflowID != "" {
+	if route, ok := channelMap[channelID]; ok && (route.WorkflowID != "" || route.ProfileID != "") {
 		return &route
 	}
 	return nil
@@ -2926,6 +2944,8 @@ func botRouteKey(route *ChannelRoute) string {
 		strings.ToLower(strings.TrimSpace(route.WorkflowID)),
 		strings.ToLower(strings.TrimSpace(route.WorkspacePath)),
 		strings.ToLower(strings.TrimSpace(route.WorkshopMode)),
+		strings.ToLower(strings.TrimSpace(route.ProfileID)),
+		strings.ToLower(strings.TrimSpace(route.ConversationKey)),
 	}
 	return strings.Join(parts, "|")
 }

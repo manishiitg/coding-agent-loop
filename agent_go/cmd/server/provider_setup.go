@@ -29,7 +29,16 @@ const (
 	providerSetupOutputLimit = 1024 * 1024
 	providerSetupMaxDuration = 20 * time.Minute
 	providerSetupRetention   = 10 * time.Minute
+	providerSetupStopTimeout = 2 * time.Second
 )
+
+type providerSetupConflictError struct {
+	provider string
+}
+
+func (e *providerSetupConflictError) Error() string {
+	return fmt.Sprintf("a %s setup session is already running", e.provider)
+}
 
 type providerSetupCommand struct {
 	command string
@@ -102,6 +111,7 @@ type providerSetupSession struct {
 	cancel      context.CancelFunc
 	output      []byte
 	subscribers map[chan []byte]struct{}
+	done        chan struct{}
 }
 
 func (s *providerSetupSession) snapshot() providerSetupSnapshot {
@@ -264,13 +274,17 @@ func (s *providerSetupSession) stop() {
 type providerSetupManager struct {
 	mu       sync.Mutex
 	sessions map[string]*providerSetupSession
+	starting map[string]bool
 }
 
 func newProviderSetupManager() *providerSetupManager {
-	return &providerSetupManager{sessions: make(map[string]*providerSetupSession)}
+	return &providerSetupManager{
+		sessions: make(map[string]*providerSetupSession),
+		starting: make(map[string]bool),
+	}
 }
 
-func (m *providerSetupManager) start(ownerID, provider, action string, cols, rows int, environment []string, cleanup func()) (*providerSetupSession, error) {
+func (m *providerSetupManager) start(ownerID, provider, action string, cols, rows int, environment []string, cleanup func(), replaceRunning bool) (*providerSetupSession, error) {
 	if cleanup == nil {
 		cleanup = func() {}
 	}
@@ -290,14 +304,38 @@ func (m *providerSetupManager) start(ownerID, provider, action string, cols, row
 	}
 
 	m.mu.Lock()
+	if m.starting[provider] {
+		m.mu.Unlock()
+		cleanup()
+		return nil, &providerSetupConflictError{provider: provider}
+	}
+	var sessionsToStop []*providerSetupSession
 	for _, existing := range m.sessions {
 		if existing.provider == provider && existing.isRunning() {
-			m.mu.Unlock()
-			cleanup()
-			return nil, fmt.Errorf("a %s setup session is already running", provider)
+			if !replaceRunning {
+				m.mu.Unlock()
+				cleanup()
+				return nil, &providerSetupConflictError{provider: provider}
+			}
+			sessionsToStop = append(sessionsToStop, existing)
+			delete(m.sessions, existing.id)
 		}
 	}
+	m.starting[provider] = true
 	m.mu.Unlock()
+	defer func() {
+		m.mu.Lock()
+		delete(m.starting, provider)
+		m.mu.Unlock()
+	}()
+
+	for _, existing := range sessionsToStop {
+		existing.stop()
+		select {
+		case <-existing.done:
+		case <-time.After(providerSetupStopTimeout):
+		}
+	}
 
 	id, err := randomProviderSetupID()
 	if err != nil {
@@ -346,6 +384,7 @@ func (m *providerSetupManager) start(ownerID, provider, action string, cols, row
 		terminal:    terminal,
 		cancel:      cancel,
 		subscribers: make(map[chan []byte]struct{}),
+		done:        make(chan struct{}),
 	}
 	m.mu.Lock()
 	m.sessions[id] = session
@@ -370,6 +409,7 @@ func (m *providerSetupManager) start(ownerID, provider, action string, cols, row
 		cancel()
 		_ = terminal.Close()
 		session.finish(waitErr)
+		close(session.done)
 		time.AfterFunc(providerSetupRetention, func() { m.remove(id, false) })
 	}()
 
@@ -518,11 +558,12 @@ func (api *StreamingAPI) providerSetupManager() *providerSetupManager {
 }
 
 type startProviderSetupRequest struct {
-	Provider      string `json:"provider"`
-	Action        string `json:"action"`
-	WorkspacePath string `json:"workspace_path,omitempty"`
-	Cols          int    `json:"cols,omitempty"`
-	Rows          int    `json:"rows,omitempty"`
+	Provider       string `json:"provider"`
+	Action         string `json:"action"`
+	WorkspacePath  string `json:"workspace_path,omitempty"`
+	Cols           int    `json:"cols,omitempty"`
+	Rows           int    `json:"rows,omitempty"`
+	ReplaceRunning bool   `json:"replace_running,omitempty"`
 }
 
 // workflowProviderSetupEnvironment builds an isolated CLI environment for an
@@ -597,10 +638,15 @@ func (api *StreamingAPI) handleStartProviderSetup(w http.ResponseWriter, r *http
 			return
 		}
 	}
-	session, err := api.providerSetupManager().start(GetUserIDFromContext(r.Context()), request.Provider, request.Action, request.Cols, request.Rows, environment, cleanup)
+	session, err := api.providerSetupManager().start(GetUserIDFromContext(r.Context()), request.Provider, request.Action, request.Cols, request.Rows, environment, cleanup, request.ReplaceRunning)
 	if err != nil {
+		status := http.StatusBadRequest
+		var conflict *providerSetupConflictError
+		if errors.As(err, &conflict) {
+			status = http.StatusConflict
+		}
 		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusBadRequest)
+		w.WriteHeader(status)
 		_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
 		return
 	}

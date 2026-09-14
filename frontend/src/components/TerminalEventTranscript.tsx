@@ -273,7 +273,10 @@ const AssistantTurnHeader: React.FC<{ event: PollingEvent; timestamp: string; la
   )
 }
 
-const AGENT_BLOCK_CLASS = 'pl-3 pr-1'
+// Keep the shared AgentWorks/Work conversation rail close to the pane edge.
+// The row already supplies horizontal padding, so a second full padding step
+// made every assistant turn look unnecessarily inset.
+const AGENT_BLOCK_CLASS = 'pl-1 pr-1'
 
 const DisclosureContext = createContext<Map<string, boolean> | null>(null)
 function useDisclosure(key: string, initial = false) {
@@ -941,7 +944,7 @@ const TerminalEventTranscriptInner: React.FC<TerminalEventTranscriptProps & { re
           // One block per agent turn: the header once at the top, then every
           // tool batch, thought and reply of that turn on the same rail.
           return (
-            <div data-transcript-key={item.key} data-testid={testId} className="flow-root px-3">
+            <div data-transcript-key={item.key} data-testid={testId} className="flow-root px-2">
               <div className={`${AGENT_BLOCK_CLASS} ${slot.first ? 'mt-4' : ''} ${slot.last ? 'mb-2' : ''}`}>
                 {slot.first && slot.header && <AssistantTurnHeader event={slot.header} timestamp={slot.showTime ? transcriptTimestamp(slot.header) : ''} label={assistantLabel} icon={assistantIcon} />}
                 {body}
@@ -963,7 +966,7 @@ const TerminalEventTranscriptInner: React.FC<TerminalEventTranscriptProps & { re
 
 const LiveAssistantTranscript: React.FC<{ text: string; status: string }> = ({ text, status }) => (
   text ? (
-    <article data-testid="terminal-clear-live-assistant-message" className="mx-3 mt-4 mb-2 pl-3 pr-1">
+    <article data-testid="terminal-clear-live-assistant-message" className="mx-2 mt-4 mb-2 pl-1 pr-1">
       <div className="[&_li]:!text-[length:calc(14px*var(--chat-scale,1))] [&_p]:!text-[length:calc(14px*var(--chat-scale,1))] [&_li]:!leading-[calc(24px*var(--chat-scale,1))] [&_p]:!leading-[calc(24px*var(--chat-scale,1))]">
         <ConversationMarkdownRenderer content={text} framed={false} maxHeight="none" />
       </div>

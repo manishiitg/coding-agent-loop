@@ -1,11 +1,17 @@
 import { FileContentViewerBody } from './FileContentViewer'
 import Workspace from './Workspace'
 import { useWorkspaceStore } from '../stores/useWorkspaceStore'
+import { EXPAND_FIRST_LEVEL_FOLDERS_BY_DEFAULT } from '../utils/workspacePathUtils'
 
 type FileWorkspacePaneProps = {
   workspacePath?: string
   title?: string
   hiddenRootFolders?: string[]
+  hideAddToChat?: boolean
+  hideRootActions?: boolean
+  expandFirstLevelFolders?: boolean
+  hideMinimizeControl?: boolean
+  showMinimizeShortcut?: boolean
   onClose: () => void
   testId?: string
 }
@@ -20,6 +26,11 @@ export function FileWorkspacePane({
   workspacePath,
   title,
   hiddenRootFolders,
+  hideAddToChat = false,
+  hideRootActions = false,
+  expandFirstLevelFolders = EXPAND_FIRST_LEVEL_FOLDERS_BY_DEFAULT,
+  hideMinimizeControl = true,
+  showMinimizeShortcut = true,
   onClose,
   testId,
 }: FileWorkspacePaneProps) {
@@ -31,9 +42,13 @@ export function FileWorkspacePane({
         <Workspace
           minimized={false}
           onToggleMinimize={onClose}
-          hideMinimizeControl
+          hideMinimizeControl={hideMinimizeControl}
+          showMinimizeShortcut={showMinimizeShortcut}
           scopedWorkspacePath={workspacePath}
           hiddenRootFolders={hiddenRootFolders}
+          hideAddToChat={hideAddToChat}
+          hideRootActions={hideRootActions}
+          expandFirstLevelFolders={expandFirstLevelFolders}
           title={title}
         />
       </div>

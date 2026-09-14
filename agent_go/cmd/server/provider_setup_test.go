@@ -1,6 +1,7 @@
 package server
 
 import (
+	"errors"
 	"os"
 	"strings"
 	"testing"
@@ -88,7 +89,7 @@ func TestProviderSetupSessionStreamsInteractivePTY(t *testing.T) {
 	t.Cleanup(func() { providerSetupCommands = original })
 
 	manager := newProviderSetupManager()
-	session, err := manager.start("owner-1", "codex-cli", "authenticate", 100, 24, nil, nil)
+	session, err := manager.start("owner-1", "codex-cli", "authenticate", 100, 24, nil, nil, false)
 	if err != nil {
 		t.Fatalf("start setup: %v", err)
 	}
@@ -154,6 +155,7 @@ func TestProviderSetupSessionPassesSuppliedEnvironmentToTerminalProcess(t *testi
 		24,
 		[]string{"CURSOR_API_KEY=workflow-key"},
 		nil,
+		false,
 	)
 	if err != nil {
 		t.Fatalf("start setup: %v", err)
@@ -190,7 +192,7 @@ func TestProviderUsageSessionSubmitsAllowlistedCommand(t *testing.T) {
 	t.Cleanup(func() { providerSetupCommands = original })
 
 	manager := newProviderSetupManager()
-	session, err := manager.start("owner-1", "claude-code", "usage", 100, 24, nil, nil)
+	session, err := manager.start("owner-1", "claude-code", "usage", 100, 24, nil, nil, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -229,14 +231,50 @@ func TestProviderUsagePromptAndTrustDetection(t *testing.T) {
 
 func TestProviderSetupRejectsCommandsOutsideAllowlist(t *testing.T) {
 	manager := newProviderSetupManager()
-	if _, err := manager.start("owner-1", "unknown", "install", 100, 24, nil, nil); err == nil {
+	if _, err := manager.start("owner-1", "unknown", "install", 100, 24, nil, nil, false); err == nil {
 		t.Fatal("expected unsupported provider error")
 	}
-	if _, err := manager.start("owner-1", "codex-cli", "shell", 100, 24, nil, nil); err == nil {
+	if _, err := manager.start("owner-1", "codex-cli", "shell", 100, 24, nil, nil, false); err == nil {
 		t.Fatal("expected unsupported action error")
 	}
-	if _, err := manager.start("owner-1", "codex-cli", "install", 100, 24, nil, nil); err == nil {
+	if _, err := manager.start("owner-1", "codex-cli", "install", 100, 24, nil, nil, false); err == nil {
 		t.Fatal("provider installation belongs to deployment, not an interactive setup session")
+	}
+}
+
+func TestProviderSetupCanReplaceRunningSession(t *testing.T) {
+	original := providerSetupCommands
+	providerSetupCommands = map[string]map[string]providerSetupCommand{
+		"codex-cli": {
+			"authenticate": {command: "/bin/sh", args: []string{"-c", "read answer"}},
+		},
+	}
+	t.Cleanup(func() { providerSetupCommands = original })
+
+	manager := newProviderSetupManager()
+	first, err := manager.start("owner-1", "codex-cli", "authenticate", 100, 24, nil, nil, false)
+	if err != nil {
+		t.Fatalf("start first setup: %v", err)
+	}
+	if _, err := manager.start("owner-1", "codex-cli", "authenticate", 100, 24, nil, nil, false); err == nil {
+		t.Fatal("expected a conflict without replacement")
+	} else {
+		var conflict *providerSetupConflictError
+		if !errors.As(err, &conflict) {
+			t.Fatalf("expected providerSetupConflictError, got %T: %v", err, err)
+		}
+	}
+
+	replacement, err := manager.start("owner-1", "codex-cli", "authenticate", 100, 24, nil, nil, true)
+	if err != nil {
+		t.Fatalf("replace setup: %v", err)
+	}
+	defer manager.remove(replacement.id, true)
+	if first.snapshot().Status != "cancelled" {
+		t.Fatalf("first setup status = %q, want cancelled", first.snapshot().Status)
+	}
+	if replacement.id == first.id || !replacement.isRunning() {
+		t.Fatalf("replacement was not started: %+v", replacement.snapshot())
 	}
 }
 

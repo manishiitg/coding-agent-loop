@@ -38,6 +38,7 @@ export function activateTab(tabId: string): boolean {
   // the tab/mode alone is not enough.
   useLLMStore.getState().setShowLLMModal(false)
   useAppStore.getState().setShowWorkflowsOverview(false)
+  useAppStore.getState().setShowSchedulesOverview(false)
 
   // The tab metadata is the source of truth for which pane it belongs to.
   const mode = tab.metadata?.mode ?? 'multi-agent'

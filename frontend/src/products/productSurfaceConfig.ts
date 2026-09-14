@@ -1,4 +1,4 @@
-export const PRODUCT_SURFACES = ['agentworks', 'video-studio', 'dominion', 'sparkquill'] as const
+export const PRODUCT_SURFACES = ['agentworks', 'video-studio', 'dominion', 'sparkquill', 'work'] as const
 
 export type ProductSurface = (typeof PRODUCT_SURFACES)[number]
 
@@ -12,22 +12,22 @@ function runtimeConfig(): ProductRuntimeConfig | undefined {
   return (window as Window & { __APP_RUNTIME_CONFIG__?: ProductRuntimeConfig }).__APP_RUNTIME_CONFIG__
 }
 
-function isProductSurface(value: unknown): value is ProductSurface {
+export function isProductSurface(value: unknown): value is ProductSurface {
   return typeof value === 'string' && PRODUCT_SURFACES.includes(value as ProductSurface)
 }
 
 /**
  * Returns the products intentionally exposed by this deployment.  Leaving the
- * runtime setting out is the ordinary AgentWorks localhost case, so it must
- * expose AgentWorks alone. Other desktop shells and multi-product deployments
- * opt in explicitly with their own allowlist.
+ * runtime setting out is the ordinary AgentWorks localhost case, which ships
+ * the automation surface and the built-in Work coding surface together.
+ * Dedicated product shells can still replace this with their own allowlist.
  */
 export function enabledProductSurfaces(): ProductSurface[] {
   const configured = runtimeConfig()?.enabledProductSurfaces
-  if (!Array.isArray(configured)) return ['agentworks']
+  if (!Array.isArray(configured)) return ['agentworks', 'work']
 
   const enabled = configured.filter(isProductSurface)
-  return enabled.length > 0 ? [...new Set(enabled)] : ['agentworks']
+  return enabled.length > 0 ? [...new Set(enabled)] : ['agentworks', 'work']
 }
 
 export function deploymentDefaultProductSurface(): ProductSurface {

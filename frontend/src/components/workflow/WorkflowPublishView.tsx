@@ -41,12 +41,12 @@ const WorkflowPublishView: React.FC<WorkflowPublishViewProps> = ({ workspacePath
       loadAccessSecret={loadAccessSecret}
       onStateLoaded={onStateLoaded}
       fallbackStrategies={FALLBACK_SUPPORTED}
-      subtitle="Share this automation's Pulse log & report dashboard at a public URL"
+      subtitle="Share this automation's Pulse log and dashboard at a public URL"
       emptyDestinationsText="Use setup to pick a static host (Netlify, Vercel, Cloudflare Pages, GitHub Pages, S3, ...) — any static host works."
       destinationsHelp="The builder deploys to these and writes the URL."
       supportedHelp="Suggestions, not a limit — any static host works."
       statusPathFallback="publish/status.json"
-      defaultTargetLabel="pulse, report"
+      defaultTargetLabel="pulse, dashboard"
       setupAction={{
         label: <>Set up · publish in chat with <code className="rounded bg-background px-1 font-medium text-foreground">/publish</code></>
       }}

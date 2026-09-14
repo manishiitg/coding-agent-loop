@@ -43,9 +43,11 @@ const queryClient = new QueryClient();
 
 const QuickSwitcher = lazy(() => import('./components/QuickSwitcher'))
 const WorkflowsOverviewPage = lazy(() => import('./components/WorkflowsOverviewPage').then(module => ({ default: module.WorkflowsOverviewPage })))
+const SchedulesPage = lazy(() => import('./components/SchedulesPage'))
 const VideoStudioSurface = lazy(() => import('./products/video-studio/VideoStudioSurface').then(module => ({ default: module.VideoStudioSurface })))
 const DominionSurface = lazy(() => import('./products/dominion/DominionSurface').then(module => ({ default: module.DominionSurface })))
 const SparkQuillSurface = lazy(() => import('./products/sparkquill/SparkQuillSurface').then(module => ({ default: module.SparkQuillSurface })))
+const WorkSurface = lazy(() => import('./products/work/WorkSurface').then(module => ({ default: module.WorkSurface })))
 
 const FileSurfaceFallback = () => (
   <div className="flex h-full min-h-40 items-center justify-center text-muted-foreground">
@@ -136,7 +138,9 @@ function App() {
     setWorkspaceMinimized,
     setWorkspaceMinimizedForLayout,
     showWorkflowsOverview,
-    setShowWorkflowsOverview
+    setShowWorkflowsOverview,
+    showSchedulesOverview,
+    setShowSchedulesOverview
   } = useAppStore(useShallow(state => ({
     setSelectedPresetId: state.setSelectedPresetId,
     workspaceMinimized: state.workspaceMinimized,
@@ -145,8 +149,11 @@ function App() {
     setWorkspaceMinimizedForLayout: state.setWorkspaceMinimizedForLayout,
     showWorkflowsOverview: state.showWorkflowsOverview,
     setShowWorkflowsOverview: state.setShowWorkflowsOverview,
+    showSchedulesOverview: state.showSchedulesOverview,
+    setShowSchedulesOverview: state.setShowSchedulesOverview,
   })))
   const [hasOpenedWorkflowsOverview, setHasOpenedWorkflowsOverview] = useState(showWorkflowsOverview)
+  const [hasOpenedSchedulesOverview, setHasOpenedSchedulesOverview] = useState(showSchedulesOverview)
   
   // Expose performance diagnostics on window for DevTools console
   useEffect(() => {
@@ -833,6 +840,7 @@ function App() {
         setModeCategory('workflow')
         useLLMStore.getState().setShowLLMModal(false)
         setShowWorkflowsOverview(false)
+        setShowSchedulesOverview(false)
         restoreMostRecentWorkflowTab()
         return
       }
@@ -840,6 +848,7 @@ function App() {
       if ((event.ctrlKey || event.metaKey) && event.key === '3') {
         event.preventDefault()
         useLLMStore.getState().setShowLLMModal(false)
+        setShowSchedulesOverview(false)
         setShowWorkflowsOverview(true)
         return
       }
@@ -868,7 +877,7 @@ function App() {
 
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [restoreMostRecentWorkflowTab, setShowWorkflowsOverview, toggleWorkspaceMinimize])
+  }, [restoreMostRecentWorkflowTab, setShowWorkflowsOverview, setShowSchedulesOverview, toggleWorkspaceMinimize])
 
   useEffect(() => {
     if (showWorkflowsOverview) {
@@ -877,7 +886,13 @@ function App() {
   }, [showWorkflowsOverview])
 
   useEffect(() => {
-    if (showWorkflowsOverview || showProviders) {
+    if (showSchedulesOverview) {
+      setHasOpenedSchedulesOverview(true)
+    }
+  }, [showSchedulesOverview])
+
+  useEffect(() => {
+    if (showWorkflowsOverview || showProviders || showSchedulesOverview) {
       setWorkspaceMinimizedForLayout(true)
       return
     }
@@ -886,7 +901,7 @@ function App() {
       const { workspaceMinimizedByMode } = useAppStore.getState()
       setWorkspaceMinimizedForLayout(Boolean(workspaceMinimizedByMode?.[selectedModeCategory]))
     }
-  }, [selectedModeCategory, showWorkflowsOverview, showProviders, setWorkspaceMinimizedForLayout])
+  }, [selectedModeCategory, showWorkflowsOverview, showProviders, showSchedulesOverview, setWorkspaceMinimizedForLayout])
 
   useEffect(() => {
     const collapseWorkspaceForPopup = () => {
@@ -923,6 +938,8 @@ function App() {
           <Suspense fallback={<FileSurfaceFallback />}><DominionSurface /></Suspense>
         ) : productSurface === 'sparkquill' ? (
           <Suspense fallback={<FileSurfaceFallback />}><SparkQuillSurface /></Suspense>
+        ) : productSurface === 'work' ? (
+          <Suspense fallback={<FileSurfaceFallback />}><WorkSurface /></Suspense>
         ) : (
         <>
         <UpdateProgressToast />
@@ -954,8 +971,15 @@ function App() {
                     </Suspense>
                   </div>
                 )}
+                {hasOpenedSchedulesOverview && (
+                  <div className={showSchedulesOverview && !showProviders ? 'h-full' : 'hidden'}>
+                    <Suspense fallback={<FileSurfaceFallback />}>
+                      <SchedulesPage />
+                    </Suspense>
+                  </div>
+                )}
                 <LlmModalHost />
-                <div className={!showWorkflowsOverview && !showProviders ? 'h-full' : 'hidden'}>
+                <div className={!showWorkflowsOverview && !showProviders && !showSchedulesOverview ? 'h-full' : 'hidden'}>
                   <WorkflowLayout
                     className="h-full"
                     onNewChat={startNewChat}

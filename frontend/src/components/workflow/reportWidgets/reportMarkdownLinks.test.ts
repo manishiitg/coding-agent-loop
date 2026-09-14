@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { isWorkspaceRelativeReference, rewriteReportMarkdownReferences } from './reportMarkdownLinks'
 
-const allow = (path: string) => (path.startsWith('db/') || path.startsWith('knowledgebase/') ? path : '')
+const allow = (path: string) => (path.startsWith('db/') || path.startsWith('dashboard/') || path.startsWith('knowledgebase/') ? path : '')
 
 describe('isWorkspaceRelativeReference', () => {
   it('is true only for a bare relative path', () => {
@@ -35,6 +35,11 @@ describe('rewriteReportMarkdownReferences', () => {
   it('leaves a reference the allow-list rejects untouched', () => {
     const html = '<a href="runs/iteration-1/out.txt">scratch</a>'
     expect(rewriteReportMarkdownReferences(html, allow)).toBe(html)
+  })
+
+  it('allows Work-native dashboard files', () => {
+    const out = rewriteReportMarkdownReferences('<a href="dashboard/notes.md">notes</a>', allow)
+    expect(out).toContain('data-report-open="dashboard/notes.md"')
   })
 
   it('resolves file-relative references against the markdown file folder, root-relative ones as-is', () => {

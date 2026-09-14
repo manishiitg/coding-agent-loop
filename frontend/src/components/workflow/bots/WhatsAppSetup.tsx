@@ -118,7 +118,7 @@ export function WhatsAppSetup({ bots }: { bots: WhatsAppSetupBots }) {
           <div className="flex items-start justify-between gap-4">
             <div>
               <h3 className="text-sm font-medium text-foreground">Connection</h3>
-              <p className="text-xs text-muted-foreground mt-0.5">Account-wide pairing shared by all workflows.</p>
+              <p className="text-xs text-muted-foreground mt-0.5">Account-wide pairing shared by all projects and workflows.</p>
               {(waStatus.owner_email || waStatus.owner_username || waStatus.owner_user_id) && (
                 <p className="mt-1 text-[11px] text-muted-foreground">
                   bound to <span className="text-foreground">{waStatus.owner_email || waStatus.owner_username || waStatus.owner_user_id}</span>

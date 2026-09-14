@@ -29,6 +29,7 @@ const { storeState } = vi.hoisted(() => ({
     setAnthropicConfig: vi.fn(),
     setAzureConfig: vi.fn(),
     testAPIKey: vi.fn(),
+    setShowLLMModal: vi.fn(),
   },
 }))
 
@@ -79,6 +80,7 @@ afterEach(() => {
   storeState.providerManifest = []
   storeState.llmConfigLocked = false
   storeState.savedLLMs = []
+  storeState.setShowLLMModal.mockReset()
   document.body.innerHTML = ''
 })
 
@@ -116,7 +118,11 @@ describe('WorkflowLLMConfigurationPanel coding-agent rows', () => {
       expect(host.textContent).toContain('OpenAI Codex CLI')
       expect(host.textContent).toContain('Needs setup')
       expect(Array.from(host.querySelectorAll('button')).some(button => button.textContent?.trim() === 'Test')).toBe(false)
-      expect(Array.from(host.querySelectorAll('button')).filter(button => button.textContent?.trim() === 'Use')).toHaveLength(2)
+      expect(Array.from(host.querySelectorAll('button')).filter(button => button.textContent?.trim() === 'Use')).toHaveLength(1)
+      const setupButton = Array.from(host.querySelectorAll('button')).find(button => button.textContent?.trim() === 'Set up in Providers')
+      expect(setupButton).toBeDefined()
+      await act(async () => setupButton?.click())
+      expect(storeState.setShowLLMModal).toHaveBeenCalledWith(true)
       expect(host.textContent).toContain('Authentication is managed in Providers')
     } finally {
       await act(async () => root.unmount())

@@ -23,9 +23,9 @@ Keep the concurrency contract simple:
    be dynamic or omitted.
 3. A schedule may opt into parallel execution only through an explicit platform
    field and only after a human approves a fixed risk disclosure.
-4. Both the already-running producing schedule and the incoming producing
-   schedule must have the parallel opt-in. Otherwise the workflow-wide lock
-   remains authoritative.
+4. The opt-in belongs to the independent schedule. An approved parallel
+   schedule may overlap the sequential schedule lane; the other schedules do
+   not need to become globally parallel merely to coexist with it.
 5. `after_schedule_ids` always wins: a dependent occurrence waits even when
    both schedules allow parallel execution.
 6. Two occurrences of the same schedule do not overlap. Collision policy still
@@ -65,9 +65,16 @@ approval rules.
 When schedule B fires while schedule A owns the workflow:
 
 - if B depends on A, B waits;
-- if A and B both have approved `parallel`, B may start;
-- otherwise B follows its existing `collision_policy` against the workflow-wide
-  busy state.
+- if B has approved `parallel`, B may start outside the sequential lane;
+- if B is sequential and A is parallel, B may acquire the sequential lane and
+  coexist with A; and
+- if A and B are both sequential, B follows its existing `collision_policy`
+  against the workflow-wide busy state.
+
+This makes a genuinely independent schedule, such as an approved measurement
+schedule, parallel without forcing Daily Normal, Growth and other producing
+schedules to overlap one another. Human approval accepts the disclosed risk of
+that independent schedule interacting with whichever sequential run is active.
 
 Manual **Run now** uses the saved schedule's mode and approval. Pulse-only and
 maintenance occurrences remain non-producing evidence reviewers under their
@@ -96,10 +103,10 @@ approval path are implemented. Before then, agents preserve the existing lock.
   migration prompt.
 - An agent cannot enable `parallel` without a durable human approval record.
 - The UI shows the same warning and writes the same approval record as chat.
-- A sequential schedule blocks overlap with a parallel schedule in either
-  direction.
-- Two approved parallel schedules can overlap only after PLAT-320 gives both
-  different immutable `-sched` identities.
+- Sequential schedules remain serialized with one another, while an approved
+  parallel schedule may coexist with the sequential lane in either start order.
+- Approved parallel schedules can overlap only after PLAT-320 gives every
+  producing occurrence a different immutable `-sched` identity.
 - `after_schedule_ids` blocks overlap even when both schedules are parallel.
 - The same schedule cannot overlap itself.
 - Removing approval or changing back to sequential immediately prevents new

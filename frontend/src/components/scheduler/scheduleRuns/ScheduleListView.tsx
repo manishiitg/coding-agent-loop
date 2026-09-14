@@ -166,10 +166,9 @@ export const ScheduleListView: React.FC<ScheduleListViewProps> = ({ panel }) => 
                     </span>
                   )}
                 </div>
-                {(dependencyNames.length > 0 || job.max_run_duration_minutes) && (
+                {dependencyNames.length > 0 && (
                   <div className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5 pr-28 text-xs text-indigo-600 dark:text-indigo-300">
                     {dependencyNames.length > 0 && <span>Waits for: {dependencyNames.join(', ')}</span>}
-                    {job.max_run_duration_minutes ? <span>Run limit: {job.max_run_duration_minutes}m</span> : null}
                   </div>
                 )}
                 {job.mode === 'workshop' && job.messages && job.messages.length > 0 && (

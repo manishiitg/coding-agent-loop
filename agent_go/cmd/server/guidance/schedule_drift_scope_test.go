@@ -41,13 +41,12 @@ func TestArtifactDriftAuditsTheSchedule(t *testing.T) {
 	}
 }
 
-func TestScheduleReferenceAdvertisesCoordinationAndRuntimeChoices(t *testing.T) {
+func TestScheduleReferenceAdvertisesCoordinationChoices(t *testing.T) {
 	rendered, err := renderFromRegistry("schedules", tmplData{}, referenceKinds)
 	if err != nil {
 		t.Fatalf("render schedules reference: %v", err)
 	}
 	for _, want := range []string{
-		"max_run_duration_minutes",
 		"after_schedule_ids",
 		"waits for **all**",
 		"after_terminal_status",
@@ -60,5 +59,8 @@ func TestScheduleReferenceAdvertisesCoordinationAndRuntimeChoices(t *testing.T) 
 	}
 	if description := referenceKinds["schedules"].Description; !strings.Contains(description, "multi-schedule fan-in") {
 		t.Errorf("schedule reference discovery description does not advertise coordination: %q", description)
+	}
+	if strings.Contains(rendered, "max_run_duration_minutes") {
+		t.Error("schedule reference still advertises the retired generic run-duration limit")
 	}
 }

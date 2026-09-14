@@ -415,35 +415,6 @@ func TestRecordOrQueueBlockedScheduleRetainsLatestOccurrence(t *testing.T) {
 	}
 }
 
-func TestScheduleRunExecutionContextAppliesOptionalWallClockLimit(t *testing.T) {
-	parent := context.Background()
-	unbounded, cancelUnbounded := scheduleRunExecutionContext(parent, WorkflowSchedule{})
-	defer cancelUnbounded()
-	if _, ok := unbounded.Deadline(); ok {
-		t.Fatal("unbounded schedule unexpectedly has a deadline")
-	}
-
-	bounded, cancelBounded := scheduleRunExecutionContext(parent, WorkflowSchedule{MaxRunDurationMinutes: 2})
-	defer cancelBounded()
-	deadline, ok := bounded.Deadline()
-	if !ok {
-		t.Fatal("bounded schedule is missing its deadline")
-	}
-	remaining := time.Until(deadline)
-	if remaining < 119*time.Second || remaining > 121*time.Second {
-		t.Fatalf("deadline remaining=%s, want approximately 2 minutes", remaining)
-	}
-
-	deadlineCtx, cancelDeadline := context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
-	defer cancelDeadline()
-	if scheduleRunTimedOut(deadlineCtx, WorkflowSchedule{}) {
-		t.Fatal("an inherited deadline without max_run_duration_minutes was mislabeled as the schedule run limit")
-	}
-	if !scheduleRunTimedOut(deadlineCtx, WorkflowSchedule{MaxRunDurationMinutes: 2}) {
-		t.Fatal("configured schedule deadline was not recognized as a run timeout")
-	}
-}
-
 func TestScheduleDependencyDispositionUsesMatchingOccurrenceAndPolicy(t *testing.T) {
 	newFixture := func(t *testing.T, terminal schedulerstate.State) (*SchedulerService, *ScheduleContext, time.Time, time.Time) {
 		t.Helper()

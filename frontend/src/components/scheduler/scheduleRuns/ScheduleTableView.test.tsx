@@ -15,7 +15,7 @@ describe('global schedule table', () => {
       cron_expression: '0 8 * * *', run_count: 3, last_status: 'error', last_error: 'Previous run failed',
       messages: ['Collect evidence and prepare the daily report.'], missed_run_count: 2,
       next_run_at: '2026-09-13T08:00:00Z', last_run_at: '2026-09-12T08:00:00Z',
-      collision_policy: 'queue_latest', max_start_delay_minutes: 120, max_run_duration_minutes: 90,
+      collision_policy: 'queue_latest', max_start_delay_minutes: 120,
       after_schedule_ids: ['collector', 'guard'], after_terminal_status: 'completed', after_delay_minutes: 5, dependency_deadline: '10:30',
     } as ScheduledJob
     const trigger = vi.fn()
@@ -38,7 +38,6 @@ describe('global schedule table', () => {
       expect(details.textContent).toContain('Waits for: collector, guard')
       expect(details.textContent).toContain('Release: completed + 5m delay · Deadline: 10:30 local')
       expect(details.textContent).toContain('When busy: queue latest · Start within 120m')
-      expect(details.textContent).toContain('Maximum run duration: 90m')
       const run = Array.from(details.querySelectorAll('button')).find(b => b.textContent === 'Run now')
       expect(Boolean(run)).toBe(!isReadOnlyUser && !isWebhook)
       if (isWebhook) {

@@ -54,7 +54,7 @@ export function ScheduleTableView({ panel }: ScheduleTableViewProps) {
             const scope = getScheduleExecutionScope(job)
             const dependencyIds = getScheduleDependencyIds(job)
             const dependencyNames = dependencyIds.map(id => panel.filteredJobs.find(candidate => candidate.id === id)?.name ?? id)
-            const hasRuntimePolicy = dependencyIds.length > 0 || !!job.collision_policy || !!job.max_start_delay_minutes || !!job.max_run_duration_minutes
+            const hasRuntimePolicy = dependencyIds.length > 0 || !!job.collision_policy || !!job.max_start_delay_minutes
             return <React.Fragment key={job.id}>
               <tr className="transition-colors hover:bg-muted/20">
                 <td className="max-w-[340px] px-4 py-3">
@@ -84,13 +84,12 @@ export function ScheduleTableView({ panel }: ScheduleTableViewProps) {
                     <h4 className="font-medium text-foreground">Coordination and runtime policy</h4>
                     {dependencyNames.length > 0 && <p>Waits for: {dependencyNames.join(', ')} · Release: {job.after_terminal_status || 'completed'}{job.after_delay_minutes ? ` + ${job.after_delay_minutes}m delay` : ''}{job.dependency_deadline ? ` · Deadline: ${job.dependency_deadline} local` : ''}</p>}
                     {job.collision_policy && <p>When busy: {job.collision_policy.replaceAll('_', ' ')}{job.max_start_delay_minutes ? ` · Start within ${job.max_start_delay_minutes}m` : ''}</p>}
-                    {job.max_run_duration_minutes ? <p>Maximum run duration: {job.max_run_duration_minutes}m</p> : null}
                   </div>}
                   {job.messages?.length ? <div className="max-w-4xl space-y-2"><h4 className="text-xs font-medium text-foreground">Instructions</h4>{job.messages.map((message, i) => <p key={i} className="whitespace-pre-wrap text-sm leading-6 text-muted-foreground">{message}</p>)}</div> : null}
                   {job.last_error && <p className="max-w-4xl whitespace-pre-wrap break-words text-xs leading-5 text-muted-foreground">Last run: {job.last_error}</p>}
                   {isMissedSchedule(job) && <p className="text-xs text-muted-foreground">{job.missed_run_count} missed occurrence{job.missed_run_count === 1 ? '' : 's'} recorded.</p>}
                   {job.waiting_reason && <p className="text-xs text-muted-foreground">{job.waiting_reason}</p>}
-                  <p className="text-xs text-muted-foreground">{isWebhook ? 'Ask the workflow builder chat to configure this webhook.' : 'Ask the workflow Builder chat to change timing, runtime limits, busy-run handling, or schedule dependencies.'}</p>
+                  <p className="text-xs text-muted-foreground">{isWebhook ? 'Ask the workflow builder chat to configure this webhook.' : 'Ask the workflow Builder chat to change timing, busy-run handling, or schedule dependencies.'}</p>
                 </div>
               </td></tr>}
             </React.Fragment>

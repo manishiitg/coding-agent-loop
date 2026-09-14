@@ -3018,7 +3018,6 @@ export interface ScheduledJob {
   execution_mode?: 'close_only'
   collision_policy?: 'skip' | 'queue_latest' | 'retry' | 'coalesce'
   max_start_delay_minutes?: number
-  max_run_duration_minutes?: number
   after_schedule_id?: string
   after_schedule_ids?: string[]
   after_terminal_status?: 'completed' | 'any_terminal'
@@ -3058,7 +3057,6 @@ export interface CreateScheduledJobRequest {
   execution_mode?: 'close_only'
   collision_policy?: 'skip' | 'queue_latest' | 'retry' | 'coalesce'
   max_start_delay_minutes?: number
-  max_run_duration_minutes?: number
   after_schedule_id?: string
   after_schedule_ids?: string[]
   after_terminal_status?: 'completed' | 'any_terminal'
@@ -3088,7 +3086,6 @@ export interface UpdateScheduledJobRequest {
   execution_mode?: 'close_only' | ''
   collision_policy?: 'skip' | 'queue_latest' | 'retry' | 'coalesce'
   max_start_delay_minutes?: number
-  max_run_duration_minutes?: number
   after_schedule_id?: string
   after_schedule_ids?: string[]
   after_terminal_status?: 'completed' | 'any_terminal'

@@ -378,8 +378,8 @@ assume the applied fix holds unless the defect is reproduced.
   dependent waits for all prerequisites on the same local calendar date; never
   introduce a cycle, a cadence mismatch, or treat the edge as permission to
   overlap runs.
-- Reconcile `max_run_duration_minutes`, collision queue/discard behavior,
-  `max_start_delay_minutes`, terminal-status release, delay, and dependency
+- Reconcile collision queue/discard behavior, `max_start_delay_minutes`,
+  terminal-status release, delay, and dependency
   deadline as one transition policy. Preserve unrelated schedule fields when
   using typed update tools.
 - Test ordering, retries, cancellation, recovery, and durable terminal state.

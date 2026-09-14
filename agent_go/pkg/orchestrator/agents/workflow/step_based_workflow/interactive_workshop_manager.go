@@ -6432,10 +6432,6 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 					"type": "integer", "minimum": 1,
 					"description": "Maximum age of a queued occurrence before it expires.",
 				},
-				"max_run_duration_minutes": map[string]interface{}{
-					"type": "integer", "minimum": 1,
-					"description": "Hard wall-clock limit for the complete scheduled job, including post-run Pulse work.",
-				},
 				"after_schedule_id": map[string]interface{}{
 					"type":        "string",
 					"description": "Legacy singular prerequisite schedule ID. Prefer after_schedule_ids for new schedules.",
@@ -6534,9 +6530,6 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 			if value, ok := args["max_start_delay_minutes"].(float64); ok {
 				policy.MaxStartDelayMinutes = int(value)
 			}
-			if value, ok := args["max_run_duration_minutes"].(float64); ok {
-				policy.MaxRunDurationMinutes = int(value)
-			}
 			if value, ok := args["after_delay_minutes"].(float64); ok {
 				policy.AfterDelayMinutes = int(value)
 			}
@@ -6581,9 +6574,6 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				"collision_policy":       map[string]interface{}{"type": "string", "enum": []string{"skip", "queue_latest", "retry", "coalesce"}, "description": "What to do if the workflow is busy when a calendar item is due."},
 				"max_start_delay_minutes": map[string]interface{}{
 					"type": "integer", "minimum": 1, "description": "Maximum age of a queued calendar occurrence before it expires.",
-				},
-				"max_run_duration_minutes": map[string]interface{}{
-					"type": "integer", "minimum": 1, "description": "Hard wall-clock limit for the complete scheduled job.",
 				},
 				"after_schedule_ids": map[string]interface{}{
 					"type": "array", "items": map[string]interface{}{"type": "string"}, "description": "Prerequisite schedule IDs whose same-day occurrences must all release first.",
@@ -6652,9 +6642,6 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 			policy.DependencyDeadline, _ = args["dependency_deadline"].(string)
 			if value, ok := args["max_start_delay_minutes"].(float64); ok {
 				policy.MaxStartDelayMinutes = int(value)
-			}
-			if value, ok := args["max_run_duration_minutes"].(float64); ok {
-				policy.MaxRunDurationMinutes = int(value)
 			}
 			if value, ok := args["after_delay_minutes"].(float64); ok {
 				policy.AfterDelayMinutes = int(value)
@@ -6745,9 +6732,6 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				},
 				"max_start_delay_minutes": map[string]interface{}{
 					"type": "integer", "minimum": 0, "description": "Maximum queued age. Zero restores the platform default.",
-				},
-				"max_run_duration_minutes": map[string]interface{}{
-					"type": "integer", "minimum": 0, "description": "Hard wall-clock limit for the complete scheduled job. Zero clears the limit.",
 				},
 				"after_schedule_id": map[string]interface{}{
 					"type": "string", "description": "Legacy singular prerequisite schedule ID, or an empty string to clear it.",
@@ -6867,9 +6851,6 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 			if _, ok3 := args["max_start_delay_minutes"]; ok3 && policy == nil {
 				policy = &ScheduleRuntimePolicy{}
 			}
-			if _, ok := args["max_run_duration_minutes"]; ok && policy == nil {
-				policy = &ScheduleRuntimePolicy{}
-			}
 			if _, ok4 := args["after_schedule_id"]; ok4 && policy == nil {
 				policy = &ScheduleRuntimePolicy{}
 			}
@@ -6899,7 +6880,6 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				_, policy.SetExecutionMode = args["execution_mode"]
 				_, policy.SetCollisionPolicy = args["collision_policy"]
 				_, policy.SetMaxStartDelayMinutes = args["max_start_delay_minutes"]
-				_, policy.SetMaxRunDurationMinutes = args["max_run_duration_minutes"]
 				_, policy.SetAfterScheduleID = args["after_schedule_id"]
 				policy.AfterScheduleIDs, policy.SetAfterScheduleIDs = stringSliceArgument(args, "after_schedule_ids")
 				_, policy.SetAfterTerminalStatus = args["after_terminal_status"]
@@ -6912,9 +6892,6 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				policy.DependencyDeadline, _ = args["dependency_deadline"].(string)
 				if value, ok := args["max_start_delay_minutes"].(float64); ok {
 					policy.MaxStartDelayMinutes = int(value)
-				}
-				if value, ok := args["max_run_duration_minutes"].(float64); ok {
-					policy.MaxRunDurationMinutes = int(value)
 				}
 				if value, ok := args["after_delay_minutes"].(float64); ok {
 					policy.AfterDelayMinutes = int(value)

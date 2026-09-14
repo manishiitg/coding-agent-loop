@@ -206,7 +206,7 @@ func TestValidateManifestAcceptsTypedDependencyAndCollisionPolicies(t *testing.T
 		{
 			ID: "pulse", Mode: "multi-agent", PulseMode: "basic", PulseModeReason: "Routine dependency fixture", ScheduleType: "cron", CronExpression: "10 16 * * 1-5",
 			AfterScheduleIDs: []string{"close", "snapshot"}, AfterTerminalStatus: "completed", AfterDelayMinutes: 10,
-			DependencyDeadline: "17:30", CollisionPolicy: "coalesce", MaxStartDelayMinutes: 80, MaxRunDurationMinutes: 45,
+			DependencyDeadline: "17:30", CollisionPolicy: "coalesce", MaxStartDelayMinutes: 80,
 		},
 	}
 	if err := ValidateManifest(manifest); err != nil {
@@ -219,7 +219,7 @@ func TestValidateManifestAcceptsTypedDependencyAndCollisionPolicies(t *testing.T
 	}
 }
 
-func TestValidateManifestRejectsInvalidDependencyListsAndRunLimit(t *testing.T) {
+func TestValidateManifestRejectsInvalidDependencyLists(t *testing.T) {
 	manifest := NewWorkflowManifest("Invalid dependency policy")
 	manifest.Schedules = []WorkflowSchedule{
 		{ID: "collect", Mode: "multi-agent", PulseMode: "basic", PulseModeReason: "Routine dependency fixture", ScheduleType: "cron", CronExpression: "0 9 * * *"},
@@ -232,12 +232,6 @@ func TestValidateManifestRejectsInvalidDependencyListsAndRunLimit(t *testing.T) 
 	manifest.Schedules[1].AfterScheduleIDs = []string{"missing"}
 	if err := ValidateManifest(manifest); err == nil || !strings.Contains(err.Error(), "unknown dependency") {
 		t.Fatalf("unknown dependency ID should be rejected, got %v", err)
-	}
-
-	manifest.Schedules[1].AfterScheduleIDs = nil
-	manifest.Schedules[1].MaxRunDurationMinutes = -1
-	if err := ValidateManifest(manifest); err == nil || !strings.Contains(err.Error(), "max_run_duration_minutes") {
-		t.Fatalf("negative run limit should be rejected, got %v", err)
 	}
 }
 

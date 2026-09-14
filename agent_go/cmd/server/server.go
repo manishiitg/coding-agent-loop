@@ -9762,9 +9762,6 @@ func (api *StreamingAPI) buildSchedulerCallbacks() *todo_creation_human.Schedule
 				if sched.MaxStartDelayMinutes > 0 {
 					sb.WriteString(fmt.Sprintf("- **Maximum start delay**: %d minutes\n", sched.MaxStartDelayMinutes))
 				}
-				if sched.MaxRunDurationMinutes > 0 {
-					sb.WriteString(fmt.Sprintf("- **Maximum run duration**: %d minutes\n", sched.MaxRunDurationMinutes))
-				}
 				if dependencyIDs := scheduleDependencyIDs(sched); len(dependencyIDs) > 0 {
 					sb.WriteString(fmt.Sprintf("- **Waits for schedules**: %v\n", dependencyIDs))
 					dependencyRelease := strings.TrimSpace(sched.AfterTerminalStatus)
@@ -9816,30 +9813,29 @@ func (api *StreamingAPI) buildSchedulerCallbacks() *todo_creation_human.Schedule
 				}
 			}
 			newSched := WorkflowSchedule{
-				ID:                    generateScheduleID(),
-				Name:                  name,
-				CronExpression:        cronExpr,
-				Timezone:              timezone,
-				GroupNames:            groupNames,
-				RouteSelections:       routeSelections,
-				Enabled:               true,
-				Mode:                  mode,
-				Messages:              messages,
-				DirectMessagesReason:  directMessagesReason,
-				WorkshopMode:          workshopMode,
-				ResumePrevious:        resumePrevious,
-				PulseReviewOnly:       pulseReviewOnly,
-				PulseMode:             strings.ToLower(strings.TrimSpace(policy.PulseMode)),
-				PulseModeReason:       strings.TrimSpace(policy.PulseModeReason),
-				ExecutionMode:         strings.TrimSpace(policy.ExecutionMode),
-				CollisionPolicy:       strings.TrimSpace(policy.CollisionPolicy),
-				MaxStartDelayMinutes:  policy.MaxStartDelayMinutes,
-				MaxRunDurationMinutes: policy.MaxRunDurationMinutes,
-				AfterScheduleID:       strings.TrimSpace(policy.AfterScheduleID),
-				AfterScheduleIDs:      normalizeScheduleDependencyIDs(policy.AfterScheduleIDs),
-				AfterTerminalStatus:   strings.TrimSpace(policy.AfterTerminalStatus),
-				AfterDelayMinutes:     policy.AfterDelayMinutes,
-				DependencyDeadline:    strings.TrimSpace(policy.DependencyDeadline),
+				ID:                   generateScheduleID(),
+				Name:                 name,
+				CronExpression:       cronExpr,
+				Timezone:             timezone,
+				GroupNames:           groupNames,
+				RouteSelections:      routeSelections,
+				Enabled:              true,
+				Mode:                 mode,
+				Messages:             messages,
+				DirectMessagesReason: directMessagesReason,
+				WorkshopMode:         workshopMode,
+				ResumePrevious:       resumePrevious,
+				PulseReviewOnly:      pulseReviewOnly,
+				PulseMode:            strings.ToLower(strings.TrimSpace(policy.PulseMode)),
+				PulseModeReason:      strings.TrimSpace(policy.PulseModeReason),
+				ExecutionMode:        strings.TrimSpace(policy.ExecutionMode),
+				CollisionPolicy:      strings.TrimSpace(policy.CollisionPolicy),
+				MaxStartDelayMinutes: policy.MaxStartDelayMinutes,
+				AfterScheduleID:      strings.TrimSpace(policy.AfterScheduleID),
+				AfterScheduleIDs:     normalizeScheduleDependencyIDs(policy.AfterScheduleIDs),
+				AfterTerminalStatus:  strings.TrimSpace(policy.AfterTerminalStatus),
+				AfterDelayMinutes:    policy.AfterDelayMinutes,
+				DependencyDeadline:   strings.TrimSpace(policy.DependencyDeadline),
 			}
 			if err := validateScheduleRuntimePolicy(newSched); err != nil {
 				return "", err
@@ -9904,26 +9900,25 @@ func (api *StreamingAPI) buildSchedulerCallbacks() *todo_creation_human.Schedule
 				return "", err
 			}
 			newSched := WorkflowSchedule{
-				ID:                    generateScheduleID(),
-				Name:                  name,
-				ScheduleType:          "calendar",
-				Timezone:              timezone,
-				CalendarItems:         calendarItems,
-				GroupNames:            groupNames,
-				Enabled:               true,
-				Mode:                  mode,
-				Messages:              messages,
-				DirectMessagesReason:  directMessagesReason,
-				WorkshopMode:          workshopMode,
-				PulseMode:             strings.ToLower(strings.TrimSpace(policy.PulseMode)),
-				PulseModeReason:       strings.TrimSpace(policy.PulseModeReason),
-				CollisionPolicy:       strings.TrimSpace(policy.CollisionPolicy),
-				MaxStartDelayMinutes:  policy.MaxStartDelayMinutes,
-				MaxRunDurationMinutes: policy.MaxRunDurationMinutes,
-				AfterScheduleIDs:      normalizeScheduleDependencyIDs(policy.AfterScheduleIDs),
-				AfterTerminalStatus:   strings.TrimSpace(policy.AfterTerminalStatus),
-				AfterDelayMinutes:     policy.AfterDelayMinutes,
-				DependencyDeadline:    strings.TrimSpace(policy.DependencyDeadline),
+				ID:                   generateScheduleID(),
+				Name:                 name,
+				ScheduleType:         "calendar",
+				Timezone:             timezone,
+				CalendarItems:        calendarItems,
+				GroupNames:           groupNames,
+				Enabled:              true,
+				Mode:                 mode,
+				Messages:             messages,
+				DirectMessagesReason: directMessagesReason,
+				WorkshopMode:         workshopMode,
+				PulseMode:            strings.ToLower(strings.TrimSpace(policy.PulseMode)),
+				PulseModeReason:      strings.TrimSpace(policy.PulseModeReason),
+				CollisionPolicy:      strings.TrimSpace(policy.CollisionPolicy),
+				MaxStartDelayMinutes: policy.MaxStartDelayMinutes,
+				AfterScheduleIDs:     normalizeScheduleDependencyIDs(policy.AfterScheduleIDs),
+				AfterTerminalStatus:  strings.TrimSpace(policy.AfterTerminalStatus),
+				AfterDelayMinutes:    policy.AfterDelayMinutes,
+				DependencyDeadline:   strings.TrimSpace(policy.DependencyDeadline),
 			}
 			if err := validateScheduleRuntimePolicy(newSched); err != nil {
 				return "", err
@@ -10046,9 +10041,6 @@ func (api *StreamingAPI) buildSchedulerCallbacks() *todo_creation_human.Schedule
 				}
 				if policy.SetMaxStartDelayMinutes {
 					sched.MaxStartDelayMinutes = policy.MaxStartDelayMinutes
-				}
-				if policy.SetMaxRunDurationMinutes {
-					sched.MaxRunDurationMinutes = policy.MaxRunDurationMinutes
 				}
 				if policy.SetAfterScheduleID {
 					sched.AfterScheduleID = strings.TrimSpace(policy.AfterScheduleID)

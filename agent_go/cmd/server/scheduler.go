@@ -2124,21 +2124,8 @@ func (s *SchedulerService) endQueuedLaunch(key string) {
 	s.queuedLaunchMu.Unlock()
 }
 
-func scheduleRunExecutionContext(parent context.Context, schedule WorkflowSchedule) (context.Context, context.CancelFunc) {
-	if schedule.MaxRunDurationMinutes <= 0 {
-		return parent, func() {}
-	}
-	return context.WithTimeout(parent, time.Duration(schedule.MaxRunDurationMinutes)*time.Minute)
-}
-
-func scheduleRunTimedOut(ctx context.Context, schedule WorkflowSchedule) bool {
-	return ctx != nil && schedule.MaxRunDurationMinutes > 0 && errors.Is(ctx.Err(), context.DeadlineExceeded)
-}
-
 // runJob executes a scheduled job: updates runtime state, creates run history, executes, updates results.
 func (s *SchedulerService) runJob(ctx context.Context, sctx *ScheduleContext, runID string) (string, error) {
-	ctx, cancelRunDeadline := scheduleRunExecutionContext(ctx, sctx.Schedule)
-	defer cancelRunDeadline()
 	if sctx.WebhookInput != nil {
 		defer s.pruneWebhookRuns(sctx.WorkspacePath)
 	}
@@ -2236,8 +2223,8 @@ func (s *SchedulerService) runJob(ctx context.Context, sctx *ScheduleContext, ru
 	// Execute
 	sessionID, runFolder, execErr := s.executeJob(ctx, sctx, runID)
 	// Execution cancellation must stop work, not the durable record explaining
-	// why it stopped. Preserve scheduler-scoped values while removing the run
-	// deadline/cancellation from all post-execution history and state writes.
+	// why it stopped. Preserve scheduler-scoped values while removing cancellation
+	// from all post-execution history and state writes.
 	persistenceCtx := context.WithoutCancel(ctx)
 
 	// Calculate results
@@ -2245,20 +2232,8 @@ func (s *SchedulerService) runJob(ctx context.Context, sctx *ScheduleContext, ru
 
 	status := "success"
 	errMsg := ""
-	// Only this schedule's configured deadline is a max-run timeout. A nested
-	// provider/tool deadline may also return context.DeadlineExceeded while the
-	// schedule context itself remains live; preserve that original error rather
-	// than misreporting a configured wall-clock limit.
-	timedOut := scheduleRunTimedOut(ctx, sctx.Schedule)
-	userInterrupted := !timedOut && (errors.Is(execErr, errWorkshopSequenceInterrupted) || errors.Is(execErr, context.Canceled))
-	if timedOut {
-		status = "error"
-		errMsg = fmt.Sprintf("schedule exceeded its %d-minute wall-clock limit", sctx.Schedule.MaxRunDurationMinutes)
-		if execErr == nil {
-			execErr = context.DeadlineExceeded
-		}
-		s.sessionLogf(sctx, sessionID, "[SCHEDULER] %s timed out after %dms: %s", schedID, durationMs, errMsg)
-	} else if userInterrupted {
+	userInterrupted := errors.Is(execErr, errWorkshopSequenceInterrupted) || errors.Is(execErr, context.Canceled)
+	if userInterrupted {
 		status = "stopped"
 		if execErr != nil {
 			errMsg = execErr.Error()
@@ -2339,7 +2314,7 @@ func (s *SchedulerService) runJob(ctx context.Context, sctx *ScheduleContext, ru
 	if upgradeBlocked {
 		s.sessionLogf(sctx, sessionID, "[PULSE] skipped for %s: the contract-upgrade preflight blocked, so the workflow did not run and there is no evidence to review", schedID)
 	}
-	if !upgradeBlocked && !userInterrupted && !timedOut && runFolder != "" {
+	if !upgradeBlocked && !userInterrupted && runFolder != "" {
 		if manifest, found, mErr := ReadWorkflowManifest(ctx, sctx.WorkspacePath); mErr == nil && found && shouldRunPulseLifecycle(sctx, manifest) {
 			pulseMode := effectiveSchedulePulseMode(sctx, manifest)
 			pulseEvidenceStatus := status
@@ -2360,10 +2335,7 @@ func (s *SchedulerService) runJob(ctx context.Context, sctx *ScheduleContext, ru
 
 	// Now the whole scheduled job, including post-run side effects, is done.
 	terminalState := schedulerstate.StateCompleted
-	timedOut = timedOut || scheduleRunTimedOut(ctx, sctx.Schedule)
-	if timedOut {
-		terminalState = schedulerstate.StateFailed
-	} else if userInterrupted {
+	if userInterrupted {
 		terminalState = schedulerstate.StateStopped
 	} else if status == "error" {
 		terminalState = schedulerstate.StateFailed
@@ -2374,13 +2346,7 @@ func (s *SchedulerService) runJob(ctx context.Context, sctx *ScheduleContext, ru
 	}
 	overallStatus := status
 	overallError := errMsg
-	if timedOut {
-		overallStatus = "error"
-		overallError = fmt.Sprintf("schedule exceeded its %d-minute wall-clock limit", sctx.Schedule.MaxRunDurationMinutes)
-		if execErr == nil {
-			execErr = context.DeadlineExceeded
-		}
-	} else if terminalState == schedulerstate.StateStopped {
+	if terminalState == schedulerstate.StateStopped {
 		overallStatus = "stopped"
 		if overallError == "" {
 			overallError = "stopped by user"
@@ -2392,11 +2358,9 @@ func (s *SchedulerService) runJob(ctx context.Context, sctx *ScheduleContext, ru
 		}
 	}
 	// Runtime state measures the complete scheduled job, including post-run
-	// Pulse. Normal history remains the workflow result except when the overall
-	// wall-clock limit is what failed the occurrence; that terminal fact must not
-	// leave a successful history row behind.
+	// Pulse. Normal history remains the workflow result.
 	durationMs = time.Since(startTime).Milliseconds()
-	if sctx.PulseOnly || timedOut {
+	if sctx.PulseOnly {
 		if err := UpdateScheduleRun(persistenceCtx, sctx.WorkspacePath, runID, overallStatus, overallError, &durationMs, runFolder, sessionID); err != nil {
 			s.sessionLogf(sctx, sessionID, "[SCHEDULER] failed to finalize schedule run history: %v", err)
 		}

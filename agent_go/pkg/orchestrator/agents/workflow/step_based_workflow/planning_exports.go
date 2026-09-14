@@ -274,31 +274,29 @@ type SchedulerCallbacks struct {
 // enforced by the runtime rather than inferred from a natural-language
 // message or a conveniently spaced cron expression.
 type ScheduleRuntimePolicy struct {
-	PulseModeReason       string
-	PulseMode             string
-	ExecutionMode         string
-	CollisionPolicy       string
-	MaxStartDelayMinutes  int
-	MaxRunDurationMinutes int
-	AfterScheduleID       string
-	AfterScheduleIDs      []string
-	AfterTerminalStatus   string
-	AfterDelayMinutes     int
-	DependencyDeadline    string
+	PulseModeReason      string
+	PulseMode            string
+	ExecutionMode        string
+	CollisionPolicy      string
+	MaxStartDelayMinutes int
+	AfterScheduleID      string
+	AfterScheduleIDs     []string
+	AfterTerminalStatus  string
+	AfterDelayMinutes    int
+	DependencyDeadline   string
 	// Set* is used only by update_schedule. It distinguishes an omitted field
 	// from an explicit empty/zero value, so changing one policy does not erase
 	// the other three.
-	SetExecutionMode         bool
-	SetPulseModeReason       bool
-	SetPulseMode             bool
-	SetCollisionPolicy       bool
-	SetMaxStartDelayMinutes  bool
-	SetMaxRunDurationMinutes bool
-	SetAfterScheduleID       bool
-	SetAfterScheduleIDs      bool
-	SetAfterTerminalStatus   bool
-	SetAfterDelayMinutes     bool
-	SetDependencyDeadline    bool
+	SetExecutionMode        bool
+	SetPulseModeReason      bool
+	SetPulseMode            bool
+	SetCollisionPolicy      bool
+	SetMaxStartDelayMinutes bool
+	SetAfterScheduleID      bool
+	SetAfterScheduleIDs     bool
+	SetAfterTerminalStatus  bool
+	SetAfterDelayMinutes    bool
+	SetDependencyDeadline   bool
 }
 
 // SkillCallbacks provides skill management operations via callbacks from server.go.

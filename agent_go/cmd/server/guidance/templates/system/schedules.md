@@ -57,9 +57,8 @@ Workflow schedules always use the workshop builder execution path. Do not create
 
 **Persist the reason**: `pulse_mode_reason` must explain this schedule's purpose/frequency, why its selected review level is appropriate, and any verified coverage dependency (schedule ID or route). Store the explanation on the schedule, not only in chat. For example: `pulse_mode="basic", pulse_mode_reason="Runs approved-queue processing four times daily; each run needs backup and a summary, but routine unchanged queue processing does not warrant review/repair every time."` Do not copy this example without checking the actual schedule.
 
-### Runtime bounds and schedule dependencies
+### Schedule dependencies
 
-- Set `max_run_duration_minutes` when a schedule needs a hard wall-clock boundary. The limit covers the workflow and its post-run Pulse lifecycle; zero or omission leaves it unbounded. Choose a value above normal variance but below the next operationally important window.
 - Use `after_schedule_ids` for explicit ordering instead of relying on cron spacing. A dependent occurrence waits for **all** listed schedules' durable occurrences on the same local calendar date. `after_schedule_id` remains available only for backward compatibility.
 - `after_terminal_status="completed"` is the safe default. Use `any_terminal` only when downstream work remains valid after a failed, partial, stopped, or interrupted prerequisite. `after_delay_minutes` applies to every prerequisite, and `dependency_deadline` (`HH:MM` local time) expires a stale dependent occurrence visibly.
 - Dependency lists must contain existing schedule IDs and cannot contain the schedule itself or form a cycle. Because matching is date-aware, do not make a daily schedule depend on a weekly schedule unless the dependent has the same active dates.

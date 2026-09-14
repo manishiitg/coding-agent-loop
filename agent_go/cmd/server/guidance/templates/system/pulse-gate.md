@@ -76,7 +76,7 @@ coverage gap honestly. Do not treat a partial sample as complete.
 
 For schedule evidence, do not infer safety or throughput from cron spacing.
 Read each relevant schedule's `collision_policy`, `max_start_delay_minutes`,
-`max_run_duration_minutes`, `after_schedule_ids`, `after_terminal_status`,
+`after_schedule_ids`, `after_terminal_status`,
 `after_delay_minutes`, and `dependency_deadline`; use `schedule-runs.json` or
 `get_schedule_runs` for actual fire, wait, skip, expiry, and duration evidence.
 The workflow-wide active-execution lock still prevents overlapping workflow

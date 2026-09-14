@@ -20,7 +20,6 @@ func TestPulseRolesUnderstandScheduleCoordinationPolicy(t *testing.T) {
 			"workflow-wide active-execution lock",
 			"two schedules work together through a directional chain",
 			"fan-in",
-			"`max_run_duration_minutes`",
 			"this review remains read-only",
 		},
 		"technical-review": {
@@ -33,7 +32,6 @@ func TestPulseRolesUnderstandScheduleCoordinationPolicy(t *testing.T) {
 			"Cron spacing is not a concurrency guarantee",
 			"directional `after_schedule_ids` edges",
 			"never introduce a cycle",
-			"`max_run_duration_minutes`",
 		},
 	}
 

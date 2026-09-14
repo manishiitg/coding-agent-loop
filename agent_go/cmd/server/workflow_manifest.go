@@ -499,9 +499,6 @@ type WorkflowSchedule struct {
 	// default. It prevents a stale market-hours or notification run from firing
 	// much later with obsolete assumptions.
 	MaxStartDelayMinutes int `json:"max_start_delay_minutes,omitempty"`
-	// MaxRunDurationMinutes is a hard wall-clock limit for the complete scheduled
-	// job, including post-run Pulse work. Zero leaves the duration unbounded.
-	MaxRunDurationMinutes int `json:"max_run_duration_minutes,omitempty"`
 	// AfterScheduleID expresses a completion dependency without encoding it as
 	// a fragile clock offset. It is retained as the backward-compatible singular
 	// form of AfterScheduleIDs.
@@ -576,9 +573,6 @@ func validateScheduleRuntimePolicy(schedule WorkflowSchedule) error {
 	}
 	if schedule.MaxStartDelayMinutes < 0 {
 		return fmt.Errorf("max_start_delay_minutes cannot be negative")
-	}
-	if schedule.MaxRunDurationMinutes < 0 {
-		return fmt.Errorf("max_run_duration_minutes cannot be negative")
 	}
 	for i, rawID := range schedule.AfterScheduleIDs {
 		if strings.TrimSpace(rawID) == "" {

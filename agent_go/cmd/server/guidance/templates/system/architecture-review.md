@@ -38,7 +38,7 @@ research instead of repeating it. External actions retain existing authorization
 ### Schedule topology and throughput
 
 Schedule coordination is an Architecture concern when required behavior works
-but the topology, runtime bounds, or queueing policy wastes capacity or makes
+but the topology or queueing policy wastes capacity or makes
 cadence fragile. Load `references/schedules.md`, then use `list_schedules` and
 targeted `get_schedule_runs` evidence. Never assume cron spacing provides
 concurrency: the workflow-wide active-execution lock permits one workflow run at
@@ -47,8 +47,7 @@ edge; two schedules work together through a directional chain, and several can
 join through fan-in. It does not permit overlap, and dependency cycles or
 daily-to-weekly cadence mismatches are invalid designs.
 
-Assess `max_run_duration_minutes`, `collision_policy`,
-`max_start_delay_minutes`, `after_terminal_status`, `after_delay_minutes`, and
+Assess `collision_policy`, `max_start_delay_minutes`, `after_terminal_status`, `after_delay_minutes`, and
 `dependency_deadline` together against observed durations, missed fires,
 queued/expired occurrences, side effects, and the next operationally important
 window. Prefer explicit edges over accidental ordering from cron gaps. Preserve

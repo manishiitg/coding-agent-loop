@@ -103,6 +103,36 @@ func TestUpdateWorkflowConfigDoesNotExposeRetiredKnowledgebaseLock(t *testing.T)
 	}
 }
 
+func TestScheduleToolsDoNotExposeGenericRunDurationLimit(t *testing.T) {
+	agent := newWorkshopDefinitionDraft()
+	workspacePath := t.TempDir()
+	base := &orchestrator.BaseOrchestrator{}
+	base.SetWorkspacePath(workspacePath)
+	session := &WorkshopChatSession{
+		controller:   &StepBasedWorkflowOrchestrator{BaseOrchestrator: base},
+		StepRegistry: NewWorkshopStepRegistry(),
+		config:       &WorkshopConfig{WorkspacePath: workspacePath},
+	}
+
+	RegisterWorkshopChatTools(agent, session, workshopToolTestLogger{})
+	for _, name := range []string{"create_schedule", "create_calendar_schedule", "update_schedule"} {
+		tool, ok := agent.tools[name]
+		if !ok {
+			t.Fatalf("actual workshop agent registry is missing %s", name)
+		}
+		properties, ok := tool.InputSchema["properties"].(map[string]interface{})
+		if !ok {
+			t.Fatalf("%s properties have unexpected shape: %#v", name, tool.InputSchema["properties"])
+		}
+		if _, exists := properties["max_run_duration_minutes"]; exists {
+			t.Fatalf("%s still exposes the retired generic run-duration limit", name)
+		}
+		if _, exists := properties["after_schedule_ids"]; !exists {
+			t.Fatalf("%s lost schedule dependency fan-in while removing the run-duration limit", name)
+		}
+	}
+}
+
 func TestUpdateWorkflowConfigShowsAndEnforcesDisabledServerCDP(t *testing.T) {
 	t.Setenv(browser.EnvAgentBrowserCDPEnabled, "false")
 	agent := newWorkshopDefinitionDraft()

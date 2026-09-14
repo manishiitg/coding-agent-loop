@@ -22,7 +22,7 @@ const STEPS: WalkthroughStep[] = [
   {
     selector: '[data-tour="bot-connector"]',
     title: 'Bots',
-    body: 'Choose the Slack channels and WhatsApp slugs this automation answers on, and connect those channels if they are not set up yet.',
+    body: 'Choose the Slack and WhatsApp slugs this automation answers on, and connect those bots if they are not set up yet.',
   },
   {
     selector: '[data-tour="workspace-open"]',

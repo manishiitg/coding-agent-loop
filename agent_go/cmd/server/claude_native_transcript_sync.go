@@ -146,6 +146,7 @@ func (api *StreamingAPI) syncWorkflowBuilderConversationFromNativeTranscript(ctx
 		conversationPath,
 		int64(len(persistedRaw)),
 		time.Now(),
+		botMetadataFromRecord(persistedRecord),
 	); err != nil {
 		log.Printf("[CHAT_HISTORY] Native transcript sync: cannot update index for %s: %v", conversationPath, err)
 	}

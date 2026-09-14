@@ -26,7 +26,7 @@ export default function WorkflowBotsPanel({ workspacePath }: WorkflowBotsPanelPr
           className="inline-flex items-center gap-1.5 text-sm font-medium text-muted-foreground transition-colors hover:text-foreground"
         >
           <ArrowLeft className="h-4 w-4" />
-          Back to channels
+          Back to routes
         </button>
         <div className="flex items-center gap-2 text-sm font-semibold text-foreground">
           {setup === 'slack' ? <MessageSquare className="h-4 w-4" /> : <Phone className="h-4 w-4" />}
@@ -48,7 +48,7 @@ export default function WorkflowBotsPanel({ workspacePath }: WorkflowBotsPanelPr
         {!workflowId ? (
           <p className="text-xs text-muted-foreground">This panel needs an active workflow folder.</p>
         ) : myRoutes.length === 0 ? (
-          <p className="text-xs text-muted-foreground">No channels yet — add one below.</p>
+          <p className="text-xs text-muted-foreground">No bot routes yet — add one below.</p>
         ) : (
           <div className="flex flex-wrap gap-1.5">{myRoutes.map(route => <RouteChip key={routeId(route)} bots={bots} route={route} />)}</div>
         )}
@@ -64,9 +64,9 @@ export default function WorkflowBotsPanel({ workspacePath }: WorkflowBotsPanelPr
         )}
       </div>
 
-      {/* Add a channel */}
+      {/* Add a bot route */}
       <div>
-        <div className="mb-1.5 text-sm font-medium text-muted-foreground">Add a channel</div>
+        <div className="mb-1.5 text-sm font-medium text-muted-foreground">Add a bot route</div>
         <div className="divide-y divide-border overflow-hidden rounded-md border border-border bg-background">
           <ChannelRow bots={bots} kind="slack" />
           <ChannelRow bots={bots} kind="whatsapp" />

@@ -77,11 +77,6 @@ export function useWorkflowBots(workspacePath: string | null) {
   const [pollingForReply, setPollingForReply] = useState(false)
   const [showBotToken, setShowBotToken] = useState(false)
   const [showAppToken, setShowAppToken] = useState(false)
-  const [allowedEmails, setAllowedEmails] = useState('')
-  const [emailsDirty, setEmailsDirty] = useState(false)
-  const [emailsSaving, setEmailsSaving] = useState(false)
-  const [emailsSaved, setEmailsSaved] = useState(false)
-
   // ── WhatsApp ──────────────────────────────────────────────────────────────
   const [waStatus, setWaStatus] = useState<WhatsAppStatus | null>(null)
   const [waError, setWaError] = useState<string | null>(null)
@@ -149,13 +144,6 @@ export function useWorkflowBots(workspacePath: string | null) {
   const [gmailOpen, setGmailOpen] = useState(false)
 
   // ── Loaders ───────────────────────────────────────────────────────────────
-  const loadEmails = useCallback(async () => {
-    try {
-      const cfg = await agentApi.getBotConfig()
-      if (Array.isArray(cfg.allowed_emails)) setAllowedEmails(cfg.allowed_emails.join(', '))
-    } catch { /* ignore */ }
-  }, [])
-
   const loadSlack = useCallback(async () => {
     try {
       setSlackLoading(true)
@@ -427,12 +415,11 @@ export function useWorkflowBots(workspacePath: string | null) {
   }, [loadGmailConnections, loadGmailOAuthClients])
 
   useEffect(() => {
-    void loadEmails()
     void loadSlack()
     void loadWaStatus()
     void loadWaRouting()
     void loadGmail()
-  }, [loadEmails, loadGmail, loadSlack, loadWaRouting, loadWaStatus])
+  }, [loadGmail, loadSlack, loadWaRouting, loadWaStatus])
 
   // ── WhatsApp: status polling while the pairing screen is open ─────────────
   // Not yet paired → poll /status every 3s so a fresh QR (rotating every
@@ -576,7 +563,7 @@ export function useWorkflowBots(workspacePath: string | null) {
     if (!workflowId) return []
     const slack = Object.entries(slackOriginal.channel_routing || {})
       .filter(([, r]) => r.workflow_id === workflowId)
-      .map(([key, r]) => ({ kind: 'slack' as const, key, workshop_mode: r.workshop_mode, send_full_details: r.send_full_details }))
+      .map(([key, r]) => ({ kind: 'slack' as const, key, workshop_mode: r.workshop_mode, send_full_details: r.send_full_details, allowed_emails: r.allowed_emails || [] }))
     const wa = Object.entries(waRouting)
       .filter(([, r]) => r.workflow_id === workflowId)
       .map(([key, r]) => ({ kind: 'whatsapp' as const, key, workshop_mode: r.workshop_mode, send_full_details: r.send_full_details }))
@@ -632,7 +619,7 @@ export function useWorkflowBots(workspacePath: string | null) {
     if (expandedChip === routeId(route)) setExpandedChip(null)
   })
 
-  const updateRoute = (route: WorkflowRoute, patch: { workshop_mode?: string; send_full_details?: boolean }) => withRouteSaving(routeId(route), async () => {
+  const updateRoute = (route: WorkflowRoute, patch: { workshop_mode?: string; send_full_details?: boolean; allowed_emails?: string[] }) => withRouteSaving(routeId(route), async () => {
     if (route.kind === 'slack') {
       const current = slackOriginal.channel_routing?.[route.key]
       if (!current) return
@@ -644,6 +631,11 @@ export function useWorkflowBots(workspacePath: string | null) {
       if ('send_full_details' in patch) {
         if (patch.send_full_details) nextRoute.send_full_details = true
         else delete nextRoute.send_full_details
+      }
+      if ('allowed_emails' in patch) {
+        const emails = Array.from(new Set((patch.allowed_emails || []).map(email => email.trim().toLowerCase()).filter(Boolean))).sort()
+        if (emails.length > 0) nextRoute.allowed_emails = emails
+        else delete nextRoute.allowed_emails
       }
       await saveSlackRouting({ ...(slackOriginal.channel_routing || {}), [route.key]: nextRoute })
     } else {
@@ -660,21 +652,25 @@ export function useWorkflowBots(workspacePath: string | null) {
   })
 
   const addSlackRoute = () => {
-    const channel = newSlackChannel.trim()
-    if (!channel || !workflowId) return
-    const existing = slackOriginal.channel_routing?.[channel]
+    const slug = newSlackChannel.trim().toLowerCase()
+    if (!slug || !workflowId) return
+    if (!SLUG_RE.test(slug)) {
+      setAddError(e => ({ ...e, slack: 'Slugs can only contain a-z, 0-9 and dashes.' }))
+      return
+    }
+    const existing = slackOriginal.channel_routing?.[slug]
     if (existing && existing.workflow_id !== workflowId) {
-      setAddError(e => ({ ...e, slack: `Channel ${channel} is already routed to ${workflowLabel(existing.workflow_id)}.` }))
+      setAddError(e => ({ ...e, slack: `Slug @${slug} is already routed to ${workflowLabel(existing.workflow_id)}.` }))
       return
     }
     if (existing) {
-      setAddError(e => ({ ...e, slack: `Channel ${channel} is already routed to this workflow.` }))
+      setAddError(e => ({ ...e, slack: `Slug @${slug} is already routed to this workflow.` }))
       return
     }
     setAddError(e => ({ ...e, slack: undefined }))
-    void withRouteSaving(`slack:${channel}`, async () => {
+    void withRouteSaving(`slack:${slug}`, async () => {
       const route: ChannelRoute = { workflow_id: workflowId, workspace_path: workflow?.workspace_path || '' }
-      await saveSlackRouting({ ...(slackOriginal.channel_routing || {}), [channel]: route })
+      await saveSlackRouting({ ...(slackOriginal.channel_routing || {}), [slug]: route })
       setNewSlackChannel('')
     })
   }
@@ -701,18 +697,6 @@ export function useWorkflowBots(workspacePath: string | null) {
       await saveWaRouting({ ...waRouting, [slug]: route })
       setNewWaSlug('')
     })
-  }
-
-  // ── Slack handlers (setup screen) ─────────────────────────────────────────
-  const handleEmailsSave = async () => {
-    setEmailsSaving(true)
-    try {
-      const emails = allowedEmails.split(',').map(e => e.trim()).filter(e => e.length > 0)
-      await agentApi.saveBotConfig({ allowed_emails: emails })
-      setEmailsDirty(false)
-      setEmailsSaved(true)
-      setTimeout(() => setEmailsSaved(false), 2000)
-    } catch { /* ignore */ } finally { setEmailsSaving(false) }
   }
 
   const handleSlackSave = async () => {
@@ -928,8 +912,7 @@ export function useWorkflowBots(workspacePath: string | null) {
     // slack
     slackConfig, setSlackConfig, slackOriginal, slackLoading, slackSaving, slackTesting, slackError, slackSuccess,
     testResult, testReply, pollingForReply, showBotToken, setShowBotToken, showAppToken, setShowAppToken,
-    allowedEmails, setAllowedEmails, emailsDirty, setEmailsDirty, emailsSaving, emailsSaved, setEmailsSaved,
-    handleEmailsSave, handleSlackSave, handleSlackTest, slackHasChanges, slackReady, slackStatusLabel,
+    handleSlackSave, handleSlackTest, slackHasChanges, slackReady, slackStatusLabel,
     // whatsapp
     waStatus, waError, waRoutingError, qrImageURL, qrLoading, qrError,
     waAddDeviceOpen, openAddWhatsAppDevice, closeAddWhatsAppDevice,

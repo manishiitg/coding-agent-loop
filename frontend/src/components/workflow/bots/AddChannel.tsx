@@ -38,7 +38,7 @@ export function ChannelRow({ bots, kind }: { bots: ChannelRowBots; kind: Channel
         <span className="text-sm font-medium text-foreground">{name}</span>
         <span
           className={`inline-flex items-center gap-1 text-[11px] font-medium ${ready ? 'text-emerald-600 dark:text-emerald-400' : loading ? 'text-muted-foreground' : 'text-amber-600 dark:text-amber-400'}`}
-          title={kind === 'slack' && slackOriginal.enabled && !slackOriginal.bot_mode ? 'Turn on Bot Mode in Set up before routing channels here.' : undefined}
+          title={kind === 'slack' && slackOriginal.enabled && !slackOriginal.bot_mode ? 'Turn on Bot Mode in Set up before routing Slack workflow slugs here.' : undefined}
         >
           <span className={`h-1.5 w-1.5 rounded-full ${ready ? 'bg-emerald-500' : loading ? 'bg-muted-foreground/40' : 'bg-amber-500'}`} />
           {statusLabel}
@@ -56,16 +56,16 @@ export function ChannelRow({ bots, kind }: { bots: ChannelRowBots; kind: Channel
       </div>
       {ready && workflowId && (
         <div className="mt-2 flex items-center gap-2">
-          {kind === 'whatsapp' && <span className="text-xs text-muted-foreground select-none">@</span>}
+          <span className="text-xs text-muted-foreground select-none">@</span>
           <input
             type="text"
             value={value}
             onChange={e => {
-              setValue(kind === 'whatsapp' ? e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, '') : e.target.value)
+              setValue(e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, ''))
               if (error) setAddError(prev => ({ ...prev, [kind]: undefined }))
             }}
             onKeyDown={e => { if (e.key === 'Enter') add() }}
-            placeholder={kind === 'slack' ? 'Channel ID (C…)' : 'slug, e.g. rca'}
+            placeholder={kind === 'slack' ? 'slug, e.g. support-triage' : 'slug, e.g. rca'}
             disabled={readOnly || !!adding}
             title={readOnly ? READ_ONLY_TITLE : undefined}
             className="min-w-0 flex-1 px-2 py-1 text-xs bg-secondary border border-border rounded font-mono focus:outline-none focus:ring-1 focus:ring-primary disabled:opacity-50"

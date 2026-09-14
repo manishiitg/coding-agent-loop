@@ -177,6 +177,26 @@ const formatMessageCount = (count?: number): string | undefined => {
   return `${formatted} ${count === 1 ? 'message' : 'messages'}`
 }
 
+const botPlatformFromSessionID = (sessionId: string): string => {
+  const match = sessionId.match(/^bot-([^-]+)--/)
+  return match?.[1] || ''
+}
+
+const formatBotPlatform = (platform?: string): string => {
+  const normalized = (platform || '').trim().toLowerCase()
+  if (!normalized) return 'Bot'
+  if (normalized === 'slack') return 'Slack'
+  if (normalized === 'whatsapp') return 'WhatsApp'
+  return normalized.charAt(0).toUpperCase() + normalized.slice(1)
+}
+
+const botSessionSourceLabel = (session: ChatHistorySession): string | undefined => {
+  if (getChatKind(session) !== 'bot') return undefined
+  const platform = formatBotPlatform(session.bot_platform || botPlatformFromSessionID(session.session_id))
+  const actor = (session.bot_user_email || session.bot_user_name || session.bot_user_id || session.username || session.user_id || '').trim()
+  return actor ? `${platform} · ${actor}` : platform
+}
+
 const sameWorkspace = (left?: string, right?: string): boolean => {
   const normalize = (value?: string) => (value || '').trim().replace(/\\/g, '/').replace(/^\/+|\/+$/g, '')
   return Boolean(normalize(left) && normalize(left) === normalize(right))
@@ -880,6 +900,7 @@ export const PreviousChatHistoryPanel: React.FC<PreviousChatHistoryPanelProps> =
               const canDelete = session.can_delete !== false
               const timeLabel = formatChatTime(session.updated_at || session.created_at)
               const messageCountLabel = formatMessageCount(session.message_count)
+              const botSourceLabel = botSessionSourceLabel(session)
 
               return (
                 <div key={session.session_id} className="group bg-background transition-colors hover:bg-muted/20">
@@ -911,7 +932,12 @@ export const PreviousChatHistoryPanel: React.FC<PreviousChatHistoryPanelProps> =
                             <span>{messageCountLabel}</span>
                           </span>
                         )}
-                        {session.username && (
+                        {botSourceLabel ? (
+                          <span className="inline-flex min-w-0 max-w-full items-center gap-1 rounded border border-border/70 bg-muted/30 px-1.5 py-0.5">
+                            <Bot className="h-3 w-3 shrink-0" />
+                            <span className="truncate">{botSourceLabel}</span>
+                          </span>
+                        ) : session.username && (
                           <span className="inline-flex min-w-0 max-w-full items-center gap-1 rounded border border-border/70 bg-muted/30 px-1.5 py-0.5">
                             <UserRound className="h-3 w-3 shrink-0" />
                             <span className="truncate">{session.username}</span>

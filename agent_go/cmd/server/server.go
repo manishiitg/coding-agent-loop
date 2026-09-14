@@ -729,6 +729,11 @@ type QueryRequest struct {
 	// conversation so human tools can notify the same Slack/WhatsApp thread.
 	BotChannelID string `json:"bot_channel_id,omitempty"`
 	BotThreadTS  string `json:"bot_thread_ts,omitempty"`
+	// BotUser* identifies the external chat user who created or continued the
+	// bot thread. These fields are display metadata only, not authorization.
+	BotUserID    string `json:"bot_user_id,omitempty"`
+	BotUserName  string `json:"bot_user_name,omitempty"`
+	BotUserEmail string `json:"bot_user_email,omitempty"`
 	// Internal workflow wire field: name of the selected encrypted secret that
 	// contains a Slack Incoming Webhook URL. The URL itself is never serialized.
 	NotificationSlackWebhookSecretName string `json:"notification_slack_webhook_secret_name,omitempty"`
@@ -6801,8 +6806,9 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		// conversations are persisted below in the workflow-scoped builder folder
 		// so /resume stays scoped to the workflow and global chat history is not
 		// polluted by workflow-only sessions.
+		botHistoryMeta := chatHistoryBotMetadataFromQuery(req)
 		if !isWorkflowPhase {
-			api.persistChatConversationToPathWithTerminalSession(persistSessionID, sessionID, req.AgentMode, currentUserID, persistedHistoryForDisk, chatRuntime, uiEvents, persistConversationPath)
+			api.persistChatConversationToPathWithTerminalSession(persistSessionID, sessionID, req.AgentMode, currentUserID, persistedHistoryForDisk, chatRuntime, uiEvents, persistConversationPath, botHistoryMeta)
 		}
 
 		// Store resolved workflowPhaseFolder so synthetic turns can persist builder conversations
@@ -6830,6 +6836,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			if chatRuntime != nil {
 				convData["runtime"] = chatRuntime
 			}
+			applyChatHistoryBotMetadata(convData, botHistoryMeta)
 			if terminalSnapshots := api.captureChatHistoryTerminalSnapshots(sessionID, chatRuntime); len(terminalSnapshots) > 0 {
 				convData["terminal_snapshots"] = terminalSnapshots
 			}
@@ -6854,7 +6861,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 					// the transcript without this leaves the chat on disk but absent
 					// from /resume, so the user is offered an older conversation and the
 					// agent legitimately has no memory of the one they were just in.
-					if err := updatePersistedChatHistoryIndex(currentUserID, persistSessionID, req.AgentMode, persistedHistoryForDisk, chatRuntime, logPath, int64(len(convJSON)), time.Now()); err != nil {
+					if err := updatePersistedChatHistoryIndex(currentUserID, persistSessionID, req.AgentMode, persistedHistoryForDisk, chatRuntime, logPath, int64(len(convJSON)), time.Now(), botHistoryMeta); err != nil {
 						log.Printf("[BUILDER LOG] Failed to update chat index for %s: %v", logPath, err)
 					}
 				}

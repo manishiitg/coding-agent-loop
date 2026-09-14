@@ -13,8 +13,7 @@ type SlackSetupBots = Pick<WorkflowBots,
   | 'readOnly'
   | 'slackConfig' | 'setSlackConfig' | 'slackLoading' | 'slackSaving' | 'slackTesting' | 'slackError' | 'slackSuccess'
   | 'testResult' | 'testReply' | 'pollingForReply' | 'showBotToken' | 'setShowBotToken' | 'showAppToken' | 'setShowAppToken'
-  | 'allowedEmails' | 'setAllowedEmails' | 'emailsDirty' | 'setEmailsDirty' | 'emailsSaving' | 'emailsSaved' | 'setEmailsSaved'
-  | 'handleEmailsSave' | 'handleSlackSave' | 'handleSlackTest' | 'slackHasChanges'
+  | 'handleSlackSave' | 'handleSlackTest' | 'slackHasChanges'
 >
 
 export function SlackSetup({ bots }: { bots: SlackSetupBots }) {
@@ -22,8 +21,7 @@ export function SlackSetup({ bots }: { bots: SlackSetupBots }) {
     readOnly,
     slackConfig, setSlackConfig, slackLoading, slackSaving, slackTesting, slackError, slackSuccess,
     testResult, testReply, pollingForReply, showBotToken, setShowBotToken, showAppToken, setShowAppToken,
-    allowedEmails, setAllowedEmails, emailsDirty, setEmailsDirty, emailsSaving, emailsSaved, setEmailsSaved,
-    handleEmailsSave, handleSlackSave, handleSlackTest, slackHasChanges,
+    handleSlackSave, handleSlackTest, slackHasChanges,
   } = bots
 
   return (
@@ -49,34 +47,6 @@ export function SlackSetup({ bots }: { bots: SlackSetupBots }) {
             </div>
           </Card>
 
-          {/* Allowed Emails */}
-          <Card className="p-4">
-            <div className="flex flex-col gap-1.5">
-              <div className="flex items-center justify-between">
-                <label className="text-sm font-medium text-foreground">Allowed Users</label>
-                <button
-                  onClick={handleEmailsSave}
-                  disabled={readOnly || emailsSaving || (!emailsDirty && !emailsSaved)}
-                  title={readOnly ? READ_ONLY_TITLE : undefined}
-                  className={`px-3 py-1 text-xs rounded-md transition-colors flex items-center gap-1 ${
-                    emailsSaved ? 'bg-green-600 text-white' : 'bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50'
-                  }`}
-                >
-                  {emailsSaving ? 'Saving...' : emailsSaved ? <><CheckCircle className="w-3 h-3" /> Saved</> : 'Save'}
-                </button>
-              </div>
-              <input
-                type="text"
-                value={allowedEmails}
-                onChange={e => { setAllowedEmails(e.target.value); setEmailsDirty(true); setEmailsSaved(false) }}
-                disabled={readOnly}
-                placeholder="user@example.com, user2@example.com"
-                className="w-full px-2.5 py-1.5 text-xs bg-secondary border border-border rounded focus:outline-none focus:ring-1 focus:ring-primary"
-              />
-              <span className="text-[10px] text-muted-foreground">Comma-separated email addresses. Leave empty to allow everyone.</span>
-            </div>
-          </Card>
-
           {slackConfig.enabled && (
             <>
               {/* Bot Mode */}
@@ -84,7 +54,7 @@ export function SlackSetup({ bots }: { bots: SlackSetupBots }) {
                 <div className="flex items-center justify-between">
                   <div>
                     <h3 className="text-sm font-medium text-foreground">Bot Mode (@mention)</h3>
-                    <p className="text-xs text-muted-foreground mt-0.5">Users can @mention the bot to start agent sessions directly from Slack. Required for channel routing.</p>
+                    <p className="text-xs text-muted-foreground mt-0.5">Users can @mention the bot to start agent sessions directly from Slack. Required for workflow slug routing.</p>
                   </div>
                   <label className="relative inline-flex items-center cursor-pointer">
                     <input type="checkbox" checked={slackConfig.bot_mode || false} disabled={readOnly} onChange={e => setSlackConfig({ ...slackConfig, bot_mode: e.target.checked })} className="sr-only peer" />

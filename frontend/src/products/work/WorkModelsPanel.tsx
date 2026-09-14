@@ -1,16 +1,20 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
-import { BrainCircuit } from 'lucide-react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { BrainCircuit, ChevronDown, Gauge, Loader2 } from 'lucide-react'
 import { TierModelSelector } from '../../components/ui/TierModelSelector'
 import { AskAIButton } from '../../components/workflow/AskAIButton'
+import GuidedProviderTerminal from '../../components/providers/GuidedProviderTerminal'
 import WorkflowLLMConfigurationPanel from '../../components/workflow/WorkflowLLMConfigurationPanel'
 import type { LLMProvider, PresetLLMConfig } from '../../services/api-types'
-import type { ModelMetadata } from '../../services/llm-config-api'
+import { llmConfigService, type ModelMetadata, type ProviderSetupSession } from '../../services/llm-config-api'
+import { useAuthStore } from '../../stores/useAuthStore'
 import { useChatStore } from '../../stores/useChatStore'
 import { useLLMStore } from '../../stores/useLLMStore'
 import { buildAgentProfileEngineGroups, loadAgentProfileProviderOptions, type AgentProfileProviderOption } from '../../utils/agentProfileCapabilities'
 import { WORK_PROFILE_ID, WORK_PROFILE_VERSION } from './workData'
 import { workLLMSelectionFromConfig } from './workSessions'
 import type { WorkRuntimeSelection } from './workTabs'
+
+const PROVIDERS_WITH_USAGE = new Set(['claude-code', 'codex-cli', 'muse-cli'])
 
 export function WorkModelsPanel({
   tabId,
@@ -34,6 +38,26 @@ export function WorkModelsPanel({
   const providerManifestLoaded = useLLMStore(state => state.providerManifestLoaded)
   const loadProviderManifest = useLLMStore(state => state.loadProviderManifest)
   const [options, setOptions] = useState<AgentProfileProviderOption[]>([])
+  const [modelPickerOpen, setModelPickerOpen] = useState(false)
+  const [usageSession, setUsageSession] = useState<ProviderSetupSession | null>(null)
+  const usageSessionRef = useRef<ProviderSetupSession | null>(null)
+  const [usageStarting, setUsageStarting] = useState(false)
+  const [usageError, setUsageError] = useState<string | null>(null)
+  const [usageConflict, setUsageConflict] = useState(false)
+  const isMultiUserMode = useAuthStore(state => state.isMultiUserMode)
+  const isAdmin = useAuthStore(state => state.user?.is_admin === true)
+  const canCheckUsage = !isMultiUserMode || isAdmin
+
+  useEffect(() => {
+    usageSessionRef.current = usageSession
+  }, [usageSession])
+
+  useEffect(() => () => {
+    const current = usageSessionRef.current
+    if (current?.status === 'running') {
+      void llmConfigService.cancelProviderSetup(current.id).catch(() => undefined)
+    }
+  }, [])
 
   useEffect(() => {
     let cancelled = false
@@ -109,6 +133,40 @@ export function WorkModelsPanel({
       output_cost_per_1m: 0,
     } satisfies ModelMetadata)
   }, [currentGroup?.models, modelCatalog, selectedOption?.provider])
+  const currentModelLabel = selectableModels.find(model => model.model_id === currentModelId)?.model_name
+    || currentModelId
+    || 'Provider default'
+  const selectedProviderManifest = providerManifest.find(provider => provider.id === selectedOption?.provider)
+  const usageSupported = Boolean(
+    selectedOption?.provider
+    && PROVIDERS_WITH_USAGE.has(selectedOption.provider)
+    && selectedProviderManifest?.usable,
+  )
+
+  const checkUsage = async (replaceRunning = false) => {
+    if (!selectedOption?.provider || !usageSupported) return
+    setUsageStarting(true)
+    setUsageError(null)
+    setUsageConflict(false)
+    try {
+      const session = await llmConfigService.startProviderSetup(
+        selectedOption.provider,
+        'usage',
+        100,
+        24,
+        undefined,
+        replaceRunning,
+      )
+      setUsageSession(session)
+    } catch (error) {
+      const status = (error as { response?: { status?: number } })?.response?.status
+      const responseMessage = (error as { response?: { data?: { error?: string } } })?.response?.data?.error
+      setUsageError(responseMessage || (error instanceof Error ? error.message : 'Could not check provider usage'))
+      setUsageConflict(status === 409)
+    } finally {
+      setUsageStarting(false)
+    }
+  }
 
   const selectProvider = (config: PresetLLMConfig) => {
     const option = options.find(candidate => candidate.provider === config.provider)
@@ -149,8 +207,41 @@ export function WorkModelsPanel({
           onAsk={onAsk}
           className="flex shrink-0 items-center gap-1.5 self-center rounded-md border border-border px-2.5 py-1.5 text-xs font-medium text-muted-foreground transition-colors hover:border-primary/40 hover:text-primary"
         />
+        {canCheckUsage && usageSupported && (
+          <button
+            type="button"
+            onClick={() => void checkUsage()}
+            disabled={usageStarting || usageSession?.status === 'running'}
+            className="flex shrink-0 items-center gap-1.5 self-center rounded-md border border-border px-2.5 py-1.5 text-xs font-medium text-muted-foreground transition-colors hover:border-primary/40 hover:text-primary disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {usageStarting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Gauge className="h-3.5 w-3.5" />}
+            Check usage
+          </button>
+        )}
       </header>
       <div className="min-h-0 flex-1 overflow-y-auto p-4">
+        {usageSession && (
+          <GuidedProviderTerminal
+            session={usageSession}
+            onFinished={setUsageSession}
+            onClose={() => setUsageSession(null)}
+          />
+        )}
+        {usageError && (
+          <div className="mb-4 rounded-lg border border-red-300 bg-red-50 px-3 py-2 text-xs text-red-700 dark:border-red-900 dark:bg-red-950/25 dark:text-red-300">
+            <p>{usageError}</p>
+            {usageConflict && (
+              <button
+                type="button"
+                onClick={() => void checkUsage(true)}
+                disabled={usageStarting}
+                className="mt-2 rounded-md border border-red-300 bg-background px-2.5 py-1.5 font-medium hover:bg-red-100 disabled:opacity-50 dark:border-red-800 dark:hover:bg-red-950/50"
+              >
+                End existing usage check and retry
+              </button>
+            )}
+          </div>
+        )}
         <WorkflowLLMConfigurationPanel
           workspacePath={workspacePath}
           llmConfig={llmConfig}
@@ -162,15 +253,30 @@ export function WorkModelsPanel({
           showModelsPerRole={false}
           configurationSource="agent_profile"
         />
-        <section className="mt-4 rounded-xl border border-border bg-card p-4">
-          <h3 className="text-sm font-semibold text-foreground">Model</h3>
-          <p className="mt-1 text-xs text-muted-foreground">The provider's Builder model is selected by default. You can change the model at any time.</p>
-          <TierModelSelector
-            models={selectableModels}
-            selectedModelId={currentModelId}
-            onSelect={selectModel}
-            className="mt-3"
-          />
+        <section className="mt-4 overflow-hidden rounded-xl border border-border bg-card">
+          <button
+            type="button"
+            aria-expanded={modelPickerOpen}
+            onClick={() => setModelPickerOpen(open => !open)}
+            className="flex w-full items-center gap-3 px-4 py-3 text-left transition-colors hover:bg-muted/40"
+          >
+            <div className="min-w-0 flex-1">
+              <h3 className="text-sm font-semibold text-foreground">Model</h3>
+              <p className="mt-0.5 truncate text-xs text-muted-foreground">{currentModelLabel}</p>
+            </div>
+            <ChevronDown className={`h-4 w-4 shrink-0 text-muted-foreground transition-transform ${modelPickerOpen ? 'rotate-180' : ''}`} />
+          </button>
+          {modelPickerOpen && (
+            <div className="border-t border-border px-4 pb-4 pt-3">
+              <p className="text-xs text-muted-foreground">The provider's Builder model is selected by default. You can change the model at any time.</p>
+              <TierModelSelector
+                models={selectableModels}
+                selectedModelId={currentModelId}
+                onSelect={selectModel}
+                className="mt-3"
+              />
+            </div>
+          )}
         </section>
         {hasStarted && <p className="mt-3 text-xs text-muted-foreground">Changing the coding agent or model relaunches this project's retained session on the next message while keeping the project chat history.</p>}
       </div>

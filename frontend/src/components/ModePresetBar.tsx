@@ -3,7 +3,7 @@ import { workflowTriggerLabel } from '../utils/workflowSessionKinds'
 import { useShallow } from 'zustand/react/shallow'
 import { Settings, Copy, LayoutDashboard, ArrowLeft, Eye, CalendarClock } from 'lucide-react'
 import { useAuthStore } from '../stores/useAuthStore'
-import { isWorkflowReadOnly } from '../utils/workflowPermissions'
+import { hasWorkflowCreateAccess, isWorkflowReadOnly } from '../utils/workflowPermissions'
 import { useModeStore } from '../stores/useModeStore'
 import { useGlobalPresetStore, usePresetApplication, usePresetManagement } from '../stores/useGlobalPresetStore'
 import type { CustomPreset, PredefinedPreset } from '../types/preset'
@@ -88,6 +88,7 @@ export const ModePresetBar: React.FC<ModePresetBarProps> = ({ productControl, re
     agentMode: state.agentMode,
   })))
   const isReadOnlyUser = useAuthStore(state => isWorkflowReadOnly(state.user, state.isMultiUserMode))
+  const canCreateWorkflows = useAuthStore(state => hasWorkflowCreateAccess(state.user, state.isMultiUserMode))
   // Use toolList to get all available servers, not just enabled ones
   const toolList = useMCPStore(state => state.toolList)
   const availableServers = React.useMemo(() =>
@@ -263,16 +264,22 @@ export const ModePresetBar: React.FC<ModePresetBarProps> = ({ productControl, re
   }, [])
 
   // Keep the create action discoverable beside the automation selector. It is
-  // intentionally rendered for read-only accounts too (so the role can see
-  // how automations are added), but the account-level read-only policy keeps
-  // the action disabled rather than opening a form that can never be saved.
+  // intentionally rendered for accounts without create access too, but the
+  // account-level create permission keeps the action disabled rather than
+  // opening a form that the server can never save.
   const handleAddWorkflow = useCallback(() => {
-    if (isReadOnlyUser) return
+    if (!canCreateWorkflows) {
+      useChatStore.getState().addToast(
+        'Your account can use existing automations but cannot create new ones. Ask an administrator to enable automation creation.',
+        'info',
+      )
+      return
+    }
     setEditingPreset(null)
     setShowPresetDropdown(false)
     setShowPresetModal(true)
     setWorkspaceMinimized(true)
-  }, [isReadOnlyUser, setWorkspaceMinimized])
+  }, [canCreateWorkflows, setWorkspaceMinimized])
 
   // Listen for external trigger to open preset settings (e.g. from workflow toolbar)
   const showPresetSettings = useCommandDialogStore(s => s.showPresetSettings)
@@ -408,10 +415,21 @@ export const ModePresetBar: React.FC<ModePresetBarProps> = ({ productControl, re
       // Surface the failure — previously this was swallowed (no toast), so a
       // rejected manifest save looked like a silent no-op. The server returns
       // the validation reason as the response body.
-      const serverDetail = (error as { response?: { data?: unknown } })?.response?.data
+      const response = (error as { response?: { status?: number; data?: unknown } })?.response
+      if (response?.status === 403) {
+        const action = editingPreset ? 'edit this automation' : 'create new automations'
+        useChatStore.getState().addToast(
+          `You don’t have permission to ${action}. Ask an administrator to update your automation access.`,
+          'error',
+        )
+        return false
+      }
+      const serverDetail = response?.data
       const detail =
         typeof serverDetail === 'string' && serverDetail.trim() !== ''
           ? serverDetail.trim()
+          : typeof serverDetail === 'object' && serverDetail !== null && 'error' in serverDetail && typeof serverDetail.error === 'string'
+            ? serverDetail.error
           : error instanceof Error
             ? error.message
             : 'Unknown error'
@@ -568,8 +586,8 @@ export const ModePresetBar: React.FC<ModePresetBarProps> = ({ productControl, re
                       onClose={() => setShowPresetDropdown(false)}
                       onAdd={handleAddWorkflow}
                       addLabel="Add automation"
-                      addTitle={isReadOnlyUser ? 'Read-only users cannot create automations' : 'Add automation'}
-                      addDisabled={isReadOnlyUser}
+                      addTitle={!canCreateWorkflows ? 'Your account cannot create automations. Ask an administrator to enable creation.' : 'Add automation'}
+                      addDisabled={!canCreateWorkflows}
                       addTestId="add-workflow-button"
                       dataTour="workflow-add-edit"
                       testId="tour-workflow-add-edit"
@@ -595,15 +613,21 @@ export const ModePresetBar: React.FC<ModePresetBarProps> = ({ productControl, re
                             {/* Add New Workflow Option */}
                             <button
                               onClick={handleAddWorkflow}
-                              disabled={isReadOnlyUser}
-                              title={isReadOnlyUser ? 'Read-only users cannot create automations' : undefined}
-                              className="w-full text-left p-2 rounded-md text-sm hover:bg-gray-100 dark:hover:bg-slate-700 text-gray-700 dark:text-gray-300"
+                              disabled={!canCreateWorkflows}
+                              title={!canCreateWorkflows ? 'Ask an administrator to enable automation creation for your account.' : undefined}
+                              className="w-full rounded-md p-2 text-left text-sm text-gray-700 hover:bg-gray-100 disabled:cursor-not-allowed disabled:opacity-50 dark:text-gray-300 dark:hover:bg-slate-700"
                             >
                               <div className="flex items-center gap-2">
                                 <div className="w-2 h-2 bg-blue-500 rounded-full"></div>
                                 <span className="font-medium">+ Add Automation</span>
                               </div>
                             </button>
+
+                            {!canCreateWorkflows && (
+                              <div className="rounded-md bg-amber-50 px-2.5 py-2 text-xs leading-5 text-amber-800 dark:bg-amber-950/40 dark:text-amber-200">
+                                Your account can use existing automations, but it cannot create new ones. Ask an administrator to enable automation creation.
+                              </div>
+                            )}
 
                             {/* Loading state */}
                             {presetsLoading && (
@@ -615,7 +639,9 @@ export const ModePresetBar: React.FC<ModePresetBarProps> = ({ productControl, re
                             {/* No workflows message */}
                             {!presetsLoading && presetsForMode.length === 0 && (
                               <div className="p-2 text-sm text-gray-500 dark:text-gray-400 text-center">
-                                No automations available. Create one to get started.
+                                {canCreateWorkflows
+                                  ? 'No automations available. Create one to get started.'
+                                  : 'No automations are available to your account.'}
                               </div>
                             )}
 

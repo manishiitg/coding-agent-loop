@@ -20,6 +20,23 @@ export function hasWorkflowOwnerAccess(user: AuthUser | null | undefined, isMult
   return user?.workflow_access === 'owner'
 }
 
+// Creating an automation is an account-level permission. A contributor can
+// edit an automation assigned to them while still being unable to create a
+// new one, so workflow write access must not be used as a substitute here.
+export function hasWorkflowCreateAccess(user: AuthUser | null | undefined, isMultiUserMode: boolean): boolean {
+  if (!isMultiUserMode) {
+    return true
+  }
+  if (user?.is_admin) {
+    return true
+  }
+  if (user?.can_create !== undefined) {
+    return user.can_create
+  }
+  // Compatibility with older servers that did not return can_create.
+  return user?.workflow_access === 'owner'
+}
+
 // True only once the backend has actually confirmed non-write access (PLAT-262
 // read tier) — never a guess from the absence of a signal, which is why this
 // is `!hasWorkflowWriteAccess` rather than checking `workflow_access === 'read'`

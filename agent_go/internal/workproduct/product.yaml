@@ -111,15 +111,15 @@ profile:
     # shared composer can show the correct runtime before the first turn.
     provider: claude-code
     model_id: claude-sonnet-5
-    # Work deliberately exposes the selected CLI's native coding tools. The
-    # AgentWorks MCP allowlist below remains available for structured file,
-    # browser, research, and secret operations.
+    # Keep all project access on AgentWorks' governed MCP bridge. Coding CLIs
+    # provide the model and conversation runtime without exposing their native
+    # shell, file, search, or interactive-question tools.
     agent_tools:
-      mode: hybrid
+      mode: mcp_only
     approvals:
       mode: provider_auto
     sandbox:
-      # Raw CLI tools still run inside the server-enforced workspace guard.
+      # Bridge tools run inside the server-enforced workspace guard.
       mode: strict
       network: allowed
       read_only: []

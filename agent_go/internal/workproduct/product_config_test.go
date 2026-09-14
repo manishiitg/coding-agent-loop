@@ -69,11 +69,11 @@ func TestWorkManifestDeclaresProjectScopeAndCodingAllowlist(t *testing.T) {
 	if manifest.Profile.Runtime.Workspace.Mode != agentprofiles.WorkspaceModeProject || manifest.Profile.Runtime.Conversation.Mode != agentprofiles.ConversationModeKeyed {
 		t.Fatalf("work must use keyed session conversations: workspace=%+v conversation=%+v", manifest.Profile.Runtime.Workspace, manifest.Profile.Runtime.Conversation)
 	}
-	if !strings.EqualFold(manifest.Profile.Runtime.AgentTools.Mode, "hybrid") {
-		t.Fatalf("work must expose the selected CLI's native coding tools, got agent_tools.mode=%q", manifest.Profile.Runtime.AgentTools.Mode)
+	if !strings.EqualFold(manifest.Profile.Runtime.AgentTools.Mode, "mcp_only") {
+		t.Fatalf("work must route coding operations through governed MCP tools, got agent_tools.mode=%q", manifest.Profile.Runtime.AgentTools.Mode)
 	}
 	if !manifest.Profile.Runtime.Sandbox.IsStrict() || manifest.Profile.Runtime.Sandbox.ChatHistory != agentprofiles.SandboxChatHistoryNone {
-		t.Fatalf("work native tools must be strictly workspace-confined: %+v", manifest.Profile.Runtime.Sandbox)
+		t.Fatalf("work MCP tools must be strictly workspace-confined: %+v", manifest.Profile.Runtime.Sandbox)
 	}
 	if !manifest.Profile.ToolPolicy.IsAllowlist() {
 		t.Fatal("work must declare tool_policy.mode: allowlist -- fail-open would silently reach workflow/schedule/pulse tools")

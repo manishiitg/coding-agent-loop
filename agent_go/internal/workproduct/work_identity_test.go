@@ -117,3 +117,21 @@ func TestWorkIdentityToolPersistsAndPromptVariablesReloadIt(t *testing.T) {
 		t.Fatalf("identity should be empty after clear: %q", variables["WORK_IDENTITY"])
 	}
 }
+
+func TestWorkIdentityStaysCompact(t *testing.T) {
+	identity := workIdentity{
+		Icon:         strings.Repeat("x", workIdentityIconLimit+1),
+		Name:         "Nova",
+		Role:         "Assistant",
+		Instructions: "Be concise.",
+	}
+	if got := validateWorkIdentity(identity); got != "The identity icon must be at most 8 characters." {
+		t.Fatalf("unexpected icon validation: %q", got)
+	}
+
+	identity.Icon = "N"
+	identity.Instructions = strings.Repeat("x", workIdentityInstructionsLimit+1)
+	if got := validateWorkIdentity(identity); got != "The identity instructions must be at most 500 characters." {
+		t.Fatalf("unexpected instructions validation: %q", got)
+	}
+}

@@ -61,6 +61,13 @@ type workProjectManifest struct {
 	UpdatedAt string        `json:"updated_at,omitempty"`
 }
 
+const (
+	workIdentityIconLimit         = 8
+	workIdentityNameLimit         = 60
+	workIdentityRoleLimit         = 120
+	workIdentityInstructionsLimit = 500
+)
+
 func normalizeWorkIdentity(identity workIdentity) workIdentity {
 	identity.Icon = strings.TrimSpace(identity.Icon)
 	identity.Name = strings.TrimSpace(identity.Name)
@@ -90,6 +97,25 @@ func renderWorkIdentity(identity workIdentity) string {
 	return strings.Join(lines, "\n")
 }
 
+func validateWorkIdentity(identity workIdentity) string {
+	limits := []struct {
+		label string
+		value string
+		max   int
+	}{
+		{label: "icon", value: identity.Icon, max: workIdentityIconLimit},
+		{label: "name", value: identity.Name, max: workIdentityNameLimit},
+		{label: "role", value: identity.Role, max: workIdentityRoleLimit},
+		{label: "instructions", value: identity.Instructions, max: workIdentityInstructionsLimit},
+	}
+	for _, field := range limits {
+		if utf8.RuneCountInString(field.value) > field.max {
+			return fmt.Sprintf("The identity %s must be at most %d characters.", field.label, field.max)
+		}
+	}
+	return ""
+}
+
 func workIdentityFactory(workspaceAPIURL string) agentprofiles.ToolFactory {
 	return func(runtime agentprofiles.ToolRuntimeContext, _ json.RawMessage) (agentprofiles.ToolSpec, error) {
 		client := workspace.NewClient(
@@ -101,9 +127,9 @@ func workIdentityFactory(workspaceAPIURL string) agentprofiles.ToolFactory {
 		return agentprofiles.ToolSpec{
 			Name:     "set_work_identity",
 			Category: "work_identity",
-			Description: "Set, update, or clear this Work project's bot identity when the user asks through chat. " +
-				"The identity is stored with the project and is injected into the coding provider's generated project instructions (including AGENTS.md for Codex/Muse and Claude's project instructions) on future provider sessions. " +
-				"Do not invent an identity: preserve omitted fields on update and use clear only when the user asks to remove it.",
+			Description: "Set, update, or clear this Work project's agent identity when the user asks. " +
+				"A short name, icon, role, and instructions keep the agent consistent across project chats, schedules, bots, and background work; they change presentation and behavior, never permissions. " +
+				"Store it in product.json, preserve omitted fields, and never invent an identity.",
 			Parameters: map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
@@ -111,10 +137,10 @@ func workIdentityFactory(workspaceAPIURL string) agentprofiles.ToolFactory {
 						"type": "string", "enum": []string{"set", "clear"},
 						"description": "Use set to create or update the identity, or clear to remove it.",
 					},
-					"icon":         map[string]interface{}{"type": "string", "description": "A single emoji or short text glyph shown with the selected Work project. Omit to preserve it; pass an empty string to remove it."},
-					"name":         map[string]interface{}{"type": "string", "description": "The bot's display name. Omit to preserve the current name."},
-					"role":         map[string]interface{}{"type": "string", "description": "The bot's role or purpose. Omit to preserve the current role."},
-					"instructions": map[string]interface{}{"type": "string", "description": "Concise behavior, tone, domain, and working preferences. Omit to preserve the current instructions."},
+					"icon":         map[string]interface{}{"type": "string", "maxLength": workIdentityIconLimit, "description": "One emoji or short glyph. Omit to preserve; pass empty to remove."},
+					"name":         map[string]interface{}{"type": "string", "maxLength": workIdentityNameLimit, "description": "Short display name. Omit to preserve."},
+					"role":         map[string]interface{}{"type": "string", "maxLength": workIdentityRoleLimit, "description": "Short role or purpose. Omit to preserve."},
+					"instructions": map[string]interface{}{"type": "string", "maxLength": workIdentityInstructionsLimit, "description": "Brief behavior, tone, or working preferences. Omit to preserve."},
 				},
 				"required": []string{"operation"},
 			},
@@ -150,8 +176,8 @@ func workIdentityFactory(workspaceAPIURL string) agentprofiles.ToolFactory {
 						identity.Instructions = value
 					}
 					identity = normalizeWorkIdentity(identity)
-					if utf8.RuneCountInString(identity.Icon) > 8 {
-						return "The identity icon must be one emoji or a short text glyph (at most 8 characters).", nil
+					if validationError := validateWorkIdentity(identity); validationError != "" {
+						return validationError, nil
 					}
 					if renderWorkIdentity(identity) == "" {
 						return "At least one of icon, name, role, or instructions is required to set the identity.", nil
@@ -172,7 +198,7 @@ func workIdentityFactory(workspaceAPIURL string) agentprofiles.ToolFactory {
 					if runtime.Emit != nil {
 						runtime.Emit(map[string]interface{}{"type": "work_identity_updated"})
 					}
-					return "The Work bot identity was removed. Use the base Work identity from now on.", nil
+					return "The project agent identity was removed. Use the base Work identity from now on.", nil
 				}
 				var saved workIdentity
 				encodedIdentity, _ := json.Marshal(manifest["identity"])

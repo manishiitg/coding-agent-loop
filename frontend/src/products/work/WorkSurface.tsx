@@ -308,7 +308,7 @@ function WorkTopBarControl({
   return (
     <TopBarEntitySelector
       label={selected?.title}
-      leading={selected?.identity?.icon ? <span className="shrink-0 text-base leading-none" title={`Bot identity: ${selected.identity.name || selected.identity.role || selected.identity.icon}`}>{selected.identity.icon}</span> : undefined}
+      leading={selected?.identity?.icon ? <span className="shrink-0 text-base leading-none" title={`Project agent identity: ${selected.identity.name || selected.identity.role || selected.identity.icon}`}>{selected.identity.icon}</span> : undefined}
       placeholder="New project"
       open={open}
       onToggle={() => setOpen(current => !current)}

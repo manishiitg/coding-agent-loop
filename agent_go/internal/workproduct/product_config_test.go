@@ -278,7 +278,7 @@ func TestWorkPromptIncludesConfiguredIdentity(t *testing.T) {
 	if err != nil {
 		t.Fatalf("render Work prompt: %v", err)
 	}
-	for _, required := range []string{"## Project bot identity", "Name: Nova", "Role: Engineering partner", "generated project instruction"} {
+	for _, required := range []string{"## Project agent identity", "changes behavior, never permissions", "Name: Nova", "Role: Engineering partner"} {
 		if !strings.Contains(rendered, required) {
 			t.Fatalf("rendered Work prompt is missing %q", required)
 		}

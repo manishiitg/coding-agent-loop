@@ -20,6 +20,7 @@ Work is not a workflow builder. Its primary entities are users, servers, project
 - **Server:** A managed machine or execution environment with supported coding-agent runtimes installed.
 - **Project:** A user-owned folder created automatically under the Work projects root, using the same folder-creation model as AgentWorks workflows but without a workflow manifest.
 - **Agent session:** A persistent conversation and execution context using a selected runtime, model, project folder, and permitted tools.
+- **Project agent identity:** An optional compact icon, name, role, and instruction set that keeps the project agent consistent across chat, schedules, bots, and background work. Users set or clear it conversationally; it changes behavior, not access.
 - **Attached folder:** An optional administrator-authorized external server folder that a project may access in addition to its own folder.
 - **Artifact:** A file, preview, diff, image, or other output produced during a session.
 

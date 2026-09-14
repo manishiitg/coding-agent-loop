@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"os"
 	"strings"
 )
 
@@ -112,6 +113,9 @@ func userAllowedProduct(claims *UserClaims, product string) bool {
 	if product == "" || claims == nil {
 		return true
 	}
+	if adminOnlyProduct(product) && !userAccessForClaims(claims).Admin {
+		return false
+	}
 	products, restricted := userProductPolicy(claims.UserID, claims.Username, claims.Email)
 	if !restricted {
 		return true
@@ -122,6 +126,29 @@ func userAllowedProduct(claims *UserClaims, product string) bool {
 		}
 	}
 	return false
+}
+
+// adminOnlyProduct provides a deployment-wide authorization boundary for
+// products that are installed but not yet ready for general access. This is
+// deliberately enforced in the server as well as reflected in /api/auth/me;
+// hiding a product in the switcher alone would leave its APIs reachable.
+func adminOnlyProduct(product string) bool {
+	for _, candidate := range strings.Split(os.Getenv("AGENTWORKS_ADMIN_ONLY_PRODUCT_SURFACES"), ",") {
+		if strings.EqualFold(strings.TrimSpace(candidate), strings.TrimSpace(product)) {
+			return true
+		}
+	}
+	return false
+}
+
+func filterAdminOnlyProducts(products []string) []string {
+	filtered := make([]string, 0, len(products))
+	for _, product := range products {
+		if !adminOnlyProduct(product) {
+			filtered = append(filtered, product)
+		}
+	}
+	return filtered
 }
 
 // userAllowedWorkflowID reports whether claims may see/run the given
@@ -179,7 +206,16 @@ func productAccessResponseFields(claims *UserClaims) map[string]interface{} {
 		"allowed_workflow_ids": nil,
 	}
 	if claims != nil {
-		if products, restricted := userProductPolicy(claims.UserID, claims.Username, claims.Email); restricted {
+		access := userAccessForClaims(claims)
+		products, restricted := userProductPolicy(claims.UserID, claims.Username, claims.Email)
+		if !access.Admin && strings.TrimSpace(os.Getenv("AGENTWORKS_ADMIN_ONLY_PRODUCT_SURFACES")) != "" {
+			if !restricted {
+				products = knownProductIDs()
+			}
+			products = filterAdminOnlyProducts(products)
+			restricted = true
+		}
+		if restricted {
 			if products == nil {
 				products = []string{}
 			}

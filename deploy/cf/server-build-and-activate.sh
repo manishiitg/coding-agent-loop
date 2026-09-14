@@ -28,6 +28,10 @@ grep -Fq 'cdpEnabled: false' "$SCRIPT_DIR/runtime-config.js" || {
   echo "confida runtime config must display CDP as disabled" >&2
   exit 1
 }
+grep -Fq 'enabledProductSurfaces: ["agentworks", "work"]' "$SCRIPT_DIR/runtime-config.js" || {
+  echo "confida runtime config must expose AgentWorks and Work" >&2
+  exit 1
+}
 
 RELEASE_ID="confida-$(git -C "$REPO_ROOT" rev-parse --short HEAD)-$(date +%Y%m%d%H%M%S)"
 REMOTE_RELEASE="$REMOTE_APP/releases/$RELEASE_ID"
@@ -157,10 +161,12 @@ printf '%s\n' '[Service]' 'Environment=AGENTWORKS_MCP_STATE_DIR=/srv/confida/sta
 printf '%s\n' '[Service]' 'Environment=AGENT_BROWSER_CDP_ENABLED=false' > "$HOME/.config/systemd/user/confida-agent.service.d/20-disable-cdp.conf"
 printf '%s\n' '[Service]' 'Environment=AGENTWORKS_BROWSER_SESSION_PREFIX=confida' 'Environment=AGENTWORKS_BROWSER_STAGING_NAMESPACE=confida' > "$HOME/.config/systemd/user/confida-agent.service.d/40-browser-isolation.conf"
 printf '%s\n' '[Service]' 'Environment=AGENTWORKS_PLAYBOOKS_DIR=/srv/confida/current/playbooks' > "$HOME/.config/systemd/user/confida-agent.service.d/50-playbook-catalog.conf"
+printf '%s\n' '[Service]' 'Environment=AGENTWORKS_ADMIN_ONLY_PRODUCT_SURFACES=work' > "$HOME/.config/systemd/user/confida-agent.service.d/60-admin-only-products.conf"
 mkdir -p "$HOME/.config/systemd/user/confida-workspace.service.d"
 printf '%s\n' '[Service]' "Environment=PATH=$runtime_path" > "$HOME/.config/systemd/user/confida-workspace.service.d/zz-runtime-tools.conf"
 printf '%s\n' '[Service]' 'Environment=AGENT_BROWSER_CDP_ENABLED=false' > "$HOME/.config/systemd/user/confida-workspace.service.d/20-disable-cdp.conf"
 printf '%s\n' '[Service]' 'Environment=AGENTWORKS_BROWSER_SESSION_PREFIX=confida' 'Environment=AGENTWORKS_BROWSER_STAGING_NAMESPACE=confida' > "$HOME/.config/systemd/user/confida-workspace.service.d/40-browser-isolation.conf"
+printf '%s\n' '[Service]' 'Environment=AGENTWORKS_ADMIN_ONLY_PRODUCT_SURFACES=work' > "$HOME/.config/systemd/user/confida-workspace.service.d/60-admin-only-products.conf"
 systemctl --user daemon-reload
 systemctl --user restart confida-workspace
 sleep 2
@@ -179,6 +185,7 @@ for unit in confida-agent confida-workspace; do
   tr '\0' '\n' < "/proc/$pid/environ" | grep -Fqx "PATH=$runtime_path"
   tr '\0' '\n' < "/proc/$pid/environ" | grep -Fqx 'AGENTWORKS_BROWSER_SESSION_PREFIX=confida'
   tr '\0' '\n' < "/proc/$pid/environ" | grep -Fqx 'AGENTWORKS_BROWSER_STAGING_NAMESPACE=confida'
+  tr '\0' '\n' < "/proc/$pid/environ" | grep -Fqx 'AGENTWORKS_ADMIN_ONLY_PRODUCT_SURFACES=work'
   if [[ "$unit" == confida-agent ]]; then
     tr '\0' '\n' < "/proc/$pid/environ" | grep -Fqx 'AGENTWORKS_PLAYBOOKS_DIR=/srv/confida/current/playbooks'
     test -f "/proc/$pid/cwd/playbooks/agentic-engineering-platform/browser-qa/basic-browser-setup/playbook.json"

@@ -28,16 +28,16 @@ func withMemoryUserDirectory(t *testing.T, initial string) *string {
 	return &content
 }
 
-func TestRegisteredProductIDsIncludesSparkQuill(t *testing.T) {
+func TestRegisteredProductIDsIncludesBuiltInProducts(t *testing.T) {
 	t.Setenv("AGENT_PRODUCTS", "")
-	found := false
+	found := map[string]bool{}
 	for _, id := range registeredProductIDs() {
-		if id == "sparkquill" {
-			found = true
-		}
+		found[id] = true
 	}
-	if !found {
-		t.Fatalf("registeredProductIDs() = %v, want it to include sparkquill", registeredProductIDs())
+	for _, id := range []string{"sparkquill", "work"} {
+		if !found[id] {
+			t.Fatalf("registeredProductIDs() = %v, want it to include %s", registeredProductIDs(), id)
+		}
 	}
 }
 

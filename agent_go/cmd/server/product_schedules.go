@@ -238,6 +238,9 @@ func usersWithProduct(product string) []string {
 }
 
 func userAccessAllowsProduct(acc UserAccess, product string) bool {
+	if adminOnlyProduct(product) && !acc.Admin {
+		return false
+	}
 	if !acc.ProductsRestricted {
 		return true
 	}

@@ -272,6 +272,42 @@ func TestListAgentProfilesFiltersOtherOwners(t *testing.T) {
 	}
 }
 
+func TestAgentProfileCatalogHidesAdminOnlyProductFromMember(t *testing.T) {
+	t.Setenv("MULTI_USER_MODE", "true")
+	t.Setenv("AGENTWORKS_ADMIN_ONLY_PRODUCT_SURFACES", "work")
+	withMemoryUserDirectory(t, `{"users":[
+		{"id":"admin","username":"admin","admin":true,"can_create":true,"products":[]},
+		{"id":"member","username":"member","can_create":true,"products":[]}
+	]}`)
+	registry := agentprofiles.NewRegistry()
+	work := routeTestProfile("work", true, "")
+	work.Product = "work"
+	if err := registry.RegisterProfile(work); err != nil {
+		t.Fatal(err)
+	}
+
+	memberRequest := profileRouteRequest(http.MethodGet, "/api/agent-profiles", nil, "member")
+	memberRecorder := httptest.NewRecorder()
+	listAgentProfilesHandler(registry)(memberRecorder, memberRequest)
+	if !bytes.Contains(memberRecorder.Body.Bytes(), []byte(`"profiles":[]`)) {
+		t.Fatalf("member catalog leaked Work: %s", memberRecorder.Body.String())
+	}
+
+	adminRequest := profileRouteRequest(http.MethodGet, "/api/agent-profiles", nil, "admin")
+	adminRecorder := httptest.NewRecorder()
+	listAgentProfilesHandler(registry)(adminRecorder, adminRequest)
+	if !bytes.Contains(adminRecorder.Body.Bytes(), []byte(`"id":"work"`)) {
+		t.Fatalf("admin catalog did not include Work: %s", adminRecorder.Body.String())
+	}
+
+	memberGet := mux.SetURLVars(profileRouteRequest(http.MethodGet, "/api/agent-profiles/work", nil, "member"), map[string]string{"id": "work"})
+	memberGetRecorder := httptest.NewRecorder()
+	getAgentProfileHandler(registry)(memberGetRecorder, memberGet)
+	if memberGetRecorder.Code != http.StatusNotFound {
+		t.Fatalf("member direct profile access status=%d body=%s", memberGetRecorder.Code, memberGetRecorder.Body.String())
+	}
+}
+
 func TestGetAgentProfileDoesNotLeakAnotherOwner(t *testing.T) {
 	registry := agentprofiles.NewRegistry()
 	if err := registry.RegisterProfile(routeTestProfile("mine", false, "user-1")); err != nil {

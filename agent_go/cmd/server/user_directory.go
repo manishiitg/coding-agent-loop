@@ -882,7 +882,7 @@ func knownProductIDs() []string {
 // filtered by AGENT_PRODUCTS so a dedicated deployment only offers its own.
 func registeredProductIDs() []string {
 	var out []string
-	for _, id := range []string{"video-studio", "dominion", "sparkquill"} {
+	for _, id := range []string{"video-studio", "dominion", "sparkquill", "work"} {
 		if productEnabled(id) {
 			out = append(out, id)
 		}

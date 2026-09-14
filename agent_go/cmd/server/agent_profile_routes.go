@@ -301,6 +301,10 @@ func (api *StreamingAPI) handleAgentProfilePresentationDelete(w http.ResponseWri
 		writeAgentProfileError(w, http.StatusNotFound, "agent profile not found")
 		return
 	}
+	if !userAllowedProduct(GetUserFromContext(r.Context()), profile.Product) {
+		writeAgentProfileError(w, http.StatusNotFound, "agent profile not found")
+		return
+	}
 	if profile.ID != "video-studio" {
 		writeAgentProfileError(w, http.StatusMethodNotAllowed, "this product does not support deleting presentations")
 		return
@@ -413,6 +417,10 @@ func (api *StreamingAPI) handleAgentProfileChatQuery(w http.ResponseWriter, r *h
 		writeAgentProfileError(w, http.StatusNotFound, "agent profile not found")
 		return
 	}
+	if !userAllowedProduct(GetUserFromContext(r.Context()), profile.Product) {
+		writeAgentProfileError(w, http.StatusNotFound, "agent profile not found")
+		return
+	}
 	// A person is using the product right now: the quiet rule must hold any
 	// due schedule back. Scheduled runs enter through Run, never here, so a
 	// check-in's own turns are not mistaken for family activity.
@@ -494,6 +502,10 @@ func (api *StreamingAPI) handleResolveAgentProfileConversation(w http.ResponseWr
 		writeAgentProfileError(w, http.StatusNotFound, "agent profile not found")
 		return
 	}
+	if !userAllowedProduct(GetUserFromContext(r.Context()), profile.Product) {
+		writeAgentProfileError(w, http.StatusNotFound, "agent profile not found")
+		return
+	}
 	// Opening the product's conversation is what the app does on launch: the
 	// family is here, so a due check-in waits for a quiet moment.
 	productInteractions.Note(r.Context(), GetUserIDFromContext(r.Context()), profile.Product)
@@ -536,6 +548,10 @@ func (api *StreamingAPI) handleRotateAgentProfileConversation(w http.ResponseWri
 	userID := productWorkspaceUserID(r.Context())
 	profile, err := api.agentProfiles.Resolve(strings.TrimSpace(mux.Vars(r)["id"]), 0, userID)
 	if err != nil {
+		writeAgentProfileError(w, http.StatusNotFound, "agent profile not found")
+		return
+	}
+	if !userAllowedProduct(GetUserFromContext(r.Context()), profile.Product) {
 		writeAgentProfileError(w, http.StatusNotFound, "agent profile not found")
 		return
 	}
@@ -641,8 +657,16 @@ func listAgentProfilesHandler(registry *agentprofiles.Registry) http.HandlerFunc
 			return
 		}
 		userID := GetUserIDFromContext(r.Context())
+		profiles := registry.List(userID)
+		claims := GetUserFromContext(r.Context())
+		visible := profiles[:0]
+		for _, profile := range profiles {
+			if userAllowedProduct(claims, profile.Product) {
+				visible = append(visible, profile)
+			}
+		}
 		writeAgentProfileJSON(w, http.StatusOK, map[string]interface{}{
-			"profiles": registry.List(userID),
+			"profiles": visible,
 		})
 	}
 }
@@ -664,6 +688,10 @@ func getAgentProfileHandler(registry *agentprofiles.Registry) http.HandlerFunc {
 		}
 		profile, err := registry.Resolve(mux.Vars(r)["id"], version, GetUserIDFromContext(r.Context()))
 		if err != nil {
+			writeAgentProfileError(w, http.StatusNotFound, "agent profile not found")
+			return
+		}
+		if !userAllowedProduct(GetUserFromContext(r.Context()), profile.Product) {
 			writeAgentProfileError(w, http.StatusNotFound, "agent profile not found")
 			return
 		}

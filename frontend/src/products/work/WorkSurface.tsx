@@ -24,6 +24,7 @@ import { WorkspaceTopToolbar } from '../../components/workspace/WorkspaceTopTool
 import { loadAgentProfileUIPanels } from '../../utils/agentProfileCapabilities'
 import { belongsToWorkProject, setWorkProjectRuntimeSelection, visibleWorkProjectTabs, type ProductEngineSelectionDetail, type WorkRuntimeSelection } from './workTabs'
 import { updateProductProjectLLMConfig, updateProductProjectSelections } from '../../platform/chat/productProjects'
+import { CreateWorkProjectDialog } from './CreateWorkProjectDialog'
 
 const WORK_SPLIT_PREFERENCE_KEY = 'work_workspace_split_ratio'
 
@@ -101,8 +102,8 @@ function useWorkSessions() {
     return () => { cancelled = true }
   }, [])
 
-  const create = useCallback(async () => {
-    const session = await createWorkSession('New project', '')
+  const create = useCallback(async (title: string, description: string) => {
+    const session = await createWorkSession(title, description)
     setSessions((current) => [session, ...current])
     setSelectedId(session.id)
     return session
@@ -349,6 +350,7 @@ export function WorkSurface() {
   }, [selected, updateLLMConfig])
   const { tabId, tabs, error: chatError } = useWorkChatTabs(selected, persistLegacyRuntime)
   const [creating, setCreating] = useState(false)
+  const [createOpen, setCreateOpen] = useState(false)
   const [chatOpen, setChatOpen] = useState(true)
   const [panelOpen, setPanelOpen] = useState(true)
   const [workspaceView, setWorkspaceView] = useState<WorkWorkspaceView>('files')
@@ -455,12 +457,13 @@ export function WorkSurface() {
     })
   }, [selected?.id, setSplitRatio, startSplitDrag])
 
-  const createProject = useCallback(async () => {
+  const createProject = useCallback(async (title: string, description: string) => {
     if (creating) return
     setCreating(true)
     setCreateError(null)
     try {
-      await create()
+      await create(title, description)
+      setCreateOpen(false)
     } catch (cause) {
       setCreateError(cause instanceof Error ? cause.message : 'Could not create project.')
     } finally {
@@ -468,23 +471,36 @@ export function WorkSurface() {
     }
   }, [create, creating])
 
+  const openCreateProject = useCallback(() => {
+    setCreateError(null)
+    setCreateOpen(true)
+  }, [])
+
   const topBarControl = useMemo(() => (
     <WorkTopBarControl
       sessions={sessions}
       selected={selected}
       onSelect={select}
-      onNewProject={() => void createProject()}
+      onNewProject={openCreateProject}
       creating={creating}
     />
-  ), [createProject, creating, select, selected, sessions])
+  ), [creating, openCreateProject, select, selected, sessions])
 
-  const error = sessionsError || createError || chatError
+  const error = sessionsError || chatError
 
   return (
     <div className="flex h-screen min-h-0 flex-col bg-background">
       <UpdateProgressToast />
       <GlobalHumanFeedbackPrompt />
       <ModePresetBar productControl={topBarControl} reduced />
+      {createOpen ? (
+        <CreateWorkProjectDialog
+          onClose={() => { if (!creating) setCreateOpen(false) }}
+          onCreate={createProject}
+          submitting={creating}
+          error={createError}
+        />
+      ) : null}
       <div className="relative min-h-0 flex-1 overflow-hidden">
         <LlmModalHost />
         <div className={showProviders ? 'hidden' : 'h-full'}>
@@ -521,7 +537,7 @@ export function WorkSurface() {
                     </div>
                     <button
                       type="button"
-                      onClick={() => void createProject()}
+                      onClick={openCreateProject}
                       className="mt-5 inline-flex items-center gap-1.5 rounded-md bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground hover:bg-primary/90"
                     >
                       <Plus className="h-3.5 w-3.5" /> Create your first project

@@ -415,6 +415,35 @@ func TestRecordOrQueueBlockedScheduleRetainsLatestOccurrence(t *testing.T) {
 	}
 }
 
+func TestScheduleRunExecutionContextAppliesOptionalWallClockLimit(t *testing.T) {
+	parent := context.Background()
+	unbounded, cancelUnbounded := scheduleRunExecutionContext(parent, WorkflowSchedule{})
+	defer cancelUnbounded()
+	if _, ok := unbounded.Deadline(); ok {
+		t.Fatal("unbounded schedule unexpectedly has a deadline")
+	}
+
+	bounded, cancelBounded := scheduleRunExecutionContext(parent, WorkflowSchedule{MaxRunDurationMinutes: 2})
+	defer cancelBounded()
+	deadline, ok := bounded.Deadline()
+	if !ok {
+		t.Fatal("bounded schedule is missing its deadline")
+	}
+	remaining := time.Until(deadline)
+	if remaining < 119*time.Second || remaining > 121*time.Second {
+		t.Fatalf("deadline remaining=%s, want approximately 2 minutes", remaining)
+	}
+
+	deadlineCtx, cancelDeadline := context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
+	defer cancelDeadline()
+	if scheduleRunTimedOut(deadlineCtx, WorkflowSchedule{}) {
+		t.Fatal("an inherited deadline without max_run_duration_minutes was mislabeled as the schedule run limit")
+	}
+	if !scheduleRunTimedOut(deadlineCtx, WorkflowSchedule{MaxRunDurationMinutes: 2}) {
+		t.Fatal("configured schedule deadline was not recognized as a run timeout")
+	}
+}
+
 func TestScheduleDependencyDispositionUsesMatchingOccurrenceAndPolicy(t *testing.T) {
 	newFixture := func(t *testing.T, terminal schedulerstate.State) (*SchedulerService, *ScheduleContext, time.Time, time.Time) {
 		t.Helper()
@@ -493,6 +522,44 @@ func TestScheduleDependencyDispositionUsesMatchingOccurrenceAndPolicy(t *testing
 		got, reason := svc.scheduleDependencyDisposition(context.Background(), sctx, completedAt.Add(5*time.Minute))
 		if got != scheduleDependencyWaiting || !strings.Contains(reason, "configured delay") {
 			t.Fatalf("disposition=%v reason=%q, want delay wait", got, reason)
+		}
+	})
+
+	t.Run("all listed parents must release the dependent occurrence", func(t *testing.T) {
+		svc, sctx, completedAt, dependentOccurrence := newFixture(t, schedulerstate.StateCompleted)
+		sctx.Schedule.AfterScheduleID = ""
+		sctx.Schedule.AfterScheduleIDs = []string{"market-close", "risk-snapshot"}
+		got, reason := svc.scheduleDependencyDisposition(context.Background(), sctx, completedAt.Add(time.Second))
+		if got != scheduleDependencyWaiting || !strings.Contains(reason, "risk-snapshot") {
+			t.Fatalf("disposition=%v reason=%q, want wait for second prerequisite", got, reason)
+		}
+
+		riskOccurrence := dependentOccurrence.Add(-10 * time.Minute)
+		risk := schedulerstate.Run{
+			RunID: "risk-run", ScopeType: "workflow", ScopeID: "Workflow/trading",
+			LockKey: "workflow:Workflow/trading", ScheduleID: "risk-snapshot", TriggerSource: "cron",
+			ScheduledFor: riskOccurrence, StartedAt: riskOccurrence,
+		}
+		if err := svc.stateStore.BeginRun(context.Background(), risk); err != nil {
+			t.Fatal(err)
+		}
+		for _, state := range []schedulerstate.State{schedulerstate.StateWorkflowRunning, schedulerstate.StateWorkflowFinished, schedulerstate.StateCompleted} {
+			if err := svc.stateStore.Transition(context.Background(), schedulerstate.Transition{
+				RunID: risk.RunID, To: state, At: completedAt,
+			}); err != nil {
+				t.Fatalf("transition risk prerequisite to %s: %v", state, err)
+			}
+		}
+		if err := svc.stateStore.RecordFireDecision(context.Background(), schedulerstate.FireDecision{
+			DecisionID: "risk-fire", ScopeType: "workflow", ScopeID: "Workflow/trading",
+			ScheduleID: "risk-snapshot", TriggerSource: "cron", Decision: "started", RunID: risk.RunID,
+			ScheduledFor: riskOccurrence, FiredAt: riskOccurrence,
+		}); err != nil {
+			t.Fatal(err)
+		}
+		got, reason = svc.scheduleDependencyDisposition(context.Background(), sctx, completedAt.Add(time.Second))
+		if got != scheduleDependencyReady {
+			t.Fatalf("disposition=%v reason=%q, want ready after every prerequisite", got, reason)
 		}
 	})
 

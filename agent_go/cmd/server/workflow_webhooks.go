@@ -110,7 +110,7 @@ func validateWebhookSchedule(s WorkflowSchedule) error {
 	if s.CronExpression != "" || len(s.CalendarItems) > 0 || len(s.TriggerPayload) > 0 || len(s.Messages) > 0 || s.Query != "" || s.PulseReviewOnly || s.ShouldResumePrevious() {
 		return errors.New("API triggers accept delivery input only; clock settings, request overrides, messages, and session resume are not supported")
 	}
-	if (s.CollisionPolicy != "" && s.CollisionPolicy != "skip") || s.AfterScheduleID != "" {
+	if (s.CollisionPolicy != "" && s.CollisionPolicy != "skip") || len(scheduleDependencyIDs(s)) > 0 {
 		return errors.New("API triggers return a retryable busy response; schedule queues and dependencies are not supported")
 	}
 	if s.WorkshopMode != "run" {

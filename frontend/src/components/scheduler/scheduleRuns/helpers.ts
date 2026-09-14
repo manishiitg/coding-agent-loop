@@ -165,6 +165,18 @@ export function getScheduleExecutionScope(job: ScheduledJob): ScheduleExecutionS
   return null
 }
 
+export function getScheduleDependencyIds(job: ScheduledJob): string[] {
+  const seen = new Set<string>()
+  const ids: string[] = []
+  for (const rawId of [job.after_schedule_id, ...(job.after_schedule_ids ?? [])]) {
+    const id = rawId?.trim()
+    if (!id || seen.has(id)) continue
+    seen.add(id)
+    ids.push(id)
+  }
+  return ids
+}
+
 export function formatMissedScheduleReason(job: ScheduledJob): string {
   switch (job.missed_run_reason) {
     case 'no_execution_recorded':

@@ -40,3 +40,25 @@ func TestArtifactDriftAuditsTheSchedule(t *testing.T) {
 		}
 	}
 }
+
+func TestScheduleReferenceAdvertisesCoordinationAndRuntimeChoices(t *testing.T) {
+	rendered, err := renderFromRegistry("schedules", tmplData{}, referenceKinds)
+	if err != nil {
+		t.Fatalf("render schedules reference: %v", err)
+	}
+	for _, want := range []string{
+		"max_run_duration_minutes",
+		"after_schedule_ids",
+		"waits for **all**",
+		"after_terminal_status",
+		"dependency_deadline",
+		"cannot contain the schedule itself or form a cycle",
+	} {
+		if !strings.Contains(rendered, want) {
+			t.Errorf("schedule reference is missing %q", want)
+		}
+	}
+	if description := referenceKinds["schedules"].Description; !strings.Contains(description, "multi-schedule fan-in") {
+		t.Errorf("schedule reference discovery description does not advertise coordination: %q", description)
+	}
+}

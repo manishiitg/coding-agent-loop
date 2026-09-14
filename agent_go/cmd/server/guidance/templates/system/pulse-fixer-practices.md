@@ -371,6 +371,17 @@ assume the applied fix holds unless the defect is reproduced.
   projection separately.
 - Define the state transition invariant before editing. A UI badge change is not
   a scheduler repair.
+- Load `references/schedules.md` and inspect actual run history before changing
+  schedule policy. Cron spacing is not a concurrency guarantee: preserve the
+  workflow-wide single-active-execution lock.
+- Model cooperating schedules as directional `after_schedule_ids` edges. The
+  dependent waits for all prerequisites on the same local calendar date; never
+  introduce a cycle, a cadence mismatch, or treat the edge as permission to
+  overlap runs.
+- Reconcile `max_run_duration_minutes`, collision queue/discard behavior,
+  `max_start_delay_minutes`, terminal-status release, delay, and dependency
+  deadline as one transition policy. Preserve unrelated schedule fields when
+  using typed update tools.
 - Test ordering, retries, cancellation, recovery, and durable terminal state.
 
 ## Evaluation and report repair

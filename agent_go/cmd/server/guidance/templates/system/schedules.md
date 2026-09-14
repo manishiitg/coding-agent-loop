@@ -57,6 +57,14 @@ Workflow schedules always use the workshop builder execution path. Do not create
 
 **Persist the reason**: `pulse_mode_reason` must explain this schedule's purpose/frequency, why its selected review level is appropriate, and any verified coverage dependency (schedule ID or route). Store the explanation on the schedule, not only in chat. For example: `pulse_mode="basic", pulse_mode_reason="Runs approved-queue processing four times daily; each run needs backup and a summary, but routine unchanged queue processing does not warrant review/repair every time."` Do not copy this example without checking the actual schedule.
 
+### Runtime bounds and schedule dependencies
+
+- Set `max_run_duration_minutes` when a schedule needs a hard wall-clock boundary. The limit covers the workflow and its post-run Pulse lifecycle; zero or omission leaves it unbounded. Choose a value above normal variance but below the next operationally important window.
+- Use `after_schedule_ids` for explicit ordering instead of relying on cron spacing. A dependent occurrence waits for **all** listed schedules' durable occurrences on the same local calendar date. `after_schedule_id` remains available only for backward compatibility.
+- `after_terminal_status="completed"` is the safe default. Use `any_terminal` only when downstream work remains valid after a failed, partial, stopped, or interrupted prerequisite. `after_delay_minutes` applies to every prerequisite, and `dependency_deadline` (`HH:MM` local time) expires a stale dependent occurrence visibly.
+- Dependency lists must contain existing schedule IDs and cannot contain the schedule itself or form a cycle. Because matching is date-aware, do not make a daily schedule depend on a weekly schedule unless the dependent has the same active dates.
+- Dependencies express prerequisite completion; `collision_policy` still decides whether a due occurrence queues or is discarded while the workflow is busy. Use `queue_latest` with a bounded `max_start_delay_minutes` when the latest delayed occurrence remains useful.
+
 ### Back up scheduled workflows
 
 Scheduled runs execute unattended and accumulate state (`workflow.json`, `planning/`, `knowledgebase/`, `learnings/`, `db/`, reports) that otherwise lives only on local disk. **Whenever you set up a recurring schedule, decide its backup coverage** against the existing owner policy and Pulse cadence. For enabled backup, arrange off-device persistence; do not override an approved disabled/off policy. Load `read_skill(skills=[{"name":"builder-reference","path":"references/backup-strategy.md"}])`, follow it once to initialise the workflow's backup destination, and persist the result in `workflow.json.backup`.

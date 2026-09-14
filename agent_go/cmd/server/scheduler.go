@@ -1884,7 +1884,7 @@ func (s *SchedulerService) queueScheduleOccurrence(ctx context.Context, sctx *Sc
 		return false
 	}
 	decision := "queued_busy"
-	if strings.TrimSpace(sctx.Schedule.AfterScheduleID) != "" && policy == "retry" {
+	if len(scheduleDependencyIDs(sctx.Schedule)) > 0 && policy == "retry" {
 		decision = "waiting_for_dependency"
 	} else if policy == "coalesce" {
 		decision = "coalesced_busy"
@@ -1929,8 +1929,8 @@ const (
 )
 
 func (s *SchedulerService) scheduleDependencyDisposition(ctx context.Context, sctx *ScheduleContext, now time.Time) (scheduleDependencyResult, string) {
-	dependencyID := strings.TrimSpace(sctx.Schedule.AfterScheduleID)
-	if dependencyID == "" {
+	dependencyIDs := scheduleDependencyIDs(sctx.Schedule)
+	if len(dependencyIDs) == 0 {
 		return scheduleDependencyReady, ""
 	}
 	scopeType, scopeID, _ := scheduleStateScope(sctx)
@@ -1952,12 +1952,10 @@ func (s *SchedulerService) scheduleDependencyDisposition(ctx context.Context, sc
 	if dependentEnd := occurrence.UTC().Add(time.Nanosecond); dependentEnd.Before(dayEnd) {
 		dayEnd = dependentEnd
 	}
+	var dependencyDeadline time.Time
 	if deadline := strings.TrimSpace(sctx.Schedule.DependencyDeadline); deadline != "" {
 		parsed, _ := time.Parse("15:04", deadline)
-		deadlineAt := time.Date(year, month, day, parsed.Hour(), parsed.Minute(), 0, 0, location)
-		if !now.Before(deadlineAt) {
-			return scheduleDependencyBlocked, fmt.Sprintf("dependency deadline %s %s passed before prerequisite %s released", deadline, location, dependencyID)
-		}
+		dependencyDeadline = time.Date(year, month, day, parsed.Hour(), parsed.Minute(), 0, 0, location)
 	}
 	s.stateStoreMu.RLock()
 	store := s.stateStore
@@ -1965,29 +1963,55 @@ func (s *SchedulerService) scheduleDependencyDisposition(ctx context.Context, sc
 		s.stateStoreMu.RUnlock()
 		return scheduleDependencyWaiting, "dependency state is unavailable"
 	}
-	run, err := store.RunForScheduleOccurrence(ctx, scopeType, scopeID, dependencyID, dayStart, dayEnd)
-	s.stateStoreMu.RUnlock()
-	if err != nil {
-		if errors.Is(err, schedulerstate.ErrRunNotFound) {
-			return scheduleDependencyWaiting, fmt.Sprintf("waiting for prerequisite schedule %s occurrence on %04d-%02d-%02d", dependencyID, year, month, day)
-		}
-		return scheduleDependencyWaiting, fmt.Sprintf("could not read prerequisite schedule %s occurrence: %v", dependencyID, err)
-	}
-	if !schedulerstate.IsTerminal(run.State) {
-		return scheduleDependencyWaiting, fmt.Sprintf("prerequisite schedule %s occurrence %s is still %s", dependencyID, run.RunID, run.State)
-	}
+	defer s.stateStoreMu.RUnlock()
 	terminalPolicy := strings.TrimSpace(sctx.Schedule.AfterTerminalStatus)
 	if terminalPolicy == "" {
 		terminalPolicy = "completed"
 	}
-	if terminalPolicy == "completed" && run.State != schedulerstate.StateCompleted {
-		return scheduleDependencyBlocked, fmt.Sprintf("prerequisite schedule %s occurrence %s ended %s; completed is required", dependencyID, run.RunID, run.State)
-	}
-	if delay := sctx.Schedule.AfterDelayMinutes; delay > 0 && run.CompletedAt != nil {
-		releaseAt := run.CompletedAt.Add(time.Duration(delay) * time.Minute)
-		if now.Before(releaseAt) {
-			return scheduleDependencyWaiting, fmt.Sprintf("prerequisite schedule %s completed; waiting until %s for configured delay", dependencyID, releaseAt.Format(time.RFC3339))
+	waitingReasons := make([]string, 0, len(dependencyIDs))
+	for _, dependencyID := range dependencyIDs {
+		run, err := store.RunForScheduleOccurrence(ctx, scopeType, scopeID, dependencyID, dayStart, dayEnd)
+		if err != nil {
+			if errors.Is(err, schedulerstate.ErrRunNotFound) {
+				waitingReasons = append(waitingReasons, fmt.Sprintf("waiting for prerequisite schedule %s occurrence on %04d-%02d-%02d", dependencyID, year, month, day))
+				continue
+			}
+			waitingReasons = append(waitingReasons, fmt.Sprintf("could not read prerequisite schedule %s occurrence: %v", dependencyID, err))
+			continue
 		}
+		if !schedulerstate.IsTerminal(run.State) {
+			waitingReasons = append(waitingReasons, fmt.Sprintf("prerequisite schedule %s occurrence %s is still %s", dependencyID, run.RunID, run.State))
+			continue
+		}
+		if terminalPolicy == "completed" && run.State != schedulerstate.StateCompleted {
+			return scheduleDependencyBlocked, fmt.Sprintf("prerequisite schedule %s occurrence %s ended %s; completed is required", dependencyID, run.RunID, run.State)
+		}
+		if !dependencyDeadline.IsZero() {
+			if run.CompletedAt == nil {
+				waitingReasons = append(waitingReasons, fmt.Sprintf("prerequisite schedule %s is terminal but its completion timestamp is unavailable", dependencyID))
+				continue
+			}
+			releaseAt := run.CompletedAt.Add(time.Duration(sctx.Schedule.AfterDelayMinutes) * time.Minute)
+			if releaseAt.After(dependencyDeadline) {
+				return scheduleDependencyBlocked, fmt.Sprintf("prerequisite schedule %s released at %s after dependency deadline %s", dependencyID, releaseAt.Format(time.RFC3339), dependencyDeadline.Format(time.RFC3339))
+			}
+		}
+		if delay := sctx.Schedule.AfterDelayMinutes; delay > 0 {
+			if run.CompletedAt == nil {
+				waitingReasons = append(waitingReasons, fmt.Sprintf("prerequisite schedule %s is terminal but its completion timestamp is unavailable", dependencyID))
+				continue
+			}
+			releaseAt := run.CompletedAt.Add(time.Duration(delay) * time.Minute)
+			if now.Before(releaseAt) {
+				waitingReasons = append(waitingReasons, fmt.Sprintf("prerequisite schedule %s completed; waiting until %s for configured delay", dependencyID, releaseAt.Format(time.RFC3339)))
+			}
+		}
+	}
+	if len(waitingReasons) > 0 {
+		if !dependencyDeadline.IsZero() && !now.Before(dependencyDeadline) {
+			return scheduleDependencyBlocked, fmt.Sprintf("dependency deadline %s %s passed before prerequisites %s released: %s", sctx.Schedule.DependencyDeadline, location, strings.Join(dependencyIDs, ", "), strings.Join(waitingReasons, "; "))
+		}
+		return scheduleDependencyWaiting, strings.Join(waitingReasons, "; ")
 	}
 	return scheduleDependencyReady, ""
 }
@@ -2100,8 +2124,21 @@ func (s *SchedulerService) endQueuedLaunch(key string) {
 	s.queuedLaunchMu.Unlock()
 }
 
+func scheduleRunExecutionContext(parent context.Context, schedule WorkflowSchedule) (context.Context, context.CancelFunc) {
+	if schedule.MaxRunDurationMinutes <= 0 {
+		return parent, func() {}
+	}
+	return context.WithTimeout(parent, time.Duration(schedule.MaxRunDurationMinutes)*time.Minute)
+}
+
+func scheduleRunTimedOut(ctx context.Context, schedule WorkflowSchedule) bool {
+	return ctx != nil && schedule.MaxRunDurationMinutes > 0 && errors.Is(ctx.Err(), context.DeadlineExceeded)
+}
+
 // runJob executes a scheduled job: updates runtime state, creates run history, executes, updates results.
 func (s *SchedulerService) runJob(ctx context.Context, sctx *ScheduleContext, runID string) (string, error) {
+	ctx, cancelRunDeadline := scheduleRunExecutionContext(ctx, sctx.Schedule)
+	defer cancelRunDeadline()
 	if sctx.WebhookInput != nil {
 		defer s.pruneWebhookRuns(sctx.WorkspacePath)
 	}
@@ -2198,14 +2235,30 @@ func (s *SchedulerService) runJob(ctx context.Context, sctx *ScheduleContext, ru
 
 	// Execute
 	sessionID, runFolder, execErr := s.executeJob(ctx, sctx, runID)
+	// Execution cancellation must stop work, not the durable record explaining
+	// why it stopped. Preserve scheduler-scoped values while removing the run
+	// deadline/cancellation from all post-execution history and state writes.
+	persistenceCtx := context.WithoutCancel(ctx)
 
 	// Calculate results
 	durationMs := time.Since(startTime).Milliseconds()
 
 	status := "success"
 	errMsg := ""
-	userInterrupted := errors.Is(execErr, errWorkshopSequenceInterrupted) || errors.Is(execErr, context.Canceled)
-	if userInterrupted {
+	// Only this schedule's configured deadline is a max-run timeout. A nested
+	// provider/tool deadline may also return context.DeadlineExceeded while the
+	// schedule context itself remains live; preserve that original error rather
+	// than misreporting a configured wall-clock limit.
+	timedOut := scheduleRunTimedOut(ctx, sctx.Schedule)
+	userInterrupted := !timedOut && (errors.Is(execErr, errWorkshopSequenceInterrupted) || errors.Is(execErr, context.Canceled))
+	if timedOut {
+		status = "error"
+		errMsg = fmt.Sprintf("schedule exceeded its %d-minute wall-clock limit", sctx.Schedule.MaxRunDurationMinutes)
+		if execErr == nil {
+			execErr = context.DeadlineExceeded
+		}
+		s.sessionLogf(sctx, sessionID, "[SCHEDULER] %s timed out after %dms: %s", schedID, durationMs, errMsg)
+	} else if userInterrupted {
 		status = "stopped"
 		if execErr != nil {
 			errMsg = execErr.Error()
@@ -2241,7 +2294,7 @@ func (s *SchedulerService) runJob(ctx context.Context, sctx *ScheduleContext, ru
 		finishedReason = "Pulse version preflight finished with status " + status + "; workflow execution was skipped"
 		finishedSessionKind = "pulse"
 	}
-	s.transitionScheduleRun(ctx, sctx, schedulerstate.Transition{
+	s.transitionScheduleRun(persistenceCtx, sctx, schedulerstate.Transition{
 		RunID:        runID,
 		To:           schedulerstate.StateWorkflowFinished,
 		Reason:       finishedReason,
@@ -2265,7 +2318,7 @@ func (s *SchedulerService) runJob(ctx context.Context, sctx *ScheduleContext, ru
 	// Update run history entry for the workflow run. Post-run Pulse
 	// may continue after this, but it does not change the recorded run result.
 	pulseResult := pulseLifecycleNotRun
-	if err := UpdateScheduleRun(ctx, sctx.WorkspacePath, runID, status, errMsg, &durationMs, runFolder, sessionID); err != nil {
+	if err := UpdateScheduleRun(persistenceCtx, sctx.WorkspacePath, runID, status, errMsg, &durationMs, runFolder, sessionID); err != nil {
 		s.sessionLogf(sctx, sessionID, "[SCHEDULER] Failed to update run entry for %s: %v", schedID, err)
 	}
 
@@ -2286,7 +2339,7 @@ func (s *SchedulerService) runJob(ctx context.Context, sctx *ScheduleContext, ru
 	if upgradeBlocked {
 		s.sessionLogf(sctx, sessionID, "[PULSE] skipped for %s: the contract-upgrade preflight blocked, so the workflow did not run and there is no evidence to review", schedID)
 	}
-	if !upgradeBlocked && !userInterrupted && runFolder != "" {
+	if !upgradeBlocked && !userInterrupted && !timedOut && runFolder != "" {
 		if manifest, found, mErr := ReadWorkflowManifest(ctx, sctx.WorkspacePath); mErr == nil && found && shouldRunPulseLifecycle(sctx, manifest) {
 			pulseMode := effectiveSchedulePulseMode(sctx, manifest)
 			pulseEvidenceStatus := status
@@ -2307,7 +2360,10 @@ func (s *SchedulerService) runJob(ctx context.Context, sctx *ScheduleContext, ru
 
 	// Now the whole scheduled job, including post-run side effects, is done.
 	terminalState := schedulerstate.StateCompleted
-	if userInterrupted {
+	timedOut = timedOut || scheduleRunTimedOut(ctx, sctx.Schedule)
+	if timedOut {
+		terminalState = schedulerstate.StateFailed
+	} else if userInterrupted {
 		terminalState = schedulerstate.StateStopped
 	} else if status == "error" {
 		terminalState = schedulerstate.StateFailed
@@ -2318,7 +2374,13 @@ func (s *SchedulerService) runJob(ctx context.Context, sctx *ScheduleContext, ru
 	}
 	overallStatus := status
 	overallError := errMsg
-	if terminalState == schedulerstate.StateStopped {
+	if timedOut {
+		overallStatus = "error"
+		overallError = fmt.Sprintf("schedule exceeded its %d-minute wall-clock limit", sctx.Schedule.MaxRunDurationMinutes)
+		if execErr == nil {
+			execErr = context.DeadlineExceeded
+		}
+	} else if terminalState == schedulerstate.StateStopped {
 		overallStatus = "stopped"
 		if overallError == "" {
 			overallError = "stopped by user"
@@ -2329,10 +2391,14 @@ func (s *SchedulerService) runJob(ctx context.Context, sctx *ScheduleContext, ru
 			overallError = "Pulse completed partially"
 		}
 	}
-	if sctx.PulseOnly {
-		durationMs = time.Since(startTime).Milliseconds()
-		if err := UpdateScheduleRun(ctx, sctx.WorkspacePath, runID, overallStatus, overallError, &durationMs, runFolder, sessionID); err != nil {
-			s.sessionLogf(sctx, sessionID, "[PULSE] failed to finalize one-off Pulse run history: %v", err)
+	// Runtime state measures the complete scheduled job, including post-run
+	// Pulse. Normal history remains the workflow result except when the overall
+	// wall-clock limit is what failed the occurrence; that terminal fact must not
+	// leave a successful history row behind.
+	durationMs = time.Since(startTime).Milliseconds()
+	if sctx.PulseOnly || timedOut {
+		if err := UpdateScheduleRun(persistenceCtx, sctx.WorkspacePath, runID, overallStatus, overallError, &durationMs, runFolder, sessionID); err != nil {
+			s.sessionLogf(sctx, sessionID, "[SCHEDULER] failed to finalize schedule run history: %v", err)
 		}
 	}
 	nextRun := s.nextWorkflowScheduleRunAt(sctx.WorkspacePath, schedID, time.Now())
@@ -2349,11 +2415,11 @@ func (s *SchedulerService) runJob(ctx context.Context, sctx *ScheduleContext, ru
 			state.ConsecutiveFailures = 0
 		}
 	})
-	terminalReason := "scheduled run finished with status " + status
+	terminalReason := "scheduled run finished with status " + overallStatus
 	if sctx.PulseOnly {
 		terminalReason = "one-off Pulse finished with status " + overallStatus + "; workflow execution was skipped"
 	}
-	s.transitionScheduleRun(ctx, sctx, schedulerstate.Transition{
+	s.transitionScheduleRun(persistenceCtx, sctx, schedulerstate.Transition{
 		RunID: runID, To: terminalState, Reason: terminalReason,
 		SessionID: sessionID, ErrorMessage: overallError, At: time.Now().UTC(),
 	})

@@ -128,3 +128,16 @@ it does not fix partial-run overwrites or reconstruct already-pruned evidence.
 release. This ticket's remaining foundation acceptance is still required and is
 not closed by adding Architecture or outcome tracking. Historical evidence and
 legacy workflow behavior remain unchanged by that release.
+
+## 2026-09-14 scheduled-run identity follow-up
+
+[PLAT-320](plat-320.md) owns the compatible storage migration that reserves
+`iteration-0` for Builder/manual execution and gives each saved-schedule
+occurrence an immutable `iteration-N-sched` folder before any workflow tool
+call. It also owns propagation into direct `execute_step`, evaluation, logs,
+retention, APIs/UI, AgentWorks guidance and Pulse intake.
+
+PLAT-047 remains the parent immutable-physical-identity requirement and retains
+the unresolved Builder/partial-run evidence criteria. PLAT-320 must not close
+PLAT-047 merely by isolating scheduled folders: lower-level evidence identity
+and the mutable Builder compatibility path must also remain truthful.

@@ -35,6 +35,28 @@ can answer the question. Preserve source URLs/paths, dates and evidence versus
 hypothesis in the brief review_note when not already in the linked evidence. Reuse fresh
 research instead of repeating it. External actions retain existing authorizations.
 
+### Schedule topology and throughput
+
+Schedule coordination is an Architecture concern when required behavior works
+but the topology, runtime bounds, or queueing policy wastes capacity or makes
+cadence fragile. Load `references/schedules.md`, then use `list_schedules` and
+targeted `get_schedule_runs` evidence. Never assume cron spacing provides
+concurrency: the workflow-wide active-execution lock permits one workflow run at
+a time. `after_schedule_ids` is an all-of, same-local-calendar-date prerequisite
+edge; two schedules work together through a directional chain, and several can
+join through fan-in. It does not permit overlap, and dependency cycles or
+daily-to-weekly cadence mismatches are invalid designs.
+
+Assess `max_run_duration_minutes`, `collision_policy`,
+`max_start_delay_minutes`, `after_terminal_status`, `after_delay_minutes`, and
+`dependency_deadline` together against observed durations, missed fires,
+queued/expired occurrences, side effects, and the next operationally important
+window. Prefer explicit edges over accidental ordering from cron gaps. Preserve
+the workflow-wide safety lock and explicit user policy. Architecture may propose
+a bounded schedule change with baseline, expected throughput/reliability benefit,
+guardrails, checkpoint, rollback, and human decision; this review remains
+read-only and must not edit schedules itself.
+
 ### Execution tier and model ownership
 
 LLM calls stay on the selected model and coding-agent provider, including retries.

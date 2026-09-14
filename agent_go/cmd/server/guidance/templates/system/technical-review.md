@@ -30,6 +30,16 @@ settings while diagnosing concrete failures. General prompt, script, orchestrati
 learning, KB, DB and report improvements
 belong to Architecture unless they repair a concrete correctness failure.
 
+For a concrete missed fire, incorrect wait/skip/expiry transition, runaway run,
+or unsafe schedule configuration, load `references/schedules.md` before deciding
+or applying a repair. Read `list_schedules` plus targeted `get_schedule_runs` or
+`schedule-runs.json`; do not infer behavior from cron spacing. Preserve the
+workflow-wide single-active-execution safety lock. Schedule prerequisites are
+directional all-of edges through `after_schedule_ids` on the same local calendar
+date, not permission for two runs to overlap. Repair with typed schedule tools,
+preserve unrelated fields and explicit user policy, and validate the scheduler
+transition rather than only the displayed configuration.
+
 Use `get_pulse_state(view="backlog", detail="compact")` and semantic issue IDs.
 A failed child call alone is not a failed outcome. Establish required-output
 impact and recovery before filing a defect. Merge duplicate symptoms into one

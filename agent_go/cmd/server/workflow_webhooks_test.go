@@ -293,6 +293,7 @@ func TestWebhookPolicyRejectsOverridesAndManualInvocation(t *testing.T) {
 		func(s *WorkflowSchedule) { s.Messages = []string{"run something else"} },
 		func(s *WorkflowSchedule) { s.CollisionPolicy = "queue_latest" },
 		func(s *WorkflowSchedule) { s.AfterScheduleID = "other" },
+		func(s *WorkflowSchedule) { s.AfterScheduleIDs = []string{"other"} },
 		func(s *WorkflowSchedule) { s.WorkshopMode = "workshop" },
 	} {
 		copy := sched

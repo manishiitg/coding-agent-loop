@@ -9,6 +9,20 @@ See [PLAT-307](pulse_platform/plat-307.md) for scope and tests.
 
 # Pulse Platform-Issue Register
 
+## Immutable scheduled-run folders and Builder `iteration-0` isolation
+
+[PLAT-320](pulse_platform/plat-320.md) specifies the compatibility migration
+that reserves mutable `iteration-0` for Builder/manual workflow execution and
+allocates an immutable `iteration-N-sched` folder for every workflow-producing
+saved-schedule occurrence before its first tool call. Pulse-only review and
+platform-maintenance occurrences retain their own lifecycle identity and target
+existing evidence rather than creating empty workflow runs. The ticket covers exact occurrence/run
+identity, direct `execute_step`, paired evaluation, logs and validation
+evidence, cost/history attribution, retention, APIs/UI, AgentWorks guidance and
+Pulse awareness. Existing plain iterations and `-hook` runs remain readable.
+The workflow-wide schedule lease stays enabled; parallel shared-state execution
+is explicitly outside this ticket.
+
 ## Notification duplicate rendering
 
 [PLAT-319](pulse_platform/plat-319.md) fixes Slack's visible plain-text plus
@@ -644,7 +658,7 @@ Rules:
 | [PLAT-139](pulse_platform/plat-139.md) | An `ICICI-BANK-PARSING-v2` workflow step finished its real work at 09:45 but held its caller ~65 minutes, never reporting completion | unassigned | `fixed` (2026-08-19: the original diagnosis in this ticket was WRONG and is corrected inline. It concluded "pi's process is gone, so cmd.Wait() is stuck on an internally-owned stderr pipe" — but the `ps` query used could not match pi, which runs as `COMM=pi`, not as a node process. Listing the server's real children during a live recurrence showed pi ALIVE (27m and 65m, elapsed matching the stall warnings, zero zombies), so cmd.Wait() was blocked correctly. Real cause: pi finishes its work and fails to EXIT — its MCP child keeps Node's event loop alive while waiting on a stdin pi never closes — and the `agent_settled` teardown that breaks this had been deleted from the pi adapter. Restored in `@3d9bcc6`; stall log now records pid + whether the terminal event was seen (`@000b917`) so the two cases cannot be confused again. The stderr-pipe fix `@6d8e4e9` is a real separate defect and is retained) | `multi-llm-provider-go` picli structured adapter |
 | [PLAT-148](pulse_platform/plat-148.md) | PLAT-116 orphan cleanup closed the Build-in-Public Pulse conversation after Gate timed out, then the scheduler immediately sent Review+Fix into that closed session, stranding the remaining sequence and later schedules | unassigned | `implemented` — orphan cleanup is now turn-scoped and preserves the conversation | per-turn lifecycle + scheduled conversation continuation |
 | [PLAT-143](pulse_platform/plat-143.md) | Workflow restoration is represented by one global frontend boolean, so hydration of another session can cover LinkedIn with a repeatedly re-armed `Restoring previous session…` screen while LinkedIn's own APIs are healthy | unassigned | `implemented` — active restore state is keyed by session | keyed frontend restore lifecycle |
-| [PLAT-144](pulse_platform/plat-144.md) | Logically dependent schedules can only approximate ordering with cron offsets; Tectonic Daily Pulse fired 15 minutes after close, while close normally required 22+ minutes, and collided | unassigned | `implemented` — occurrence-linked dependency, terminal policy, delay, deadline, and restart-safe release shipped | schedule dependencies + overlap validation |
+| [PLAT-144](pulse_platform/plat-144.md) | Logically dependent schedules can only approximate ordering with cron offsets; Tectonic Daily Pulse fired 15 minutes after close, while close normally required 22+ minutes, and collided | Codex | `implemented and regression-tested` — same-day all-of dependency fan-in, terminal policy, delay/deadline, maximum runtime, authoring validation and restart-safe release; deployment pending | schedule dependencies + runtime bounds |
 | [PLAT-145](pulse_platform/plat-145.md) | A busy workflow lease terminally discards every occurrence as `skipped_busy`; three Tectonic occurrences were durably observed and then permanently lost because no queue/coalesce/retry policy exists | unassigned | `implemented` — durable skip/queue-latest/retry/coalesce with atomic lease claim and visible waiting state shipped | durable scheduler collision policy |
 | [PLAT-146](pulse_platform/plat-146.md) | Manual launch preserves schedule prose but no typed safety mode; the Tectonic “market close” schedule launched before cutoff could reach ordinary entry logic because close-only existed only as a time assumption | unassigned | `implemented` — runtime mode reaches and gates the script boundary | typed schedule inputs + side-effect enforcement |
 | [PLAT-147](pulse_platform/plat-147.md) | The managed backup contract allowed a generated Git bundle to be tracked inside its own source repository; Tectonic reached a ~67 GB bundle and ~133 GB `.git` through recursive self-inclusion | unassigned | `contained` — canonical path guard, future-agent Git contract, bundle deletion, verified history rebuild, and external recovery bundle shipped; managed archive lifecycle/health remains separate work | backup destination validation + health |

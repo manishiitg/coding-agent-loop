@@ -188,8 +188,9 @@ func TestValidateManifestRejectsEquivalentMCPServerAliases(t *testing.T) {
 func TestValidateManifestRejectsScheduleDependencyCycle(t *testing.T) {
 	manifest := NewWorkflowManifest("Dependency cycle")
 	manifest.Schedules = []WorkflowSchedule{
-		{ID: "close", Mode: "multi-agent", PulseMode: "basic", PulseModeReason: "Routine dependency fixture", ScheduleType: "cron", CronExpression: "0 16 * * 1-5", AfterScheduleID: "pulse"},
-		{ID: "pulse", Mode: "multi-agent", PulseMode: "basic", PulseModeReason: "Routine dependency fixture", ScheduleType: "cron", CronExpression: "5 16 * * 1-5", AfterScheduleID: "close"},
+		{ID: "collect", Mode: "multi-agent", PulseMode: "basic", PulseModeReason: "Routine dependency fixture", ScheduleType: "cron", CronExpression: "0 16 * * 1-5", AfterScheduleIDs: []string{"publish"}},
+		{ID: "review", Mode: "multi-agent", PulseMode: "basic", PulseModeReason: "Routine dependency fixture", ScheduleType: "cron", CronExpression: "5 16 * * 1-5", AfterScheduleIDs: []string{"collect"}},
+		{ID: "publish", Mode: "multi-agent", PulseMode: "basic", PulseModeReason: "Routine dependency fixture", ScheduleType: "cron", CronExpression: "10 16 * * 1-5", AfterScheduleIDs: []string{"review"}},
 	}
 	err := ValidateManifest(manifest)
 	if err == nil || !strings.Contains(err.Error(), "dependency cycle") {
@@ -201,19 +202,62 @@ func TestValidateManifestAcceptsTypedDependencyAndCollisionPolicies(t *testing.T
 	manifest := NewWorkflowManifest("Dependent schedules")
 	manifest.Schedules = []WorkflowSchedule{
 		{ID: "close", Mode: "multi-agent", PulseMode: "basic", PulseModeReason: "Routine dependency fixture", ScheduleType: "cron", CronExpression: "55 15 * * 1-5", CollisionPolicy: "queue_latest"},
+		{ID: "snapshot", Mode: "multi-agent", PulseMode: "basic", PulseModeReason: "Routine dependency fixture", ScheduleType: "cron", CronExpression: "0 16 * * 1-5", CollisionPolicy: "queue_latest"},
 		{
 			ID: "pulse", Mode: "multi-agent", PulseMode: "basic", PulseModeReason: "Routine dependency fixture", ScheduleType: "cron", CronExpression: "10 16 * * 1-5",
-			AfterScheduleID: "close", AfterTerminalStatus: "completed", AfterDelayMinutes: 10,
-			DependencyDeadline: "17:30", CollisionPolicy: "coalesce", MaxStartDelayMinutes: 80,
+			AfterScheduleIDs: []string{"close", "snapshot"}, AfterTerminalStatus: "completed", AfterDelayMinutes: 10,
+			DependencyDeadline: "17:30", CollisionPolicy: "coalesce", MaxStartDelayMinutes: 80, MaxRunDurationMinutes: 45,
 		},
 	}
 	if err := ValidateManifest(manifest); err != nil {
 		t.Fatalf("valid dependency policy rejected: %v", err)
 	}
 
-	manifest.Schedules[1].DependencyDeadline = "tomorrow"
+	manifest.Schedules[2].DependencyDeadline = "tomorrow"
 	if err := ValidateManifest(manifest); err == nil || !strings.Contains(err.Error(), "HH:MM") {
 		t.Fatalf("invalid dependency deadline should be rejected, got %v", err)
+	}
+}
+
+func TestValidateManifestRejectsInvalidDependencyListsAndRunLimit(t *testing.T) {
+	manifest := NewWorkflowManifest("Invalid dependency policy")
+	manifest.Schedules = []WorkflowSchedule{
+		{ID: "collect", Mode: "multi-agent", PulseMode: "basic", PulseModeReason: "Routine dependency fixture", ScheduleType: "cron", CronExpression: "0 9 * * *"},
+		{ID: "publish", Mode: "multi-agent", PulseMode: "basic", PulseModeReason: "Routine dependency fixture", ScheduleType: "cron", CronExpression: "30 9 * * *", AfterScheduleIDs: []string{""}},
+	}
+	if err := ValidateManifest(manifest); err == nil || !strings.Contains(err.Error(), "cannot be empty") {
+		t.Fatalf("empty dependency ID should be rejected, got %v", err)
+	}
+
+	manifest.Schedules[1].AfterScheduleIDs = []string{"missing"}
+	if err := ValidateManifest(manifest); err == nil || !strings.Contains(err.Error(), "unknown dependency") {
+		t.Fatalf("unknown dependency ID should be rejected, got %v", err)
+	}
+
+	manifest.Schedules[1].AfterScheduleIDs = nil
+	manifest.Schedules[1].MaxRunDurationMinutes = -1
+	if err := ValidateManifest(manifest); err == nil || !strings.Contains(err.Error(), "max_run_duration_minutes") {
+		t.Fatalf("negative run limit should be rejected, got %v", err)
+	}
+}
+
+func TestReplaceScheduleDependencyIDsClearsHiddenLegacyDependency(t *testing.T) {
+	schedule := WorkflowSchedule{
+		AfterScheduleID:  "legacy-parent",
+		AfterScheduleIDs: []string{"old-list-parent"},
+	}
+	replaceScheduleDependencyIDs(&schedule, []string{"new-parent"}, false)
+	if schedule.AfterScheduleID != "" {
+		t.Fatalf("legacy dependency survived list replacement: %q", schedule.AfterScheduleID)
+	}
+	if got := scheduleDependencyIDs(schedule); !reflect.DeepEqual(got, []string{"new-parent"}) {
+		t.Fatalf("dependencies = %v, want only new-parent", got)
+	}
+
+	schedule.AfterScheduleID = "explicit-legacy-parent"
+	replaceScheduleDependencyIDs(&schedule, []string{"new-parent"}, true)
+	if got := scheduleDependencyIDs(schedule); !reflect.DeepEqual(got, []string{"explicit-legacy-parent", "new-parent"}) {
+		t.Fatalf("explicit singular+list update lost a dependency: %v", got)
 	}
 }
 

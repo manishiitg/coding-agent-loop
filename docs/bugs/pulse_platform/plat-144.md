@@ -4,9 +4,9 @@
 
 | Coordination | Value |
 |---|---|
-| Assigned agent | unassigned |
-| Ticket state | `implemented` — durable occurrence-linked dependencies, terminal policy, delay, deadline, authoring validation, and restart-safe release shipped |
-| Last synchronized | `2026-08-19` |
+| Assigned agent | Codex |
+| Ticket state | `implemented and regression-tested` — durable occurrence-linked fan-in, terminal policy, delay, deadline, maximum runtime, authoring validation, and restart-safe release; deployment pending |
+| Last synchronized | `2026-09-14` |
 
 - **Priority:** P1 for operational/financial workflows; P2 generally.
 - **Owner:** schedule schema, scheduler trigger graph, and workflow-builder
@@ -84,3 +84,26 @@ The builder rejects unknown dependency IDs, self-dependencies, dependency
 cycles, invalid terminal policies, negative delays, and malformed deadlines.
 Observed-p95 overlap advice remains a useful authoring enhancement, but is no
 longer required for correctness because the runtime dependency is authoritative.
+
+## 2026-09-14 fan-in and runtime-bound extension
+
+The singular `after_schedule_id` contract now has a canonical list form,
+`after_schedule_ids`. The dependent occurrence waits for **all** named
+prerequisite occurrences on the same local calendar date. The singular field
+remains readable for old manifests; replacing the list clears a legacy singular
+value unless the caller explicitly supplies both in the same update. Manifest
+validation rejects empty/unknown IDs, self-dependencies and cycles across the
+full directed graph.
+
+Schedules also accept `max_run_duration_minutes`, a hard wall-clock limit over
+the workflow and its post-run Pulse lifecycle. A timeout cancels execution but
+uses an uncancelled persistence context to record the failed terminal state and
+history. A timeout during Pulse cannot leave the occurrence recorded as a
+success.
+
+Builder schedule tools, list output, schedule UI details, Pulse Gate,
+Architecture Review, Technical Review and Fixer guidance expose the fan-in and
+runtime policies. Dependencies still express ordering rather than permission to
+overlap; the workflow-wide active-execution lease remains in force. Immutable
+scheduled run folders and the later concurrency boundary are tracked separately
+by [PLAT-320](plat-320.md).

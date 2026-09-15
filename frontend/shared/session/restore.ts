@@ -6,7 +6,7 @@ import { intermediateUpdateFromTranscriptChunk } from './transcriptChunkUpdates'
 // chat with the same rules (coding-CLI narration kept, transcript artifacts
 // dropped, a bounded UI trace merged without duplicating user/final carriers).
 import type { ChatHistoryMessage, PollingEvent, RestorableConversation } from './types'
-import { isProviderTranscriptArtifact } from './transcript/restoredConversationFilter'
+import { sanitizeProviderTranscriptContent } from './transcript/restoredConversationFilter'
 
 export function getMessageRole(message: ChatHistoryMessage): string {
   return String(message.Role || message.role || '').toLowerCase()
@@ -181,11 +181,12 @@ export function conversationToRestoredEvents(conversation: RestorableConversatio
         ...(timestamp ? { timestamp } : {}),
       }, eventIndexBase + events.length))
     } else if (role === 'ai' || role === 'assistant') {
-      if (isProviderTranscriptArtifact(content)) continue
+      const visibleContent = sanitizeProviderTranscriptContent(content)
+      if (!visibleContent) continue
       // Coding providers persist commentary and tool markers as separate AI
       // messages. The final ordinary AI message before the next user message
       // is the completed reply that belongs in the resumed chat.
-      pendingAssistant.push({ content, message })
+      pendingAssistant.push({ content: visibleContent, message })
     }
   }
   flushAssistant()

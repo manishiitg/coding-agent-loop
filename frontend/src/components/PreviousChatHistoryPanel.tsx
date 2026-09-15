@@ -15,6 +15,7 @@ import { workflowTriggerLabel } from '../utils/workflowSessionKinds'
 import { isScheduledChatHistorySession } from '../utils/chatHistoryOpenDisposition'
 import { chatHistoryWorkshopMode } from '../utils/chatHistoryWorkshopMode'
 import { chatHistoryRuntimeLabel, chatHistoryRuntimeShortLabel } from '../utils/chatHistoryRuntimeLabel'
+import { sanitizeProviderTranscriptContent } from '../utils/restoredConversationFilter'
 import { type ScheduleActivityItem } from '../utils/scheduleRunPresentation'
 import { ScheduleRunCard } from './ScheduleRunCard'
 import { ChatSessionIdCopyButton } from './ChatSessionIdCopyButton'
@@ -273,17 +274,14 @@ const messageIsError = (message: ChatHistoryMessage): boolean => {
   return parts.some(part => Boolean((part as Record<string, unknown>).IsError ?? (part as Record<string, unknown>).is_error))
 }
 
-const shouldSkipMessageText = (text: string): boolean => {
-  return text.startsWith('[AUTO-NOTIFICATION]') ||
-    text.startsWith('[Previous tool call') ||
-    text.startsWith('[Previous tool result')
-}
-
 const conversationMessages = (conversation: ChatHistoryConversation): ChatHistoryPreviewMessage[] => {
   return (conversation.conversation_history || [])
     .flatMap((message): ChatHistoryPreviewMessage[] => {
       const role = messageRole(message)
-      const text = messageText(message)
+      const rawText = messageText(message)
+      const text = role === 'ai' || role === 'assistant'
+        ? sanitizeProviderTranscriptContent(rawText)
+        : rawText
       const toolName = messageToolName(message)
       const rows: ChatHistoryPreviewMessage[] = []
       if (text) rows.push({ role, text, toolName, isError: messageIsError(message) })
@@ -299,7 +297,7 @@ const conversationMessages = (conversation: ChatHistoryConversation): ChatHistor
       if (!message.text) return false
       // Prose heuristics (auto-notification banners, replayed tool summaries)
       // must not be applied to raw tool arguments/results.
-      if (message.role !== 'tool' && message.role !== 'tool_call' && shouldSkipMessageText(message.text)) return false
+      if (message.role !== 'tool' && message.role !== 'tool_call' && message.text.startsWith('[AUTO-NOTIFICATION]')) return false
       return message.role === 'human' ||
         message.role === 'user' ||
         message.role === 'ai' ||

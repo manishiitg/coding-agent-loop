@@ -105,7 +105,7 @@ export const WorkflowChatTabs: React.FC<WorkflowChatTabsProps> = ({ embedded = f
     activateTab(tabId)
     // On narrow screens the toolbar stays visible while only one content pane
     // is shown. A chat-tab selection must therefore bring the chat pane back.
-    setFocusedPane('chat')
+    if (window.innerWidth < 768) setFocusedPane('chat')
   }, [setFocusedPane])
 
   const handleCloseTab = useCallback((tabId: string) => {

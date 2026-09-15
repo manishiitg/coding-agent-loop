@@ -48,6 +48,7 @@ describe('parseSessionManifest', () => {
     capabilities: {
       selected_servers: ['github'],
       selected_skills: ['code-reviewer'],
+      selected_secrets: ['GITHUB_TOKEN'],
       workflow_context_paths: ['Workflow/reference'],
       llm_config: {
         schema_version: 2,
@@ -65,6 +66,8 @@ describe('parseSessionManifest', () => {
     expect(session?.llmConfig?.builder_llm?.provider).toBe('muse-cli')
     expect(session?.selectedServers).toEqual(['github'])
     expect(session?.selectedSkills).toEqual(['code-reviewer'])
+    expect(session?.selectedSecrets).toEqual(['GITHUB_TOKEN'])
+    expect(session?.secretSelectionInitialized).toBe(true)
     expect(session?.workflowContextPaths).toEqual(['Workflow/reference'])
   })
 
@@ -80,17 +83,22 @@ describe('createWorkSession', () => {
     const session = await createWorkSession('New project', '')
 
     expect(session.workspacePath).toMatch(/^Chats\/Work\/projects\/new-project-/)
-    const [manifestPath, content] = updatePlannerFile.mock.calls.at(-1)!
-    expect(manifestPath).toBe(`${session.workspacePath}/product.json`)
-    const manifest = JSON.parse(content as string)
-    expect(manifest).not.toHaveProperty('workspace_id')
-    expect(manifest.capabilities.llm_config.builder_llm).toMatchObject({
+    const runtimeCall = updatePlannerFile.mock.calls.find(call => call[0] === `${session.workspacePath}/workflow.json`)
+    const productCall = updatePlannerFile.mock.calls.find(call => call[0] === `${session.workspacePath}/product.json`)
+    expect(runtimeCall).toBeTruthy()
+    expect(productCall).toBeTruthy()
+    const runtime = JSON.parse(runtimeCall![1] as string)
+    const product = JSON.parse(productCall![1] as string)
+    expect(product).not.toHaveProperty('workspace_id')
+    expect(product).not.toHaveProperty('capabilities')
+    expect(runtime.capabilities.llm_config.builder_llm).toMatchObject({
       provider: 'muse-cli',
       model_id: 'muse-spark-1.3-contributor',
     })
-    expect(manifest.capabilities.selected_servers).toEqual([])
-    expect(manifest.capabilities.selected_skills).toEqual([])
-    expect(manifest.capabilities.workflow_context_paths).toEqual([])
+    expect(runtime.capabilities.selected_servers).toEqual([])
+    expect(runtime.capabilities.selected_skills).toEqual([])
+    expect(runtime.capabilities.selected_secrets).toEqual([])
+    expect(runtime.workflow_context_paths).toEqual([])
     expect(createPlannerFolder).toHaveBeenCalledWith(
       `${session.workspacePath}/code`,
       expect.stringContaining('Initialize Work project code folder'),
@@ -99,7 +107,7 @@ describe('createWorkSession', () => {
 })
 
 describe('updateProductProjectSelections', () => {
-  it('persists MCP servers, skills, and workflow references in product.json while preserving other capabilities', async () => {
+  it('persists Work runtime selections in workflow.json while preserving other capabilities', async () => {
     const project = parseSessionManifest(JSON.stringify({
       schema_version: 1,
       product: 'work',
@@ -112,10 +120,8 @@ describe('updateProductProjectSelections', () => {
       success: true,
       data: { content: JSON.stringify({
         schema_version: 1,
-        product: 'work',
         id: 'abc',
-        title: 'Site',
-        session_id: 'work:project:abc',
+        label: 'Site',
         capabilities: { custom_feature: { enabled: true } },
       }) },
     })
@@ -123,18 +129,22 @@ describe('updateProductProjectSelections', () => {
     const updated = await updateProductProjectSelections(project, {
       selectedServers: ['google_sheets', 'google_sheets'],
       selectedSkills: ['work-dashboard'],
+      selectedSecrets: ['GITHUB_TOKEN', 'GITHUB_TOKEN'],
       workflowContextPaths: ['Workflow/reference', 'Workflow/reference'],
-    }, 'Update integrations')
+    }, 'Update integrations', 'workflow.json')
 
     expect(updated.selectedServers).toEqual(['google_sheets'])
     expect(updated.selectedSkills).toEqual(['work-dashboard'])
+    expect(updated.selectedSecrets).toEqual(['GITHUB_TOKEN'])
     expect(updated.workflowContextPaths).toEqual(['Workflow/reference'])
-    const [, content] = updatePlannerFile.mock.calls.at(-1)!
+    const [path, content] = updatePlannerFile.mock.calls.at(-1)!
+    expect(path).toBe(`${project.workspacePath}/workflow.json`)
     const manifest = JSON.parse(content as string)
     expect(manifest.capabilities.custom_feature).toEqual({ enabled: true })
     expect(manifest.capabilities.selected_servers).toEqual(['google_sheets'])
     expect(manifest.capabilities.selected_skills).toEqual(['work-dashboard'])
-    expect(manifest.capabilities.workflow_context_paths).toEqual(['Workflow/reference'])
+    expect(manifest.capabilities.selected_secrets).toEqual(['GITHUB_TOKEN'])
+    expect(manifest.workflow_context_paths).toEqual(['Workflow/reference'])
   })
 })
 
@@ -153,10 +163,8 @@ describe('updateProductProjectLLMConfig', () => {
       data: {
         content: JSON.stringify({
           schema_version: 1,
-          product: 'work',
           id: 'abc',
-          title: 'Site',
-          session_id: 'work:project:abc',
+          label: 'Site',
           capabilities: { custom_feature: { enabled: true } },
         }),
       },
@@ -167,10 +175,11 @@ describe('updateProductProjectLLMConfig', () => {
       modelId: 'gpt-6-astra',
       reasoningEffort: 'high',
     })
-    const updated = await updateProductProjectLLMConfig(project, llmConfig, 'Update model')
+    const updated = await updateProductProjectLLMConfig(project, llmConfig, 'Update model', 'workflow.json')
 
     expect(updated.llmConfig).toEqual(llmConfig)
-    const [, content] = updatePlannerFile.mock.calls.at(-1)!
+    const [path, content] = updatePlannerFile.mock.calls.at(-1)!
+    expect(path).toBe(`${project.workspacePath}/workflow.json`)
     const manifest = JSON.parse(content as string)
     expect(manifest.capabilities.custom_feature).toEqual({ enabled: true })
     expect(manifest.capabilities.llm_config).toEqual(llmConfig)

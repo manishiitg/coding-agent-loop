@@ -58,7 +58,12 @@ export const AgentWorksChatTabItem = React.memo<AgentWorksChatTabItemProps>(({
       }`}
     >
       {!isBlank && <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${dot.cls}`} title={dot.label} aria-label={dot.label} />}
-      <span className="min-w-0 max-w-[14rem] truncate whitespace-nowrap">{displayName}</span>
+      <span
+        className="min-w-0 max-w-[14rem] truncate whitespace-nowrap"
+        title={displayName !== tab.name ? tab.name : undefined}
+      >
+        {displayName}
+      </span>
       {ALLOW_MAKE_SCHEDULE_INTERACTIVE && onMakeInteractive && tab.metadata?.isViewOnly && (tab.metadata?.isScheduledRun || tab.metadata?.isBotRun) && !isReadOnlyUser && (
         <button type="button" onClick={(event) => { event.stopPropagation(); onMakeInteractive(tab.tabId) }} className="ml-0.5 rounded p-0.5 text-blue-600 opacity-80 hover:bg-blue-100 hover:opacity-100 dark:text-blue-300 dark:hover:bg-blue-900/40" title="Interact in Automation Builder" aria-label="Interact in Automation Builder">
           <MessageSquare className="h-3 w-3" />

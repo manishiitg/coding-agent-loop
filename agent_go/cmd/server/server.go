@@ -5214,6 +5214,12 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			workspaceTools := workspaceRegistry.Tools
 			workspaceExecutors := workspaceRegistry.Executors
 			workspaceEnv = workspaceRegistry.Env
+			// A retained native coding session can keep an older MCP workspace
+			// client across turns. Refresh every live client from durable secret
+			// storage as each turn starts, so secrets saved before this process or
+			// before live mutation support was deployed become usable without a
+			// new chat.
+			virtualtools.ReplaceSessionShellSecrets(sessionID, chatAgentSecretEnv)
 			api.setPlaywrightExecutionContext(workspaceEnv, sessionID, req)
 			toolCategories := workspaceRegistry.Categories
 			logfWithContext(queryLogCtx, "[USER_ID_DEBUGGING] Main agent workspace executors: created with explicit userID=%q sessionID=%q", currentUserID, sessionID)
@@ -5683,12 +5689,41 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				if resolvedProfile != nil {
 					secretWorkflowPath = req.SelectedFolder
 				}
-				if err := api.registerSecretManagementTools(llmAgent, currentUserID, secretWorkflowPath, "secret_tools", currentUserIsReadOnly, nil, nil); err != nil {
+				// Secret tools run inside the current agent turn. Push mutations into
+				// every live workspace client for this retained session so a Work
+				// agent can save a project secret and use it in its very next shell
+				// call. Later turns still reload project secrets from encrypted
+				// storage in resolveAgentProfileForQuery.
+				afterSecretUpsert := func(ctx context.Context, name, value string) error {
+					if resolvedProfile != nil && !isGlobalScopedProfile(resolvedProfile) && secretWorkflowPath != "" {
+						if err := updateProductSelectedSecrets(ctx, resolvedProfile.Definition.ID, secretWorkflowPath, func(current []string) []string {
+							return appendUniqueStrings(current, name)
+						}); err != nil {
+							return err
+						}
+					}
+					updated := virtualtools.SetSessionShellEnv(sessionID, "SECRET_"+name, value)
+					logfWithContext(queryLogCtx, "[SECRET TOOLS] Made SECRET_%s available to %d live shell client(s) for session %s", name, updated, sessionID)
+					return nil
+				}
+				afterSecretDelete := func(ctx context.Context, name string) error {
+					if resolvedProfile != nil && !isGlobalScopedProfile(resolvedProfile) && secretWorkflowPath != "" {
+						if err := updateProductSelectedSecrets(ctx, resolvedProfile.Definition.ID, secretWorkflowPath, func(current []string) []string {
+							return removeString(current, name)
+						}); err != nil {
+							return err
+						}
+					}
+					updated := virtualtools.DeleteSessionShellEnv(sessionID, "SECRET_"+name)
+					logfWithContext(queryLogCtx, "[SECRET TOOLS] Removed SECRET_%s from %d live shell client(s) for session %s", name, updated, sessionID)
+					return nil
+				}
+				if err := api.registerSecretManagementTools(llmAgent, currentUserID, secretWorkflowPath, "secret_tools", currentUserIsReadOnly, afterSecretUpsert, afterSecretDelete); err != nil {
 					logfWithContext(queryLogCtx, "[SECRET TOOLS] Failed to register multi-agent secret tools: %v", err)
 					sendError(fmt.Sprintf("Failed to register multi-agent secret tools: %v", err), true)
 					return
 				}
-				logfWithContext(queryLogCtx, "[SECRET TOOLS] Registered multi-agent secret tools (list_secrets, set_user_secret, delete_user_secret; global names read-only)")
+				logfWithContext(queryLogCtx, "[SECRET TOOLS] Registered multi-agent secret tools with live session injection (list_secrets, set_user_secret, delete_user_secret; global names read-only)")
 			}
 			if isAgentWorksChat {
 				// Generic AgentWorks chat can create workflows and inspect live
@@ -10344,7 +10379,7 @@ func (api *StreamingAPI) buildSkillCallbacks() *todo_creation_human.SkillCallbac
 
 func skillSelectionHint(productID, skillNames string) string {
 	if strings.EqualFold(strings.TrimSpace(productID), "work") {
-		return fmt.Sprintf("%s can be loaded immediately with read_skill. To attach it automatically on future Work turns, select it in Setup > Skills; Work persists that selection in product.json.", skillNames)
+		return fmt.Sprintf("%s can be loaded immediately with read_skill. To attach it automatically on future Work turns, select it in Setup > Skills; Work persists that selection in workflow.json.", skillNames)
 	}
 	return fmt.Sprintf("Use update_workflow_config to add %s to the workflow's selected skills.", skillNames)
 }

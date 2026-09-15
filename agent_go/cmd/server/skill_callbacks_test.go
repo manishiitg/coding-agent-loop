@@ -7,7 +7,7 @@ import (
 
 func TestSkillSelectionHintUsesProductSpecificConfiguration(t *testing.T) {
 	work := skillSelectionHint("work", "It")
-	for _, want := range []string{"read_skill", "Setup > Skills", "product.json"} {
+	for _, want := range []string{"read_skill", "Setup > Skills", "workflow.json"} {
 		if !strings.Contains(work, want) {
 			t.Fatalf("Work skill hint is missing %q: %q", want, work)
 		}

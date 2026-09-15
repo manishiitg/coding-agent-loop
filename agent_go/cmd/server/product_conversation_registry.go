@@ -59,7 +59,7 @@ type ProductConversationRecord struct {
 	EnabledServers       []string `json:"enabled_servers,omitempty"`
 	SelectedSkills       []string `json:"selected_skills,omitempty"`
 	WorkflowContextPaths []string `json:"workflow_context_paths,omitempty"`
-	// ProjectLLMConfig is loaded from product.json for this request. It is not
+	// ProjectLLMConfig is loaded from the project's runtime manifest for this request. It is not
 	// duplicated into the conversation registry.
 	ProjectLLMConfig            *workflowtypes.PresetLLMConfig `json:"-"`
 	ProjectSelectedServers      []string                       `json:"-"`
@@ -590,6 +590,13 @@ func sameRuntimeSelection(left, right []string) bool {
 	return true
 }
 
+func firstNonEmptyStrings(primary, fallback []string) []string {
+	if primary != nil {
+		return primary
+	}
+	return fallback
+}
+
 func (store productConversationRegistryStore) writeManifestSessionID(ctx context.Context, manifestPath, sessionID string) error {
 	raw, exists, err := store.read(ctx, manifestPath)
 	if err != nil {
@@ -629,21 +636,27 @@ func (store productConversationRegistryStore) writeDocument(ctx context.Context,
 }
 
 type productProjectManifest struct {
-	SchemaVersion int                        `json:"schema_version"`
-	Product       string                     `json:"product"`
-	ID            string                     `json:"id"`
-	Title         string                     `json:"title"`
-	Description   string                     `json:"description"`
-	SessionID     string                     `json:"session_id"`
-	CreatedAt     string                     `json:"created_at,omitempty"`
-	UpdatedAt     string                     `json:"updated_at,omitempty"`
-	Schedules     []productschedule.Schedule `json:"schedules,omitempty"`
-	Triggers      []productWebhookTrigger    `json:"triggers,omitempty"`
-	Capabilities  struct {
-		LLMConfig            *workflowtypes.PresetLLMConfig `json:"llm_config,omitempty"`
-		SelectedServers      []string                       `json:"selected_servers,omitempty"`
-		SelectedSkills       []string                       `json:"selected_skills,omitempty"`
-		WorkflowContextPaths []string                       `json:"workflow_context_paths,omitempty"`
+	SchemaVersion        int                        `json:"schema_version"`
+	Product              string                     `json:"product,omitempty"`
+	ID                   string                     `json:"id"`
+	Title                string                     `json:"title,omitempty"`
+	Label                string                     `json:"label,omitempty"`
+	Description          string                     `json:"description,omitempty"`
+	SessionID            string                     `json:"session_id,omitempty"`
+	CreatedAt            string                     `json:"created_at,omitempty"`
+	UpdatedAt            string                     `json:"updated_at,omitempty"`
+	Schedules            []productschedule.Schedule `json:"schedules,omitempty"`
+	Triggers             []productWebhookTrigger    `json:"triggers,omitempty"`
+	WorkflowContextPaths []string                   `json:"workflow_context_paths,omitempty"`
+	Capabilities         struct {
+		LLMConfig       *workflowtypes.PresetLLMConfig `json:"llm_config,omitempty"`
+		SelectedServers []string                       `json:"selected_servers,omitempty"`
+		SelectedSkills  []string                       `json:"selected_skills,omitempty"`
+		// Pointer preserves the contract's three relevant states when schedule
+		// updates rewrite the runtime manifest: missing (legacy, migrate once), empty
+		// (explicitly attach none), and populated.
+		SelectedSecrets      *[]string `json:"selected_secrets,omitempty"`
+		WorkflowContextPaths []string  `json:"workflow_context_paths,omitempty"`
 	} `json:"capabilities,omitempty"`
 }
 
@@ -735,6 +748,21 @@ func resolveProductProjectBindingWithStore(
 		if strings.TrimSpace(manifest.Title) == "" || strings.TrimSpace(manifest.SessionID) == "" {
 			return productConversationBinding{}, fmt.Errorf("project %q has an incomplete product manifest", resourceProjectID)
 		}
+		if strings.EqualFold(profile.ID, "work") {
+			runtimePath := filepath.ToSlash(filepath.Join(filepath.Dir(candidate), "workflow.json"))
+			if runtimeRaw, runtimeFound, runtimeErr := store.read(ctx, runtimePath); runtimeErr != nil {
+				return productConversationBinding{}, fmt.Errorf("read project runtime manifest %s: %w", runtimePath, runtimeErr)
+			} else if runtimeFound {
+				var runtimeManifest productProjectManifest
+				if err := json.Unmarshal([]byte(runtimeRaw), &runtimeManifest); err != nil {
+					return productConversationBinding{}, fmt.Errorf("decode project runtime manifest %s: %w", runtimePath, err)
+				}
+				manifest.Capabilities = runtimeManifest.Capabilities
+				manifest.Schedules = runtimeManifest.Schedules
+				manifest.Triggers = runtimeManifest.Triggers
+				manifest.WorkflowContextPaths = runtimeManifest.WorkflowContextPaths
+			}
+		}
 		if matched != nil {
 			return productConversationBinding{}, fmt.Errorf("project id %q is duplicated", resourceProjectID)
 		}
@@ -750,7 +778,7 @@ func resolveProductProjectBindingWithStore(
 			ProjectLLMConfig:            manifest.Capabilities.LLMConfig,
 			ProjectSelectedServers:      append([]string(nil), manifest.Capabilities.SelectedServers...),
 			ProjectSelectedSkills:       append([]string(nil), manifest.Capabilities.SelectedSkills...),
-			ProjectWorkflowContextPaths: append([]string(nil), manifest.Capabilities.WorkflowContextPaths...),
+			ProjectWorkflowContextPaths: append([]string(nil), firstNonEmptyStrings(manifest.WorkflowContextPaths, manifest.Capabilities.WorkflowContextPaths)...),
 		}
 		// Only the legacy/default project chat is tied to product.json's one
 		// session_id. Additional tabs are independent and live solely in the

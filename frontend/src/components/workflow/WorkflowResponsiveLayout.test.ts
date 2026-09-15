@@ -13,10 +13,14 @@ describe('workflow responsive pane contract', () => {
   })
 
   it('uses the persistent toolbar controls to switch the focused narrow pane', () => {
+    const layout = readFileSync('src/components/workflow/WorkflowLayout.tsx', 'utf8')
     const tabs = readFileSync('src/components/workflow/WorkflowChatTabs.tsx', 'utf8')
     const store = readFileSync('src/stores/useWorkflowStore.ts', 'utf8')
 
     expect(tabs).toContain("setFocusedPane('chat')")
+    expect(tabs).toContain('window.innerWidth < 768')
+    expect(layout).toContain("if (window.innerWidth < 768) setFocusedPane('preview')")
+    expect(layout).toContain("if (window.innerWidth < 768) setFocusedPane('chat')")
     expect(store).toContain("get().setFocusedPane('preview')")
   })
 })

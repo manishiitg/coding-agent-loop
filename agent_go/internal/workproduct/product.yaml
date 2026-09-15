@@ -130,7 +130,7 @@ profile:
       chat_history: none
     workspace:
       # New projects are created below this per-user root, exactly like the
-      # AgentWorks folder lifecycle but without a workflow manifest.
+      # AgentWorks folder lifecycle with workflow.json as the shared runtime manifest.
       mode: project
       projects_root: Chats/Work/projects
       placement:

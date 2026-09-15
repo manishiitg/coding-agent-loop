@@ -330,7 +330,7 @@ function WorkBrowserPanel({ tabId, workspacePath }: { tabId: string; workspacePa
   )
 }
 
-export function WorkWorkspacePane({ workspacePath, projectId, projectTitle, tabId, onClose, view, onViewChange, enabledPanels, projectLLMConfig, workflowContextPaths, onRuntimeChange, onSelectedServersChange, onSelectedSkillsChange, onWorkflowContextPathsChange }: { workspacePath: string; projectId: string; projectTitle: string; tabId: string; onClose: () => void; view: WorkWorkspaceView; onViewChange: (view: WorkWorkspaceView) => void; enabledPanels?: Set<string>; projectLLMConfig?: PresetLLMConfig; workflowContextPaths: string[]; onRuntimeChange: (selection: WorkRuntimeSelection) => void | Promise<void>; onSelectedServersChange: (servers: string[]) => Promise<unknown>; onSelectedSkillsChange: (skills: string[]) => Promise<unknown>; onWorkflowContextPathsChange: (paths: string[]) => Promise<unknown> }) {
+export function WorkWorkspacePane({ workspacePath, projectId, projectTitle, tabId, onClose, view, onViewChange, enabledPanels, projectLLMConfig, selectedSecrets, workflowContextPaths, onRuntimeChange, onSelectedServersChange, onSelectedSkillsChange, onSelectedSecretsChange, onWorkflowContextPathsChange }: { workspacePath: string; projectId: string; projectTitle: string; tabId: string; onClose: () => void; view: WorkWorkspaceView; onViewChange: (view: WorkWorkspaceView) => void; enabledPanels?: Set<string>; projectLLMConfig?: PresetLLMConfig; selectedSecrets: string[]; workflowContextPaths: string[]; onRuntimeChange: (selection: WorkRuntimeSelection) => void | Promise<void>; onSelectedServersChange: (servers: string[]) => Promise<unknown>; onSelectedSkillsChange: (skills: string[]) => Promise<unknown>; onSelectedSecretsChange: (secrets: string[]) => Promise<unknown>; onWorkflowContextPathsChange: (paths: string[]) => Promise<unknown> }) {
   const selectedSkills = useChatStore(state => state.chatTabs[tabId]?.config.selectedSkills || [])
 
   const toggleSkill = async (folderName: string) => {
@@ -351,6 +351,14 @@ export function WorkWorkspacePane({ workspacePath, projectId, projectTitle, tabI
     }
   }
 
+  const updateSecretSelection = async (secrets: string[]) => {
+    try {
+      await onSelectedSecretsChange(secrets)
+    } catch (cause) {
+      useChatStore.getState().addToast(cause instanceof Error ? cause.message : 'Could not save project secret selection.', 'error')
+    }
+  }
+
   if (enabledPanels && !enabledPanels.has(view)) {
     return <div className="grid h-full place-items-center bg-background text-sm text-muted-foreground">No workspace view is enabled for this product.</div>
   }
@@ -358,12 +366,12 @@ export function WorkWorkspacePane({ workspacePath, projectId, projectTitle, tabI
   return (
     <div className="flex h-full min-h-0 flex-col bg-background">
       <div className="min-h-0 flex-1 overflow-hidden">
-        {view === 'files' && <FileWorkspacePane workspacePath={workspacePath} hiddenRootFolders={['.git', 'node_modules', 'product.json']} hideManagedEntriesByDefault title="Workspace" hideAddToChat hideRootActions onClose={onClose} testId="work-files-panel" />}
+        {view === 'files' && <FileWorkspacePane workspacePath={workspacePath} hiddenRootFolders={['.git', 'node_modules', 'product.json', 'workflow.json']} hideManagedEntriesByDefault title="Workspace" hideAddToChat hideRootActions onClose={onClose} testId="work-files-panel" />}
         {view === 'skills' && <div className="flex h-full min-h-0 flex-col p-4"><SkillsManagerPanel compact workspacePath={workspacePath} selectedSkills={selectedSkills} onToggleSkill={folderName => { void toggleSkill(folderName) }} selectionLabel="Skills for this project" emptySelectionText="No project skills yet — pick one below." selectionScopeLabel="project" /></div>}
         {view === 'mcp' && <WorkMCPPanel tabId={tabId} workspacePath={workspacePath} onSelectedServersChange={onSelectedServersChange} />}
         {view === 'secrets' && <div className="h-full overflow-y-auto p-4"><SecretSelectionSection
-          selectedSecrets={[]}
-          onSecretChange={() => undefined}
+          selectedSecrets={selectedSecrets}
+          onSecretChange={secrets => { void updateSecretSelection(secrets) }}
           workflowPath={workspacePath}
           workspaceNoun="project"
           workspaceSecretHeading="Project secrets"
@@ -371,7 +379,6 @@ export function WorkWorkspacePane({ workspacePath, projectId, projectTitle, tabI
           workspaceSharingBadgeLabel="Project"
           showGlobalSecrets={false}
           showSharedSecrets={false}
-          workspaceSecretsAlwaysEnabled
           allowGlobalPromotion={false}
         /></div>}
         {view === 'folders' && <WorkFoldersPanel workflowContextPaths={workflowContextPaths} onWorkflowContextPathsChange={onWorkflowContextPathsChange} />}

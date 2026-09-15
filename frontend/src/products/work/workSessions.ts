@@ -1,5 +1,6 @@
 import { createProductProject, loadProductProjects, parseProductProjectManifest, updateProductProjectSelections, type ProductProject } from '../../platform/chat/productProjects'
 import { agentApi } from '../../services/api'
+import { secretsApi } from '../../api/secrets'
 import type { LLMProvider, PresetLLMConfig } from '../../services/api-types'
 import { slugifyTitle } from '../../utils/plannerFiles'
 import { loadAgentProfileProviderOptions } from '../../utils/agentProfileCapabilities'
@@ -43,10 +44,25 @@ export function parseSessionManifest(content: string, workspacePath: string, las
 }
 
 export async function loadWorkSessions(): Promise<WorkSession[]> {
-  const sessions = await loadProductProjects(WORK_PROJECTS_ROOT, WORK_PROFILE_ID)
-  return Promise.all(sessions.map(session => session.selectionConfigInitialized
-    ? session
-    : updateProductProjectSelections(session, { selectedServers: [], selectedSkills: [] }, `Initialize Work project integrations ${session.title}`)))
+  const sessions = await loadProductProjects(WORK_PROJECTS_ROOT, WORK_PROFILE_ID, { runtimeManifestName: 'workflow.json' })
+  return Promise.all(sessions.map(async original => {
+    let session = original
+    if (!session.runtimeConfigInitialized || !session.selectionConfigInitialized) {
+      session = await updateProductProjectSelections(session, {
+        ...(!session.selectionConfigInitialized ? { selectedServers: [], selectedSkills: [] } : {}),
+      }, `Initialize Work project runtime ${session.title}`, 'workflow.json')
+    }
+    if (!original.secretSelectionInitialized) {
+      try {
+        const stored = await secretsApi.listWorkflowSecrets(session.workspacePath)
+        session = await updateProductProjectSelections(session, { selectedSecrets: stored.map(secret => secret.name) }, `Initialize Work project secret attachments ${session.title}`, 'workflow.json')
+      } catch {
+        // Keep the project usable during a transient secret-store failure. The
+        // server performs the same migration before the next agent turn.
+      }
+    }
+    return session
+  }))
 }
 
 export async function createWorkSession(title: string, description: string): Promise<WorkSession> {
@@ -67,6 +83,7 @@ export async function createWorkSession(title: string, description: string): Pro
     slugFallback: 'workspace',
     commitLabel: 'Create Work project',
     llmConfig,
+    runtimeManifestName: 'workflow.json',
   })
   await agentApi.createPlannerFolder(
     `${project.workspacePath}/code`,

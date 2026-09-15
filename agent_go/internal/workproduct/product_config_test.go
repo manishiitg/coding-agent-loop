@@ -196,7 +196,7 @@ func TestWorkPlatformSkillsRegisterAndLoad(t *testing.T) {
 		t.Fatalf("RegisterProductSkills: %v", err)
 	}
 	checks := map[string][]string{
-		"work-integrations":       {"list_mcp_servers", "Setup > MCP servers", "set_workflow_secret", "list_work_folders", "Setup > Models"},
+		"work-integrations":       {"list_mcp_servers", "Setup > MCP servers", "set_workflow_secret", "available to shell", "do not ask the user to start", "list_work_folders", "Setup > Models"},
 		"work-workflow-files":     {"list_accessible_workflows", "WORK_FOLDER_<ALIAS>", "workflow.json", "knowledgebase/", "learnings/", "db/db.sqlite", "db/reports/", "runs/run_index.json", "sqlite3 -readonly", "get_file_link", "get_report_link", "same signed-in Work account"},
 		"work-skills":             {"list_skills", "search_skills", "skills/custom/<skill-name>/SKILL.md", "skill authoring is a capability", "Setup > Skills"},
 		"work-schedules-and-bots": {"list_project_schedules", "five-field cron", "list_project_triggers", "Project webhook triggers", "Setup > Bots", "Slack", "WhatsApp", "list_gmail_connections", "google_workspace_cli", "gmail.readonly"},

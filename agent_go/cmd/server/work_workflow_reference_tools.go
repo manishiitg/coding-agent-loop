@@ -32,7 +32,7 @@ func updateWorkSessionWorkflowGuard(sessionID string, add []string, remove ...st
 
 // registerWorkWorkflowReferenceTools lets the Work assistant discover the
 // same authorized workflow set as the AgentWorks picker and persist an exact
-// read-only reference in product.json. Names are never accepted for mutation:
+// read-only reference in workflow.json. Names are never accepted for mutation:
 // the model must first list, disambiguate, and use the returned workspace path.
 func (api *StreamingAPI) registerWorkWorkflowReferenceTools(registrar definitionToolRegistrar, userID, sessionID, workspacePath string) error {
 	register := func(name, description string, parameters map[string]interface{}, execute func(context.Context, map[string]interface{}) (string, error)) error {
@@ -163,44 +163,46 @@ func (api *StreamingAPI) registerWorkWorkflowReferenceTools(registrar definition
 }
 
 func readWorkWorkflowReferences(ctx context.Context, workspacePath string) ([]string, error) {
-	raw, exists, err := readFileFromWorkspace(ctx, strings.TrimSuffix(strings.TrimSpace(workspacePath), "/")+"/product.json")
+	productRaw, productExists, err := readFileFromWorkspace(ctx, strings.TrimSuffix(strings.TrimSpace(workspacePath), "/")+"/product.json")
 	if err != nil {
 		return nil, err
 	}
-	if !exists {
+	if !productExists {
 		return nil, fmt.Errorf("Work product manifest does not exist")
+	}
+	var productManifest productProjectManifest
+	if err := json.Unmarshal([]byte(productRaw), &productManifest); err != nil {
+		return nil, fmt.Errorf("decode Work product manifest: %w", err)
+	}
+	if strings.TrimSpace(productManifest.Product) != "work" {
+		return nil, fmt.Errorf("workspace is not a Work project")
+	}
+	raw, _, err := readProjectRuntimeManifest(ctx, "work", workspacePath)
+	if err != nil {
+		return nil, err
 	}
 	var manifest productProjectManifest
 	if err := json.Unmarshal([]byte(raw), &manifest); err != nil {
-		return nil, fmt.Errorf("decode Work product manifest: %w", err)
+		return nil, fmt.Errorf("decode Work runtime manifest: %w", err)
 	}
-	if strings.TrimSpace(manifest.Product) != "work" {
-		return nil, fmt.Errorf("workspace is not a Work project")
-	}
-	return canonicalRuntimeSelection(manifest.Capabilities.WorkflowContextPaths), nil
+	return canonicalRuntimeSelection(firstNonEmptyStrings(manifest.WorkflowContextPaths, manifest.Capabilities.WorkflowContextPaths)), nil
 }
 
 func updateWorkWorkflowReferences(ctx context.Context, workspacePath string, mutate func([]string) ([]string, error)) ([]string, error) {
-	manifestPath := strings.TrimSuffix(strings.TrimSpace(workspacePath), "/") + "/product.json"
+	manifestPath := projectRuntimeManifestPath("work", workspacePath)
 	mutex := productConversationRegistryMutex(manifestPath)
 	mutex.Lock()
 	defer mutex.Unlock()
 
-	raw, exists, err := readFileFromWorkspace(ctx, manifestPath)
+	raw, _, err := ensureProjectRuntimeManifest(ctx, "work", workspacePath)
 	if err != nil {
 		return nil, err
-	}
-	if !exists {
-		return nil, fmt.Errorf("Work product manifest does not exist")
 	}
 	var typed productProjectManifest
 	if err := json.Unmarshal([]byte(raw), &typed); err != nil {
 		return nil, fmt.Errorf("decode Work product manifest: %w", err)
 	}
-	if strings.TrimSpace(typed.Product) != "work" {
-		return nil, fmt.Errorf("workspace is not a Work project")
-	}
-	next, err := mutate(canonicalRuntimeSelection(typed.Capabilities.WorkflowContextPaths))
+	next, err := mutate(canonicalRuntimeSelection(firstNonEmptyStrings(typed.WorkflowContextPaths, typed.Capabilities.WorkflowContextPaths)))
 	if err != nil {
 		return nil, err
 	}
@@ -210,12 +212,7 @@ func updateWorkWorkflowReferences(ctx context.Context, workspacePath string, mut
 	if err := json.Unmarshal([]byte(raw), &document); err != nil {
 		return nil, fmt.Errorf("decode Work product manifest fields: %w", err)
 	}
-	capabilities, _ := document["capabilities"].(map[string]interface{})
-	if capabilities == nil {
-		capabilities = map[string]interface{}{}
-		document["capabilities"] = capabilities
-	}
-	capabilities["workflow_context_paths"] = next
+	document["workflow_context_paths"] = next
 	document["updated_at"] = time.Now().UTC().Format(time.RFC3339Nano)
 	encoded, err := json.MarshalIndent(document, "", "  ")
 	if err != nil {

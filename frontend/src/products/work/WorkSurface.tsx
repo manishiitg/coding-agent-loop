@@ -23,7 +23,7 @@ import { WorkspaceSplitCollapseControls, WorkspaceSplitDivider } from '../../com
 import { WorkspaceTopToolbar } from '../../components/workspace/WorkspaceTopToolbar'
 import { loadAgentProfileInteractionKinds, loadAgentProfileUIPanels } from '../../utils/agentProfileCapabilities'
 import { parseProductInteraction } from '../../../shared/session/interactions'
-import { belongsToWorkProject, markWorkProjectRuntimeDirty, preferredWorkProjectTabId, setWorkProjectRuntimeSelection, visibleWorkProjectTabs, type ProductEngineSelectionDetail, type WorkRuntimeSelection } from './workTabs'
+import { belongsToWorkProject, markWorkProjectRuntimeDirty, preferredWorkProjectTabId, setWorkProjectRuntimeSelection, visibleWorkProjectTabs, workTabDisplayName, type ProductEngineSelectionDetail, type WorkRuntimeSelection } from './workTabs'
 import { updateProductProjectLLMConfig, updateProductProjectSelections } from '../../platform/chat/productProjects'
 import { CreateWorkProjectDialog } from './CreateWorkProjectDialog'
 import { useWorkspaceUIControl, type WorkspaceUIControlAdapter } from '../../platform/ui-control/useWorkspaceUIControl'
@@ -140,15 +140,15 @@ function useWorkSessions() {
       modelId: selection.modelId,
       reasoningEffort: selection.reasoningEffort,
     })
-    const updated = await updateProductProjectLLMConfig(project, llmConfig, `Update Work project model ${project.title}`)
+    const updated = await updateProductProjectLLMConfig(project, llmConfig, `Update Work project model ${project.title}`, 'workflow.json')
     setSessions(current => current.map(item => item.id === projectId ? updated : item))
     return updated
   }, [sessions])
 
-  const updateSelections = useCallback(async (projectId: string, patch: { selectedServers?: string[]; selectedSkills?: string[]; workflowContextPaths?: string[] }) => {
+  const updateSelections = useCallback(async (projectId: string, patch: { selectedServers?: string[]; selectedSkills?: string[]; selectedSecrets?: string[]; workflowContextPaths?: string[] }) => {
     const project = sessions.find(item => item.id === projectId)
     if (!project) throw new Error('This Work project is no longer available.')
-    const updated = await updateProductProjectSelections(project, patch, `Update Work project integrations ${project.title}`)
+    const updated = await updateProductProjectSelections(project, patch, `Update Work project integrations ${project.title}`, 'workflow.json')
     setSessions(current => current.map(item => item.id === projectId ? updated : item))
     return updated
   }, [sessions])
@@ -312,7 +312,7 @@ function WorkChatTabs({
           isActive={builder ? workshopOpen : (!workshopOpen && tab.tabId === activeTabId)}
           canClose={!builder}
           isBlank={builder}
-          displayName={builder ? 'Workshop' : (tab.name === 'Builder' ? 'Chat' : undefined)}
+          displayName={builder ? 'Workshop' : workTabDisplayName(tab.name === 'Builder' ? 'Chat' : tab.name)}
           onTabClick={(tabId) => {
             activateTab(tabId)
             if (builder) onWorkshopOpen()
@@ -398,7 +398,7 @@ export function WorkSurface() {
   const { tabId, tabs, error: chatError } = useWorkChatTabs(selected, persistLegacyRuntime)
 
   // A browser reload loses transient tab metadata while the durable references
-  // remain in product.json. Force the first follow-up through the full profile
+  // remain in workflow.json. Force the first follow-up through the full profile
   // route so an old retained CLI cannot bypass the current read-only grants.
   useEffect(() => {
     if (selected?.id && workflowContextSignature) markWorkProjectRuntimeDirty(selected.id)
@@ -765,10 +765,12 @@ export function WorkSurface() {
                         onViewChange={setWorkspaceView}
                         enabledPanels={enabledWorkspacePanels}
                         projectLLMConfig={selected.llmConfig}
+                        selectedSecrets={selected.selectedSecrets}
                         workflowContextPaths={selected.workflowContextPaths}
                         onRuntimeChange={changeWorkRuntime}
                         onSelectedServersChange={servers => updateSelections(selected.id, { selectedServers: servers })}
                         onSelectedSkillsChange={skills => updateSelections(selected.id, { selectedSkills: skills })}
+                        onSelectedSecretsChange={secrets => updateSelections(selected.id, { selectedSecrets: secrets })}
                         onWorkflowContextPathsChange={async paths => {
                           await updateSelections(selected.id, { workflowContextPaths: paths })
                           markWorkProjectRuntimeDirty(selected.id)

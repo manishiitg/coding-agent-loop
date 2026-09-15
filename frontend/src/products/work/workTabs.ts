@@ -13,6 +13,23 @@ export type ProductEngineSelectionDetail = Partial<WorkRuntimeSelection> & {
   tabId?: string
 }
 
+const WORK_TAB_MAX_WORDS = 3
+const WORK_TAB_MAX_CHARACTERS = 20
+
+/** Keep Work's tab strip readable while preserving the full conversation title elsewhere. */
+export function workTabDisplayName(name: string): string {
+  const normalized = name.replace(/\s+/g, ' ').trim()
+  if (!normalized) return 'Chat'
+
+  const words = normalized.split(' ')
+  const shortenedByWords = words.length > WORK_TAB_MAX_WORDS
+  const candidate = words.slice(0, WORK_TAB_MAX_WORDS).join(' ')
+  if (!shortenedByWords && candidate.length <= WORK_TAB_MAX_CHARACTERS) return candidate
+
+  const visible = candidate.slice(0, WORK_TAB_MAX_CHARACTERS - 1).trimEnd()
+  return `${visible}…`
+}
+
 export function belongsToWorkProject(tab: ChatTab, projectId: string): boolean {
   return Boolean(tab.metadata?.agentProfileId === 'work' && (
     tab.metadata.agentProfileProjectId === projectId ||

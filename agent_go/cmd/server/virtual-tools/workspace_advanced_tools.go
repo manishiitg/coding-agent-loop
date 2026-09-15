@@ -148,6 +148,11 @@ var sessionShellClients = struct {
 	m  map[string][]*workspace.Client
 }{m: make(map[string][]*workspace.Client)}
 
+var sessionShellSecretNames = struct {
+	mu sync.Mutex
+	m  map[string]map[string]struct{}
+}{m: make(map[string]map[string]struct{})}
+
 func registerSessionShellClient(sessionID string, client *workspace.Client) {
 	if sessionID == "" || client == nil {
 		return
@@ -166,6 +171,14 @@ func registerSessionShellClient(sessionID string, client *workspace.Client) {
 // set_workflow_secret call is visible to execute_shell_command in the same
 // turn instead of from the next message on.
 func SetSessionShellEnv(sessionID, key, value string) int {
+	if sessionID != "" && strings.HasPrefix(key, "SECRET_") {
+		sessionShellSecretNames.mu.Lock()
+		if sessionShellSecretNames.m[sessionID] == nil {
+			sessionShellSecretNames.m[sessionID] = map[string]struct{}{}
+		}
+		sessionShellSecretNames.m[sessionID][key] = struct{}{}
+		sessionShellSecretNames.mu.Unlock()
+	}
 	sessionShellClients.mu.Lock()
 	clients := append([]*workspace.Client(nil), sessionShellClients.m[sessionID]...)
 	sessionShellClients.mu.Unlock()
@@ -177,11 +190,52 @@ func SetSessionShellEnv(sessionID, key, value string) int {
 
 // DeleteSessionShellEnv removes one env var from every live shell client of a session.
 func DeleteSessionShellEnv(sessionID, key string) int {
+	if sessionID != "" && strings.HasPrefix(key, "SECRET_") {
+		sessionShellSecretNames.mu.Lock()
+		delete(sessionShellSecretNames.m[sessionID], key)
+		sessionShellSecretNames.mu.Unlock()
+	}
 	sessionShellClients.mu.Lock()
 	clients := append([]*workspace.Client(nil), sessionShellClients.m[sessionID]...)
 	sessionShellClients.mu.Unlock()
 	for _, c := range clients {
 		c.DeleteExtraEnv(key)
+	}
+	return len(clients)
+}
+
+// ReplaceSessionShellSecrets makes retained clients match the current durable
+// attachment set. This removes a secret after it is unchecked in Setup instead
+// of leaving the old value in a reused native coding session.
+func ReplaceSessionShellSecrets(sessionID string, values map[string]string) int {
+	if sessionID == "" {
+		return 0
+	}
+	sessionShellSecretNames.mu.Lock()
+	previous := sessionShellSecretNames.m[sessionID]
+	next := make(map[string]struct{}, len(values))
+	for key := range values {
+		if strings.HasPrefix(key, "SECRET_") {
+			next[key] = struct{}{}
+		}
+	}
+	sessionShellSecretNames.m[sessionID] = next
+	sessionShellSecretNames.mu.Unlock()
+
+	sessionShellClients.mu.Lock()
+	clients := append([]*workspace.Client(nil), sessionShellClients.m[sessionID]...)
+	sessionShellClients.mu.Unlock()
+	for _, c := range clients {
+		for key := range previous {
+			if _, keep := next[key]; !keep {
+				c.DeleteExtraEnv(key)
+			}
+		}
+		for key, value := range values {
+			if strings.HasPrefix(key, "SECRET_") {
+				c.SetExtraEnv(key, value)
+			}
+		}
 	}
 	return len(clients)
 }

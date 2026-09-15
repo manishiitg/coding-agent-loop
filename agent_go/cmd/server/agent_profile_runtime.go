@@ -111,7 +111,7 @@ func agentProfileRuntimeWorkspace(userID, workspacePath string) string {
 // isActiveWorkProjectWorkspace distinguishes an actual Work project from the
 // Work landing/root workspace. Project-scoped tools must be absent on the
 // landing chat: registering them there either fails immediately (share links,
-// schedules) or gives the model tools that cannot operate without product.json.
+// schedules) or gives the model tools that cannot operate without a project manifest.
 func isActiveWorkProjectWorkspace(userID, workspacePath string) bool {
 	canonical := canonicalChatHistoryWorkspacePath(userID, workspacePath)
 	const prefix = "Chats/Work/projects/"
@@ -317,29 +317,30 @@ func (api *StreamingAPI) resolveAgentProfileForQuery(ctx context.Context, req *Q
 		noGlobalSecrets := []string{}
 		req.SelectedGlobalSecrets = &noGlobalSecrets
 	} else if !isGlobalScope && api.chatStore != nil && userID != "" {
-		// A product project owns its workflow-scoped secrets. Attach their names
-		// automatically for every direct-chat turn so native coding-agent tools
-		// receive SECRET_<NAME> without the model ever seeing a value. User-wide
-		// secrets remain opt-in through the existing selected-secret mechanism;
-		// a project secret with the same name deliberately resolves to the
-		// project value. Skipped for a global-scoped profile: there is no
-		// single project secret bucket to attach, and req.DecryptedSecrets /
-		// req.SelectedGlobalSecrets are left exactly as the client sent them --
-		// identical to today's profile-less behavior.
-		stored, secretErr := api.chatStore.ListWorkflowSecrets(ctx, userID, workspacePath)
+		// Product runtime manifests use the same selected_secrets contract.
+		// Values stay in encrypted storage; only explicitly attached names enter
+		// the coding-agent environment. For an older product manifest, preserve
+		// the previous behavior once by attaching its existing project secrets.
+		selectedNames, initialized, secretErr := productSelectedSecrets(ctx, profile.ID, workspacePath)
 		if secretErr != nil {
-			log.Printf("[SECRETS] Failed to list product workspace secrets for %s (%s): %v", userID, workspacePath, secretErr)
+			log.Printf("[SECRETS] Failed to read product secret attachments for %s (%s): %v", userID, workspacePath, secretErr)
+		} else if !initialized {
+			stored, listErr := api.ensureSharedWorkflowSecrets(ctx, workspacePath, userID)
+			if listErr != nil {
+				log.Printf("[SECRETS] Failed to migrate product secret attachments for %s (%s): %v", userID, workspacePath, listErr)
+			} else {
+				for _, secret := range stored {
+					selectedNames = appendUniqueStrings(selectedNames, secret.Name)
+				}
+				if writeErr := updateProductSelectedSecrets(ctx, profile.ID, workspacePath, func([]string) []string { return selectedNames }); writeErr != nil {
+					log.Printf("[SECRETS] Failed to persist migrated product secret attachments for %s (%s): %v", userID, workspacePath, writeErr)
+				}
+			}
+		}
+		if len(selectedNames) > 0 {
+			req.DecryptedSecrets = api.loadSelectedSecrets(ctx, userID, workspacePath, selectedNames)
 		} else {
-			selectedNames := make([]string, 0, len(req.DecryptedSecrets)+len(stored))
-			for _, secret := range req.DecryptedSecrets {
-				selectedNames = appendUniqueStrings(selectedNames, secret.Name)
-			}
-			for _, secret := range stored {
-				selectedNames = appendUniqueStrings(selectedNames, secret.Name)
-			}
-			if len(selectedNames) > 0 {
-				req.DecryptedSecrets = api.loadSelectedSecrets(ctx, userID, workspacePath, selectedNames)
-			}
+			req.DecryptedSecrets = nil
 		}
 	}
 	browserRequirement := profile.Runtime.Capabilities.Browser

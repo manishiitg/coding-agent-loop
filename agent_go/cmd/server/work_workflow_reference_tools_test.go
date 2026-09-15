@@ -22,6 +22,7 @@ func TestWorkWorkflowReferenceToolsDiscoverAndPersistAuthorizedWorkflows(t *test
 		Access: &WorkflowAccess{Owners: []string{"owner"}},
 	})
 	productPath := "_users/reader/Chats/Work/projects/banking/product.json"
+	runtimePath := "_users/reader/Chats/Work/projects/banking/workflow.json"
 	workspace := &mockWorkspaceAPI{files: map[string]string{
 		manifestPath("Workflow/hdfc-personal"): string(shared),
 		manifestPath("Workflow/private-bank"):  string(private),
@@ -59,10 +60,15 @@ func TestWorkWorkflowReferenceToolsDiscoverAndPersistAuthorizedWorkflows(t *test
 		t.Fatalf("attached workflow was not granted immediately as read-only: %+v", cfg)
 	}
 	workspace.mu.Lock()
-	saved := workspace.files[productPath]
+	productSaved := workspace.files[productPath]
+	saved := workspace.files[runtimePath]
 	workspace.mu.Unlock()
-	if !strings.Contains(saved, `"custom": "keep"`) || !strings.Contains(saved, `"Workflow/hdfc-personal"`) {
-		t.Fatalf("product manifest was not preserved and updated: %s", saved)
+	var productMetadata map[string]interface{}
+	if json.Unmarshal([]byte(productSaved), &productMetadata) != nil || productMetadata["custom"] != "keep" || strings.Contains(productSaved, `Workflow/hdfc-personal`) {
+		t.Fatalf("product metadata was changed: %s", productSaved)
+	}
+	if !strings.Contains(saved, `"Workflow/hdfc-personal"`) || !strings.Contains(saved, `"selected_skills"`) {
+		t.Fatalf("workflow runtime manifest was not migrated and updated: %s", saved)
 	}
 	out, err = registrar.tools["list_accessible_workflows"].exec(context.Background(), map[string]interface{}{"query": "personal"})
 	if err != nil || !strings.Contains(out, `"attached": true`) {

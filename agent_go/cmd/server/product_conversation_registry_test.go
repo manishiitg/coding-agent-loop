@@ -211,12 +211,16 @@ func TestWorkProjectBindingUsesCreatedProjectFolder(t *testing.T) {
 	profile.Runtime.Conversation = agentprofiles.ConversationPolicy{Mode: agentprofiles.ConversationModeKeyed, KeyType: agentprofiles.ConversationKeyTypeProject}
 
 	manifestPath := "_users/user-1/Chats/Work/projects/site/product.json"
+	runtimePath := "_users/user-1/Chats/Work/projects/site/workflow.json"
 	store := productProjectStore{
 		listPaths: func(context.Context, string) ([]string, bool, error) {
 			return []string{manifestPath}, true, nil
 		},
-		read: func(context.Context, string) (string, bool, error) {
-			return `{"schema_version":1,"product":"work","id":"task-1","title":"Task","session_id":"work:task-1","capabilities":{"workflow_context_paths":["Workflow/reference"],"llm_config":{"schema_version":2,"mode":"explicit","builder_llm":{"provider":"muse-cli","model_id":"muse-spark-1.3-contributor"}}}}`, true, nil
+		read: func(_ context.Context, path string) (string, bool, error) {
+			if path == runtimePath {
+				return `{"schema_version":1,"id":"task-1","label":"Task","workflow_context_paths":["Workflow/reference"],"capabilities":{"llm_config":{"schema_version":2,"mode":"explicit","builder_llm":{"provider":"muse-cli","model_id":"muse-spark-1.3-contributor"}}}}`, true, nil
+			}
+			return `{"schema_version":1,"product":"work","id":"task-1","title":"Task","session_id":"work:task-1"}`, true, nil
 		},
 	}
 	binding, err := resolveProductProjectBindingWithStore(context.Background(), "user-1", profile, "task-1", store)

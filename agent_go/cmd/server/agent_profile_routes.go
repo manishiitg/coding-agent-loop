@@ -119,7 +119,7 @@ func queryRequestForAgentProfileChat(profile agentprofiles.Profile, input AgentP
 	}
 	// Project schedules, bots and restored clients may not send a browser tab's
 	// engine fields. Reuse the same capabilities.llm_config stored in
-	// product.json that the Work UI uses, just as workflow turns resolve their
+	// workflow.json that the Work UI uses, just as AgentWorks turns resolve their
 	// runtime from workflow.json.
 	if strings.TrimSpace(input.Engine) == "" && conversation.ProjectLLMConfig != nil {
 		builder := presetPrimaryLLMForChat(conversation.ProjectLLMConfig)
@@ -150,7 +150,7 @@ func queryRequestForAgentProfileChat(profile agentprofiles.Profile, input AgentP
 	}
 	// Projects created before capabilities.llm_config was introduced fall back
 	// to the conversation's last actual runtime, never the profile default. The
-	// Work UI backfills this value into product.json when the project is opened.
+	// Work UI backfills this value into workflow.json when the project is opened.
 	if strings.TrimSpace(input.Engine) == "" && conversation.ProjectLLMConfig == nil && strings.TrimSpace(conversation.Provider) != "" {
 		for _, option := range profile.Runtime.ProviderOptions {
 			if !strings.EqualFold(strings.TrimSpace(option.Provider), strings.TrimSpace(conversation.Provider)) {

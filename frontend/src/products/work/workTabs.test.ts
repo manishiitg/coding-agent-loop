@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { ChatTab } from '../../stores/useChatStore'
-import { applyWorkProjectRuntimeSelection, markWorkProjectRuntimeDirty, preferredWorkProjectTabId, setWorkProjectRuntimeSelection, visibleWorkProjectTabs } from './workTabs'
+import { applyWorkProjectRuntimeSelection, markWorkProjectRuntimeDirty, preferredWorkProjectTabId, setWorkProjectRuntimeSelection, visibleWorkProjectTabs, workTabDisplayName } from './workTabs'
 import { useChatStore } from '../../stores/useChatStore'
 
 function tab(overrides: Partial<ChatTab> & Pick<ChatTab, 'tabId'>): ChatTab {
@@ -41,6 +41,17 @@ describe('visibleWorkProjectTabs', () => {
     const current = tab({ tabId: 'current' })
     const other = tab({ tabId: 'other', metadata: { mode: 'multi-agent', agentProfileId: 'work', agentProfileProjectId: 'project-2' } })
     expect(visibleWorkProjectTabs({ current, other }, 'project-1', null).map(item => item.tabId)).toEqual(['current'])
+  })
+})
+
+describe('workTabDisplayName', () => {
+  it('limits a tab label to three words and twenty characters', () => {
+    expect(workTabDisplayName('Browser resume test C — reply only with ACK-C.')).toBe('Browser resume test…')
+    expect(workTabDisplayName('One unusuallylongword title')).toBe('One unusuallylongwo…')
+  })
+
+  it('keeps short labels unchanged', () => {
+    expect(workTabDisplayName('Fix login')).toBe('Fix login')
   })
 })
 

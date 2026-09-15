@@ -7,6 +7,7 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -287,6 +288,12 @@ func TestResolveAgentProfileInjectsProjectScopedSecretsIntoNativeEnvironment(t *
 	}
 	const userID = "user-1"
 	const workspacePath = "Chats/Video Studio/projects/launch"
+	workspace := &mockWorkspaceAPI{files: map[string]string{
+		workspacePath + "/product.json": `{"schema_version":1,"product":"video-studio","capabilities":{"selected_secrets":["PEXELS_API_KEY"]}}`,
+	}}
+	host := httptest.NewServer(workspace)
+	defer host.Close()
+	t.Setenv("WORKSPACE_API_URL", host.URL)
 	if err := store.UpsertWorkflowSecret(context.Background(), userID, workspacePath, "PEXELS_API_KEY", encryptProfileSecretForTest(t, userID, "test-key")); err != nil {
 		t.Fatalf("store project secret: %v", err)
 	}

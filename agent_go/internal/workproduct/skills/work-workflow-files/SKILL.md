@@ -48,7 +48,7 @@ A `#` workflow selection applies only to that message. For durable access, use
 `list_accessible_workflows`, disambiguate by its exact returned path, and call
 `attach_workflow_reference` only when the user asks to keep it attached. Use
 the exact saved path for `detach_workflow_reference`. Durable references live
-in the Work project's `product.json` and are re-authorized on every turn.
+in the Work project's `workflow.json` and are re-authorized on every turn.
 
 ## Inspect progressively
 

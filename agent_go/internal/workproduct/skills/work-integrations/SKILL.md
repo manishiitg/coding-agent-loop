@@ -28,6 +28,14 @@ from selection for this project.
 - `set_workflow_secret` and `delete_workflow_secret` are legacy tool names for
   project-scoped secrets in Work. Use `set_user_secret` and
   `delete_user_secret` only when the user requests an account-level secret.
+- After `set_workflow_secret` succeeds, `$SECRET_<NAME>` is available to shell
+  tools immediately in the current chat and remains available in later turns.
+  Continue the requested work in the same chat; do not ask the user to start a
+  new chat or session. Verify availability without printing the secret value.
+- Work stores attached secret names in `workflow.json` under
+  `capabilities.selected_secrets`, using the AgentWorks workflow contract.
+  Secret values remain encrypted outside the manifest. Respect the user's
+  selections in **Setup > Secrets**; do not attach an unrelated credential.
 - Never print, echo, store in project files, or otherwise reveal a secret
   value. Refer to secrets by name.
 

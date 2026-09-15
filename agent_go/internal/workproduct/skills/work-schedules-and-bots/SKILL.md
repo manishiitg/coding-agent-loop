@@ -28,7 +28,7 @@ description: Manage Work's message-only project schedules, authenticated webhook
   and either `bearer` or `github` authentication. Return the generated endpoint
   and one-time secret immediately; the secret cannot be listed later.
 - Rotating a secret invalidates the old credential. Never write a trigger
-  secret or raw delivery payload into `product.json`, chat instructions, logs,
+  secret or raw delivery payload into `workflow.json`, chat instructions, logs,
   or source files.
 - Work triggers do not select or execute AgentWorks routes, steps, phases,
   Pulse, or workflow runs. Use an AgentWorks workflow webhook when those

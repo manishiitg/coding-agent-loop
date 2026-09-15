@@ -11,7 +11,7 @@ import (
 )
 
 // registerWorkScheduleTools exposes the project-scoped subset Work needs:
-// recurring one-message jobs. Definitions live in product.json and execution
+// recurring one-message jobs. Definitions live in workflow.json and execution
 // reuses ProductScheduleService, so there is no second scheduler.
 func (api *StreamingAPI) registerWorkScheduleTools(registrar definitionToolRegistrar, userID, workspacePath string) error {
 	if api.productSchedules == nil {
@@ -135,7 +135,7 @@ func (api *StreamingAPI) registerWorkScheduleTools(registrar definitionToolRegis
 	}); err != nil {
 		return err
 	}
-	if err := register("list_project_triggers", "List the authenticated webhook triggers stored in this Work project's product.json. Secrets are never returned.", map[string]interface{}{
+	if err := register("list_project_triggers", "List the authenticated webhook triggers stored in this Work project's workflow.json. Secrets are never returned.", map[string]interface{}{
 		"type": "object", "properties": map[string]interface{}{},
 	}, func(ctx context.Context, _ map[string]interface{}) (string, error) {
 		triggers, err := api.productSchedules.projectWebhookConfigs(ctx, userID, "work", projectID)

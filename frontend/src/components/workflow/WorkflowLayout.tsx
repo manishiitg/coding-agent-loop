@@ -2161,15 +2161,16 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
         </button>
       )}
       {/* Main Content */}
-      {/* Focus-follows-click: a mousedown anywhere in the split focuses the preview
-          (gives it ~75%); the chat pane's own capture handler below overrides to
-          'chat' when the click lands inside it. Capture fires outer→inner, so the
-          deeper chat handler wins for chat clicks while canvas clicks stay 'preview'. */}
+      {/* Narrow layouts show one pane at a time, so clicks choose that pane.
+          Desktop keeps both panes visible and must not mutate focus on ordinary
+          clicks: that store update can make stateful workspace views repaint. */}
       <div
         ref={splitLayoutRef}
         className={splitLayoutClassName}
         style={splitLayoutStyle}
-        onMouseDownCapture={showChatArea && workspacePaneVisible ? () => setFocusedPane('preview') : undefined}
+        onMouseDownCapture={showChatArea && workspacePaneVisible ? () => {
+          if (window.innerWidth < 768) setFocusedPane('preview')
+        } : undefined}
       >
         {showChatArea && !workspacePaneVisible && canvasElement}
 
@@ -2177,7 +2178,9 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
           <div
             data-tour="workflow-chat-pane"
             data-testid="tour-workflow-chat-pane"
-            onMouseDownCapture={() => setFocusedPane('chat')}
+            onMouseDownCapture={() => {
+              if (window.innerWidth < 768) setFocusedPane('chat')
+            }}
             className={`${chatPaneVisibilityClass} col-start-1 row-start-2 min-h-0 min-w-0 overflow-hidden flex-col bg-background transition-all duration-300 ${
             workspacePaneVisible
               ? `border-b border-border md:col-start-1 md:row-start-2 md:border-b-0 md:border-r ${shouldUseMobileReportPane ? 'flex-1 md:flex-[1.35]' : 'flex-1 basis-1/2'}`

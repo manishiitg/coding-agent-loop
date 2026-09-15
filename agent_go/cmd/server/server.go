@@ -3526,10 +3526,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 	// through. Frontend "+ new chat" pre-checks /api/workflow/running and
 	// offers a kill-and-start dialog; this 409 is the backend guard
 	// against races.
-	if req.AgentMode == "workflow_phase" &&
-		req.PhaseID == workflowtypes.WorkflowStatusWorkflowBuilder &&
-		strings.TrimSpace(req.SelectedFolder) != "" &&
-		!scheduledRequestBypassesWorkflowBusy(sessionID, req.TriggeredBy) {
+	if workflowBusyGuardApplies(sessionID, req) {
 		if running := api.findRunningTrackedExecutionForWorkspaceWhere(req.SelectedFolder, func(exec *TrackedWorkflowExecution) bool {
 			return trackedExecutionBlocksNewWorkflowBuilderChat(exec)
 		}); running != nil && running.SessionID != sessionID {
@@ -7088,6 +7085,23 @@ func scheduledRequestBypassesWorkflowBusy(sessionID, triggeredBy string) bool {
 	return isScheduledSessionIdentity(sessionID, triggeredBy)
 }
 
+func workflowBusyGuardApplies(sessionID string, req QueryRequest) bool {
+	if req.AgentMode != "workflow_phase" ||
+		req.PhaseID != workflowtypes.WorkflowStatusWorkflowBuilder ||
+		strings.TrimSpace(req.SelectedFolder) == "" ||
+		scheduledRequestBypassesWorkflowBusy(sessionID, req.TriggeredBy) {
+		return false
+	}
+	mode := ""
+	if req.ExecutionOptions != nil {
+		mode = normalizeChatHistoryWorkshopMode(req.ExecutionOptions.WorkshopMode)
+	}
+	// Bot and scheduled workflow traffic use the workflow-builder phase as a
+	// conversational runtime in run mode. The exclusive lock is only for
+	// authoring modes that can mutate workflow design state.
+	return mode != "run"
+}
+
 func isScheduledSessionIdentity(sessionID, triggeredBy string) bool {
 	trigger := strings.ToLower(strings.TrimSpace(triggeredBy))
 	id := strings.ToLower(strings.TrimSpace(sessionID))
@@ -9078,10 +9092,7 @@ func (api *StreamingAPI) startNextTurnFromLiveInput(w http.ResponseWriter, r *ht
 	baseReq.IsAutoNotification = false
 	baseReq.userID = GetUserIDFromContext(r.Context())
 
-	if baseReq.AgentMode == "workflow_phase" &&
-		baseReq.PhaseID == workflowtypes.WorkflowStatusWorkflowBuilder &&
-		strings.TrimSpace(baseReq.SelectedFolder) != "" &&
-		!scheduledRequestBypassesWorkflowBusy(sessionID, baseReq.TriggeredBy) {
+	if workflowBusyGuardApplies(sessionID, baseReq) {
 		if running := api.findRunningTrackedExecutionForWorkspaceWhere(baseReq.SelectedFolder, func(exec *TrackedWorkflowExecution) bool {
 			return trackedExecutionBlocksNewWorkflowBuilderChat(exec)
 		}); running != nil && running.SessionID != sessionID {

@@ -106,17 +106,32 @@ func multiAgentChatPrimaryLLM(preset *workflowtypes.PresetLLMConfig) *workflowty
 	return nil
 }
 
-// ChannelRoute maps a bot-visible route key (Slack/WhatsApp slug, or legacy
-// Slack channel ID) to a specific workflow, including the workspace path so the
-// bot can read the workflow manifest without scanning all workspaces.
+// ChannelRoute maps a bot-visible route key to a specific workflow, including
+// the workspace path so the bot can read the workflow manifest without scanning
+// all workspaces.
 type ChannelRoute struct {
 	WorkflowID    string `json:"workflow_id"`
 	WorkspacePath string `json:"workspace_path"`
 	// WorkshopMode overrides whatever is set in the workflow manifest. Valid:
-	// "builder" | "optimizer" | "run". Empty means "use workflow default".
-	WorkshopMode    string   `json:"workshop_mode,omitempty"`
-	SendFullDetails bool     `json:"send_full_details,omitempty"`
-	AllowedEmails   []string `json:"allowed_emails,omitempty"`
+	// "workshop" | "run". UI/API aliases like "build" normalize to "workshop".
+	WorkshopMode    string `json:"workshop_mode,omitempty"`
+	SendFullDetails bool   `json:"send_full_details,omitempty"`
+}
+
+// NormalizeBotWorkshopMode canonicalizes bot route mode input. Slack exposes
+// this as Run/Build in the UI; the workflow runtime expects run/workshop.
+func NormalizeBotWorkshopMode(mode string) string {
+	trimmed := strings.ToLower(strings.TrimSpace(mode))
+	switch trimmed {
+	case "":
+		return ""
+	case "run", "runner", "ask", "debugger":
+		return "run"
+	case "build", "builder", "workshop":
+		return "workshop"
+	default:
+		return "workshop"
+	}
 }
 
 // ThreadID identifies a conversation thread on a platform
@@ -147,8 +162,8 @@ type BotIncomingMessage struct {
 	IsMention       bool            // true when the bot was @mentioned (vs plain thread reply)
 	ThreadHistory   []ThreadMessage // populated when tagged in existing thread
 	// PresetWorkflow, when set, overrides channel-based workflow routing
-	// for this message. WhatsApp and Slack use it after their @<slug>
-	// routers have selected a workflow explicitly.
+	// for this message. WhatsApp uses it after its @<slug> router has
+	// selected a workflow explicitly.
 	PresetWorkflow *ChannelRoute
 	// PresetProfile, when set, sends this message to one of the default
 	// product's own profiles (an @token the product resolved, e.g. a
@@ -738,29 +753,19 @@ func (m *BotConversationManager) HandleIncomingMessage(msg BotIncomingMessage) {
 	}
 
 	// Check allowed_emails filter — merge DB config with BOT_ALLOWED_EMAILS env var.
-	// Slack workflow traffic is checked before handoff using each route's
-	// AllowedEmails list, so the old global gate must not block/allow a different
-	// workflow policy or break replies to an already-routed Slack thread.
-	enforceGlobalAllowedEmails := !strings.EqualFold(msg.Platform, "slack")
-	if !enforceGlobalAllowedEmails {
-		workflowID := ""
-		if msg.PresetWorkflow != nil {
-			workflowID = msg.PresetWorkflow.WorkflowID
-		}
-		log.Printf("[BOT_FLOW] access: skipped global allowed_emails for Slack user=%s email=%s workflow=%s",
-			msg.UserID, msg.UserEmail, workflowID)
-	}
 	// Only send rejection message for @mentions (non-mentions are silently ignored above)
-	if msg.UserEmail != "" && enforceGlobalAllowedEmails {
+	if msg.UserEmail != "" {
 		var allowedEmails []string
 
 		// 1. Load from filesystem-backed bot connector config
-		globalCfg, _ := m.chatStore.GetBotConnectorConfig(context.Background(), "_global")
-		if globalCfg != nil && globalCfg.ConfigJSON != "" {
-			var cfgData map[string]json.RawMessage
-			if err := json.Unmarshal([]byte(globalCfg.ConfigJSON), &cfgData); err == nil {
-				if raw, ok := cfgData["allowed_emails"]; ok {
-					json.Unmarshal(raw, &allowedEmails)
+		if m.chatStore != nil {
+			globalCfg, _ := m.chatStore.GetBotConnectorConfig(context.Background(), "_global")
+			if globalCfg != nil && globalCfg.ConfigJSON != "" {
+				var cfgData map[string]json.RawMessage
+				if err := json.Unmarshal([]byte(globalCfg.ConfigJSON), &cfgData); err == nil {
+					if raw, ok := cfgData["allowed_emails"]; ok {
+						json.Unmarshal(raw, &allowedEmails)
+					}
 				}
 			}
 		}
@@ -2693,15 +2698,15 @@ func (m *BotConversationManager) buildQueryWithThreadHistory(query string, platf
 // generic chat, silently losing the workflow's own tools and LLM config.
 // This is the fallback path only: a platform that resolves its own route
 // first — WhatsApp maps an "@slug" to a workflow in WhatsAppService.Resolve —
-// arrives here already routed and never reaches this lookup. An empty
-// platform keeps the historical key.
+// arrives here already routed and never reaches this lookup. Slack uses this
+// only for channel-ID routing; the historical empty-platform key is disabled.
 func (m *BotConversationManager) resolveChannelWorkflow(platform, channelID string) *ChannelRoute {
 	if m.chatStore == nil {
 		return nil
 	}
 	configID := strings.ToLower(strings.TrimSpace(platform))
 	if configID == "" {
-		configID = "slack"
+		return nil
 	}
 	botCfg, err := m.chatStore.GetBotConnectorConfig(context.Background(), configID)
 	if err != nil || botCfg == nil {
@@ -2715,8 +2720,14 @@ func (m *BotConversationManager) resolveChannelWorkflow(platform, channelID stri
 	if err := json.Unmarshal([]byte(routing), &channelMap); err != nil {
 		return nil
 	}
-	if route, ok := channelMap[channelID]; ok && route.WorkflowID != "" {
-		return &route
+	normalizedChannelID := strings.ToUpper(strings.TrimSpace(channelID))
+	for rawKey, route := range channelMap {
+		if strings.EqualFold(strings.TrimSpace(rawKey), normalizedChannelID) && strings.TrimSpace(route.WorkflowID) != "" {
+			route.WorkflowID = strings.TrimSpace(route.WorkflowID)
+			route.WorkspacePath = strings.TrimSpace(route.WorkspacePath)
+			route.WorkshopMode = NormalizeBotWorkshopMode(route.WorkshopMode)
+			return &route
+		}
 	}
 	return nil
 }
@@ -2787,20 +2798,15 @@ func (m *BotConversationManager) buildQueryRequest(query string, userID string, 
 			req["bot_send_full_details"] = true
 		}
 
-		// Prefer a per-channel override on the route; fall back to the
-		// workflow manifest's workshop_mode when the route doesn't pin one,
-		// then use Run mode for deployed bot workflow traffic.
-		workshopMode := route.WorkshopMode
+		// Prefer a per-channel override on the route. Deployed bot workflow
+		// traffic defaults to Run mode; do not inherit a manifest authoring
+		// default unless there is no bot platform involved.
+		workshopMode := NormalizeBotWorkshopMode(route.WorkshopMode)
+		if workshopMode == "" && platform != "" {
+			workshopMode = "run"
+		}
 		if workshopMode == "" {
 			workshopMode = m.readManifestWorkshopMode(route.WorkspacePath)
-		}
-		if workshopMode == "" && platform != "" {
-			// Deployed bot workflows route through the conversational Workflow
-			// workshop in Run mode by default: channel questions should execute
-			// the existing workflow and return an answer, not enter workflow
-			// design. Routes/manifests can still pin Builder or another
-			// workshop mode explicitly.
-			workshopMode = "run"
 		}
 		via := "channel " + channelID
 		if presetRoute != nil {
@@ -3039,7 +3045,7 @@ func botRouteKey(route *ChannelRoute) string {
 	parts := []string{
 		strings.ToLower(strings.TrimSpace(route.WorkflowID)),
 		strings.ToLower(strings.TrimSpace(route.WorkspacePath)),
-		strings.ToLower(strings.TrimSpace(route.WorkshopMode)),
+		NormalizeBotWorkshopMode(route.WorkshopMode),
 	}
 	return strings.Join(parts, "|")
 }
@@ -3074,7 +3080,7 @@ func botRouteFromActive(active *activeBotSession) *ChannelRoute {
 	defer active.mu.Unlock()
 	workflowID := strings.TrimSpace(active.PresetQueryID)
 	workspacePath := strings.TrimSpace(active.WorkspacePath)
-	workshopMode := strings.TrimSpace(active.WorkshopMode)
+	workshopMode := NormalizeBotWorkshopMode(active.WorkshopMode)
 	if workflowID == "" && workspacePath == "" {
 		return nil
 	}

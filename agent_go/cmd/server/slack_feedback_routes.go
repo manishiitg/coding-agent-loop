@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
-	"sort"
+	"regexp"
 	"strings"
 
 	"github.com/manishiitg/coding-agent-loop/agent_go/cmd/server/services"
@@ -15,9 +15,7 @@ import (
 	"github.com/gorilla/mux"
 )
 
-// ChannelRoute maps a Slack @slug to a specific workflow, including the workspace
-// path needed so the bot can read the workflow manifest without scanning all
-// workspaces during execution.
+// ChannelRoute maps a Slack channel ID to a specific workflow.
 type ChannelRoute = services.ChannelRoute
 
 // SlackConfigRequest represents a request to update Slack config (Socket Mode only)
@@ -26,8 +24,8 @@ type SlackConfigRequest struct {
 	BotToken       string                  `json:"bot_token"` // Bot User OAuth Token (xoxb-...)
 	AppToken       string                  `json:"app_token"` // App-level token (xapp-...) for Socket Mode
 	ChannelID      string                  `json:"channel_id"`
-	BotMode        bool                    `json:"bot_mode"`        // Enable @mention bot mode (starts agent sessions from Slack)
-	ChannelRouting map[string]ChannelRoute `json:"channel_routing"` // Historical name; now maps Slack @slugs to ChannelRoute.
+	BotMode        bool                    `json:"bot_mode"` // Enable @mention bot mode (starts agent sessions from Slack)
+	ChannelRouting map[string]ChannelRoute `json:"channel_routing,omitempty"`
 }
 
 // SlackConfigResponse represents the Slack configuration response
@@ -37,7 +35,7 @@ type SlackConfigResponse struct {
 	AppToken       string                  `json:"app_token,omitempty"` // Masked in GET
 	ChannelID      string                  `json:"channel_id,omitempty"`
 	BotMode        bool                    `json:"bot_mode"`
-	ChannelRouting map[string]ChannelRoute `json:"channel_routing,omitempty"` // Historical name; now maps Slack @slugs to ChannelRoute.
+	ChannelRouting map[string]ChannelRoute `json:"channel_routing,omitempty"`
 }
 
 // SlackTestResponse represents test connection response
@@ -47,50 +45,47 @@ type SlackTestResponse struct {
 	TestID  string `json:"test_id,omitempty"` // Unique ID for polling test replies
 }
 
-func joinSlackSlugLog(slugs []string) string {
-	if len(slugs) == 0 {
-		return ""
+var slackChannelIDPattern = regexp.MustCompile(`^[CDG][A-Z0-9]{2,}$`)
+
+func normalizeSlackChannelRouting(routes map[string]ChannelRoute) (map[string]ChannelRoute, error) {
+	if routes == nil {
+		return nil, nil
 	}
-	return strings.Join(slugs, ", @")
+	out := make(map[string]ChannelRoute, len(routes))
+	for rawChannelID, route := range routes {
+		channelID := strings.ToUpper(strings.TrimSpace(rawChannelID))
+		if channelID == "" || strings.TrimSpace(route.WorkflowID) == "" {
+			continue
+		}
+		if !slackChannelIDPattern.MatchString(channelID) {
+			return nil, fmt.Errorf("Slack route key %q is not a channel ID; use the channel ID from Slack, for example C1234567890", rawChannelID)
+		}
+		if existing, ok := out[channelID]; ok && !strings.EqualFold(existing.WorkflowID, strings.TrimSpace(route.WorkflowID)) {
+			return nil, fmt.Errorf("Slack channel %s is already routed to workflow %s", channelID, existing.WorkflowID)
+		}
+		route.WorkflowID = strings.TrimSpace(route.WorkflowID)
+		route.WorkspacePath = strings.TrimSpace(route.WorkspacePath)
+		route.WorkshopMode = services.NormalizeBotWorkshopMode(route.WorkshopMode)
+		out[channelID] = route
+	}
+	return out, nil
 }
 
-func slackAutoRoutedWorkflowSet(configJSON string) (map[string]bool, map[string]json.RawMessage) {
-	raw := map[string]json.RawMessage{}
-	if strings.TrimSpace(configJSON) != "" {
-		_ = json.Unmarshal([]byte(configJSON), &raw)
+func migrateLegacySlackRouteToDefaultChannel(routes map[string]ChannelRoute, defaultChannelID string) (map[string]ChannelRoute, bool) {
+	defaultChannelID = strings.ToUpper(strings.TrimSpace(defaultChannelID))
+	if !slackChannelIDPattern.MatchString(defaultChannelID) || len(routes) != 1 {
+		return nil, false
 	}
-	var ids []string
-	if data, ok := raw["auto_routed_workflows"]; ok {
-		_ = json.Unmarshal(data, &ids)
-	}
-	set := make(map[string]bool, len(ids))
-	for _, id := range ids {
-		id = strings.TrimSpace(id)
-		if id != "" {
-			set[id] = true
+	for rawKey, route := range routes {
+		if slackChannelIDPattern.MatchString(strings.ToUpper(strings.TrimSpace(rawKey))) || strings.TrimSpace(route.WorkflowID) == "" {
+			return nil, false
 		}
+		route.WorkflowID = strings.TrimSpace(route.WorkflowID)
+		route.WorkspacePath = strings.TrimSpace(route.WorkspacePath)
+		route.WorkshopMode = services.NormalizeBotWorkshopMode(route.WorkshopMode)
+		return map[string]ChannelRoute{defaultChannelID: route}, true
 	}
-	return set, raw
-}
-
-func slackConfigJSONWithAutoRouted(raw map[string]json.RawMessage, set map[string]bool) string {
-	if raw == nil {
-		raw = map[string]json.RawMessage{}
-	}
-	ids := make([]string, 0, len(set))
-	for id := range set {
-		if strings.TrimSpace(id) != "" {
-			ids = append(ids, strings.TrimSpace(id))
-		}
-	}
-	sort.Strings(ids)
-	data, _ := json.Marshal(ids)
-	raw["auto_routed_workflows"] = data
-	out, err := json.Marshal(raw)
-	if err != nil {
-		return "{}"
-	}
-	return string(out)
+	return nil, false
 }
 
 // Webhook types removed - using Socket Mode for real-time events
@@ -139,42 +134,42 @@ func getSlackConfigHandler(api *StreamingAPI) http.HandlerFunc {
 
 		config := slackService.GetConfig()
 
-		// Check bot_mode and Slack slug routing from the filesystem-backed bot connector config.
+		// Check bot_mode from the filesystem-backed bot connector config.
 		botMode := false
 		var channelRouting map[string]ChannelRoute
-		autoRouted := map[string]bool{}
-		configJSONRaw := map[string]json.RawMessage{}
 		botCfg, _ := api.chatStore.GetBotConnectorConfig(r.Context(), "slack")
 		if botCfg != nil {
 			botMode = botCfg.BotMode
 			if botCfg.AllowedChannels != "" && botCfg.AllowedChannels != "[]" && botCfg.AllowedChannels != "{}" {
 				_ = json.Unmarshal([]byte(botCfg.AllowedChannels), &channelRouting)
-			}
-			autoRouted, configJSONRaw = slackAutoRoutedWorkflowSet(botCfg.ConfigJSON)
-		}
-		ensuredRouting, added, marked, ensureErr := services.EnsureSlackDefaultWorkflowRoutes(r.Context(), channelRouting, autoRouted)
-		if ensureErr != nil {
-			log.Printf("[SLACK_FLOW] api config GET: default Slack slug ensure failed: %v", ensureErr)
-		} else {
-			channelRouting = map[string]ChannelRoute(ensuredRouting)
-			if len(added) > 0 || len(marked) > 0 {
-				if data, err := json.Marshal(channelRouting); err == nil {
-					_, saveErr := api.chatStore.UpsertBotConnectorConfig(r.Context(), &chathistory.CreateBotConnectorConfigRequest{
-						ID:              "slack",
-						Enabled:         config.Enabled,
-						BotMode:         botMode,
-						ConfigJSON:      slackConfigJSONWithAutoRouted(configJSONRaw, autoRouted),
-						AllowedChannels: string(data),
-					})
-					if saveErr != nil {
-						log.Printf("[SLACK_FLOW] api config GET: failed to persist auto Slack slugs added=%d err=%v", len(added), saveErr)
+				var normalizeErr error
+				channelRouting, normalizeErr = normalizeSlackChannelRouting(channelRouting)
+				if normalizeErr != nil {
+					var rawRouting map[string]ChannelRoute
+					_ = json.Unmarshal([]byte(botCfg.AllowedChannels), &rawRouting)
+					if migratedRouting, migrated := migrateLegacySlackRouteToDefaultChannel(rawRouting, config.ChannelID); migrated {
+						channelRouting = migratedRouting
+						if data, err := json.Marshal(channelRouting); err == nil {
+							if _, saveErr := api.chatStore.UpsertBotConnectorConfig(r.Context(), &chathistory.CreateBotConnectorConfigRequest{
+								ID:              "slack",
+								Enabled:         config.Enabled,
+								BotMode:         botMode,
+								ConfigJSON:      botCfg.ConfigJSON,
+								AllowedChannels: string(data),
+							}); saveErr != nil {
+								log.Printf("[SLACK_FLOW] api config GET: failed to persist migrated default channel route: %v", saveErr)
+							} else {
+								log.Printf("[SLACK_FLOW] api config GET: migrated legacy Slack route to default channel=%s", config.ChannelID)
+							}
+						}
 					} else {
-						log.Printf("[SLACK_FLOW] api config GET: auto-created Slack slugs @%s marked=%d", joinSlackSlugLog(added), len(marked))
+						log.Printf("[SLACK_FLOW] api config GET: ignoring invalid saved channel routing: %v", normalizeErr)
+						channelRouting = nil
 					}
 				}
 			}
 		}
-		log.Printf("[SLACK_FLOW] api config GET: returning enabled=%v botMode=%v channel=%s slugRoutes=%d hasBotToken=%v hasAppToken=%v",
+		log.Printf("[SLACK_FLOW] api config GET: returning enabled=%v botMode=%v defaultChannel=%s routeChannels=%d hasBotToken=%v hasAppToken=%v",
 			config.Enabled, botMode, config.ChannelID, len(channelRouting), config.BotToken != "", config.AppToken != "")
 
 		resp := SlackConfigResponse{
@@ -207,7 +202,7 @@ func updateSlackConfigHandler(api *StreamingAPI) http.HandlerFunc {
 			http.Error(w, fmt.Sprintf("Invalid request body: %v", err), http.StatusBadRequest)
 			return
 		}
-		log.Printf("[SLACK_FLOW] api config POST: decoded enabled=%v botMode=%v hasBotToken=%v hasAppToken=%v channel=%s slugRoutes=%d",
+		log.Printf("[SLACK_FLOW] api config POST: decoded enabled=%v botMode=%v hasBotToken=%v hasAppToken=%v defaultChannel=%s routeChannels=%d",
 			req.Enabled, req.BotMode, req.BotToken != "", req.AppToken != "", req.ChannelID, len(req.ChannelRouting))
 
 		slackService, err := ensureSlackService()
@@ -233,43 +228,57 @@ func updateSlackConfigHandler(api *StreamingAPI) http.HandlerFunc {
 		}
 		log.Printf("[SLACK_FLOW] api config POST: Slack config saved")
 
-		existingBotCfg, _ := api.chatStore.GetBotConnectorConfig(r.Context(), "slack")
-		autoRouted := map[string]bool{}
-		configJSONRaw := map[string]json.RawMessage{}
-		if existingBotCfg != nil {
-			autoRouted, configJSONRaw = slackAutoRoutedWorkflowSet(existingBotCfg.ConfigJSON)
+		var normalizeErr error
+		req.ChannelRouting, normalizeErr = normalizeSlackChannelRouting(req.ChannelRouting)
+		if normalizeErr != nil {
+			log.Printf("[SLACK_FLOW] api config POST: channel routing validation failed: %v", normalizeErr)
+			http.Error(w, normalizeErr.Error(), http.StatusBadRequest)
+			return
 		}
-		ensuredRouting, added, marked, ensureErr := services.EnsureSlackDefaultWorkflowRoutes(r.Context(), req.ChannelRouting, autoRouted)
-		if ensureErr != nil {
-			log.Printf("[SLACK_FLOW] api config POST: default Slack slug ensure failed: %v", ensureErr)
-		} else {
-			req.ChannelRouting = map[string]ChannelRoute(ensuredRouting)
-			if len(added) > 0 || len(marked) > 0 {
-				log.Printf("[SLACK_FLOW] api config POST: auto-created Slack slugs @%s marked=%d", joinSlackSlugLog(added), len(marked))
-			}
-		}
-
-		// Marshal Slack slug routing into the historical AllowedChannels JSON field.
+		channelRouting := req.ChannelRouting
 		allowedChannelsJSON := ""
-		if len(req.ChannelRouting) > 0 {
+		if req.ChannelRouting != nil {
 			if data, err := json.Marshal(req.ChannelRouting); err == nil {
 				allowedChannelsJSON = string(data)
 			}
+		} else if existingBotCfg, _ := api.chatStore.GetBotConnectorConfig(r.Context(), "slack"); existingBotCfg != nil {
+			allowedChannelsJSON = existingBotCfg.AllowedChannels
+			if allowedChannelsJSON != "" && allowedChannelsJSON != "[]" && allowedChannelsJSON != "{}" {
+				_ = json.Unmarshal([]byte(allowedChannelsJSON), &channelRouting)
+				var existingNormalizeErr error
+				channelRouting, existingNormalizeErr = normalizeSlackChannelRouting(channelRouting)
+				if existingNormalizeErr != nil {
+					var rawRouting map[string]ChannelRoute
+					_ = json.Unmarshal([]byte(allowedChannelsJSON), &rawRouting)
+					if migratedRouting, migrated := migrateLegacySlackRouteToDefaultChannel(rawRouting, config.ChannelID); migrated {
+						channelRouting = migratedRouting
+						if data, err := json.Marshal(channelRouting); err == nil {
+							allowedChannelsJSON = string(data)
+						}
+						log.Printf("[SLACK_FLOW] api config POST: migrated legacy Slack route to default channel=%s", config.ChannelID)
+					} else {
+						log.Printf("[SLACK_FLOW] api config POST: clearing invalid saved channel routing: %v", existingNormalizeErr)
+						channelRouting = nil
+						allowedChannelsJSON = ""
+					}
+				} else if data, err := json.Marshal(channelRouting); err == nil {
+					allowedChannelsJSON = string(data)
+				}
+			}
 		}
 
-		// Save bot_mode and Slack slug routing to the filesystem-backed bot connector config.
+		// Save bot_mode and Slack channel routing to the filesystem-backed bot connector config.
 		if _, err := api.chatStore.UpsertBotConnectorConfig(r.Context(), &chathistory.CreateBotConnectorConfigRequest{
 			ID:              "slack",
 			Enabled:         req.Enabled,
 			BotMode:         req.BotMode,
-			ConfigJSON:      slackConfigJSONWithAutoRouted(configJSONRaw, autoRouted),
 			AllowedChannels: allowedChannelsJSON,
 		}); err != nil {
 			log.Printf("[SLACK] Failed to save bot config: %v", err)
 			log.Printf("[SLACK_FLOW] api config POST: bot connector config save failed: %v", err)
 			// Non-fatal — Slack config itself was saved
 		} else {
-			log.Printf("[SLACK_FLOW] api config POST: bot connector config saved botMode=%v slugRoutes=%d", req.BotMode, len(req.ChannelRouting))
+			log.Printf("[SLACK_FLOW] api config POST: bot connector config saved botMode=%v routeChannels=%d", req.BotMode, len(channelRouting))
 		}
 
 		// Dynamically register/unregister Slack bot connector
@@ -296,7 +305,7 @@ func updateSlackConfigHandler(api *StreamingAPI) http.HandlerFunc {
 			Enabled:        config.Enabled,
 			ChannelID:      config.ChannelID,
 			BotMode:        req.BotMode,
-			ChannelRouting: req.ChannelRouting,
+			ChannelRouting: channelRouting,
 		}
 
 		w.Header().Set("Content-Type", "application/json")

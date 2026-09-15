@@ -213,6 +213,67 @@ func TestInteractiveWorkflowBuilderTaskBlocksNewBuilderChat(t *testing.T) {
 	}
 }
 
+func TestRunModeBotWorkflowBuilderChatDoesNotBlockAnotherThread(t *testing.T) {
+	exec := &TrackedWorkflowExecution{
+		ExecutionID:   "query-1",
+		SessionID:     "bot-slack--first-thread",
+		Source:        trackedExecutionSourceConversationTurn,
+		Kind:          "workflow_builder_task",
+		WorkspacePath: "Workflow/testingmcp",
+		PhaseID:       "workflow-builder",
+		Status:        trackedExecutionStatusRunning,
+		TriggeredBy:   "bot:slack",
+		StartedAt:     time.Now().UTC(),
+		Metadata: map[string]string{
+			"workshop_mode": "run",
+		},
+	}
+
+	if trackedExecutionBlocksNewWorkflowBuilderChat(exec) {
+		t.Fatal("run-mode bot workflow chat must not block another Slack thread")
+	}
+
+	req := QueryRequest{
+		AgentMode:      "workflow_phase",
+		PhaseID:        "workflow-builder",
+		SelectedFolder: "Workflow/testingmcp",
+		BotPlatform:    "slack",
+		TriggeredBy:    "bot:slack",
+		ExecutionOptions: &ExecutionOptions{
+			WorkshopMode: "run",
+		},
+	}
+	if workflowBusyGuardApplies("bot-slack--second-thread", req) {
+		t.Fatal("run-mode bot workflow request must bypass workflow_busy guard")
+	}
+
+	builderReq := QueryRequest{
+		AgentMode:      "workflow_phase",
+		PhaseID:        "workflow-builder",
+		SelectedFolder: "Workflow/testingmcp",
+		TriggeredBy:    "workflow_builder",
+	}
+	if !workflowBusyGuardApplies("interactive-builder-session", builderReq) {
+		t.Fatal("interactive builder request must still use workflow_busy guard")
+	}
+}
+
+func TestNormalizeSlackChannelRoutingCanonicalizesBuildMode(t *testing.T) {
+	routes, err := normalizeSlackChannelRouting(map[string]ChannelRoute{
+		" c123abc ": {WorkflowID: " wf-report ", WorkspacePath: " Workflow/report ", WorkshopMode: "Build"},
+		"G456DEF":   {WorkflowID: "wf-run", WorkspacePath: "Workflow/run", WorkshopMode: "Run"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if routes["C123ABC"].WorkshopMode != "workshop" {
+		t.Fatalf("C123ABC workshop_mode = %q, want workshop", routes["C123ABC"].WorkshopMode)
+	}
+	if routes["G456DEF"].WorkshopMode != "run" {
+		t.Fatalf("G456DEF workshop_mode = %q, want run", routes["G456DEF"].WorkshopMode)
+	}
+}
+
 // The chat/schedule pairing is symmetric, and only one half was implemented.
 // trackedExecutionBlocksNewWorkflowBuilderChat already lets a user open a chat
 // while scheduled work runs; the reverse — a schedule firing while a user has a

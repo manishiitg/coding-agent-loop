@@ -16,6 +16,7 @@ type testBotConnector struct {
 	supportsThreads bool
 	mu              sync.Mutex // guards sent; every other field here is only ever touched single-threaded
 	sent            []string
+	updates         []string
 	sendStarted     chan struct{}
 	releaseSend     chan struct{}
 }
@@ -80,13 +81,18 @@ func (c *testBotConnector) SendThreadMessage(_ context.Context, _ ThreadID, mess
 	if c.releaseSend != nil {
 		<-c.releaseSend
 	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	c.sent = append(c.sent, message)
 	return "msg", nil
 }
 func (c *testBotConnector) SendThreadMessageWithBlocks(_ context.Context, _ ThreadID, message string, _ []MessageBlock) (string, error) {
 	return c.SendThreadMessage(context.Background(), ThreadID{}, message)
 }
-func (c *testBotConnector) UpdateMessage(context.Context, ThreadID, string, string) error {
+func (c *testBotConnector) UpdateMessage(_ context.Context, _ ThreadID, _ string, message string) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.updates = append(c.updates, message)
 	return nil
 }
 func (c *testBotConnector) AddReaction(context.Context, string, string, string) error {
@@ -265,6 +271,14 @@ func TestBuildQueryRequestForActivePreservesWorkflowMetadata(t *testing.T) {
 		WorkspacePath: "Workflow/report",
 		PhaseID:       "workflow-builder",
 		WorkshopMode:  "run",
+		Metadata: &chathistory.BotMetadata{
+			Platform:  "whatsapp",
+			ChannelID: "dm",
+			ThreadTS:  "dm",
+			UserID:    "15551234567",
+			UserName:  "Shubham",
+			UserEmail: "shubham@example.com",
+		},
 	}
 
 	req := manager.buildQueryRequestForActive(active, "continue", "user-1", "whatsapp", ThreadID{
@@ -279,6 +293,55 @@ func TestBuildQueryRequestForActivePreservesWorkflowMetadata(t *testing.T) {
 	execOpts, ok := req["execution_options"].(map[string]interface{})
 	if !ok || execOpts["workshop_mode"] != "run" {
 		t.Fatalf("execution_options = %#v, want workshop_mode run", req["execution_options"])
+	}
+	if req["bot_user_email"] != "shubham@example.com" || req["bot_user_name"] != "Shubham" {
+		t.Fatalf("request did not preserve bot user metadata: %#v", req)
+	}
+}
+
+func TestBotWorkflowRouteDefaultsToRunMode(t *testing.T) {
+	manager := NewBotConversationManager(nil, "", "")
+	req := manager.buildQueryRequest(
+		"what step are we on?",
+		"user-1",
+		"C123",
+		&ChannelRoute{WorkflowID: "wf-report", WorkspacePath: "Workflow/report"},
+		"slack",
+		ThreadID{Platform: "slack", ChannelID: "C123", ThreadTS: "1700000000.000100"},
+	)
+
+	if req["agent_mode"] != "workflow_phase" || req["phase_id"] != "workflow-builder" {
+		t.Fatalf("request mode = %#v/%#v, want workflow_phase/workflow-builder", req["agent_mode"], req["phase_id"])
+	}
+	if req["workshop_mode"] != "run" {
+		t.Fatalf("workshop_mode = %#v, want run", req["workshop_mode"])
+	}
+	execOpts, ok := req["execution_options"].(map[string]interface{})
+	if !ok || execOpts["workshop_mode"] != "run" {
+		t.Fatalf("execution_options = %#v, want workshop_mode run", req["execution_options"])
+	}
+}
+
+func TestSlackBotWorkflowRouteBuildModeUsesWorkshop(t *testing.T) {
+	manager := NewBotConversationManager(nil, "", "")
+	req := manager.buildQueryRequest(
+		"add a validation step",
+		"user-1",
+		"C123",
+		&ChannelRoute{WorkflowID: "wf-report", WorkspacePath: "Workflow/report", WorkshopMode: "build"},
+		"slack",
+		ThreadID{Platform: "slack", ChannelID: "C123", ThreadTS: "1700000000.000100"},
+	)
+
+	if req["agent_mode"] != "workflow_phase" || req["phase_id"] != "workflow-builder" {
+		t.Fatalf("request mode = %#v/%#v, want workflow_phase/workflow-builder", req["agent_mode"], req["phase_id"])
+	}
+	if req["workshop_mode"] != "workshop" {
+		t.Fatalf("workshop_mode = %#v, want workshop", req["workshop_mode"])
+	}
+	execOpts, ok := req["execution_options"].(map[string]interface{})
+	if !ok || execOpts["workshop_mode"] != "workshop" {
+		t.Fatalf("execution_options = %#v, want workshop_mode workshop", req["execution_options"])
 	}
 }
 
@@ -394,13 +457,18 @@ func TestThreadedCompletedSessionStartsFreshWithRestoreSessionID(t *testing.T) {
 
 	threadID := ThreadID{Platform: "slack", ChannelID: "C123", ThreadTS: "1710000000.000100"}
 	active := &activeBotSession{
-		SessionID:    "old-session-1",
-		UserID:       "user-1",
-		Status:       chathistory.BotSessionStatusCompleted,
-		Platform:     "slack",
-		ThreadID:     threadID,
-		LastActivity: time.Now(),
-		builderDone:  true,
+		SessionID:       "old-session-1",
+		UserID:          "user-1",
+		Status:          chathistory.BotSessionStatusCompleted,
+		Platform:        "slack",
+		ThreadID:        threadID,
+		RouteKey:        botRouteKey(&ChannelRoute{WorkflowID: "wf-report", WorkspacePath: "Workflow/report", WorkshopMode: "run"}),
+		LastActivity:    time.Now(),
+		builderDone:     true,
+		sendFullDetails: true,
+		PresetQueryID:   "wf-report",
+		WorkspacePath:   "Workflow/report",
+		WorkshopMode:    "run",
 	}
 
 	manager.handleExistingSession(active, BotIncomingMessage{
@@ -420,8 +488,53 @@ func TestThreadedCompletedSessionStartsFreshWithRestoreSessionID(t *testing.T) {
 		if got.req["restored_conversation_session_id"] != "old-session-1" {
 			t.Fatalf("restored_conversation_session_id = %#v, want old-session-1", got.req["restored_conversation_session_id"])
 		}
+		if got.req["preset_query_id"] != "wf-report" || got.req["selected_folder"] != "Workflow/report" || got.req["workshop_mode"] != "run" {
+			t.Fatalf("completed threaded follow-up lost workflow route: req=%#v", got.req)
+		}
+		if got.req["bot_send_full_details"] != true {
+			t.Fatalf("completed threaded follow-up lost full-details flag: req=%#v", got.req)
+		}
 	case <-time.After(time.Second):
 		t.Fatal("expected new threaded session to start")
+	}
+}
+
+func TestThreadedNonMentionPresetWorkflowStartsAfterRestart(t *testing.T) {
+	manager := NewBotConversationManager(nil, "", "")
+	connector := &testBotConnector{name: "slack", supportsThreads: true}
+	manager.RegisterConnector(connector)
+
+	type startedSession struct {
+		req       map[string]interface{}
+		sessionID string
+	}
+	started := make(chan startedSession, 1)
+	manager.SetStartSessionFunc(func(_ context.Context, req map[string]interface{}, sessionID string, _ string, _ func(event *events.AgentEvent)) error {
+		started <- startedSession{req: req, sessionID: sessionID}
+		return nil
+	})
+
+	manager.HandleIncomingMessage(BotIncomingMessage{
+		Platform:       "slack",
+		ChannelID:      "C123",
+		ThreadTS:       "1710000000.000100",
+		UserID:         "U123",
+		UserEmail:      "alice@example.com",
+		Text:           "hello again",
+		IsThreadReply:  true,
+		PresetWorkflow: &ChannelRoute{WorkflowID: "wf-report", WorkspacePath: "Workflow/report", WorkshopMode: "run"},
+	})
+
+	select {
+	case got := <-started:
+		if got.sessionID == "" {
+			t.Fatal("expected a fresh Slack bot session")
+		}
+		if got.req["preset_query_id"] != "wf-report" || got.req["selected_folder"] != "Workflow/report" || got.req["workshop_mode"] != "run" {
+			t.Fatalf("routed non-mention thread reply lost workflow route: req=%#v", got.req)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("expected routed non-mention thread reply to start after restart")
 	}
 }
 

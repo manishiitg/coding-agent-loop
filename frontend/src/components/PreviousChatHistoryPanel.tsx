@@ -190,10 +190,36 @@ const formatBotPlatform = (platform?: string): string => {
   return normalized.charAt(0).toUpperCase() + normalized.slice(1)
 }
 
+const botActorFromEmail = (email?: string): string => {
+  const value = (email || '').trim()
+  const atIndex = value.indexOf('@')
+  if (atIndex > 0) return value.slice(0, atIndex)
+  return value
+}
+
+const botActorFromUserID = (userID?: string): string => {
+  const value = (userID || '').trim()
+  if (!value) return ''
+  if (value.includes('@')) return botActorFromEmail(value)
+  const normalized = value.toLowerCase()
+  for (const suffix of ['-gmail-com', '-googlemail-com', '-outlook-com', '-hotmail-com', '-yahoo-com']) {
+    if (normalized.endsWith(suffix) && value.length > suffix.length) {
+      return value.slice(0, -suffix.length)
+    }
+  }
+  return value
+}
+
 const botSessionSourceLabel = (session: ChatHistorySession): string | undefined => {
   if (getChatKind(session) !== 'bot') return undefined
   const platform = formatBotPlatform(session.bot_platform || botPlatformFromSessionID(session.session_id))
-  const actor = (session.bot_user_email || session.bot_user_name || session.bot_user_id || session.username || session.user_id || '').trim()
+  const actor = (
+    botActorFromEmail(session.bot_user_email) ||
+    (session.bot_user_name || '').trim() ||
+    botActorFromUserID(session.bot_user_id) ||
+    botActorFromUserID(session.user_id) ||
+    (session.username || '').trim()
+  )
   return actor ? `${platform} · ${actor}` : platform
 }
 

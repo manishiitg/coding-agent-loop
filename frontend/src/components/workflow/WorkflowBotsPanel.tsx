@@ -26,7 +26,7 @@ export default function WorkflowBotsPanel({ workspacePath }: WorkflowBotsPanelPr
           className="inline-flex items-center gap-1.5 text-sm font-medium text-muted-foreground transition-colors hover:text-foreground"
         >
           <ArrowLeft className="h-4 w-4" />
-          Back to routes
+          Back to bots
         </button>
         <div className="flex items-center gap-2 text-sm font-semibold text-foreground">
           {setup === 'slack' ? <MessageSquare className="h-4 w-4" /> : <Phone className="h-4 w-4" />}

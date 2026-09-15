@@ -158,6 +158,9 @@ func trackedExecutionBlocksNewWorkflowBuilderChat(exec *TrackedWorkflowExecution
 	if isScheduledSessionIdentity(exec.SessionID, exec.TriggeredBy) {
 		return false
 	}
+	if normalizeChatHistoryWorkshopMode(exec.Metadata["workshop_mode"]) == "run" {
+		return false
+	}
 	return true
 }
 

@@ -12,7 +12,6 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
-	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -35,7 +34,6 @@ var (
 	slackFSMu           sync.Mutex
 	slackMessagesCache  map[string]*slackFeedbackMessageRecord
 	slackMessagesLoaded bool
-	slackActiveRoutesMu sync.Mutex
 )
 
 func slackConfigFilePath() string {
@@ -174,12 +172,6 @@ type SlackConfig struct {
 	ChannelID string `json:"channel_id"`
 }
 
-// SlackRouting maps @slug names to workflow routes. The JSON still flows
-// through the historical channel_routing/allowed_channels fields so older saved
-// config files and frontend callers keep working while Slack routing becomes
-// workflow-slug based.
-type SlackRouting map[string]ChannelRoute
-
 // SlackService handles Slack integration for human feedback. It implements
 // the NotificationConnector interface and persists its configuration and the
 // feedback-message mapping via the helpers above.
@@ -202,460 +194,6 @@ type SlackService struct {
 	// Message deduplication — prevents processing the same Slack event twice
 	seenMessages   map[string]time.Time
 	seenMessagesMu sync.Mutex
-}
-
-func slackActiveRoutesFilePath() string {
-	return "config/slack-active-routes.json"
-}
-
-func normalizeSlackSlug(raw string) string {
-	return slugifyWhatsAppWorkflow(strings.TrimPrefix(strings.TrimSpace(raw), "@"))
-}
-
-func normalizeSlackRouting(routes map[string]ChannelRoute) SlackRouting {
-	out := make(SlackRouting)
-	for key, route := range routes {
-		slug := normalizeSlackSlug(key)
-		if slug == "" || strings.TrimSpace(route.WorkflowID) == "" {
-			continue
-		}
-		route.WorkflowID = strings.TrimSpace(route.WorkflowID)
-		route.WorkspacePath = strings.TrimSpace(route.WorkspacePath)
-		route.WorkshopMode = strings.TrimSpace(route.WorkshopMode)
-		route.AllowedEmails = normalizeBotEmailList(route.AllowedEmails)
-		out[slug] = route
-	}
-	return out
-}
-
-func normalizeBotEmailList(values []string) []string {
-	seen := make(map[string]bool, len(values))
-	out := make([]string, 0, len(values))
-	for _, raw := range values {
-		for _, part := range strings.FieldsFunc(raw, func(r rune) bool {
-			return r == ',' || r == ';' || r == '\n' || r == '\t' || r == ' '
-		}) {
-			email := strings.ToLower(strings.TrimSpace(part))
-			if email == "" || seen[email] {
-				continue
-			}
-			seen[email] = true
-			out = append(out, email)
-		}
-	}
-	sort.Strings(out)
-	return out
-}
-
-func slackRouteAllowsEmail(route ChannelRoute, email string) bool {
-	email = strings.ToLower(strings.TrimSpace(email))
-	if email == "" {
-		return false
-	}
-	for _, allowed := range normalizeBotEmailList(route.AllowedEmails) {
-		if strings.EqualFold(allowed, email) {
-			return true
-		}
-	}
-	return false
-}
-
-func filterSlackRoutingForEmail(routing SlackRouting, email string) SlackRouting {
-	out := make(SlackRouting)
-	for slug, route := range routing {
-		if slackRouteAllowsEmail(route, email) {
-			out[slug] = route
-		}
-	}
-	return out
-}
-
-func sortedSlackVisibleSlugs(routing SlackRouting, email string) ([]string, SlackRouting) {
-	visible := filterSlackRoutingForEmail(routing, email)
-	slugs := make([]string, 0, len(visible))
-	for slug := range visible {
-		slugs = append(slugs, slug)
-	}
-	sort.Strings(slugs)
-	return slugs, visible
-}
-
-func slackRouteForActiveSlug(activeSlug, userEmail string, routing SlackRouting) (string, *ChannelRoute) {
-	slug := normalizeSlackSlug(activeSlug)
-	if slug == "" {
-		return "", nil
-	}
-	route, ok := routing[slug]
-	if !ok || strings.TrimSpace(route.WorkflowID) == "" || !slackRouteAllowsEmail(route, userEmail) {
-		return "", nil
-	}
-	routeCopy := route
-	return slug, &routeCopy
-}
-
-func formatSlackSlugChoices(routing SlackRouting, email string) string {
-	slugs, _ := sortedSlackVisibleSlugs(routing, email)
-	if len(slugs) == 0 {
-		return "No Slack workflows are available for your account yet. Ask an admin to add your email on the workflow's Slack slug."
-	}
-	if len(slugs) == 1 {
-		return fmt.Sprintf("You have one Slack workflow available, @%s. It is selected automatically, so send your message normally.", slugs[0])
-	}
-	var sb strings.Builder
-	sb.WriteString("Choose a workflow for this Slack chat:\n")
-	for i, slug := range slugs {
-		fmt.Fprintf(&sb, "%d. @%s\n", i+1, slug)
-	}
-	sb.WriteString("\nSend one of the @slugs above to select it. Your later messages in this channel will keep using it until you send @off.")
-	return sb.String()
-}
-
-type slackWorkflowRouteDecision struct {
-	Handled     bool
-	Reply       string
-	HandOff     bool
-	Text        string
-	Route       *ChannelRoute
-	Slug        string
-	SetActive   string
-	ClearActive bool
-}
-
-func decideSlackWorkflowRoute(text, activeSlug, userEmail string, routing SlackRouting) slackWorkflowRouteDecision {
-	text = strings.TrimSpace(text)
-	lower := strings.ToLower(text)
-	visibleSlugs, visibleRoutes := sortedSlackVisibleSlugs(routing, userEmail)
-	first := ""
-	rest := ""
-	fields := strings.Fields(text)
-	if len(fields) > 0 {
-		first = strings.ToLower(fields[0])
-		if len(fields) > 1 {
-			rest = strings.TrimSpace(strings.TrimPrefix(text, fields[0]))
-		}
-	}
-
-	isOff := lower == "off" || lower == "deactivate" || lower == "stop" || first == "@off" || first == "@deactivate" || first == "@stop"
-	if isOff {
-		reply := "No active workflow."
-		if len(visibleSlugs) == 0 {
-			reply = "No Slack workflows are available for your account yet. Ask an admin to add your email on the workflow's Slack slug."
-		} else if len(visibleSlugs) == 1 {
-			reply = fmt.Sprintf("You're connected automatically to @%s because it is your only Slack workflow. Send your message normally.", visibleSlugs[0])
-		} else if activeSlug != "" {
-			reply = "Workflow off. Send a new @slug to choose another workflow; use @list to see the options."
-		} else {
-			reply = "No active workflow. Send @list to choose one."
-		}
-		return slackWorkflowRouteDecision{Handled: true, Reply: reply, ClearActive: true}
-	}
-
-	isList := lower == "hi" || lower == "hello" || lower == "hey" || lower == "help" || lower == "list" ||
-		first == "@list" || first == "@workflows" || first == "@help" || first == "@commands"
-	if isList && activeSlug == "" {
-		if len(visibleSlugs) == 1 && lower != "hi" && lower != "hello" && lower != "hey" {
-			return slackWorkflowRouteDecision{Handled: true, Reply: formatSlackSlugChoices(routing, userEmail), SetActive: visibleSlugs[0], Slug: visibleSlugs[0]}
-		}
-		if len(visibleSlugs) == 1 {
-			slug := visibleSlugs[0]
-			routeCopy := visibleRoutes[slug]
-			return slackWorkflowRouteDecision{HandOff: true, Text: text, Route: &routeCopy, Slug: slug, SetActive: slug}
-		}
-		return slackWorkflowRouteDecision{Handled: true, Reply: formatSlackSlugChoices(routing, userEmail)}
-	}
-
-	if strings.HasPrefix(first, "@") && len(first) > 1 {
-		slug := normalizeSlackSlug(first)
-		if slug == "list" || slug == "workflows" || slug == "help" || slug == "commands" {
-			return slackWorkflowRouteDecision{Handled: true, Reply: formatSlackSlugChoices(routing, userEmail)}
-		}
-		route, ok := routing[slug]
-		if !ok || strings.TrimSpace(route.WorkflowID) == "" {
-			return slackWorkflowRouteDecision{Handled: true, Reply: fmt.Sprintf("Unknown workflow @%s. Use @list to see the workflows available to you.", slug)}
-		}
-		if !slackRouteAllowsEmail(route, userEmail) {
-			return slackWorkflowRouteDecision{Handled: true, Reply: fmt.Sprintf("You do not have access to @%s. Use @list to see the workflows available to you.", slug)}
-		}
-		routeCopy := route
-		if rest == "" {
-			reply := fmt.Sprintf("Activated @%s for this Slack channel. Send your next message normally.", slug)
-			if len(visibleSlugs) > 1 {
-				reply += " Type @off to turn this off."
-			}
-			return slackWorkflowRouteDecision{Handled: true, Reply: reply, SetActive: slug, Slug: slug}
-		}
-		return slackWorkflowRouteDecision{HandOff: true, Text: rest, Route: &routeCopy, Slug: slug, SetActive: slug}
-	}
-
-	if activeSlug != "" {
-		slug := normalizeSlackSlug(activeSlug)
-		route, ok := routing[slug]
-		if !ok || strings.TrimSpace(route.WorkflowID) == "" {
-			if len(visibleSlugs) == 1 {
-				nextSlug := visibleSlugs[0]
-				routeCopy := visibleRoutes[nextSlug]
-				return slackWorkflowRouteDecision{HandOff: true, Text: text, Route: &routeCopy, Slug: nextSlug, SetActive: nextSlug, ClearActive: true}
-			}
-			return slackWorkflowRouteDecision{Handled: true, Reply: "Your active Slack workflow is no longer configured. Use @list to choose another workflow.", ClearActive: true}
-		}
-		if !slackRouteAllowsEmail(route, userEmail) {
-			if len(visibleSlugs) == 1 {
-				nextSlug := visibleSlugs[0]
-				routeCopy := visibleRoutes[nextSlug]
-				return slackWorkflowRouteDecision{HandOff: true, Text: text, Route: &routeCopy, Slug: nextSlug, SetActive: nextSlug, ClearActive: true}
-			}
-			return slackWorkflowRouteDecision{Handled: true, Reply: "Your access to the active Slack workflow was removed. Use @list to choose another workflow.", ClearActive: true}
-		}
-		routeCopy := route
-		return slackWorkflowRouteDecision{HandOff: true, Text: text, Route: &routeCopy, Slug: slug}
-	}
-
-	if len(visibleSlugs) == 1 {
-		slug := visibleSlugs[0]
-		routeCopy := visibleRoutes[slug]
-		return slackWorkflowRouteDecision{HandOff: true, Text: text, Route: &routeCopy, Slug: slug, SetActive: slug}
-	}
-
-	return slackWorkflowRouteDecision{Handled: true, Reply: formatSlackSlugChoices(routing, userEmail)}
-}
-
-func loadSlackWorkflowRouting(ctx context.Context) SlackRouting {
-	content, exists, err := readWorkspaceFile(ctx, workspaceAPIURL(), "config/bot-connectors.json")
-	if err != nil || !exists || content == "" {
-		if err != nil {
-			log.Printf("[SLACK_FLOW] routing: failed to read bot connector config: %v", err)
-		}
-		return SlackRouting{}
-	}
-	var raw map[string]struct {
-		AllowedChannels string `json:"allowed_channels"`
-	}
-	if err := json.Unmarshal([]byte(content), &raw); err != nil {
-		log.Printf("[SLACK_FLOW] routing: failed to parse bot connector config: %v", err)
-		return SlackRouting{}
-	}
-	slackCfg, ok := raw["slack"]
-	if !ok || slackCfg.AllowedChannels == "" || slackCfg.AllowedChannels == "[]" || slackCfg.AllowedChannels == "{}" {
-		log.Printf("[SLACK_FLOW] routing: no saved Slack slug routes")
-		return SlackRouting{}
-	}
-	var routes map[string]ChannelRoute
-	if err := json.Unmarshal([]byte(slackCfg.AllowedChannels), &routes); err != nil {
-		log.Printf("[SLACK_FLOW] routing: failed to parse Slack slug routes: %v", err)
-		return SlackRouting{}
-	}
-	normalized := normalizeSlackRouting(routes)
-	log.Printf("[SLACK_FLOW] routing: loaded Slack slug routes count=%d", len(normalized))
-	return normalized
-}
-
-func loadSlackActiveRoutes(ctx context.Context) map[string]string {
-	content, exists, err := readWorkspaceFile(ctx, workspaceAPIURL(), slackActiveRoutesFilePath())
-	if err != nil || !exists || content == "" {
-		if err != nil {
-			log.Printf("[SLACK_FLOW] active_route: failed to read active routes: %v", err)
-		}
-		return map[string]string{}
-	}
-	var routes map[string]string
-	if err := json.Unmarshal([]byte(content), &routes); err != nil {
-		log.Printf("[SLACK_FLOW] active_route: failed to parse active routes: %v", err)
-		return map[string]string{}
-	}
-	return routes
-}
-
-func saveSlackActiveRoutes(ctx context.Context, routes map[string]string) error {
-	if routes == nil {
-		routes = map[string]string{}
-	}
-	data, err := json.MarshalIndent(routes, "", "  ")
-	if err != nil {
-		return err
-	}
-	return writeWorkspaceFile(ctx, workspaceAPIURL(), slackActiveRoutesFilePath(), string(data))
-}
-
-func slackActiveRouteKey(channelID, userID, userEmail string) string {
-	userKey := strings.TrimSpace(userID)
-	if userKey == "" {
-		userKey = strings.ToLower(strings.TrimSpace(userEmail))
-	}
-	return strings.TrimSpace(channelID) + "\x00" + userKey
-}
-
-type slackDocumentListResponse struct {
-	Success bool            `json:"success"`
-	Data    []slackDocument `json:"data"`
-}
-
-type slackDocument struct {
-	FilePath string          `json:"filepath"`
-	Type     string          `json:"type,omitempty"`
-	Children []slackDocument `json:"children,omitempty"`
-}
-
-type slackWorkflowManifest struct {
-	ID            string `json:"id"`
-	Label         string `json:"label"`
-	ExecutionDefs struct {
-		WorkshopMode string `json:"workshop_mode"`
-	} `json:"execution_defaults"`
-}
-
-type SlackWorkflowCandidate struct {
-	ID            string
-	Label         string
-	WorkspacePath string
-	Slug          string
-	WorkshopMode  string
-}
-
-func DiscoverSlackWorkflowCandidates(ctx context.Context) ([]SlackWorkflowCandidate, error) {
-	wsClient := workspace.NewClient(workspaceAPIURL())
-	maxDepth := 2
-	list, err := wsClient.ListWorkspaceFiles(ctx, workspace.ListWorkspaceFilesParams{Folder: "Workflow", MaxDepth: &maxDepth})
-	if err != nil {
-		return nil, err
-	}
-	var resp slackDocumentListResponse
-	if err := json.Unmarshal(list.Raw, &resp); err != nil {
-		return nil, fmt.Errorf("parse workflow list: %w", err)
-	}
-	var manifestPaths []string
-	var walkDocs func([]slackDocument)
-	walkDocs = func(docs []slackDocument) {
-		for _, doc := range docs {
-			if strings.HasSuffix(doc.FilePath, "/workflow.json") {
-				manifestPaths = append(manifestPaths, doc.FilePath)
-			}
-			if len(doc.Children) > 0 {
-				walkDocs(doc.Children)
-			}
-		}
-	}
-	walkDocs(resp.Data)
-	sort.Strings(manifestPaths)
-
-	seenManifestPaths := make(map[string]bool, len(manifestPaths))
-	seenWorkflowKeys := make(map[string]bool, len(manifestPaths))
-	candidates := make([]SlackWorkflowCandidate, 0, len(manifestPaths))
-	for _, manifestPath := range manifestPaths {
-		manifestPath = filepath.ToSlash(strings.TrimSpace(manifestPath))
-		if manifestPath == "" || seenManifestPaths[manifestPath] {
-			continue
-		}
-		seenManifestPaths[manifestPath] = true
-		content, err := wsClient.ReadWorkspaceFile(ctx, workspace.ReadWorkspaceFileParams{Filepath: manifestPath})
-		if err != nil {
-			log.Printf("[SLACK_FLOW] routing: failed to read workflow manifest path=%s err=%v", manifestPath, err)
-			continue
-		}
-		var manifest slackWorkflowManifest
-		if err := json.Unmarshal([]byte(content.Content), &manifest); err != nil {
-			log.Printf("[SLACK_FLOW] routing: failed to parse workflow manifest path=%s err=%v", manifestPath, err)
-			continue
-		}
-		workspacePath := strings.TrimSuffix(manifestPath, "/workflow.json")
-		label := strings.TrimSpace(manifest.Label)
-		if label == "" {
-			label = filepath.Base(workspacePath)
-		}
-		id := strings.TrimSpace(manifest.ID)
-		if id == "" {
-			id = normalizeSlackSlug(label)
-		}
-		workflowKey := strings.ToLower(strings.TrimSpace(id))
-		if workflowKey == "" {
-			workflowKey = strings.ToLower(strings.TrimSpace(workspacePath))
-		}
-		if seenWorkflowKeys[workflowKey] {
-			continue
-		}
-		seenWorkflowKeys[workflowKey] = true
-		candidates = append(candidates, SlackWorkflowCandidate{
-			ID:            id,
-			Label:         label,
-			WorkspacePath: workspacePath,
-			Slug:          normalizeSlackSlug(label),
-			WorkshopMode:  strings.TrimSpace(manifest.ExecutionDefs.WorkshopMode),
-		})
-	}
-	sort.Slice(candidates, func(i, j int) bool {
-		return strings.ToLower(candidates[i].Label) < strings.ToLower(candidates[j].Label)
-	})
-	return candidates, nil
-}
-
-func EnsureSlackDefaultWorkflowRoutes(ctx context.Context, routing map[string]ChannelRoute, autoRoutedWorkflows map[string]bool) (SlackRouting, []string, []string, error) {
-	candidates, err := DiscoverSlackWorkflowCandidates(ctx)
-	if err != nil {
-		return normalizeSlackRouting(routing), nil, nil, err
-	}
-	normalized, added, marked := ensureSlackDefaultWorkflowRoutesFromCandidates(routing, autoRoutedWorkflows, candidates)
-	return normalized, added, marked, nil
-}
-
-func ensureSlackDefaultWorkflowRoutesFromCandidates(routing map[string]ChannelRoute, autoRoutedWorkflows map[string]bool, candidates []SlackWorkflowCandidate) (SlackRouting, []string, []string) {
-	normalized := normalizeSlackRouting(routing)
-	if autoRoutedWorkflows == nil {
-		autoRoutedWorkflows = map[string]bool{}
-	}
-	workflowRouted := make(map[string]bool, len(normalized))
-	for _, route := range normalized {
-		if route.WorkflowID != "" {
-			workflowRouted[route.WorkflowID] = true
-		}
-	}
-	added := make([]string, 0)
-	marked := make([]string, 0)
-	for _, candidate := range candidates {
-		if candidate.ID == "" || autoRoutedWorkflows[candidate.ID] {
-			continue
-		}
-		if workflowRouted[candidate.ID] {
-			autoRoutedWorkflows[candidate.ID] = true
-			marked = append(marked, candidate.ID)
-			continue
-		}
-		slug := candidate.Slug
-		if slug == "" {
-			slug = "workflow"
-		}
-		finalSlug := slug
-		if existing, ok := normalized[finalSlug]; ok && existing.WorkflowID != candidate.ID {
-			suffix := normalizeSlackSlug(strings.TrimPrefix(candidate.ID, "wf_"))
-			if suffix == "" || suffix == finalSlug {
-				suffix = "workflow"
-			}
-			finalSlug = slug + "-" + suffix
-		}
-		for i := 2; ; i++ {
-			existing, ok := normalized[finalSlug]
-			if !ok || existing.WorkflowID == candidate.ID {
-				break
-			}
-			finalSlug = fmt.Sprintf("%s-%d", slug, i)
-		}
-		mode := candidate.WorkshopMode
-		if parsedMode, ok := normalizeWhatsAppRouteMode(mode); ok {
-			mode = parsedMode
-		} else {
-			mode = "run"
-		}
-		normalized[finalSlug] = ChannelRoute{WorkflowID: candidate.ID, WorkspacePath: candidate.WorkspacePath, WorkshopMode: mode}
-		workflowRouted[candidate.ID] = true
-		autoRoutedWorkflows[candidate.ID] = true
-		added = append(added, finalSlug)
-		marked = append(marked, candidate.ID)
-	}
-	if len(added) > 0 {
-		sort.Strings(added)
-	}
-	if len(marked) > 0 {
-		sort.Strings(marked)
-	}
-	return normalized, added, marked
 }
 
 // Name returns the name of this connector
@@ -1813,90 +1351,16 @@ func (s *SlackService) handleSlackBotMessage(userID, channelID, threadTS, messag
 	log.Printf("[SLACK_FLOW] bot_message: submitted feedback request=%s channel=%s thread=%s", uniqueID, channelID, threadTS)
 }
 
-func (s *SlackService) routeSlackWorkflowMessage(ctx context.Context, userID, userEmail, channelID, threadTS, text string, isThreadReply bool) (string, *ChannelRoute, bool) {
-	if isThreadReply && strings.TrimSpace(userEmail) == "" {
-		log.Printf("[SLACK_FLOW] route: skipped slug gate for thread reply without email user=%s channel=%s thread=%s", userID, channelID, threadTS)
+func (s *SlackService) routeSlackWorkflowMessage(_ context.Context, userID, userEmail, channelID, threadTS, text string, isThreadReply bool) (string, *ChannelRoute, bool) {
+	route := s.resolveSlackChannelWorkflow(channelID)
+	if route == nil {
+		log.Printf("[SLACK_FLOW] route: no Slack channel workflow route user=%s email=%s channel=%s thread=%s reply=%v chars=%d",
+			userID, userEmail, channelID, threadTS, isThreadReply, len(text))
 		return text, nil, false
 	}
-	if strings.TrimSpace(userEmail) == "" {
-		log.Printf("[SLACK_FLOW] route: rejected missing email user=%s channel=%s thread=%s", userID, channelID, threadTS)
-		_, _ = s.SendThreadMessage(ctx, ThreadID{Platform: "slack", ChannelID: channelID, ThreadTS: threadTS},
-			"Can't link your account because Slack did not provide an email. Ask an admin to add users:read.email and reinstall the Slack app.")
-		return "", nil, true
-	}
-
-	routing := loadSlackWorkflowRouting(ctx)
-	visible := filterSlackRoutingForEmail(routing, userEmail)
-	slackActiveRoutesMu.Lock()
-	activeRoutes := loadSlackActiveRoutes(ctx)
-	activeKey := slackActiveRouteKey(channelID, userID, userEmail)
-	activeSlug := activeRoutes[activeKey]
-	log.Printf("[SLACK_FLOW] route: evaluating user=%s email=%s channel=%s active=%s routes=%d visible=%d chars=%d",
-		userID, userEmail, channelID, activeSlug, len(routing), len(visible), len(text))
-
-	// Thread replies already belong to a Slack thread/session. Do not force a
-	// fresh slug selection, but do attach the persisted active workflow route so
-	// a server restart can recreate the internal AgentWorks session.
-	if isThreadReply {
-		slug, route := slackRouteForActiveSlug(activeSlug, userEmail, routing)
-		slackActiveRoutesMu.Unlock()
-		if route != nil {
-			log.Printf("[SLACK_FLOW] route: thread reply using active slug=%s workflow=%s user=%s email=%s channel=%s thread=%s",
-				slug, route.WorkflowID, userID, userEmail, channelID, threadTS)
-			return text, route, false
-		}
-		log.Printf("[SLACK_FLOW] route: thread reply has no active workflow route user=%s email=%s channel=%s thread=%s active=%s",
-			userID, userEmail, channelID, threadTS, activeSlug)
-		return text, nil, false
-	}
-
-	decision := decideSlackWorkflowRoute(text, activeSlug, userEmail, routing)
-	changedActive := false
-	if decision.ClearActive {
-		if _, ok := activeRoutes[activeKey]; ok {
-			delete(activeRoutes, activeKey)
-			changedActive = true
-			log.Printf("[SLACK_FLOW] active_route: cleared user=%s email=%s channel=%s old=%s", userID, userEmail, channelID, activeSlug)
-		}
-	}
-	if decision.SetActive != "" {
-		activeRoutes[activeKey] = decision.SetActive
-		changedActive = true
-		log.Printf("[SLACK_FLOW] active_route: set user=%s email=%s channel=%s slug=%s workflow=%s",
-			userID, userEmail, channelID, decision.SetActive, workflowIDForRoute(decision.Route, routing[decision.SetActive]))
-	}
-	if changedActive {
-		if err := saveSlackActiveRoutes(ctx, activeRoutes); err != nil {
-			log.Printf("[SLACK_FLOW] active_route: persist failed user=%s email=%s channel=%s err=%v", userID, userEmail, channelID, err)
-		} else {
-			log.Printf("[SLACK_FLOW] active_route: persisted entries=%d", len(activeRoutes))
-		}
-	}
-	slackActiveRoutesMu.Unlock()
-
-	if decision.HandOff {
-		workflowID := ""
-		if decision.Route != nil {
-			workflowID = decision.Route.WorkflowID
-		}
-		log.Printf("[SLACK_FLOW] route: selected slug=%s workflow=%s user=%s email=%s channel=%s textChars=%d",
-			decision.Slug, workflowID, userID, userEmail, channelID, len(decision.Text))
-		return decision.Text, decision.Route, false
-	}
-	if decision.Handled {
-		log.Printf("[SLACK_FLOW] route: replying without bot handoff user=%s email=%s channel=%s active=%s replyChars=%d",
-			userID, userEmail, channelID, activeSlug, len(decision.Reply))
-		_, _ = s.SendThreadMessage(ctx, ThreadID{Platform: "slack", ChannelID: channelID, ThreadTS: threadTS}, decision.Reply)
-		return "", nil, true
-	}
-	return text, nil, false
-}
-
-func workflowIDForRoute(route *ChannelRoute, fallback ChannelRoute) string {
-	if route != nil {
-		return route.WorkflowID
-	}
-	return fallback.WorkflowID
+	log.Printf("[SLACK_FLOW] route: Slack channel routed user=%s email=%s channel=%s thread=%s reply=%v workflow=%s workspace=%s chars=%d",
+		userID, userEmail, channelID, threadTS, isThreadReply, route.WorkflowID, route.WorkspacePath, len(text))
+	return text, route, false
 }
 
 func slackMessageFileCount(msg *slack.Msg) int {
@@ -2179,11 +1643,15 @@ func (s *SlackService) UpdateMessage(ctx context.Context, threadID ThreadID, mes
 	formatted := convertMarkdownToSlackMrkdwn(newText)
 	logBotOutboundMessage("slack", threadID, "update", formatted, 1, 0)
 
-	_, _, _, err := s.client.UpdateMessageContext(ctx,
-		threadID.ChannelID,
-		messageID,
-		slack.MsgOptionText(formatted, false),
-	)
+	opts := []slack.MsgOption{slack.MsgOptionText(formatted, false)}
+	if len(formatted) <= 3000 {
+		sectionBlock := slack.NewSectionBlock(
+			slack.NewTextBlockObject(slack.MarkdownType, formatted, false, false),
+			nil, nil,
+		)
+		opts = append(opts, slack.MsgOptionBlocks(sectionBlock))
+	}
+	_, _, _, err := s.client.UpdateMessageContext(ctx, threadID.ChannelID, messageID, opts...)
 	if err != nil {
 		return fmt.Errorf("failed to update message: %w", err)
 	}
@@ -2371,6 +1839,10 @@ func (s *SlackService) resolveUserEmail(userID string) string {
 }
 
 func (s *SlackService) resolveSlackChannelWorkflow(channelID string) *ChannelRoute {
+	channelID = strings.ToUpper(strings.TrimSpace(channelID))
+	if channelID == "" {
+		return nil
+	}
 	content, exists, err := readWorkspaceFile(context.Background(), workspaceAPIURL(), "config/bot-connectors.json")
 	if err != nil || !exists || content == "" {
 		return nil
@@ -2389,10 +1861,50 @@ func (s *SlackService) resolveSlackChannelWorkflow(channelID string) *ChannelRou
 	if err := json.Unmarshal([]byte(slackCfg.AllowedChannels), &routes); err != nil {
 		return nil
 	}
-	if route, ok := routes[channelID]; ok && route.WorkflowID != "" {
-		return &route
+	for rawKey, route := range routes {
+		if strings.EqualFold(strings.TrimSpace(rawKey), channelID) && strings.TrimSpace(route.WorkflowID) != "" {
+			route.WorkflowID = strings.TrimSpace(route.WorkflowID)
+			route.WorkspacePath = strings.TrimSpace(route.WorkspacePath)
+			route.WorkshopMode = NormalizeBotWorkshopMode(route.WorkshopMode)
+			return &route
+		}
+	}
+	defaultChannelID := ""
+	if s.config != nil {
+		defaultChannelID = strings.ToUpper(strings.TrimSpace(s.config.ChannelID))
+	}
+	if defaultChannelID != "" && strings.EqualFold(defaultChannelID, channelID) && len(routes) == 1 {
+		for rawKey, route := range routes {
+			legacyKey := strings.ToUpper(strings.TrimSpace(rawKey))
+			if slackChannelIDLike(legacyKey) || strings.TrimSpace(route.WorkflowID) == "" {
+				continue
+			}
+			route.WorkflowID = strings.TrimSpace(route.WorkflowID)
+			route.WorkspacePath = strings.TrimSpace(route.WorkspacePath)
+			route.WorkshopMode = NormalizeBotWorkshopMode(route.WorkshopMode)
+			log.Printf("[SLACK_FLOW] route: using legacy single Slack route key=%s for default channel=%s workflow=%s",
+				rawKey, channelID, route.WorkflowID)
+			return &route
+		}
 	}
 	return nil
+}
+
+func slackChannelIDLike(channelID string) bool {
+	if len(channelID) < 3 {
+		return false
+	}
+	switch channelID[0] {
+	case 'C', 'D', 'G':
+	default:
+		return false
+	}
+	for _, r := range channelID[1:] {
+		if (r < 'A' || r > 'Z') && (r < '0' || r > '9') {
+			return false
+		}
+	}
+	return true
 }
 
 func slackUserChatUploadFolder(userID string) string {

@@ -893,28 +893,16 @@ export interface CompactContextResponse {
 
 // Slack Feedback Configuration types
 
-// ChannelRoute maps a bot route key (Slack/WhatsApp slug, or legacy Slack
-// channel ID) to a specific workflow, including the workspace path so the bot
-// can read the workflow manifest without scanning all workspaces.
-export interface ChannelRoute {
-  workflow_id: string
-  workspace_path: string
-  // Override the manifest's workshop_mode for this route. Empty = use manifest.
-  workshop_mode?: 'workshop' | 'run'
-  // Opt in to detailed workflow runtime messages in the bot route.
-  send_full_details?: boolean
-  // Slack workflow slug access list. Empty means no Slack users can activate this workflow.
-  allowed_emails?: string[]
-}
-
-// Shape of GET/PUT /api/whatsapp/routing entries. Same idea as ChannelRoute
-// but workshop_mode is an untyped string on this endpoint.
-export interface WhatsAppRoute {
+// BotRoute maps a bot-visible route key to a specific workflow.
+export interface BotRoute {
   workflow_id: string
   workspace_path?: string
-  workshop_mode?: string
+  workshop_mode?: 'run' | 'workshop' | string
   send_full_details?: boolean
 }
+
+// Shape of GET/PUT /api/whatsapp/routing entries.
+export interface WhatsAppRoute extends BotRoute {}
 
 // Shape of GET /api/whatsapp/status. enabled = connector started at server
 // startup; paired = device identity stored; connected = live WS.
@@ -970,7 +958,7 @@ export interface SlackConfig {
   app_token?: string  // Masked in GET response (App-level token for Socket Mode)
   channel_id?: string
   bot_mode?: boolean  // Enable @mention bot mode
-  channel_routing?: Record<string, ChannelRoute>  // Historical name; maps Slack @slugs to ChannelRoute
+  channel_routing?: Record<string, BotRoute>  // Slack channel ID -> workflow route
 }
 
 export interface SlackConfigRequest {
@@ -979,7 +967,7 @@ export interface SlackConfigRequest {
   app_token: string  // App-level token (xapp-...) for Socket Mode
   channel_id: string
   bot_mode: boolean  // Enable @mention bot mode
-  channel_routing?: Record<string, ChannelRoute>  // Historical name; maps Slack @slugs to ChannelRoute
+  channel_routing?: Record<string, BotRoute>  // Slack channel ID -> workflow route
 }
 
 export interface SlackConfigResponse {
@@ -988,7 +976,7 @@ export interface SlackConfigResponse {
   app_token?: string  // Masked in GET
   channel_id?: string
   bot_mode?: boolean
-  channel_routing?: Record<string, ChannelRoute>  // Historical name; maps Slack @slugs to ChannelRoute
+  channel_routing?: Record<string, BotRoute>  // Slack channel ID -> workflow route
 }
 
 export interface SlackTestResponse {

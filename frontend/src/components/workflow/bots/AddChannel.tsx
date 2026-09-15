@@ -9,7 +9,7 @@ import type { WorkflowBots } from './useWorkflowBots'
 type ChannelRowBots = Pick<WorkflowBots,
   | 'readOnly' | 'workflowId' | 'setSetup'
   | 'slackReady' | 'waReady' | 'slackStatusLabel' | 'waStatusLabel' | 'slackLoading' | 'slackOriginal' | 'waStatus' | 'waError'
-  | 'newSlackChannel' | 'setNewSlackChannel' | 'newWaSlug' | 'setNewWaSlug' | 'addSlackRoute' | 'addWaRoute'
+  | 'newSlackChannel' | 'setNewSlackChannel' | 'newSlackMode' | 'setNewSlackMode' | 'newWaSlug' | 'setNewWaSlug' | 'addSlackRoute' | 'addWaRoute'
   | 'routeSaving' | 'myRoutes' | 'addError' | 'setAddError'
 >
 
@@ -17,7 +17,7 @@ export function ChannelRow({ bots, kind }: { bots: ChannelRowBots; kind: Channel
   const {
     readOnly, workflowId, setSetup,
     slackReady, waReady, slackStatusLabel, waStatusLabel, slackLoading, slackOriginal, waStatus, waError,
-    newSlackChannel, setNewSlackChannel, newWaSlug, setNewWaSlug, addSlackRoute, addWaRoute,
+    newSlackChannel, setNewSlackChannel, newSlackMode, setNewSlackMode, newWaSlug, setNewWaSlug, addSlackRoute, addWaRoute,
     routeSaving, myRoutes, addError, setAddError,
   } = bots
 
@@ -38,7 +38,7 @@ export function ChannelRow({ bots, kind }: { bots: ChannelRowBots; kind: Channel
         <span className="text-sm font-medium text-foreground">{name}</span>
         <span
           className={`inline-flex items-center gap-1 text-[11px] font-medium ${ready ? 'text-emerald-600 dark:text-emerald-400' : loading ? 'text-muted-foreground' : 'text-amber-600 dark:text-amber-400'}`}
-          title={kind === 'slack' && slackOriginal.enabled && !slackOriginal.bot_mode ? 'Turn on Bot Mode in Set up before routing Slack workflow slugs here.' : undefined}
+          title={kind === 'slack' && slackOriginal.enabled && !slackOriginal.bot_mode ? 'Turn on Bot Mode in Set up before Slack can receive @mentions.' : undefined}
         >
           <span className={`h-1.5 w-1.5 rounded-full ${ready ? 'bg-emerald-500' : loading ? 'bg-muted-foreground/40' : 'bg-amber-500'}`} />
           {statusLabel}
@@ -56,20 +56,35 @@ export function ChannelRow({ bots, kind }: { bots: ChannelRowBots; kind: Channel
       </div>
       {ready && workflowId && (
         <div className="mt-2 flex items-center gap-2">
-          <span className="text-xs text-muted-foreground select-none">@</span>
+          {kind === 'whatsapp' && <span className="text-xs text-muted-foreground select-none">@</span>}
           <input
             type="text"
             value={value}
             onChange={e => {
-              setValue(e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, ''))
+              const next = kind === 'slack'
+                ? e.target.value.toUpperCase().replace(/[^A-Z0-9_,;\s-]/g, '')
+                : e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, '')
+              setValue(next)
               if (error) setAddError(prev => ({ ...prev, [kind]: undefined }))
             }}
             onKeyDown={e => { if (e.key === 'Enter') add() }}
-            placeholder={kind === 'slack' ? 'slug, e.g. support-triage' : 'slug, e.g. rca'}
+            placeholder={kind === 'slack' ? 'channel ID, e.g. C1234567890' : 'slug, e.g. rca'}
             disabled={readOnly || !!adding}
             title={readOnly ? READ_ONLY_TITLE : undefined}
             className="min-w-0 flex-1 px-2 py-1 text-xs bg-secondary border border-border rounded font-mono focus:outline-none focus:ring-1 focus:ring-primary disabled:opacity-50"
           />
+          {kind === 'slack' && (
+            <select
+              value={newSlackMode}
+              onChange={e => setNewSlackMode(e.target.value === 'workshop' ? 'workshop' : 'run')}
+              disabled={readOnly || !!adding}
+              title="Run can execute and answer questions. Build can edit this workflow from Slack."
+              className="h-7 rounded border border-border bg-secondary px-2 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-primary disabled:opacity-50"
+            >
+              <option value="run">Run</option>
+              <option value="workshop">Build</option>
+            </select>
+          )}
           <button
             type="button"
             onClick={add}

@@ -54,7 +54,7 @@ export function SlackSetup({ bots }: { bots: SlackSetupBots }) {
                 <div className="flex items-center justify-between">
                   <div>
                     <h3 className="text-sm font-medium text-foreground">Bot Mode (@mention)</h3>
-                    <p className="text-xs text-muted-foreground mt-0.5">Users can @mention the bot to start agent sessions directly from Slack. Required for workflow slug routing.</p>
+                    <p className="text-xs text-muted-foreground mt-0.5">Users can @mention the bot to start agent sessions directly from Slack.</p>
                   </div>
                   <label className="relative inline-flex items-center cursor-pointer">
                     <input type="checkbox" checked={slackConfig.bot_mode || false} disabled={readOnly} onChange={e => setSlackConfig({ ...slackConfig, bot_mode: e.target.checked })} className="sr-only peer" />

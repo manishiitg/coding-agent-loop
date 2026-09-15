@@ -197,6 +197,10 @@ var featureCatalog = map[string]featureDefinition{
 		Skills:          []string{"background-work"},
 		PromptExtension: "Background work is enabled. Read the attached `background-work` skill before delegating. Delegate only bounded independent tasks, rely on automatic completion notifications, and do not poll unless the user asks for status.",
 	},
+	"workspace-ui": {
+		Tools: []string{"open_workspace_view", "refresh_workspace_view", "list_ui_capabilities", "get_ui_state", "perform_ui_action", "get_ui_action_result"},
+		PromptExtension: "The interactive Work chat can present its right-side workspace views. Use open_workspace_view after creating or discussing something the user should inspect, and trust only an applied browser acknowledgement.",
+	},
 }
 
 // ResolveFeatures expands a profile's feature declarations into its existing

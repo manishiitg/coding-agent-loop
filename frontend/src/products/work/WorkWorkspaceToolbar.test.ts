@@ -11,4 +11,15 @@ describe('WorkWorkspaceToolbar', () => {
     expect(source).toContain("onToggle={() => setOpenGroup('setup')}")
     expect(source).toContain("setOpenGroup(SETUP_BUTTONS.some(item => item.id === view) ? 'setup' : 'views')")
   })
+
+  it('binds the Work chat to acknowledged workspace view controls', () => {
+    const source = readFileSync('src/products/work/WorkSurface.tsx', 'utf8')
+
+    expect(source).toContain('useWorkspaceUIControl(activeSessionId ?? undefined, workUIAdapter)')
+    expect(source).toContain('data-ui-workspace={selected.workspacePath}')
+    expect(source).toContain('data-ui-view={workPresentationView(workspaceView)}')
+    expect(source).toContain('data-ui-view-mounted')
+    expect(source).toContain("report: 'dashboard'")
+    expect(source).toContain("llm: 'models'")
+  })
 })

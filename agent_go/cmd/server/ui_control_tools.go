@@ -15,25 +15,41 @@ func uiError(err error) string {
 }
 
 func (api *StreamingAPI) registerUIControlTools(registrar definitionToolRegistrar, session, workspace string) error {
+	return api.registerUIControlToolsForContract(registrar, session, workspace, uiControlContract)
+}
+
+func uiContractViewIDs(contract uiContract) []string {
+	ids := make([]string, 0, len(contract.Views))
+	for _, view := range contract.Views {
+		ids = append(ids, view.ID)
+	}
+	return ids
+}
+
+func (api *StreamingAPI) registerUIControlToolsForContract(registrar definitionToolRegistrar, session, workspace string, contract uiContract) error {
 	b := api.uiBroker()
 	b.setScope(session, workspace)
+	targetDescription := "For flow/open: exact plan step ID. For report/open: exact top-level report tab label. For files/open: workspace-relative file path (for example code/shared/helpers.py). For notify/expand: run_summary or pulse_review. Omit for other view openings."
+	if contract.Product == "work" {
+		targetDescription = "Work currently supports opening complete panels only; omit target."
+	}
 	props := map[string]interface{}{
-		"view":                    map[string]interface{}{"type": "string", "enum": workflowWorkspaceViewIDs()},
+		"view":                    map[string]interface{}{"type": "string", "enum": uiContractViewIDs(contract)},
 		"action":                  map[string]interface{}{"type": "string", "enum": []string{"open", "expand"}},
-		"target":                  map[string]interface{}{"type": "string", "maxLength": 1024, "description": "For flow/open: exact plan step ID. For report/open: exact top-level report tab label. For files/open: workspace-relative file path (for example code/shared/helpers.py). For notify/expand: run_summary or pulse_review. Omit for other view openings."},
+		"target":                  map[string]interface{}{"type": "string", "maxLength": 1024, "description": targetDescription},
 		"idempotency_key":         map[string]interface{}{"type": "string", "maxLength": 128, "description": "Reuse for a retry of this exact action; omit to generate a fresh request."},
 		"expected_state_revision": map[string]interface{}{"type": "integer", "minimum": 0},
 	}
 	schema := func(p map[string]interface{}, required ...string) map[string]interface{} {
 		return map[string]interface{}{"type": "object", "properties": p, "required": required, "additionalProperties": false}
 	}
-	if err := registrar.RegisterCustomTool("list_ui_capabilities", "Discover presentation-only actions on the bound AgentWorks workspace. Only advertised actions are implemented. Other products, deep targets and refresh are not yet supported by this acknowledged protocol; never infer support. No MCP connections or external sends.", schema(map[string]interface{}{}), func(context.Context, map[string]interface{}) (string, error) {
+	if err := registrar.RegisterCustomTool("list_ui_capabilities", "Discover presentation-only actions on the bound "+contract.Product+" workspace. Only advertised actions are implemented; never infer support for another view or target. No MCP connections or external sends.", schema(map[string]interface{}{}), func(context.Context, map[string]interface{}) (string, error) {
 		_, err := b.snapshot(session)
 		availability := "available"
 		if err != nil {
 			availability = err.Error()
 		}
-		return uiJSON(map[string]interface{}{"schema_version": uiControlContract.Version, "product": uiControlContract.Product, "availability": availability, "views": uiControlContract.Views}), nil
+		return uiJSON(map[string]interface{}{"schema_version": contract.Version, "product": contract.Product, "availability": availability, "views": contract.Views}), nil
 	}, "workflow_ui"); err != nil {
 		return err
 	}
@@ -47,7 +63,7 @@ func (api *StreamingAPI) registerUIControlTools(registrar definitionToolRegistra
 		return err
 	}
 	if err := registrar.RegisterCustomTool("perform_ui_action", "Perform one semantic presentation action and wait up to 10 seconds for a browser receipt. Discover capabilities first. applied confirms the view shell rendered, not that every data request succeeded. Notify expand confirms its instructions are visible. accepted/applying/expired are NOT success. Never retry an unknown outcome with a new key; use get_ui_action_result. Does not send, save, run, delete or connect anything.", schema(props, "view", "action"), func(ctx context.Context, args map[string]interface{}) (string, error) {
-		return api.performUIAction(ctx, session, workspace, args)
+		return api.performUIActionForContract(ctx, session, workspace, contract, args)
 	}, "workflow_ui"); err != nil {
 		return err
 	}
@@ -62,6 +78,10 @@ func (api *StreamingAPI) registerUIControlTools(registrar definitionToolRegistra
 }
 
 func (api *StreamingAPI) performUIAction(ctx context.Context, session, workspace string, args map[string]interface{}) (string, error) {
+	return api.performUIActionForContract(ctx, session, workspace, uiControlContract, args)
+}
+
+func (api *StreamingAPI) performUIActionForContract(ctx context.Context, session, workspace string, contract uiContract, args map[string]interface{}) (string, error) {
 	b := api.uiBroker()
 	if b.scope(session) != workspace {
 		return uiError(fmt.Errorf("inactive_scope")), nil
@@ -69,6 +89,9 @@ func (api *StreamingAPI) performUIAction(ctx context.Context, session, workspace
 	view, _ := args["view"].(string)
 	action, _ := args["action"].(string)
 	target, _ := args["target"].(string)
+	if err := validateUIActionForContract(contract, view, action, target); err != nil {
+		return uiError(err), nil
+	}
 	key, _ := args["idempotency_key"].(string)
 	var revision *int64
 	if raw, ok := args["expected_state_revision"]; ok {

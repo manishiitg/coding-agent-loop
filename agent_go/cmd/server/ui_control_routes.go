@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"log"
 	"net/http"
+	"path"
 	"strings"
 
 	"github.com/gorilla/mux"
@@ -31,18 +32,25 @@ func (api *StreamingAPI) handleUIControl(w http.ResponseWriter, r *http.Request)
 	}
 	b := api.uiBroker()
 	workspace := b.scope(session)
-	if !strings.HasPrefix(workspace, "Workflow/") {
+	isWorkflow := strings.HasPrefix(workspace, "Workflow/")
+	cleanWorkspace := path.Clean(strings.Trim(strings.TrimSpace(workspace), "/"))
+	workPrefix := "Chats/Work/projects/"
+	ownedWorkPrefix := path.Join("_users", sanitizeUserIDForPath(user), "Chats", "Work", "projects") + "/"
+	isOwnedWork := strings.HasPrefix(cleanWorkspace, workPrefix) || strings.HasPrefix(cleanWorkspace, ownedWorkPrefix)
+	if !isWorkflow && !isOwnedWork {
 		fail("unsupported_surface", http.StatusConflict)
 		return
 	}
-	level, manifest := workflowAccessForWorkspacePath(r.Context(), GetUserFromContext(r.Context()), workspace)
-	if manifest == nil {
-		fail("workspace_unavailable", http.StatusConflict)
-		return
-	}
-	if level == WorkflowAccessNone || !userAllowedWorkflowID(GetUserFromContext(r.Context()), manifest.ID) {
-		fail("forbidden", http.StatusForbidden)
-		return
+	if isWorkflow {
+		level, manifest := workflowAccessForWorkspacePath(r.Context(), GetUserFromContext(r.Context()), workspace)
+		if manifest == nil {
+			fail("workspace_unavailable", http.StatusConflict)
+			return
+		}
+		if level == WorkflowAccessNone || !userAllowedWorkflowID(GetUserFromContext(r.Context()), manifest.ID) {
+			fail("forbidden", http.StatusForbidden)
+			return
+		}
 	}
 	var req struct {
 		Operation string     `json:"operation"`

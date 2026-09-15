@@ -177,7 +177,11 @@ func validUIView(view string) bool {
 	return false
 }
 func validateUIAction(view, action, target string) error {
-	for _, v := range uiControlContract.Views {
+	return validateUIActionForContract(uiControlContract, view, action, target)
+}
+
+func validateUIActionForContract(contract uiContract, view, action, target string) error {
+	for _, v := range contract.Views {
 		if v.ID != view {
 			continue
 		}

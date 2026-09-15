@@ -1,0 +1,56 @@
+package server
+
+import (
+	"context"
+	"strings"
+	"testing"
+)
+
+func TestWorkUIRegistersSamePresentationToolFamilyWithWorkViews(t *testing.T) {
+	api := &StreamingAPI{}
+	reg := &recordingRegistrar{}
+	if err := api.registerOpenWorkWorkspaceViewTool(reg, "work-chat", "Chats/Work/projects/demo"); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"open_workspace_view", "refresh_workspace_view", "list_ui_capabilities", "get_ui_state", "perform_ui_action", "get_ui_action_result"} {
+		if _, ok := reg.tools[name]; !ok {
+			t.Fatalf("missing Work UI tool %q", name)
+		}
+	}
+	capabilities, err := reg.tools["list_ui_capabilities"].exec(context.Background(), map[string]interface{}{})
+	if err != nil || !strings.Contains(capabilities, `"product":"work"`) || !strings.Contains(capabilities, `"id":"report"`) {
+		t.Fatalf("capabilities=%s err=%v", capabilities, err)
+	}
+	for _, workflowOnly := range []string{`"id":"flow"`, `"id":"pulse"`, `"id":"evaluation"`, `"id":"playbooks"`} {
+		if strings.Contains(capabilities, workflowOnly) {
+			t.Fatalf("Work advertised workflow-only capability %s: %s", workflowOnly, capabilities)
+		}
+	}
+	if out, err := reg.tools["open_workspace_view"].exec(context.Background(), map[string]interface{}{"view": "report"}); err != nil || !strings.Contains(out, "browser_disconnected") {
+		t.Fatalf("report open=%s err=%v", out, err)
+	}
+	if out, err := reg.tools["perform_ui_action"].exec(context.Background(), map[string]interface{}{"view": "flow", "action": "open"}); err != nil || !strings.Contains(out, "unsupported_view") {
+		t.Fatalf("workflow-only view was accepted: %s err=%v", out, err)
+	}
+}
+
+func TestWorkUIOnlyRegistersForInteractiveWorkChat(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		req  QueryRequest
+		want bool
+	}{
+		{name: "interactive", req: QueryRequest{AgentProfileID: "work"}, want: true},
+		{name: "manual interactive", req: QueryRequest{AgentProfileID: "work", TriggeredBy: "manual"}, want: true},
+		{name: "cron", req: QueryRequest{AgentProfileID: "work", TriggeredBy: "cron"}},
+		{name: "bot", req: QueryRequest{AgentProfileID: "work", BotPlatform: "slack"}},
+		{name: "background child", req: QueryRequest{AgentProfileID: "work", ParentSessionID: "parent"}},
+		{name: "other product", req: QueryRequest{AgentProfileID: "video-studio"}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if got := registerWorkUIAllowed(test.req); got != test.want {
+				t.Fatalf("allowed=%v want=%v", got, test.want)
+			}
+		})
+	}
+}

@@ -484,7 +484,7 @@ func stampEventData(data unifiedevents.EventData, now time.Time) {
 	}
 }
 
-func (api *StreamingAPI) registerAgentProfileTools(registrar definitionToolRegistrar, gate *productToolGate, resolved *resolvedAgentProfile, userID, sessionID, workspacePath string) error {
+func (api *StreamingAPI) registerAgentProfileTools(registrar definitionToolRegistrar, gate *productToolGate, resolved *resolvedAgentProfile, userID, sessionID, workspacePath string, req ...QueryRequest) error {
 	if resolved == nil {
 		return nil
 	}
@@ -534,6 +534,14 @@ func (api *StreamingAPI) registerAgentProfileTools(registrar definitionToolRegis
 	}
 	if resolved.Definition.ID == "work" && agentprofiles.HasFeature(resolved.Definition, "bots") {
 		if err := api.registerGmailConnectionManagementTools(registrar, sessionID, workspacePath); err != nil {
+			return err
+		}
+	}
+	if resolved.Definition.ID == "work" && agentprofiles.HasFeature(resolved.Definition, "workspace-ui") && len(req) > 0 && registerWorkUIAllowed(req[0]) {
+		for _, name := range []string{"open_workspace_view", "refresh_workspace_view", "list_ui_capabilities", "get_ui_state", "perform_ui_action", "get_ui_action_result"} {
+			gate.Declare(name)
+		}
+		if err := api.registerOpenWorkWorkspaceViewTool(registrar, sessionID, workspacePath); err != nil {
 			return err
 		}
 	}

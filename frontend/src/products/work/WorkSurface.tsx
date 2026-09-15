@@ -26,8 +26,23 @@ import { parseProductInteraction } from '../../../shared/session/interactions'
 import { belongsToWorkProject, markWorkProjectRuntimeDirty, preferredWorkProjectTabId, setWorkProjectRuntimeSelection, visibleWorkProjectTabs, type ProductEngineSelectionDetail, type WorkRuntimeSelection } from './workTabs'
 import { updateProductProjectLLMConfig, updateProductProjectSelections } from '../../platform/chat/productProjects'
 import { CreateWorkProjectDialog } from './CreateWorkProjectDialog'
+import { useWorkspaceUIControl, type WorkspaceUIControlAdapter } from '../../platform/ui-control/useWorkspaceUIControl'
+import { usePresentationEvents } from '../../platform/presentations/usePresentationEvents'
 
 const WORK_SPLIT_PREFERENCE_KEY = 'work_workspace_split_ratio'
+const WORK_UI_PRESENTATION_VIEWS = {
+  report: 'dashboard', database: 'database', browser: 'browser', costs: 'costs', schedules: 'schedules', files: 'files',
+  skills: 'skills', secrets: 'secrets', mcp: 'mcp', llm: 'models', bots: 'bots', folders: 'folders',
+} as const satisfies Record<string, WorkWorkspaceView>
+type WorkUIPresentationView = keyof typeof WORK_UI_PRESENTATION_VIEWS
+const WORK_UI_LABELS: Record<WorkUIPresentationView, string> = {
+  report: 'Dashboard', database: 'Database', browser: 'Browser', costs: 'Costs and usage', schedules: 'Schedules', files: 'Files',
+  skills: 'Skills', secrets: 'Secrets', mcp: 'MCP servers', llm: 'Agent configuration', bots: 'Bots', folders: 'Attached folders',
+}
+
+function workPresentationView(view: WorkWorkspaceView): WorkUIPresentationView {
+  return (Object.entries(WORK_UI_PRESENTATION_VIEWS).find(([, panel]) => panel === view)?.[0] ?? 'files') as WorkUIPresentationView
+}
 
 function clampWorkSplitRatio(ratio: number, width: number): number {
   const minPaneWidth = 240
@@ -403,6 +418,7 @@ export function WorkSurface() {
   const [chatOpen, setChatOpen] = useState(true)
   const [panelOpen, setPanelOpen] = useState(true)
   const [workspaceView, setWorkspaceView] = useState<WorkWorkspaceView>('files')
+  const [workspaceViewRefresh, setWorkspaceViewRefresh] = useState(0)
   const [enabledWorkspacePanels, setEnabledWorkspacePanels] = useState<Set<string> | undefined>()
   const splitLayoutRef = useRef<HTMLDivElement>(null)
   const [splitRatio, setSplitRatioState] = useState(() => readWorkSplitRatio(selected?.id))
@@ -410,6 +426,40 @@ export function WorkSurface() {
   const { start: startSplitDrag, stop: stopSplitDrag } = usePointerDrag()
   const [createError, setCreateError] = useState<string | null>(null)
   const showProviders = useLLMStore((state) => state.showLLMModal)
+  const activeSessionId = useChatStore(state => tabId ? state.chatTabs[tabId]?.sessionId : undefined)
+  const legacyViewEvents = usePresentationEvents(activeSessionId ?? undefined, ['workflow.view'])
+  const handledLegacyViewEvents = useRef<{ session?: string; count: number }>({ session: activeSessionId ?? undefined, count: legacyViewEvents.length })
+  const openWorkPresentationView = useCallback((view: string) => {
+    if (!(view in WORK_UI_PRESENTATION_VIEWS)) return
+    const panel = WORK_UI_PRESENTATION_VIEWS[view as WorkUIPresentationView]
+    if (enabledWorkspacePanels && !enabledWorkspacePanels.has(panel)) return
+    setPanelOpen(true)
+    setWorkspaceView(panel)
+  }, [enabledWorkspacePanels])
+  const workUIAdapter = useMemo<WorkspaceUIControlAdapter>(() => ({
+    getView: () => workPresentationView(workspaceView),
+    openView: openWorkPresentationView,
+    isViewSupported: (view) => view in WORK_UI_PRESENTATION_VIEWS,
+    labelForView: (view) => WORK_UI_LABELS[view as WorkUIPresentationView] ?? view,
+    actorLabel: 'Work',
+  }), [openWorkPresentationView, workspaceView])
+  useWorkspaceUIControl(activeSessionId ?? undefined, workUIAdapter)
+
+  useEffect(() => {
+    const session = activeSessionId ?? undefined
+    if (handledLegacyViewEvents.current.session !== session) {
+      handledLegacyViewEvents.current = { session, count: legacyViewEvents.length }
+      return
+    }
+    for (const event of legacyViewEvents.slice(handledLegacyViewEvents.current.count)) {
+      const view = event.payload.view
+      if (typeof view === 'string') {
+        openWorkPresentationView(view)
+        if (event.payload.action === 'refresh') setWorkspaceViewRefresh(value => value + 1)
+      }
+    }
+    handledLegacyViewEvents.current = { session, count: legacyViewEvents.length }
+  }, [activeSessionId, legacyViewEvents, openWorkPresentationView])
 
   const changeWorkRuntime = useCallback(async (selection: WorkRuntimeSelection) => {
     if (!selected || !tabId) return
@@ -550,7 +600,11 @@ export function WorkSurface() {
           error={createError}
         />
       ) : null}
-      <div className="relative min-h-0 flex-1 overflow-hidden">
+      <div
+        data-ui-workspace={selected?.workspacePath}
+        data-ui-view={selected ? workPresentationView(workspaceView) : undefined}
+        className="relative min-h-0 flex-1 overflow-hidden"
+      >
         <LlmModalHost />
         <div className={showProviders ? 'hidden' : 'h-full'}>
           {error ? (
@@ -665,28 +719,32 @@ export function WorkSurface() {
                   </WorkspaceSplitDivider>
                 ) : null}
                 {panelOpen ? (
-                  <aside className={`min-h-0 min-w-0 overflow-hidden bg-background row-start-2 ${chatOpen ? 'md:col-start-2' : 'col-start-1'}`}>
+                  <aside
+                    data-ui-workspace={selected.workspacePath}
+                    data-ui-view={workPresentationView(workspaceView)}
+                    className={`min-h-0 min-w-0 overflow-hidden bg-background row-start-2 ${chatOpen ? 'md:col-start-2' : 'col-start-1'}`}
+                  >
                   {tabId ? (
-                    <WorkWorkspacePane
-                      key={selected.id}
-                      workspacePath={selected.workspacePath}
-                      projectId={selected.id}
-                      projectTitle={selected.title}
-                      tabId={tabId}
-                      onClose={() => setPanelOpen(false)}
-                      view={workspaceView}
-                      onViewChange={setWorkspaceView}
-                      enabledPanels={enabledWorkspacePanels}
-                      projectLLMConfig={selected.llmConfig}
-                      workflowContextPaths={selected.workflowContextPaths}
-                      onRuntimeChange={changeWorkRuntime}
-                      onSelectedServersChange={servers => updateSelections(selected.id, { selectedServers: servers })}
-                      onSelectedSkillsChange={skills => updateSelections(selected.id, { selectedSkills: skills })}
-                      onWorkflowContextPathsChange={async paths => {
-                        await updateSelections(selected.id, { workflowContextPaths: paths })
-                        markWorkProjectRuntimeDirty(selected.id)
-                      }}
-                    />
+                    <><span hidden data-ui-view-mounted /><WorkWorkspacePane
+                        key={`${selected.id}:${workspaceViewRefresh}`}
+                        workspacePath={selected.workspacePath}
+                        projectId={selected.id}
+                        projectTitle={selected.title}
+                        tabId={tabId}
+                        onClose={() => setPanelOpen(false)}
+                        view={workspaceView}
+                        onViewChange={setWorkspaceView}
+                        enabledPanels={enabledWorkspacePanels}
+                        projectLLMConfig={selected.llmConfig}
+                        workflowContextPaths={selected.workflowContextPaths}
+                        onRuntimeChange={changeWorkRuntime}
+                        onSelectedServersChange={servers => updateSelections(selected.id, { selectedServers: servers })}
+                        onSelectedSkillsChange={skills => updateSelections(selected.id, { selectedSkills: skills })}
+                        onWorkflowContextPathsChange={async paths => {
+                          await updateSelections(selected.id, { workflowContextPaths: paths })
+                          markWorkProjectRuntimeDirty(selected.id)
+                        }}
+                      /></>
                   ) : (
                     <div className="grid h-full place-items-center text-sm text-muted-foreground">Opening workspace…</div>
                   )}

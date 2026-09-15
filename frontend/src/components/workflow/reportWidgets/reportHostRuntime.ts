@@ -10,7 +10,7 @@ import { getReportEvaluations, getReportCosts, renderReportEvaluations, renderRe
 import type { ReportCostOptions, ReportDataApi } from './reportEmbedContext'
 import { getReportGoalMetrics, renderReportGoalProgress } from './reportGoalProgress'
 import { REPORT_OPEN_ATTR, REPORT_SRC_ATTR } from './reportMarkdownLinks'
-import { REPORT_DAISYUI_STYLE, reportUsesDaisyUi } from './reportDaisyUi'
+import { reportDaisyUiHead } from './reportDaisyUi'
 
 export type ReportHostTheme = 'dark' | 'light'
 
@@ -111,7 +111,7 @@ export const REPORT_BOOTSTRAP = `<script>(function(){
 // falls back to prepending for a fragment without a full document shell.
 export function withReportBootstrap(html: string): string {
   if (html.includes('window.__reportQueuedCallbacks')) return html
-  const platformStyles = reportUsesDaisyUi(html) ? REPORT_DAISYUI_STYLE : ''
+  const platformStyles = reportDaisyUiHead(html)
   const bootstrap = platformStyles + REPORT_BOOTSTRAP
   const headOpen = html.match(/<head[^>]*>/i)
   if (headOpen?.index !== undefined) {

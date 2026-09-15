@@ -187,7 +187,7 @@ var featureCatalog = map[string]featureDefinition{
 		Tools:           []string{"validate_report_html", "preview_report"},
 		Skills:          []string{"work-dashboard"},
 		UIPanels:        []string{"dashboard"},
-		PromptExtension: "A visual Dashboard is enabled. Read the attached `work-dashboard` skill before creating or changing it. It may contain multiple HTML views under db/reports/ with optional views.json metadata; the shared toolbar handles navigation. The viewer locally supports opt-in daisyUI. Use the managed data contract and validate every changed view.",
+		PromptExtension: "A visual Dashboard is enabled. Read the attached `work-dashboard` skill before creating or changing it. It may contain multiple HTML views under db/reports/ with optional views.json metadata; the shared toolbar handles navigation. Reports may opt into the pinned daisyUI CDN stylesheet. Use the managed data contract and validate every changed view.",
 	},
 	"costs": {
 		UIPanels: []string{"costs"},

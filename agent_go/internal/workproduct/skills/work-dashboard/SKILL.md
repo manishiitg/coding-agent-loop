@@ -26,12 +26,12 @@ or another project view intended to organize or manage information visually.
 - Build responsive documents. Use separate toolbar views for genuinely distinct
   destinations and internal sections/tabs for closely related material.
 - Support both app themes using `:root.dark` or `[data-theme="dark"]`.
-- daisyUI is locally bundled in the report viewer. When it will help, first
-  inspect installed skills; install the official `saadeghi/daisyui` skill with
-  `install_skill` only if missing, then read it. Opt a document in with
-  `<html data-report-ui="daisyui">`. Use daisyUI component classes and inline
-  CSS for layout. Never add a CDN, external stylesheet, Tailwind browser build,
-  or project package dependency for a report.
+- daisyUI is CDN-only for reports. When it will help, first inspect installed
+  skills; install the official `saadeghi/daisyui` skill with `install_skill`
+  only if missing, then read it. Opt in with `<html data-report-ui="daisyui">`
+  and include `https://cdn.jsdelivr.net/npm/daisyui@5.7.38/daisyui.css`. Use
+  daisyUI component classes and inline CSS for layout. Never add daisyUI as a
+  project package or use the Tailwind browser build.
 
 ## Project data and actions
 

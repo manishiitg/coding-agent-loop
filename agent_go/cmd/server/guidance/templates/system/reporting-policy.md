@@ -16,10 +16,12 @@ There is no report generation step or widget-layout registry.
   report has multiple views or sections.
 - Keep CSS and JavaScript inline. Do not pin body height or create a nested
   scroll container.
-- The viewer locally bundles daisyUI. To use it, inspect/install the official
-  `saadeghi/daisyui` skill, read it, and add `data-report-ui="daisyui"` to the
-  document's `<html>` element. The host injects component CSS; use inline CSS
-  for layout and never add CDN links, external scripts, or package setup.
+- daisyUI is CDN-only. To use it, inspect/install the official
+  `saadeghi/daisyui` skill, read it, add `data-report-ui="daisyui"` to the
+  document's `<html>` element, and include the pinned stylesheet
+  `https://cdn.jsdelivr.net/npm/daisyui@5.7.38/daisyui.css`. The host supplies
+  that same CDN link for older opted-in reports that omit it. Use inline CSS
+  for layout; never add package setup or the Tailwind browser build.
 - Design for the default Tablet report pane first (~768px). Use one or two
   primary columns, responsive spacing/type, 44px minimum touch targets, no
   hover-only interactions, and tabs that wrap or scroll without clipping.

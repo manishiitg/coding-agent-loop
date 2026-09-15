@@ -41,7 +41,6 @@
     "clsx": "^2.1.1",
     "cronstrue": "^2.59.0",
     "dagre": "^0.8.5",
-    "daisyui": "^5.7.38",
     "lodash.debounce": "^4.0.8",
     "lucide-react": "^0.525.0",
     "mammoth": "^1.11.0",

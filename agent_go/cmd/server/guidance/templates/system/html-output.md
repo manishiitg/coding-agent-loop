@@ -29,7 +29,7 @@ below change in these specific ways:
 | Data baked into the file; `Generated: <date>` meta line | Data read live through `window.report.query` inside `window.report.ready(fn)`; no generated-at stamp, the numbers are current by construction |
 | `body { max-width: 960px; margin: 0 auto }` | Full width — the pane is the layout boundary; no fixed body/`html` height, no nested scroll container |
 | Sticky `<nav>` of `#anchors` | Same, or real tabs; `#anchor` clicks are intercepted and scrolled by the host |
-| Self-contained: no external `<link>`/`<script>` | Same. An opted-in `<html data-report-ui="daisyui">` receives the locally bundled daisyUI component CSS from the host; never add a CDN or Tailwind browser script. |
+| Self-contained: no external `<link>`/`<script>` | Same, except an opted-in `<html data-report-ui="daisyui">` may load the pinned daisyUI stylesheet from jsDelivr; never add a Tailwind browser script. |
 
 Everything else in this doc (summary-first layout, semantic colour, tables,
 inline charts, the quality checklist) applies to both. For the report
@@ -39,7 +39,7 @@ paths — load `reporting-policy.md`.
 ### Non-negotiable rules
 
 **Self-contained — no external URLs.**
-Every report-owned `<style>`, font, icon, and script must be inlined. External CDN links (`<link href="https://...">`, `<script src="https://...">`) break when the file is opened offline or shared. Use `<style>` blocks and `<script>` blocks only. The sole component-library exception is the platform's locally bundled daisyUI CSS, enabled with `data-report-ui="daisyui"`; use inline CSS for layout. If you need charts, use the platform-supported chart guidance or inline SVG, never a CDN dependency.
+Every report-owned `<style>`, font, icon, and script must be inlined. External CDN links (`<link href="https://...">`, `<script src="https://...">`) break when the file is opened offline or shared. Use `<style>` blocks and `<script>` blocks only. The sole component-library exception is the pinned daisyUI stylesheet `https://cdn.jsdelivr.net/npm/daisyui@5.7.38/daisyui.css`, enabled with `data-report-ui="daisyui"`; use inline CSS for layout. If you need charts, use the platform-supported chart guidance or inline SVG, never another CDN dependency.
 
 **Dark-mode styles.**
 For a standalone artifact, always include (an in-app report keys the same

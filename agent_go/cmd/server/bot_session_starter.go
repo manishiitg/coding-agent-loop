@@ -15,27 +15,12 @@ import (
 	"github.com/manishiitg/mcpagent/events"
 )
 
-type botRouteGrantContextKey struct{}
-
-func internalBotRouteGrantContext(ctx context.Context, grant string) context.Context {
-	grant = strings.ToLower(strings.TrimSpace(grant))
-	if grant != "run" && grant != "owner" {
-		return ctx
-	}
-	return context.WithValue(ctx, botRouteGrantContextKey{}, grant)
-}
-
-func internalBotRouteGrant(ctx context.Context) string {
-	grant, _ := ctx.Value(botRouteGrantContextKey{}).(string)
-	return grant
-}
-
 // internalBotRequestContext gives bot-originated turns the same authenticated
 // identity as an HTTP turn from the paired account. The user directory remains
 // authoritative for permissions: we deliberately persist only the user ID on
 // the connector, then resolve the current username/email/role for every turn so
 // a promotion or demotion takes effect without re-pairing WhatsApp.
-func internalBotRequestContext(ctx context.Context, userID string) context.Context {
+func internalBotRequestContext(ctx context.Context, userID string, reqMaps ...map[string]interface{}) context.Context {
 	if userID == "" || GetUserFromContext(ctx) != nil {
 		return ctx
 	}
@@ -44,7 +29,41 @@ func internalBotRequestContext(ctx context.Context, userID string) context.Conte
 		claims.Username = record.Username
 		claims.Email = record.Email
 	}
+	if len(reqMaps) > 0 {
+		applyBotRouteClaims(claims, reqMaps[0])
+	}
 	return context.WithValue(ctx, UserContextKey, claims)
+}
+
+func applyBotRouteClaims(claims *UserClaims, reqMap map[string]interface{}) {
+	if claims == nil || reqMap == nil {
+		return
+	}
+	platform, _ := reqMap["bot_platform"].(string)
+	grant, _ := reqMap["bot_route_grant"].(string)
+	grant = services.NormalizeBotRouteGrant(grant, "")
+	if strings.TrimSpace(platform) == "" || grant == "" {
+		return
+	}
+	claims.Provider = "bot_route"
+	claims.BotRouteGrant = grant
+	claims.BotRouteWorkflowID = strings.TrimSpace(stringFromRequestMap(reqMap, "preset_query_id"))
+}
+
+func stringFromRequestMap(reqMap map[string]interface{}, key string) string {
+	value, _ := reqMap[key].(string)
+	return strings.TrimSpace(value)
+}
+
+func botRouteUserClaims(userID string, route services.ChannelRoute) *UserClaims {
+	userID = strings.TrimSpace(userID)
+	return &UserClaims{
+		UserID:             userID,
+		Username:           userID,
+		Provider:           "bot_route",
+		BotRouteGrant:      services.NormalizeBotRouteGrant(route.BotGrant, route.WorkshopMode),
+		BotRouteWorkflowID: strings.TrimSpace(route.WorkflowID),
+	}
 }
 
 // checkBotWorkflowAccess decides whether an external chat user may drive a
@@ -86,15 +105,15 @@ func (api *StreamingAPI) checkBotWorkflowAccess(ctx context.Context, workspaceUs
 		return fallbackID, false, nil
 	}
 
-	// 2. The configured route grant is the runtime principal. Slack sender
-	// identity is audit metadata only; callers do not need AgentWorks accounts or
-	// direct workflow permission to use an already-authorized route.
-	grant := services.NormalizeBotRouteGrant(route.BotGrant, route.WorkshopMode)
-	if grant != "run" && grant != "owner" {
-		log.Printf("[BOT_ACCESS] Denied: workflow %s route has invalid bot grant %q", manifest.ID, route.BotGrant)
+	// 2. The configured route grant is resolved through the same manifest access
+	// function used by AgentWorks chat. Slack sender identity stays audit
+	// metadata and does not alter the route principal's authority.
+	claims := botRouteUserClaims(fallbackID, route)
+	if workflowAccessForManifest(claims, manifest) == WorkflowAccessNone {
+		log.Printf("[BOT_ACCESS] Denied: route principal %s has no access to workflow %s", claims.UserID, manifest.ID)
 		return fallbackID, false, nil
 	}
-	return fallbackID, true, nil
+	return claims.UserID, true, nil
 }
 
 func (api *StreamingAPI) workflowManifestByBotRoute(ctx context.Context, route services.ChannelRoute) (*WorkflowManifest, bool, error) {
@@ -124,11 +143,6 @@ func (api *StreamingAPI) startSessionInternal(
 	userID string,
 	eventCallback func(event *events.AgentEvent),
 ) error {
-	if platform, _ := reqMap["bot_platform"].(string); strings.TrimSpace(platform) != "" {
-		if grant, _ := reqMap["bot_route_grant"].(string); strings.TrimSpace(grant) != "" {
-			ctx = internalBotRouteGrantContext(ctx, grant)
-		}
-	}
 	// Marshal the request map to JSON
 	body, err := json.Marshal(reqMap)
 	if err != nil {
@@ -140,7 +154,7 @@ func (api *StreamingAPI) startSessionInternal(
 	if err != nil {
 		return fmt.Errorf("failed to create internal request: %w", err)
 	}
-	httpReq = httpReq.WithContext(internalBotRequestContext(httpReq.Context(), userID))
+	httpReq = httpReq.WithContext(internalBotRequestContext(httpReq.Context(), userID, reqMap))
 
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("X-Session-ID", sessionID)
@@ -206,12 +220,7 @@ func (api *StreamingAPI) sendFollowUpInternal(
 	if err != nil {
 		return fmt.Errorf("failed to create follow-up request: %w", err)
 	}
-	if platform, _ := reqMap["bot_platform"].(string); strings.TrimSpace(platform) != "" {
-		if grant, _ := reqMap["bot_route_grant"].(string); strings.TrimSpace(grant) != "" {
-			httpReq = httpReq.WithContext(internalBotRouteGrantContext(httpReq.Context(), grant))
-		}
-	}
-	httpReq = httpReq.WithContext(internalBotRequestContext(httpReq.Context(), userID))
+	httpReq = httpReq.WithContext(internalBotRequestContext(httpReq.Context(), userID, reqMap))
 
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("X-Session-ID", sessionID)

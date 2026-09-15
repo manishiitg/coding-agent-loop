@@ -2945,7 +2945,6 @@ func (m *BotConversationManager) buildQueryRequest(query string, userID string, 
 		req["preset_query_id"] = route.WorkflowID
 		grant := NormalizeBotRouteGrant(route.BotGrant, route.WorkshopMode)
 		req["bot_route_grant"] = grant
-		req["bot_route_principal_id"] = BotPrincipalIDForRoute(platform, *route)
 		if strings.TrimSpace(route.WorkspacePath) != "" {
 			req["selected_folder"] = strings.TrimSpace(route.WorkspacePath)
 		}
@@ -3146,12 +3145,6 @@ func (m *BotConversationManager) buildQueryRequestForActive(active *activeBotSes
 	}
 	if routeGrant != "" {
 		req["bot_route_grant"] = routeGrant
-		req["bot_route_principal_id"] = BotPrincipalIDForRoute(platform, ChannelRoute{
-			WorkflowID:    presetQueryID,
-			WorkspacePath: workspacePath,
-			WorkshopMode:  workshopMode,
-			BotGrant:      routeGrant,
-		})
 	}
 	return req
 }

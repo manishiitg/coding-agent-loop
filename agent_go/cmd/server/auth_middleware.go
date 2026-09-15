@@ -31,6 +31,11 @@ type UserClaims struct {
 	Username    string              `json:"username"`
 	Email       string              `json:"email,omitempty"`
 	Provider    string              `json:"provider,omitempty"` // Auth provider: "simple", "cognito", "supabase"
+	// BotRouteGrant is set only by server-owned connector paths. It lets normal
+	// workflow access resolution treat a configured bot route as the executing
+	// principal while keeping the external sender as audit metadata.
+	BotRouteGrant      string `json:"bot_route_grant,omitempty"`
+	BotRouteWorkflowID string `json:"bot_route_workflow_id,omitempty"`
 	// Scope, when set, narrows a token to one purpose: the middleware admits it
 	// only to the paths scopeAllowsPath names for that scope. A normal session
 	// token has no scope. Today's only scope is "report-preview" (a headless

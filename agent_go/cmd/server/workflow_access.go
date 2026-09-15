@@ -78,6 +78,9 @@ func workflowAccessForManifest(claims *UserClaims, m *WorkflowManifest) Workflow
 	if claims == nil {
 		return account
 	}
+	if level, ok := workflowAccessForBotRouteClaims(claims, m); ok {
+		return level
+	}
 	if userAccessForClaims(claims).Admin {
 		return WorkflowAccessOwner
 	}
@@ -94,6 +97,36 @@ func workflowAccessForManifest(claims *UserClaims, m *WorkflowManifest) Workflow
 		return WorkflowAccessRead
 	}
 	return WorkflowAccessNone
+}
+
+func workflowAccessForBotRouteClaims(claims *UserClaims, m *WorkflowManifest) (WorkflowAccessLevel, bool) {
+	if claims == nil || claims.Provider != "bot_route" {
+		return "", false
+	}
+	switch strings.ToLower(strings.TrimSpace(claims.BotRouteGrant)) {
+	case "owner":
+		if m == nil {
+			return WorkflowAccessOwner, true
+		}
+		if !m.hasOwnershipRecord() {
+			return WorkflowAccessNone, true
+		}
+		if target := strings.TrimSpace(claims.BotRouteWorkflowID); target != "" && !strings.EqualFold(target, strings.TrimSpace(m.ID)) {
+			return WorkflowAccessNone, true
+		}
+		return WorkflowAccessOwner, true
+	default:
+		if m == nil {
+			return WorkflowAccessRead, true
+		}
+		if !m.hasOwnershipRecord() {
+			return WorkflowAccessNone, true
+		}
+		if target := strings.TrimSpace(claims.BotRouteWorkflowID); target != "" && !strings.EqualFold(target, strings.TrimSpace(m.ID)) {
+			return WorkflowAccessNone, true
+		}
+		return WorkflowAccessRead, true
+	}
 }
 
 // workflowAccessForWorkspacePath reads the manifest at workspacePath and

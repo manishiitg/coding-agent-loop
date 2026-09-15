@@ -134,7 +134,6 @@ const CostsPopup: React.FC<CostsPopupProps> = ({
               />
 
               <RunCostsSection
-                hasScopedActivity={hasScopedActivity}
                 runCosts={runCosts}
                 selectedRunFolder={selectedRunFolder}
                 expandedRunFolders={expandedRunFolders}

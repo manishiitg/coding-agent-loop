@@ -604,7 +604,7 @@ export const getStepTypeLabel = (type: string): string => {
       return 'Agent'
     case 'regular':
     default:
-      return 'AI Agent Task'
+      return 'Scripted'
   }
 }
 
@@ -625,7 +625,7 @@ export const getStepTypeDescription = (type: string): string => {
       return 'Human-input step: waits for an operator response before continuing.'
     case 'regular':
     default:
-      return 'AI agent task: one standalone task run by an AI agent with its available tools.'
+      return 'Scripted step: runs deterministic Python code for this step.'
   }
 }
 

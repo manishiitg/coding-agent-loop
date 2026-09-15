@@ -6138,6 +6138,9 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				// The phase composer is shared with the assembled-prompt regression tests.
 				var phaseAdditions []string
 				if workflowPhaseID == workflowtypes.WorkflowStatusWorkflowBuilder {
+					if userPrompt := authenticatedWorkflowUserPrompt(GetUserFromContext(r.Context())); userPrompt != "" {
+						phaseAdditions = append(phaseAdditions, userPrompt)
+					}
 					if notificationPrompt := buildWorkflowNotificationInstructionsPrompt(req.NotificationRunSummaryInstructions, req.NotificationPulseSummaryInstructions); notificationPrompt != "" {
 						phaseAdditions = append(phaseAdditions, notificationPrompt)
 						log.Printf("[WORKFLOW_PHASE] Appended workflow notification preferences to %s system prompt", workflowPhaseID)

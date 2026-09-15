@@ -78,6 +78,13 @@ func getModelMetadata(provider, modelID string) (*llmtypes.ModelMetadata, error)
 	case "cursor-cli":
 		return cursorcli.NewCursorCLIAdapter("", resolvedModelID, nil).GetModelMetadata(resolvedModelID)
 	case "pi-cli":
+		// Pi is an execution transport, not the billing provider. Its Google
+		// model IDs use the same public Gemini rate card as Vertex; resolve those
+		// IDs here so token usage is priced instead of being recorded as
+		// permanently unpriced. Other Pi model families retain Pi's fallback.
+		if strings.HasPrefix(strings.ToLower(resolvedModelID), "google/") {
+			return vertex.GetVertexGeminiModelMetadata(strings.TrimPrefix(resolvedModelID, "google/"))
+		}
 		return picli.NewPiCLIAdapter("", resolvedModelID, nil).GetModelMetadata(resolvedModelID)
 	case "muse-cli":
 		return musecli.NewMuseCLIAdapter("", resolvedModelID, nil).GetModelMetadata(resolvedModelID)

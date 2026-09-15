@@ -2683,6 +2683,14 @@ export interface PlanChangelogEntry {
   reason: string
   step_ids?: string[]
   changes?: PlanChangelogFieldChange[]
+  actor?: string
+  origin?: {
+    type?: string
+    agent_name?: string
+    session_id?: string
+    user_id?: string
+    username?: string
+  }
   file?: string
 }
 

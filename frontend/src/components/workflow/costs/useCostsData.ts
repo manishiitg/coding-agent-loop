@@ -103,25 +103,20 @@ export function useCostsData({ active, workspacePath, selectedRunFolder }: UseCo
       if (hasAuthoritativeCosts) {
         setScopedCosts(summaryResponse.scoped_costs ?? null)
         setActivityTiming(summaryResponse.activity_timing ?? null)
-        setRunCosts([])
-        setPhaseCostSummary(null)
-        setPhaseDailyCostSummaries([])
-        setRunDailyCostSummaries([])
         setCostHistory({
           hasMore: summaryResponse.history?.has_more ?? false,
           nextBefore: summaryResponse.history?.next_before,
         })
-        setExpandedRunFolders(new Set())
-        return
       }
 
-      // Compatibility fallback for old workspaces that predate the canonical
-      // event ledger. This deliberately remains off the normal first-paint path.
+      // Load immutable per-run artifacts as well as the canonical summary.
+      // Besides step-level detail, this reprices historical artifacts when a
+      // rate card is added (for example Pi-routed Gemini webhook runs).
       const costsResponse = await agentApi.getCosts(workspacePath)
       if (generation !== loadGenerationRef.current) return
       setScopedCosts(costsResponse.scoped_costs ?? null)
       setActivityTiming(costsResponse.activity_timing ?? null)
-      setCostHistory(null)
+      if (!hasAuthoritativeCosts) setCostHistory(null)
       const costEntriesByRunFolder = new Map<string, WorkflowRunCostsEntry>(
         (costsResponse.runs || []).map(entry => [entry.run_folder, entry])
       )
@@ -182,14 +177,18 @@ export function useCostsData({ active, workspacePath, selectedRunFolder }: UseCo
         try {
           const data = costEntriesByRunFolder.get(runFolder)
           if (data?.token_usage || data?.evaluation_token_usage) {
-            // Also fetch steps to get step titles for cost breakdown
+            // Fetch step titles only for the selected run. Loading the immutable
+            // history must stay one bounded request rather than an N+1 request
+            // for every webhook execution ever recorded.
             let steps: Record<string, StepExecutionLogs> | undefined
-            try {
-              const logsData = await agentApi.getExecutionLogs(workspacePath, runFolder)
-              steps = logsData.steps
-            } catch (err) {
-              // If we can't get steps, continue without them (costs will still work)
-              console.warn(`Failed to load steps for ${runFolder}:`, err)
+            if (runFolder === selectedRunFolder) {
+              try {
+                const logsData = await agentApi.getExecutionLogs(workspacePath, runFolder)
+                steps = logsData.steps
+              } catch (err) {
+                // If we can't get steps, continue without them (costs will still work)
+                console.warn(`Failed to load steps for ${runFolder}:`, err)
+              }
             }
             const costSummary = calculateCostSummary(data.token_usage ?? null, data.evaluation_token_usage, steps)
             costs.push({

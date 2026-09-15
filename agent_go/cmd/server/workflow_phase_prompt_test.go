@@ -108,3 +108,15 @@ func TestNativeWorkflowPromptDoesNotInstructHTTPDiscovery(t *testing.T) {
 		t.Fatal("native tool-calling prompt must use supplied schemas, not the CLI bridge")
 	}
 }
+
+func TestAuthenticatedWorkflowUserPrompt(t *testing.T) {
+	got := authenticatedWorkflowUserPrompt(&UserClaims{UserID: "user-123", Username: "erin", Email: "erin@confida.ai"})
+	for _, want := range []string{"## Current authenticated user", `username: "erin"`, `email: "erin@confida.ai"`, `user_id: "user-123"`} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("prompt missing %q: %s", want, got)
+		}
+	}
+	if authenticatedWorkflowUserPrompt(nil) != "" {
+		t.Fatal("anonymous request must not synthesize a user identity")
+	}
+}

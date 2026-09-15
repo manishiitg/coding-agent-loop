@@ -16,6 +16,8 @@ type PlanChangeOrigin struct {
 	Type         string   `json:"type"`
 	AgentName    string   `json:"agent_name,omitempty"`
 	SessionID    string   `json:"session_id,omitempty"`
+	UserID       string   `json:"user_id,omitempty"`
+	Username     string   `json:"username,omitempty"`
 	PulseRunID   string   `json:"pulse_run_id,omitempty"`
 	IssueIDs     []string `json:"issue_ids,omitempty"`
 	FixAttemptID string   `json:"fix_attempt_id,omitempty"`
@@ -49,6 +51,8 @@ func withPlanChangeOrigin(ctx context.Context, agentName string) context.Context
 		sessionID = strings.TrimSpace(sessionID)
 	}
 	originType := "other"
+	userID, _ := ctx.Value(common.UserIDKey).(string)
+	username, _ := ctx.Value(common.UsernameKey).(string)
 	switch strings.ToLower(agentName) {
 	case "workflow-builder":
 		originType = "user_chat"
@@ -59,6 +63,7 @@ func withPlanChangeOrigin(ctx context.Context, agentName string) context.Context
 	}
 	return context.WithValue(ctx, planChangeOriginContextKey{}, PlanChangeOrigin{
 		Type: originType, AgentName: agentName, SessionID: sessionID,
+		UserID: strings.TrimSpace(userID), Username: strings.TrimSpace(username),
 	})
 }
 

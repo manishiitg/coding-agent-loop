@@ -64,11 +64,13 @@ func TestUserAccessToolsPermissionsAndRevocation(t *testing.T) {
 func TestUserAccessToolsAbsentOutsideBuilder(t *testing.T) {
 	api := &StreamingAPI{}
 	for _, mode := range []string{"workshop", "run"} {
-		for _, origin := range []string{"interactive", "scheduled", "child", "pulse"} {
+		for _, origin := range []string{"interactive", "scheduled", "bot", "child", "pulse"} {
 			req := QueryRequest{}
 			switch origin {
 			case "scheduled":
 				req.TriggeredBy = "cron"
+			case "bot":
+				req.BotPlatform = "slack"
 			case "child":
 				req.ParentSessionID = "parent"
 			case "pulse":
@@ -80,7 +82,10 @@ func TestUserAccessToolsAbsentOutsideBuilder(t *testing.T) {
 				t.Fatal(err)
 			}
 			_, exists := reg.tools["manage_user_access"]
-			if exists != (mode == "workshop" && origin == "interactive") {
+			// Writable workflow users receive Builder authority even when a
+			// legacy client still requests Run. Origin restrictions still apply.
+			want := origin == "interactive" || origin == "scheduled" || origin == "bot"
+			if exists != want {
 				t.Fatalf("admission %s/%s=%v", mode, origin, exists)
 			}
 		}

@@ -97,6 +97,9 @@ func (api *StreamingAPI) handleCapabilities(w http.ResponseWriter, r *http.Reque
 		"servers":       []string{},
 		"local_mode":    IsLocalMode(),
 		"runtime_debug": runtimeDiagnosticsEnabled(),
+		// Deployment-owned IANA timezone used by UI timestamps. It is distinct
+		// from the host timezone and follows daylight-saving rules.
+		"display_time_zone": strings.TrimSpace(os.Getenv("DISPLAY_TIME_ZONE")),
 		// Live-attach (control-mode) terminal WebSocket transport. True when tmux
 		// is new enough for control mode (the manager is constructed). Lets the
 		// frontend render the selected live tmux terminal over

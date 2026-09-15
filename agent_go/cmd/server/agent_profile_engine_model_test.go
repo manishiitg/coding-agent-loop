@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/agentprofiles"
+	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/workflowtypes"
 )
 
 func engineModelTestProfile() agentprofiles.Profile {
@@ -42,9 +43,59 @@ func TestProfileQueryModelMustBelongToEngineProvider(t *testing.T) {
 	}
 }
 
-// The provider is bound by a conversation's first turn and reported back
-// unchanged afterwards; a rotated (new) conversation starts unbound.
-func TestConversationProviderBindsOnFirstTurn(t *testing.T) {
+func TestProfileQueryUsesProjectLLMConfigWithoutBrowserEngineFields(t *testing.T) {
+	profile := engineModelTestProfile()
+	conversation := ProductConversationRecord{
+		SessionID:       "s",
+		WorkspacePath:   "Chats/P",
+		ConversationKey: "main",
+		ProjectLLMConfig: &workflowtypes.PresetLLMConfig{
+			SchemaVersion: 2,
+			Mode:          "explicit",
+			BuilderLLM: &workflowtypes.AgentLLMConfig{
+				Provider: "codex-cli",
+				ModelID:  "gpt-5.6-sol",
+				Options:  map[string]interface{}{"reasoning_effort": "high"},
+			},
+		},
+	}
+	profile.Runtime.ProviderOptions[1].Models = []string{"gpt-6-astra", "gpt-5.6-sol"}
+	profile.Runtime.ProviderOptions[1].ReasoningEfforts = []string{"medium", "high"}
+
+	req, err := queryRequestForAgentProfileChat(profile, AgentProfileChatRequest{Message: "scheduled message"}, conversation)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if req.Provider != "codex-cli" || req.ModelID != "gpt-5.6-sol" || req.ReasoningEffort != "high" {
+		t.Fatalf("project runtime = %q/%q/%q", req.Provider, req.ModelID, req.ReasoningEffort)
+	}
+}
+
+func TestProfileQueryUsesLegacyConversationRuntimeWithoutProjectConfig(t *testing.T) {
+	profile := engineModelTestProfile()
+	profile.Runtime.ProviderOptions[1].Models = []string{"gpt-6-astra", "gpt-5.6-sol"}
+	profile.Runtime.ProviderOptions[1].ReasoningEfforts = []string{"medium", "high"}
+	conversation := ProductConversationRecord{
+		SessionID:       "s",
+		WorkspacePath:   "Chats/P",
+		ConversationKey: "main",
+		Provider:        "codex-cli",
+		ModelID:         "gpt-5.6-sol",
+		ReasoningEffort: "high",
+	}
+
+	req, err := queryRequestForAgentProfileChat(profile, AgentProfileChatRequest{Message: "scheduled message"}, conversation)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if req.Provider != "codex-cli" || req.ModelID != "gpt-5.6-sol" || req.ReasoningEffort != "high" {
+		t.Fatalf("legacy project runtime = %q/%q/%q", req.Provider, req.ModelID, req.ReasoningEffort)
+	}
+}
+
+// A project conversation can change coding-agent provider. The durable
+// AgentWorks conversation remains stable while the native CLI is relaunched.
+func TestConversationProviderChangeRequestsRestart(t *testing.T) {
 	store, _ := memoryProductConversationStore()
 	profile := engineModelTestProfile()
 	binding := productConversationBinding{ConversationKey: "main", WorkspacePath: "Chats/P", Title: "P"}
@@ -56,9 +107,9 @@ func TestConversationProviderBindsOnFirstTurn(t *testing.T) {
 	if err != nil || bound != "codex-cli" {
 		t.Fatalf("first bind = %q, %v", bound, err)
 	}
-	bound, _, err = store.bindRuntime(ctx, "u", profile, "main", "claude-code", "claude-fable-5-1", "")
-	if err != nil || bound != "codex-cli" {
-		t.Fatalf("second bind should report the bound provider, got %q, %v", bound, err)
+	bound, restart, err := store.bindRuntime(ctx, "u", profile, "main", "claude-code", "claude-fable-5-1", "")
+	if err != nil || bound != "claude-code" || !restart {
+		t.Fatalf("provider change = bound %q restart %v, %v", bound, restart, err)
 	}
 	if _, err := store.rotate(ctx, "u", profile, binding); err != nil {
 		t.Fatalf("rotate: %v", err)
@@ -106,11 +157,10 @@ func TestProfileQueryReasoningEffortMustBeDeclared(t *testing.T) {
 	}
 }
 
-// A model or reasoning-effort change on an already-bound conversation must
+// A provider, model or reasoning-effort change on an existing conversation must
 // be reported as needing a restart — the running tmux-backed CLI process
 // only reads its launch flags once, so the caller must close it or the next
-// turn silently keeps generating with the old value. The provider itself
-// changing is a different, refused case (TestConversationProviderBindsOnFirstTurn).
+// turn silently keeps generating with the old value.
 func TestConversationRuntimeChangeReportsRestartNeeded(t *testing.T) {
 	store, _ := memoryProductConversationStore()
 	profile := engineModelTestProfile()
@@ -133,5 +183,46 @@ func TestConversationRuntimeChangeReportsRestartNeeded(t *testing.T) {
 	}
 	if _, restart, err := store.bindRuntime(ctx, "u", profile, "main", "codex-cli", "gpt-5.6-sol", "high"); err != nil || restart {
 		t.Fatalf("the now-current model/effort should not need another restart: restart=%v err=%v", restart, err)
+	}
+	if bound, restart, err := store.bindRuntime(ctx, "u", profile, "main", "claude-code", "claude-sonnet-5", "high"); err != nil || !restart || bound != "claude-code" {
+		t.Fatalf("a provider change should be recorded and need a restart: bound=%q restart=%v err=%v", bound, restart, err)
+	}
+}
+
+func TestConversationRuntimeChangeReportsRestartForMCPAndSkills(t *testing.T) {
+	store, _ := memoryProductConversationStore()
+	profile := engineModelTestProfile()
+	binding := productConversationBinding{ConversationKey: "main", WorkspacePath: "Chats/P", Title: "P"}
+	ctx := t.Context()
+	if _, err := store.resolveOrCreate(ctx, "u", profile, binding, ""); err != nil {
+		t.Fatalf("resolveOrCreate: %v", err)
+	}
+	bind := func(servers, skills, workflowContextPaths []string) bool {
+		_, restart, err := store.bindRuntimeConfiguration(ctx, "u", profile, "main", "muse-cli", "muse-spark-1.3-contributor", "", servers, skills, workflowContextPaths)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return restart
+	}
+	if bind([]string{"NO_SERVERS"}, nil, nil) {
+		t.Fatal("first runtime binding requested a restart")
+	}
+	if bind([]string{"NO_SERVERS"}, nil, nil) {
+		t.Fatal("unchanged MCP selection requested a restart")
+	}
+	if !bind([]string{"google_sheets"}, nil, nil) {
+		t.Fatal("changed MCP selection did not request a restart")
+	}
+	if bind([]string{"GOOGLE_SHEETS", "google_sheets"}, nil, nil) {
+		t.Fatal("equivalent MCP selection requested a restart")
+	}
+	if !bind([]string{"google_sheets"}, []string{"work-dashboard"}, nil) {
+		t.Fatal("changed skill selection did not request a restart")
+	}
+	if bind([]string{"google_sheets"}, []string{"work-dashboard"}, []string{"Workflow/research"}) {
+		t.Fatal("changed workflow reference selection requested a runtime restart")
+	}
+	if bind([]string{"google_sheets"}, []string{"work-dashboard"}, []string{"workflow/RESEARCH", "Workflow/research"}) {
+		t.Fatal("equivalent workflow reference selection requested a restart")
 	}
 }

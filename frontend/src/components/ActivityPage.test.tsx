@@ -4,49 +4,19 @@ import { createRoot } from 'react-dom/client'
 import { describe, expect, it, vi } from 'vitest'
 
 vi.mock('./EmployeeDashboard', () => ({ EmployeeDashboard: () => <input aria-label="Find updates" /> }))
-vi.mock('./scheduler/WorkflowScheduleRunsPanel', () => ({ default: ({ embedded, active }: { embedded: boolean; active: boolean }) => <div data-embedded={embedded} data-active={active}><input aria-label="Find schedules" /></div> }))
-vi.mock('./playbooks/PlaybookOperationsOverview', () => ({ default: () => <input aria-label="Find engineering operations" /> }))
-vi.mock('../stores/useAppStore', () => ({ useAppStore: (selector: (state: unknown) => unknown) => selector({ showWorkflowsOverview: true, setShowWorkflowsOverview: vi.fn() }) }))
-vi.mock('../stores/useLLMStore', () => ({ useLLMStore: (selector: (state: unknown) => unknown) => selector({ showLLMModal: false }) }))
 import ActivityPage from './ActivityPage'
 
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true })
 
 describe('Activity page', () => {
-  it('switches between updates and embedded schedules by keyboard, retaining each view', async () => {
+  it('shows the updates dashboard with no schedules tab', async () => {
     const host = document.createElement('div'); document.body.append(host); const root = createRoot(host)
     try {
       await act(async () => root.render(<ActivityPage />))
-      const updates = host.querySelector<HTMLButtonElement>('#activity-tab-updates')!
-      const schedules = host.querySelector<HTMLButtonElement>('#activity-tab-schedules')!
-      const playbooks = host.querySelector<HTMLButtonElement>('#activity-tab-playbooks')!
-      const updateInput = host.querySelector<HTMLInputElement>('[aria-label="Find updates"]')!
-      updateInput.value = 'Trading'
-      expect(updates.getAttribute('aria-selected')).toBe('true')
-      expect(host.querySelector('[aria-label="Find schedules"]')).toBeNull()
-      await act(async () => schedules.click())
-      const scheduleInput = host.querySelector<HTMLInputElement>('[aria-label="Find schedules"]')!
-      scheduleInput.value = 'Daily'
-      expect(host.querySelector('[data-embedded="true"][data-active="true"]')).not.toBeNull()
-      expect(host.querySelector('#activity-panel-updates')?.hasAttribute('hidden')).toBe(true)
-      await act(async () => schedules.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowLeft', bubbles: true })))
-      expect(document.activeElement).toBe(playbooks)
-      expect(playbooks.getAttribute('aria-selected')).toBe('true')
-      const playbookInput = host.querySelector<HTMLInputElement>('[aria-label="Find engineering operations"]')!
-      playbookInput.value = 'Browser QA'
-      await act(async () => playbooks.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowLeft', bubbles: true })))
-      expect(document.activeElement).toBe(updates)
-      expect(updates.getAttribute('aria-selected')).toBe('true')
-      expect(host.querySelector('[aria-label="Find updates"]')).toBe(updateInput)
-      expect(updateInput.value).toBe('Trading')
-      expect(host.querySelector('[data-active="false"]')).not.toBeNull()
-      await act(async () => updates.dispatchEvent(new KeyboardEvent('keydown', { key: 'End', bubbles: true })))
-      expect(document.activeElement).toBe(schedules)
-      expect(host.querySelector('[aria-label="Find schedules"]')).toBe(scheduleInput)
-      expect(scheduleInput.value).toBe('Daily')
-      await act(async () => schedules.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowLeft', bubbles: true })))
-      expect(host.querySelector('[aria-label="Find engineering operations"]')).toBe(playbookInput)
-      expect(playbookInput.value).toBe('Browser QA')
+      expect(host.querySelector('h1')?.textContent).toBe('Activity')
+      expect(host.querySelector('[aria-label="Find updates"]')).not.toBeNull()
+      expect(host.querySelector('[role="tablist"]')).toBeNull()
+      expect(host.querySelector('#activity-tab-schedules')).toBeNull()
     } finally { await act(async () => root.unmount()); host.remove() }
   })
 })

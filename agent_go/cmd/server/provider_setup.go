@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -28,7 +29,16 @@ const (
 	providerSetupOutputLimit = 1024 * 1024
 	providerSetupMaxDuration = 20 * time.Minute
 	providerSetupRetention   = 10 * time.Minute
+	providerSetupStopTimeout = 2 * time.Second
 )
+
+type providerSetupConflictError struct {
+	provider string
+}
+
+func (e *providerSetupConflictError) Error() string {
+	return fmt.Sprintf("a %s setup session is already running", e.provider)
+}
 
 type providerSetupCommand struct {
 	command string
@@ -42,10 +52,12 @@ var providerSetupCommands = map[string]map[string]providerSetupCommand{
 	"claude-code": {
 		"authenticate": {command: "claude", args: []string{"auth", "login"}},
 		"inspect":      {command: "claude", args: []string{"--tools", ""}},
+		"usage":        {command: "claude", args: []string{"--tools", ""}},
 	},
 	"codex-cli": {
 		"authenticate": {command: "codex", args: []string{"login"}},
 		"inspect":      {command: "codex", args: []string{"--sandbox", "read-only", "--ask-for-approval", "never"}},
+		"usage":        {command: "codex", args: []string{"--sandbox", "read-only", "--ask-for-approval", "never"}},
 	},
 	"cursor-cli": {
 		"authenticate": {command: "cursor-agent", args: []string{"login"}},
@@ -61,7 +73,16 @@ var providerSetupCommands = map[string]map[string]providerSetupCommand{
 	"muse-cli": {
 		"authenticate": {command: "muse", args: []string{"login"}},
 		"inspect":      {command: "muse", args: []string{"--disable-shell", "--disable-write"}},
+		"usage":        {command: "muse", args: []string{"--disable-shell", "--disable-write"}},
 	},
+}
+
+var providerSetupANSI = regexp.MustCompile(`\x1b\[[0-9;:?>]*[ -/]*[@-~]|\x1b.`)
+
+var providerUsageCommands = map[string]string{
+	"claude-code": "/usage",
+	"codex-cli":   "/status",
+	"muse-cli":    "/usage",
 }
 
 type providerSetupSnapshot struct {
@@ -90,6 +111,7 @@ type providerSetupSession struct {
 	cancel      context.CancelFunc
 	output      []byte
 	subscribers map[chan []byte]struct{}
+	done        chan struct{}
 }
 
 func (s *providerSetupSession) snapshot() providerSetupSnapshot {
@@ -139,6 +161,12 @@ func (s *providerSetupSession) appendOutput(chunk []byte) {
 		}
 	}
 	s.mu.Unlock()
+}
+
+func (s *providerSetupSession) outputText() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return string(s.output)
 }
 
 func (s *providerSetupSession) finish(err error) {
@@ -246,13 +274,17 @@ func (s *providerSetupSession) stop() {
 type providerSetupManager struct {
 	mu       sync.Mutex
 	sessions map[string]*providerSetupSession
+	starting map[string]bool
 }
 
 func newProviderSetupManager() *providerSetupManager {
-	return &providerSetupManager{sessions: make(map[string]*providerSetupSession)}
+	return &providerSetupManager{
+		sessions: make(map[string]*providerSetupSession),
+		starting: make(map[string]bool),
+	}
 }
 
-func (m *providerSetupManager) start(ownerID, provider, action string, cols, rows int, environment []string, cleanup func()) (*providerSetupSession, error) {
+func (m *providerSetupManager) start(ownerID, provider, action string, cols, rows int, environment []string, cleanup func(), replaceRunning bool) (*providerSetupSession, error) {
 	if cleanup == nil {
 		cleanup = func() {}
 	}
@@ -272,14 +304,38 @@ func (m *providerSetupManager) start(ownerID, provider, action string, cols, row
 	}
 
 	m.mu.Lock()
+	if m.starting[provider] {
+		m.mu.Unlock()
+		cleanup()
+		return nil, &providerSetupConflictError{provider: provider}
+	}
+	var sessionsToStop []*providerSetupSession
 	for _, existing := range m.sessions {
 		if existing.provider == provider && existing.isRunning() {
-			m.mu.Unlock()
-			cleanup()
-			return nil, fmt.Errorf("a %s setup session is already running", provider)
+			if !replaceRunning {
+				m.mu.Unlock()
+				cleanup()
+				return nil, &providerSetupConflictError{provider: provider}
+			}
+			sessionsToStop = append(sessionsToStop, existing)
+			delete(m.sessions, existing.id)
 		}
 	}
+	m.starting[provider] = true
 	m.mu.Unlock()
+	defer func() {
+		m.mu.Lock()
+		delete(m.starting, provider)
+		m.mu.Unlock()
+	}()
+
+	for _, existing := range sessionsToStop {
+		existing.stop()
+		select {
+		case <-existing.done:
+		case <-time.After(providerSetupStopTimeout):
+		}
+	}
 
 	id, err := randomProviderSetupID()
 	if err != nil {
@@ -288,6 +344,20 @@ func (m *providerSetupManager) start(ownerID, provider, action string, cols, row
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), providerSetupMaxDuration)
 	command := exec.CommandContext(ctx, spec.command, spec.args...)
+	if action == "usage" {
+		workDir, mkdirErr := os.MkdirTemp("", "agentworks-provider-usage-*")
+		if mkdirErr != nil {
+			cancel()
+			cleanup()
+			return nil, fmt.Errorf("prepare provider usage workspace: %w", mkdirErr)
+		}
+		previousCleanup := cleanup
+		cleanup = func() {
+			previousCleanup()
+			_ = os.RemoveAll(workDir)
+		}
+		command.Dir = workDir
+	}
 	if environment == nil {
 		environment = os.Environ()
 	}
@@ -314,10 +384,14 @@ func (m *providerSetupManager) start(ownerID, provider, action string, cols, row
 		terminal:    terminal,
 		cancel:      cancel,
 		subscribers: make(map[chan []byte]struct{}),
+		done:        make(chan struct{}),
 	}
 	m.mu.Lock()
 	m.sessions[id] = session
 	m.mu.Unlock()
+	if action == "usage" {
+		go driveProviderUsage(ctx, session)
+	}
 
 	go func() {
 		defer cleanup()
@@ -335,10 +409,118 @@ func (m *providerSetupManager) start(ownerID, provider, action string, cols, row
 		cancel()
 		_ = terminal.Close()
 		session.finish(waitErr)
+		close(session.done)
 		time.AfterFunc(providerSetupRetention, func() { m.remove(id, false) })
 	}()
 
 	return session, nil
+}
+
+// driveProviderUsage turns the reviewed usage action into one click. It only
+// writes a fixed provider command and, in the throwaway usage directory, the
+// minimum keys needed to accept a workspace-trust prompt.
+func driveProviderUsage(ctx context.Context, session *providerSetupSession) {
+	usageCommand := providerUsageCommands[session.provider]
+	if usageCommand == "" {
+		return
+	}
+	ticker := time.NewTicker(150 * time.Millisecond)
+	defer ticker.Stop()
+	deadline := time.NewTimer(30 * time.Second)
+	defer deadline.Stop()
+	baseline := 0
+	trustHandled := false
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-deadline.C:
+			return
+		case <-ticker.C:
+			output := providerSetupANSI.ReplaceAllString(session.outputText(), "")
+			if !trustHandled && providerUsageTrustPrompt(session.provider, output) {
+				if !acceptProviderUsageTrust(session, session.provider, output) {
+					return
+				}
+				trustHandled = true
+				baseline = len(output)
+				continue
+			}
+			visible := output
+			if baseline >= len(output) && baseline > 0 {
+				continue
+			}
+			if baseline > 0 {
+				visible = output[baseline:]
+			}
+			if providerUsagePromptReady(session.provider, visible) {
+				_ = session.write(usageCommand + "\r")
+				return
+			}
+		}
+	}
+}
+
+func providerUsageTrustPrompt(provider, output string) bool {
+	lower := strings.ToLower(output)
+	switch provider {
+	case "claude-code":
+		return strings.Contains(lower, "yes, i trust this folder") || strings.Contains(lower, "yes - i trust this project")
+	case "codex-cli":
+		return strings.Contains(lower, "do you trust the contents of this directory") && strings.Contains(lower, "press enter to continue")
+	case "muse-cli":
+		return strings.Contains(lower, "do you trust this workspace") || strings.Contains(lower, "do you trust the files in this folder")
+	default:
+		return false
+	}
+}
+
+func acceptProviderUsageTrust(session *providerSetupSession, provider, output string) bool {
+	lower := strings.ToLower(output)
+	switch provider {
+	case "claude-code":
+		if strings.Contains(lower, "❯ no, exit") || strings.Contains(lower, "❯ 1. no, exit") {
+			if session.write("\x1b[B") != nil {
+				return false
+			}
+			time.Sleep(250 * time.Millisecond)
+		}
+		return session.write("\r") == nil
+	case "codex-cli":
+		if strings.Contains(lower, "› 2. no, quit") {
+			if session.write("\x1b[A") != nil {
+				return false
+			}
+			time.Sleep(250 * time.Millisecond)
+		}
+		return session.write("\r") == nil
+	case "muse-cli":
+		return session.write("1\r") == nil
+	default:
+		return false
+	}
+}
+
+func providerUsagePromptReady(provider, output string) bool {
+	lines := strings.Split(strings.ReplaceAll(output, "\r", ""), "\n")
+	start := len(lines) - 24
+	if start < 0 {
+		start = 0
+	}
+	for _, line := range lines[start:] {
+		trimmed := strings.TrimSpace(line)
+		switch provider {
+		case "claude-code", "muse-cli":
+			if trimmed == "❯" || strings.HasPrefix(trimmed, "❯ ") {
+				return true
+			}
+		case "codex-cli":
+			if trimmed == "›" || strings.HasPrefix(trimmed, "› ") {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func (m *providerSetupManager) get(id string) (*providerSetupSession, bool) {
@@ -376,11 +558,12 @@ func (api *StreamingAPI) providerSetupManager() *providerSetupManager {
 }
 
 type startProviderSetupRequest struct {
-	Provider      string `json:"provider"`
-	Action        string `json:"action"`
-	WorkspacePath string `json:"workspace_path,omitempty"`
-	Cols          int    `json:"cols,omitempty"`
-	Rows          int    `json:"rows,omitempty"`
+	Provider       string `json:"provider"`
+	Action         string `json:"action"`
+	WorkspacePath  string `json:"workspace_path,omitempty"`
+	Cols           int    `json:"cols,omitempty"`
+	Rows           int    `json:"rows,omitempty"`
+	ReplaceRunning bool   `json:"replace_running,omitempty"`
 }
 
 // workflowProviderSetupEnvironment builds an isolated CLI environment for an
@@ -455,10 +638,15 @@ func (api *StreamingAPI) handleStartProviderSetup(w http.ResponseWriter, r *http
 			return
 		}
 	}
-	session, err := api.providerSetupManager().start(GetUserIDFromContext(r.Context()), request.Provider, request.Action, request.Cols, request.Rows, environment, cleanup)
+	session, err := api.providerSetupManager().start(GetUserIDFromContext(r.Context()), request.Provider, request.Action, request.Cols, request.Rows, environment, cleanup, request.ReplaceRunning)
 	if err != nil {
+		status := http.StatusBadRequest
+		var conflict *providerSetupConflictError
+		if errors.As(err, &conflict) {
+			status = http.StatusConflict
+		}
 		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusBadRequest)
+		w.WriteHeader(status)
 		_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
 		return
 	}

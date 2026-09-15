@@ -93,6 +93,7 @@ func TestWorkspaceMapPicksOneVariantPerMode(t *testing.T) {
 	}{
 		{"workflow phase", promptContext{IsWorkflowPhase: true, ShellRoot: "/root", WorkflowPhaseFolder: "Workflow/demo"}, "Workflow/demo"},
 		{"product profile", promptContext{HasProfile: true, ShellRoot: "/root", ProfileWorkspace: "Chats/Video Studio/projects/x"}, "Chats/Video Studio/projects/x"},
+		{"work profile", promptContext{HasProfile: true, ProfileID: "work", ShellRoot: "/root", ProfileWorkspace: "/srv/repos/site"}, "/srv/repos/site/"},
 		{"plain chat", promptContext{ShellRoot: "/root", PerUserChatsFolder: "_users/default/Chats"}, "_users/default/Chats"},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
@@ -103,6 +104,17 @@ func TestWorkspaceMapPicksOneVariantPerMode(t *testing.T) {
 				t.Fatalf("workspace map does not describe %q:\n%s", tt.want, got)
 			}
 		})
+	}
+}
+
+func TestWorkWorkspaceMapDoesNotLeakAgentWorksStorageConcepts(t *testing.T) {
+	text := sectionByName(t, "workspace-map").Build(promptContext{
+		HasProfile: true, ProfileID: "work", ProfileWorkspace: "/srv/repos/site",
+	})
+	for _, forbidden := range []string{"Chats", "Workflow", "Pulse", "docs root"} {
+		if strings.Contains(text, forbidden) {
+			t.Fatalf("Work workspace map leaked %q:\n%s", forbidden, text)
+		}
 	}
 }
 
@@ -145,6 +157,24 @@ func TestCapabilitySnapshotIsWithheldWhenItsToolsAreNotAvailable(t *testing.T) {
 	}
 	if !section.Applies(promptContext{CapabilitySection: snapshot, HasLLMCapabilityTools: true}) {
 		t.Fatal("a session that can call them still needs the snapshot")
+	}
+}
+
+func TestProductFeatureInstructionsAreAdditiveNamedSections(t *testing.T) {
+	section := sectionByName(t, "product-features")
+	ctx := promptContext{
+		HasProfile:        true,
+		FeatureExtensions: []string{"## Feature: files\n\nFiles are enabled.", "## Feature: mcp\n\nMCP is enabled."},
+	}
+	if !section.Applies(ctx) {
+		t.Fatal("a profile with resolved features must receive their extensions")
+	}
+	got := section.Build(ctx)
+	if !strings.Contains(got, "Feature: files") || !strings.Contains(got, "Feature: mcp") {
+		t.Fatalf("feature extension section = %q", got)
+	}
+	if section.Applies(promptContext{HasProfile: false, FeatureExtensions: ctx.FeatureExtensions}) {
+		t.Fatal("profile feature extensions must never leak into generic chat")
 	}
 }
 

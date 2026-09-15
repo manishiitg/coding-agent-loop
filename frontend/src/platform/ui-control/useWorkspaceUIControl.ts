@@ -10,10 +10,21 @@ import { applyUIAction, workspaceHost, type UIAction, type UISnapshot } from './
 const kinds = ['workflow.ui-action']
 type Binding = { binding: string; token: string; workspace: string }
 
+export type WorkspaceUIControlAdapter = {
+  getView: () => string
+  openView: (view: string, target?: string) => void
+  isViewSupported: (view: string) => boolean
+  labelForView: (view: string) => string
+  actorLabel?: string
+  getTarget?: (view: string, host: HTMLElement | undefined) => string | undefined
+}
+
 // One lease per mounted, visible chat. No history playback, persisted binding,
 // auto product switch, or shared global command queue. Duplicate SSE only wakes
 // sync; the authenticated server atomically claims commands for this binding.
-export function useWorkspaceUIControl(session: string | undefined): void {
+export function useWorkspaceUIControl(session: string | undefined, adapter?: WorkspaceUIControlAdapter): void {
+  const adapterRef = useRef(adapter)
+  adapterRef.current = adapter
   const events = usePresentationEvents(session, kinds)
   const wake = useRef<(() => void) | null>(null)
   useEffect(() => { wake.current?.() }, [events])
@@ -28,12 +39,14 @@ export function useWorkspaceUIControl(session: string | undefined): void {
     let lastTarget: string | undefined
     const controller = new AbortController()
     const state = (): UISnapshot => {
+      const configured = adapterRef.current
       const store = useWorkflowStore.getState()
-      const view = store.workflowWorkspaceView ?? store.lastCanvasView
+      const view = configured?.getView() ?? store.workflowWorkspaceView ?? store.lastCanvasView
       const host = binding ? workspaceHost(binding.workspace) : undefined
       const visible = !!host && host.getClientRects().length > 0 && !!host.querySelector('[data-ui-view-mounted]') && document.visibilityState === 'visible'
       const panel = host?.querySelector<HTMLElement>('[data-ui-plan-step]')
-      const target = view === 'flow' && panel?.getClientRects().length ? panel.dataset.uiPlanStep : undefined
+      const target = configured?.getTarget?.(view, host)
+        ?? (view === 'flow' && panel?.getClientRects().length ? panel.dataset.uiPlanStep : undefined)
       if (lastView !== view || lastVisible !== visible || lastTarget !== target) {
         revision++; lastView = view; lastVisible = visible; lastTarget = target
       }
@@ -74,15 +87,20 @@ export function useWorkspaceUIControl(session: string | undefined): void {
           if (stopped) break
           const before = state()
           const result = await applyUIAction(command, binding.workspace, (view, target) => {
-            if (isWorkspaceViewId(view)) useWorkflowStore.getState().openWorkspaceView(view, target)
+            const configured = adapterRef.current
+            if (configured) {
+              if (configured.isViewSupported(view)) configured.openView(view, target)
+            } else if (isWorkspaceViewId(view)) useWorkflowStore.getState().openWorkspaceView(view, target)
           }, state, controller.signal)
           if (stopped) break
           if (result.status === 'applied') {
             revision++
             const after = state()
-            if (after.visible && (!before.visible || before.view !== after.view) && isWorkspaceViewId(after.view)) {
-              const label = after.view === 'browser' ? 'Browser' : getWorkspaceView(after.view).label
-              useChatStore.getState().addToast(`Builder opened ${label}`, 'info')
+            const configured = adapterRef.current
+            const supported = configured?.isViewSupported(after.view) ?? isWorkspaceViewId(after.view)
+            if (after.visible && (!before.visible || before.view !== after.view) && supported) {
+              const label = configured?.labelForView(after.view) ?? (after.view === 'browser' ? 'Browser' : getWorkspaceView(after.view as Parameters<typeof getWorkspaceView>[0]).label)
+              useChatStore.getState().addToast(`${configured?.actorLabel ?? 'Builder'} opened ${label}`, 'info')
             }
           }
           await boundCall({ operation: 'ack', request_id: command.request_id, ...result, state: state() })

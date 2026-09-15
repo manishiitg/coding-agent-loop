@@ -67,3 +67,21 @@ func TestWorkflowContextAccessFailsClosedWhenWorkspaceUnavailable(t *testing.T) 
 		t.Fatalf("workspace failure granted access: %v %v", got, err)
 	}
 }
+
+func TestMergeDurableWorkflowContextPaths(t *testing.T) {
+	source := WorkflowManifest{ID: "source", Label: "Source", WorkflowContextPaths: []string{"Workflow/target"}}
+	raw, _ := json.Marshal(source)
+	workspace := &mockWorkspaceAPI{files: map[string]string{manifestPath("Workflow/source"): string(raw)}}
+	host := httptest.NewServer(workspace)
+	defer host.Close()
+	t.Setenv("WORKSPACE_API_URL", host.URL)
+
+	got := mergeDurableWorkflowContextPaths(context.Background(), "Workflow/source", []string{"Workflow/temporary", "Workflow/target"})
+	want := []string{"Workflow/target", "Workflow/temporary"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("merged paths = %v, want %v", got, want)
+	}
+	if got := mergeDurableWorkflowContextPaths(context.Background(), "Chats/project", []string{"Workflow/temporary"}); !reflect.DeepEqual(got, []string{"Workflow/temporary"}) {
+		t.Fatalf("product path unexpectedly loaded a workflow manifest: %v", got)
+	}
+}

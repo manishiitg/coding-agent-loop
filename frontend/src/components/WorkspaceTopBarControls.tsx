@@ -3,8 +3,8 @@ import RuntimeHealthControl from './topbar/RuntimeHealthControl'
 import AccountControl from './topbar/AccountControl'
 
 interface WorkspaceTopBarControlsProps {
-  onOpenWalkthrough: () => void
-  onOpenShortcuts: () => void
+  onOpenWalkthrough?: () => void
+  onOpenShortcuts?: () => void
 }
 
 export default function WorkspaceTopBarControls(props: WorkspaceTopBarControlsProps) {

@@ -110,10 +110,15 @@ func multiAgentChatPrimaryLLM(preset *workflowtypes.PresetLLMConfig) *workflowty
 // the workspace path so the bot can read the workflow manifest without scanning
 // all workspaces.
 type ChannelRoute struct {
-	WorkflowID    string `json:"workflow_id"`
+	WorkflowID    string `json:"workflow_id,omitempty"`
 	WorkspacePath string `json:"workspace_path"`
-	// WorkshopMode overrides whatever is set in the workflow manifest. Valid:
-	// "workshop" | "run". UI/API aliases like "build" normalize to "workshop".
+	// Product routes share the connector and conversation manager with
+	// workflow routes, but enter a keyed product conversation directly.
+	ProfileID       string `json:"profile_id,omitempty"`
+	ConversationKey string `json:"conversation_key,omitempty"`
+	ProfileLabel    string `json:"profile_label,omitempty"`
+	// WorkshopMode overrides the bot workflow route mode. Valid: "workshop" | "run".
+	// UI/API aliases like "build" normalize to "workshop".
 	WorkshopMode    string `json:"workshop_mode,omitempty"`
 	SendFullDetails bool   `json:"send_full_details,omitempty"`
 }
@@ -2123,6 +2128,19 @@ func (m *BotConversationManager) startNewSessionDirect(msg BotIncomingMessage, t
 	workspaceUserID := m.resolveWorkspaceUserID(msg)
 	log.Printf("[BOT_FLOW] session_start: requested platform=%s user=%s workspaceUser=%s channel=%s thread=%s resumeArgs=%d chars=%d",
 		msg.Platform, msg.UserID, workspaceUserID, threadID.ChannelID, threadID.ThreadTS, len(resumeSessionID), len(msg.Text))
+	if route := msg.PresetWorkflow; route != nil && strings.TrimSpace(route.ProfileID) != "" {
+		label := strings.TrimSpace(route.ProfileLabel)
+		if label == "" {
+			label = strings.TrimSpace(route.ProfileID)
+		}
+		msg.PresetProfile = &ProfileRoute{
+			ProfileID:       strings.TrimSpace(route.ProfileID),
+			ConversationKey: strings.TrimSpace(route.ConversationKey),
+			UploadFolder:    strings.TrimSpace(route.WorkspacePath),
+			Label:           label,
+		}
+		msg.PresetWorkflow = nil
+	}
 
 	sessionID := newBotSessionID(msg.Platform)
 	if len(resumeSessionID) > 0 && resumeSessionID[0] != "" {
@@ -2819,36 +2837,17 @@ func (m *BotConversationManager) resolveChannelWorkflow(platform, channelID stri
 	}
 	normalizedChannelID := strings.ToUpper(strings.TrimSpace(channelID))
 	for rawKey, route := range channelMap {
-		if strings.EqualFold(strings.TrimSpace(rawKey), normalizedChannelID) && strings.TrimSpace(route.WorkflowID) != "" {
+		if strings.EqualFold(strings.TrimSpace(rawKey), normalizedChannelID) && (strings.TrimSpace(route.WorkflowID) != "" || strings.TrimSpace(route.ProfileID) != "") {
 			route.WorkflowID = strings.TrimSpace(route.WorkflowID)
 			route.WorkspacePath = strings.TrimSpace(route.WorkspacePath)
+			route.ProfileID = strings.TrimSpace(route.ProfileID)
+			route.ConversationKey = strings.TrimSpace(route.ConversationKey)
+			route.ProfileLabel = strings.TrimSpace(route.ProfileLabel)
 			route.WorkshopMode = NormalizeBotWorkshopMode(route.WorkshopMode)
 			return &route
 		}
 	}
 	return nil
-}
-
-// readManifestWorkshopMode reads workflow.json for the given workspace path and returns
-// execution_defaults.workshop_mode. Returns "" if not set or on any error.
-func (m *BotConversationManager) readManifestWorkshopMode(workspacePath string) string {
-	if workspacePath == "" || m.workspaceURL == "" {
-		return ""
-	}
-	filePath := workspacePath + "/workflow.json"
-	content, exists, err := readWorkspaceFile(context.Background(), m.workspaceURL, filePath)
-	if err != nil || !exists || content == "" {
-		return ""
-	}
-	var manifest struct {
-		ExecutionDefs struct {
-			WorkshopMode string `json:"workshop_mode"`
-		} `json:"execution_defaults"`
-	}
-	if err := json.Unmarshal([]byte(content), &manifest); err != nil {
-		return ""
-	}
-	return manifest.ExecutionDefs.WorkshopMode
 }
 
 // buildQueryRequest constructs a request map for startSessionInternal.
@@ -2897,13 +2896,11 @@ func (m *BotConversationManager) buildQueryRequest(query string, userID string, 
 
 		// Prefer a per-channel override on the route. Deployed bot workflow
 		// traffic defaults to Run mode; do not inherit a manifest authoring
-		// default unless there is no bot platform involved.
+		// default unless there is no bot platform involved. The server access
+		// check still pins read-only users to Run even if a route asks for Build.
 		workshopMode := NormalizeBotWorkshopMode(route.WorkshopMode)
 		if workshopMode == "" && platform != "" {
 			workshopMode = "run"
-		}
-		if workshopMode == "" {
-			workshopMode = m.readManifestWorkshopMode(route.WorkspacePath)
 		}
 		via := "channel " + channelID
 		if presetRoute != nil {
@@ -3047,6 +3044,14 @@ func (m *BotConversationManager) buildQueryRequestForActive(active *activeBotSes
 	phaseID := strings.TrimSpace(active.PhaseID)
 	workshopMode := strings.TrimSpace(active.WorkshopMode)
 	botMeta := active.Metadata
+	if agentMode == "workflow_phase" && workspacePath != "" {
+		// Do not perpetuate a legacy Run route across turns. The server applies
+		// the actual user's read-only pin after receiving this request.
+		workshopMode = NormalizeBotWorkshopMode(workshopMode)
+		if workshopMode == "" {
+			workshopMode = "workshop"
+		}
+	}
 	active.mu.Unlock()
 	applyBotQueryRequestMetadata(req, botMeta)
 
@@ -3143,6 +3148,8 @@ func botRouteKey(route *ChannelRoute) string {
 		strings.ToLower(strings.TrimSpace(route.WorkflowID)),
 		strings.ToLower(strings.TrimSpace(route.WorkspacePath)),
 		NormalizeBotWorkshopMode(route.WorkshopMode),
+		strings.ToLower(strings.TrimSpace(route.ProfileID)),
+		strings.ToLower(strings.TrimSpace(route.ConversationKey)),
 	}
 	return strings.Join(parts, "|")
 }

@@ -1156,7 +1156,16 @@ function spawnAgent(userDataPath) {
     }
 
     spawnServer({
-      name: 'agent', bin, args, preferredPort: 45678, cwd, env, log: logStream, echoToConsole: true,
+      name: 'agent', bin, args, preferredPort: 45678, cwd,
+      env: (port) => ({
+        ...env,
+        // OAuth tools run without an incoming browser request, so they need a
+        // callback origin in the process environment. Use the port selected by
+        // the desktop launcher; an explicit deployment value still wins.
+        PUBLIC_URL: env.PUBLIC_URL || `http://127.0.0.1:${port}`,
+        MCP_AGENT_SERVER_URL: env.MCP_AGENT_SERVER_URL || `http://127.0.0.1:${port}`,
+      }),
+      log: logStream, echoToConsole: true,
     }).then(({ child, port }) => {
       agentProcess = child;
       dynamicAgentPort = port;

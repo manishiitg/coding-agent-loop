@@ -55,6 +55,45 @@ class ConfidaRuntimeDependenciesTest(unittest.TestCase):
         self.assertIn("confida-agent.service.d/40-browser-isolation.conf", activate)
         self.assertIn("confida-workspace.service.d/40-browser-isolation.conf", activate)
 
+    def test_confida_display_timezone_is_eastern(self) -> None:
+        activate = (CF_DIR / "server-build-and-activate.sh").read_text()
+        deploy = (CF_DIR / "deploy-cf.sh").read_text()
+
+        for script in (activate, deploy):
+            self.assertIn("DISPLAY_TIME_ZONE=America/New_York", script)
+        self.assertIn("/^DISPLAY_TIME_ZONE=/", activate)
+
+    def test_work_is_available_to_every_confida_user(self) -> None:
+        activate = (CF_DIR / "server-build-and-activate.sh").read_text()
+        deploy = (CF_DIR / "deploy-cf.sh").read_text()
+
+        for script in (activate, deploy):
+            self.assertIn("AGENTWORKS_ADMIN_ONLY_PRODUCT_SURFACES=", script)
+            self.assertIn("AGENTWORKS_PRODUCTS_AVAILABLE_TO_ALL=work", script)
+        self.assertNotIn("AGENTWORKS_ADMIN_ONLY_PRODUCT_SURFACES=work", activate)
+
+    def test_playbook_catalog_is_a_validated_release_dependency(self) -> None:
+        activate = (CF_DIR / "server-build-and-activate.sh").read_text()
+
+        self.assertGreaterEqual(
+            activate.count('python3 "$REPO_ROOT/playbooks/scripts/validate_playbooks.py"'),
+            1,
+        )
+        self.assertIn('cp -R "$REPO_ROOT/playbooks/." "$BUILD_DIR/playbooks/"', activate)
+        self.assertIn(
+            'python3 "$BUILD_DIR/playbooks/scripts/validate_playbooks.py"',
+            activate,
+        )
+        self.assertIn(
+            "AGENTWORKS_PLAYBOOKS_DIR=/srv/confida/current/playbooks",
+            activate,
+        )
+        self.assertIn("confida-agent.service.d/50-playbook-catalog.conf", activate)
+        self.assertIn(
+            'test -f "/proc/$pid/cwd/playbooks/agentic-engineering-platform/browser-qa/basic-browser-setup/playbook.json"',
+            activate,
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

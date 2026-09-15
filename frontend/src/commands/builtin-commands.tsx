@@ -128,8 +128,9 @@ export const builtinCommands: CommandDefinition[] = [
     }
   },
   {
-    command: 'design-reporting-ui',
-    description: 'Design the reporting UI from scratch: one live-data HTML report at db/reports/index.html',
+    command: 'design-dashboard',
+    aliases: ['design-reporting-ui'],
+    description: 'Design the dashboard from scratch: one live-data HTML dashboard at db/reports/index.html',
     icon: <CheckCircle className="w-4 h-4" />,
     modes: ['workflow'],
     requiredWorkflowMode: 'plan',

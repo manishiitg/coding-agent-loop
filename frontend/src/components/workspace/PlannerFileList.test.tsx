@@ -1,0 +1,100 @@
+// @vitest-environment happy-dom
+import React, { act } from 'react'
+import { createRoot } from 'react-dom/client'
+import { describe, expect, it, vi } from 'vitest'
+import type { PlannerFile } from '../../services/api-types'
+import { TooltipProvider } from '../ui/tooltip'
+import PlannerFileList from './PlannerFileList'
+
+vi.mock('../../stores/useWorkspaceStore', () => ({
+  useWorkspaceStore: Object.assign(
+    (selector: (state: { scrollToFile: () => void }) => unknown) => selector({ scrollToFile: () => undefined }),
+    { getState: () => ({ scrollToFile: () => undefined }) },
+  ),
+}))
+vi.mock('../../stores/useAuthStore', () => ({
+  useAuthStore: { getState: () => ({ user: { id: 'test-user' } }) },
+}))
+import {
+  flattenVisiblePlannerFiles,
+  WORKSPACE_SCROLL_TO_FILE_EVENT,
+} from '../../utils/plannerFileTree'
+
+const file = (filepath: string, type: 'file' | 'folder' = 'file', children?: PlannerFile[]): PlannerFile => ({
+  filepath,
+  type,
+  children,
+})
+
+describe('flattenVisiblePlannerFiles', () => {
+  it('uses a stable event name for virtual row navigation', () => {
+    expect(WORKSPACE_SCROLL_TO_FILE_EVENT).toBe('workspace-scroll-to-file')
+  })
+
+  it('sorts folders before files without mutating backend arrays', () => {
+    const children = [file('root/z.txt'), file('root/a', 'folder')]
+    const files = [file('z.txt'), file('root', 'folder', children), file('a.txt')]
+
+    const rows = flattenVisiblePlannerFiles(files, new Set(['root']), false)
+
+    expect(rows.map(row => [row.file.filepath, row.depth])).toEqual([
+      ['root', 0],
+      ['root/a', 1],
+      ['root/z.txt', 1],
+      ['a.txt', 0],
+      ['z.txt', 0],
+    ])
+    expect(files.map(item => item.filepath)).toEqual(['z.txt', 'root', 'a.txt'])
+    expect(children.map(item => item.filepath)).toEqual(['root/z.txt', 'root/a'])
+  })
+
+  it('only includes descendants of expanded folders', () => {
+    const files = [file('root', 'folder', [file('root/child.txt')])]
+
+    expect(flattenVisiblePlannerFiles(files, new Set(), false)).toHaveLength(1)
+    expect(flattenVisiblePlannerFiles(files, new Set(), true)).toHaveLength(2)
+  })
+})
+
+Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true })
+
+describe('PlannerFileList Work controls', () => {
+  it('can hide send-to-chat everywhere and actions on the project root only', async () => {
+    const files = [file('my-project', 'folder', [file('my-project/frontend', 'folder')])]
+    const host = document.createElement('div')
+    document.body.append(host)
+    const root = createRoot(host)
+    try {
+      await act(async () => root.render(
+        <TooltipProvider>
+          <PlannerFileList
+            files={files}
+            loading={false}
+            error={null}
+            onFolderClick={() => undefined}
+            onFileClick={() => undefined}
+            onFileDelete={() => undefined}
+            onFolderDelete={() => undefined}
+            onRetry={() => undefined}
+            expandedFolders={new Set(['my-project'])}
+            loadingChildren={new Set()}
+            chatFileContext={[]}
+            addFileToContext={() => undefined}
+            onCreateFolder={() => undefined}
+            hideAddToChat
+            hideRootActions
+          />
+        </TooltipProvider>,
+      ))
+
+      const actionButtons = Array.from(host.querySelectorAll('button[aria-label^="More actions for"]'))
+      expect(actionButtons).toHaveLength(1)
+      expect(actionButtons[0].getAttribute('aria-label')).toBe('More actions for frontend')
+      expect(host.querySelector('[aria-label="More actions for my-project"]')).toBeNull()
+      expect(host.querySelector('[aria-label^="Send "]')).toBeNull()
+    } finally {
+      await act(async () => root.unmount())
+      host.remove()
+    }
+  })
+})

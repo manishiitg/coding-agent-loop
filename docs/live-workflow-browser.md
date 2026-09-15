@@ -242,20 +242,20 @@ this group **Pulse**), and is removed from **Setup**.
 Its mode and connection settings remain behind the Browser panel’s gear button.
 
 
-## Shared persistent Chrome (opt-in)
+## Persistent workflow Chrome (opt-in)
 
 Set `AGENT_BROWSER_SHARED_PROFILE` to an absolute dedicated directory outside
 release folders, for example `/data/video-studio/browser-profile`. Unset it to
 retain isolated sessions. A filesystem root or relative path is rejected.
 
-In shared headless mode, all agent session names map to `shared-browser`.
-All signed-in users with access to a browser-enabled workflow can see the same
-browser; write access is still required for input and recording. Everyone can
-access the browser's logged-in accounts. There is no extra control locking;
-users coordinate concurrent actions themselves. Workflow completion and idle
-cleanup do not close the shared browser. An explicit browser close still closes
-it for everyone, so agents should inspect existing tabs and avoid reset/close
-or clearing storage without a user request.
+In persistent headless mode, all agent session names within one workflow map to
+that workflow's `workflow-<hash>--browser` identity. Authorized users share its
+logged-in accounts; write access is still required for input and recording.
+Different workflows use different directories beneath
+`<configured-profile>-workflows/`. Browser actions share a
+per-workflow control lock, and workflow completion preserves the profile. Agents
+should inspect existing tabs and avoid reset/close or clearing storage without a
+user request.
 
 The shared launch settings are defined once in `workspace/browserconfig` and
 used by automation, viewer tab controls, recording, and the browser supervisor.
@@ -390,19 +390,22 @@ Validation: `AGENTWORKS_PLAYWRIGHT_LIVE_TEST=1 go -C agent_go test ./cmd/server
 -run '^TestPlaywrightFixtureLive$' -count=1` runs a real Chromium test against an
 isolated local publisher/viewer server.
 
-## User browser ownership and capture
+## Workflow browser ownership and capture
 
 Managed headless browsing uses one opaque, deployment-prefixed browser identity per
-signed-in user. Builder chats, execution agents and workflow groups all resolve to
-it, regardless of an agent's session label. Anonymous chats retain separate identities.
+workflow. Its authorized users, Builder chats, execution agents and workflow groups all
+resolve to it, regardless of an agent's session label. Other workflows and anonymous
+chats retain separate identities.
 Tabs are optional; the agent can reuse the current tab or open/select one as useful.
-When a persistent shared profile is configured, user profiles live in sibling
-`<configured-profile>-users/<browser-identity>` directories, so cookies never cross users.
+When a persistent shared profile is configured, workflow profiles live in
+`<configured-profile>-workflows/<browser-identity>` directories, so cookies never
+cross workflows. Authorized users of one workflow intentionally share its cookies
+and logins. Legacy non-workflow user profiles remain under `<configured-profile>-users/`.
 Existing per-chat browsers are not migrated or replayed into the new browser; a new
-user browser may require login. Legacy unbound callers and external CDP retain their
+workflow browser may require login. Legacy unbound callers and external CDP retain their
 existing routing; this change concerns authenticated managed headless browsing.
 
-Workflow/agent cleanup preserves user browsers. Idle reaping still applies when no
+Workflow/agent cleanup preserves workflow browsers. Idle reaping still applies when no
 capture is active. Browser commands and manual control share a per-browser lock;
 this serializes individual actions, not an entire snapshot-to-click conversation.
 Agents still need fresh snapshots and coordination for concurrent tasks. A capture

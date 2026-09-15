@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import { agentApi } from '../services/api'
 import type { CapabilitiesResponse } from '../services/api-types'
+import { setDisplayTimeZone } from '../utils/displayTime'
 
 interface CapabilitiesState {
   capabilities: CapabilitiesResponse | null
@@ -30,6 +31,7 @@ export const useCapabilitiesStore = create<CapabilitiesState>()(
         for (let attempt = 1; attempt <= 15; attempt++) {
           try {
             const capabilities = await agentApi.getCapabilities()
+            setDisplayTimeZone(capabilities.display_time_zone)
             set({ capabilities, loading: false, error: null })
             return
           } catch (err) {

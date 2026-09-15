@@ -432,6 +432,7 @@ func isAllowedShellExtraEnvKey(key string) bool {
 	return strings.HasPrefix(key, "MCP_") ||
 		strings.HasPrefix(key, "SECRET_") ||
 		strings.HasPrefix(key, "WORKFLOW_FOLDER_") ||
+		strings.HasPrefix(key, "WORK_FOLDER_") ||
 		strings.HasPrefix(key, "VAR_") ||
 		strings.HasPrefix(key, "STEP_") ||
 		strings.HasPrefix(key, "SCRIPT_") ||

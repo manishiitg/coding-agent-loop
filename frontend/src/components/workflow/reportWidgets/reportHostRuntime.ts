@@ -86,7 +86,7 @@ export const REPORT_BOOTSTRAP = `<script>(function(){
   };
   // Actions must not be replayed from a render/initialization callback.
   api.sendChatMessage = function(){
-    return Promise.reject(new Error('Report chat is not ready. Try again after the report loads.'));
+    return Promise.reject(new Error('Dashboard chat is not ready. Try again after the dashboard loads.'));
   };
   var theme = 'light';
   try {

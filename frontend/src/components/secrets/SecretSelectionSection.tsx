@@ -15,6 +15,14 @@ interface SecretSelectionSectionProps {
   workflowPath?: string;
   /** Lets the selector use an embedded side panel's remaining vertical space. */
   fillAvailableHeight?: boolean;
+  workspaceNoun?: string;
+  workspaceSecretHeading?: string;
+  workspaceBadgeLabel?: string;
+  workspaceSharingBadgeLabel?: string;
+  showGlobalSecrets?: boolean;
+  showSharedSecrets?: boolean;
+  workspaceSecretsAlwaysEnabled?: boolean;
+  allowGlobalPromotion?: boolean;
 }
 
 const isValidName = (name: string) => /^[A-Za-z_][A-Za-z0-9_]*$/.test(name);
@@ -26,6 +34,14 @@ export const SecretSelectionSection: React.FC<SecretSelectionSectionProps> = ({
   onGlobalSecretChange,
   workflowPath,
   fillAvailableHeight = false,
+  workspaceNoun = 'workflow',
+  workspaceSecretHeading = 'Automation Secrets',
+  workspaceBadgeLabel = 'Automation',
+  workspaceSharingBadgeLabel = 'Shared',
+  showGlobalSecrets = true,
+  showSharedSecrets = true,
+  workspaceSecretsAlwaysEnabled = false,
+  allowGlobalPromotion = true,
 }) => {
   const secrets = useSecretsStore((s) => s.secrets);
   const globalSecrets = useSecretsStore((s) => s.globalSecrets);
@@ -192,7 +208,7 @@ export const SecretSelectionSection: React.FC<SecretSelectionSectionProps> = ({
       setWorkflowSecretName('');
       setWorkflowSecretValue('');
     } catch (err) {
-      setWorkflowSecretError(err instanceof Error ? err.message : 'Failed to save automation secret');
+      setWorkflowSecretError(err instanceof Error ? err.message : `Failed to save ${workspaceNoun} secret`);
     } finally {
       setSavingWorkflowSecret(false);
     }
@@ -200,7 +216,7 @@ export const SecretSelectionSection: React.FC<SecretSelectionSectionProps> = ({
 
   const handleDeleteWorkflowSecret = async (name: string) => {
     if (!normalizedWorkflowPath) return;
-    if (!confirm(`Delete automation secret "${name}"?`)) return;
+    if (!confirm(`Delete ${workspaceNoun} secret "${name}"?`)) return;
     await removeWorkflowSecret(normalizedWorkflowPath, name);
     onSecretChange(selectedSecrets.filter(s => s !== name));
   };
@@ -220,14 +236,14 @@ export const SecretSelectionSection: React.FC<SecretSelectionSectionProps> = ({
         <div className="shrink-0 space-y-2 rounded-md border border-amber-200 bg-amber-50 p-3 dark:border-amber-900/60 dark:bg-amber-950/20">
           <div className="flex items-center justify-between gap-2">
             <div className="min-w-0">
-              <div className="text-sm font-medium text-gray-900 dark:text-gray-100">Automation Secrets</div>
+              <div className="text-sm font-medium text-gray-900 dark:text-gray-100">{workspaceSecretHeading}</div>
               <div className="truncate text-xs text-gray-500 dark:text-gray-400">{normalizedWorkflowPath}</div>
             </div>
             <span
               className="shrink-0 rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium text-amber-700 dark:bg-amber-900/60 dark:text-amber-300"
-              title="Shared with everyone who has access to this workflow; only owners can change or reveal values"
+              title={`Stored for this ${workspaceNoun}; only authorized users can change or reveal values`}
             >
-              Shared
+              {workspaceSharingBadgeLabel}
             </span>
           </div>
           <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)_auto]">
@@ -272,8 +288,9 @@ export const SecretSelectionSection: React.FC<SecretSelectionSectionProps> = ({
           <div key={`workflow-${secret.name}`} className="flex items-center gap-2 p-3 border-b border-gray-200 dark:border-gray-700 last:border-b-0 hover:bg-gray-100 dark:hover:bg-gray-700">
             <Checkbox
               id={`workflow-secret-${secret.name}`}
-              checked={selectedSecretNames.has(secret.name)}
+              checked={workspaceSecretsAlwaysEnabled || selectedSecretNames.has(secret.name)}
               onCheckedChange={() => toggleSecretName(secret.name)}
+              disabled={workspaceSecretsAlwaysEnabled}
             />
             <label htmlFor={`workflow-secret-${secret.name}`} className="flex-1 flex min-w-0 items-center gap-2 text-sm cursor-pointer select-none text-gray-900 dark:text-gray-100">
               <span className="min-w-0 flex-1 flex flex-col">
@@ -282,9 +299,9 @@ export const SecretSelectionSection: React.FC<SecretSelectionSectionProps> = ({
                   <span className="mt-0.5 break-all font-mono text-xs text-gray-600 dark:text-gray-300">{revealedValues[secret.name]}</span>
                 )}
               </span>
-              <span className="ml-auto shrink-0 text-[10px] px-1.5 py-0.5 rounded bg-amber-100 dark:bg-amber-900/50 text-amber-700 dark:text-amber-300">Automation</span>
+              <span className="ml-auto shrink-0 text-[10px] px-1.5 py-0.5 rounded bg-amber-100 dark:bg-amber-900/50 text-amber-700 dark:text-amber-300">{workspaceBadgeLabel}</span>
             </label>
-            {isAdmin && canWrite && <button type="button" disabled={globalBusy} onClick={() => void manageGlobal('promote', secret.name)} className="shrink-0 text-xs text-blue-600 disabled:opacity-40" aria-label={`Make ${secret.name} global`}>Make global</button>}
+            {allowGlobalPromotion && isAdmin && canWrite && <button type="button" disabled={globalBusy} onClick={() => void manageGlobal('promote', secret.name)} className="shrink-0 text-xs text-blue-600 disabled:opacity-40" aria-label={`Make ${secret.name} global`}>Make global</button>}
             <button
               type="button"
               onClick={() => { void toggleReveal(secret) }}
@@ -299,14 +316,14 @@ export const SecretSelectionSection: React.FC<SecretSelectionSectionProps> = ({
               onClick={() => handleDeleteWorkflowSecret(secret.name)}
               disabled={!canWrite}
               className="shrink-0 p-1 text-gray-400 transition-colors hover:text-red-600 dark:hover:text-red-400 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:text-gray-400"
-              title={canWrite ? 'Delete automation secret' : READ_ONLY_TITLE}
+              title={canWrite ? `Delete ${workspaceNoun} secret` : READ_ONLY_TITLE}
             >
               <Trash2 className="h-3.5 w-3.5" />
             </button>
           </div>
         ))}
 
-        {globalSecrets.map((gs) => (
+        {showGlobalSecrets && globalSecrets.map((gs) => (
           <div key={`global-${gs.name}`} className="flex items-center gap-2 p-3 border-b border-gray-200 dark:border-gray-700 last:border-b-0 hover:bg-gray-100 dark:hover:bg-gray-700">
             <Checkbox
               id={`global-secret-${gs.name}`}
@@ -326,7 +343,7 @@ export const SecretSelectionSection: React.FC<SecretSelectionSectionProps> = ({
           </div>
         ))}
 
-        {sharedSecrets.map((secret) => (
+        {showSharedSecrets && sharedSecrets.map((secret) => (
           <div key={`shared-${secret.name}`} className="flex items-center gap-2 p-3 border-b border-gray-200 dark:border-gray-700 last:border-b-0 hover:bg-gray-100 dark:hover:bg-gray-700">
             <Checkbox
               id={`secret-${secret.name}`}

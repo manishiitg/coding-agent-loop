@@ -28,7 +28,7 @@ func gmailOAuthRedirectURIFromEnv() (string, error) {
 // description and its result payload, so the agent sees the diagnostic
 // decision tree whether it reads the description up front or only the
 // result -- and so it doesn't need to re-derive this reasoning itself.
-const gmailGrantMismatchNote = "granted_scopes reflects the last live check against Google, refreshed periodically -- it is the actual truth, unlike allow_read_access/services which are only the stored request. stored_but_not_granted lists every requested read/write level Google has not actually granted yet. If the user says they have NOT reconnected since requesting it, tell them to click Reconnect (or call update_gmail_connection_grants to get a fresh reconnect_url) and complete Google's consent screen. If the user says they HAVE already reconnected and it is still listed here, this is almost always because that exact scope is not registered on this OAuth client's consent screen in Google Cloud Console (APIs & Services -> OAuth consent screen -> Data Access) -- Google silently omits any requested-but-unregistered scope from the granted token even with a fresh consent prompt. Tell them the exact missing scope URL and that step, rather than asking them to describe what they see in the UI."
+const gmailGrantMismatchNote = "granted_scopes reflects the last SUCCESSFUL connection checked against Google, unlike allow_read_access/services which are only the stored request. stored_but_not_granted lists requested access missing from that last successful connection. A reconnect counts only when its browser callback says 'Gmail connected'. If the callback says 'Sign-in failed' (including a gog import error), the old granted_scopes remain visible: report that local callback failure and retry reconnect; do NOT infer a Google consent-screen scope problem from the stale scope list. If a successful reconnect still omits requested access, report the exact missing scope and investigate the returned grant, OAuth-client policy, organization policy, and consent restrictions. Do not claim that every scope must be manually registered in Google Cloud or that Google silently drops unregistered scopes; that is not a general requirement and must be supported by the concrete OAuth response before presenting it as the cause."
 
 // registerGmailConnectionManagementTools gives the workflow/builder agent a
 // chat-driven path to the same grant change the "Sending accounts" settings
@@ -160,6 +160,10 @@ func (api *StreamingAPI) updateGmailConnectionGrantsFromTool(ctx context.Context
 	if err != nil {
 		return "", err
 	}
+	updated, err = svc.EnsureConnectionOAuthClient(ctx, updated.ID)
+	if err != nil {
+		return "", fmt.Errorf("saved the new request, but could not prepare this legacy connection for reconnect: %w", err)
+	}
 
 	redirectURI, err := gmailOAuthRedirectURIFromEnv()
 	if err != nil {
@@ -210,8 +214,6 @@ type gmailConnectionStatusReport struct {
 	StoredButNotGranted []string                  `json:"stored_but_not_granted,omitempty"`
 }
 
-const gmailReadonlyScope = "https://www.googleapis.com/auth/gmail.readonly"
-
 func (api *StreamingAPI) listGmailConnectionsFromTool(_ context.Context, args map[string]interface{}) (string, error) {
 	svc := services.GetGmailService()
 	if svc == nil {
@@ -241,7 +243,7 @@ func (api *StreamingAPI) listGmailConnectionsFromTool(_ context.Context, args ma
 			Status:             string(conn.Status),
 			Enabled:            conn.Enabled,
 			GmailReadRequested: conn.AllowReadAccess,
-			GmailReadGranted:   services.GoogleScopesGrant(conn.Scopes, gmailReadonlyScope),
+			GmailReadGranted:   services.GoogleScopesGrant(conn.Scopes, services.GmailReadonlyScope),
 			GrantedScopes:      conn.Scopes,
 		}
 		if conn.AllowReadAccess && !report.GmailReadGranted {

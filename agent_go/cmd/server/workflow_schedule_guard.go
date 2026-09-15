@@ -56,7 +56,7 @@ func (api *StreamingAPI) scheduleCollisionCheck(workspacePath, sessionID, trigge
 			"schedule_id": run.ScheduleID, "run_id": run.RunID, "session_id": run.ActiveSessionID,
 			"started_at": run.StartedAt, "lease_expires_at": run.UpdatedAt.Add(schedulerstate.LeaseDuration),
 			"recovery_required": time.Since(run.UpdatedAt) > schedulerstate.LeaseDuration,
-			"message":           "This workflow has an active schedule. No action was performed. Show this warning to the user and wait for explicit approval before retrying this action with force=true. Do not bypass through shell or a background agent.",
+			"message":           "This workflow has an active schedule. No action was performed. Stop the current workflow-mutation batch, including different pending writes. Show one warning to the user and wait for explicit approval before retrying any of those actions with force=true. Do not bypass through shell or a background agent.",
 		})
 		return fmt.Errorf("%s", body)
 	}

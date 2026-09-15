@@ -46,8 +46,9 @@ native videos/traces remain controlled by the test configuration.
 
 ### Retention, concurrency, progress and runtime inputs
 
-- The server retains the latest 10 terminal webhook run folders per workflow,
-  independently of normal schedule retention. Active hooks are never pruned.
+- The server uses `workflow.json::run_retention_count` (default 10) for webhook
+  runs too, retaining that many terminal `-hook` folders independently of the
+  same-sized Builder and saved-schedule families. Active hooks are never pruned.
   Older run history remains; status shows artifacts_expired=true and downloads
   return 410 Gone. Do not promise permanent video/artifact storage; CI should
   download and archive artifacts before retention removes them.
@@ -78,6 +79,16 @@ native videos/traces remain controlled by the test configuration.
 - For create/update supply input_mode and allowed_variables; preserve existing
   values when editing unrelated configuration. An empty allowed_variables array
   removes override permission. Choose raw to restore native provider payloads.
+- When the sender's raw JSON shape cannot change, configure `payload_mappings`.
+  Each mapping has `source` (a top-level or dotted field such as `env`,
+  `$.component`, or `deployment.environment`), `values` (incoming scalar value
+  to saved ID), and an optional `default`. `group` maps to one allowed
+  `group_names` entry. `routes` is keyed by routing/branch step ID and maps to a
+  route ID on that exact step; fixed outer `route_selections` and mapped inner
+  branches are merged before execution. `step` maps to a standalone executable
+  step and cannot be combined with fixed or mapped routes. Missing, non-scalar,
+  or unmapped values fail with 400 unless a valid default is configured.
+  Mappings require `input_mode="raw"`; they never mutate the stored payload.
 - Validate with a harmless authorized dev test, check action=status, verify the
   chosen group and changed input through a step result, inspect progress and
   download an artifact. Also verify an unauthorized group/variable is rejected.
@@ -88,6 +99,72 @@ native videos/traces remain controlled by the test configuration.
 Webhook deliveries dispatch directly to the workflow plan executor with the saved route selections and validated group/variable inputs. They do not start a Builder chat or ask an agent to call `run_full_workflow`. Plan prerequisites and agent steps still run normally. An empty route selection runs the full plan. Scheduled jobs retain their existing execution path.
 
 Prepare and upgrade the workflow in Builder before testing the trigger; a webhook never edits or upgrades the plan. Poll the returned status URL (or use `manage_workflow_webhook` action `status`) for progress, step outputs, final success/failure and artifact links. The isolated `iteration-<n>-hook` folders, last-10 retention, cancellation, authentication, idempotency and no-Pulse policy still apply.
+
+### Payload-driven selection setup
+
+When the caller cannot change its raw JSON payload, the Builder can configure
+the mapping. Always call `manage_workflow_webhook(action="list")` first and use
+the exact returned group, routing/branch step, route, and executable-step IDs.
+Never infer an ID from its display label.
+
+For a payload such as:
+
+```json
+{"component":"service/review","env":"prod","commit_sha":"abc123"}
+```
+
+configure a fixed outer route plus mapped group and inner branch like this:
+
+```json
+{
+  "action": "update",
+  "id": "EXISTING_TRIGGER_ID",
+  "name": "Confida deployment",
+  "enabled": true,
+  "auth_mode": "bearer",
+  "input_mode": "raw",
+  "group_names": ["confida-prod", "confida-staging"],
+  "route_selections": {
+    "MAIN_ROUTING_STEP_ID": "regression"
+  },
+  "payload_mappings": {
+    "group": {
+      "source": "env",
+      "values": {
+        "prod": "confida-prod",
+        "staging": "confida-staging"
+      }
+    },
+    "routes": {
+      "COMPONENT_BRANCH_STEP_ID": {
+        "source": "component",
+        "values": {
+          "service/review": "review"
+        }
+      }
+    }
+  }
+}
+```
+
+`route_selections` and `payload_mappings.routes` use **step IDs as keys** and
+**route IDs as values**. The fixed outer route and mapped inner branch are
+merged and seeded before the full workflow starts; this is deterministic route
+selection, not human input. A mapped inner branch must lie on the selected
+outer path to execute. The selected branch then runs every connected downstream
+step, including shared steps after paths rejoin.
+
+To choose one standalone step instead, use `payload_mappings.step` with the
+same `{source, values, default?}` shape, keep `route_selections={}`, and omit
+fixed or mapped routes. Group mapping may still be used. The mapped target must
+be one of `list.steps`; routing, branch, human-input, and nested nodes are not
+standalone targets.
+
+After saving, run one harmless authorized test for each configured mapping
+value. Check the 202 receipt, then call `status` and verify the reported group
+and observed branch/step progress. Also test an unmapped value and confirm it
+returns 400 without creating a run. Never use a production-side-effecting route
+as a configuration probe.
 
 ### Single-step targets
 

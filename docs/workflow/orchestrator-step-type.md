@@ -168,7 +168,8 @@ were kept.
 - PLAT-027: async completion no longer falsely completes the parent.
 - PLAT-082: failed async children reported correctly.
 - PLAT-151: dead `context_to_pass` removed from routes.
-- PLAT-157: identifier boundary (`route_id` / `task_id` / `execution_id`).
+- PLAT-322: merged identifier and workflow-browser inheritance boundary
+  (`route_id` / `task_id` / `execution_id`).
 - PLAT-259: `branch` split from `routing`; route `sub_agent_step` types.
 - PLAT-269: scripted orchestrator path removed, dead todo list deleted,
   `todo_id` → `task_id`, orchestrator moved onto the message_sequence executor.

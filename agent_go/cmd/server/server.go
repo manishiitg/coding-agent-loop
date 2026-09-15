@@ -35,6 +35,7 @@ import (
 	"github.com/manishiitg/coding-agent-loop/agent_go/internal/platformtools"
 	"github.com/manishiitg/coding-agent-loop/agent_go/internal/sparkquillproduct"
 	"github.com/manishiitg/coding-agent-loop/agent_go/internal/videoproduct"
+	"github.com/manishiitg/coding-agent-loop/agent_go/internal/workproduct"
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/agentprofiles"
 	agent "github.com/manishiitg/coding-agent-loop/agent_go/pkg/agentwrapper"
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/chathistory"
@@ -578,8 +579,9 @@ type StreamingAPI struct {
 	workshopChatSessions sync.Map
 
 	// Cron scheduler service for scheduled workflow executions
-	scheduler          *SchedulerService
-	webhookInvocations sync.Map // session ID -> *step_based_workflow.WebhookInvocation; internal only
+	scheduler           *SchedulerService
+	webhookInvocations  sync.Map // session ID -> *step_based_workflow.WebhookInvocation; internal only
+	scheduleInvocations sync.Map // session ID -> *step_based_workflow.ScheduleInvocation; internal only
 
 	// Background completion loop tracking — prevents multiple loops per session
 	completionLoopStarted   map[string]bool
@@ -690,6 +692,10 @@ type QueryRequest struct {
 	AgentProfileID      string                      `json:"agent_profile_id,omitempty"`
 	AgentProfileVersion int                         `json:"agent_profile_version,omitempty"`
 	AgentProfileContext agentprofiles.PromptContext `json:"agent_profile_context,omitempty"`
+	// AgentProfileConversationKey lets the server re-resolve the product's
+	// authoritative manifest for this turn. It is never itself a filesystem
+	// authority: Work maps its workspace_id through the caller's current grants.
+	AgentProfileConversationKey string `json:"agent_profile_conversation_key,omitempty"`
 	// Code execution mode: When enabled, only virtual tools are added to LLM
 	// MCP tools are accessed through generated scripts using the on-demand HTTP API specification.
 	UseCodeExecutionMode bool `json:"use_code_execution_mode,omitempty"`
@@ -1831,6 +1837,20 @@ func runServer(cmd *cobra.Command, args []string) {
 			}
 		}
 	}
+	if productEnabled("work") {
+		if err := workproduct.RegisterProductSkills(); err != nil {
+			log.Fatalf("Failed to register Work skills: %v", err)
+		}
+		for _, profile := range workproduct.BuiltinAgentProfiles() {
+			profile.Product = "work"
+			if err := profileRegistry.RegisterProfile(profile); err != nil {
+				log.Fatalf("Failed to register Work agent profile: %v", err)
+			}
+		}
+		if err := workproduct.RegisterAgentProfileRuntime(profileRegistry, getWorkspaceAPIURL()); err != nil {
+			log.Fatalf("Failed to register Work agent profile runtime: %v", err)
+		}
+	}
 
 	api := &StreamingAPI{
 		config:                             config,
@@ -2041,6 +2061,11 @@ func runServer(cmd *cobra.Command, args []string) {
 	apiRouter.HandleFunc("/agent-profiles/{id}/conversations", api.handleListAgentProfileConversations).Methods("GET", "OPTIONS")
 	apiRouter.HandleFunc("/agent-profiles/{id}/conversations/{session_id}", api.handleDeleteAgentProfileConversation).Methods("DELETE", "OPTIONS")
 	apiRouter.HandleFunc("/agent-profiles/{id}/presentations/{presentationID}", api.handleAgentProfilePresentationDelete).Methods("DELETE", "OPTIONS")
+	apiRouter.HandleFunc("/work/folders", api.handleListWorkFolders).Methods("GET", "OPTIONS")
+	apiRouter.HandleFunc("/work/folders", api.handleAddWorkFolder).Methods("POST", "OPTIONS")
+	apiRouter.HandleFunc("/work/folders/{id}", api.handleDeleteWorkFolder).Methods("DELETE", "OPTIONS")
+	apiRouter.HandleFunc("/work/roots", api.handleGetWorkRoots).Methods("GET", "OPTIONS")
+	apiRouter.HandleFunc("/work/roots", api.handlePutWorkRoots).Methods("PUT", "OPTIONS")
 	apiRouter.HandleFunc("/health", api.handleHealth).Methods("GET")
 	apiRouter.HandleFunc("/capabilities", api.handleCapabilities).Methods("GET")
 	CLISecurityRoutes(apiRouter, api.cliSecurityStore)
@@ -2509,6 +2534,7 @@ func runServer(cmd *cobra.Command, args []string) {
 	}
 	SchedulerRoutes(router, schedulerSvc)
 	WorkflowWebhookRoutes(router, schedulerSvc)
+	ProductWebhookRoutes(router, productScheduleSvc)
 
 	// Workflow API routes
 	apiRouter.HandleFunc("/workflow/create", requireWorkflowCreateAccess(api.handleCreateWorkflow)).Methods("POST", "OPTIONS")
@@ -3320,6 +3346,10 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// A workflow may keep durable read-only links in workflow.json. Merge those
+	// with one-message # references before the common authorization boundary so
+	// both forms receive identical access checks and folder guards.
+	req.WorkflowContextPaths = mergeDurableWorkflowContextPaths(r.Context(), req.SelectedFolder, req.WorkflowContextPaths)
 	contextPaths, contextErr := authorizeWorkflowContextPaths(r.Context(), req.WorkflowContextPaths)
 	if contextErr != nil {
 		http.Error(w, contextErr.Error(), http.StatusForbidden)
@@ -3435,10 +3465,21 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 	// this point. Resolve it for backend delivery and strip it from agent env.
 	api.resolveNotificationSecretForRequest(r.Context(), currentUserID, req.SelectedFolder, &req)
 	// Browser names supplied by an agent (including the conventional "default")
-	// are public aliases. Bind them to this authenticated user (guests remain chat-scoped)
-	// before any browser executor can run so accounts never share cookies, tabs,
-	// recordings, or a browser process when working in the same workflow.
-	common.BindSessionBrowserIsolation(sessionID, currentUserID)
+	// are public aliases. Workflow sessions bind to a durable browser owned by
+	// the workflow, so all authorized users and runs retain its site state while
+	// unrelated workflows never share cookies, tabs, recordings or a process.
+	// Non-workflow chats retain the existing user boundary; guests remain chat-scoped.
+	browserWorkflowPath := ""
+	selected := strings.Trim(strings.TrimSpace(req.SelectedFolder), "/")
+	if selected == "" && strings.TrimSpace(req.PresetQueryID) != "" {
+		if resolved, resolveErr := api.resolveWorkspacePathFromPreset(r.Context(), req.PresetQueryID); resolveErr == nil {
+			selected = strings.Trim(strings.TrimSpace(resolved), "/")
+		}
+	}
+	if strings.HasPrefix(selected, "Workflow/") {
+		browserWorkflowPath = selected
+	}
+	common.BindSessionBrowserIsolationForWorkflow(sessionID, currentUserID, browserWorkflowPath)
 	common.SetSessionBrowserMode(sessionID, getBrowserMode(req))
 	// Keep configured browser intent on the request. In auto mode,
 	// agent_browser queries current CDP reachability at tool-call time.
@@ -4837,12 +4878,10 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 
 		// Create new agent with streamCtx instead of r.Context()
 		log.Printf("[AGENT CONFIG DEBUG] Creating agent with ServerName: %s, UseCodeExecutionMode: %v", serverList, useCodeExecutionMode)
-		profileTransportPolicy := ""
 		profileAgentToolsMode := ""
 		profileApprovalsMode := ""
 		var profileBridgeRoutingInstructions *string
 		if resolvedProfile != nil {
-			profileTransportPolicy = resolvedProfile.Definition.Runtime.Transport
 			profileAgentToolsMode = resolvedProfile.Definition.Runtime.AgentTools.Mode
 			profileApprovalsMode = resolvedProfile.Definition.Runtime.Approvals.Mode
 			if strings.EqualFold(profileAgentToolsMode, "hybrid") {
@@ -4853,7 +4892,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		allowPersistentInteractive := codingAgentRequestAllowsPersistentInteractive(&req, sessionID)
-		forceStructuredCodingAgent := codingAgentUsesStructuredTransportForChat(finalProvider, profileTransportPolicy, isWorkflowBuilderPhase && allowPersistentInteractive)
+		forceStructuredCodingAgent := codingAgentUsesStructuredTransportForChat(finalProvider, allowPersistentInteractive)
 		claudeCodePersistentInteractive, codexPersistentInteractive, cursorPersistentInteractive, piPersistentInteractive, musePersistentInteractive := codingAgentPersistentInteractiveFlags(finalProvider, allowPersistentInteractive, forceStructuredCodingAgent)
 		claudeCodeTransport := codingAgentClaudeCodeChatTransport(finalProvider)
 		if forceStructuredCodingAgent {
@@ -4874,8 +4913,8 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		if isWorkflowPhase && workflowPhaseFolder != "" && workflowPhaseFolder != "default_workspace" {
 			chatWorkingFolder = workflowPhaseFolder
 		}
-		workspace.SetSessionWorkingDir(sessionID, chatWorkingFolder)
 		chatWorkingDir := codingAgentWorkspaceWorkingDir(chatWorkingFolder)
+		workspace.SetSessionWorkingDir(sessionID, chatWorkingFolder)
 		sharedChatWorkingDir := chatWorkingDir
 		if isWorkflowPhase {
 			var isolationErr error
@@ -4885,15 +4924,22 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		}
-		cliWorkingPaths := []string{sharedChatWorkingDir}
+		cliReadPaths := []string{sharedChatWorkingDir}
+		cliWritePaths := []string{sharedChatWorkingDir}
 		if chatWorkingDir != sharedChatWorkingDir {
-			cliWorkingPaths = append(cliWorkingPaths, chatWorkingDir)
+			cliReadPaths = append(cliReadPaths, chatWorkingDir)
+			cliWritePaths = append(cliWritePaths, chatWorkingDir)
+		}
+		if resolvedProfile != nil && resolvedProfile.Definition.ID == "work" {
+			grantRead, grantWrite, _, _ := workFolderGuardInputs(r.Context())
+			cliReadPaths = appendUniqueStrings(cliReadPaths, grantRead...)
+			cliWritePaths = appendUniqueStrings(cliWritePaths, grantWrite...)
 		}
 		cliSecurityPolicy, err := api.cliSecurityStore.Resolve(
 			currentUserID,
 			finalProvider,
-			cliWorkingPaths,
-			cliWorkingPaths,
+			cliReadPaths,
+			cliWritePaths,
 		)
 		if err != nil {
 			logfWithContext(queryLogCtx, "[CLI_SECURITY] Failed to resolve policy: %v", err)
@@ -5239,12 +5285,36 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 					sandbox := resolvedProfile.Definition.Runtime.Sandbox
 					profileReadOnly := agentProfileReadOnlyFolders(sandbox, workflowReadOnlyFolders)
 					chatHistoryGrants := agentProfileChatHistoryGrants(sandbox, perUserChatHistory)
-					workspaceExecutors = wrapExecutorsWithPlanFolderGuard(workspaceExecutors, profileRoot, profileReadOnly, chatHistoryGrants...)
+					workGrantWrite := []string(nil)
+					workGrantReadOnly := []string(nil)
+					if resolvedProfile.Definition.ID == "work" {
+						// Owner-attached external folders: readable always,
+						// writable for read_write grants, exposed to tools
+						// as WORK_FOLDER_<ALIAS> session env.
+						grantRead, grantWrite, grantReadOnly, grantEnv := workFolderGuardInputs(r.Context())
+						profileReadOnly = append(profileReadOnly, grantRead...)
+						workGrantWrite = grantWrite
+						workGrantReadOnly = grantReadOnly
+						if len(grantEnv) > 0 {
+							common.SetSessionShellEnv(sessionID, grantEnv)
+						}
+						log.Printf("[WORK FOLDER GUARD] Applied %d attached folder(s) (write=%v)", len(grantRead), grantWrite)
+					}
+					executorWrite := append(append([]string{}, chatHistoryGrants...), workGrantWrite...)
+					workspaceExecutors = wrapExecutorsWithPlanFolderGuard(workspaceExecutors, profileRoot, profileReadOnly, executorWrite...)
 					workspace.SetSessionWorkingDir(sessionID, profileRoot)
 					workspace.SetSessionFolderGuard(sessionID,
 						append(append([]string{profileWrite}, chatHistoryGrants...), profileReadOnly...),
-						append([]string{profileWrite}, chatHistoryGrants...),
+						append(append([]string{profileWrite}, chatHistoryGrants...), workGrantWrite...),
 					)
+					if len(workGrantReadOnly) > 0 {
+						workspace.SetSessionFolderGuardBlockedWritePaths(sessionID, workGrantReadOnly)
+					}
+					if resolvedProfile.Definition.ID == "work" {
+						// Work uses the shared managed database boundary: migrations and
+						// row tools are allowed, while raw SQLite/WAL/SHM access is denied.
+						todo_creation_human.ConfigureManagedWorkflowDBSession(sessionID, profileRoot, true)
+					}
 					if sandbox.IsStrict() {
 						// The profile asked for the deny-by-default shell: only the
 						// paths above, system binaries and scratch exist for the
@@ -5322,6 +5392,11 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				todo_creation_human.RefreshWorkflowFolderAccessSession(sessionID, workflowPhaseFolder)
 				log.Printf("[WORKFLOW PHASE FOLDER GUARD] Applied workflow folder restriction (workflow writes: %v, chats read-only: %s, read-only: %v, blocked-write: %v)", writePaths, perUserChatsWrite, workflowReadOnlyFolders, fileContextBlockedWriteFolders)
 			}
+
+			// Coding-agent adapters project system instructions, selected skills,
+			// MCP config and provider metadata into the working directory. Keep
+			// those readable for the CLI but outside the agent's write authority.
+			protectManagedCodingAgentProjectionWrites(sessionID, chatWorkingFolder)
 
 			// Report the selected filesystem skills, not a restriction. Every
 			// branch above grants "skills/" wholesale, and this list is used
@@ -5526,7 +5601,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			}
 			log.Printf("[CUSTOM TOOLS] Registered %d custom tools with agent", registeredCount)
 
-			if err := api.registerAgentProfileTools(llmAgent, resolvedProfile, currentUserID, sessionID, req.SelectedFolder); err != nil {
+			if err := api.registerAgentProfileTools(llmAgent, toolGate, resolvedProfile, currentUserID, sessionID, req.SelectedFolder, req); err != nil {
 				logfWithContext(queryLogCtx, "[AGENT PROFILE] Failed to register tools: %v", err)
 				sendError(fmt.Sprintf("Failed to register agent profile tools: %v", err), true)
 				return
@@ -5546,6 +5621,16 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				sendError(fmt.Sprintf("Failed to register agent profile workflow runtime: %v", err), true)
 				return
 			}
+			if err := api.registerWorkBackgroundTools(llmAgent, resolvedProfile, req, sessionID, currentUserID); err != nil {
+				logfWithContext(queryLogCtx, "[WORK BACKGROUND] Failed to register tools: %v", err)
+				sendError(fmt.Sprintf("Failed to register Work background tools: %v", err), true)
+				return
+			}
+			if err := api.registerWorkDashboardTools(llmAgent, resolvedProfile, sessionID, currentUserID, req.SelectedFolder); err != nil {
+				logfWithContext(queryLogCtx, "[WORK DASHBOARD] Failed to register tools: %v", err)
+				sendError(fmt.Sprintf("Failed to register Work Dashboard tools: %v", err), true)
+				return
+			}
 
 			isToolBackedChat := !isWorkflowPhase
 			isAgentWorksChat := isToolBackedChat && resolvedProfile == nil
@@ -5559,9 +5644,13 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				}
 				logfWithContext(queryLogCtx, "[LLM TOOLS] Registered multi-agent LLM tools")
 
+				skillProductID := ""
+				if resolvedProfile != nil {
+					skillProductID = resolvedProfile.Definition.ID
+				}
 				if err := api.registerMultiAgentSkillTools(llmAgent, func(toolName string) bool {
 					return profileDisablesVirtualTool(resolvedProfile, toolName)
-				}); err != nil {
+				}, skillProductID); err != nil {
 					logfWithContext(queryLogCtx, "[SKILL TOOLS] Failed to register multi-agent skill tools: %v", err)
 					sendError(fmt.Sprintf("Failed to register multi-agent skill tools: %v", err), true)
 					return
@@ -5693,8 +5782,8 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				// read_skill can also serve a skill installed in this workspace
 				// but not attached, so a router skill names the specialists and
 				// the agent asks by name instead of shelling out to a path.
-				if underlying := llmAgent.GetUnderlyingAgent(); underlying != nil {
-					underlying.SetInstalledSkillResolver(installedSkillResolver(req.SelectedFolder))
+				if err := llmAgent.SetInstalledSkillResolver(installedSkillResolver(req.SelectedFolder)); err != nil {
+					logfWithContext(queryLogCtx, "[SKILLS] Failed to configure installed-skill resolver: %v", err)
 				}
 				if attached := skills.LoadAttachableIn(getWorkspaceAPIURL(), req.SelectedFolder, identitySkillNames); len(attached) > 0 {
 					attachedNames := make([]string, 0, len(attached))
@@ -5731,9 +5820,13 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			if resolvedProfile != nil {
 				promptCtx.ProfileID = resolvedProfile.Definition.ID
 				promptCtx.NativeCodingTools = strings.EqualFold(strings.TrimSpace(resolvedProfile.Definition.Runtime.AgentTools.Mode), "hybrid")
+				promptCtx.FeatureExtensions = agentprofiles.FeaturePromptExtensions(resolvedProfile.Definition)
 			}
 			if len(req.WorkflowContextPaths) > 0 {
 				promptCtx.WorkflowContext = buildWorkflowContextPrompt(req.WorkflowContextPaths, getWorkspaceAPIURL())
+			}
+			if resolvedProfile != nil && resolvedProfile.Definition.ID == "work" {
+				promptCtx.WorkFolders = workproduct.BuildAttachedFoldersPrompt(workFolderGrantsForClaims(r.Context(), GetUserFromContext(r.Context())))
 			}
 			// The full browser guide is a ~10KB on-demand skill; this is only a
 			// pointer so the agent knows the surface exists.
@@ -6025,6 +6118,11 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				// installWorkflowPhaseTools's doc comment.
 				if currentUserIsReadOnly {
 					phaseTemplateVars["WorkshopMode"] = "run"
+				} else {
+					// Workshop/Run is permission-derived. Ignore stale saved modes or
+					// client requests that attempt to put a writable workflow user on
+					// the read-only prompt and tool surface.
+					phaseTemplateVars["WorkshopMode"] = "workshop"
 				}
 				activeForCapabilities, _ := api.getActiveSession(sessionID)
 				phasePolicy := resolveWorkflowChatPolicy(phaseTemplateVars["WorkshopMode"], sessionID, req, activeForCapabilities, currentUserIsReadOnly)
@@ -6043,6 +6141,9 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				// The phase composer is shared with the assembled-prompt regression tests.
 				var phaseAdditions []string
 				if workflowPhaseID == workflowtypes.WorkflowStatusWorkflowBuilder {
+					if userPrompt := authenticatedWorkflowUserPrompt(GetUserFromContext(r.Context())); userPrompt != "" {
+						phaseAdditions = append(phaseAdditions, userPrompt)
+					}
 					if notificationPrompt := buildWorkflowNotificationInstructionsPrompt(req.NotificationRunSummaryInstructions, req.NotificationPulseSummaryInstructions); notificationPrompt != "" {
 						phaseAdditions = append(phaseAdditions, notificationPrompt)
 						log.Printf("[WORKFLOW_PHASE] Appended workflow notification preferences to %s system prompt", workflowPhaseID)
@@ -6778,6 +6879,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		persistSessionID := sessionID
 		persistConversationPath := ""
 		persistedHistoryForDisk := persistedHistory
+		var restoredPersistTarget *restoredChatHistoryPersistTarget
 		if target, ok, err := api.resolveRestoredCodingConversationPersistTarget(
 			currentUserID,
 			sessionID,
@@ -6789,6 +6891,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		); err != nil {
 			logfWithContext(queryLogCtx, "[CHAT_HISTORY] Failed to resolve restored coding-agent persistence target: %v", err)
 		} else if ok && target != nil {
+			restoredPersistTarget = target
 			persistSessionID = target.SessionID
 			persistConversationPath = target.ConversationPath
 			// Also deliberately unbounded — and the merge makes it sharper: this
@@ -6800,11 +6903,26 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				sessionID, persistSessionID, persistConversationPath, len(persistedHistoryForDisk))
 		}
 
-		// Persist normal chats to the user's global chat_history. Workflow
-		// conversations are persisted below in the workflow-scoped builder folder
-		// so /resume stays scoped to the workflow and global chat history is not
-		// polluted by workflow-only sessions.
 		botHistoryMeta := chatHistoryBotMetadataFromQuery(req)
+
+		// Work uses the same workspace-owned transcript layout as AgentWorks.
+		// When an older centrally stored chat is resumed, seed the local file first
+		// so its durable UI events and terminal snapshot survive the move.
+		if workConversationPath, ok := workProjectChatHistoryConversationPath(currentUserID, runtimeWorkspacePath, persistSessionID, time.Now()); ok {
+			if err := copyChatHistoryConversationIfNeeded(persistConversationPath, workConversationPath); err != nil {
+				logfWithContext(queryLogCtx, "[CHAT_HISTORY] Failed to move Work conversation into project workspace: %v", err)
+			} else {
+				persistConversationPath = workConversationPath
+				if restoredPersistTarget != nil {
+					restoredPersistTarget.ConversationPath = workConversationPath
+					api.rememberRestoredConversationPersistTarget(sessionID, *restoredPersistTarget)
+				}
+			}
+		}
+
+		// Persist ordinary personal/product chats to global chat_history, except
+		// Work projects which use the project-owned path selected above. Workflow
+		// conversations are persisted below in their workspace Builder folder.
 		if !isWorkflowPhase {
 			api.persistChatConversationToPathWithTerminalSession(persistSessionID, sessionID, req.AgentMode, currentUserID, persistedHistoryForDisk, chatRuntime, uiEvents, persistConversationPath, botHistoryMeta)
 		}
@@ -9650,6 +9768,9 @@ func (api *StreamingAPI) buildWorkshopConfig(
 	if invocation, ok := api.webhookInvocations.Load(sessionID); ok {
 		cfg.WebhookInvocation = invocation.(*todo_creation_human.WebhookInvocation)
 	}
+	if invocation, ok := api.scheduleInvocations.Load(sessionID); ok {
+		cfg.ScheduleInvocation = invocation.(*todo_creation_human.ScheduleInvocation)
+	}
 	cfg.ScheduleCollisionCheck = api.scheduleCollisionCheck(cfg.WorkspacePath, sessionID, req.TriggeredBy)
 	cfg.SkillFuncs = api.buildSkillCallbacks()
 	cfg.LLMToolsFuncs = api.buildLLMToolsCallbacks()
@@ -9775,6 +9896,32 @@ func (api *StreamingAPI) buildSchedulerCallbacks() *todo_creation_human.Schedule
 				if len(sched.RouteSelections) > 0 {
 					sb.WriteString(fmt.Sprintf("- **Route selections**: %v\n", sched.RouteSelections))
 				}
+				if strings.TrimSpace(sched.CollisionPolicy) != "" {
+					sb.WriteString(fmt.Sprintf("- **Collision policy**: %s\n", sched.CollisionPolicy))
+				}
+				concurrencyMode := strings.TrimSpace(sched.ConcurrencyMode)
+				if concurrencyMode == "" {
+					concurrencyMode = "sequential"
+				}
+				sb.WriteString(fmt.Sprintf("- **Concurrency mode**: %s\n", concurrencyMode))
+				if sched.MaxStartDelayMinutes > 0 {
+					sb.WriteString(fmt.Sprintf("- **Maximum start delay**: %d minutes\n", sched.MaxStartDelayMinutes))
+				}
+				if dependencyIDs := scheduleDependencyIDs(sched); len(dependencyIDs) > 0 {
+					sb.WriteString(fmt.Sprintf("- **Waits for schedules**: %v\n", dependencyIDs))
+					dependencyRelease := strings.TrimSpace(sched.AfterTerminalStatus)
+					if dependencyRelease == "" {
+						dependencyRelease = "completed"
+					}
+					sb.WriteString(fmt.Sprintf("- **Dependency release**: %s", dependencyRelease))
+					if sched.AfterDelayMinutes > 0 {
+						sb.WriteString(fmt.Sprintf(" + %d minute delay", sched.AfterDelayMinutes))
+					}
+					if strings.TrimSpace(sched.DependencyDeadline) != "" {
+						sb.WriteString(fmt.Sprintf("; deadline %s local", sched.DependencyDeadline))
+					}
+					sb.WriteString("\n")
+				}
 				if strings.TrimSpace(sched.DirectMessagesReason) != "" {
 					sb.WriteString(fmt.Sprintf("- **Direct message rationale**: %s\n", sched.DirectMessagesReason))
 				}
@@ -9811,28 +9958,31 @@ func (api *StreamingAPI) buildSchedulerCallbacks() *todo_creation_human.Schedule
 				}
 			}
 			newSched := WorkflowSchedule{
-				ID:                   generateScheduleID(),
-				Name:                 name,
-				CronExpression:       cronExpr,
-				Timezone:             timezone,
-				GroupNames:           groupNames,
-				RouteSelections:      routeSelections,
-				Enabled:              true,
-				Mode:                 mode,
-				Messages:             messages,
-				DirectMessagesReason: directMessagesReason,
-				WorkshopMode:         workshopMode,
-				ResumePrevious:       resumePrevious,
-				PulseReviewOnly:      pulseReviewOnly,
-				PulseMode:            strings.ToLower(strings.TrimSpace(policy.PulseMode)),
-				PulseModeReason:      strings.TrimSpace(policy.PulseModeReason),
-				ExecutionMode:        strings.TrimSpace(policy.ExecutionMode),
-				CollisionPolicy:      strings.TrimSpace(policy.CollisionPolicy),
-				MaxStartDelayMinutes: policy.MaxStartDelayMinutes,
-				AfterScheduleID:      strings.TrimSpace(policy.AfterScheduleID),
-				AfterTerminalStatus:  strings.TrimSpace(policy.AfterTerminalStatus),
-				AfterDelayMinutes:    policy.AfterDelayMinutes,
-				DependencyDeadline:   strings.TrimSpace(policy.DependencyDeadline),
+				ID:                       generateScheduleID(),
+				Name:                     name,
+				CronExpression:           cronExpr,
+				Timezone:                 timezone,
+				GroupNames:               groupNames,
+				RouteSelections:          routeSelections,
+				Enabled:                  true,
+				Mode:                     mode,
+				Messages:                 messages,
+				DirectMessagesReason:     directMessagesReason,
+				WorkshopMode:             workshopMode,
+				ResumePrevious:           resumePrevious,
+				PulseReviewOnly:          pulseReviewOnly,
+				PulseMode:                strings.ToLower(strings.TrimSpace(policy.PulseMode)),
+				PulseModeReason:          strings.TrimSpace(policy.PulseModeReason),
+				ExecutionMode:            strings.TrimSpace(policy.ExecutionMode),
+				CollisionPolicy:          strings.TrimSpace(policy.CollisionPolicy),
+				ConcurrencyMode:          strings.TrimSpace(policy.ConcurrencyMode),
+				ParallelRiskAcknowledged: policy.ParallelRiskAcknowledged,
+				MaxStartDelayMinutes:     policy.MaxStartDelayMinutes,
+				AfterScheduleID:          strings.TrimSpace(policy.AfterScheduleID),
+				AfterScheduleIDs:         normalizeScheduleDependencyIDs(policy.AfterScheduleIDs),
+				AfterTerminalStatus:      strings.TrimSpace(policy.AfterTerminalStatus),
+				AfterDelayMinutes:        policy.AfterDelayMinutes,
+				DependencyDeadline:       strings.TrimSpace(policy.DependencyDeadline),
 			}
 			if err := validateScheduleRuntimePolicy(newSched); err != nil {
 				return "", err
@@ -9897,24 +10047,38 @@ func (api *StreamingAPI) buildSchedulerCallbacks() *todo_creation_human.Schedule
 				return "", err
 			}
 			newSched := WorkflowSchedule{
-				ID:                   generateScheduleID(),
-				Name:                 name,
-				ScheduleType:         "calendar",
-				Timezone:             timezone,
-				CalendarItems:        calendarItems,
-				GroupNames:           groupNames,
-				Enabled:              true,
-				Mode:                 mode,
-				Messages:             messages,
-				DirectMessagesReason: directMessagesReason,
-				WorkshopMode:         workshopMode,
-				PulseMode:            strings.ToLower(strings.TrimSpace(policy.PulseMode)),
-				PulseModeReason:      strings.TrimSpace(policy.PulseModeReason),
+				ID:                       generateScheduleID(),
+				Name:                     name,
+				ScheduleType:             "calendar",
+				Timezone:                 timezone,
+				CalendarItems:            calendarItems,
+				GroupNames:               groupNames,
+				Enabled:                  true,
+				Mode:                     mode,
+				Messages:                 messages,
+				DirectMessagesReason:     directMessagesReason,
+				WorkshopMode:             workshopMode,
+				PulseMode:                strings.ToLower(strings.TrimSpace(policy.PulseMode)),
+				PulseModeReason:          strings.TrimSpace(policy.PulseModeReason),
+				CollisionPolicy:          strings.TrimSpace(policy.CollisionPolicy),
+				ConcurrencyMode:          strings.TrimSpace(policy.ConcurrencyMode),
+				ParallelRiskAcknowledged: policy.ParallelRiskAcknowledged,
+				MaxStartDelayMinutes:     policy.MaxStartDelayMinutes,
+				AfterScheduleIDs:         normalizeScheduleDependencyIDs(policy.AfterScheduleIDs),
+				AfterTerminalStatus:      strings.TrimSpace(policy.AfterTerminalStatus),
+				AfterDelayMinutes:        policy.AfterDelayMinutes,
+				DependencyDeadline:       strings.TrimSpace(policy.DependencyDeadline),
+			}
+			if err := validateScheduleRuntimePolicy(newSched); err != nil {
+				return "", err
 			}
 			if err := schedulepolicy.ValidatePulse(newSched.PulseMode, newSched.PulseModeReason); err != nil {
 				return "", err
 			}
 			manifest.Schedules = append(manifest.Schedules, newSched)
+			if err := ValidateManifest(manifest); err != nil {
+				return "", err
+			}
 			if err := WriteWorkflowManifest(ctx, workspacePath, manifest); err != nil {
 				return "", fmt.Errorf("failed to write manifest: %w", err)
 			}
@@ -10024,11 +10188,23 @@ func (api *StreamingAPI) buildSchedulerCallbacks() *todo_creation_human.Schedule
 				if policy.SetCollisionPolicy {
 					sched.CollisionPolicy = strings.TrimSpace(policy.CollisionPolicy)
 				}
+				if policy.SetConcurrencyMode {
+					sched.ConcurrencyMode = strings.TrimSpace(policy.ConcurrencyMode)
+					if sched.ConcurrencyMode != "parallel" && !policy.SetParallelRiskAcknowledged {
+						sched.ParallelRiskAcknowledged = false
+					}
+				}
+				if policy.SetParallelRiskAcknowledged {
+					sched.ParallelRiskAcknowledged = policy.ParallelRiskAcknowledged
+				}
 				if policy.SetMaxStartDelayMinutes {
 					sched.MaxStartDelayMinutes = policy.MaxStartDelayMinutes
 				}
 				if policy.SetAfterScheduleID {
 					sched.AfterScheduleID = strings.TrimSpace(policy.AfterScheduleID)
+				}
+				if policy.SetAfterScheduleIDs {
+					replaceScheduleDependencyIDs(sched, policy.AfterScheduleIDs, policy.SetAfterScheduleID)
 				}
 				if policy.SetAfterTerminalStatus {
 					sched.AfterTerminalStatus = strings.TrimSpace(policy.AfterTerminalStatus)
@@ -10183,6 +10359,17 @@ func (api *StreamingAPI) buildSchedulerCallbacks() *todo_creation_human.Schedule
 // buildSkillCallbacks creates SkillCallbacks that bridge the workshop tools
 // to the workspace skills API. Returns nil-safe callbacks.
 func (api *StreamingAPI) buildSkillCallbacks() *todo_creation_human.SkillCallbacks {
+	return api.buildSkillCallbacksForProduct("")
+}
+
+func skillSelectionHint(productID, skillNames string) string {
+	if strings.EqualFold(strings.TrimSpace(productID), "work") {
+		return fmt.Sprintf("%s can be loaded immediately with read_skill. To attach it automatically on future Work turns, select it in Setup > Skills; Work persists that selection in product.json.", skillNames)
+	}
+	return fmt.Sprintf("Use update_workflow_config to add %s to the workflow's selected skills.", skillNames)
+}
+
+func (api *StreamingAPI) buildSkillCallbacksForProduct(productID string) *todo_creation_human.SkillCallbacks {
 	wsURL := getWorkspaceAPIURL() // workspace container URL, not backend URL
 	return &todo_creation_human.SkillCallbacks{
 		ListSkills: func(ctx context.Context) (string, error) {
@@ -10216,7 +10403,7 @@ func (api *StreamingAPI) buildSkillCallbacks() *todo_creation_human.SkillCallbac
 			if !resp.Success {
 				return fmt.Sprintf("Failed to import skill: %s", resp.Error), nil
 			}
-			return fmt.Sprintf("Successfully imported skill **%s**. Use update_workflow_config to add it to the workflow's selected skills.", resp.SkillName), nil
+			return fmt.Sprintf("Successfully imported skill **%s**. %s", resp.SkillName, skillSelectionHint(productID, "It")), nil
 		},
 		DeleteSkill: func(ctx context.Context, folderName string) error {
 			err := skills.DeleteSkill(wsURL, folderName)
@@ -10249,15 +10436,19 @@ func (api *StreamingAPI) buildSkillCallbacks() *todo_creation_human.SkillCallbac
 			if len(result.InstalledSkills) == 0 {
 				return "No skills were installed. Check the source format (e.g., 'owner/repo@skill-name').", nil
 			}
-			return fmt.Sprintf("Successfully installed: %s. Use update_workflow_config to add to workflow's selected skills.", strings.Join(result.InstalledSkills, ", ")), nil
+			return fmt.Sprintf("Successfully installed: %s. %s", strings.Join(result.InstalledSkills, ", "), skillSelectionHint(productID, "These skills")), nil
 		},
 	}
 }
 
 func (api *StreamingAPI) registerMultiAgentSkillTools(registrar interface {
 	RegisterCustomTool(string, string, map[string]interface{}, func(context.Context, map[string]interface{}) (string, error), string) error
-}, disabled func(string) bool) error {
-	skillFuncs := api.buildSkillCallbacks()
+}, disabled func(string) bool, productID ...string) error {
+	activeProductID := ""
+	if len(productID) > 0 {
+		activeProductID = productID[0]
+	}
+	skillFuncs := api.buildSkillCallbacksForProduct(activeProductID)
 	if skillFuncs == nil {
 		return fmt.Errorf("skill callbacks unavailable")
 	}

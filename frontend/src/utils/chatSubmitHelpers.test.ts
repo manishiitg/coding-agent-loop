@@ -1,7 +1,24 @@
 import { describe, expect, it } from 'vitest'
 import type { AgentQueryRequest } from '../services/api-types'
 import type { ChatTab } from '../stores/useChatStore'
-import { applyAgentProfileBinding, buildAgentProfileChatRequest } from './chatSubmitHelpers'
+import { applyAgentProfileBinding, buildAgentProfileChatRequest, remainingWorkflowContextAfterSubmission } from './chatSubmitHelpers'
+
+describe('one-shot workflow references', () => {
+  const hdfc = { presetId: 'hdfc', label: 'HDFC', workspacePath: 'Workflow/HDFC' }
+  const icici = { presetId: 'icici', label: 'ICICI', workspacePath: 'Workflow/ICICI' }
+
+  it('consumes references captured by an accepted submission', () => {
+    expect(remainingWorkflowContextAfterSubmission([hdfc, icici], [hdfc, icici])).toEqual([])
+  })
+
+  it('preserves references added while the accepted submission was starting', () => {
+    expect(remainingWorkflowContextAfterSubmission([hdfc, icici], [hdfc])).toEqual([icici])
+  })
+
+  it('does nothing before a submission has been accepted', () => {
+    expect(remainingWorkflowContextAfterSubmission([hdfc], [])).toEqual([hdfc])
+  })
+})
 
 describe('agent profile query binding', () => {
   it('pins a product query to its profile version and workspace', () => {
@@ -31,7 +48,7 @@ describe('agent profile query binding', () => {
     expect(payload.agent_profile_id).toBeUndefined()
   })
 
-  it('reduces a broad AgentWorks request to the minimal profile-chat wire contract', () => {
+  it('keeps only the product-supported chat extras from the broad request', () => {
     const payload = {
       query: 'Explain today\'s portfolio changes',
       agent_mode: 'multi-agent',
@@ -39,13 +56,17 @@ describe('agent profile query binding', () => {
       model_id: 'gpt-5.6-sol',
       selected_folder: 'a/browser/chosen/path',
       enabled_servers: ['workspace_advanced'],
-      selected_skills: [{ name: 'builder-reference', path: 'SKILL.md' }],
+      selected_skills: ['builder-reference'],
+      workflow_context_paths: ['Workflow/customer-research'],
       restored_conversation_path: 'Chats/dominion-history.json',
     } as unknown as AgentQueryRequest
 
     expect(buildAgentProfileChatRequest(payload, 'project-123')).toEqual({
       message: 'Explain today\'s portfolio changes',
       conversation_key: 'project-123',
+      enabled_servers: ['workspace_advanced'],
+      selected_skills: ['builder-reference'],
+      workflow_context_paths: ['Workflow/customer-research'],
     })
   })
 

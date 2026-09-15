@@ -1,6 +1,7 @@
 package server
 
 import (
+	"errors"
 	"os"
 	"strings"
 	"testing"
@@ -88,7 +89,7 @@ func TestProviderSetupSessionStreamsInteractivePTY(t *testing.T) {
 	t.Cleanup(func() { providerSetupCommands = original })
 
 	manager := newProviderSetupManager()
-	session, err := manager.start("owner-1", "codex-cli", "authenticate", 100, 24, nil, nil)
+	session, err := manager.start("owner-1", "codex-cli", "authenticate", 100, 24, nil, nil, false)
 	if err != nil {
 		t.Fatalf("start setup: %v", err)
 	}
@@ -154,6 +155,7 @@ func TestProviderSetupSessionPassesSuppliedEnvironmentToTerminalProcess(t *testi
 		24,
 		[]string{"CURSOR_API_KEY=workflow-key"},
 		nil,
+		false,
 	)
 	if err != nil {
 		t.Fatalf("start setup: %v", err)
@@ -177,16 +179,102 @@ func TestProviderSetupSessionPassesSuppliedEnvironmentToTerminalProcess(t *testi
 	}
 }
 
+func TestProviderUsageSessionSubmitsAllowlistedCommand(t *testing.T) {
+	original := providerSetupCommands
+	providerSetupCommands = map[string]map[string]providerSetupCommand{
+		"claude-code": {
+			"usage": {
+				command: "/bin/sh",
+				args:    []string{"-c", `printf '❯'; IFS= read -r command; printf '\nsubmitted:%s\npwd:%s\n' "$command" "$PWD"`},
+			},
+		},
+	}
+	t.Cleanup(func() { providerSetupCommands = original })
+
+	manager := newProviderSetupManager()
+	session, err := manager.start("owner-1", "claude-code", "usage", 100, 24, nil, nil, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer manager.remove(session.id, true)
+
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		output := session.outputText()
+		if strings.Contains(output, "submitted:/usage") {
+			if !strings.Contains(output, "agentworks-provider-usage-") {
+				t.Fatalf("usage command did not run in a throwaway workspace: %q", output)
+			}
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatalf("usage command was not submitted; output=%q", session.outputText())
+}
+
+func TestProviderUsagePromptAndTrustDetection(t *testing.T) {
+	if !providerUsageTrustPrompt("claude-code", "❯ No, exit\n  Yes, I trust this folder") {
+		t.Fatal("Claude trust prompt was not detected")
+	}
+	if !providerUsageTrustPrompt("codex-cli", "Do you trust the contents of this directory?\nPress enter to continue") {
+		t.Fatal("Codex trust prompt was not detected")
+	}
+	if !providerUsageTrustPrompt("muse-cli", "Do you trust this workspace?\n> 1 Trust and continue") {
+		t.Fatal("Muse trust prompt was not detected")
+	}
+	for provider, prompt := range map[string]string{"claude-code": "❯", "codex-cli": "›", "muse-cli": "❯"} {
+		if !providerUsagePromptReady(provider, prompt) {
+			t.Fatalf("%s prompt was not detected", provider)
+		}
+	}
+}
+
 func TestProviderSetupRejectsCommandsOutsideAllowlist(t *testing.T) {
 	manager := newProviderSetupManager()
-	if _, err := manager.start("owner-1", "unknown", "install", 100, 24, nil, nil); err == nil {
+	if _, err := manager.start("owner-1", "unknown", "install", 100, 24, nil, nil, false); err == nil {
 		t.Fatal("expected unsupported provider error")
 	}
-	if _, err := manager.start("owner-1", "codex-cli", "shell", 100, 24, nil, nil); err == nil {
+	if _, err := manager.start("owner-1", "codex-cli", "shell", 100, 24, nil, nil, false); err == nil {
 		t.Fatal("expected unsupported action error")
 	}
-	if _, err := manager.start("owner-1", "codex-cli", "install", 100, 24, nil, nil); err == nil {
+	if _, err := manager.start("owner-1", "codex-cli", "install", 100, 24, nil, nil, false); err == nil {
 		t.Fatal("provider installation belongs to deployment, not an interactive setup session")
+	}
+}
+
+func TestProviderSetupCanReplaceRunningSession(t *testing.T) {
+	original := providerSetupCommands
+	providerSetupCommands = map[string]map[string]providerSetupCommand{
+		"codex-cli": {
+			"authenticate": {command: "/bin/sh", args: []string{"-c", "read answer"}},
+		},
+	}
+	t.Cleanup(func() { providerSetupCommands = original })
+
+	manager := newProviderSetupManager()
+	first, err := manager.start("owner-1", "codex-cli", "authenticate", 100, 24, nil, nil, false)
+	if err != nil {
+		t.Fatalf("start first setup: %v", err)
+	}
+	if _, err := manager.start("owner-1", "codex-cli", "authenticate", 100, 24, nil, nil, false); err == nil {
+		t.Fatal("expected a conflict without replacement")
+	} else {
+		var conflict *providerSetupConflictError
+		if !errors.As(err, &conflict) {
+			t.Fatalf("expected providerSetupConflictError, got %T: %v", err, err)
+		}
+	}
+
+	replacement, err := manager.start("owner-1", "codex-cli", "authenticate", 100, 24, nil, nil, true)
+	if err != nil {
+		t.Fatalf("replace setup: %v", err)
+	}
+	defer manager.remove(replacement.id, true)
+	if first.snapshot().Status != "cancelled" {
+		t.Fatalf("first setup status = %q, want cancelled", first.snapshot().Status)
+	}
+	if replacement.id == first.id || !replacement.isRunning() {
+		t.Fatalf("replacement was not started: %+v", replacement.snapshot())
 	}
 }
 
@@ -226,6 +314,21 @@ func TestProviderSetupAllowlistIncludesReviewedProviderActions(t *testing.T) {
 		}
 		if actual.command != expected.command || strings.Join(actual.args, "\x00") != strings.Join(expected.args, "\x00") {
 			t.Fatalf("unexpected %s inspection command: %#v", provider, actual)
+		}
+	}
+
+	usage := map[string]providerSetupCommand{
+		"claude-code": {command: "claude", args: []string{"--tools", ""}},
+		"codex-cli":   {command: "codex", args: []string{"--sandbox", "read-only", "--ask-for-approval", "never"}},
+		"muse-cli":    {command: "muse", args: []string{"--disable-shell", "--disable-write"}},
+	}
+	for provider, expected := range usage {
+		actual, ok := providerSetupCommands[provider]["usage"]
+		if !ok {
+			t.Fatalf("%s is missing its reviewed usage command", provider)
+		}
+		if actual.command != expected.command || strings.Join(actual.args, "\x00") != strings.Join(expected.args, "\x00") {
+			t.Fatalf("unexpected %s usage command: %#v", provider, actual)
 		}
 	}
 }

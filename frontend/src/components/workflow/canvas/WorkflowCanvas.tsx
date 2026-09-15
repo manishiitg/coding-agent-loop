@@ -2603,7 +2603,7 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
             setRouteTrace(null)
             setSelectedTrigger(null)
             focusTriggers()
-          }} className="absolute right-44 top-3 z-20 h-8 rounded-md border border-border bg-background/95 px-2 text-xs text-foreground shadow-sm hover:bg-muted" aria-label="Show triggers">Triggers {triggers.jobs.length}</button>
+          }} className="absolute right-48 top-3 z-20 h-8 rounded-md border border-border bg-background/95 px-2 text-xs text-foreground shadow-sm hover:bg-muted" aria-label="Show triggers">Triggers</button>
           {!!evaluationPlan?.steps.length && <button type="button" onClick={() => {
             setRouteTrace(null)
             setSelectedTrigger(null)
@@ -2611,7 +2611,7 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
             void fitView({ nodes: nodes.filter(node => node.data.isEvaluationStep || node.type === 'evaluation-group'),
               padding: 0.12, duration: 300, minZoom: FLOW_FIT_MIN_ZOOM, maxZoom: FLOW_FIT_MAX_ZOOM })
           }} className="absolute right-24 top-3 z-20 h-8 rounded-md border border-border bg-background/95 px-2 text-xs text-foreground shadow-sm hover:bg-muted"
-            aria-label="Show evaluation groups" title="Show evaluations grouped by route">Evals {evaluationPlan.steps.length}</button>}
+            aria-label="Show evaluation groups" title="Show evaluations grouped by route">Evaluation</button>}
           <button type="button" onClick={() => void fitView({ padding: FLOW_FIT_PADDING, duration: 300, minZoom: FLOW_FIT_MIN_ZOOM, maxZoom: FLOW_FIT_MAX_ZOOM })}
             className="absolute right-14 top-3 z-20 inline-flex h-8 w-8 items-center justify-center rounded-md border border-border bg-background/95 text-muted-foreground shadow-sm hover:bg-muted hover:text-foreground"
             aria-label="Fit plan to view" title="Fit plan to view">

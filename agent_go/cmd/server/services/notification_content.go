@@ -59,12 +59,12 @@ type NotificationSummarySection struct {
 
 // GmailContent is the Gmail-specific rendering. Every field is optional and
 // falls back: Subject → derived from the message's first line; HTMLBody → none;
-// CC → none; Attachments → none. The shared message remains the automatically
-// generated plain-text alternative when HTMLBody is present.
+// CC → none; Attachments → none. When HTMLBody is absent, the shared message is
+// escaped and sent as the single HTML body.
 type GmailContent struct {
 	Subject     string
 	CC          []string
-	HTMLBody    string   // optional rich HTML body; sent as a text/html alternative
+	HTMLBody    string   // optional complete rich HTML body
 	Attachments []string // absolute file paths on the server host (see Gmail raw send)
 }
 

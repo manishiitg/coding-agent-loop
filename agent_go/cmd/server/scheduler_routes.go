@@ -35,7 +35,7 @@ type ScheduledJobResponse struct {
 	Mode                 string                 `json:"mode,omitempty"`
 	Messages             []string               `json:"messages,omitempty"` // Predefined messages for workshop schedules
 	DirectMessagesReason string                 `json:"direct_messages_reason,omitempty"`
-	WorkshopMode         string                 `json:"workshop_mode,omitempty"`   // run (default) or optimizer
+	WorkshopMode         string                 `json:"workshop_mode,omitempty"`   // workshop for writable users; Run is access-derived
 	ResumePrevious       bool                   `json:"resume_previous,omitempty"` // Coding-agent CLI only: opt in to resume latest prior thread instead of fresh session
 	ScheduleType         string                 `json:"schedule_type,omitempty"`
 	CalendarItems        []CalendarScheduleItem `json:"calendar_items,omitempty"`
@@ -52,84 +52,96 @@ type ScheduledJobResponse struct {
 	ConsecutiveFailures  int                    `json:"consecutive_failures"`
 	// DeferredReason is set while a due product schedule is held back by its
 	// quiet rule (the user is active); empty otherwise.
-	DeferredReason       string     `json:"deferred_reason,omitempty"`
-	ExecutionMode        string     `json:"execution_mode,omitempty"`
-	CollisionPolicy      string     `json:"collision_policy,omitempty"`
-	MaxStartDelayMinutes int        `json:"max_start_delay_minutes,omitempty"`
-	AfterScheduleID      string     `json:"after_schedule_id,omitempty"`
-	AfterTerminalStatus  string     `json:"after_terminal_status,omitempty"`
-	AfterDelayMinutes    int        `json:"after_delay_minutes,omitempty"`
-	DependencyDeadline   string     `json:"dependency_deadline,omitempty"`
-	WaitingSince         *time.Time `json:"waiting_since,omitempty"`
-	WaitingUntil         *time.Time `json:"waiting_until,omitempty"`
-	WaitingReason        string     `json:"waiting_reason,omitempty"`
-	QueuedOccurrences    int        `json:"queued_occurrences,omitempty"`
-	MissedRunCount       int        `json:"missed_run_count,omitempty"`
-	LatestMissedRunAt    *time.Time `json:"latest_missed_run_at,omitempty"`
-	MissedRunReason      string     `json:"missed_run_reason,omitempty"`
-	PulseReviewOnly      bool       `json:"pulse_review_only,omitempty"`
-	PulseMode            string     `json:"pulse_mode,omitempty"`
-	PulseModeReason      string     `json:"pulse_mode_reason,omitempty"`
-	CreatedAt            string     `json:"created_at,omitempty"`
-	UpdatedAt            string     `json:"updated_at,omitempty"`
+	DeferredReason           string     `json:"deferred_reason,omitempty"`
+	ExecutionMode            string     `json:"execution_mode,omitempty"`
+	CollisionPolicy          string     `json:"collision_policy,omitempty"`
+	ConcurrencyMode          string     `json:"concurrency_mode,omitempty"`
+	ParallelRiskAcknowledged bool       `json:"parallel_risk_acknowledged,omitempty"`
+	MaxStartDelayMinutes     int        `json:"max_start_delay_minutes,omitempty"`
+	AfterScheduleID          string     `json:"after_schedule_id,omitempty"`
+	AfterScheduleIDs         []string   `json:"after_schedule_ids,omitempty"`
+	AfterTerminalStatus      string     `json:"after_terminal_status,omitempty"`
+	AfterDelayMinutes        int        `json:"after_delay_minutes,omitempty"`
+	DependencyDeadline       string     `json:"dependency_deadline,omitempty"`
+	WaitingSince             *time.Time `json:"waiting_since,omitempty"`
+	WaitingUntil             *time.Time `json:"waiting_until,omitempty"`
+	WaitingReason            string     `json:"waiting_reason,omitempty"`
+	QueuedOccurrences        int        `json:"queued_occurrences,omitempty"`
+	MissedRunCount           int        `json:"missed_run_count,omitempty"`
+	LatestMissedRunAt        *time.Time `json:"latest_missed_run_at,omitempty"`
+	MissedRunReason          string     `json:"missed_run_reason,omitempty"`
+	PulseReviewOnly          bool       `json:"pulse_review_only,omitempty"`
+	PulseMode                string     `json:"pulse_mode,omitempty"`
+	PulseModeReason          string     `json:"pulse_mode_reason,omitempty"`
+	CreatedAt                string     `json:"created_at,omitempty"`
+	UpdatedAt                string     `json:"updated_at,omitempty"`
 }
 
 // CreateScheduleRequest is the request body for creating a schedule.
 type CreateScheduleRequest struct {
-	WorkspacePath        string                 `json:"workspace_path"` // Required for workflow/workshop mode
-	Name                 string                 `json:"name"`
-	Description          string                 `json:"description,omitempty"`
-	ScheduleType         string                 `json:"schedule_type,omitempty"`
-	CronExpression       string                 `json:"cron_expression"`
-	Timezone             string                 `json:"timezone"`
-	CalendarItems        []CalendarScheduleItem `json:"calendar_items,omitempty"`
-	Enabled              bool                   `json:"enabled"`
-	TriggerPayload       json.RawMessage        `json:"trigger_payload,omitempty"`
-	GroupNames           []string               `json:"group_names,omitempty"`
-	RouteSelections      map[string]string      `json:"route_selections,omitempty"`
-	Mode                 string                 `json:"mode,omitempty"`
-	Messages             []string               `json:"messages,omitempty"` // Predefined messages for workshop schedules
-	DirectMessagesReason string                 `json:"direct_messages_reason,omitempty"`
-	WorkshopMode         string                 `json:"workshop_mode,omitempty"`   // run (default) or optimizer
-	ResumePrevious       *bool                  `json:"resume_previous,omitempty"` // Coding-agent CLI only: explicit true resumes latest prior thread; nil/false starts fresh
-	ExecutionMode        string                 `json:"execution_mode,omitempty"`
-	CollisionPolicy      string                 `json:"collision_policy,omitempty"`
-	MaxStartDelayMinutes int                    `json:"max_start_delay_minutes,omitempty"`
-	AfterScheduleID      string                 `json:"after_schedule_id,omitempty"`
-	AfterTerminalStatus  string                 `json:"after_terminal_status,omitempty"`
-	AfterDelayMinutes    int                    `json:"after_delay_minutes,omitempty"`
-	DependencyDeadline   string                 `json:"dependency_deadline,omitempty"`
-	PulseReviewOnly      bool                   `json:"pulse_review_only,omitempty"`
-	PulseMode            string                 `json:"pulse_mode,omitempty"`
-	PulseModeReason      string                 `json:"pulse_mode_reason,omitempty"`
+	EntityType               string                 `json:"entity_type,omitempty"`
+	ProductProfileID         string                 `json:"product_profile_id,omitempty"`
+	ProductProjectID         string                 `json:"product_project_id,omitempty"`
+	WorkspacePath            string                 `json:"workspace_path"` // Required for workflow/workshop mode
+	Name                     string                 `json:"name"`
+	Description              string                 `json:"description,omitempty"`
+	ScheduleType             string                 `json:"schedule_type,omitempty"`
+	CronExpression           string                 `json:"cron_expression"`
+	Timezone                 string                 `json:"timezone"`
+	CalendarItems            []CalendarScheduleItem `json:"calendar_items,omitempty"`
+	Enabled                  bool                   `json:"enabled"`
+	TriggerPayload           json.RawMessage        `json:"trigger_payload,omitempty"`
+	GroupNames               []string               `json:"group_names,omitempty"`
+	RouteSelections          map[string]string      `json:"route_selections,omitempty"`
+	Mode                     string                 `json:"mode,omitempty"`
+	Messages                 []string               `json:"messages,omitempty"` // Predefined messages for workshop schedules
+	DirectMessagesReason     string                 `json:"direct_messages_reason,omitempty"`
+	WorkshopMode             string                 `json:"workshop_mode,omitempty"`   // workshop for writable users; Run is access-derived
+	ResumePrevious           *bool                  `json:"resume_previous,omitempty"` // Coding-agent CLI only: explicit true resumes latest prior thread; nil/false starts fresh
+	ExecutionMode            string                 `json:"execution_mode,omitempty"`
+	CollisionPolicy          string                 `json:"collision_policy,omitempty"`
+	ConcurrencyMode          string                 `json:"concurrency_mode,omitempty"`
+	ParallelRiskAcknowledged bool                   `json:"parallel_risk_acknowledged,omitempty"`
+	MaxStartDelayMinutes     int                    `json:"max_start_delay_minutes,omitempty"`
+	AfterScheduleID          string                 `json:"after_schedule_id,omitempty"`
+	AfterScheduleIDs         []string               `json:"after_schedule_ids,omitempty"`
+	AfterTerminalStatus      string                 `json:"after_terminal_status,omitempty"`
+	AfterDelayMinutes        int                    `json:"after_delay_minutes,omitempty"`
+	DependencyDeadline       string                 `json:"dependency_deadline,omitempty"`
+	PulseReviewOnly          bool                   `json:"pulse_review_only,omitempty"`
+	PulseMode                string                 `json:"pulse_mode,omitempty"`
+	PulseModeReason          string                 `json:"pulse_mode_reason,omitempty"`
 }
 
 // UpdateScheduleRequest is the request body for updating a schedule.
 type UpdateScheduleRequest struct {
-	Name                 string                 `json:"name,omitempty"`
-	Description          string                 `json:"description,omitempty"`
-	ScheduleType         string                 `json:"schedule_type,omitempty"`
-	CronExpression       string                 `json:"cron_expression,omitempty"`
-	Timezone             string                 `json:"timezone,omitempty"`
-	CalendarItems        []CalendarScheduleItem `json:"calendar_items,omitempty"`
-	Enabled              *bool                  `json:"enabled,omitempty"`
-	TriggerPayload       json.RawMessage        `json:"trigger_payload,omitempty"`
-	GroupNames           []string               `json:"group_names,omitempty"`
-	RouteSelections      map[string]string      `json:"route_selections,omitempty"`
-	Mode                 string                 `json:"mode,omitempty"`
-	Messages             []string               `json:"messages,omitempty"` // Predefined messages for workshop schedules
-	DirectMessagesReason *string                `json:"direct_messages_reason,omitempty"`
-	WorkshopMode         string                 `json:"workshop_mode,omitempty"`   // run (default) or optimizer
-	ResumePrevious       *bool                  `json:"resume_previous,omitempty"` // Coding-agent CLI only: explicit true resumes latest prior thread; nil/false starts fresh
-	ExecutionMode        *string                `json:"execution_mode,omitempty"`
-	CollisionPolicy      *string                `json:"collision_policy,omitempty"`
-	MaxStartDelayMinutes *int                   `json:"max_start_delay_minutes,omitempty"`
-	AfterScheduleID      *string                `json:"after_schedule_id,omitempty"`
-	AfterTerminalStatus  *string                `json:"after_terminal_status,omitempty"`
-	AfterDelayMinutes    *int                   `json:"after_delay_minutes,omitempty"`
-	DependencyDeadline   *string                `json:"dependency_deadline,omitempty"`
-	PulseMode            *string                `json:"pulse_mode,omitempty"`
-	PulseModeReason      *string                `json:"pulse_mode_reason,omitempty"`
+	Name                     string                 `json:"name,omitempty"`
+	Description              string                 `json:"description,omitempty"`
+	ScheduleType             string                 `json:"schedule_type,omitempty"`
+	CronExpression           string                 `json:"cron_expression,omitempty"`
+	Timezone                 string                 `json:"timezone,omitempty"`
+	CalendarItems            []CalendarScheduleItem `json:"calendar_items,omitempty"`
+	Enabled                  *bool                  `json:"enabled,omitempty"`
+	TriggerPayload           json.RawMessage        `json:"trigger_payload,omitempty"`
+	GroupNames               []string               `json:"group_names,omitempty"`
+	RouteSelections          map[string]string      `json:"route_selections,omitempty"`
+	Mode                     string                 `json:"mode,omitempty"`
+	Messages                 []string               `json:"messages,omitempty"` // Predefined messages for workshop schedules
+	DirectMessagesReason     *string                `json:"direct_messages_reason,omitempty"`
+	WorkshopMode             string                 `json:"workshop_mode,omitempty"`   // workshop for writable users; Run is access-derived
+	ResumePrevious           *bool                  `json:"resume_previous,omitempty"` // Coding-agent CLI only: explicit true resumes latest prior thread; nil/false starts fresh
+	ExecutionMode            *string                `json:"execution_mode,omitempty"`
+	CollisionPolicy          *string                `json:"collision_policy,omitempty"`
+	ConcurrencyMode          *string                `json:"concurrency_mode,omitempty"`
+	ParallelRiskAcknowledged *bool                  `json:"parallel_risk_acknowledged,omitempty"`
+	MaxStartDelayMinutes     *int                   `json:"max_start_delay_minutes,omitempty"`
+	AfterScheduleID          *string                `json:"after_schedule_id,omitempty"`
+	AfterScheduleIDs         []string               `json:"after_schedule_ids,omitempty"`
+	AfterTerminalStatus      *string                `json:"after_terminal_status,omitempty"`
+	AfterDelayMinutes        *int                   `json:"after_delay_minutes,omitempty"`
+	DependencyDeadline       *string                `json:"dependency_deadline,omitempty"`
+	PulseMode                *string                `json:"pulse_mode,omitempty"`
+	PulseModeReason          *string                `json:"pulse_mode_reason,omitempty"`
 }
 
 type TriggerPulseRequest struct {
@@ -138,55 +150,58 @@ type TriggerPulseRequest struct {
 
 func buildJobResponse(workspacePath string, manifest *WorkflowManifest, sched WorkflowSchedule, state ScheduleRuntimeState, missed WorkflowScheduleMissedStatus) ScheduledJobResponse {
 	return ScheduledJobResponse{
-		StepID:               workflowWebhookDTO(sched).StepID,
-		ID:                   sched.ID,
-		Name:                 sched.Name,
-		Description:          sched.Description,
-		EntityType:           "workflow",
-		WorkspacePath:        workspacePath,
-		WorkflowID:           manifest.ID,
-		WorkflowLabel:        manifest.Label,
-		PresetQueryID:        manifest.ID,
-		TriggerPayload:       sched.TriggerPayload,
-		GroupNames:           sched.GroupNames,
-		RouteSelections:      sched.RouteSelections,
-		Mode:                 "workshop",
-		Messages:             sched.Messages,
-		DirectMessagesReason: sched.DirectMessagesReason,
-		WorkshopMode:         sched.WorkshopMode,
-		ResumePrevious:       sched.ShouldResumePrevious(),
-		ScheduleType:         scheduleTypeOrDefault(sched.ScheduleType),
-		CalendarItems:        sched.CalendarItems,
-		CronExpression:       sched.CronExpression,
-		Timezone:             sched.Timezone,
-		Enabled:              sched.Enabled,
-		LastRunAt:            state.LastRunAt,
-		NextRunAt:            state.NextRunAt,
-		LastSessionID:        state.LastSessionID,
-		LastStatus:           state.LastStatus,
-		LastError:            state.LastError,
-		LastDurationMs:       state.LastDurationMs,
-		RunCount:             state.RunCount,
-		ConsecutiveFailures:  state.ConsecutiveFailures,
-		ExecutionMode:        sched.ExecutionMode,
-		CollisionPolicy:      sched.CollisionPolicy,
-		MaxStartDelayMinutes: sched.MaxStartDelayMinutes,
-		AfterScheduleID:      sched.AfterScheduleID,
-		AfterTerminalStatus:  sched.AfterTerminalStatus,
-		AfterDelayMinutes:    sched.AfterDelayMinutes,
-		DependencyDeadline:   sched.DependencyDeadline,
-		WaitingSince:         state.WaitingSince,
-		WaitingUntil:         state.WaitingUntil,
-		WaitingReason:        state.WaitingReason,
-		QueuedOccurrences:    state.QueuedOccurrences,
-		MissedRunCount:       missed.MissedRunCount,
-		LatestMissedRunAt:    missed.LatestMissedRunAt,
-		MissedRunReason:      missed.MissedRunReason,
-		PulseReviewOnly:      sched.PulseReviewOnly,
-		PulseMode:            sched.PulseMode,
-		PulseModeReason:      sched.PulseModeReason,
-		CreatedAt:            manifest.CreatedAt,
-		UpdatedAt:            manifest.UpdatedAt,
+		StepID:                   workflowWebhookDTO(sched).StepID,
+		ID:                       sched.ID,
+		Name:                     sched.Name,
+		Description:              sched.Description,
+		EntityType:               "workflow",
+		WorkspacePath:            workspacePath,
+		WorkflowID:               manifest.ID,
+		WorkflowLabel:            manifest.Label,
+		PresetQueryID:            manifest.ID,
+		TriggerPayload:           sched.TriggerPayload,
+		GroupNames:               sched.GroupNames,
+		RouteSelections:          sched.RouteSelections,
+		Mode:                     "workshop",
+		Messages:                 sched.Messages,
+		DirectMessagesReason:     sched.DirectMessagesReason,
+		WorkshopMode:             sched.WorkshopMode,
+		ResumePrevious:           sched.ShouldResumePrevious(),
+		ScheduleType:             scheduleTypeOrDefault(sched.ScheduleType),
+		CalendarItems:            sched.CalendarItems,
+		CronExpression:           sched.CronExpression,
+		Timezone:                 sched.Timezone,
+		Enabled:                  sched.Enabled,
+		LastRunAt:                state.LastRunAt,
+		NextRunAt:                state.NextRunAt,
+		LastSessionID:            state.LastSessionID,
+		LastStatus:               state.LastStatus,
+		LastError:                state.LastError,
+		LastDurationMs:           state.LastDurationMs,
+		RunCount:                 state.RunCount,
+		ConsecutiveFailures:      state.ConsecutiveFailures,
+		ExecutionMode:            sched.ExecutionMode,
+		CollisionPolicy:          sched.CollisionPolicy,
+		ConcurrencyMode:          sched.ConcurrencyMode,
+		ParallelRiskAcknowledged: sched.ParallelRiskAcknowledged,
+		MaxStartDelayMinutes:     sched.MaxStartDelayMinutes,
+		AfterScheduleID:          sched.AfterScheduleID,
+		AfterScheduleIDs:         sched.AfterScheduleIDs,
+		AfterTerminalStatus:      sched.AfterTerminalStatus,
+		AfterDelayMinutes:        sched.AfterDelayMinutes,
+		DependencyDeadline:       sched.DependencyDeadline,
+		WaitingSince:             state.WaitingSince,
+		WaitingUntil:             state.WaitingUntil,
+		WaitingReason:            state.WaitingReason,
+		QueuedOccurrences:        state.QueuedOccurrences,
+		MissedRunCount:           missed.MissedRunCount,
+		LatestMissedRunAt:        missed.LatestMissedRunAt,
+		MissedRunReason:          missed.MissedRunReason,
+		PulseReviewOnly:          sched.PulseReviewOnly,
+		PulseMode:                sched.PulseMode,
+		PulseModeReason:          sched.PulseModeReason,
+		CreatedAt:                manifest.CreatedAt,
+		UpdatedAt:                manifest.UpdatedAt,
 	}
 }
 
@@ -239,6 +254,30 @@ func normalizeCalendarScheduleItems(items []CalendarScheduleItem) []CalendarSche
 		out = append(out, item)
 	}
 	return out
+}
+
+func normalizeScheduleDependencyIDs(ids []string) []string {
+	if ids == nil {
+		return nil
+	}
+	out := make([]string, len(ids))
+	for i, id := range ids {
+		out[i] = strings.TrimSpace(id)
+	}
+	return out
+}
+
+// replaceScheduleDependencyIDs applies the canonical list update. The legacy
+// singular field remains a read-compatible input, but it must not survive as a
+// hidden extra dependency when a caller replaces the list.
+func replaceScheduleDependencyIDs(schedule *WorkflowSchedule, ids []string, legacySupplied bool) {
+	if schedule == nil {
+		return
+	}
+	schedule.AfterScheduleIDs = normalizeScheduleDependencyIDs(ids)
+	if !legacySupplied {
+		schedule.AfterScheduleID = ""
+	}
 }
 
 type badRequestError string
@@ -307,12 +346,12 @@ func SchedulerRoutes(router *mux.Router, svc *SchedulerService) {
 	apiRouter.HandleFunc("/config", getSchedulerConfigHandler(svc)).Methods("GET", "OPTIONS")
 	apiRouter.HandleFunc("/config", requireWorkflowWriteAccess(updateSchedulerConfigHandler(svc))).Methods("PUT", "OPTIONS")
 	apiRouter.HandleFunc("/jobs", listScheduledJobsHandler(svc)).Methods("GET", "OPTIONS")
-	apiRouter.HandleFunc("/jobs", requireWorkflowWriteAccess(createScheduledJobHandler(svc))).Methods("POST", "OPTIONS")
+	apiRouter.HandleFunc("/jobs", createScheduledJobHandler(svc)).Methods("POST", "OPTIONS")
 	apiRouter.HandleFunc("/jobs/{id}", getScheduledJobHandler(svc)).Methods("GET", "OPTIONS")
-	apiRouter.HandleFunc("/jobs/{id}", requireWorkflowWriteAccess(updateScheduledJobHandler(svc))).Methods("PUT", "OPTIONS")
-	apiRouter.HandleFunc("/jobs/{id}", requireWorkflowWriteAccess(deleteScheduledJobHandler(svc))).Methods("DELETE", "OPTIONS")
-	apiRouter.HandleFunc("/jobs/{id}/enable", requireWorkflowWriteAccess(enableScheduledJobHandler(svc))).Methods("POST", "OPTIONS")
-	apiRouter.HandleFunc("/jobs/{id}/disable", requireWorkflowWriteAccess(disableScheduledJobHandler(svc))).Methods("POST", "OPTIONS")
+	apiRouter.HandleFunc("/jobs/{id}", updateScheduledJobHandler(svc)).Methods("PUT", "OPTIONS")
+	apiRouter.HandleFunc("/jobs/{id}", deleteScheduledJobHandler(svc)).Methods("DELETE", "OPTIONS")
+	apiRouter.HandleFunc("/jobs/{id}/enable", enableScheduledJobHandler(svc)).Methods("POST", "OPTIONS")
+	apiRouter.HandleFunc("/jobs/{id}/disable", disableScheduledJobHandler(svc)).Methods("POST", "OPTIONS")
 	apiRouter.HandleFunc("/jobs/{id}/trigger", triggerScheduledJobHandler(svc)).Methods("POST", "OPTIONS")
 	apiRouter.HandleFunc("/workflows/pulse-run", requireWorkflowWriteAccess(triggerWorkflowPulseHandler(svc))).Methods("POST", "OPTIONS")
 	apiRouter.HandleFunc("/jobs/{id}/stop", stopScheduledJobHandler(svc)).Methods("POST", "OPTIONS")
@@ -501,6 +540,29 @@ func createScheduledJobHandler(svc *SchedulerService) http.HandlerFunc {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
+		if req.EntityType == "product" {
+			if svc == nil || svc.api == nil || svc.api.productSchedules == nil {
+				http.Error(w, "product schedules are not available", http.StatusNotFound)
+				return
+			}
+			if len(req.Messages) != 1 || strings.TrimSpace(req.Messages[0]) == "" {
+				http.Error(w, "a Work project schedule requires exactly one message", http.StatusBadRequest)
+				return
+			}
+			job, err := svc.api.productSchedules.CreateProjectSchedule(r.Context(), productWorkspaceUserID(r.Context()), req.ProductProfileID, req.ProductProjectID, productschedule.Schedule{
+				Name: req.Name, Description: req.Description, Enabled: req.Enabled,
+				CronExpression: req.CronExpression, Timezone: scheduleTimezoneOrDefault(req.Timezone), Messages: req.Messages,
+			})
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+			runsWorkspace, _ := svc.api.productSchedules.RunsWorkspace(r.Context(), job)
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusCreated)
+			_ = json.NewEncoder(w).Encode(svc.api.productSchedules.jobResponse(job, runsWorkspace))
+			return
+		}
 		if req.WorkspacePath != "" && !requireWorkflowOwner(w, r, req.WorkspacePath) {
 			return
 		}
@@ -539,32 +601,35 @@ func createScheduledJobHandler(svc *SchedulerService) http.HandlerFunc {
 
 		// Create new schedule
 		newSched := WorkflowSchedule{
-			ID:                   uuid.New().String(),
-			Name:                 req.Name,
-			Description:          req.Description,
-			ScheduleType:         scheduleTypeOrDefault(req.ScheduleType),
-			CronExpression:       req.CronExpression,
-			Timezone:             req.Timezone,
-			CalendarItems:        normalizeCalendarScheduleItems(req.CalendarItems),
-			Enabled:              req.Enabled,
-			TriggerPayload:       req.TriggerPayload,
-			GroupNames:           req.GroupNames,
-			RouteSelections:      req.RouteSelections,
-			Mode:                 mode,
-			Messages:             req.Messages,
-			DirectMessagesReason: req.DirectMessagesReason,
-			WorkshopMode:         req.WorkshopMode,
-			ResumePrevious:       req.ResumePrevious,
-			ExecutionMode:        strings.TrimSpace(req.ExecutionMode),
-			CollisionPolicy:      strings.TrimSpace(req.CollisionPolicy),
-			MaxStartDelayMinutes: req.MaxStartDelayMinutes,
-			AfterScheduleID:      strings.TrimSpace(req.AfterScheduleID),
-			AfterTerminalStatus:  strings.TrimSpace(req.AfterTerminalStatus),
-			AfterDelayMinutes:    req.AfterDelayMinutes,
-			DependencyDeadline:   strings.TrimSpace(req.DependencyDeadline),
-			PulseReviewOnly:      req.PulseReviewOnly,
-			PulseMode:            strings.ToLower(strings.TrimSpace(req.PulseMode)),
-			PulseModeReason:      strings.TrimSpace(req.PulseModeReason),
+			ID:                       uuid.New().String(),
+			Name:                     req.Name,
+			Description:              req.Description,
+			ScheduleType:             scheduleTypeOrDefault(req.ScheduleType),
+			CronExpression:           req.CronExpression,
+			Timezone:                 req.Timezone,
+			CalendarItems:            normalizeCalendarScheduleItems(req.CalendarItems),
+			Enabled:                  req.Enabled,
+			TriggerPayload:           req.TriggerPayload,
+			GroupNames:               req.GroupNames,
+			RouteSelections:          req.RouteSelections,
+			Mode:                     mode,
+			Messages:                 req.Messages,
+			DirectMessagesReason:     req.DirectMessagesReason,
+			WorkshopMode:             req.WorkshopMode,
+			ResumePrevious:           req.ResumePrevious,
+			ExecutionMode:            strings.TrimSpace(req.ExecutionMode),
+			CollisionPolicy:          strings.TrimSpace(req.CollisionPolicy),
+			ConcurrencyMode:          strings.TrimSpace(req.ConcurrencyMode),
+			ParallelRiskAcknowledged: req.ParallelRiskAcknowledged,
+			MaxStartDelayMinutes:     req.MaxStartDelayMinutes,
+			AfterScheduleID:          strings.TrimSpace(req.AfterScheduleID),
+			AfterScheduleIDs:         normalizeScheduleDependencyIDs(req.AfterScheduleIDs),
+			AfterTerminalStatus:      strings.TrimSpace(req.AfterTerminalStatus),
+			AfterDelayMinutes:        req.AfterDelayMinutes,
+			DependencyDeadline:       strings.TrimSpace(req.DependencyDeadline),
+			PulseReviewOnly:          req.PulseReviewOnly,
+			PulseMode:                strings.ToLower(strings.TrimSpace(req.PulseMode)),
+			PulseModeReason:          strings.TrimSpace(req.PulseModeReason),
 		}
 
 		if err := schedulepolicy.ValidatePulse(newSched.PulseMode, newSched.PulseModeReason); err != nil {
@@ -756,11 +821,23 @@ func updateScheduledJobHandler(svc *SchedulerService) http.HandlerFunc {
 		if req.CollisionPolicy != nil {
 			sched.CollisionPolicy = strings.TrimSpace(*req.CollisionPolicy)
 		}
+		if req.ConcurrencyMode != nil {
+			sched.ConcurrencyMode = strings.TrimSpace(*req.ConcurrencyMode)
+			if sched.ConcurrencyMode != "parallel" && req.ParallelRiskAcknowledged == nil {
+				sched.ParallelRiskAcknowledged = false
+			}
+		}
+		if req.ParallelRiskAcknowledged != nil {
+			sched.ParallelRiskAcknowledged = *req.ParallelRiskAcknowledged
+		}
 		if req.MaxStartDelayMinutes != nil {
 			sched.MaxStartDelayMinutes = *req.MaxStartDelayMinutes
 		}
 		if req.AfterScheduleID != nil {
 			sched.AfterScheduleID = strings.TrimSpace(*req.AfterScheduleID)
+		}
+		if req.AfterScheduleIDs != nil {
+			replaceScheduleDependencyIDs(sched, req.AfterScheduleIDs, req.AfterScheduleID != nil)
 		}
 		if req.AfterTerminalStatus != nil {
 			sched.AfterTerminalStatus = strings.TrimSpace(*req.AfterTerminalStatus)
@@ -1075,37 +1152,43 @@ func getScheduledJobRunsHandler(svc *SchedulerService) http.HandlerFunc {
 
 		// Map to response format compatible with frontend ScheduledJobRun
 		type RunResponse struct {
-			ID            string              `json:"id"`
-			JobID         string              `json:"job_id"`
-			TriggerSource string              `json:"trigger_source,omitempty"`
-			Webhook       *WebhookRunMetadata `json:"webhook,omitempty"`
-			ScheduledFor  *time.Time          `json:"scheduled_for,omitempty"`
-			RunFolder     string              `json:"run_folder,omitempty"`
-			SessionID     string              `json:"session_id,omitempty"`
-			Status        string              `json:"status"`
-			Error         string              `json:"error,omitempty"`
-			DurationMs    *int64              `json:"duration_ms,omitempty"`
-			GroupNames    []string            `json:"group_names,omitempty"`
-			StartedAt     time.Time           `json:"started_at"`
-			CompletedAt   *time.Time          `json:"completed_at,omitempty"`
+			ID                       string              `json:"id"`
+			JobID                    string              `json:"job_id"`
+			TriggerSource            string              `json:"trigger_source,omitempty"`
+			Webhook                  *WebhookRunMetadata `json:"webhook,omitempty"`
+			ScheduledFor             *time.Time          `json:"scheduled_for,omitempty"`
+			RunFolder                string              `json:"run_folder,omitempty"`
+			ConcurrencyMode          string              `json:"concurrency_mode,omitempty"`
+			ParallelRiskAcknowledged bool                `json:"parallel_risk_acknowledged,omitempty"`
+			ArtifactsExpired         bool                `json:"artifacts_expired,omitempty"`
+			SessionID                string              `json:"session_id,omitempty"`
+			Status                   string              `json:"status"`
+			Error                    string              `json:"error,omitempty"`
+			DurationMs               *int64              `json:"duration_ms,omitempty"`
+			GroupNames               []string            `json:"group_names,omitempty"`
+			StartedAt                time.Time           `json:"started_at"`
+			CompletedAt              *time.Time          `json:"completed_at,omitempty"`
 		}
 
 		var respRuns []RunResponse
 		for _, run := range runs {
 			respRuns = append(respRuns, RunResponse{
-				ID:            run.ID,
-				JobID:         id,
-				TriggerSource: run.TriggerSource,
-				Webhook:       run.Webhook,
-				ScheduledFor:  run.ScheduledFor,
-				RunFolder:     run.RunFolder,
-				SessionID:     run.SessionID,
-				Status:        run.Status,
-				Error:         run.Error,
-				DurationMs:    run.DurationMs,
-				GroupNames:    run.GroupNames,
-				StartedAt:     run.StartedAt,
-				CompletedAt:   run.CompletedAt,
+				ID:                       run.ID,
+				JobID:                    id,
+				TriggerSource:            run.TriggerSource,
+				Webhook:                  run.Webhook,
+				ScheduledFor:             run.ScheduledFor,
+				RunFolder:                run.RunFolder,
+				ConcurrencyMode:          run.ConcurrencyMode,
+				ParallelRiskAcknowledged: run.ParallelRiskAcknowledged,
+				ArtifactsExpired:         scheduleArtifactsExpired(workspacePath, run.ID) || webhookArtifactsExpired(workspacePath, run.ID),
+				SessionID:                run.SessionID,
+				Status:                   run.Status,
+				Error:                    run.Error,
+				DurationMs:               run.DurationMs,
+				GroupNames:               run.GroupNames,
+				StartedAt:                run.StartedAt,
+				CompletedAt:              run.CompletedAt,
 			})
 		}
 
@@ -1149,7 +1232,9 @@ func productScheduleJobResponses(r *http.Request, svc *SchedulerService, enabled
 // schedule ids ("product:<profile>:<schedule>"); false means the id is a
 // workflow schedule and the caller continues as before.
 func handleProductScheduleJob(w http.ResponseWriter, r *http.Request, svc *SchedulerService, id, action string) bool {
-	if _, _, ok := parseProductScheduleJobID(id); !ok {
+	_, _, productOK := parseProductScheduleJobID(id)
+	_, _, _, projectOK := parseProjectScheduleJobID(id)
+	if !productOK && !projectOK {
 		return false
 	}
 	w.Header().Set("Content-Type", "application/json")
@@ -1229,6 +1314,52 @@ func handleProductScheduleJob(w http.ResponseWriter, r *http.Request, svc *Sched
 			return true
 		}
 		_ = json.NewEncoder(w).Encode(map[string]interface{}{"runs": runs, "total": total, "limit": limit, "offset": offset})
+	case "update":
+		if !projectOK {
+			http.Error(w, "product schedules are declared by the product and cannot be edited here", http.StatusMethodNotAllowed)
+			return true
+		}
+		var req UpdateScheduleRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return true
+		}
+		updated, err := ps.UpdateProjectSchedule(ctx, userID, id, func(schedule *productschedule.Schedule) {
+			if req.Name != "" {
+				schedule.Name = req.Name
+			}
+			if req.Description != "" {
+				schedule.Description = req.Description
+			}
+			if req.CronExpression != "" {
+				schedule.CronExpression = req.CronExpression
+			}
+			if req.Timezone != "" {
+				schedule.Timezone = req.Timezone
+			}
+			if req.Enabled != nil {
+				schedule.Enabled = *req.Enabled
+			}
+			if req.Messages != nil {
+				schedule.Messages = req.Messages
+			}
+		})
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return true
+		}
+		runsWorkspace, _ := ps.RunsWorkspace(ctx, updated)
+		_ = json.NewEncoder(w).Encode(ps.jobResponse(updated, runsWorkspace))
+	case "delete":
+		if !projectOK {
+			http.Error(w, "product schedules are declared by the product and cannot be deleted here", http.StatusMethodNotAllowed)
+			return true
+		}
+		if err := ps.DeleteProjectSchedule(ctx, userID, id); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return true
+		}
+		w.WriteHeader(http.StatusNoContent)
 	default:
 		// A product declares its schedules in product.yaml; users only
 		// enable, disable and trigger them.

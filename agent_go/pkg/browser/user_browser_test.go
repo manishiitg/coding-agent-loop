@@ -11,8 +11,8 @@ import (
 	"time"
 )
 
-func TestUserBrowserSurvivesWorkflowCleanupAndCaptureProtectsLifetime(t *testing.T) {
-	session := common.BrowserSessionNamespace("alice", "") + "--browser"
+func TestWorkflowBrowserSurvivesWorkflowCleanupAndCaptureProtectsLifetime(t *testing.T) {
+	session := common.WorkflowBrowserSessionNamespace("alice", "", "Workflow/one") + "--browser"
 	tracker := &SessionTracker{sessions: map[string]*browserSessionInfo{}}
 	tracker.Touch(session, "builder", "run")
 	tracker.Touch(session, "step", "run")
@@ -43,9 +43,10 @@ func TestUserBrowserSurvivesWorkflowCleanupAndCaptureProtectsLifetime(t *testing
 		t.Fatal("finished recording blocks browser")
 	}
 }
-func TestUserBrowserCommandsShareGateAcrossChatAliases(t *testing.T) {
-	for _, id := range []string{"one", "two"} {
-		common.BindSessionBrowserIsolation(id, "alice")
+func TestWorkflowBrowserCommandsShareGateAcrossUsersAndChatAliases(t *testing.T) {
+	for i, id := range []string{"one", "two"} {
+		user := []string{"alice", "bob"}[i]
+		common.BindSessionBrowserIsolationForWorkflow(id, user, "Workflow/research")
 		defer common.ClearSessionShellConfig(id)
 	}
 	release, err := AcquireBrowserAutomation(context.Background(), common.ResolveBrowserSessionID("one", "main"))
@@ -57,7 +58,7 @@ func TestUserBrowserCommandsShareGateAcrossChatAliases(t *testing.T) {
 	defer cancel()
 	if other, err := AcquireBrowserAutomation(ctx, common.ResolveBrowserSessionID("two", "ai-news")); err == nil {
 		other()
-		t.Fatal("same user's commands ran concurrently")
+		t.Fatal("same workflow's commands ran concurrently")
 	}
 	other, err := AcquireBrowserAutomation(context.Background(), common.BrowserSessionNamespace("bob", "")+"--browser")
 	if err != nil {
@@ -66,11 +67,11 @@ func TestUserBrowserCommandsShareGateAcrossChatAliases(t *testing.T) {
 	other()
 }
 
-func TestUserBrowserExecutorSharesBuilderWorkflowAndCapture(t *testing.T) {
+func TestWorkflowBrowserExecutorSharesBuilderWorkflowAndCapture(t *testing.T) {
 	t.Setenv("AGENT_BROWSER_SHARED_PROFILE", "/data/browser-profile")
 	t.Setenv("AGENT_BROWSER_CDP_ENABLED", "false")
 	const parent, child = "routing-builder", "routing-step"
-	common.BindSessionBrowserIsolation(parent, "alice")
+	common.BindSessionBrowserIsolationForWorkflow(parent, "alice", "Workflow/demo")
 	common.SetSessionBrowserNamespace(child, common.GetSessionShellConfig(parent).BrowserSessionNamespace)
 	common.SetSessionBrowserSessionID(child, "old-workflow-specific-browser")
 	for _, id := range []string{parent, child} {
@@ -87,7 +88,7 @@ func TestUserBrowserExecutorSharesBuilderWorkflowAndCapture(t *testing.T) {
 			opens++
 			var req ShellExecuteRequest
 			_ = json.NewDecoder(r.Body).Decode(&req)
-			if !strings.Contains(req.Command, "--session "+expected) || !strings.Contains(req.Command, "/data/browser-profile-users/"+expected) {
+			if !strings.Contains(req.Command, "--session "+expected) || !strings.Contains(req.Command, "/data/browser-profile-workflows/"+expected) {
 				t.Errorf("wrong browser/profile: %s", req.Command)
 			}
 			_ = json.NewEncoder(w).Encode(APIResponse{Success: true, Data: ShellExecuteResponse{Stdout: `{"success":true}`, ExitCode: 0}})

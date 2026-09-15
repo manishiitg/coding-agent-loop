@@ -1,9 +1,8 @@
 import { stripRetiredLLMFallbacks } from '../../utils/retiredLLMFallbacks'
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
 import { useShallow } from 'zustand/react/shallow'
-import { ArrowLeft, CheckCircle2, ChevronDown, ChevronRight, Loader2, Lock, RefreshCw, Search, X } from 'lucide-react'
+import { ArrowLeft, CheckCircle2, ChevronDown, ChevronRight, Loader2, Lock, RefreshCw, Search } from 'lucide-react'
 import LLMRoleSelector from '../LLMRoleSelector'
-import LLMSelectionDropdown from '../LLMSelectionDropdown'
 import { WorkflowProviderCredentialField } from '../WorkflowProviderCredentialField'
 import { CodingAgentSection } from '../llm/CodingAgentSection'
 import { APIProviderSection } from '../llm/APIProviderSection'
@@ -91,6 +90,17 @@ type WorkflowLLMConfigurationPanelProps = {
   /** Persist a provider choice immediately (the drill-in's "Use in this
    * workflow"), instead of leaving it as a draft for the footer Save. */
   onUseProvider?: (config: PresetLLMConfig) => void | Promise<void>
+  /** Reuse this configuration surface outside workflows without leaking workflow terminology. */
+  scopeNoun?: string
+  canWriteOverride?: boolean
+  allowedProviderIds?: readonly string[]
+  /** Work selects Pi as one coding CLI, then chooses its model separately. */
+  splitPiProviders?: boolean
+  showModelsPerRole?: boolean
+  readOnlyReason?: string
+  /** Product-profile bindings remain authoritative under the deployment-wide
+   * workflow/chat lock, matching the server's agent-profile resolution. */
+  configurationSource?: 'agent_profile'
 }
 
 const hasOptions = (options?: Record<string, unknown>) => Boolean(options && Object.keys(options).length > 0)
@@ -108,12 +118,6 @@ function configKey(config: { provider?: string; model_id?: string; published_llm
   return config.published_llm_id
     ? `id:${config.published_llm_id}`
     : `model:${config.provider}/${config.model_id}/${llmOptionsKey(config.options)}`
-}
-
-function optionKey(option: LLMOption): string {
-  return option.id
-    ? `id:${option.id}`
-    : `model:${option.provider}/${option.model}/${llmOptionsKey(option.options)}`
 }
 
 function roleConfig(config: PresetLLMConfig | undefined, key: RoleKey): AgentLLMConfig | undefined {
@@ -157,7 +161,19 @@ function statusTitle(label: string): string {
   return 'Needs setup before it can run'
 }
 
-export default function WorkflowLLMConfigurationPanel({ workspacePath, llmConfig, onChange, onUseProvider }: WorkflowLLMConfigurationPanelProps) {
+export default function WorkflowLLMConfigurationPanel({
+  workspacePath,
+  llmConfig,
+  onChange,
+  onUseProvider,
+  scopeNoun = 'workflow',
+  canWriteOverride,
+  allowedProviderIds,
+  splitPiProviders = true,
+  showModelsPerRole = true,
+  readOnlyReason,
+  configurationSource,
+}: WorkflowLLMConfigurationPanelProps) {
   const {
     availableLLMs,
     providerManifest,
@@ -181,6 +197,7 @@ export default function WorkflowLLMConfigurationPanel({ workspacePath, llmConfig
     setAnthropicConfig,
     setAzureConfig,
     testAPIKey,
+    setShowLLMModal,
   } = useLLMStore(useShallow(state => ({
     availableLLMs: state.availableLLMs,
     providerManifest: state.providerManifest,
@@ -204,6 +221,7 @@ export default function WorkflowLLMConfigurationPanel({ workspacePath, llmConfig
     setAnthropicConfig: state.setAnthropicConfig,
     setAzureConfig: state.setAzureConfig,
     testAPIKey: state.testAPIKey,
+    setShowLLMModal: state.setShowLLMModal,
   })))
 
   // Provider selection goes through the panel's Save, but the drill-ins (API
@@ -212,8 +230,10 @@ export default function WorkflowLLMConfigurationPanel({ workspacePath, llmConfig
   // A locked deployment (LLM_CONFIG_LOCKED) shows the same list, fully
   // disabled: the published provider reads "In use", every other row is
   // visible for reference but cannot be tested, selected or configured.
-  const readOnly = !useCanWriteWorkflow(workspacePath) || llmConfigLocked
-  const disabledTitle = llmConfigLocked ? 'Set by your administrator for this deployment' : READ_ONLY_TITLE
+  const workflowCanWrite = useCanWriteWorkflow(workspacePath)
+  const globalLockApplies = llmConfigLocked && configurationSource !== 'agent_profile'
+  const readOnly = !(canWriteOverride ?? workflowCanWrite) || globalLockApplies
+  const disabledTitle = globalLockApplies ? 'Set by your administrator for this deployment' : readOnlyReason || READ_ONLY_TITLE
   const [activeProviderId, setActiveProviderId] = useState<string | null>(null)
   const [query, setQuery] = useState('')
   const [tokenOpen, setTokenOpen] = useState(false)
@@ -268,11 +288,17 @@ export default function WorkflowLLMConfigurationPanel({ workspacePath, llmConfig
     return lockedProviders.includes('all') || lockedProviders.includes(base)
   }, [lockedProviders])
 
+  const providerIsReadyForUse = useCallback((row: ProviderRow) => {
+    const status = providerStatus(row.entry, isProviderLocked(row.id))
+    return status.label === 'Ready' || status.label === 'Managed'
+  }, [isProviderLocked])
+
   const manifestEntries = useMemo(() => providerManifest.filter(entry => {
     if (entry.deprecated) return false
     if (HIDDEN_CHAT_PROVIDER_TABS.has(entry.id)) return false
+    if (allowedProviderIds && !allowedProviderIds.includes(entry.id)) return false
     return isProviderSupported(entry.id as LLMProvider)
-  }), [isProviderSupported, providerManifest])
+  }), [allowedProviderIds, isProviderSupported, providerManifest])
 
   const hasPiCli = manifestEntries.some(entry => entry.id === 'pi-cli')
   useEffect(() => {
@@ -307,7 +333,7 @@ export default function WorkflowLLMConfigurationPanel({ workspacePath, llmConfig
 
     const result: ProviderRow[] = []
     codingAgents.forEach(entry => {
-      if (entry.id === 'pi-cli') {
+      if (entry.id === 'pi-cli' && splitPiProviders) {
         const publishedPi = availableLLMs.filter(option => option.provider === 'pi-cli')
         piCliGroups.forEach(group => {
           const seenModels = new Set<string>()
@@ -344,7 +370,7 @@ export default function WorkflowLLMConfigurationPanel({ workspacePath, llmConfig
       result.push({ id: entry.id, entry, name: entry.display_name, modelId: null, selectable: false })
     })
     return result
-  }, [availableLLMs, manifestEntries, piCliGroups, piCliModels, piGroupDefaultModel, providerOptions])
+  }, [availableLLMs, manifestEntries, piCliGroups, piCliModels, piGroupDefaultModel, providerOptions, splitPiProviders])
 
   // The row for a Pi backend, at a specific model when one is given and
   // listed, else the backend's first (default) row.
@@ -357,7 +383,7 @@ export default function WorkflowLLMConfigurationPanel({ workspacePath, llmConfig
 
   // Which row the current config corresponds to, if any.
   const selectedRowId = useMemo<string | null>(() => {
-    if (llmConfigLocked) {
+    if (globalLockApplies) {
       // What actually runs under the lock (server: resolveLockedLLM), whatever
       // this workflow saved -- so the published provider is the one "In use".
       const effective = effectiveLLMUnderLock(
@@ -405,7 +431,7 @@ export default function WorkflowLLMConfigurationPanel({ workspacePath, llmConfig
     // that provider: match its row so the compact status line and the
     // Models per role section show instead of "custom per-role setup".
     return manifestEntries.some(entry => entry.id === provider && entry.integration_kind === 'coding_agent') ? provider : null
-  }, [llmConfig, manifestEntries, piRowFor])
+  }, [globalLockApplies, llmConfig, manifestEntries, piRowFor, publishedLLMs])
 
   const visibleRows = useMemo(() => {
     const q = query.trim().toLowerCase()
@@ -464,6 +490,7 @@ export default function WorkflowLLMConfigurationPanel({ workspacePath, llmConfig
   // only Gemini"); any other coding agent is a plain provider profile.
   const configForRow = (row: ProviderRow): PresetLLMConfig | null => {
     if (!row.selectable) return null
+    if (row.entry.integration_kind === 'coding_agent' && !providerIsReadyForUse(row)) return null
     if (row.groupFilter) {
       const option = piGroupOption(row)
       if (!option) return null
@@ -651,6 +678,7 @@ export default function WorkflowLLMConfigurationPanel({ workspacePath, llmConfig
             initialModelId={activeRow.modelId ?? undefined}
             inUse={activeRow.id === selectedRowId}
             onUseInWorkflow={applyActiveRowToWorkflow}
+            scopeNoun={scopeNoun}
           />
         )}
       </div>
@@ -666,7 +694,7 @@ export default function WorkflowLLMConfigurationPanel({ workspacePath, llmConfig
       const usable = status.label === 'Ready' || status.label === 'Managed'
       return (
         <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm">
-          <span className="text-muted-foreground">This workflow runs on</span>
+          <span className="text-muted-foreground">This {scopeNoun} runs on</span>
           <span className="inline-flex items-center gap-1.5 font-medium text-foreground">
             <span className={`h-2 w-2 rounded-full ${tone.dot}`} />
             {selectedRow.name}
@@ -674,22 +702,24 @@ export default function WorkflowLLMConfigurationPanel({ workspacePath, llmConfig
           {selectedRow.groupFilter && selectedRow.modelId && (
             <span className="truncate font-mono text-[11px] text-muted-foreground">{selectedRow.modelId}</span>
           )}
-          {llmConfigLocked && (
-            <span className="inline-flex items-center gap-1 rounded-full border border-border px-2 py-0.5 text-[11px] text-muted-foreground" title="Every workflow on this deployment uses this provider">
+          {globalLockApplies && (
+            <span className="inline-flex items-center gap-1 rounded-full border border-border px-2 py-0.5 text-[11px] text-muted-foreground" title={`Every ${scopeNoun} on this deployment uses this provider`}>
               <Lock className="h-3 w-3" /> Set by your administrator
             </span>
           )}
-          {!usable && !llmConfigLocked && (
+          {!usable && !globalLockApplies && (
             <>
               <span className={`text-xs font-medium ${tone.text}`} title={statusTitle(status.label)}>
                 {statusActionText(status.label) ?? status.label}
               </span>
               <button
                 type="button"
-                onClick={() => setActiveProviderId(selectedRow.id)}
+                onClick={() => selectedRow.entry.integration_kind === 'coding_agent'
+                  ? setShowLLMModal(true)
+                  : setActiveProviderId(selectedRow.id)}
                 className="rounded-md bg-primary px-2 py-0.5 text-xs font-medium text-primary-foreground hover:bg-primary/90"
               >
-                Set up
+                {selectedRow.entry.integration_kind === 'coding_agent' ? 'Set up in Providers' : 'Set up'}
               </button>
             </>
           )}
@@ -711,7 +741,7 @@ export default function WorkflowLLMConfigurationPanel({ workspacePath, llmConfig
       // editable; "Change provider" replaces all of it with one provider.
       return (
         <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm">
-          <span className="text-muted-foreground">This workflow uses a</span>
+          <span className="text-muted-foreground">This {scopeNoun} uses a</span>
           <span className="font-medium text-foreground">custom per-role setup</span>
           <span className="text-muted-foreground">— see Models per role below.</span>
           {!readOnly && (
@@ -741,8 +771,8 @@ export default function WorkflowLLMConfigurationPanel({ workspacePath, llmConfig
           className="inline-flex items-center gap-1 text-xs text-muted-foreground transition-colors hover:text-foreground"
         >
           <ChevronRight className={`h-3 w-3 transition-transform ${tokenOpen ? 'rotate-90' : ''}`} />
-          Workflow {isClaude ? 'token' : 'API key'}
-          <span className="text-muted-foreground/70">· scoped to this workflow, falls back to the saved login</span>
+          {scopeNoun.charAt(0).toUpperCase() + scopeNoun.slice(1)} {isClaude ? 'token' : 'API key'}
+          <span className="text-muted-foreground/70">· scoped to this {scopeNoun}, falls back to the saved login</span>
         </button>
         {tokenOpen && (
           <div className="mt-2 rounded-md border border-border bg-muted/20 p-3">
@@ -796,7 +826,7 @@ export default function WorkflowLLMConfigurationPanel({ workspacePath, llmConfig
       // Sign-in CLI: authentication and diagnostics live in the platform-level
       // Providers panel. This workflow-level row only reports that state and
       // lets the user choose which connected CLI to use.
-      const connected = row.entry.auth_configured && status.label === 'Ready'
+      const connected = providerIsReadyForUse(row)
       return (
         <div key={row.id} className={`flex items-center gap-2 px-3 py-2 ${selected ? 'bg-primary/5' : ''}`}>
           <span className={`shrink-0 text-sm ${selected ? 'font-semibold' : 'font-medium'} text-foreground`}>{row.name}</span>
@@ -819,15 +849,26 @@ export default function WorkflowLLMConfigurationPanel({ workspacePath, llmConfig
               {statusActionText(status.label)}
             </span>
           )}
-          <button
-            type="button"
-            onClick={() => void applyRowToWorkflow(row)}
-            disabled={readOnly || selected || !row.selectable || rowUsing === row.id}
-            title={readOnly ? disabledTitle : selected ? 'Already in use' : status.label === 'Ready' || status.label === 'Managed' ? `Use ${row.name} for this workflow` : `${row.name} still needs setup in Providers`}
-            className="inline-flex shrink-0 items-center gap-1 rounded-md bg-primary px-2 py-0.5 text-xs font-medium text-primary-foreground hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50"
-          >
-            {rowUsing === row.id ? <><Loader2 className="h-3 w-3 animate-spin" /> Saving…</> : 'Use'}
-          </button>
+          {connected ? (
+            <button
+              type="button"
+              onClick={() => void applyRowToWorkflow(row)}
+              disabled={readOnly || selected || !row.selectable || rowUsing === row.id}
+              title={readOnly ? disabledTitle : selected ? 'Already in use' : `Use ${row.name} for this ${scopeNoun}`}
+              className="inline-flex shrink-0 items-center gap-1 rounded-md bg-primary px-2 py-0.5 text-xs font-medium text-primary-foreground hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {rowUsing === row.id ? <><Loader2 className="h-3 w-3 animate-spin" /> Saving…</> : 'Use'}
+            </button>
+          ) : (
+            <button
+              type="button"
+              onClick={() => setShowLLMModal(true)}
+              title={`Set up ${row.name} in global Providers`}
+              className="inline-flex shrink-0 items-center rounded-md border border-border px-2 py-0.5 text-xs font-medium text-foreground hover:bg-muted"
+            >
+              Set up in Providers
+            </button>
+          )}
         </div>
       )
     }
@@ -840,7 +881,7 @@ export default function WorkflowLLMConfigurationPanel({ workspacePath, llmConfig
             aria-checked={selected}
             disabled={readOnly || !row.selectable}
             onClick={() => selectRow(row)}
-            title={readOnly ? disabledTitle : row.selectable ? `Use ${row.name} for this workflow` : 'Loading models…'}
+            title={readOnly ? disabledTitle : row.selectable ? `Use ${row.name} for this ${scopeNoun}` : 'Loading models…'}
             className="flex h-4 w-4 shrink-0 items-center justify-center rounded-full border border-border transition-colors hover:border-primary disabled:cursor-not-allowed disabled:opacity-40"
           >
             {selected && <span className="h-2 w-2 rounded-full bg-primary" />}
@@ -911,6 +952,7 @@ export default function WorkflowLLMConfigurationPanel({ workspacePath, llmConfig
       const status = providerStatus(head.entry, isProviderLocked(head.id))
       const tone = statusTone(status.label)
       const selectedInGroup = models.find(row => row.id === selectedRowId) ?? null
+      const connected = providerIsReadyForUse(head)
       const open = searching || openPiGroups.has(group) || selectedInGroup !== null
       return (
         <div key={group} className="divide-y divide-border">
@@ -942,17 +984,17 @@ export default function WorkflowLLMConfigurationPanel({ workspacePath, llmConfig
             </span>
             <button
               type="button"
-              onClick={() => setActiveProviderId((selectedInGroup ?? head).id)}
+              onClick={() => setShowLLMModal(true)}
               className="inline-flex shrink-0 items-center gap-0.5 text-[11px] font-medium text-muted-foreground transition-colors hover:text-foreground"
-              title={`Keys, test and publish for ${group}`}
+              title={`${connected ? 'Manage' : 'Set up'} Pi in global Providers`}
             >
-              Set up <ChevronRight className="h-3 w-3" />
+              {connected ? 'Providers' : 'Set up in Providers'} <ChevronRight className="h-3 w-3" />
             </button>
           </div>
           {open && models.map(row => {
             const selected = row.id === selectedRowId
             const saving = rowUsing === row.id
-            const disabled = readOnly || !row.selectable || selected || rowUsing !== null
+            const disabled = readOnly || !connected || !row.selectable || selected || rowUsing !== null
             // Picking a model is the whole action: it is saved to the
             // workflow and the list folds back to the "runs on" line, the
             // same as Use on a CLI row.
@@ -965,7 +1007,7 @@ export default function WorkflowLLMConfigurationPanel({ workspacePath, llmConfig
                   aria-checked={selected}
                   disabled={disabled}
                   onClick={pick}
-                  title={readOnly ? disabledTitle : selected ? 'In use' : `Use ${row.modelId} for this workflow`}
+                  title={readOnly ? disabledTitle : !connected ? 'Set up Pi in global Providers first' : selected ? 'In use' : `Use ${row.modelId} for this ${scopeNoun}`}
                   className="flex h-4 w-4 shrink-0 items-center justify-center rounded-full border border-border transition-colors hover:border-primary disabled:cursor-not-allowed disabled:opacity-40"
                 >
                   {selected && <span className="h-2 w-2 rounded-full bg-primary" />}
@@ -1044,11 +1086,11 @@ export default function WorkflowLLMConfigurationPanel({ workspacePath, llmConfig
         {renderTokenLine()}
       </div>
 
-      {((!selectedRow && !advanced) || changing || llmConfigLocked) && (
+      {((!selectedRow && !advanced) || changing || globalLockApplies) && (
       <>
-      {llmConfigLocked && (
+      {globalLockApplies && (
         <p className="text-xs text-muted-foreground">
-          Every workflow on this deployment uses the provider marked “In use”. The others are shown for reference and cannot be selected here — ask your administrator to enable one.
+          Every {scopeNoun} on this deployment uses the provider marked “In use”. The others are shown for reference and cannot be selected here — ask your administrator to enable one.
         </p>
       )}
       <div className="flex items-center gap-2">
@@ -1075,7 +1117,7 @@ export default function WorkflowLLMConfigurationPanel({ workspacePath, llmConfig
         </button>
       </div>
 
-      <div role="radiogroup" aria-label="Provider for this workflow" className="divide-y divide-border overflow-hidden rounded-md border border-border bg-background">
+      <div role="radiogroup" aria-label={`Provider for this ${scopeNoun}`} className="divide-y divide-border overflow-hidden rounded-md border border-border bg-background">
         {!providerManifestLoaded ? (
           <div className="py-6 text-center text-sm text-muted-foreground">Loading providers…</div>
         ) : visibleRows.length === 0 ? (
@@ -1086,7 +1128,7 @@ export default function WorkflowLLMConfigurationPanel({ workspacePath, llmConfig
           <>
             {renderGroup(
               'Coding agent CLIs',
-              'Authentication is managed in Providers. Choose which connected CLI this workflow uses.',
+              `Authentication is managed in Providers. Choose which connected CLI this ${scopeNoun} uses.`,
               visibleRows.filter(row => row.entry.integration_kind === 'coding_agent' && !row.groupFilter),
             )}
             {renderGroup(
@@ -1095,7 +1137,7 @@ export default function WorkflowLLMConfigurationPanel({ workspacePath, llmConfig
               visibleRows.filter(row => Boolean(row.groupFilter)),
               renderPiGroups,
             )}
-            <div className="bg-muted/20 px-3 py-1.5">
+            {!allowedProviderIds && <div className="bg-muted/20 px-3 py-1.5">
               <button
                 type="button"
                 onClick={() => setMoreProviders(open => !open)}
@@ -1105,8 +1147,8 @@ export default function WorkflowLLMConfigurationPanel({ workspacePath, llmConfig
                 <ChevronRight className={`h-3 w-3 transition-transform ${moreProviders ? 'rotate-90' : ''}`} />
                 {moreProviders ? 'Hide direct API providers' : 'Direct API providers (chat only)'}
               </button>
-            </div>
-            {(moreProviders || query.trim()) && renderGroup(
+            </div>}
+            {!allowedProviderIds && (moreProviders || query.trim()) && renderGroup(
               'Direct API providers',
               'Chat and library use only; not selectable for a workflow.',
               visibleRows.filter(row => row.entry.integration_kind !== 'coding_agent' && !row.groupFilter),
@@ -1117,7 +1159,7 @@ export default function WorkflowLLMConfigurationPanel({ workspacePath, llmConfig
       </>
       )}
 
-      {!changing && (selectedRow || advanced) && (
+      {showModelsPerRole && !changing && (selectedRow || advanced) && (
       <div className="rounded-md border border-border">
         <button
           type="button"

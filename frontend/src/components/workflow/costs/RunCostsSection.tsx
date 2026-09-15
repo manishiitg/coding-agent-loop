@@ -19,7 +19,6 @@ import type { CostsData } from './useCostsData'
 
 type RunCostsSectionProps = Pick<
   CostsData,
-  | 'hasScopedActivity'
   | 'runCosts'
   | 'expandedRunFolders'
   | 'expandedCostModels'
@@ -34,7 +33,6 @@ type RunCostsSectionProps = Pick<
 }
 
 const RunCostsSection: React.FC<RunCostsSectionProps> = ({
-  hasScopedActivity,
   runCosts,
   selectedRunFolder,
   expandedRunFolders,
@@ -47,9 +45,9 @@ const RunCostsSection: React.FC<RunCostsSectionProps> = ({
   setRouteFilterForRunFolder,
 }) => (
   <>
-              {/* Legacy per-run explorer: the canonical ledger provides the grouped
-                  activity detail above. Retain this only when the ledger is absent. */}
-              {!hasScopedActivity && runCosts.length > 0 && (
+              {/* Per-run explorer complements the canonical activity ledger with
+                  immutable webhook/run and step-level detail. */}
+              {runCosts.length > 0 && (
                 <div className="space-y-3">
                 <div>
                   <h3 className="text-sm font-semibold text-foreground">Workflow runs</h3>

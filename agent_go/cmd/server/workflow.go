@@ -4210,6 +4210,11 @@ func (api *StreamingAPI) handleGetCosts(w http.ResponseWriter, r *http.Request) 
 		http.Error(w, "Invalid workspace path", http.StatusBadRequest)
 		return
 	}
+	// Product projects expose a stable public Chats/... path to the browser,
+	// while their runtime and the global ledger are correctly scoped under the
+	// authenticated user's _users/<id>/Chats tree. Query the same canonical key
+	// that the turn writer records; ordinary Workflow paths remain unchanged.
+	cleanedWorkspacePath = costWorkspacePathForUser(cleanedWorkspacePath, GetUserIDFromContext(r.Context()))
 
 	w.Header().Set("Content-Type", "application/json")
 	if r.URL.Query().Get("view") == "summary" {
@@ -4231,6 +4236,14 @@ func (api *StreamingAPI) handleGetCosts(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	json.NewEncoder(w).Encode(loadWorkflowCosts(r.Context(), cleanedWorkspacePath))
+}
+
+func costWorkspacePathForUser(workspacePath, userID string) string {
+	workspacePath = filepath.ToSlash(filepath.Clean(filepath.FromSlash(workspacePath)))
+	if workspacePath == "Chats" || strings.HasPrefix(workspacePath, "Chats/") {
+		return agentProfileRuntimeWorkspace(userID, workspacePath)
+	}
+	return workspacePath
 }
 
 // handleGetLogFile returns the content of a specific log file

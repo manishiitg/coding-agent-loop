@@ -91,6 +91,18 @@ func TestWorkflowDBToolRegistryExposesQueryAndMutation(t *testing.T) {
 	}
 }
 
+func TestWorkflowDBWorkspacePathRecognizesWorkProject(t *testing.T) {
+	for _, candidate := range []string{
+		"Chats/Work/projects/demo",
+		"_users/alice/Chats/Work/projects/demo/db/db.sqlite",
+		"/srv/workspace/_users/alice/Chats/Work/projects/demo/frontend",
+	} {
+		if got := workflowDBWorkspacePathFromCandidate(candidate); got != "Chats/Work/projects/demo" {
+			t.Fatalf("workflowDBWorkspacePathFromCandidate(%q) = %q", candidate, got)
+		}
+	}
+}
+
 func TestWorkflowDBBackupSnapshotExecutorRejectsWorkflowStep(t *testing.T) {
 	sessionID := "workflow-db-step-backup"
 	defer common.ClearSessionShellConfig(sessionID)

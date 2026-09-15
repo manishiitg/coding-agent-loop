@@ -12,10 +12,10 @@ afterEach(() => {
 })
 
 describe('product surface deployment configuration', () => {
-  it('defaults to AgentWorks only when no deployment allowlist is configured', () => {
-    expect(enabledProductSurfaces()).toEqual(['agentworks'])
+  it('defaults to AgentWorks and Work when no deployment allowlist is configured', () => {
+    expect(enabledProductSurfaces()).toEqual(['agentworks', 'work'])
     expect(deploymentDefaultProductSurface()).toBe('agentworks')
-    expect(isSingleProductDeployment()).toBe(true)
+    expect(isSingleProductDeployment()).toBe(false)
   })
 
   it('constrains the dedicated host to AgentWorks and Video Studio', () => {
@@ -45,6 +45,21 @@ describe('product surface deployment configuration', () => {
     expect(deploymentDefaultProductSurface()).toBe('sparkquill')
     expect(isEnabledProductSurface('agentworks')).toBe(false)
     expect(isSingleProductDeployment()).toBe(true)
+  })
+
+  it('exposes the Work surface when the deployment allowlists it', () => {
+    vi.stubGlobal('window', {
+      __APP_RUNTIME_CONFIG__: {
+        defaultProductSurface: 'agentworks',
+        enabledProductSurfaces: ['agentworks', 'work'],
+      },
+    })
+
+    expect(enabledProductSurfaces()).toEqual(['agentworks', 'work'])
+    expect(deploymentDefaultProductSurface()).toBe('agentworks')
+    expect(isEnabledProductSurface('work')).toBe(true)
+    expect(isEnabledProductSurface('dominion')).toBe(false)
+    expect(isSingleProductDeployment()).toBe(false)
   })
 })
 

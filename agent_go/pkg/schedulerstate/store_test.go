@@ -532,3 +532,16 @@ func TestWebhookRunFolderBinding(t *testing.T) {
 		t.Fatal("terminal folder modified")
 	}
 }
+
+func TestActiveRunForScheduleIgnoresConcurrencyLockKeyShape(t *testing.T) {
+	s := openTestStore(t)
+	ctx := context.Background()
+	run := Run{RunID: "parallel-run", ScopeType: "workflow", ScopeID: "Workflow/demo", LockKey: "workflow-parallel|Workflow/demo|measurement", ScheduleID: "measurement", TriggerSource: "cron"}
+	if err := s.BeginRun(ctx, run); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.ActiveRunForSchedule(ctx, "workflow", "Workflow/demo", "measurement")
+	if err != nil || got.RunID != run.RunID {
+		t.Fatalf("active run = (%+v, %v), want %s", got, err, run.RunID)
+	}
+}

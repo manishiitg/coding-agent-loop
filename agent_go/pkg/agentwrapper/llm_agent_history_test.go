@@ -87,3 +87,13 @@ func TestProviderNeedsPlainTextHistory(t *testing.T) {
 		t.Fatal("did not expect anthropic to use plain text history")
 	}
 }
+
+func TestPlainTextFromPartsDoesNotDoubleWrapPreviousToolResult(t *testing.T) {
+	const existing = `[Previous tool result: read -> {"status":"ok"}]`
+	got := plainTextFromParts("[Previous tool result]", []llmtypes.ContentPart{
+		llmtypes.TextContent{Text: existing},
+	})
+	if got != existing {
+		t.Fatalf("plainTextFromParts() = %q, want existing marker unchanged", got)
+	}
+}

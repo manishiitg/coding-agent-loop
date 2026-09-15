@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Activity, ArrowLeft, BookMarked, CheckCircle2, ChevronDown, ChevronRight, CircleDot, FolderTree, Layers3, Loader2, PackageCheck, Search, Settings2, Wrench } from 'lucide-react'
+import { Activity, ArrowLeft, BookMarked, CheckCircle2, ChevronDown, ChevronRight, CircleDot, FolderTree, Info, Layers3, Loader2, PackageCheck, Search, Settings2, Wrench } from 'lucide-react'
 import { isNewerPlaybookVersion, PLAYBOOK_CATALOG, PLAYBOOK_CATEGORIES, type PlaybookCatalogItem } from './playbookCatalog'
 import { playbooksApi } from '../../api/playbooks'
 import type { InstalledPlaybook } from '../../services/api-types'
@@ -227,7 +227,7 @@ export default function PlaybooksPanel({ workspacePath }: PlaybooksPanelProps) {
         <div className="flex min-h-0 flex-1 flex-col items-center justify-center px-6 text-center">
           <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-muted text-muted-foreground"><BookMarked className="h-5 w-5" /></div>
           <h3 className="mt-3 text-sm font-semibold text-foreground">No playbooks installed</h3>
-          <p className="mt-1 max-w-sm text-xs leading-5 text-muted-foreground">Choose a playbook from the catalog to guide this workflow’s plan, capabilities, and reporting.</p>
+          <p className="mt-1 max-w-sm text-xs leading-5 text-muted-foreground">Choose a playbook from the catalog to guide this workflow’s plan, capabilities, and dashboard.</p>
           <button type="button" onClick={() => setTab('catalog')} className="mt-4 rounded-md bg-primary px-3 py-2 text-xs font-medium text-primary-foreground">Browse catalog</button>
         </div>)
       ) : (
@@ -257,11 +257,16 @@ export default function PlaybooksPanel({ workspacePath }: PlaybooksPanelProps) {
                       {expanded && (
                         <div className="ml-5 space-y-2 border-l border-border px-3 pb-3">
                           {group.playbooks.map(playbook => (
-                            <button key={playbook.id} type="button" onClick={() => setSelected(playbook)} className="group flex w-full items-start gap-3 rounded-lg border border-border bg-card p-3 text-left transition-colors hover:border-primary/40 hover:bg-muted/20">
+                            <div key={playbook.id} className="group flex w-full items-start gap-3 rounded-lg border border-border bg-card p-3 transition-colors hover:border-primary/40 hover:bg-muted/20">
                               <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-muted text-muted-foreground group-hover:text-primary"><BookMarked className="h-4 w-4" /></div>
-                              <div className="min-w-0 flex-1"><div className="flex items-center gap-2"><span className="truncate text-sm font-medium text-foreground">{playbook.title}</span><span className="shrink-0 text-[10px] text-muted-foreground">v{playbook.version}</span></div><p className="mt-1 line-clamp-2 text-xs leading-5 text-muted-foreground">{playbook.description}</p></div>
-                              <ChevronRight className="mt-2 h-4 w-4 shrink-0 text-muted-foreground" />
-                            </button>
+                              <div className="min-w-0 flex-1">
+                                <div className="flex items-center gap-2"><span className="truncate text-sm font-medium text-foreground">{playbook.title}</span><span className="shrink-0 text-[10px] text-muted-foreground">v{playbook.version}</span></div>
+                                <p className="mt-1 line-clamp-2 text-xs leading-5 text-muted-foreground">{playbook.description}</p>
+                                <button type="button" aria-label={`What ${playbook.title} is about`} onClick={() => setSelected(playbook)} className="mt-2 inline-flex items-center gap-1.5 rounded-md border border-border bg-background px-2.5 py-1.5 text-xs font-medium text-foreground hover:border-primary/50 hover:text-primary">
+                                  <Info className="h-3.5 w-3.5" /> What this is about
+                                </button>
+                              </div>
+                            </div>
                           ))}
                         </div>
                       )}

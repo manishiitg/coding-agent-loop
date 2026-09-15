@@ -94,3 +94,25 @@ test('spawnServer resolves on the DynamicPort line, substitutes the port and log
   assert.match(content, /fake-server exited/);
   await assert.rejects(spawnServer({ name: 'missing', bin: path.join(dir, 'nope'), args: [], preferredPort: 47655, cwd: dir, env: process.env, log }));
 });
+
+test('spawnServer can derive process environment from the selected port', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'awspawn-env-'));
+  const script = path.join(dir, 'fake-server.js');
+  fs.writeFileSync(script, `
+    const port = process.argv[process.argv.indexOf('--port') + 1];
+    if (process.env.PUBLIC_URL !== 'http://127.0.0.1:' + port) process.exit(2);
+    console.log('DynamicPort: ' + port);
+    setInterval(() => {}, 1000);
+  `);
+  const log = createBoundedLogWriter(path.join(dir, 'fake.log'));
+  const { child, port } = await spawnServer({
+    name: 'fake-env', bin: process.execPath, args: [script, '--port', spawnServer.PORT_PLACEHOLDER],
+    preferredPort: 47656, cwd: dir,
+    env: (selectedPort) => ({ ...process.env, PUBLIC_URL: `http://127.0.0.1:${selectedPort}` }),
+    log,
+  });
+  assert.ok(port >= 47656, `port ${port}`);
+  const exited = new Promise((r) => child.on('exit', r));
+  killServer(child);
+  await exited;
+});

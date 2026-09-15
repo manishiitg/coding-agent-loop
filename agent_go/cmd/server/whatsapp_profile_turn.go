@@ -156,22 +156,31 @@ func (api *StreamingAPI) whatsappProfileRouter(ctx context.Context, userID, toke
 // the pairing has no default profile; an error means it has one that cannot
 // take the message, which the bot manager reports back in the chat.
 func (api *StreamingAPI) botProfileTurn(ctx context.Context, userID string, msg services.BotIncomingMessage, threadID services.ThreadID) (map[string]interface{}, string, bool, error) {
-	if msg.Platform != "whatsapp" || api.whatsappManager == nil || api.agentProfiles == nil {
+	if api.agentProfiles == nil {
 		return nil, "", false, nil
 	}
-	svc, err := api.whatsappManager.ServiceForUser(ctx, userID, "", "")
-	if err != nil {
-		log.Printf("[WHATSAPP] default profile lookup for user=%s: %v", userID, err)
-		return nil, "", false, nil
-	}
-	profileID, _ := svc.DefaultProfile()
-	if profileID == "" {
-		return nil, "", false, nil
+	profileID := ""
+	if msg.PresetProfile == nil {
+		if msg.Platform != "whatsapp" || api.whatsappManager == nil {
+			return nil, "", false, nil
+		}
+		svc, err := api.whatsappManager.ServiceForUser(ctx, userID, "", "")
+		if err != nil {
+			log.Printf("[WHATSAPP] default profile lookup for user=%s: %v", userID, err)
+			return nil, "", false, nil
+		}
+		profileID, _ = svc.DefaultProfile()
+		if profileID == "" {
+			return nil, "", false, nil
+		}
 	}
 	// The pairing's owner is the request principal; durable product data
 	// belongs to the configured default owner on a single-user deployment,
 	// exactly as the app's own profile chat resolves it.
-	workspaceUserID := whatsappWorkspaceUserID(userID)
+	workspaceUserID := userID
+	if msg.Platform == "whatsapp" {
+		workspaceUserID = whatsappWorkspaceUserID(userID)
+	}
 	conversationKey := ""
 	if msg.PresetProfile != nil {
 		// An @token the default product resolved to one of its own profiles
@@ -196,11 +205,13 @@ func (api *StreamingAPI) botProfileTurn(ctx context.Context, userID string, msg 
 		return nil, "", false, fmt.Errorf("open %s conversation: %w", profile.Name, err)
 	}
 	input := AgentProfileChatRequest{Message: msg.Text}
-	if option, ok := whatsappEngineFor(profile, conversation); ok {
-		input.Engine = option.ID
-		if strings.TrimSpace(conversation.Provider) != "" {
-			input.ModelID = conversation.ModelID
-			input.ReasoningEffort = conversation.ReasoningEffort
+	if conversation.ProjectLLMConfig == nil {
+		if option, ok := whatsappEngineFor(profile, conversation); ok {
+			input.Engine = option.ID
+			if strings.TrimSpace(conversation.Provider) != "" {
+				input.ModelID = conversation.ModelID
+				input.ReasoningEffort = conversation.ReasoningEffort
+			}
 		}
 	}
 	query, err := queryRequestForAgentProfileChat(profile, input, conversation)
@@ -208,15 +219,16 @@ func (api *StreamingAPI) botProfileTurn(ctx context.Context, userID string, msg 
 		return nil, "", false, err
 	}
 	if strings.TrimSpace(query.Provider) != "" {
-		bound, restartNeeded, err := defaultProductConversationRegistryStore().bindRuntime(ctx, workspaceUserID, profile, conversation.ConversationKey, query.Provider, query.ModelID, query.ReasoningEffort)
+		_, restartNeeded, err := defaultProductConversationRegistryStore().bindRuntimeConfiguration(
+			ctx, workspaceUserID, profile, conversation.ConversationKey,
+			query.Provider, query.ModelID, query.ReasoningEffort, query.EnabledServers, query.SelectedSkills,
+			query.WorkflowContextPaths,
+		)
 		if err != nil {
 			return nil, "", false, err
 		}
-		if !strings.EqualFold(bound, query.Provider) {
-			return nil, "", false, fmt.Errorf("this chat runs on %s", providerOptionLabelForProvider(profile.Runtime.ProviderOptions, bound))
-		}
 		if restartNeeded {
-			closeAllCodingCLIInteractiveSessionsForOwner(conversation.SessionID, "whatsapp turn: model or reasoning effort changed")
+			closeAllCodingCLIInteractiveSessionsForOwner(conversation.SessionID, "whatsapp turn: coding agent, model, MCP or skill configuration changed")
 		}
 	}
 	reqMap, err := queryRequestToMap(query)
@@ -225,8 +237,8 @@ func (api *StreamingAPI) botProfileTurn(ctx context.Context, userID string, msg 
 	}
 	// The channel prompt (WhatsApp's markup subset) applies to this turn only;
 	// the app's own turns in the same conversation send no bot_platform.
-	reqMap["bot_platform"] = "whatsapp"
-	reqMap["triggered_by"] = "bot:whatsapp"
+	reqMap["bot_platform"] = msg.Platform
+	reqMap["triggered_by"] = "bot:" + msg.Platform
 	if threadID.ChannelID != "" {
 		reqMap["bot_channel_id"] = threadID.ChannelID
 	}

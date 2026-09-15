@@ -78,11 +78,27 @@ it('shows Architecture as its own review area with a separate drift check', asyn
   try {
     await act(async () => root.render(<PulseReviewOverview moduleStates={[]} coverage={[]} findings={[]} audits={[]} reports={[]} moduleFilter="architecture_review" onSelectModule={() => {}} />))
     const navigation = container.querySelector('[aria-label="Pulse work areas"]')!
-    expect(navigation.querySelectorAll('button')).toHaveLength(3)
+    expect(navigation.querySelectorAll('[role="switch"]')).toHaveLength(3)
     expect(navigation.textContent).toContain('Architecture')
     expect(navigation.textContent).not.toContain('Drift check')
     expect(container.querySelector('[aria-label="Architecture content"]')?.textContent).toContain('Learning quality')
     expect(container.querySelector('[aria-label="Health content"]')).toBeNull()
+  } finally { await act(async () => root.unmount()) }
+})
+
+it('lets the user turn an individual reviewer back on while preserving its history', async () => {
+  Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true })
+  const container = document.createElement('div'); const root = createRoot(container)
+  const onToggleReviewModule = vi.fn()
+  try {
+    await act(async () => root.render(<PulseReviewOverview moduleStates={[]} coverage={[]} findings={[]} audits={[]} reports={[]}
+      moduleFilter="strategic_review" onSelectModule={() => {}} disabledReviewModules={['strategic_review']}
+      onToggleReviewModule={onToggleReviewModule} />))
+    const strategySwitch = container.querySelector<HTMLButtonElement>('[aria-label="Include Strategy reviewer in Pulse reviews"]')!
+    expect(strategySwitch.getAttribute('aria-checked')).toBe('false')
+    expect(container.textContent).toContain('Future Pulse runs will skip it; previous findings, coverage, and reports remain below.')
+    await act(async () => strategySwitch.click())
+    expect(onToggleReviewModule).toHaveBeenCalledWith('strategic_review')
   } finally { await act(async () => root.unmount()) }
 })
 

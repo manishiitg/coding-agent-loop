@@ -120,6 +120,10 @@ func (api *StreamingAPI) agentProfileConversationSlot(w http.ResponseWriter, r *
 		writeAgentProfileError(w, http.StatusNotFound, "agent profile not found")
 		return "", profileAndBinding{}, false
 	}
+	if !userAllowedProduct(GetUserFromContext(r.Context()), profile.Product) {
+		writeAgentProfileError(w, http.StatusNotFound, "agent profile not found")
+		return "", profileAndBinding{}, false
+	}
 	binding, err := resolveProductConversationBinding(r.Context(), userID, profile, conversationKey)
 	if err != nil {
 		writeAgentProfileError(w, http.StatusUnprocessableEntity, err.Error())
@@ -269,7 +273,10 @@ func (api *StreamingAPI) handleDeleteAgentProfileConversation(w http.ResponseWri
 	// Only this slot's chats can go: listed by the registry, or in its
 	// workspace per chat_history.
 	owned := false
-	for _, record := range func() []ProductConversationRecord { _, _, previous, _ := store.history(r.Context(), userID, slot.profile, slot.binding); return previous }() {
+	for _, record := range func() []ProductConversationRecord {
+		_, _, previous, _ := store.history(r.Context(), userID, slot.profile, slot.binding)
+		return previous
+	}() {
 		if record.SessionID == sessionID {
 			owned = true
 		}

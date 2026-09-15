@@ -14,6 +14,7 @@ import {
   formatOverdueDuration,
   getLocalizedJobName,
   getMissedScheduleDelayMs,
+  getScheduleDependencyIds,
   getScheduleExecutionScope,
   isMissedSchedule,
   isScheduleIssueStatus,
@@ -55,6 +56,7 @@ export const ScheduleListView: React.FC<ScheduleListViewProps> = ({ panel }) => 
         const localizedJobName = getLocalizedJobName(job)
         const workflowDisplayLabel = preset?.label || job.workflow_label || job.name
         const executionScope = getScheduleExecutionScope(job)
+        const dependencyNames = getScheduleDependencyIds(job).map(id => jobsList.find(candidate => candidate.id === id)?.name ?? id)
         const previousJob = index > 0 ? jobsList[index - 1] : null
         const isRunningJob = job.last_status === 'running'
         const isWaitingJob = isScheduleWaitingStatus(job.last_status)
@@ -164,6 +166,11 @@ export const ScheduleListView: React.FC<ScheduleListViewProps> = ({ panel }) => 
                     </span>
                   )}
                 </div>
+                {dependencyNames.length > 0 && (
+                  <div className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5 pr-28 text-xs text-indigo-600 dark:text-indigo-300">
+                    {dependencyNames.length > 0 && <span>Waits for: {dependencyNames.join(', ')}</span>}
+                  </div>
+                )}
                 {job.mode === 'workshop' && job.messages && job.messages.length > 0 && (
                   <div className="mt-1 pr-28">
                     <div className="space-y-0.5">

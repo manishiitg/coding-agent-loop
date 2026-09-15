@@ -274,27 +274,33 @@ type SchedulerCallbacks struct {
 // enforced by the runtime rather than inferred from a natural-language
 // message or a conveniently spaced cron expression.
 type ScheduleRuntimePolicy struct {
-	PulseModeReason      string
-	PulseMode            string
-	ExecutionMode        string
-	CollisionPolicy      string
-	MaxStartDelayMinutes int
-	AfterScheduleID      string
-	AfterTerminalStatus  string
-	AfterDelayMinutes    int
-	DependencyDeadline   string
+	PulseModeReason          string
+	PulseMode                string
+	ExecutionMode            string
+	CollisionPolicy          string
+	ConcurrencyMode          string
+	ParallelRiskAcknowledged bool
+	MaxStartDelayMinutes     int
+	AfterScheduleID          string
+	AfterScheduleIDs         []string
+	AfterTerminalStatus      string
+	AfterDelayMinutes        int
+	DependencyDeadline       string
 	// Set* is used only by update_schedule. It distinguishes an omitted field
 	// from an explicit empty/zero value, so changing one policy does not erase
 	// the other three.
-	SetExecutionMode        bool
-	SetPulseModeReason      bool
-	SetPulseMode            bool
-	SetCollisionPolicy      bool
-	SetMaxStartDelayMinutes bool
-	SetAfterScheduleID      bool
-	SetAfterTerminalStatus  bool
-	SetAfterDelayMinutes    bool
-	SetDependencyDeadline   bool
+	SetExecutionMode            bool
+	SetPulseModeReason          bool
+	SetPulseMode                bool
+	SetCollisionPolicy          bool
+	SetConcurrencyMode          bool
+	SetParallelRiskAcknowledged bool
+	SetMaxStartDelayMinutes     bool
+	SetAfterScheduleID          bool
+	SetAfterScheduleIDs         bool
+	SetAfterTerminalStatus      bool
+	SetAfterDelayMinutes        bool
+	SetDependencyDeadline       bool
 }
 
 // SkillCallbacks provides skill management operations via callbacks from server.go.
@@ -605,7 +611,8 @@ func formatWorkshopExecutionName(kind string, targetRunFolder string) string {
 // exact same tool/LLM/browser/image-gen setup as normal workflow execution.
 // Built by server.go using the same preset-loading logic as the normal workflow path.
 type WorkshopConfig struct {
-	WebhookInvocation      *WebhookInvocation // Set internally by API trigger dispatch, never from tool arguments.
+	WebhookInvocation      *WebhookInvocation  // Set internally by API trigger dispatch, never from tool arguments.
+	ScheduleInvocation     *ScheduleInvocation // Set internally by saved-schedule dispatch, never from tool arguments.
 	ScheduleCollisionCheck ScheduleCollisionCheck
 	WorkspacePath          string
 	RunFolder              string
@@ -777,6 +784,14 @@ func NewWorkshopChatSession(ctx context.Context, cfg *WorkshopConfig) (*Workshop
 	if cfg.RunFolder != "" {
 		controller.SetSelectedRunFolder(cfg.RunFolder)
 		logger.Debug(fmt.Sprintf("[WORKSHOP] Run folder set from session init: %s", cfg.RunFolder))
+	}
+	if cfg.ScheduleInvocation != nil {
+		controller.SetExecutionOptions(&ExecutionOptions{
+			SelectedRunFolder: cfg.ScheduleInvocation.RunFolder,
+			RunKind:           "schedule", ScheduleRunID: cfg.ScheduleInvocation.RunID,
+			ScheduleID: cfg.ScheduleInvocation.ScheduleID, TriggerSource: cfg.ScheduleInvocation.TriggerSource,
+			ScheduledFor: cfg.ScheduleInvocation.ScheduledFor,
+		})
 	}
 
 	// Load variables manifest so execute_step can resolve variable values.
@@ -1335,7 +1350,7 @@ func RegisterRunFullEvaluationTool(
 	}
 	if err := mcpAgent.RegisterCustomTool(
 		"run_full_evaluation",
-		"Run the full evaluation pipeline: execute all evaluation steps against a target execution run, then publish their outputs into evaluation_report.json for review. Evaluation always targets iteration-0 (the default execution run). Runs in background — you will be notified when complete.",
+		"Run the full evaluation pipeline against the current execution run and publish evaluation_report.json. Interactive Builder use targets iteration-0; a saved schedule targets its server-bound iteration-N-sched run. Runs in background — you will be notified when complete.",
 		map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
@@ -1348,6 +1363,9 @@ func RegisterRunFullEvaluationTool(
 		},
 		func(ctx context.Context, args map[string]interface{}) (string, error) {
 			iteration := currentWorkflowRunFolder
+			if session.config != nil && session.config.ScheduleInvocation != nil {
+				iteration = session.config.ScheduleInvocation.RunFolder
+			}
 			groupName, _ := args["group_name"].(string)
 			if groupName == "" {
 				return "group_name is required — evaluation needs a specific group's execution folder (e.g., 'saurabh', 'xspaces')", nil
@@ -1888,7 +1906,7 @@ func RegisterRunFullWorkflowTool(
 	}
 	if err := mcpAgent.RegisterCustomTool(
 		"run_full_workflow",
-		"Execute the complete workflow: load the plan, resolve variables, and run all steps for a single variable group. Always uses iteration-0 and starts from the beginning. Runs in background - you will be notified when complete. Use send_step_message with the returned execution_id to steer whichever workflow child-agent turn is currently active. Use human_inputs for run-specific instructions or responses, keyed by the exact target step ID; each value is visible only to that step. If the plan contains human_input steps on the selected path, you MUST provide a response for each one. If the plan contains deterministic routing steps and the user's request already selected a branch, pass route_selections keyed by routing step ID. Pass disable_eval=true to skip the automatic evaluation pass after the workflow completes.",
+		"Execute the complete workflow: load the plan, resolve variables, and run all steps for a single variable group. Interactive Builder runs use iteration-0; a saved schedule or webhook uses its server-bound immutable run folder. Starts from the beginning and runs in background - you will be notified when complete. Use send_step_message with the returned execution_id to steer whichever workflow child-agent turn is currently active. Use human_inputs for run-specific instructions or responses, keyed by the exact target step ID; each value is visible only to that step. If the plan contains human_input steps on the selected path, you MUST provide a response for each one. If the plan contains deterministic routing steps and the user's request already selected a branch, pass route_selections keyed by routing step ID. Pass disable_eval=true to skip the automatic evaluation pass after the workflow completes.",
 		map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
@@ -1926,6 +1944,8 @@ func RegisterRunFullWorkflowTool(
 			iteration := "iteration-0"
 			if cfg.WebhookInvocation != nil {
 				iteration = cfg.WebhookInvocation.RunFolder
+			} else if cfg.ScheduleInvocation != nil {
+				iteration = cfg.ScheduleInvocation.RunFolder
 			}
 			strategy := "start_from_beginning_no_human"
 
@@ -2245,6 +2265,14 @@ func RegisterRunFullWorkflowTool(
 					HumanInputs:       humanInputs,
 					RouteSelections:   routeSelections,
 					DisableEval:       disableEval,
+				}
+				if cfg.ScheduleInvocation != nil {
+					execOpts.RunKind = "schedule"
+					execOpts.ScheduleRunID = cfg.ScheduleInvocation.RunID
+					execOpts.ScheduleID = cfg.ScheduleInvocation.ScheduleID
+					execOpts.TriggerSource = cfg.ScheduleInvocation.TriggerSource
+					execOpts.ScheduledFor = cfg.ScheduleInvocation.ScheduledFor
+					execOpts.ExecutionID = execID
 				}
 				if cfg.WebhookInvocation != nil {
 					execOpts.WebhookInputFile = cfg.WebhookInvocation.InputFile

@@ -1,5 +1,5 @@
-import React, { useEffect, useState } from 'react'
-import { CalendarClock, Clock, Search, MessageSquare, Webhook } from 'lucide-react'
+import React, { lazy, useEffect, useState } from 'react'
+import { CalendarClock, ChevronLeft, Clock, Search, MessageSquare, Webhook } from 'lucide-react'
 import ModalPortal from '../ui/ModalPortal'
 import type { ScheduledJob } from '../../services/api-types'
 import { TooltipProvider } from '../ui/tooltip'
@@ -12,7 +12,10 @@ import { ScheduleGroupsView } from './scheduleRuns/ScheduleGroupsView'
 import { ScheduleListView } from './scheduleRuns/ScheduleListView'
 import { ScheduleTableView } from './scheduleRuns/ScheduleTableView'
 import WorkflowAPITriggersView from '../workflow/WorkflowAPITriggersView'
+import type { ProductTriggerScope } from '../../api/productWebhooks'
 import { useWorkflowStore } from '../../stores/useWorkflowStore'
+
+const ProductAPITriggersView = lazy(() => import('../workflow/ProductAPITriggersView'))
 
 interface WorkflowScheduleRunsPanelProps {
   onClose: () => void
@@ -21,21 +24,28 @@ interface WorkflowScheduleRunsPanelProps {
   onJobsLoaded?: (jobs: ScheduledJob[]) => void
   workflowScope?: WorkflowScope
   headerAction?: React.ReactNode
+  entityType?: 'workflow' | 'product'
+  canManage?: boolean
+  scopeNoun?: 'automation' | 'project'
+  productTriggerScope?: ProductTriggerScope
 }
 
-const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ onClose, onJobsLoaded, workflowScope, embedded = false, active = true, headerAction }) => {
-  const panel = useScheduleRunsData({ onClose, onJobsLoaded, workflowScope, active })
+const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ onClose, onJobsLoaded, workflowScope, embedded = false, active = true, headerAction, entityType = 'workflow', canManage, scopeNoun = 'automation', productTriggerScope }) => {
+  const panel = useScheduleRunsData({ onClose, onJobsLoaded, workflowScope, entityType, canManage, active })
   const workspaceViewTarget = useWorkflowStore(state => state.workspaceViewTarget)
-  const hasWorkflowWebhooks = Boolean(workflowScope?.workspacePath)
+  const hasWorkflowWebhooks = entityType === 'workflow' && Boolean(workflowScope?.workspacePath)
+  const hasProductWebhooks = entityType === 'product' && Boolean(productTriggerScope)
+
+  const hasWebhooks = hasWorkflowWebhooks || hasProductWebhooks
   const [automationSection, setAutomationSection] = useState<'schedules' | 'webhooks'>(() =>
-    hasWorkflowWebhooks && workspaceViewTarget?.view === 'schedules' && workspaceViewTarget.target === 'webhooks'
+    hasWebhooks && workspaceViewTarget?.view === 'schedules' && workspaceViewTarget.target === 'webhooks'
       ? 'webhooks'
       : 'schedules',
   )
   useEffect(() => {
     if (workspaceViewTarget?.view !== 'schedules') return
-    setAutomationSection(hasWorkflowWebhooks && workspaceViewTarget.target === 'webhooks' ? 'webhooks' : 'schedules')
-  }, [hasWorkflowWebhooks, workspaceViewTarget])
+    setAutomationSection(hasWebhooks && workspaceViewTarget.target === 'webhooks' ? 'webhooks' : 'schedules')
+  }, [hasWebhooks, workspaceViewTarget])
   const {
     isLoading,
     error,
@@ -60,6 +70,7 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
   const compact = embedded && !isWorkflowScoped
 
   const views = [
+    { key: 'by-workflow' as const, label: 'Workflows' },
     { key: 'schedules' as const, label: 'List' },
     { key: 'calendar' as const, label: 'Calendar' },
   ]
@@ -87,7 +98,7 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
         ? 'flex h-full min-h-0 w-full flex-col bg-card text-card-foreground'
         : 'mx-4 flex max-h-[85vh] w-full max-w-6xl flex-col rounded-xl border border-border bg-card text-card-foreground shadow-2xl'}>
 
-        {hasWorkflowWebhooks && (
+        {hasWebhooks && (
           <div className="flex shrink-0 items-center gap-1 border-b border-border px-4 py-2 sm:px-6" role="tablist" aria-label="Workflow triggers">
             <button type="button" role="tab" aria-selected={automationSection === 'schedules'}
               onClick={() => setAutomationSection('schedules')}
@@ -102,7 +113,11 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
           </div>
         )}
 
-        {automationSection === 'webhooks' && workflowScope?.workspacePath ? (
+        {automationSection === 'webhooks' && hasProductWebhooks && productTriggerScope ? (
+          <div className="min-h-0 flex-1">
+            <ProductAPITriggersView scope={productTriggerScope} onViewRuns={() => setAutomationSection('schedules')} headerAction={headerAction} />
+          </div>
+        ) : automationSection === 'webhooks' && workflowScope?.workspacePath ? (
           <div className="min-h-0 flex-1">
             <WorkflowAPITriggersView
               workspacePath={workflowScope.workspacePath}
@@ -150,10 +165,10 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
             <div className="flex flex-col items-center justify-center h-48 gap-3 px-6 text-center text-sm text-muted-foreground">
               <Clock className="w-8 h-8 opacity-30" />
               <div>
-                <p>{isWorkflowScoped ? 'No schedules for this automation yet.' : 'No automation schedules yet.'}</p>
+                <p>{isWorkflowScoped ? `No schedules for this ${scopeNoun} yet.` : 'No automation schedules yet.'}</p>
                 <p className="mt-1 text-xs">
                   {isWorkflowScoped
-                    ? 'Ask chat to schedule this automation when you are ready.'
+                    ? `Ask chat to schedule this ${scopeNoun} when you are ready.`
                     : 'Ask chat to schedule an automation when you are ready.'}
                 </p>
               </div>
@@ -164,6 +179,23 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
             <ScheduleCalendarView panel={panel} />
           ) : (
             <>
+              {!isWorkflowScoped && activeView === 'schedules' && selectedWorkflowFilter !== 'all' && (
+                <div className="flex items-center gap-2 px-4 pt-3 sm:px-6">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSelectedWorkflowFilter('all')
+                      setActiveView('by-workflow')
+                    }}
+                    className="inline-flex items-center gap-1 text-xs font-medium text-primary hover:underline"
+                  >
+                    <ChevronLeft className="h-3.5 w-3.5" /> All workflows
+                  </button>
+                  <span className="truncate text-xs text-muted-foreground">
+                    {workflowOptions.find(option => option.value === selectedWorkflowFilter)?.label}
+                  </span>
+                </div>
+              )}
               <div className={`border-b border-border px-4 sm:px-6 ${compact ? 'py-2.5' : 'py-4'}`}>
                 <div className="flex flex-wrap items-center gap-2">
                     <div className="flex min-w-0 flex-1 flex-wrap gap-2">

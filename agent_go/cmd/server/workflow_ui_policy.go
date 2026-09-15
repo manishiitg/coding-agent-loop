@@ -20,8 +20,13 @@ func workflowUICallerAllowed(phase, session string, req QueryRequest, active *Ac
 		mode = req.ExecutionOptions.WorkshopMode
 	}
 	policy := resolveWorkflowChatPolicy(mode, session, req, active, false)
+	// Builder authority is broader than control of the user's live workspace UI.
+	// Headless callers can author and maintain workflow state, but only an
+	// interactive human turn may receive a UI-control lease.
+	if policy.Origin != "interactive" {
+		return false
+	}
 	return policy.allows("workspace_ui")
-
 }
 
 func (api *StreamingAPI) registerWorkflowUIForCaller(registrar definitionToolRegistrar, phase, session, workspace string, req QueryRequest, readOnly bool) error {

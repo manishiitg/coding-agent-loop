@@ -1,5 +1,7 @@
 import { Filter, RefreshCw, Terminal } from 'lucide-react'
+import type { RunFolderInfo } from '../../../services/api-types'
 import { formatStartedAt } from '../../../utils/duration'
+import { formatDeploymentDateTime } from '../../../utils/displayTime'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../../ui/select'
 
 export interface LogsHeaderProps {
@@ -7,6 +9,7 @@ export interface LogsHeaderProps {
   embedded: boolean
   startedAt?: string | null
   runFolderOptions: string[]
+  runFolderInfos: RunFolderInfo[]
   selectedRunFolder: string
   setSelectedRunFolder: (folder: string) => void
   loading: boolean
@@ -19,12 +22,24 @@ export function LogsHeader({
   embedded,
   startedAt,
   runFolderOptions,
+  runFolderInfos,
   selectedRunFolder,
   setSelectedRunFolder,
   loading,
   loadLogs,
   onRefreshRunFolders,
 }: LogsHeaderProps) {
+  const timestampsByFolder = new Map(
+    runFolderInfos.map(folder => [
+      folder.name,
+      folder.metadata?.started_at || folder.metadata?.created_at || null,
+    ]),
+  )
+  const formatRunDateTime = (value?: string | null) => {
+    return formatDeploymentDateTime(value)
+  }
+  const selectedTimestamp = formatRunDateTime(timestampsByFolder.get(selectedRunFolder))
+
   return (
           <div className={`flex min-w-0 flex-1 ${embedded ? 'items-center gap-3' : 'items-start gap-3'}`}>
             <h2 className={`${embedded ? 'text-sm' : 'text-lg'} flex shrink-0 items-center gap-2 font-semibold text-foreground`}>
@@ -43,15 +58,36 @@ export function LogsHeader({
                     value={selectedRunFolder}
                     onValueChange={setSelectedRunFolder}
                   >
-                    <SelectTrigger className="h-7 w-52 max-w-[42vw] bg-card px-2 text-xs font-medium shadow-none" aria-label="Execution run">
-                      <SelectValue placeholder="Select iteration/group" />
+                    <SelectTrigger className="h-8 w-80 max-w-[48vw] bg-card px-2 text-xs font-medium shadow-none" aria-label="Execution run">
+                      <SelectValue placeholder="Select iteration/group">
+                        {selectedRunFolder && (
+                          <span className="flex min-w-0 items-center gap-2">
+                            <span className="truncate">{selectedRunFolder}</span>
+                            {selectedTimestamp && (
+                              <span className="shrink-0 text-[10px] font-normal text-muted-foreground">
+                                {selectedTimestamp}
+                              </span>
+                            )}
+                          </span>
+                        )}
+                      </SelectValue>
                     </SelectTrigger>
                     <SelectContent className="max-h-72">
-                      {runFolderOptions.map(folder => (
-                        <SelectItem key={folder} value={folder} className="text-xs">
-                          {folder}
-                        </SelectItem>
-                      ))}
+                      {runFolderOptions.map(folder => {
+                        const timestamp = formatRunDateTime(timestampsByFolder.get(folder))
+                        return (
+                          <SelectItem key={folder} value={folder} className="text-xs">
+                            <span className="flex min-w-[25rem] items-center justify-between gap-6 pr-1">
+                              <span>{folder}</span>
+                              {timestamp && (
+                                <span className="text-[10px] font-normal text-muted-foreground">
+                                  {timestamp}
+                                </span>
+                              )}
+                            </span>
+                          </SelectItem>
+                        )
+                      })}
                     </SelectContent>
                   </Select>
                 </div>

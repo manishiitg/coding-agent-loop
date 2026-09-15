@@ -1013,6 +1013,211 @@ func TestListWorkflowChatHistorySessionsUsesIndexWithoutParsingConversation(t *t
 	}
 }
 
+func TestListWorkspaceChatHistoryIncludesCentralProductConversations(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("WORKSPACE_DOCS_PATH", root)
+
+	workspacePath := "Chats/Work/projects/demo-12345678"
+	if err := os.MkdirAll(filepath.Join(root, filepath.FromSlash(workspacePath)), 0o755); err != nil {
+		t.Fatalf("mkdir product workspace: %v", err)
+	}
+	conversationDir := filepath.Join(root, "_users", "default", "chat_history", "2026-09-14")
+	if err := os.MkdirAll(conversationDir, 0o755); err != nil {
+		t.Fatalf("mkdir chat history: %v", err)
+	}
+	writeProductChat := func(sessionID, runtimeWorkspace, updatedAt string) {
+		t.Helper()
+		data := fmt.Sprintf(`{
+  "session_id": %q,
+  "agent_mode": "multi-agent",
+  "conversation_history": [
+    {"Role":"human","Parts":[{"Text":"hello from product chat"}]},
+    {"Role":"ai","Parts":[{"Text":"hello"}]}
+  ],
+  "runtime": {
+    "kind": "coding_agent",
+    "provider": "muse-cli",
+    "workspace_path": %q
+  },
+  "updated_at": %q
+}`, sessionID, runtimeWorkspace, updatedAt)
+		filename := "session-" + sessionID + "-conversation.json"
+		if err := os.WriteFile(filepath.Join(conversationDir, filename), []byte(data), 0o600); err != nil {
+			t.Fatalf("write product conversation: %v", err)
+		}
+	}
+
+	writeProductChat("product-matching", "_users/default/"+workspacePath, "2026-09-14T10:00:00Z")
+	writeProductChat("product-other", "_users/default/Chats/Work/projects/other", "2026-09-14T11:00:00Z")
+
+	sessions, err := ListChatHistorySessionsByKind("default", "chat", 10, 0, workspacePath)
+	if err != nil {
+		t.Fatalf("list product project chats: %v", err)
+	}
+	if len(sessions) != 1 || sessions[0].SessionID != "product-matching" {
+		t.Fatalf("sessions = %#v, want only exact workspace-bound product chat", sessions)
+	}
+}
+
+func TestListWorkProjectChatHistoryResolvesOwnedProjectStorage(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("WORKSPACE_DOCS_PATH", root)
+
+	const (
+		userID        = "alice"
+		workspacePath = "Chats/Work/projects/demo-12345678"
+		sessionID     = "product-chat-1"
+	)
+	conversationDir := filepath.Join(root, "_users", userID, filepath.FromSlash(workspacePath), "builder", "conversation", "2026-09-15")
+	if err := os.MkdirAll(conversationDir, 0o755); err != nil {
+		t.Fatalf("mkdir Work conversation dir: %v", err)
+	}
+	conversation := `{
+  "session_id": "product-chat-1",
+  "agent_mode": "multi-agent",
+  "conversation_history": [
+    {"Role":"human","Parts":[{"Text":"saved Work question"}]},
+    {"Role":"ai","Parts":[{"Text":"saved Work answer"}]}
+  ],
+  "runtime": {
+    "kind": "coding_agent",
+    "provider": "claude-code",
+    "workspace_path": "_users/alice/Chats/Work/projects/demo-12345678"
+  },
+  "user_id": "alice",
+  "updated_at": "2026-09-15T05:00:00Z"
+}`
+	conversationPath := filepath.Join(conversationDir, chatHistoryConversationFileName(sessionID))
+	if err := os.WriteFile(conversationPath, []byte(conversation), 0o600); err != nil {
+		t.Fatalf("write Work conversation: %v", err)
+	}
+
+	sessions, err := ListChatHistorySessionsByKind(userID, "chat", 25, 0, workspacePath)
+	if err != nil {
+		t.Fatalf("list Work project chats: %v", err)
+	}
+	if len(sessions) != 1 || sessions[0].SessionID != sessionID || sessions[0].Query != "saved Work question" {
+		t.Fatalf("Work project history = %#v, want owned project transcript", sessions)
+	}
+	if !strings.HasPrefix(sessions[0].ConversationPath, "_users/alice/Chats/Work/projects/") {
+		t.Fatalf("conversation path = %q, want owned Work path", sessions[0].ConversationPath)
+	}
+}
+
+func TestWorkProjectChatHistoryConversationPathUsesProjectBuilderFolder(t *testing.T) {
+	timestamp := time.Date(2026, 9, 14, 12, 0, 0, 0, time.UTC)
+
+	got, ok := workProjectChatHistoryConversationPath(
+		"default",
+		"_users/default/Chats/Work/projects/demo-12345678",
+		"product-chat-1",
+		timestamp,
+	)
+	if !ok {
+		t.Fatal("expected Work project workspace to use project-owned chat history")
+	}
+	want := "_users/default/Chats/Work/projects/demo-12345678/builder/conversation/2026-09-14/session-product-chat-1-conversation.json"
+	if got != want {
+		t.Fatalf("conversation path = %q, want %q", got, want)
+	}
+
+	got, ok = workProjectChatHistoryConversationPath(
+		"alice",
+		"Chats/Work/projects/demo-12345678",
+		"product-chat-2",
+		timestamp,
+	)
+	if !ok || !strings.HasPrefix(got, "_users/alice/Chats/Work/projects/demo-12345678/builder/conversation/") {
+		t.Fatalf("unscoped Work path = %q, ok=%v", got, ok)
+	}
+
+	if got, ok := workProjectChatHistoryConversationPath("default", "Chats/Video/projects/demo", "chat-3", timestamp); ok || got != "" {
+		t.Fatalf("other product path = %q, ok=%v; want unchanged global storage", got, ok)
+	}
+}
+
+func TestDeleteWorkProjectChatRemovesProjectAndLegacyCopies(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("WORKSPACE_DOCS_PATH", root)
+
+	const (
+		userID        = "alice"
+		sessionID     = "product-chat-1"
+		workspacePath = "Chats/Work/projects/demo"
+	)
+	projectConversation := filepath.Join(root, "_users", userID, filepath.FromSlash(workspacePath), "builder", "conversation", "2026-09-14", chatHistoryConversationFileName(sessionID))
+	legacyConversation := filepath.Join(root, "_users", userID, "chat_history", "2026-09-14", chatHistoryConversationFileName(sessionID))
+	for _, conversation := range []string{projectConversation, legacyConversation} {
+		if err := os.MkdirAll(filepath.Dir(conversation), 0o755); err != nil {
+			t.Fatalf("mkdir conversation parent: %v", err)
+		}
+		if err := os.WriteFile(conversation, []byte(`{"session_id":"product-chat-1"}`), 0o600); err != nil {
+			t.Fatalf("write conversation: %v", err)
+		}
+	}
+
+	result, err := DeleteChatHistorySession(userID, sessionID, workspacePath)
+	if err != nil {
+		t.Fatalf("delete Work chat: %v", err)
+	}
+	if result.DeletedCount != 2 {
+		t.Fatalf("deleted count = %d, want project and legacy copies", result.DeletedCount)
+	}
+	for _, conversation := range []string{projectConversation, legacyConversation} {
+		if _, err := os.Stat(conversation); !os.IsNotExist(err) {
+			t.Fatalf("conversation still exists or stat failed: %s: %v", conversation, err)
+		}
+	}
+}
+
+func TestNormalizeRestoredChatHistoryConversationPathAllowsOnlyOwnedWorkProject(t *testing.T) {
+	owned := "_users/alice/Chats/Work/projects/demo/builder/conversation/2026-09-14/session-chat-1-conversation.json"
+	if got, ok := normalizeRestoredChatHistoryConversationPath("alice", owned); !ok || got != owned {
+		t.Fatalf("owned Work conversation path = %q, ok=%v", got, ok)
+	}
+	otherUser := "_users/bob/Chats/Work/projects/demo/builder/conversation/2026-09-14/session-chat-1-conversation.json"
+	if got, ok := normalizeRestoredChatHistoryConversationPath("alice", otherUser); ok || got != "" {
+		t.Fatalf("other user's Work conversation path = %q, ok=%v", got, ok)
+	}
+}
+
+func TestCopyChatHistoryConversationIfNeededPreservesLegacyTranscript(t *testing.T) {
+	workspace := httptest.NewServer(&mockWorkspaceAPI{files: map[string]string{}})
+	defer workspace.Close()
+	t.Setenv("WORKSPACE_API_URL", workspace.URL)
+
+	sourcePath := "_users/default/chat_history/2026-09-14/session-legacy-conversation.json"
+	destinationPath := "_users/default/Chats/Work/projects/demo/builder/conversation/2026-09-14/session-legacy-conversation.json"
+	if err := writeRawFileToWorkspace(context.Background(), sourcePath, `{"session_id":"legacy","ui_events":[{"type":"tool"}]}`); err != nil {
+		t.Fatalf("write legacy transcript: %v", err)
+	}
+	if err := copyChatHistoryConversationIfNeeded(sourcePath, destinationPath); err != nil {
+		t.Fatalf("copy legacy transcript: %v", err)
+	}
+
+	got, exists, err := readFileFromWorkspace(context.Background(), destinationPath)
+	if err != nil || !exists {
+		t.Fatalf("read project transcript: exists=%v err=%v", exists, err)
+	}
+	if !strings.Contains(got, `"ui_events"`) {
+		t.Fatalf("project transcript lost durable UI events: %s", got)
+	}
+	if _, exists, err := readFileFromWorkspace(context.Background(), sourcePath); err != nil || !exists {
+		t.Fatalf("legacy fallback should remain readable: exists=%v err=%v", exists, err)
+	}
+
+	if err := writeRawFileToWorkspace(context.Background(), destinationPath, `{"session_id":"newer"}`); err != nil {
+		t.Fatalf("overwrite project transcript for test: %v", err)
+	}
+	if err := copyChatHistoryConversationIfNeeded(sourcePath, destinationPath); err != nil {
+		t.Fatalf("second copy: %v", err)
+	}
+	got, _, _ = readFileFromWorkspace(context.Background(), destinationPath)
+	if !strings.Contains(got, `"newer"`) {
+		t.Fatalf("existing project transcript was overwritten: %s", got)
+	}
+}
+
 // A transcript on disk that the index does not know about must still be listed.
 // It was not: the workflow lister returned a complete index verbatim, so a chat
 // whose write did not also update the index stayed out of /resume permanently —

@@ -34,6 +34,7 @@ type providerManifestEntry struct {
 	AuthDescription       string                            `json:"auth_description"`
 	RuntimeCommand        string                            `json:"runtime_command,omitempty"`
 	RuntimeAvailable      *bool                             `json:"runtime_available,omitempty"`
+	InstallCommand        string                            `json:"install_command,omitempty"`
 	AuthConfigured        bool                              `json:"auth_configured"`
 	AuthSource            string                            `json:"auth_source,omitempty"`
 	Usable                bool                              `json:"usable"`
@@ -105,6 +106,7 @@ type providerStaticInfo struct {
 	description     string
 	integrationKind string
 	authDescription string
+	installCommand  string
 	requiresAPIKey  bool
 	apiKeyEnv       string
 	apiKeyURL       string
@@ -116,6 +118,7 @@ var providerStaticInfoMap = map[string]providerStaticInfo{
 		description:     "Uses the locally installed codex CLI. Authentication via codex login or CODEX_API_KEY.",
 		integrationKind: "coding_agent",
 		authDescription: "Local CLI (API key optional)",
+		installCommand:  "npm install -g @openai/codex@latest",
 		requiresAPIKey:  false,
 	},
 	"cursor-cli": {
@@ -123,6 +126,7 @@ var providerStaticInfoMap = map[string]providerStaticInfo{
 		description:     "Uses cursor-agent through tmux. Supports 100+ models via Cursor subscription.",
 		integrationKind: "coding_agent",
 		authDescription: "Local CLI (API key optional)",
+		installCommand:  "curl --proto '=https' --proto-redir '=https' --tlsv1.2 https://cursor.com/install | bash",
 		requiresAPIKey:  false,
 	},
 	"pi-cli": {
@@ -130,6 +134,7 @@ var providerStaticInfoMap = map[string]providerStaticInfo{
 		description:     "Uses Pi CLI through tmux marker transport for Pi model IDs across Gemini, Z.AI, Kimi, MiniMax, DeepSeek, and custom Pi providers.",
 		integrationKind: "coding_agent",
 		authDescription: "Local CLI (Pi provider API key)",
+		installCommand:  "npm install -g @earendil-works/pi-coding-agent@latest",
 		requiresAPIKey:  false,
 		apiKeyEnv:       "Provider-specific: GEMINI_API_KEY, ZAI_API_KEY, KIMI_API_KEY, MINIMAX_API_KEY, DEEPSEEK_API_KEY, etc.",
 		apiKeyURL:       "https://pi.dev/docs/latest/providers",
@@ -139,6 +144,7 @@ var providerStaticInfoMap = map[string]providerStaticInfo{
 		description:     "Uses the locally installed muse CLI (Meta). Authentication via muse login or META_API_KEY.",
 		integrationKind: "coding_agent",
 		authDescription: "Local CLI (Meta login or API key)",
+		installCommand:  "curl --proto '=https' --proto-redir '=https' --tlsv1.2 https://dev.meta.ai/install.sh | bash",
 		requiresAPIKey:  false,
 		apiKeyEnv:       "META_API_KEY",
 	},
@@ -147,6 +153,7 @@ var providerStaticInfoMap = map[string]providerStaticInfo{
 		description:     "Uses the locally installed claude CLI. Handles its own authentication, model selection, and tool execution.",
 		integrationKind: "coding_agent",
 		authDescription: "Local CLI (no API key)",
+		installCommand:  "npm install -g @anthropic-ai/claude-code@latest",
 		requiresAPIKey:  false,
 	},
 	"openai": {
@@ -381,6 +388,7 @@ func (api *StreamingAPI) handleGetProviderManifest(w http.ResponseWriter, r *htt
 			AuthDescription:       info.authDescription,
 			RuntimeCommand:        runtimeCommand,
 			RuntimeAvailable:      runtimeOK,
+			InstallCommand:        info.installCommand,
 			AuthConfigured:        authConfigured,
 			AuthSource:            authSource,
 			Usable:                usable,

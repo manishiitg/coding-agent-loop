@@ -94,6 +94,9 @@ func LoadProductManifest(fsys fs.FS, path string) (ProductManifest, error) {
 	if strings.TrimSpace(manifest.Profile.Prompt.File) == "" {
 		manifest.Profile.Prompt = manifest.Prompt
 	}
+	if err := ResolveFeatures(&manifest.Profile); err != nil {
+		return manifest, fmt.Errorf("profile %q features: %w", manifest.Profile.ID, err)
+	}
 	seen := map[string]struct{}{manifest.Profile.ID: {}}
 	for i := range manifest.Profiles {
 		extra := &manifest.Profiles[i]
@@ -106,6 +109,9 @@ func LoadProductManifest(fsys fs.FS, path string) (ProductManifest, error) {
 		seen[extra.ID] = struct{}{}
 		if strings.TrimSpace(extra.Prompt.File) == "" {
 			return manifest, fmt.Errorf("invalid product manifest: profile %q needs its own prompt.file", extra.ID)
+		}
+		if err := ResolveFeatures(extra); err != nil {
+			return manifest, fmt.Errorf("profile %q features: %w", extra.ID, err)
 		}
 	}
 	for _, profile := range manifest.AllProfiles() {

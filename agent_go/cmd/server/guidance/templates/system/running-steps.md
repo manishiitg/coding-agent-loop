@@ -7,9 +7,11 @@ execute. Do not prefill an approval the user has not given.
 
 ## Iterations & Groups
 
-**Iterations** are just output folders (e.g., `iteration-0`). In
-Workshop mode, always use **iteration-0**. Do not choose or
-pass any other iteration. Every `execute_step` re-reads the **latest**
+**Iterations** are output folders. Interactive Builder/Workshop work uses
+**iteration-0**. A saved schedule is instead server-bound to one immutable
+**iteration-N-sched** folder, and a webhook to **iteration-N-hook**; in those
+invocations use the bound folder and never choose, rotate, or substitute a
+different iteration. Every `execute_step` re-reads the **latest**
 `plan.json` — no caching or snapshotting.
 
 When running a step or the full workflow:

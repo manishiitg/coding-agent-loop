@@ -41,8 +41,9 @@ export function shouldShowLiveTerminalControl(
   liveTerminalOffered: boolean,
   isProductSurface: boolean,
   isInteractiveWorkflowBuilder: boolean,
+  allowProductSurface = false,
 ): boolean {
-  return liveTerminalOffered && (!isProductSurface || isInteractiveWorkflowBuilder)
+  return liveTerminalOffered && (!isProductSurface || isInteractiveWorkflowBuilder || allowProductSurface)
 }
 
 // Only an interactive transport can accept terminal-style live delivery.

@@ -1,6 +1,6 @@
 ## EVALUATION PLAN — evaluation/evaluation_plan.json
 
-Workshop owns the eval plan: write it, validate it, run it against `iteration-0`, and keep it aligned as the workflow evolves.
+Workshop owns the eval plan: write it, validate it, and keep it aligned as the workflow evolves. Interactive tests target `iteration-0`; a scheduled invocation targets its server-bound `iteration-N-sched` run.
 
 ### Division of labor — evals measure the GOAL; Pulse owns the rest
 
@@ -60,7 +60,7 @@ Auto-eval runs after every successful execution, so every eval step's cost recur
   - tier rule of thumb: `high` for subjective/ambiguous judgment, `medium` for normal eval checks, `low` for deterministic/file-shape checks
   - there is no final combined scoring agent; each eval step must emit structured verdict fields that downstream reviews and reports can read
 - After every edit to `evaluation/evaluation_plan.json`, call `validate_evaluation_plan`.
-- When you want to test the current eval plan, call `run_full_evaluation(group_name="...")`. Evaluation always targets `iteration-0`.
+- When you want to test the current eval plan, call `run_full_evaluation(group_name="...")`. Interactive Workshop evaluation targets `iteration-0`; a scheduled invocation targets its bound `iteration-N-sched` folder.
 
 ### Writing a GOOD eval (best practices)
 
@@ -75,7 +75,7 @@ A good eval catches a bad run — including one that *looks* successful. Design 
 - **Fail loud / fail closed.** Missing input → fail (0), don't skip or assume. An eval that errors or finds nothing must register as failure, never as success. A failure caused by missing/broken input is **Bug evidence** — name the missing path in `reasoning` so Pulse routes it to Bug Review/Fixer instead of reading it as a goal regression.
 - **Explicit rubric + thresholds.** State the pass/fail criteria; define what 100 vs 0 means and any partial-credit rule, so scoring is repeatable.
 - **Rubric stability.** Changing scale, thresholds, or rubric changes what scores MEAN across runs. Do it only in a deliberate eval improvement pass (`/improve-evaluation`), record a typed Pulse decision flagging that score semantics changed, and never bundle it with a workflow behavior or strategy change in the same pass — otherwise before/after comparisons are uninterpretable.
-- **Sandbox hygiene.** Eval steps execute in a shared sandbox (`evaluation/runs/iteration-0[/group]`) that is NOT cleaned between evaluations. Read evidence ONLY via `{{"{{TARGET_RUN_PATH}}"}}` (and `db/` for persistent stores); never base a score on files found in the sandbox except facts your own step just extracted. Remember `pre_validation` checks the sandbox, not the target run.
+- **Sandbox hygiene.** Interactive eval steps execute under `evaluation/runs/iteration-0[/group]`; scheduled evals use the matching `evaluation/runs/iteration-N-sched[/group]`. Read evidence ONLY via `{{"{{TARGET_RUN_PATH}}"}}` (and `db/` for persistent stores); never base a score on unrelated files found in an eval folder except facts your own step just extracted. Remember `pre_validation` checks the eval execution folder, not the target run.
 - **Route-gate** with `applies_to_routes` so an eval only runs for the path the target run actually took.
 - **Cheap checks first.** Presence / format / SQL gates before any expensive model judgment.
 - **Independence.** Don't reuse the same reasoning that produced the data to also judge it.
@@ -94,13 +94,13 @@ A good eval catches a bad run — including one that *looks* successful. Design 
 2. Edit `evaluation/evaluation_plan.json`.
 3. Call `validate_evaluation_plan`.
 4. Fix validation errors, then validate again until clean.
-5. If needed, call `run_full_evaluation(group_name="...")` to test the plan against a group in `iteration-0`.
+5. If needed, call `run_full_evaluation(group_name="...")` to test the plan against the current interactive `iteration-0` group or the schedule-bound group.
 
 ### Files
 
 - Plan: `evaluation/evaluation_plan.json`
 - Step config: `evaluation/step_config.json`
-- Eval runs + reports: `evaluation/runs/iteration-0[/group]/`
+- Eval runs + reports: `evaluation/runs/iteration-0[/group]/` interactively, or matching `evaluation/runs/iteration-N-sched[/group]/` for schedules.
 
 ### Where verdicts end up
 

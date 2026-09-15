@@ -238,10 +238,13 @@ func TestUserBrowserDiscoveryHonorsOwnershipAndWorkflowAccess(t *testing.T) {
 	t.Setenv("WORKSPACE_API_URL", workspace.URL)
 	api := &StreamingAPI{}
 	for _, user := range []string{"alice", "bob", "outsider"} {
-		name := common.PrefixBrowserSessionID(common.BrowserSessionNamespace(user, "") + "--browser")
+		name := common.PrefixBrowserSessionID(common.WorkflowBrowserSessionNamespace(user, "", "Workflow/shared-view-check") + "--browser")
 		browser.GetSessionTracker().Touch(name, "old-chat", "old-chat")
 		defer browser.GetSessionTracker().Remove(name)
 	}
+	otherWorkflow := common.PrefixBrowserSessionID(common.WorkflowBrowserSessionNamespace("alice", "", "Workflow/private-work") + "--browser")
+	browser.GetSessionTracker().Touch(otherWorkflow, "other-chat", "other-chat")
+	defer browser.GetSessionTracker().Remove(otherWorkflow)
 	for _, user := range []string{"alice", "bob", "outsider"} {
 		r := httptest.NewRequest("GET", "/?workspace_path=Workflow/shared-view-check", nil)
 		r = r.WithContext(context.WithValue(r.Context(), UserContextKey, &UserClaims{UserID: user}))
@@ -252,7 +255,7 @@ func TestUserBrowserDiscoveryHonorsOwnershipAndWorkflowAccess(t *testing.T) {
 			}
 			continue
 		}
-		if len(items) != 1 || items[0]["browser_session"] != common.PrefixBrowserSessionID(common.BrowserSessionNamespace(user, "")+"--browser") {
+		if len(items) != 1 || items[0]["browser_session"] != common.PrefixBrowserSessionID(common.WorkflowBrowserSessionNamespace(user, "", "Workflow/shared-view-check")+"--browser") {
 			t.Fatalf("%s: %v", user, items)
 		}
 	}

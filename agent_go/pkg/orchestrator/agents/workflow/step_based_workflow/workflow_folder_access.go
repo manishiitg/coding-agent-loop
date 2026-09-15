@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"regexp"
 	"sort"
 	"strings"
 
@@ -14,8 +13,6 @@ import (
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/workflowkb"
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/workflowtypes"
 )
-
-var workflowFolderEnvUnsafe = regexp.MustCompile(`[^A-Z0-9]+`)
 
 type workflowFolderAccessManifest struct {
 	FolderAccess         []workflowtypes.WorkflowFolderGrant         `json:"folder_access"`
@@ -125,18 +122,12 @@ func workflowFolderAccessRequests(workspacePath string) []workflowtypes.Workflow
 func appendWorkflowFolderAccess(workspacePath string, readPaths, writePaths []string, kbRead ...bool) ([]string, []string, []string, map[string]string) {
 	env := map[string]string{}
 	readOnlyPaths := []string{}
-	for _, grant := range workflowFolderAccess(workspacePath) {
-		readPaths = append(readPaths, grant.Path)
-		if grant.CanWrite() {
-			writePaths = append(writePaths, grant.Path)
-		} else {
-			readOnlyPaths = append(readOnlyPaths, grant.Path)
-		}
-		key := workflowFolderEnvUnsafe.ReplaceAllString(strings.ToUpper(strings.TrimSpace(grant.Alias)), "_")
-		key = strings.Trim(key, "_")
-		if key != "" {
-			env["WORKFLOW_FOLDER_"+key] = grant.Path
-		}
+	grantRead, grantWrite, grantReadOnly, grantEnv := workflowtypes.ResolveFolderGrants(workflowFolderAccess(workspacePath), "WORKFLOW_FOLDER_")
+	readPaths = append(readPaths, grantRead...)
+	writePaths = append(writePaths, grantWrite...)
+	readOnlyPaths = append(readOnlyPaths, grantReadOnly...)
+	for key, path := range grantEnv {
+		env[key] = path
 	}
 	enabled := len(kbRead) == 0 || kbRead[0]
 	env["WORKFLOW_KB_ACCESS"] = "none"
@@ -213,8 +204,7 @@ func workflowFolderAccessPrompt(workspacePath string) string {
 	var lines []string
 	lines = append(lines, "## Attached folders", "These owner-approved host folders are available through the shell. Use the environment variable, not a hand-copied absolute path. For a read-write grant, `diff_patch_workspace_file` accepts `linked://<alias>/<relative-path>`:")
 	for _, grant := range grants {
-		key := strings.Trim(workflowFolderEnvUnsafe.ReplaceAllString(strings.ToUpper(strings.TrimSpace(grant.Alias)), "_"), "_")
-		lines = append(lines, fmt.Sprintf("- `%s` — `%s` (%s)", grant.Alias, "WORKFLOW_FOLDER_"+key, grant.Access))
+		lines = append(lines, fmt.Sprintf("- `%s` — `%s` (%s)", grant.Alias, "WORKFLOW_FOLDER_"+workflowtypes.FolderAliasEnvKey(grant.Alias), grant.Access))
 	}
 	return strings.Join(lines, "\n")
 }

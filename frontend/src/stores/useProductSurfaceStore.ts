@@ -1,7 +1,8 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
+import { isProductSurface, type ProductSurface } from '../products/productSurfaceConfig'
 
-export type ProductSurface = 'agentworks' | 'video-studio' | 'dominion' | 'sparkquill'
+export type { ProductSurface } from '../products/productSurfaceConfig'
 
 interface ProductSurfaceState {
   productSurface: ProductSurface
@@ -24,13 +25,9 @@ export const useProductSurfaceStore = create<ProductSurfaceState>()(
       migrate: (persisted) => {
         const state = persisted as Partial<ProductSurfaceState> | undefined
         const surface = state?.productSurface
-        const validSurface = surface === 'agentworks' ||
-          surface === 'video-studio' ||
-          surface === 'dominion' ||
-          surface === 'sparkquill'
         return {
           ...state,
-          productSurface: validSurface ? surface : 'agentworks',
+          productSurface: isProductSurface(surface) ? surface : 'agentworks',
         } as ProductSurfaceState
       },
     },

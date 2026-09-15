@@ -43,6 +43,14 @@ describe('shared transcript failure retry', () => {
     expect(host.querySelector('[data-testid="terminal-clear-thinking-batch-toggle"]')).toBeNull()
   })
 
+  it('renders stored Pi progress as an assistant response without a Thinking disclosure', async () => {
+    const host = await mount([event('pi-update', 'conversation_thinking', {
+      thinking: 'Inspecting the webhook payload.', metadata: { provider: 'pi-cli' },
+    })])
+    expect(host.querySelector('[data-testid="terminal-assistant-update"]')?.textContent).toBe('Inspecting the webhook payload.')
+    expect(host.querySelector('[data-testid="terminal-clear-thinking-batch-toggle"]')).toBeNull()
+  })
+
   it.each(['sending', 'sent_to_cli', 'queued_for_injection', 'next_turn_started'])('shows only the timestamp for delivery status %s', async (status) => {
     const host = await mount([event('user', 'user_message', {
       content: 'Check the browser', metadata: { delivery_status: status },

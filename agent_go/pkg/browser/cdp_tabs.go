@@ -472,7 +472,7 @@ func clearCDPActiveTab(port int, tab string) {
 // sharedConnectionIdentity: that string is shared by construction across
 // every workflow using the same CDP port (see sharedCDPSessionName), so
 // treating it as one workflow's owner identity silently pools every such
-// workflow's tabs and cleanup leases under one key (PLAT-181).
+// workflow's tabs and cleanup leases under one key (PLAT-322).
 func cdpOwnerID(workflowSessionID, agentSessionID, session, sharedConnectionIdentity string) string {
 	for _, candidate := range []string{agentSessionID, workflowSessionID} {
 		candidate = strings.TrimSpace(candidate)
@@ -503,7 +503,7 @@ func cdpOwnerID(workflowSessionID, agentSessionID, session, sharedConnectionIden
 // and refuse the operation outright rather than trust this value as a real
 // owner -- a fresh, never-before-seen key always reads as "zero tabs used,"
 // so treating it as a normal owner silently bypasses the quota it exists to
-// enforce (PLAT-181 review). Fixed diagnostics/cleanup paths that only
+// enforce (PLAT-322 review). Fixed diagnostics/cleanup paths that only
 // observe usage (not gate it) may still record against this value; it is
 // still unique per call, so it will not pool with a genuine workflow's
 // count or with another unidentified call's count.
@@ -514,7 +514,7 @@ var cdpUnidentifiedOwnerCounter atomic.Int64
 // cdpUnidentifiedOwnerID returns a fresh identity for a caller with no
 // resolvable per-workflow session at all -- the old behavior returned the
 // fixed literal "default" here, which collided across every such caller the
-// same way the shared connection identity did (PLAT-181): two genuinely
+// same way the shared connection identity did (PLAT-322): two genuinely
 // unidentified workflows would still pool their tabs under one key. A
 // unique value per call means it never collides with anyone else's real
 // count. It must not be treated as a normal, quota-eligible owner by any

@@ -28,6 +28,66 @@ func TestUserAllowedProductDefaultsToUnrestrictedWhenFileAbsent(t *testing.T) {
 	}
 }
 
+func TestAdminOnlyProductsAreHiddenAndRejectedForMembers(t *testing.T) {
+	t.Setenv("MULTI_USER_MODE", "true")
+	t.Setenv("AGENTWORKS_ADMIN_ONLY_PRODUCT_SURFACES", " work ")
+	withMemoryUserDirectory(t, `{"users":[
+		{"id":"admin","username":"admin","admin":true,"can_create":true,"products":[]},
+		{"id":"member","username":"member","can_create":true,"products":[]}
+	]}`)
+
+	admin := &UserClaims{UserID: "admin", Username: "admin"}
+	member := &UserClaims{UserID: "member", Username: "member"}
+	if !userAllowedProduct(admin, "work") {
+		t.Fatal("admin must retain access to an admin-only product")
+	}
+	if userAllowedProduct(member, "work") {
+		t.Fatal("member must not reach an admin-only product")
+	}
+	if !userAllowedProduct(member, "agentworks") {
+		t.Fatal("admin-only Work must not remove the member's AgentWorks access")
+	}
+	products, ok := productAccessResponseFields(member)["allowed_products"].([]string)
+	if !ok {
+		t.Fatal("member must receive an explicit frontend product allowlist")
+	}
+	for _, product := range products {
+		if product == "work" {
+			t.Fatalf("member frontend allowlist contains admin-only Work: %v", products)
+		}
+	}
+	if got := productAccessResponseFields(admin)["allowed_products"]; got != nil {
+		t.Fatalf("admin should remain unrestricted, got %v", got)
+	}
+}
+
+func TestProductsAvailableToAllAugmentReadOnlyAccounts(t *testing.T) {
+	t.Setenv("MULTI_USER_MODE", "true")
+	t.Setenv("AGENTWORKS_PRODUCTS_AVAILABLE_TO_ALL", " work ")
+	withMemoryUserDirectory(t, `{"users":[
+		{"id":"reader","username":"reader","can_create":false,"products":["agentworks"]},
+		{"id":"new-reader","username":"new-reader","can_create":false,"products":[]}
+	]}`)
+
+	for _, userID := range []string{"reader", "new-reader"} {
+		claims := &UserClaims{UserID: userID, Username: userID}
+		if !userAllowedProduct(claims, "work") {
+			t.Fatalf("%s should receive deployment-wide Work access", userID)
+		}
+		products, ok := productAccessResponseFields(claims)["allowed_products"].([]string)
+		hasWork := false
+		for _, product := range products {
+			hasWork = hasWork || product == "work"
+		}
+		if !ok || !hasWork {
+			t.Fatalf("%s frontend products = %v, want Work", userID, products)
+		}
+	}
+	if userAllowedProduct(&UserClaims{UserID: "new-reader", Username: "new-reader"}, "dominion") {
+		t.Fatal("deployment-wide Work access must not unlock unrelated products")
+	}
+}
+
 func TestUserAllowedProductRestrictsExplicitEntry(t *testing.T) {
 	withUserProductAccessFile(t, `{
 		"john": { "products": ["dominion"] },

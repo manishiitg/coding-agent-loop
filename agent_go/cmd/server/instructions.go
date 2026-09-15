@@ -96,6 +96,17 @@ Reuse existing project folders for follow-up work on the same topic.
 `
 }
 
+// GetWorkWorkspaceMap describes the primary host workspace without leaking
+// AgentWorks' internal Chats/Workflow storage model into the Work product.
+func GetWorkWorkspaceMap(workspacePath string) string {
+	workspacePath = strings.TrimSpace(workspacePath)
+	if workspacePath == "" {
+		return ""
+	}
+	return "\n## Workspace\n\nYour selected primary workspace is `" + workspacePath +
+		"/`. The native coding CLI starts in this directory. Use paths relative to that working directory, or this exact authorized absolute path. Access levels for it and any additional attached folders are listed below; never infer access to another host path.\n"
+}
+
 // GetWorkflowPhaseWorkspaceMap returns workflow-phase-specific workspace instructions.
 // Unlike chat mode, workflow-phase work should treat the active workflow folder as the
 // primary writable root and avoid surfacing internal per-user Chats paths.
@@ -175,7 +186,7 @@ Each workflow lives in ` + "`" + absWorkflow + `/<name>/` + "`" + ` with:
 
 **Planning & config:**
 - ` + "`soul/soul.md`" + ` — canonical stable workflow intent: ` + "`## Objective`" + `, ` + "`## Success Criteria`" + `, and optional explicit user-approved constraints. Read before review, improve, eval, harden, and ambiguous execution decisions. **Do not store architecture, current step design, provider/tool choices, implementation details, historical decisions, references, agent-inferred assumptions, or notification preferences in soul.md** — per-workflow notification preferences live in workflow.json ` + "`notifications`" + ` (` + "`run_summary_instructions`" + ` and ` + "`run_summary_channels`" + ` for execution outcomes, ` + "`pulse_summary_instructions`" + ` and ` + "`pulse_summary_channels`" + ` for Pulse activity, ` + "`run_summary_recipients`" + ` and ` + "`pulse_summary_recipients`" + ` for WHO each summary is emailed to (empty = the account default recipient), ` + "`run_summary_slack_webhook_secret_names`" + ` and ` + "`pulse_summary_slack_webhook_secret_names`" + ` for WHICH Slack channel(s) each summary posts to — one Incoming Webhook is one channel, so a second channel needs a second webhook secret (empty = the single ` + "`slack_webhook_secret_name`" + `),` + "`exclude_channels`" + ` for workflow-wide channel opt-outs, and ` + "`block_recipients`" + ` for the email denylist, and ` + "`gmail_connection_id`" + ` for WHICH configured Gmail account sends this workflow's mail — empty inherits the account default connection, and an unknown or disabled connection fails the send rather than falling back to another account). The backend applies delivery rules automatically, exposes the preferences to Workflow Builder, and supplies them to the Pulse finalizer for their matching notification sends. Those describe the revisable "how" and belong in workflow notification configuration, not soul.md. **Stays Markdown — never create a ` + "`soul.html`" + `, a "readable mirror", or any HTML copy.** It is parsed as Markdown (the framework-health check and run-time objective injection read the ` + "`## Objective`" + ` / ` + "`## Success Criteria`" + ` headings), and AgentWorks renders it directly in Goal. Typed Pulse records store time-based review, analysis, and improvement history; they may report evidence-stamped goal progress but must not copy a Goal/Profile card. soul.md is the single source; leave it Markdown.
-- ` + "`workflow.json`" + ` — workflow-level config: schedules, MCP servers, skills, LLM config, optional ` + "`run_retention_count`" + ` (backup iterations to keep; default 3). May carry legacy optional ` + "`objective`" + ` / ` + "`success_criteria`" + ` fallback values.
+- ` + "`workflow.json`" + ` — workflow-level config: schedules, MCP servers, skills, LLM config, optional ` + "`run_retention_count`" + ` (completed run/eval folders to keep per Builder, schedule, and webhook family; default 10). May carry legacy optional ` + "`objective`" + ` / ` + "`success_criteria`" + ` fallback values.
 - ` + "`planning/plan.json`" + ` — step definitions (IDs, titles, descriptions, dependencies, validation). It no longer owns root objective/success fields; use ` + "`soul/soul.md`" + ` for that.
 - ` + "`planning/step_config.json`" + ` — per-step settings. Each step's ` + "`agent_configs`" + ` object controls execution mode:
   - ` + "`use_code_execution_mode`" + ` (bool) — ` + "`false`" + ` = direct tool calls, ` + "`true`" + ` = scripted Python (main.py)
@@ -191,7 +202,7 @@ Each workflow lives in ` + "`" + absWorkflow + `/<name>/` + "`" + ` with:
 - ` + "`code/<step-id>/script_metadata.json (legacy: learnings/<step-id>/script_metadata.json)`" + ` — version history + run stats for the saved script
 
 **Runs (execution output):**
-- ` + "`runs/iteration-0/`" + ` — **active run folder**. All new executions land here. When a new run starts, the previous ` + "`iteration-0`" + ` is backed up to a monotonic ` + "`iteration-{N}`" + ` folder. ` + "`workflow.json::run_retention_count`" + ` controls how many backup iterations are kept; default 3.
+- ` + "`runs/iteration-0/`" + ` — mutable Builder/manual-workflow slot. A new Builder full run rotates the previous slot to plain ` + "`iteration-{N}`" + `. Producing saved schedules use immutable ` + "`iteration-{N}-sched`" + ` folders and webhooks use ` + "`iteration-{N}-hook`" + `. ` + "`workflow.json::run_retention_count`" + ` controls how many completed run/eval folders are kept independently for each family; default 10.
 - ` + "`runs/iteration-{N}/{group-name}/execution/{step-id}/`" + ` — per-step execution outputs, keyed by the declared ID in ` + "`planning/plan.json`" + ` (when variable groups are in use, each group runs in its own subfolder)
 - ` + "`runs/iteration-{N}/{group-name}/execution/{step-id}/code/main.py`" + ` — per-run working copy of the ` + "`scripted`" + ` script
 - ` + "`runs/iteration-{N}/{group-name}/logs/{step-id}/`" + ` — per-step logs (see Log Layout below). Generated nested routes may use composite folders; inspect the actual directory for those executions.
@@ -212,7 +223,7 @@ Each workflow lives in ` + "`" + absWorkflow + `/<name>/` + "`" + ` with:
 **Operating model and oversight:**
 - ` + "`/define-success`" + ` records the confirmed operating-model assessment (primary type, secondary traits, plan stability, runtime mode, business-context accumulation, and cadence) as a typed decision record. It is historical reasoning, not a permanent Goal/Profile card. Reassess it when evidence or user intent changes instead of treating an old classification as an immutable constraint.
 - ` + "`oversight_mode`" + ` (in ` + "`workflow.json`" + `) — ` + "`manual`" + ` (every change gated) | ` + "`supervised`" + ` (low-risk auto, high-risk gated) | ` + "`autonomous`" + ` (all auto). Default: ` + "`supervised`" + `. Hard gate: drives auto-vs-human-approval flow.
-- ` + "`run_retention_count`" + ` (in ` + "`workflow.json`" + `) — optional integer, 1-50. Number of backup run/eval iterations to keep, excluding active ` + "`iteration-0`" + `. Default: 3. Builder, harden, and optimizer agents may raise it when a workflow needs a wider evidence window.
+- ` + "`run_retention_count`" + ` (in ` + "`workflow.json`" + `) — optional integer, 1-50. Number of completed run/eval folders to keep independently for plain Builder archives, saved-schedule ` + "`-sched`" + ` runs, and webhook ` + "`-hook`" + ` runs, excluding active ` + "`iteration-0`" + `. Default: 10. Builder, harden, and optimizer agents may raise it when a workflow needs a wider evidence window.
 ### Log Layout (inside ` + "`runs/iteration-{N}/{group-name}/logs/{step-id}/`" + `)
 - ` + "`validation-{N}.json`" + ` — validation attempts for the step
 - ` + "`execution/execution-attempt-{A}-iteration-{I}.json`" + ` — execution result per attempt
@@ -447,7 +458,7 @@ Workflow-level manifest. **Required fields**: ` + "`schema_version`" + ` (int, 1
 - ` + "`llm_config`" + ` — set to ` + "`null`" + ` unless the user asked for a specific provider/model
 
 **Optional workflow-level fields**:
-- ` + "`run_retention_count`" + ` — number of backup run/eval iterations to keep, excluding active ` + "`iteration-0`" + `. Omit for the default 3; set 1-50 when the workflow needs a wider or narrower evidence window.
+- ` + "`run_retention_count`" + ` — number of completed run/eval folders to keep independently for Builder archives, saved schedules, and webhooks, excluding active ` + "`iteration-0`" + `. Omit for the default 10; set 1-50 when the workflow needs a wider or narrower evidence window.
 
 **` + "`schedules`" + `** is an array; leave empty ` + "`[]`" + ` unless the user asked for cron scheduling. Each schedule (if any) needs: ` + "`id`" + `, ` + "`name`" + `, ` + "`cron_expression`" + `, ` + "`timezone`" + `, ` + "`enabled`" + ` (bool), ` + "`group_names`" + ` (array).
 
@@ -707,32 +718,31 @@ Use this access to create and update custom sub-agent templates.
 	return instructions
 }
 
-// buildWorkflowContextPrompt builds rich context about selected workflows for injection into chat system prompt.
-// Provides comprehensive context about the workflow.
-// Includes full plan.json, step config, variables, execution history with step-level detail,
-// file location guide with step naming conventions, and learnings.
-func buildWorkflowContextPrompt(paths []string, workspaceAPIURL string) string {
-	if len(paths) == 0 || workspaceAPIURL == "" {
+// buildWorkflowContextPrompt grants discoverable read-only workflow context
+// without copying whole workflows into the system prompt. The folder guard is
+// the authority and the model reads only the files relevant to the user's
+// question. Previously this eagerly embedded workflow.json, the full plan,
+// step config, variables, history and learnings for every # reference; two
+// ordinary workflows could inflate a projected AGENTS.md beyond 100 KB and
+// that stale snapshot was less reliable than reading the source files.
+func buildWorkflowContextPrompt(paths []string, _ string) string {
+	if len(paths) == 0 {
 		return ""
 	}
 
-	client := skills.NewWorkspaceAPIClient(workspaceAPIURL)
-	var sections []string
-
-	sections = append(sections, "\n## Workflow Context (Read-Only)\n\nThe following workflow(s) have been selected as reference context for this conversation. You have **read-only** access to these workflow folders — you can read files and list directories but cannot modify them. Use the information below to answer questions about workflow structure, compare approaches, or reference patterns from these workflows.\n")
-
+	var references []string
 	for _, wsPath := range paths {
-		section := buildSingleWorkflowContext(client, wsPath)
-		if section != "" {
-			sections = append(sections, section)
+		wsPath = strings.TrimSpace(strings.TrimSuffix(wsPath, "/"))
+		if wsPath != "" {
+			references = append(references, fmt.Sprintf("- **%s:** `%s/`", path.Base(wsPath), wsPath))
 		}
 	}
-
-	if len(sections) <= 1 {
-		return "" // No workflow context was actually built
+	if len(references) == 0 {
+		return ""
 	}
-
-	return strings.Join(sections, "\n")
+	return "\n## Workflow Context (Read-Only)\n\n" +
+		"The following exact workflow folders are authorized as reference context for this message. Read only the files needed for the user's request; do not modify or execute these workflows. The coding CLI starts inside another working directory, so resolve each listed path from the workspace root—for shell calls use `$WORKSPACE_DOCS_PATH/<listed-path>/...`, not `<listed-path>/...` relative to the current directory. Do not list or probe the parent `Workflow/` directory: it is intentionally not granted, and failure to list that parent does not mean the attached child folders are inaccessible. Verify access against an exact listed folder or file before reporting it unavailable. Start with `workflow.json`, `soul/soul.md`, `planning/plan.json`, or `planning/step_config.json` when relevant, and inspect other files on demand. Treat the files as the source of truth rather than relying on a copied prompt snapshot.\n\n" +
+		strings.Join(references, "\n") + "\n"
 }
 
 // buildSingleWorkflowContext builds comprehensive context for a single workflow path
@@ -808,7 +818,7 @@ func buildSingleWorkflowContext(client *skills.WorkspaceAPIClient, wsPath string
 - Global workflow learnings: `+"`%s/learnings/_global/SKILL.md`"+` (plus `+"`references/`"+` and `+"`scripts/`"+` siblings) — shared domain knowledge for the whole workflow
 - Per-step saved scripts: `+"`%s/<source-root>/{step_id}/main.py`"+` — source-root is code for code_layout_version=1, otherwise learnings; persistent script for `+"`scripted`"+` steps (source of truth, reused across runs)
 - Knowledgebase: `+"`%s/knowledgebase/`"+` — persistent files across runs
-- Runs: `+"`%s/runs/iteration-0/`"+` is the **active** run; older runs are backed up to monotonic `+"`iteration-{N}/`"+` folders. `+"`workflow.json::run_retention_count`"+` controls how many backups are kept; default 3. Per-run layout: `+"`runs/iteration-{N}/{group}/execution/{step-id}/code/main.py`"+` for legacy working main.py copies only; version 1 executes canonical source directly.
+- Runs: `+"`%s/runs/iteration-0/`"+` is the mutable Builder/manual-workflow slot; producing saved schedules use immutable `+"`iteration-{N}-sched/`"+` and webhooks use `+"`iteration-{N}-hook/`"+`. `+"`workflow.json::run_retention_count`"+` keeps that many completed run/eval folders independently for each family; default 10. Per-run layout: `+"`runs/iteration-{N}/{group}/execution/{step-id}/code/main.py`"+` for legacy working main.py copies only; version 1 executes canonical source directly.
 - Live report dashboard: `+"`%s/db/reports/index.html`"+` — one complete HTML experience that reads `+"`db/db.sqlite`"+` through `+"`window.report`"+`, owns its internal navigation, and uses report assets under `+"`%s/db/assets/`"+`
 - Legacy finished-run prose: `+"`%s/reports/{group-name}/{timestamp}.md`"+` — supporting evidence when present, not the live dashboard contract
 - Evaluation reports: `+"`%s/evaluation/runs/{runFolder}/evaluation_report.json`"+`

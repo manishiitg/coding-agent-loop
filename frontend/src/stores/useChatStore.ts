@@ -436,6 +436,9 @@ export interface ChatTab {
     agentProfileWorkspace?: string
     agentProfileProjectId?: string
     agentProfileProjectTitle?: string
+    // Permanent product home tab. Sending from it creates a separate chat,
+    // matching AgentWorks' Builder -> Chat tab workflow.
+    agentProfileBuilder?: boolean
     agentProfileWorkspaceDescription?: string
     // Stable product-domain identity used by the server conversation registry.
     // Singleton products omit it; keyed products use a project/resource id.
@@ -456,6 +459,14 @@ export interface ChatTab {
     // composer's ReasoningEffortControl). Sent as `reasoning_effort` on every
     // profile query; empty keeps the engine's own default.
     agentProfileReasoningEffort?: string
+    // Product-owned MCP selection is isolated from the old global chat
+    // default. Existing tabs without this marker are migrated to no servers;
+    // right-side Setup marks the project selection explicit.
+    agentProfileMCPSelectionInitialized?: boolean
+    // A project-level runtime selection changed after this native session was
+    // launched. The next message must take the full query path once so the
+    // shared runner can relaunch the CLI with the saved provider/model.
+    agentProfileRuntimeDirty?: boolean
     userInteractiveContinuation?: boolean // Observed run promoted to an interactive chat without changing session ID
   }
 }
@@ -2212,6 +2223,7 @@ export const useChatStore = create<ChatState>()(
         if (
           mode === 'multi-agent' &&
           metadata &&
+          !metadata.agentProfileBuilder &&
           !metadata?.isOrganizationAssistant &&
           !metadata?.isViewOnly &&
           !metadata?.isScheduledRun &&
@@ -2219,6 +2231,11 @@ export const useChatStore = create<ChatState>()(
         ) {
           const existing = Object.values(get().chatTabs).find(t =>
             t.metadata?.mode === 'multi-agent' &&
+            // A product's permanent Builder is a blank launch surface, never
+            // the durable conversation being created or restored. Reusing it
+            // here would merge agentProfileBuilder:false into the Builder and
+            // unpin it, then restoration would create a duplicate chat tab.
+            t.metadata?.agentProfileBuilder !== true &&
             !t.metadata?.isOrganizationAssistant &&
             t.metadata?.isViewOnly !== true &&
             t.metadata?.isScheduledRun !== true &&
@@ -2289,6 +2306,10 @@ export const useChatStore = create<ChatState>()(
         
         // Get default config from current global state (mode-specific)
         const defaultConfig = getDefaultTabConfig(mode)
+        if (metadata?.agentProfileId) {
+          defaultConfig.selectedServers = ['NO_SERVERS']
+          defaultConfig.selectedSkills = []
+        }
         
         // Validate session ID before creating tab
         if (!sessionIdForTab || sessionIdForTab.trim() === '') {

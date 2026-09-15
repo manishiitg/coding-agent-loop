@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { SavedLLM } from '../../services/api-types'
-import { effectiveLLMUnderLock, effectiveProviderUnderLock } from '../effectiveLLM'
+import { effectiveLLMUnderLock, effectiveProviderUnderLock, runtimeStatusLLMChoice } from '../effectiveLLM'
 import { chatUsesStructuredTransport, shouldRouteChatInputToLiveTransport } from '../liveInputSubmission'
 
 const published = [{ provider: 'cursor-cli', model_id: 'cursor-cli' }] as unknown as SavedLLM[]
@@ -52,5 +52,22 @@ describe('effectiveProviderUnderLock', () => {
   it('still falls back when a product has no resolved binding', () => {
     expect(effectiveLLMUnderLock(null, true, published, 'agent_profile')?.provider).toBe('cursor-cli')
     expect(effectiveProviderUnderLock(null, true, published, 'agent_profile')).toBe('cursor-cli')
+  })
+})
+
+describe('runtimeStatusLLMChoice', () => {
+  const selected = { provider: 'claude-code', model_id: 'claude-sonnet-5' }
+  const retainedRuntime = { provider: 'muse-cli', model_id: 'muse-spark-1.3-contributor' }
+
+  it('shows an authoritative project or workflow selection instead of a retained stale runtime', () => {
+    expect(runtimeStatusLLMChoice(selected, retainedRuntime, true)).toEqual(selected)
+  })
+
+  it('keeps the attached runtime authoritative for ordinary AgentWorks chats', () => {
+    expect(runtimeStatusLLMChoice(selected, retainedRuntime, false)).toEqual(retainedRuntime)
+  })
+
+  it('falls back to the attached runtime when a product has no complete selection', () => {
+    expect(runtimeStatusLLMChoice({ provider: 'claude-code' }, retainedRuntime, true)).toEqual(retainedRuntime)
   })
 })

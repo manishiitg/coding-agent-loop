@@ -103,25 +103,20 @@ export function useCostsData({ active, workspacePath, selectedRunFolder }: UseCo
       if (hasAuthoritativeCosts) {
         setScopedCosts(summaryResponse.scoped_costs ?? null)
         setActivityTiming(summaryResponse.activity_timing ?? null)
-        setRunCosts([])
-        setPhaseCostSummary(null)
-        setPhaseDailyCostSummaries([])
-        setRunDailyCostSummaries([])
         setCostHistory({
           hasMore: summaryResponse.history?.has_more ?? false,
           nextBefore: summaryResponse.history?.next_before,
         })
-        setExpandedRunFolders(new Set())
-        return
       }
 
-      // Compatibility fallback for old workspaces that predate the canonical
-      // event ledger. This deliberately remains off the normal first-paint path.
+      // Load immutable per-run artifacts as well as the canonical summary.
+      // Besides step-level detail, this reprices historical artifacts when a
+      // rate card is added (for example Pi-routed Gemini webhook runs).
       const costsResponse = await agentApi.getCosts(workspacePath)
       if (generation !== loadGenerationRef.current) return
       setScopedCosts(costsResponse.scoped_costs ?? null)
       setActivityTiming(costsResponse.activity_timing ?? null)
-      setCostHistory(null)
+      if (!hasAuthoritativeCosts) setCostHistory(null)
       const costEntriesByRunFolder = new Map<string, WorkflowRunCostsEntry>(
         (costsResponse.runs || []).map(entry => [entry.run_folder, entry])
       )
@@ -182,14 +177,18 @@ export function useCostsData({ active, workspacePath, selectedRunFolder }: UseCo
         try {
           const data = costEntriesByRunFolder.get(runFolder)
           if (data?.token_usage || data?.evaluation_token_usage) {
-            // Also fetch steps to get step titles for cost breakdown
+            // Fetch step titles only for the selected run. Loading the immutable
+            // history must stay one bounded request rather than an N+1 request
+            // for every webhook execution ever recorded.
             let steps: Record<string, StepExecutionLogs> | undefined
-            try {
-              const logsData = await agentApi.getExecutionLogs(workspacePath, runFolder)
-              steps = logsData.steps
-            } catch (err) {
-              // If we can't get steps, continue without them (costs will still work)
-              console.warn(`Failed to load steps for ${runFolder}:`, err)
+            if (runFolder === selectedRunFolder) {
+              try {
+                const logsData = await agentApi.getExecutionLogs(workspacePath, runFolder)
+                steps = logsData.steps
+              } catch (err) {
+                // If we can't get steps, continue without them (costs will still work)
+                console.warn(`Failed to load steps for ${runFolder}:`, err)
+              }
             }
             const costSummary = calculateCostSummary(data.token_usage ?? null, data.evaluation_token_usage, steps)
             costs.push({
@@ -446,25 +445,46 @@ export function useCostsData({ active, workspacePath, selectedRunFolder }: UseCo
         .sort((a, b) => b.date.localeCompare(a.date))
     }
 
+    const artifactByDate = new Map<string, { workflowCost: number; evaluationCost: number; workflowTokens: number; evaluationTokens: number; runs: Set<string> }>()
+    runDailyCostSummaries.forEach(daily => {
+      const current = artifactByDate.get(daily.date) || { workflowCost: 0, evaluationCost: 0, workflowTokens: 0, evaluationTokens: 0, runs: new Set<string>() }
+      if (daily.scope === 'evaluation') {
+        current.evaluationCost += daily.summary.totalCost
+        current.evaluationTokens += daily.summary.totalTokens
+      } else {
+        current.workflowCost += daily.summary.totalCost
+        current.workflowTokens += daily.summary.totalTokens
+      }
+      current.runs.add(`${daily.scope}:${daily.runFolder}`)
+      artifactByDate.set(daily.date, current)
+    })
+
     return Object.entries(byDate)
       .map(([date, total]): CombinedDailyCostSummaryEntry => {
         const byScope = total.by_scope || {}
         const costFor = (scope: string) => byScope[scope]?.total_cost_usd || 0
         const tokensFor = (scope: string) => (byScope[scope]?.prompt_tokens || 0) + (byScope[scope]?.completion_tokens || 0)
+        const artifacts = artifactByDate.get(date)
+        const ledgerWorkflowCost = costFor('workflow_execution')
+        const ledgerEvaluationCost = costFor('evaluation')
+        // Old ledger rows can be explicitly unpriced while their immutable
+        // run artifacts can now be repriced with a newly available rate card.
+        const workflowCost = ledgerWorkflowCost === 0 && (artifacts?.workflowCost || 0) > 0 ? artifacts!.workflowCost : ledgerWorkflowCost
+        const evaluationCost = ledgerEvaluationCost === 0 && (artifacts?.evaluationCost || 0) > 0 ? artifacts!.evaluationCost : ledgerEvaluationCost
         return {
           date,
           builderCost: costFor('builder') + costFor('chat'),
           pulseCost: costFor('pulse'),
-          workflowCost: costFor('workflow_execution'),
-          evaluationCost: costFor('evaluation'),
-          totalCost: total.total_cost_usd || 0,
+          workflowCost,
+          evaluationCost,
+          totalCost: (total.total_cost_usd || 0) - ledgerWorkflowCost - ledgerEvaluationCost + workflowCost + evaluationCost,
           builderTokens: tokensFor('builder') + tokensFor('chat'),
           pulseTokens: tokensFor('pulse'),
-          workflowTokens: tokensFor('workflow_execution'),
-          evaluationTokens: tokensFor('evaluation'),
+          workflowTokens: tokensFor('workflow_execution') || artifacts?.workflowTokens || 0,
+          evaluationTokens: tokensFor('evaluation') || artifacts?.evaluationTokens || 0,
           totalTokens: (total.prompt_tokens || 0) + (total.completion_tokens || 0),
           llmDurationMS: total.llm_generation_duration_ms || 0,
-          runCount: total.workflow_run_count || 0,
+          runCount: total.workflow_run_count || artifacts?.runs.size || 0,
         }
       })
       .sort((a, b) => b.date.localeCompare(a.date))
@@ -486,7 +506,9 @@ export function useCostsData({ active, workspacePath, selectedRunFolder }: UseCo
   return {
     loading,
     error,
+    scopedCosts,
     runCosts,
+    runDailyCostSummaries,
     phaseCostSummary,
     phaseDailyCostSummaries,
     hasScopedActivity,

@@ -26,8 +26,25 @@ func TestProductScheduleJobIDRoundTrip(t *testing.T) {
 	}
 }
 
+func TestProjectScheduleJobIDRoundTrip(t *testing.T) {
+	id := projectScheduleJobID("work", "project-1", "daily-checkin")
+	if id != "product-project:work:project-1:daily-checkin" {
+		t.Fatalf("id = %q", id)
+	}
+	profile, project, sched, ok := parseProjectScheduleJobID(id)
+	if !ok || profile != "work" || project != "project-1" || sched != "daily-checkin" {
+		t.Fatalf("parse = %q %q %q %v", profile, project, sched, ok)
+	}
+	for _, bad := range []string{"daily-checkin", "product-project:", "product-project:work:project-1", "product-project:work::daily"} {
+		if _, _, _, ok := parseProjectScheduleJobID(bad); ok {
+			t.Fatalf("%q should not parse", bad)
+		}
+	}
+}
+
 func TestUsersWithProductFollowsDirectoryAccess(t *testing.T) {
 	t.Setenv("MULTI_USER_MODE", "true")
+	t.Setenv("AGENTWORKS_ADMIN_ONLY_PRODUCT_SURFACES", "work")
 	withMemoryUserDirectory(t, `{"users":[
 		{"id":"admin1","username":"admin","admin":true,"can_create":true,"products":[]},
 		{"id":"member1","username":"m","can_create":true,"products":[]},
@@ -41,6 +58,9 @@ func TestUsersWithProductFollowsDirectoryAccess(t *testing.T) {
 	}
 	if got := usersWithProduct("finance"); strings.Join(got, ",") != "admin1,member1,scoped1" {
 		t.Fatalf("finance users = %v", got)
+	}
+	if got := usersWithProduct("work"); strings.Join(got, ",") != "admin1" {
+		t.Fatalf("admin-only Work users = %v", got)
 	}
 }
 

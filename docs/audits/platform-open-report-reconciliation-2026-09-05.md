@@ -9,7 +9,7 @@ LinkedIn invite-flow failure, so it is not closed and no backlog count changes.
 
 ## Subsequent prompt-health fix — latest status
 
-[PLAT-290](../bugs/pulse_platform/plat-290.md) reproduces and fixes G26's
+[PLAT-290](../bugs/pulse_platform/plans-contracts/plat-290.md) reproduces and fixes G26's
 PUL-07504731 through the registered tool: every probe now reads the current
 workspace plan instead of a stale controller cache. The exact SQLite report is
 resolved with prior records preserved; local tests pass, deployment unverified.
@@ -18,7 +18,7 @@ original 120** are closed. The inventories below are historical snapshots.
 
 ## Subsequent Substack closure — latest status
 
-[PLAT-289](../bugs/pulse_platform/plat-289.md) subsequently verified and closed all
+[PLAT-289](../bugs/pulse_platform/learnings-knowledge/plat-289.md) subsequently verified and closed all
 ten G09 research-folder reports, corrected three stale learning statements and
 added a real guarded file-write/readback test. The retained September 5 source
 packets and parent summary reconcile to 57 findings. **78** typed reports now
@@ -35,7 +35,7 @@ The 96 reports form **67 investigation groups**, of which **61** retain open rep
 ## Why old reports cannot all be closed
 
 - The original PLAT-072 cost fix is not sufficient: PUL-E2BACEEB carries explicit Aug 12 post-fix recurrence evidence in detail_json.
-- PLAT-181 corrects its own diagnosis: the defensive tab-owner change does not explain the actual reported message-sequence incident.
+- PLAT-322 preserves the corrected diagnosis: the defensive tab-owner change does not explain the actual reported message-sequence incident.
 - PLAT-066 explicitly leaves the Hetzner route-selection failure unresolved despite another workflow passing.
 - PUL-C93522E5 refutes its original wrong-folder explanation but still alleges a premature validation gate; it is not simply a false report.
 - get_plan_prompt_health currently reads approvedPlan unless nil; PUL-07504731 therefore has a plausible still-live stale-read path.
@@ -95,7 +95,7 @@ Only run_concerns tracking status and appended platform_tracking_resolved events
 | G26: Stale plan prompt-health read | PUL-07504731 | New code evidence; no exact ticket match | Current code suspect. get_plan_prompt_health only reloads when approvedPlan is nil. A populated controller can retain old descriptions after another writer updates disk; keep open for an actual tool regression test. |
 | G27: Tool index versus callable MCP surface | PUL-61347449 | PLAT-087, PLAT-244, PLAT-247 | Partial/retired subtools; unresolved. Some generation tools retired and read_image restored; this does not establish advertised/registered parity for all message-sequence child capabilities. |
 | G28: Image absolute path normalization | PUL-8E45EDCB | PLAT-007, PLAT-247 | Post-fix recurrence; unresolved. Aug 22 recurrence postdates initial normalization work. Requires exact registered tool plus guard/path fixture; do not close from the original Aug 3 fix. |
-| G29: Cross-workflow CDP tab quota | PUL-3DC592D9 | PLAT-181 | Explicitly partial; unresolved. Ticket corrects its original hypothesis and states it does not explain the actual message-sequence incident. Keep open despite defensive owner-ID tests. |
+| G29: Cross-workflow CDP tab quota | PUL-3DC592D9 | PLAT-322 | Explicitly partial; unresolved. Ticket preserves the corrected hypothesis and states it does not explain the actual message-sequence incident. Keep open despite defensive owner-ID tests. |
 | G30: Tab-scoped network output | PUL-9CCE9488 | PLAT-224 | Third-party CLI defect. Already investigated as upstream agent-browser behavior. Remains tracked, not a repository fix. |
 | G31: Missing run completion response | PUL-B898D60C | PLAT-103, PLAT-116, PLAT-179 | Related lifecycle fixes; unresolved. Need exact provider/session turn evidence to map the completed response to the no-response classifier. |
 | G32: Route selection seeding | PUL-05A81CA0 | PLAT-066, PLAT-259 | Explicitly unresolved. PLAT-066 proves ordinary path works but explicitly leaves the reported Hetzner path unresolved. Routing redesign alone is not closure proof. |

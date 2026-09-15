@@ -1,7 +1,7 @@
 import { Activity, RefreshCw } from 'lucide-react'
 import { PulseWorkspace } from './PulseWorkspace'
 import { WORKFLOW_SOUL_REFRESH_EVENT } from './SoulViewer'
-import type { PulseFinalCommandState, PulseModuleState, PulseReviewFocus } from '../../services/api-types'
+import type { PulseFinalCommandState, PulseModuleState, PulseReviewFocus, PulseReviewerModule } from '../../services/api-types'
 
 export interface PulseOverview {
   recorded: number
@@ -14,6 +14,9 @@ interface PulseViewProps {
   monitorOn: boolean
   monitorSaving: boolean
   onToggleMonitor: () => void
+  disabledReviewModules: PulseReviewerModule[]
+  reviewModuleSaving: PulseReviewerModule | null
+  onToggleReviewModule: (module: PulseReviewerModule) => void
   moduleStates: PulseModuleState[]
   finalCommandStates: PulseFinalCommandState[]
   reviewFocuses: PulseReviewFocus[]
@@ -29,6 +32,9 @@ export default function PulseView({
   monitorOn,
   monitorSaving,
   onToggleMonitor,
+  disabledReviewModules,
+  reviewModuleSaving,
+  onToggleReviewModule,
   moduleStates,
   finalCommandStates,
   reviewFocuses,
@@ -84,6 +90,9 @@ export default function PulseView({
               finalCommandStates={finalCommandStates}
               reviewFocuses={reviewFocuses}
               reviewFocusSelections={reviewFocusSelections}
+              disabledReviewModules={disabledReviewModules}
+              reviewModuleSaving={reviewModuleSaving}
+              onToggleReviewModule={onToggleReviewModule}
               statusError={statusError}
             />
           )}

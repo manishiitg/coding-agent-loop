@@ -5,11 +5,10 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 )
 
-func TestGoalMetricToolsRoundTripMultipleOutcomesAndNotifications(t *testing.T) {
+func TestGoalMetricToolsRoundTripMultipleOutcomes(t *testing.T) {
 	root := t.TempDir()
 	t.Setenv("WORKSPACE_DOCS_PATH", root)
 	ws := "Workflow/metrics"
@@ -55,20 +54,5 @@ func TestGoalMetricToolsRoundTripMultipleOutcomesAndNotifications(t *testing.T) 
 	}
 	if len(result.Metrics) != 3 || len(result.Progress) != 3 {
 		t.Fatal("tool dropped outcomes", raw)
-	}
-	sections, err := loadGoalProgressNotificationSections(context.Background(), ws)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(sections) != 2 {
-		t.Fatal("notification dropped primary", sections)
-	}
-	for _, section := range sections {
-		if strings.Contains(section.Heading, "voice") && !strings.Contains(section.Body, "English") {
-			t.Fatal("missing supporting breakdown", section)
-		}
-		if strings.Contains(section.Heading, "cost") && strings.Contains(section.Body, "English") {
-			t.Fatal("supporting breakdown attached to wrong goal", section)
-		}
 	}
 }

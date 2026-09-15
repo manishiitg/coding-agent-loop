@@ -3,6 +3,7 @@ import { isForegroundSessionEvent } from '../../shared/session/foreground'
 import { useEffect, useRef, useCallback, forwardRef, useImperativeHandle, useMemo, useState, lazy, Suspense, type ComponentType, type ForwardedRef, type ReactNode } from 'react'
 import { normalizeEventViewMode } from '../stores/useChatStore'
 import { intermediateUpdateFromTranscriptChunk } from '../utils/transcriptChunkUpdates'
+import { codingCliCompletionNeedsTranscriptReconciliation } from '../utils/codingCliTranscriptReconciliation'
 import { withLiveInputReceipt } from '../utils/liveInputReceipt'
 import { useRenderLogger, useMemoLogger } from '../utils/renderLogger'
 import { chatSubmissionLane } from '../utils/promiseLane'
@@ -48,6 +49,7 @@ import {
   createUserMessageEvent,
   validateExecutionGroups,
   isChatCompatiblePhase,
+  remainingWorkflowContextAfterSubmission,
 } from '../utils/chatSubmitHelpers'
 import { shouldKeepWorkflowSessionSubscribed } from '../utils/workflowSessionSubscription'
 import { activateTab } from '../utils/activateTab'
@@ -459,6 +461,12 @@ interface ChatAreaProps {
   // chat sits in the narrow rail; labeled tabs when it fills the pane (org panel
   // minimized). The panel always renders in fill mode so it scrolls in both.
   previousChatsCompact?: boolean
+  // Scope the shared previous-chat landing panel to one product/workflow
+  // workspace. Without this, the panel intentionally shows the user's global
+  // AgentWorks history, which is not appropriate inside a project surface.
+  previousChatsWorkspacePath?: string
+  // Product surfaces can reuse AgentWorks history without automation tabs.
+  previousChatsRecentOnly?: boolean
   // Workflow landing previous-chats panel. WorkflowLayout owns the panel + its
   // resume handler (so the workflow-scoped history logic isn't duplicated here)
   // and passes the rendered node only when a fresh automation chat should show
@@ -486,6 +494,15 @@ interface ChatAreaProps {
   showConversationUsage?: boolean
   // Product deployments with one fixed runtime can omit a redundant badge.
   hideRuntimeStatus?: boolean
+  // Show AgentWorks' compact running spinner beside the microphone. When this
+  // is enabled the model badge stays a stable status dot, so the composer never
+  // renders two activity spinners for the same turn.
+  showCompactRuntimeLoading?: boolean
+  // Work reuses AgentWorks' queued-message UI and exposes an explicit Steer
+  // action even though the underlying provider is a coding CLI.
+  showProductSteerAction?: boolean
+  // Product surfaces normally hide the retained terminal; Work exposes it.
+  showProductTerminalControl?: boolean
   // Product chats otherwise have no generic header in which to start fresh.
   showNewChatAction?: boolean
   /** Product-specific composer placeholder (the product variant otherwise says "Describe what you want to create…"). */
@@ -509,7 +526,7 @@ let globalHasRestored = false
 
 // Inner component for chat area
 const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAreaRef>) => {
-  const { onNewChat, hideInput = false, compact = false, tabId, previousChatsCompact = false, workflowPreviousChatsPanel, landingContent, contentRenderer: ContentRenderer, inputVariant = 'default', fullTurnStreaming = false, showConversationUsage = false, hideRuntimeStatus = false, showNewChatAction = false , composerPlaceholder} = props
+  const { onNewChat, hideInput = false, compact = false, tabId, previousChatsCompact = false, previousChatsWorkspacePath, previousChatsRecentOnly = false, workflowPreviousChatsPanel, landingContent, contentRenderer: ContentRenderer, inputVariant = 'default', fullTurnStreaming = false, showConversationUsage = false, hideRuntimeStatus = false, showCompactRuntimeLoading = false, showProductSteerAction = false, showProductTerminalControl = false, showNewChatAction = false , composerPlaceholder} = props
   // Product mode is a complete shared surface, not just a simplified composer.
   // Products may still supply a renderer for domain-specific presentation, but
   // every new product gets the durable transcript and normalized error UI by
@@ -614,8 +631,10 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
       ? activeTab.config.selectedServers
       : selectedServers).filter((server): server is string => typeof server === 'string')
 
-    // If no servers are selected (empty array), default to all connected servers
+    // Product profiles are explicit opt-in: an empty project selection means
+    // no MCP servers. It must never inherit every account-connected server.
     if (tabSelectedServers.length === 0) {
+      if (activeTab?.metadata?.agentProfileId) return ["NO_SERVERS"]
       const all = Array.from(connectedServers)
       return all.length > 0 ? all : ["NO_SERVERS"]
     }
@@ -628,7 +647,8 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
     currentPresetServers,
     selectedServers,
     connectedServers,
-    activeTab?.config
+    activeTab?.config,
+    activeTab?.metadata?.agentProfileId
   ])
 
   // Filter tools to only include those from effective servers
@@ -1170,6 +1190,7 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
 
   // Track whether workspace-modifying events occurred during the current run
   const hadWorkspaceActivityRef = useRef<boolean>(false)
+  const reconciledCodingCliCompletionsRef = useRef<Set<string>>(new Set())
 
   // Ref to track if we're currently performing programmatic scrolling
   const isProgrammaticScrollRef = useRef<boolean>(false)
@@ -1951,6 +1972,31 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
       if (!finalTab) return
       addTabEvents(actualSessionId, newEvents)
     }
+
+    // A retained CLI can accept a second message while it is still answering
+    // the first. Its single live completion contains only the newest final
+    // result, while its native transcript contains both ordered exchanges.
+    // Re-read the bounded durable history at completion so no user message or
+    // assistant reply is lost from Chat. hydrateTabEvents merges the volatile
+    // live tail back afterwards, preserving tool activity and the completion.
+    const codingCliCompletion = newEvents.find(codingCliCompletionNeedsTranscriptReconciliation)
+    if (tab && codingCliCompletion) {
+      const completionKey = `${actualSessionId}:${codingCliCompletion.id || codingCliCompletion.timestamp || 'completion'}`
+      if (!reconciledCodingCliCompletionsRef.current.has(completionKey)) {
+        reconciledCodingCliCompletionsRef.current.add(completionKey)
+        void hydrateTabEvents(actualSessionId, {
+          workspacePath: tab.metadata?.agentProfileWorkspace,
+          fallbackToChatHistory: true,
+          preferChatHistory: true,
+          includeUiEvents: true,
+        }).catch(error => {
+          // Allow a later replay of the same completion to retry after a
+          // transient history read failure.
+          reconciledCodingCliCompletionsRef.current.delete(completionKey)
+          logger.warn('ChatArea', 'Failed to reconcile coding CLI transcript after completion', error)
+        })
+      }
+    }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [getTabEvents, getTabLastEventIndex, setTabLastEventIndex, setLastEventIndex, addTabEvents, setIsStreaming, setIsCompleted, setHasActiveChat, selectedModeCategory])
 
@@ -2613,6 +2659,7 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
 
     // Get fresh tab state from store to avoid stale closure issues
     let freshActiveTab = submissionTab?.tabId ? chatStore.chatTabs[submissionTab.tabId] : submissionTab
+    const oneShotWorkflowContextSourceTabId = freshActiveTab?.tabId
 
     // Early validation
     if (!trimmedQuery) {
@@ -2640,6 +2687,23 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
       freshActiveTab = useChatStore.getState().chatTabs[chatTabId]
     }
 
+    if (freshActiveTab?.metadata?.agentProfileBuilder) {
+      const normalized = trimmedQuery.replace(/\s+/g, ' ').trim()
+      const chatName = normalized.length > 110 ? `${normalized.slice(0, 110)}...` : normalized
+      const builderConfig = freshActiveTab.config
+      const projectId = freshActiveTab.metadata.agentProfileProjectId
+      if (!projectId) return false
+      const chatTabId = await chatStore.createChatTab(chatName, {
+        ...freshActiveTab.metadata,
+        agentProfileBuilder: false,
+        agentProfileConversationKey: `${projectId}:${globalThis.crypto.randomUUID()}`,
+        agentProfileConversationId: undefined,
+      })
+      if (builderConfig) chatStore.setTabConfig(chatTabId, { ...builderConfig })
+      activateTab(chatTabId)
+      freshActiveTab = useChatStore.getState().chatTabs[chatTabId]
+    }
+
     if (submitModeCategory === 'workflow' && !isRequiredFolderSelected) {
       logger.error('ChatArea', 'Workflow folder required for workflow mode')
       return false
@@ -2651,10 +2715,30 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
     let { tab: currentTab, sessionId: tabSessionId } = resolved
     chatSubmissionLane.link(currentTab.tabId, tabSessionId)
 
+    // Capture # references before constructing the request. They are consumed
+    // only after the backend accepts this message; failed submissions retain
+    // them for retry. A blank Builder may have copied them into a new chat, so
+    // clear the accepted references from both tabs without removing anything
+    // the user attached while this request was starting.
+    const submittedWorkflowContext = [...(currentTab.config?.workflowContext ?? [])]
+    const consumeSubmittedWorkflowContext = () => {
+      if (submittedWorkflowContext.length === 0) return
+      const ownerTabIds = new Set([currentTab.tabId, oneShotWorkflowContextSourceTabId].filter((id): id is string => Boolean(id)))
+      for (const ownerTabId of ownerTabIds) {
+        const latest = useChatStore.getState().getTabConfig(ownerTabId)?.workflowContext ?? []
+        const remaining = remainingWorkflowContextAfterSubmission(latest, submittedWorkflowContext)
+        if (remaining.length !== latest.length) {
+          useChatStore.getState().setTabConfig(ownerTabId, { workflowContext: remaining })
+        }
+      }
+    }
+
     const hasOneShotContext = Boolean(
       currentTab.config?.restoredConversationPath?.trim() ||
       currentTab.config?.fileContext?.length ||
-      executionOptions
+      currentTab.config?.workflowContext?.length ||
+      executionOptions ||
+      currentTab.metadata?.agentProfileRuntimeDirty
     )
     const useRetainedLiveInput = shouldUseRetainedLiveInput({
       requested: options?.preferLiveInput === true,
@@ -3090,9 +3174,14 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
           return false
         }
 
+        consumeSubmittedWorkflowContext()
+
         console.log('[WF_DEBUG] 3. Before updateTabSessionId', { old: tabSessionId, new: responseSessionId, changed: responseSessionId !== tabSessionId, oldEvents: chatStore.getTabEvents(tabSessionId).length, newEvents: chatStore.getTabEvents(responseSessionId).length })
         chatStore.setSessionId(responseSessionId)
         chatStore.updateTabSessionId(currentTab.tabId, responseSessionId)
+        if (currentTab.metadata?.agentProfileRuntimeDirty) {
+          chatStore.setTabMetadata(currentTab.tabId, { agentProfileRuntimeDirty: false })
+        }
         console.log('[WF_DEBUG] 4. After updateTabSessionId', { events: chatStore.getTabEvents(responseSessionId).length, activeTabSession: useChatStore.getState().chatTabs[currentTab.tabId]?.sessionId })
         chatStore.setTabStreaming(currentTab.tabId, true)
         chatStore.setTabCompleted(currentTab.tabId, false)
@@ -3136,6 +3225,7 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
         // clears the spinner. Do NOT resetStreamingState here (that would stop the
         // spinner mid-turn).
         const sid = response.session_id || tabSessionId
+        consumeSubmittedWorkflowContext()
         chatStore.setTabStreaming(currentTab.tabId, true)
         chatStore.setTabCompleted(currentTab.tabId, false)
         if (sid && shouldRefreshSessionEventStream(
@@ -3186,7 +3276,9 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
       hasOneShotContext: Boolean(
         sourceTab?.config?.restoredConversationPath?.trim() ||
         sourceTab?.config?.fileContext?.length ||
-        executionOptions
+        sourceTab?.config?.workflowContext?.length ||
+        executionOptions ||
+        sourceTab?.metadata?.agentProfileRuntimeDirty
       ),
     })
     if (useRetainedLiveInput) {
@@ -3706,6 +3798,8 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
             {multiAgentSurface === 'landing' && (
               landingContent ?? (
                 <PreviousChatHistoryPanel
+                  workspacePath={previousChatsWorkspacePath}
+                  recentOnly={previousChatsRecentOnly}
                   activeSessionId={hasConversationContent ? activeTab?.sessionId ?? undefined : undefined}
                   title="Previous chats"
                   actionLabel="Resume"
@@ -3763,6 +3857,9 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
           restoredConversationPending={resumePending && !hasRestoredLiveContent}
           surfaceVariant={inputVariant}
           hideRuntimeStatus={hideRuntimeStatus}
+          showCompactRuntimeLoading={showCompactRuntimeLoading}
+          showProductSteerAction={showProductSteerAction}
+          showProductTerminalControl={showProductTerminalControl}
           showNewChatAction={showNewChatAction}
           placeholderOverride={composerPlaceholder}
         />

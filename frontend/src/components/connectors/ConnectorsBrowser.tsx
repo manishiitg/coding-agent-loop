@@ -44,9 +44,21 @@ interface ConnectorsBrowserProps {
   // The embedded workflow panel defaults to available connectors.
   compact?: boolean
   workspacePath?: string | null
+  /** Terminology for the workspace receiving the connection. */
+  workspaceLabel?: string
+  /** Name of the conversational agent that helps with setup. */
+  assistantLabel?: string
+  /** Optional product-owned chat delivery; workflows use their existing lane. */
+  onAskAI?: (message: string) => void | Promise<void>
 }
 
-export default function ConnectorsBrowser({ compact = false, workspacePath }: ConnectorsBrowserProps) {
+export default function ConnectorsBrowser({
+  compact = false,
+  workspacePath,
+  workspaceLabel = 'workflow',
+  assistantLabel = 'builder',
+  onAskAI,
+}: ConnectorsBrowserProps) {
   const {
     toolList,
     isLoadingTools,
@@ -181,15 +193,16 @@ export default function ConnectorsBrowser({ compact = false, workspacePath }: Co
         <div className="min-w-0 flex-1 basis-56">
           <p className="text-base font-semibold text-foreground">Need another connection?</p>
           <p className="mt-1 text-sm leading-6 text-muted-foreground">
-            Tell the builder which app you need. It can search for an official MCP server and help you connect it.
+            Tell the {assistantLabel} which app you need. It can search for an official MCP server and help you connect it.
           </p>
         </div>
         <AskAIButton
           workspacePath={readOnly ? null : workspacePath ?? null}
+          onAsk={onAskAI}
           label="Add MCP"
           message={query.trim()
-            ? `Help me add an MCP server for ${JSON.stringify(query.trim())} to this workflow. Search the catalog and official provider documentation on the web, and help me connect it. Ask for any missing details.`
-            : 'Help me add an MCP server to this workflow. Ask me which app or service I want to connect, then search the catalog and official provider documentation on the web and help me connect it.'}
+            ? `Help me add an MCP server for ${JSON.stringify(query.trim())} to this ${workspaceLabel}. Search the catalog and official provider documentation on the web, and help me connect it. Ask for any missing details.`
+            : `Help me add an MCP server to this ${workspaceLabel}. Ask me which app or service I want to connect, then search the catalog and official provider documentation on the web and help me connect it.`}
           className="inline-flex shrink-0 items-center justify-center gap-2 rounded-lg bg-primary px-4 py-2.5 text-sm font-medium text-primary-foreground shadow-sm transition-colors hover:bg-primary/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
         />
       </div>
@@ -283,11 +296,12 @@ export default function ConnectorsBrowser({ compact = false, workspacePath }: Co
                   <div className="flex shrink-0 flex-col items-center gap-1 self-center">
                     <AskAIButton
                       workspacePath={readOnly ? null : workspacePath ?? null}
+                      onAsk={onAskAI}
                       iconOnly
                       label={`Ask AI about ${serverName}`}
                       message={connection === 'connected'
-                        ? `Help me with the existing ${JSON.stringify(serverName)} MCP connection in this workflow. Check its current connection status and workflow selection, then ask what I want to do with it.`
-                        : `Help me connect ${JSON.stringify(serverName)} to this workflow. It is already listed in the MCP catalog, so check its existing configuration and connection status first and reuse it. Guide me through the required authorization or secure credential setup, verify that its tools are available, then add it to this workflow. Ask for any missing details; do not ask me to paste secrets into chat.`}
+                        ? `Help me with the existing ${JSON.stringify(serverName)} MCP connection in this ${workspaceLabel}. Check its current connection status and ${workspaceLabel} selection, then ask what I want to do with it.`
+                        : `Help me connect ${JSON.stringify(serverName)} to this ${workspaceLabel}. It is already listed in the MCP catalog, so check its existing configuration and connection status first and reuse it. Guide me through the required authorization or secure credential setup, verify that its tools are available, then add it to this ${workspaceLabel}. Ask for any missing details; do not ask me to paste secrets into chat.`}
                       className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-primary/10 hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
                     />
                   </div>

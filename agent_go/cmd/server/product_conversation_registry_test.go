@@ -200,8 +200,87 @@ func TestProductConversationP0ProjectKeyResolvesAndResumesOneDurableConversation
 	if err != nil {
 		t.Fatal(err)
 	}
-	if query.SelectedFolder != binding.WorkspacePath || query.SessionTitle != "Launch Film" || query.RestoredConversationPath != "" {
+	if query.SelectedFolder != binding.WorkspacePath || query.AgentProfileConversationKey != binding.ConversationKey || query.SessionTitle != "Launch Film" || query.RestoredConversationPath != "" {
 		t.Fatalf("turn did not use only the canonical product binding: %+v", query)
+	}
+}
+
+func TestWorkProjectBindingUsesCreatedProjectFolder(t *testing.T) {
+	profile := routeTestProfile("work", true, "")
+	profile.Runtime.Workspace = agentprofiles.WorkspacePolicy{Mode: agentprofiles.WorkspaceModeProject, ProjectsRoot: "Chats/Work/projects"}
+	profile.Runtime.Conversation = agentprofiles.ConversationPolicy{Mode: agentprofiles.ConversationModeKeyed, KeyType: agentprofiles.ConversationKeyTypeProject}
+
+	manifestPath := "_users/user-1/Chats/Work/projects/site/product.json"
+	store := productProjectStore{
+		listPaths: func(context.Context, string) ([]string, bool, error) {
+			return []string{manifestPath}, true, nil
+		},
+		read: func(context.Context, string) (string, bool, error) {
+			return `{"schema_version":1,"product":"work","id":"task-1","title":"Task","session_id":"work:task-1","capabilities":{"workflow_context_paths":["Workflow/reference"],"llm_config":{"schema_version":2,"mode":"explicit","builder_llm":{"provider":"muse-cli","model_id":"muse-spark-1.3-contributor"}}}}`, true, nil
+		},
+	}
+	binding, err := resolveProductProjectBindingWithStore(context.Background(), "user-1", profile, "task-1", store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if binding.WorkspacePath != "_users/user-1/Chats/Work/projects/site" {
+		t.Fatalf("unexpected durable binding: %+v", binding)
+	}
+	if binding.ProjectLLMConfig == nil || binding.ProjectLLMConfig.BuilderLLM == nil || binding.ProjectLLMConfig.BuilderLLM.Provider != "muse-cli" {
+		t.Fatalf("project LLM configuration was not loaded: %+v", binding.ProjectLLMConfig)
+	}
+	if got := strings.Join(binding.ProjectWorkflowContextPaths, ","); got != "Workflow/reference" {
+		t.Fatalf("project workflow references were not loaded: %v", binding.ProjectWorkflowContextPaths)
+	}
+}
+
+func TestWorkProjectChatKeySharesProjectButNotManifestSession(t *testing.T) {
+	profile := routeTestProfile("work", true, "")
+	profile.Runtime.Workspace = agentprofiles.WorkspacePolicy{Mode: agentprofiles.WorkspaceModeProject, ProjectsRoot: "Chats/Work/projects"}
+	profile.Runtime.Conversation = agentprofiles.ConversationPolicy{Mode: agentprofiles.ConversationModeKeyed, KeyType: agentprofiles.ConversationKeyTypeProject}
+	manifestPath := "_users/user-1/Chats/Work/projects/site/product.json"
+	store := productProjectStore{
+		listPaths: func(context.Context, string) ([]string, bool, error) { return []string{manifestPath}, true, nil },
+		read: func(context.Context, string) (string, bool, error) {
+			return `{"schema_version":1,"product":"work","id":"task-1","title":"Task","session_id":"legacy-project-session"}`, true, nil
+		},
+	}
+	binding, err := resolveProductProjectBindingWithStore(context.Background(), "user-1", profile, "task-1:chat-2", store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if binding.ConversationKey != "task-1:chat-2" {
+		t.Fatalf("conversation key = %q", binding.ConversationKey)
+	}
+	if binding.ResourceID != "task-1" || binding.WorkspacePath != "_users/user-1/Chats/Work/projects/site" {
+		t.Fatalf("sub-chat escaped its project binding: %+v", binding)
+	}
+	if binding.ManifestPath != "" || binding.AuthoritativeSessionID != "" {
+		t.Fatalf("sub-chat incorrectly reused the manifest session: %+v", binding)
+	}
+}
+
+func TestWorkProjectChatKeyUsesSameFolderWithIndependentSession(t *testing.T) {
+	profile := routeTestProfile("work", true, "")
+	profile.Runtime.Workspace = agentprofiles.WorkspacePolicy{Mode: agentprofiles.WorkspaceModeProject, ProjectsRoot: "Chats/Work/projects"}
+	profile.Runtime.Conversation = agentprofiles.ConversationPolicy{Mode: agentprofiles.ConversationModeKeyed, KeyType: agentprofiles.ConversationKeyTypeProject}
+
+	manifestPath := "_users/user-1/Chats/Work/projects/site/product.json"
+	store := productProjectStore{
+		listPaths: func(context.Context, string) ([]string, bool, error) { return []string{manifestPath}, true, nil },
+		read: func(context.Context, string) (string, bool, error) {
+			return `{"schema_version":1,"product":"work","id":"project-1","title":"Site","session_id":"legacy-project-session"}`, true, nil
+		},
+	}
+	binding, err := resolveProductProjectBindingWithStore(context.Background(), "user-1", profile, "project-1:chat-2", store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if binding.ConversationKey != "project-1:chat-2" || binding.ResourceID != "project-1" || binding.WorkspacePath != "_users/user-1/Chats/Work/projects/site" {
+		t.Fatalf("unexpected project chat binding: %+v", binding)
+	}
+	if binding.AuthoritativeSessionID != "" || binding.ManifestPath != "" {
+		t.Fatalf("additional chat must not reuse or rewrite the manifest session: %+v", binding)
 	}
 }
 

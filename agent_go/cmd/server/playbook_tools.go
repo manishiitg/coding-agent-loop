@@ -25,6 +25,8 @@ type playbookSearchResult struct {
 	InstalledStatus      string                   `json:"installed_status,omitempty"`
 	InstalledVersion     string                   `json:"installed_version,omitempty"`
 	UpdateAvailable      bool                     `json:"update_available"`
+	Availability         string                   `json:"availability"`
+	RequiredAction       string                   `json:"required_action"`
 	Score                int                      `json:"-"`
 }
 
@@ -113,12 +115,17 @@ func searchPlaybooks(items []playbookCatalogItem, installed []InstalledPlaybook,
 			continue
 		}
 		installedItem, isInstalled := installedByID[item.ID]
+		availability, requiredAction := "catalog_only", "open_playbooks_view_and_wait_for_user_installation"
+		if isInstalled {
+			availability, requiredAction = "installed_in_this_workflow", "read_installed_skill_before_setup"
+		}
 		results = append(results, playbookSearchResult{
 			ID: item.ID, Title: item.Title, Category: item.Category, Description: item.Description,
 			Version: item.Version, Changelog: item.Changelog, SetupAreas: setupAreas, RequiredCapabilities: item.RequiredCapabilities,
 			Outputs: item.Outputs, RecommendedTools: item.RecommendedTools, PulseFocus: item.PulseFocus, Installed: isInstalled,
 			InstalledStatus: installedItem.Status, InstalledVersion: installedItem.Version,
-			UpdateAvailable: isInstalled && isNewerPlaybookVersion(item.Version, installedItem.Version), Score: score,
+			UpdateAvailable: isInstalled && isNewerPlaybookVersion(item.Version, installedItem.Version),
+			Availability:    availability, RequiredAction: requiredAction, Score: score,
 		})
 	}
 	sort.SliceStable(results, func(i, j int) bool {
@@ -137,7 +144,7 @@ func searchPlaybooks(items []playbookCatalogItem, installed []InstalledPlaybook,
 }
 
 func (api *StreamingAPI) registerPlaybookSearchTool(registrar definitionToolRegistrar, workspacePath string) error {
-	description := "Search the AgentWorks small-team playbook catalog by the user's intent, operating area, capability, tool, expected outcome, or Pulse review focus. Use this before improvising a generic workflow setup when a reusable engineering playbook may fit. Results include setup areas, deliverables, recommended tools, Technical/Architecture/Strategic Pulse focus, installed and latest versions, update availability, and the catalog changelog. When asked about an upgrade, compare the versions and explain only the supplied changelog; do not infer changes from version numbers. This tool never installs anything: ask the user to install or update the chosen playbook, and use open_workspace_view(view=\"playbooks\") to show it when available. After installation, inspect the current workflow, default to one workflow unless access or lifecycle boundaries require a split, summarize reuse and gaps, and ask focused questions for material unresolved customer choices before proposing changes; installation is not approval to edit or run the workflow."
+	description := "Search the AgentWorks small-team playbook catalog by the user's intent, operating area, capability, tool, expected outcome, or Pulse review focus. Use this before improvising a generic workflow setup when a reusable engineering playbook may fit. Results include setup areas, deliverables, recommended tools, Technical/Architecture/Strategic Pulse focus, installed and latest versions, update availability, and the catalog changelog. The catalog is platform-wide, but installation and read_skill availability are workflow-specific. This tool never installs anything. A catalog_only result is not usable in the current workflow: when the user asked to use that playbook, do not recreate it manually or begin setup. Tell the user it is not installed here, open_workspace_view(view=\"playbooks\"), and wait for the user to install it. After installation, inspect the current workflow, default to one workflow unless access or lifecycle boundaries require a split, summarize reuse and gaps, and ask focused questions for material unresolved customer choices before proposing changes; installation is not approval to edit or run the workflow."
 	params := map[string]interface{}{
 		"type": "object",
 		"properties": map[string]interface{}{
@@ -171,7 +178,10 @@ func (api *StreamingAPI) registerPlaybookSearchTool(registrar definitionToolRegi
 		matches := searchPlaybooks(items, installed, query, limit)
 		payload := map[string]interface{}{
 			"query": query, "matches": matches, "total": len(matches),
-			"next_action": "Recommend the best-fitting playbook with reasons. If it is not installed, ask the user to install it and open the Playbooks view. After installation, inspect the current workflow, summarize reuse and gaps, ask focused questions for material unresolved customer choices, and record the answers before proposing changes. Installation is not approval to mutate or run the workflow.",
+			"installation_scope":                              "workflow_specific",
+			"installation_method":                             "The user installs or updates from the Playbooks view; search_playbooks cannot install.",
+			"manual_fallback_allowed_when_playbook_requested": false,
+			"next_action":                                     "For catalog_only: STOP, tell the user the playbook is not installed in this workflow, open the Playbooks view, and wait for installation. Do not recreate or apply the playbook manually. For installed_in_this_workflow: read the installed skill first. Then inspect the workflow, summarize reuse and gaps, ask focused questions for material unresolved customer choices, and record the answers before proposing changes. Installation is not approval to mutate or run the workflow.",
 		}
 		encoded, err := json.Marshal(payload)
 		if err != nil {

@@ -382,7 +382,35 @@ func TestImportRefreshTokenIntoGogRegistersClientBeforeToken(t *testing.T) {
 	if !strings.Contains(argv, "auth credentials set ") || !strings.Contains(argv, credentials) {
 		t.Fatalf("argv %q missing credentials registration %q", argv, credentials)
 	}
-	if !strings.Contains(argv, "auth import --email me@example.com --client primary") {
+	if !strings.Contains(argv, "auth import --email me@example.com --client primary") || !strings.Contains(argv, "--no-input --force") {
 		t.Fatalf("argv %q missing token import", argv)
+	}
+}
+
+func TestImportRefreshTokenIntoGogReportsImportFailureDetail(t *testing.T) {
+	binDir := t.TempDir()
+	gogPath := filepath.Join(binDir, "gog")
+	script := "#!/bin/sh\n" +
+		"case \" $* \" in\n" +
+		"  *\" auth import \"*) echo 'entry already exists; use --force' >&2; exit 2 ;;\n" +
+		"esac\n"
+	if err := os.WriteFile(gogPath, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("GOG_HOME", t.TempDir())
+	clientsDir := t.TempDir()
+	t.Setenv("GMAIL_OAUTH_CLIENTS_DIR", clientsDir)
+	clientDir := filepath.Join(clientsDir, "primary")
+	if err := os.MkdirAll(clientDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(clientDir, "client_secret.json"), []byte(`{"installed":{"client_id":"id","client_secret":"secret"}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	err := ImportRefreshTokenIntoGog(context.Background(), "me@example.com", "primary", "refresh-token")
+	if err == nil || !strings.Contains(err.Error(), "entry already exists; use --force") {
+		t.Fatalf("ImportRefreshTokenIntoGog error = %v, want gog stderr detail", err)
 	}
 }

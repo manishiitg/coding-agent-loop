@@ -1,16 +1,17 @@
-import { Loader2, MessageSquare, Phone, PlayCircle, Trash2, Wrench } from 'lucide-react'
+import { ChevronDown, Loader2, MessageSquare, Phone, PlayCircle, Trash2, Wrench } from 'lucide-react'
 import { READ_ONLY_TITLE } from '../../../hooks/useCanWriteWorkflow'
 import { routeId, type WorkflowRoute } from './types'
 import type { WorkflowBots } from './useWorkflowBots'
 
 // One route card in "this workflow answers on".
 
-type RouteChipBots = Pick<WorkflowBots, 'readOnly' | 'routeSaving' | 'removeRoute' | 'updateRoute'>
+type RouteChipBots = Pick<WorkflowBots, 'readOnly' | 'expandedChip' | 'setExpandedChip' | 'routeSaving' | 'removeRoute' | 'updateRoute'>
 
 export function RouteChip({ bots, route }: { bots: RouteChipBots; route: WorkflowRoute }) {
-  const { readOnly, routeSaving, removeRoute, updateRoute } = bots
+  const { readOnly, expandedChip, setExpandedChip, routeSaving, removeRoute, updateRoute } = bots
 
   const id = routeId(route)
+  const expanded = expandedChip === id
   const saving = routeSaving === id
   const channelLabel = route.kind === 'slack' ? route.key : `@${route.key}`
   const mode = route.kind === 'slack' && route.workshop_mode === 'workshop' ? 'workshop' : 'run'
@@ -69,6 +70,30 @@ export function RouteChip({ bots, route }: { bots: RouteChipBots; route: Workflo
           <span className="truncate">Build</span>
         </button>
       </div>
+      <button
+        type="button"
+        onClick={() => setExpandedChip(expanded ? null : id)}
+        className="mt-2 inline-flex items-center gap-1 text-xs font-medium text-muted-foreground transition-colors hover:text-foreground"
+        aria-expanded={expanded}
+      >
+        Options
+        <ChevronDown className={`h-3 w-3 transition-transform ${expanded ? 'rotate-180' : ''}`} />
+      </button>
+      {expanded && (
+        <div className="mt-1.5 flex flex-wrap items-center gap-3 rounded-md border border-border bg-muted/20 px-3 py-2 text-xs">
+          <span className="text-muted-foreground">Access follows the routed user's workflow permission.</span>
+          <label className="flex items-center gap-1.5 text-muted-foreground" title="Send detailed automation step/runtime messages to this channel">
+            <input
+              type="checkbox"
+              checked={!!route.send_full_details}
+              disabled={readOnly || saving}
+              onChange={e => void updateRoute(route, { send_full_details: e.target.checked })}
+              className="h-3.5 w-3.5"
+            />
+            Send full details
+          </label>
+        </div>
+      )}
     </div>
   )
 }

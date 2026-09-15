@@ -3,8 +3,25 @@ package server
 import (
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
+
+func TestCodingProviderManifestDefinesAdminInstallCommands(t *testing.T) {
+	want := map[string]string{
+		"claude-code": "npm install -g @anthropic-ai/claude-code@latest",
+		"codex-cli":   "npm install -g @openai/codex@latest",
+		"cursor-cli":  "https://cursor.com/install",
+		"pi-cli":      "npm install -g @earendil-works/pi-coding-agent@latest",
+		"muse-cli":    "https://dev.meta.ai/install.sh",
+	}
+	for provider, fragment := range want {
+		command := providerStaticInfoMap[provider].installCommand
+		if !strings.Contains(command, fragment) {
+			t.Fatalf("%s install command = %q, want fragment %q", provider, command, fragment)
+		}
+	}
+}
 
 func TestParsePiCLIModelList(t *testing.T) {
 	output := `provider       model                          context  max-out  thinking  images

@@ -293,6 +293,7 @@ func TestWebhookPolicyRejectsOverridesAndManualInvocation(t *testing.T) {
 		func(s *WorkflowSchedule) { s.Messages = []string{"run something else"} },
 		func(s *WorkflowSchedule) { s.CollisionPolicy = "queue_latest" },
 		func(s *WorkflowSchedule) { s.AfterScheduleID = "other" },
+		func(s *WorkflowSchedule) { s.AfterScheduleIDs = []string{"other"} },
 		func(s *WorkflowSchedule) { s.WorkshopMode = "workshop" },
 	} {
 		copy := sched
@@ -329,5 +330,58 @@ func TestWebhookSessionOriginAndHistoryMetadata(t *testing.T) {
 	}
 	if strings.Contains(string(data), "not-for-history") || strings.Contains(string(data), "payload") {
 		t.Fatalf("history leaks payload: %s", data)
+	}
+}
+
+func TestWorkflowWebhookPayloadIsLoadedOnDemand(t *testing.T) {
+	workspace := "Workflow/test"
+	sched := webhookTestSchedule(t, "bearer")
+	manifest := NewWorkflowManifest("API test")
+	manifest.ID = "wf_test"
+	manifest.Schedules = []WorkflowSchedule{sched}
+	manifestRaw, _ := json.Marshal(manifest)
+	runsRaw, _ := json.Marshal([]ScheduleRunEntry{{
+		ID:         "run-1",
+		ScheduleID: sched.ID,
+		Status:     "success",
+		StartedAt:  time.Now().UTC(),
+		Webhook:    &WebhookRunMetadata{TriggerName: sched.Name, DeliveryID: "delivery-1", ReceivedAt: time.Now().UTC()},
+	}})
+	deliveryRaw, _ := json.Marshal(WorkflowWebhookDelivery{
+		RunID:      "run-1",
+		DeliveryID: "delivery-1",
+		ReceivedAt: time.Now().UTC(),
+		Payload:    json.RawMessage(`{"action":"opened","nested":{"value":42}}`),
+	})
+	mock := &mockWorkspaceAPI{files: map[string]string{
+		manifestPath(workspace):              string(manifestRaw),
+		scheduleRunsPath(workspace):          string(runsRaw),
+		webhookInputPath(workspace, "run-1"): string(deliveryRaw),
+	}}
+	ws := httptest.NewServer(mock)
+	defer ws.Close()
+	t.Setenv("WORKSPACE_API_URL", ws.URL)
+
+	router := mux.NewRouter()
+	WorkflowWebhookRoutes(router, &SchedulerService{})
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/workflow-webhooks/"+sched.ID+"/runs/run-1/payload", nil))
+	if w.Code != http.StatusOK {
+		t.Fatalf("payload: %d %s", w.Code, w.Body.String())
+	}
+	var response struct {
+		RawPayload string `json:"raw_payload"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	if response.RawPayload != `{"action":"opened","nested":{"value":42}}` {
+		t.Fatalf("unexpected payload: %q", response.RawPayload)
+	}
+
+	w = httptest.NewRecorder()
+	router.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/workflow-webhooks/"+sched.ID+"/runs/other-run/payload", nil))
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("cross-run payload lookup: %d %s", w.Code, w.Body.String())
 	}
 }

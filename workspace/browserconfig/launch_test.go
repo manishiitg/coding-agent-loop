@@ -70,3 +70,12 @@ func TestUserBrowserProfilesDoNotShareCookies(t *testing.T) {
 		t.Fatal("shared user profile")
 	}
 }
+
+func TestWorkflowBrowserUsesPersistentProfile(t *testing.T) {
+	t.Setenv(ProfileEnv, "/data/profile")
+	session := "workflow-0123456789abcdef--browser"
+	args := HeadlessArgsForSession(session)
+	if !IsUserSession(session) || args[1] != "/data/profile-workflows/"+session {
+		t.Fatalf("workflow profile was not isolated: %v", args)
+	}
+}

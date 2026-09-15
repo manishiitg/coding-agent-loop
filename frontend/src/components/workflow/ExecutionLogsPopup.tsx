@@ -6,7 +6,7 @@ import {
   Route as RouteIcon,
   ArrowLeft,
 } from 'lucide-react'
-import type { StepExecutionLogs } from '../../services/api-types'
+import type { RunFolderInfo, StepExecutionLogs } from '../../services/api-types'
 import InspectorShell from './InspectorShell'
 import { PulseReviewsPanel } from './executionLogs/LogPrimitives'
 import { LogsHeader } from './executionLogs/LogsHeader'
@@ -23,6 +23,7 @@ interface ExecutionLogsPopupProps {
   workspacePath: string | null
   runFolder: string | null
   runFolders: string[] // Available run folders (iterations and groups)
+  runFolderInfos?: RunFolderInfo[] // Lifecycle timestamps for dropdown labels
   startedAt?: string | null
   embedded?: boolean
   // Refreshes the run_folder LIST itself (a new folder appearing after a
@@ -41,6 +42,7 @@ const ExecutionLogsPopup: React.FC<ExecutionLogsPopupProps> = ({
   workspacePath,
   runFolder: initialRunFolder,
   runFolders,
+  runFolderInfos = [],
   startedAt,
   embedded = false,
   onRefreshRunFolders
@@ -109,6 +111,7 @@ const ExecutionLogsPopup: React.FC<ExecutionLogsPopupProps> = ({
           embedded={embedded}
           startedAt={startedAt}
           runFolderOptions={runFolderOptions}
+          runFolderInfos={runFolderInfos}
           selectedRunFolder={selectedRunFolder}
           setSelectedRunFolder={setSelectedRunFolder}
           loading={loading}

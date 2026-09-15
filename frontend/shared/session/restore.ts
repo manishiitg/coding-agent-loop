@@ -6,7 +6,7 @@ import { intermediateUpdateFromTranscriptChunk } from './transcriptChunkUpdates'
 // chat with the same rules (coding-CLI narration kept, transcript artifacts
 // dropped, a bounded UI trace merged without duplicating user/final carriers).
 import type { ChatHistoryMessage, PollingEvent, RestorableConversation } from './types'
-import { isProviderTranscriptArtifact } from './transcript/restoredConversationFilter'
+import { sanitizeProviderTranscriptContent } from './transcript/restoredConversationFilter'
 
 export function getMessageRole(message: ChatHistoryMessage): string {
   return String(message.Role || message.role || '').toLowerCase()
@@ -181,11 +181,12 @@ export function conversationToRestoredEvents(conversation: RestorableConversatio
         ...(timestamp ? { timestamp } : {}),
       }, eventIndexBase + events.length))
     } else if (role === 'ai' || role === 'assistant') {
-      if (isProviderTranscriptArtifact(content)) continue
+      const visibleContent = sanitizeProviderTranscriptContent(content)
+      if (!visibleContent) continue
       // Coding providers persist commentary and tool markers as separate AI
       // messages. The final ordinary AI message before the next user message
       // is the completed reply that belongs in the resumed chat.
-      pendingAssistant.push({ content, message })
+      pendingAssistant.push({ content: visibleContent, message })
     }
   }
   flushAssistant()
@@ -306,7 +307,25 @@ function mergePersistedUIEvents(
       return true
     })
 
+  // Both sources are already chronological on their own, but concatenating
+  // them put the older retained UI trace after the newest durable messages.
+  // Formatted chat renders array order, so refresh appeared to lose recent
+  // prompts and landed on stale progress. The synthetic conversation
+  // timestamps above exist specifically to place these two sources on one
+  // timeline; use them here while keeping the resume marker first.
   return [...conversationEvents, ...trace]
+    .map((event, index) => ({ event, index }))
+    .sort((left, right) => {
+      if (left.event.type === 'conversation_resumed') return -1
+      if (right.event.type === 'conversation_resumed') return 1
+      const leftTime = Date.parse(left.event.timestamp || '')
+      const rightTime = Date.parse(right.event.timestamp || '')
+      if (Number.isFinite(leftTime) && Number.isFinite(rightTime) && leftTime !== rightTime) {
+        return leftTime - rightTime
+      }
+      return left.index - right.index
+    })
+    .map(({ event }) => event)
 }
 
 function markPersistedRestoreTrace(event: PollingEvent, parentSessionId: string, eventIndex: number): PollingEvent {

@@ -13,6 +13,7 @@ import (
 	"io"
 	"mime"
 	"net/http"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -28,21 +29,39 @@ const maxWebhookBodyBytes = 1024 * 1024
 // The plaintext secret is returned only on creation/rotation. Ciphertext uses
 // the existing server secrets key, bound to this workflow and trigger.
 type WorkflowWebhookConfig struct {
-	StepID           string   `json:"step_id,omitempty"`
-	InputMode        string   `json:"input_mode,omitempty"`
-	AllowedVariables []string `json:"allowed_variables,omitempty"`
-	AuthMode         string   `json:"auth_mode"`
-	EncryptedSecret  string   `json:"encrypted_secret"`
+	StepID           string                          `json:"step_id,omitempty"`
+	InputMode        string                          `json:"input_mode,omitempty"`
+	AllowedVariables []string                        `json:"allowed_variables,omitempty"`
+	PayloadMappings  *WorkflowWebhookPayloadMappings `json:"payload_mappings,omitempty"`
+	AuthMode         string                          `json:"auth_mode"`
+	EncryptedSecret  string                          `json:"encrypted_secret"`
+}
+
+type WorkflowWebhookValueMapping struct {
+	Source  string            `json:"source"`
+	Values  map[string]string `json:"values"`
+	Default string            `json:"default,omitempty"`
+}
+
+// WorkflowWebhookPayloadMappings turns trusted configuration plus untrusted raw
+// event fields into bounded execution choices. Routes is keyed by routing/branch
+// step ID; its mapped values are route IDs belonging to that exact step.
+type WorkflowWebhookPayloadMappings struct {
+	Group  *WorkflowWebhookValueMapping           `json:"group,omitempty"`
+	Routes map[string]WorkflowWebhookValueMapping `json:"routes,omitempty"`
+	Step   *WorkflowWebhookValueMapping           `json:"step,omitempty"`
 }
 
 type WorkflowWebhookDelivery struct {
-	Group      string            `json:"group,omitempty"`
-	Variables  map[string]string `json:"variables,omitempty"`
-	RunID      string            `json:"run_id"`
-	DeliveryID string            `json:"delivery_id"`
-	Event      string            `json:"event,omitempty"`
-	ReceivedAt time.Time         `json:"received_at"`
-	Payload    json.RawMessage   `json:"payload"`
+	Group           string            `json:"group,omitempty"`
+	Variables       map[string]string `json:"variables,omitempty"`
+	RunID           string            `json:"run_id"`
+	DeliveryID      string            `json:"delivery_id"`
+	Event           string            `json:"event,omitempty"`
+	ReceivedAt      time.Time         `json:"received_at"`
+	Payload         json.RawMessage   `json:"payload"`
+	RouteSelections map[string]string `json:"route_selections,omitempty"`
+	StepID          string            `json:"step_id,omitempty"`
 }
 
 // WebhookRunMetadata is safe delivery context for history; never includes payloads or secrets.
@@ -68,30 +87,32 @@ type webhookRouteOption struct {
 }
 
 type workflowWebhookResponse struct {
-	StepID           string            `json:"step_id,omitempty"`
-	InputMode        string            `json:"input_mode,omitempty"`
-	AllowedVariables []string          `json:"allowed_variables,omitempty"`
-	ID               string            `json:"id"`
-	Name             string            `json:"name"`
-	Enabled          bool              `json:"enabled"`
-	AuthMode         string            `json:"auth_mode"`
-	Path             string            `json:"path"`
-	RouteSelections  map[string]string `json:"route_selections"`
-	GroupNames       []string          `json:"group_names"`
-	Secret           string            `json:"secret,omitempty"`
+	StepID           string                          `json:"step_id,omitempty"`
+	InputMode        string                          `json:"input_mode,omitempty"`
+	AllowedVariables []string                        `json:"allowed_variables,omitempty"`
+	PayloadMappings  *WorkflowWebhookPayloadMappings `json:"payload_mappings,omitempty"`
+	ID               string                          `json:"id"`
+	Name             string                          `json:"name"`
+	Enabled          bool                            `json:"enabled"`
+	AuthMode         string                          `json:"auth_mode"`
+	Path             string                          `json:"path"`
+	RouteSelections  map[string]string               `json:"route_selections"`
+	GroupNames       []string                        `json:"group_names"`
+	Secret           string                          `json:"secret,omitempty"`
 }
 
 type workflowWebhookRequest struct {
-	StepID           *string           `json:"step_id,omitempty"`
-	InputMode        string            `json:"input_mode,omitempty"`
-	AllowedVariables []string          `json:"allowed_variables,omitempty"`
-	WorkspacePath    string            `json:"workspace_path"`
-	Name             string            `json:"name"`
-	Enabled          bool              `json:"enabled"`
-	AuthMode         string            `json:"auth_mode"`
-	RouteSelections  map[string]string `json:"route_selections"`
-	GroupNames       []string          `json:"group_names"`
-	RotateSecret     bool              `json:"rotate_secret"`
+	StepID           *string                         `json:"step_id,omitempty"`
+	InputMode        string                          `json:"input_mode,omitempty"`
+	AllowedVariables []string                        `json:"allowed_variables,omitempty"`
+	PayloadMappings  *WorkflowWebhookPayloadMappings `json:"payload_mappings,omitempty"`
+	WorkspacePath    string                          `json:"workspace_path"`
+	Name             string                          `json:"name"`
+	Enabled          bool                            `json:"enabled"`
+	AuthMode         string                          `json:"auth_mode"`
+	RouteSelections  map[string]string               `json:"route_selections"`
+	GroupNames       []string                        `json:"group_names"`
+	RotateSecret     bool                            `json:"rotate_secret"`
 }
 
 func validateWebhookSchedule(s WorkflowSchedule) error {
@@ -110,7 +131,7 @@ func validateWebhookSchedule(s WorkflowSchedule) error {
 	if s.CronExpression != "" || len(s.CalendarItems) > 0 || len(s.TriggerPayload) > 0 || len(s.Messages) > 0 || s.Query != "" || s.PulseReviewOnly || s.ShouldResumePrevious() {
 		return errors.New("API triggers accept delivery input only; clock settings, request overrides, messages, and session resume are not supported")
 	}
-	if (s.CollisionPolicy != "" && s.CollisionPolicy != "skip") || s.AfterScheduleID != "" {
+	if (s.CollisionPolicy != "" && s.CollisionPolicy != "skip") || len(scheduleDependencyIDs(s)) > 0 {
 		return errors.New("API triggers return a retryable busy response; schedule queues and dependencies are not supported")
 	}
 	if s.WorkshopMode != "run" {
@@ -139,6 +160,7 @@ func workflowWebhookDTO(s WorkflowSchedule) workflowWebhookResponse {
 		out.StepID = s.Webhook.StepID
 		out.InputMode = s.Webhook.InputMode
 		out.AllowedVariables = s.Webhook.AllowedVariables
+		out.PayloadMappings = s.Webhook.PayloadMappings
 	}
 	return out
 }
@@ -185,6 +207,89 @@ func validateWebhookRoutes(ctx context.Context, workspacePath string, selections
 	return nil
 }
 
+func webhookMappingTargets(mapping WorkflowWebhookValueMapping) ([]string, error) {
+	source := strings.TrimPrefix(strings.TrimPrefix(strings.TrimSpace(mapping.Source), "$."), ".")
+	if source == "" {
+		return nil, errors.New("payload mapping source is required")
+	}
+	for _, segment := range strings.Split(source, ".") {
+		if strings.TrimSpace(segment) == "" {
+			return nil, fmt.Errorf("invalid payload mapping source %q", mapping.Source)
+		}
+	}
+	if len(mapping.Values) == 0 {
+		return nil, fmt.Errorf("payload mapping %q requires at least one value", mapping.Source)
+	}
+	targets := make([]string, 0, len(mapping.Values)+1)
+	for sourceValue, target := range mapping.Values {
+		if sourceValue == "" || strings.TrimSpace(target) == "" {
+			return nil, fmt.Errorf("payload mapping %q contains an empty source value or target", mapping.Source)
+		}
+		targets = append(targets, strings.TrimSpace(target))
+	}
+	if fallback := strings.TrimSpace(mapping.Default); fallback != "" {
+		targets = append(targets, fallback)
+	}
+	return targets, nil
+}
+
+func validateWebhookPayloadMappings(ctx context.Context, workspacePath string, cfg *WorkflowWebhookConfig, groups []string, staticRoutes map[string]string) error {
+	if cfg == nil || cfg.PayloadMappings == nil {
+		return nil
+	}
+	mappings := cfg.PayloadMappings
+	if cfg.InputMode == "envelope" {
+		return errors.New("payload_mappings require input_mode=raw")
+	}
+	if mappings.Step != nil && (cfg.StepID != "" || len(staticRoutes) > 0 || len(mappings.Routes) > 0) {
+		return errors.New("a payload step mapping cannot be combined with a fixed step or route selections")
+	}
+	if cfg.StepID != "" && len(mappings.Routes) > 0 {
+		return errors.New("payload route mappings cannot be combined with a fixed step")
+	}
+	if mappings.Group != nil {
+		targets, err := webhookMappingTargets(*mappings.Group)
+		if err != nil {
+			return fmt.Errorf("group mapping: %w", err)
+		}
+		for _, group := range targets {
+			if !slices.Contains(groups, group) {
+				return fmt.Errorf("group mapping target %q is not allowed by this trigger", group)
+			}
+		}
+	}
+	for stepID, mapping := range mappings.Routes {
+		stepID = strings.TrimSpace(stepID)
+		if stepID == "" {
+			return errors.New("payload route mapping requires a routing or branch step ID")
+		}
+		if _, exists := staticRoutes[stepID]; exists {
+			return fmt.Errorf("payload route mapping for step %q conflicts with its fixed route selection", stepID)
+		}
+		targets, err := webhookMappingTargets(mapping)
+		if err != nil {
+			return fmt.Errorf("route mapping for step %q: %w", stepID, err)
+		}
+		for _, routeID := range targets {
+			if err := validateWebhookRoutes(ctx, workspacePath, map[string]string{stepID: routeID}); err != nil {
+				return err
+			}
+		}
+	}
+	if mappings.Step != nil {
+		targets, err := webhookMappingTargets(*mappings.Step)
+		if err != nil {
+			return fmt.Errorf("step mapping: %w", err)
+		}
+		for _, stepID := range targets {
+			if err := validateWebhookTarget(ctx, workspacePath, stepID, nil); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
 var workflowWebhookConfigMu sync.Mutex
 
 func WorkflowWebhookRoutes(router *mux.Router, svc *SchedulerService) {
@@ -192,10 +297,64 @@ func WorkflowWebhookRoutes(router *mux.Router, svc *SchedulerService) {
 	router.HandleFunc("/api/workflow-webhooks", requireWorkflowWriteAccess(svc.saveWorkflowWebhook)).Methods("POST")
 	router.HandleFunc("/api/workflow-webhooks/{id}", requireWorkflowWriteAccess(svc.saveWorkflowWebhook)).Methods("PUT")
 	router.HandleFunc("/api/workflow-webhooks/{id}", requireWorkflowWriteAccess(svc.deleteWorkflowWebhook)).Methods("DELETE")
+	router.HandleFunc("/api/workflow-webhooks/{id}/runs/{run}/payload", svc.getWorkflowWebhookPayload).Methods("GET")
 	receiver := webhookReceiver{find: findScheduleByIDAny, start: svc.triggerSavedSchedule, existing: svc.existingWebhookRun}
 	router.HandleFunc("/api/hooks/workflow/{id}", receiver.receive).Methods("POST")
 	router.HandleFunc("/api/hooks/workflow/{id}/runs/{run}", svc.pollWebhookRun).Methods("GET")
 	router.HandleFunc("/api/hooks/workflow/{id}/runs/{run}/artifact", svc.downloadWebhookArtifact).Methods("GET", "HEAD")
+}
+
+func (s *SchedulerService) getWorkflowWebhookPayload(w http.ResponseWriter, r *http.Request) {
+	id := mux.Vars(r)["id"]
+	runID := mux.Vars(r)["run"]
+	result, err := findScheduleByIDAny(r.Context(), id)
+	if err != nil || result.Manifest == nil || result.Index < 0 || result.Index >= len(result.Manifest.Schedules) {
+		http.Error(w, "webhook not found", http.StatusNotFound)
+		return
+	}
+	if !requireWorkflowVisible(w, r, result.WorkspacePath) {
+		return
+	}
+	schedule := result.Manifest.Schedules[result.Index]
+	if schedule.ScheduleType != "webhook" {
+		http.Error(w, "webhook not found", http.StatusNotFound)
+		return
+	}
+
+	runs, _, err := ListScheduleRuns(r.Context(), result.WorkspacePath, id, maxScheduleRuns, 0)
+	if err != nil {
+		http.Error(w, "could not read webhook history", http.StatusInternalServerError)
+		return
+	}
+	found := false
+	for _, run := range runs {
+		if run.ID == runID && run.Webhook != nil {
+			found = true
+			break
+		}
+	}
+	if !found {
+		http.Error(w, "webhook run not found", http.StatusNotFound)
+		return
+	}
+
+	content, exists, err := readFileFromWorkspace(r.Context(), webhookInputPath(result.WorkspacePath, runID))
+	if err != nil {
+		http.Error(w, "could not read webhook payload", http.StatusInternalServerError)
+		return
+	}
+	if !exists {
+		http.Error(w, "webhook payload is no longer available", http.StatusNotFound)
+		return
+	}
+	var delivery WorkflowWebhookDelivery
+	if err := json.Unmarshal([]byte(content), &delivery); err != nil || !json.Valid(delivery.Payload) {
+		http.Error(w, "stored webhook payload is invalid", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]string{"raw_payload": string(delivery.Payload)})
 }
 
 func (s *SchedulerService) listWorkflowWebhooks(w http.ResponseWriter, r *http.Request) {
@@ -336,7 +495,18 @@ func (s *SchedulerService) saveWorkflowWebhook(w http.ResponseWriter, r *http.Re
 	if req.AllowedVariables != nil {
 		cfg.AllowedVariables = req.AllowedVariables
 	}
+	if req.PayloadMappings != nil {
+		if req.PayloadMappings.Group == nil && len(req.PayloadMappings.Routes) == 0 && req.PayloadMappings.Step == nil {
+			cfg.PayloadMappings = nil
+		} else {
+			cfg.PayloadMappings = req.PayloadMappings
+		}
+	}
 	if err := validateWebhookVariableNames(r.Context(), req.WorkspacePath, cfg.AllowedVariables); err != nil {
+		http.Error(w, err.Error(), 400)
+		return
+	}
+	if err := validateWebhookPayloadMappings(r.Context(), req.WorkspacePath, cfg, groups, req.RouteSelections); err != nil {
 		http.Error(w, err.Error(), 400)
 		return
 	}

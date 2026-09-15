@@ -202,8 +202,8 @@ async function start() {
   const style = document.createElement('style')
   style.textContent = APP_TOKENS_CSS
   document.head.appendChild(style)
-  document.title = 'Report preview'
-  document.body.innerHTML = '<div id="report-preview-shell"><div id="report-preview-status">Loading report…</div></div>'
+  document.title = 'Dashboard preview'
+  document.body.innerHTML = '<div id="report-preview-shell"><div id="report-preview-status">Loading dashboard…</div></div>'
   setPreviewState('loading')
   setTheme(initialTheme)
   setWidth(initialWidth)
@@ -229,13 +229,13 @@ async function start() {
   shell.innerHTML = ''
   frame = document.createElement('iframe')
   frame.id = 'report-preview-frame'
-  frame.title = 'Report preview'
+  frame.title = 'Dashboard preview'
   frame.setAttribute('sandbox', 'allow-same-origin allow-scripts')
   const dataApi = createPreviewDataApi()
   frame.addEventListener('load', () => {
     if (!frame) return
     installReportHost(frame, {
-      title: 'Report preview',
+      title: 'Dashboard preview',
       dataApi,
       tokenSource: document.documentElement,
       theme: currentTheme,

@@ -33,10 +33,13 @@ type AgentProfileChatRequest struct {
 	// ModelID picks a model within the engine's provider: one the platform's
 	// model catalog lists for that provider (or, when the engine declares its
 	// own Models list, one of those). Empty keeps the option's own model.
-	ModelID         string `json:"model_id,omitempty"`
+	ModelID string `json:"model_id,omitempty"`
 	// ReasoningEffort picks a level from the engine's declared
 	// ReasoningEfforts. Empty keeps whatever the engine's own Options declare.
-	ReasoningEffort string `json:"reasoning_effort,omitempty"`
+	ReasoningEffort      string   `json:"reasoning_effort,omitempty"`
+	EnabledServers       []string `json:"enabled_servers,omitempty"`
+	SelectedSkills       []string `json:"selected_skills,omitempty"`
+	WorkflowContextPaths []string `json:"workflow_context_paths,omitempty"`
 }
 
 type AgentProfileConversationRequest struct {
@@ -67,17 +70,97 @@ func queryRequestForAgentProfileChat(profile agentprofiles.Profile, input AgentP
 		return QueryRequest{}, fmt.Errorf("product conversation has no runtime binding")
 	}
 	req := QueryRequest{
-		Query:               input.Message,
-		SessionTitle:        firstNonEmptyTrimmed(conversation.Title, profile.Name),
-		AgentMode:           "multi-agent",
-		AgentProfileID:      profile.ID,
-		AgentProfileVersion: profile.Version,
+		Query:                       input.Message,
+		SessionTitle:                firstNonEmptyTrimmed(conversation.Title, profile.Name),
+		AgentMode:                   "multi-agent",
+		AgentProfileID:              profile.ID,
+		AgentProfileVersion:         profile.Version,
+		AgentProfileConversationKey: conversation.ConversationKey,
 		AgentProfileContext: agentprofiles.PromptContext{
 			ProjectTitle:         firstNonEmptyTrimmed(conversation.Title, profile.Name),
 			WorkspaceDescription: conversation.Description,
 		},
-		SelectedFolder:           conversation.WorkspacePath,
-		DisableLiveInputDelivery: true,
+		SelectedFolder: conversation.WorkspacePath,
+	}
+	// Work is the general coding product: unlike fixed-purpose profiles, it
+	// exposes AgentWorks' existing per-chat MCP and skill selection. The
+	// profile resolver still adds its built-in skills and enforces its tool and
+	// workspace policy. Other products retain their deliberately narrow input.
+	if profile.Runtime.Capabilities.MCPSelection != "" && profile.Runtime.Capabilities.MCPSelection != agentprofiles.CapabilityDisabled {
+		if strings.TrimSpace(conversation.ResourceID) != "" {
+			req.EnabledServers = appendUniqueStrings(nil, conversation.ProjectSelectedServers...)
+			if len(req.EnabledServers) == 0 {
+				// Preserve an explicit project-level "none" through the shared
+				// query path. This also differs from legacy registry records that
+				// silently mounted every connected account MCP, forcing one clean
+				// CLI relaunch during migration.
+				req.EnabledServers = []string{"NO_SERVERS"}
+			}
+		} else {
+			req.EnabledServers = appendUniqueStrings(nil, input.EnabledServers...)
+		}
+	} else if len(input.EnabledServers) > 0 {
+		return QueryRequest{}, fmt.Errorf("profile %q does not accept user-selected MCP servers", profile.ID)
+	}
+	if profile.Runtime.Capabilities.SkillSelection != "" && profile.Runtime.Capabilities.SkillSelection != agentprofiles.CapabilityDisabled {
+		if strings.TrimSpace(conversation.ResourceID) != "" {
+			req.SelectedSkills = appendUniqueStrings(nil, conversation.ProjectSelectedSkills...)
+		} else {
+			req.SelectedSkills = appendUniqueStrings(nil, input.SelectedSkills...)
+		}
+	} else if len(input.SelectedSkills) > 0 {
+		return QueryRequest{}, fmt.Errorf("profile %q does not accept user-selected skills", profile.ID)
+	}
+	if profile.Runtime.Capabilities.WorkflowReferences != "" && profile.Runtime.Capabilities.WorkflowReferences != agentprofiles.CapabilityDisabled {
+		req.WorkflowContextPaths = appendUniqueStrings(nil, conversation.ProjectWorkflowContextPaths...)
+		req.WorkflowContextPaths = appendUniqueStrings(req.WorkflowContextPaths, input.WorkflowContextPaths...)
+	} else if len(input.WorkflowContextPaths) > 0 {
+		return QueryRequest{}, fmt.Errorf("profile %q does not accept workflow references", profile.ID)
+	}
+	// Project schedules, bots and restored clients may not send a browser tab's
+	// engine fields. Reuse the same capabilities.llm_config stored in
+	// product.json that the Work UI uses, just as workflow turns resolve their
+	// runtime from workflow.json.
+	if strings.TrimSpace(input.Engine) == "" && conversation.ProjectLLMConfig != nil {
+		builder := presetPrimaryLLMForChat(conversation.ProjectLLMConfig)
+		provider := ""
+		modelID := ""
+		reasoningEffort := ""
+		if builder != nil {
+			provider = strings.TrimSpace(builder.Provider)
+			modelID = strings.TrimSpace(builder.ModelID)
+			if effort, ok := builder.Options["reasoning_effort"].(string); ok {
+				reasoningEffort = strings.TrimSpace(effort)
+			}
+		}
+		if provider != "" {
+			for _, option := range profile.Runtime.ProviderOptions {
+				if !strings.EqualFold(strings.TrimSpace(option.Provider), provider) {
+					continue
+				}
+				input.Engine = option.ID
+				input.ModelID = modelID
+				input.ReasoningEffort = reasoningEffort
+				break
+			}
+			if strings.TrimSpace(input.Engine) == "" {
+				return QueryRequest{}, fmt.Errorf("project LLM provider %q is not offered by profile %q", provider, profile.ID)
+			}
+		}
+	}
+	// Projects created before capabilities.llm_config was introduced fall back
+	// to the conversation's last actual runtime, never the profile default. The
+	// Work UI backfills this value into product.json when the project is opened.
+	if strings.TrimSpace(input.Engine) == "" && conversation.ProjectLLMConfig == nil && strings.TrimSpace(conversation.Provider) != "" {
+		for _, option := range profile.Runtime.ProviderOptions {
+			if !strings.EqualFold(strings.TrimSpace(option.Provider), strings.TrimSpace(conversation.Provider)) {
+				continue
+			}
+			input.Engine = option.ID
+			input.ModelID = conversation.ModelID
+			input.ReasoningEffort = conversation.ReasoningEffort
+			break
+		}
 	}
 	if engine := strings.TrimSpace(input.Engine); engine != "" {
 		option, ok := findProviderOptionByID(profile.Runtime.ProviderOptions, engine)
@@ -149,17 +232,6 @@ func providerOffersModel(provider, modelID string) bool {
 	return !known
 }
 
-// providerOptionLabelForProvider names a provider the way the profile
-// labels it (product.yaml provider_options[].label), or by the provider id.
-func providerOptionLabelForProvider(options []agentprofiles.ProviderOption, provider string) string {
-	for _, option := range options {
-		if strings.EqualFold(strings.TrimSpace(option.Provider), strings.TrimSpace(provider)) {
-			return firstNonEmptyTrimmed(option.Label, option.ID)
-		}
-	}
-	return provider
-}
-
 func findProviderOptionByID(options []agentprofiles.ProviderOption, id string) (agentprofiles.ProviderOption, bool) {
 	for _, option := range options {
 		if strings.EqualFold(strings.TrimSpace(option.ID), id) {
@@ -226,6 +298,10 @@ func (api *StreamingAPI) handleAgentProfilePresentationDelete(w http.ResponseWri
 	}
 	profile, err := api.agentProfiles.Resolve(strings.TrimSpace(mux.Vars(r)["id"]), 0, GetUserIDFromContext(r.Context()))
 	if err != nil {
+		writeAgentProfileError(w, http.StatusNotFound, "agent profile not found")
+		return
+	}
+	if !userAllowedProduct(GetUserFromContext(r.Context()), profile.Product) {
 		writeAgentProfileError(w, http.StatusNotFound, "agent profile not found")
 		return
 	}
@@ -341,6 +417,10 @@ func (api *StreamingAPI) handleAgentProfileChatQuery(w http.ResponseWriter, r *h
 		writeAgentProfileError(w, http.StatusNotFound, "agent profile not found")
 		return
 	}
+	if !userAllowedProduct(GetUserFromContext(r.Context()), profile.Product) {
+		writeAgentProfileError(w, http.StatusNotFound, "agent profile not found")
+		return
+	}
 	// A person is using the product right now: the quiet rule must hold any
 	// due schedule back. Scheduled runs enter through Run, never here, so a
 	// check-in's own turns are not mistaken for family activity.
@@ -355,26 +435,21 @@ func (api *StreamingAPI) handleAgentProfileChatQuery(w http.ResponseWriter, r *h
 		writeAgentProfileError(w, http.StatusUnprocessableEntity, err.Error())
 		return
 	}
-	// The provider is bound by the conversation's first turn: a Codex thread
-	// and a Claude Code session are separate CLI state, so switching would
-	// start the other runtime blank. The model and reasoning effort may
-	// change any turn — but the tmux-backed CLI process this conversation's
-	// session already has running only picks up its launch flags once, so a
-	// change to either must close that process before this turn runs, or it
-	// silently keeps generating with the old ones.
+	// Runtime changes keep the AgentWorks conversation identity but must close
+	// the retained coding CLI. Its provider/model flags are read only at launch;
+	// the shared runner relaunches it with the new project configuration below.
 	if strings.TrimSpace(query.Provider) != "" {
-		bound, restartNeeded, err := defaultProductConversationRegistryStore().bindRuntime(r.Context(), productWorkspaceUserID(r.Context()), profile, conversation.ConversationKey, query.Provider, query.ModelID, query.ReasoningEffort)
+		_, restartNeeded, err := defaultProductConversationRegistryStore().bindRuntimeConfiguration(
+			r.Context(), productWorkspaceUserID(r.Context()), profile, conversation.ConversationKey,
+			query.Provider, query.ModelID, query.ReasoningEffort, query.EnabledServers, query.SelectedSkills,
+			query.WorkflowContextPaths,
+		)
 		if err != nil {
 			writeAgentProfileError(w, http.StatusUnprocessableEntity, err.Error())
 			return
 		}
-		if !strings.EqualFold(bound, query.Provider) {
-			option, _ := findProviderOptionByID(profile.Runtime.ProviderOptions, strings.TrimSpace(input.Engine))
-			writeAgentProfileError(w, http.StatusConflict, fmt.Sprintf("this chat runs on %s; start a new chat to switch to %s", providerOptionLabelForProvider(profile.Runtime.ProviderOptions, bound), firstNonEmptyTrimmed(option.Label, option.ID)))
-			return
-		}
 		if restartNeeded {
-			closeAllCodingCLIInteractiveSessionsForOwner(conversation.SessionID, "product chat: model or reasoning effort changed")
+			closeAllCodingCLIInteractiveSessionsForOwner(conversation.SessionID, "product chat: coding agent, model, MCP or skill configuration changed")
 		}
 	}
 	encoded, err := json.Marshal(query)
@@ -427,6 +502,10 @@ func (api *StreamingAPI) handleResolveAgentProfileConversation(w http.ResponseWr
 		writeAgentProfileError(w, http.StatusNotFound, "agent profile not found")
 		return
 	}
+	if !userAllowedProduct(GetUserFromContext(r.Context()), profile.Product) {
+		writeAgentProfileError(w, http.StatusNotFound, "agent profile not found")
+		return
+	}
 	// Opening the product's conversation is what the app does on launch: the
 	// family is here, so a due check-in waits for a quiet moment.
 	productInteractions.Note(r.Context(), GetUserIDFromContext(r.Context()), profile.Product)
@@ -472,6 +551,10 @@ func (api *StreamingAPI) handleRotateAgentProfileConversation(w http.ResponseWri
 		writeAgentProfileError(w, http.StatusNotFound, "agent profile not found")
 		return
 	}
+	if !userAllowedProduct(GetUserFromContext(r.Context()), profile.Product) {
+		writeAgentProfileError(w, http.StatusNotFound, "agent profile not found")
+		return
+	}
 	binding, err := resolveProductConversationBinding(r.Context(), userID, profile, input.ConversationKey)
 	if err != nil {
 		writeAgentProfileError(w, http.StatusUnprocessableEntity, err.Error())
@@ -494,6 +577,27 @@ func (api *StreamingAPI) resolveAgentProfileConversation(r *http.Request, profil
 	binding, err := resolveProductConversationBinding(r.Context(), userID, profile, requestedKey)
 	if err != nil {
 		return ProductConversationRecord{}, err
+	}
+	client := workspace.NewClient(getWorkspaceAPIURL(), workspace.WithUserID(userID))
+	// Work projects have a conventional source-code home. Creating it here is
+	// idempotent and also upgrades projects created before the convention was
+	// introduced. The frontend creates it eagerly so it is visible immediately;
+	// this server-side guard keeps non-UI callers consistent.
+	if profile.ID == "work" {
+		if err := client.CreateFolder(r.Context(), filepath.ToSlash(filepath.Join(binding.WorkspacePath, "code"))); err != nil {
+			return ProductConversationRecord{}, fmt.Errorf("initialize product code folder: %w", err)
+		}
+	}
+	// Database is a product feature, so its physical managed SQLite location is
+	// part of enabling that feature too. Create the valid empty database through
+	// the trusted server-to-workspace channel when a project is first opened;
+	// repeat calls are idempotent and older projects are upgraded automatically.
+	if agentprofiles.HasFeature(profile, "database") {
+		if _, err := client.InitializeWorkflowDB(r.Context(), workspace.InitializeWorkflowDBParams{
+			DBPath: filepath.ToSlash(filepath.Join(binding.WorkspacePath, "db", "db.sqlite")),
+		}); err != nil {
+			return ProductConversationRecord{}, fmt.Errorf("initialize product database: %w", err)
+		}
 	}
 	preferredSessionID := ""
 	if binding.AuthoritativeSessionID == "" {
@@ -553,8 +657,16 @@ func listAgentProfilesHandler(registry *agentprofiles.Registry) http.HandlerFunc
 			return
 		}
 		userID := GetUserIDFromContext(r.Context())
+		profiles := registry.List(userID)
+		claims := GetUserFromContext(r.Context())
+		visible := profiles[:0]
+		for _, profile := range profiles {
+			if userAllowedProduct(claims, profile.Product) {
+				visible = append(visible, profile)
+			}
+		}
 		writeAgentProfileJSON(w, http.StatusOK, map[string]interface{}{
-			"profiles": registry.List(userID),
+			"profiles": visible,
 		})
 	}
 }
@@ -576,6 +688,10 @@ func getAgentProfileHandler(registry *agentprofiles.Registry) http.HandlerFunc {
 		}
 		profile, err := registry.Resolve(mux.Vars(r)["id"], version, GetUserIDFromContext(r.Context()))
 		if err != nil {
+			writeAgentProfileError(w, http.StatusNotFound, "agent profile not found")
+			return
+		}
+		if !userAllowedProduct(GetUserFromContext(r.Context()), profile.Product) {
 			writeAgentProfileError(w, http.StatusNotFound, "agent profile not found")
 			return
 		}

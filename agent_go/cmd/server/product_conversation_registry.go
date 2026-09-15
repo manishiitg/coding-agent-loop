@@ -13,6 +13,8 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/agentprofiles"
+	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/productschedule"
+	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/workflowtypes"
 )
 
 const (
@@ -39,24 +41,32 @@ type ProductConversationRecord struct {
 	ResourceID      string `json:"resource_id,omitempty"`
 	Title           string `json:"title,omitempty"`
 	Description     string `json:"description,omitempty"`
-	// Provider is the coding-agent runtime the conversation runs on, bound by
-	// its first turn. A Codex thread and a Claude Code session are separate
-	// CLI state, so the other runtime would start blank: the model can change
-	// mid-chat, the provider cannot — a new conversation starts unbound.
-	Provider        string `json:"provider,omitempty"`
+	// Provider is the coding-agent runtime the conversation most recently used.
+	// Changing it relaunches the retained CLI while the AgentWorks conversation
+	// history remains owned by this stable product session.
+	Provider string `json:"provider,omitempty"`
 	// ModelID and ReasoningEffort are the runtime options the conversation's
-	// already-running tmux-backed CLI process was last launched with. Unlike
-	// Provider these may change mid-chat, but the running process does not
+	// already-running tmux-backed CLI process was last launched with. Runtime
+	// selections may change mid-chat, but the running process does not
 	// notice on its own — the interactive adapter only builds its CLI flags
 	// (--model, -c model_reasoning_effort) once, at first acquire, and every
 	// later turn against the same owner session id silently reuses that
 	// process. bindRuntime compares against these to know when the caller
 	// must close the tmux session so the next turn relaunches with the new
-	// flags (see closeAllCodingCLIInteractiveSessionsForOwner).
-	ModelID         string `json:"model_id,omitempty"`
-	ReasoningEffort string `json:"reasoning_effort,omitempty"`
-	CreatedAt       string `json:"created_at"`
-	UpdatedAt       string `json:"updated_at"`
+	// flags.
+	ModelID              string   `json:"model_id,omitempty"`
+	ReasoningEffort      string   `json:"reasoning_effort,omitempty"`
+	EnabledServers       []string `json:"enabled_servers,omitempty"`
+	SelectedSkills       []string `json:"selected_skills,omitempty"`
+	WorkflowContextPaths []string `json:"workflow_context_paths,omitempty"`
+	// ProjectLLMConfig is loaded from product.json for this request. It is not
+	// duplicated into the conversation registry.
+	ProjectLLMConfig            *workflowtypes.PresetLLMConfig `json:"-"`
+	ProjectSelectedServers      []string                       `json:"-"`
+	ProjectSelectedSkills       []string                       `json:"-"`
+	ProjectWorkflowContextPaths []string                       `json:"-"`
+	CreatedAt                   string                         `json:"created_at"`
+	UpdatedAt                   string                         `json:"updated_at"`
 }
 
 type productConversationRegistryDocument struct {
@@ -253,13 +263,17 @@ func (store productConversationRegistryStore) forget(ctx context.Context, userID
 }
 
 type productConversationBinding struct {
-	ConversationKey        string
-	WorkspacePath          string
-	ManifestPath           string
-	ResourceID             string
-	Title                  string
-	Description            string
-	AuthoritativeSessionID string
+	ConversationKey             string
+	WorkspacePath               string
+	ManifestPath                string
+	ResourceID                  string
+	Title                       string
+	Description                 string
+	AuthoritativeSessionID      string
+	ProjectLLMConfig            *workflowtypes.PresetLLMConfig
+	ProjectSelectedServers      []string
+	ProjectSelectedSkills       []string
+	ProjectWorkflowContextPaths []string
 }
 
 type productConversationRegistryStore struct {
@@ -352,6 +366,10 @@ func (store productConversationRegistryStore) resolveOrCreate(
 				return ProductConversationRecord{}, err
 			}
 		}
+		existing.ProjectLLMConfig = binding.ProjectLLMConfig
+		existing.ProjectSelectedServers = append([]string(nil), binding.ProjectSelectedServers...)
+		existing.ProjectSelectedSkills = append([]string(nil), binding.ProjectSelectedSkills...)
+		existing.ProjectWorkflowContextPaths = append([]string(nil), binding.ProjectWorkflowContextPaths...)
 		return existing, nil
 	}
 
@@ -363,17 +381,21 @@ func (store productConversationRegistryStore) resolveOrCreate(
 		sessionID = "product-" + store.newID()
 	}
 	record := ProductConversationRecord{
-		ConversationID:  "conversation-" + store.newID(),
-		ConversationKey: binding.ConversationKey,
-		ProfileID:       profile.ID,
-		ProfileVersion:  profile.Version,
-		SessionID:       sessionID,
-		WorkspacePath:   binding.WorkspacePath,
-		ResourceID:      binding.ResourceID,
-		Title:           binding.Title,
-		Description:     binding.Description,
-		CreatedAt:       now,
-		UpdatedAt:       now,
+		ConversationID:              "conversation-" + store.newID(),
+		ConversationKey:             binding.ConversationKey,
+		ProfileID:                   profile.ID,
+		ProfileVersion:              profile.Version,
+		SessionID:                   sessionID,
+		WorkspacePath:               binding.WorkspacePath,
+		ResourceID:                  binding.ResourceID,
+		Title:                       binding.Title,
+		Description:                 binding.Description,
+		CreatedAt:                   now,
+		UpdatedAt:                   now,
+		ProjectLLMConfig:            binding.ProjectLLMConfig,
+		ProjectSelectedServers:      append([]string(nil), binding.ProjectSelectedServers...),
+		ProjectSelectedSkills:       append([]string(nil), binding.ProjectSelectedSkills...),
+		ProjectWorkflowContextPaths: append([]string(nil), binding.ProjectWorkflowContextPaths...),
 	}
 	document.Version = productConversationRegistryVersion
 	document.Entries[entryKey] = record
@@ -420,17 +442,21 @@ func (store productConversationRegistryStore) rotate(
 		createdAt = existing.CreatedAt
 	}
 	record := ProductConversationRecord{
-		ConversationID:  "conversation-" + store.newID(),
-		ConversationKey: binding.ConversationKey,
-		ProfileID:       profile.ID,
-		ProfileVersion:  profile.Version,
-		SessionID:       "product-" + store.newID(),
-		WorkspacePath:   binding.WorkspacePath,
-		ResourceID:      binding.ResourceID,
-		Title:           binding.Title,
-		Description:     binding.Description,
-		CreatedAt:       createdAt,
-		UpdatedAt:       now,
+		ConversationID:              "conversation-" + store.newID(),
+		ConversationKey:             binding.ConversationKey,
+		ProfileID:                   profile.ID,
+		ProfileVersion:              profile.Version,
+		SessionID:                   "product-" + store.newID(),
+		WorkspacePath:               binding.WorkspacePath,
+		ResourceID:                  binding.ResourceID,
+		Title:                       binding.Title,
+		Description:                 binding.Description,
+		ProjectLLMConfig:            binding.ProjectLLMConfig,
+		ProjectSelectedServers:      append([]string(nil), binding.ProjectSelectedServers...),
+		ProjectSelectedSkills:       append([]string(nil), binding.ProjectSelectedSkills...),
+		ProjectWorkflowContextPaths: append([]string(nil), binding.ProjectWorkflowContextPaths...),
+		CreatedAt:                   createdAt,
+		UpdatedAt:                   now,
 	}
 
 	// A project manifest is an authoritative runtime binding. Update it before
@@ -454,14 +480,10 @@ func (store productConversationRegistryStore) rotate(
 	return record, nil
 }
 
-// bindRuntime records the runtime a conversation runs on the first time a
-// turn names one. A different provider on an already-bound conversation is
-// refused (boundProvider names what it is bound to; the caller starts a new
-// chat to switch). A different model or reasoning effort is accepted and
-// recorded, but restartNeeded reports that the tmux-backed CLI process this
-// conversation's session already has running was launched with the old
-// values — the caller must close it (closeAllCodingCLIInteractiveSessionsForOwner)
-// before this turn runs, or the process silently keeps using them.
+// bindRuntime records the runtime selected for a conversation. A provider,
+// model or reasoning-effort change is accepted and recorded. restartNeeded
+// reports that the tmux-backed CLI process was launched with older settings;
+// the caller closes it before the next turn so the shared runner relaunches it.
 func (store productConversationRegistryStore) bindRuntime(
 	ctx context.Context,
 	userID string,
@@ -469,9 +491,23 @@ func (store productConversationRegistryStore) bindRuntime(
 	conversationKey string,
 	provider, modelID, reasoningEffort string,
 ) (boundProvider string, restartNeeded bool, err error) {
+	return store.bindRuntimeConfiguration(ctx, userID, profile, conversationKey, provider, modelID, reasoningEffort, nil, nil, nil)
+}
+
+func (store productConversationRegistryStore) bindRuntimeConfiguration(
+	ctx context.Context,
+	userID string,
+	profile agentprofiles.Profile,
+	conversationKey string,
+	provider, modelID, reasoningEffort string,
+	enabledServers, selectedSkills, workflowContextPaths []string,
+) (boundProvider string, restartNeeded bool, err error) {
 	provider = strings.TrimSpace(provider)
 	modelID = strings.TrimSpace(modelID)
 	reasoningEffort = strings.TrimSpace(reasoningEffort)
+	enabledServers = canonicalRuntimeSelection(enabledServers)
+	selectedSkills = canonicalRuntimeSelection(selectedSkills)
+	workflowContextPaths = canonicalRuntimeSelection(workflowContextPaths)
 	path := productConversationRegistryPath(userID)
 	mutex := productConversationRegistryMutex(path)
 	mutex.Lock()
@@ -496,11 +532,11 @@ func (store productConversationRegistryStore) bindRuntime(
 		return "", false, fmt.Errorf("product conversation %q is not registered", entryKey)
 	}
 	if bound := strings.TrimSpace(record.Provider); bound != "" {
-		if !strings.EqualFold(bound, provider) {
-			return bound, false, nil
-		}
-		restartNeeded = (modelID != "" && !strings.EqualFold(strings.TrimSpace(record.ModelID), modelID)) ||
-			(reasoningEffort != "" && !strings.EqualFold(strings.TrimSpace(record.ReasoningEffort), reasoningEffort))
+		restartNeeded = !strings.EqualFold(bound, provider) ||
+			(modelID != "" && !strings.EqualFold(strings.TrimSpace(record.ModelID), modelID)) ||
+			(reasoningEffort != "" && !strings.EqualFold(strings.TrimSpace(record.ReasoningEffort), reasoningEffort)) ||
+			!sameRuntimeSelection(record.EnabledServers, enabledServers) ||
+			!sameRuntimeSelection(record.SelectedSkills, selectedSkills)
 	}
 	record.Provider = provider
 	if modelID != "" {
@@ -509,6 +545,9 @@ func (store productConversationRegistryStore) bindRuntime(
 	if reasoningEffort != "" {
 		record.ReasoningEffort = reasoningEffort
 	}
+	record.EnabledServers = enabledServers
+	record.SelectedSkills = selectedSkills
+	record.WorkflowContextPaths = workflowContextPaths
 	record.UpdatedAt = store.now().UTC().Format(time.RFC3339Nano)
 	document.Version = productConversationRegistryVersion
 	document.Entries[entryKey] = record
@@ -516,6 +555,39 @@ func (store productConversationRegistryStore) bindRuntime(
 		return "", false, writeErr
 	}
 	return provider, restartNeeded, nil
+}
+
+func canonicalRuntimeSelection(values []string) []string {
+	seen := make(map[string]struct{}, len(values))
+	result := make([]string, 0, len(values))
+	for _, raw := range values {
+		value := strings.TrimSpace(raw)
+		if value == "" {
+			continue
+		}
+		key := strings.ToLower(value)
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		result = append(result, value)
+	}
+	sort.Slice(result, func(i, j int) bool { return strings.ToLower(result[i]) < strings.ToLower(result[j]) })
+	return result
+}
+
+func sameRuntimeSelection(left, right []string) bool {
+	left = canonicalRuntimeSelection(left)
+	right = canonicalRuntimeSelection(right)
+	if len(left) != len(right) {
+		return false
+	}
+	for index := range left {
+		if !strings.EqualFold(left[index], right[index]) {
+			return false
+		}
+	}
+	return true
 }
 
 func (store productConversationRegistryStore) writeManifestSessionID(ctx context.Context, manifestPath, sessionID string) error {
@@ -557,12 +629,22 @@ func (store productConversationRegistryStore) writeDocument(ctx context.Context,
 }
 
 type productProjectManifest struct {
-	SchemaVersion int    `json:"schema_version"`
-	Product       string `json:"product"`
-	ID            string `json:"id"`
-	Title         string `json:"title"`
-	Description   string `json:"description"`
-	SessionID     string `json:"session_id"`
+	SchemaVersion int                        `json:"schema_version"`
+	Product       string                     `json:"product"`
+	ID            string                     `json:"id"`
+	Title         string                     `json:"title"`
+	Description   string                     `json:"description"`
+	SessionID     string                     `json:"session_id"`
+	CreatedAt     string                     `json:"created_at,omitempty"`
+	UpdatedAt     string                     `json:"updated_at,omitempty"`
+	Schedules     []productschedule.Schedule `json:"schedules,omitempty"`
+	Triggers      []productWebhookTrigger    `json:"triggers,omitempty"`
+	Capabilities  struct {
+		LLMConfig            *workflowtypes.PresetLLMConfig `json:"llm_config,omitempty"`
+		SelectedServers      []string                       `json:"selected_servers,omitempty"`
+		SelectedSkills       []string                       `json:"selected_skills,omitempty"`
+		WorkflowContextPaths []string                       `json:"workflow_context_paths,omitempty"`
+	} `json:"capabilities,omitempty"`
 }
 
 type productProjectStore struct {
@@ -596,6 +678,17 @@ func resolveProductProjectBindingWithStore(
 	projectID string,
 	store productProjectStore,
 ) (productConversationBinding, error) {
+	// A project product may own several AgentWorks-style chat tabs. The stable
+	// project id remains the authorization/resource boundary; a suffix gives
+	// each chat its own native CLI session and durable conversation entry.
+	conversationKey := strings.TrimSpace(projectID)
+	resourceProjectID := conversationKey
+	if base, _, found := strings.Cut(conversationKey, ":"); found {
+		resourceProjectID = strings.TrimSpace(base)
+		if resourceProjectID == "" {
+			return productConversationBinding{}, fmt.Errorf("project conversation key has no project id")
+		}
+	}
 	projectsRoot, err := cleanAgentProfileWorkspace(profile.Runtime.Workspace.ProjectsRoot, userID)
 	if err != nil {
 		return productConversationBinding{}, fmt.Errorf("invalid product projects root: %w", err)
@@ -636,28 +729,39 @@ func resolveProductProjectBindingWithStore(
 		var manifest productProjectManifest
 		if json.Unmarshal([]byte(raw), &manifest) != nil ||
 			strings.TrimSpace(manifest.Product) != profile.ID ||
-			strings.TrimSpace(manifest.ID) != projectID {
+			strings.TrimSpace(manifest.ID) != resourceProjectID {
 			continue
 		}
 		if strings.TrimSpace(manifest.Title) == "" || strings.TrimSpace(manifest.SessionID) == "" {
-			return productConversationBinding{}, fmt.Errorf("project %q has an incomplete product manifest", projectID)
+			return productConversationBinding{}, fmt.Errorf("project %q has an incomplete product manifest", resourceProjectID)
 		}
 		if matched != nil {
-			return productConversationBinding{}, fmt.Errorf("project id %q is duplicated", projectID)
+			return productConversationBinding{}, fmt.Errorf("project id %q is duplicated", resourceProjectID)
 		}
 		workspacePath := filepath.ToSlash(filepath.Dir(candidate))
 		matched = &productConversationBinding{
-			ConversationKey:        projectID,
-			WorkspacePath:          workspacePath,
-			ManifestPath:           candidate,
-			ResourceID:             projectID,
-			Title:                  strings.TrimSpace(manifest.Title),
-			Description:            strings.TrimSpace(manifest.Description),
-			AuthoritativeSessionID: strings.TrimSpace(manifest.SessionID),
+			ConversationKey:             conversationKey,
+			WorkspacePath:               workspacePath,
+			ManifestPath:                candidate,
+			ResourceID:                  resourceProjectID,
+			Title:                       strings.TrimSpace(manifest.Title),
+			Description:                 strings.TrimSpace(manifest.Description),
+			AuthoritativeSessionID:      strings.TrimSpace(manifest.SessionID),
+			ProjectLLMConfig:            manifest.Capabilities.LLMConfig,
+			ProjectSelectedServers:      append([]string(nil), manifest.Capabilities.SelectedServers...),
+			ProjectSelectedSkills:       append([]string(nil), manifest.Capabilities.SelectedSkills...),
+			ProjectWorkflowContextPaths: append([]string(nil), manifest.Capabilities.WorkflowContextPaths...),
+		}
+		// Only the legacy/default project chat is tied to product.json's one
+		// session_id. Additional tabs are independent and live solely in the
+		// shared product conversation registry.
+		if conversationKey != resourceProjectID {
+			matched.ManifestPath = ""
+			matched.AuthoritativeSessionID = ""
 		}
 	}
 	if matched == nil {
-		return productConversationBinding{}, fmt.Errorf("project %q was not found", projectID)
+		return productConversationBinding{}, fmt.Errorf("project %q was not found", resourceProjectID)
 	}
 	return *matched, nil
 }

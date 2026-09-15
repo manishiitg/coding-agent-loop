@@ -11,13 +11,16 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/manishiitg/coding-agent-loop/agent_go/cmd/server/services"
 	virtualtools "github.com/manishiitg/coding-agent-loop/agent_go/cmd/server/virtual-tools"
 	"github.com/manishiitg/coding-agent-loop/agent_go/internal/events"
+	agent "github.com/manishiitg/coding-agent-loop/agent_go/pkg/agentwrapper"
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/common"
 	orchEvents "github.com/manishiitg/coding-agent-loop/agent_go/pkg/orchestrator/events"
 
 	mcpagent "github.com/manishiitg/mcpagent/agent"
 	unifiedevents "github.com/manishiitg/mcpagent/events"
+	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 )
 
 // BackgroundAgentStatus represents the status of a background agent
@@ -912,6 +915,163 @@ func backgroundAgentCountsAsLiveActivity(snap BackgroundAgentSnapshot, now time.
 // Background-agent execution + lifecycle logic (relocated verbatim from
 // server.go to sit alongside the BackgroundAgent types above).
 // ---------------------------------------------------------------------------
+
+// executeBackgroundDelegatedTask spawns a background goroutine for async delegation
+func (api *StreamingAPI) executeBackgroundDelegatedTask(
+	ctx context.Context, parentReq QueryRequest, sessionID, name, instruction string,
+) (string, error) {
+	agentID := api.bgAgentRegistry.NextID(name)
+	bgCtx, bgCancel := context.WithCancel(context.Background())
+
+	// Carry the delegation spec across the context boundary (bgCtx derives from
+	// Background(), not from ctx, so nothing is inherited automatically).
+	// Depth is reset to 0 because background sub-agents don't have the delegate
+	// tool, so they can never create further sub-agents.
+	// BackgroundAgentID is set to this agent so delegation_start can link back.
+	bgSpec := virtualtools.SubAgentSpecFromContext(ctx)
+	parentExecutionID := bgSpec.BackgroundAgentID
+	if strings.TrimSpace(parentExecutionID) == "" {
+		// A first-level background agent belongs to the exact conversation turn
+		// that invoked run_in_background, not to the session-wide main node. This
+		// lets the scheduler wait for only that message's descendants and prevents
+		// an old/unrelated child completion from advancing a later message.
+		parentExecutionID = api.currentConversationTurnExecutionID(sessionID)
+	}
+	bgSpec.Depth = 0
+	bgSpec.BackgroundAgentID = agentID
+	bgCtx = virtualtools.WithSubAgentSpec(bgCtx, bgSpec)
+	// The background context intentionally starts from context.Background(),
+	// so carry the Chief of Staff's exact attached skill snapshot explicitly.
+	bgCtx = copyDelegatedParentSkills(ctx, bgCtx)
+
+	// Propagate per-user Chats folder to background sub-agents so shell commands
+	// resolve to the right user's workspace folder.
+	if cf, ok := ctx.Value(virtualtools.ChatsFolderKey).(string); ok && cf != "" {
+		bgCtx = context.WithValue(bgCtx, virtualtools.ChatsFolderKey, cf)
+	}
+	// Pass user ID for per-user OAuth
+	if userID, ok := ctx.Value(common.UserIDKey).(string); ok {
+		bgCtx = context.WithValue(bgCtx, common.UserIDKey, userID)
+		log.Printf("[USER_ID_DEBUGGING] Background agent: copied UserIDKey=%q to bgCtx", userID)
+	}
+	if dest, ok := ctx.Value(virtualtools.BotNotificationDestinationKey).(*services.NotificationDestination); ok && dest != nil {
+		bgCtx = context.WithValue(bgCtx, virtualtools.BotNotificationDestinationKey, dest)
+	}
+
+	bgAgent := &BackgroundAgent{
+		ID:                agentID,
+		ParentExecutionID: parentExecutionID,
+		Name:              name,
+		SessionID:         sessionID,
+		Instruction:       instruction,
+		Kind:              "delegation",
+		Status:            BGAgentRunning,
+		CreatedAt:         time.Now(),
+		cancel:            bgCancel,
+	}
+	api.bgAgentRegistry.Register(sessionID, bgAgent)
+
+	// Inject tool event callback so executeDelegatedTask's observer tracks timing on bgAgent
+	bgCtx = context.WithValue(bgCtx, virtualtools.ToolEventCallbackKey, events.ToolEventCallback(
+		func(toolCallID, toolName, eventType string, duration time.Duration) {
+			switch eventType {
+			case "start":
+				bgAgent.RecordToolCallStart(toolCallID, toolName)
+			case "end":
+				bgAgent.RecordToolCallEnd(toolCallID, toolName, duration, false)
+			case "error":
+				bgAgent.RecordToolCallEnd(toolCallID, toolName, duration, true)
+			}
+		},
+	))
+
+	// Emit background_agent_started event
+	// The delegate tool always creates a real delegated LLM agent.
+	api.emitBackgroundAgentStarted(sessionID, agentID, name, truncateForToolResponse(instruction, 200), "", orchEvents.ExecutionKindSubAgent)
+	api.notifyBackgroundAgentStarted(sessionID, agentID)
+
+	// Start the background completion loop for this session if not already running
+	api.completionLoopStartedMu.Lock()
+	if !api.completionLoopStarted[sessionID] {
+		api.completionLoopStarted[sessionID] = true
+		go api.backgroundCompletionLoop(sessionID)
+	}
+	api.completionLoopStartedMu.Unlock()
+
+	go func() {
+		defer bgCancel()
+		result, err := api.executeDelegatedTask(bgCtx, parentReq, sessionID, instruction, func(wrapper *agent.LLMAgentWrapper) {
+			// Attach history func so query_agent can read the sub-agent's live conversation
+			bgAgent.SetHistoryFunc(func(lastN int) []HistoryEntry {
+				history := wrapper.GetHistory()
+				start := 0
+				if lastN > 0 && len(history) > lastN {
+					start = len(history) - lastN
+				}
+				var entries []HistoryEntry
+				for _, msg := range history[start:] {
+					role := string(msg.Role)
+					var parts []string
+					for _, part := range msg.Parts {
+						switch p := part.(type) {
+						case llmtypes.TextContent:
+							if p.Text != "" {
+								parts = append(parts, p.Text)
+							}
+						case llmtypes.ToolCall:
+							name := ""
+							args := ""
+							if p.FunctionCall != nil {
+								name = p.FunctionCall.Name
+								args = p.FunctionCall.Arguments
+							}
+							parts = append(parts, fmt.Sprintf("[tool_call: %s(%s)]", name, args))
+						case *llmtypes.ToolCall:
+							name := ""
+							args := ""
+							if p != nil && p.FunctionCall != nil {
+								name = p.FunctionCall.Name
+								args = p.FunctionCall.Arguments
+							}
+							parts = append(parts, fmt.Sprintf("[tool_call: %s(%s)]", name, args))
+						case llmtypes.ToolCallResponse:
+							parts = append(parts, fmt.Sprintf("[tool_result: %s] %s", p.Name, p.Content))
+						case *llmtypes.ToolCallResponse:
+							if p != nil {
+								parts = append(parts, fmt.Sprintf("[tool_result: %s] %s", p.Name, p.Content))
+							}
+						}
+					}
+					if len(parts) > 0 {
+						entries = append(entries, HistoryEntry{
+							Role: role,
+							Text: strings.Join(parts, "\n"),
+						})
+					}
+				}
+				return entries
+			})
+		})
+
+		now := time.Now()
+		duration := now.Sub(bgAgent.CreatedAt)
+
+		if err != nil {
+			bgAgent.SetError(err.Error())
+			api.emitBackgroundAgentCompleted(sessionID, agentID, name, "failed", "", err.Error(), duration.Truncate(time.Second).String())
+			log.Printf("[BG AGENT] Agent '%s' (ID: %s) failed after %s: %v", name, agentID, duration, err)
+		} else {
+			bgAgent.SetResult(result)
+			api.emitBackgroundAgentCompleted(sessionID, agentID, name, "completed", truncateForToolResponse(result, 500), "", duration.Truncate(time.Second).String())
+			log.Printf("[BG AGENT] Agent '%s' (ID: %s) completed in %s", name, agentID, duration)
+		}
+
+		// Signal completion to the notification loop
+		api.bgAgentRegistry.NotifyCompletion(sessionID, agentID)
+	}()
+
+	return agentID, nil
+}
 
 // backfillParentExecutionID returns existing if already set, otherwise looks
 // up agentID in the background agent registry for its ParentExecutionID.

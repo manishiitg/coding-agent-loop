@@ -231,6 +231,46 @@ func chatHistoryConversationPath(userID, sessionID string, t time.Time) string {
 	return pathpkg.Join(chatHistoryRoot(userID), chatHistoryConversationDate(t), chatHistoryConversationFileName(sessionID))
 }
 
+// workProjectChatHistoryConversationPath keeps Work's Builder transcripts in
+// the project, matching AgentWorks' workspace-owned conversation layout. Other
+// product chats continue to use the user's central chat_history directory.
+func workProjectChatHistoryConversationPath(userID, workspacePath, sessionID string, t time.Time) (string, bool) {
+	canonicalWorkspace := canonicalChatHistoryWorkspacePath(userID, workspacePath)
+	const workProjectsRoot = "Chats/Work/projects/"
+	projectRelativePath := strings.TrimPrefix(canonicalWorkspace, workProjectsRoot)
+	if projectRelativePath == canonicalWorkspace || strings.Trim(projectRelativePath, "/") == "" {
+		return "", false
+	}
+
+	userWorkspacePath := pathpkg.Join("_users", sanitizeUserIDForPath(userID), canonicalWorkspace)
+	return workflowBuilderConversationLogPath(userWorkspacePath, sanitizeChatHistorySessionID(sessionID), t), true
+}
+
+// copyChatHistoryConversationIfNeeded seeds a project-local transcript from a
+// legacy central transcript before the next save. Leaving the legacy file in
+// place provides a rollback-compatible fallback while all subsequent writes go
+// to the project-owned copy.
+func copyChatHistoryConversationIfNeeded(sourcePath, destinationPath string) error {
+	sourcePath = strings.Trim(strings.TrimSpace(sourcePath), "/")
+	destinationPath = strings.Trim(strings.TrimSpace(destinationPath), "/")
+	if sourcePath == "" || destinationPath == "" || sourcePath == destinationPath {
+		return nil
+	}
+	if _, exists, err := readFileFromWorkspace(context.Background(), destinationPath); err != nil {
+		return err
+	} else if exists {
+		return nil
+	}
+	content, exists, err := readFileFromWorkspace(context.Background(), sourcePath)
+	if err != nil {
+		return err
+	}
+	if !exists {
+		return nil
+	}
+	return writeRawFileToWorkspace(context.Background(), destinationPath, content)
+}
+
 func (api *StreamingAPI) persistChatConversationToPathWithTerminalSession(sessionID, terminalSnapshotSessionID, agentMode, userID string, persistedHistory []llmtypes.MessageContent, runtime *ChatHistoryAgentRuntime, uiEvents []internalevents.Event, conversationPath string, botMeta *ChatHistoryBotMetadata) {
 	if len(persistedHistory) == 0 {
 		return
@@ -1368,6 +1408,14 @@ func chatHistorySessionIDFromWorkspacePath(root, convPath string) (string, bool)
 
 func listWorkflowScopedChatHistorySessionsFromDisk(userID, chatHistoryRootPath, workflowPath string, limit, offset int, kind string) ([]ChatHistorySession, bool, error) {
 	all := make([]ChatHistorySession, 0)
+	builderWorkspacePath := workflowPath
+	// Work project paths sent by the browser are logical, while their files are
+	// stored below the signed-in user's private _users/<id> root. Resolve that
+	// owned storage path before scanning builder/conversation; otherwise the
+	// project can have durable transcripts on disk while Recent returns none.
+	if ownedPath, isWorkProject := ownedWorkProjectWorkspacePath(userID, workflowPath); isWorkProject {
+		builderWorkspacePath = ownedPath
+	}
 
 	// Workflow builder files are the most precise source for /resume inside a
 	// workflow. Do not include global chat_history matches here: those can
@@ -1378,11 +1426,64 @@ func listWorkflowScopedChatHistorySessionsFromDisk(userID, chatHistoryRootPath, 
 	if limit > 0 {
 		readBudget = limit + offset
 	}
-	if builderSessions, ok := listWorkflowBuilderHistoryFromDisk(userID, workflowPath, readBudget, kind); ok {
+	if builderSessions, ok := listWorkflowBuilderHistoryFromDisk(userID, builderWorkspacePath, readBudget, kind); ok {
 		all = append(all, builderSessions...)
 	}
 
-	return paginateChatHistorySessions(all, limit, offset), true, nil
+	// Compatibility fallback for product conversations written before Work moved
+	// to the same project-owned builder/conversation layout as AgentWorks. Match
+	// structured workspace metadata so pasted paths cannot create false results.
+	if productSessions, ok, err := listChatHistorySessionsFromDisk(userID, chatHistoryRootPath, "", 0, 0); err != nil {
+		return nil, true, err
+	} else if ok {
+		for _, session := range productSessions {
+			if !chatHistorySessionMatchesKind(session.SessionID, kind) || !chatHistorySessionMatchesWorkspace(userID, session, workflowPath) {
+				continue
+			}
+			// Migrate legacy Work transcripts opportunistically when the project is
+			// opened. This is a non-destructive copy; the central source remains as
+			// a compatibility fallback until a later cleanup policy removes it.
+			timestamp, parseErr := time.Parse(time.RFC3339, strings.TrimSpace(session.UpdatedAt))
+			if parseErr != nil {
+				timestamp = time.Now()
+			}
+			if projectPath, isWorkProject := workProjectChatHistoryConversationPath(userID, workflowPath, session.SessionID, timestamp); isWorkProject {
+				if err := copyChatHistoryConversationIfNeeded(session.ConversationPath, projectPath); err == nil {
+					session.ConversationPath = projectPath
+				}
+			}
+			all = append(all, session)
+		}
+	}
+
+	bySessionID := make(map[string]ChatHistorySession, len(all))
+	for _, session := range all {
+		if existing, ok := bySessionID[session.SessionID]; !ok || session.UpdatedAt > existing.UpdatedAt {
+			bySessionID[session.SessionID] = session
+		}
+	}
+	deduped := make([]ChatHistorySession, 0, len(bySessionID))
+	for _, session := range bySessionID {
+		deduped = append(deduped, session)
+	}
+	sort.Slice(deduped, func(i, j int) bool {
+		return deduped[i].UpdatedAt > deduped[j].UpdatedAt
+	})
+	return paginateChatHistorySessions(deduped, limit, offset), true, nil
+}
+
+func chatHistorySessionMatchesWorkspace(userID string, session ChatHistorySession, workspacePath string) bool {
+	candidate := strings.TrimSpace(session.WorkspacePath)
+	if session.Runtime != nil && strings.TrimSpace(session.Runtime.WorkspacePath) != "" {
+		candidate = session.Runtime.WorkspacePath
+	}
+	return canonicalChatHistoryWorkspacePath(userID, candidate) == canonicalChatHistoryWorkspacePath(userID, workspacePath)
+}
+
+func canonicalChatHistoryWorkspacePath(userID, workspacePath string) string {
+	workspacePath = normalizeChatHistoryWorkspacePath(workspacePath)
+	userPrefix := pathpkg.Join("_users", sanitizeUserIDForPath(userID)) + "/"
+	return strings.TrimPrefix(workspacePath, userPrefix)
 }
 
 // listWorkflowBuilderHistoryFromDisk returns builder chat sessions for a workflow.
@@ -2747,6 +2848,10 @@ func normalizeRestoredChatHistoryConversationPath(userID, conversationPath strin
 	if cleaned == userRoot || strings.HasPrefix(cleaned, userRoot+"/") {
 		return cleaned, true
 	}
+	workProjectsRoot := pathpkg.Join("_users", sanitizeUserIDForPath(userID), "Chats", "Work", "projects") + "/"
+	if strings.HasPrefix(cleaned, workProjectsRoot) && strings.Contains(cleaned, "/builder/conversation/") && strings.HasSuffix(cleaned, ".json") {
+		return cleaned, true
+	}
 	if strings.HasPrefix(cleaned, "Workflow/") && strings.Contains(cleaned, "/builder/") && strings.HasSuffix(cleaned, ".json") {
 		return cleaned, true
 	}
@@ -3036,14 +3141,26 @@ func DeleteChatHistorySession(userID, sessionID, workspacePath string) (ChatHist
 	}
 
 	if workspacePath != "" {
-		return deleteWorkflowChatHistorySession(result, sessionID, workspacePath)
+		return deleteWorkspaceChatHistorySession(result, userID, sessionID, workspacePath)
 	}
 	return deleteUserChatHistorySession(result, userID, sessionID)
 }
 
-func deleteWorkflowChatHistorySession(result ChatHistoryCleanupResult, sessionID, workspacePath string) (ChatHistoryCleanupResult, error) {
-	workflowDir, ok := resolveLocalWorkflowDir(workspacePath)
+func ownedWorkProjectWorkspacePath(userID, workspacePath string) (string, bool) {
+	canonical := canonicalChatHistoryWorkspacePath(userID, workspacePath)
+	if !strings.HasPrefix(canonical, "Chats/Work/projects/") {
+		return workspacePath, false
+	}
+	return pathpkg.Join("_users", sanitizeUserIDForPath(userID), canonical), true
+}
+
+func deleteWorkspaceChatHistorySession(result ChatHistoryCleanupResult, userID, sessionID, workspacePath string) (ChatHistoryCleanupResult, error) {
+	storageWorkspacePath, workProject := ownedWorkProjectWorkspacePath(userID, workspacePath)
+	workflowDir, ok := resolveLocalWorkflowDir(storageWorkspacePath)
 	if !ok {
+		if workProject {
+			return deleteUserChatHistorySession(result, userID, sessionID)
+		}
 		return result, nil
 	}
 	fileName := fmt.Sprintf("session-%s-conversation.json", sessionID)
@@ -3078,11 +3195,17 @@ func deleteWorkflowChatHistorySession(result ChatHistoryCleanupResult, sessionID
 		}
 	}
 	if result.DeletedCount > 0 {
-		indexWorkspacePath := pathpkg.Join(workspacePath, "builder", "conversation", chatHistoryIndexFileName)
+		indexWorkspacePath := pathpkg.Join(storageWorkspacePath, "builder", "conversation", chatHistoryIndexFileName)
 		indexLocalPath := filepath.Join(workflowDir, "builder", "conversation", chatHistoryIndexFileName)
 		if err := removeLocalChatHistoryIndexEntries(indexWorkspacePath, indexLocalPath, sessionID, nil); err != nil {
 			return result, err
 		}
+	}
+	// Work originally stored product chats in the user's central chat history.
+	// Project opening copied those transcripts into the project for compatibility;
+	// delete both so the fallback cannot restore a chat the user removed.
+	if workProject {
+		return deleteUserChatHistorySession(result, userID, sessionID)
 	}
 	return result, nil
 }

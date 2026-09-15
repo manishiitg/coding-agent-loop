@@ -32,8 +32,8 @@ type InitializeWorkflowDBResult struct {
 // workflow's own pre-authored db/migrations/*.sql file and a read-write
 // trusted session -- agents never reach this client method with inline SQL.
 func (c *Client) InitializeWorkflowDB(ctx context.Context, params InitializeWorkflowDBParams) (InitializeWorkflowDBResult, error) {
-	if params.DBPath == "" || len(params.Migrations) == 0 {
-		return InitializeWorkflowDBResult{}, fmt.Errorf("db_path and migrations are required")
+	if params.DBPath == "" {
+		return InitializeWorkflowDBResult{}, fmt.Errorf("db_path is required")
 	}
 	body, err := c.request(ctx, "POST", "/api/db/initialize", params)
 	if err != nil {

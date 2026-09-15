@@ -37,4 +37,18 @@ describe('submissionFailure', () => {
     expect(failure.message).toBe('Network Error')
     expect(failure.technicalDetails).toBe('Network Error')
   })
+
+  it('shows a server error string once instead of repeating the Axios status', () => {
+    const failure = submissionFailure({
+      message: 'Request failed with status code 422',
+      response: {
+        status: 422,
+        data: { error: 'initialize product code folder: folder already exists' },
+      },
+    })
+
+    expect(failure.message).toBe('initialize product code folder: folder already exists')
+    expect(failure.code).toBeUndefined()
+    expect(failure.technicalDetails).toBe('Request failed with status code 422\ninitialize product code folder: folder already exists')
+  })
 })

@@ -36,6 +36,7 @@ interface PlannerFileListProps {
   onFileDownload?: (file: PlannerFile) => void
   downloadingFilePath?: string
   hideAddToChat?: boolean
+  hideRootActions?: boolean
   onExportBackup?: (folderPath: string) => void
   onImportBackup?: (folderPath: string) => void
   workflowFolderPath?: string | null
@@ -78,6 +79,7 @@ export default function PlannerFileList({
   onFileDownload,
   downloadingFilePath,
   hideAddToChat = false,
+  hideRootActions = false,
   onExportBackup,
   onImportBackup,
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
@@ -273,6 +275,7 @@ export default function PlannerFileList({
               <Tooltip>
                 <TooltipTrigger asChild>
                   <button
+                    aria-label={`Send ${file.type || 'file'} to chat context`}
                     onClick={(e) => {
                       e.stopPropagation()
                       // Use the filepath as-is for context
@@ -297,7 +300,7 @@ export default function PlannerFileList({
             )}
 
             {/* More actions dropdown for folders */}
-            {file.type === 'folder' && (onCreateFolder || onFolderUpload || onFolderMove) && (
+            {file.type === 'folder' && (!hideRootActions || depth > 0) && (onCreateFolder || onFolderUpload || onFolderMove) && (
               <div className="relative">
                 <Tooltip>
                   <TooltipTrigger asChild>

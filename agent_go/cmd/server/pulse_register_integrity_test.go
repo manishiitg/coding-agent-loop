@@ -29,6 +29,10 @@ import (
 // deletion.
 //
 // So this asserts the invariant directly rather than relying on that luck.
+//
+// Ticket files live in per-category subdirectories of docs/bugs/pulse_platform/
+// (see docs/bugs/pulse_platform_categories.md); the check walks the whole tree
+// and matches register hrefs with their category prefix.
 func TestEveryPulsePlatformTicketIsLinkedFromTheRegister(t *testing.T) {
 	repoRoot, err := filepath.Abs(filepath.Join("..", "..", ".."))
 	if err != nil {
@@ -45,25 +49,35 @@ func TestEveryPulsePlatformTicketIsLinkedFromTheRegister(t *testing.T) {
 	}
 	register := string(registerBytes)
 
-	entries, err := os.ReadDir(ticketsDir)
+	var onDisk []string
+	err = filepath.WalkDir(ticketsDir, func(path string, entry os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".md") {
+			return nil
+		}
+		rel, relErr := filepath.Rel(ticketsDir, path)
+		if relErr != nil {
+			return relErr
+		}
+		onDisk = append(onDisk, filepath.ToSlash(rel))
+		return nil
+	})
 	if err != nil {
 		t.Skipf("tickets dir not readable at %s: %v", ticketsDir, err)
 	}
 
 	// Match the link target rather than the display text: a row may render its
 	// id differently (PLAT-073 links plat-073-remaining-board.md), but the href
-	// is exactly the filename and is what actually has to resolve.
+	// is exactly the path under pulse_platform/ and is what actually has to resolve.
 	linked := map[string]bool{}
-	for _, m := range regexp.MustCompile(`pulse_platform/([A-Za-z0-9._-]+\.md)`).FindAllStringSubmatch(register, -1) {
+	for _, m := range regexp.MustCompile(`pulse_platform/((?:[A-Za-z0-9._-]+/)*[A-Za-z0-9._-]+\.md)`).FindAllStringSubmatch(register, -1) {
 		linked[m[1]] = true
 	}
 
 	var orphaned []string
-	for _, entry := range entries {
-		name := entry.Name()
-		if entry.IsDir() || !strings.HasSuffix(name, ".md") {
-			continue
-		}
+	for _, name := range onDisk {
 		if !linked[name] {
 			orphaned = append(orphaned, name)
 		}

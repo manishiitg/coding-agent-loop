@@ -16,7 +16,6 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/contractupgrade"
-	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/costledger"
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/fsutil"
 	stepworkflow "github.com/manishiitg/coding-agent-loop/agent_go/pkg/orchestrator/agents/workflow/step_based_workflow"
 	orchestratorevents "github.com/manishiitg/coding-agent-loop/agent_go/pkg/orchestrator/events"
@@ -82,6 +81,9 @@ type ScheduleContext struct {
 	CapacityResumeRunID     string
 	CapacityResumeRunFolder string
 	CapacityResumeFromStep  int
+	// ScheduledRunFolder is allocated and durably bound before a producing
+	// saved-schedule session starts. Pulse-only runs leave it empty.
+	ScheduledRunFolder string
 }
 
 const manualWorkflowPulseScheduleID = "manual-pulse"
@@ -103,6 +105,9 @@ func scheduleRuntimeKeyHasID(key, scheduleID string) bool {
 	return strings.HasSuffix(key, scheduleScopeSeparator+strings.TrimSpace(scheduleID))
 }
 
+// scheduleStateLockKeyFromRuntimeKey retains the legacy sequential/Pulse key
+// projection for diagnostics and compatibility tests. Runtime recovery uses
+// ActiveRunForSchedule so parallel lane keys are resolved by durable identity.
 func scheduleStateLockKeyFromRuntimeKey(runtimeKey string) string {
 	parts := strings.Split(runtimeKey, scheduleScopeSeparator)
 	if len(parts) < 3 || parts[0] != "workflow" {
@@ -122,6 +127,9 @@ func scheduleStateScope(sctx *ScheduleContext) (scopeType, scopeID, lockKey stri
 		}
 		if sctx.Schedule.ID == manualWorkflowPulseScheduleID {
 			return "workflow", scopeID, strings.Join([]string{"workflow-pulse", scopeID}, scheduleScopeSeparator)
+		}
+		if scheduleAllowsParallel(sctx.Schedule) {
+			return "workflow", scopeID, strings.Join([]string{"workflow-parallel", scopeID, sctx.Schedule.ID}, scheduleScopeSeparator)
 		}
 	}
 	return "workflow", scopeID, strings.Join([]string{"workflow", scopeID}, scheduleScopeSeparator)
@@ -1289,9 +1297,6 @@ func (s *SchedulerService) triggerSavedSchedule(workspacePath, scheduleID, origi
 		if err := validateWebhookSchedule(*sched); err != nil {
 			return "", err
 		}
-		if err := validateWebhookTarget(ctx, workspacePath, sched.Webhook.StepID, sched.RouteSelections); err != nil {
-			return "", err
-		}
 		sctx.TriggerSource = "webhook"
 		sctx.WebhookInput = input
 		if input.Group != "" && !slices.Contains(sched.GroupNames, input.Group) {
@@ -1304,6 +1309,14 @@ func (s *SchedulerService) triggerSavedSchedule(workspacePath, scheduleID, origi
 		}
 		if input.Group != "" {
 			sctx.Schedule.GroupNames = []string{input.Group}
+		}
+		resolvedStepID, resolvedRoutes := resolvedWebhookExecutionTarget(*sched, input)
+		sctx.Schedule.RouteSelections = resolvedRoutes
+		webhookConfig := *sched.Webhook
+		webhookConfig.StepID = resolvedStepID
+		sctx.Schedule.Webhook = &webhookConfig
+		if err := validateWebhookTarget(ctx, workspacePath, resolvedStepID, resolvedRoutes); err != nil {
+			return "", err
 		}
 		if err := validateWebhookVariableNames(ctx, workspacePath, keysWebhookVariables(input.Variables)); err != nil {
 			return "", err
@@ -1324,7 +1337,7 @@ func (s *SchedulerService) triggerSavedSchedule(workspacePath, scheduleID, origi
 
 	// A workflow may have one interactive builder chat and one schedule at the
 	// same time. Other workflow executions still block a schedule start.
-	if activeExec := s.findActiveNonBuilderExecutionForWorkspace(workspacePath); input == nil && activeExec != nil {
+	if activeExec := s.findActiveExecutionBlockingSchedule(workspacePath, scheduleAllowsParallel(sctx.Schedule)); input == nil && activeExec != nil {
 		triggeredBy := activeExec.TriggeredBy
 		if strings.TrimSpace(triggeredBy) == "" {
 			triggeredBy = "unknown"
@@ -1345,7 +1358,7 @@ func (s *SchedulerService) triggerSavedSchedule(workspacePath, scheduleID, origi
 	runtimeKey := workflowScheduleRuntimeKey(workspacePath, scheduleID)
 	workflowRuntimeKeys := make([]string, 0, len(manifest.Schedules))
 	for i := range manifest.Schedules {
-		if input == nil && manifest.Schedules[i].ScheduleType != "webhook" {
+		if input == nil && manifest.Schedules[i].ScheduleType != "webhook" && !scheduleAllowsParallel(manifest.Schedules[i]) {
 			workflowRuntimeKeys = append(workflowRuntimeKeys, workflowScheduleRuntimeKey(workspacePath, manifest.Schedules[i].ID))
 		}
 	}
@@ -1362,7 +1375,7 @@ func (s *SchedulerService) triggerSavedSchedule(workspacePath, scheduleID, origi
 		}
 		return "", fmt.Errorf("job is already running (session: %s)", state.LastSessionID)
 	}
-	if otherKey, otherSession := runningScheduleInSetLocked(s.runtimeStates, workflowRuntimeKeys, runtimeKey); otherKey != "" {
+	if otherKey, otherSession := runningScheduleInSetLocked(s.runtimeStates, workflowRuntimeKeys, runtimeKey); !scheduleAllowsParallel(sctx.Schedule) && otherKey != "" {
 		s.runtimeStatesMu.Unlock()
 		if s.recordOrQueueBlockedSchedule(ctx, sctx, "another schedule owns the workflow", startTime) {
 			return "queued", nil
@@ -1437,7 +1450,7 @@ func (s *SchedulerService) TriggerPulseNow(workspacePath string) (string, error)
 		CronExpression: "",
 		Timezone:       "UTC",
 		Mode:           "workshop",
-		WorkshopMode:   "run",
+		WorkshopMode:   "workshop",
 	}
 	sctx := buildScheduleContext(workspacePath, manifest, sched)
 	sctx.TriggerSource = "manual"
@@ -1558,11 +1571,15 @@ func (s *SchedulerService) stopRunningJob(runtimeKey, scheduleID string) {
 	state.ActiveRunID = ""
 	s.runtimeStatesMu.Unlock()
 	if runID == "" {
-		lockKey := scheduleStateLockKeyFromRuntimeKey(runtimeKey)
+		parts := strings.Split(runtimeKey, scheduleScopeSeparator)
+		workspacePath := ""
+		if len(parts) >= 3 && parts[0] == "workflow" {
+			workspacePath = parts[1]
+		}
 		s.stateStoreMu.RLock()
 		store := s.stateStore
-		if store != nil {
-			if active, err := store.ActiveRunByLockKey(context.Background(), lockKey); err == nil && active.ScheduleID == scheduleID {
+		if store != nil && workspacePath != "" {
+			if active, err := store.ActiveRunForSchedule(context.Background(), "workflow", workspacePath, scheduleID); err == nil {
 				runID = active.RunID
 			}
 		}
@@ -1657,7 +1674,7 @@ func (s *SchedulerService) triggerSchedule(sctx *ScheduleContext, scheduledFor t
 
 		workflowScheduleIDs = make([]string, 0, len(manifest.Schedules))
 		for i := range manifest.Schedules {
-			if manifest.Schedules[i].ScheduleType != "webhook" {
+			if manifest.Schedules[i].ScheduleType != "webhook" && !scheduleAllowsParallel(manifest.Schedules[i]) {
 				workflowScheduleIDs = append(workflowScheduleIDs, manifest.Schedules[i].ID)
 			}
 		}
@@ -1684,7 +1701,7 @@ func (s *SchedulerService) triggerSchedule(sctx *ScheduleContext, scheduledFor t
 			return
 		}
 
-		if activeExec := s.findActiveNonBuilderExecutionForWorkspace(sctx.WorkspacePath); activeExec != nil {
+		if activeExec := s.findActiveExecutionBlockingSchedule(sctx.WorkspacePath, scheduleAllowsParallel(*currentSched)); activeExec != nil {
 			triggeredBy := activeExec.TriggeredBy
 			if strings.TrimSpace(triggeredBy) == "" {
 				triggeredBy = "unknown"
@@ -1758,7 +1775,7 @@ func (s *SchedulerService) triggerSchedule(sctx *ScheduleContext, scheduledFor t
 	for _, workflowScheduleID := range workflowScheduleIDs {
 		workflowRuntimeKeys = append(workflowRuntimeKeys, workflowScheduleRuntimeKey(freshCtx.WorkspacePath, workflowScheduleID))
 	}
-	if otherKey, otherSession := runningScheduleInSetLocked(s.runtimeStates, workflowRuntimeKeys, scheduleRuntimeKey(freshCtx)); otherKey != "" {
+	if otherKey, otherSession := runningScheduleInSetLocked(s.runtimeStates, workflowRuntimeKeys, scheduleRuntimeKey(freshCtx)); !scheduleAllowsParallel(freshCtx.Schedule) && otherKey != "" {
 		s.runtimeStatesMu.Unlock()
 		s.logf(freshCtx, "[SCHEDULER] ⏭️ Workflow %s already has running schedule %s (session: %s), skipping schedule %s",
 			freshCtx.WorkspacePath, otherKey, otherSession, schedID)
@@ -1884,7 +1901,7 @@ func (s *SchedulerService) queueScheduleOccurrence(ctx context.Context, sctx *Sc
 		return false
 	}
 	decision := "queued_busy"
-	if strings.TrimSpace(sctx.Schedule.AfterScheduleID) != "" && policy == "retry" {
+	if len(scheduleDependencyIDs(sctx.Schedule)) > 0 && policy == "retry" {
 		decision = "waiting_for_dependency"
 	} else if policy == "coalesce" {
 		decision = "coalesced_busy"
@@ -1929,8 +1946,8 @@ const (
 )
 
 func (s *SchedulerService) scheduleDependencyDisposition(ctx context.Context, sctx *ScheduleContext, now time.Time) (scheduleDependencyResult, string) {
-	dependencyID := strings.TrimSpace(sctx.Schedule.AfterScheduleID)
-	if dependencyID == "" {
+	dependencyIDs := scheduleDependencyIDs(sctx.Schedule)
+	if len(dependencyIDs) == 0 {
 		return scheduleDependencyReady, ""
 	}
 	scopeType, scopeID, _ := scheduleStateScope(sctx)
@@ -1952,12 +1969,10 @@ func (s *SchedulerService) scheduleDependencyDisposition(ctx context.Context, sc
 	if dependentEnd := occurrence.UTC().Add(time.Nanosecond); dependentEnd.Before(dayEnd) {
 		dayEnd = dependentEnd
 	}
+	var dependencyDeadline time.Time
 	if deadline := strings.TrimSpace(sctx.Schedule.DependencyDeadline); deadline != "" {
 		parsed, _ := time.Parse("15:04", deadline)
-		deadlineAt := time.Date(year, month, day, parsed.Hour(), parsed.Minute(), 0, 0, location)
-		if !now.Before(deadlineAt) {
-			return scheduleDependencyBlocked, fmt.Sprintf("dependency deadline %s %s passed before prerequisite %s released", deadline, location, dependencyID)
-		}
+		dependencyDeadline = time.Date(year, month, day, parsed.Hour(), parsed.Minute(), 0, 0, location)
 	}
 	s.stateStoreMu.RLock()
 	store := s.stateStore
@@ -1965,29 +1980,55 @@ func (s *SchedulerService) scheduleDependencyDisposition(ctx context.Context, sc
 		s.stateStoreMu.RUnlock()
 		return scheduleDependencyWaiting, "dependency state is unavailable"
 	}
-	run, err := store.RunForScheduleOccurrence(ctx, scopeType, scopeID, dependencyID, dayStart, dayEnd)
-	s.stateStoreMu.RUnlock()
-	if err != nil {
-		if errors.Is(err, schedulerstate.ErrRunNotFound) {
-			return scheduleDependencyWaiting, fmt.Sprintf("waiting for prerequisite schedule %s occurrence on %04d-%02d-%02d", dependencyID, year, month, day)
-		}
-		return scheduleDependencyWaiting, fmt.Sprintf("could not read prerequisite schedule %s occurrence: %v", dependencyID, err)
-	}
-	if !schedulerstate.IsTerminal(run.State) {
-		return scheduleDependencyWaiting, fmt.Sprintf("prerequisite schedule %s occurrence %s is still %s", dependencyID, run.RunID, run.State)
-	}
+	defer s.stateStoreMu.RUnlock()
 	terminalPolicy := strings.TrimSpace(sctx.Schedule.AfterTerminalStatus)
 	if terminalPolicy == "" {
 		terminalPolicy = "completed"
 	}
-	if terminalPolicy == "completed" && run.State != schedulerstate.StateCompleted {
-		return scheduleDependencyBlocked, fmt.Sprintf("prerequisite schedule %s occurrence %s ended %s; completed is required", dependencyID, run.RunID, run.State)
-	}
-	if delay := sctx.Schedule.AfterDelayMinutes; delay > 0 && run.CompletedAt != nil {
-		releaseAt := run.CompletedAt.Add(time.Duration(delay) * time.Minute)
-		if now.Before(releaseAt) {
-			return scheduleDependencyWaiting, fmt.Sprintf("prerequisite schedule %s completed; waiting until %s for configured delay", dependencyID, releaseAt.Format(time.RFC3339))
+	waitingReasons := make([]string, 0, len(dependencyIDs))
+	for _, dependencyID := range dependencyIDs {
+		run, err := store.RunForScheduleOccurrence(ctx, scopeType, scopeID, dependencyID, dayStart, dayEnd)
+		if err != nil {
+			if errors.Is(err, schedulerstate.ErrRunNotFound) {
+				waitingReasons = append(waitingReasons, fmt.Sprintf("waiting for prerequisite schedule %s occurrence on %04d-%02d-%02d", dependencyID, year, month, day))
+				continue
+			}
+			waitingReasons = append(waitingReasons, fmt.Sprintf("could not read prerequisite schedule %s occurrence: %v", dependencyID, err))
+			continue
 		}
+		if !schedulerstate.IsTerminal(run.State) {
+			waitingReasons = append(waitingReasons, fmt.Sprintf("prerequisite schedule %s occurrence %s is still %s", dependencyID, run.RunID, run.State))
+			continue
+		}
+		if terminalPolicy == "completed" && run.State != schedulerstate.StateCompleted {
+			return scheduleDependencyBlocked, fmt.Sprintf("prerequisite schedule %s occurrence %s ended %s; completed is required", dependencyID, run.RunID, run.State)
+		}
+		if !dependencyDeadline.IsZero() {
+			if run.CompletedAt == nil {
+				waitingReasons = append(waitingReasons, fmt.Sprintf("prerequisite schedule %s is terminal but its completion timestamp is unavailable", dependencyID))
+				continue
+			}
+			releaseAt := run.CompletedAt.Add(time.Duration(sctx.Schedule.AfterDelayMinutes) * time.Minute)
+			if releaseAt.After(dependencyDeadline) {
+				return scheduleDependencyBlocked, fmt.Sprintf("prerequisite schedule %s released at %s after dependency deadline %s", dependencyID, releaseAt.Format(time.RFC3339), dependencyDeadline.Format(time.RFC3339))
+			}
+		}
+		if delay := sctx.Schedule.AfterDelayMinutes; delay > 0 {
+			if run.CompletedAt == nil {
+				waitingReasons = append(waitingReasons, fmt.Sprintf("prerequisite schedule %s is terminal but its completion timestamp is unavailable", dependencyID))
+				continue
+			}
+			releaseAt := run.CompletedAt.Add(time.Duration(delay) * time.Minute)
+			if now.Before(releaseAt) {
+				waitingReasons = append(waitingReasons, fmt.Sprintf("prerequisite schedule %s completed; waiting until %s for configured delay", dependencyID, releaseAt.Format(time.RFC3339)))
+			}
+		}
+	}
+	if len(waitingReasons) > 0 {
+		if !dependencyDeadline.IsZero() && !now.Before(dependencyDeadline) {
+			return scheduleDependencyBlocked, fmt.Sprintf("dependency deadline %s %s passed before prerequisites %s released: %s", sctx.Schedule.DependencyDeadline, location, strings.Join(dependencyIDs, ", "), strings.Join(waitingReasons, "; "))
+		}
+		return scheduleDependencyWaiting, strings.Join(waitingReasons, "; ")
 	}
 	return scheduleDependencyReady, ""
 }
@@ -2104,6 +2145,8 @@ func (s *SchedulerService) endQueuedLaunch(key string) {
 func (s *SchedulerService) runJob(ctx context.Context, sctx *ScheduleContext, runID string) (string, error) {
 	if sctx.WebhookInput != nil {
 		defer s.pruneWebhookRuns(sctx.WorkspacePath)
+	} else if !sctx.PulseOnly {
+		defer s.pruneScheduledRuns(sctx.WorkspacePath)
 	}
 	defer s.releaseScheduleRunContext(runID)
 	defer s.maintainRunLease(ctx, runID)()
@@ -2140,6 +2183,72 @@ func (s *SchedulerService) runJob(ctx context.Context, sctx *ScheduleContext, ru
 		state.LastSessionID = ""
 		state.LastError = ""
 	})
+	failBeforeHistory := func(cause error, folder string) {
+		persistenceCtx := context.WithoutCancel(ctx)
+		completedAt := time.Now().UTC()
+		durationMs := completedAt.Sub(startTime).Milliseconds()
+		triggerSource := strings.TrimSpace(sctx.TriggerSource)
+		if triggerSource == "" {
+			triggerSource = "cron"
+		}
+		var scheduledFor *time.Time
+		if !sctx.ScheduledFor.IsZero() {
+			value := sctx.ScheduledFor.UTC()
+			scheduledFor = &value
+		}
+		entry := &ScheduleRunEntry{
+			ID: runID, ScheduleID: schedID, TriggerSource: triggerSource,
+			ScheduledFor: scheduledFor, RunFolder: folder, Status: "error",
+			ConcurrencyMode:          effectiveScheduleConcurrencyMode(sctx.Schedule),
+			ParallelRiskAcknowledged: sctx.Schedule.ParallelRiskAcknowledged,
+			Error:                    cause.Error(), DurationMs: &durationMs, GroupNames: sctx.Schedule.GroupNames,
+			StartedAt: startTime, CompletedAt: &completedAt,
+		}
+		if err := AppendScheduleRun(persistenceCtx, sctx.WorkspacePath, entry); err != nil {
+			s.logf(sctx, "[SCHEDULER] failed to record schedule startup failure: %v", err)
+		}
+		s.transitionScheduleRun(persistenceCtx, sctx, schedulerstate.Transition{
+			RunID: runID, To: schedulerstate.StateFailed, Reason: "scheduled run failed before workflow execution",
+			RunFolder: folder, ErrorMessage: cause.Error(), At: completedAt,
+		})
+		s.updateRuntimeState(runtimeKey, func(state *ScheduleRuntimeState) {
+			state.ActiveRunID = ""
+			state.LastStatus = "error"
+			state.LastError = cause.Error()
+			state.LastDurationMs = &durationMs
+			state.NextRunAt = s.nextWorkflowScheduleRunAt(sctx.WorkspacePath, schedID, completedAt)
+			state.RunCount++
+			state.ConsecutiveFailures++
+		})
+		s.cleanupRemovedScheduleRuntimeState(runtimeKey)
+	}
+
+	if !sctx.PulseOnly && sctx.WebhookInput == nil {
+		folder := strings.TrimSpace(sctx.CapacityResumeRunFolder)
+		if folder == "" {
+			var allocationErr error
+			folder, allocationErr = allocateScheduledRunFolder(sctx.WorkspacePath, runID)
+			if allocationErr != nil {
+				wrapped := fmt.Errorf("allocate scheduled run folder: %w", allocationErr)
+				failBeforeHistory(wrapped, "")
+				return "", wrapped
+			}
+			s.stateStoreMu.RLock()
+			store := s.stateStore
+			s.stateStoreMu.RUnlock()
+			if store == nil {
+				wrapped := errors.New("bind scheduled run folder: schedule state store unavailable")
+				failBeforeHistory(wrapped, folder)
+				return "", wrapped
+			}
+			if err := store.AssignRunFolder(ctx, runID, folder); err != nil {
+				wrapped := fmt.Errorf("bind scheduled run folder: %w", err)
+				failBeforeHistory(wrapped, folder)
+				return "", wrapped
+			}
+		}
+		sctx.ScheduledRunFolder = folder
+	}
 
 	// Create run history entry (file-based)
 	if strings.TrimSpace(runID) == "" {
@@ -2155,13 +2264,16 @@ func (s *SchedulerService) runJob(ctx context.Context, sctx *ScheduleContext, ru
 		scheduledFor = &value
 	}
 	run := &ScheduleRunEntry{
-		ID:            runID,
-		ScheduleID:    schedID,
-		TriggerSource: triggerSource,
-		ScheduledFor:  scheduledFor,
-		Status:        "running",
-		GroupNames:    sctx.Schedule.GroupNames,
-		StartedAt:     startTime,
+		ID:                       runID,
+		ScheduleID:               schedID,
+		TriggerSource:            triggerSource,
+		ScheduledFor:             scheduledFor,
+		Status:                   "running",
+		GroupNames:               sctx.Schedule.GroupNames,
+		StartedAt:                startTime,
+		RunFolder:                sctx.ScheduledRunFolder,
+		ConcurrencyMode:          effectiveScheduleConcurrencyMode(sctx.Schedule),
+		ParallelRiskAcknowledged: sctx.Schedule.ParallelRiskAcknowledged,
 	}
 	if sctx.WebhookInput != nil {
 		run.Webhook = webhookRunMetadata(sctx)
@@ -2198,6 +2310,10 @@ func (s *SchedulerService) runJob(ctx context.Context, sctx *ScheduleContext, ru
 
 	// Execute
 	sessionID, runFolder, execErr := s.executeJob(ctx, sctx, runID)
+	// Execution cancellation must stop work, not the durable record explaining
+	// why it stopped. Preserve scheduler-scoped values while removing cancellation
+	// from all post-execution history and state writes.
+	persistenceCtx := context.WithoutCancel(ctx)
 
 	// Calculate results
 	durationMs := time.Since(startTime).Milliseconds()
@@ -2241,7 +2357,7 @@ func (s *SchedulerService) runJob(ctx context.Context, sctx *ScheduleContext, ru
 		finishedReason = "Pulse version preflight finished with status " + status + "; workflow execution was skipped"
 		finishedSessionKind = "pulse"
 	}
-	s.transitionScheduleRun(ctx, sctx, schedulerstate.Transition{
+	s.transitionScheduleRun(persistenceCtx, sctx, schedulerstate.Transition{
 		RunID:        runID,
 		To:           schedulerstate.StateWorkflowFinished,
 		Reason:       finishedReason,
@@ -2265,7 +2381,7 @@ func (s *SchedulerService) runJob(ctx context.Context, sctx *ScheduleContext, ru
 	// Update run history entry for the workflow run. Post-run Pulse
 	// may continue after this, but it does not change the recorded run result.
 	pulseResult := pulseLifecycleNotRun
-	if err := UpdateScheduleRun(ctx, sctx.WorkspacePath, runID, status, errMsg, &durationMs, runFolder, sessionID); err != nil {
+	if err := UpdateScheduleRun(persistenceCtx, sctx.WorkspacePath, runID, status, errMsg, &durationMs, runFolder, sessionID); err != nil {
 		s.sessionLogf(sctx, sessionID, "[SCHEDULER] Failed to update run entry for %s: %v", schedID, err)
 	}
 
@@ -2329,10 +2445,12 @@ func (s *SchedulerService) runJob(ctx context.Context, sctx *ScheduleContext, ru
 			overallError = "Pulse completed partially"
 		}
 	}
+	// Runtime state measures the complete scheduled job, including post-run
+	// Pulse. Normal history remains the workflow result.
+	durationMs = time.Since(startTime).Milliseconds()
 	if sctx.PulseOnly {
-		durationMs = time.Since(startTime).Milliseconds()
-		if err := UpdateScheduleRun(ctx, sctx.WorkspacePath, runID, overallStatus, overallError, &durationMs, runFolder, sessionID); err != nil {
-			s.sessionLogf(sctx, sessionID, "[PULSE] failed to finalize one-off Pulse run history: %v", err)
+		if err := UpdateScheduleRun(persistenceCtx, sctx.WorkspacePath, runID, overallStatus, overallError, &durationMs, runFolder, sessionID); err != nil {
+			s.sessionLogf(sctx, sessionID, "[SCHEDULER] failed to finalize schedule run history: %v", err)
 		}
 	}
 	nextRun := s.nextWorkflowScheduleRunAt(sctx.WorkspacePath, schedID, time.Now())
@@ -2349,13 +2467,13 @@ func (s *SchedulerService) runJob(ctx context.Context, sctx *ScheduleContext, ru
 			state.ConsecutiveFailures = 0
 		}
 	})
-	terminalReason := "scheduled run finished with status " + status
+	terminalReason := "scheduled run finished with status " + overallStatus
 	if sctx.PulseOnly {
 		terminalReason = "one-off Pulse finished with status " + overallStatus + "; workflow execution was skipped"
 	}
-	s.transitionScheduleRun(ctx, sctx, schedulerstate.Transition{
+	s.transitionScheduleRun(persistenceCtx, sctx, schedulerstate.Transition{
 		RunID: runID, To: terminalState, Reason: terminalReason,
-		SessionID: sessionID, ErrorMessage: overallError, At: time.Now().UTC(),
+		SessionID: sessionID, RunFolder: runFolder, ErrorMessage: overallError, At: time.Now().UTC(),
 	})
 	s.cleanupRemovedScheduleRuntimeState(runtimeKey)
 
@@ -2382,8 +2500,6 @@ func (s *SchedulerService) runPulseLifecycle(ctx context.Context, sctx *Schedule
 		return pulseLifecycleNotRun
 	}
 	pulseResult = pulseLifecyclePartial
-	var reviewFixStartedAt, reviewFixCompletedAt time.Time
-
 	// Resume the SAME session the workflow run just used, so Pulse continues in the
 	// run's chat thread — the user sees the run and its post-run steward as one
 	// conversation, not a fresh session spun up out of nowhere. Fall back to a new id
@@ -2440,9 +2556,6 @@ func (s *SchedulerService) runPulseLifecycle(ctx context.Context, sctx *Schedule
 		reqMap := cloneStringInterfaceMap(baseReqMap)
 		markPulseLifecycleTurn(reqMap)
 		query := st.query
-		if st.label == "finalize" {
-			query += pulseReviewFixCostContext(s.api.costLedger, sctx.WorkspacePath, reviewFixStartedAt, reviewFixCompletedAt)
-		}
 		includesIntro := false
 		if !introSent {
 			priorFailureContext := ""
@@ -2602,9 +2715,6 @@ func (s *SchedulerService) runPulseLifecycle(ctx context.Context, sctx *Schedule
 				handleStepFailure(st, result, i < len(steps)-1)
 				continue
 			}
-			if reviewFixStartedAt.IsZero() {
-				reviewFixStartedAt = time.Now().UTC()
-			}
 		}
 		result := runStep(st)
 		contractupgrade.Revoke(sessionID)
@@ -2646,7 +2756,6 @@ func (s *SchedulerService) runPulseLifecycle(ctx context.Context, sctx *Schedule
 			}
 		}
 		if isImprovementReview {
-			reviewFixCompletedAt = time.Now().UTC()
 			// This is intentionally scheduler-owned. A child can write a useful
 			// checkpoint and then time out or exit before its final tool call; an
 			// instruction telling the parent agent to remember that fact is not a
@@ -2724,32 +2833,6 @@ func workflowBackupRequiresDatabaseSnapshot(config *WorkflowBackupConfig, trigge
 		}
 	}
 	return false
-}
-
-func pulseReviewFixCostContext(ledger *costledger.Ledger, workspacePath string, startedAt, completedAt time.Time) string {
-	if startedAt.IsZero() && completedAt.IsZero() {
-		return "\n\nREVIEWER/FIXER COST. Review+Fix was not run in this pass, so its cost is $0.00. Include that compact fact in Operations; do not substitute Gate, Finalize, workflow, builder, or prior-pass cost."
-	}
-	const unavailable = "\n\nREVIEWER/FIXER COST. Cost evidence is unavailable for this pass. Say that plainly in Operations; do not estimate or reuse a prior run's amount."
-	if ledger == nil || startedAt.IsZero() || completedAt.IsZero() || !completedAt.After(startedAt) {
-		return unavailable
-	}
-	summary, err := ledger.SummarizeWorkflowScopeWindow(workspacePath, "pulse", startedAt, completedAt)
-	if err != nil {
-		return unavailable
-	}
-	total := summary.Total
-	if total.AccountingEventCount == 0 {
-		return "\n\nREVIEWER/FIXER COST. Review+Fix ran, but no LLM cost events were recorded in its measured window. Report the measurement gap in Operations; do not present it as $0.00 or substitute another cost bucket."
-	}
-	costLabel := "accounted cost"
-	if total.SubscriptionShadowUSD > 0 && total.ProviderActualCostUSD == 0 && total.TokenEstimateCostUSD == 0 {
-		costLabel = "estimated token-equivalent cost (subscription-backed coding CLI)"
-	}
-	return fmt.Sprintf(
-		"\n\nREVIEWER/FIXER COST (backend-measured after Review+Fix completed at %s). Include this exact, compact line in the notification's Operations section: Reviewers + Fixer %s: $%.2f across %d LLM call(s). This covers the parent Review+Fix turn, its background reviewer/fixer agents, and any receipt continuation inside that stage. It excludes Gate, Finalize, workflow execution, builder activity, and prior Pulse passes.",
-		completedAt.UTC().Format(time.RFC3339), costLabel, total.TotalCostUSD, total.CallCount,
-	)
 }
 
 type pulseLifecycleStep struct{ label, query string }
@@ -3341,16 +3424,12 @@ type scheduledWorkshopTurn struct {
 	failureBlocksRun bool
 }
 
-// workshopMode returns the least-privileged workflow phase needed by this
-// scheduled turn. Normal schedule work is deployed workflow execution and runs
-// with the smaller Run prompt/tool/skill surface. Contract upgrades and
-// approved-decision application edit workflow-owned artifacts, so those
-// bounded maintenance turns run in Workshop mode.
+// workshopMode returns the workflow phase for a scheduler-owned conversation.
+// All writable scheduled turns use Workshop because the same session owns
+// migrations, approved decisions, and execution. Read-only access is pinned to
+// Run later by the server's workflow access policy.
 func (turn scheduledWorkshopTurn) workshopMode() string {
-	if turn.upgradeTarget != "" || turn.decisionDrain {
-		return "workshop"
-	}
-	return "run"
+	return "workshop"
 }
 
 func scheduledDecisionApplyMode(input ReportHumanInput) string {
@@ -3604,6 +3683,9 @@ func (s *SchedulerService) executeWorkshopJob(ctx context.Context, sctx *Schedul
 		messages[0] += " " + webhookRunInputInstruction(webhookInputPath(sctx.WorkspacePath, sctx.WebhookInput.RunID)) + " This is an isolated webhook invocation. Execute only the saved workflow binding. Do not run Pulse, reviewers, post-run backup, publish, or maintenance. Stop after reporting the run result."
 	}
 	runFolder := "iteration-0"
+	if strings.TrimSpace(sctx.ScheduledRunFolder) != "" {
+		runFolder = strings.TrimSpace(sctx.ScheduledRunFolder)
+	}
 	if sctx.WebhookInput != nil {
 		var allocationErr error
 		runFolder, allocationErr = allocateWebhookRunFolder(sctx.WorkspacePath, runID)
@@ -3615,14 +3697,14 @@ func (s *SchedulerService) executeWorkshopJob(ctx context.Context, sctx *Schedul
 		runFolder = strings.TrimSpace(sctx.PulseEvidenceRunFolder)
 	}
 
-	// Snapshot existing run folders before this invocation. executeWorkshopJob's
-	// own runFolder above is workshop-session bookkeeping (always "iteration-0"
-	// outside PulseOnly, never the folder the triggered workflow run actually
-	// used — the LLM's run_full_workflow tool call picks that via the normal
-	// iteration rotation). This snapshot lets the post-run check below tell a
-	// NEW run folder created by this invocation from a pre-existing one.
+	// Snapshot existing run folders before this invocation. A producing saved
+	// schedule is already bound to its immutable iteration-N-sched folder; an
+	// interactive Builder run uses iteration-0 and a webhook is allocated an
+	// iteration-N-hook folder. This snapshot is retained for legacy metadata and
+	// exact-folder outcome reconciliation.
 	preRunFolders, preRunFoldersErr := s.api.loadRunFoldersInternal(ctx, sctx.WorkspacePath)
 	preRunFolders = webhookInvocationFolders(preRunFolders, runFolder, sctx.WebhookInput != nil)
+	preRunFolders = scheduleInvocationFolders(preRunFolders, runFolder, sctx.ScheduledRunFolder != "")
 	preRunFolderNames := runFolderNameSet(preRunFolders)
 	// A failed snapshot is not an empty workspace. Without this distinction the
 	// reconciler below compares against an empty baseline, concludes every
@@ -3635,6 +3717,19 @@ func (s *SchedulerService) executeWorkshopJob(ctx context.Context, sctx *Schedul
 	sctx.ProducedRunEvidence = false
 
 	sessionID := s.newScheduleSessionID(sctx)
+	// Mark the complete scheduled-session lifetime in server-owned state so a
+	// late contract migration cannot stamp the workflow after its owning
+	// scheduled session has ended.
+	contractupgrade.MarkScheduled(sessionID)
+	defer contractupgrade.ClearScheduled(sessionID)
+	if sctx.WebhookInput == nil && !sctx.PulseOnly && sctx.ScheduledRunFolder != "" {
+		s.api.scheduleInvocations.Store(sessionID, &stepworkflow.ScheduleInvocation{
+			RunID: runID, ScheduleID: sctx.Schedule.ID, RunFolder: sctx.ScheduledRunFolder,
+			TriggerSource: sctx.TriggerSource, ScheduledFor: sctx.ScheduledFor,
+			AllowParallel: scheduleAllowsParallel(sctx.Schedule),
+		})
+		defer s.api.scheduleInvocations.Delete(sessionID)
+	}
 	if sctx.WebhookInput != nil {
 		s.api.webhookInvocations.Store(sessionID, &stepworkflow.WebhookInvocation{
 			InputFile:       webhookInputPath(sctx.WorkspacePath, sctx.WebhookInput.RunID),
@@ -3854,6 +3949,7 @@ func (s *SchedulerService) executeWorkshopJob(ctx context.Context, sctx *Schedul
 	// "success" for a run that fully failed at its first posting step).
 	postRunFolders, postRunFoldersErr := s.api.loadRunFoldersInternal(ctx, sctx.WorkspacePath)
 	postRunFolders = webhookInvocationFolders(postRunFolders, runFolder, sctx.WebhookInput != nil)
+	postRunFolders = scheduleInvocationFolders(postRunFolders, runFolder, sctx.ScheduledRunFolder != "")
 	sctx.ProducedRunEvidence = workshopRunProducedEvidence(preRunFolderNames, postRunFolders, invocationStartedAt)
 	if !sctx.ProducedRunEvidence && s.scheduledWorkflowExecutionProducedEvidence(sessionID, invocationStartedAt) {
 		sctx.ProducedRunEvidence = true
@@ -3923,11 +4019,14 @@ func (s *SchedulerService) preserveRunEvidenceAfterFailedTurn(ctx context.Contex
 	// Deliberately the baseline-free check: the pre-run snapshot can itself be
 	// lost (PLAT-070), and an empty baseline would make every folder look new
 	// and answer "evidence" unconditionally — the opposite error.
-	if folders, listErr := s.api.loadRunFoldersInternal(ctx, sctx.WorkspacePath); listErr == nil &&
-		sctx.WebhookInput == nil && workshopRunStartedDuringInvocation(webhookInvocationFolders(folders, "iteration-0", false), since) {
-		sctx.ProducedRunEvidence = true
-		s.sessionLogf(sctx, sessionID, "[SCHEDULER] turn failed for %s, but a full workflow run started during this invocation and its own metadata is the authority; preserving run evidence for Pulse", sctx.Schedule.ID)
-		return
+	if folders, listErr := s.api.loadRunFoldersInternal(ctx, sctx.WorkspacePath); listErr == nil && sctx.WebhookInput == nil {
+		folders = webhookInvocationFolders(folders, "iteration-0", false)
+		folders = scheduleInvocationFolders(folders, sctx.ScheduledRunFolder, sctx.ScheduledRunFolder != "")
+		if workshopRunStartedDuringInvocation(folders, since) {
+			sctx.ProducedRunEvidence = true
+			s.sessionLogf(sctx, sessionID, "[SCHEDULER] turn failed for %s, but a full workflow run started during this invocation and its own metadata is the authority; preserving run evidence for Pulse", sctx.Schedule.ID)
+			return
+		}
 	}
 	if s.scheduledWorkflowExecutionProducedEvidence(sessionID, since) {
 		sctx.ProducedRunEvidence = true
@@ -4063,7 +4162,7 @@ const maxWorkflowResumeScan = 5
 
 // maybeResumeLatestWorkflowThread wires restored_conversation_session_id into reqMap
 // so an opt-in scheduled workflow run continues the schedule's most recent
-// scheduled chat in the same Workshop/Run mode instead of starting fresh.
+// scheduled chat with the same access-derived authority instead of starting fresh.
 //
 // We look at schedule-runs.json for this exact schedule_id first, then validate
 // the referenced chat runtime. This deliberately excludes normal user/builder
@@ -4103,14 +4202,14 @@ func (s *SchedulerService) maybeResumeLatestScheduledThread(sctx *ScheduleContex
 	if currentProvider == "" {
 		return ""
 	}
-	currentWorkshopMode := "run"
+	currentWorkshopMode := "workshop"
 	if execOpts, ok := reqMap["execution_options"].(map[string]interface{}); ok {
 		if requested, ok := execOpts["workshop_mode"].(string); ok {
 			currentWorkshopMode = normalizeChatHistoryWorkshopMode(requested)
 		}
 	}
 	if currentWorkshopMode == "" {
-		currentWorkshopMode = "run"
+		currentWorkshopMode = "workshop"
 	}
 
 	// Runs are newest-first. Within the latest maxWorkflowResumeScan scheduled
@@ -4323,8 +4422,8 @@ func markPulseLifecycleTurn(reqMap map[string]interface{}) {
 }
 
 // buildWorkshopRequest creates the base request map for scheduled workflow
-// execution. Normal turns default to Run mode; bounded preflight and Pulse
-// callers explicitly elevate only their own turn to Workshop mode.
+// execution. Writable scheduled turns use Workshop; the server pins read-only
+// workflow access to Run.
 func (s *SchedulerService) buildWorkshopRequest(ctx context.Context, sctx *ScheduleContext) map[string]interface{} {
 	reqMap := map[string]interface{}{
 		"agent_mode":                  "workflow_phase",
@@ -4340,8 +4439,6 @@ func (s *SchedulerService) buildWorkshopRequest(ctx context.Context, sctx *Sched
 		"use_code_execution_mode":     sctx.Capabilities.UseCodeExecutionMode,
 		"disable_live_input_delivery": true,
 		// Retain the coding CLI across consecutive turns with the same authority.
-		// A Run↔Workshop transition is detected by the server and deliberately
-		// relaunches in the mode-specific private runtime and prompt projection.
 		"keep_native_session_alive": true,
 	}
 	if len(sctx.Capabilities.CDPPorts) > 0 {
@@ -4355,13 +4452,17 @@ func (s *SchedulerService) buildWorkshopRequest(ctx context.Context, sctx *Sched
 
 	s.applyLLMAndSecretsToReqMap(ctx, reqMap, sctx)
 
+	runFolder := "iteration-0"
+	if strings.TrimSpace(sctx.ScheduledRunFolder) != "" {
+		runFolder = strings.TrimSpace(sctx.ScheduledRunFolder)
+	}
 	execOpts := map[string]interface{}{
-		"selected_run_folder": "iteration-0",
+		"selected_run_folder": runFolder,
 		"execution_strategy":  "start_from_beginning_no_human",
-		// A normal schedule is an unattended workflow run. Keep its prompt,
-		// tools, projected skills, and private CLI working directory on the Run
-		// surface. Maintenance callers elevate their individual turns explicitly.
-		"workshop_mode": "run",
+		// Scheduled turns act for the workflow owner and may need to migrate the
+		// workflow or apply an approved decision before launching existing work.
+		// Read-only access is pinned back to Run by the server policy.
+		"workshop_mode": "workshop",
 	}
 	if sctx.CapacityResumeFromStep > 0 {
 		// Resume exactly where the capacity wall stopped this run. Resume-from-step
@@ -4722,7 +4823,41 @@ func (s *SchedulerService) findActiveNonBuilderExecutionForWorkspace(workspacePa
 	}
 
 	tracked := s.api.findRunningTrackedExecutionForWorkspaceWhere(workspacePath, func(exec *TrackedWorkflowExecution) bool {
+		if invocation, ok := s.api.scheduleInvocations.Load(exec.SessionID); ok && invocation.(*stepworkflow.ScheduleInvocation).AllowParallel {
+			return false
+		}
 		return exec.TriggeredBy != "webhook" && exec.Metadata["trigger_source"] != "webhook" && !strings.HasPrefix(exec.SessionID, "schedule-webhook--") && trackedExecutionBlocksScheduledWorkflow(exec)
+	})
+	if tracked == nil {
+		return nil
+	}
+	active := trackedExecutionToActive(tracked)
+	return &active
+}
+
+// findActiveExecutionBlockingSchedule keeps manual workflow runs and Pulse
+// exclusive. A human-approved parallel schedule may overlap other producing
+// schedules, but it does not silently broaden that approval to manual work or
+// maintenance. Sequential schedules ignore only already-running schedules that
+// themselves carry the parallel opt-in.
+func (s *SchedulerService) findActiveExecutionBlockingSchedule(workspacePath string, incomingParallel bool) *ActiveWorkflowExecution {
+	if !incomingParallel {
+		return s.findActiveNonBuilderExecutionForWorkspace(workspacePath)
+	}
+	if s == nil || s.api == nil || strings.TrimSpace(workspacePath) == "" {
+		return nil
+	}
+	tracked := s.api.findRunningTrackedExecutionForWorkspaceWhere(workspacePath, func(exec *TrackedWorkflowExecution) bool {
+		if exec.TriggeredBy == "webhook" || exec.Metadata["trigger_source"] == "webhook" || strings.HasPrefix(exec.SessionID, "schedule-webhook--") {
+			return false
+		}
+		// A trusted schedule binding identifies a normal workflow-producing
+		// schedule. Pulse-only sessions deliberately have no such binding and
+		// therefore continue to block this lane.
+		if _, scheduled := s.api.scheduleInvocations.Load(exec.SessionID); scheduled {
+			return false
+		}
+		return trackedExecutionBlocksScheduledWorkflow(exec)
 	})
 	if tracked == nil {
 		return nil

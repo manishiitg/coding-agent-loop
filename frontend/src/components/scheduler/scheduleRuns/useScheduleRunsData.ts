@@ -13,6 +13,7 @@ import type { ScheduledJob, ScheduledJobRun, SchedulerConfig } from '../../../se
 import { useCanWriteWorkflow } from '../../../hooks/useCanWriteWorkflow'
 import {
   WORKFLOW_SCHEDULE_PANEL_LIMIT,
+  defaultSchedulePanelView,
   getMissedScheduleDelayMs,
   getWorkflowFilterMeta,
   getWorkflowScopeLabel,
@@ -41,16 +42,18 @@ export type UseScheduleRunsDataArgs = {
   onClose: () => void
   onJobsLoaded?: (jobs: ScheduledJob[]) => void
   workflowScope?: WorkflowScope
+  entityType?: 'workflow' | 'product'
+  canManage?: boolean
 }
 
-export function useScheduleRunsData({ onClose, onJobsLoaded, workflowScope, active = true }: UseScheduleRunsDataArgs) {
+export function useScheduleRunsData({ onClose, onJobsLoaded, workflowScope, entityType = 'workflow', canManage, active = true }: UseScheduleRunsDataArgs) {
   const [jobs, setJobs] = useState<ScheduledJob[]>([])
   const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [openActionMenuJobId, setOpenActionMenuJobId] = useState<string | null>(null)
   const [expandedWorkflowKeys, setExpandedWorkflowKeys] = useState<string[]>([])
   const isWorkflowScoped = !!workflowScope
-  const [activeView, setActiveView] = useState<SchedulePanelView>('schedules')
+  const [activeView, setActiveView] = useState<SchedulePanelView>(() => defaultSchedulePanelView(isWorkflowScoped))
   const [calendarMonth, setCalendarMonth] = useState(() => new Date())
   const [selectedCalendarDate, setSelectedCalendarDate] = useState<string | null>(null)
   const [focusedScheduleId, setFocusedScheduleId] = useState<string | null>(null)
@@ -98,7 +101,8 @@ export function useScheduleRunsData({ onClose, onJobsLoaded, workflowScope, acti
   const scopePresetId = workflowScope?.presetQueryId ?? null
   const scopePath = workflowScope?.workspacePath ?? null
   const scopeLabel = workflowScope?.label ?? null
-  const isReadOnlyUser = !useCanWriteWorkflow(scopePath)
+  const canWriteWorkflow = useCanWriteWorkflow(scopePath)
+  const isReadOnlyUser = canManage === undefined ? !canWriteWorkflow : !canManage
   const stableScope = useMemo<WorkflowScope | undefined>(
     () => (isWorkflowScoped ? { presetQueryId: scopePresetId, workspacePath: scopePath, label: scopeLabel } : undefined),
     [isWorkflowScoped, scopePresetId, scopePath, scopeLabel],
@@ -136,7 +140,7 @@ export function useScheduleRunsData({ onClose, onJobsLoaded, workflowScope, acti
     try {
       const [resp, config] = await Promise.all([
         schedulerApi.listJobs({
-          entity_type: 'workflow',
+          entity_type: entityType,
           limit: WORKFLOW_SCHEDULE_PANEL_LIMIT,
         }),
         schedulerApi.getConfig().catch(() => null),
@@ -149,7 +153,7 @@ export function useScheduleRunsData({ onClose, onJobsLoaded, workflowScope, acti
     } finally {
       if (showLoading) setIsLoading(false)
     }
-  }, [onJobsLoaded])
+  }, [entityType, onJobsLoaded])
 
   useEffect(() => {
     if (!active) return
@@ -579,6 +583,13 @@ export function useScheduleRunsData({ onClose, onJobsLoaded, workflowScope, acti
 
     const chatStore = useChatStore.getState()
     const existingTab = Object.values(chatStore.chatTabs).find(t => t.sessionId === sessionId)
+
+    if (job.entity_type === 'product') {
+      if (existingTab) activateTab(existingTab.tabId)
+      else chatStore.addToast('Open this project\'s Builder chat to view the scheduled conversation.', 'info')
+      onClose()
+      return
+    }
 
     let effectivePresetQueryId = job.preset_query_id || existingTab?.metadata?.presetQueryId
     if (!effectivePresetQueryId) {

@@ -147,28 +147,21 @@ func TestScheduledWorkflowUsesPrivateRunRuntimeAndSeparateMaintenanceRuntime(t *
 	sctx := &ScheduleContext{
 		WorkflowID:    "testing",
 		WorkspacePath: "Workflow/testing",
-		Schedule:      WorkflowSchedule{ID: "daily", Name: "Daily", WorkshopMode: "run"},
+		Schedule:      WorkflowSchedule{ID: "daily", Name: "Daily", WorkshopMode: "run"}, // legacy metadata is ignored
 	}
 	base := (&SchedulerService{}).buildWorkshopRequest(context.Background(), sctx)
 	execOpts, ok := base["execution_options"].(map[string]interface{})
-	if !ok || execOpts["workshop_mode"] != "run" {
-		t.Fatalf("scheduled request execution_options = %#v, want Run mode", base["execution_options"])
+	if !ok || execOpts["workshop_mode"] != "workshop" {
+		t.Fatalf("scheduled request execution_options = %#v, want Workshop mode", base["execution_options"])
 	}
 
 	sessionID := "schedule-cron--daily_123"
-	runDir, err := workflowCLIWorkingDir(sctx.WorkspacePath, "owner", sessionID, "codex-cli", "run")
+	workshopDir, err := workflowCLIWorkingDir(sctx.WorkspacePath, "owner", sessionID, "codex-cli", "workshop")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if runDir == codingAgentWorkspaceWorkingDir(sctx.WorkspacePath) {
-		t.Fatal("scheduled Run selected the shared workflow as its CLI cwd")
-	}
-	maintenanceDir, err := workflowCLIWorkingDir(sctx.WorkspacePath, "owner", sessionID, "codex-cli", "workshop")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if maintenanceDir == runDir {
-		t.Fatal("scheduled Run and maintenance turns shared a private CLI runtime")
+	if workshopDir == codingAgentWorkspaceWorkingDir(sctx.WorkspacePath) {
+		t.Fatal("scheduled Workshop selected the shared workflow as its CLI cwd")
 	}
 }
 

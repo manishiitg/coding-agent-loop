@@ -82,6 +82,10 @@ const NON_TRANSCRIPT_TYPES = new Set([
   // Product side-channel events (suggestion pills, family/pin updates) are
   // read by the product's own surface, not rendered as transcript cards.
   'product_interaction',
+  // Compatibility for pre-profile Work state events. New product tools emit
+  // typed product_interaction events declared in product.yaml.
+  'work_identity_updated',
+  'work_workflow_references_updated',
   'streaming_end',
 ])
 
@@ -661,7 +665,14 @@ export function collapseTurnFailures(items: TranscriptItem[]): TranscriptItem[] 
 export function isAssistantUpdate(event: PollingEvent): boolean {
   const envelope = event.data as Record<string, unknown> | undefined
   const inner = envelope?.data as Record<string, unknown> | undefined
-  return metadataField(inner || envelope || {}, 'presentation') === 'assistant_update'
+  const fields = inner || envelope || {}
+  if (metadataField(fields, 'presentation') === 'assistant_update') return true
+
+  // Pi historically sent its narrated progress through the reasoning stream.
+  // Treat those events as assistant updates so restored runs use the same
+  // presentation as newly emitted Pi events.
+  const provider = metadataField(fields, 'provider').trim().toLowerCase().replaceAll('_', '-')
+  return provider === 'pi-cli'
 }
 
 function transcriptThinkingText(event: PollingEvent): string {

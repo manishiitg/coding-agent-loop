@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -676,5 +677,12 @@ func (c *Client) CreateFolder(ctx context.Context, folderPath string) error {
 	}
 	body := map[string]string{"folder_path": folderPath}
 	_, err := c.request(ctx, "POST", "/api/folders", body)
+	var statusErr *httpStatusError
+	if errors.As(err, &statusErr) && statusErr.statusCode == http.StatusConflict {
+		// Creating a folder is an ensure operation for every Go-side caller.
+		// The workspace API returns 409 when the folder already exists, which
+		// is the desired final state and must remain safe to repeat.
+		return nil
+	}
 	return err
 }

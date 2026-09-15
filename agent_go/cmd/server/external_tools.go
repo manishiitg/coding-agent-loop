@@ -75,7 +75,7 @@ func externalTools() ([]externalTool, error) {
 			}
 			add(name, "Browse or search workflow files. Private paths and symbolic links are excluded. Results are bounded and paginated.", false, true, p, required...)
 		}
-		add("get_file_link", "Get an existing asset’s browser preview URL, authenticated download URL, size and content type. Works for large PDFs, images and videos. Links never contain credentials; recipients need workflow access.", false, true, map[string]any{"path": externalString("Workflow-relative file path.")}, "path")
+		add("get_file_link", "Get an existing file or folder’s authenticated browser preview URL. Files also include an authenticated download URL, size and content type. Links never contain credentials; recipients need workflow access.", false, true, map[string]any{"path": externalString("Workflow-relative file or folder path.")}, "path")
 		add("read_file", "Read a workflow file up to 2 MiB, with a revision. Binary content is base64. Missing files return revision 'missing'.", false, true, map[string]any{"path": externalString("Workflow-relative file path.")}, "path")
 		for _, name := range []string{"write_file", "patch_file"} {
 			p = map[string]any{"path": externalString("Workflow-relative file path."), "expected_revision": externalString("Revision returned by read_file; use 'missing' to create.")}

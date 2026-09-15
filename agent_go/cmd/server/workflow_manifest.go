@@ -14,6 +14,7 @@ import (
 	"time"
 
 	step_based_workflow "github.com/manishiitg/coding-agent-loop/agent_go/pkg/orchestrator/agents/workflow/step_based_workflow"
+	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/pulsemodules"
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/schedulepolicy"
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/workflowtypes"
 
@@ -121,6 +122,10 @@ type WorkflowManifest struct {
 	RunRetentionCount    *int                                        `json:"run_retention_count,omitempty"`
 	FolderAccess         []workflowtypes.WorkflowFolderGrant         `json:"folder_access,omitempty"`
 	FolderAccessRequests []workflowtypes.WorkflowFolderAccessRequest `json:"folder_access_requests,omitempty"`
+	// WorkflowContextPaths are durable links to other workflows. They are
+	// resolved through the same authorization boundary as transient # references
+	// and are always mounted read-only.
+	WorkflowContextPaths []string `json:"workflow_context_paths,omitempty"`
 	// InstalledPlaybooks are Builder-only setup guides materialized as
 	// workflow-local skills. Execution agents continue to use the workflow and
 	// per-step runtime skill selections.
@@ -187,6 +192,46 @@ type WorkflowPulseConfig struct {
 	// does not own a separate recurring cron; the completed run is its trigger.
 	Enabled               bool                           `json:"enabled,omitempty"`
 	AdvisorSpecialization *WorkflowAdvisorSpecialization `json:"advisor_specialization,omitempty"`
+	// DisabledReviewModules is the owner-controlled denylist for optional Pulse
+	// reviewers. Gate still records these modules in each worklist for an
+	// auditable skip, but the scheduler never launches their review agents.
+	DisabledReviewModules []string `json:"disabled_review_modules,omitempty"`
+}
+
+var configurablePulseReviewModules = map[string]bool{
+	pulsemodules.TechnicalReviewID:    true,
+	pulsemodules.ArchitectureReviewID: true,
+	pulsemodules.StrategicReviewID:    true,
+}
+
+func normalizeDisabledPulseReviewModules(modules []string) ([]string, error) {
+	seen := map[string]bool{}
+	result := make([]string, 0, len(modules))
+	for _, raw := range modules {
+		module := strings.ToLower(strings.TrimSpace(raw))
+		if !configurablePulseReviewModules[module] {
+			return nil, fmt.Errorf("pulse.disabled_review_modules contains unsupported reviewer %q", raw)
+		}
+		if seen[module] {
+			continue
+		}
+		seen[module] = true
+		result = append(result, module)
+	}
+	return result, nil
+}
+
+func (m *WorkflowManifest) PulseReviewModuleDisabled(module string) bool {
+	if m == nil || m.Pulse == nil {
+		return false
+	}
+	module = strings.ToLower(strings.TrimSpace(module))
+	for _, disabled := range m.Pulse.DisabledReviewModules {
+		if strings.ToLower(strings.TrimSpace(disabled)) == module {
+			return true
+		}
+	}
+	return false
 }
 
 type WorkflowAdvisorSpecialization struct {
@@ -473,7 +518,7 @@ type WorkflowSchedule struct {
 	// DirectMessagesReason records why a schedule-local conversation is preferable
 	// to a canonical route despite its weaker step-level lifecycle.
 	DirectMessagesReason string `json:"direct_messages_reason,omitempty"`
-	WorkshopMode         string `json:"workshop_mode,omitempty"`   // Normal scheduled work runs with the constrained "run" prompt/tool/skill surface. New schedules require "run"; legacy values remain parseable for migration.
+	WorkshopMode         string `json:"workshop_mode,omitempty"`   // Writable scheduled work uses Workshop; read-only access is pinned to Run. Legacy values remain parseable.
 	Query                string `json:"query,omitempty"`           // Message to execute (multi-agent mode)
 	ResumePrevious       *bool  `json:"resume_previous,omitempty"` // Coding-agent CLI only: resume the latest prior thread (same provider) instead of a fresh session each run. nil = default (fresh session); explicit true opts in.
 	// PulseReviewOnly is a legacy compatibility field. On read, an enabled
@@ -495,14 +540,21 @@ type WorkflowSchedule struct {
 	// by another scheduled/execution run. Empty/"skip" preserves the default;
 	// "queue_latest" durably retains the newest occurrence for a later retry.
 	CollisionPolicy string `json:"collision_policy,omitempty"`
+	// ConcurrencyMode is sequential by default. Parallel is an explicit,
+	// human-approved risk opt-in for an independently runnable schedule.
+	ConcurrencyMode          string `json:"concurrency_mode,omitempty"`
+	ParallelRiskAcknowledged bool   `json:"parallel_risk_acknowledged,omitempty"`
 	// MaxStartDelayMinutes bounds a queued occurrence. Zero uses the platform
 	// default. It prevents a stale market-hours or notification run from firing
 	// much later with obsolete assumptions.
 	MaxStartDelayMinutes int `json:"max_start_delay_minutes,omitempty"`
 	// AfterScheduleID expresses a completion dependency without encoding it as
-	// a fragile clock offset. The dependent occurrence is bound to the named
-	// schedule's durable occurrence on the same local calendar date.
+	// a fragile clock offset. It is retained as the backward-compatible singular
+	// form of AfterScheduleIDs.
 	AfterScheduleID string `json:"after_schedule_id,omitempty"`
+	// AfterScheduleIDs lists completion dependencies. The dependent occurrence
+	// waits for every named schedule's durable occurrence on the same local date.
+	AfterScheduleIDs []string `json:"after_schedule_ids,omitempty"`
 	// AfterTerminalStatus controls which prerequisite outcomes release this
 	// schedule. Empty/"completed" requires a successful completion; any_terminal
 	// permits failed, partial, stopped, or interrupted prerequisites too.
@@ -520,6 +572,29 @@ type WorkflowSchedule struct {
 // each scheduled run starts fresh.
 func (s WorkflowSchedule) ShouldResumePrevious() bool {
 	return s.ResumePrevious != nil && *s.ResumePrevious
+}
+
+// scheduleDependencyIDs returns the de-duplicated union of the legacy singular
+// dependency and the current list form, preserving declaration order.
+func scheduleDependencyIDs(schedule WorkflowSchedule) []string {
+	seen := make(map[string]struct{}, len(schedule.AfterScheduleIDs)+1)
+	dependencies := make([]string, 0, len(schedule.AfterScheduleIDs)+1)
+	appendID := func(raw string) {
+		id := strings.TrimSpace(raw)
+		if id == "" {
+			return
+		}
+		if _, exists := seen[id]; exists {
+			return
+		}
+		seen[id] = struct{}{}
+		dependencies = append(dependencies, id)
+	}
+	appendID(schedule.AfterScheduleID)
+	for _, id := range schedule.AfterScheduleIDs {
+		appendID(id)
+	}
+	return dependencies
 }
 
 type CalendarScheduleItem struct {
@@ -545,11 +620,30 @@ func validateScheduleRuntimePolicy(schedule WorkflowSchedule) error {
 	default:
 		return fmt.Errorf("collision_policy must be skip, queue_latest, retry, or coalesce")
 	}
+	switch strings.TrimSpace(schedule.ConcurrencyMode) {
+	case "", "sequential":
+	case "parallel":
+		if !schedule.ParallelRiskAcknowledged {
+			return fmt.Errorf("parallel_risk_acknowledged=true is required when concurrency_mode=parallel")
+		}
+		if schedule.ScheduleType == "webhook" || schedule.PulseReviewOnly {
+			return fmt.Errorf("concurrency_mode=parallel is only supported for producing cron/calendar schedules")
+		}
+	default:
+		return fmt.Errorf("concurrency_mode must be sequential or parallel")
+	}
 	if schedule.MaxStartDelayMinutes < 0 {
 		return fmt.Errorf("max_start_delay_minutes cannot be negative")
 	}
-	if strings.TrimSpace(schedule.AfterScheduleID) == schedule.ID {
-		return fmt.Errorf("after_schedule_id cannot reference itself")
+	for i, rawID := range schedule.AfterScheduleIDs {
+		if strings.TrimSpace(rawID) == "" {
+			return fmt.Errorf("after_schedule_ids[%d] cannot be empty", i)
+		}
+	}
+	for _, dependencyID := range scheduleDependencyIDs(schedule) {
+		if dependencyID == schedule.ID {
+			return fmt.Errorf("schedule dependencies cannot reference the schedule itself")
+		}
 	}
 	switch strings.TrimSpace(schedule.AfterTerminalStatus) {
 	case "", "completed", "any_terminal":
@@ -564,11 +658,22 @@ func validateScheduleRuntimePolicy(schedule WorkflowSchedule) error {
 			return fmt.Errorf("dependency_deadline must be HH:MM in the schedule timezone")
 		}
 	}
-	if strings.TrimSpace(schedule.AfterScheduleID) == "" &&
+	if len(scheduleDependencyIDs(schedule)) == 0 &&
 		(strings.TrimSpace(schedule.AfterTerminalStatus) != "" || schedule.AfterDelayMinutes != 0 || strings.TrimSpace(schedule.DependencyDeadline) != "") {
-		return fmt.Errorf("after_terminal_status, after_delay_minutes, and dependency_deadline require after_schedule_id")
+		return fmt.Errorf("after_terminal_status, after_delay_minutes, and dependency_deadline require after_schedule_id or after_schedule_ids")
 	}
 	return nil
+}
+
+func scheduleAllowsParallel(schedule WorkflowSchedule) bool {
+	return strings.TrimSpace(schedule.ConcurrencyMode) == "parallel" && schedule.ParallelRiskAcknowledged && schedule.ScheduleType != "webhook" && !schedule.PulseReviewOnly
+}
+
+func effectiveScheduleConcurrencyMode(schedule WorkflowSchedule) string {
+	if scheduleAllowsParallel(schedule) {
+		return "parallel"
+	}
+	return "sequential"
 }
 
 // --- Validation ---
@@ -674,6 +779,18 @@ func ValidateManifest(m *WorkflowManifest) error {
 			}
 		}
 	}
+	seenWorkflowContexts := make(map[string]struct{}, len(m.WorkflowContextPaths))
+	for i, raw := range m.WorkflowContextPaths {
+		path := strings.TrimSuffix(strings.TrimSpace(raw), "/")
+		parts := strings.Split(path, "/")
+		if len(parts) != 2 || parts[0] != "Workflow" || parts[1] == "" || parts[1] == "." || parts[1] == ".." || strings.ContainsAny(path, "\\\x00") {
+			return fmt.Errorf("workflow_context_paths[%d] must be a Workflow/<folder> path", i)
+		}
+		if _, exists := seenWorkflowContexts[path]; exists {
+			return fmt.Errorf("duplicate workflow_context_paths entry %q", path)
+		}
+		seenWorkflowContexts[path] = struct{}{}
+	}
 	if m.Pulse != nil && m.Pulse.AdvisorSpecialization != nil {
 		specialization := m.Pulse.AdvisorSpecialization
 		if specialization.Version < 1 {
@@ -684,6 +801,11 @@ func ValidateManifest(m *WorkflowManifest) error {
 		}
 		if strings.TrimSpace(specialization.GoalAdvisor) == "" {
 			return fmt.Errorf("pulse.advisor_specialization.goal_advisor is required")
+		}
+	}
+	if m.Pulse != nil {
+		if _, err := normalizeDisabledPulseReviewModules(m.Pulse.DisabledReviewModules); err != nil {
+			return err
 		}
 	}
 
@@ -770,27 +892,41 @@ func ValidateManifest(m *WorkflowManifest) error {
 				return fmt.Errorf("schedules[%d]: %w", i, err)
 			}
 		}
-		if dependencyID := strings.TrimSpace(sched.AfterScheduleID); dependencyID != "" {
+		for _, dependencyID := range scheduleDependencyIDs(sched) {
 			if _, ok := scheduleIDs[dependencyID]; !ok {
-				return fmt.Errorf("schedules[%d].after_schedule_id references unknown schedule %q", i, dependencyID)
+				return fmt.Errorf("schedules[%d] references unknown dependency schedule %q", i, dependencyID)
 			}
 		}
 	}
 	// Dependencies form a directed graph. Reject cycles at authoring time so a
 	// pair (or longer chain) of queue_latest schedules cannot wait forever.
-	dependencies := make(map[string]string, len(m.Schedules))
+	dependencies := make(map[string][]string, len(m.Schedules))
 	for _, sched := range m.Schedules {
-		if dependencyID := strings.TrimSpace(sched.AfterScheduleID); dependencyID != "" {
-			dependencies[sched.ID] = dependencyID
+		if dependencyIDs := scheduleDependencyIDs(sched); len(dependencyIDs) > 0 {
+			dependencies[sched.ID] = dependencyIDs
 		}
 	}
-	for scheduleID := range dependencies {
-		seen := map[string]bool{}
-		for current := scheduleID; current != ""; current = dependencies[current] {
-			if seen[current] {
-				return fmt.Errorf("schedule dependency cycle includes %q", current)
+	visitState := make(map[string]uint8, len(dependencies))
+	var visit func(string) error
+	visit = func(scheduleID string) error {
+		switch visitState[scheduleID] {
+		case 1:
+			return fmt.Errorf("schedule dependency cycle includes %q", scheduleID)
+		case 2:
+			return nil
+		}
+		visitState[scheduleID] = 1
+		for _, dependencyID := range dependencies[scheduleID] {
+			if err := visit(dependencyID); err != nil {
+				return err
 			}
-			seen[current] = true
+		}
+		visitState[scheduleID] = 2
+		return nil
+	}
+	for scheduleID := range dependencies {
+		if err := visit(scheduleID); err != nil {
+			return err
 		}
 	}
 

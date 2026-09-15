@@ -19,6 +19,12 @@ var (
 )
 
 func Validate(profile Profile) error {
+	// Validation accepts both already-loaded manifests and direct JSON profile
+	// payloads. Resolve a copy so feature declarations are checked and their
+	// compatibility projection is included in all validation below.
+	if err := ResolveFeatures(&profile); err != nil {
+		return err
+	}
 	if !profileIDPattern.MatchString(strings.TrimSpace(profile.ID)) {
 		return fmt.Errorf("invalid profile id %q", profile.ID)
 	}
@@ -252,6 +258,9 @@ func validateRuntime(runtime RuntimePolicy) error {
 		{"workflow_execution", capabilities.WorkflowExecution},
 		{"browser", capabilities.Browser},
 		{"secrets", capabilities.Secrets},
+		{"mcp_selection", capabilities.MCPSelection},
+		{"skill_selection", capabilities.SkillSelection},
+		{"workflow_references", capabilities.WorkflowReferences},
 		{"whatsapp", capabilities.WhatsApp},
 	}
 	for _, item := range values {

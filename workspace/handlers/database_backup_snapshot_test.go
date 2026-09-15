@@ -1,14 +1,18 @@
 package handlers
 
 import (
+	"bytes"
 	"database/sql"
 	"encoding/json"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"testing"
 
+	"github.com/gin-gonic/gin"
 	"github.com/manishiitg/coding-agent-loop/workspace/models"
+	"github.com/spf13/viper"
 )
 
 func TestWorkflowDatabaseBackupSnapshotIncludesWALAndReplacesPriorImage(t *testing.T) {
@@ -68,6 +72,42 @@ func TestWorkflowDatabaseBackupSnapshotRejectsArbitraryPaths(t *testing.T) {
 		if recorder.Code == http.StatusOK {
 			t.Fatalf("unsafe db_path %q was accepted: %s", path, recorder.Body.String())
 		}
+	}
+}
+
+func TestWorkDatabaseBackupSnapshotUsesProjectBackupFolder(t *testing.T) {
+	docs := t.TempDir()
+	old := viper.GetString("docs-dir")
+	viper.Set("docs-dir", docs)
+	t.Cleanup(func() { viper.Set("docs-dir", old) })
+	rel := "Chats/Work/projects/demo/db/db.sqlite"
+	abs := filepath.Join(docs, "_users", "alice", filepath.FromSlash(rel))
+	if err := os.MkdirAll(filepath.Dir(abs), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	db, err := sql.Open("sqlite", abs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec("CREATE TABLE facts(id INTEGER PRIMARY KEY)"); err != nil {
+		t.Fatal(err)
+	}
+	_ = db.Close()
+
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	router.POST("/api/db/backup-snapshot", CreateWorkflowDatabaseBackupSnapshot)
+	body, _ := json.Marshal(models.WorkflowDatabaseBackupSnapshotRequest{DBPath: rel})
+	req := httptest.NewRequest(http.MethodPost, "/api/db/backup-snapshot", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-User-ID", "alice")
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, req)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("Work snapshot failed: status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+	if _, err := os.Stat(filepath.Join(docs, "_users", "alice", "Chats", "Work", "projects", "demo", "backup", "database", "db.sqlite")); err != nil {
+		t.Fatal(err)
 	}
 }
 

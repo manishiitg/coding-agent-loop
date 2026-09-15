@@ -726,6 +726,7 @@ const MarkdownRendererImpl: React.FC<MarkdownRendererProps> = ({
         // full-screen overlay covered the overview, so close it here or the
         // file opens where the user can't see it.
         useAppStore.getState().setShowWorkflowsOverview(false)
+        useAppStore.getState().setShowSchedulesOverview(false)
         useWorkflowStore.getState().openWorkspaceView('files')
       }
 

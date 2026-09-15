@@ -84,6 +84,11 @@ func TestSharedAssetLinksLargeDownloadsAndRevocation(t *testing.T) {
 	if result["size"].(float64) != float64(len(payload)) || strings.Contains(preview.RawQuery, "token") {
 		t.Fatal("bad asset metadata")
 	}
+	folderResult := externalTestBody(t, f.call(t, "owner", "get_file_link", map[string]any{"workflow_id": "invoices", "path": "docs"}), 200)
+	folderPreview, err := url.Parse(folderResult["preview_url"].(string))
+	if err != nil || folderPreview.Path != "/folder" || folderResult["type"] != "folder" || folderResult["download_url"] != nil {
+		t.Fatal("bad folder link metadata", folderResult, err)
+	}
 	store, err := openAccessTokens()
 	if err != nil {
 		t.Fatal(err)

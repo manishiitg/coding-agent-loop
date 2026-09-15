@@ -13,14 +13,14 @@ AGENTWORKS_MODEL="${AGENTWORKS_MODEL:-cursor-cli}"
 export GOMAXPROCS=2 GOFLAGS=-p=2 NODE_OPTIONS=--max-old-space-size=2048
 for command in git go gcc npm jq rsync python3 ffmpeg; do command -v "$command" >/dev/null || { echo "Missing $command" >&2; exit 1; }; done
 # This host has one fixed deployment contract: AgentWorks supplies the shared
-# application shell and Video Studio is the only product backend. Fail before
+# application shell and the approved product backends. Fail before
 # building or touching the server if either checked-in allowlist drifts.
-grep -Fq 'enabledProductSurfaces: ["agentworks", "video-studio"]' "$SCRIPT_DIR/server/runtime-config.js" || {
-  echo "Video Studio deployment must expose exactly AgentWorks and Video Studio" >&2
+grep -Fq 'enabledProductSurfaces: ["agentworks", "video-studio", "work"]' "$SCRIPT_DIR/server/runtime-config.js" || {
+  echo "RTS deployment must expose exactly AgentWorks, Video Studio, and Work" >&2
   exit 1
 }
-grep -Fq 'Environment=AGENT_PRODUCTS=video-studio' "$SCRIPT_DIR/rootless/video-studio-agent.service" || {
-  echo "Video Studio deployment must load only the video-studio product backend" >&2
+grep -Fq 'Environment=AGENT_PRODUCTS=video-studio,work' "$SCRIPT_DIR/rootless/video-studio-agent.service" || {
+  echo "RTS deployment must load the video-studio and work product backends" >&2
   exit 1
 }
 grep -Fq 'Environment=AGENT_BROWSER_CDP_ENABLED=false' "$SCRIPT_DIR/rootless/video-studio-agent.service" || {

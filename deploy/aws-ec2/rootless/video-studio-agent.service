@@ -7,7 +7,7 @@ ConditionPathIsMountPoint=/data/video-studio
 EnvironmentFile=%h/video-studio/.env
 Environment=HOME=%h
 Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
-Environment=AGENT_PRODUCTS=video-studio
+Environment=AGENT_PRODUCTS=video-studio,work
 Environment=AGENTWORKS_MCP_STATE_DIR=%h/.local/state/agentworks/mcp
 Environment=AGENT_BROWSER_CDP_ENABLED=false
 Environment=MCP_BRIDGE_BINARY=%h/video-studio/current/bin/mcpbridge

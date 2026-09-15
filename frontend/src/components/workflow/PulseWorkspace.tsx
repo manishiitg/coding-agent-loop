@@ -18,6 +18,7 @@ import type {
   PulseReviewFocus,
   PulseReviewAudit,
   PulseReviewReport,
+  PulseReviewerModule,
 } from '../../services/api-types'
 import { ReportHumanInputPanel } from './ReportHumanInputPanel'
 import { WORKFLOW_LOG_REFRESH_EVENT } from './workflowEvents'
@@ -113,6 +114,9 @@ export function PulseWorkspace({
   finalCommandStates,
   reviewFocuses,
   reviewFocusSelections,
+  disabledReviewModules = [],
+  reviewModuleSaving = null,
+  onToggleReviewModule,
   statusError,
 }: {
   workspacePath: string
@@ -120,6 +124,9 @@ export function PulseWorkspace({
   finalCommandStates: PulseFinalCommandState[]
   reviewFocuses: PulseReviewFocus[]
   reviewFocusSelections: PulseReviewFocus[]
+  disabledReviewModules?: PulseReviewerModule[]
+  reviewModuleSaving?: PulseReviewerModule | null
+  onToggleReviewModule?: (module: PulseReviewerModule) => void
   statusError: string | null
 }) {
   const loadVersion = useRef(0)
@@ -332,6 +339,7 @@ export function PulseWorkspace({
       <PulseReviewOverview moduleStates={moduleStates} coverage={mergePulseReviewCoverage(coverage, reviewFocuses, reviewFocusSelections)}
         audits={audits} reports={reports} findings={findings} moduleFilter={moduleFilter} reviewFocusSelections={reviewFocusSelections}
         playbookFocuses={playbookFocuses}
+        disabledReviewModules={disabledReviewModules} reviewModuleSaving={reviewModuleSaving} onToggleReviewModule={onToggleReviewModule}
         onSelectModule={module => {
           const counts = pulseWorkspaceQueueCounts(findings.filter(item => pulseFindingReviewAreas(item, reviewFocusSelections).includes(module)))
           setModuleFilter(module)

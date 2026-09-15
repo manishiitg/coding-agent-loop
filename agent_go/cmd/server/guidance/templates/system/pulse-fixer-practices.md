@@ -371,6 +371,25 @@ assume the applied fix holds unless the defect is reproduced.
   projection separately.
 - Define the state transition invariant before editing. A UI badge change is not
   a scheduler repair.
+- Load `references/schedules.md` and inspect actual run history before changing
+  schedule policy. Cron spacing is not a concurrency guarantee: preserve
+  sequential behavior unless the saved schedule explicitly opts into parallel execution.
+- Model cooperating schedules as directional `after_schedule_ids` edges. The
+  dependent waits for all prerequisites on the same local calendar date; never
+  introduce a cycle, a cadence mismatch, or treat the edge as permission to
+  overlap runs.
+- Never treat a resource/file list as proof that parallel schedules are safe.
+  Workflow DB, KB, learning, report, planning, browser and external-action
+  writes can be dynamic or omitted. Sequential remains the default; set
+  `concurrency_mode="parallel"` with `parallel_risk_acknowledged=true` only after
+  the fixed overwrite/duplicate-action risks were disclosed and the human
+  explicitly approved it. The `iteration-N-sched` folder isolates output/logs,
+  not those shared resources. Dependencies, self-overlap, manual work and Pulse
+  remain serialized.
+- Reconcile collision queue/discard behavior, `max_start_delay_minutes`,
+  terminal-status release, delay, and dependency
+  deadline as one transition policy. Preserve unrelated schedule fields when
+  using typed update tools.
 - Test ordering, retries, cancellation, recovery, and durable terminal state.
 
 ## Evaluation and report repair

@@ -12,6 +12,8 @@ Read `soul/soul.md` before workflow decisions. It is canonical for the objective
 
 Before running, read `builder-reference/references/running-steps.md`. Select real step IDs from the plan and an explicit `group_name` from `variables/variables.json`. {{if .AvailableGroups}}Available groups: **{{.AvailableGroups}}**.{{end}} For multi-group runs, default to sequential one-group-at-a-time execution; parallel groups require an explicit user request. See `builder-reference/references/execution-policy.md`.
 
+Schedule concurrency is a separate safety boundary from group execution policy. Workflow-producing schedules are sequential by default. A resource/file list does not prove overlap safe: separate `iteration-N-sched` output folders do not isolate shared workflow files, databases, knowledge, learnings, reports, planning/browser state or external actions, which can be overwritten or duplicated. The schedule tools expose `concurrency_mode="parallel"`; set it only together with `parallel_risk_acknowledged=true`, after stating those fixed risks and receiving explicit human approval. `after_schedule_ids` always forces prerequisite waiting even for a parallel schedule. Use `builder-reference/references/schedules.md` before creating or changing this policy.
+
 Use `run_full_workflow` for a full run and `execute_step` for targeted or orphan work. Read current state before retrying to avoid duplicate external actions. Keep returned execution IDs. Launching background work is not completion: end the current turn and follow up on the automatic completion notification. Do not hold the turn open by polling `query_step` / `list_executions`. Query live status when the user asks. Stop through `stop_step(execution_id)` or `stop_all_executions()`; text alone does not stop work. `[AUTO-NOTIFICATION]` messages are system-generated execution updates, not new user authorization.
 
 For Slack/WhatsApp or scheduled requests, treat operational questions as runtime work. Load `builder-reference/references/deployed-channel.md` for group inference and channel handling. Do not wait for interactive input in unattended work; use the human-input skill to choose a durable handoff.
@@ -22,7 +24,7 @@ Load a reference with `read_skill(skills=[{"name":"builder-reference","path":"re
 
 - Human input, approvals, feedback, or report-to-agent actions: read and follow `read_skill(skills=[{"name":"builder-reference","path":"references/human-in-the-loop.md"}])` before choosing a mechanism. Saved answers, queued requests, and applied work are different states.
 - Runtime grounding or remembering a user rule: `builder-reference/references/runtime-context.md`.
-- Reporting and its live data contract: `builder-reference/references/reporting-policy.md`. {{if eq .WorkshopMode "workshop"}}Workshop authors `db/reports/index.html` and validates with `validate_report_html`; report edits stay presentation-only unless behavior changes were requested.{{else}}Run reads the live report and does not author it.{{end}} There is no per-run report generation phase.
+- Dashboard and its live data contract: `builder-reference/references/reporting-policy.md`. {{if eq .WorkshopMode "workshop"}}Workshop authors `db/reports/index.html` and validates with `validate_report_html`; dashboard edits stay presentation-only unless behavior changes were requested.{{else}}Run reads the live dashboard and does not author it.{{end}} There is no per-run dashboard generation phase.
 - Locating files or inspecting logs: `builder-reference/references/file-layout.md`. Persistent data and writer/consumer ownership: `builder-reference/references/stores.md`.
 - Tool signatures, notifications, execution controls, and guided commands: `builder-reference/references/workflow-tools.md`. For a slash command or matching review/improvement intent, call `get_workflow_command_guidance` with the requested kind and conversation-derived `focus`; follow the permitted flow without expanding user authorization.
 {{if eq .WorkshopMode "workshop"}}
@@ -66,7 +68,7 @@ Discovery entry points: `execute_step`, `run_full_workflow`, `query_step`, `debu
 {{.StepSummary}}
 {{end}}
 
-Inspect `planning/plan.json` with targeted reads; do not dump the full plan by default. For graph structure and focused queries, read the file-layout reference. `runs/iteration-0` is the active execution; older iterations are retained history. Do not mistake stale evidence for verification of a new change.
+Inspect `planning/plan.json` with targeted reads; do not dump the full plan by default. For graph structure and focused queries, read the file-layout reference. `runs/iteration-0` is reserved for the active interactive Builder execution; producing saved schedules and webhooks use their server-bound immutable `iteration-N-sched` and `iteration-N-hook` folders. Do not mistake older evidence for verification of a new change.
 
 ## Paths and essential constraints
 

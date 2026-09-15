@@ -1,0 +1,81 @@
+{
+  "metadata_version": 1,
+  "content_schema": "agentworks-playbook/v1",
+  "id": "growth-experimentation-follow-through",
+  "version": "0.2.0",
+  "changelog": [
+    {
+      "version": "0.1.0",
+      "summary": "Initial playbook release."
+    },
+    {
+      "version": "0.2.0",
+      "summary": "Accepts findings from SEO and AI Visibility Intelligence in addition to funnel and lifecycle sources."
+    }
+  ],
+  "title": "Growth Experimentation and Follow-Through",
+  "description": "Generate prioritized experiment hypotheses from growth findings, create tracked Linear, Slack, and CRM actions, and verify whether shipped changes actually improved their KPI — your AI Growth Analyst's action loop.",
+  "hierarchy": [
+    "AgentWorks",
+    "Agentic Engineering Platform",
+    "Growth Analytics"
+  ],
+  "order": 4,
+  "entrypoint": "SKILL.md",
+  "audience": "workflow_builder",
+  "team_scope": "small_team",
+  "setup_prompt": "Use Growth Experimentation and Follow-Through for my AI Growth Analyst. Turn my supported findings into prioritized hypotheses, create tracked actions only in my authorized tools, require my approval for launches and customer-facing changes, and verify each shipped change against its pre-registered KPI target.",
+  "setup_inputs": [
+    {"id": "findings", "label": "Finding sources with evidence and confidence", "required": true},
+    {"id": "process", "label": "Hypothesis format and prioritization model", "required": true},
+    {"id": "design", "label": "Experiment design standards and guardrails", "required": true},
+    {"id": "actions", "label": "Authorized action destinations and permissions", "required": true},
+    {"id": "rollout", "label": "Rollout, rollback, and launch approval ownership", "required": true},
+    {"id": "readout", "label": "KPI targets, readout windows, and notification policy", "required": true}
+  ],
+  "required_capabilities": ["experiment_design", "growth_outcome_verification", "work_item_tracking", "notifications", "human_decision", "durable_workflow_storage", "workflow_reporting"],
+  "recommended_tools": [
+    {"id": "issue-tracker", "name": "Linear or Jira MCP", "type": "mcp", "purpose": "Create and track approved experiment and follow-up tasks with evidence links", "capability": "work_item_tracking", "optional": true},
+    {"id": "notification-destination", "name": "Notification MCP", "type": "mcp", "purpose": "Publish approved alerts, readout summaries, and review requests to customer channels and retain delivery receipts", "capability": "notifications", "optional": true},
+    {"id": "crm-lifecycle", "name": "HubSpot or Customer.io MCP", "type": "mcp", "purpose": "Create approved CRM segments and campaign audiences from verified experiment cohorts", "capability": "lifecycle_messaging", "optional": true},
+    {"id": "workflow-database", "name": "AgentWorks workflow database", "type": "builtin", "purpose": "Persist hypotheses, experiments, actions, KPI snapshots, and readout verdicts", "capability": "durable_workflow_storage", "optional": true}
+  ],
+  "pulse_focus": [
+    {
+      "module": "technical_review",
+      "label": "Technical review",
+      "focus_areas": [
+        "Hypothesis-evidence linkage, target pre-registration, and readout integrity",
+        "Action delivery receipts and guardrail monitoring"
+      ],
+      "review_when": [
+        "A run fails, produces incomplete evidence, or a key metric becomes unreliable"
+      ]
+    },
+    {
+      "module": "architecture_review",
+      "label": "Architecture review",
+      "focus_areas": [
+        "Backlog model, experiment tracking, action integrations, and dashboard architecture",
+        "Ownership of launches, rollouts, and downstream consumers"
+      ],
+      "review_when": [
+        "The workflow, integration, environment, scale, or operating policy changes materially"
+      ]
+    },
+    {
+      "module": "strategic_review",
+      "label": "Strategic review",
+      "focus_areas": [
+        "Whether experiments compound into growth outcomes",
+        "Learning rate, prioritization quality, and decision value"
+      ],
+      "review_when": [
+        "Outcome metrics regress, priorities change, or the current approach needs periodic challenge"
+      ]
+    }
+  ],
+  "outputs": ["Prioritized experiment backlog with evidence links", "Experiment designs with pre-registered targets", "Tracked actions with delivery receipts", "KPI readouts with verdicts", "Guardrail status", "Learning history and live experimentation report"],
+  "setup_playbooks": ["funnel-conversion-intelligence", "activation-retention-intelligence", "seo-intelligence", "ai-visibility-intelligence"],
+  "accepts_equivalent_setup": true
+}

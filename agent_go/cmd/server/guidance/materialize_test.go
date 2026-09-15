@@ -504,6 +504,12 @@ func TestWebhookReferenceIsBuilderOnly(t *testing.T) {
 	if err != nil || len(builder) != 1 {
 		t.Fatalf("webhook skill: %v", err)
 	}
+	content := builder[0].Content
+	for _, want := range []string{"payload_mappings", "MAIN_ROUTING_STEP_ID", "COMPONENT_BRANCH_STEP_ID", "deterministic route", "returns 400"} {
+		if !strings.Contains(content, want) {
+			t.Errorf("webhook skill missing payload-mapping guidance %q", want)
+		}
+	}
 	if run, err := MaterializeReferenceKindsAsSkills("run", []string{"webhook-triggers"}); err == nil && len(run) > 0 {
 		t.Fatal("Run receives webhook management skill")
 	}

@@ -72,10 +72,14 @@ type promptContext struct {
 	WorkflowMode        string
 	WorkflowUIAvailable bool
 	WorkflowContext     string
+	WorkFolders         string
 	ChannelFormatting   string
 	BrowserPointer      string
 	GrantSections       []string
 	CLIToolEnvironment  string
+	// FeatureExtensions come from the trusted feature catalog resolved from
+	// product.yaml. They extend the product prompt; they never replace it.
+	FeatureExtensions []string
 }
 
 // promptSections is the assembly order. Order is the slice order — previously
@@ -90,12 +94,19 @@ var promptSections = []promptSection{
 			switch {
 			case c.IsWorkflowPhase:
 				return getWorkflowPhaseWorkspaceMapForMode(c.ShellRoot, c.WorkflowPhaseFolder, c.WorkflowMode)
+			case c.ProfileID == "work":
+				return GetWorkWorkspaceMap(c.ProfileWorkspace)
 			case c.HasProfile:
 				return GetWorkspaceMap(c.ShellRoot, c.ProfileWorkspace)
 			default:
 				return GetWorkspaceMap(c.ShellRoot, c.PerUserChatsFolder)
 			}
 		},
+	},
+	{
+		Name:    "product-features",
+		Applies: func(c promptContext) bool { return c.HasProfile && len(c.FeatureExtensions) > 0 },
+		Build:   func(c promptContext) string { return strings.Join(c.FeatureExtensions, "\n\n") },
 	},
 	{
 		// A provider/auth inventory that also instructs the agent to call
@@ -112,6 +123,13 @@ var promptSections = []promptSection{
 		Name:    "workflow-context",
 		Applies: func(promptContext) bool { return true },
 		Build:   func(c promptContext) string { return c.WorkflowContext },
+	},
+	{
+		// Owner-attached external folders for Work sessions (aliases +
+		// WORK_FOLDER_<ALIAS> env). Empty for every other surface.
+		Name:    "work-folders",
+		Applies: func(c promptContext) bool { return c.ProfileID == "work" },
+		Build:   func(c promptContext) string { return c.WorkFolders },
 	},
 	{
 		// Which markup subset the bot platform renders, so replies do not arrive

@@ -5,6 +5,7 @@ import (
 	"time"
 
 	storeevents "github.com/manishiitg/coding-agent-loop/agent_go/internal/events"
+	agentevents "github.com/manishiitg/mcpagent/events"
 )
 
 func errEvent(kind, detail string, at time.Time) storeevents.Event {
@@ -67,6 +68,66 @@ func TestScheduledTurnFailureStaysQuietForAHealthyTurn(t *testing.T) {
 	}
 	if got := scheduledTurnFailure(store, "unknown-session", turnStart); got != "" {
 		t.Errorf("unknown session reported a failure: %q", got)
+	}
+}
+
+func TestScheduledTurnFailureIgnoresTransientErrorWhenTurnLaterProducesResponse(t *testing.T) {
+	store := storeevents.NewEventStore(200)
+	const sessionID = "sched-session-recovered-response"
+	turnStart := time.Now().UTC()
+
+	store.AddEvent(sessionID, errEvent("conversation_error", "", turnStart.Add(time.Second)))
+	store.AddEvent(sessionID, storeevents.Event{
+		Type:      "unified_completion",
+		Timestamp: turnStart.Add(2 * time.Second),
+		Data: &agentevents.AgentEvent{
+			Type: "unified_completion",
+			Data: &agentevents.UnifiedCompletionEvent{Status: "completed", FinalResult: "Workflow launched."},
+		},
+	})
+
+	if got := scheduledTurnFailure(store, sessionID, turnStart); got != "" {
+		t.Errorf("a recovered turn with assistant output was reported as failed: %q", got)
+	}
+}
+
+func TestScheduledTurnFailureDoesNotLetEmptyCompletionHideFailure(t *testing.T) {
+	store := storeevents.NewEventStore(200)
+	const sessionID = "sched-session-empty-completion"
+	turnStart := time.Now().UTC()
+
+	store.AddEvent(sessionID, errEvent("conversation_error", "provider failed", turnStart.Add(time.Second)))
+	store.AddEvent(sessionID, storeevents.Event{
+		Type:      "unified_completion",
+		Timestamp: turnStart.Add(2 * time.Second),
+		Data: &agentevents.AgentEvent{
+			Type: "unified_completion",
+			Data: &agentevents.UnifiedCompletionEvent{Status: "completed"},
+		},
+	})
+
+	if got := scheduledTurnFailure(store, sessionID, turnStart); !contains(got, "provider failed") {
+		t.Errorf("empty completion hid the real failure: %q", got)
+	}
+}
+
+func TestScheduledTurnFailureUsesLaterTerminalFailure(t *testing.T) {
+	store := storeevents.NewEventStore(200)
+	const sessionID = "sched-session-late-failure"
+	turnStart := time.Now().UTC()
+
+	store.AddEvent(sessionID, storeevents.Event{
+		Type:      "unified_completion",
+		Timestamp: turnStart.Add(time.Second),
+		Data: &agentevents.AgentEvent{
+			Type: "unified_completion",
+			Data: &agentevents.UnifiedCompletionEvent{Status: "completed", FinalResult: "early response"},
+		},
+	})
+	store.AddEvent(sessionID, errEvent("conversation_error", "terminal provider failure", turnStart.Add(2*time.Second)))
+
+	if got := scheduledTurnFailure(store, sessionID, turnStart); !contains(got, "terminal provider failure") {
+		t.Errorf("later terminal failure did not win: %q", got)
 	}
 }
 

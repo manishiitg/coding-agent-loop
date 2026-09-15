@@ -17,6 +17,7 @@ import {
 } from 'lucide-react'
 import { agentApi } from '../../services/api'
 import type { PlannerFile } from '../../services/api-types'
+import { describeDatabaseLoadFailure } from './databaseLoadError'
 
 interface DatabaseViewProps {
   workspacePath: string | null
@@ -420,7 +421,8 @@ export default function DatabaseView({ workspacePath, headerAction }: DatabaseVi
       setTableRowCounts({})
       setTableColumns({})
       setRelationships([])
-      setError(err instanceof Error ? err.message : String(err))
+      const failure = describeDatabaseLoadFailure(err)
+      setError(failure.missing ? null : failure.message)
       setLoading(false)
       setRelationshipLoading(false)
     }
@@ -532,7 +534,7 @@ export default function DatabaseView({ workspacePath, headerAction }: DatabaseVi
               <div className="col-span-full py-12 text-center text-muted-foreground">
                 <Table2 className="mx-auto mb-3 h-10 w-10 opacity-30" />
                 <div className="text-sm">
-                  Database is empty. Durable JSON files appear here after steps write to <code className="rounded bg-muted px-1">db/</code>.
+                  Database is empty. Tables will appear here after this project creates durable data.
                 </div>
               </div>
             )}

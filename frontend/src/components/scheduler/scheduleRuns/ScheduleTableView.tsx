@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react'
 import { ChevronDown, ChevronRight, Square } from 'lucide-react'
 import { WebhookEndpoint } from './WebhookEndpoint'
 import { describeCron } from './cron'
-import { formatExactDateTime, formatLastRunLabel, formatLocalScheduleTime, getLocalizedJobName, getScheduleExecutionScope, isMissedSchedule, isScheduleWaitingStatus } from './helpers'
+import { formatExactDateTime, formatLastRunLabel, formatLocalScheduleTime, getLocalizedJobName, getScheduleDependencyIds, getScheduleExecutionScope, isMissedSchedule, isScheduleWaitingStatus } from './helpers'
 import { ScheduleRowActions } from './ScheduleRowActions'
 import type { ScheduleRunsPanelState } from './useScheduleRunsData'
 
@@ -52,6 +52,9 @@ export function ScheduleTableView({ panel }: ScheduleTableViewProps) {
               return next
             })
             const scope = getScheduleExecutionScope(job)
+            const dependencyIds = getScheduleDependencyIds(job)
+            const dependencyNames = dependencyIds.map(id => panel.filteredJobs.find(candidate => candidate.id === id)?.name ?? id)
+            const hasRuntimePolicy = dependencyIds.length > 0 || !!job.collision_policy || !!job.max_start_delay_minutes || job.concurrency_mode === 'parallel'
             return <React.Fragment key={job.id}>
               <tr className="transition-colors hover:bg-muted/20">
                 <td className="max-w-[340px] px-4 py-3">
@@ -77,11 +80,17 @@ export function ScheduleTableView({ panel }: ScheduleTableViewProps) {
                   </div>
                   {isWebhook && <WebhookEndpoint id={job.id} name={job.name} />}
                   {job.group_names?.length ? <p className="text-xs text-muted-foreground">Groups: {job.group_names.join(', ')}</p> : null}
+                  {hasRuntimePolicy && <div className="max-w-4xl space-y-1 rounded-md border border-border bg-background/70 p-3 text-xs text-muted-foreground">
+                    <h4 className="font-medium text-foreground">Coordination and runtime policy</h4>
+                    {dependencyNames.length > 0 && <p>Waits for: {dependencyNames.join(', ')} · Release: {job.after_terminal_status || 'completed'}{job.after_delay_minutes ? ` + ${job.after_delay_minutes}m delay` : ''}{job.dependency_deadline ? ` · Deadline: ${job.dependency_deadline} local` : ''}</p>}
+                    {job.collision_policy && <p>When busy: {job.collision_policy.replaceAll('_', ' ')}{job.max_start_delay_minutes ? ` · Start within ${job.max_start_delay_minutes}m` : ''}</p>}
+                    {job.concurrency_mode === 'parallel' && <p>Concurrency: parallel · shared-state overwrite and duplicate-action risks accepted</p>}
+                  </div>}
                   {job.messages?.length ? <div className="max-w-4xl space-y-2"><h4 className="text-xs font-medium text-foreground">Instructions</h4>{job.messages.map((message, i) => <p key={i} className="whitespace-pre-wrap text-sm leading-6 text-muted-foreground">{message}</p>)}</div> : null}
                   {job.last_error && <p className="max-w-4xl whitespace-pre-wrap break-words text-xs leading-5 text-muted-foreground">Last run: {job.last_error}</p>}
                   {isMissedSchedule(job) && <p className="text-xs text-muted-foreground">{job.missed_run_count} missed occurrence{job.missed_run_count === 1 ? '' : 's'} recorded.</p>}
                   {job.waiting_reason && <p className="text-xs text-muted-foreground">{job.waiting_reason}</p>}
-                  <p className="text-xs text-muted-foreground">{isWebhook ? 'Ask the workflow builder chat to configure this webhook.' : 'Ask this automation in Chat to change its schedule.'}</p>
+                  <p className="text-xs text-muted-foreground">{isWebhook ? 'Ask the workflow builder chat to configure this webhook.' : 'Ask the workflow Builder chat to change timing, busy-run handling, or schedule dependencies.'}</p>
                 </div>
               </td></tr>}
             </React.Fragment>

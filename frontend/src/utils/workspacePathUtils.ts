@@ -1,5 +1,91 @@
 import type { PlannerFile } from '../services/api-types'
 
+/** Shared Files policy: the workspace root opens, its child folders do not. */
+export const EXPAND_FIRST_LEVEL_FOLDERS_BY_DEFAULT = false
+
+/**
+ * Platform-owned project/workflow entries that are useful for diagnostics but
+ * add noise to the normal Files view. This is UI-only: the entries remain on
+ * disk and become visible through the shared "Show hidden files" control.
+ */
+export const MANAGED_WORKSPACE_ROOT_ENTRIES = new Set([
+  '.agents',
+  '.claude',
+  '.codex',
+  '.cursor',
+  '.gemini',
+  '.git',
+  '.local',
+  '.pi',
+  '.sandbox-cache',
+  '.tmp',
+  'AGENTS.md',
+  'CLAUDE.md',
+  'GEMINI.md',
+  'Workflow',
+  '_users',
+  'agents',
+  'builder',
+  'code-migration-backup',
+  'config',
+  'costs',
+  'migration-backups',
+  'node_modules',
+  'planning',
+  'product.json',
+  'pulse',
+  'skills',
+  'soul',
+  'subagents',
+  'tool_output_folder',
+  'variables',
+  'versions',
+  'workflow.json',
+  'workflow.json.backup',
+])
+
+const workspaceEntryName = (file: PlannerFile): string => {
+  const normalized = file.filepath.replace(/\/+$/, '')
+  return normalized.split('/').pop() || normalized
+}
+
+export function hideManagedWorkspaceRootEntries(
+  files: PlannerFile[],
+  additionalHiddenEntries: readonly string[] = [],
+): PlannerFile[] {
+  const hidden = new Set([...MANAGED_WORKSPACE_ROOT_ENTRIES, ...additionalHiddenEntries])
+  const visibleEntry = (file: PlannerFile): PlannerFile | null => {
+    const name = workspaceEntryName(file)
+    // Custom skills are user-authored project output. Keep that branch visible
+    // while concealing built-in/projected skill folders alongside other
+    // platform-managed files.
+    if (name === 'skills' && file.type === 'folder') {
+      const custom = (file.children || []).find(child => workspaceEntryName(child) === 'custom')
+      if (custom) return { ...file, children: [custom] }
+    }
+    return !name.startsWith('.') && !hidden.has(name) ? file : null
+  }
+  const filterEntries = (entries: PlannerFile[]) => entries.flatMap(file => {
+    const visible = visibleEntry(file)
+    return visible ? [visible] : []
+  })
+
+  // Scoped project/workflow trees are represented by one visible root. Keep
+  // that root and filter only its direct children so similarly named folders
+  // inside user code are never hidden.
+  if (files.length === 1 && files[0].type === 'folder') {
+    return [{
+      ...files[0],
+      children: filterEntries(files[0].children || []),
+    }]
+  }
+  return filterEntries(files)
+}
+
+export function getInitialExpandedWorkspaceFolders(rootFolder?: PlannerFile | null): Set<string> {
+  return new Set(rootFolder?.type === 'folder' ? [rootFolder.filepath] : [])
+}
+
 /**
  * Utility functions for handling workspace paths in different modes (chat vs workflow)
  * Handles path normalization, adjustment, and mapping between original and adjusted paths
@@ -215,7 +301,7 @@ export function findIterationFolders(fileList: PlannerFile[]): string[] {
       // Check if this is an iteration folder (matches pattern: runs/iteration-* or iteration-*)
       // Also handle group subfolders: runs/iteration-*/group-* or runs/iteration-*/display-name
       // Accepts both "group-X" format and display names (any alphanumeric/dash folder name)
-      if (file.filepath.match(/^runs\/iteration-\d+(?:-hook)?(\/[a-zA-Z0-9_-]+)?$/) || file.filepath.match(/^iteration-\d+(?:-hook)?(\/[a-zA-Z0-9_-]+)?$/)) {
+      if (file.filepath.match(/^runs\/iteration-\d+(?:-(?:hook|sched))?(\/[a-zA-Z0-9_-]+)?$/) || file.filepath.match(/^iteration-\d+(?:-(?:hook|sched))?(\/[a-zA-Z0-9_-]+)?$/)) {
         iterationFolders.push(file.filepath)
       }
       
@@ -235,8 +321,8 @@ export function findIterationFolders(fileList: PlannerFile[]): string[] {
  */
 export function isIterationFolder(path: string): boolean {
   return !!(
-    path.match(/^runs\/iteration-\d+(?:-hook)?(\/[a-zA-Z0-9_-]+)?$/) ||
-    path.match(/^iteration-\d+(?:-hook)?(\/[a-zA-Z0-9_-]+)?$/)
+    path.match(/^runs\/iteration-\d+(?:-(?:hook|sched))?(\/[a-zA-Z0-9_-]+)?$/) ||
+    path.match(/^iteration-\d+(?:-(?:hook|sched))?(\/[a-zA-Z0-9_-]+)?$/)
   )
 }
 

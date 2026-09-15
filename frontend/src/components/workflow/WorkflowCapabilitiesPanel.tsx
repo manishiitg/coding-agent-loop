@@ -1,22 +1,21 @@
-import WorkflowLiveBrowser from './WorkflowLiveBrowser'
 import { capabilitiesEqual, mergeRemoteCapabilities } from './workflowCapabilitiesSync'
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { LoaderCircle, RefreshCw, Save, Settings2, X } from 'lucide-react'
+import { LoaderCircle, RefreshCw, Save } from 'lucide-react'
 import { ToolSelectionSection } from '../ToolSelectionSection'
 import SkillsManagerPanel from '../skills/SkillsManagerPanel'
 import PlaybooksPanel from '../playbooks/PlaybooksPanel'
 import { SecretSelectionSection } from '../secrets/SecretSelectionSection'
-import BrowserAutomationSettings, { type BrowserAutomationMode } from '../BrowserAutomationSettings'
 import WorkflowLLMConfigurationPanel from './WorkflowLLMConfigurationPanel'
 import WorkflowBotsPanel from './WorkflowBotsPanel'
 import ConnectorsBrowser from '../connectors/ConnectorsBrowser'
 import { agentApi, workflowManifestApi } from '../../services/api'
 import type { WorkflowCapabilities } from '../../services/api-types'
-import { AskAIButton } from './AskAIButton'
 import { useMCPStore } from '../../stores/useMCPStore'
 import { useWorkflowManifestStore } from '../../stores/useWorkflowManifestStore'
 import { useCanWriteWorkflow } from '../../hooks/useCanWriteWorkflow'
 import { getWorkspaceView, type CapabilityViewId } from './workspaceViews'
+import { BrowserWorkspacePanel } from './BrowserWorkspacePanel'
+import type { BrowserAutomationMode } from '../BrowserAutomationSettings'
 
 // Which sections exist is decided by the registry in workspaceViews.ts; this
 // panel only carries the per-section copy.
@@ -114,26 +113,13 @@ export default function WorkflowCapabilitiesPanel({ section, workspacePath }: Wo
   const copy = SECTION_COPY[section]
   const view = getWorkspaceView(section)
 
-  // Each of these panels only ever shows what's already configured on this
-  // deployment or in this workflow — none of them can tell the user chat is
-  // able to go find, install, or explain something that isn't listed at
-  // all. Rendered via AskAIButton (shared with every other settings panel);
-  // each message here is a real, complete first message it delivers (not a
-  // prefilled fragment), ending by inviting the agent to ask what's needed.
-  const ASK_CHAT_MESSAGE: Partial<Record<WorkflowCapabilitySection, string>> = {
-    playbooks: "Help me choose an AgentWorks playbook for this workflow. Ask what outcome I need, compare the relevant playbooks, and explain the setup before changing my workflow.",
-    mcp: "Help me add an MCP server to this workflow. Ask me which app or service I want to connect, then search the catalog and official provider documentation on the web and help me connect it.",
-    skills: "I want a skill this workflow doesn't have yet. Ask me what it should cover, then find an existing one or write a new one.",
-    secrets: "I need to add a secret this workflow doesn't have yet. Ask me which credential it is and where it should come from.",
-    llm: "I want to change or add an LLM provider/model this workflow doesn't have configured yet. Ask me which one and what it's for.",
-    bots: "I want to connect a bot channel (Slack, WhatsApp, Gmail, etc.) this workflow doesn't have set up yet. Ask me which one and where it should notify.",
-    browser: "I need browser automation access this workflow doesn't have configured yet. Ask me what site or task it's for.",
-  }
   const SectionIcon = view.icon
 
   const latest = useRef({ workspacePath, capabilities, loaded, saving })
   latest.current = { workspacePath, capabilities, loaded, saving }
   const loadVersion = useRef(0)
+  const saveVersion = useRef(0)
+  const saveQueue = useRef<Promise<void>>(Promise.resolve())
 
   const load = useCallback(async (background = false) => {
     if (!workspacePath) {
@@ -210,26 +196,54 @@ export default function WorkflowCapabilitiesPanel({ section, workspacePath }: Wo
     }
   }, [])
 
-  const persist = useCallback(async (next: WorkflowCapabilities) => {
+  const persist = useCallback((next: WorkflowCapabilities): Promise<void> => {
     if (!workspacePath) {
       setError('This panel needs an active workflow folder before it can save.')
-      return
+      return Promise.resolve()
     }
+    const targetPath = workspacePath
+    const version = ++saveVersion.current
     ++loadVersion.current
     setSaving(true)
     setError(null)
-    try {
-      await workflowManifestApi.updateWorkflowManifest({ workspace_path: workspacePath, capabilities: next })
-      setLoaded(next)
-      await useWorkflowManifestStore.getState().refreshWorkflows()
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : 'Unable to save workflow capabilities')
-    } finally {
-      setSaving(false)
-    }
-  }, [workspacePath])
 
-  const [browserSettingsOpen, setBrowserSettingsOpen] = useState(false)
+    // Chat and settings consume the same manifest store. Update it immediately
+    // so the composer never displays the previous provider while this save is
+    // in flight. Requests are serialized below, making the server last-write-
+    // wins in the same order as the user's selections.
+    const manifestStore = useWorkflowManifestStore.getState()
+    const current = manifestStore.getWorkflowByPath(targetPath)
+    if (current) {
+      manifestStore.replaceWorkflowManifest(targetPath, {
+        ...current.manifest,
+        capabilities: next,
+      })
+    }
+
+    const save = async () => {
+      try {
+        const response = await workflowManifestApi.updateWorkflowManifest({
+          workspace_path: targetPath,
+          capabilities: next,
+        })
+        if (version !== saveVersion.current) return
+        useWorkflowManifestStore.getState().replaceWorkflowManifest(targetPath, response.manifest)
+        if (latest.current.workspacePath === targetPath) setLoaded(next)
+      } catch (cause) {
+        if (version !== saveVersion.current) return
+        await useWorkflowManifestStore.getState().refreshWorkflows()
+        if (latest.current.workspacePath === targetPath) {
+          setError(cause instanceof Error ? cause.message : 'Unable to save workflow capabilities')
+        }
+      } finally {
+        if (version === saveVersion.current && latest.current.workspacePath === targetPath) setSaving(false)
+      }
+    }
+
+    const queued = saveQueue.current.then(save, save)
+    saveQueue.current = queued
+    return queued
+  }, [workspacePath])
 
   const save = useCallback(() => persist(capabilities), [capabilities, persist])
 
@@ -254,9 +268,6 @@ export default function WorkflowCapabilitiesPanel({ section, workspacePath }: Wo
           >
             <RefreshCw className={`h-3.5 w-3.5 ${refreshingServers ? 'animate-spin' : ''}`} />
           </button>
-        )}
-        {ASK_CHAT_MESSAGE[section] && (
-          <AskAIButton workspacePath={workspacePath} message={ASK_CHAT_MESSAGE[section]!} className="flex shrink-0 items-center gap-1.5 self-center rounded-md border border-border px-2.5 py-1.5 text-xs font-medium text-muted-foreground transition-colors hover:border-primary/40 hover:text-primary" />
         )}
       </header>}
 
@@ -340,30 +351,24 @@ export default function WorkflowCapabilitiesPanel({ section, workspacePath }: Wo
               </div>
             )}
             {section === 'browser' && (
-              <>
-                <WorkflowLiveBrowser workspacePath={workspacePath} toolbar={<>
-                  <AskAIButton workspacePath={workspacePath} message={ASK_CHAT_MESSAGE.browser!} iconOnly className="flex items-center gap-1.5 rounded p-1.5 text-muted-foreground hover:bg-muted" />
-                  <button type="button" aria-label="Browser settings" title="Browser settings" onClick={() => setBrowserSettingsOpen(value => !value)} className="rounded p-1.5 text-muted-foreground hover:bg-muted"><Settings2 className="h-4 w-4" /></button>
-                </>} />
-                {browserSettingsOpen && <div role="dialog" aria-label="Browser settings" className="absolute inset-x-2 top-12 z-10 max-h-[calc(100%-4rem)] overflow-y-auto rounded-lg border border-border bg-background p-4 shadow-xl">
-                  <div className="mb-3 flex items-center justify-between"><h3 className="text-sm font-medium">Browser settings</h3><button type="button" aria-label="Close browser settings" onClick={() => setBrowserSettingsOpen(false)} className="rounded p-1 hover:bg-muted"><X className="h-4 w-4" /></button></div>
-                <BrowserAutomationSettings
-                  browserMode={capabilities.browser_mode as BrowserAutomationMode}
-                  onBrowserModeChange={(browser_mode) => setCapabilities(current => ({ ...current, browser_mode }))}
-                  cdpPort={cdpPort}
-                  onCdpPortChange={(port) => {
-                    setCdpPort(port)
-                    setCapabilities(current => ({ ...current, cdp_ports: [port] }))
-                  }}
-                  cdpConnected={cdpConnected}
-                  cdpError={cdpError}
-                  cdpChecking={cdpChecking}
-                  onCheckCdpConnection={checkCdpConnection}
-                  readOnly={!canWriteWorkflow}
-                />
-                {canWriteWorkflow && <div className="mt-3 flex items-center justify-end gap-3 border-t pt-3">{dirty && <span className="text-xs text-muted-foreground">Unsaved changes</span>}<button type="button" disabled={!dirty || saving} onClick={() => void save()} className="rounded bg-primary px-3 py-1.5 text-xs text-primary-foreground disabled:opacity-50">{saving ? 'Saving…' : 'Save settings'}</button></div>}
-                </div>}
-              </>
+              <BrowserWorkspacePanel
+                workspacePath={workspacePath}
+                browserMode={capabilities.browser_mode as BrowserAutomationMode}
+                onBrowserModeChange={(browser_mode) => setCapabilities(current => ({ ...current, browser_mode }))}
+                cdpPort={cdpPort}
+                onCdpPortChange={(port) => {
+                  setCdpPort(port)
+                  setCapabilities(current => ({ ...current, cdp_ports: [port] }))
+                }}
+                cdpConnected={cdpConnected}
+                cdpError={cdpError}
+                cdpChecking={cdpChecking}
+                onCheckCdpConnection={checkCdpConnection}
+                readOnly={!canWriteWorkflow}
+                dirty={dirty}
+                saving={saving}
+                onSave={() => void save()}
+              />
             )}
             {section === 'llm' && (
               <WorkflowLLMConfigurationPanel
@@ -373,11 +378,6 @@ export default function WorkflowCapabilitiesPanel({ section, workspacePath }: Wo
                   const next = { ...capabilities, llm_config }
                   setCapabilities(next)
                   void persist(next)
-                }}
-                onUseProvider={async (llm_config) => {
-                  const next = { ...capabilities, llm_config }
-                  setCapabilities(next)
-                  await persist(next)
                 }}
               />
             )}

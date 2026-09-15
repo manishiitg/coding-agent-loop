@@ -164,11 +164,8 @@ func (api *StreamingAPI) registerAgentProfileWorkflowTools(
 		return nil
 	}
 
-	// PLAT-262: this path hardcodes "run" workshop mode below, which is now
-	// the single gate for mutating tools/prompt/skills (see
-	// interactive_workshop_manager.go) — no separate access-level thread
-	// needed here, this session gets the same reduced tool set as any other
-	// Run-mode session automatically.
+	// The registrar below exposes only execution tools to the profile. Use the
+	// normal Workshop runtime; Run is reserved for a read-only workflow user.
 	runtimeWorkspacePath := agentProfileRuntimeWorkspace(userID, publicWorkspacePath)
 	const runFolder = "iteration-0"
 	// A browser tab/session can be reused after switching products or projects.
@@ -186,7 +183,7 @@ func (api *StreamingAPI) registerAgentProfileWorkflowTools(
 		workshopSession, _ = cached.(*todo_creation_human.WorkshopChatSession)
 		if workshopSession != nil {
 			workshopSession.UpdateAPIKeys(mergedAPIKeys)
-			workshopSession.SetWorkshopModeOverride("run")
+			workshopSession.SetWorkshopModeOverride("workshop")
 		}
 	}
 	if workshopSession == nil {
@@ -195,7 +192,7 @@ func (api *StreamingAPI) registerAgentProfileWorkflowTools(
 		syntheticReq.ExecutionOptions = &ExecutionOptions{
 			SelectedRunFolder: runFolder,
 			ExecutionStrategy: "start_from_beginning_no_human",
-			WorkshopMode:      "run",
+			WorkshopMode:      "workshop",
 		}
 		cfg, err := api.buildWorkshopConfig(ctx, syntheticReq, userID, runtimeWorkspacePath, runFolder, selectedServers, sessionID, mergedAPIKeys)
 		if err != nil {
@@ -205,7 +202,7 @@ func (api *StreamingAPI) registerAgentProfileWorkflowTools(
 		if err != nil {
 			return fmt.Errorf("create profile workflow runtime: %w", err)
 		}
-		created.SetWorkshopModeOverride("run")
+		created.SetWorkshopModeOverride("workshop")
 		workshopSession = created
 		api.workshopChatSessions.Store(workshopKey, workshopSession)
 	}

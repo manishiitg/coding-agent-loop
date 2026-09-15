@@ -4,6 +4,13 @@ import { normalizeWorkspacePath } from '../../../utils/workspacePathUtils'
 export type JobFilter = 'running' | 'enabled' | 'paused' | 'missed' | 'issues' | 'all'
 export type SchedulePanelView = 'overview' | 'calendar' | 'by-workflow' | 'schedules'
 
+/** Global views open on the per-workflow grouping with drill-down into each
+ *  workflow's schedules; a workflow-scoped view already identifies one
+ *  workflow, so it opens on the schedule list directly. */
+export function defaultSchedulePanelView(isWorkflowScoped: boolean): SchedulePanelView {
+  return isWorkflowScoped ? 'schedules' : 'by-workflow'
+}
+
 export type WorkflowScope = {
   presetQueryId?: string | null
   workspacePath?: string | null
@@ -163,6 +170,18 @@ export function getScheduleExecutionScope(job: ScheduledJob): ScheduleExecutionS
   }
 
   return null
+}
+
+export function getScheduleDependencyIds(job: ScheduledJob): string[] {
+  const seen = new Set<string>()
+  const ids: string[] = []
+  for (const rawId of [job.after_schedule_id, ...(job.after_schedule_ids ?? [])]) {
+    const id = rawId?.trim()
+    if (!id || seen.has(id)) continue
+    seen.add(id)
+    ids.push(id)
+  }
+  return ids
 }
 
 export function formatMissedScheduleReason(job: ScheduledJob): string {

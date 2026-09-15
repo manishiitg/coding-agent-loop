@@ -10,6 +10,30 @@ export interface EffectiveLLM extends LLMChoice {
   forcedByLock: boolean
 }
 
+/**
+ * Choose the provider/model shown beside a chat composer.
+ *
+ * Ordinary chats report the runtime attached to their session. A configurable
+ * Builder's manifest selection is authoritative, though: an old session can
+ * remain in the activity cache until the next turn relaunches it on the newly
+ * selected provider/model. This applies equally to AgentWorks workflows and
+ * profile-backed products.
+ */
+export function runtimeStatusLLMChoice(
+  selected: Partial<LLMChoice> | null | undefined,
+  attachedRuntime: Partial<LLMChoice> | null | undefined,
+  selectionIsAuthoritative: boolean,
+): LLMChoice | null {
+  const complete = (choice: Partial<LLMChoice> | null | undefined): LLMChoice | null => {
+    const provider = choice?.provider?.trim() || ''
+    const modelId = choice?.model_id?.trim() || ''
+    return provider && modelId ? { provider, model_id: modelId } : null
+  }
+  const saved = complete(selected)
+  const runtime = complete(attachedRuntime)
+  return selectionIsAuthoritative ? (saved || runtime) : (runtime || saved)
+}
+
 const norm = (value: string | undefined | null) => (value ?? '').trim().toLowerCase()
 
 /**

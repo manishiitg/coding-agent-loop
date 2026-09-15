@@ -1,5 +1,6 @@
 import { agentApi, getApiBaseUrl, getAuthToken } from '../../services/api'
-import type { PlannerFile } from '../../services/api-types'
+import { createProductProject, loadProductProjects, parseProductProjectManifest } from '../../platform/chat/productProjects'
+import { flattenFiles, responseContent, responseFiles, slugifyTitle } from '../../utils/plannerFiles'
 import { loadWorkspacePresentations, parseWorkspacePresentations, type WorkspacePresentation } from '../../platform/presentations/presentationData'
 
 export const VIDEO_PROJECTS_ROOT = 'Chats/Video Studio/projects'
@@ -131,94 +132,19 @@ export type VideoWorkflowStep = {
   routes?: Array<{ id: string; title: string; nextStepId: string }>
 }
 
-type ProductManifest = {
-  schema_version?: unknown
-  product?: unknown
-  id?: unknown
-  title?: unknown
-  description?: unknown
-  session_id?: unknown
-  created_at?: unknown
-  updated_at?: unknown
-}
-
-function responseFiles(response: unknown): PlannerFile[] {
-  if (Array.isArray(response)) return response as PlannerFile[]
-  if (!response || typeof response !== 'object') return []
-  const data = (response as { data?: unknown }).data
-  return Array.isArray(data) ? data as PlannerFile[] : []
-}
-
-function flattenFiles(items: PlannerFile[], result: PlannerFile[] = []): PlannerFile[] {
-  for (const item of items) {
-    result.push(item)
-    if (Array.isArray(item.children)) flattenFiles(item.children, result)
-  }
-  return result
-}
-
-// Keeps the first entry per filepath, preserving listing order. The listing can
-// describe one file from more than one branch of the tree it returns.
-function dedupeByFilepath(files: PlannerFile[]): PlannerFile[] {
-  const seen = new Set<string>()
-  return files.filter((file) => {
-    if (seen.has(file.filepath)) return false
-    seen.add(file.filepath)
-    return true
-  })
-}
-
-function responseContent(response: unknown): { content: string; lastModified?: string } | null {
-  if (!response || typeof response !== 'object') return null
-  const envelope = response as { data?: unknown; content?: unknown; last_modified?: unknown }
-  const value = envelope.data && typeof envelope.data === 'object'
-    ? envelope.data as { content?: unknown; last_modified?: unknown }
-    : envelope
-  if (typeof value.content !== 'string') return null
-  return {
-    content: value.content,
-    lastModified: typeof value.last_modified === 'string' ? value.last_modified : undefined,
-  }
-}
-
 function asString(value: unknown): string {
   return typeof value === 'string' ? value.trim() : ''
 }
 
 export function projectSlug(title: string): string {
-  const slug = title
-    .normalize('NFKD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '')
-    .slice(0, 48)
-  return slug || 'video-project'
+  return slugifyTitle(title, 'video-project')
 }
 
 export function parseProjectManifest(content: string, workspacePath: string, lastModified?: string): VideoProject | null {
-  let raw: ProductManifest
-  try {
-    raw = JSON.parse(content) as ProductManifest
-  } catch {
-    return null
-  }
-  const id = asString(raw.id)
-  const title = asString(raw.title)
-  const sessionId = asString(raw.session_id)
-  if (raw.schema_version !== 1 || raw.product !== VIDEO_PROFILE_ID || !id || !title || !sessionId) return null
-  const createdAt = asString(raw.created_at) || lastModified || new Date(0).toISOString()
-  const updatedAt = lastModified || asString(raw.updated_at) || createdAt
+  const project = parseProductProjectManifest(content, workspacePath, VIDEO_PROFILE_ID, lastModified)
+  if (!project) return null
   return {
-    schemaVersion: 1,
-    product: VIDEO_PROFILE_ID,
-    id,
-    title,
-    description: asString(raw.description),
-    sessionId,
-    workspacePath,
-    createdAt,
-    updatedAt,
+    ...project,
     videos: 0,
   }
 }
@@ -237,67 +163,25 @@ async function projectVideoCount(workspacePath: string): Promise<number> {
 }
 
 export async function loadVideoProjects(): Promise<VideoProject[]> {
-  const response = await agentApi.getPlannerFiles(VIDEO_PROJECTS_ROOT, -1, 2)
-  // The listing returns the requested folder as a node whose children are the
-  // projects, AND each project again as a top-level sibling, so a flatten walks
-  // every product.json twice. Key by filepath: the same physical manifest must
-  // produce one project, or the grid renders duplicate React keys and every
-  // manifest is fetched twice.
-  const manifests = dedupeByFilepath(
-    flattenFiles(responseFiles(response))
-      .filter((file) => file.type !== 'folder' && file.filepath.endsWith('/product.json')),
-  )
-
-  const projects = await Promise.all(manifests.map(async (file) => {
-    try {
-      const response = await agentApi.getPlannerFileContent(file.filepath)
-      const document = responseContent(response)
-      if (!document) return null
-      const workspacePath = file.filepath.replace(/\/product\.json$/, '')
-      const project = parseProjectManifest(document.content, workspacePath, document.lastModified || file.last_modified)
-      if (!project) return null
-      project.videos = await projectVideoCount(workspacePath)
-      return project
-    } catch {
-      return null
-    }
-  }))
-
-  return projects
-    .filter((project): project is VideoProject => project !== null)
-    .sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt))
+  const projects = await loadProductProjects(VIDEO_PROJECTS_ROOT, VIDEO_PROFILE_ID)
+  return Promise.all(projects.map(async (project) => ({
+    ...project,
+    videos: await projectVideoCount(project.workspacePath),
+  })))
 }
 
 export async function createVideoProject(title: string, description: string): Promise<VideoProject> {
-  const id = globalThis.crypto.randomUUID()
-  const sessionId = `video-studio:project:${id}`
-  const workspacePath = `${VIDEO_PROJECTS_ROOT}/${projectSlug(title)}-${id.slice(0, 8)}`
-  const now = new Date().toISOString()
-  const manifest = {
-    schema_version: 1,
+  const project = await createProductProject({
+    root: VIDEO_PROJECTS_ROOT,
     product: VIDEO_PROFILE_ID,
-    id,
-    title: title.trim(),
-    description: description.trim(),
-    session_id: sessionId,
-    created_at: now,
-    updated_at: now,
-  }
-  await agentApi.updatePlannerFile(
-    `${workspacePath}/product.json`,
-    `${JSON.stringify(manifest, null, 2)}\n`,
-    `Create Video Studio project ${title.trim()}`,
-  )
+    title,
+    description,
+    sessionPrefix: 'video-studio:project',
+    slugFallback: 'video-project',
+    commitLabel: 'Create Video Studio project',
+  })
   return {
-    schemaVersion: 1,
-    product: VIDEO_PROFILE_ID,
-    id,
-    title: manifest.title,
-    description: manifest.description,
-    sessionId,
-    workspacePath,
-    createdAt: now,
-    updatedAt: now,
+    ...project,
     videos: 0,
   }
 }

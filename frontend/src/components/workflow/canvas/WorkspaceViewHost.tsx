@@ -13,9 +13,10 @@ import React, {
 import { useShallow } from 'zustand/react/shallow'
 import { ReactFlowProvider } from '@xyflow/react'
 import { FileWorkspacePane } from '../../FileWorkspacePane'
-import { AskAIButton } from '../AskAIButton'
 import { useChatStore } from '../../../stores/useChatStore'
 import { WorkflowToolbar } from './WorkflowToolbar'
+import { AskAIButton } from '../AskAIButton'
+import { getWorkspaceAskAIMessage } from '../workspaceAskAI'
 import { ReportView } from '../ReportViewer'
 import { usePlanData } from '../hooks/usePlanData'
 import { useEvaluationPlanData } from '../hooks/useEvaluationPlanData'
@@ -30,6 +31,7 @@ import type {
   PulseFinalCommandState,
   PulseModuleState,
   PulseReviewFocus,
+  PulseReviewerModule,
   PulseShadowSignalObservation,
   VariablesManifest,
 } from '../../../services/api-types'
@@ -50,6 +52,8 @@ import {
   type WorkflowCanvasProps,
   type WorkflowCanvasRef,
 } from './WorkflowCanvas'
+
+const NO_DISABLED_PULSE_REVIEWERS: PulseReviewerModule[] = []
 
 // Every inspector view is lazy: only the one the user opens is fetched, so the
 // eager bundle carries the flow canvas and nothing else from this list. The
@@ -113,27 +117,7 @@ function FilesBody() {
   const handleCloseFiles = useCallback(() => {
     useWorkflowStore.getState().openWorkspaceView(lastCanvasView)
   }, [lastCanvasView])
-  return <FileWorkspacePane onClose={handleCloseFiles} />
-}
-
-// Every inspector view here only ever shows what's already set up — a
-// schedule, a backup destination, a publish target, a notification channel
-// — with no hint that chat can search for, configure, or explain something
-// that isn't there. skills/mcp/secrets/browser/llm/bots render their own
-// AskAIButton inside WorkflowCapabilitiesPanel's header already (a per-
-// section message fits better there than a generic one here), so they're
-// deliberately absent from this map to avoid a second, redundant button.
-const INSPECTOR_ASK_AI_MESSAGE: Partial<Record<InspectorViewId, string>> = {
-  schedules: "I want to set up or change a schedule or webhook for this workflow. Ask me what should run, what should trigger it, and any timing, route, or authentication requirements.",
-  notify: "I want to change who or where this workflow notifies (email, Slack, WhatsApp). Ask me what event and who should be notified.",
-  backup: "I want to set up or change a backup destination for this workflow. Ask me what should be backed up and where.",
-  publish: "I want to publish this workflow somewhere it isn't published yet. Ask me what the target is.",
-  folders: "I want this workflow to read or write a folder it doesn't have access to yet. Ask me which one and what for.",
-  access: "I want to change who can access or run this workflow. Ask me who and what level of access.",
-  database: "I want to inspect or change something in this workflow's database that isn't visible here. Ask me what.",
-  knowledgebase: "I want to add or find something in this workflow's knowledgebase. Ask me what topic.",
-  learnings: "I want to see or change how this workflow learned to do something. Ask me which step.",
-  costs: "I want to understand or reduce this workflow's cost. Ask me what's driving it or what to change.",
+  return <FileWorkspacePane hideManagedEntriesByDefault onClose={handleCloseFiles} />
 }
 
 function InspectorBody({ workspacePath, presetQueryId }: { workspacePath: string | null; presetQueryId: string | null }) {
@@ -146,21 +130,6 @@ function InspectorBody({ workspacePath, presetQueryId }: { workspacePath: string
   const closeInspector = useCallback(() => {
     useWorkflowStore.getState().setShowWorkspacePane(false)
   }, [])
-
-  const askAIMessage = isInspectorView(workflowWorkspaceView) ? INSPECTOR_ASK_AI_MESSAGE[workflowWorkspaceView] : undefined
-  // Rendered inside each view's OWN header row (as `headerAction`), never as
-  // an overlay on top of it: several inspector views (database, knowledgebase,
-  // notify, schedules, costs, access) already put their own refresh/tabs
-  // control in that same top-right corner, and a floating overlay used to sit
-  // directly on top of it, visually merging the two into one unreadable icon.
-  const askAIHeaderAction = askAIMessage ? (
-    <AskAIButton
-      workspacePath={workspacePath}
-      message={askAIMessage}
-      iconOnly
-      className="flex items-center justify-center rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-muted hover:text-primary"
-    />
-  ) : undefined
 
   // One explicit branch per inspector view. The `default` is a compile-time
   // exhaustiveness check: a view added to the registry without a branch here
@@ -176,7 +145,6 @@ function InspectorBody({ workspacePath, presetQueryId }: { workspacePath: string
             workspacePath={workspacePath}
             runFolders={runFolderNames}
             selectedRunFolder={selectedRunFolder}
-            headerAction={askAIHeaderAction}
           />
         )
       case 'execution-logs':
@@ -188,15 +156,16 @@ function InspectorBody({ workspacePath, presetQueryId }: { workspacePath: string
             workspacePath={workspacePath}
             runFolder={selectedRunFolder}
             runFolders={runFolderNames}
+            runFolderInfos={workspace.state?.run_folders || []}
             onRefreshRunFolders={refreshWorkspaceState}
           />
         )
       case 'learnings':
-        return <LearningsView workspacePath={workspacePath} plan={plan} headerAction={askAIHeaderAction} />
+        return <LearningsView workspacePath={workspacePath} plan={plan} />
       case 'knowledgebase':
-        return <KnowledgebaseView workspacePath={workspacePath} headerAction={askAIHeaderAction} />
+        return <KnowledgebaseView workspacePath={workspacePath} />
       case 'database':
-        return <DatabaseView workspacePath={workspacePath} headerAction={askAIHeaderAction} />
+        return <DatabaseView workspacePath={workspacePath} />
       case 'evaluation':
         return (
           <div className="h-full overflow-y-auto">
@@ -209,11 +178,10 @@ function InspectorBody({ workspacePath, presetQueryId }: { workspacePath: string
             embedded
             workflowScope={{ presetQueryId: presetQueryId || undefined, workspacePath: workspacePath || undefined }}
             onClose={closeInspector}
-            headerAction={askAIHeaderAction}
           />
         )
       case 'folders':
-        return <WorkflowFolderAccessView workspacePath={workspacePath} headerAction={askAIHeaderAction} />
+        return <WorkflowFolderAccessView workspacePath={workspacePath} />
       case 'pulse':
         return (
           <PulseView
@@ -221,6 +189,9 @@ function InspectorBody({ workspacePath, presetQueryId }: { workspacePath: string
             monitorOn={pulse.monitorOn}
             monitorSaving={pulse.monitorSaving}
             onToggleMonitor={pulse.toggleMonitor}
+            disabledReviewModules={pulse.disabledReviewModules}
+            reviewModuleSaving={pulse.reviewModuleSaving}
+            onToggleReviewModule={pulse.toggleReviewModule}
             moduleStates={pulse.moduleStates}
             finalCommandStates={pulse.finalCommandStates}
             reviewFocuses={pulse.reviewFocuses}
@@ -232,13 +203,13 @@ function InspectorBody({ workspacePath, presetQueryId }: { workspacePath: string
           />
         )
       case 'backup':
-        return <WorkflowBackupView workspacePath={workspacePath} headerAction={askAIHeaderAction} />
+        return <WorkflowBackupView workspacePath={workspacePath} />
       case 'publish':
-        return <WorkflowPublishView workspacePath={workspacePath} headerAction={askAIHeaderAction} />
+        return <WorkflowPublishView workspacePath={workspacePath} />
       case 'notify':
-        return <WorkflowNotificationView workspacePath={workspacePath} headerAction={askAIHeaderAction} />
+        return <WorkflowNotificationView workspacePath={workspacePath} />
       case 'access':
-        return <WorkflowAccessView workspacePath={workspacePath} headerAction={askAIHeaderAction} />
+        return <WorkflowAccessView workspacePath={workspacePath} />
       case 'playbooks':
       case 'skills':
       case 'mcp':
@@ -335,14 +306,28 @@ export const WorkspaceViewHost = React.memo(forwardRef<WorkflowCanvasRef, Workfl
     const wf = state.workflows.find(w => w.workspace_path === workspacePath)
     return {
       enabled: wf?.manifest.pulse?.enabled,
+      disabledReviewModules: wf?.manifest.pulse?.disabled_review_modules,
       legacyEnabled: wf?.manifest.schedules?.some(schedule => schedule.pulse_review_only && schedule.enabled),
     }
   }))
+  const disabledReviewModules = pulseConfig.disabledReviewModules ?? NO_DISABLED_PULSE_REVIEWERS
   const monitorOn = !!(pulseConfig.enabled || pulseConfig.legacyEnabled)
   const updateWorkflowManifest = useWorkflowManifestStore(state => state.updateWorkflow)
   const { monitorSaving, toggleMonitor } = usePulseToggle(
     workspacePath, monitorOn, updateWorkflowManifest, useChatStore.getState().addToast,
   )
+  const [reviewModuleSaving, setReviewModuleSaving] = useState<PulseReviewerModule | null>(null)
+  const toggleReviewModule = useCallback((module: PulseReviewerModule) => {
+    if (!workspacePath || reviewModuleSaving) return
+    const disabled = new Set(disabledReviewModules)
+    const enabling = disabled.delete(module)
+    if (!enabling) disabled.add(module)
+    setReviewModuleSaving(module)
+    void updateWorkflowManifest(workspacePath, { pulse_disabled_review_modules: [...disabled] })
+      .then(() => useChatStore.getState().addToast(`${module === 'technical_review' ? 'Health' : module === 'architecture_review' ? 'Architecture' : 'Strategy'} reviewer turned ${enabling ? 'on' : 'off'}`, 'success'))
+      .catch(error => useChatStore.getState().addToast(error instanceof Error ? error.message : 'Could not update Pulse reviewers', 'error'))
+      .finally(() => setReviewModuleSaving(null))
+  }, [workspacePath, reviewModuleSaving, disabledReviewModules, updateWorkflowManifest])
 
   const [pulseModuleStates, setPulseModuleStates] = useState<PulseModuleState[]>([])
   const [pulseFinalCommandStates, setPulseFinalCommandStates] = useState<PulseFinalCommandState[]>([])
@@ -439,6 +424,9 @@ export const WorkspaceViewHost = React.memo(forwardRef<WorkflowCanvasRef, Workfl
     monitorOn,
     monitorSaving,
     toggleMonitor,
+    disabledReviewModules,
+    reviewModuleSaving,
+    toggleReviewModule,
     moduleStates: pulseModuleStates,
     finalCommandStates: pulseFinalCommandStates,
     reviewFocuses: pulseReviewFocuses,
@@ -448,7 +436,7 @@ export const WorkspaceViewHost = React.memo(forwardRef<WorkflowCanvasRef, Workfl
     overview: pulseOverview,
     refresh: refreshPulseModuleStates,
   }), [
-    monitorOn, monitorSaving, toggleMonitor, pulseModuleStates, pulseFinalCommandStates,
+    monitorOn, monitorSaving, toggleMonitor, disabledReviewModules, reviewModuleSaving, toggleReviewModule, pulseModuleStates, pulseFinalCommandStates,
     pulseReviewFocuses, pulseReviewFocusSelections, pulseStatusError, pulseStatusLoading,
     pulseOverview, refreshPulseModuleStates,
   ])
@@ -677,9 +665,19 @@ export const WorkspaceViewHost = React.memo(forwardRef<WorkflowCanvasRef, Workfl
           data-ui-workspace={embeddedPlanOnly ? undefined : workspacePath ?? undefined}
           data-ui-view={effectiveView}
           data-testid="tour-workflow-canvas-pane"
-          className={`${gridToolbar ? 'flex-1 col-start-1 row-start-2 md:col-start-2' : 'flex-1'} ${paneClassName} min-h-0 ${isInspectorKind ? 'overflow-hidden border-l border-border' : ''}`}
+          className={`${gridToolbar ? 'flex-1 col-start-1 row-start-2 md:col-start-2' : 'flex-1'} ${paneClassName} flex min-h-0 flex-col ${isInspectorKind ? 'overflow-hidden border-l border-border' : ''}`}
         >
-          {body}
+          {workspacePath && !toolbarOnly && !embeddedPlanOnly && (
+            <div data-ui-view-assistant className="flex h-9 shrink-0 items-center justify-between gap-3 border-b border-border bg-background px-3">
+              <span className="truncate text-xs font-medium text-muted-foreground">{getWorkspaceView(effectiveView).label}</span>
+              <AskAIButton
+                workspacePath={workspacePath}
+                message={getWorkspaceAskAIMessage(effectiveView)}
+                className="flex shrink-0 items-center gap-1.5 rounded-md border border-border px-2.5 py-1 text-xs font-medium text-muted-foreground transition-colors hover:border-primary/40 hover:text-primary"
+              />
+            </div>
+          )}
+          <div className="min-h-0 flex-1">{body}</div>
           {!isInspectorKind && !toolbarOnly && <span hidden data-ui-view-mounted />}
         </div>
       </div>

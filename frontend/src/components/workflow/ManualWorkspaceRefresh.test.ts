@@ -25,6 +25,6 @@ describe('manual workflow workspace refresh', () => {
     expect(canvas).toContain('loadPlanRefresh(),')
     expect(canvas).toContain('refreshEvaluationPlan(),')
     expect(canvas).toContain("addToast('Plan reloaded', 'success')")
-    expect(report).toContain('aria-label="Refresh report"')
+    expect(report).toContain('aria-label="Refresh dashboard"')
   })
 })

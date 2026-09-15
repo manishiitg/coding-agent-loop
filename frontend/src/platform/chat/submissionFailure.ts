@@ -21,6 +21,11 @@ function statusText(value: unknown): string | undefined {
   return firstText(value)
 }
 
+function machineErrorCode(value: unknown): string | undefined {
+  const text = firstText(value)
+  return text && /^[a-z][a-z0-9_]*$/.test(text) ? text : undefined
+}
+
 // Axios rejects non-2xx responses and puts the useful server payload under
 // response.data. Convert that transport shape into the same event hints used by
 // restored/SSE failures so the product error card can show safe diagnostics.
@@ -30,10 +35,12 @@ export function submissionFailure(error: unknown): SubmissionFailure {
   const responseData = response?.data
   const data = asRecord(responseData)
   const nestedError = asRecord(data?.error)
+  const responseErrorText = firstText(typeof data?.error === 'string' ? data.error : undefined)
   const responseMessage = firstText(
     data?.message,
     nestedError?.message,
     typeof responseData === 'string' ? responseData : undefined,
+    responseErrorText,
   )
   const fallbackMessage = firstText(
     typeof error === 'string' ? error : undefined,
@@ -49,7 +56,7 @@ export function submissionFailure(error: unknown): SubmissionFailure {
 
   return {
     message: responseMessage || fallbackMessage,
-    code: firstText(data?.code, data?.error_code, typeof data?.error === 'string' ? data.error : undefined, nestedError?.code),
+    code: firstText(data?.code, data?.error_code, machineErrorCode(data?.error), nestedError?.code),
     provider: firstText(data?.provider, nestedError?.provider),
     technicalDetails,
   }

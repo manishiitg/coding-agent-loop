@@ -35,51 +35,16 @@ func codingAgentPersistentInteractiveFlags(provider string, allowPersistentInter
 	}
 }
 
-// codingAgentUsesStructuredTransportForChat resolves the transport for a
-// user-facing chat. Cursor and Muse normally prefer their structured JSON
-// protocols, but the interactive Workflow Builder deliberately uses retained
-// tmux so a user can inspect the terminal and steer the active turn.
-// Workflow execution does not use this helper: steps and background execution
-// remain force-structured in applyWorkflowTransportToAgentConfig.
-func codingAgentUsesStructuredTransportForChat(provider, policy string, isInteractiveWorkflowBuilder bool) bool {
-	if isInteractiveWorkflowBuilder {
-		trimmed := strings.TrimSpace(provider)
-		if strings.EqualFold(trimmed, string(llm.ProviderCursorCLI)) ||
-			strings.EqualFold(trimmed, string(llm.ProviderMuseCLI)) {
-			return false
-		}
-	}
-	return codingAgentUsesStructuredTransportForPolicy(provider, policy)
-}
-
-// codingAgentUsesStructuredTransport is the product-level default for coding
-// providers whose native CLI JSON protocol is more reliable than terminal UI
-// automation. Cursor conversations retain continuity with the provider's
-// native --resume session ID; they do not use a persistent tmux pane.
-//
-// Muse keeps the structured default outside the interactive builder: its
-// exec --json lane is the reliable one-shot path for workflows and
-// background execution. Interactive builder chats opt into the tmux lane via
-// codingAgentUsesStructuredTransportForChat above, where the adapter's
-// persistent pool owns a live pane the user can inspect and steer.
-func codingAgentUsesStructuredTransport(provider string) bool {
-	normalized := strings.ToLower(strings.TrimSpace(provider))
-	return normalized == strings.ToLower(string(llm.ProviderCursorCLI)) ||
-		normalized == strings.ToLower(string(llm.ProviderMuseCLI))
-}
-
-// codingAgentUsesStructuredTransportForPolicy resolves the product/profile
-// transport setting before the legacy provider default. A profile's explicit
-// policy is authoritative; "auto" retains the shared application default.
-func codingAgentUsesStructuredTransportForPolicy(provider, policy string) bool {
-	switch strings.ToLower(strings.TrimSpace(policy)) {
-	case "structured":
-		return true
-	case "tmux":
+// codingAgentUsesStructuredTransportForChat applies AgentWorks' shared
+// use-case rule to every product: a human-facing coding-agent conversation is
+// retained in tmux; non-interactive/background execution uses structured JSON.
+// A product profile may choose tools, skills and models, but it does not create
+// a second transport policy for the same kind of chat.
+func codingAgentUsesStructuredTransportForChat(provider string, isInteractiveChat bool) bool {
+	if _, ok := llm.GetCodingAgentProviderContract(llm.Provider(strings.TrimSpace(provider)), ""); !ok {
 		return false
-	default:
-		return codingAgentUsesStructuredTransport(provider)
 	}
+	return !isInteractiveChat
 }
 
 func codingAgentRequestAllowsPersistentInteractive(req *QueryRequest, sessionID string) bool {

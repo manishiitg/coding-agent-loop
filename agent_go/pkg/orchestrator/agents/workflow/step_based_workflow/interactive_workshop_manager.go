@@ -63,7 +63,8 @@ func parseWorkshopIterationNumber(iteration string) int {
 		return 0
 	}
 	trimmed := strings.TrimSpace(iteration)
-	trimmed = strings.TrimSuffix(strings.TrimPrefix(trimmed, "iteration-"), "-hook")
+	trimmed = strings.TrimPrefix(trimmed, "iteration-")
+	trimmed = strings.TrimSuffix(strings.TrimSuffix(trimmed, "-hook"), "-sched")
 	if n, err := strconv.Atoi(trimmed); err == nil {
 		return n
 	}
@@ -173,6 +174,27 @@ func parseBackgroundTaskInstruction(args map[string]interface{}) (string, error)
 		return "", fmt.Errorf("instruction must contain task instructions, not an empty value or null; when using the HTTP bridge, check success and decode result before extracting guidance")
 	}
 	return instruction, nil
+}
+
+func stringSliceArgument(args map[string]interface{}, key string) ([]string, bool) {
+	raw, supplied := args[key]
+	if !supplied || raw == nil {
+		return nil, supplied
+	}
+	if values, ok := raw.([]string); ok {
+		return append([]string(nil), values...), true
+	}
+	values, ok := raw.([]interface{})
+	if !ok {
+		return nil, true
+	}
+	result := make([]string, 0, len(values))
+	for _, value := range values {
+		if text, ok := value.(string); ok {
+			result = append(result, text)
+		}
+	}
+	return result, true
 }
 
 func parseBackgroundMessageSequence(args map[string]interface{}) ([]backgroundMessageSequenceItem, error) {
@@ -1145,7 +1167,7 @@ func (iwm *InteractiveWorkshopManager) inPulseLifecycleTurn() bool {
 // and skills. A read-only-access identity is always pinned to "run" by the
 // caller (cmd/server); anyone else genuinely in "run" mode (Bot Connector
 // routes, scheduled runs, the agent-profile runtime) gets the same reduced
-// tool set on purpose. See RCA #2 in docs/bugs/pulse_platform/plat-262.md.
+// tool set on purpose. See RCA #2 in docs/bugs/pulse_platform/security-sandbox/plat-262.md.
 func (iwm *InteractiveWorkshopManager) isRunModeRestricted() bool {
 	return canonicalWorkshopMode(iwm.workshopModeOverride) == "run"
 }
@@ -2296,6 +2318,9 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 			}
 
 			iteration := "iteration-0"
+			if iwm.workshopConfig != nil && iwm.workshopConfig.ScheduleInvocation != nil {
+				iteration = iwm.workshopConfig.ScheduleInvocation.RunFolder
+			}
 
 			// Build run_folder from iteration + group folder name
 			// Refresh manifest from file to avoid stale group data
@@ -2433,6 +2458,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 			}
 
 			execID := fmt.Sprintf("exec-%s-%d", stepID, time.Now().UnixNano())
+			execOpts.ExecutionID = execID
 			execCtx, cancel, ctxErr := iwm.newExecContext(ctx)
 			if ctxErr != nil {
 				return "Session was stopped — execution skipped", nil
@@ -3082,7 +3108,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 					"description": "Character offset into the saved scripted execution log; use next_log_offset to read more.",
 				},
 				"iteration": map[string]interface{}{
-					"type": "string", "pattern": "^iteration-[0-9]+(-hook)?$",
+					"type": "string", "pattern": "^iteration-[0-9]+(?:-(?:hook|sched))?$",
 					"description": "Run iteration to inspect, default iteration-0.",
 				},
 				"step_id": map[string]interface{}{
@@ -3111,7 +3137,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 
 			iteration := "iteration-0"
 			if value, ok := args["iteration"].(string); ok && value != "" {
-				if !regexp.MustCompile(`^iteration-[0-9]+(-hook)?$`).MatchString(value) {
+				if !regexp.MustCompile(`^iteration-[0-9]+(?:-(?:hook|sched))?$`).MatchString(value) {
 					return "iteration must be iteration-<number>", nil
 				}
 				iteration = value
@@ -4582,16 +4608,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 			}
 
 			// --- Owner-approved external folders ---
-			sb.WriteString("\n### Attached Folders\n")
-			grants := workflowFolderAccess(ctrl.GetWorkspacePath())
-			if len(grants) == 0 {
-				sb.WriteString("No external folders are attached. Use Workflow toolbar → Attached folders; an agent cannot approve a host path for itself.\n")
-			} else {
-				for _, grant := range grants {
-					key := strings.Trim(workflowFolderEnvUnsafe.ReplaceAllString(strings.ToUpper(strings.TrimSpace(grant.Alias)), "_"), "_")
-					sb.WriteString(fmt.Sprintf("- **%s** (`%s`) — %s — `$WORKFLOW_FOLDER_%s`\n", grant.Alias, grant.ID, grant.Access, key))
-				}
-			}
+			sb.WriteString(workflowtypes.FolderGrantsPrompt(workflowFolderAccess(ctrl.GetWorkspacePath()), "WORKFLOW_FOLDER_", "No external folders are attached. Use Workflow toolbar → Attached folders; an agent cannot approve a host path for itself.\n"))
 			if requests := workflowFolderAccessRequests(ctrl.GetWorkspacePath()); len(requests) > 0 {
 				sb.WriteString("Pending requests:\n")
 				for _, request := range requests {
@@ -4955,7 +4972,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 		// PLAT-262: skip update_workflow_config registration for read-only access
 	} else if err := mcpAgent.RegisterCustomTool(
 		"update_workflow_config",
-		"Update workflow configuration: add/remove MCP servers, workflow-level tool allowlist entries, skills and secrets; save workflow-scoped notification content instructions; configure a one-way Slack Incoming Webhook by encrypted secret name; set browser mode and optional specialized multi-profile CDP ports; set run retention; or activate an owner-approved Strategy Auditor + Goal Advisor specialization. Use get_workflow_config to inspect current workflow settings and list_skills to discover installed skill folder names. Most changes take effect immediately for subsequent steps; changing cdp_ports or Slack webhook configuration takes effect on the next workflow execution.",
+		"Update workflow configuration: add/remove MCP servers, workflow-level tool allowlist entries, skills and secrets; save workflow-scoped notification content instructions; configure a one-way Slack Incoming Webhook by encrypted secret name; set browser mode and optional specialized multi-profile CDP ports; set run retention; disable selected Pulse reviewers; or activate an owner-approved Strategy Auditor + Goal Advisor specialization. Use get_workflow_config to inspect current workflow settings and list_skills to discover installed skill folder names. Most changes take effect immediately for subsequent steps; changing cdp_ports, Pulse reviewer selection, or Slack webhook configuration takes effect on the next workflow execution.",
 		map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
@@ -5066,7 +5083,13 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 					"type":        "integer",
 					"minimum":     1,
 					"maximum":     maxRunRetentionCount,
-					"description": "Number of backup run/eval iterations to keep, excluding active iteration-0. Defaults to 3 when omitted. Raise this for workflows whose Pulse or Goal Advisor reviews need a wider evidence window.",
+					"description": "Number of completed run/eval folders to keep independently for plain Builder archives, saved-schedule -sched runs, and webhook -hook runs, excluding active iteration-0. Defaults to 10 when omitted. Raise this for workflows whose Pulse or Goal Advisor reviews need a wider evidence window.",
+				},
+				"pulse_disabled_review_modules": map[string]interface{}{
+					"type":        "array",
+					"items":       map[string]interface{}{"type": "string", "enum": []string{"technical_review", "architecture_review", "strategic_review"}},
+					"uniqueItems": true,
+					"description": "Replace the complete list of Pulse reviewers disabled by the workflow owner. Disabled reviewers are skipped in future full Pulse runs while their history remains visible. Use technical_review for Health, architecture_review for Architecture, and strategic_review for Strategy. Pass [] to enable all three. This does not turn Pulse itself off or change per-schedule off/basic/full policy.",
 				},
 				"disable_parallel_tool_execution": map[string]interface{}{
 					"type":        "boolean",
@@ -6057,7 +6080,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				}
 
 				anyChanged = true
-				sb.WriteString(fmt.Sprintf("\n### Run Retention (updated)\nKeeping %d backup run/eval iteration(s), excluding active iteration-0.\n", count))
+				sb.WriteString(fmt.Sprintf("\n### Run Retention (updated)\nKeeping %d completed run/eval folder(s) independently for Builder archives, saved schedules, and webhooks, excluding active iteration-0.\n", count))
 				logger.Info(fmt.Sprintf("Updated workflow run_retention_count=%d", count))
 			}
 
@@ -6133,6 +6156,44 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				logger.Info(fmt.Sprintf("Updated workflow execution_defaults: %v", summary))
 			}
 
+			if _, provided := args["pulse_disabled_review_modules"]; provided {
+				disabled := extractStringArray("pulse_disabled_review_modules")
+				allowed := map[string]bool{"technical_review": true, "architecture_review": true, "strategic_review": true}
+				for _, module := range disabled {
+					if !allowed[module] {
+						return fmt.Sprintf("Error: unsupported Pulse reviewer %q; choose technical_review, architecture_review, or strategic_review.", module), nil
+					}
+				}
+				content, err := iwm.controller.ReadWorkspaceFile(ctx, "workflow.json")
+				if err != nil {
+					return "", err
+				}
+				var manifest map[string]interface{}
+				if err := json.Unmarshal([]byte(content), &manifest); err != nil {
+					return fmt.Sprintf("Failed to parse workflow.json: %v", err), nil
+				}
+				pulse, _ := manifest["pulse"].(map[string]interface{})
+				if pulse == nil {
+					pulse = map[string]interface{}{}
+				}
+				if len(disabled) == 0 {
+					delete(pulse, "disabled_review_modules")
+				} else {
+					pulse["disabled_review_modules"] = disabled
+				}
+				manifest["pulse"] = pulse
+				manifest["updated_at"] = time.Now().UTC().Format(time.RFC3339)
+				updated, err := json.MarshalIndent(manifest, "", "  ")
+				if err != nil {
+					return "", err
+				}
+				if err := iwm.controller.WriteWorkspaceFile(ctx, "workflow.json", string(updated)); err != nil {
+					return "", err
+				}
+				anyChanged = true
+				sb.WriteString(fmt.Sprintf("\n### Pulse reviewers (updated)\n- Disabled: %v\n- The change applies to future full Pulse runs; prior review history remains available.\n", disabled))
+			}
+
 			// --- Owner-approved advisor specialization ---
 			if raw, ok := args["advisor_specialization_approval_input_id"]; ok && raw != nil {
 				inputID, _ := raw.(string)
@@ -6191,7 +6252,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 			}
 
 			if !anyChanged {
-				return "No changes applied. Provide at least one of: knowledgebase_sources, add_servers, remove_servers, add_tools, remove_tools, add_skills, remove_skills, add_secrets, remove_secrets, run_notification_instructions, pulse_notification_instructions, run_notification_channels, pulse_notification_channels, slack_webhook_secret_name, browser_mode, cdp_ports, run_retention_count, advisor_specialization_approval_input_id.", nil
+				return "No changes applied. Provide at least one of: knowledgebase_sources, add_servers, remove_servers, add_tools, remove_tools, add_skills, remove_skills, add_secrets, remove_secrets, run_notification_instructions, pulse_notification_instructions, run_notification_channels, pulse_notification_channels, slack_webhook_secret_name, browser_mode, cdp_ports, run_retention_count, pulse_disabled_review_modules, advisor_specialization_approval_input_id.", nil
 			}
 
 			// Persist config changes to workflow.json manifest (file-backed)
@@ -6341,7 +6402,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 		// PLAT-262: skip create_schedule registration for read-only access
 	} else if err := mcpAgent.RegisterCustomTool(
 		"create_schedule",
-		"Create a new cron schedule for this workflow. Workflow schedules use mode='workshop' with workshop_mode='run'. Messages are optional; when omitted, the scheduler asks Run mode to execute the full workflow. Before adding, inspect existing schedules and choose review frequency using token cost and accumulated-run evidence. Require pulse_mode and pulse_mode_reason for every schedule: off has no Pulse actions, basic finalizes backup/report/notification only, and full includes Gate, drift review, review+fix, and finalization. For the full contract (collision/dependency policy design, when direct messages vs. route_selections is correct, resume_previous tradeoffs): read_skill(skills=[{\"name\":\"builder-reference\",\"path\":\"references/schedules.md\"}]).",
+		"Create a new cron schedule for this workflow. Workflow schedules use mode='workshop' with workshop_mode='workshop'; read-only access is pinned to Run by the server. Messages are optional; when omitted, the scheduler asks the Builder to execute the full workflow. Before adding, inspect existing schedules and choose review frequency using token cost and accumulated-run evidence. Require pulse_mode and pulse_mode_reason for every schedule: off has no Pulse actions, basic finalizes backup/report/notification only, and full includes Gate, drift review, review+fix, and finalization. For the full contract (collision/dependency policy design, when direct messages vs. route_selections is correct, resume_previous tradeoffs): read_skill(skills=[{\"name\":\"builder-reference\",\"path\":\"references/schedules.md\"}]).",
 		map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
@@ -6383,8 +6444,8 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				},
 				"workshop_mode": map[string]interface{}{
 					"type":        "string",
-					"description": "Run mode is the only supported value for new schedules. Pulse selects maintenance and Goal Advisor work after runs.",
-					"enum":        []string{"run"},
+					"description": "Workshop is the supported value for writable scheduled sessions; read-only access is pinned to Run by the server.",
+					"enum":        []string{"workshop"},
 				},
 				"resume_previous": map[string]interface{}{
 					"type":        "boolean",
@@ -6407,13 +6468,24 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 					"type": "string", "enum": []string{"skip", "queue_latest", "retry", "coalesce"},
 					"description": "What to do if this workflow is already running: skip discards; queue_latest keeps only the newest; retry preserves the first blocked occurrence; coalesce combines repeated occurrences into one catch-up run.",
 				},
+				"concurrency_mode": map[string]interface{}{
+					"type": "string", "enum": []string{"sequential", "parallel"},
+					"description": "Defaults to sequential. Set parallel only after the human explicitly accepts that shared workflow DB/KB/learnings/reports/planning/browser state may conflict or be overwritten and external actions may be duplicated.",
+				},
+				"parallel_risk_acknowledged": map[string]interface{}{
+					"type": "boolean", "description": "Required true with concurrency_mode=parallel. Set only after explicitly disclosing the shared-state overwrite and duplicate-action risks and receiving human approval.",
+				},
 				"max_start_delay_minutes": map[string]interface{}{
 					"type": "integer", "minimum": 1,
 					"description": "Maximum age of a queued occurrence before it expires.",
 				},
 				"after_schedule_id": map[string]interface{}{
 					"type":        "string",
-					"description": "Optional prerequisite schedule ID. This schedule binds to that schedule's durable occurrence on the same local date.",
+					"description": "Legacy singular prerequisite schedule ID. Prefer after_schedule_ids for new schedules.",
+				},
+				"after_schedule_ids": map[string]interface{}{
+					"type": "array", "items": map[string]interface{}{"type": "string"},
+					"description": "Optional prerequisite schedule IDs. This schedule waits for every listed schedule's durable occurrence on the same local date.",
 				},
 				"after_terminal_status": map[string]interface{}{
 					"type": "string", "enum": []string{"completed", "any_terminal"},
@@ -6471,6 +6543,9 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				}
 			}
 			workshopMode, _ := args["workshop_mode"].(string)
+			if strings.TrimSpace(workshopMode) == "" {
+				workshopMode = "workshop"
+			}
 			directMessagesReason, _ := args["direct_messages_reason"].(string)
 			var resumePrevious *bool
 			if raw, ok := args["resume_previous"]; ok && raw != nil {
@@ -6498,7 +6573,10 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 			policy.PulseModeReason, _ = args["pulse_mode_reason"].(string)
 			policy.ExecutionMode, _ = args["execution_mode"].(string)
 			policy.CollisionPolicy, _ = args["collision_policy"].(string)
+			policy.ConcurrencyMode, _ = args["concurrency_mode"].(string)
+			policy.ParallelRiskAcknowledged, _ = args["parallel_risk_acknowledged"].(bool)
 			policy.AfterScheduleID, _ = args["after_schedule_id"].(string)
+			policy.AfterScheduleIDs, _ = stringSliceArgument(args, "after_schedule_ids")
 			policy.AfterTerminalStatus, _ = args["after_terminal_status"].(string)
 			policy.DependencyDeadline, _ = args["dependency_deadline"].(string)
 			if value, ok := args["max_start_delay_minutes"].(float64); ok {
@@ -6519,7 +6597,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 		// PLAT-262: skip create_calendar_schedule registration for read-only access
 	} else if err := mcpAgent.RegisterCustomTool(
 		"create_calendar_schedule",
-		"Create a dated calendar schedule for this workflow, such as a full-month Instagram content calendar. Inspect existing schedules and choose pulse_mode and pulse_mode_reason using review frequency, token cost and accumulated-run evidence. Use this when the user provides specific dates/times instead of a repeating cron pattern. Workflow calendar schedules use mode='workshop' for the workflow-phase transport and workshop_mode='run' for normal execution. For the full contract: read_skill(skills=[{\"name\":\"builder-reference\",\"path\":\"references/schedules.md\"}]).",
+		"Create a dated calendar schedule for this workflow, such as a full-month Instagram content calendar. Inspect existing schedules and choose pulse_mode and pulse_mode_reason using review frequency, token cost and accumulated-run evidence. Use this when the user provides specific dates/times instead of a repeating cron pattern. Workflow calendar schedules use mode='workshop' and workshop_mode='workshop'; read-only access is pinned to Run by the server. For the full contract: read_skill(skills=[{\"name\":\"builder-reference\",\"path\":\"references/schedules.md\"}]).",
 		map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
@@ -6541,10 +6619,22 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 						"required": []string{"date", "time"},
 					},
 				},
-				"direct_messages_reason": map[string]interface{}{"type": "string", "description": "Required when default or per-item messages form a direct procedure; explain why it is schedule-specific."},
-				"mode":                   map[string]interface{}{"type": "string", "description": "Execution mode. Only 'workshop' is supported for workflow schedules; legacy 'workflow' input is normalized to 'workshop'.", "enum": []string{"workshop"}},
-				"messages":               map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "string"}, "description": "Optional default workshop messages for all items. Omit for the default full-workflow run message."},
-				"workshop_mode":          map[string]interface{}{"type": "string", "description": "Run mode is the only supported value for new schedules; Pulse selects maintenance after runs.", "enum": []string{"run"}},
+				"direct_messages_reason":     map[string]interface{}{"type": "string", "description": "Required when default or per-item messages form a direct procedure; explain why it is schedule-specific."},
+				"mode":                       map[string]interface{}{"type": "string", "description": "Execution mode. Only 'workshop' is supported for workflow schedules; legacy 'workflow' input is normalized to 'workshop'.", "enum": []string{"workshop"}},
+				"messages":                   map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "string"}, "description": "Optional default workshop messages for all items. Omit for the default full-workflow run message."},
+				"workshop_mode":              map[string]interface{}{"type": "string", "description": "Workshop is the supported value for writable scheduled sessions; read-only access is pinned to Run by the server.", "enum": []string{"workshop"}},
+				"collision_policy":           map[string]interface{}{"type": "string", "enum": []string{"skip", "queue_latest", "retry", "coalesce"}, "description": "What to do if the workflow is busy when a calendar item is due."},
+				"concurrency_mode":           map[string]interface{}{"type": "string", "enum": []string{"sequential", "parallel"}, "description": "Defaults to sequential. Parallel requires explicit human approval after disclosing shared-state overwrite and duplicate-action risks."},
+				"parallel_risk_acknowledged": map[string]interface{}{"type": "boolean", "description": "Required true with concurrency_mode=parallel; set only after explicit human approval."},
+				"max_start_delay_minutes": map[string]interface{}{
+					"type": "integer", "minimum": 1, "description": "Maximum age of a queued calendar occurrence before it expires.",
+				},
+				"after_schedule_ids": map[string]interface{}{
+					"type": "array", "items": map[string]interface{}{"type": "string"}, "description": "Prerequisite schedule IDs whose same-day occurrences must all release first.",
+				},
+				"after_terminal_status": map[string]interface{}{"type": "string", "enum": []string{"completed", "any_terminal"}, "description": "Which prerequisite outcomes release this schedule."},
+				"after_delay_minutes":   map[string]interface{}{"type": "integer", "minimum": 0, "description": "Delay after every prerequisite terminal receipt."},
+				"dependency_deadline":   map[string]interface{}{"type": "string", "description": "Optional local HH:MM deadline for prerequisite release."},
 			},
 			"required": []string{"name", "timezone", "calendar_items", "group_names", "pulse_mode", "pulse_mode_reason"},
 		},
@@ -6596,10 +6686,25 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				}
 			}
 			workshopMode, _ := args["workshop_mode"].(string)
+			if strings.TrimSpace(workshopMode) == "" {
+				workshopMode = "workshop"
+			}
 			directMessagesReason, _ := args["direct_messages_reason"].(string)
 			policy := ScheduleRuntimePolicy{}
 			policy.PulseMode, _ = args["pulse_mode"].(string)
 			policy.PulseModeReason, _ = args["pulse_mode_reason"].(string)
+			policy.CollisionPolicy, _ = args["collision_policy"].(string)
+			policy.ConcurrencyMode, _ = args["concurrency_mode"].(string)
+			policy.ParallelRiskAcknowledged, _ = args["parallel_risk_acknowledged"].(bool)
+			policy.AfterScheduleIDs, _ = stringSliceArgument(args, "after_schedule_ids")
+			policy.AfterTerminalStatus, _ = args["after_terminal_status"].(string)
+			policy.DependencyDeadline, _ = args["dependency_deadline"].(string)
+			if value, ok := args["max_start_delay_minutes"].(float64); ok {
+				policy.MaxStartDelayMinutes = int(value)
+			}
+			if value, ok := args["after_delay_minutes"].(float64); ok {
+				policy.AfterDelayMinutes = int(value)
+			}
 			return iwm.schedulerFuncs.CreateCalendarSchedule(ctx, iwm.schedulerWorkspacePath, name, timezone, groupNames, string(calendarItemsJSON), mode, messages, directMessagesReason, workshopMode, policy)
 		},
 		"workflow",
@@ -6653,8 +6758,8 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				},
 				"workshop_mode": map[string]interface{}{
 					"type":        "string",
-					"description": "Use 'run'. Omit this field to preserve an existing legacy schedule value.",
-					"enum":        []string{"run"},
+					"description": "Use 'workshop'. Omit this field to preserve an existing legacy schedule value.",
+					"enum":        []string{"workshop"},
 				},
 				"resume_previous": map[string]interface{}{
 					"type":        "boolean",
@@ -6684,11 +6789,20 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				"collision_policy": map[string]interface{}{
 					"type": "string", "description": "Set skip, queue_latest, retry, or coalesce. Empty resets to the default skip behavior.",
 				},
+				"concurrency_mode": map[string]interface{}{
+					"type": "string", "enum": []string{"sequential", "parallel"}, "description": "Set sequential (default) or parallel. Parallel requires explicit human approval after the shared-state overwrite and duplicate-action warning.",
+				},
+				"parallel_risk_acknowledged": map[string]interface{}{
+					"type": "boolean", "description": "Set true only when the human explicitly approved parallel risk; set false when returning to sequential.",
+				},
 				"max_start_delay_minutes": map[string]interface{}{
 					"type": "integer", "minimum": 0, "description": "Maximum queued age. Zero restores the platform default.",
 				},
 				"after_schedule_id": map[string]interface{}{
-					"type": "string", "description": "Prerequisite schedule ID, or an empty string to clear the dependency.",
+					"type": "string", "description": "Legacy singular prerequisite schedule ID, or an empty string to clear it.",
+				},
+				"after_schedule_ids": map[string]interface{}{
+					"type": "array", "items": map[string]interface{}{"type": "string"}, "description": "Replace the prerequisite list. Pass [] to clear it; every listed same-day occurrence must release before this schedule starts.",
 				},
 				"after_terminal_status": map[string]interface{}{
 					"type": "string", "description": "Set completed or any_terminal. Empty restores completed.",
@@ -6799,10 +6913,19 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 			if _, ok2 := args["collision_policy"]; ok2 && policy == nil {
 				policy = &ScheduleRuntimePolicy{}
 			}
+			if _, ok := args["concurrency_mode"]; ok && policy == nil {
+				policy = &ScheduleRuntimePolicy{}
+			}
+			if _, ok := args["parallel_risk_acknowledged"]; ok && policy == nil {
+				policy = &ScheduleRuntimePolicy{}
+			}
 			if _, ok3 := args["max_start_delay_minutes"]; ok3 && policy == nil {
 				policy = &ScheduleRuntimePolicy{}
 			}
 			if _, ok4 := args["after_schedule_id"]; ok4 && policy == nil {
+				policy = &ScheduleRuntimePolicy{}
+			}
+			if _, ok := args["after_schedule_ids"]; ok && policy == nil {
 				policy = &ScheduleRuntimePolicy{}
 			}
 			if _, ok5 := args["after_terminal_status"]; ok5 && policy == nil {
@@ -6827,13 +6950,18 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				policy.PulseModeReason, _ = args["pulse_mode_reason"].(string)
 				_, policy.SetExecutionMode = args["execution_mode"]
 				_, policy.SetCollisionPolicy = args["collision_policy"]
+				_, policy.SetConcurrencyMode = args["concurrency_mode"]
+				_, policy.SetParallelRiskAcknowledged = args["parallel_risk_acknowledged"]
 				_, policy.SetMaxStartDelayMinutes = args["max_start_delay_minutes"]
 				_, policy.SetAfterScheduleID = args["after_schedule_id"]
+				policy.AfterScheduleIDs, policy.SetAfterScheduleIDs = stringSliceArgument(args, "after_schedule_ids")
 				_, policy.SetAfterTerminalStatus = args["after_terminal_status"]
 				_, policy.SetAfterDelayMinutes = args["after_delay_minutes"]
 				_, policy.SetDependencyDeadline = args["dependency_deadline"]
 				policy.ExecutionMode, _ = args["execution_mode"].(string)
 				policy.CollisionPolicy, _ = args["collision_policy"].(string)
+				policy.ConcurrencyMode, _ = args["concurrency_mode"].(string)
+				policy.ParallelRiskAcknowledged, _ = args["parallel_risk_acknowledged"].(bool)
 				policy.AfterScheduleID, _ = args["after_schedule_id"].(string)
 				policy.AfterTerminalStatus, _ = args["after_terminal_status"].(string)
 				policy.DependencyDeadline, _ = args["dependency_deadline"].(string)

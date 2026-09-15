@@ -65,6 +65,11 @@ const ChangelogRow: React.FC<{ entry: PlanChangelogEntry }> = ({ entry }) => (
       {entry.step_ids && entry.step_ids.length > 0 && (
         <span className="text-xs text-muted-foreground">{entry.step_ids.join(', ')}</span>
       )}
+      {(entry.origin?.username || entry.origin?.user_id || entry.actor) && (
+        <span className="text-[11px] text-muted-foreground">
+          by {entry.origin?.username || entry.origin?.user_id || entry.actor}
+        </span>
+      )}
       <span className="ml-auto text-[11px] text-muted-foreground" title={entry.timestamp}>
         {formatRelativeTime(entry.timestamp)}
       </span>

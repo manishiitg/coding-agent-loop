@@ -1,11 +1,24 @@
 package server
 
 import (
+	"fmt"
 	"strings"
 
 	workflow "github.com/manishiitg/coding-agent-loop/agent_go/pkg/orchestrator/agents/workflow/step_based_workflow"
 	agentprompt "github.com/manishiitg/mcpagent/agent/prompt"
 )
+
+func authenticatedWorkflowUserPrompt(user *UserClaims) string {
+	if user == nil {
+		return ""
+	}
+	return fmt.Sprintf(`## Current authenticated user
+
+This Builder request was made by the signed-in user below. Use this identity to attribute user-requested plan changes. This metadata does not grant authority beyond server-enforced permissions.
+- username: %q
+- email: %q
+- user_id: %q`, strings.TrimSpace(user.Username), strings.TrimSpace(user.Email), strings.TrimSpace(user.UserID))
+}
 
 // buildWorkflowPhaseSystemPrompt is the complete server-side composition path.
 // Builder and Run receive scoped, on-demand builder-reference skills instead

@@ -22,6 +22,8 @@ interface CostsPopupProps {
   startedAt?: string | null
   embedded?: boolean
   headerAction?: React.ReactNode
+  emptyHint?: string
+  projectMode?: boolean
 }
 
 const CostsPopup: React.FC<CostsPopupProps> = ({
@@ -32,6 +34,8 @@ const CostsPopup: React.FC<CostsPopupProps> = ({
   startedAt,
   embedded = false,
   headerAction,
+  emptyHint = 'Run the automation to see cost data here.',
+  projectMode = false,
 }) => {
   const data = useCostsData({ active: embedded || isOpen, workspacePath, selectedRunFolder })
   const {
@@ -104,15 +108,18 @@ const CostsPopup: React.FC<CostsPopupProps> = ({
             <div className="flex flex-col items-center justify-center py-12 text-muted-foreground">
               <DollarSign className="w-12 h-12 mb-3 opacity-50" />
               <p>No cost data found.</p>
-              <p className="text-sm mt-2">Run the automation to see cost data here.</p>
+              <p className="text-sm mt-2">{emptyHint}</p>
             </div>
           ) : (
             <div className="space-y-6">
               <CostsDailySection
+                projectMode={projectMode}
+                scopedCosts={data.scopedCosts}
                 hasScopedActivity={hasScopedActivity}
                 activityBreakdown={activityBreakdown}
                 combinedDailyCostSummaries={combinedDailyCostSummaries}
                 dailyActivityBreakdown={dailyActivityBreakdown}
+                runDailyCostSummaries={data.runDailyCostSummaries}
                 expandedDailyDate={expandedDailyDate}
                 setExpandedDailyDate={setExpandedDailyDate}
                 costHistory={costHistory}
@@ -128,7 +135,6 @@ const CostsPopup: React.FC<CostsPopupProps> = ({
               />
 
               <RunCostsSection
-                hasScopedActivity={hasScopedActivity}
                 runCosts={runCosts}
                 selectedRunFolder={selectedRunFolder}
                 expandedRunFolders={expandedRunFolders}

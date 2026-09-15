@@ -1,7 +1,9 @@
 ## User and workflow access management
 
-In workflow Builder mode, use `manage_user_access`. Run, scheduled execution,
-Pulse, bots and child agents do not receive this management capability.
+In workflow Builder mode, use `manage_user_access`. Read-only Run sessions,
+Pulse and child agents do not receive this management capability. Writable bot,
+scheduled and notification turns share the Builder capability set; every call
+still rechecks the mapped user's current authorization.
 
 Call `get_workflow_access` with the actual `workspace_path` before changing
 sharing. `list_users` resolves existing user IDs: owners see the enabled sharing

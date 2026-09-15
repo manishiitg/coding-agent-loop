@@ -41,6 +41,10 @@ describe('shouldShowLiveTerminalControl', () => {
   it('keeps the compact product chat chrome for ordinary product chats', () => {
     expect(shouldShowLiveTerminalControl(true, true, false)).toBe(false)
   })
+
+  it('allows an explicit product to reuse the live terminal switch', () => {
+    expect(shouldShowLiveTerminalControl(true, true, false, true)).toBe(true)
+  })
 })
 
 describe('shouldRouteChatInputToLiveTransport', () => {

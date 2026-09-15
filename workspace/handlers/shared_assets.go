@@ -69,7 +69,15 @@ func SharedAssets(c *gin.Context) {
 		}
 		defer f.Close()
 		info, err := f.Stat()
-		if err != nil || !info.Mode().IsRegular() {
+		if err != nil || (!info.Mode().IsRegular() && !info.IsDir()) {
+			c.AbortWithStatus(400)
+			return
+		}
+		if req.Operation == "stat" && info.IsDir() {
+			c.JSON(200, gin.H{"path": p, "type": "folder", "modified_at": info.ModTime()})
+			return
+		}
+		if info.IsDir() {
 			c.AbortWithStatus(400)
 			return
 		}
@@ -81,7 +89,7 @@ func SharedAssets(c *gin.Context) {
 			f.Seek(0, io.SeekStart)
 		}
 		if req.Operation == "stat" {
-			c.JSON(200, gin.H{"path": p, "size": info.Size(), "content_type": contentType, "modified_at": info.ModTime()})
+			c.JSON(200, gin.H{"path": p, "type": "file", "size": info.Size(), "content_type": contentType, "modified_at": info.ModTime()})
 			return
 		}
 		c.Header("Content-Type", contentType)

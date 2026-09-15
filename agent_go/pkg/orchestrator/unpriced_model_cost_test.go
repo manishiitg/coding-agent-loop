@@ -6,36 +6,29 @@ import (
 	"testing"
 )
 
-// PLAT-203: harness:cost-ledger:reflection-attribution-and-call-count found
-// costs/execution/confida-staging/2026-08-24.json's by_step_and_model block
-// for google/gemini-3.7-flash (a pi-cli-routed model) had llm_call_count
-// present but no total_cost_usd key at all. Traced this to two compounding
-// gaps: (1) pi-cli's own GetModelMetadata (multi-llm-provider-go) returns
-// metadata with every *CostPer1MTokens field left at its Go zero value for
-// every model it serves -- there is no rate card for pi-cli at all, not
-// just for this one model version -- and (2) ModelTokenUsage.TotalCost had
-// `omitempty`, so a genuinely-zero-because-unpriced cost was indistinguishable
-// from a genuinely-zero-because-free one; the JSON key just vanished.
-func TestUnpricedProviderCallsAreExplicitNotAbsent(t *testing.T) {
+// Pi is the execution transport for several model providers. Google-prefixed
+// models must resolve through the Gemini rate card instead of inheriting Pi's
+// intentionally unpriced generic metadata.
+func TestPiGoogleCallsUseGeminiPricing(t *testing.T) {
 	modelData := &ModelTokenData{
 		Provider:     "pi-cli",
-		ModelID:      "google/gemini-3.7-flash",
+		ModelID:      "google/gemini-3.8-flash",
 		InputTokens:  10_000,
 		OutputTokens: 2_000,
 		LLMCallCount: 4,
 	}
 	inputCost, outputCost, reasoningCost, cacheCost, totalCost, _, pricingFound := calculatePricingFromModelData(modelData)
-	if pricingFound {
-		t.Fatal("pi-cli has no rate card for any model; pricingFound should be false")
+	if !pricingFound {
+		t.Fatal("Pi-routed Google Gemini models must use the Gemini rate card")
 	}
-	if inputCost != 0 || outputCost != 0 || reasoningCost != 0 || cacheCost != 0 || totalCost != 0 {
-		t.Fatalf("expected all-zero costs when unpriced, got input=%v output=%v reasoning=%v cache=%v total=%v",
+	if inputCost <= 0 || outputCost <= 0 || totalCost <= 0 {
+		t.Fatalf("expected non-zero Gemini input/output/total costs, got input=%v output=%v reasoning=%v cache=%v total=%v",
 			inputCost, outputCost, reasoningCost, cacheCost, totalCost)
 	}
 
 	usage := buildModelTokenUsage(modelData)
-	if !usage.Unpriced {
-		t.Fatal("ModelTokenUsage.Unpriced should be true for a model with no rate card")
+	if usage.Unpriced {
+		t.Fatal("Pi-routed Gemini usage must not be marked unpriced")
 	}
 
 	encoded, err := json.Marshal(usage)
@@ -43,11 +36,17 @@ func TestUnpricedProviderCallsAreExplicitNotAbsent(t *testing.T) {
 		t.Fatalf("marshal: %v", err)
 	}
 	body := string(encoded)
-	if !strings.Contains(body, `"total_cost_usd":0`) {
-		t.Fatalf("total_cost_usd must be explicitly present (not omitted) for an unpriced call, got: %s", body)
+	if strings.Contains(body, `"unpriced"`) {
+		t.Fatalf("priced Gemini usage must not carry an unpriced marker, got: %s", body)
 	}
-	if !strings.Contains(body, `"unpriced":true`) {
-		t.Fatalf("unpriced:true must be present so a $0 total is never mistaken for a genuinely free call, got: %s", body)
+}
+
+func TestUnknownPiModelsRemainExplicitlyUnpriced(t *testing.T) {
+	usage := buildModelTokenUsage(&ModelTokenData{
+		Provider: "pi-cli", ModelID: "custom/unknown-model", InputTokens: 10_000, OutputTokens: 2_000,
+	})
+	if !usage.Unpriced || usage.TotalCost != 0 {
+		t.Fatalf("unknown Pi model should remain explicitly unpriced, got %+v", usage)
 	}
 }
 

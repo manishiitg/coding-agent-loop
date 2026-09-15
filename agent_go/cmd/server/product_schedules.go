@@ -34,6 +34,7 @@ import (
 // startSessionInternal already provide.
 
 const productScheduleJobPrefix = "product:"
+const projectScheduleJobPrefix = "product-project:"
 const productScheduleStateFile = "product-schedules.json"
 
 // productScheduleUserState is one user's bookkeeping for one schedule.
@@ -55,14 +56,23 @@ type productScheduleUserState struct {
 
 // productScheduleJob is one (profile, schedule, user) triple.
 type productScheduleJob struct {
-	UserID   string
-	Profile  agentprofiles.Profile
-	Schedule productschedule.Schedule
-	State    productScheduleUserState
+	UserID        string
+	Profile       agentprofiles.Profile
+	Schedule      productschedule.Schedule
+	State         productScheduleUserState
+	ProjectID     string
+	ProjectTitle  string
+	WorkspacePath string
+	ManifestPath  string
 }
 
 // ID is the job id exposed through /api/scheduler/jobs.
-func (j productScheduleJob) ID() string { return productScheduleJobID(j.Profile.ID, j.Schedule.ID) }
+func (j productScheduleJob) ID() string {
+	if j.ProjectID != "" {
+		return projectScheduleJobID(j.Profile.ID, j.ProjectID, j.Schedule.ID)
+	}
+	return productScheduleJobID(j.Profile.ID, j.Schedule.ID)
+}
 
 // Effective returns the schedule with the user's enable override applied.
 func (j productScheduleJob) Effective() productschedule.Schedule {
@@ -91,6 +101,21 @@ func productScheduleJobID(profileID, scheduleID string) string {
 	return productScheduleJobPrefix + strings.TrimSpace(profileID) + ":" + strings.TrimSpace(scheduleID)
 }
 
+func projectScheduleJobID(profileID, projectID, scheduleID string) string {
+	return projectScheduleJobPrefix + strings.TrimSpace(profileID) + ":" + strings.TrimSpace(projectID) + ":" + strings.TrimSpace(scheduleID)
+}
+
+func parseProjectScheduleJobID(id string) (profileID, projectID, scheduleID string, ok bool) {
+	if !strings.HasPrefix(id, projectScheduleJobPrefix) {
+		return "", "", "", false
+	}
+	parts := strings.Split(strings.TrimPrefix(id, projectScheduleJobPrefix), ":")
+	if len(parts) != 3 || parts[0] == "" || parts[1] == "" || parts[2] == "" {
+		return "", "", "", false
+	}
+	return parts[0], parts[1], parts[2], true
+}
+
 // parseProductScheduleJobID splits "product:<profile>:<schedule>".
 func parseProductScheduleJobID(id string) (profileID, scheduleID string, ok bool) {
 	if !strings.HasPrefix(id, productScheduleJobPrefix) {
@@ -110,6 +135,17 @@ func productScheduleStatePath(userID string) string {
 
 func productScheduleStateKey(profileID, scheduleID string) string {
 	return strings.TrimSpace(profileID) + "/" + strings.TrimSpace(scheduleID)
+}
+
+func projectScheduleStateKey(profileID, projectID, scheduleID string) string {
+	return strings.TrimSpace(profileID) + "/" + strings.TrimSpace(projectID) + "/" + strings.TrimSpace(scheduleID)
+}
+
+func scheduleStateKey(job productScheduleJob) string {
+	if job.ProjectID != "" {
+		return projectScheduleStateKey(job.Profile.ID, job.ProjectID, job.Schedule.ID)
+	}
+	return productScheduleStateKey(job.Profile.ID, job.Schedule.ID)
 }
 
 // ProductScheduleService runs product schedules for every user.
@@ -202,6 +238,9 @@ func usersWithProduct(product string) []string {
 }
 
 func userAccessAllowsProduct(acc UserAccess, product string) bool {
+	if adminOnlyProduct(product) && !acc.Admin {
+		return false
+	}
 	if !acc.ProductsRestricted {
 		return true
 	}
@@ -211,6 +250,13 @@ func userAccessAllowsProduct(acc UserAccess, product string) bool {
 		}
 	}
 	return false
+}
+
+func productAccessName(profile agentprofiles.Profile) string {
+	if name := strings.TrimSpace(profile.Product); name != "" {
+		return name
+	}
+	return strings.TrimSpace(profile.ID)
 }
 
 // profilesWithSchedules returns the built-in profiles that declare schedules.
@@ -225,6 +271,69 @@ func (s *ProductScheduleService) profilesWithSchedules() []agentprofiles.Profile
 		}
 	}
 	return out
+}
+
+func (s *ProductScheduleService) profilesWithProjectSchedules() []agentprofiles.Profile {
+	if s.registry == nil {
+		return nil
+	}
+	var out []agentprofiles.Profile
+	for _, p := range s.registry.List("") {
+		if p.BuiltIn && p.UIPanels.Schedules && strings.EqualFold(strings.TrimSpace(p.Runtime.Conversation.Mode), agentprofiles.ConversationModeKeyed) {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+func (s *ProductScheduleService) projectJobsForUser(ctx context.Context, userID string, profile agentprofiles.Profile, states map[string]productScheduleUserState) ([]productScheduleJob, error) {
+	projectsRoot, err := cleanAgentProfileWorkspace(profile.Runtime.Workspace.ProjectsRoot, userID)
+	if err != nil {
+		return nil, err
+	}
+	runtimeRoot := agentProfileRuntimeWorkspace(userID, projectsRoot)
+	store := defaultProductProjectStore()
+	paths, exists, err := store.listPaths(ctx, runtimeRoot)
+	if err != nil || !exists {
+		return nil, err
+	}
+	rootPrefix := strings.TrimSuffix(filepath.ToSlash(runtimeRoot), "/") + "/"
+	seen := map[string]struct{}{}
+	var jobs []productScheduleJob
+	for _, candidate := range paths {
+		candidate = filepath.ToSlash(strings.TrimSpace(candidate))
+		if !strings.HasPrefix(candidate, rootPrefix) || !strings.HasSuffix(candidate, "/product.json") {
+			continue
+		}
+		if _, ok := seen[candidate]; ok {
+			continue
+		}
+		seen[candidate] = struct{}{}
+		raw, found, readErr := store.read(ctx, candidate)
+		if readErr != nil {
+			return nil, readErr
+		}
+		if !found {
+			continue
+		}
+		var manifest productProjectManifest
+		if err := json.Unmarshal([]byte(raw), &manifest); err != nil || manifest.Product != profile.ID || strings.TrimSpace(manifest.ID) == "" {
+			continue
+		}
+		if err := productschedule.ValidateAll(manifest.Schedules); err != nil {
+			return nil, fmt.Errorf("project %s schedules: %w", manifest.ID, err)
+		}
+		for _, sched := range manifest.Schedules {
+			job := productScheduleJob{
+				UserID: userID, Profile: profile, Schedule: sched,
+				ProjectID: manifest.ID, ProjectTitle: manifest.Title,
+				WorkspacePath: filepath.ToSlash(filepath.Dir(candidate)), ManifestPath: candidate,
+			}
+			job.State = states[scheduleStateKey(job)]
+			jobs = append(jobs, job)
+		}
+	}
+	return jobs, nil
 }
 
 func (s *ProductScheduleService) loadState(ctx context.Context, userID string) (map[string]productScheduleUserState, error) {
@@ -242,25 +351,6 @@ func (s *ProductScheduleService) loadState(ctx context.Context, userID string) (
 	return out, nil
 }
 
-// updateState applies fn to one schedule's state under the state-file lock.
-func (s *ProductScheduleService) updateState(ctx context.Context, userID, profileID, scheduleID string, fn func(*productScheduleUserState)) error {
-	s.stateMu.Lock()
-	defer s.stateMu.Unlock()
-	all, err := s.loadState(ctx, userID)
-	if err != nil {
-		return err
-	}
-	key := productScheduleStateKey(profileID, scheduleID)
-	st := all[key]
-	fn(&st)
-	all[key] = st
-	data, err := json.MarshalIndent(all, "", "  ")
-	if err != nil {
-		return err
-	}
-	return s.writeFile(ctx, productScheduleStatePath(userID), string(data))
-}
-
 // JobsForUser lists every product schedule visible to one user.
 func (s *ProductScheduleService) JobsForUser(ctx context.Context, userID string) ([]productScheduleJob, error) {
 	if s == nil || strings.TrimSpace(userID) == "" {
@@ -269,7 +359,7 @@ func (s *ProductScheduleService) JobsForUser(ctx context.Context, userID string)
 	var jobs []productScheduleJob
 	var states map[string]productScheduleUserState
 	for _, profile := range s.profilesWithSchedules() {
-		if !containsUserID(s.users(profile.Product), userID) {
+		if !containsUserID(s.users(productAccessName(profile)), userID) {
 			continue
 		}
 		if states == nil {
@@ -287,6 +377,22 @@ func (s *ProductScheduleService) JobsForUser(ctx context.Context, userID string)
 			})
 		}
 	}
+	for _, profile := range s.profilesWithProjectSchedules() {
+		if !containsUserID(s.users(productAccessName(profile)), userID) {
+			continue
+		}
+		if states == nil {
+			var err error
+			if states, err = s.loadState(ctx, userID); err != nil {
+				return nil, err
+			}
+		}
+		projectJobs, err := s.projectJobsForUser(ctx, userID, profile, states)
+		if err != nil {
+			return nil, err
+		}
+		jobs = append(jobs, projectJobs...)
+	}
 	return jobs, nil
 }
 
@@ -302,6 +408,10 @@ func containsUserID(list []string, v string) bool {
 // Job finds one product schedule for a user by job id.
 func (s *ProductScheduleService) Job(ctx context.Context, userID, jobID string) (productScheduleJob, error) {
 	profileID, scheduleID, ok := parseProductScheduleJobID(jobID)
+	projectID := ""
+	if projectProfileID, parsedProjectID, projectScheduleID, projectOK := parseProjectScheduleJobID(jobID); projectOK {
+		profileID, projectID, scheduleID, ok = projectProfileID, parsedProjectID, projectScheduleID, true
+	}
 	if !ok {
 		return productScheduleJob{}, fmt.Errorf("not a product schedule id: %q", jobID)
 	}
@@ -310,7 +420,7 @@ func (s *ProductScheduleService) Job(ctx context.Context, userID, jobID string) 
 		return productScheduleJob{}, err
 	}
 	for _, j := range jobs {
-		if j.Profile.ID == profileID && j.Schedule.ID == scheduleID {
+		if j.Profile.ID == profileID && j.ProjectID == projectID && j.Schedule.ID == scheduleID {
 			return j, nil
 		}
 	}
@@ -323,12 +433,149 @@ func (s *ProductScheduleService) SetEnabled(ctx context.Context, userID, jobID s
 	if err != nil {
 		return job, err
 	}
-	if err := s.updateState(ctx, userID, job.Profile.ID, job.Schedule.ID, func(st *productScheduleUserState) {
+	if err := s.updateStateByKey(ctx, userID, scheduleStateKey(job), func(st *productScheduleUserState) {
 		st.Enabled = &enabled
 	}); err != nil {
 		return job, err
 	}
 	return s.Job(ctx, userID, jobID)
+}
+
+func (s *ProductScheduleService) projectManifest(ctx context.Context, userID, profileID, projectID string) (agentprofiles.Profile, productConversationBinding, productProjectManifest, error) {
+	if s.registry == nil {
+		return agentprofiles.Profile{}, productConversationBinding{}, productProjectManifest{}, fmt.Errorf("product profiles are unavailable")
+	}
+	profile, err := s.registry.Resolve(profileID, 0, userID)
+	if err != nil {
+		return agentprofiles.Profile{}, productConversationBinding{}, productProjectManifest{}, err
+	}
+	if !profile.UIPanels.Schedules || !strings.EqualFold(strings.TrimSpace(profile.Runtime.Conversation.Mode), agentprofiles.ConversationModeKeyed) {
+		return agentprofiles.Profile{}, productConversationBinding{}, productProjectManifest{}, fmt.Errorf("profile %q does not support project schedules", profileID)
+	}
+	binding, err := resolveProductConversationBinding(ctx, userID, profile, projectID)
+	if err != nil {
+		return agentprofiles.Profile{}, productConversationBinding{}, productProjectManifest{}, err
+	}
+	raw, found, err := s.readFile(ctx, binding.ManifestPath)
+	if err != nil || !found {
+		if err == nil {
+			err = fmt.Errorf("project manifest not found")
+		}
+		return agentprofiles.Profile{}, productConversationBinding{}, productProjectManifest{}, err
+	}
+	var manifest productProjectManifest
+	if err := json.Unmarshal([]byte(raw), &manifest); err != nil {
+		return agentprofiles.Profile{}, productConversationBinding{}, productProjectManifest{}, err
+	}
+	return profile, binding, manifest, nil
+}
+
+func (s *ProductScheduleService) writeProjectManifest(ctx context.Context, binding productConversationBinding, manifest productProjectManifest) error {
+	manifest.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
+	data, err := json.MarshalIndent(manifest, "", "  ")
+	if err != nil {
+		return err
+	}
+	return s.writeFile(ctx, binding.ManifestPath, string(data)+"\n")
+}
+
+func (s *ProductScheduleService) CreateProjectSchedule(ctx context.Context, userID, profileID, projectID string, schedule productschedule.Schedule) (productScheduleJob, error) {
+	profile, binding, manifest, err := s.projectManifest(ctx, userID, profileID, projectID)
+	if err != nil {
+		return productScheduleJob{}, err
+	}
+	if strings.TrimSpace(schedule.ID) == "" {
+		schedule.ID = uuid.NewString()
+	}
+	manifest.Schedules = append(manifest.Schedules, schedule)
+	if err := productschedule.ValidateAll(manifest.Schedules); err != nil {
+		return productScheduleJob{}, err
+	}
+	if err := s.writeProjectManifest(ctx, binding, manifest); err != nil {
+		return productScheduleJob{}, err
+	}
+	return productScheduleJob{UserID: userID, Profile: profile, Schedule: schedule, ProjectID: manifest.ID, ProjectTitle: manifest.Title, WorkspacePath: binding.WorkspacePath, ManifestPath: binding.ManifestPath}, nil
+}
+
+func (s *ProductScheduleService) UpdateProjectSchedule(ctx context.Context, userID, jobID string, update func(*productschedule.Schedule)) (productScheduleJob, error) {
+	job, err := s.Job(ctx, userID, jobID)
+	if err != nil || job.ProjectID == "" {
+		return job, firstError(err, fmt.Errorf("not a project schedule"))
+	}
+	_, binding, manifest, err := s.projectManifest(ctx, userID, job.Profile.ID, job.ProjectID)
+	if err != nil {
+		return job, err
+	}
+	found := false
+	for i := range manifest.Schedules {
+		if manifest.Schedules[i].ID == job.Schedule.ID {
+			update(&manifest.Schedules[i])
+			job.Schedule = manifest.Schedules[i]
+			found = true
+			break
+		}
+	}
+	if !found {
+		return job, fmt.Errorf("schedule not found")
+	}
+	if err := productschedule.ValidateAll(manifest.Schedules); err != nil {
+		return job, err
+	}
+	if err := s.writeProjectManifest(ctx, binding, manifest); err != nil {
+		return job, err
+	}
+	return s.Job(ctx, userID, jobID)
+}
+
+func (s *ProductScheduleService) DeleteProjectSchedule(ctx context.Context, userID, jobID string) error {
+	job, err := s.Job(ctx, userID, jobID)
+	if err != nil {
+		return err
+	}
+	if job.ProjectID == "" {
+		return fmt.Errorf("not a project schedule")
+	}
+	_, binding, manifest, err := s.projectManifest(ctx, userID, job.Profile.ID, job.ProjectID)
+	if err != nil {
+		return err
+	}
+	next := manifest.Schedules[:0]
+	for _, schedule := range manifest.Schedules {
+		if schedule.ID != job.Schedule.ID {
+			next = append(next, schedule)
+		}
+	}
+	if len(next) == len(manifest.Schedules) {
+		return fmt.Errorf("schedule not found")
+	}
+	manifest.Schedules = next
+	return s.writeProjectManifest(ctx, binding, manifest)
+}
+
+func firstError(errs ...error) error {
+	for _, err := range errs {
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (s *ProductScheduleService) updateStateByKey(ctx context.Context, userID, key string, fn func(*productScheduleUserState)) error {
+	s.stateMu.Lock()
+	defer s.stateMu.Unlock()
+	all, err := s.loadState(ctx, userID)
+	if err != nil {
+		return err
+	}
+	st := all[key]
+	fn(&st)
+	all[key] = st
+	data, err := json.MarshalIndent(all, "", "  ")
+	if err != nil {
+		return err
+	}
+	return s.writeFile(ctx, productScheduleStatePath(userID), string(data))
 }
 
 // Start runs the tick loop until ctx is done.
@@ -349,43 +596,47 @@ func (s *ProductScheduleService) Start(ctx context.Context) {
 }
 
 func (s *ProductScheduleService) tick(ctx context.Context, now time.Time) {
-	for _, profile := range s.profilesWithSchedules() {
-		for _, userID := range s.users(profile.Product) {
-			states, err := s.loadState(ctx, userID)
-			if err != nil {
-				scheduleLogf("[PRODUCT-SCHEDULE] %s/%s: cannot read state: %v", profile.ID, userID, err)
+	users := map[string]struct{}{}
+	profiles := append(s.profilesWithSchedules(), s.profilesWithProjectSchedules()...)
+	for _, profile := range profiles {
+		for _, userID := range s.users(productAccessName(profile)) {
+			users[userID] = struct{}{}
+		}
+	}
+	for userID := range users {
+		jobs, err := s.JobsForUser(ctx, userID)
+		if err != nil {
+			scheduleLogf("[PRODUCT-SCHEDULE] %s: cannot discover schedules: %v", userID, err)
+			continue
+		}
+		for _, job := range jobs {
+			in := productschedule.Inputs{
+				Now:                 now,
+				LastRun:             job.lastRun(),
+				LastAttempt:         job.lastAttempt(),
+				ConsecutiveFailures: job.State.ConsecutiveFailures,
+				SinceInteractive:    productInteractionNever,
+			}
+			if s.sinceInteractive != nil {
+				in.SinceInteractive = s.sinceInteractive(userID, job.Profile)
+			}
+			d := productschedule.Decide(job.Effective(), in)
+			if d.Deferred {
+				s.setDeferred(userID, job.ID(), d.Reason)
+			} else {
+				s.setDeferred(userID, job.ID(), "")
+			}
+			if !d.Run {
+				if d.Deferred {
+					scheduleLogf("[PRODUCT-SCHEDULE] %s deferring for %s: %s", job.ID(), userID, d.Reason)
+				}
 				continue
 			}
-			for _, sched := range profile.Schedules {
-				job := productScheduleJob{UserID: userID, Profile: profile, Schedule: sched, State: states[productScheduleStateKey(profile.ID, sched.ID)]}
-				in := productschedule.Inputs{
-					Now:                 now,
-					LastRun:             job.lastRun(),
-					LastAttempt:         job.lastAttempt(),
-					ConsecutiveFailures: job.State.ConsecutiveFailures,
-					SinceInteractive:    productInteractionNever,
+			go func(job productScheduleJob, scheduledFor time.Time) {
+				if _, err := s.Run(context.Background(), job, "cron", scheduledFor); err != nil && !errors.Is(err, productschedule.ErrAlreadyRunning) {
+					scheduleLogf("[PRODUCT-SCHEDULE] %s failed for %s: %v", job.ID(), job.UserID, err)
 				}
-				if s.sinceInteractive != nil {
-					in.SinceInteractive = s.sinceInteractive(userID, profile)
-				}
-				d := productschedule.Decide(job.Effective(), in)
-				if d.Deferred {
-					s.setDeferred(userID, job.ID(), d.Reason)
-				} else {
-					s.setDeferred(userID, job.ID(), "")
-				}
-				if !d.Run {
-					if d.Deferred {
-						scheduleLogf("[PRODUCT-SCHEDULE] %s deferring for %s: %s", job.ID(), userID, d.Reason)
-					}
-					continue
-				}
-				go func(job productScheduleJob, scheduledFor time.Time) {
-					if _, err := s.Run(context.Background(), job, "cron", scheduledFor); err != nil && !errors.Is(err, productschedule.ErrAlreadyRunning) {
-						scheduleLogf("[PRODUCT-SCHEDULE] %s failed for %s: %v", job.ID(), job.UserID, err)
-					}
-				}(job, d.ScheduledFor)
-			}
+			}(job, d.ScheduledFor)
 		}
 	}
 }
@@ -493,7 +744,9 @@ func (s *ProductScheduleService) Run(ctx context.Context, job productScheduleJob
 
 	var binding productConversationBinding
 	var bindErr error
-	if job.Schedule.Isolated {
+	if job.ProjectID != "" {
+		binding, bindErr = resolveProductConversationBinding(runCtx, job.UserID, job.Profile, job.ProjectID)
+	} else if job.Schedule.Isolated {
 		binding, bindErr = resolveIsolatedScheduleBinding(runCtx, job.UserID, job.Profile)
 	} else {
 		binding, bindErr = resolveProductConversationBinding(runCtx, job.UserID, job.Profile, "")
@@ -532,7 +785,7 @@ func (s *ProductScheduleService) Run(ctx context.Context, job productScheduleJob
 	if err := AppendScheduleRun(runCtx, runsWorkspace, entry); err != nil {
 		scheduleLogf("[PRODUCT-SCHEDULE] %s: cannot record run for %s: %v", job.ID(), job.UserID, err)
 	}
-	_ = s.updateState(runCtx, job.UserID, job.Profile.ID, job.Schedule.ID, func(st *productScheduleUserState) {
+	_ = s.updateStateByKey(runCtx, job.UserID, scheduleStateKey(job), func(st *productScheduleUserState) {
 		st.LastStatus = "running"
 		st.LastSessionID = sessionID
 		st.LastError = ""
@@ -556,7 +809,7 @@ func (s *ProductScheduleService) Run(ctx context.Context, job productScheduleJob
 			runErr = err
 			break
 		}
-		reqMap["triggered_by"] = "cron"
+		reqMap["triggered_by"] = firstNonEmptyTrimmed(triggerSource, "cron")
 		reqMap["session_title"] = firstNonEmptyTrimmed(conversation.Title, job.Profile.Name)
 		scheduleLogf("[PRODUCT-SCHEDULE] %s turn %d/%d for %s", job.ID(), i+1, len(job.Schedule.Messages), job.UserID)
 		if err := s.api.startSessionInternal(runCtx, reqMap, sessionID, job.UserID, nil); err != nil {
@@ -576,7 +829,7 @@ func (s *ProductScheduleService) Run(ctx context.Context, job productScheduleJob
 	}
 	duration := time.Since(startedAt).Milliseconds()
 	_ = UpdateScheduleRun(context.Background(), runsWorkspace, entry.ID, status, errMsg, &duration, "", sessionID)
-	_ = s.updateState(context.Background(), job.UserID, job.Profile.ID, job.Schedule.ID, func(st *productScheduleUserState) {
+	_ = s.updateStateByKey(context.Background(), job.UserID, scheduleStateKey(job), func(st *productScheduleUserState) {
 		st.LastStatus = status
 		st.LastError = errMsg
 		st.LastDurationMs = &duration
@@ -610,6 +863,9 @@ func queryRequestToMap(req QueryRequest) (map[string]interface{}, error) {
 
 // RunsWorkspace is where a job's schedule-runs.json lives for a user.
 func (s *ProductScheduleService) RunsWorkspace(ctx context.Context, job productScheduleJob) (string, error) {
+	if job.ProjectID != "" {
+		return agentProfileRuntimeWorkspace(job.UserID, job.WorkspacePath), nil
+	}
 	binding, err := resolveProductConversationBinding(ctx, job.UserID, job.Profile, "")
 	if err != nil {
 		return "", err
@@ -626,8 +882,8 @@ func (s *ProductScheduleService) jobResponse(job productScheduleJob, runsWorkspa
 		Description:         sched.Description,
 		EntityType:          "product",
 		WorkspacePath:       runsWorkspace,
-		WorkflowID:          job.Profile.ID,
-		WorkflowLabel:       job.Profile.Name,
+		WorkflowID:          firstNonEmptyTrimmed(job.ProjectID, job.Profile.ID),
+		WorkflowLabel:       firstNonEmptyTrimmed(job.ProjectTitle, job.Profile.Name),
 		Mode:                "workshop",
 		Messages:            sched.Messages,
 		ScheduleType:        "cron",

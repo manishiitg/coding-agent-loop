@@ -231,6 +231,13 @@ type RuntimeCapabilities struct {
 	// injection flow for a product agent. Values are never part of the prompt;
 	// selected values are supplied only as shell environment variables.
 	Secrets CapabilityRequirement `json:"secrets,omitempty" yaml:"secrets,omitempty"`
+	// MCPSelection, SkillSelection, and WorkflowReferences opt a
+	// general-purpose product into the matching shared AgentWorks composer
+	// features. Fixed-purpose products leave these disabled so their profile
+	// remains the only source of tools, skills, and external context.
+	MCPSelection       CapabilityRequirement `json:"mcp_selection,omitempty" yaml:"mcp_selection,omitempty"`
+	SkillSelection     CapabilityRequirement `json:"skill_selection,omitempty" yaml:"skill_selection,omitempty"`
+	WorkflowReferences CapabilityRequirement `json:"workflow_references,omitempty" yaml:"workflow_references,omitempty"`
 	// Voice enables the shared AgentWorks streaming speech-to-text service
 	// (/api/voice/stream). Products opt in by declaring a requirement; they
 	// never carry their own STT engine, model, or websocket handling — the
@@ -276,8 +283,9 @@ type ToolBinding struct {
 
 // InteractionBinding is a tool's declared in-chat rendering.
 type InteractionBinding struct {
-	Kind   string `json:"kind" yaml:"kind"`
-	Render string `json:"render" yaml:"render"`
+	Kind    string `json:"kind" yaml:"kind"`
+	Render  string `json:"render" yaml:"render"`
+	Message string `json:"message,omitempty" yaml:"message,omitempty"`
 }
 
 // PresentationBinding names the presentation kind a tool produces and the
@@ -351,15 +359,28 @@ type Profile struct {
 	// Prompt is where the system prompt comes from in product.yaml. It is
 	// resolved into SystemPromptTemplate by LoadProductManifest and never
 	// travels over the wire.
-	Prompt     PromptSource     `json:"-" yaml:"prompt,omitempty"`
-	Skills     []string         `json:"skills,omitempty" yaml:"skills,omitempty"`
-	Tools      []ToolBinding    `json:"tools,omitempty" yaml:"tools,omitempty"`
-	Commands   []CommandBinding `json:"commands,omitempty" yaml:"commands,omitempty"`
-	Secrets    []SecretBinding  `json:"secrets,omitempty" yaml:"secrets,omitempty"`
-	ToolPolicy ToolPolicy       `json:"tool_policy,omitempty" yaml:"tool_policy,omitempty"`
-	Runtime    RuntimePolicy    `json:"runtime" yaml:"runtime"`
-	BuiltIn    bool             `json:"built_in" yaml:"built_in"`
-	OwnerID    string           `json:"owner_id,omitempty" yaml:"owner_id,omitempty"`
+	Prompt PromptSource `json:"-" yaml:"prompt,omitempty"`
+	// Features are reusable platform capability bundles. A feature contributes
+	// its tools, default skills, prompt extension, runtime capability flags and
+	// UI panels as one unit. Product manifests select bundles here instead of
+	// repeating the same capability across five unrelated blocks.
+	Features []FeatureBinding `json:"features,omitempty" yaml:"features,omitempty"`
+	// ResolvedFeatures is produced by ResolveFeatures. It is returned to clients
+	// so product surfaces can render the same bundle declarations the backend
+	// enforced. It is never accepted from product.yaml.
+	ResolvedFeatures []ResolvedFeature `json:"resolved_features,omitempty" yaml:"-"`
+	Skills           []string          `json:"skills,omitempty" yaml:"skills,omitempty"`
+	Tools            []ToolBinding     `json:"tools,omitempty" yaml:"tools,omitempty"`
+	// Interactions declare product events emitted by feature tools that are
+	// registered outside the profile tool factory. This keeps their UI behavior
+	// in product.yaml too, rather than hardcoding product copy in React.
+	Interactions []InteractionBinding `json:"interactions,omitempty" yaml:"interactions,omitempty"`
+	Commands     []CommandBinding     `json:"commands,omitempty" yaml:"commands,omitempty"`
+	Secrets      []SecretBinding      `json:"secrets,omitempty" yaml:"secrets,omitempty"`
+	ToolPolicy   ToolPolicy           `json:"tool_policy,omitempty" yaml:"tool_policy,omitempty"`
+	Runtime      RuntimePolicy        `json:"runtime" yaml:"runtime"`
+	BuiltIn      bool                 `json:"built_in" yaml:"built_in"`
+	OwnerID      string               `json:"owner_id,omitempty" yaml:"owner_id,omitempty"`
 	// Product names which product surface this builtin profile belongs to
 	// (e.g. "dominion", "video-studio", "sparkquill") -- set by each product's
 	// registration call in server.go, never by the product package itself.

@@ -35,6 +35,39 @@ can answer the question. Preserve source URLs/paths, dates and evidence versus
 hypothesis in the brief review_note when not already in the linked evidence. Reuse fresh
 research instead of repeating it. External actions retain existing authorizations.
 
+### Schedule topology and throughput
+
+Schedule coordination is an Architecture concern when required behavior works
+but the topology or queueing policy wastes capacity or makes
+cadence fragile. Load `references/schedules.md`, then use `list_schedules` and
+targeted `get_schedule_runs` evidence. Never assume cron spacing provides
+concurrency: schedules are sequential unless their saved policy explicitly opts
+into parallel execution. `after_schedule_ids` is an all-of, same-local-calendar-date prerequisite
+edge; two schedules work together through a directional chain, and several can
+join through fan-in. It does not permit overlap, and dependency cycles or
+daily-to-weekly cadence mismatches are invalid designs.
+
+Do not propose an agent-authored resource/file claim as proof that concurrency
+is safe. Workflow writes are dynamic and shared across the database, knowledge
+base, learnings, reports, planning state, browser/CDP state and external actions;
+an omitted or newly discovered target can be overwritten or duplicated.
+Sequential is the default. Architecture may recommend
+`concurrency_mode="parallel"` only with the fixed risks stated plainly and an
+explicit human approval; the applied policy must also persist
+`parallel_risk_acknowledged=true`. It must not imply that the server-bound
+`iteration-N-sched` folder isolates the other shared state. Dependencies still
+force waiting, the same schedule cannot overlap itself, and manual/Pulse work
+remains exclusive.
+
+Assess `collision_policy`, `max_start_delay_minutes`, `after_terminal_status`, `after_delay_minutes`, and
+`dependency_deadline` together against observed durations, missed fires,
+queued/expired occurrences, side effects, and the next operationally important
+window. Prefer explicit edges over accidental ordering from cron gaps. Preserve
+the default sequential policy and explicit user policy. Architecture may propose
+a bounded schedule change with baseline, expected throughput/reliability benefit,
+guardrails, checkpoint, rollback, and human decision; this review remains
+read-only and must not edit schedules itself.
+
 ### Execution tier and model ownership
 
 LLM calls stay on the selected model and coding-agent provider, including retries.

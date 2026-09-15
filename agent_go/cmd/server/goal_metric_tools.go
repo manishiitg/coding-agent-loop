@@ -4,10 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/manishiitg/coding-agent-loop/agent_go/cmd/server/services"
 	step "github.com/manishiitg/coding-agent-loop/agent_go/pkg/orchestrator/agents/workflow/step_based_workflow"
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
-	"strings"
 	"time"
 )
 
@@ -80,56 +78,4 @@ func createGoalMetricTools() ([]llmtypes.Tool, map[string]interface{}, map[strin
 		return `{"status":"recorded"}`, nil
 	}
 	return tools, executors, categories
-}
-
-func loadGoalProgressNotificationSections(ctx context.Context, workspacePath string) ([]services.NotificationSummarySection, error) {
-	ledger, err := step.LoadPulseImpactLedger(ctx, workspacePath, 500)
-	if err != nil {
-		return nil, err
-	}
-	if len(ledger.Metrics) == 0 {
-		return []services.NotificationSummarySection{{Heading: "Goal progress", Body: "Measurement setup needed. Use /setup-goals to choose primary metrics and connect collection."}}, nil
-	}
-	lines := map[string]string{}
-	for _, p := range step.GoalMetricSnapshots(ledger, time.Now()) {
-		line := p.Metric.Name + ": " + p.State
-		if p.Value != nil {
-			line = fmt.Sprintf("%s: %g %s — %s", p.Metric.Name, *p.Value, p.Metric.Unit, p.State)
-		}
-		line += " · " + p.Metric.Window
-		if p.Change != nil {
-			line += fmt.Sprintf(" · change %+.2f %s since previous measurement", *p.Change, p.Metric.Unit)
-		}
-		if p.Metric.Target != nil {
-			line += fmt.Sprintf(" · target %g %s (%s)", *p.Metric.Target, p.Metric.Unit, p.Metric.Direction)
-			if p.Metric.TargetDate != "" {
-				line += " by " + p.Metric.TargetDate
-			}
-		}
-		if p.ObservedAt != "" {
-			line += " · observed " + p.ObservedAt
-		}
-		lines[p.Metric.ID] = line
-	}
-	sections := []services.NotificationSummarySection{}
-	for _, m := range ledger.Metrics {
-		if m.Role != "primary" {
-			continue
-		}
-		body := []string{lines[m.ID]}
-		for _, support := range ledger.Metrics {
-			for _, id := range support.Supports {
-				if id == m.ID {
-					body = append(body, "Supporting: "+lines[support.ID])
-					break
-				}
-			}
-		}
-		heading := "Goal progress: " + m.Name
-		if m.GoalName != "" {
-			heading = m.GoalName + " — " + m.Name
-		}
-		sections = append(sections, services.NotificationSummarySection{Heading: heading, Body: strings.Join(body, "\n")})
-	}
-	return sections, nil
 }

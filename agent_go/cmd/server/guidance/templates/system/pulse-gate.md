@@ -74,6 +74,27 @@ not proof of success: scripted steps and crashed agents may emit none.
 If retention no longer covers the period since the last check, record that
 coverage gap honestly. Do not treat a partial sample as complete.
 
+For schedule evidence, do not infer safety or throughput from cron spacing.
+Read each relevant schedule's `collision_policy`, `max_start_delay_minutes`,
+`after_schedule_ids`, `after_terminal_status`,
+`after_delay_minutes`, and `dependency_deadline`; use `schedule-runs.json` or
+`get_schedule_runs` for actual fire, wait, skip, expiry, and duration evidence.
+Schedules are sequential unless their saved policy explicitly enables parallel
+execution. A directional dependency means the dependent occurrence waits for all
+listed prerequisite occurrences on the same local calendar date; it does not
+enable concurrent execution. A resource or file list does not prove overlap
+safe: workflow DB, KB, learning, report, planning, browser and external-action
+writes may be dynamic, omitted, overwritten or duplicated. Any explicit
+parallel opt-in must contain `concurrency_mode="parallel"` and
+`parallel_risk_acknowledged=true`, recording human approval after those fixed
+risks were disclosed; otherwise sequential execution remains authoritative.
+The server-bound `iteration-N-sched` folder protects run outputs/logs only;
+dependencies still wait, self-overlap is forbidden, and manual/Pulse work stays exclusive.
+Route a working but inefficient topology to
+Architecture Review, and a concrete missed-run, incorrect transition, or unsafe
+configuration repair to Technical Review. Load `references/schedules.md` in the
+selected reviewer before reasoning about or changing schedule policy.
+
 Compare exact pins against `list_provider_models` and
 `default_tier_models`. Provider-profile defaults auto-update, while exact pins
 do not. Never infer freshness by name or silently rewrite an exact pin.

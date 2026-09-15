@@ -1,0 +1,32 @@
+{
+  "contract_version": "experiment-backlog/v1",
+  "revision": 1,
+  "status": "example_only",
+  "prioritization_model": {
+    "id": "example-impact-confidence-cost",
+    "revision": 1,
+    "weights": "customer-defined"
+  },
+  "hypotheses": [
+    {
+      "id": "example-hypothesis-1",
+      "statement": "example-only hypothesis text",
+      "source_finding": "example-finding-ref with evidence links",
+      "confidence": "example-medium",
+      "target_kpi": "example-kpi with pre-registered target",
+      "readout_window": "customer-defined",
+      "guardrails": ["example-guardrail-metric"],
+      "status": "example-backlog",
+      "owner": "customer-defined"
+    }
+  ],
+  "readouts": [
+    {
+      "experiment_ref": "example-experiment-1",
+      "kpi_delta": "example-only",
+      "verdict": "example-ship-iterate-kill",
+      "guardrail_status": "example-pass",
+      "confidence": "example-medium"
+    }
+  ]
+}

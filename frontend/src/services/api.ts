@@ -91,6 +91,9 @@ import type {
   OrgDashboardNotification,
   WhatsAppRoute,
   WhatsAppStatus,
+  WorkFolderGrant,
+  WorkFolderListResponse,
+  WorkFolderAddRequest,
 } from './api-types'
 import type { PlanStep, AgentConfigs } from '../utils/stepConfigMatching'
 
@@ -127,6 +130,9 @@ export type {
   EvaluationReportsResponse,
   EvaluationReport,
   EvaluationStepScore,
+  WorkFolderGrant,
+  WorkFolderListResponse,
+  WorkFolderAddRequest,
 } from './api-types'
 
 type RuntimeConfig = {
@@ -2798,6 +2804,23 @@ export const workflowManifestApi = {
 
   duplicateWorkflowManifest: async (request: DuplicateWorkflowManifestRequest) => {
     const response = await api.post('/api/workflows/manifest/duplicate', request)
+    return response.data
+  },
+}
+
+export const workFolderApi = {
+  listWorkFolders: async (): Promise<WorkFolderListResponse> => {
+    const response = await api.get('/api/work/folders')
+    return response.data
+  },
+
+  addWorkFolder: async (request: WorkFolderAddRequest): Promise<{ folder: WorkFolderGrant }> => {
+    const response = await api.post('/api/work/folders', request)
+    return response.data
+  },
+
+  deleteWorkFolder: async (id: string): Promise<{ success: boolean }> => {
+    const response = await api.delete(`/api/work/folders/${encodeURIComponent(id)}`)
     return response.data
   },
 }

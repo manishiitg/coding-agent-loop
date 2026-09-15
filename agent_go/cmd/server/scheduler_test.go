@@ -13,7 +13,6 @@ import (
 	"time"
 
 	"github.com/manishiitg/coding-agent-loop/agent_go/internal/terminals"
-	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/costledger"
 	todo_creation_human "github.com/manishiitg/coding-agent-loop/agent_go/pkg/orchestrator/agents/workflow/step_based_workflow"
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/schedulerstate"
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/workflowtypes"
@@ -53,42 +52,6 @@ func TestBuildScheduleCronExpressionAlwaysSetsTimezone(t *testing.T) {
 				t.Fatalf("buildScheduleCronExpression() = %q, want %q", got, tt.want)
 			}
 		})
-	}
-}
-
-func TestPulseReviewFixCostContextUsesOnlyReviewFixWindow(t *testing.T) {
-	ledger, err := costledger.NewSQLiteLedger(filepath.Join(t.TempDir(), "costs.sqlite"))
-	if err != nil {
-		t.Fatalf("NewSQLiteLedger() error = %v", err)
-	}
-	defer ledger.Close()
-	start := time.Date(2026, 8, 15, 1, 0, 0, 0, time.UTC)
-	for _, entry := range []costledger.Entry{
-		{EventID: "prior", IdempotencyKey: "prior", Timestamp: start.Add(-time.Second), WorkflowID: "Workflow/demo", Scope: "pulse", LLMCallCount: 1, TotalCostUSD: 90},
-		{EventID: "gate", IdempotencyKey: "gate", Timestamp: start.Add(time.Second), WorkflowID: "Workflow/demo", Scope: "pulse", LLMCallCount: 1, TotalCostUSD: 1.25, BillingBasis: "subscription_shadow"},
-		{EventID: "review", IdempotencyKey: "review", Timestamp: start.Add(2 * time.Second), WorkflowID: "Workflow/demo", Scope: "pulse", LLMCallCount: 2, TotalCostUSD: 2.75, BillingBasis: "subscription_shadow"},
-		{EventID: "run", IdempotencyKey: "run", Timestamp: start.Add(2 * time.Second), WorkflowID: "Workflow/demo", Scope: "workflow_execution", LLMCallCount: 1, TotalCostUSD: 80},
-	} {
-		if err := ledger.Append(entry); err != nil {
-			t.Fatalf("Append(%q) error = %v", entry.EventID, err)
-		}
-	}
-
-	got := pulseReviewFixCostContext(ledger, "Workflow/demo", start, start.Add(3*time.Second))
-	for _, want := range []string{"$4.00", "3 LLM call(s)", "estimated token-equivalent cost", "excludes Gate, Finalize"} {
-		if !strings.Contains(got, want) {
-			t.Fatalf("pulseReviewFixCostContext() missing %q: %s", want, got)
-		}
-	}
-	if strings.Contains(got, "$90") || strings.Contains(got, "$80") {
-		t.Fatalf("pulseReviewFixCostContext() mixed prior/workflow cost: %s", got)
-	}
-}
-
-func TestPulseReviewFixCostContextReportsSkippedStageAsZero(t *testing.T) {
-	got := pulseReviewFixCostContext(nil, "Workflow/demo", time.Time{}, time.Time{})
-	if !strings.Contains(got, "not run") || !strings.Contains(got, "$0.00") {
-		t.Fatalf("skipped Review+Fix cost context = %q", got)
 	}
 }
 
@@ -194,6 +157,71 @@ func TestScheduleStateLockKeyFromRuntimeKey(t *testing.T) {
 	wantPulse := strings.Join([]string{"workflow-pulse", "/tmp/Workflow/demo"}, scheduleScopeSeparator)
 	if got := scheduleStateLockKeyFromRuntimeKey(pulseKey); got != wantPulse {
 		t.Fatalf("Pulse lock key = %q, want %q", got, wantPulse)
+	}
+}
+
+func TestScheduleStateScopeUsesIndependentParallelLane(t *testing.T) {
+	sequential := &ScheduleContext{WorkspacePath: "Workflow/demo", Schedule: WorkflowSchedule{ID: "growth"}}
+	parallel := &ScheduleContext{WorkspacePath: "Workflow/demo", Schedule: WorkflowSchedule{
+		ID: "measurement", ConcurrencyMode: "parallel", ParallelRiskAcknowledged: true,
+	}}
+	_, _, sequentialKey := scheduleStateScope(sequential)
+	_, _, parallelKey := scheduleStateScope(parallel)
+	if sequentialKey == parallelKey {
+		t.Fatalf("parallel schedule reused sequential workflow lane: %q", parallelKey)
+	}
+	if !strings.Contains(parallelKey, "workflow-parallel") || !strings.Contains(parallelKey, "measurement") {
+		t.Fatalf("parallel lock key lacks schedule-local identity: %q", parallelKey)
+	}
+}
+
+func TestValidateScheduleRuntimePolicyRequiresParallelRiskAcknowledgement(t *testing.T) {
+	schedule := WorkflowSchedule{ID: "measurement", ScheduleType: "cron", ConcurrencyMode: "parallel"}
+	if err := validateScheduleRuntimePolicy(schedule); err == nil || !strings.Contains(err.Error(), "parallel_risk_acknowledged") {
+		t.Fatalf("parallel schedule without acknowledgement error = %v", err)
+	}
+	schedule.ParallelRiskAcknowledged = true
+	if err := validateScheduleRuntimePolicy(schedule); err != nil {
+		t.Fatalf("approved parallel cron schedule rejected: %v", err)
+	}
+	schedule.ScheduleType = "webhook"
+	if err := validateScheduleRuntimePolicy(schedule); err == nil {
+		t.Fatal("parallel webhook schedule was accepted")
+	}
+}
+
+func TestParallelScheduleOverlapsOnlyTrustedScheduleExecutions(t *testing.T) {
+	api := &StreamingAPI{trackedWorkflowExecutions: map[string]*TrackedWorkflowExecution{}}
+	svc := &SchedulerService{api: api}
+	workspace := "Workflow/demo"
+	put := func(sessionID, triggeredBy string) {
+		api.trackedWorkflowExecutions = map[string]*TrackedWorkflowExecution{
+			"exec": {ExecutionID: "exec", SessionID: sessionID, WorkspacePath: workspace, Kind: "full_workflow", Status: trackedExecutionStatusRunning, TriggeredBy: triggeredBy, StartedAt: time.Now()},
+		}
+	}
+
+	put("manual-session", "manual")
+	if got := svc.findActiveExecutionBlockingSchedule(workspace, true); got == nil {
+		t.Fatal("parallel schedule was allowed to overlap manual workflow execution")
+	}
+
+	put("schedule-cron--measurement_1", "cron")
+	api.scheduleInvocations.Store("schedule-cron--measurement_1", &todo_creation_human.ScheduleInvocation{AllowParallel: false})
+	if got := svc.findActiveExecutionBlockingSchedule(workspace, true); got != nil {
+		t.Fatalf("parallel schedule was blocked by another trusted schedule: %+v", got)
+	}
+	if got := svc.findActiveExecutionBlockingSchedule(workspace, false); got == nil {
+		t.Fatal("sequential schedule ignored another sequential schedule")
+	}
+
+	api.scheduleInvocations.Store("schedule-cron--measurement_1", &todo_creation_human.ScheduleInvocation{AllowParallel: true})
+	if got := svc.findActiveExecutionBlockingSchedule(workspace, false); got != nil {
+		t.Fatalf("sequential lane was blocked by approved parallel schedule: %+v", got)
+	}
+
+	api.scheduleInvocations.Delete("schedule-cron--measurement_1")
+	if got := svc.findActiveExecutionBlockingSchedule(workspace, true); got == nil {
+		t.Fatal("parallel schedule ignored unbound scheduled/Pulse-like execution")
 	}
 }
 
@@ -493,6 +521,44 @@ func TestScheduleDependencyDispositionUsesMatchingOccurrenceAndPolicy(t *testing
 		got, reason := svc.scheduleDependencyDisposition(context.Background(), sctx, completedAt.Add(5*time.Minute))
 		if got != scheduleDependencyWaiting || !strings.Contains(reason, "configured delay") {
 			t.Fatalf("disposition=%v reason=%q, want delay wait", got, reason)
+		}
+	})
+
+	t.Run("all listed parents must release the dependent occurrence", func(t *testing.T) {
+		svc, sctx, completedAt, dependentOccurrence := newFixture(t, schedulerstate.StateCompleted)
+		sctx.Schedule.AfterScheduleID = ""
+		sctx.Schedule.AfterScheduleIDs = []string{"market-close", "risk-snapshot"}
+		got, reason := svc.scheduleDependencyDisposition(context.Background(), sctx, completedAt.Add(time.Second))
+		if got != scheduleDependencyWaiting || !strings.Contains(reason, "risk-snapshot") {
+			t.Fatalf("disposition=%v reason=%q, want wait for second prerequisite", got, reason)
+		}
+
+		riskOccurrence := dependentOccurrence.Add(-10 * time.Minute)
+		risk := schedulerstate.Run{
+			RunID: "risk-run", ScopeType: "workflow", ScopeID: "Workflow/trading",
+			LockKey: "workflow:Workflow/trading", ScheduleID: "risk-snapshot", TriggerSource: "cron",
+			ScheduledFor: riskOccurrence, StartedAt: riskOccurrence,
+		}
+		if err := svc.stateStore.BeginRun(context.Background(), risk); err != nil {
+			t.Fatal(err)
+		}
+		for _, state := range []schedulerstate.State{schedulerstate.StateWorkflowRunning, schedulerstate.StateWorkflowFinished, schedulerstate.StateCompleted} {
+			if err := svc.stateStore.Transition(context.Background(), schedulerstate.Transition{
+				RunID: risk.RunID, To: state, At: completedAt,
+			}); err != nil {
+				t.Fatalf("transition risk prerequisite to %s: %v", state, err)
+			}
+		}
+		if err := svc.stateStore.RecordFireDecision(context.Background(), schedulerstate.FireDecision{
+			DecisionID: "risk-fire", ScopeType: "workflow", ScopeID: "Workflow/trading",
+			ScheduleID: "risk-snapshot", TriggerSource: "cron", Decision: "started", RunID: risk.RunID,
+			ScheduledFor: riskOccurrence, FiredAt: riskOccurrence,
+		}); err != nil {
+			t.Fatal(err)
+		}
+		got, reason = svc.scheduleDependencyDisposition(context.Background(), sctx, completedAt.Add(time.Second))
+		if got != scheduleDependencyReady {
+			t.Fatalf("disposition=%v reason=%q, want ready after every prerequisite", got, reason)
 		}
 	})
 
@@ -1523,6 +1589,11 @@ func TestPulseFinalBackupRunsOnlyInParentTurn(t *testing.T) {
 	if strings.Contains(string(raw), "publish unbacked changes after backup failure") {
 		t.Fatalf("finalizer still couples publish eligibility to backup success")
 	}
+	for _, forbidden := range []string{"REVIEWER/FIXER COST", "Reviewers + Fixer"} {
+		if strings.Contains(finalizer, forbidden) || strings.Contains(string(raw), forbidden) {
+			t.Fatalf("Pulse notification still requires reviewer/fixer cost field %q", forbidden)
+		}
+	}
 }
 
 func TestWorkflowBackupRequiresDatabaseSnapshotOnlyForDueTriggerAndCoverage(t *testing.T) {
@@ -1675,8 +1746,8 @@ func TestBuildWorkshopRequestDisablesLiveInputDeliveryForSchedulerTurns(t *testi
 	if !ok {
 		t.Fatalf("execution_options missing or wrong type: %#v", reqMap["execution_options"])
 	}
-	if got := execOpts["workshop_mode"]; got != "run" {
-		t.Fatalf("workshop_mode = %#v, want run for normal scheduled work", got)
+	if got := execOpts["workshop_mode"]; got != "workshop" {
+		t.Fatalf("workshop_mode = %#v, want workshop for writable scheduled work", got)
 	}
 }
 
@@ -1686,7 +1757,7 @@ func TestScheduledTurnsUseLeastPrivilegedWorkshopMode(t *testing.T) {
 		turn scheduledWorkshopTurn
 		want string
 	}{
-		{name: "normal schedule message", turn: scheduledWorkshopTurn{label: "schedule-message-1"}, want: "run"},
+		{name: "normal schedule message", turn: scheduledWorkshopTurn{label: "schedule-message-1"}, want: "workshop"},
 		{name: "contract upgrade", turn: scheduledWorkshopTurn{upgradeTarget: "1.2.3"}, want: "workshop"},
 		{name: "decision drain", turn: scheduledWorkshopTurn{decisionDrain: true}, want: "workshop"},
 	}
@@ -1702,21 +1773,21 @@ func TestScheduledTurnsUseLeastPrivilegedWorkshopMode(t *testing.T) {
 func TestRequestWithWorkshopModeDoesNotLeakElevationAcrossTurns(t *testing.T) {
 	base := map[string]interface{}{
 		"execution_options": map[string]interface{}{
-			"workshop_mode":      "run",
+			"workshop_mode":      "workshop",
 			"execution_strategy": "start_from_beginning_no_human",
 		},
 	}
 
 	maintenance := requestWithWorkshopMode(base, "workshop")
-	normal := requestWithWorkshopMode(base, "run")
+	normal := requestWithWorkshopMode(base, "workshop")
 
 	if got := maintenance["execution_options"].(map[string]interface{})["workshop_mode"]; got != "workshop" {
 		t.Fatalf("maintenance mode = %#v, want workshop", got)
 	}
-	if got := normal["execution_options"].(map[string]interface{})["workshop_mode"]; got != "run" {
-		t.Fatalf("normal mode = %#v, want run", got)
+	if got := normal["execution_options"].(map[string]interface{})["workshop_mode"]; got != "workshop" {
+		t.Fatalf("normal mode = %#v, want workshop", got)
 	}
-	if got := base["execution_options"].(map[string]interface{})["workshop_mode"]; got != "run" {
+	if got := base["execution_options"].(map[string]interface{})["workshop_mode"]; got != "workshop" {
 		t.Fatalf("base mode was mutated to %#v", got)
 	}
 
@@ -1724,7 +1795,7 @@ func TestRequestWithWorkshopModeDoesNotLeakElevationAcrossTurns(t *testing.T) {
 	if got := normal["execution_options"].(map[string]interface{})["workshop_mode"]; got != "workshop" {
 		t.Fatalf("Pulse mode = %#v, want workshop", got)
 	}
-	if got := base["execution_options"].(map[string]interface{})["workshop_mode"]; got != "run" {
+	if got := base["execution_options"].(map[string]interface{})["workshop_mode"]; got != "workshop" {
 		t.Fatalf("Pulse elevation leaked into base request: %#v", got)
 	}
 }
@@ -2024,7 +2095,7 @@ func TestMaybeResumeLatestWorkflowThreadUsesPreviousScheduledSessionOnly(t *test
 	workspacePath := "Workflow/rtslatency"
 	scheduleID := "schedule-1"
 	writeWorkflowChatRuntime(t, root, workspacePath, "normal-user-chat", "claude-code", "run", true)
-	writeWorkflowChatRuntime(t, root, workspacePath, "previous-schedule-chat", "claude-code", "run", true)
+	writeWorkflowChatRuntime(t, root, workspacePath, "previous-schedule-chat", "claude-code", "workshop", true)
 	writeScheduleRunsForTest(t, root, workspacePath, []ScheduleRunEntry{
 		{
 			ID:         "current-run",
@@ -2085,21 +2156,19 @@ func TestMaybeResumeLatestWorkflowThreadDoesNotCrossModeBoundary(t *testing.T) {
 
 	workspacePath := "Workflow/rtslatency"
 	scheduleID := "schedule-1"
-	writeWorkflowChatRuntime(t, root, workspacePath, "previous-workshop-chat", "claude-code", "workshop", true)
+	writeWorkflowChatRuntime(t, root, workspacePath, "previous-run-chat", "claude-code", "run", true)
 	writeScheduleRunsForTest(t, root, workspacePath, []ScheduleRunEntry{{
 		ID:         "previous-run",
 		ScheduleID: scheduleID,
-		SessionID:  "previous-workshop-chat",
+		SessionID:  "previous-run-chat",
 		Status:     "success",
 		StartedAt:  time.Now().Add(-time.Hour).UTC(),
 	}})
 
-	reqMap := map[string]interface{}{
-		"execution_options": map[string]interface{}{"workshop_mode": "run"},
-	}
+	reqMap := map[string]interface{}{}
 	resumed := (&SchedulerService{}).maybeResumeLatestWorkflowThread(context.Background(), resumeTestScheduleContext(workspacePath, scheduleID), reqMap, "current-schedule-chat")
 	if resumed != "" {
-		t.Fatalf("resumed session = %q, want fresh Run session for Workshop-only history", resumed)
+		t.Fatalf("resumed session = %q, want fresh Workshop session for legacy Run history", resumed)
 	}
 	if _, ok := reqMap["restored_conversation_session_id"]; ok {
 		t.Fatalf("restored_conversation_session_id crossed Workshop/Run boundary: %#v", reqMap)

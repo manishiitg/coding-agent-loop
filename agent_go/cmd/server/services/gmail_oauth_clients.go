@@ -2,6 +2,7 @@ package services
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -293,6 +294,15 @@ func (g *GmailService) ImportLegacyOAuthClient(ctx context.Context, name string)
 	if err != nil {
 		return GmailOAuthClient{}, 0, fmt.Errorf("no legacy client credentials found to import: %w", err)
 	}
+	autoNamed := strings.TrimSpace(name) == ""
+	if autoNamed {
+		// A reconnect must never enter OAuth with a legacy client and then fail
+		// at the callback because gog requires a named client. Derive a stable,
+		// non-secret name from the OAuth client id so every connection using the
+		// same legacy registration converges on one registry entry.
+		sum := sha256.Sum256([]byte(clientID))
+		name = fmt.Sprintf("legacy-%x", sum[:6])
+	}
 	secretJSON, err := json.Marshal(map[string]any{
 		"installed": map[string]string{
 			"client_id":     clientID,
@@ -302,9 +312,18 @@ func (g *GmailService) ImportLegacyOAuthClient(ctx context.Context, name string)
 	if err != nil {
 		return GmailOAuthClient{}, 0, fmt.Errorf("gmail oauth client: encode legacy credentials: %w", err)
 	}
-	client, err := CreateOAuthClient(ctx, name, secretJSON, false)
-	if err != nil {
-		return GmailOAuthClient{}, 0, err
+	var client GmailOAuthClient
+	if autoNamed && OAuthClientExists(name) {
+		existing, ok := loadGmailOAuthClientMeta(name)
+		if !ok || existing.ClientID != clientID {
+			return GmailOAuthClient{}, 0, fmt.Errorf("derived legacy OAuth client %q conflicts with an existing registration", name)
+		}
+		client = existing
+	} else {
+		client, err = CreateOAuthClient(ctx, name, secretJSON, false)
+		if err != nil {
+			return GmailOAuthClient{}, 0, err
+		}
 	}
 
 	cfg := g.GetConfig()
@@ -322,4 +341,25 @@ func (g *GmailService) ImportLegacyOAuthClient(ctx context.Context, name string)
 		}
 	}
 	return client, backfilled, nil
+}
+
+// EnsureConnectionOAuthClient migrates a pre-registry Gmail connection onto
+// the named gog client store before OAuth begins. New connections are already
+// named and pass through unchanged.
+func (g *GmailService) EnsureConnectionOAuthClient(ctx context.Context, connectionID string) (GmailConnection, error) {
+	conn, ok := g.GetConnection(strings.TrimSpace(connectionID))
+	if !ok {
+		return GmailConnection{}, fmt.Errorf("gmail connection %q not found", connectionID)
+	}
+	if strings.TrimSpace(conn.ClientName) != "" {
+		return conn, nil
+	}
+	if _, _, err := g.ImportLegacyOAuthClient(ctx, ""); err != nil {
+		return GmailConnection{}, fmt.Errorf("migrate legacy Gmail OAuth client before reconnect: %w", err)
+	}
+	conn, ok = g.GetConnection(strings.TrimSpace(connectionID))
+	if !ok || strings.TrimSpace(conn.ClientName) == "" {
+		return GmailConnection{}, fmt.Errorf("legacy Gmail connection was not assigned an OAuth client")
+	}
+	return conn, nil
 }

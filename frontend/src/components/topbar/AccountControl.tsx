@@ -6,6 +6,7 @@ import NotificationsControl from './NotificationsControl'
 import ChangePasswordDialog from './ChangePasswordDialog'
 import AccessTokensDialog from './AccessTokensDialog'
 import UsersAdminPanel from '../admin/UsersAdminPanel'
+import { APP_VERSION } from '../../version'
 
 /**
  * AccountControl - the signed-in user's avatar (their initial) which opens a
@@ -78,6 +79,7 @@ export default function AccountControl({ onOpenWalkthrough, onOpenShortcuts }: A
             {isMultiUserMode && user.email && user.username !== user.email && (
               <p className="text-xs text-gray-500 dark:text-gray-400 truncate">{user.email}</p>
             )}
+            <p className="text-xs text-gray-500 dark:text-gray-400">AgentWorks v{APP_VERSION}</p>
           </div>
           {onOpenWalkthrough && <button type="button" role="menuitem" className={itemClass} onClick={() => {
             setOpen(false)

@@ -9,6 +9,7 @@ vi.mock('../admin/UsersAdminPanel', () => ({ default: ({ isOpen }: { isOpen: boo
 import { useAuthStore } from '../../stores/useAuthStore'
 import { TooltipProvider } from '../ui/tooltip'
 import AccountControl from './AccountControl'
+import { APP_VERSION } from '../../version'
 
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true })
 beforeEach(() => {
@@ -29,6 +30,7 @@ describe('Account menu availability', () => {
       const trigger = host.querySelector('button')!
       expect(trigger.getAttribute('aria-label')).toBe(isMultiUserMode ? 'Account: Alex' : 'Account: Local account')
       await act(async () => trigger.click())
+      expect(host.textContent).toContain(`AgentWorks v${APP_VERSION}`)
       expect(host.textContent).toContain('Access tokens')
       expect(host.textContent?.includes('Change password')).toBe(isMultiUserMode)
       expect(host.textContent).not.toContain('Users & access')

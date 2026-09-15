@@ -32,6 +32,7 @@ interface BrowserAutomationSettingsProps {
   cdpChecking: boolean
   onCheckCdpConnection: (port: number) => void
   readOnly?: boolean
+  scopeNoun?: 'workflow' | 'project'
 }
 
 interface CommandBlockProps {
@@ -83,6 +84,7 @@ const BrowserAutomationSettings: React.FC<BrowserAutomationSettingsProps> = ({
   cdpChecking,
   onCheckCdpConnection,
   readOnly = false,
+  scopeNoun = 'workflow',
 }) => {
   const platform = typeof navigator !== 'undefined' ? navigator.platform : undefined
   const isMac = platform?.includes('Mac')
@@ -114,7 +116,7 @@ const BrowserAutomationSettings: React.FC<BrowserAutomationSettingsProps> = ({
           </h3>
           <p className="mt-0.5 text-xs text-gray-500 dark:text-gray-400">
             {cdpEnabled
-              ? 'This saves the workflow policy. Chrome availability is checked live each time the workflow runs.'
+              ? `This saves the ${scopeNoun} policy. Chrome availability is checked live each time the ${scopeNoun} runs.`
               : 'CDP is disabled on this server. Automatic and Headless use managed background Chromium.'}
           </p>
         </div>
@@ -158,7 +160,7 @@ const BrowserAutomationSettings: React.FC<BrowserAutomationSettingsProps> = ({
             <p className="mt-1 text-xs leading-relaxed text-gray-500 dark:text-gray-400">
               {cdpEnabled
                 ? 'Requires CDP and stops with a clear error if that Chrome is unavailable.'
-                : 'Unavailable in this deployment. A workflow cannot force or configure CDP here.'}
+                : `Unavailable in this deployment. A ${scopeNoun} cannot force or configure CDP here.`}
             </p>
           </div>
         </label>
@@ -189,7 +191,7 @@ const BrowserAutomationSettings: React.FC<BrowserAutomationSettingsProps> = ({
           <div className="min-w-0">
             <div className="text-sm font-medium text-gray-900 dark:text-gray-100">No browser</div>
             <p className="mt-1 text-xs leading-relaxed text-gray-500 dark:text-gray-400">
-              Browser tools are unavailable to this workflow.
+              Browser tools are unavailable to this {scopeNoun}.
             </p>
           </div>
         </label>
@@ -197,7 +199,7 @@ const BrowserAutomationSettings: React.FC<BrowserAutomationSettingsProps> = ({
 
       {!cdpEnabled && browserMode === 'cdp' && (
         <p className="rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs leading-relaxed text-amber-800 dark:text-amber-200">
-          This workflow has a legacy CDP setting, but CDP is disabled on this server. Select Automatic, Headless, or No browser before saving.
+          This {scopeNoun} has a legacy CDP setting, but CDP is disabled on this server. Select Automatic, Headless, or No browser before saving.
         </p>
       )}
 
@@ -250,7 +252,9 @@ const BrowserAutomationSettings: React.FC<BrowserAutomationSettingsProps> = ({
             )}
 
             <p className="rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs leading-relaxed text-amber-800 dark:text-amber-200">
-              Visible Chrome can take keyboard focus. For schedules, prefer Automatic or Always headless, or launch a dedicated Chrome profile on this port.
+              {scopeNoun === 'workflow'
+                ? 'Visible Chrome can take keyboard focus. For schedules, prefer Automatic or Always headless, or launch a dedicated Chrome profile on this port.'
+                : 'Visible Chrome can take keyboard focus. Prefer Automatic or Always headless, or launch a dedicated Chrome profile on this port.'}
             </p>
           </div>
 

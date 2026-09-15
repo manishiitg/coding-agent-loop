@@ -471,6 +471,33 @@ func SetSessionShellEnv(sessionID string, env map[string]string) {
 	log.Printf("[SHELL] Set %d shell env var(s) for session %s", len(env), sessionID)
 }
 
+// ReplaceSessionShellEnvPrefix atomically replaces one managed namespace in a
+// session's shell environment while preserving variables owned by other
+// features. This is used when a live attachment set changes: merging alone
+// cannot remove the alias of a detached folder.
+func ReplaceSessionShellEnvPrefix(sessionID, prefix string, env map[string]string) {
+	prefix = strings.TrimSpace(prefix)
+	if prefix == "" {
+		return
+	}
+	updateSessionShellConfig(sessionID, func(cfg *SessionShellConfig) {
+		if cfg.Env == nil {
+			cfg.Env = make(map[string]string, len(env))
+		}
+		for key := range cfg.Env {
+			if strings.HasPrefix(key, prefix) {
+				delete(cfg.Env, key)
+			}
+		}
+		for key, value := range env {
+			if strings.HasPrefix(key, prefix) {
+				cfg.Env[key] = value
+			}
+		}
+	})
+	log.Printf("[SHELL] Replaced %s shell env namespace with %d var(s) for session %s", prefix, len(env), sessionID)
+}
+
 // GetSessionShellEnv returns a copy of the session's shell env vars (nil if none),
 // safe to read without holding the config lock.
 func GetSessionShellEnv(sessionID string) map[string]string {
@@ -513,9 +540,9 @@ func SetSessionBrowserSessionID(sessionID, browserSessionID string) {
 	log.Printf("[SHELL] Set browser session ID for session %s: %s", sessionID, browserSessionID)
 }
 
-// BrowserSessionNamespace is the authenticated browser ownership boundary.
-// Chats, workflow groups and explicit tool session names share one user browser.
-// Anonymous contexts remain chat-scoped so unrelated guests never share cookies.
+// BrowserSessionNamespace is the authenticated browser ownership boundary for
+// non-workflow chats. Anonymous contexts remain chat-scoped so unrelated guests
+// never share cookies.
 func BrowserSessionNamespace(userID, sessionID string) string {
 	userID, sessionID = strings.TrimSpace(userID), strings.TrimSpace(sessionID)
 	if userID == "" && sessionID == "" {
@@ -531,12 +558,32 @@ func BrowserSessionNamespace(userID, sessionID string) string {
 	return kind + hex.EncodeToString(sum[:8])
 }
 
+// WorkflowBrowserSessionNamespace gives one workflow a durable browser shared
+// by all of its authorized users, runs, builder chats, groups and delegated
+// agents. An empty workflow path retains the user-scoped non-workflow boundary.
+func WorkflowBrowserSessionNamespace(userID, sessionID, workflowPath string) string {
+	workflowPath = strings.ReplaceAll(workflowPath, "\\", "/")
+	workflowPath = filepath.ToSlash(filepath.Clean(strings.TrimSpace(workflowPath)))
+	workflowPath = strings.Trim(workflowPath, "/")
+	if workflowPath == "" || workflowPath == "." {
+		return BrowserSessionNamespace(userID, sessionID)
+	}
+	sum := sha256.Sum256([]byte("workflow\x00" + workflowPath))
+	return "workflow-" + hex.EncodeToString(sum[:8])
+}
+
 // BindSessionBrowserIsolation always replaces obsolete per-chat/per-group bindings.
 func BindSessionBrowserIsolation(sessionID, userID string) {
+	BindSessionBrowserIsolationForWorkflow(sessionID, userID, "")
+}
+
+// BindSessionBrowserIsolationForWorkflow binds a public tool/chat session to
+// one workflow's persistent browser, shared by that workflow's authorized users.
+func BindSessionBrowserIsolationForWorkflow(sessionID, userID, workflowPath string) {
 	if strings.TrimSpace(sessionID) == "" {
 		return
 	}
-	namespace := BrowserSessionNamespace(userID, sessionID)
+	namespace := WorkflowBrowserSessionNamespace(userID, sessionID, workflowPath)
 	updateSessionShellConfig(sessionID, func(cfg *SessionShellConfig) {
 		cfg.BrowserSessionNamespace = namespace
 		cfg.BrowserSessionID = namespace + "--browser"

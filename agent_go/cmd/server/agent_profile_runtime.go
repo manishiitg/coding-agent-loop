@@ -108,6 +108,19 @@ func agentProfileRuntimeWorkspace(userID, workspacePath string) string {
 	return workspacePath
 }
 
+// isActiveWorkProjectWorkspace distinguishes an actual Work project from the
+// Work landing/root workspace. Project-scoped tools must be absent on the
+// landing chat: registering them there either fails immediately (share links,
+// schedules) or gives the model tools that cannot operate without product.json.
+func isActiveWorkProjectWorkspace(userID, workspacePath string) bool {
+	canonical := canonicalChatHistoryWorkspacePath(userID, workspacePath)
+	const prefix = "Chats/Work/projects/"
+	if !strings.HasPrefix(canonical, prefix) {
+		return false
+	}
+	return strings.Trim(strings.TrimPrefix(canonical, prefix), "/") != ""
+}
+
 // providerOptionRuntimeOptions returns a copy of the runtime options the
 // profile declares for the (provider, model) binding a turn resolved to —
 // nil when the binding is not one of the profile's provider_options or
@@ -159,6 +172,9 @@ func resolveProfileRuntimeModel(runtime agentprofiles.RuntimePolicy, requestedPr
 			if strings.EqualFold(requestedModelID, strings.TrimSpace(id)) {
 				return strings.TrimSpace(option.Provider), requestedModelID
 			}
+		}
+		if len(option.Models) == 0 && providerOffersModel(option.Provider, requestedModelID) {
+			return strings.TrimSpace(option.Provider), requestedModelID
 		}
 	}
 	return provider, modelID
@@ -235,6 +251,19 @@ func (api *StreamingAPI) resolveAgentProfileForQuery(ctx context.Context, req *Q
 		return nil, err
 	}
 	req.SelectedFolder = workspacePath
+	if profile.ID == "work" {
+		conversationKey := strings.TrimSpace(req.AgentProfileConversationKey)
+		if conversationKey == "" {
+			return nil, fmt.Errorf("agent_profile_conversation_key is required for Work")
+		}
+		binding, bindingErr := resolveProductConversationBinding(ctx, userID, profile, conversationKey)
+		if bindingErr != nil {
+			return nil, fmt.Errorf("resolve Work workspace: %w", bindingErr)
+		}
+		if filepath.Clean(binding.WorkspacePath) != filepath.Clean(workspacePath) {
+			return nil, fmt.Errorf("Work conversation does not match the selected session")
+		}
+	}
 
 	promptContext := req.AgentProfileContext
 	promptContext.ProjectTitle = strings.TrimSpace(promptContext.ProjectTitle)
@@ -468,7 +497,7 @@ func stampEventData(data unifiedevents.EventData, now time.Time) {
 	}
 }
 
-func (api *StreamingAPI) registerAgentProfileTools(registrar definitionToolRegistrar, resolved *resolvedAgentProfile, userID, sessionID, workspacePath string) error {
+func (api *StreamingAPI) registerAgentProfileTools(registrar definitionToolRegistrar, gate *productToolGate, resolved *resolvedAgentProfile, userID, sessionID, workspacePath string, req ...QueryRequest) error {
 	if resolved == nil {
 		return nil
 	}
@@ -487,8 +516,47 @@ func (api *StreamingAPI) registerAgentProfileTools(registrar definitionToolRegis
 		if category == "" {
 			category = "agent_profile_tools"
 		}
+		// profile.tools is itself an explicit capability declaration. The
+		// binding uses a factory id while tool_policy uses public tool names,
+		// so admit the factory's resolved name instead of requiring products
+		// to duplicate it in a second list that can drift out of sync.
+		gate.Declare(tool.Name)
 		if err := registrar.RegisterCustomTool(tool.Name, tool.Description, tool.Parameters, tool.Execute, category); err != nil {
 			return fmt.Errorf("register profile tool %q: %w", tool.Name, err)
+		}
+	}
+	activeWorkProject := resolved.Definition.ID == "work" && isActiveWorkProjectWorkspace(userID, workspacePath)
+	if resolved.Definition.ID == "work" && agentprofiles.HasFeature(resolved.Definition, "attached-folders") {
+		if err := api.registerWorkFolderTools(registrar, userID, sessionID); err != nil {
+			return err
+		}
+	}
+	if activeWorkProject && agentprofiles.HasFeature(resolved.Definition, "workflow-references") {
+		if err := api.registerWorkWorkflowReferenceTools(registrar, userID, sessionID, workspacePath); err != nil {
+			return err
+		}
+	}
+	if activeWorkProject && agentprofiles.HasFeature(resolved.Definition, "files") {
+		if err := api.registerWorkShareLinkTool(registrar, userID, workspacePath); err != nil {
+			return err
+		}
+	}
+	if activeWorkProject && agentprofiles.HasFeature(resolved.Definition, "schedules") {
+		if err := api.registerWorkScheduleTools(registrar, userID, workspacePath); err != nil {
+			return err
+		}
+	}
+	if activeWorkProject && agentprofiles.HasFeature(resolved.Definition, "bots") {
+		if err := api.registerGmailConnectionManagementTools(registrar, sessionID, workspacePath); err != nil {
+			return err
+		}
+	}
+	if activeWorkProject && agentprofiles.HasFeature(resolved.Definition, "workspace-ui") && len(req) > 0 && registerWorkUIAllowed(req[0]) {
+		for _, name := range []string{"open_workspace_view", "refresh_workspace_view", "list_ui_capabilities", "get_ui_state", "perform_ui_action", "get_ui_action_result"} {
+			gate.Declare(name)
+		}
+		if err := api.registerOpenWorkWorkspaceViewTool(registrar, sessionID, workspacePath); err != nil {
+			return err
 		}
 	}
 	return nil
@@ -527,7 +595,11 @@ func agentProfileReadOnlyFolders(sandbox agentprofiles.SandboxPolicy, workflowRe
 	if sandbox.ReadOnly == nil {
 		return append([]string{"skills/", "subagents/", "Downloads/"}, workflowReadOnlyFolders...)
 	}
-	out := make([]string, 0, len(sandbox.ReadOnly))
+	// sandbox.read_only controls the product's ambient/default read roots. An
+	// authorized # workflow reference is request/project context, not an ambient
+	// default, and must remain readable even when the product deliberately uses
+	// `read_only: []` to disable those defaults.
+	out := make([]string, 0, len(sandbox.ReadOnly)+len(workflowReadOnlyFolders))
 	for _, folder := range sandbox.ReadOnly {
 		clean := strings.Trim(strings.TrimSpace(folder), "/")
 		if clean == "" {
@@ -535,5 +607,5 @@ func agentProfileReadOnlyFolders(sandbox agentprofiles.SandboxPolicy, workflowRe
 		}
 		out = append(out, clean+"/")
 	}
-	return out
+	return appendUniqueStrings(out, workflowReadOnlyFolders...)
 }

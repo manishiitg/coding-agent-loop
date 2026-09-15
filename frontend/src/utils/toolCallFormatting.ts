@@ -136,6 +136,12 @@ export function toolCallValueToText(value: unknown): string {
  */
 const HARNESS_TOOL_ERROR = /tool execution (?:failed|canceled|timed out): layer=/
 
+// Coding-agent native shell tools do not use the AgentWorks JSON shell
+// envelope. Claude Code, for example, reports a failed Bash call as plain text
+// beginning with "Exit code 1". Treat that provider status line as authoritative
+// so a completed tool event is not rendered with a green success mark.
+const NATIVE_SHELL_NONZERO_EXIT = /^exit code\s+[1-9]\d*\b/im
+
 /**
  * A folder-guard denial on stderr, which the exit code does not report.
  *
@@ -152,7 +158,9 @@ const HARNESS_TOOL_ERROR = /tool execution (?:failed|canceled|timed out): layer=
 const SHELL_PERMISSION_DENIED = /(?:Operation not permitted|[Pp]ermission denied)/
 
 function textCarriesHarnessError(value: unknown): boolean {
-  return typeof value === 'string' && HARNESS_TOOL_ERROR.test(value)
+  return typeof value === 'string' && (
+    HARNESS_TOOL_ERROR.test(value) || NATIVE_SHELL_NONZERO_EXIT.test(value)
+  )
 }
 
 function formatTextThatMayBeJson(text: string): FormattedToolCallValue {

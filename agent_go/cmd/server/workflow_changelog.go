@@ -29,8 +29,18 @@ type planChangelogEntry struct {
 	StepIDs        []string                     `json:"step_ids,omitempty"`
 	Changes        []planChangelogFieldChange   `json:"changes,omitempty"`
 	ArtifactReview *planChangelogArtifactReview `json:"artifact_review,omitempty"`
+	Actor          string                       `json:"actor,omitempty"`
+	Origin         planChangelogOrigin          `json:"origin,omitempty"`
 	// Source changelog file this entry came from (added by the server, not on disk).
 	File string `json:"file,omitempty"`
+}
+
+type planChangelogOrigin struct {
+	Type      string `json:"type,omitempty"`
+	AgentName string `json:"agent_name,omitempty"`
+	SessionID string `json:"session_id,omitempty"`
+	UserID    string `json:"user_id,omitempty"`
+	Username  string `json:"username,omitempty"`
 }
 
 type planChangelogArtifactReview struct {

@@ -12,8 +12,8 @@ import (
 )
 
 // google_workspace_cli gives the agent direct, general-purpose access to
-// gogcli for the Google Workspace services a connection was explicitly
-// authorized for beyond Gmail (Drive, Sheets, Docs, Slides, Calendar) — see
+// gogcli for Gmail reads and the Google Workspace services a connection was
+// explicitly authorized for (Drive, Sheets, Docs, Slides, Calendar) — see
 // services/google_services.go. Unlike notify_user (a fixed send operation),
 // there is no single obvious operation for these services, so the agent
 // drives the CLI itself rather than calling a bespoke tool per operation.
@@ -25,12 +25,12 @@ import (
 // shapes the tool description and passes args through.
 
 func createGoogleCLITool() llmtypes.Tool {
-	serviceNames := strings.Join(sortedGoogleServiceCatalogKeys(), ", ")
+	serviceNames := "gmail, " + strings.Join(sortedGoogleServiceCatalogKeys(), ", ")
 	description := fmt.Sprintf(
 		"Run a gogcli (`gog`) command against a Google account connection the user has authorized for a specific service. "+
-			"Use this for Google Drive, Sheets, Docs, Slides, and Calendar — Gmail send goes through notify_user, not this tool. "+
-			"args is the argument list to pass to `gog`, EXCLUDING the `gog` binary name itself, e.g. [\"drive\",\"files\",\"list\",\"--json\"] or "+
-			"[\"sheets\",\"values\",\"get\",\"--spreadsheet-id\",\"...\",\"--range\",\"Sheet1!A1:B10\",\"--json\"]. "+
+			"Use this for read-only Gmail search/message retrieval and for Google Drive, Sheets, Docs, Slides, and Calendar. Gmail send goes through notify_user, not this tool. "+
+			"Before calling this tool, check installed skills; if necessary install `https://github.com/openclaw/gogcli` with `install_skill`, then load `gog` and the relevant `gog-*` service skill with `read_skill`. Those versioned skills, not this description, define current command syntax. "+
+			"args is the argument list to pass to `gog`, EXCLUDING the `gog` binary name and any account or authentication flags. "+
 			"The FIRST element must be one of: %s — whichever the connection was authorized for. "+
 			"Never pass --access-token, --account, --client, or --home: the server injects the authorized connection's credential automatically, and passing "+
 			"any of those is rejected. Prefer --json or --plain for parseable output. If the connection was only granted read access to a service, "+
@@ -77,7 +77,7 @@ func sortedGoogleServiceCatalogKeys() []string {
 func handleGoogleWorkspaceCLI(ctx context.Context, args map[string]interface{}) (string, error) {
 	rawArgs, _ := args["args"].([]interface{})
 	if len(rawArgs) == 0 {
-		return "", fmt.Errorf("args is required and must start with a service name, e.g. [\"drive\",\"files\",\"list\"]")
+		return "", fmt.Errorf("args is required and must start with a supported Google service name; read the attached gog service skill for current syntax")
 	}
 	cliArgs := make([]string, 0, len(rawArgs))
 	for _, item := range rawArgs {

@@ -224,17 +224,36 @@ func recordSchemaMigrationLedgerTx(ctx context.Context, tx *sql.Tx, migrationFil
 // dbTablesSampleRows is how many sample rows the inspector returns per table.
 const dbTablesSampleRows = 50
 
-// resolveReadonlyDBPath resolves a workspace-relative SQLite path with the same
-// user-isolation rules as document access, and rejects cross-user (_users/)
-// access and traversal. Returns the absolute filesystem path.
-func resolveReadonlyDBPath(c *gin.Context, requestedPath string) (string, error) {
+// normalizeOwnedPerUserDBPath accepts public per-user paths and the internal
+// runtime spelling of the current user's path. Foreign _users trees remain
+// inaccessible. Returning the public spelling lets resolveUserPath apply the
+// current user scope exactly once.
+func normalizeOwnedPerUserDBPath(c *gin.Context, requestedPath string) (string, error) {
 	docsDir := viper.GetString("docs-dir")
 	clean := utils.SanitizeInputPath(requestedPath, docsDir)
-	// Never allow a query endpoint to reach into another user's private tree.
 	if clean == utils.UsersDirectory || strings.HasPrefix(clean, utils.UsersDirectory+"/") {
-		return "", fmt.Errorf("access to %s/ is not allowed", utils.UsersDirectory)
+		ownPrefix := filepath.ToSlash(filepath.Join(utils.UsersDirectory, getUserID(c))) + "/"
+		if !strings.HasPrefix(clean, ownPrefix) {
+			return "", fmt.Errorf("access to another user's database is not allowed")
+		}
+		clean = strings.TrimPrefix(clean, ownPrefix)
+		if !utils.IsPerUserPath(clean) {
+			return "", fmt.Errorf("invalid private database path")
+		}
 	}
-	fullPath, err := resolveUserPath(c, requestedPath)
+	return clean, nil
+}
+
+// resolveReadonlyDBPath resolves a workspace-relative SQLite path with the same
+// user-isolation rules as document access and rejects cross-user access and
+// traversal. Returns the absolute filesystem path.
+func resolveReadonlyDBPath(c *gin.Context, requestedPath string) (string, error) {
+	docsDir := viper.GetString("docs-dir")
+	clean, err := normalizeOwnedPerUserDBPath(c, requestedPath)
+	if err != nil {
+		return "", err
+	}
+	fullPath, err := resolveUserPath(c, clean)
 	if err != nil {
 		return "", err
 	}
@@ -272,8 +291,8 @@ func openMutationDB(fullPath string) (*sql.DB, error) {
 }
 
 // InitializeWorkflowDB is the generic, trusted database-template primitive.
-// It creates only a workspace-relative db.sqlite and accepts a bounded set of
-// schema-only migration statements -- idempotent CREATE TABLE/INDEX IF NOT
+// It creates only a workspace-relative db.sqlite and optionally accepts a
+// bounded set of schema-only migration statements -- idempotent CREATE TABLE/INDEX IF NOT
 // EXISTS, idempotent DROP TABLE/INDEX IF EXISTS, and ALTER TABLE RENAME
 // TO/RENAME COLUMN/ADD COLUMN/DROP COLUMN. There is no human-approval gate on
 // this route, so any destructive statement (DROP, RENAME, DROP COLUMN --
@@ -290,11 +309,16 @@ func InitializeWorkflowDB(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, models.APIResponse[any]{Success: false, Message: "Invalid request body", Error: err.Error()})
 		return
 	}
-	if len(req.Migrations) == 0 || len(req.Migrations) > maximumStatements {
-		c.JSON(http.StatusBadRequest, models.APIResponse[any]{Success: false, Message: "Invalid migrations", Error: fmt.Sprintf("migrations must contain 1-%d statements", maximumStatements)})
+	if len(req.Migrations) > maximumStatements {
+		c.JSON(http.StatusBadRequest, models.APIResponse[any]{Success: false, Message: "Invalid migrations", Error: fmt.Sprintf("migrations must contain at most %d statements", maximumStatements)})
 		return
 	}
-	cleanRequest := strings.TrimSpace(filepath.ToSlash(filepath.Clean(filepath.FromSlash(req.DBPath))))
+	cleanRequest, normalizeErr := normalizeOwnedPerUserDBPath(c, req.DBPath)
+	if normalizeErr != nil {
+		c.JSON(http.StatusBadRequest, models.APIResponse[any]{Success: false, Message: "Invalid db_path", Error: normalizeErr.Error()})
+		return
+	}
+	cleanRequest = strings.TrimSpace(filepath.ToSlash(filepath.Clean(filepath.FromSlash(cleanRequest))))
 	if !strings.HasSuffix(cleanRequest, "/db/db.sqlite") || strings.HasPrefix(cleanRequest, "../") || cleanRequest == "../db/db.sqlite" {
 		c.JSON(http.StatusBadRequest, models.APIResponse[any]{Success: false, Message: "Invalid db_path", Error: "managed databases must use <workspace>/db/db.sqlite"})
 		return
@@ -339,6 +363,21 @@ func InitializeWorkflowDB(c *gin.Context) {
 	}
 	defer db.Close()
 	db.SetMaxOpenConns(1)
+	if len(req.Migrations) == 0 {
+		// Opening is lazy in database/sql; Ping forces the valid SQLite image to
+		// exist on disk without inventing a user-visible placeholder table.
+		if err := db.PingContext(c.Request.Context()); err != nil {
+			c.JSON(http.StatusInternalServerError, models.APIResponse[any]{Success: false, Message: "Failed to initialize database", Error: err.Error()})
+			return
+		}
+		log.Printf("[WORKFLOW_DB_INITIALIZE] user=%q db=%q", getUserID(c), cleanRequest)
+		c.JSON(http.StatusOK, models.APIResponse[map[string]any]{
+			Success: true,
+			Message: "Database initialized",
+			Data:    map[string]any{"db_path": cleanRequest},
+		})
+		return
+	}
 	tx, err := db.BeginTx(c.Request.Context(), nil)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, models.APIResponse[any]{Success: false, Message: "Failed to start migration", Error: err.Error()})

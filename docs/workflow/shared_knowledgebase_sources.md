@@ -1,6 +1,6 @@
 # Shared knowledge bases through workflow references
 
-Status: deployed to RTS; fresh real-workflow attachment acceptance remains unverified in this deployment check. Updated 2026-09-12. See [PLAT-310](../bugs/pulse_platform/plat-310.md).
+Status: deployed to RTS; fresh real-workflow attachment acceptance remains unverified in this deployment check. Updated 2026-09-12. See [PLAT-310](../bugs/pulse_platform/learnings-knowledge/plat-310.md).
 
 ## Purpose
 

@@ -828,8 +828,8 @@ func (w *WhatsAppService) SetRouting(routing WhatsAppRouting) error {
 		if !isValidSlug(slug) {
 			return fmt.Errorf("whatsapp: invalid slug %q — use lowercase letters, digits, and hyphens only", slug)
 		}
-		if strings.TrimSpace(route.WorkflowID) == "" {
-			return fmt.Errorf("whatsapp: slug %q must map to a workflow_id", slug)
+		if strings.TrimSpace(route.WorkflowID) == "" && strings.TrimSpace(route.ProfileID) == "" {
+			return fmt.Errorf("whatsapp: slug %q must map to a workflow or product project", slug)
 		}
 		cleaned[slug] = route
 	}

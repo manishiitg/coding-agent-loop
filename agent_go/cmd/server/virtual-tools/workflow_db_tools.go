@@ -599,7 +599,7 @@ func resolveWorkflowDBSession(ctx context.Context, fallbackSessionID string) (st
 	return sessionID, cfg, nil
 }
 
-// ResolveWorkflowWorkspaceFolder resolves the owning "Workflow/<name>" folder
+// ResolveWorkflowWorkspaceFolder resolves the owning managed-data workspace
 // for a trusted session, reusing the exact DB_PATH/read/write-path resolution
 // resolveWorkflowWorkspaceFolder already does for the workflow-database
 // tools. Exported so a sibling registry constructor in this package (see
@@ -633,7 +633,7 @@ func resolveWorkflowMigrationFilePath(sessionID string, cfg *common.SessionShell
 	return filepath.ToSlash(filepath.Join(folder, "db", "migrations", filename)), nil
 }
 
-// resolveWorkflowWorkspaceFolder finds the owning "Workflow/<name>" folder for
+// resolveWorkflowWorkspaceFolder finds the owning workflow or Work project for
 // the trusted session, from DB_PATH or, failing that, its read/write paths and
 // working dir. Shared by every resolver that needs to address a location
 // inside that workflow's own db/ tree from the session context alone.
@@ -661,9 +661,10 @@ func resolveWorkflowWorkspaceFolder(sessionID string, cfg *common.SessionShellCo
 	return "", fmt.Errorf("workflow database context is unavailable for session %q", sessionID)
 }
 
-// workflowDBWorkspacePathFromCandidate extracts the owning workflow's own
-// "Workflow/<name>" folder from any path scoped somewhere inside it (a read
-// path, write path, or working dir taken from the session's shell config).
+// workflowDBWorkspacePathFromCandidate extracts the owning workflow or Work
+// project from trusted session configuration. Work paths are returned in their
+// public user-relative form so the workspace API applies the authenticated
+// user's private-tree scope exactly once.
 // Shared by every per-workflow database resolver -- db/db.sqlite here, and
 // costs/costs.sqlite in workflow_costs_tools.go -- so the two tools agree on
 // exactly which workflow folder they're scoped to, from the same session.
@@ -673,6 +674,11 @@ func workflowDBWorkspacePathFromCandidate(candidate string) string {
 		return ""
 	}
 	parts := strings.Split(strings.Trim(clean, "/"), "/")
+	for i := 0; i+3 < len(parts); i++ {
+		if parts[i] == "Chats" && parts[i+1] == "Work" && parts[i+2] == "projects" && strings.TrimSpace(parts[i+3]) != "" {
+			return filepath.ToSlash(filepath.Join("Chats", "Work", "projects", parts[i+3]))
+		}
+	}
 	for i := 0; i+1 < len(parts); i++ {
 		if parts[i] == "Workflow" && strings.TrimSpace(parts[i+1]) != "" {
 			return filepath.ToSlash(filepath.Join("Workflow", parts[i+1]))

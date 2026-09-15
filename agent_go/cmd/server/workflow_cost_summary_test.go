@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -82,5 +83,45 @@ func TestHandleGetCostsSummaryUsesBoundedEndpoint(t *testing.T) {
 	}
 	if response.History == nil || response.History.Days != 7 || response.ScopedCosts == nil || response.ScopedCosts.Total.TotalCostUSD != 2 {
 		t.Fatalf("response = %#v, want seven-day summary", response)
+	}
+}
+
+func TestCostWorkspacePathForUserScopesPublicChatProjects(t *testing.T) {
+	if got := costWorkspacePathForUser("Chats/Work/projects/demo", "alice"); got != "_users/alice/Chats/Work/projects/demo" {
+		t.Fatalf("costWorkspacePathForUser() = %q", got)
+	}
+	if got := costWorkspacePathForUser("Workflow/demo", "alice"); got != "Workflow/demo" {
+		t.Fatalf("workflow cost path changed to %q", got)
+	}
+}
+
+func TestHandleGetCostsSummaryResolvesWorkProjectToOwnerLedgerKey(t *testing.T) {
+	ledger := installWorkflowCostTestLedger(t)
+	const ownerLedgerKey = "_users/alice/Chats/Work/projects/demo"
+	if err := ledger.Append(costledger.Entry{
+		EventID: "work-turn", IdempotencyKey: "work-turn", Timestamp: time.Now().UTC(),
+		WorkflowID: ownerLedgerKey, Scope: "chat", Provider: "muse-cli",
+		EffectiveProvider: "muse-cli", ModelID: "muse-spark-1.3-contributor",
+		EffectiveModelID: "muse-spark-1.3-contributor", LLMCallCount: 1,
+		PromptTokens: 120, CompletionTokens: 30, TotalCostUSD: 0.04,
+	}); err != nil {
+		t.Fatalf("Append() error = %v", err)
+	}
+
+	request := httptest.NewRequest(http.MethodGet, "/api/workflow/costs?workspace_path=Chats%2FWork%2Fprojects%2Fdemo&view=summary&days=7", nil)
+	request = request.WithContext(context.WithValue(request.Context(), UserContextKey, &UserClaims{UserID: "alice"}))
+	recorder := httptest.NewRecorder()
+	(&StreamingAPI{}).handleGetCosts(recorder, request)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", recorder.Code, recorder.Body.String())
+	}
+	var response workflowCostsResponse
+	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	day := response.ScopedCosts.ByDate[time.Now().UTC().Format("2006-01-02")]
+	model := day.ByModel["muse-spark-1.3-contributor"]
+	if model == nil || model.Provider != "muse-cli" || model.TotalCostUSD != 0.04 {
+		t.Fatalf("daily model split = %#v, want Muse provider and model cost", day.ByModel)
 	}
 }

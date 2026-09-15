@@ -6,8 +6,6 @@ import (
 	"fmt"
 	"log"
 	"net/http"
-	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -181,17 +179,19 @@ func (api *StreamingAPI) handleCreateWorkflowManifest(w http.ResponseWriter, r *
 // --- Update manifest ---
 
 type UpdateWorkflowManifestRequest struct {
-	KnowledgebaseSources *[]workflowtypes.KnowledgebaseSource         `json:"knowledgebase_sources,omitempty"`
-	WorkspacePath        string                                       `json:"workspace_path"`
-	Label                *string                                      `json:"label,omitempty"`
-	Capabilities         *WorkflowCapabilities                        `json:"capabilities,omitempty"`
-	ExecutionDefaults    *WorkflowExecutionDefaults                   `json:"execution_defaults,omitempty"`
-	Schedules            *[]WorkflowSchedule                          `json:"schedules,omitempty"`
-	WorkshopMode         *string                                      `json:"workshop_mode,omitempty"` // Standalone patch — avoids zeroing out other ExecutionDefaults fields
-	RunRetentionCount    *int                                         `json:"run_retention_count,omitempty"`
-	FolderAccess         *[]workflowtypes.WorkflowFolderGrant         `json:"folder_access,omitempty"`
-	FolderAccessRequests *[]workflowtypes.WorkflowFolderAccessRequest `json:"folder_access_requests,omitempty"`
-	PulseEnabled         *bool                                        `json:"pulse_enabled,omitempty"`
+	KnowledgebaseSources       *[]workflowtypes.KnowledgebaseSource         `json:"knowledgebase_sources,omitempty"`
+	WorkspacePath              string                                       `json:"workspace_path"`
+	Label                      *string                                      `json:"label,omitempty"`
+	Capabilities               *WorkflowCapabilities                        `json:"capabilities,omitempty"`
+	ExecutionDefaults          *WorkflowExecutionDefaults                   `json:"execution_defaults,omitempty"`
+	Schedules                  *[]WorkflowSchedule                          `json:"schedules,omitempty"`
+	WorkshopMode               *string                                      `json:"workshop_mode,omitempty"` // Standalone patch — avoids zeroing out other ExecutionDefaults fields
+	RunRetentionCount          *int                                         `json:"run_retention_count,omitempty"`
+	FolderAccess               *[]workflowtypes.WorkflowFolderGrant         `json:"folder_access,omitempty"`
+	FolderAccessRequests       *[]workflowtypes.WorkflowFolderAccessRequest `json:"folder_access_requests,omitempty"`
+	WorkflowContextPaths       *[]string                                    `json:"workflow_context_paths,omitempty"`
+	PulseEnabled               *bool                                        `json:"pulse_enabled,omitempty"`
+	PulseDisabledReviewModules *[]string                                    `json:"pulse_disabled_review_modules,omitempty"`
 	// Notification instruction fields are standalone patches so the Notify
 	// popup can update content guidance without replacing workflow capabilities.
 	RunNotificationInstructions   *string   `json:"run_notification_instructions,omitempty"`
@@ -342,8 +342,34 @@ func (api *StreamingAPI) handleUpdateWorkflowManifest(w http.ResponseWriter, r *
 	if req.FolderAccessRequests != nil {
 		manifest.FolderAccessRequests = append([]workflowtypes.WorkflowFolderAccessRequest(nil), (*req.FolderAccessRequests)...)
 	}
+	if req.WorkflowContextPaths != nil {
+		normalized, contextErr := authorizeWorkflowContextPaths(r.Context(), *req.WorkflowContextPaths)
+		if contextErr != nil {
+			http.Error(w, contextErr.Error(), http.StatusForbidden)
+			return
+		}
+		self := strings.TrimSuffix(strings.TrimSpace(req.WorkspacePath), "/")
+		for _, path := range normalized {
+			if path == self {
+				http.Error(w, "a workflow cannot attach itself", http.StatusBadRequest)
+				return
+			}
+		}
+		manifest.WorkflowContextPaths = normalized
+	}
 	if req.PulseEnabled != nil {
 		setWorkflowPulseEnabled(manifest, *req.PulseEnabled)
+	}
+	if req.PulseDisabledReviewModules != nil {
+		disabled, disabledErr := normalizeDisabledPulseReviewModules(*req.PulseDisabledReviewModules)
+		if disabledErr != nil {
+			http.Error(w, disabledErr.Error(), http.StatusBadRequest)
+			return
+		}
+		if manifest.Pulse == nil {
+			manifest.Pulse = &WorkflowPulseConfig{}
+		}
+		manifest.Pulse.DisabledReviewModules = disabled
 	}
 	if req.RunNotificationInstructions != nil || req.PulseNotificationInstructions != nil ||
 		req.RunNotificationChannels != nil || req.PulseNotificationChannels != nil ||
@@ -435,35 +461,7 @@ func (api *StreamingAPI) handleUpdateWorkflowManifest(w http.ResponseWriter, r *
 }
 
 func normalizeWorkflowFolderGrants(requested, previous []workflowtypes.WorkflowFolderGrant) ([]workflowtypes.WorkflowFolderGrant, error) {
-	previousByID := make(map[string]workflowtypes.WorkflowFolderGrant, len(previous))
-	for _, grant := range previous {
-		previousByID[grant.ID] = grant
-	}
-	now := time.Now().UTC().Format(time.RFC3339)
-	normalized := make([]workflowtypes.WorkflowFolderGrant, 0, len(requested))
-	for i, grant := range requested {
-		canonical, err := filepath.EvalSymlinks(filepath.Clean(strings.TrimSpace(grant.Path)))
-		if err != nil {
-			return nil, fmt.Errorf("folder_access[%d] is unavailable: %w", i, err)
-		}
-		info, err := os.Stat(canonical)
-		if err != nil || !info.IsDir() {
-			return nil, fmt.Errorf("folder_access[%d] must reference an existing directory", i)
-		}
-		grant.Path = filepath.Clean(canonical)
-		grant.ID = strings.TrimSpace(grant.ID)
-		grant.Alias = strings.TrimSpace(grant.Alias)
-		grant.Access = strings.TrimSpace(grant.Access)
-		grant.Reason = strings.TrimSpace(grant.Reason)
-		if prior, exists := previousByID[grant.ID]; exists && strings.TrimSpace(prior.CreatedAt) != "" {
-			grant.CreatedAt = prior.CreatedAt
-		} else {
-			grant.CreatedAt = now
-		}
-		grant.UpdatedAt = now
-		normalized = append(normalized, grant)
-	}
-	return normalized, nil
+	return workflowtypes.NormalizeFolderGrants(requested, previous, "folder_access", time.Now().UTC().Format(time.RFC3339))
 }
 
 func normalizeNotificationChannels(channels []string) []string {

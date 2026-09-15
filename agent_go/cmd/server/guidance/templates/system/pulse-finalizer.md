@@ -51,12 +51,7 @@ Run Backup, Publish, then Notify. Before and after each, call
      issues, blocker, next owner, and checkpoint. If over five, show the top five,
      remaining count, and tell the user to open Pulse for details.
    - **Needs your decision:** pending requests and what each unblocks.
-   - **Operations:** backup/publish, the backend-supplied current-pass
-     **Reviewers + Fixer** cost, time, and next Pulse action. Preserve the
-     supplied cost label exactly. It covers only the Review+Fix parent turn,
-     its background reviewer/fixer agents, and any receipt continuation. Never
-     substitute Gate, Finalize, cumulative daily, workflow-execution, builder,
-     or prior-pass cost.
+   - **Operations:** backup/publish, review timing, and next Pulse action.
 
    If a newly found issue remains pending, say so instead of duplicating it
    ambiguously. Say `Backup risk: local only` until an off-device destination is verified.
@@ -91,8 +86,7 @@ not run failed. Mention meaningful uncovered scope honestly.
 
 Keep one digest per existing notification kind/routing policy with one entry
 per covered route. Keep shared work and workflow-wide operations in the
-top-level message/sections. Do not allocate total workflow or Reviewers + Fixer
-cost to individual routes without route-attributed ledger evidence. Put route
+top-level message/sections. Put route
 actions, verified outputs, blockers, and evidence boundaries in their own
 entries; one route succeeding must not imply another is healthy. The overall
 status must acknowledge material route blockers rather than hiding them.

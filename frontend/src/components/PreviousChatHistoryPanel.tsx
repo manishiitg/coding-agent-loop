@@ -15,6 +15,7 @@ import { workflowTriggerLabel } from '../utils/workflowSessionKinds'
 import { isScheduledChatHistorySession } from '../utils/chatHistoryOpenDisposition'
 import { chatHistoryWorkshopMode } from '../utils/chatHistoryWorkshopMode'
 import { chatHistoryRuntimeLabel, chatHistoryRuntimeShortLabel } from '../utils/chatHistoryRuntimeLabel'
+import { sanitizeProviderTranscriptContent } from '../utils/restoredConversationFilter'
 import { type ScheduleActivityItem } from '../utils/scheduleRunPresentation'
 import { ScheduleRunCard } from './ScheduleRunCard'
 import { ChatSessionIdCopyButton } from './ChatSessionIdCopyButton'
@@ -319,17 +320,14 @@ const messageIsError = (message: ChatHistoryMessage): boolean => {
   return parts.some(part => Boolean((part as Record<string, unknown>).IsError ?? (part as Record<string, unknown>).is_error))
 }
 
-const shouldSkipMessageText = (text: string): boolean => {
-  return text.startsWith('[AUTO-NOTIFICATION]') ||
-    text.startsWith('[Previous tool call') ||
-    text.startsWith('[Previous tool result')
-}
-
 const conversationMessages = (conversation: ChatHistoryConversation): ChatHistoryPreviewMessage[] => {
   return (conversation.conversation_history || [])
     .flatMap((message): ChatHistoryPreviewMessage[] => {
       const role = messageRole(message)
-      const text = messageText(message)
+      const rawText = messageText(message)
+      const text = role === 'ai' || role === 'assistant'
+        ? sanitizeProviderTranscriptContent(rawText)
+        : rawText
       const toolName = messageToolName(message)
       const rows: ChatHistoryPreviewMessage[] = []
       if (text) rows.push({ role, text, toolName, isError: messageIsError(message) })
@@ -345,7 +343,7 @@ const conversationMessages = (conversation: ChatHistoryConversation): ChatHistor
       if (!message.text) return false
       // Prose heuristics (auto-notification banners, replayed tool summaries)
       // must not be applied to raw tool arguments/results.
-      if (message.role !== 'tool' && message.role !== 'tool_call' && shouldSkipMessageText(message.text)) return false
+      if (message.role !== 'tool' && message.role !== 'tool_call' && message.text.startsWith('[AUTO-NOTIFICATION]')) return false
       return message.role === 'human' ||
         message.role === 'user' ||
         message.role === 'ai' ||
@@ -378,7 +376,8 @@ const PreviousChatEmptyState: React.FC<{
   filter: PreviousChatFilter
   hasAnySessions: boolean
   fallbackText: string
-}> = ({ filter, hasAnySessions, fallbackText }) => {
+  recentOnly?: boolean
+}> = ({ filter, hasAnySessions, fallbackText, recentOnly = false }) => {
   const content = hasAnySessions
     ? emptyStateContent[filter]
     : { ...emptyStateContent[filter], body: emptyStateContent[filter].body || fallbackText }
@@ -397,7 +396,9 @@ const PreviousChatEmptyState: React.FC<{
 
             {!hasAnySessions && (
               <div className="mt-3 grid gap-x-4 gap-y-2 border-t border-border/70 pt-3 sm:grid-cols-3">
-                {firstRunHints.map(({ icon: HintIcon, label, body }) => (
+                {firstRunHints
+                  .filter(({ label }) => !recentOnly || label === 'Chat')
+                  .map(({ icon: HintIcon, label, body }) => (
                   <div key={label} className="min-w-0">
                     <div className="flex items-center gap-1.5 text-xs font-medium text-foreground">
                       <HintIcon className="h-3.5 w-3.5 text-muted-foreground" />
@@ -428,6 +429,8 @@ interface PreviousChatHistoryPanelProps {
   compact?: boolean
   /** Fill the available chat surface for landing dashboards. */
   fill?: boolean
+  /** Keep the shared history UI while hiding automation-only filters. */
+  recentOnly?: boolean
 }
 
 export const PreviousChatHistoryPanel: React.FC<PreviousChatHistoryPanelProps> = ({
@@ -440,6 +443,7 @@ export const PreviousChatHistoryPanel: React.FC<PreviousChatHistoryPanelProps> =
   onSelectSession,
   compact = false,
   fill = false,
+  recentOnly = false,
 }) => {
   const [sessions, setSessions] = useState<ChatHistorySession[]>([])
   const [isLoading, setIsLoading] = useState(true)
@@ -487,13 +491,18 @@ export const PreviousChatHistoryPanel: React.FC<PreviousChatHistoryPanelProps> =
     // Fetch ordinary chats separately. A schedule-heavy workflow can have many
     // newer schedule transcripts, so a mixed newest-N page would otherwise
     // hide every older chat before the Recent filter gets a chance to run.
-    Promise.all([
-      agentApi.listChatHistorySessions(FETCH_LIMIT, 0, workspacePath),
-      agentApi.listChatHistorySessions(FETCH_LIMIT, 0, workspacePath, 'chat'),
-    ])
-      .then(([allResponse, chatResponse]) => {
+    const sessionsRequest = recentOnly
+      ? agentApi.listChatHistorySessions(FETCH_LIMIT, 0, workspacePath, 'chat')
+          .then(chatResponse => chatResponse.sessions || [])
+      : Promise.all([
+          agentApi.listChatHistorySessions(FETCH_LIMIT, 0, workspacePath),
+          agentApi.listChatHistorySessions(FETCH_LIMIT, 0, workspacePath, 'chat'),
+        ]).then(([allResponse, chatResponse]) => mergeSessions(allResponse.sessions || [], chatResponse.sessions || []))
+
+    sessionsRequest
+      .then(nextSessions => {
         if (cancelled) return
-        setSessions(mergeSessions(allResponse.sessions || [], chatResponse.sessions || []))
+        setSessions(nextSessions)
       })
       .catch(() => {
         if (cancelled) return
@@ -505,10 +514,16 @@ export const PreviousChatHistoryPanel: React.FC<PreviousChatHistoryPanelProps> =
       })
 
     return () => { cancelled = true }
-  }, [addToast, workspacePath])
+  }, [addToast, recentOnly, workspacePath])
 
   const showRunActivity = activeFilter === 'schedule' || activeFilter === 'webhook'
   useEffect(() => {
+    if (recentOnly) {
+      setScheduleJobs([])
+      setScheduleRunsByJob({})
+      setScheduleJobsWorkspacePath('')
+      return
+    }
     if (!workspacePath) {
       setScheduleJobs([])
       setScheduleRunsByJob({})
@@ -545,7 +560,7 @@ export const PreviousChatHistoryPanel: React.FC<PreviousChatHistoryPanelProps> =
     void refresh(true)
     const timer = showRunActivity ? window.setInterval(() => { if (!document.hidden) void refresh() }, 10000) : undefined
     return () => { cancelled = true; if (timer !== undefined) window.clearInterval(timer) }
-  }, [addToast, workspacePath, showRunActivity])
+  }, [addToast, recentOnly, workspacePath, showRunActivity])
 
   const visibleSessions = useMemo(
     () => sessions.filter(session => session.session_id !== activeSessionId),
@@ -805,7 +820,7 @@ export const PreviousChatHistoryPanel: React.FC<PreviousChatHistoryPanelProps> =
     { filter: 'schedule' as const, label: 'Schedules', icon: CalendarClock },
     { filter: 'bot' as const, label: 'Bots', icon: Bot },
     { filter: 'webhook' as const, label: 'Webhooks', icon: Webhook },
-  ]
+  ].filter(({ filter }) => !recentOnly || filter === 'chat')
 
   return (
     <div className={`${fill ? 'flex min-h-0 flex-1 flex-col overflow-hidden' : 'shrink-0'} border-b border-border bg-background`}>
@@ -904,12 +919,14 @@ export const PreviousChatHistoryPanel: React.FC<PreviousChatHistoryPanelProps> =
             filter={activeFilter}
             hasAnySessions={false}
             fallbackText={emptyText}
+            recentOnly={recentOnly}
           />
         ) : filteredSessions.length === 0 ? (
           <PreviousChatEmptyState
             filter={activeFilter}
             hasAnySessions
             fallbackText={`No previous ${activeFilter} chats yet.`}
+            recentOnly={recentOnly}
           />
         ) : (
           <div className={`${fill ? 'min-h-0 flex-1 overflow-y-auto' : ''} divide-y divide-border`}>

@@ -397,4 +397,25 @@ describe('Product commands are scoped to their own surface', () => {
     }
     expect(getCommands('multi-agent').map(command => command.command)).not.toContain('production')
   })
+
+  it('can read the manifest-owned command set without legacy or user commands', async () => {
+    const { findProductCommand, getProductCommands, setProductCommands, setUserCommands } = await import('./registry')
+    setUserCommands([{
+      command: 'personal', description: 'Personal command', icon: null,
+      modes: ['multi-agent'], source: 'user', execute: () => {},
+    } as unknown as import('./types').CommandDefinition])
+    setProductCommands([{
+      command: 'production', description: 'Product command', icon: null,
+      modes: ['multi-agent'], source: 'product', execute: () => {},
+    } as unknown as import('./types').CommandDefinition])
+    try {
+      expect(getProductCommands('multi-agent').map(command => command.command)).toEqual(['production'])
+      expect(findProductCommand('production', 'multi-agent')).toBeDefined()
+      expect(findProductCommand('personal', 'multi-agent')).toBeUndefined()
+      expect(findProductCommand('pulse-review', 'multi-agent')).toBeUndefined()
+    } finally {
+      setProductCommands([])
+      setUserCommands([])
+    }
+  })
 })

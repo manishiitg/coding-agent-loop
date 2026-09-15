@@ -26,6 +26,12 @@ func (hcpo *StepBasedWorkflowOrchestrator) prepareCurrentRun(ctx context.Context
 		}
 		return opts.SelectedRunFolder, hcpo.createRunFolderStructure(ctx, filepath.Join(workspacePath, "runs", opts.SelectedRunFolder))
 	}
+	if opts := hcpo.GetExecutionOptions(); opts != nil && opts.RunKind == "schedule" {
+		if !regexp.MustCompile(`^iteration-[0-9]+-sched$`).MatchString(opts.SelectedRunFolder) || opts.ScheduleRunID == "" || opts.ScheduleID == "" {
+			return "", fmt.Errorf("invalid scheduled run binding")
+		}
+		return opts.SelectedRunFolder, hcpo.createRunFolderStructure(ctx, filepath.Join(workspacePath, "runs", opts.SelectedRunFolder))
+	}
 	runsPath := fmt.Sprintf("%s/runs", workspacePath)
 	evalRunsPath := fmt.Sprintf("%s/evaluation/runs", workspacePath)
 	runRetentionCount := hcpo.resolveRunRetentionCount(ctx)
@@ -140,7 +146,10 @@ func (hcpo *StepBasedWorkflowOrchestrator) rotatePairedIterationZero(ctx context
 // rotation aligned.
 func (hcpo *StepBasedWorkflowOrchestrator) nextAvailableIterationAcross(ctx context.Context, paths ...string) string {
 	maxIter := 0
-	re := regexp.MustCompile(`^iteration-(\d+)$`)
+	// Builder archives, webhook runs, and scheduled runs share one numeric
+	// namespace. Counting all three prevents iteration-12 from being allocated
+	// after iteration-12-sched (or -hook) already exists.
+	re := regexp.MustCompile(`^iteration-(\d+)(?:-(?:hook|sched))?$`)
 	for _, p := range paths {
 		folders, err := hcpo.listRunFolders(ctx, p)
 		if err != nil {
@@ -173,6 +182,9 @@ func (hcpo *StepBasedWorkflowOrchestrator) pruneOldIterations(ctx context.Contex
 		name string
 	}
 	var backups []iterEntry
+	// Retention of Builder archives is intentionally independent. Trigger-owned
+	// immutable folders have their own retention policies and must not be pruned
+	// by an interactive Builder run.
 	re := regexp.MustCompile(`^iteration-(\d+)$`)
 	for _, folder := range existingFolders {
 		matches := re.FindStringSubmatch(folder)
@@ -213,7 +225,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) nextAvailableIteration(ctx context.Co
 	}
 
 	maxIter := 0
-	re := regexp.MustCompile(`^iteration-(\d+)$`)
+	re := regexp.MustCompile(`^iteration-(\d+)(?:-(?:hook|sched))?$`)
 	for _, folder := range existingFolders {
 		matches := re.FindStringSubmatch(folder)
 		if len(matches) > 1 {

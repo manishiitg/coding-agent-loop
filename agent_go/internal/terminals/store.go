@@ -519,6 +519,39 @@ func (s *Store) GetRaw(terminalID string) (Snapshot, bool) {
 	return snapshot, ok
 }
 
+// RebindLiveTmux attaches an existing terminal record to a replacement tmux
+// pane. Coding-agent providers can replace their pane while recovering a
+// failed turn; the logical main terminal remains the same, but its process
+// identity changes. Keeping this update in the store makes every terminal
+// route and subsequent poll converge on the replacement pane.
+func (s *Store) RebindLiveTmux(terminalID, tmuxSession string) (Snapshot, bool) {
+	terminalID = strings.TrimSpace(terminalID)
+	tmuxSession = strings.TrimSpace(tmuxSession)
+	if s == nil || terminalID == "" || tmuxSession == "" {
+		return Snapshot{}, false
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	snapshot, ok := s.byID[terminalID]
+	if !ok {
+		return Snapshot{}, false
+	}
+	snapshot.TmuxSession = tmuxSession
+	snapshot.StepTransport = "tmux"
+	snapshot.ContentSource = "tmux_live"
+	snapshot.Active = true
+	snapshot.State = "running"
+	snapshot.ProcessState = "live"
+	snapshot.SnapshotKind = "live"
+	snapshot.CloseReason = ""
+	snapshot.ClosesAt = nil
+	snapshot.RetentionSeconds = 0
+	snapshot.UpdatedAt = time.Now()
+	delete(s.forcedInactive, terminalID)
+	s.byID[terminalID] = snapshot
+	return snapshot, true
+}
+
 func (s *Store) RemoveSession(sessionID string) {
 	sessionID = strings.TrimSpace(sessionID)
 	if s == nil || sessionID == "" {

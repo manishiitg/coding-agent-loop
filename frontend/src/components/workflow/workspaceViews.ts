@@ -71,7 +71,7 @@ export type WorkspaceViewDef = {
 
 const VIEWS = [
   // -- canvas / preview (dispatched by WorkspaceViewHost) ------------------
-  { id: 'report', kind: 'preview', label: 'Report', icon: LayoutDashboard, toolbarGroup: 'views', pane: true },
+  { id: 'report', kind: 'preview', label: 'Dashboard', icon: LayoutDashboard, toolbarGroup: 'views', pane: true },
   { id: 'flow', kind: 'canvas', label: 'Plan', icon: Route, toolbarGroup: 'views', pane: true },
   // -- inspectors (toolbar "views" cluster, in button order) ---------------
   { id: 'costs', kind: 'inspector', label: 'Costs', icon: DollarSign, toolbarGroup: 'views', pane: true },

@@ -234,7 +234,7 @@ This is a Builder extension, so upstream skills do not document it. CDP currentl
 - Default per-agent / per-workflow / global concurrency caps are enforced
   by the runtime — keep one browser open at a time per agent. Re-use the
   same session name across calls within one task.
-- In managed headless mode, all names map to the user browser; preserve its tabs and sign-ins. Tabs are optional. In shared CDP
+- In managed headless mode, all names map to the workflow browser shared by its authorized users; preserve its tabs and sign-ins. Unrelated workflows use separate browsers. Tabs are optional. In shared CDP
   mode, sessions are intentionally remapped to one per port; isolation comes
   from workflow-owned labeled tabs plus the per-port select-and-act lock.
 

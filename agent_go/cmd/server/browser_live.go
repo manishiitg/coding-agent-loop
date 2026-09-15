@@ -30,9 +30,9 @@ func (api *StreamingAPI) liveBrowserSessions(r *http.Request) []map[string]strin
 	for _, item := range browser.GetSessionTracker().ActiveSessions() {
 		if browser.IsUserBrowserSession(item["browser_session"]) {
 			userID := GetUserIDFromContext(r.Context())
-			expected := common.PrefixBrowserSessionID(common.BrowserSessionNamespace(userID, "") + "--browser")
+			expected := common.PrefixBrowserSessionID(common.WorkflowBrowserSessionNamespace(userID, "", workspace) + "--browser")
 			if userID != "" && item["browser_session"] == expected {
-				item["label"] = "Your browser"
+				item["label"] = "Workflow browser"
 				level, manifest := workflowAccessForWorkspacePath(r.Context(), GetUserFromContext(r.Context()), workspace)
 				if manifest != nil && level != WorkflowAccessNone && (manifest.Capabilities.BrowserMode == "auto" || manifest.Capabilities.BrowserMode == "headless") {
 					result = append(result, item)

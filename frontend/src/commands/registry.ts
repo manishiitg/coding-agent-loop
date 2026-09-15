@@ -55,6 +55,15 @@ export function setProductCommands(cmds: CommandDefinition[]) {
   notifyCommandsChanged()
 }
 
+/** Commands owned by the currently mounted product's product.yaml. */
+export function getProductCommands(mode?: ModeCategory, workshopMode?: WorkshopMode, canWriteWorkflow = true): CommandDefinition[] {
+  return productCommands.filter(cmd => !cmd.menuHidden && matchesMode(cmd, mode, workshopMode, canWriteWorkflow))
+}
+
+export function findProductCommand(name: string, mode?: ModeCategory, workshopMode?: WorkshopMode, canWriteWorkflow = true): CommandDefinition | undefined {
+  return productCommands.find(cmd => matchesName(cmd, name) && matchesMode(cmd, mode, workshopMode, canWriteWorkflow))
+}
+
 export function getCommands(mode?: ModeCategory, workshopMode?: WorkshopMode, canWriteWorkflow = true): CommandDefinition[] {
   return [...productCommands, ...builtinCommands, ...userCommands].filter(cmd => !cmd.menuHidden && matchesMode(cmd, mode, workshopMode, canWriteWorkflow))
 }

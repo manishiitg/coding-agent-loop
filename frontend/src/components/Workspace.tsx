@@ -1,6 +1,6 @@
 import { useEffect, useCallback, useRef, useMemo, useState } from 'react'
 import { useShallow } from 'zustand/react/shallow'
-import { Plus, Upload, FolderPlus, ChevronDown, CheckSquare, X, Trash2, PanelRightClose, Loader2 } from 'lucide-react'
+import { Plus, Upload, FolderPlus, ChevronDown, CheckSquare, X, Trash2, PanelRightClose, Loader2, Eye, EyeOff } from 'lucide-react'
 import { agentApi, workspaceApi } from '../services/api'
 import type { PlannerFile } from '../services/api-types'
 import PlannerFileList from './workspace/PlannerFileList'
@@ -22,6 +22,9 @@ import { usePresetApplication } from '../stores/useGlobalPresetStore'
 import { useActiveWorkflowPreset } from '../hooks/useActiveWorkflowPreset'
 import {
   collectFolderPaths,
+  EXPAND_FIRST_LEVEL_FOLDERS_BY_DEFAULT,
+  getInitialExpandedWorkspaceFolders,
+  hideManagedWorkspaceRootEntries,
   restoreExpandedFolders,
   getOriginalPath,
   isPathWithinFolder,
@@ -33,10 +36,19 @@ interface WorkspaceProps {
   minimized: boolean
   onToggleMinimize: () => void
   hideMinimizeControl?: boolean
+  showMinimizeShortcut?: boolean
   /** Restrict the reusable Files experience to one trusted workspace root. */
   scopedWorkspacePath?: string
   /** Provider/runtime directories to keep out of a creator-facing file tree. */
   hiddenRootFolders?: string[]
+  /** Hide the per-row shortcut that adds a file or folder to chat context. */
+  hideAddToChat?: boolean
+  /** Hide actions for the scoped workspace root while retaining child actions. */
+  hideRootActions?: boolean
+  /** Opt in to opening direct child folders when the workspace is first shown. */
+  expandFirstLevelFolders?: boolean
+  /** Hide platform-owned root files/folders until the user reveals them. */
+  hideManagedEntriesByDefault?: boolean
   title?: string
 }
 
@@ -87,8 +99,13 @@ export default function Workspace({
   minimized,
   onToggleMinimize,
   hideMinimizeControl = false,
+  showMinimizeShortcut = true,
   scopedWorkspacePath,
   hiddenRootFolders = [],
+  hideAddToChat = false,
+  hideRootActions = false,
+  expandFirstLevelFolders = EXPAND_FIRST_LEVEL_FOLDERS_BY_DEFAULT,
+  hideManagedEntriesByDefault = false,
   title = 'Workspace',
 }: WorkspaceProps) {
   // Get mode-specific file context and handlers
@@ -96,6 +113,7 @@ export default function Workspace({
   const authUser = useAuthStore(state => state.user)
   const currentUserFolder = `_users/${authUser?.id || 'default'}`
   const showWorkflowsOverview = useAppStore(state => state.showWorkflowsOverview)
+  const showSchedulesOverview = useAppStore(state => state.showSchedulesOverview)
   const getActiveTab = useChatStore(state => state.getActiveTab)
   const setTabConfig = useChatStore(state => state.setTabConfig)
   const { getActivePreset } = usePresetApplication()
@@ -161,6 +179,7 @@ export default function Workspace({
 
   // Server refresh search state (re-fetch file tree when local search finds nothing)
   const [serverSearchLoading, setServerSearchLoading] = useState(false)
+  const [showHiddenFiles, setShowHiddenFiles] = useState(false)
 
   // Multi-file upload state
   const [pendingFiles, setPendingFiles] = useState<File[]>([])
@@ -322,7 +341,6 @@ export default function Workspace({
   const autoExpandedWorkflowRef = useRef<string | null>(null)
   // Track whether we've auto-expanded Chats/ for multi-agent mode
   const autoExpandedChatRef = useRef(false)
-  const autoExpandedMultiAgentRef = useRef(false)
   // Track workflow folders that already have a full tree in memory
   const fullyLoadedWorkflowFoldersRef = useRef<Set<string>>(new Set())
   // Tracks which iterations have been lazy-loaded, keyed by workflowFolder
@@ -356,20 +374,20 @@ export default function Workspace({
 
   const effectiveWorkflowFolderPath = useMemo(() => {
     if (selectedModeCategory !== 'workflow') return null
-    if (showWorkflowsOverview) return null
+    if (showWorkflowsOverview || showSchedulesOverview) return null
     return workflowFolderPath
-  }, [selectedModeCategory, showWorkflowsOverview, workflowFolderPath])
+  }, [selectedModeCategory, showWorkflowsOverview, showSchedulesOverview, workflowFolderPath])
 
   // Determine which folder to pass to the API based on mode
   const activeFolder = useMemo(() => {
     if (scopedWorkspacePath) return scopedWorkspacePath
-    if (showWorkflowsOverview) return 'Workflow'
+    if (showWorkflowsOverview || showSchedulesOverview) return 'Workflow'
     if (selectedModeCategory === 'workflow') {
       if (effectiveWorkflowFolderPath) return effectiveWorkflowFolderPath
     }
     // For multi-agent mode and default, fetch root (Chats + skills are at root level)
     return undefined
-  }, [scopedWorkspacePath, showWorkflowsOverview, selectedModeCategory, effectiveWorkflowFolderPath])
+  }, [scopedWorkspacePath, showWorkflowsOverview, showSchedulesOverview, selectedModeCategory, effectiveWorkflowFolderPath])
 
   // Raw workspace axios instance
   const wsRawApi = workspaceApi
@@ -390,11 +408,12 @@ export default function Workspace({
   // This matches the logic in filteredFiles useMemo to ensure paths are consistent
   const applyFilteringAndPathAdjustment = useCallback((filesToProcess: PlannerFile[]): PlannerFile[] => {
     let result = filesToProcess
+    const scopedHiddenRootFolders = hideManagedEntriesByDefault && showHiddenFiles ? [] : hiddenRootFolders
 
     // Only filter if we're in workflow mode and have a workflow folder path
     // When in multi-agent mode, show all files regardless of preset
     if (scopedWorkspacePath) {
-      result = scopeFilesToWorkspace(result, scopedWorkspacePath, hiddenRootFolders)
+      result = scopeFilesToWorkspace(result, scopedWorkspacePath, scopedHiddenRootFolders)
     } else if (selectedModeCategory === 'workflow' && effectiveWorkflowFolderPath) {
       // Files are already scoped to the workflow folder by the API (folder param)
       // Just adjust filepaths to show workflow folder as root
@@ -415,7 +434,7 @@ export default function Workspace({
     }
 
     return result
-  }, [scopedWorkspacePath, hiddenRootFolders, selectedModeCategory, effectiveWorkflowFolderPath, currentUserFolder])
+  }, [scopedWorkspacePath, hiddenRootFolders, selectedModeCategory, effectiveWorkflowFolderPath, currentUserFolder, hideManagedEntriesByDefault, showHiddenFiles])
 
   // Fetch capabilities on mount
   useEffect(() => {
@@ -617,11 +636,12 @@ export default function Workspace({
   // Get filtered files - first filter to workflow folder if preset is active, then apply search
   const filteredFiles = useMemo(() => {
     let result = files
+    const scopedHiddenRootFolders = hideManagedEntriesByDefault && showHiddenFiles ? [] : hiddenRootFolders
 
     // Only filter if we're in workflow mode and have a workflow folder path
     // When in multi-agent mode, show all files regardless of preset
     if (scopedWorkspacePath) {
-      result = scopeFilesToWorkspace(result, scopedWorkspacePath, hiddenRootFolders)
+      result = scopeFilesToWorkspace(result, scopedWorkspacePath, scopedHiddenRootFolders)
     } else if (selectedModeCategory === 'workflow' && effectiveWorkflowFolderPath) {
       // The API returns the workflow folder itself AND its children as flat top-level siblings.
       // e.g., [Workflow/codeanalysis, Workflow/codeanalysis/knowledgebase, Workflow/codeanalysis/learnings, ...]
@@ -674,11 +694,15 @@ export default function Workspace({
       })
     }
 
+    if (hideManagedEntriesByDefault && !showHiddenFiles) {
+      result = hideManagedWorkspaceRootEntries(result, hiddenRootFolders)
+    }
+
     // Apply search filter
     result = filterFiles(result, searchQuery)
 
     return result
-  }, [files, scopedWorkspacePath, hiddenRootFolders, effectiveWorkflowFolderPath, searchQuery, selectedModeCategory, effectiveDisplayedIteration, currentUserFolder, pruneRunsToIteration])
+  }, [files, scopedWorkspacePath, hiddenRootFolders, effectiveWorkflowFolderPath, searchQuery, selectedModeCategory, effectiveDisplayedIteration, currentUserFolder, pruneRunsToIteration, hideManagedEntriesByDefault, showHiddenFiles])
 
   // Reveal search matches by opening the folders on their path, without permanently
   // forcing every folder open: only newly-matched folders get expanded, so a folder
@@ -757,11 +781,17 @@ export default function Workspace({
             ? workflowFolder.children
             : filteredFiles
 
-          // Expand only the first-level folders inside the workflow root.
-          // filesToExpand is already workflowFolder.children, so level 0 means direct children only.
-          const additionalFolders = workflowFolder ? [workflowFolder.filepath] : undefined
-          const excludeFolders = scopedWorkspacePath ? [] : ['planning', 'variables', 'learnings', 'logs', 'runs']
-          expandFoldersToLevel(filesToExpand, 0, additionalFolders, excludeFolders)
+          if (expandFirstLevelFolders) {
+            // filesToExpand is already workflowFolder.children, so level 0 means
+            // direct children only.
+            const additionalFolders = workflowFolder ? [workflowFolder.filepath] : undefined
+            const excludeFolders = scopedWorkspacePath ? [] : ['planning', 'variables', 'learnings', 'logs', 'runs']
+            expandFoldersToLevel(filesToExpand, 0, additionalFolders, excludeFolders)
+          } else {
+            // Across every product, keep the workspace root open while every
+            // direct child folder starts closed.
+            setExpandedFolders(getInitialExpandedWorkspaceFolders(workflowFolder))
+          }
 
           // Mark this workflow as auto-expanded
           autoExpandedWorkflowRef.current = workflowPresetId
@@ -774,7 +804,7 @@ export default function Workspace({
       autoExpandedWorkflowRef.current = null
     }
 
-  }, [scopedWorkspacePath, selectedModeCategory, effectiveWorkflowFolderPath, filteredFiles, expandFoldersToLevel, activeWorkflowPreset?.id])
+  }, [scopedWorkspacePath, selectedModeCategory, effectiveWorkflowFolderPath, filteredFiles, expandFoldersToLevel, setExpandedFolders, expandFirstLevelFolders, activeWorkflowPreset?.id])
 
   // In multi-agent mode, auto-expand Chats/ folder by default (skills/ stays closed)
   useEffect(() => {
@@ -786,19 +816,6 @@ export default function Workspace({
       }
     } else if (selectedModeCategory !== 'multi-agent') {
       autoExpandedChatRef.current = false
-    }
-  }, [scopedWorkspacePath, selectedModeCategory, filteredFiles, setExpandedFolders])
-
-  // In multi-agent mode, auto-expand Chats/ by default.
-  useEffect(() => {
-    if (!scopedWorkspacePath && selectedModeCategory === 'multi-agent' && filteredFiles.length > 0 && !autoExpandedMultiAgentRef.current) {
-      const hasChatsFolder = filteredFiles.some(f => f.filepath === 'Chats' || f.filepath === 'Chats/')
-      if (hasChatsFolder) {
-        autoExpandedMultiAgentRef.current = true
-        setExpandedFolders(new Set(['Chats']))
-      }
-    } else if (selectedModeCategory !== 'multi-agent') {
-      autoExpandedMultiAgentRef.current = false
     }
   }, [scopedWorkspacePath, selectedModeCategory, filteredFiles, setExpandedFolders])
 
@@ -2070,6 +2087,27 @@ export default function Workspace({
                 </Tooltip>
               )}
 
+              {hideManagedEntriesByDefault && !isSelectionMode && (
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <button
+                      type="button"
+                      onClick={() => setShowHiddenFiles(current => !current)}
+                      aria-pressed={showHiddenFiles}
+                      aria-label={showHiddenFiles ? 'Hide internal files' : 'Show hidden files'}
+                      className={`p-2 transition-colors ${showHiddenFiles
+                        ? 'text-blue-600 dark:text-blue-400'
+                        : 'text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200'}`}
+                    >
+                      {showHiddenFiles ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                    </button>
+                  </TooltipTrigger>
+                  <TooltipContent>
+                    <p>{showHiddenFiles ? 'Hide internal files' : 'Show hidden files'}</p>
+                  </TooltipContent>
+                </Tooltip>
+              )}
+
               {/* Combined Actions Dropdown - Hidden in selection mode */}
               {!isSelectionMode && (
                 <div className="relative actions-dropdown">
@@ -2133,7 +2171,7 @@ export default function Workspace({
               {/* Minimize button - Hidden in selection mode */}
               {!isSelectionMode && !hideMinimizeControl && (
                 <div className="flex items-center gap-1">
-                  <span className="text-xs text-gray-400 dark:text-gray-500 font-mono">⌘6</span>
+                  {showMinimizeShortcut && <span className="text-xs text-gray-400 dark:text-gray-500 font-mono">⌘6</span>}
                   <Tooltip>
                     <TooltipTrigger asChild>
                       <button
@@ -2257,7 +2295,8 @@ export default function Workspace({
                 onFolderRename={handleFolderRename}
                 onFileDownload={handleFileDownload}
                 downloadingFilePath={downloadStatus?.path}
-                hideAddToChat={selectedModeCategory === 'workflow' && !!effectiveWorkflowFolderPath}
+                hideAddToChat={hideAddToChat || (selectedModeCategory === 'workflow' && !!effectiveWorkflowFolderPath)}
+                hideRootActions={hideRootActions}
                 onExportBackup={handleExportBackup}
                 onImportBackup={handleImportBackupClick}
                 workflowFolderPath={effectiveWorkflowFolderPath}

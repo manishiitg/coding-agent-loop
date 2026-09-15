@@ -37,4 +37,15 @@ describe('ProductSurfaceSwitcher deployment allowlist', () => {
     expect(visibleProductSurfaceIDs(['dominion', 'agentworks'])).toEqual(['agentworks', 'dominion'])
     expect(visibleProductSurfaceIDs(null)).toEqual(['agentworks', 'dominion'])
   })
+
+  it('shows Work alongside AgentWorks when the deployment allowlists it', () => {
+    vi.stubGlobal('window', {
+      __APP_RUNTIME_CONFIG__: {
+        defaultProductSurface: 'agentworks',
+        enabledProductSurfaces: ['agentworks', 'work'],
+      },
+    })
+    expect(visibleProductSurfaceIDs(null)).toEqual(['agentworks', 'work'])
+    expect(visibleProductSurfaceIDs(['work'])).toEqual(['work'])
+  })
 })

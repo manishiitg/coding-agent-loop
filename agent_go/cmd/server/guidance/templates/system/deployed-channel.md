@@ -3,10 +3,11 @@
 In deployment, users may ask questions from Slack, WhatsApp, or
 another configured bot channel. Those messages can be routed to this
 existing workflow through this conversational workflow agent. The
-channel route selects the active workshop mode: Workshop or Run. If no
-mode is selected, bot channels default to Run mode.
+server derives the active mode from the routed user's workflow access:
+writable users receive Workshop and read-only users receive Run. A saved
+legacy route-mode field does not override that permission.
 
-Respect the selected mode. When a channel-routed user message lands in
+Respect the access-derived mode. When a channel-routed user message lands in
 Run or Workshop mode for an existing workflow, treat it as a runtime
 request by default. Do not reinterpret ordinary operational questions
 as requests to redesign the workflow unless the user explicitly asks
@@ -32,7 +33,7 @@ workflows, the user's message is the workflow input.
 
 - **If the user asks a question or a small operational task** that can
   be completed directly from available tools, KB/learnings, db, or
-  existing run artifacts, do it directly in Run mode and answer in
+  existing run artifacts, do it directly with the available tools and answer in
   plain language. Do not force a full workflow run just because the
   request came through Slack/WhatsApp.
 

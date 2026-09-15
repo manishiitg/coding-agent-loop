@@ -25,6 +25,24 @@ export function userInteractiveContinuationFlag(tab: Pick<ChatTab, 'metadata'>):
   return tab.metadata?.userInteractiveContinuation === true ? true : undefined
 }
 
+export type WorkflowReferenceContext = {
+  presetId: string
+  label: string
+  workspacePath: string
+}
+
+// # references are message attachments, not conversation configuration. Remove
+// only the references captured by an accepted submission so a reference added
+// while that request is starting remains available for the next message.
+export function remainingWorkflowContextAfterSubmission(
+  current: WorkflowReferenceContext[],
+  submitted: WorkflowReferenceContext[],
+): WorkflowReferenceContext[] {
+  if (submitted.length === 0) return current
+  const consumed = new Set(submitted.map(reference => `${reference.presetId}\u0000${reference.workspacePath}`))
+  return current.filter(reference => !consumed.has(`${reference.presetId}\u0000${reference.workspacePath}`))
+}
+
 // ---------------------------------------------------------------------------
 // 1a. determineModeFlag — deduplicate useCodeExecutionMode
 // ---------------------------------------------------------------------------
@@ -212,6 +230,9 @@ export function buildAgentProfileChatRequest(payload: AgentQueryRequest, convers
     ...(engine ? { engine } : {}),
     ...(engine && modelId ? { model_id: modelId } : {}),
     ...(engine && reasoningEffort ? { reasoning_effort: reasoningEffort } : {}),
+    ...(payload.enabled_servers?.length ? { enabled_servers: payload.enabled_servers } : {}),
+    ...(payload.selected_skills?.length ? { selected_skills: payload.selected_skills } : {}),
+    ...(payload.workflow_context_paths?.length ? { workflow_context_paths: payload.workflow_context_paths } : {}),
   }
 }
 

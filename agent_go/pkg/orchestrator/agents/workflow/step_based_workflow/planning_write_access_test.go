@@ -136,6 +136,8 @@ func TestWritePlanChangelogEntryUsesManagedFileAccess(t *testing.T) {
 
 	client := workspacepkg.NewClient("http://unused")
 	ctx := context.WithValue(context.Background(), common.ChatSessionIDKey, sessionID)
+	ctx = context.WithValue(ctx, common.UserIDKey, "user-123")
+	ctx = context.WithValue(ctx, common.UsernameKey, "erin")
 	ctx = withPlanChangeOrigin(ctx, "workflow-builder")
 	wrote := false
 	var written string
@@ -169,6 +171,9 @@ func TestWritePlanChangelogEntryUsesManagedFileAccess(t *testing.T) {
 	}
 	if changelog.Entries[0].Origin.Type != "user_chat" || changelog.Entries[0].Origin.SessionID != sessionID {
 		t.Fatalf("origin = %+v", changelog.Entries[0].Origin)
+	}
+	if changelog.Entries[0].Origin.UserID != "user-123" || changelog.Entries[0].Origin.Username != "erin" {
+		t.Fatalf("user attribution = %+v", changelog.Entries[0].Origin)
 	}
 	if err := client.ValidatePathWithContext(ctx, changelogPath, true); err == nil || !strings.Contains(err.Error(), "blocked for writes") {
 		t.Fatalf("changelog capability leaked into caller context: %v", err)

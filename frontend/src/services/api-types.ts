@@ -213,8 +213,10 @@ export interface AgentQueryResponse {
   provider?: string
 }
 
-// Minimal product-chat wire contract. Profile-owned model, prompt, tools,
-// skills and workspace configuration are deliberately absent.
+// Minimal product-chat wire contract. Profile-owned prompt, tools and
+// workspace remain server-owned. Work may add user-selected MCP servers and
+// skills from the same shared controls as AgentWorks; the server accepts those
+// fields only for profiles that explicitly support them.
 export interface AgentProfileChatRequest {
   message: string
   conversation_key?: string
@@ -227,6 +229,12 @@ export interface AgentProfileChatRequest {
   // A reasoning level from the engine's declared reasoning_efforts; omitted
   // keeps whatever the engine's own runtime options declare.
   reasoning_effort?: string
+  enabled_servers?: string[]
+  selected_skills?: string[]
+  // Workspace paths selected through the shared # automation picker. The
+  // profile must explicitly enable workflow_references; the server authorizes
+  // every path and exposes it read-only.
+  workflow_context_paths?: string[]
 }
 
 export interface AgentProfileConversationRequest {
@@ -893,16 +901,33 @@ export interface CompactContextResponse {
 
 // Slack Feedback Configuration types
 
-// BotRoute maps a bot-visible route key to a specific workflow.
-export interface BotRoute {
-  workflow_id: string
-  workspace_path?: string
-  workshop_mode?: 'run' | 'workshop' | string
+// ChannelRoute maps a Slack channel ID to a specific workflow, including the workspace path
+// so the bot can read the workflow manifest (e.g. workshop_mode) without scanning all workspaces.
+export interface ChannelRoute {
+  workflow_id?: string
+  workspace_path: string
+  profile_id?: string
+  conversation_key?: string
+  profile_label?: string
+  // Override the manifest's workshop_mode for this channel. Empty = use manifest.
+  workshop_mode?: 'workshop' | 'run'
+  // Opt in to detailed workflow runtime messages in the bot channel.
   send_full_details?: boolean
 }
 
-// Shape of GET/PUT /api/whatsapp/routing entries.
-export interface WhatsAppRoute extends BotRoute {}
+export type BotRoute = ChannelRoute
+
+// Shape of GET/PUT /api/whatsapp/routing entries. Same idea as ChannelRoute
+// but workshop_mode is an untyped string on this endpoint.
+export interface WhatsAppRoute {
+  workflow_id?: string
+  workspace_path?: string
+  profile_id?: string
+  conversation_key?: string
+  profile_label?: string
+  workshop_mode?: string
+  send_full_details?: boolean
+}
 
 // Shape of GET /api/whatsapp/status. enabled = connector started at server
 // startup; paired = device identity stored; connected = live WS.
@@ -1596,6 +1621,10 @@ export interface UpdateRunningWorkflowRequest {
 
 // Global cost ledger summary — mirror of pkg/costledger.Summary.
 export interface CostAggregate {
+  // Present on per-model buckets. Overall totals intentionally leave this
+  // blank when several providers contributed.
+  provider?: string
+  pricing_model_id?: string
   prompt_tokens: number
   completion_tokens: number
   reasoning_tokens: number
@@ -1749,6 +1778,7 @@ export interface CapabilitiesResponse {
   servers: string[];
   local_mode?: boolean;
   runtime_debug?: boolean;
+  display_time_zone?: string;
   terminal_live_attach?: boolean;
   /** Streaming microphone dictation (agent_go/pkg/voicestt, voicestt.Status).
    * `available` is a build-time fact (false in a CGO_ENABLED=0 build);
@@ -2663,6 +2693,14 @@ export interface PlanChangelogEntry {
   reason: string
   step_ids?: string[]
   changes?: PlanChangelogFieldChange[]
+  actor?: string
+  origin?: {
+    type?: string
+    agent_name?: string
+    session_id?: string
+    user_id?: string
+    username?: string
+  }
   file?: string
 }
 
@@ -3015,8 +3053,11 @@ export interface ScheduledJob {
   consecutive_failures: number
   execution_mode?: 'close_only'
   collision_policy?: 'skip' | 'queue_latest' | 'retry' | 'coalesce'
+  concurrency_mode?: 'sequential' | 'parallel'
+  parallel_risk_acknowledged?: boolean
   max_start_delay_minutes?: number
   after_schedule_id?: string
+  after_schedule_ids?: string[]
   after_terminal_status?: 'completed' | 'any_terminal'
   after_delay_minutes?: number
   dependency_deadline?: string
@@ -3041,7 +3082,9 @@ export interface CreateScheduledJobRequest {
   pulse_mode_reason?: string
   name: string
   description?: string
-  entity_type: 'workflow' | 'chat' | 'multi-agent'
+  entity_type: 'workflow' | 'chat' | 'multi-agent' | 'product'
+  product_profile_id?: string
+  product_project_id?: string
   preset_query_id?: string
   workspace_path?: string
   trigger_payload?: Record<string, unknown>
@@ -3053,8 +3096,11 @@ export interface CreateScheduledJobRequest {
   resume_previous?: boolean
   execution_mode?: 'close_only'
   collision_policy?: 'skip' | 'queue_latest' | 'retry' | 'coalesce'
+  concurrency_mode?: 'sequential' | 'parallel'
+  parallel_risk_acknowledged?: boolean
   max_start_delay_minutes?: number
   after_schedule_id?: string
+  after_schedule_ids?: string[]
   after_terminal_status?: 'completed' | 'any_terminal'
   after_delay_minutes?: number
   dependency_deadline?: string
@@ -3081,8 +3127,11 @@ export interface UpdateScheduledJobRequest {
   resume_previous?: boolean
   execution_mode?: 'close_only' | ''
   collision_policy?: 'skip' | 'queue_latest' | 'retry' | 'coalesce'
+  concurrency_mode?: 'sequential' | 'parallel'
+  parallel_risk_acknowledged?: boolean
   max_start_delay_minutes?: number
   after_schedule_id?: string
+  after_schedule_ids?: string[]
   after_terminal_status?: 'completed' | 'any_terminal'
   after_delay_minutes?: number
   dependency_deadline?: string
@@ -3116,6 +3165,9 @@ export interface ScheduledJobRun {
   trigger_source?: 'manual' | 'cron' | 'calendar' | string
   scheduled_for?: string
   run_folder?: string
+  concurrency_mode?: 'sequential' | 'parallel'
+  parallel_risk_acknowledged?: boolean
+  artifacts_expired?: boolean
   session_id?: string
   status: 'running' | 'success' | 'error' | 'failed' | 'partial' | 'stopped' | 'interrupted' | 'waiting_for_capacity' | 'waiting_for_workflow'
   error?: string
@@ -3160,6 +3212,8 @@ export interface WorkflowManifest {
   knowledgebase_sources?: KnowledgebaseSource[]
   folder_access?: WorkflowFolderGrant[]
   folder_access_requests?: WorkflowFolderAccessRequest[]
+  /** Durable read-only workflow attachments, re-authorized on every run. */
+  workflow_context_paths?: string[]
   installed_playbooks?: InstalledPlaybook[]
 }
 
@@ -3196,7 +3250,10 @@ export interface WorkflowFolderAccessRequest {
 export interface WorkflowPulseConfig {
   enabled?: boolean
   advisor_specialization?: WorkflowAdvisorSpecialization
+  disabled_review_modules?: PulseReviewerModule[]
 }
+
+export type PulseReviewerModule = 'technical_review' | 'architecture_review' | 'strategic_review'
 
 export interface WorkflowAdvisorSpecialization {
   version: number
@@ -3299,6 +3356,7 @@ export interface UpdateWorkflowManifestRequest {
   workshop_mode?: string // Standalone patch — avoids zeroing out other execution_defaults fields
   run_retention_count?: number
   pulse_enabled?: boolean
+  pulse_disabled_review_modules?: PulseReviewerModule[]
   run_notification_instructions?: string
   pulse_notification_instructions?: string
   run_notification_channels?: string[]
@@ -3316,6 +3374,7 @@ export interface UpdateWorkflowManifestRequest {
   knowledgebase_sources?: KnowledgebaseSource[]
   folder_access?: WorkflowFolderGrant[]
   folder_access_requests?: WorkflowFolderAccessRequest[]
+  workflow_context_paths?: string[]
 }
 
 export interface DuplicateWorkflowManifestRequest {
@@ -3419,5 +3478,28 @@ export interface KnowledgebaseSourceStatus extends KnowledgebaseSource {
   label?: string
   workspace_path?: string
   available: boolean
+  reason?: string
+}
+
+export interface WorkFolderGrant {
+  id: string
+  alias: string
+  path: string
+  access: 'read_only' | 'read_write'
+  reason?: string
+  created_at?: string
+  updated_at?: string
+  available?: boolean
+}
+
+export interface WorkFolderListResponse {
+  folders: WorkFolderGrant[]
+  roots?: string[]
+}
+
+export interface WorkFolderAddRequest {
+  path: string
+  alias: string
+  access: 'read_only' | 'read_write'
   reason?: string
 }

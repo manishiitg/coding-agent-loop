@@ -15,8 +15,20 @@ describe('activity session helpers', () => {
   it('recognizes product-project sessions so AgentWorks can keep them out of its monitor', () => {
     expect(isProductProjectSession({ session_id: 'video-studio:project:new-video' })).toBe(true)
     expect(isProductProjectSession({ session_id: 'future-product:project:launch-1' })).toBe(true)
+    expect(isProductProjectSession({
+      session_id: 'legacy-uuid-session',
+      workspace_path: 'Chats/Work/projects/new-project-75db2aa1',
+    })).toBe(true)
+    expect(isProductProjectSession({
+      session_id: 'legacy-uuid-session',
+      workspace_path: '_users/alice/Chats/Video-Studio/projects/launch-1',
+    })).toBe(true)
     expect(isProductProjectSession({ session_id: 'schedule-cron--workflow_1' })).toBe(false)
     expect(isProductProjectSession({ session_id: 'chat-123' })).toBe(false)
+    expect(isProductProjectSession({
+      session_id: 'workflow-session',
+      workspace_path: 'Workflow/confida-login',
+    })).toBe(false)
   })
 
   it('does not treat an idle retained session as active work', () => {

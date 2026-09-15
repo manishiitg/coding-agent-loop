@@ -27,6 +27,9 @@ nonzero; do not report success or bypass it. Confida alone is in scope: the
 - [ ] Native Linux binaries build successfully, including the sandbox runner.
 - [ ] Frontend TypeScript, Vite build, release-asset checks, and bundle-budget
   checks pass. Runtime configuration keeps CDP disabled.
+- [ ] The source playbook catalog passes its schema/link validator; the complete
+  catalog is copied into the immutable release and the packaged copy passes the
+  same validator. A missing known manifest stops activation.
 
 ## After activation, before success or release pruning
 
@@ -35,7 +38,14 @@ nonzero; do not report success or bypass it. Confida alone is in scope: the
   A correct file alone is insufficient: this catches missed restarts and runtime
   overrides. Callback URL: `https://confida.agentworkshq.com/api/oauth/callback`.
 - [ ] Agent/workspace processes received the expected tools PATH and Confida
-  browser namespaces.
+  browser namespaces, plus `DISPLAY_TIME_ZONE=America/New_York` for
+  deployment-consistent UI timestamps.
+- [ ] Work is available to every approved user through
+  `AGENTWORKS_PRODUCTS_AVAILABLE_TO_ALL=work`; its project data remains under
+  each user's private `_users/<id>/Chats/Work/projects` root.
+- [ ] The running agent received
+  `AGENTWORKS_PLAYBOOKS_DIR=/srv/confida/current/playbooks`, and its working
+  directory can read the packaged Basic Browser Setup manifest.
 - [ ] Local agent/workspace health and public `/api/health` and `/login` succeed.
 - [ ] Only after verification is the release marked complete and old releases
   pruned. Record the release ID and source revisions when reporting deployment.

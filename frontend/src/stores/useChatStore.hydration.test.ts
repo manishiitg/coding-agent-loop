@@ -140,6 +140,55 @@ describe('useChatStore hydration bootstrap', () => {
     expect(Object.keys(chatStore.useChatStore.getState().chatTabs)).toHaveLength(2)
   })
 
+  it('never reuses a product Builder as the project conversation tab', async () => {
+    const chatStore = await import('./useChatStore')
+    await chatStore.waitForChatStoreHydration()
+
+    const builderTabId = await chatStore.useChatStore.getState().createChatTab('Builder', {
+      mode: 'multi-agent',
+      agentProfileId: 'work',
+      agentProfileVersion: 1,
+      agentProfileWorkspace: 'Chats/Work/projects/demo',
+      agentProfileProjectId: 'demo',
+      agentProfileBuilder: true,
+    })
+    const chatTabId = await chatStore.useChatStore.getState().createChatTab('Fix the login form', {
+      mode: 'multi-agent',
+      agentProfileId: 'work',
+      agentProfileVersion: 1,
+      agentProfileWorkspace: 'Chats/Work/projects/demo',
+      agentProfileProjectId: 'demo',
+      agentProfileConversationKey: 'demo:chat-1',
+      agentProfileBuilder: false,
+    })
+
+    expect(chatTabId).not.toBe(builderTabId)
+    expect(chatStore.useChatStore.getState().getTab(builderTabId)?.metadata?.agentProfileBuilder).toBe(true)
+    expect(chatStore.useChatStore.getState().getTab(chatTabId)?.metadata?.agentProfileBuilder).toBe(false)
+    expect(Object.keys(chatStore.useChatStore.getState().chatTabs)).toHaveLength(2)
+  })
+
+  it('does not inherit globally connected MCP or skill selections into a product tab', async () => {
+    const chatStore = await import('./useChatStore')
+    const { useMCPStore } = await import('./useMCPStore')
+    const { useAppStore } = await import('./useAppStore')
+    await chatStore.waitForChatStoreHydration()
+    useMCPStore.setState({ chatSelectedServers: ['google_sheets'] })
+    useAppStore.setState({ lastSelectedSkills: ['personal-skill'] })
+
+    const tabId = await chatStore.useChatStore.getState().createChatTab('Builder', {
+      mode: 'multi-agent',
+      agentProfileId: 'work',
+      agentProfileProjectId: 'isolated-project',
+      agentProfileBuilder: true,
+    })
+
+    expect(chatStore.useChatStore.getState().getTab(tabId)?.config).toMatchObject({
+      selectedServers: ['NO_SERVERS'],
+      selectedSkills: [],
+    })
+  })
+
   it('reuses a keyed product conversation across profile upgrades and workspace moves', async () => {
     const chatStore = await import('./useChatStore')
     await chatStore.waitForChatStoreHydration()

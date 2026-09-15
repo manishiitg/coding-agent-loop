@@ -32,12 +32,12 @@ func resolveWorkflowChatPolicy(mode, session string, req QueryRequest, active *A
 	case !req.UserInteractiveContinuation && (isScheduledSessionIdentity(session, req.TriggeredBy) || active != nil && isScheduledSessionIdentity(session, active.TriggeredBy)):
 		origin = "scheduled"
 	}
-	normalized := "run"
-	switch strings.TrimSpace(mode) {
-	case "", "workshop", "builder", "optimizer":
-		normalized = "builder"
-	}
-	if strings.TrimSpace(req.AgentMode) == "workflow" || origin == "scheduled" || origin == "notification" {
+	// Conversational workflow authority is access-derived. A legacy/client
+	// request for Run cannot reduce a writable user's scheduled, bot, or human
+	// Builder session; Run is reserved for read-only workflow access. The direct
+	// headless workflow executor is separate and intentionally remains Run.
+	normalized := "builder"
+	if readOnly || strings.TrimSpace(req.AgentMode) == "workflow" {
 		normalized = "run"
 	}
 	return workflowChatPolicy{Mode: normalized, Origin: origin, Capabilities: agentworksproduct.ChatCapabilities(normalized, origin, readOnly)}

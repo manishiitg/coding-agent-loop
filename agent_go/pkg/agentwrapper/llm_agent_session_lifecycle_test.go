@@ -73,3 +73,20 @@ func TestWrapperBuildsSessionTurnWithExplicitContinuationInput(t *testing.T) {
 		t.Fatalf("turn history = %d messages, want prior history only", len(turn.History))
 	}
 }
+
+func TestWrapperRetainsInstalledSkillResolverForFinalizedAgent(t *testing.T) {
+	wrapper := &LLMAgentWrapper{}
+	resolver := func(name, path string) (mcpagent.InstalledSkillFile, error) {
+		return mcpagent.InstalledSkillFile{Content: name + ":" + path}, nil
+	}
+	if err := wrapper.SetInstalledSkillResolver(resolver); err != nil {
+		t.Fatalf("SetInstalledSkillResolver: %v", err)
+	}
+	if wrapper.installedSkillResolver == nil {
+		t.Fatal("resolver was not retained on the immutable wrapper definition")
+	}
+	wrapper.finalized = true
+	if err := wrapper.SetInstalledSkillResolver(resolver); err == nil {
+		t.Fatal("resolver changed after immutable definition was finalized")
+	}
+}

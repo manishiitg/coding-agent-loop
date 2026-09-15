@@ -23,6 +23,7 @@ type WorkshopExecuteOptions struct {
 	MessageSequenceRestart bool                   // If true, archive any existing message_sequence session and replay the configured item queue.
 	ScriptParameters       map[string]interface{} // Validated named inputs for a scripted step, exposed through STEP_PARAMS_JSON.
 	ScriptParametersSet    bool                   // Distinguishes an omitted field from an explicitly supplied empty object.
+	ExecutionID            string                 // Server-generated identity for this direct step execution.
 }
 
 // cleanupWorkshopExecutionPath removes a specific workshop execution folder and archives
@@ -171,6 +172,15 @@ func (hcpo *StepBasedWorkflowOrchestrator) ExecuteStepForWorkshop(
 	fullRunFolderPath := fmt.Sprintf("%s/runs/%s", hcpo.GetWorkspacePath(), hcpo.selectedRunFolder)
 	if err := hcpo.createRunFolderStructure(ctx, fullRunFolderPath); err != nil {
 		hcpo.GetLogger().Warn(fmt.Sprintf("[WORKSHOP] Failed to create run folder structure: %v (continuing)", err))
+	}
+	if executionOpts := hcpo.GetExecutionOptions(); executionOpts != nil && executionOpts.RunKind == "schedule" {
+		executionID := ""
+		if opts != nil {
+			executionID = opts.ExecutionID
+		}
+		if err := hcpo.markRunMetadataStartedForExecution(ctx, hcpo.selectedRunFolder, executionID); err != nil {
+			return "", fmt.Errorf("bind scheduled step run identity: %w", err)
+		}
 	}
 
 	// 5. Standard execution pipeline — same as normal "run single step" UI action

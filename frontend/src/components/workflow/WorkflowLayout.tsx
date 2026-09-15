@@ -1,7 +1,7 @@
 import { usePointerDrag } from '../../hooks/usePointerDrag'
 import React, { useMemo, useCallback, useRef, useEffect, forwardRef, useState } from 'react'
 import { useShallow } from 'zustand/react/shallow'
-import { GripVertical, Laptop, PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen, Smartphone, Tablet } from 'lucide-react'
+import { Laptop, PanelLeftOpen, PanelRightOpen, Smartphone, Tablet } from 'lucide-react'
 import { WorkflowCanvas, type WorkflowCanvasRef } from './canvas'
 import { useGlobalPresetStore } from '../../stores/useGlobalPresetStore'
 import { useModeStore } from '../../stores/useModeStore'
@@ -45,6 +45,7 @@ import {
   writeReportPreviewPreference,
   writeWorkflowSplitPreference,
 } from '../../utils/reportPreviewPreference'
+import { WorkspaceSplitCollapseControls, WorkspaceSplitDivider } from '../workspace/WorkspaceSplitDivider'
 
 // Helper component to get observerId and render ChatArea
 // Always renders ChatArea (even without observerId) so it can handle initialization
@@ -2139,8 +2140,8 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
         <button
           type="button"
           onClick={() => setShowWorkspacePane(true)}
-          title="Show report / plan panel"
-          aria-label="Show report / plan panel"
+          title="Show dashboard / plan panel"
+          aria-label="Show dashboard / plan panel"
           className="absolute right-0 top-1/2 z-30 hidden -translate-y-1/2 flex-col items-center gap-1.5 rounded-l-lg border border-r-0 border-border bg-background/95 py-3 pl-1.5 pr-1 text-muted-foreground shadow-md backdrop-blur-sm transition-colors hover:bg-muted hover:text-foreground md:flex"
         >
           <PanelRightOpen className="h-4 w-4" />
@@ -2218,29 +2219,12 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
         {workspacePaneVisible && canvasElement}
 
         {showChatArea && workspacePaneVisible && (
-          <div className="group/split relative z-30 hidden min-h-0 w-0 justify-self-start md:col-start-2 md:row-start-2 md:block">
-            <button
-              type="button"
-              onPointerDown={handleSplitPointerDown}
-              onKeyDown={(event) => {
-                if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return
-                event.preventDefault()
-                setSplitRatio(workspaceSplitRatioRef.current + (event.key === 'ArrowLeft' ? -0.02 : 0.02), true)
-              }}
-              className="absolute -left-1.5 inset-y-0 z-10 w-3 cursor-col-resize touch-none outline-none"
-              aria-label="Resize chat and workspace panels"
-              aria-orientation="vertical"
-              role="separator"
-              aria-valuemin={15}
-              aria-valuemax={85}
-              aria-valuenow={Math.round(workspaceSplitRatio * 100)}
-            >
-              <span className="absolute bottom-0 left-1/2 top-0 w-px -translate-x-1/2 bg-border transition-colors group-hover/split:bg-primary group-focus-within/split:bg-primary" />
-              <span className="absolute left-1/2 top-1/2 flex h-6 w-3.5 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full border border-border bg-background text-muted-foreground shadow-sm transition-colors group-hover/split:border-primary group-hover/split:text-primary group-focus-within/split:border-primary group-focus-within/split:text-primary">
-                <GripVertical className="h-3 w-3" />
-              </span>
-            </button>
-            <div className="pointer-events-none absolute left-0 top-1/2 z-20 flex -translate-x-1/2 -translate-y-1/2 flex-col items-center gap-0.5 rounded-md border border-border bg-background/95 p-0.5 shadow-lg backdrop-blur-sm opacity-0 transition-opacity group-hover/split:opacity-100 group-focus-within/split:opacity-100">
+          <WorkspaceSplitDivider
+            ratio={workspaceSplitRatio}
+            onPointerDown={handleSplitPointerDown}
+            onStep={delta => setSplitRatio(workspaceSplitRatioRef.current + delta, true)}
+            className="md:row-start-2"
+          >
               {([
                 ['mobile', Smartphone, 'Mobile preview'],
                 ['tablet', Tablet, 'Tablet preview'],
@@ -2260,28 +2244,11 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
                 </button>
               ))}
               <span className="h-px w-3 bg-border" />
-              <button
-                type="button"
-                onPointerDown={event => event.stopPropagation()}
-                onClick={collapseChatFromRail}
-                className="pointer-events-auto flex h-6 w-6 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-                aria-label="Collapse chat panel"
-                title="Collapse chat panel"
-              >
-                <PanelLeftClose className="h-3 w-3" />
-              </button>
-              <button
-                type="button"
-                onPointerDown={event => event.stopPropagation()}
-                onClick={collapseWorkspaceFromRail}
-                className="pointer-events-auto flex h-6 w-6 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-                aria-label="Collapse workspace panel"
-                title="Collapse workspace panel"
-              >
-                <PanelRightClose className="h-3 w-3" />
-              </button>
-            </div>
-          </div>
+              <WorkspaceSplitCollapseControls
+                onCollapseChat={collapseChatFromRail}
+                onCollapseWorkspace={collapseWorkspaceFromRail}
+              />
+          </WorkspaceSplitDivider>
         )}
       </div>
     </div>

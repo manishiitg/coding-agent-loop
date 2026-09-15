@@ -21,7 +21,11 @@ const DYNAMIC_PORT_RE = /DynamicPort: (\d+)/;
 function spawnServer({ name, bin, args, preferredPort, cwd, env, log, onExit, echoToConsole = false }) {
   return detect(preferredPort).then((port) => new Promise((resolve, reject) => {
     const finalArgs = args.map((a) => (a === spawnServer.PORT_PLACEHOLDER ? String(port) : a));
-    const child = spawn(bin, finalArgs, { cwd, env, stdio: ['ignore', 'pipe', 'pipe'] });
+    // Some per-process settings (notably the local OAuth callback origin)
+    // depend on the port detect() actually selected. Accept an env factory so
+    // callers never have to guess the preferred port or persist a stale one.
+    const resolvedEnv = typeof env === 'function' ? env(port) : env;
+    const child = spawn(bin, finalArgs, { cwd, env: resolvedEnv, stdio: ['ignore', 'pipe', 'pipe'] });
     let portFound = false;
 
     child.on('error', (err) => {

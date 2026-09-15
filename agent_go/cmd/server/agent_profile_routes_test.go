@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/gorilla/mux"
@@ -59,7 +60,7 @@ func TestQueryRequestForAgentProfileChatUsesOnlyServerOwnedProfileConfiguration(
 	if query.RestoredConversationPath != "" || query.RestoredConversationSessionID != "" {
 		t.Fatalf("browser-controlled restore leaked into query: path=%q session=%q", query.RestoredConversationPath, query.RestoredConversationSessionID)
 	}
-	if query.AgentMode != "multi-agent" || !query.DisableLiveInputDelivery {
+	if query.AgentMode != "multi-agent" || query.DisableLiveInputDelivery {
 		t.Fatalf("unexpected runner configuration: mode=%q disable_live_input=%v", query.AgentMode, query.DisableLiveInputDelivery)
 	}
 }
@@ -120,6 +121,108 @@ func TestQueryRequestForAgentProfileChatRejectsUndeclaredEngine(t *testing.T) {
 	}
 }
 
+func TestQueryRequestForAgentProfileChatAcceptsDeclaredChatExtras(t *testing.T) {
+	profile := routeTestProfile("work", true, "")
+	profile.Runtime.Capabilities.MCPSelection = agentprofiles.CapabilityPreferred
+	profile.Runtime.Capabilities.SkillSelection = agentprofiles.CapabilityPreferred
+	profile.Runtime.Capabilities.WorkflowReferences = agentprofiles.CapabilityPreferred
+	query, err := queryRequestForAgentProfileChat(profile, AgentProfileChatRequest{
+		Message:              "hello",
+		EnabledServers:       []string{"github", "github"},
+		SelectedSkills:       []string{"code-reviewer", "code-reviewer"},
+		WorkflowContextPaths: []string{"Workflow/customer-research", "Workflow/customer-research"},
+	}, ProductConversationRecord{SessionID: "session-1", WorkspacePath: "Chats/Work/projects/demo"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(query.EnabledServers, ",") != "github" || strings.Join(query.SelectedSkills, ",") != "code-reviewer" {
+		t.Fatalf("chat extras not applied or deduplicated: servers=%v skills=%v", query.EnabledServers, query.SelectedSkills)
+	}
+	if strings.Join(query.WorkflowContextPaths, ",") != "Workflow/customer-research" {
+		t.Fatalf("workflow references not applied or deduplicated: %v", query.WorkflowContextPaths)
+	}
+}
+
+func TestProjectChatMergesDurableAndMessageWorkflowReferences(t *testing.T) {
+	profile := routeTestProfile("work", true, "")
+	profile.Runtime.Capabilities.WorkflowReferences = agentprofiles.CapabilityPreferred
+	query, err := queryRequestForAgentProfileChat(profile, AgentProfileChatRequest{
+		Message:              "compare them",
+		WorkflowContextPaths: []string{"Workflow/temporary", "Workflow/saved"},
+	}, ProductConversationRecord{
+		SessionID:                   "session-1",
+		WorkspacePath:               "Chats/Work/projects/demo",
+		ResourceID:                  "demo",
+		ProjectWorkflowContextPaths: []string{"Workflow/saved"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Join(query.WorkflowContextPaths, ","); got != "Workflow/saved,Workflow/temporary" {
+		t.Fatalf("workflow references = %q, want durable first and deduplicated", got)
+	}
+}
+
+func TestProjectChatUsesManifestMCPAndSkillsInsteadOfBrowserInput(t *testing.T) {
+	profile := routeTestProfile("work", true, "")
+	profile.Runtime.Capabilities.MCPSelection = agentprofiles.CapabilityPreferred
+	profile.Runtime.Capabilities.SkillSelection = agentprofiles.CapabilityPreferred
+	query, err := queryRequestForAgentProfileChat(profile, AgentProfileChatRequest{
+		Message:        "hello",
+		EnabledServers: []string{"browser-leaked-server"},
+		SelectedSkills: []string{"browser-leaked-skill"},
+	}, ProductConversationRecord{
+		SessionID:              "session-1",
+		WorkspacePath:          "Chats/Work/projects/demo",
+		ResourceID:             "demo",
+		ProjectSelectedServers: []string{"github"},
+		ProjectSelectedSkills:  []string{"code-reviewer"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(query.EnabledServers, ",") != "github" || strings.Join(query.SelectedSkills, ",") != "code-reviewer" {
+		t.Fatalf("project manifest was not authoritative: servers=%v skills=%v", query.EnabledServers, query.SelectedSkills)
+	}
+	empty, err := queryRequestForAgentProfileChat(profile, AgentProfileChatRequest{
+		Message:        "hello",
+		EnabledServers: []string{"browser-leaked-server"},
+	}, ProductConversationRecord{
+		SessionID:     "session-2",
+		WorkspacePath: "Chats/Work/projects/empty",
+		ResourceID:    "empty",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(empty.EnabledServers, ",") != "NO_SERVERS" {
+		t.Fatalf("an empty project selection was not preserved as none: %v", empty.EnabledServers)
+	}
+}
+
+func TestQueryRequestForAgentProfileChatRejectsUndeclaredChatExtras(t *testing.T) {
+	profile := routeTestProfile("dominion", true, "")
+	_, err := queryRequestForAgentProfileChat(profile, AgentProfileChatRequest{
+		Message:              "hello",
+		EnabledServers:       []string{"github"},
+		WorkflowContextPaths: []string{"Workflow/customer-research"},
+	}, ProductConversationRecord{SessionID: "session-1", WorkspacePath: "Chats"})
+	if err == nil {
+		t.Fatal("expected a fixed-purpose profile to reject user-selected MCP servers")
+	}
+}
+
+func TestQueryRequestForAgentProfileChatRejectsUndeclaredWorkflowReferences(t *testing.T) {
+	profile := routeTestProfile("dominion", true, "")
+	_, err := queryRequestForAgentProfileChat(profile, AgentProfileChatRequest{
+		Message:              "hello",
+		WorkflowContextPaths: []string{"Workflow/customer-research"},
+	}, ProductConversationRecord{SessionID: "session-1", WorkspacePath: "Chats"})
+	if err == nil || !strings.Contains(err.Error(), "does not accept workflow references") {
+		t.Fatalf("expected a fixed-purpose profile to reject workflow references, got %v", err)
+	}
+}
+
 func TestAgentProfileChatEndpointRejectsBroadAgentWorksFields(t *testing.T) {
 	api := &StreamingAPI{}
 	req := profileRouteRequest(
@@ -166,6 +269,42 @@ func TestListAgentProfilesFiltersOtherOwners(t *testing.T) {
 	}
 	if len(response.Profiles) != 2 || response.Profiles[0].ID != "built-in" || response.Profiles[1].ID != "mine" {
 		t.Fatalf("unexpected visible profiles: %+v", response.Profiles)
+	}
+}
+
+func TestAgentProfileCatalogHidesAdminOnlyProductFromMember(t *testing.T) {
+	t.Setenv("MULTI_USER_MODE", "true")
+	t.Setenv("AGENTWORKS_ADMIN_ONLY_PRODUCT_SURFACES", "work")
+	withMemoryUserDirectory(t, `{"users":[
+		{"id":"admin","username":"admin","admin":true,"can_create":true,"products":[]},
+		{"id":"member","username":"member","can_create":true,"products":[]}
+	]}`)
+	registry := agentprofiles.NewRegistry()
+	work := routeTestProfile("work", true, "")
+	work.Product = "work"
+	if err := registry.RegisterProfile(work); err != nil {
+		t.Fatal(err)
+	}
+
+	memberRequest := profileRouteRequest(http.MethodGet, "/api/agent-profiles", nil, "member")
+	memberRecorder := httptest.NewRecorder()
+	listAgentProfilesHandler(registry)(memberRecorder, memberRequest)
+	if !bytes.Contains(memberRecorder.Body.Bytes(), []byte(`"profiles":[]`)) {
+		t.Fatalf("member catalog leaked Work: %s", memberRecorder.Body.String())
+	}
+
+	adminRequest := profileRouteRequest(http.MethodGet, "/api/agent-profiles", nil, "admin")
+	adminRecorder := httptest.NewRecorder()
+	listAgentProfilesHandler(registry)(adminRecorder, adminRequest)
+	if !bytes.Contains(adminRecorder.Body.Bytes(), []byte(`"id":"work"`)) {
+		t.Fatalf("admin catalog did not include Work: %s", adminRecorder.Body.String())
+	}
+
+	memberGet := mux.SetURLVars(profileRouteRequest(http.MethodGet, "/api/agent-profiles/work", nil, "member"), map[string]string{"id": "work"})
+	memberGetRecorder := httptest.NewRecorder()
+	getAgentProfileHandler(registry)(memberGetRecorder, memberGet)
+	if memberGetRecorder.Code != http.StatusNotFound {
+		t.Fatalf("member direct profile access status=%d body=%s", memberGetRecorder.Code, memberGetRecorder.Body.String())
 	}
 }
 

@@ -212,6 +212,18 @@ func normalizeMessageForPlainTextProvider(msg llmtypes.MessageContent) llmtypes.
 }
 
 func plainTextFromParts(prefix string, parts []llmtypes.ContentPart) string {
+	// History can pass through this sanitizer more than once when a retained
+	// coding-agent session is resumed. Keep the conversion idempotent: an
+	// already serialized tool result is context, not a new result to wrap again.
+	if prefix == "[Previous tool result]" && len(parts) == 1 {
+		if text, ok := parts[0].(llmtypes.TextContent); ok {
+			trimmed := strings.TrimSpace(text.Text)
+			lower := strings.ToLower(trimmed)
+			if strings.HasPrefix(lower, "[previous tool result:") || strings.HasPrefix(lower, "[previous tool result]:") {
+				return trimmed
+			}
+		}
+	}
 	var sb strings.Builder
 	sb.WriteString(prefix)
 	for _, part := range parts {

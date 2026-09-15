@@ -165,6 +165,21 @@ describe('hydrateTabEvents restored chat fallback', () => {
     expect(events.filter(event => event.type === 'unified_completion')).toHaveLength(1)
   })
 
+	 it('hides legacy double-wrapped tool context while keeping the real reply', () => {
+	   const events = conversationToRestoredEvents({
+	     session_id: 'double-wrapped-tool-context',
+	     conversation_history: [
+	       { Role: 'human', Parts: [{ Text: 'hi' }] },
+	       { Role: 'ai', Parts: [{ Text: '[Previous tool result]: [Previous tool result: read -> internal output]' }] },
+	       { Role: 'ai', Parts: [{ Text: 'Hello — what would you like to work on?' }] },
+	     ],
+	   })
+
+	   const visibleText = events.map(event => JSON.stringify(event.data)).join('\n')
+	   expect(visibleText).not.toContain('[Previous tool result]')
+	   expect(visibleText).toContain('Hello — what would you like to work on?')
+	 })
+
   it('keeps turns from before the saved trace above it instead of spreading them across it', () => {
     // Three old turns, then one traced turn. The trace (a restart cleared the
     // rest) holds only the last prompt and its tool call.

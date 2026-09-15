@@ -114,13 +114,12 @@ function ChatHistoryRuntimeBadge({ session }: { session: ChatHistorySession }) {
 
   return (
     <span
-      className="group/runtime inline-flex min-w-0 max-w-full items-center gap-1 rounded border border-border/70 bg-muted/30 px-1.5 py-0.5 text-[10px]"
-      title={`Coding agent and model: ${fullLabel}`}
+      className="inline-flex min-w-0 items-center gap-0.5 text-[9px] text-muted-foreground/70"
+      title={fullLabel}
       aria-label={`Coding agent and model: ${fullLabel}`}
     >
-      <Code2 className="h-3 w-3 shrink-0" />
-      <span className="whitespace-nowrap group-hover/runtime:hidden">{shortLabel}</span>
-      <span className="hidden max-w-64 truncate whitespace-nowrap group-hover/runtime:inline">{fullLabel}</span>
+      <Code2 className="h-2.5 w-2.5 shrink-0" />
+      <span className="truncate whitespace-nowrap">{shortLabel}</span>
     </span>
   )
 }
@@ -917,10 +916,10 @@ export const PreviousChatHistoryPanel: React.FC<PreviousChatHistoryPanelProps> =
                       className="min-w-0 flex-1 text-left"
                     >
                       <div className="line-clamp-1 text-sm font-medium text-foreground">{chatHistorySessionTitle(session)}</div>
-                      <div className={`mt-1 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-muted-foreground ${compact ? 'text-[10px]' : 'text-[11px]'}`}>
-                        <span className="inline-flex min-w-0 items-center gap-1">
+                      <div className={`mt-0.5 flex min-w-0 flex-nowrap items-center gap-x-2 overflow-hidden text-muted-foreground/80 ${compact ? 'text-[9px]' : 'text-[10px]'}`}>
+                        <span className="inline-flex shrink-0 items-center gap-1">
                           <CalendarClock className="h-3 w-3 shrink-0" />
-                          <span className="truncate">{timeLabel}</span>
+                          <span className="whitespace-nowrap">{timeLabel}</span>
                         </span>
                         {messageCountLabel && (
                           <span className="inline-flex items-center gap-1">
@@ -929,8 +928,8 @@ export const PreviousChatHistoryPanel: React.FC<PreviousChatHistoryPanelProps> =
                           </span>
                         )}
                         {session.username && (
-                          <span className="inline-flex min-w-0 max-w-full items-center gap-1 rounded border border-border/70 bg-muted/30 px-1.5 py-0.5">
-                            <UserRound className="h-3 w-3 shrink-0" />
+                          <span className="inline-flex min-w-0 items-center gap-0.5 text-[9px] text-muted-foreground/70" title={session.username}>
+                            <UserRound className="h-2.5 w-2.5 shrink-0" />
                             <span className="truncate">{session.username}</span>
                           </span>
                         )}

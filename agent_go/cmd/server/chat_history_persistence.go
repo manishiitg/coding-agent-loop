@@ -1323,6 +1323,14 @@ func chatHistorySessionIDFromWorkspacePath(root, convPath string) (string, bool)
 
 func listWorkflowScopedChatHistorySessionsFromDisk(userID, chatHistoryRootPath, workflowPath string, limit, offset int, kind string) ([]ChatHistorySession, bool, error) {
 	all := make([]ChatHistorySession, 0)
+	builderWorkspacePath := workflowPath
+	// Work project paths sent by the browser are logical, while their files are
+	// stored below the signed-in user's private _users/<id> root. Resolve that
+	// owned storage path before scanning builder/conversation; otherwise the
+	// project can have durable transcripts on disk while Recent returns none.
+	if ownedPath, isWorkProject := ownedWorkProjectWorkspacePath(userID, workflowPath); isWorkProject {
+		builderWorkspacePath = ownedPath
+	}
 
 	// Workflow builder files are the most precise source for /resume inside a
 	// workflow. Do not include global chat_history matches here: those can
@@ -1333,7 +1341,7 @@ func listWorkflowScopedChatHistorySessionsFromDisk(userID, chatHistoryRootPath, 
 	if limit > 0 {
 		readBudget = limit + offset
 	}
-	if builderSessions, ok := listWorkflowBuilderHistoryFromDisk(userID, workflowPath, readBudget, kind); ok {
+	if builderSessions, ok := listWorkflowBuilderHistoryFromDisk(userID, builderWorkspacePath, readBudget, kind); ok {
 		all = append(all, builderSessions...)
 	}
 

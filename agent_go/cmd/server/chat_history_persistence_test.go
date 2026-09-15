@@ -1059,6 +1059,51 @@ func TestListWorkspaceChatHistoryIncludesCentralProductConversations(t *testing.
 	}
 }
 
+func TestListWorkProjectChatHistoryResolvesOwnedProjectStorage(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("WORKSPACE_DOCS_PATH", root)
+
+	const (
+		userID        = "alice"
+		workspacePath = "Chats/Work/projects/demo-12345678"
+		sessionID     = "product-chat-1"
+	)
+	conversationDir := filepath.Join(root, "_users", userID, filepath.FromSlash(workspacePath), "builder", "conversation", "2026-09-15")
+	if err := os.MkdirAll(conversationDir, 0o755); err != nil {
+		t.Fatalf("mkdir Work conversation dir: %v", err)
+	}
+	conversation := `{
+  "session_id": "product-chat-1",
+  "agent_mode": "multi-agent",
+  "conversation_history": [
+    {"Role":"human","Parts":[{"Text":"saved Work question"}]},
+    {"Role":"ai","Parts":[{"Text":"saved Work answer"}]}
+  ],
+  "runtime": {
+    "kind": "coding_agent",
+    "provider": "claude-code",
+    "workspace_path": "_users/alice/Chats/Work/projects/demo-12345678"
+  },
+  "user_id": "alice",
+  "updated_at": "2026-09-15T05:00:00Z"
+}`
+	conversationPath := filepath.Join(conversationDir, chatHistoryConversationFileName(sessionID))
+	if err := os.WriteFile(conversationPath, []byte(conversation), 0o600); err != nil {
+		t.Fatalf("write Work conversation: %v", err)
+	}
+
+	sessions, err := ListChatHistorySessionsByKind(userID, "chat", 25, 0, workspacePath)
+	if err != nil {
+		t.Fatalf("list Work project chats: %v", err)
+	}
+	if len(sessions) != 1 || sessions[0].SessionID != sessionID || sessions[0].Query != "saved Work question" {
+		t.Fatalf("Work project history = %#v, want owned project transcript", sessions)
+	}
+	if !strings.HasPrefix(sessions[0].ConversationPath, "_users/alice/Chats/Work/projects/") {
+		t.Fatalf("conversation path = %q, want owned Work path", sessions[0].ConversationPath)
+	}
+}
+
 func TestWorkProjectChatHistoryConversationPathUsesProjectBuilderFolder(t *testing.T) {
 	timestamp := time.Date(2026, 9, 14, 12, 0, 0, 0, time.UTC)
 

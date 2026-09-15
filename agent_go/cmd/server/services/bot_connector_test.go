@@ -2,7 +2,6 @@ package services
 
 import (
 	"context"
-	"errors"
 	"strings"
 	"sync"
 	"testing"
@@ -17,7 +16,6 @@ type testBotConnector struct {
 	supportsThreads bool
 	mu              sync.Mutex // guards sent; every other field here is only ever touched single-threaded
 	sent            []string
-	updates         []string
 	sendStarted     chan struct{}
 	releaseSend     chan struct{}
 }
@@ -82,18 +80,13 @@ func (c *testBotConnector) SendThreadMessage(_ context.Context, _ ThreadID, mess
 	if c.releaseSend != nil {
 		<-c.releaseSend
 	}
-	c.mu.Lock()
-	defer c.mu.Unlock()
 	c.sent = append(c.sent, message)
 	return "msg", nil
 }
 func (c *testBotConnector) SendThreadMessageWithBlocks(_ context.Context, _ ThreadID, message string, _ []MessageBlock) (string, error) {
 	return c.SendThreadMessage(context.Background(), ThreadID{}, message)
 }
-func (c *testBotConnector) UpdateMessage(_ context.Context, _ ThreadID, _ string, message string) error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.updates = append(c.updates, message)
+func (c *testBotConnector) UpdateMessage(context.Context, ThreadID, string, string) error {
 	return nil
 }
 func (c *testBotConnector) AddReaction(context.Context, string, string, string) error {
@@ -272,14 +265,6 @@ func TestBuildQueryRequestForActivePreservesWorkflowMetadata(t *testing.T) {
 		WorkspacePath: "Workflow/report",
 		PhaseID:       "workflow-builder",
 		WorkshopMode:  "run",
-		Metadata: &chathistory.BotMetadata{
-			Platform:  "whatsapp",
-			ChannelID: "dm",
-			ThreadTS:  "dm",
-			UserID:    "15551234567",
-			UserName:  "Shubham",
-			UserEmail: "shubham@example.com",
-		},
 	}
 
 	req := manager.buildQueryRequestForActive(active, "continue", "user-1", "whatsapp", ThreadID{
@@ -294,193 +279,6 @@ func TestBuildQueryRequestForActivePreservesWorkflowMetadata(t *testing.T) {
 	execOpts, ok := req["execution_options"].(map[string]interface{})
 	if !ok || execOpts["workshop_mode"] != "workshop" {
 		t.Fatalf("execution_options = %#v, want workshop_mode workshop", req["execution_options"])
-	}
-	if req["bot_user_email"] != "shubham@example.com" || req["bot_user_name"] != "Shubham" {
-		t.Fatalf("request did not preserve bot user metadata: %#v", req)
-	}
-}
-
-func TestBotWorkflowRouteDefaultsToRunMode(t *testing.T) {
-	manager := NewBotConversationManager(nil, "", "")
-	req := manager.buildQueryRequest(
-		"what step are we on?",
-		"user-1",
-		"C123",
-		&ChannelRoute{WorkflowID: "wf-report", WorkspacePath: "Workflow/report"},
-		"slack",
-		ThreadID{Platform: "slack", ChannelID: "C123", ThreadTS: "1700000000.000100"},
-	)
-
-	if req["agent_mode"] != "workflow_phase" || req["phase_id"] != "workflow-builder" {
-		t.Fatalf("request mode = %#v/%#v, want workflow_phase/workflow-builder", req["agent_mode"], req["phase_id"])
-	}
-	if req["workshop_mode"] != "run" {
-		t.Fatalf("workshop_mode = %#v, want run", req["workshop_mode"])
-	}
-	execOpts, ok := req["execution_options"].(map[string]interface{})
-	if !ok || execOpts["workshop_mode"] != "run" {
-		t.Fatalf("execution_options = %#v, want workshop_mode run", req["execution_options"])
-	}
-	if req["bot_send_full_details"] != true {
-		t.Fatalf("bot_send_full_details = %#v, want true", req["bot_send_full_details"])
-	}
-}
-
-func TestSlackBotWorkflowRouteBuildModeUsesWorkshop(t *testing.T) {
-	manager := NewBotConversationManager(nil, "", "")
-	req := manager.buildQueryRequest(
-		"add a validation step",
-		"user-1",
-		"C123",
-		&ChannelRoute{WorkflowID: "wf-report", WorkspacePath: "Workflow/report", WorkshopMode: "build"},
-		"slack",
-		ThreadID{Platform: "slack", ChannelID: "C123", ThreadTS: "1700000000.000100"},
-	)
-
-	if req["agent_mode"] != "workflow_phase" || req["phase_id"] != "workflow-builder" {
-		t.Fatalf("request mode = %#v/%#v, want workflow_phase/workflow-builder", req["agent_mode"], req["phase_id"])
-	}
-	if req["workshop_mode"] != "workshop" {
-		t.Fatalf("workshop_mode = %#v, want workshop", req["workshop_mode"])
-	}
-	execOpts, ok := req["execution_options"].(map[string]interface{})
-	if !ok || execOpts["workshop_mode"] != "workshop" {
-		t.Fatalf("execution_options = %#v, want workshop_mode workshop", req["execution_options"])
-	}
-	if req["bot_send_full_details"] != true {
-		t.Fatalf("bot_send_full_details = %#v, want true", req["bot_send_full_details"])
-	}
-}
-
-func TestSlackWorkflowRouteRejectsUserWithoutWorkflowAccess(t *testing.T) {
-	manager := NewBotConversationManager(nil, "", "")
-	connector := &testBotConnector{name: "slack", supportsThreads: true}
-	manager.RegisterConnector(connector)
-
-	started := make(chan struct{}, 1)
-	manager.SetStartSessionFunc(func(context.Context, map[string]interface{}, string, string, func(*events.AgentEvent)) error {
-		started <- struct{}{}
-		return nil
-	})
-	manager.SetWorkflowAccessFunc(func(_ context.Context, userID, email string, route ChannelRoute) (string, bool, error) {
-		if userID != "shubham-example-com" || email != "shubham@example.com" {
-			t.Fatalf("access identity = %q/%q, want email-derived user", userID, email)
-		}
-		if route.WorkflowID != "wf-report" || route.WorkspacePath != "Workflow/report" {
-			t.Fatalf("access route = %+v, want report route", route)
-		}
-		return "user-shubham", false, nil
-	})
-
-	manager.HandleIncomingMessage(BotIncomingMessage{
-		Platform:       "slack",
-		UserID:         "U123",
-		UserEmail:      "shubham@example.com",
-		ChannelID:      "C123",
-		ThreadTS:       "1700000000.000100",
-		Text:           "what step are we on?",
-		MessageTS:      "1700000000.000100",
-		IsMention:      true,
-		PresetWorkflow: &ChannelRoute{WorkflowID: "wf-report", WorkspacePath: "Workflow/report", WorkshopMode: "run"},
-	})
-
-	select {
-	case <-started:
-		t.Fatal("unauthorized Slack workflow message started a session")
-	case <-time.After(150 * time.Millisecond):
-	}
-	connector.mu.Lock()
-	defer connector.mu.Unlock()
-	if len(connector.sent) != 1 || !strings.Contains(connector.sent[0], "don't have access to this workflow") {
-		t.Fatalf("denial reply = %#v, want workflow access denial", connector.sent)
-	}
-}
-
-func TestSlackWorkflowRouteUsesResolvedAccessUserForSession(t *testing.T) {
-	manager := NewBotConversationManager(nil, "", "")
-	connector := &testBotConnector{name: "slack", supportsThreads: true}
-	manager.RegisterConnector(connector)
-
-	startedUser := make(chan string, 1)
-	manager.SetStartSessionFunc(func(_ context.Context, _ map[string]interface{}, _ string, userID string, _ func(*events.AgentEvent)) error {
-		startedUser <- userID
-		return nil
-	})
-	manager.SetWorkflowAccessFunc(func(_ context.Context, _ string, _ string, _ ChannelRoute) (string, bool, error) {
-		return "agentworks-user-123", true, nil
-	})
-
-	manager.HandleIncomingMessage(BotIncomingMessage{
-		Platform:       "slack",
-		UserID:         "U123",
-		UserEmail:      "shubham@example.com",
-		ChannelID:      "C123",
-		ThreadTS:       "1700000000.000100",
-		Text:           "what step are we on?",
-		MessageTS:      "1700000000.000100",
-		IsMention:      true,
-		PresetWorkflow: &ChannelRoute{WorkflowID: "wf-report", WorkspacePath: "Workflow/report", WorkshopMode: "run"},
-	})
-
-	select {
-	case got := <-startedUser:
-		if got != "agentworks-user-123" {
-			t.Fatalf("session userID = %q, want access-resolved user ID", got)
-		}
-	case <-time.After(time.Second):
-		t.Fatal("expected authorized Slack workflow message to start a session")
-	}
-}
-
-func TestSlackWorkflowFollowUpRejectsUserAfterAccessRevoked(t *testing.T) {
-	manager := NewBotConversationManager(nil, "", "")
-	connector := &testBotConnector{name: "slack", supportsThreads: true}
-	manager.RegisterConnector(connector)
-
-	threadID := ThreadID{Platform: "slack", ChannelID: "C123", ThreadTS: "1700000000.000100"}
-	manager.sessions[threadID.Key()] = &activeBotSession{
-		SessionID:     "session-1",
-		UserID:        "agentworks-user-123",
-		Status:        chathistory.BotSessionStatusRunning,
-		Platform:      "slack",
-		ThreadID:      threadID,
-		PresetQueryID: "wf-report",
-		WorkspacePath: "Workflow/report",
-		PhaseID:       "workflow-builder",
-		WorkshopMode:  "run",
-		LastActivity:  time.Now(),
-	}
-
-	followedUp := make(chan struct{}, 1)
-	manager.SetFollowUpFunc(func(context.Context, map[string]interface{}, string, string) error {
-		followedUp <- struct{}{}
-		return nil
-	})
-	manager.SetWorkflowAccessFunc(func(context.Context, string, string, ChannelRoute) (string, bool, error) {
-		return "agentworks-user-123", false, nil
-	})
-
-	manager.HandleIncomingMessage(BotIncomingMessage{
-		Platform:      "slack",
-		UserID:        "U123",
-		UserEmail:     "shubham@example.com",
-		ChannelID:     "C123",
-		ThreadTS:      "1700000000.000100",
-		Text:          "continue",
-		MessageTS:     "1700000000.000200",
-		IsMention:     true,
-		IsThreadReply: true,
-	})
-
-	select {
-	case <-followedUp:
-		t.Fatal("revoked Slack workflow user was allowed to continue the session")
-	case <-time.After(150 * time.Millisecond):
-	}
-	connector.mu.Lock()
-	defer connector.mu.Unlock()
-	if len(connector.sent) != 1 || !strings.Contains(connector.sent[0], "don't have access to this workflow") {
-		t.Fatalf("denial reply = %#v, want workflow access denial", connector.sent)
 	}
 }
 
@@ -499,7 +297,7 @@ func TestStatusShowsNumberedResumableChats(t *testing.T) {
 		}, nil
 	})
 
-	reply := manager.formatBotStatusReply("whatsapp", "user-1", "", false, "", false, BotResumeFilter{
+	reply := manager.formatBotStatusReply("user-1", "", false, "", false, BotResumeFilter{
 		WorkspacePath: "Workflow/report",
 		PresetQueryID: "preset-report",
 	})
@@ -596,18 +394,13 @@ func TestThreadedCompletedSessionStartsFreshWithRestoreSessionID(t *testing.T) {
 
 	threadID := ThreadID{Platform: "slack", ChannelID: "C123", ThreadTS: "1710000000.000100"}
 	active := &activeBotSession{
-		SessionID:       "old-session-1",
-		UserID:          "user-1",
-		Status:          chathistory.BotSessionStatusCompleted,
-		Platform:        "slack",
-		ThreadID:        threadID,
-		RouteKey:        botRouteKey(&ChannelRoute{WorkflowID: "wf-report", WorkspacePath: "Workflow/report", WorkshopMode: "run"}),
-		LastActivity:    time.Now(),
-		builderDone:     true,
-		sendFullDetails: true,
-		PresetQueryID:   "wf-report",
-		WorkspacePath:   "Workflow/report",
-		WorkshopMode:    "run",
+		SessionID:    "old-session-1",
+		UserID:       "user-1",
+		Status:       chathistory.BotSessionStatusCompleted,
+		Platform:     "slack",
+		ThreadID:     threadID,
+		LastActivity: time.Now(),
+		builderDone:  true,
 	}
 
 	manager.handleExistingSession(active, BotIncomingMessage{
@@ -627,167 +420,8 @@ func TestThreadedCompletedSessionStartsFreshWithRestoreSessionID(t *testing.T) {
 		if got.req["restored_conversation_session_id"] != "old-session-1" {
 			t.Fatalf("restored_conversation_session_id = %#v, want old-session-1", got.req["restored_conversation_session_id"])
 		}
-		if got.req["preset_query_id"] != "wf-report" || got.req["selected_folder"] != "Workflow/report" || got.req["workshop_mode"] != "run" {
-			t.Fatalf("completed threaded follow-up lost workflow route: req=%#v", got.req)
-		}
-		if got.req["bot_send_full_details"] != true {
-			t.Fatalf("completed threaded follow-up lost full-details flag: req=%#v", got.req)
-		}
 	case <-time.After(time.Second):
 		t.Fatal("expected new threaded session to start")
-	}
-}
-
-func TestThreadedNonMentionPresetWorkflowStartsAfterRestart(t *testing.T) {
-	manager := NewBotConversationManager(nil, "", "")
-	connector := &testBotConnector{name: "slack", supportsThreads: true}
-	manager.RegisterConnector(connector)
-
-	type startedSession struct {
-		req       map[string]interface{}
-		sessionID string
-	}
-	started := make(chan startedSession, 1)
-	manager.SetStartSessionFunc(func(_ context.Context, req map[string]interface{}, sessionID string, _ string, _ func(event *events.AgentEvent)) error {
-		started <- startedSession{req: req, sessionID: sessionID}
-		return nil
-	})
-
-	manager.HandleIncomingMessage(BotIncomingMessage{
-		Platform:       "slack",
-		ChannelID:      "C123",
-		ThreadTS:       "1710000000.000100",
-		UserID:         "U123",
-		UserEmail:      "alice@example.com",
-		Text:           "hello again",
-		IsThreadReply:  true,
-		PresetWorkflow: &ChannelRoute{WorkflowID: "wf-report", WorkspacePath: "Workflow/report", WorkshopMode: "run"},
-	})
-
-	select {
-	case got := <-started:
-		if got.sessionID == "" {
-			t.Fatal("expected a fresh Slack bot session")
-		}
-		if got.req["preset_query_id"] != "wf-report" || got.req["selected_folder"] != "Workflow/report" || got.req["workshop_mode"] != "run" {
-			t.Fatalf("routed non-mention thread reply lost workflow route: req=%#v", got.req)
-		}
-	case <-time.After(time.Second):
-		t.Fatal("expected routed non-mention thread reply to start after restart")
-	}
-}
-
-func TestSlackRootMentionsCreateSeparateSessionsAndThreadRepliesReuseOne(t *testing.T) {
-	manager := NewBotConversationManager(nil, "", "")
-	connector := &testBotConnector{name: "slack", supportsThreads: true}
-	manager.RegisterConnector(connector)
-
-	route := &ChannelRoute{WorkflowID: "wf-report", WorkspacePath: "Workflow/report", WorkshopMode: "run"}
-	type startedSession struct {
-		threadTS  string
-		sessionID string
-	}
-	started := make(chan startedSession, 5)
-	release := make(chan struct{})
-	manager.SetStartSessionFunc(func(ctx context.Context, req map[string]interface{}, sessionID string, _ string, _ func(event *events.AgentEvent)) error {
-		meta, _ := req["bot_thread_ts"].(string)
-		started <- startedSession{threadTS: meta, sessionID: sessionID}
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-release:
-			return nil
-		}
-	})
-	t.Cleanup(func() {
-		close(release)
-		manager.mu.RLock()
-		defer manager.mu.RUnlock()
-		for _, active := range manager.sessions {
-			active.mu.Lock()
-			cancel := active.cancel
-			active.mu.Unlock()
-			if cancel != nil {
-				cancel()
-			}
-		}
-	})
-
-	threadRoots := []string{
-		"1789373969.018426",
-		"1789375148.019142",
-		"1789375841.020231",
-		"1789376699.021314",
-		"1789428663.022418",
-	}
-	for _, threadTS := range threadRoots {
-		manager.HandleIncomingMessage(BotIncomingMessage{
-			Platform:       "slack",
-			UserID:         "U123",
-			UserEmail:      "shubham@example.com",
-			ChannelID:      "C123",
-			ThreadTS:       threadTS,
-			Text:           "can you tell me which steps we are on in the workflow",
-			MessageTS:      threadTS,
-			IsMention:      true,
-			PresetWorkflow: route,
-		})
-	}
-
-	byThread := make(map[string]string)
-	for i := 0; i < len(threadRoots); i++ {
-		select {
-		case got := <-started:
-			if got.threadTS == "" || got.sessionID == "" {
-				t.Fatalf("started session = %+v, want thread metadata and session ID", got)
-			}
-			if previous := byThread[got.threadTS]; previous != "" {
-				t.Fatalf("thread %s started twice: %s then %s", got.threadTS, previous, got.sessionID)
-			}
-			byThread[got.threadTS] = got.sessionID
-		case <-time.After(time.Second):
-			t.Fatal("expected all Slack root mentions to start sessions")
-		}
-	}
-	if len(byThread) != len(threadRoots) {
-		t.Fatalf("started sessions by thread = %#v, want one per Slack root mention", byThread)
-	}
-	seenSessions := map[string]bool{}
-	for _, threadTS := range threadRoots {
-		sessionID := byThread[threadTS]
-		if seenSessions[sessionID] {
-			t.Fatalf("session %s was shared by more than one Slack root thread", sessionID)
-		}
-		seenSessions[sessionID] = true
-	}
-
-	followUps := make(chan startedSession, 1)
-	manager.SetFollowUpFunc(func(_ context.Context, req map[string]interface{}, sessionID string, _ string) error {
-		meta, _ := req["bot_thread_ts"].(string)
-		followUps <- startedSession{threadTS: meta, sessionID: sessionID}
-		return errors.New("stop follow-up")
-	})
-	manager.HandleIncomingMessage(BotIncomingMessage{
-		Platform:      "slack",
-		UserID:        "U123",
-		UserEmail:     "shubham@example.com",
-		ChannelID:     "C123",
-		ThreadTS:      threadRoots[2],
-		Text:          "what things were implemented yesterday",
-		MessageTS:     "1789429000.030000",
-		IsThreadReply: true,
-	})
-
-	select {
-	case got := <-followUps:
-		if got.threadTS != threadRoots[2] {
-			t.Fatalf("follow-up thread = %q, want %q", got.threadTS, threadRoots[2])
-		}
-		if got.sessionID != byThread[threadRoots[2]] {
-			t.Fatalf("follow-up session = %q, want original session %q", got.sessionID, byThread[threadRoots[2]])
-		}
-	case <-time.After(time.Second):
-		t.Fatal("expected Slack thread reply to reuse its root session")
 	}
 }
 

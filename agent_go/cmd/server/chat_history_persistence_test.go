@@ -1315,7 +1315,7 @@ func TestPersistChatConversationUpdatesMetadataIndex(t *testing.T) {
 		Kind:         "coding_agent",
 		Provider:     "codex",
 		WorkshopMode: "workshop",
-	}, nil, conversationPath, nil)
+	}, nil, conversationPath)
 
 	indexPath := "Workflow/demo/builder/conversation/" + chatHistoryIndexFileName
 	workspace.mu.Lock()
@@ -1342,49 +1342,6 @@ func TestPersistChatConversationUpdatesMetadataIndex(t *testing.T) {
 	}
 	if !entry.AttributionVerified {
 		t.Fatal("newly persisted conversation must have verified attribution")
-	}
-}
-
-func TestPersistChatConversationIncludesBotMetadata(t *testing.T) {
-	workspace := &mockWorkspaceAPI{files: map[string]string{}}
-	server := httptest.NewServer(workspace)
-	defer server.Close()
-	t.Setenv("WORKSPACE_API_URL", server.URL)
-
-	history := []llmtypes.MessageContent{{
-		Role: llmtypes.ChatMessageTypeHuman,
-		Parts: []llmtypes.ContentPart{
-			llmtypes.TextContent{Text: "hello from slack"},
-		},
-	}}
-	conversationPath := "Workflow/demo/builder/conversation/2026-08-03/session-bot-slack--123-conversation.json"
-	api := &StreamingAPI{}
-	botMeta := &ChatHistoryBotMetadata{
-		Platform:  "slack",
-		ChannelID: "C123",
-		ThreadTS:  "1789373969.018426",
-		UserID:    "U123",
-		UserName:  "Shubham",
-		UserEmail: "shubham@example.com",
-	}
-	api.persistChatConversationToPathWithTerminalSession("bot-slack--123", "", "workflow", "default", history, nil, nil, conversationPath, botMeta)
-
-	indexPath := "Workflow/demo/builder/conversation/" + chatHistoryIndexFileName
-	workspace.mu.Lock()
-	conversationData := workspace.files[conversationPath]
-	indexData := workspace.files[indexPath]
-	workspace.mu.Unlock()
-	if !strings.Contains(conversationData, `"bot_user_email": "shubham@example.com"`) {
-		t.Fatalf("conversation missing bot user metadata: %s", conversationData)
-	}
-
-	var index chatHistoryIndex
-	if err := json.Unmarshal([]byte(indexData), &index); err != nil {
-		t.Fatalf("decode persisted index: %v", err)
-	}
-	entry := index.Entries[conversationPath]
-	if entry.Session.BotPlatform != "slack" || entry.Session.BotUserEmail != "shubham@example.com" || entry.Session.BotThreadTS != "1789373969.018426" {
-		t.Fatalf("unexpected indexed bot metadata: %#v", entry.Session)
 	}
 }
 
@@ -1809,35 +1766,6 @@ func TestParseLocalChatHistorySessionIncludesRuntime(t *testing.T) {
 	}
 	if session.Runtime.Provider != "claude-code" || session.Runtime.ExternalSessionID != "claude-session-1" || !session.Runtime.ResumeSupported {
 		t.Fatalf("unexpected runtime metadata: %#v", session.Runtime)
-	}
-}
-
-func TestParseLocalChatHistorySessionIncludesBotMetadata(t *testing.T) {
-	data := `{
-  "session_id": "bot-slack--123",
-  "user_id": "workflow-owner",
-  "agent_mode": "workflow",
-  "bot_platform": "slack",
-  "bot_channel_id": "C123",
-  "bot_thread_ts": "1789373969.018426",
-  "bot_user_id": "U123",
-  "bot_user_name": "Shubham",
-  "bot_user_email": "shubham@example.com",
-  "conversation_history": [
-    {
-      "Role": "human",
-      "Parts": [{"Text": "hello"}]
-    }
-  ],
-  "updated_at": "2026-05-15T10:00:00Z"
-}`
-
-	session, ok := parseLocalChatHistorySession("default", "Workflow/demo", "Workflow/demo", "fallback", data, time.Date(2026, 5, 15, 10, 0, 0, 0, time.UTC))
-	if !ok {
-		t.Fatal("expected session to parse")
-	}
-	if session.BotPlatform != "slack" || session.BotUserEmail != "shubham@example.com" || session.BotThreadTS != "1789373969.018426" {
-		t.Fatalf("unexpected bot metadata: %#v", session)
 	}
 }
 

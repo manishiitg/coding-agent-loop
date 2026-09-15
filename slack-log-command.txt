@@ -1,7 +1,0 @@
-From repo root:
-
-tail -f agent_go/logs/server_debug.log | awk '/SLACK_FLOW|BOT_FLOW|SLACK_BOT|SLACK_API|SLACK_SOCKET|Slack|slack/ && !/WebSocket ping/ { print; fflush() }'
-
-If you are already inside agent_go:
-
-tail -f logs/server_debug.log | awk '/SLACK_FLOW|BOT_FLOW|SLACK_BOT|SLACK_API|SLACK_SOCKET|Slack|slack/ && !/WebSocket ping/ { print; fflush() }'

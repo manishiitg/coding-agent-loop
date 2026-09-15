@@ -36,9 +36,11 @@ export function MainAgentTerminal({ sessionId, onUnavailable }: MainAgentTermina
     if (requestInFlight.current) return
     requestInFlight.current = true
     try {
-      // The live socket owns scrollback. Screen is merely an initial/reconnect
-      // fallback, avoiding the former full-history polling storm.
-      const next = await agentApi.getMainTerminal(sessionId, { content: 'screen', lines: 200 })
+      // The live socket normally owns scrollback, but it can remain in the
+      // connecting/snapshot state (and alternate-screen CLIs often leave tmux
+      // with no capture-pane history). Seed that state from the bounded pipe
+      // history so the product Terminal view is scrollable while attaching.
+      const next = await agentApi.getMainTerminal(sessionId, { content: 'history', lines: 10000 })
       setSnapshot(next)
       setError(null)
     } catch (cause: any) {
@@ -97,7 +99,7 @@ export function MainAgentTerminal({ sessionId, onUnavailable }: MainAgentTermina
             authoritativeVersion={`${snapshot.chunk_index}:${snapshot.updated_at}`}
             reconnectOnClose
             streamUrl={(cols, rows) => agentApi.getMainTerminalStreamUrl(sessionId, cols, rows, snapshot.tmux_session)}
-            loadSnapshot={() => agentApi.getMainTerminal(sessionId, { content: 'screen', lines: 200 })}
+            loadSnapshot={() => agentApi.getMainTerminal(sessionId, { content: 'history', lines: 10000 })}
           />
         ) : (
           <StaticXtermPane

@@ -6,6 +6,7 @@ import { KeyRound, Globe, Plus, Trash2, Eye, EyeOff } from 'lucide-react';
 import { useSecretsStore } from '../../stores';
 import { secretsApi } from '../../api/secrets';
 import { useCanWriteWorkflow, READ_ONLY_TITLE } from '../../hooks/useCanWriteWorkflow';
+import { PROJECT_SECRETS_REFRESH_EVENT } from '../../utils/secretMutationRefresh';
 
 interface SecretSelectionSectionProps {
   selectedSecrets: string[];
@@ -127,6 +128,16 @@ export const SecretSelectionSection: React.FC<SecretSelectionSectionProps> = ({
       fetchWorkflowSecrets(normalizedWorkflowPath);
     }
   }, [normalizedWorkflowPath, fetchWorkflowSecrets]);
+
+  // Secrets created by the agent use the server-side project tools, so they
+  // do not pass through this component's local add action. Refresh the visible
+  // list as soon as that tool completes instead of requiring a page reload.
+  useEffect(() => {
+    if (!normalizedWorkflowPath) return
+    const refresh = () => { void fetchWorkflowSecrets(normalizedWorkflowPath) }
+    window.addEventListener(PROJECT_SECRETS_REFRESH_EVENT, refresh)
+    return () => window.removeEventListener(PROJECT_SECRETS_REFRESH_EVENT, refresh)
+  }, [normalizedWorkflowPath, fetchWorkflowSecrets])
 
   const toggleSecretName = (name: string, legacyId?: string) => {
     const isSelected = selectedSecrets.includes(name) || (!!legacyId && selectedSecrets.includes(legacyId));

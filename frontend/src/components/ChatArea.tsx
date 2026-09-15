@@ -58,6 +58,8 @@ import { ProductChatSurface } from '../platform/chat/ProductChatSurface'
 import { submissionFailure } from '../platform/chat/submissionFailure'
 import { WORKFLOW_LOG_REFRESH_EVENT } from './workflow/workflowEvents'
 import { decisionMutationNeedsRefresh } from '../utils/decisionRefresh'
+import { resolveWorkSubmissionTab } from '../products/work/workTabs'
+import { PROJECT_SECRETS_REFRESH_EVENT, projectSecretsNeedRefresh } from '../utils/secretMutationRefresh'
 
 // Stable empty array to avoid infinite re-render loops in Zustand selectors
 // (a new [] on every selector call breaks referential equality checks)
@@ -1900,6 +1902,9 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
       preset => preset.id === presetState.activePresetIds.workflow,
     )?.selectedFolder?.filepath ?? ''
     const hasDecisionMutation = newEvents.some(event => decisionMutationNeedsRefresh(event, visibleWorkspace))
+    if (newEvents.some(projectSecretsNeedRefresh)) {
+      window.dispatchEvent(new CustomEvent(PROJECT_SECRETS_REFRESH_EVENT))
+    }
     if ((isCompletionLike || hasDecisionMutation) && selectedModeCategory === 'workflow' && isActivePresetTab) {
       window.dispatchEvent(new CustomEvent(WORKFLOW_LOG_REFRESH_EVENT))
     }
@@ -2651,7 +2656,16 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
       logger.warn('ChatArea', `Submission source tab ${options.sourceTabId} no longer exists`)
       return false
     }
-    const submissionTab = sourceTab ?? activeTab
+    // Rapid sends can still carry the permanent Work Builder's tab ID after
+    // the first send has opened its conversation. Follow the now-active Work
+    // conversation so every queued message reaches the same retained CLI
+    // session instead of creating one chat tab per message.
+    const globallyActiveTab = chatStore.activeTabId
+      ? chatStore.chatTabs[chatStore.activeTabId]
+      : undefined
+    const submissionTab = sourceTab
+      ? resolveWorkSubmissionTab(sourceTab, globallyActiveTab)
+      : activeTab
     const activeTabModeCategory =
       submissionTab?.metadata?.mode === 'workflow' || submissionTab?.metadata?.mode === 'multi-agent'
         ? submissionTab.metadata.mode

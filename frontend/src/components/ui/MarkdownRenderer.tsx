@@ -1062,6 +1062,15 @@ const MarkdownRendererImpl: React.FC<MarkdownRendererProps> = ({
             font-size: 0.78rem;
             font-weight: 500;
             line-height: 1.35;
+            color: rgb(71 85 105);
+            background-color: rgb(241 245 249);
+            border: 1px solid rgb(226 232 240);
+          }
+          .dark .conversation-markdown :not(pre) > code,
+          .dark-plus .conversation-markdown :not(pre) > code {
+            color: rgb(203 213 225);
+            background-color: rgb(30 41 59 / 0.72);
+            border-color: rgb(71 85 105 / 0.65);
           }
           /* Override prose table styles for dark theme */
           .markdown-content.prose table tbody tr {

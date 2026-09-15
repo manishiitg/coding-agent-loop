@@ -11,7 +11,7 @@ import {
   Gauge,
 } from 'lucide-react'
 import { useWorkflowStore, type RunFolder } from '../../../stores/useWorkflowStore'
-import { getWorkspaceView, PRIMARY_WORKSPACE_TOOLBAR_VIEWS, WORKSPACE_VIEWS, type WorkspaceViewId } from '../workspaceViews'
+import { PRIMARY_WORKSPACE_TOOLBAR_VIEWS, WORKSPACE_VIEWS, type WorkspaceViewId } from '../workspaceViews'
 import { useChatStore } from '../../../stores/useChatStore'
 import { useAuthStore } from '../../../stores/useAuthStore'
 import type { ScheduledJob, VariablesManifest } from '../../../services/api-types'
@@ -35,6 +35,7 @@ import { ReportDocumentSwitcher } from '../ReportDocumentSwitcher'
 // Execution phase ID - special phase that should be displayed separately
 const EXECUTION_PHASE_ID = 'execution'
 const WORKFLOW_SCHEDULE_TOOLBAR_LIMIT = 10_000
+const PRIMARY_TOOLBAR_VIEW_IDS = new Set<WorkspaceViewId>(['pulse', 'playbooks', 'flow', 'costs', 'files', 'browser', 'schedules'])
 
 // Product-tour / test hooks on specific toolbar buttons. Kept here rather
 // than in the view registry because they describe this toolbar's buttons,
@@ -134,21 +135,20 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
   // No explicit view means the pane is on whichever canvas view was last open.
   const activeWorkspaceView: WorkspaceViewId = workflowWorkspaceView ?? lastCanvasView
   const [openToolbarGroup, setOpenToolbarGroup] = useState<'views' | 'setup'>(() =>
-    getWorkspaceView(activeWorkspaceView).toolbarGroup === 'capabilities' ? 'setup' : 'views'
+    activeWorkspaceView === 'report' || PRIMARY_TOOLBAR_VIEW_IDS.has(activeWorkspaceView) ? 'views' : 'setup'
   )
 
   // Keep the selected view visible while preserving the compact, mutually
-  // exclusive Views/Setup control. Primary actions such as Pulse do not force
-  // either group to change.
+  // exclusive primary/secondary controls. Report remains outside both groups.
   useEffect(() => {
-    const group = getWorkspaceView(activeWorkspaceView).toolbarGroup
-    if (group === 'capabilities') setOpenToolbarGroup('setup')
-    if (group === 'views') setOpenToolbarGroup('views')
+    if (activeWorkspaceView === 'report') return
+    setOpenToolbarGroup(PRIMARY_TOOLBAR_VIEW_IDS.has(activeWorkspaceView) ? 'views' : 'setup')
   }, [activeWorkspaceView])
 
   // Button clusters come from the view registry, in registry order. Plan is
   // always present, including for a new workflow with no steps yet.
-  const workspaceViewDefinitions = PRIMARY_WORKSPACE_TOOLBAR_VIEWS.filter(view => view.id !== 'report')
+  const workspaceViewDefinitions = PRIMARY_WORKSPACE_TOOLBAR_VIEWS.filter(view => view.id === 'flow' || view.id === 'costs' || view.id === 'files' || view.id === 'browser')
+  const secondaryWorkspaceViewDefinitions = PRIMARY_WORKSPACE_TOOLBAR_VIEWS.filter(view => !['report', 'flow', 'costs', 'files', 'browser'].includes(view.id))
   const capabilityViewDefinitions = useMemo(
     () => WORKSPACE_VIEWS.filter(view => view.toolbarGroup === 'capabilities' && view.id !== 'playbooks'),
     [],
@@ -437,47 +437,10 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
       {/* Right side - View controls */}
       <div data-tour="workflow-tools" data-testid="tour-workflow-tools" className="ml-auto flex shrink-0 items-center gap-1">
         <TooltipProvider delayDuration={150}>
-          {/* Report, Pulse, and Playbooks are primary views, always visible outside the groups. */}
+          {/* Report stays visible while the remaining tools use two compact groups. */}
           {workspacePath && <ReportDocumentSwitcher workspacePath={workspacePath} active={activeWorkspaceView === 'report'} onOpen={() => openWorkspaceView('report')} />}
 
-          {workspacePath && (
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <button
-                  type="button"
-                  onClick={() => openWorkspaceView('pulse')}
-                  className={`relative flex h-8 w-8 items-center justify-center rounded-lg border border-border transition-colors ${activeWorkspaceView === 'pulse' ? 'bg-muted text-foreground shadow-sm' : 'bg-muted/60 text-muted-foreground hover:bg-muted hover:text-foreground'}`}
-                  aria-label={pendingDecisionCount > 0 ? `Pulse, ${pendingDecisionCount} pending ${pendingDecisionCount === 1 ? 'decision' : 'decisions'}` : 'Pulse'}
-                  aria-pressed={activeWorkspaceView === 'pulse'}
-                >
-                  <Activity
-                    aria-hidden="true"
-                    className={`h-3.5 w-3.5 ${pendingDecisionCount > 0 ? 'pulse-decision-heartbeat text-amber-500' : monitorOn ? 'text-primary' : ''}`}
-                  />
-                </button>
-              </TooltipTrigger>
-              <TooltipContent side="bottom"><p>{pendingDecisionCount > 0 ? `Pulse · ${pendingDecisionCount} ${pendingDecisionCount === 1 ? 'decision needs' : 'decisions need'} your input` : 'Pulse'}</p></TooltipContent>
-            </Tooltip>
-          )}
-
-          {workspacePath && (
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <button
-                  type="button"
-                  onClick={() => openWorkspaceView('playbooks')}
-                  className={`flex h-8 w-8 items-center justify-center rounded-lg border border-border transition-colors ${activeWorkspaceView === 'playbooks' ? 'bg-muted text-foreground shadow-sm' : 'bg-muted/60 text-muted-foreground hover:bg-muted hover:text-foreground'}`}
-                  aria-label="Playbooks"
-                  aria-pressed={activeWorkspaceView === 'playbooks'}
-                >
-                  <BookMarked className="h-3.5 w-3.5" />
-                </button>
-              </TooltipTrigger>
-              <TooltipContent side="bottom"><p>Playbooks</p></TooltipContent>
-            </Tooltip>
-          )}
-
-          {/* One continuous pill: Views | Setup, separated by a divider. */}
+          {/* One continuous pill: frequent views | remaining tools. */}
           {(workspacePath || canWriteWorkflow) && (
           <div className="inline-flex h-8 items-center divide-x divide-border rounded-lg border border-border bg-muted/60 py-0.5 shadow-sm">
           {/* Supporting workspace views and operations. */}
@@ -486,9 +449,37 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
               label="Views"
               open={openToolbarGroup === 'views'}
               onToggle={() => setOpenToolbarGroup('views')}
-              title="Views: plan, evidence, data, browser, schedules, webhooks, files and operations"
+              title="Views: Pulse, playbooks, plan, costs, files, browser and schedules"
             >
               <div className="inline-flex items-center gap-0.5">
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <button
+                      type="button"
+                      onClick={() => openWorkspaceView('pulse')}
+                      className={`relative flex h-6 w-7 items-center justify-center rounded transition-colors ${activeWorkspaceView === 'pulse' ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:bg-background/70 hover:text-foreground'}`}
+                      aria-label={pendingDecisionCount > 0 ? `Pulse, ${pendingDecisionCount} pending ${pendingDecisionCount === 1 ? 'decision' : 'decisions'}` : 'Pulse'}
+                      aria-pressed={activeWorkspaceView === 'pulse'}
+                    >
+                      <Activity aria-hidden="true" className={`h-3.5 w-3.5 ${pendingDecisionCount > 0 ? 'pulse-decision-heartbeat text-amber-500' : monitorOn ? 'text-primary' : ''}`} />
+                    </button>
+                  </TooltipTrigger>
+                  <TooltipContent side="bottom"><p>{pendingDecisionCount > 0 ? `Pulse · ${pendingDecisionCount} ${pendingDecisionCount === 1 ? 'decision needs' : 'decisions need'} your input` : 'Pulse'}</p></TooltipContent>
+                </Tooltip>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <button
+                      type="button"
+                      onClick={() => openWorkspaceView('playbooks')}
+                      className={`flex h-6 w-7 items-center justify-center rounded transition-colors ${activeWorkspaceView === 'playbooks' ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:bg-background/70 hover:text-foreground'}`}
+                      aria-label="Playbooks"
+                      aria-pressed={activeWorkspaceView === 'playbooks'}
+                    >
+                      <BookMarked className="h-3.5 w-3.5" />
+                    </button>
+                  </TooltipTrigger>
+                  <TooltipContent side="bottom"><p>Playbooks</p></TooltipContent>
+                </Tooltip>
                 {workspaceViewDefinitions.map(({ id: view, icon: Icon, label }) => {
                   const active = view === activeWorkspaceView
                   const viewButton = (
@@ -514,20 +505,6 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
                   <TooltipTrigger asChild>
                     <button
                       type="button"
-                      onClick={() => openWorkspaceView('evaluation')}
-                      className={`flex h-6 w-7 items-center justify-center rounded transition-colors ${activeWorkspaceView === 'evaluation' ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:bg-background/70 hover:text-foreground'}`}
-                      aria-label="Evaluation"
-                      aria-pressed={activeWorkspaceView === 'evaluation'}
-                    >
-                      <Gauge className="h-3.5 w-3.5" />
-                    </button>
-                  </TooltipTrigger>
-                  <TooltipContent side="bottom"><p>Evaluation results</p></TooltipContent>
-                </Tooltip>
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <button
-                      type="button"
                       onClick={() => openWorkspaceView('schedules', 'schedules')}
                       className={`relative flex h-6 w-7 items-center justify-center rounded transition-colors ${activeWorkspaceView === 'schedules' ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:bg-background/70 hover:text-foreground'}`}
                       aria-label="Schedules"
@@ -540,50 +517,6 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
                   <TooltipContent side="bottom"><p>{scheduleTooltip} · Webhooks</p></TooltipContent>
                 </Tooltip>
               </div>
-              <span className="mx-0.5 h-4 w-px bg-border" aria-hidden="true" />
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <button
-                    type="button"
-                    onClick={() => openWorkspaceView('backup')}
-                    className="relative flex h-6 w-7 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-background/70 hover:text-foreground"
-                    aria-label="Backup"
-                  >
-                    <Cloud className="h-3.5 w-3.5" />
-                    <span className={`absolute right-1.5 top-1.5 h-1.5 w-1.5 rounded-full border border-background ${getBackupDotClass(backupState)}`} />
-                  </button>
-                </TooltipTrigger>
-                <TooltipContent side="bottom"><p>Backup</p></TooltipContent>
-              </Tooltip>
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <button
-                    type="button"
-                    onClick={() => openWorkspaceView('publish')}
-                    className="relative flex h-6 w-7 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-background/70 hover:text-foreground"
-                    aria-label="Publish"
-                  >
-                    <Globe className="h-3.5 w-3.5" />
-                    <span className={`absolute right-1.5 top-1.5 h-1.5 w-1.5 rounded-full border border-background ${getPublishDotClass(publishState)}`} />
-                  </button>
-                </TooltipTrigger>
-                <TooltipContent side="bottom"><p>Publish</p></TooltipContent>
-              </Tooltip>
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <button
-                    type="button"
-                    data-testid="workflow-notification-settings-button"
-                    onClick={() => openWorkspaceView('notify')}
-                    className="relative flex h-6 w-7 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-background/70 hover:text-foreground"
-                    aria-label="Notify"
-                  >
-                    <BellRing className="h-3.5 w-3.5" />
-                    <span className={`absolute right-1.5 top-1.5 h-1.5 w-1.5 rounded-full border border-background ${getNotificationDotClass(notificationState)}`} />
-                  </button>
-                </TooltipTrigger>
-                <TooltipContent side="bottom"><p>Notify</p></TooltipContent>
-              </Tooltip>
             </ToolbarGroup>
           )}
 
@@ -594,9 +527,55 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
             label="Setup"
             open={openToolbarGroup === 'setup'}
             onToggle={() => setOpenToolbarGroup('setup')}
-            title="Setup: skills, secrets, MCP servers, LLM, bots, folders, sharing and users"
+            title="Setup and more: logs, learnings, data, evaluation, backup, publish, notifications, skills, secrets, MCP, LLM, bots, folders and access"
           >
           <div className="inline-flex items-center gap-0.5">
+            {secondaryWorkspaceViewDefinitions.map(({ id: view, icon: Icon, label }) => {
+              const active = view === activeWorkspaceView
+              const viewButton = (
+                <button type="button" onClick={() => openWorkspaceView(view)} className={`flex h-6 w-7 items-center justify-center rounded transition-colors ${active ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:bg-background/70 hover:text-foreground'}`} aria-label={label} aria-pressed={active}>
+                  <Icon className="h-3.5 w-3.5" />
+                </button>
+              )
+              if (active) return <React.Fragment key={view}>{viewButton}</React.Fragment>
+              return <Tooltip key={view}><TooltipTrigger asChild>{viewButton}</TooltipTrigger><TooltipContent side="bottom"><p>{label}</p></TooltipContent></Tooltip>
+            })}
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button type="button" onClick={() => openWorkspaceView('evaluation')} className={`flex h-6 w-7 items-center justify-center rounded transition-colors ${activeWorkspaceView === 'evaluation' ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:bg-background/70 hover:text-foreground'}`} aria-label="Evaluation" aria-pressed={activeWorkspaceView === 'evaluation'}>
+                  <Gauge className="h-3.5 w-3.5" />
+                </button>
+              </TooltipTrigger>
+              <TooltipContent side="bottom"><p>Evaluation results</p></TooltipContent>
+            </Tooltip>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button type="button" onClick={() => openWorkspaceView('backup')} className={`relative flex h-6 w-7 items-center justify-center rounded transition-colors ${activeWorkspaceView === 'backup' ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:bg-background/70 hover:text-foreground'}`} aria-label="Backup" aria-pressed={activeWorkspaceView === 'backup'}>
+                  <Cloud className="h-3.5 w-3.5" />
+                  <span className={`absolute right-1.5 top-1.5 h-1.5 w-1.5 rounded-full border border-background ${getBackupDotClass(backupState)}`} />
+                </button>
+              </TooltipTrigger>
+              <TooltipContent side="bottom"><p>Backup</p></TooltipContent>
+            </Tooltip>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button type="button" onClick={() => openWorkspaceView('publish')} className={`relative flex h-6 w-7 items-center justify-center rounded transition-colors ${activeWorkspaceView === 'publish' ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:bg-background/70 hover:text-foreground'}`} aria-label="Publish" aria-pressed={activeWorkspaceView === 'publish'}>
+                  <Globe className="h-3.5 w-3.5" />
+                  <span className={`absolute right-1.5 top-1.5 h-1.5 w-1.5 rounded-full border border-background ${getPublishDotClass(publishState)}`} />
+                </button>
+              </TooltipTrigger>
+              <TooltipContent side="bottom"><p>Publish</p></TooltipContent>
+            </Tooltip>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button type="button" data-testid="workflow-notification-settings-button" onClick={() => openWorkspaceView('notify')} className={`relative flex h-6 w-7 items-center justify-center rounded transition-colors ${activeWorkspaceView === 'notify' ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:bg-background/70 hover:text-foreground'}`} aria-label="Notify" aria-pressed={activeWorkspaceView === 'notify'}>
+                  <BellRing className="h-3.5 w-3.5" />
+                  <span className={`absolute right-1.5 top-1.5 h-1.5 w-1.5 rounded-full border border-background ${getNotificationDotClass(notificationState)}`} />
+                </button>
+              </TooltipTrigger>
+              <TooltipContent side="bottom"><p>Notify</p></TooltipContent>
+            </Tooltip>
+            <span className="mx-0.5 h-4 w-px bg-border" aria-hidden="true" />
             {capabilityViewDefinitions.map(({ id, icon: Icon, label }) => {
               const active = workflowWorkspaceView === id
               return (

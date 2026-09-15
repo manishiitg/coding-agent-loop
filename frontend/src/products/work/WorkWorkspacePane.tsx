@@ -61,11 +61,11 @@ function queueWorkMessage(tabId: string, message: string) {
 
 const VIEW_BUTTONS: Array<{ id: WorkWorkspaceView; label: string; icon: LucideIcon }> = [
   { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
-  { id: 'database', label: 'Database', icon: Database },
+  { id: 'files', label: 'Files', icon: Files },
   { id: 'browser', label: 'Browser', icon: Monitor },
   { id: 'costs', label: 'Costs and usage', icon: DollarSign },
   { id: 'schedules', label: 'Schedules', icon: CalendarClock },
-  { id: 'files', label: 'Files', icon: Files },
+  { id: 'database', label: 'Database', icon: Database },
 ]
 
 const SETUP_BUTTONS: Array<{ id: WorkWorkspaceView; label: string; icon: LucideIcon }> = [
@@ -107,7 +107,7 @@ export function WorkWorkspaceToolbar({ workspacePath, view, onViewChange, enable
       <TooltipProvider delayDuration={150}>
         {visibleViews.some(item => item.id === 'dashboard') && <ReportDocumentSwitcher workspacePath={workspacePath} active={view === 'dashboard'} onOpen={() => onViewChange('dashboard')} />}
         <div className="inline-flex h-8 items-center divide-x divide-border rounded-lg border border-border bg-muted/60 py-0.5 shadow-sm">
-          <WorkspaceToolbarGroup label="Views" open={openGroup === 'views'} onToggle={() => setOpenGroup('views')} title="Views: dashboard, database, browser, costs, schedules and files">
+          <WorkspaceToolbarGroup label="Views" open={openGroup === 'views'} onToggle={() => setOpenGroup('views')} title="Views: files, browser, costs, schedules and database">
             <div className="inline-flex items-center gap-0.5">{visibleViews.filter(item => item.id !== 'dashboard').map((item) => <WorkToolbarButton key={item.id} {...item} active={view === item.id} onClick={() => onViewChange(item.id)} />)}</div>
           </WorkspaceToolbarGroup>
           <WorkspaceToolbarGroup label="Setup" open={openGroup === 'setup'} onToggle={() => setOpenGroup('setup')} title="Setup: skills, secrets, MCP servers, models, bots and folders">

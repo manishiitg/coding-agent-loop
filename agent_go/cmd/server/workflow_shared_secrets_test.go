@@ -15,6 +15,7 @@ import (
 )
 
 const sharedSecretsTestWorkflow = "Workflow/renewals"
+const sharedSecretsTestProductWorkspace = "_users/a1/Chats/Work/projects/demo"
 
 // sharedSecretsTestAPI builds a StreamingAPI over a filesystem chat store with
 // one workflow whose manifest names alice (a1) as owner and carol (c3) as
@@ -33,7 +34,10 @@ func sharedSecretsTestAPI(t *testing.T) (*StreamingAPI, string) {
 	if err != nil {
 		t.Fatalf("marshal manifest: %v", err)
 	}
-	ws := httptest.NewServer(&mockWorkspaceAPI{files: map[string]string{manifestPath(sharedSecretsTestWorkflow): string(raw)}})
+	ws := httptest.NewServer(&mockWorkspaceAPI{files: map[string]string{
+		manifestPath(sharedSecretsTestWorkflow):         string(raw),
+		manifestPath(sharedSecretsTestProductWorkspace): string(raw),
+	}})
 	t.Cleanup(ws.Close)
 	t.Setenv("WORKSPACE_API_URL", ws.URL)
 
@@ -43,6 +47,50 @@ func sharedSecretsTestAPI(t *testing.T) (*StreamingAPI, string) {
 		t.Fatalf("NewFilesystemStore: %v", err)
 	}
 	return &StreamingAPI{chatStore: store}, root
+}
+
+func TestProductRelativeSecretPathUsesRuntimeWorkspace(t *testing.T) {
+	api, _ := sharedSecretsTestAPI(t)
+	const browserPath = "Chats/Work/projects/demo"
+
+	fromAlice, err := encryptSecretValueWithAAD("hunter2", []byte("a1"))
+	if err != nil {
+		t.Fatalf("encrypt: %v", err)
+	}
+	w := httptest.NewRecorder()
+	body := storeSecretRequest{Name: "TOKEN", EncryptedValue: fromAlice, WorkspacePath: browserPath}
+	api.handleStoreWorkflowSecret(w, sharedSecretsRequest(http.MethodPut, "/api/secrets/workflow/store", "a1", body))
+	if w.Code != http.StatusOK {
+		t.Fatalf("store using browser path: status %d body %s", w.Code, w.Body.String())
+	}
+
+	stored, err := api.chatStore.ListWorkflowSecrets(context.Background(), chathistory.SharedWorkflowSecretsUserID, sharedSecretsTestProductWorkspace)
+	if err != nil || len(stored) != 1 || stored[0].Name != "TOKEN" {
+		t.Fatalf("runtime workspace store = %+v err=%v", stored, err)
+	}
+
+	w = httptest.NewRecorder()
+	api.handleListStoredWorkflowSecrets(w, sharedSecretsRequest(http.MethodGet, "/api/secrets/workflow/stored?workspace_path="+browserPath, "a1", nil))
+	var listed []struct {
+		Name           string `json:"name"`
+		EncryptedValue string `json:"encrypted_value"`
+	}
+	if w.Code != http.StatusOK {
+		t.Fatalf("list using browser path: status %d body %s", w.Code, w.Body.String())
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &listed); err != nil || len(listed) != 1 || listed[0].Name != "TOKEN" || listed[0].EncryptedValue == "" {
+		t.Fatalf("listed secrets = %+v err=%v", listed, err)
+	}
+
+	w = httptest.NewRecorder()
+	api.handleDecryptSecret(w, sharedSecretsRequest(http.MethodPost, "/api/secrets/decrypt", "a1", secretDecryptRequest{Encrypted: listed[0].EncryptedValue, WorkspacePath: browserPath}))
+	var revealed secretDecryptResponse
+	if w.Code != http.StatusOK {
+		t.Fatalf("reveal using browser path: status %d body %s", w.Code, w.Body.String())
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &revealed); err != nil || revealed.Value != "hunter2" {
+		t.Fatalf("revealed secret mismatch: err=%v", err)
+	}
 }
 
 func sharedSecretsRequest(method, target, userID string, body interface{}) *http.Request {

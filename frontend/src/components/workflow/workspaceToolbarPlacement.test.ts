@@ -19,4 +19,12 @@ describe('workflow Ask AI placement', () => {
     expect(toolbar).toContain("onToggle={() => setOpenToolbarGroup('views')}")
     expect(toolbar).toContain("onToggle={() => setOpenToolbarGroup('setup')}")
   })
+
+  it('keeps report separate and the frequent workflow tools in the requested order', () => {
+    const toolbar = readFileSync('src/components/workflow/canvas/WorkflowToolbar.tsx', 'utf8')
+
+    expect(toolbar).toContain("new Set<WorkspaceViewId>(['pulse', 'playbooks', 'flow', 'costs', 'files', 'browser', 'schedules'])")
+    expect(toolbar).toContain("view.id === 'flow' || view.id === 'costs' || view.id === 'files' || view.id === 'browser'")
+    expect(toolbar.indexOf('<ReportDocumentSwitcher')).toBeLessThan(toolbar.indexOf('title="Views: Pulse, playbooks, plan, costs, files, browser and schedules"'))
+  })
 })

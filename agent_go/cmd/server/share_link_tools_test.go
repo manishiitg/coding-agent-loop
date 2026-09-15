@@ -115,6 +115,29 @@ func TestGetFileLinkToolScopesWorkLinksToProjectOwner(t *testing.T) {
 	if err := f.api.registerWorkShareLinkTool(&recordingRegistrar{}, userID, "Chats/another-project"); err == nil {
 		t.Fatal("Work share tool accepted a non-Work project root")
 	}
+
+	// Resumed Work conversations carry the expanded private path. It must
+	// register the same tool and still emit the canonical user-scoped URL.
+	physical := &recordingRegistrar{}
+	if err := f.api.registerWorkShareLinkTool(physical, userID, "_users/work-user/Chats/Work/projects/demo"); err != nil {
+		t.Fatalf("register share tool for resumed Work path: %v", err)
+	}
+	out, err := physical.tools["get_file_link"].exec(context.Background(), map[string]interface{}{"path": "output/report.txt"})
+	if err != nil {
+		t.Fatalf("create link from resumed Work path: %v", err)
+	}
+	var resumedResult map[string]interface{}
+	if err := json.Unmarshal([]byte(out), &resumedResult); err != nil {
+		t.Fatal(err)
+	}
+	preview, err := url.Parse(resumedResult["preview_url"].(string))
+	if err != nil {
+		t.Fatal(err)
+	}
+	decoded, err := base64.StdEncoding.DecodeString(preview.Query().Get("path"))
+	if err != nil || string(decoded) != "Chats/Work/projects/demo/output/report.txt" {
+		t.Fatalf("resumed Work encoded path = %q err=%v", decoded, err)
+	}
 }
 
 func TestGetFileLinkToolRejectsUnauthorizedPrivateAndMissingPaths(t *testing.T) {

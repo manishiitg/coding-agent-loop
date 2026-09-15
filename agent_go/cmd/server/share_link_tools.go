@@ -56,10 +56,11 @@ func (api *StreamingAPI) registerShareLinkTools(reg definitionToolRegistrar, use
 // account instead of pretending that the URL grants another user access.
 func (api *StreamingAPI) registerWorkShareLinkTool(reg definitionToolRegistrar, userID, workspace string) error {
 	cleanWorkspace, err := cleanAgentProfileWorkspace(workspace, userID)
-	if err != nil || cleanWorkspace != workspace || !strings.HasPrefix(cleanWorkspace, "Chats/Work/projects/") {
+	if err != nil || cleanWorkspace != workspace || !isActiveWorkProjectWorkspace(userID, cleanWorkspace) {
 		return fmt.Errorf("Work share links require an active Work project")
 	}
-	physicalRoot := agentProfileRuntimeWorkspace(userID, cleanWorkspace)
+	canonicalWorkspace := canonicalChatHistoryWorkspacePath(userID, cleanWorkspace)
+	physicalRoot := agentProfileRuntimeWorkspace(userID, canonicalWorkspace)
 	return reg.RegisterCustomTool("get_file_link", "Create an authenticated preview link for an existing file or folder in the active Work project. Pass a canonical project-relative path; the server validates existence, protected-path rules, and whether the target is a file or folder. Present the returned url value verbatim; never manually build, rewrite, or Base64-encode a /file or /folder URL. The URL contains no credential and grants no access. Work projects are personal: the link can currently be opened only by the same signed-in Work account. This is not public publishing and cannot share arbitrary web URLs or files outside this project.", map[string]interface{}{
 		"type":                 "object",
 		"additionalProperties": false,
@@ -77,7 +78,7 @@ func (api *StreamingAPI) registerWorkShareLinkTool(reg definitionToolRegistrar, 
 		if wf.Private(clean) {
 			return "", fmt.Errorf("private workspace files are not shareable")
 		}
-		return createSecureShareLink(ctx, physicalRoot, cleanWorkspace, clean, userID, "The link contains no credential and grants no access. It can currently be opened only by this same signed-in Work account.")
+		return createSecureShareLink(ctx, physicalRoot, canonicalWorkspace, clean, userID, "The link contains no credential and grants no access. It can currently be opened only by this same signed-in Work account.")
 	}, "work_files")
 }
 

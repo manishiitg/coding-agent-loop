@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"strings"
 
+	"github.com/manishiitg/coding-agent-loop/agent_go/cmd/server/services"
 	"github.com/manishiitg/mcpagent/events"
 )
 
@@ -28,6 +29,59 @@ func internalBotRequestContext(ctx context.Context, userID string) context.Conte
 		claims.Email = record.Email
 	}
 	return context.WithValue(ctx, UserContextKey, claims)
+}
+
+func (api *StreamingAPI) checkBotWorkflowAccess(ctx context.Context, workspaceUserID, userEmail string, route services.ChannelRoute) (string, bool, error) {
+	claims := &UserClaims{UserID: strings.TrimSpace(workspaceUserID), Username: strings.TrimSpace(workspaceUserID), Email: strings.TrimSpace(userEmail)}
+	if record := directoryUserFor(workspaceUserID, "", userEmail); record != nil {
+		claims.UserID = record.ID
+		claims.Username = record.Username
+		claims.Email = record.Email
+		if record.Disabled {
+			return claims.UserID, false, nil
+		}
+	}
+
+	var manifest *WorkflowManifest
+	var exists bool
+	var err error
+	workspacePath := strings.TrimSpace(route.WorkspacePath)
+	if workspacePath != "" {
+		manifest, exists, err = ReadWorkflowManifest(ctx, workspacePath)
+		if err != nil {
+			return claims.UserID, false, err
+		}
+	}
+	if !exists || manifest == nil {
+		manifest, exists, err = api.workflowManifestByBotRoute(ctx, route)
+		if err != nil {
+			return claims.UserID, false, err
+		}
+		if !exists || manifest == nil {
+			return claims.UserID, false, nil
+		}
+	}
+	if !userAllowedWorkflowID(claims, manifest.ID) {
+		return claims.UserID, false, nil
+	}
+	return claims.UserID, workflowAccessForManifest(claims, manifest) != WorkflowAccessNone, nil
+}
+
+func (api *StreamingAPI) workflowManifestByBotRoute(ctx context.Context, route services.ChannelRoute) (*WorkflowManifest, bool, error) {
+	workflowID := strings.TrimSpace(route.WorkflowID)
+	if workflowID == "" {
+		return nil, false, nil
+	}
+	discovered, err := DiscoverWorkflowManifests(ctx)
+	if err != nil {
+		return nil, false, err
+	}
+	for _, workflow := range discovered {
+		if workflow.Manifest != nil && strings.EqualFold(strings.TrimSpace(workflow.Manifest.ID), workflowID) {
+			return workflow.Manifest, true, nil
+		}
+	}
+	return nil, false, nil
 }
 
 // startSessionInternal starts an agent session programmatically (used by bot connector).

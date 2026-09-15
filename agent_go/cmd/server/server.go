@@ -2344,6 +2344,7 @@ func runServer(cmd *cobra.Command, args []string) {
 	botManager.SetFollowUpFunc(api.sendFollowUpInternal)
 	botManager.SetResumeTargetFunc(api.resolveBotResumeTarget)
 	botManager.SetResumeListFunc(api.listBotResumeTargets)
+	botManager.SetWorkflowAccessFunc(api.checkBotWorkflowAccess)
 	botManager.SetRunningWorkflowsFunc(func(userID string) []services.BotRunningWorkflow {
 		running := api.listRunningWorkflowExecutions(userID)
 		out := make([]services.BotRunningWorkflow, 0, len(running))

@@ -352,6 +352,138 @@ func TestSlackBotWorkflowRouteBuildModeUsesWorkshop(t *testing.T) {
 	}
 }
 
+func TestSlackWorkflowRouteRejectsUserWithoutWorkflowAccess(t *testing.T) {
+	manager := NewBotConversationManager(nil, "", "")
+	connector := &testBotConnector{name: "slack", supportsThreads: true}
+	manager.RegisterConnector(connector)
+
+	started := make(chan struct{}, 1)
+	manager.SetStartSessionFunc(func(context.Context, map[string]interface{}, string, string, func(*events.AgentEvent)) error {
+		started <- struct{}{}
+		return nil
+	})
+	manager.SetWorkflowAccessFunc(func(_ context.Context, userID, email string, route ChannelRoute) (string, bool, error) {
+		if userID != "shubham-example-com" || email != "shubham@example.com" {
+			t.Fatalf("access identity = %q/%q, want email-derived user", userID, email)
+		}
+		if route.WorkflowID != "wf-report" || route.WorkspacePath != "Workflow/report" {
+			t.Fatalf("access route = %+v, want report route", route)
+		}
+		return "user-shubham", false, nil
+	})
+
+	manager.HandleIncomingMessage(BotIncomingMessage{
+		Platform:       "slack",
+		UserID:         "U123",
+		UserEmail:      "shubham@example.com",
+		ChannelID:      "C123",
+		ThreadTS:       "1700000000.000100",
+		Text:           "what step are we on?",
+		MessageTS:      "1700000000.000100",
+		IsMention:      true,
+		PresetWorkflow: &ChannelRoute{WorkflowID: "wf-report", WorkspacePath: "Workflow/report", WorkshopMode: "run"},
+	})
+
+	select {
+	case <-started:
+		t.Fatal("unauthorized Slack workflow message started a session")
+	case <-time.After(150 * time.Millisecond):
+	}
+	connector.mu.Lock()
+	defer connector.mu.Unlock()
+	if len(connector.sent) != 1 || !strings.Contains(connector.sent[0], "don't have access to this workflow") {
+		t.Fatalf("denial reply = %#v, want workflow access denial", connector.sent)
+	}
+}
+
+func TestSlackWorkflowRouteUsesResolvedAccessUserForSession(t *testing.T) {
+	manager := NewBotConversationManager(nil, "", "")
+	connector := &testBotConnector{name: "slack", supportsThreads: true}
+	manager.RegisterConnector(connector)
+
+	startedUser := make(chan string, 1)
+	manager.SetStartSessionFunc(func(_ context.Context, _ map[string]interface{}, _ string, userID string, _ func(*events.AgentEvent)) error {
+		startedUser <- userID
+		return nil
+	})
+	manager.SetWorkflowAccessFunc(func(_ context.Context, _ string, _ string, _ ChannelRoute) (string, bool, error) {
+		return "agentworks-user-123", true, nil
+	})
+
+	manager.HandleIncomingMessage(BotIncomingMessage{
+		Platform:       "slack",
+		UserID:         "U123",
+		UserEmail:      "shubham@example.com",
+		ChannelID:      "C123",
+		ThreadTS:       "1700000000.000100",
+		Text:           "what step are we on?",
+		MessageTS:      "1700000000.000100",
+		IsMention:      true,
+		PresetWorkflow: &ChannelRoute{WorkflowID: "wf-report", WorkspacePath: "Workflow/report", WorkshopMode: "run"},
+	})
+
+	select {
+	case got := <-startedUser:
+		if got != "agentworks-user-123" {
+			t.Fatalf("session userID = %q, want access-resolved user ID", got)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("expected authorized Slack workflow message to start a session")
+	}
+}
+
+func TestSlackWorkflowFollowUpRejectsUserAfterAccessRevoked(t *testing.T) {
+	manager := NewBotConversationManager(nil, "", "")
+	connector := &testBotConnector{name: "slack", supportsThreads: true}
+	manager.RegisterConnector(connector)
+
+	threadID := ThreadID{Platform: "slack", ChannelID: "C123", ThreadTS: "1700000000.000100"}
+	manager.sessions[threadID.Key()] = &activeBotSession{
+		SessionID:     "session-1",
+		UserID:        "agentworks-user-123",
+		Status:        chathistory.BotSessionStatusRunning,
+		Platform:      "slack",
+		ThreadID:      threadID,
+		PresetQueryID: "wf-report",
+		WorkspacePath: "Workflow/report",
+		PhaseID:       "workflow-builder",
+		WorkshopMode:  "run",
+		LastActivity:  time.Now(),
+	}
+
+	followedUp := make(chan struct{}, 1)
+	manager.SetFollowUpFunc(func(context.Context, map[string]interface{}, string, string) error {
+		followedUp <- struct{}{}
+		return nil
+	})
+	manager.SetWorkflowAccessFunc(func(context.Context, string, string, ChannelRoute) (string, bool, error) {
+		return "agentworks-user-123", false, nil
+	})
+
+	manager.HandleIncomingMessage(BotIncomingMessage{
+		Platform:      "slack",
+		UserID:        "U123",
+		UserEmail:     "shubham@example.com",
+		ChannelID:     "C123",
+		ThreadTS:      "1700000000.000100",
+		Text:          "continue",
+		MessageTS:     "1700000000.000200",
+		IsMention:     true,
+		IsThreadReply: true,
+	})
+
+	select {
+	case <-followedUp:
+		t.Fatal("revoked Slack workflow user was allowed to continue the session")
+	case <-time.After(150 * time.Millisecond):
+	}
+	connector.mu.Lock()
+	defer connector.mu.Unlock()
+	if len(connector.sent) != 1 || !strings.Contains(connector.sent[0], "don't have access to this workflow") {
+		t.Fatalf("denial reply = %#v, want workflow access denial", connector.sent)
+	}
+}
+
 func TestStatusShowsNumberedResumableChats(t *testing.T) {
 	manager := NewBotConversationManager(nil, "", "")
 	manager.SetResumeListFunc(func(_ context.Context, userID string, filter BotResumeFilter) ([]BotResumeTarget, error) {

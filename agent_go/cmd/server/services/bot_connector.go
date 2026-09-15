@@ -365,6 +365,13 @@ type BotRunningWorkflow struct {
 
 type RunningWorkflowsFunc func(userID string) []BotRunningWorkflow
 
+// BotWorkflowAccessFunc checks whether a bot user may use a routed workflow.
+// The server layer owns the real user directory and workflow manifest access
+// helpers, so the manager receives this as an injection to avoid an import cycle.
+// It may return a canonical workspace user ID; Slack often starts with an email
+// slug, while server permissions are stored against AgentWorks user IDs.
+type BotWorkflowAccessFunc func(ctx context.Context, workspaceUserID, userEmail string, route ChannelRoute) (resolvedUserID string, allowed bool, err error)
+
 type BotResumeTarget struct {
 	SessionID     string
 	UserID        string
@@ -422,6 +429,7 @@ type BotConversationManager struct {
 	profileTurn      ProfileTurnFunc
 	chatHistory      ChatHistoryReaderFunc
 	runningWorkflows RunningWorkflowsFunc
+	workflowAccess   BotWorkflowAccessFunc
 	resumeTarget     BotResumeTargetFunc
 	resumeList       BotResumeListFunc
 	mcpConfigPath    string
@@ -527,6 +535,12 @@ func (m *BotConversationManager) SetFollowUpFunc(fn SessionFollowUpFunc) {
 // SetRunningWorkflowsFunc sets the server-backed running workflow snapshot used by status commands.
 func (m *BotConversationManager) SetRunningWorkflowsFunc(fn RunningWorkflowsFunc) {
 	m.runningWorkflows = fn
+}
+
+// SetWorkflowAccessFunc installs the server-backed workflow visibility check
+// used by routed bot messages.
+func (m *BotConversationManager) SetWorkflowAccessFunc(fn BotWorkflowAccessFunc) {
+	m.workflowAccess = fn
 }
 
 func (m *BotConversationManager) SetResumeTargetFunc(fn BotResumeTargetFunc) {
@@ -702,6 +716,64 @@ func (m *BotConversationManager) resolveWorkspaceUserID(msg BotIncomingMessage) 
 	return ""
 }
 
+func (m *BotConversationManager) workflowRouteForMessage(msg BotIncomingMessage, active *activeBotSession) *ChannelRoute {
+	if msg.PresetWorkflow != nil {
+		return msg.PresetWorkflow
+	}
+	if active != nil {
+		return botRouteFromActive(active)
+	}
+	return m.resolveChannelWorkflow(msg.Platform, msg.ChannelID)
+}
+
+func (m *BotConversationManager) authorizeWorkflowRouteForMessage(ctx context.Context, msg *BotIncomingMessage, threadID ThreadID, active *activeBotSession) bool {
+	if m.workflowAccess == nil || msg == nil {
+		return true
+	}
+	route := m.workflowRouteForMessage(*msg, active)
+	if route == nil || strings.TrimSpace(route.WorkflowID) == "" && strings.TrimSpace(route.WorkspacePath) == "" {
+		return true
+	}
+	workspaceUserID := m.resolveWorkspaceUserID(*msg)
+	resolvedUserID, allowed, err := m.workflowAccess(ctx, workspaceUserID, msg.UserEmail, *route)
+	if strings.TrimSpace(resolvedUserID) != "" {
+		msg.WorkspaceUserID = strings.TrimSpace(resolvedUserID)
+	}
+	if err != nil {
+		log.Printf("[BOT_MANAGER] Failed to verify workflow access platform=%s user=%s email=%s workflow=%s workspace=%s: %v",
+			msg.Platform, msg.UserID, msg.UserEmail, route.WorkflowID, route.WorkspacePath, err)
+		if msg.IsMention {
+			m.sendWorkflowAccessDenied(msg.Platform, threadID, "I can't verify your workflow access right now. Please try again in a moment.")
+		}
+		return false
+	}
+	if allowed {
+		if msg.PresetWorkflow == nil && active == nil {
+			msg.PresetWorkflow = route
+		}
+		return true
+	}
+	log.Printf("[BOT_MANAGER] Rejected workflow bot message platform=%s user=%s email=%s workspaceUser=%s workflow=%s workspace=%s — no workflow access",
+		msg.Platform, msg.UserID, msg.UserEmail, workspaceUserID, route.WorkflowID, route.WorkspacePath)
+	if msg.IsMention {
+		m.sendWorkflowAccessDenied(msg.Platform, threadID, "You don't have access to this workflow. Ask a workflow owner to share it with you in AgentWorks.")
+	}
+	return false
+}
+
+func (m *BotConversationManager) sendWorkflowAccessDenied(platform string, threadID ThreadID, message string) {
+	connector := m.GetConnector(platform)
+	if connector == nil {
+		return
+	}
+	if threadID.ThreadTS == "" {
+		threadID.ThreadTS = fmt.Sprintf("%d", time.Now().UnixNano())
+	}
+	if _, err := connector.SendThreadMessage(context.Background(), threadID, message); err != nil {
+		log.Printf("[BOT_MANAGER] Failed to send workflow access denial: %v", err)
+	}
+}
+
 // HandleIncomingMessage processes a message from any platform (async path)
 func (m *BotConversationManager) HandleIncomingMessage(msg BotIncomingMessage) {
 	log.Printf("[BOT_FLOW] incoming: platform=%s user=%s hasEmail=%v workspaceUser=%s channel=%s thread=%s ts=%s mention=%v threadReply=%v chars=%d",
@@ -832,16 +904,19 @@ func (m *BotConversationManager) HandleIncomingMessage(msg BotIncomingMessage) {
 	log.Printf("[BOT_MANAGER] Incoming message from %s user=%s thread=%s: %s", msg.Platform, msg.UserID, threadKey, botTruncate(msg.Text, 100))
 	log.Printf("[BOT_FLOW] route: normalized thread=%s supportsThreads=%v", threadKey, supportsThreads)
 
+	m.mu.RLock()
+	active, exists := m.sessions[threadKey]
+	m.mu.RUnlock()
+
+	if !m.authorizeWorkflowRouteForMessage(context.Background(), &msg, threadID, active) {
+		return
+	}
+
 	if selector, ok := parseBotResumeCommand(msg.Text, !supportsThreads); ok {
 		log.Printf("[BOT_FLOW] route: resume command selector=%q thread=%s", selector, threadKey)
 		m.handleBotResumeCommand(msg, threadID, threadKey, selector, botResumeFilterFromRoute(msg.PresetWorkflow))
 		return
 	}
-
-	// Check if there's an existing in-memory session for this thread.
-	m.mu.RLock()
-	active, exists := m.sessions[threadKey]
-	m.mu.RUnlock()
 
 	if exists {
 		active.mu.Lock()
@@ -1937,6 +2012,14 @@ func (m *BotConversationManager) HandleMessageSync(ctx context.Context, msg BotI
 	m.mu.RLock()
 	active, exists := m.sessions[threadID.Key()]
 	m.mu.RUnlock()
+
+	if !m.authorizeWorkflowRouteForMessage(ctx, &msg, threadID, active) {
+		return &SyncMessageResult{
+			Type:     "conversation",
+			Response: "You don't have access to this workflow.",
+			ThreadID: threadID.ThreadTS,
+		}, nil
+	}
 
 	// Snapshot active session fields under lock for safe access
 	var status, sessionID string

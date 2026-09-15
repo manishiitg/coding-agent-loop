@@ -38,7 +38,8 @@ nonzero; do not report success or bypass it. Confida alone is in scope: the
   A correct file alone is insufficient: this catches missed restarts and runtime
   overrides. Callback URL: `https://confida.agentworkshq.com/api/oauth/callback`.
 - [ ] Agent/workspace processes received the expected tools PATH and Confida
-  browser namespaces.
+  browser namespaces, plus `DISPLAY_TIME_ZONE=America/New_York` for
+  deployment-consistent UI timestamps.
 - [ ] The running agent received
   `AGENTWORKS_PLAYBOOKS_DIR=/srv/confida/current/playbooks`, and its working
   directory can read the packaged Basic Browser Setup manifest.

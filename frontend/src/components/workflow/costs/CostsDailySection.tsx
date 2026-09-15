@@ -1,7 +1,7 @@
 import React from 'react'
 import { Loader2, TrendingUp } from 'lucide-react'
 import { phaseLabel as costPhaseLabel } from '../../../utils/costActivityBreakdown'
-import { formatUSD, formatTokens, formatDuration } from './helpers'
+import { formatUSD, formatTokens, formatDuration, getRunFolderDisplayName } from './helpers'
 import { buildModelCostRows } from './CostsModelSection'
 import type { CostsData } from './useCostsData'
 
@@ -12,6 +12,7 @@ type CostsDailySectionProps = Pick<
   | 'activityBreakdown'
   | 'combinedDailyCostSummaries'
   | 'dailyActivityBreakdown'
+  | 'runDailyCostSummaries'
   | 'expandedDailyDate'
   | 'setExpandedDailyDate'
   | 'costHistory'
@@ -25,6 +26,7 @@ const CostsDailySection: React.FC<CostsDailySectionProps> = ({
   activityBreakdown,
   combinedDailyCostSummaries,
   dailyActivityBreakdown,
+  runDailyCostSummaries,
   expandedDailyDate,
   setExpandedDailyDate,
   costHistory,
@@ -75,7 +77,7 @@ const CostsDailySection: React.FC<CostsDailySectionProps> = ({
                         Daily Cost Breakdown
                       </h3>
                       <p className="text-xs text-muted-foreground">
-                        {projectMode ? 'Daily project totals.' : 'Daily totals using the same Builder, Pulse, Workflow, and Evaluation categories above.'}
+                        {projectMode ? 'Daily project totals by UTC accounting date.' : 'Daily totals by UTC accounting date using the same Builder, Pulse, Workflow, and Evaluation categories above.'}
                       </p>
                     </div>
                   </div>
@@ -84,7 +86,7 @@ const CostsDailySection: React.FC<CostsDailySectionProps> = ({
                     <table className="w-full text-xs">
                       <thead>
                         <tr className="text-muted-foreground border-b border-border pb-2">
-                          <th className="text-left font-medium pb-2">Date</th>
+                          <th className="text-left font-medium pb-2">Date (UTC)</th>
                           {!projectMode && <th className="text-right font-medium pb-2">Runs</th>}
                           <th className="text-right font-medium pb-2">{projectMode ? 'Chat' : 'Builder'}</th>
                           {!projectMode && <th className="text-right font-medium pb-2">Pulse</th>}
@@ -100,6 +102,7 @@ const CostsDailySection: React.FC<CostsDailySectionProps> = ({
                           const isExpanded = expandedDailyDate === entry.date
                           const categories = dailyActivityBreakdown.get(entry.date)
                           const modelRows = buildModelCostRows({ by_model: scopedCosts?.by_date?.[entry.date]?.by_model || {} })
+                          const dailyRuns = runDailyCostSummaries.filter(run => run.date === entry.date)
                           return (
                             <React.Fragment key={entry.date}>
                               <tr className="hover:bg-accent/50 transition-colors">
@@ -143,10 +146,36 @@ const CostsDailySection: React.FC<CostsDailySectionProps> = ({
                               {isExpanded && (
                                 <tr className="bg-muted/20">
                                   <td colSpan={projectMode ? 5 : 9} className="p-3">
-                                    {!categories && modelRows.length === 0 ? (
+                                    {!categories && modelRows.length === 0 && dailyRuns.length === 0 ? (
                                       <p className="text-xs text-muted-foreground">This older daily record has totals but no activity attribution.</p>
                                     ) : (
                                       <div className="space-y-3">
+                                        {dailyRuns.length > 0 && (
+                                          <div className="overflow-hidden rounded-md border border-border bg-card">
+                                            <div className="border-b border-border px-3 py-2">
+                                              <div className="text-xs font-semibold text-foreground">Workflow runs</div>
+                                              <div className="text-[10px] text-muted-foreground">Repriced immutable run detail contributing to this date.</div>
+                                            </div>
+                                            <div className="divide-y divide-border">
+                                              {dailyRuns.map(run => (
+                                                <div key={`${run.scope}:${run.runFolder}`} className="px-3 py-2 text-[10px]">
+                                                  <div className="flex flex-wrap items-center gap-2">
+                                                    <span className="font-mono font-medium text-foreground">{getRunFolderDisplayName(run.runFolder)}</span>
+                                                    <span className="rounded bg-muted px-1.5 py-0.5 text-muted-foreground">{run.scope}</span>
+                                                    <span className="ml-auto font-mono text-muted-foreground">{formatTokens(run.summary.totalTokens)} tokens</span>
+                                                    <span className="font-mono font-semibold text-foreground">{formatUSD(run.summary.totalCost)}</span>
+                                                  </div>
+                                                  <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-muted-foreground">
+                                                    {Object.entries(run.summary.stageCosts)
+                                                      .filter(([, cost]) => cost > 0)
+                                                      .map(([stage, cost]) => <span key={stage}>{stage}: <span className="font-mono">{formatUSD(cost)}</span></span>)}
+                                                    {Object.entries(run.tokenUsage.by_model || {}).map(([model]) => <span key={model} className="font-mono">{model}</span>)}
+                                                  </div>
+                                                </div>
+                                              ))}
+                                            </div>
+                                          </div>
+                                        )}
                                         {modelRows.length > 0 && (
                                           <div className="overflow-hidden rounded-md border border-border bg-card">
                                             <div className="border-b border-border px-3 py-2">

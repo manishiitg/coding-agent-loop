@@ -119,6 +119,7 @@ const CostsPopup: React.FC<CostsPopupProps> = ({
                 activityBreakdown={activityBreakdown}
                 combinedDailyCostSummaries={combinedDailyCostSummaries}
                 dailyActivityBreakdown={dailyActivityBreakdown}
+                runDailyCostSummaries={data.runDailyCostSummaries}
                 expandedDailyDate={expandedDailyDate}
                 setExpandedDailyDate={setExpandedDailyDate}
                 costHistory={costHistory}

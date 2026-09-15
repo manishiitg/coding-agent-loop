@@ -5,6 +5,8 @@
  * Frontend needs to convert nanoseconds to human-readable format
  */
 
+import { getDisplayTimeZone } from './displayTime'
+
 /**
  * Formats a duration in nanoseconds to a human-readable string
  * @param durationNs - Duration in nanoseconds (from Go time.Duration)
@@ -71,7 +73,14 @@ export function formatStartedAt(iso?: string | null): string {
   if (!iso) return ''
   const d = new Date(iso)
   if (isNaN(d.getTime())) return ''
-  const clock = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: true })
+  const timeZone = getDisplayTimeZone()
+  const clock = d.toLocaleTimeString([], {
+    timeZone,
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: true,
+    timeZoneName: timeZone ? 'short' : undefined,
+  })
   const diffMs = Date.now() - d.getTime()
   const mins = Math.floor(diffMs / 60000)
   let rel: string

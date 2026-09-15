@@ -55,6 +55,14 @@ class ConfidaRuntimeDependenciesTest(unittest.TestCase):
         self.assertIn("confida-agent.service.d/40-browser-isolation.conf", activate)
         self.assertIn("confida-workspace.service.d/40-browser-isolation.conf", activate)
 
+    def test_confida_display_timezone_is_eastern(self) -> None:
+        activate = (CF_DIR / "server-build-and-activate.sh").read_text()
+        deploy = (CF_DIR / "deploy-cf.sh").read_text()
+
+        for script in (activate, deploy):
+            self.assertIn("DISPLAY_TIME_ZONE=America/New_York", script)
+        self.assertIn("/^DISPLAY_TIME_ZONE=/", activate)
+
     def test_playbook_catalog_is_a_validated_release_dependency(self) -> None:
         activate = (CF_DIR / "server-build-and-activate.sh").read_text()
 

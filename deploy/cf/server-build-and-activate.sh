@@ -140,15 +140,17 @@ runtime_path="$REMOTE_APP/tools/node/bin:$REMOTE_APP/tools/bin:$REMOTE_APP/home/
 env_file="$REMOTE_APP/.env"
 env_next="$(mktemp "$REMOTE_APP/.env.runtime.XXXXXX")"
 awk -v managed_path="$runtime_path" '
-	BEGIN { wrote_path = 0; wrote_browser_prefix = 0; wrote_staging_namespace = 0 }
+	BEGIN { wrote_path = 0; wrote_browser_prefix = 0; wrote_staging_namespace = 0; wrote_display_timezone = 0 }
 	/^PATH=/ { if (!wrote_path) { print "PATH=" managed_path; wrote_path = 1 }; next }
 	/^AGENTWORKS_BROWSER_SESSION_PREFIX=/ { if (!wrote_browser_prefix) { print "AGENTWORKS_BROWSER_SESSION_PREFIX=confida"; wrote_browser_prefix = 1 }; next }
 	/^AGENTWORKS_BROWSER_STAGING_NAMESPACE=/ { if (!wrote_staging_namespace) { print "AGENTWORKS_BROWSER_STAGING_NAMESPACE=confida"; wrote_staging_namespace = 1 }; next }
+	/^DISPLAY_TIME_ZONE=/ { if (!wrote_display_timezone) { print "DISPLAY_TIME_ZONE=America/New_York"; wrote_display_timezone = 1 }; next }
 	{ print }
 	END {
 		if (!wrote_path) print "PATH=" managed_path
 		if (!wrote_browser_prefix) print "AGENTWORKS_BROWSER_SESSION_PREFIX=confida"
 		if (!wrote_staging_namespace) print "AGENTWORKS_BROWSER_STAGING_NAMESPACE=confida"
+		if (!wrote_display_timezone) print "DISPLAY_TIME_ZONE=America/New_York"
 	}
 ' "$env_file" > "$env_next"
 chmod 0600 "$env_next"
@@ -186,6 +188,7 @@ for unit in confida-agent confida-workspace; do
   tr '\0' '\n' < "/proc/$pid/environ" | grep -Fqx 'AGENTWORKS_BROWSER_SESSION_PREFIX=confida'
   tr '\0' '\n' < "/proc/$pid/environ" | grep -Fqx 'AGENTWORKS_BROWSER_STAGING_NAMESPACE=confida'
   tr '\0' '\n' < "/proc/$pid/environ" | grep -Fqx 'AGENTWORKS_ADMIN_ONLY_PRODUCT_SURFACES=work'
+  tr '\0' '\n' < "/proc/$pid/environ" | grep -Fqx 'DISPLAY_TIME_ZONE=America/New_York'
   if [[ "$unit" == confida-agent ]]; then
     tr '\0' '\n' < "/proc/$pid/environ" | grep -Fqx 'AGENTWORKS_PLAYBOOKS_DIR=/srv/confida/current/playbooks'
     test -f "/proc/$pid/cwd/playbooks/agentic-engineering-platform/browser-qa/basic-browser-setup/playbook.json"

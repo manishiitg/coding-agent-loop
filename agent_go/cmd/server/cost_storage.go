@@ -87,7 +87,21 @@ func listWorkspaceFilesRecursive(ctx context.Context, folderPath string) ([]stri
 	}
 	var filePaths []string
 	collectWorkspaceFilePaths(listing, &filePaths)
-	return filePaths, nil
+	// Some workspace backends return both a nested tree and repeated flattened
+	// children. Cost readers merge every returned file, so duplicate paths here
+	// double every token and dollar amount in the run explorer.
+	seen := make(map[string]struct{}, len(filePaths))
+	unique := make([]string, 0, len(filePaths))
+	for _, filePath := range filePaths {
+		filePath = filepath.ToSlash(filePath)
+		if _, exists := seen[filePath]; exists {
+			continue
+		}
+		seen[filePath] = struct{}{}
+		unique = append(unique, filePath)
+	}
+	sort.Strings(unique)
+	return unique, nil
 }
 
 func migrateLegacyScopedTokenUsage(ctx context.Context, workspacePath, legacyRoot string, scope orchestrator.CostScope) error {

@@ -1769,6 +1769,7 @@ export interface CapabilitiesResponse {
   servers: string[];
   local_mode?: boolean;
   runtime_debug?: boolean;
+  display_time_zone?: string;
   terminal_live_attach?: boolean;
   /** Streaming microphone dictation (agent_go/pkg/voicestt, voicestt.Status).
    * `available` is a build-time fact (false in a CGO_ENABLED=0 build);

@@ -1,6 +1,7 @@
 import { Filter, RefreshCw, Terminal } from 'lucide-react'
 import type { RunFolderInfo } from '../../../services/api-types'
 import { formatStartedAt } from '../../../utils/duration'
+import { formatDeploymentDateTime } from '../../../utils/displayTime'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../../ui/select'
 
 export interface LogsHeaderProps {
@@ -35,16 +36,7 @@ export function LogsHeader({
     ]),
   )
   const formatRunDateTime = (value?: string | null) => {
-    if (!value) return ''
-    const date = new Date(value)
-    if (Number.isNaN(date.getTime())) return ''
-    return date.toLocaleString(undefined, {
-      day: 'numeric',
-      month: 'short',
-      year: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit',
-    })
+    return formatDeploymentDateTime(value)
   }
   const selectedTimestamp = formatRunDateTime(timestampsByFolder.get(selectedRunFolder))
 

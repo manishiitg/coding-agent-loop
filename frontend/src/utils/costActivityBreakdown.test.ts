@@ -209,6 +209,30 @@ describe('buildCostActivityBreakdown', () => {
     expect(execution.cost.by_phase?.['item:draft-message'].total_cost_usd).toBe(0.3)
     expect(execution.cost.by_phase?.['item:send-message'].total_cost_usd).toBe(0.15)
   })
+
+  it('coerces numeric API values without concatenating category costs', () => {
+    const summary: CostSummary = {
+      total: cost(31.5781457, 2),
+      by_date: {},
+      by_model: {},
+      by_scope: {
+        builder: {
+          ...cost(0),
+          prompt_tokens: '20' as unknown as number,
+          total_cost_usd: '31.0781457' as unknown as number,
+        },
+        chat: {
+          ...cost(0),
+          prompt_tokens: 10,
+          total_cost_usd: '0.5' as unknown as number,
+        },
+      },
+    }
+
+    const builder = buildCostActivityBreakdown(summary, null).find(category => category.id === 'builder')!
+    expect(builder.total.total_cost_usd).toBeCloseTo(31.5781457)
+    expect(builder.total.prompt_tokens).toBe(30)
+  })
 })
 
 describe('phaseLabel', () => {

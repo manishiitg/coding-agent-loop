@@ -26,16 +26,21 @@ const emptyCost = (): CostAggregate => ({
   llm_generation_duration_ms: 0,
 })
 
+const finiteNumber = (value: unknown): number => {
+  const parsed = typeof value === 'number' ? value : Number(value)
+  return Number.isFinite(parsed) ? parsed : 0
+}
+
 const addCost = (target: CostAggregate, source?: Partial<CostAggregate>) => {
   if (!source) return
-  target.prompt_tokens += source.prompt_tokens || 0
-  target.completion_tokens += source.completion_tokens || 0
-  target.reasoning_tokens += source.reasoning_tokens || 0
-  target.cache_read_tokens += source.cache_read_tokens || 0
-  target.cache_write_tokens += source.cache_write_tokens || 0
-  target.total_cost_usd += source.total_cost_usd || 0
-  target.call_count += source.call_count || 0
-  target.llm_generation_duration_ms = (target.llm_generation_duration_ms || 0) + (source.llm_generation_duration_ms || 0)
+  target.prompt_tokens += finiteNumber(source.prompt_tokens)
+  target.completion_tokens += finiteNumber(source.completion_tokens)
+  target.reasoning_tokens += finiteNumber(source.reasoning_tokens)
+  target.cache_read_tokens += finiteNumber(source.cache_read_tokens)
+  target.cache_write_tokens += finiteNumber(source.cache_write_tokens)
+  target.total_cost_usd += finiteNumber(source.total_cost_usd)
+  target.call_count += finiteNumber(source.call_count)
+  target.llm_generation_duration_ms = finiteNumber(target.llm_generation_duration_ms) + finiteNumber(source.llm_generation_duration_ms)
 }
 
 const emptyExecutionCost = (): CostExecutionAggregate => emptyCost()

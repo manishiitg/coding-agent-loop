@@ -216,6 +216,7 @@ curl -fsSI "https://confida.agentworkshq.com/login" | head -1
     tr '\\0' '\\n' < \"/proc/\$pid/environ\" | grep -Fqx 'AGENTWORKS_BROWSER_SESSION_PREFIX=confida'
     tr '\\0' '\\n' < \"/proc/\$pid/environ\" | grep -Fqx 'AGENTWORKS_BROWSER_STAGING_NAMESPACE=confida'
     tr '\\0' '\\n' < \"/proc/\$pid/environ\" | grep -Fqx 'AGENTWORKS_ADMIN_ONLY_PRODUCT_SURFACES=work'
+    tr '\\0' '\\n' < \"/proc/\$pid/environ\" | grep -Fqx 'DISPLAY_TIME_ZONE=America/New_York'
   done"
 
 echo "==> Done."

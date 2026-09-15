@@ -256,8 +256,9 @@ describe('hydrateTabEvents restored chat fallback', () => {
     }
     const ordered = events.map(label)
     expect(ordered[0]).toBe('conversation_resumed')
-    expect(ordered.indexOf('progress before tool')).toBeLessThan(ordered.indexOf('tool'))
-    expect(ordered.indexOf('tool')).toBeLessThan(ordered.indexOf('latest question'))
+    expect(ordered.indexOf('tool')).toBeLessThan(ordered.indexOf('progress before tool'))
+    expect(ordered.indexOf('progress before tool')).toBeLessThan(ordered.indexOf('latest question'))
+    expect(ordered.indexOf('agent_end')).toBeLessThan(ordered.indexOf('latest question'))
     expect(ordered.indexOf('latest question')).toBeLessThan(ordered.indexOf('latest answer'))
   })
 

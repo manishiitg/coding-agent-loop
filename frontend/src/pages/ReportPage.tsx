@@ -3,6 +3,8 @@ import { ReportView } from '../components/workflow/ReportViewer'
 
 interface ReportPageProps {
   encodedPath: string
+  ownerUid?: string
+  currentUserId?: string
   onBack?: () => void
 }
 
@@ -18,24 +20,29 @@ function decodeBase64Utf8(value: string): string | null {
   }
 }
 
-function isSafeWorkflowPath(path: string): boolean {
+function isSafeReportWorkspacePath(path: string): boolean {
   const normalized = path.replace(/\\/g, '/').replace(/^\/+/, '')
   if (!normalized || normalized.split('/').includes('..')) return false
-  return normalized === path && normalized.startsWith('Workflow/')
+  if (normalized !== path) return false
+  if (normalized.startsWith('Workflow/')) return normalized.split('/').length === 2
+  return normalized.startsWith('Chats/Work/projects/') && normalized.split('/').length >= 4
 }
 
-export function ReportPage({ encodedPath, onBack }: ReportPageProps) {
+export function ReportPage({ encodedPath, ownerUid, currentUserId, onBack }: ReportPageProps) {
   const workspacePath = decodeBase64Utf8(encodedPath)
-  const isValidPath = workspacePath !== null && isSafeWorkflowPath(workspacePath)
+  const isValidPath = workspacePath !== null && isSafeReportWorkspacePath(workspacePath)
+  const isWrongPersonalAccount = Boolean(ownerUid && ownerUid !== currentUserId)
 
-  if (!isValidPath) {
+  if (!isValidPath || isWrongPersonalAccount) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-background px-4 text-foreground">
         <div className="w-full max-w-md rounded-lg border border-border bg-card p-6 text-center shadow-sm">
           <BarChart3 className="mx-auto mb-4 h-10 w-10 text-muted-foreground" />
-          <h1 className="mb-2 text-lg font-semibold">Invalid dashboard URL</h1>
+          <h1 className="mb-2 text-lg font-semibold">{isWrongPersonalAccount ? 'Dashboard unavailable' : 'Invalid dashboard URL'}</h1>
           <p className="mb-4 text-sm text-muted-foreground">
-            The dashboard URL must include a valid encoded workflow path.
+            {isWrongPersonalAccount
+              ? 'This Work dashboard belongs to a different signed-in account.'
+              : 'The dashboard URL must include a valid encoded workflow or Work project path.'}
           </p>
           {onBack && (
             <button

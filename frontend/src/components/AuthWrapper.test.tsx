@@ -7,7 +7,7 @@ vi.mock('../pages/Login', () => ({ Login: () => <div>App sign in</div> }))
 vi.mock('../pages/AuthCallback', () => ({ AuthCallback: () => <div>OAuth</div> }))
 vi.mock('../pages/SharedFile', () => ({ SharedFile: ({ encodedPath }: { encodedPath: string }) => <div>Shared asset {encodedPath}</div> }))
 vi.mock('../pages/SharedFolder', () => ({ SharedFolder: () => <div>Shared folder</div> }))
-vi.mock('../pages/ReportPage', () => ({ ReportPage: () => <div>Report</div> }))
+vi.mock('../pages/ReportPage', () => ({ ReportPage: ({ encodedPath, ownerUid, currentUserId }: { encodedPath: string; ownerUid?: string; currentUserId?: string }) => <div>Report {encodedPath} owner {ownerUid} viewer {currentUserId}</div> }))
 vi.mock('./WorkspaceConnectionSwitcher', () => ({ WorkspaceConnectionSwitcher: () => null }))
 vi.mock('./DesktopAppOnlyGate', () => ({ DesktopAppOnlyGate: () => null }))
 vi.mock('../services/api', () => ({ isDesktopAppOnlyMode: () => false }))
@@ -50,6 +50,25 @@ describe('Shared asset sign in', () => {
       await act(async () => root.render(<AuthWrapper>Generic workflow with hints</AuthWrapper>))
       expect(host.textContent).toContain('Shared asset V29ya2Zsb3cvY29uZmlkYS1sb2dpbi9yZXBvcnQuaHRtbA==')
       expect(host.textContent).not.toContain('Generic workflow with hints')
+    } finally { await act(async () => root.unmount()); host.remove(); window.history.replaceState({}, '', '/') }
+  })
+
+  it('preserves the Work project owner on an authenticated report link', async () => {
+    window.history.replaceState({}, '', '/report?path=Q2hhdHMvV29yay9wcm9qZWN0cy9kZW1v&uid=work-user')
+    vi.mocked(useAuthStore).mockReturnValue({
+      user: { id: 'work-user', username: 'work-user' },
+      isMultiUserMode: true,
+      isMultiUserModeChecked: true,
+      isAuthenticated: true,
+      isLoading: false,
+      checkAuth: vi.fn(),
+      checkAuthMode: vi.fn(),
+      login: vi.fn(),
+    } as ReturnType<typeof useAuthStore>)
+    const host = document.createElement('div'); document.body.append(host); const root = createRoot(host)
+    try {
+      await act(async () => root.render(<AuthWrapper>Home</AuthWrapper>))
+      expect(host.textContent).toContain('Report Q2hhdHMvV29yay9wcm9qZWN0cy9kZW1v owner work-user viewer work-user')
     } finally { await act(async () => root.unmount()); host.remove(); window.history.replaceState({}, '', '/') }
   })
 })

@@ -137,6 +137,7 @@ func TestRegisterAgentProfileToolsDeclaresResolvedPublicNameToGate(t *testing.T)
 	}
 	foundIdentity := false
 	foundFileLink := false
+	foundReportLink := false
 	for _, name := range registrar.admitted {
 		if name == "set_work_identity" {
 			foundIdentity = true
@@ -144,12 +145,18 @@ func TestRegisterAgentProfileToolsDeclaresResolvedPublicNameToGate(t *testing.T)
 		if name == "get_file_link" {
 			foundFileLink = true
 		}
+		if name == "get_report_link" {
+			foundReportLink = true
+		}
 	}
 	if !foundIdentity {
 		t.Fatalf("admitted profile tools = %v, missing set_work_identity", registrar.admitted)
 	}
 	if !foundFileLink {
 		t.Fatalf("admitted profile tools = %v, missing get_file_link", registrar.admitted)
+	}
+	if !foundReportLink {
+		t.Fatalf("admitted profile tools = %v, missing get_report_link", registrar.admitted)
 	}
 }
 

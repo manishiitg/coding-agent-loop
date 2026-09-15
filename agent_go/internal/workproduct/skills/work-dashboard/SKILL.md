@@ -51,4 +51,9 @@ or another project view intended to organize or manage information visually.
 - Verify responsive layout, light and dark themes, navigation, empty states,
   and any buttons or filters. Use the managed browser when it materially
   improves confidence.
+- When the user asks for a URL to this Dashboard, call `get_report_link` with
+  no arguments and present its returned `url` verbatim. It opens the full live
+  Dashboard runtime, not the restricted generic HTML file preview. The link is
+  private to the same signed-in Work account; it contains no credential and
+  does not grant access or publish the project publicly.
 - Tell the user the Dashboard is available from the Work **Dashboard** button.

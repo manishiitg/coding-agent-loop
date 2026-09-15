@@ -16,6 +16,7 @@ interface AuthWrapperProps {
 
 export function AuthWrapper({ children }: AuthWrapperProps) {
   const {
+    user,
     isAuthenticated,
     isMultiUserMode,
     isMultiUserModeChecked,
@@ -78,6 +79,7 @@ export function AuthWrapper({ children }: AuthWrapperProps) {
       const reportPath = encodedPathFor('report')
       if (reportPath) {
         setReportWorkspacePath(reportPath)
+        if (uidParam) setSharedUid(uidParam)
         return
       }
 
@@ -169,6 +171,8 @@ export function AuthWrapper({ children }: AuthWrapperProps) {
       return (
         <ReportPage
           encodedPath={reportWorkspacePath}
+          ownerUid={sharedUid || undefined}
+          currentUserId={user?.id}
           onBack={() => {
             setReportWorkspacePath(null)
             window.history.pushState({}, '', '/')
@@ -198,6 +202,8 @@ export function AuthWrapper({ children }: AuthWrapperProps) {
     return (
       <ReportPage
         encodedPath={reportWorkspacePath}
+        ownerUid={sharedUid || undefined}
+        currentUserId={user?.id}
         onBack={() => {
           setReportWorkspacePath(null)
           window.history.pushState({}, '', '/')

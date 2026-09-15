@@ -5,6 +5,7 @@ import (
 	"time"
 
 	storeevents "github.com/manishiitg/coding-agent-loop/agent_go/internal/events"
+	agentevents "github.com/manishiitg/mcpagent/events"
 )
 
 // scheduledTurnFailureEventTypes are the events a turn emits when it could not
@@ -41,12 +42,17 @@ func scheduledTurnFailure(store *storeevents.EventStore, sessionID string, since
 	if !result.Exists {
 		return ""
 	}
-	// Scan newest-first: the turn that just ran is at the end, and an older
-	// failure from an earlier turn in the same session must not condemn this one.
+	// Scan newest-first so the terminal outcome wins. Providers can emit a
+	// transient conversation_error and then recover on a later attempt. Once a
+	// main-level completion contains real assistant output, an older error from
+	// the same turn no longer means that the turn "produced no response".
 	for i := len(result.Events) - 1; i >= 0; i-- {
 		event := result.Events[i]
 		if !since.IsZero() && event.Timestamp.Before(since) {
 			break
+		}
+		if scheduledTurnProducedResponse(event) {
+			return ""
 		}
 		if !scheduledTurnFailureEventTypes[event.Type] {
 			continue
@@ -57,4 +63,24 @@ func scheduledTurnFailure(store *storeevents.EventStore, sessionID string, since
 		return "turn ended with " + event.Type
 	}
 	return ""
+}
+
+// scheduledTurnProducedResponse recognizes only a successful main-agent
+// completion with non-empty assistant text. agent_end alone is deliberately
+// insufficient: failure paths can emit lifecycle cleanup without a response.
+// Nested workflow agents cannot rescue a failed workshop turn merely by
+// completing their own work in the same session.
+func scheduledTurnProducedResponse(event storeevents.Event) bool {
+	if event.Data == nil || event.Data.HierarchyLevel != 0 || event.Data.Data == nil {
+		return false
+	}
+	switch payload := event.Data.Data.(type) {
+	case *agentevents.UnifiedCompletionEvent:
+		return !strings.EqualFold(strings.TrimSpace(payload.Status), "error") &&
+			strings.TrimSpace(payload.FinalResult) != ""
+	case *agentevents.LLMGenerationEndEvent:
+		return strings.TrimSpace(payload.Content) != ""
+	default:
+		return false
+	}
 }

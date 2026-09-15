@@ -21,7 +21,7 @@ func (api *StreamingAPI) registerShareLinkTools(reg definitionToolRegistrar, use
 	if strings.TrimSpace(workspace) == "" {
 		return nil
 	}
-	return reg.RegisterCustomTool("get_file_link", "Create an authenticated AgentWorks preview link for an existing file or folder in the active workflow. Pass a canonical workflow-relative path such as db/reports/index.html or runs/latest; the server validates current workflow access, existence, protected-path rules, and whether the target is a file or folder. Present the returned url value verbatim; never manually build, rewrite, or Base64-encode a /file or /folder URL. The URL contains no credential and grants no access: every recipient must sign in and already have access to this workflow. This is not publishing and cannot create anonymous links or share arbitrary web URLs.", map[string]interface{}{
+	if err := reg.RegisterCustomTool("get_file_link", "Create an authenticated AgentWorks preview link for an existing file or folder in the active workflow. Pass a canonical workflow-relative path such as db/reports/index.html or runs/latest; the server validates current workflow access, existence, protected-path rules, and whether the target is a file or folder. Present the returned url value verbatim; never manually build, rewrite, or Base64-encode a /file or /folder URL. The URL contains no credential and grants no access: every recipient must sign in and already have access to this workflow. This is not publishing and cannot create anonymous links or share arbitrary web URLs.", map[string]interface{}{
 		"type":                 "object",
 		"additionalProperties": false,
 		"required":             []string{"path"},
@@ -48,6 +48,23 @@ func (api *StreamingAPI) registerShareLinkTools(reg definitionToolRegistrar, use
 		}
 
 		return createSecureShareLink(ctx, workspace, workspace, clean, "", "Recipient must sign in to AgentWorks and already have access to this workflow. The link contains no credential and grants no access.")
+	}, "workflow_files"); err != nil {
+		return err
+	}
+
+	return reg.RegisterCustomTool("get_report_link", "Create an authenticated AgentWorks dashboard link for the active workflow's db/reports/index.html. The server validates current workflow access and confirms that the report exists. Present the returned url value verbatim; never manually build, rewrite, or Base64-encode a /report URL. The dedicated report viewer preserves the dashboard's styling, tabs, live data API, file actions, and refresh behavior. The URL contains no credential and grants no access: every recipient must sign in and already have access to this workflow. This is secure internal sharing, not anonymous public publishing.", map[string]interface{}{
+		"type":                 "object",
+		"additionalProperties": false,
+		"properties":           map[string]interface{}{},
+	}, func(ctx context.Context, _ map[string]interface{}) (string, error) {
+		ctx = context.WithValue(ctx, UserContextKey, &UserClaims{UserID: userID})
+		if userAccessForClaims(&UserClaims{UserID: userID}).Disabled {
+			return "", fmt.Errorf("access denied: disabled account")
+		}
+		if _, err := authorizeWorkflowContextPaths(ctx, []string{workspace}); err != nil {
+			return "", fmt.Errorf("workflow is unavailable or access denied")
+		}
+		return createSecureReportLink(ctx, workspace, workspace, "", "Recipient must sign in to AgentWorks and already have access to this workflow. The link contains no credential and grants no access.")
 	}, "workflow_files")
 }
 
@@ -61,7 +78,7 @@ func (api *StreamingAPI) registerWorkShareLinkTool(reg definitionToolRegistrar, 
 	}
 	canonicalWorkspace := canonicalChatHistoryWorkspacePath(userID, cleanWorkspace)
 	physicalRoot := agentProfileRuntimeWorkspace(userID, canonicalWorkspace)
-	return reg.RegisterCustomTool("get_file_link", "Create an authenticated preview link for an existing file or folder in the active Work project. Pass a canonical project-relative path; the server validates existence, protected-path rules, and whether the target is a file or folder. Present the returned url value verbatim; never manually build, rewrite, or Base64-encode a /file or /folder URL. The URL contains no credential and grants no access. Work projects are personal: the link can currently be opened only by the same signed-in Work account. This is not public publishing and cannot share arbitrary web URLs or files outside this project.", map[string]interface{}{
+	if err := reg.RegisterCustomTool("get_file_link", "Create an authenticated preview link for an existing file or folder in the active Work project. Pass a canonical project-relative path; the server validates existence, protected-path rules, and whether the target is a file or folder. Present the returned url value verbatim; never manually build, rewrite, or Base64-encode a /file or /folder URL. The URL contains no credential and grants no access. Work projects are personal: the link can currently be opened only by the same signed-in Work account. This is not public publishing and cannot share arbitrary web URLs or files outside this project.", map[string]interface{}{
 		"type":                 "object",
 		"additionalProperties": false,
 		"required":             []string{"path"},
@@ -79,7 +96,45 @@ func (api *StreamingAPI) registerWorkShareLinkTool(reg definitionToolRegistrar, 
 			return "", fmt.Errorf("private workspace files are not shareable")
 		}
 		return createSecureShareLink(ctx, physicalRoot, canonicalWorkspace, clean, userID, "The link contains no credential and grants no access. It can currently be opened only by this same signed-in Work account.")
+	}, "work_files"); err != nil {
+		return err
+	}
+
+	return reg.RegisterCustomTool("get_report_link", "Create an authenticated AgentWorks dashboard link for the active Work project's db/reports/index.html. The server validates that the dashboard exists and emits the canonical project URL even when this is a resumed chat with an expanded _users path. Present the returned url value verbatim; never manually build, rewrite, or Base64-encode a /report URL. The dedicated report viewer preserves the dashboard's styling, tabs, live project data, file actions, and refresh behavior. The URL contains no credential and grants no access. Work projects are personal: it can be opened only by the same signed-in Work account.", map[string]interface{}{
+		"type":                 "object",
+		"additionalProperties": false,
+		"properties":           map[string]interface{}{},
+	}, func(ctx context.Context, _ map[string]interface{}) (string, error) {
+		return createSecureReportLink(ctx, physicalRoot, canonicalWorkspace, userID, "The link contains no credential and grants no access. It can currently be opened only by this same signed-in Work account.")
 	}, "work_files")
+}
+
+func createSecureReportLink(ctx context.Context, metadataRoot, linkRoot, userID, authentication string) (string, error) {
+	const reportPath = "db/reports/index.html"
+	metadata, err := sharedAssetMetadata(ctx, metadataRoot, reportPath)
+	if err != nil {
+		return "", fmt.Errorf("project report is unavailable: %w", err)
+	}
+	if kind, _ := metadata["type"].(string); kind != "file" {
+		return "", fmt.Errorf("project report is not a file")
+	}
+	publicURL := strings.TrimRight(strings.TrimSpace(os.Getenv("PUBLIC_URL")), "/")
+	if publicURL == "" {
+		return "", fmt.Errorf("PUBLIC_URL is not configured on this server; cannot create a report link")
+	}
+	previewURL := sharedAssetPublicURLForUser(publicURL, "report", linkRoot, userID)
+	result := map[string]interface{}{
+		"kind":           "report",
+		"path":           reportPath,
+		"url":            previewURL,
+		"preview_url":    previewURL,
+		"authentication": authentication,
+	}
+	encoded, err := json.Marshal(result)
+	if err != nil {
+		return "", fmt.Errorf("cannot encode report link metadata: %w", err)
+	}
+	return string(encoded), nil
 }
 
 func createSecureShareLink(ctx context.Context, metadataRoot, linkRoot, relative, userID, authentication string) (string, error) {

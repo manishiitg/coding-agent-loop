@@ -59,6 +59,7 @@ profile:
     mode: allowlist
     enabled:
       - get_file_link
+      - get_report_link
     # Populated by features above. Not enabled, deliberately: workflow
     # schedule/route tools,
     # pulse/improvement tools, workflow-step orchestration, media-generation tools,

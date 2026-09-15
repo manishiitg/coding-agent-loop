@@ -57,6 +57,63 @@ func TestGetFileLinkToolCreatesAuthenticatedFileAndFolderLinks(t *testing.T) {
 	}
 }
 
+func TestGetReportLinkToolCreatesAuthenticatedDashboardLink(t *testing.T) {
+	f := newExternalToolsFixture(t)
+	t.Setenv("PUBLIC_URL", "https://confida.example/")
+	f.write(t, "Workflow/invoices/db/reports/index.html", "<html><title>Invoices</title></html>")
+	reg := &recordingRegistrar{}
+	if err := f.api.registerShareLinkTools(reg, "owner", "Workflow/invoices"); err != nil {
+		t.Fatal(err)
+	}
+	tool, ok := reg.tools["get_report_link"]
+	if !ok || !strings.Contains(tool.desc, "dashboard") || !strings.Contains(tool.desc, "grants no access") {
+		t.Fatalf("get_report_link registration = %+v", tool)
+	}
+	out, err := tool.exec(context.Background(), map[string]interface{}{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var result map[string]interface{}
+	if err := json.Unmarshal([]byte(out), &result); err != nil {
+		t.Fatal(err)
+	}
+	if result["kind"] != "report" || result["path"] != "db/reports/index.html" || result["url"] != result["preview_url"] {
+		t.Fatalf("report metadata = %#v", result)
+	}
+	preview, err := url.Parse(result["url"].(string))
+	if err != nil || preview.Path != "/report" {
+		t.Fatalf("report preview = %v err=%v", preview, err)
+	}
+	decoded, err := base64.StdEncoding.DecodeString(preview.Query().Get("path"))
+	if err != nil || string(decoded) != "Workflow/invoices" {
+		t.Fatalf("report encoded path = %q err=%v", decoded, err)
+	}
+	if strings.Contains(preview.RawQuery, "token") {
+		t.Fatal("report URL contains a credential")
+	}
+}
+
+func TestGetReportLinkToolRejectsUnauthorizedOrMissingReport(t *testing.T) {
+	f := newExternalToolsFixture(t)
+	t.Setenv("PUBLIC_URL", "https://confida.example")
+
+	denied := &recordingRegistrar{}
+	if err := f.api.registerShareLinkTools(denied, "outsider", "Workflow/invoices"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := denied.tools["get_report_link"].exec(context.Background(), map[string]interface{}{}); err == nil {
+		t.Fatal("outsider created a workflow report link")
+	}
+
+	allowed := &recordingRegistrar{}
+	if err := f.api.registerShareLinkTools(allowed, "owner", "Workflow/invoices"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := allowed.tools["get_report_link"].exec(context.Background(), map[string]interface{}{}); err == nil {
+		t.Fatal("missing workflow report received a link")
+	}
+}
+
 func TestGetFileLinkToolScopesWorkLinksToProjectOwner(t *testing.T) {
 	f := newExternalToolsFixture(t)
 	t.Setenv("PUBLIC_URL", "https://confida.example")
@@ -137,6 +194,42 @@ func TestGetFileLinkToolScopesWorkLinksToProjectOwner(t *testing.T) {
 	decoded, err := base64.StdEncoding.DecodeString(preview.Query().Get("path"))
 	if err != nil || string(decoded) != "Chats/Work/projects/demo/output/report.txt" {
 		t.Fatalf("resumed Work encoded path = %q err=%v", decoded, err)
+	}
+}
+
+func TestGetReportLinkToolScopesWorkDashboardToProjectOwner(t *testing.T) {
+	f := newExternalToolsFixture(t)
+	t.Setenv("PUBLIC_URL", "https://confida.example")
+	const userID = "work-user"
+	f.write(t, "_users/"+userID+"/Chats/Work/projects/demo/db/reports/index.html", "<html><title>Work dashboard</title></html>")
+
+	for _, workspace := range []string{
+		"Chats/Work/projects/demo",
+		"_users/work-user/Chats/Work/projects/demo",
+	} {
+		reg := &recordingRegistrar{}
+		if err := f.api.registerWorkShareLinkTool(reg, userID, workspace); err != nil {
+			t.Fatalf("register Work report tool for %s: %v", workspace, err)
+		}
+		out, err := reg.tools["get_report_link"].exec(context.Background(), map[string]interface{}{})
+		if err != nil {
+			t.Fatalf("create Work report link for %s: %v", workspace, err)
+		}
+		var result map[string]interface{}
+		if err := json.Unmarshal([]byte(out), &result); err != nil {
+			t.Fatal(err)
+		}
+		preview, err := url.Parse(result["url"].(string))
+		if err != nil || preview.Path != "/report" || preview.Query().Get("uid") != userID {
+			t.Fatalf("Work report preview = %v err=%v", preview, err)
+		}
+		decoded, err := base64.StdEncoding.DecodeString(preview.Query().Get("path"))
+		if err != nil || string(decoded) != "Chats/Work/projects/demo" {
+			t.Fatalf("Work report encoded path = %q err=%v", decoded, err)
+		}
+		if strings.Contains(preview.RawQuery, "token") {
+			t.Fatal("Work report URL contains a credential")
+		}
 	}
 }
 

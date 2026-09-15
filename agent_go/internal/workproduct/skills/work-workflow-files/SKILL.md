@@ -7,6 +7,11 @@ description: Read and interpret files from attached folders or read-only AgentWo
 
 ## Share an active Work project file or folder
 
+For the project's live Dashboard, call `get_report_link` with no arguments and
+use its returned `url`. Do not pass `db/reports/index.html` to `get_file_link`:
+that would open a restricted generic HTML preview instead of the full Dashboard
+runtime.
+
 Call `get_file_link` with the path relative to the active Work project. The
 server verifies that the target exists, rejects private or escaping paths,
 detects file versus folder, and returns the correct authenticated

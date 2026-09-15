@@ -4,7 +4,22 @@ Use this reference when a user wants a link to an existing workflow artifact
 without publishing it. These are authenticated AgentWorks preview links, not
 public hosting.
 
-## Create a link
+## Create a report link
+
+For the active workflow's dashboard, call `get_report_link` with no arguments:
+
+```json
+{}
+```
+
+The server verifies access and confirms that `db/reports/index.html` exists,
+then returns a dedicated `/report` URL. Present its `url` value verbatim. This
+viewer uses the same report runtime as Builder, including the report's styling,
+tabs, live data API, file actions, and refresh behavior. Do not use
+`get_file_link` for the dashboard: its restricted generic HTML preview is not
+the report runtime.
+
+## Create a file or folder link
 
 Call `get_file_link` with a canonical path relative to the active workflow:
 
@@ -47,3 +62,11 @@ tool result as JSON and use `url` (or legacy `preview_url`). Persist or send tha
 workflow contract requires it. A scripted step must pass the artifact's current
 workflow-relative path; it cannot create links for another workflow or for an
 arbitrary web URL.
+
+For the workflow dashboard, use the same bridge pattern with an empty payload
+and the report tool:
+
+```bash
+payload='{}'
+curl --fail-with-body -sS --json "$payload" -H "$MCP_AUTH" "$MCP_CUSTOM/get_report_link"
+```

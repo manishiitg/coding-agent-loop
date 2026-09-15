@@ -11,11 +11,12 @@ describe('open report stability', () => {
     expect(source).not.toContain('report_plan.json')
   })
 
-  it('shows durable workflow decisions with the report dashboard', () => {
-    const source = readFileSync('src/components/workflow/ReportViewer.tsx', 'utf8')
+  it('keeps durable workflow decisions out of Reports and scoped to Pulse', () => {
+    const report = readFileSync('src/components/workflow/ReportViewer.tsx', 'utf8')
+    const pulse = readFileSync('src/components/workflow/PulseWorkspace.tsx', 'utf8')
 
-    expect(source).toContain('ReportHumanInputPanel')
-    expect(source).toContain('historyMode="collapsed"')
+    expect(report).not.toContain('ReportHumanInputPanel')
+    expect(pulse).toContain('<ReportHumanInputPanel')
   })
 
   it('keeps report reload behind the explicit toolbar refresh action', () => {

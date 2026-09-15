@@ -76,6 +76,13 @@ func queryRequestForAgentProfileChat(profile agentprofiles.Profile, input AgentP
 		AgentProfileID:              profile.ID,
 		AgentProfileVersion:         profile.Version,
 		AgentProfileConversationKey: conversation.ConversationKey,
+		// The registry has already verified that this durable session belongs to
+		// the signed-in user and selected product resource. Carry that trusted
+		// identity into the shared runner so a reopened product chat can restore
+		// its provider-native session, or replay its bounded saved transcript when
+		// native resume is unavailable. The narrow product API still gives the
+		// browser no way to nominate an arbitrary restore path or session.
+		RestoredConversationSessionID: conversation.SessionID,
 		AgentProfileContext: agentprofiles.PromptContext{
 			ProjectTitle:         firstNonEmptyTrimmed(conversation.Title, profile.Name),
 			WorkspaceDescription: conversation.Description,

@@ -57,8 +57,8 @@ func TestQueryRequestForAgentProfileChatUsesOnlyServerOwnedProfileConfiguration(
 	if query.SelectedFolder != "Chats" || query.AgentProfileContext.ProjectTitle != "Dominion" {
 		t.Fatalf("unexpected server-owned workspace binding: folder=%q context=%+v", query.SelectedFolder, query.AgentProfileContext)
 	}
-	if query.RestoredConversationPath != "" || query.RestoredConversationSessionID != "" {
-		t.Fatalf("browser-controlled restore leaked into query: path=%q session=%q", query.RestoredConversationPath, query.RestoredConversationSessionID)
+	if query.RestoredConversationPath != "" || query.RestoredConversationSessionID != "session-1" {
+		t.Fatalf("server-owned resume identity missing or browser path leaked: path=%q session=%q", query.RestoredConversationPath, query.RestoredConversationSessionID)
 	}
 	if query.AgentMode != "multi-agent" || query.DisableLiveInputDelivery {
 		t.Fatalf("unexpected runner configuration: mode=%q disable_live_input=%v", query.AgentMode, query.DisableLiveInputDelivery)

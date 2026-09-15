@@ -39,6 +39,7 @@ export function useResumePreviousChat() {
 
     const profileId = targetTab.metadata.agentProfileId
     let conversationKey = targetTab.metadata.agentProfileConversationKey
+    let resumeProjectId: string | undefined
     let createResumedTab = false
 
     // Work's permanent Workshop tab is a history/new-chat launch surface. A
@@ -58,20 +59,16 @@ export function useResumePreviousChat() {
         targetTab = existing
         conversationKey = existing.metadata?.agentProfileConversationKey
       } else {
-        // The manifest's project id is the authorization key. New Work tabs
-        // carry it as their conversation-key prefix; agentProfileProjectId is
-        // the migration fallback for Builder tabs persisted before that field
-        // was added.
-        const projectConversationKey = targetTab.metadata.agentProfileConversationKey?.split(':', 1)[0]
-          || targetTab.metadata.agentProfileProjectId
-        conversationKey = projectConversationKey
-          ? `${projectConversationKey}:${session.session_id}`
-          : session.session_id
+        // The browser sends only the project and selected chat identities. The
+        // server owns the registry key format and verifies project ownership.
+        resumeProjectId = targetTab.metadata.agentProfileProjectId
+          || targetTab.metadata.agentProfileConversationKey?.split(':', 1)[0]
+        conversationKey = undefined
         createResumedTab = true
       }
     }
 
-    if (!conversationKey) {
+    if (!conversationKey && !resumeProjectId) {
       useChatStore.getState().addToast('This chat has no product conversation binding.', 'error')
       return
     }
@@ -84,6 +81,7 @@ export function useResumePreviousChat() {
     try {
       resumedConversation = await agentApi.switchAgentProfileConversation(profileId, {
         conversation_key: conversationKey,
+        resource_id: resumeProjectId,
         session_id: session.session_id,
       })
     } catch (error) {

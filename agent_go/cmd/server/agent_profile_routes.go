@@ -44,15 +44,55 @@ type AgentProfileChatRequest struct {
 
 type AgentProfileConversationRequest struct {
 	ConversationKey string `json:"conversation_key,omitempty"`
+	// ResourceID lets Work resume with the stable project id plus the saved chat
+	// id. The server derives the tab-specific conversation key; the browser does
+	// not need to understand registry key construction.
+	ResourceID string `json:"resource_id,omitempty"`
 	// SessionID names an earlier conversation of the slot to make live again
 	// (POST …/conversation/switch); the other conversation routes ignore it.
 	SessionID string `json:"session_id,omitempty"`
+}
+
+func agentProfileResumeConversationKey(profileID string, input AgentProfileConversationRequest) string {
+	if key := strings.TrimSpace(input.ConversationKey); key != "" {
+		return key
+	}
+	resourceID := strings.TrimSpace(input.ResourceID)
+	if strings.EqualFold(strings.TrimSpace(profileID), "work") && resourceID != "" && strings.TrimSpace(input.SessionID) != "" {
+		return resourceID + ":" + strings.TrimSpace(input.SessionID)
+	}
+	return resourceID
 }
 
 type AgentProfileConversationResponse struct {
 	ConversationID  string `json:"conversation_id"`
 	ConversationKey string `json:"conversation_key"`
 	SessionID       string `json:"session_id"`
+}
+
+type resolvedResumeTargetContextKey struct{}
+
+func resolveProductResumeTarget(userID string, conversation ProductConversationRecord) (*resolvedResumeTarget, bool, error) {
+	workspacePath := normalizeConversationWorkspace(conversation.WorkspacePath)
+	// Local Work history lives below the authenticated user's project root.
+	// Rebuild that canonical owner prefix after normalizing absolute/runtime
+	// variants; the history reader can still fall back to legacy global chats.
+	lookupWorkspacePath := workspacePath
+	if workspacePath != "" {
+		lookupWorkspacePath = filepath.ToSlash(filepath.Join("_users", sanitizeUserIDForPath(userID), filepath.FromSlash(workspacePath)))
+	}
+	target, ok, err := readRestoredChatHistoryPersistTargetForSession(userID, conversation.SessionID, lookupWorkspacePath)
+	if err != nil || !ok || target == nil {
+		return nil, false, err
+	}
+	return &resolvedResumeTarget{
+		SessionID:        target.SessionID,
+		WorkspacePath:    workspacePath,
+		ConversationPath: target.ConversationPath,
+		History:          target.History,
+		Runtime:          target.Runtime,
+		WorkshopMode:     target.WorkshopMode,
+	}, true, nil
 }
 
 // AgentProfilePresentationDeleteRequest is deliberately narrow: the browser
@@ -442,6 +482,14 @@ func (api *StreamingAPI) handleAgentProfileChatQuery(w http.ResponseWriter, r *h
 		writeAgentProfileError(w, http.StatusUnprocessableEntity, err.Error())
 		return
 	}
+	// Resolve the saved transcript, native provider handle, and persistence
+	// destination once. The shared runner receives this trusted target through
+	// context; it does not reconstruct product ownership from browser data.
+	resumeTarget, hasResumeTarget, err := resolveProductResumeTarget(productWorkspaceUserID(r.Context()), conversation)
+	if err != nil {
+		writeAgentProfileError(w, http.StatusInternalServerError, "resolve saved conversation: "+err.Error())
+		return
+	}
 	// Runtime changes keep the AgentWorks conversation identity but must close
 	// the retained coding CLI. Its provider/model flags are read only at launch;
 	// the shared runner relaunches it with the new project configuration below.
@@ -475,7 +523,11 @@ func (api *StreamingAPI) handleAgentProfileChatQuery(w http.ResponseWriter, r *h
 	// durable workspace remains owned by DEFAULT_USER_ID. Keep that gateway
 	// identity out of the shared query path so the folder guard, project
 	// initializer, history and registry all address the same project files.
-	forwarded := r.Clone(productWorkspaceContext(r.Context()))
+	forwardedContext := productWorkspaceContext(r.Context())
+	if hasResumeTarget {
+		forwardedContext = context.WithValue(forwardedContext, resolvedResumeTargetContextKey{}, resumeTarget)
+	}
+	forwarded := r.Clone(forwardedContext)
 	forwarded.Body = io.NopCloser(bytes.NewReader(encoded))
 	forwarded.ContentLength = int64(len(encoded))
 	forwarded.Header = r.Header.Clone()

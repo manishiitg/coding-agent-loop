@@ -780,6 +780,9 @@ type QueryRequest struct {
 	// Previous persisted chat session to resume from when callers do not know
 	// the conversation JSON path (for example Slack/WhatsApp bot channels).
 	RestoredConversationSessionID string `json:"restored_conversation_session_id,omitempty"`
+	// resolvedResumeTarget is attached only by a trusted server-owned product
+	// route. It is never accepted from or serialized back to a browser.
+	resolvedResumeTarget *resolvedResumeTarget `json:"-"`
 
 	// Workflow phase chat: phase ID for running a phase as a conversational chat session
 	// When agent_mode is "workflow_phase", this specifies which phase to run (e.g., "planning", "plan-improvement")
@@ -3334,6 +3337,9 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		errorMsg := fmt.Sprintf("Invalid request body: %v", err)
 		http.Error(w, errorMsg, http.StatusBadRequest)
 		return
+	}
+	if target, ok := r.Context().Value(resolvedResumeTargetContextKey{}).(*resolvedResumeTarget); ok {
+		req.resolvedResumeTarget = target
 	}
 	if err := validateRequestedCDPPorts(req); err != nil {
 		http.Error(w, "Invalid CDP configuration: "+err.Error(), http.StatusBadRequest)
@@ -6516,12 +6522,16 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		// Replaying the UI transcript caused repeated restore cycles to grow a
 		// coding-agent prompt without bound.
 		if !modeChangedThisTurn {
-			api.restorePersistedConversationHistory(
-				sessionID,
-				currentUserID,
-				workflowPhaseFolder,
-				newWorkshopMode,
-			)
+			if target := req.resolvedResumeTarget; target != nil {
+				api.restoreResolvedResumeTarget(sessionID, target, newWorkshopMode)
+			} else {
+				api.restorePersistedConversationHistory(
+					sessionID,
+					currentUserID,
+					workflowPhaseFolder,
+					newWorkshopMode,
+				)
+			}
 		}
 
 		// Snapshot the UI history. Whether it becomes fallback agent context is
@@ -6598,13 +6608,17 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			}
 			restoredConversationPathForFallback := restoredConversationPath
 			var restoredRuntime *ChatHistoryAgentRuntime
-			if runtime, ok, err := ReadChatHistoryRuntimeFromPath(currentUserID, restoredConversationPath); err != nil {
+			if target := req.resolvedResumeTarget; target != nil {
+				restoredConversationPathForFallback = target.ConversationPath
+				restoredRuntime = target.Runtime
+				restoredNativeCodingResume = api.seedCodingAgentRuntimeFromRestoredConversation(sessionID, finalProvider, newWorkshopMode, restoredRuntime, underlyingAgent)
+			} else if runtime, ok, err := ReadChatHistoryRuntimeFromPath(currentUserID, restoredConversationPath); err != nil {
 				logfWithContext(queryLogCtx, "[CHAT_HISTORY] Failed to read restored runtime from %s: %v", restoredConversationPath, err)
 			} else if ok {
 				restoredRuntime = runtime
 				restoredNativeCodingResume = api.seedCodingAgentRuntimeFromRestoredConversation(sessionID, finalProvider, newWorkshopMode, restoredRuntime, underlyingAgent)
 			}
-			if !restoredNativeCodingResume && restoredConversationPath == "" && restoredConversationSessionID != "" {
+			if req.resolvedResumeTarget == nil && !restoredNativeCodingResume && restoredConversationPath == "" && restoredConversationSessionID != "" {
 				if runtime, ok, err := ReadChatHistoryRuntimeForSession(currentUserID, restoredConversationSessionID, restoredConversationWorkspace); err != nil {
 					logfWithContext(queryLogCtx, "[CHAT_HISTORY] Failed to read restored runtime for session %s: %v", restoredConversationSessionID, err)
 				} else if ok {
@@ -6731,6 +6745,13 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 					chatQuery = cleanedChatQuery
 					logfWithContext(queryLogCtx, "[CHAT_HISTORY] Using native coding-agent resume; stripped restored conversation attach context from prompt")
 				}
+			} else if req.resolvedResumeTarget != nil && req.resolvedResumeTarget.crossesProvider(finalProvider) && restoredConversationPathForFallback != "" {
+				// Provider-native handles cannot cross CLI implementations. Keep the
+				// AgentWorks conversation stable and give the newly selected provider
+				// the trusted, project-owned transcript as read-only context.
+				chatQuery = appendRestoredConversationContext(chatQuery, restoredConversationPathForFallback)
+				replayHistoryToAgent = false
+				logfWithContext(queryLogCtx, "[CHAT_HISTORY] Resuming across providers saved=%s current=%s with trusted conversation context %s", req.resolvedResumeTarget.provider(), strings.ToLower(strings.TrimSpace(finalProvider)), restoredConversationPathForFallback)
 			} else if restoredConversationPathForFallback != "" {
 				// A conversation JSON is UI state. Never attach it as an ad-hoc
 				// prompt file: native resume is preferred, and an unavailable native
@@ -6919,25 +6940,40 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		persistConversationPath := ""
 		persistedHistoryForDisk := persistedHistory
 		var restoredPersistTarget *restoredChatHistoryPersistTarget
-		if target, ok, err := api.resolveRestoredCodingConversationPersistTarget(
-			currentUserID,
-			sessionID,
-			req.RestoredConversationPath,
-			req.RestoredConversationSessionID,
-			firstNonEmptyTrimmed(workflowPhaseFolder, normalizeConversationWorkspace(req.SelectedFolder)),
-			finalProvider,
-			newWorkshopMode,
-		); err != nil {
-			logfWithContext(queryLogCtx, "[CHAT_HISTORY] Failed to resolve restored coding-agent persistence target: %v", err)
-		} else if ok && target != nil {
-			restoredPersistTarget = target
-			persistSessionID = target.SessionID
-			persistConversationPath = target.ConversationPath
+		var resolvedTarget *restoredChatHistoryPersistTarget
+		var resolvedTargetOK bool
+		var resolvedTargetErr error
+		if req.resolvedResumeTarget != nil {
+			resolvedTarget = req.resolvedResumeTarget.persistTarget()
+			// Product resume keeps one AgentWorks conversation even when its CLI
+			// provider changes. The next save replaces the runtime metadata with the
+			// new provider's handle while preserving the original transcript path.
+			resolvedTargetOK = req.resolvedResumeTarget.canPersist(newWorkshopMode)
+			if resolvedTargetOK {
+				api.rememberRestoredConversationPersistTarget(sessionID, *resolvedTarget)
+			}
+		} else {
+			resolvedTarget, resolvedTargetOK, resolvedTargetErr = api.resolveRestoredCodingConversationPersistTarget(
+				currentUserID,
+				sessionID,
+				req.RestoredConversationPath,
+				req.RestoredConversationSessionID,
+				firstNonEmptyTrimmed(workflowPhaseFolder, normalizeConversationWorkspace(req.SelectedFolder)),
+				finalProvider,
+				newWorkshopMode,
+			)
+		}
+		if resolvedTargetErr != nil {
+			logfWithContext(queryLogCtx, "[CHAT_HISTORY] Failed to resolve restored coding-agent persistence target: %v", resolvedTargetErr)
+		} else if resolvedTargetOK && resolvedTarget != nil {
+			restoredPersistTarget = resolvedTarget
+			persistSessionID = resolvedTarget.SessionID
+			persistConversationPath = resolvedTarget.ConversationPath
 			// Also deliberately unbounded — and the merge makes it sharper: this
 			// combines the restored conversation with the current turn, so a
 			// bound here would trim the very history the user just reopened,
 			// permanently, on the first message they send into it.
-			persistedHistoryForDisk = mergeRestoredChatHistory(target.History, persistedHistory)
+			persistedHistoryForDisk = mergeRestoredChatHistory(resolvedTarget.History, persistedHistory)
 			logfWithContext(queryLogCtx, "[CHAT_HISTORY] Continuing restored coding-agent conversation current_session=%s persisted_session=%s path=%s merged_messages=%d",
 				sessionID, persistSessionID, persistConversationPath, len(persistedHistoryForDisk))
 		}

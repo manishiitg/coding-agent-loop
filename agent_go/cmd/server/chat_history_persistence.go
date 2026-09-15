@@ -90,6 +90,60 @@ type restoredChatHistoryPersistTarget struct {
 	WorkshopMode     string
 }
 
+// resolvedResumeTarget is the single server-owned description of a saved chat
+// being resumed. Product routes resolve it once from the authenticated project
+// and carry it through the shared runner without asking later stages to find the
+// same conversation again from a path, workspace, or session id.
+type resolvedResumeTarget struct {
+	SessionID        string
+	WorkspacePath    string
+	ConversationPath string
+	History          []llmtypes.MessageContent
+	Runtime          *ChatHistoryAgentRuntime
+	WorkshopMode     string
+}
+
+func (target *resolvedResumeTarget) persistTarget() *restoredChatHistoryPersistTarget {
+	if target == nil {
+		return nil
+	}
+	return &restoredChatHistoryPersistTarget{
+		SessionID:        target.SessionID,
+		ConversationPath: target.ConversationPath,
+		History:          target.History,
+		Runtime:          target.Runtime,
+		WorkshopMode:     target.WorkshopMode,
+	}
+}
+
+func (target *resolvedResumeTarget) provider() string {
+	if target == nil || target.Runtime == nil {
+		return ""
+	}
+	provider := strings.ToLower(strings.TrimSpace(target.Runtime.Provider))
+	if provider == "" && target.Runtime.AgentSessionHandle != nil {
+		provider = strings.ToLower(strings.TrimSpace(target.Runtime.AgentSessionHandle.Provider.Provider))
+	}
+	return provider
+}
+
+func (target *resolvedResumeTarget) crossesProvider(currentProvider string) bool {
+	savedProvider := target.provider()
+	currentProvider = strings.ToLower(strings.TrimSpace(currentProvider))
+	return savedProvider != "" && currentProvider != "" && savedProvider != currentProvider
+}
+
+func (target *resolvedResumeTarget) canPersist(currentWorkshopMode string) bool {
+	if target == nil || strings.TrimSpace(target.SessionID) == "" || strings.TrimSpace(target.ConversationPath) == "" {
+		return false
+	}
+	restoredMode := target.WorkshopMode
+	if target.Runtime != nil {
+		restoredMode = firstNonEmptyTrimmed(target.Runtime.WorkshopMode, restoredMode)
+	}
+	return chatHistoryResumeModesCompatible(restoredMode, currentWorkshopMode)
+}
+
 const (
 	maxPersistedChatHistoryUIEvents = 200
 	maxChatHistoryFallbackScan      = 1000
@@ -641,6 +695,39 @@ func (api *StreamingAPI) rememberRestoredConversationPersistTarget(currentSessio
 		Runtime:          target.Runtime,
 		WorkshopMode:     target.WorkshopMode,
 	}
+}
+
+// restoreResolvedResumeTarget hydrates UI history and persistence from the
+// same target that will seed the provider-native continuation. It performs no
+// path or session lookup; product ownership was already established by the
+// authenticated profile route.
+func (api *StreamingAPI) restoreResolvedResumeTarget(currentSessionID string, target *resolvedResumeTarget, currentWorkshopMode string) bool {
+	if api == nil || target == nil || strings.TrimSpace(currentSessionID) == "" {
+		return false
+	}
+	restoredMode := target.WorkshopMode
+	if target.Runtime != nil {
+		restoredMode = firstNonEmptyTrimmed(target.Runtime.WorkshopMode, restoredMode)
+	}
+	if !chatHistoryResumeModesCompatible(restoredMode, currentWorkshopMode) {
+		return false
+	}
+
+	history := append([]llmtypes.MessageContent(nil), target.History...)
+	if len(history) > 0 {
+		api.conversationMux.Lock()
+		if _, exists := api.conversationHistory[currentSessionID]; !exists {
+			if api.conversationHistory == nil {
+				api.conversationHistory = make(map[string][]llmtypes.MessageContent)
+			}
+			api.conversationHistory[currentSessionID] = history
+		}
+		api.conversationMux.Unlock()
+	}
+	if persistTarget := target.persistTarget(); persistTarget != nil {
+		api.rememberRestoredConversationPersistTarget(currentSessionID, *persistTarget)
+	}
+	return len(history) > 0
 }
 
 func (api *StreamingAPI) rememberedRestoredConversationPersistTarget(currentSessionID string) (*restoredChatHistoryPersistTarget, bool) {

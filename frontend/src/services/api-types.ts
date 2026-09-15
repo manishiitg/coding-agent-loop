@@ -239,6 +239,8 @@ export interface AgentProfileChatRequest {
 
 export interface AgentProfileConversationRequest {
   conversation_key?: string
+  /** Stable Work project id. Resume derives its tab key on the server. */
+  resource_id?: string
   /** An earlier conversation of the slot to make live again (…/conversation/switch). */
   session_id?: string
 }

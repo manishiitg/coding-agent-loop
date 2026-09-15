@@ -227,7 +227,8 @@ func (api *StreamingAPI) handleSwitchAgentProfileConversation(w http.ResponseWri
 		writeAgentProfileError(w, http.StatusBadRequest, "session_id is required")
 		return
 	}
-	userID, slot, ok := api.agentProfileConversationSlot(w, r, input.ConversationKey)
+	conversationKey := agentProfileResumeConversationKey(strings.TrimSpace(mux.Vars(r)["id"]), input)
+	userID, slot, ok := api.agentProfileConversationSlot(w, r, conversationKey)
 	if !ok {
 		return
 	}

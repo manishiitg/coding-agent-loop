@@ -65,6 +65,20 @@ func TestQueryRequestForAgentProfileChatUsesOnlyServerOwnedProfileConfiguration(
 	}
 }
 
+func TestWorkResumeKeyIsDerivedFromProjectAndSavedChat(t *testing.T) {
+	input := AgentProfileConversationRequest{ResourceID: "project-1", SessionID: "saved-chat"}
+	if got := agentProfileResumeConversationKey("work", input); got != "project-1:saved-chat" {
+		t.Fatalf("resume key=%q", got)
+	}
+	input.ConversationKey = "existing:key"
+	if got := agentProfileResumeConversationKey("work", input); got != "existing:key" {
+		t.Fatalf("existing key was replaced: %q", got)
+	}
+	if got := agentProfileResumeConversationKey("video-studio", AgentProfileConversationRequest{ResourceID: "launch", SessionID: "saved-chat"}); got != "launch" {
+		t.Fatalf("non-Work project key=%q", got)
+	}
+}
+
 func TestQueryRequestForAgentProfileChatRequiresServerOwnedWorkspace(t *testing.T) {
 	_, err := queryRequestForAgentProfileChat(
 		routeTestProfile("project-product", true, ""),

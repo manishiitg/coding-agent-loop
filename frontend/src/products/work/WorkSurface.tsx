@@ -246,11 +246,16 @@ function useWorkChatTabs(
             ...projectMetadata,
             ...selectedRuntimeMetadata,
             agentProfileBuilder: true,
+            agentProfileConversationKey: session.id,
           })
           builder = chatStore.getTab(builderId)
         }
         if (cancelled || !builder) return
-        chatStore.setTabMetadata(builder.tabId, { ...projectMetadata, ...selectedRuntimeMetadata })
+        chatStore.setTabMetadata(builder.tabId, {
+          ...projectMetadata,
+          ...selectedRuntimeMetadata,
+          agentProfileConversationKey: session.id,
+        })
         chatStore.setTabConfig(builder.tabId, { selectedServers: savedServers, selectedSkills: savedSkills })
         chatStore.setTabMetadata(builder.tabId, { agentProfileMCPSelectionInitialized: true })
 

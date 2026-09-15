@@ -43,14 +43,14 @@ export default function WorkflowBotsPanel({ workspacePath }: WorkflowBotsPanelPr
   return (
     <div className="space-y-4">
       {/* This workflow answers on */}
-      <div className="rounded-lg border border-border bg-muted/20 p-3">
+      <div>
         <div className="mb-1.5 text-sm font-medium text-muted-foreground">This workflow answers on</div>
         {!workflowId ? (
           <p className="text-xs text-muted-foreground">This panel needs an active workflow folder.</p>
         ) : myRoutes.length === 0 ? (
-          <p className="text-xs text-muted-foreground">No bot routes yet — add one below.</p>
+          <p className="rounded-md border border-dashed border-border bg-muted/20 px-3 py-2 text-xs text-muted-foreground">No bot routes yet. Add one below.</p>
         ) : (
-          <div className="flex flex-wrap gap-1.5">{myRoutes.map(route => <RouteChip key={routeId(route)} bots={bots} route={route} />)}</div>
+          <div className="grid gap-2 sm:grid-cols-2">{myRoutes.map(route => <RouteChip key={routeId(route)} bots={bots} route={route} />)}</div>
         )}
         {routeError && (
           <p className="mt-2 flex items-start gap-1.5 text-xs text-red-600 dark:text-red-400">

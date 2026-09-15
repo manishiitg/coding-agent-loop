@@ -27,7 +27,7 @@ func TestMCPManagementRegistrationFollowsChatPolicy(t *testing.T) {
 		{name: "Pulse reviewer", mode: "workshop", req: QueryRequest{SessionKind: "pulse_reviewer", ParentSessionID: "parent"}},
 		{name: "restored child", mode: "workshop", active: &ActiveSessionInfo{ParentSessionID: "parent"}},
 		{name: "notification", mode: "workshop", req: QueryRequest{IsAutoNotification: true}},
-		{name: "bot", mode: "workshop", req: QueryRequest{BotPlatform: "slack"}},
+		{name: "bot", mode: "workshop", req: QueryRequest{BotPlatform: "slack"}, want: true},
 		{name: "promoted schedule", mode: "workshop", session: "schedule-digest_123", req: QueryRequest{UserInteractiveContinuation: true}, want: true},
 		{name: "promotion cannot elevate child", mode: "workshop", req: QueryRequest{UserInteractiveContinuation: true, SessionKind: "pulse_reviewer"}},
 	} {

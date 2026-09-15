@@ -2,6 +2,7 @@ package services
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"sync"
 	"testing"
@@ -541,6 +542,120 @@ func TestThreadedNonMentionPresetWorkflowStartsAfterRestart(t *testing.T) {
 		}
 	case <-time.After(time.Second):
 		t.Fatal("expected routed non-mention thread reply to start after restart")
+	}
+}
+
+func TestSlackRootMentionsCreateSeparateSessionsAndThreadRepliesReuseOne(t *testing.T) {
+	manager := NewBotConversationManager(nil, "", "")
+	connector := &testBotConnector{name: "slack", supportsThreads: true}
+	manager.RegisterConnector(connector)
+
+	route := &ChannelRoute{WorkflowID: "wf-report", WorkspacePath: "Workflow/report", WorkshopMode: "run"}
+	type startedSession struct {
+		threadTS  string
+		sessionID string
+	}
+	started := make(chan startedSession, 5)
+	release := make(chan struct{})
+	manager.SetStartSessionFunc(func(ctx context.Context, req map[string]interface{}, sessionID string, _ string, _ func(event *events.AgentEvent)) error {
+		meta, _ := req["bot_thread_ts"].(string)
+		started <- startedSession{threadTS: meta, sessionID: sessionID}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-release:
+			return nil
+		}
+	})
+	t.Cleanup(func() {
+		close(release)
+		manager.mu.RLock()
+		defer manager.mu.RUnlock()
+		for _, active := range manager.sessions {
+			active.mu.Lock()
+			cancel := active.cancel
+			active.mu.Unlock()
+			if cancel != nil {
+				cancel()
+			}
+		}
+	})
+
+	threadRoots := []string{
+		"1789373969.018426",
+		"1789375148.019142",
+		"1789375841.020231",
+		"1789376699.021314",
+		"1789428663.022418",
+	}
+	for _, threadTS := range threadRoots {
+		manager.HandleIncomingMessage(BotIncomingMessage{
+			Platform:       "slack",
+			UserID:         "U123",
+			UserEmail:      "shubham@example.com",
+			ChannelID:      "C123",
+			ThreadTS:       threadTS,
+			Text:           "can you tell me which steps we are on in the workflow",
+			MessageTS:      threadTS,
+			IsMention:      true,
+			PresetWorkflow: route,
+		})
+	}
+
+	byThread := make(map[string]string)
+	for i := 0; i < len(threadRoots); i++ {
+		select {
+		case got := <-started:
+			if got.threadTS == "" || got.sessionID == "" {
+				t.Fatalf("started session = %+v, want thread metadata and session ID", got)
+			}
+			if previous := byThread[got.threadTS]; previous != "" {
+				t.Fatalf("thread %s started twice: %s then %s", got.threadTS, previous, got.sessionID)
+			}
+			byThread[got.threadTS] = got.sessionID
+		case <-time.After(time.Second):
+			t.Fatal("expected all Slack root mentions to start sessions")
+		}
+	}
+	if len(byThread) != len(threadRoots) {
+		t.Fatalf("started sessions by thread = %#v, want one per Slack root mention", byThread)
+	}
+	seenSessions := map[string]bool{}
+	for _, threadTS := range threadRoots {
+		sessionID := byThread[threadTS]
+		if seenSessions[sessionID] {
+			t.Fatalf("session %s was shared by more than one Slack root thread", sessionID)
+		}
+		seenSessions[sessionID] = true
+	}
+
+	followUps := make(chan startedSession, 1)
+	manager.SetFollowUpFunc(func(_ context.Context, req map[string]interface{}, sessionID string, _ string) error {
+		meta, _ := req["bot_thread_ts"].(string)
+		followUps <- startedSession{threadTS: meta, sessionID: sessionID}
+		return errors.New("stop follow-up")
+	})
+	manager.HandleIncomingMessage(BotIncomingMessage{
+		Platform:      "slack",
+		UserID:        "U123",
+		UserEmail:     "shubham@example.com",
+		ChannelID:     "C123",
+		ThreadTS:      threadRoots[2],
+		Text:          "what things were implemented yesterday",
+		MessageTS:     "1789429000.030000",
+		IsThreadReply: true,
+	})
+
+	select {
+	case got := <-followUps:
+		if got.threadTS != threadRoots[2] {
+			t.Fatalf("follow-up thread = %q, want %q", got.threadTS, threadRoots[2])
+		}
+		if got.sessionID != byThread[threadRoots[2]] {
+			t.Fatalf("follow-up session = %q, want original session %q", got.sessionID, byThread[threadRoots[2]])
+		}
+	case <-time.After(time.Second):
+		t.Fatal("expected Slack thread reply to reuse its root session")
 	}
 }
 

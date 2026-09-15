@@ -732,12 +732,22 @@ func (m *BotConversationManager) workflowRouteForMessage(msg BotIncomingMessage,
 }
 
 func (m *BotConversationManager) authorizeWorkflowRouteForMessage(ctx context.Context, msg *BotIncomingMessage, threadID ThreadID, active *activeBotSession) bool {
-	if m.workflowAccess == nil || msg == nil {
+	if msg == nil {
 		return true
 	}
 	route := m.workflowRouteForMessage(*msg, active)
-	if route == nil || strings.TrimSpace(route.WorkflowID) == "" && strings.TrimSpace(route.WorkspacePath) == "" {
+	if route == nil || (strings.TrimSpace(route.WorkflowID) == "" && strings.TrimSpace(route.WorkspacePath) == "") {
+		// Not workflow-routed: generic chat, governed by the allowed_emails filter.
 		return true
+	}
+	// A routed workflow without a wired access check is a misconfigured server,
+	// not an open door. Refuse rather than fall through ungated.
+	if m.workflowAccess == nil {
+		log.Printf("[BOT_MANAGER] No workflow access check installed — refusing routed workflow message on %s", msg.Platform)
+		if msg.IsMention {
+			m.sendWorkflowAccessDenied(msg.Platform, threadID, "Workflow access checks are not configured on this server. Ask an administrator to enable them.")
+		}
+		return false
 	}
 	workspaceUserID := m.resolveWorkspaceUserID(*msg)
 	resolvedUserID, allowed, err := m.workflowAccess(ctx, workspaceUserID, msg.UserEmail, *route)
@@ -745,6 +755,7 @@ func (m *BotConversationManager) authorizeWorkflowRouteForMessage(ctx context.Co
 		msg.WorkspaceUserID = strings.TrimSpace(resolvedUserID)
 	}
 	if err != nil {
+		log.Printf("[BOT_MANAGER] Workflow access check failed for %s user=%s: %v", msg.Platform, msg.UserID, err)
 		if msg.IsMention {
 			m.sendWorkflowAccessDenied(msg.Platform, threadID, "I can't verify your workflow access right now. Please try again in a moment.")
 		}
@@ -756,6 +767,7 @@ func (m *BotConversationManager) authorizeWorkflowRouteForMessage(ctx context.Co
 		}
 		return true
 	}
+	log.Printf("[BOT_MANAGER] Workflow access denied for %s user=%s email=%s workflow=%s", msg.Platform, msg.UserID, msg.UserEmail, strings.TrimSpace(route.WorkflowID))
 	if msg.IsMention {
 		m.sendWorkflowAccessDenied(msg.Platform, threadID, "You don't have access to this workflow. Ask a workflow owner to share it with you in AgentWorks.")
 	}
@@ -776,9 +788,13 @@ func (m *BotConversationManager) sendWorkflowAccessDenied(platform string, threa
 // HandleIncomingMessage processes a message from any platform (async path)
 func (m *BotConversationManager) HandleIncomingMessage(msg BotIncomingMessage) {
 	// Non-mention messages should only be processed if there's an active session
-	// in the thread or the platform router already attached an explicit workflow.
+	// in the thread. A channel route is NOT enough on its own: attaching a route
+	// to every message in the channel (see SlackService.handleSlackBotMessage)
+	// would otherwise make any reply in any thread — including two colleagues
+	// talking to each other — start a fresh workflow run. Opening a session is
+	// always an explicit @mention.
 	// Skip access checks and don't reply with "no access" for messages that didn't tag the bot.
-	if !msg.IsMention && msg.PresetWorkflow == nil {
+	if !msg.IsMention {
 		// Quick check: is there even a session entry for this thread? The key
 		// must match ThreadID.Key() format (platform-prefixed) — not just
 		// channel:ts — otherwise the lookup always misses and non-mention
@@ -794,7 +810,6 @@ func (m *BotConversationManager) HandleIncomingMessage(msg BotIncomingMessage) {
 			// No session entry and not a mention — silently ignore
 			return
 		}
-	} else if !msg.IsMention {
 	}
 
 	// Reject if we can't link the user to a workspace identity. Without an email
@@ -2986,11 +3001,18 @@ func (m *BotConversationManager) buildQueryRequestForActive(active *activeBotSes
 	workshopMode := strings.TrimSpace(active.WorkshopMode)
 	botMeta := active.Metadata
 	if agentMode == "workflow_phase" && workspacePath != "" {
-		// Do not perpetuate a legacy Run route across turns. The server applies
-		// the actual user's read-only pin after receiving this request.
+		// Carry the session's own mode across turns. A blank mode must not
+		// escalate: buildQueryRequest starts bot traffic in Run, so defaulting
+		// a follow-up to Workshop would hand the thread full authoring
+		// authority on its second message. The server still applies the
+		// routed user's read-only pin on top of whatever is asked for here.
 		workshopMode = NormalizeBotWorkshopMode(workshopMode)
 		if workshopMode == "" {
-			workshopMode = "workshop"
+			if strings.TrimSpace(platform) != "" {
+				workshopMode = "run"
+			} else {
+				workshopMode = "workshop"
+			}
 		}
 	}
 	active.mu.Unlock()

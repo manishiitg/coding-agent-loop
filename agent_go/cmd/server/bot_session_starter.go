@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -31,16 +32,28 @@ func internalBotRequestContext(ctx context.Context, userID string) context.Conte
 	return context.WithValue(ctx, UserContextKey, claims)
 }
 
+// checkBotWorkflowAccess decides whether an external chat user may drive a
+// routed workflow. Unlike the web paths it deliberately fails CLOSED at every
+// step: a browser caller has already authenticated into the account before any
+// permission is resolved, whereas a bot caller has only proved that they are in
+// a Slack channel. The legacy "no ownership record means the account tier
+// applies" fallback (workflow_access.go rule 3) is therefore not honoured here
+// — bot access must be granted explicitly or not at all.
 func (api *StreamingAPI) checkBotWorkflowAccess(ctx context.Context, workspaceUserID, userEmail string, route services.ChannelRoute) (string, bool, error) {
-	claims := &UserClaims{UserID: strings.TrimSpace(workspaceUserID), Username: strings.TrimSpace(workspaceUserID), Email: strings.TrimSpace(userEmail)}
-	if record := directoryUserFor(workspaceUserID, "", userEmail); record != nil {
-		claims.UserID = record.ID
-		claims.Username = record.Username
-		claims.Email = record.Email
-		if record.Disabled {
-			return claims.UserID, false, nil
-		}
+	fallbackID := strings.TrimSpace(workspaceUserID)
+
+	// 1. The chat identity must map to a real account. An unmatched email is a
+	// stranger, not an unrestricted user, so it never reaches the tier fallback.
+	record := directoryUserFor(workspaceUserID, "", userEmail)
+	if record == nil {
+		log.Printf("[BOT_ACCESS] Denied: no account matches chat user %q (email %q)", fallbackID, strings.TrimSpace(userEmail))
+		return fallbackID, false, nil
 	}
+	if record.Disabled {
+		log.Printf("[BOT_ACCESS] Denied: account %s is disabled", record.ID)
+		return record.ID, false, nil
+	}
+	claims := &UserClaims{UserID: record.ID, Username: record.Username, Email: record.Email}
 
 	var manifest *WorkflowManifest
 	var exists bool
@@ -58,13 +71,27 @@ func (api *StreamingAPI) checkBotWorkflowAccess(ctx context.Context, workspaceUs
 			return claims.UserID, false, err
 		}
 		if !exists || manifest == nil {
+			log.Printf("[BOT_ACCESS] Denied: no manifest for route workflow=%q workspace=%q", strings.TrimSpace(route.WorkflowID), workspacePath)
 			return claims.UserID, false, nil
 		}
 	}
 	if !userAllowedWorkflowID(claims, manifest.ID) {
+		log.Printf("[BOT_ACCESS] Denied: workflow %s is outside the allowlist for %s", manifest.ID, claims.UserID)
 		return claims.UserID, false, nil
 	}
-	return claims.UserID, workflowAccessForManifest(claims, manifest) != WorkflowAccessNone, nil
+
+	// 2. An unowned workflow grants the account tier on the web. Over a bot that
+	// would hand every channel member write access to any manifest the builder
+	// wrote without a created_by stamp, so require a real ownership record.
+	if !manifest.hasOwnershipRecord() {
+		log.Printf("[BOT_ACCESS] Denied: workflow %s has no owner recorded; claim or share it before routing a bot to it", manifest.ID)
+		return claims.UserID, false, nil
+	}
+	if workflowAccessForManifest(claims, manifest) == WorkflowAccessNone {
+		log.Printf("[BOT_ACCESS] Denied: %s is not an owner or reader of workflow %s", claims.UserID, manifest.ID)
+		return claims.UserID, false, nil
+	}
+	return claims.UserID, true, nil
 }
 
 func (api *StreamingAPI) workflowManifestByBotRoute(ctx context.Context, route services.ChannelRoute) (*WorkflowManifest, bool, error) {

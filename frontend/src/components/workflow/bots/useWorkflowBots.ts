@@ -103,6 +103,11 @@ export function useWorkflowBots(workspacePath: string | null, target?: BotRouteT
   const [pollingForReply, setPollingForReply] = useState(false)
   const [showBotToken, setShowBotToken] = useState(false)
   const [showAppToken, setShowAppToken] = useState(false)
+  const [allowedEmails, setAllowedEmails] = useState('')
+  const [emailsDirty, setEmailsDirty] = useState(false)
+  const [emailsSaving, setEmailsSaving] = useState(false)
+  const [emailsSaved, setEmailsSaved] = useState(false)
+
   // ── WhatsApp ──────────────────────────────────────────────────────────────
   const [waStatus, setWaStatus] = useState<WhatsAppStatus | null>(null)
   const [waError, setWaError] = useState<string | null>(null)
@@ -170,6 +175,15 @@ export function useWorkflowBots(workspacePath: string | null, target?: BotRouteT
   const [gmailOpen, setGmailOpen] = useState(false)
 
   // ── Loaders ───────────────────────────────────────────────────────────────
+  // The bot manager still enforces allowed_emails on every incoming message
+  // (see bot_connector.go HandleIncomingMessage), so this stays editable here.
+  const loadEmails = useCallback(async () => {
+    try {
+      const cfg = await agentApi.getBotConfig()
+      if (Array.isArray(cfg.allowed_emails)) setAllowedEmails(cfg.allowed_emails.join(', '))
+    } catch { /* ignore */ }
+  }, [])
+
   const loadSlack = useCallback(async () => {
     try {
       setSlackLoading(true)
@@ -441,11 +455,12 @@ export function useWorkflowBots(workspacePath: string | null, target?: BotRouteT
   }, [loadGmailConnections, loadGmailOAuthClients])
 
   useEffect(() => {
+    void loadEmails()
     void loadSlack()
     void loadWaStatus()
     void loadWaRouting()
     void loadGmail()
-  }, [loadGmail, loadSlack, loadWaRouting, loadWaStatus])
+  }, [loadEmails, loadGmail, loadSlack, loadWaRouting, loadWaStatus])
 
   // ── WhatsApp: status polling while the pairing screen is open ─────────────
   // Not yet paired → poll /status every 3s so a fresh QR (rotating every
@@ -733,6 +748,18 @@ export function useWorkflowBots(workspacePath: string | null, target?: BotRouteT
     })
   }
 
+  // ── Slack handlers (setup screen) ─────────────────────────────────────────
+  const handleEmailsSave = async () => {
+    setEmailsSaving(true)
+    try {
+      const emails = allowedEmails.split(',').map(e => e.trim()).filter(e => e.length > 0)
+      await agentApi.saveBotConfig({ allowed_emails: emails })
+      setEmailsDirty(false)
+      setEmailsSaved(true)
+      setTimeout(() => setEmailsSaved(false), 2000)
+    } catch { /* ignore */ } finally { setEmailsSaving(false) }
+  }
+
   const handleSlackSave = async () => {
     try {
       setSlackSaving(true)
@@ -943,7 +970,8 @@ export function useWorkflowBots(workspacePath: string | null, target?: BotRouteT
     // slack
     slackConfig, setSlackConfig, slackOriginal, slackLoading, slackSaving, slackTesting, slackError, slackSuccess,
     testResult, testReply, pollingForReply, showBotToken, setShowBotToken, showAppToken, setShowAppToken,
-    handleSlackSave, handleSlackTest, slackHasChanges, slackReady, slackStatusLabel,
+    allowedEmails, setAllowedEmails, emailsDirty, setEmailsDirty, emailsSaving, emailsSaved, setEmailsSaved,
+    handleEmailsSave, handleSlackSave, handleSlackTest, slackHasChanges, slackReady, slackStatusLabel,
     // whatsapp
     waStatus, waError, waRoutingError, qrImageURL, qrLoading, qrError,
     waAddDeviceOpen, openAddWhatsAppDevice, closeAddWhatsAppDevice,

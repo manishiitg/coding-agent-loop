@@ -281,7 +281,19 @@ function useWorkChatTabs(
   return { tabId: ready ? activeProjectTab?.tabId ?? null : null, tabs: projectTabs, error }
 }
 
-function WorkChatTabs({ tabs, activeTabId }: { tabs: ReturnType<typeof useWorkChatTabs>['tabs']; activeTabId: string | null }) {
+function WorkChatTabs({
+  tabs,
+  activeTabId,
+  workshopOpen,
+  onWorkshopOpen,
+  onChatOpen,
+}: {
+  tabs: ReturnType<typeof useWorkChatTabs>['tabs']
+  activeTabId: string | null
+  workshopOpen: boolean
+  onWorkshopOpen: () => void
+  onChatOpen: () => void
+}) {
   const closeTab = useChatStore(state => state.closeTab)
   const close = useCallback((tabId: string) => {
     const nextId = activeTabId === tabId
@@ -297,11 +309,15 @@ function WorkChatTabs({ tabs, activeTabId }: { tabs: ReturnType<typeof useWorkCh
         return <AgentWorksChatTabItem
           key={tab.tabId}
           tab={tab}
-          isActive={tab.tabId === activeTabId}
+          isActive={builder ? workshopOpen : (!workshopOpen && tab.tabId === activeTabId)}
           canClose={!builder}
           isBlank={builder}
-          displayName={builder ? 'Builder' : (tab.name === 'Builder' ? 'Chat' : undefined)}
-          onTabClick={activateTab}
+          displayName={builder ? 'Workshop' : (tab.name === 'Builder' ? 'Chat' : undefined)}
+          onTabClick={(tabId) => {
+            activateTab(tabId)
+            if (builder) onWorkshopOpen()
+            else onChatOpen()
+          }}
           onCloseTab={close}
         />
       })}
@@ -416,6 +432,7 @@ export function WorkSurface() {
   const [creating, setCreating] = useState(false)
   const [createOpen, setCreateOpen] = useState(false)
   const [chatOpen, setChatOpen] = useState(true)
+  const [workshopOpen, setWorkshopOpen] = useState(false)
   const [panelOpen, setPanelOpen] = useState(true)
   const [workspaceView, setWorkspaceView] = useState<WorkWorkspaceView>('files')
   const [workspaceViewRefresh, setWorkspaceViewRefresh] = useState(0)
@@ -587,6 +604,11 @@ export function WorkSurface() {
 
   const error = sessionsError || chatError
 
+  useEffect(() => {
+    const active = tabs.find(tab => tab.tabId === tabId)
+    if (active) setWorkshopOpen(active.metadata?.agentProfileBuilder === true)
+  }, [tabId, tabs])
+
   return (
     <div className="flex h-screen min-h-0 flex-col bg-background">
       <UpdateProgressToast />
@@ -681,7 +703,13 @@ export function WorkSurface() {
                 style={chatOpen && panelOpen ? ({ '--work-split-columns': `minmax(240px, ${splitRatio}fr) minmax(240px, ${1 - splitRatio}fr)` } as React.CSSProperties) : undefined}
               >
                 <WorkspaceTopToolbar className={`${chatOpen && panelOpen ? 'md:col-span-2' : ''} col-start-1 row-start-1`}>
-                  {chatOpen && tabId ? <WorkChatTabs tabs={tabs} activeTabId={tabId} /> : <div className="min-w-0 flex-1" />}
+                  {chatOpen && tabId ? <WorkChatTabs
+                    tabs={tabs}
+                    activeTabId={tabId}
+                    workshopOpen={workshopOpen}
+                    onWorkshopOpen={() => setWorkshopOpen(true)}
+                    onChatOpen={() => setWorkshopOpen(false)}
+                  /> : <div className="min-w-0 flex-1" />}
                   {panelOpen ? <WorkWorkspaceToolbar view={workspaceView} onViewChange={setWorkspaceView} enabledPanels={enabledWorkspacePanels} /> : null}
                 </WorkspaceTopToolbar>
                 {chatOpen ? <main className={`flex min-h-0 min-w-0 flex-col overflow-hidden bg-background col-start-1 row-start-2 ${panelOpen ? 'border-b border-border md:border-b-0 md:border-r' : ''}`}>
@@ -693,6 +721,7 @@ export function WorkSurface() {
                           onNewChat={() => activateTab(tabs.find(tab => tab.metadata?.agentProfileBuilder)?.tabId ?? tabId)}
                           previousChatsWorkspacePath={selected.workspacePath}
                           previousChatsRecentOnly
+                          forcePreviousChats={workshopOpen}
                           composerPlaceholder="Describe what you want to build… (@ files, # automations)"
                           showCompactRuntimeLoading
                           showProductSteerAction

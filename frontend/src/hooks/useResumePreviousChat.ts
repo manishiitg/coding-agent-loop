@@ -28,12 +28,42 @@ import { startRestoredTransportTerminal } from '../utils/restoredTerminal'
 export function useResumePreviousChat() {
   return useCallback(async (session: ChatHistorySession) => {
     const chatStore = useChatStore.getState()
-    const targetTabId = chatStore.activeTabId || undefined
-    const targetTab = targetTabId ? chatStore.chatTabs[targetTabId] : undefined
+    let targetTabId = chatStore.activeTabId || undefined
+    let targetTab = targetTabId ? chatStore.chatTabs[targetTabId] : undefined
 
     if (!targetTabId || targetTab?.metadata?.mode !== 'multi-agent' || !targetTab.metadata.agentProfileId) {
       useChatStore.getState().addToast('Open the product chat before resuming its history.', 'error')
       return
+    }
+
+    // Work's permanent Workshop tab is a history/new-chat launch surface. A
+    // resume must open the selected durable conversation in its own chat tab;
+    // attaching it to Workshop makes old messages appear under the launcher,
+    // while the next submission still follows launcher semantics and silently
+    // creates a different conversation.
+    if (targetTab.metadata.agentProfileBuilder === true) {
+      const existing = Object.values(chatStore.chatTabs).find(tab =>
+        tab.metadata?.agentProfileBuilder !== true &&
+        tab.metadata?.agentProfileId === targetTab?.metadata?.agentProfileId &&
+        tab.metadata?.agentProfileProjectId === targetTab?.metadata?.agentProfileProjectId &&
+        tab.sessionId === session.session_id,
+      )
+      if (existing) {
+        targetTabId = existing.tabId
+        targetTab = existing
+      } else {
+        const builderConfig = targetTab.config
+        const projectId = targetTab.metadata.agentProfileProjectId
+        const resumedTabId = await chatStore.createChatTab(chatHistorySessionTitle(session), {
+          ...targetTab.metadata,
+          agentProfileBuilder: false,
+          agentProfileConversationKey: projectId ? `${projectId}:${session.session_id}` : session.session_id,
+          agentProfileConversationId: undefined,
+        }, session.session_id)
+        if (builderConfig) chatStore.setTabConfig(resumedTabId, { ...builderConfig })
+        targetTabId = resumedTabId
+        targetTab = chatStore.chatTabs[resumedTabId]
+      }
     }
 
     // Clear the current conversation before resuming a different one (or the
@@ -42,7 +72,7 @@ export function useResumePreviousChat() {
     // cheap no-op (just rotates the session id).
     const events = targetTab.sessionId ? useChatStore.getState().tabEvents[targetTab.sessionId] : undefined
     const hasContent = Array.isArray(events) && events.length > 0
-    if (targetTab.sessionId !== session.session_id && hasContent) {
+    if (targetTab?.sessionId !== session.session_id && hasContent) {
       chatStore.resetTabChat(targetTabId)
     }
     chatStore.updateTabSessionId(targetTabId, session.session_id)

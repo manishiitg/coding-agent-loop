@@ -467,6 +467,11 @@ interface ChatAreaProps {
   previousChatsWorkspacePath?: string
   // Product surfaces can reuse AgentWorks history without automation tabs.
   previousChatsRecentOnly?: boolean
+  // Product shells with an explicit history/workshop tab can show the scoped
+  // previous-chat browser independently of the active tab's session state.
+  // This avoids hiding history when a permanent launch tab retained a stale
+  // session id after an upgrade or browser restore.
+  forcePreviousChats?: boolean
   // Workflow landing previous-chats panel. WorkflowLayout owns the panel + its
   // resume handler (so the workflow-scoped history logic isn't duplicated here)
   // and passes the rendered node only when a fresh automation chat should show
@@ -526,7 +531,7 @@ let globalHasRestored = false
 
 // Inner component for chat area
 const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAreaRef>) => {
-  const { onNewChat, hideInput = false, compact = false, tabId, previousChatsCompact = false, previousChatsWorkspacePath, previousChatsRecentOnly = false, workflowPreviousChatsPanel, landingContent, contentRenderer: ContentRenderer, inputVariant = 'default', fullTurnStreaming = false, showConversationUsage = false, hideRuntimeStatus = false, showCompactRuntimeLoading = false, showProductSteerAction = false, showProductTerminalControl = false, showNewChatAction = false , composerPlaceholder} = props
+  const { onNewChat, hideInput = false, compact = false, tabId, previousChatsCompact = false, previousChatsWorkspacePath, previousChatsRecentOnly = false, forcePreviousChats = false, workflowPreviousChatsPanel, landingContent, contentRenderer: ContentRenderer, inputVariant = 'default', fullTurnStreaming = false, showConversationUsage = false, hideRuntimeStatus = false, showCompactRuntimeLoading = false, showProductSteerAction = false, showProductTerminalControl = false, showNewChatAction = false , composerPlaceholder} = props
   // Product mode is a complete shared surface, not just a simplified composer.
   // Products may still supply a renderer for domain-specific presentation, but
   // every new product gets the durable transcript and normalized error UI by
@@ -3619,7 +3624,7 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
     (selectedModeCategory === 'multi-agent' && multiAgentSurface === 'active')
   // A product-supplied content renderer owns the whole pane, so it is always
   // full height regardless of which transcript surface is active.
-  const shouldUseFullHeightContent = !!EffectiveContentRenderer || hasActiveTranscript || showNormalPreviousChatsPanel || showWorkflowPreviousChatsPanel
+  const shouldUseFullHeightContent = forcePreviousChats || !!EffectiveContentRenderer || hasActiveTranscript || showNormalPreviousChatsPanel || showWorkflowPreviousChatsPanel
 
   return (
     <div className="flex flex-col h-full min-w-0" data-testid="chat-area-container">
@@ -3697,7 +3702,18 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
             </div>
           )}
 
-        {EffectiveContentRenderer && selectedModeCategory !== 'workflow' ? (
+        {forcePreviousChats ? (
+          <PreviousChatHistoryPanel
+            workspacePath={previousChatsWorkspacePath}
+            recentOnly={previousChatsRecentOnly}
+            title="Previous chats"
+            actionLabel="Resume"
+            emptyText="No previous chats yet."
+            onSelectSession={handleResumePreviousChat}
+            fill
+            compact={previousChatsCompact}
+          />
+        ) : EffectiveContentRenderer && selectedModeCategory !== 'workflow' ? (
           <EffectiveContentRenderer
             events={transcriptEvents}
             isStreaming={activeTabBusy}

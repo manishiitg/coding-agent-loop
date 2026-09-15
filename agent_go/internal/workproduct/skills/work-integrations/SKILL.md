@@ -1,9 +1,9 @@
 ---
 name: work-integrations
-description: Connect and manage Work MCP servers, secrets, browser access, models, and administrator-authorized server folders. Use when the user asks to connect a service, configure credentials or browser access, choose a coding provider, diagnose an integration, or attach an external folder.
+description: Connect and manage Crew MCP servers, secrets, browser access, models, and administrator-authorized server folders. Use when the user asks to connect a service, configure credentials or browser access, choose a coding provider, diagnose an integration, or attach an external folder.
 ---
 
-# Work integrations
+# Crew integrations
 
 Inspect current state before changing it, and distinguish account-level setup
 from selection for this project.
@@ -12,10 +12,10 @@ from selection for this project.
 
 - Use `list_mcp_servers` to inspect installed connection and authorization
   state. Use `search_mcp_catalog` only to discover a new server.
-- Use `install_mcp_server` for a catalog result or service URL so Work can probe
+- Use `install_mcp_server` for a catalog result or service URL so Crew can probe
   its authentication requirements. Use `add_mcp_server` only for a custom
   server whose protocol and complete configuration are already known.
-- An installed server is a platform connection shared by AgentWorks, Work,
+- An installed server is a platform connection shared by AgentWorks, Crew,
   workflows, chats, schedules, and every user. Only a platform administrator
   may add, authenticate, reconnect, edit, or remove one. Explain this before
   starting credential or OAuth setup. A connection is not automatically
@@ -30,13 +30,13 @@ from selection for this project.
 
 - Call `list_secrets` before creating, replacing, or deleting a secret.
 - `set_workflow_secret` and `delete_workflow_secret` are legacy tool names for
-  project-scoped secrets in Work. Use `set_user_secret` and
+  project-scoped secrets in Crew. Use `set_user_secret` and
   `delete_user_secret` only when the user requests an account-level secret.
 - After `set_workflow_secret` succeeds, `$SECRET_<NAME>` is available to shell
   tools immediately in the current chat and remains available in later turns.
   Continue the requested work in the same chat; do not ask the user to start a
   new chat or session. Verify availability without printing the secret value.
-- Work stores attached secret names in `workflow.json` under
+- Crew stores attached secret names in `workflow.json` under
   `capabilities.selected_secrets`, using the AgentWorks workflow contract.
   Secret values remain encrypted outside the manifest. Respect the user's
   selections in **Setup > Secrets**; do not attach an unrelated credential.

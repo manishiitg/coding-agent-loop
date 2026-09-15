@@ -402,6 +402,7 @@ export interface ChatTab {
   isStreaming: boolean  // Whether this tab's execution is currently running
   lastStreamingStartedAt?: number  // Timestamp for the current/last foreground turn
   isCompleted: boolean  // Whether this tab's execution has completed
+  hasUnreadCompletion?: boolean  // Finished while another tab was selected; cleared when opened
   hasRunningBgAgents: boolean  // Whether background agents are still running for this session
   isSyntheticTurn: boolean  // Whether current running turn is an auto-notification that should not queue user input
   canSteer: boolean  // Whether the backend currently has a live agent that can accept steer injection
@@ -812,6 +813,7 @@ const selectDurableChatState = (state: ChatState): DurableChatState => {
           sessionId: tab.sessionId,
           isStreaming: false,
           isCompleted: false,
+          hasUnreadCompletion: false,
           hasRunningBgAgents: false,
           isSyntheticTurn: false,
           canSteer: false,
@@ -2402,13 +2404,15 @@ export const useChatStore = create<ChatState>()(
             updates[tabId] = {
               ...newTab,
               lastAccessedAt: Date.now(),
+              hasUnreadCompletion: false,
               lastViewedEventCount: events.length, // @deprecated - kept for compat
               lastViewedEventCounts: computePerModeCounts(events)
             }
           } else if (newTab) {
             updates[tabId] = {
               ...newTab,
-              lastAccessedAt: Date.now()
+              lastAccessedAt: Date.now(),
+              hasUnreadCompletion: false,
             }
           }
 
@@ -2623,6 +2627,11 @@ export const useChatStore = create<ChatState>()(
             [tabId]: {
               ...state.chatTabs[tabId],
               isStreaming,
+              hasUnreadCompletion: isStreaming
+                ? false
+                : (!tab.hasRunningBgAgents && state.activeTabId !== tabId
+                    ? true
+                    : tab.hasUnreadCompletion),
               lastStreamingStartedAt: isStreaming ? Date.now() : undefined,
             }
           }
@@ -2642,6 +2651,11 @@ export const useChatStore = create<ChatState>()(
               ...state.chatTabs[tabId],
               isCompleted,
               isStreaming: newStreaming,
+              hasUnreadCompletion: !isCompleted
+                ? false
+                : (state.activeTabId !== tabId && (tab.isStreaming || tab.hasRunningBgAgents)
+                    ? true
+                    : tab.hasUnreadCompletion),
               lastStreamingStartedAt: newStreaming ? state.chatTabs[tabId].lastStreamingStartedAt : undefined,
             }
           }
@@ -2655,7 +2669,15 @@ export const useChatStore = create<ChatState>()(
         set((state) => ({
           chatTabs: {
             ...state.chatTabs,
-            [tabId]: { ...state.chatTabs[tabId], hasRunningBgAgents }
+            [tabId]: {
+              ...state.chatTabs[tabId],
+              hasRunningBgAgents,
+              hasUnreadCompletion: hasRunningBgAgents
+                ? false
+                : (!tab.isStreaming && state.activeTabId !== tabId
+                    ? true
+                    : tab.hasUnreadCompletion),
+            }
           }
         }))
       },

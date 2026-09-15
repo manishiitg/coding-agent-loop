@@ -174,7 +174,7 @@ function WorkFoldersPanel({ workflowContextPaths, onWorkflowContextPathsChange }
   return (
     <div className="flex h-full min-h-0 flex-col overflow-y-auto p-4">
       <h2 className="text-sm font-semibold text-foreground">Attached folders</h2>
-      <p className="mt-1 text-xs text-muted-foreground">Give Work access to an existing server folder in addition to this project.</p>
+      <p className="mt-1 text-xs text-muted-foreground">Give Crew access to an existing server folder in addition to this project.</p>
       {roots.length > 0 && <p className="mt-2 text-[11px] text-muted-foreground">Allowed roots: {roots.join(', ')}</p>}
       <div className="mt-4"><WorkflowReferenceAccess selectedPaths={workflowContextPaths} onChange={onWorkflowContextPathsChange} /></div>
       <div className="mt-4 grid gap-2 rounded-lg border border-border p-3">
@@ -393,7 +393,7 @@ export function WorkWorkspacePane({ workspacePath, projectId, projectTitle, tabI
         <Suspense fallback={<div className="grid h-full place-items-center text-sm text-muted-foreground">Loading…</div>}>
           {view === 'dashboard' && <ReportView
             workspacePath={workspacePath}
-            emptyDescription="Ask Work to create a visual dashboard for this project. It can organize tasks, notes, plans, status, research, or anything else you want to manage visually."
+            emptyDescription="Ask Crew to create a visual dashboard for this project. It can organize tasks, notes, plans, status, research, or anything else you want to manage visually."
             sendChatMessage={async (message) => ({ status: 'queued', ...queueWorkMessage(tabId, `From this project's dashboard:\n\n${message}`) })}
           />}
           {view === 'database' && <DatabaseView workspacePath={workspacePath} />}
@@ -410,7 +410,7 @@ export function WorkWorkspacePane({ workspacePath, projectId, projectTitle, tabI
             onClose={() => onViewChange('files')}
             headerAction={<AskAIButton
               workspacePath={workspacePath}
-              message="Help me manage this project's schedules or authenticated webhook triggers. Each sends exactly one saved instruction to this Work project; do not create workflow routes or workflow executions."
+              message="Help me manage this project's schedules or authenticated webhook triggers. Each sends exactly one saved instruction to this Crew project; do not create workflow routes or workflow executions."
               onAsk={message => { queueWorkMessage(tabId, message) }}
             />}
           />}

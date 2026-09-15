@@ -17,10 +17,10 @@ export interface AgentWorksChatTabItemProps {
 }
 
 const ALLOW_MAKE_SCHEDULE_INTERACTIVE = false
-const TAB_STATUS_DOT: Record<'busy' | 'idle' | 'stopped', { cls: string; label: string }> = {
+const TAB_STATUS_DOT: Record<'busy' | 'completed' | 'ready', { cls: string; label: string }> = {
   busy: { cls: 'bg-[hsl(var(--info))] animate-pulse', label: 'Busy' },
-  idle: { cls: 'bg-[hsl(var(--success))]', label: 'Idle' },
-  stopped: { cls: 'bg-muted-foreground/60', label: 'Stopped' },
+  completed: { cls: 'bg-[hsl(var(--success))]', label: 'Completed — open to mark as seen' },
+  ready: { cls: 'bg-muted-foreground/60', label: 'Ready' },
 }
 
 /** The shared AgentWorks Builder/Chat tab pill used by workflows and Work. */
@@ -30,9 +30,9 @@ export const AgentWorksChatTabItem = React.memo<AgentWorksChatTabItemProps>(({
 }) => {
   const isReadOnlyUser = useAuthStore(state => isWorkflowReadOnly(state.user, state.isMultiUserMode))
   const displayName = displayNameOverride ?? tab.name
-  const rawStatus: 'busy' | 'idle' | 'stopped' = tab.isStreaming || tab.hasRunningBgAgents
+  const rawStatus: 'busy' | 'completed' | 'ready' = tab.isStreaming || tab.hasRunningBgAgents
     ? 'busy'
-    : tab.isCompleted ? 'stopped' : 'idle'
+    : tab.hasUnreadCompletion && !isActive ? 'completed' : 'ready'
   const [status, setStatus] = useState(rawStatus)
   const [isRenaming, setIsRenaming] = useState(false)
   const [renameDraft, setRenameDraft] = useState(tab.name)
@@ -44,8 +44,11 @@ export const AgentWorksChatTabItem = React.memo<AgentWorksChatTabItemProps>(({
       setStatus('busy')
       return
     }
-    const timer = setTimeout(() => setStatus(rawStatus), 1200)
-    return () => clearTimeout(timer)
+    if (status === 'busy') {
+      const timer = setTimeout(() => setStatus(rawStatus), 1200)
+      return () => clearTimeout(timer)
+    }
+    setStatus(rawStatus)
   }, [rawStatus, status])
   const dot = TAB_STATUS_DOT[status]
   const isBusy = status === 'busy'
@@ -76,7 +79,7 @@ export const AgentWorksChatTabItem = React.memo<AgentWorksChatTabItemProps>(({
       tabIndex={0}
       className={`group flex min-w-0 cursor-pointer items-center gap-1.5 rounded-t-md px-2 py-1 text-xs font-medium outline-none transition-colors ${
         isActive
-          ? 'border-b-2 border-blue-500 bg-white text-gray-900 dark:bg-gray-900 dark:text-gray-100'
+          ? 'bg-gray-100 text-gray-900 dark:bg-gray-800 dark:text-gray-100'
           : 'text-gray-600 hover:bg-gray-100 hover:text-gray-900 dark:text-gray-400 dark:hover:bg-gray-700 dark:hover:text-gray-100'
       }`}
     >

@@ -100,6 +100,32 @@ describe('useChatStore hydration bootstrap', () => {
     expect(chatStore.useChatStore.getState().activeTabId).toBe(secondTab)
   })
 
+  it('marks a background tab completed until the user opens it', async () => {
+    const chatStore = await import('./useChatStore')
+    await chatStore.waitForChatStoreHydration()
+
+    const firstTab = await chatStore.useChatStore.getState().createChatTab('Current', {
+      mode: 'workflow',
+      phaseId: 'workflow-builder',
+      presetQueryId: 'current-workflow',
+    })
+    const backgroundTab = await chatStore.useChatStore.getState().createChatTab('Background', {
+      mode: 'workflow',
+      phaseId: 'workflow-builder',
+      presetQueryId: 'background-workflow',
+    })
+    chatStore.useChatStore.getState().switchTab(firstTab)
+
+    chatStore.useChatStore.getState().setTabStreaming(backgroundTab, true)
+    expect(chatStore.useChatStore.getState().getTab(backgroundTab)?.hasUnreadCompletion).toBe(false)
+
+    chatStore.useChatStore.getState().setTabStreaming(backgroundTab, false)
+    expect(chatStore.useChatStore.getState().getTab(backgroundTab)?.hasUnreadCompletion).toBe(true)
+
+    chatStore.useChatStore.getState().switchTab(backgroundTab)
+    expect(chatStore.useChatStore.getState().getTab(backgroundTab)?.hasUnreadCompletion).toBe(false)
+  })
+
   it('rejects the removed profile-less AgentWorks chat lane', async () => {
     const chatStore = await import('./useChatStore')
     await chatStore.waitForChatStoreHydration()

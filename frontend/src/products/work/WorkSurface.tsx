@@ -134,21 +134,21 @@ function useWorkSessions() {
 
   const updateLLMConfig = useCallback(async (projectId: string, selection: WorkRuntimeSelection) => {
     const project = sessions.find(item => item.id === projectId)
-    if (!project) throw new Error('This Work project is no longer available.')
+    if (!project) throw new Error('This Crew project is no longer available.')
     const llmConfig = workLLMConfigFromSelection({
       provider: selection.provider || selection.engine,
       modelId: selection.modelId,
       reasoningEffort: selection.reasoningEffort,
     })
-    const updated = await updateProductProjectLLMConfig(project, llmConfig, `Update Work project model ${project.title}`, 'workflow.json')
+    const updated = await updateProductProjectLLMConfig(project, llmConfig, `Update Crew project model ${project.title}`, 'workflow.json')
     setSessions(current => current.map(item => item.id === projectId ? updated : item))
     return updated
   }, [sessions])
 
   const updateSelections = useCallback(async (projectId: string, patch: { selectedServers?: string[]; selectedSkills?: string[]; selectedSecrets?: string[]; workflowContextPaths?: string[] }) => {
     const project = sessions.find(item => item.id === projectId)
-    if (!project) throw new Error('This Work project is no longer available.')
-    const updated = await updateProductProjectSelections(project, patch, `Update Work project integrations ${project.title}`, 'workflow.json')
+    if (!project) throw new Error('This Crew project is no longer available.')
+    const updated = await updateProductProjectSelections(project, patch, `Update Crew project integrations ${project.title}`, 'workflow.json')
     setSessions(current => current.map(item => item.id === projectId ? updated : item))
     return updated
   }, [sessions])
@@ -213,7 +213,7 @@ function useWorkChatTabs(
           tab => belongsToWorkProject(tab, session.id) && !tab.metadata?.agentProfileBuilder,
         )
 
-        // Migrate the original one-chat Work tabs into the project-scoped tab
+        // Migrate the original one-chat Crew tabs into the project-scoped tab
         // family without discarding their native CLI conversation.
         let legacyRuntime: WorkRuntimeSelection | null = null
         const orderedChats = [...chats].sort((left, right) => {
@@ -270,7 +270,7 @@ function useWorkChatTabs(
         }
         setReady(true)
       } catch (cause) {
-        if (!cancelled) setError(cause instanceof Error ? cause.message : 'Could not open Work.')
+        if (!cancelled) setError(cause instanceof Error ? cause.message : 'Could not open Crew.')
       }
     }
     void prepare()
@@ -491,7 +491,7 @@ export function WorkSurface() {
     openView: openWorkPresentationView,
     isViewSupported: (view) => view in WORK_UI_PRESENTATION_VIEWS,
     labelForView: (view) => WORK_UI_LABELS[view as WorkUIPresentationView] ?? view,
-    actorLabel: 'Work',
+    actorLabel: 'Crew',
   }), [openWorkPresentationView, workspaceView])
   useWorkspaceUIControl(activeSessionId ?? undefined, workUIAdapter)
 
@@ -667,17 +667,17 @@ export function WorkSurface() {
           ) : !selected ? (
             <div className="flex h-full items-center justify-center bg-gray-50 dark:bg-gray-900">
               {sessionsLoading || creating ? (
-                <span className="text-sm text-muted-foreground"><Loader2 className="mr-2 inline h-4 w-4 animate-spin" />Opening Work…</span>
+                <span className="text-sm text-muted-foreground"><Loader2 className="mr-2 inline h-4 w-4 animate-spin" />Opening Crew…</span>
               ) : (
                 <div className="flex max-w-xl flex-col items-center px-6 text-center">
                   <div className="flex h-20 w-20 items-center justify-center rounded-full bg-gray-200 dark:bg-gray-700">
                     <span className="font-mono text-3xl font-semibold text-gray-600 dark:text-gray-200">&lt;&gt;</span>
                   </div>
                   <div className="mt-5">
-                    <p className="text-xs font-semibold uppercase tracking-[0.18em] text-primary">Work</p>
+                    <p className="text-xs font-semibold uppercase tracking-[0.18em] text-primary">Crew</p>
                     <h2 className="mt-2 text-2xl font-semibold text-gray-900 dark:text-gray-100">Your AI workspace for any project</h2>
                     <p className="mx-auto mt-2 max-w-lg text-sm leading-6 text-muted-foreground">
-                      Create a persistent project and chat with an AI bot for everyday questions, research, coding, and ongoing work. It can use your project files, browser, terminal, MCP servers, and connected tools.
+                      Create a persistent crew member for everyday questions, research, coding, and ongoing work. It can use your project files, browser, terminal, MCP servers, and connected tools.
                     </p>
                     <div className="mt-5 grid grid-cols-1 gap-2 text-left text-xs text-muted-foreground sm:grid-cols-3">
                       <div className="rounded-lg border border-border bg-background/70 px-3 py-2.5">

@@ -50,7 +50,7 @@ func TestWorkIdentityToolPersistsAndPromptVariablesReloadIt(t *testing.T) {
 
 	registry := agentprofiles.NewRegistry()
 	if err := RegisterAgentProfileRuntime(registry, server.URL); err != nil {
-		t.Fatalf("register Work runtime: %v", err)
+		t.Fatalf("register Crew runtime: %v", err)
 	}
 	var emitted []*orchestratorevents.ProductInteractionEvent
 	interaction := &agentprofiles.InteractionBinding{Kind: "identity_updated", Render: "product.refresh"}
@@ -63,7 +63,7 @@ func TestWorkIdentityToolPersistsAndPromptVariablesReloadIt(t *testing.T) {
 		},
 	})
 	if err != nil {
-		t.Fatalf("build Work identity tool: %v", err)
+		t.Fatalf("build Crew identity tool: %v", err)
 	}
 	result, err := tool.Execute(context.Background(), map[string]interface{}{
 		"operation": "set",
@@ -72,7 +72,7 @@ func TestWorkIdentityToolPersistsAndPromptVariablesReloadIt(t *testing.T) {
 		"role":      "Engineering partner",
 	})
 	if err != nil {
-		t.Fatalf("set Work identity: %v", err)
+		t.Fatalf("set Crew identity: %v", err)
 	}
 	if !strings.Contains(result, "Adopt it immediately") || !strings.Contains(result, "Name: Nova") {
 		t.Fatalf("unexpected tool result: %q", result)
@@ -100,14 +100,14 @@ func TestWorkIdentityToolPersistsAndPromptVariablesReloadIt(t *testing.T) {
 		UserID: "user-1", SessionID: "session-1", WorkspacePath: projectPath,
 	})
 	if err != nil {
-		t.Fatalf("load Work prompt variables: %v", err)
+		t.Fatalf("load Crew prompt variables: %v", err)
 	}
 	if got := variables["WORK_IDENTITY"]; !strings.Contains(got, "Icon: 🛠️") || !strings.Contains(got, "Name: Nova") || !strings.Contains(got, "Role: Engineering partner") {
 		t.Fatalf("prompt identity was not reloaded: %q", got)
 	}
 
 	if _, err := tool.Execute(context.Background(), map[string]interface{}{"operation": "clear"}); err != nil {
-		t.Fatalf("clear Work identity: %v", err)
+		t.Fatalf("clear Crew identity: %v", err)
 	}
 	if len(emitted) != 2 || emitted[1].Payload["operation"] != "clear" {
 		t.Fatalf("identity clear interaction was not emitted: %+v", emitted)
@@ -116,7 +116,7 @@ func TestWorkIdentityToolPersistsAndPromptVariablesReloadIt(t *testing.T) {
 		UserID: "user-1", SessionID: "session-1", WorkspacePath: projectPath,
 	})
 	if err != nil {
-		t.Fatalf("reload cleared Work prompt variables: %v", err)
+		t.Fatalf("reload cleared Crew prompt variables: %v", err)
 	}
 	if variables["WORK_IDENTITY"] != "" {
 		t.Fatalf("identity should be empty after clear: %q", variables["WORK_IDENTITY"])

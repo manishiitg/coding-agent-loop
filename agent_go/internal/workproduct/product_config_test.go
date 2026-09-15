@@ -17,12 +17,12 @@ func TestWorkManifestDeclaresProjectScopeAndCodingAllowlist(t *testing.T) {
 		t.Fatalf("unexpected profile id: %q", manifest.Profile.ID)
 	}
 	if len(manifest.Dependencies.Skills) != 0 {
-		t.Fatalf("Work must not install external skills merely because a project opens: %+v", manifest.Dependencies.Skills)
+		t.Fatalf("Crew must not install external skills merely because a project opens: %+v", manifest.Dependencies.Skills)
 	}
 	// Project, not global -- same reasoning as Finance/Dominion: global
 	// scope makes provider_options non-authoritative and skips this
 	// profile's own prompt.file in favor of the dynamic delegation
-	// prompt. Work's prompt (plain coding work, no workflow vocabulary)
+	// prompt. Crew's prompt (plain coding work, no workflow vocabulary)
 	// must actually reach the model.
 	if manifest.Profile.Scope != agentprofiles.ProfileScopeProject {
 		t.Fatalf("work must declare scope: project, got %q", manifest.Profile.Scope)
@@ -33,11 +33,11 @@ func TestWorkManifestDeclaresProjectScopeAndCodingAllowlist(t *testing.T) {
 		}
 	}
 	if len(manifest.Profile.ResolvedFeatures) == 0 {
-		t.Fatal("Work must expose resolved feature bundles to the shared product UI")
+		t.Fatal("Crew must expose resolved feature bundles to the shared product UI")
 	}
 	for _, name := range manifest.Profile.Skills {
 		if name == "skill-creator" {
-			t.Fatal("skill-creator must be selected on demand; attaching it to every Work chat replaces Work's general-purpose identity with Skill Builder mode")
+			t.Fatal("skill-creator must be selected on demand; attaching it to every Crew chat replaces Crew's general-purpose identity with Skill Builder mode")
 		}
 	}
 	// Runtime choice reuses AgentWorks' complete coding-agent provider set and
@@ -56,9 +56,9 @@ func TestWorkManifestDeclaresProjectScopeAndCodingAllowlist(t *testing.T) {
 		}
 	}
 	if !options[0].Default {
-		t.Fatal("Claude Code must remain Work's default coding CLI")
+		t.Fatal("Claude Code must remain Crew's default coding CLI")
 	}
-	// Work uses the shared AgentWorks execution policy instead of defining a
+	// Crew uses the shared AgentWorks execution policy instead of defining a
 	// product-specific transport policy.
 	if manifest.Profile.Runtime.Transport != "auto" {
 		t.Fatalf("work must use the shared runtime transport policy, got transport=%q", manifest.Profile.Runtime.Transport)
@@ -78,7 +78,7 @@ func TestWorkManifestDeclaresProjectScopeAndCodingAllowlist(t *testing.T) {
 	if !manifest.Profile.ToolPolicy.IsAllowlist() {
 		t.Fatal("work must declare tool_policy.mode: allowlist -- fail-open would silently reach workflow/schedule/pulse tools")
 	}
-	// Work reuses platform coding tools plus its deliberately small,
+	// Crew reuses platform coding tools plus its deliberately small,
 	// project-scoped schedule surface. Workflow routes and execution remain out.
 	wantEnabled := map[string]bool{
 		"get_file_link":                     false,
@@ -159,7 +159,7 @@ func TestWorkManifestDeclaresProjectScopeAndCodingAllowlist(t *testing.T) {
 		t.Fatalf("work identity interaction must be declared in product.yaml, got %+v", identityInteraction)
 	}
 	if !manifest.Profile.UIPanels.Schedules {
-		t.Fatal("Work must expose its project schedule panel")
+		t.Fatal("Crew must expose its project schedule panel")
 	}
 	caps := manifest.Profile.Runtime.Capabilities
 	if caps.WorkflowExecution != agentprofiles.CapabilityDisabled {
@@ -196,16 +196,16 @@ func TestWorkPlatformSkillsRegisterAndLoad(t *testing.T) {
 		t.Fatalf("RegisterProductSkills: %v", err)
 	}
 	checks := map[string][]string{
-		"work-integrations":       {"list_mcp_servers", "Setup > MCP servers", "set_workflow_secret", "available to shell", "do not ask the user to start", "list_work_folders", "Setup > Models"},
-		"work-workflow-files":     {"list_accessible_workflows", "WORK_FOLDER_<ALIAS>", "workflow.json", "knowledgebase/", "learnings/", "db/db.sqlite", "db/reports/", "runs/run_index.json", "sqlite3 -readonly", "get_file_link", "get_report_link", "same signed-in Work account"},
-		"work-skills":             {"list_skills", "search_skills", "skills/custom/<skill-name>/SKILL.md", "skill authoring is a capability", "Setup > Skills"},
+		"work-integrations":       {"list_mcp_servers", "platform administrator", "project selection remains", "set_workflow_secret", "available to shell", "do not ask the user to start", "list_work_folders", "Setup > Models"},
+		"work-workflow-files":     {"list_accessible_workflows", "WORK_FOLDER_<ALIAS>", "workflow.json", "knowledgebase/", "learnings/", "db/db.sqlite", "db/reports/", "runs/run_index.json", "sqlite3 -readonly", "get_file_link", "get_report_link", "same signed-in Crew account"},
+		"work-skills":             {"list_skills", "search_skills", "skills/custom/<skill-name>/SKILL.md", "same topic", "independently reusable topics", "catch-all", "150 lines or fewer", "references/", "scripts/", "skill authoring is a capability", "Setup > Skills"},
 		"work-schedules-and-bots": {"list_project_schedules", "five-field cron", "list_project_triggers", "Project webhook triggers", "Setup > Bots", "Slack", "WhatsApp", "list_gmail_connections", "google_workspace_cli", "gmail.readonly"},
 		"work-dashboard":          {"db/reports/index.html", "window.report.sendChatMessage", "query_workflow_db", "validate_report_html", "get_report_link"},
 		"background-work":         {"run_in_background", "[AUTO-NOTIFICATION]", "query_agent"},
 	}
 	for name, required := range checks {
 		if !skills.IsBuiltinSkill(name) {
-			t.Fatalf("%s did not register as a built-in Work skill", name)
+			t.Fatalf("%s did not register as a built-in Crew skill", name)
 		}
 		attached := skills.LoadAttachable("", []string{name})
 		if len(attached) != 1 {
@@ -248,7 +248,7 @@ func TestBuiltinAgentProfilesReturnsExactlyOneVersion(t *testing.T) {
 func TestRenderPromptSucceedsAgainstAPromptContext(t *testing.T) {
 	profile := BuiltinAgentProfile()
 	rendered, err := agentprofiles.RenderPrompt(profile, agentprofiles.PromptContext{
-		ProjectTitle:  "Work",
+		ProjectTitle:  "Crew",
 		LocalDateTime: "Monday, 1 January 2026 at 9:00 AM UTC",
 	})
 	if err != nil {
@@ -270,7 +270,7 @@ func TestRenderPromptSucceedsAgainstAPromptContext(t *testing.T) {
 		"tasks, notes, plans, status, research",
 	} {
 		if !strings.Contains(rendered, required) {
-			t.Fatalf("rendered Work prompt is missing %q", required)
+			t.Fatalf("rendered Crew prompt is missing %q", required)
 		}
 	}
 }
@@ -298,11 +298,11 @@ func TestWorkPromptIncludesConfiguredIdentity(t *testing.T) {
 		Product:      map[string]string{"WORK_IDENTITY": "Name: Nova\nRole: Engineering partner"},
 	})
 	if err != nil {
-		t.Fatalf("render Work prompt: %v", err)
+		t.Fatalf("render Crew prompt: %v", err)
 	}
 	for _, required := range []string{"## Project agent identity", "changes behavior, never permissions", "Name: Nova", "Role: Engineering partner"} {
 		if !strings.Contains(rendered, required) {
-			t.Fatalf("rendered Work prompt is missing %q", required)
+			t.Fatalf("rendered Crew prompt is missing %q", required)
 		}
 	}
 }

@@ -36,12 +36,12 @@ var registerProductSkillsOnce sync.Once
 var registerProductSkillsErr error
 
 var productSkills = []agentprofiles.SkillFileBinding{
-	{Name: "work-integrations", Description: "Connect and manage Work MCP servers, secrets, browser access, models, and administrator-authorized server folders.", Path: "skills/work-integrations/SKILL.md"},
-	{Name: "work-workflow-files", Description: "Read and interpret attached folders and read-only AgentWorks workflow references in Work.", Path: "skills/work-workflow-files/SKILL.md"},
-	{Name: "work-skills", Description: "Discover, install, import, create, select, and remove reusable skills in Work.", Path: "skills/work-skills/SKILL.md"},
-	{Name: "work-schedules-and-bots", Description: "Manage Work's message-only schedules, authenticated webhook triggers, and Slack or WhatsApp project-chat bots.", Path: "skills/work-schedules-and-bots/SKILL.md"},
-	{Name: "work-dashboard", Description: "Create and maintain a general-purpose visual dashboard for a Work project.", Path: "skills/work-dashboard/SKILL.md"},
-	{Name: "background-work", Description: "Run a bounded task asynchronously and rely on Work's automatic completion notification instead of polling.", Path: "skills/background-work/SKILL.md"},
+	{Name: "work-integrations", Description: "Connect and manage Crew MCP servers, secrets, browser access, models, and administrator-authorized server folders.", Path: "skills/work-integrations/SKILL.md"},
+	{Name: "work-workflow-files", Description: "Read and interpret attached folders and read-only AgentWorks workflow references in Crew.", Path: "skills/work-workflow-files/SKILL.md"},
+	{Name: "work-skills", Description: "Discover, install, import, create, select, and remove reusable skills in Crew.", Path: "skills/work-skills/SKILL.md"},
+	{Name: "work-schedules-and-bots", Description: "Manage Crew's message-only schedules, authenticated webhook triggers, and Slack or WhatsApp project-chat bots.", Path: "skills/work-schedules-and-bots/SKILL.md"},
+	{Name: "work-dashboard", Description: "Create and maintain a general-purpose visual dashboard for a Crew project.", Path: "skills/work-dashboard/SKILL.md"},
+	{Name: "background-work", Description: "Run a bounded task asynchronously and rely on Crew's automatic completion notification instead of polling.", Path: "skills/background-work/SKILL.md"},
 }
 
 var customCommandSlugPattern = regexp.MustCompile(`[^a-z0-9_-]+`)
@@ -76,7 +76,7 @@ func workCustomCommandsFactory(workspaceAPIURL string) agentprofiles.ToolFactory
 		commandsPath := path.Join(runtime.WorkspacePath, commands.CustomCommandsSubPath)
 		return agentprofiles.ToolSpec{
 			Name: "manage_custom_commands", Category: "custom_commands",
-			Description: "List, create, update, or delete reusable slash commands for this Work project when the user asks. Commands appear immediately in this project's slash menu. Product commands are immutable and cannot be changed with this tool.",
+			Description: "List, create, update, or delete reusable slash commands for this Crew project when the user asks. Commands appear immediately in this project's slash menu. Product commands are immutable and cannot be changed with this tool.",
 			Parameters: map[string]interface{}{
 				"type": "object", "additionalProperties": false,
 				"properties": map[string]interface{}{
@@ -138,7 +138,7 @@ func workCustomCommandsFactory(workspaceAPIURL string) agentprofiles.ToolFactory
 	}
 }
 
-// RegisterProductSkills adds Work's platform-operation contracts. General
+// RegisterProductSkills adds Crew's platform-operation contracts. General
 // browser, coding, review, and skill-authoring skills still come from the
 // existing AgentWorks registry.
 func RegisterProductSkills() error {
@@ -244,7 +244,7 @@ func workIdentityFactory(workspaceAPIURL string) agentprofiles.ToolFactory {
 		return agentprofiles.ToolSpec{
 			Name:     "set_work_identity",
 			Category: "work_identity",
-			Description: "Set, update, or clear this Work project's agent identity when the user asks. " +
+			Description: "Set, update, or clear this Crew project's agent identity when the user asks. " +
 				"A short name, icon, role, and instructions keep the agent consistent across project chats, schedules, bots, and background work; they change presentation and behavior, never permissions. " +
 				"Store it in product.json, preserve omitted fields, and never invent an identity.",
 			Parameters: map[string]interface{}{
@@ -264,11 +264,11 @@ func workIdentityFactory(workspaceAPIURL string) agentprofiles.ToolFactory {
 			Execute: func(ctx context.Context, args map[string]interface{}) (string, error) {
 				read, err := client.ReadWorkspaceFile(ctx, workspace.ReadWorkspaceFileParams{Filepath: manifestPath})
 				if err != nil {
-					return "", fmt.Errorf("read Work project configuration: %w", err)
+					return "", fmt.Errorf("read Crew project configuration: %w", err)
 				}
 				var manifest map[string]interface{}
 				if err := json.Unmarshal([]byte(read.Content), &manifest); err != nil {
-					return "", fmt.Errorf("decode Work project configuration: %w", err)
+					return "", fmt.Errorf("decode Crew project configuration: %w", err)
 				}
 				operation, _ := args["operation"].(string)
 				operation = strings.ToLower(strings.TrimSpace(operation))
@@ -306,14 +306,14 @@ func workIdentityFactory(workspaceAPIURL string) agentprofiles.ToolFactory {
 				manifest["updated_at"] = time.Now().UTC().Format(time.RFC3339)
 				encoded, err := json.MarshalIndent(manifest, "", "  ")
 				if err != nil {
-					return "", fmt.Errorf("encode Work project configuration: %w", err)
+					return "", fmt.Errorf("encode Crew project configuration: %w", err)
 				}
 				if _, err := client.UpdateWorkspaceFile(ctx, workspace.UpdateWorkspaceFileParams{Filepath: manifestPath, Content: string(encoded) + "\n"}); err != nil {
-					return "", fmt.Errorf("save Work identity: %w", err)
+					return "", fmt.Errorf("save Crew identity: %w", err)
 				}
 				if operation == "clear" {
 					emitIdentityUpdated(operation)
-					return "The project agent identity was removed. Use the base Work identity from now on.", nil
+					return "The project agent identity was removed. Use the base Crew identity from now on.", nil
 				}
 				var saved workIdentity
 				encodedIdentity, _ := json.Marshal(manifest["identity"])
@@ -325,7 +325,7 @@ func workIdentityFactory(workspaceAPIURL string) agentprofiles.ToolFactory {
 	}
 }
 
-// RegisterAgentProfileRuntime connects Work's durable chat-configurable
+// RegisterAgentProfileRuntime connects Crew's durable chat-configurable
 // identity to both the provider prompt and its one product-owned tool.
 func RegisterAgentProfileRuntime(registry *agentprofiles.Registry, workspaceAPIURL string) error {
 	if err := registry.RegisterToolFactory("work.set-identity", workIdentityFactory(workspaceAPIURL)); err != nil {
@@ -342,17 +342,17 @@ func RegisterAgentProfileRuntime(registry *agentprofiles.Registry, workspaceAPIU
 		)
 		result, err := client.ReadWorkspaceFile(ctx, workspace.ReadWorkspaceFileParams{Filepath: path.Join(runtime.WorkspacePath, "product.json")})
 		if err != nil {
-			return nil, fmt.Errorf("read Work identity: %w", err)
+			return nil, fmt.Errorf("read Crew identity: %w", err)
 		}
 		var manifest workProjectManifest
 		if err := json.Unmarshal([]byte(result.Content), &manifest); err != nil {
-			return nil, fmt.Errorf("decode Work identity: %w", err)
+			return nil, fmt.Errorf("decode Crew identity: %w", err)
 		}
 		identity := ""
 		if manifest.Identity != nil {
 			identity = renderWorkIdentity(*manifest.Identity)
 		}
-		// Always return the key because the Work prompt uses missingkey=error.
+		// Always return the key because the Crew prompt uses missingkey=error.
 		return map[string]string{"WORK_IDENTITY": identity}, nil
 	})
 }

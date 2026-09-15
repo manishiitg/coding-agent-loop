@@ -43,7 +43,7 @@ export function ReportPage({ encodedPath, ownerUid, currentUserId, onBack }: Rep
         <div className="w-full max-w-md rounded-lg border border-border bg-card p-6 text-center shadow-sm">
           <BarChart3 className="mx-auto mb-4 h-10 w-10 text-muted-foreground" />
           <h1 className="mb-2 text-lg font-semibold">{isWrongPersonalAccount ? "Dashboard unavailable" : "Invalid dashboard URL"}</h1>
-          <p className="mb-4 text-sm text-muted-foreground">{isWrongPersonalAccount ? "This Work dashboard belongs to a different signed-in account." : "The dashboard URL must include a valid encoded workflow or Work project path."}</p>
+          <p className="mb-4 text-sm text-muted-foreground">{isWrongPersonalAccount ? "This Crew dashboard belongs to a different signed-in account." : "The dashboard URL must include a valid encoded workflow or Crew project path."}</p>
           {onBack && (
             <button type="button" onClick={onBack} className="rounded-md border border-border bg-background px-3 py-1.5 text-sm font-medium text-foreground hover:bg-muted">
               Go back

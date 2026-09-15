@@ -24,7 +24,7 @@ export function CreateWorkProjectDialog({ onClose, onCreate, submitting, error }
           <X className="h-4 w-4" />
         </button>
         <span className="grid h-11 w-11 place-items-center rounded-xl bg-primary/10 text-primary"><FolderKanban className="h-5 w-5" /></span>
-        <h2 id="work-create-project-title" className="mt-4 text-xl font-semibold text-foreground">Create a Work project</h2>
+        <h2 id="work-create-project-title" className="mt-4 text-xl font-semibold text-foreground">Create a Crew project</h2>
         <p className="mt-1.5 text-sm leading-6 text-muted-foreground">Give this project a clear name. Its chats, files, coding work, tools, schedules, and dashboard will stay together.</p>
         <label className="mt-5 block text-xs font-semibold text-foreground">
           Project name

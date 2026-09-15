@@ -1,6 +1,6 @@
 schema_version: 2
 
-# Work's small product manifests hold only durable project/session metadata.
+# Crew's small product manifests hold only durable project/session metadata.
 # MCP/tool policy and built-in skills stay here; coding happens in the
 # automatically created project folder.
 dependencies: {}
@@ -11,7 +11,7 @@ prompt:
 
 profile:
   id: work
-  name: Work
+  name: Crew
   version: 1
   # Each shared feature expands into its existing tools, skills, prompt
   # extension, runtime capabilities and UI panels. This is the source of truth;
@@ -43,7 +43,7 @@ profile:
   # project scope, not global -- same reasoning as Finance/Dominion: global
   # scope (1) makes provider_options non-authoritative and (2) skips this
   # profile's own prompt.file in favor of the dynamic multi-agent
-  # delegation prompt. Work's prompt (plain coding work, no workflow
+  # delegation prompt. Crew's prompt (plain coding work, no workflow
   # vocabulary) must actually reach the model.
   scope: project
   tools:
@@ -52,7 +52,7 @@ profile:
         kind: identity_updated
         render: product.refresh
     - id: work.custom-commands
-  # Work reuses the platform coding and background-agent surfaces (shell,
+  # Crew reuses the platform coding and background-agent surfaces (shell,
   # guarded file patching, browser, secrets, web research, run_in_background).
   # Its only product-specific wrappers are folder grants and message-only
   # project schedules; workflow/plan/route/pulse tools remain excluded.
@@ -73,7 +73,7 @@ profile:
     # chats retain tmux, while background children and steps use structured JSON.
     transport: auto
     # Reuse AgentWorks' complete coding-agent provider set. These providers
-    # launch the globally installed CLIs; Work does not install, fork, or
+    # launch the globally installed CLIs; Crew does not install, fork, or
     # maintain a separate copy of any runtime.
     provider_options:
       - id: claude-code
@@ -148,7 +148,7 @@ profile:
       mode: keyed
       key_type: project
     capabilities:
-      # Work has no workflows: no plans, phases, steps, or execution.
+      # Crew has no workflows: no plans, phases, steps, or execution.
       workflow_execution: disabled
   built_in: true
 

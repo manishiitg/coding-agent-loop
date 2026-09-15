@@ -25,6 +25,7 @@ interface PulseViewProps {
   statusLoading: boolean
   overview: PulseOverview
   onRefresh: () => void
+  headerAction?: React.ReactNode
 }
 
 export default function PulseView({
@@ -43,6 +44,7 @@ export default function PulseView({
   statusLoading,
   overview,
   onRefresh,
+  headerAction,
 }: PulseViewProps) {
   return (
     <div className="flex h-full min-h-0 w-full max-w-none flex-col bg-background">
@@ -64,6 +66,7 @@ export default function PulseView({
             </div>
           </div>
         </div>
+        <div className="flex shrink-0 items-center gap-2">
         {monitorOn && (
           <button
             type="button"
@@ -79,6 +82,8 @@ export default function PulseView({
             <RefreshCw className={`h-3.5 w-3.5 ${statusLoading ? 'animate-spin' : ''}`} />
           </button>
         )}
+        {headerAction}
+        </div>
       </div>
 
       <div className="min-h-0 flex-1 overflow-y-auto">

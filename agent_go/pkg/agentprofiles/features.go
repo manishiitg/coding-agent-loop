@@ -118,11 +118,11 @@ var featureCatalog = map[string]featureDefinition{
 		PromptExtension: "Secret management is enabled. Read the attached `work-integrations` skill before managing secrets. Use dedicated secret tools, refer to credentials only by name, and never print or store secret values in project files.",
 	},
 	"mcp": {
-		Tools:           []string{"list_mcp_servers", "search_mcp_catalog", "install_mcp_server", "add_mcp_server", "remove_mcp_server", "get_mcp_server_logs", "trigger_mcp_discovery"},
-		Skills:          []string{"work-integrations"},
+		Tools:           []string{"list_mcp_servers", "search_mcp_catalog", "install_mcp_server", "add_mcp_server", "remove_mcp_server", "get_mcp_server_logs", "trigger_mcp_discovery", "update_project_mcp_server_selection"},
+		Skills:          []string{"work-mcp"},
 		UIPanels:        []string{"mcp"},
 		Capabilities:    map[string]CapabilityRequirement{"mcp_selection": CapabilityPreferred},
-		PromptExtension: "MCP integrations are enabled. Read the attached `work-integrations` skill before managing MCP servers. Distinguish account installation from project selection and use only connected, explicitly selected servers.",
+		PromptExtension: "MCP is enabled. Read the attached `work-mcp` skill before managing MCP servers. Distinguish platform connection setup from project selection and use only connected, explicitly selected servers.",
 	},
 	"skills": {
 		Tools:           []string{"list_skills", "search_skills", "install_skill", "import_skill", "uninstall_skill"},

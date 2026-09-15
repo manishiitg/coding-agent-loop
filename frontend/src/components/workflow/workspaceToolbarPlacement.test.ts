@@ -7,8 +7,9 @@ describe('workflow Ask AI placement', () => {
     const host = readFileSync('src/components/workflow/canvas/WorkspaceViewHost.tsx', 'utf8')
 
     expect(toolbar).not.toContain('<AskAIButton')
-    expect(host).toContain('data-ui-view-assistant')
-    expect(host).toContain('getWorkspaceAskAIMessage(effectiveView)')
+    expect(host).not.toContain('data-ui-view-assistant')
+    expect(host).toContain('headerAction={askAI(')
+    expect(host).toContain('assistantControl={workspacePath ? (')
   })
 
   it('keeps Views and Setup mutually exclusive', () => {

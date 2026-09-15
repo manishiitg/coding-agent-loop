@@ -24,7 +24,7 @@ export function AskAIButton({
   message,
   onAsk,
   label = 'Ask AI',
-  className = 'flex shrink-0 items-center gap-1.5 rounded-md border border-border px-2.5 py-1.5 text-xs font-medium text-muted-foreground transition-colors hover:border-primary/40 hover:text-primary',
+  className,
   iconOnly = false,
 }: {
   workspacePath: string | null
@@ -36,6 +36,9 @@ export function AskAIButton({
   /** Renders just the icon (for a tight icon-toolbar spot) instead of icon+label. */
   iconOnly?: boolean
 }) {
+  const buttonClassName = className ?? (iconOnly
+    ? 'inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-border text-muted-foreground transition-colors hover:border-primary/40 hover:text-primary'
+    : 'flex shrink-0 items-center gap-1.5 rounded-md border border-border px-2.5 py-1.5 text-xs font-medium text-muted-foreground transition-colors hover:border-primary/40 hover:text-primary')
   const handleClick = () => {
     if (onAsk) {
       void Promise.resolve(onAsk(message)).catch(err => {
@@ -56,7 +59,7 @@ export function AskAIButton({
     // (backed by the TooltipProvider in App.tsx) doesn't have that problem.
     <Tooltip>
       <TooltipTrigger asChild>
-        <button type="button" onClick={handleClick} aria-label={iconOnly ? label : undefined} className={className} disabled={!workspacePath && !onAsk}>
+        <button type="button" onClick={handleClick} aria-label={iconOnly ? label : undefined} className={buttonClassName} disabled={!workspacePath && !onAsk}>
           <MessageCircle className="h-3.5 w-3.5" />
           {!iconOnly && label}
         </button>

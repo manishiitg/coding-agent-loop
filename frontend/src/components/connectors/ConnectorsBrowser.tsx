@@ -51,6 +51,8 @@ interface ConnectorsBrowserProps {
   assistantLabel?: string
   /** Optional product-owned chat delivery; workflows use their existing lane. */
   onAskAI?: (message: string) => void | Promise<void>
+  /** Let an embedding scroll the complete page instead of only this list. */
+  manageOwnScroll?: boolean
 }
 
 export default function ConnectorsBrowser({
@@ -59,6 +61,7 @@ export default function ConnectorsBrowser({
   workspaceLabel = 'workflow',
   assistantLabel = 'builder',
   onAskAI,
+  manageOwnScroll = true,
 }: ConnectorsBrowserProps) {
   const {
     toolList,
@@ -156,7 +159,7 @@ export default function ConnectorsBrowser({
   const gridGap = compact ? 'gap-2' : 'gap-3'
 
   return (
-    <div className="flex h-full min-h-0 flex-col">
+    <div className={manageOwnScroll ? 'flex h-full min-h-0 flex-col' : 'flex flex-col'}>
       {/* Search + filter */}
       <div className="flex shrink-0 items-center gap-2">
         <div className="relative flex-1">
@@ -221,7 +224,7 @@ export default function ConnectorsBrowser({
       </div>
 
       {/* Grid */}
-      <div className="min-h-0 flex-1 overflow-y-auto pt-5">
+      <div className={manageOwnScroll ? 'min-h-0 flex-1 overflow-y-auto pt-5' : 'pt-5'}>
         <div className="mb-3 flex items-baseline justify-between">
           <h3 className="text-sm font-semibold text-gray-900 dark:text-gray-100">
             {filter === 'connected'

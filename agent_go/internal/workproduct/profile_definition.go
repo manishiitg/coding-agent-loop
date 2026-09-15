@@ -36,7 +36,8 @@ var registerProductSkillsOnce sync.Once
 var registerProductSkillsErr error
 
 var productSkills = []agentprofiles.SkillFileBinding{
-	{Name: "work-integrations", Description: "Connect and manage Crew MCP servers, secrets, browser access, models, and administrator-authorized server folders.", Path: "skills/work-integrations/SKILL.md"},
+	{Name: "work-mcp", Description: "Connect and manage MCP servers for Crew projects.", Path: "skills/work-mcp/SKILL.md"},
+	{Name: "work-integrations", Description: "Manage Crew secrets, browser access, models, and administrator-authorized server folders.", Path: "skills/work-integrations/SKILL.md"},
 	{Name: "work-workflow-files", Description: "Read and interpret attached folders and read-only AgentWorks workflow references in Crew.", Path: "skills/work-workflow-files/SKILL.md"},
 	{Name: "work-skills", Description: "Discover, install, import, create, select, and remove reusable skills in Crew.", Path: "skills/work-skills/SKILL.md"},
 	{Name: "work-schedules-and-bots", Description: "Manage Crew's message-only schedules, authenticated webhook triggers, and Slack or WhatsApp project-chat bots.", Path: "skills/work-schedules-and-bots/SKILL.md"},

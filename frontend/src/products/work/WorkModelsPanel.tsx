@@ -205,7 +205,8 @@ export function WorkModelsPanel({
           workspacePath={workspacePath}
           message="Help me choose between the coding agents available for this project. Explain the practical differences before changing anything."
           onAsk={onAsk}
-          className="flex shrink-0 items-center gap-1.5 self-center rounded-md border border-border px-2.5 py-1.5 text-xs font-medium text-muted-foreground transition-colors hover:border-primary/40 hover:text-primary"
+          iconOnly
+          className="inline-flex h-8 w-8 shrink-0 items-center justify-center self-center rounded-md border border-border text-muted-foreground transition-colors hover:border-primary/40 hover:text-primary"
         />
       </header>
       <div className="min-h-0 flex-1 overflow-y-auto p-4">

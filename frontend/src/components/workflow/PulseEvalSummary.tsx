@@ -38,9 +38,11 @@ function formatRunTime(value: string): string {
 export function PulseEvalSummary({
   workspacePath,
   className = '',
+  headerAction,
 }: {
   workspacePath: string
   className?: string
+  headerAction?: React.ReactNode
 }) {
   const [results, setResults] = useState<EvalResultRecord[]>([])
   const [loading, setLoading] = useState(false)
@@ -199,6 +201,7 @@ export function PulseEvalSummary({
               : 'Criterion scores across recent workflow runs'}
           </p>
         </div>
+        <div className="flex items-center gap-2">
         <button
           type="button"
           onClick={() => { void load() }}
@@ -208,6 +211,8 @@ export function PulseEvalSummary({
         >
           <RefreshCw className={`h-3.5 w-3.5 ${loading ? 'animate-spin' : ''}`} />
         </button>
+        {headerAction}
+        </div>
       </div>
 
       {error ? (

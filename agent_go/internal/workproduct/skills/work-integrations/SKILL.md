@@ -1,30 +1,12 @@
 ---
 name: work-integrations
-description: Connect and manage Crew MCP servers, secrets, browser access, models, and administrator-authorized server folders. Use when the user asks to connect a service, configure credentials or browser access, choose a coding provider, diagnose an integration, or attach an external folder.
+description: Manage Crew secrets, browser access, models, and administrator-authorized server folders. Use when the user asks to configure credentials or browser access, choose a coding provider, or attach an external folder.
 ---
 
 # Crew integrations
 
 Inspect current state before changing it, and distinguish account-level setup
-from selection for this project.
-
-## MCP servers
-
-- Use `list_mcp_servers` to inspect installed connection and authorization
-  state. Use `search_mcp_catalog` only to discover a new server.
-- Use `install_mcp_server` for a catalog result or service URL so Crew can probe
-  its authentication requirements. Use `add_mcp_server` only for a custom
-  server whose protocol and complete configuration are already known.
-- An installed server is a platform connection shared by AgentWorks, Crew,
-  workflows, chats, schedules, and every user. Only a platform administrator
-  may add, authenticate, reconnect, edit, or remove one. Explain this before
-  starting credential or OAuth setup. A connection is not automatically
-  selected for this project; project selection remains in **Setup > MCP
-  servers**. Never claim its tools are available here until it is connected
-  and selected.
-- Use `get_mcp_server_logs` to diagnose a configured server and
-  `trigger_mcp_discovery` when its tool metadata is stale. Removing a server is
-  platform-wide, so identify the exact server and explain that scope first.
+from selection for this project. MCP setup has its own `work-mcp` skill.
 
 ## Secrets
 
@@ -36,7 +18,7 @@ from selection for this project.
   tools immediately in the current chat and remains available in later turns.
   Continue the requested work in the same chat; do not ask the user to start a
   new chat or session. Verify availability without printing the secret value.
-- Crew stores attached secret names in `workflow.json` under
+- Work stores attached secret names in `workflow.json` under
   `capabilities.selected_secrets`, using the AgentWorks workflow contract.
   Secret values remain encrypted outside the manifest. Respect the user's
   selections in **Setup > Secrets**; do not attach an unrelated credential.

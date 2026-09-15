@@ -8133,7 +8133,7 @@ func (api *StreamingAPI) deliverRetainedMainTerminalInput(ctx context.Context, s
 	if api.internalRetainedTerminalInputHandler != nil {
 		return provider, true, api.internalRetainedTerminalInputHandler(ctx, llmproviders.Provider(provider), modelID, sessionID, message)
 	}
-	return provider, true, llmproviders.SendCodingAgentLiveInput(ctx, llmproviders.Provider(provider), modelID, sessionID, message)
+	return provider, true, llmproviders.SendCodingAgentRetainedInput(ctx, llmproviders.Provider(provider), modelID, sessionID, message)
 }
 
 func (api *StreamingAPI) recordRetainedTerminalLiveInput(sessionID, message, provider string, executionIDs ...string) string {
@@ -11052,7 +11052,7 @@ func (api *StreamingAPI) registerMultiAgentMCPServerTools(registrar interface {
 
 	if err := registerTool(
 		"install_mcp_server",
-		"Administrator-only platform install of an MCP server, shared by AgentWorks, Work, workflows, chats, and schedules. It still needs update_workflow_config(add_servers=[name]) to be selected by a workflow. Before OAuth or API-key setup, explicitly tell the administrator that every AgentWorks user will be able to use the connected external account. For a fresh URL, live-probe its auth requirements and verify the provider. To reauthorize an existing OAuth connection, set reconnect=true.",
+		"Administrator-only platform install of an MCP server, shared by AgentWorks, Work, workflows, chats, and schedules. Installation does not select the server: workflows use update_workflow_config(add_servers=[name]), while an active Work project uses update_project_mcp_server_selection(action=select, server=name). Before OAuth or API-key setup, explicitly tell the administrator that every AgentWorks user will be able to use the connected external account. For a fresh URL, live-probe its auth requirements and verify the provider. To reauthorize an existing OAuth connection, set reconnect=true.",
 		map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
@@ -11142,7 +11142,7 @@ func (api *StreamingAPI) registerMultiAgentMCPServerTools(registrar interface {
 						connected = hasOAuthTokenFile(owned)
 					}
 					if connected {
-						return fmt.Sprintf("%q is already connected across AgentWorks. Use update_workflow_config(add_servers=[%q]) to select it for this workflow. For OAuth reauthorization, a platform administrator can call install_mcp_server with reconnect=true.", name, name), nil
+						return fmt.Sprintf("%q is already connected across AgentWorks. Select it with update_workflow_config(add_servers=[%q]) in a workflow, or update_project_mcp_server_selection(action=select, server=%q) in an active Work project. For OAuth reauthorization, a platform administrator can call install_mcp_server with reconnect=true.", name, name, name), nil
 					}
 				}
 			}
@@ -11167,7 +11167,7 @@ func (api *StreamingAPI) registerMultiAgentMCPServerTools(registrar interface {
 					api.invalidateServerDiscovery(name, "Installed — discovering tools...")
 					api.startServerDiscovery(GetUserIDFromContext(ctx), name)
 					notifyMCPViewRefresh()
-					return fmt.Sprintf("Installed %q (no sign-in required). Discovery is running now; use update_workflow_config(add_servers=[%q]) to add it to this workflow.", name, name), nil
+					return fmt.Sprintf("Installed %q (no sign-in required). Discovery is running now. Select it with update_workflow_config(add_servers=[%q]) in a workflow, or update_project_mcp_server_selection(action=select, server=%q) in an active Work project.", name, name, name), nil
 				}
 				// Needs OAuth. Build the config from what discovery found.
 				serverConfig.OAuth = &oauth.OAuthConfig{
@@ -11202,7 +11202,7 @@ func (api *StreamingAPI) registerMultiAgentMCPServerTools(registrar interface {
 				api.invalidateServerDiscovery(name, "Installed — discovering tools...")
 				api.startServerDiscovery(GetUserIDFromContext(ctx), name)
 				notifyMCPViewRefresh()
-				return fmt.Sprintf("Installed %q. Discovery is running now; use update_workflow_config(add_servers=[%q]) to add it to this workflow.", name, name), nil
+				return fmt.Sprintf("Installed %q. Discovery is running now. Select it with update_workflow_config(add_servers=[%q]) in a workflow, or update_project_mcp_server_selection(action=select, server=%q) in an active Work project.", name, name, name), nil
 			}
 
 			// OAuth: start the flow and hand back the URL for the user to open.
@@ -11316,7 +11316,7 @@ func (api *StreamingAPI) registerMultiAgentMCPServerTools(registrar interface {
 			api.invalidateServerDiscovery(name, "Configuration saved — discovering tools...")
 			api.startServerDiscovery(GetUserIDFromContext(ctx), name)
 
-			return fmt.Sprintf("Saved user MCP server %q and started discovery. After discovery completes, select it with update_workflow_config(add_servers=[name]). The chat catalog refreshes on the next turn; no server restart is needed.", name), nil
+			return fmt.Sprintf("Saved user MCP server %q and started discovery. After discovery completes, select it with update_workflow_config(add_servers=[name]) in a workflow, or update_project_mcp_server_selection(action=select, server=name) in an active Work project. The chat catalog refreshes on the next turn; no server restart is needed.", name), nil
 		},
 	); err != nil {
 		return err

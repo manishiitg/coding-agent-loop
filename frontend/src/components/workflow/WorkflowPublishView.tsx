@@ -23,7 +23,7 @@ const getPublishSummary = (info: WorkflowPublishInfoResponse | null): string => 
   return 'Publish status is waiting for the builder to update publish/status.json.'
 }
 
-const WorkflowPublishView: React.FC<WorkflowPublishViewProps> = ({ workspacePath, onStateLoaded }) => {
+const WorkflowPublishView: React.FC<WorkflowPublishViewProps> = ({ workspacePath, onStateLoaded, headerAction }) => {
   const loadInfo = useCallback(async () => {
     if (!workspacePath) throw new Error('No workflow is selected')
     return agentApi.getWorkflowPublish(workspacePath)
@@ -51,6 +51,7 @@ const WorkflowPublishView: React.FC<WorkflowPublishViewProps> = ({ workspacePath
         label: <>Set up · publish in chat with <code className="rounded bg-background px-1 font-medium text-foreground">/publish</code></>
       }}
       getSummary={getPublishSummary}
+      headerAction={headerAction}
     />
   )
 }

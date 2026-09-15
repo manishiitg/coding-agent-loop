@@ -412,6 +412,7 @@ export function WorkWorkspacePane({ workspacePath, projectId, projectTitle, tabI
               workspacePath={workspacePath}
               message="Help me manage this project's schedules or authenticated webhook triggers. Each sends exactly one saved instruction to this Crew project; do not create workflow routes or workflow executions."
               onAsk={message => { queueWorkMessage(tabId, message) }}
+              iconOnly
             />}
           />}
         </Suspense>

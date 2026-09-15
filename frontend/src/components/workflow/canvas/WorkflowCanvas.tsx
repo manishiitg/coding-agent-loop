@@ -151,6 +151,7 @@ export interface WorkflowCanvasProps {
   /** Embed only the reusable read-only Plan canvas, without global workflow view switching. */
   embeddedPlanOnly?: boolean
   openPulseOnMount?: boolean
+  assistantControl?: React.ReactNode
 }
 
 // On-pane controls for the preview (canvas) pane: a Plan/Report segmented switch
@@ -1017,6 +1018,7 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
   toolbarOnly = false,
   readOnly = false,
   embeddedPlanOnly = false,
+  assistantControl,
 }, ref) => {
   const reactFlowWrapper = useRef<HTMLDivElement>(null)
   const highlightTimeoutRef = useRef<NodeJS.Timeout | null>(null)
@@ -2527,16 +2529,19 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
               </div>
             )}
           </div>
-          <button
-            onClick={() => {
-              loadPlanRefresh()
-              refreshWorkspaceState()
-            }}
-            className="px-4 py-2 text-sm bg-gray-100 dark:bg-gray-700 text-gray-900 dark:text-gray-100 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-600 disabled:opacity-50 disabled:cursor-not-allowed"
-            disabled={isRetryingWorkspaceState}
-          >
-            {isRetryingWorkspaceState ? 'Retrying...' : 'Retry Loading'}
-          </button>
+          <div className="flex items-center gap-2">
+            {assistantControl}
+            <button
+              onClick={() => {
+                loadPlanRefresh()
+                refreshWorkspaceState()
+              }}
+              className="px-4 py-2 text-sm bg-gray-100 dark:bg-gray-700 text-gray-900 dark:text-gray-100 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-600 disabled:opacity-50 disabled:cursor-not-allowed"
+              disabled={isRetryingWorkspaceState}
+            >
+              {isRetryingWorkspaceState ? 'Retrying...' : 'Retry Loading'}
+            </button>
+          </div>
         </div>
       </div>
     )
@@ -2559,6 +2564,8 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
                 Create a plan to visualize your workflow
               </p>
             </div>
+            <div className="flex items-center gap-2">
+            {assistantControl}
             {onCreatePlan && (
               <button
                 onClick={onCreatePlan}
@@ -2567,6 +2574,7 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
                 Build Plan
               </button>
             )}
+            </div>
           </div>
       </div>
     )
@@ -2603,35 +2611,38 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
             setRouteTrace(null)
             setSelectedTrigger(null)
             focusTriggers()
-          }} className="absolute right-48 top-3 z-20 h-8 rounded-md border border-border bg-background/95 px-2 text-xs text-foreground shadow-sm hover:bg-muted" aria-label="Show triggers">Triggers</button>
+          }} className="absolute right-60 top-3 z-20 h-8 rounded-md border border-border bg-background/95 px-2 text-xs text-foreground shadow-sm hover:bg-muted" aria-label="Show triggers">Triggers</button>
           {!!evaluationPlan?.steps.length && <button type="button" onClick={() => {
             setRouteTrace(null)
             setSelectedTrigger(null)
             setSelectedFlowNode(null)
             void fitView({ nodes: nodes.filter(node => node.data.isEvaluationStep || node.type === 'evaluation-group'),
               padding: 0.12, duration: 300, minZoom: FLOW_FIT_MIN_ZOOM, maxZoom: FLOW_FIT_MAX_ZOOM })
-          }} className="absolute right-24 top-3 z-20 h-8 rounded-md border border-border bg-background/95 px-2 text-xs text-foreground shadow-sm hover:bg-muted"
+          }} className="absolute right-32 top-3 z-20 h-8 rounded-md border border-border bg-background/95 px-2 text-xs text-foreground shadow-sm hover:bg-muted"
             aria-label="Show evaluation groups" title="Show evaluations grouped by route">Evaluation</button>}
-          <button type="button" onClick={() => void fitView({ padding: FLOW_FIT_PADDING, duration: 300, minZoom: FLOW_FIT_MIN_ZOOM, maxZoom: FLOW_FIT_MAX_ZOOM })}
-            className="absolute right-14 top-3 z-20 inline-flex h-8 w-8 items-center justify-center rounded-md border border-border bg-background/95 text-muted-foreground shadow-sm hover:bg-muted hover:text-foreground"
-            aria-label="Fit plan to view" title="Fit plan to view">
-            <Maximize className="h-3.5 w-3.5" />
-          </button>
-          <button
-            type="button"
-            onPointerDown={event => event.stopPropagation()}
-            onClick={event => {
-              event.stopPropagation()
-              void handlePlanRefresh()
-            }}
-            disabled={isRefreshingPlan}
-            className="absolute right-3 top-3 z-20 inline-flex h-8 w-8 items-center justify-center rounded-md border border-border bg-background/95 text-muted-foreground shadow-sm backdrop-blur-sm transition-colors hover:bg-muted hover:text-foreground"
-            aria-label="Refresh plan"
-            title="Refresh plan"
-            data-testid="refresh-plan"
-          >
-            <RefreshCw className={`h-3.5 w-3.5 ${isRefreshingPlan ? 'animate-spin' : ''}`} />
-          </button>
+          <div className="absolute right-3 top-3 z-20 flex items-center gap-1">
+            {assistantControl}
+            <button type="button" onClick={() => void fitView({ padding: FLOW_FIT_PADDING, duration: 300, minZoom: FLOW_FIT_MIN_ZOOM, maxZoom: FLOW_FIT_MAX_ZOOM })}
+              className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-border bg-background/95 text-muted-foreground shadow-sm hover:bg-muted hover:text-foreground"
+              aria-label="Fit plan to view" title="Fit plan to view">
+              <Maximize className="h-3.5 w-3.5" />
+            </button>
+            <button
+              type="button"
+              onPointerDown={event => event.stopPropagation()}
+              onClick={event => {
+                event.stopPropagation()
+                void handlePlanRefresh()
+              }}
+              disabled={isRefreshingPlan}
+              className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-border bg-background/95 text-muted-foreground shadow-sm backdrop-blur-sm transition-colors hover:bg-muted hover:text-foreground"
+              aria-label="Refresh plan"
+              title="Refresh plan"
+              data-testid="refresh-plan"
+            >
+              <RefreshCw className={`h-3.5 w-3.5 ${isRefreshingPlan ? 'animate-spin' : ''}`} />
+            </button>
+          </div>
           <div className={`min-h-0 h-full transition-all duration-300 ${showVariablesSidebar ? 'mr-[450px]' : ''} ${previewDevice === 'desktop' ? 'flex-1' : previewDeviceShellClass(previewDevice)}`}>
         <ReactFlow
           className="w-full h-full bg-gray-50 dark:bg-gray-900"

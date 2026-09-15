@@ -547,6 +547,11 @@ func (api *StreamingAPI) registerAgentProfileTools(registrar definitionToolRegis
 			return err
 		}
 	}
+	if activeWorkProject && agentprofiles.HasFeature(resolved.Definition, "mcp") {
+		if err := api.registerWorkMCPSelectionTool(registrar, userID, workspacePath); err != nil {
+			return err
+		}
+	}
 	if activeWorkProject && agentprofiles.HasFeature(resolved.Definition, "bots") {
 		if err := api.registerGmailConnectionManagementTools(registrar, sessionID, workspacePath); err != nil {
 			return err
@@ -556,7 +561,7 @@ func (api *StreamingAPI) registerAgentProfileTools(registrar definitionToolRegis
 		for _, name := range []string{"open_workspace_view", "refresh_workspace_view", "list_ui_capabilities", "get_ui_state", "perform_ui_action", "get_ui_action_result"} {
 			gate.Declare(name)
 		}
-		if err := api.registerOpenWorkWorkspaceViewTool(registrar, sessionID, workspacePath); err != nil {
+		if err := api.registerOpenWorkWorkspaceViewTool(registrar, userID, sessionID, workspacePath); err != nil {
 			return err
 		}
 	}

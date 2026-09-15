@@ -532,7 +532,7 @@ func (api *StreamingAPI) notifyOAuthFlowOutcome(sessionID, serverName string, su
 		return
 	}
 	status := "completed"
-	message := fmt.Sprintf("The OAuth connection to MCP server %q finished successfully and the token was saved. Tool discovery is running; verify discovery or a live tool call before saying it is ready. It still needs update_workflow_config(add_servers=[%q]) to be usable in a specific workflow.", serverName, serverName)
+	message := fmt.Sprintf("The OAuth connection to MCP server %q finished successfully and the token was saved. Tool discovery is running; verify discovery or a live tool call before saying it is ready. It still needs project selection: use update_workflow_config(add_servers=[%q]) for a workflow, or update_project_mcp_server_selection(action=select, server=%q) for an active Work project.", serverName, serverName, serverName)
 	if !success {
 		status = "failed"
 		message = fmt.Sprintf("The OAuth connection to MCP server %q did not complete: %s. Tell the user and offer to retry (they can ask you to start the connection again).", serverName, detail)

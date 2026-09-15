@@ -6,6 +6,7 @@ const mocks = vi.hoisted(() => ({
   setTabLastEventIndex: vi.fn(),
   setTabHasMoreOlderEvents: vi.fn(),
   setTabHistoryPagination: vi.fn(),
+  getTabEvents: vi.fn(),
   getRecentSessionEvents: vi.fn(),
   getChatHistoryConversation: vi.fn(),
   getChatHistoryResumeConversation: vi.fn(),
@@ -19,6 +20,7 @@ vi.mock('../stores/useChatStore', () => ({
       setTabLastEventIndex: mocks.setTabLastEventIndex,
       setTabHasMoreOlderEvents: mocks.setTabHasMoreOlderEvents,
       setTabHistoryPagination: mocks.setTabHistoryPagination,
+      getTabEvents: mocks.getTabEvents,
     }),
   },
 }))
@@ -40,6 +42,7 @@ import { conversationToRestoredEvents, hydrateTabEvents } from './sessionRestore
 describe('hydrateTabEvents restored chat fallback', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    mocks.getTabEvents.mockReturnValue([])
   })
 
   it('prefers complete persisted history when reopening a chat', async () => {
@@ -114,6 +117,49 @@ describe('hydrateTabEvents restored chat fallback', () => {
     expect(mocks.setTabEvents).toHaveBeenCalledWith('active-codex-session', expect.any(Array))
     expect(mocks.addTabEvents).toHaveBeenCalledWith('active-codex-session', [liveTail])
     expect(mocks.setTabLastEventIndex).toHaveBeenLastCalledWith('active-codex-session', 7)
+  })
+
+  it('does not erase a user message and completion that arrive while history hydration is in flight', async () => {
+    let resolveHistory!: (value: unknown) => void
+    mocks.getRecentSessionEvents.mockResolvedValue({
+      events: [],
+      session_status: 'completed',
+      last_processed_index: 455,
+      has_more: false,
+    })
+    mocks.getChatHistoryResumeConversation.mockReturnValue(new Promise(resolve => { resolveHistory = resolve }))
+
+    const optimisticUser = {
+      id: 'new-user-message',
+      type: 'user_message',
+      timestamp: '2026-09-15T12:40:26Z',
+      data: { data: { content: 'Run the complete test now.' } },
+    }
+    const liveCompletion = {
+      id: 'new-live-completion',
+      type: 'unified_completion',
+      timestamp: '2026-09-15T12:41:23Z',
+      data: { data: { final_result: 'The complete test passed.' } },
+    }
+
+    const hydration = hydrateTabEvents('active-race-session', { workspacePath: '/workspace/workflow' })
+    mocks.getTabEvents.mockReturnValue([optimisticUser, liveCompletion])
+    resolveHistory({
+      session_id: 'active-race-session',
+      conversation_history: [
+        { Role: 'human', Parts: [{ Text: 'Older question' }] },
+        { Role: 'ai', Parts: [{ Text: 'Older answer' }] },
+      ],
+    })
+    await hydration
+
+    expect(mocks.setTabEvents).toHaveBeenCalledWith(
+      'active-race-session',
+      expect.arrayContaining([
+        expect.objectContaining({ id: 'new-user-message', type: 'user_message' }),
+        expect.objectContaining({ id: 'new-live-completion', type: 'unified_completion' }),
+      ]),
+    )
   })
 
   it('does not append a live completion that durable history already restored', async () => {

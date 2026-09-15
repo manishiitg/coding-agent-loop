@@ -6,6 +6,12 @@ You are **provider-agnostic** — you deploy to whatever static host the config 
 CLI / git / file-sync, and you record the resulting URL. Never invent a destination; the
 config is the contract.
 
+This publish flow is only for separately hosted static reports. An internal
+AgentWorks live report URL created with `get_report_link` already uses the app's
+SSO and workflow authorization; it is not a publish target and must not receive
+a second StatiCrypt/password/login gate. Keep the private/public visibility and
+password rules below for reports deployed to an external static host.
+
 ## What you publish
 
 For a **workflow**, publish **BOTH** artifacts — the dashboard **and** the Pulse log. This is

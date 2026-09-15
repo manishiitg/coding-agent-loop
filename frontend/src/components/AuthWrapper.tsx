@@ -1,118 +1,149 @@
-import { useEffect, useState } from 'react'
-import { useAuthStore } from '../stores/useAuthStore'
-import { Login } from '../pages/Login'
-import { AuthCallback } from '../pages/AuthCallback'
-import { SharedFile } from '../pages/SharedFile'
-import { SharedFolder } from '../pages/SharedFolder'
-import { ReportPage } from '../pages/ReportPage'
-import { Loader2 } from 'lucide-react'
-import { WorkspaceConnectionSwitcher } from './WorkspaceConnectionSwitcher'
-import { DesktopAppOnlyGate } from './DesktopAppOnlyGate'
-import { isDesktopAppOnlyMode } from '../services/api'
+import { useEffect, useState } from "react";
+import { useAuthStore } from "../stores/useAuthStore";
+import { Login } from "../pages/Login";
+import { AuthCallback } from "../pages/AuthCallback";
+import { SharedFile } from "../pages/SharedFile";
+import { SharedFolder } from "../pages/SharedFolder";
+import { ReportPage } from "../pages/ReportPage";
+import { Loader2 } from "lucide-react";
+import { WorkspaceConnectionSwitcher } from "./WorkspaceConnectionSwitcher";
+import { DesktopAppOnlyGate } from "./DesktopAppOnlyGate";
+import { isDesktopAppOnlyMode } from "../services/api";
 
 interface AuthWrapperProps {
-  children: React.ReactNode
+  children: React.ReactNode;
+}
+
+const REPORT_ENTRY_SUFFIX = "/db/reports/index.html";
+
+function decodeBase64Utf8(value: string): string | null {
+  try {
+    let normalized = value.trim().replace(/ /g, "+").replace(/-/g, "+").replace(/_/g, "/");
+    while (normalized.length % 4 !== 0) normalized += "=";
+    const binary = atob(normalized);
+    const bytes = Uint8Array.from(binary, (char) => char.charCodeAt(0));
+    return new TextDecoder().decode(bytes);
+  } catch {
+    return null;
+  }
+}
+
+function encodeBase64Utf8(value: string): string {
+  const bytes = new TextEncoder().encode(value);
+  let binary = "";
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+  return btoa(binary);
+}
+
+function reportWorkspaceFromFileLink(encodedPath: string): string | null {
+  const decoded = decodeBase64Utf8(encodedPath);
+  if (!decoded?.endsWith(REPORT_ENTRY_SUFFIX)) return null;
+  const workspace = decoded.slice(0, -REPORT_ENTRY_SUFFIX.length);
+  if (/^Workflow\/[^/]+$/.test(workspace)) return workspace;
+  if (/^Chats\/Work\/projects\/[^/]+(?:\/[^/]+)*$/.test(workspace)) return workspace;
+  return null;
 }
 
 export function AuthWrapper({ children }: AuthWrapperProps) {
-  const {
-    user,
-    isAuthenticated,
-    isMultiUserMode,
-    isMultiUserModeChecked,
-    isLoading,
-    checkAuthMode,
-    checkAuth,
-    login
-  } = useAuthStore()
+  const { user, isAuthenticated, isMultiUserMode, isMultiUserModeChecked, isLoading, checkAuthMode, checkAuth, login } = useAuthStore();
 
-  const [sharedFilePath, setSharedFilePath] = useState<string | null>(null)
-  const [sharedFolderPath, setSharedFolderPath] = useState<string | null>(null)
-  const [reportWorkspacePath, setReportWorkspacePath] = useState<string | null>(null)
-  const [sharedUid, setSharedUid] = useState<string | null>(null)
-  const [isAuthCallback, setIsAuthCallback] = useState(false)
-  const [singleUserAuthAttempted, setSingleUserAuthAttempted] = useState(false)
+  const [sharedFilePath, setSharedFilePath] = useState<string | null>(null);
+  const [sharedFolderPath, setSharedFolderPath] = useState<string | null>(null);
+  const [reportWorkspacePath, setReportWorkspacePath] = useState<string | null>(null);
+  const [sharedUid, setSharedUid] = useState<string | null>(null);
+  const [isAuthCallback, setIsAuthCallback] = useState(false);
+  const [singleUserAuthAttempted, setSingleUserAuthAttempted] = useState(false);
 
   // Check for shared file/folder URL or OAuth callback
   useEffect(() => {
     const parseRoute = () => {
-      setSharedFilePath(null)
-      setSharedFolderPath(null)
-      setReportWorkspacePath(null)
-      setIsAuthCallback(false)
-      setSharedUid(null)
-      const path = window.location.pathname
-      const params = new URLSearchParams(window.location.search)
-      const uidParam = params.get('uid')
+      setSharedFilePath(null);
+      setSharedFolderPath(null);
+      setReportWorkspacePath(null);
+      setIsAuthCallback(false);
+      setSharedUid(null);
+      const path = window.location.pathname;
+      const params = new URLSearchParams(window.location.search);
+      const uidParam = params.get("uid");
 
       // Current links use /file?path=BASE64. Older agents sometimes surfaced
       // /file/BASE64 instead, so accept that shape too rather than falling
       // through to the normal workflow shell.
-      const encodedPathFor = (kind: 'file' | 'folder' | 'report') => {
-        if (path === `/${kind}`) return params.get('path')
-        const prefix = `/${kind}/`
-        if (!path.startsWith(prefix) || path.length === prefix.length) return null
+      const encodedPathFor = (kind: "file" | "folder" | "report") => {
+        if (path === `/${kind}`) return params.get("path");
+        const prefix = `/${kind}/`;
+        if (!path.startsWith(prefix) || path.length === prefix.length) return null;
         try {
-          return decodeURIComponent(path.slice(prefix.length))
+          return decodeURIComponent(path.slice(prefix.length));
         } catch {
-          return null
+          return null;
         }
-      }
+      };
 
       // Check for shared file: /file?path=BASE64 or legacy /file/BASE64
-      const filePath = encodedPathFor('file')
+      const filePath = encodedPathFor("file");
       if (filePath) {
-        setSharedFilePath(filePath)
-        if (uidParam) setSharedUid(uidParam)
-        return
+        const reportWorkspace = reportWorkspaceFromFileLink(filePath);
+        if (reportWorkspace) {
+          const encodedWorkspace = encodeBase64Utf8(reportWorkspace);
+          setReportWorkspacePath(encodedWorkspace);
+          if (uidParam) setSharedUid(uidParam);
+          const reportParams = new URLSearchParams({ path: encodedWorkspace });
+          if (uidParam) reportParams.set("uid", uidParam);
+          window.history.replaceState({}, "", `/report?${reportParams.toString()}`);
+          return;
+        }
+        setSharedFilePath(filePath);
+        if (uidParam) setSharedUid(uidParam);
+        return;
       }
 
       // Check for shared folder: /folder?path=BASE64 or legacy /folder/BASE64
-      const folderPath = encodedPathFor('folder')
+      const folderPath = encodedPathFor("folder");
       if (folderPath) {
-        setSharedFolderPath(folderPath)
-        if (uidParam) setSharedUid(uidParam)
-        return
+        setSharedFolderPath(folderPath);
+        if (uidParam) setSharedUid(uidParam);
+        return;
       }
 
       // Check for dedicated workflow report URL.
-      const reportPath = encodedPathFor('report')
+      const reportPath = encodedPathFor("report");
       if (reportPath) {
-        setReportWorkspacePath(reportPath)
-        if (uidParam) setSharedUid(uidParam)
-        return
+        setReportWorkspacePath(reportPath);
+        if (uidParam) setSharedUid(uidParam);
+        return;
       }
 
       // Check for OAuth callback
-      if (path === '/auth/callback') {
-        setIsAuthCallback(true)
-        return
+      if (path === "/auth/callback") {
+        setIsAuthCallback(true);
+        return;
       }
-    }
-    parseRoute()
-    window.addEventListener('popstate', parseRoute)
-    return () => window.removeEventListener('popstate', parseRoute)
-  }, [])
+    };
+    parseRoute();
+    window.addEventListener("popstate", parseRoute);
+    return () => window.removeEventListener("popstate", parseRoute);
+  }, []);
 
   // Initialize auth state
   useEffect(() => {
-    checkAuthMode()
-    checkAuth()
-  }, [checkAuthMode, checkAuth])
+    checkAuthMode();
+    checkAuth();
+  }, [checkAuthMode, checkAuth]);
 
   useEffect(() => {
     if (!isMultiUserModeChecked || isMultiUserMode || isAuthenticated || isLoading || singleUserAuthAttempted) {
-      return
+      return;
     }
-    setSingleUserAuthAttempted(true)
-    login('', '').catch((error) => {
-      console.error('[AUTH] Failed to initialize single-user token:', error)
-    })
-  }, [isMultiUserModeChecked, isMultiUserMode, isAuthenticated, isLoading, singleUserAuthAttempted, login])
+    setSingleUserAuthAttempted(true);
+    login("", "").catch((error) => {
+      console.error("[AUTH] Failed to initialize single-user token:", error);
+    });
+  }, [isMultiUserModeChecked, isMultiUserMode, isAuthenticated, isLoading, singleUserAuthAttempted, login]);
 
   // If handling OAuth callback, render callback component
   if (isAuthCallback) {
-    return <AuthCallback />
+    return <AuthCallback />;
   }
 
   // Still loading auth mode or local single-user token
@@ -125,13 +156,18 @@ export function AuthWrapper({ children }: AuthWrapperProps) {
           <p className="mt-4 text-gray-600 dark:text-gray-400">Loading...</p>
         </div>
       </div>
-    )
+    );
   }
 
   // Shared viewers use the same app authentication lifecycle. Wait for local
   // auto-login or show hosted login without losing the requested asset URL.
   if ((sharedFilePath || sharedFolderPath) && !isAuthenticated) {
-    return <><WorkspaceConnectionSwitcher placement="auth" /><Login /></>
+    return (
+      <>
+        <WorkspaceConnectionSwitcher placement="auth" />
+        <Login />
+      </>
+    );
   }
 
   // If viewing a shared file, render it directly
@@ -141,11 +177,11 @@ export function AuthWrapper({ children }: AuthWrapperProps) {
         encodedPath={sharedFilePath}
         uid={sharedUid || undefined}
         onBack={() => {
-          setSharedFilePath(null)
-          window.history.pushState({}, '', '/')
+          setSharedFilePath(null);
+          window.history.pushState({}, "", "/");
         }}
       />
-    )
+    );
   }
 
   // If viewing a shared folder, render it directly
@@ -155,17 +191,17 @@ export function AuthWrapper({ children }: AuthWrapperProps) {
         encodedPath={sharedFolderPath}
         uid={sharedUid || undefined}
         onBack={() => {
-          setSharedFolderPath(null)
-          window.history.pushState({}, '', '/')
+          setSharedFolderPath(null);
+          window.history.pushState({}, "", "/");
         }}
       />
-    )
+    );
   }
 
   // Single-user mode: no auth required, render children directly
   if (!isMultiUserMode) {
     if (isDesktopAppOnlyMode() && !window.electronAPI) {
-      return <DesktopAppOnlyGate />
+      return <DesktopAppOnlyGate />;
     }
     if (reportWorkspacePath) {
       return (
@@ -174,13 +210,13 @@ export function AuthWrapper({ children }: AuthWrapperProps) {
           ownerUid={sharedUid || undefined}
           currentUserId={user?.id}
           onBack={() => {
-            setReportWorkspacePath(null)
-            window.history.pushState({}, '', '/')
+            setReportWorkspacePath(null);
+            window.history.pushState({}, "", "/");
           }}
         />
-      )
+      );
     }
-    return <>{children}</>
+    return <>{children}</>;
   }
 
   // Multi-user mode: require authentication (login only, no registration)
@@ -190,12 +226,12 @@ export function AuthWrapper({ children }: AuthWrapperProps) {
         <WorkspaceConnectionSwitcher placement="auth" />
         <Login />
       </>
-    )
+    );
   }
 
   // Authenticated: render children
   if (isDesktopAppOnlyMode() && !window.electronAPI) {
-    return <DesktopAppOnlyGate />
+    return <DesktopAppOnlyGate />;
   }
 
   if (reportWorkspacePath) {
@@ -205,12 +241,12 @@ export function AuthWrapper({ children }: AuthWrapperProps) {
         ownerUid={sharedUid || undefined}
         currentUserId={user?.id}
         onBack={() => {
-          setReportWorkspacePath(null)
-          window.history.pushState({}, '', '/')
+          setReportWorkspacePath(null);
+          window.history.pushState({}, "", "/");
         }}
       />
-    )
+    );
   }
 
-  return <>{children}</>
+  return <>{children}</>;
 }

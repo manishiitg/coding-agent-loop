@@ -91,6 +91,9 @@ func TestGetReportLinkToolCreatesAuthenticatedDashboardLink(t *testing.T) {
 	if strings.Contains(preview.RawQuery, "token") {
 		t.Fatal("report URL contains a credential")
 	}
+	if _, err := reg.tools["get_file_link"].exec(context.Background(), map[string]interface{}{"path": "db/reports/index.html"}); err == nil || !strings.Contains(err.Error(), "use get_report_link") {
+		t.Fatalf("report entry accepted by get_file_link: %v", err)
+	}
 }
 
 func TestGetReportLinkToolRejectsUnauthorizedOrMissingReport(t *testing.T) {
@@ -111,6 +114,58 @@ func TestGetReportLinkToolRejectsUnauthorizedOrMissingReport(t *testing.T) {
 	}
 	if _, err := allowed.tools["get_report_link"].exec(context.Background(), map[string]interface{}{}); err == nil {
 		t.Fatal("missing workflow report received a link")
+	}
+}
+
+func TestShareLinkToolsMarkLocalhostURLsAsLocalOnly(t *testing.T) {
+	f := newExternalToolsFixture(t)
+	t.Setenv("PUBLIC_URL", "http://localhost:3000")
+	f.write(t, "Workflow/invoices/db/reports/index.html", "<html><title>Invoices</title></html>")
+	reg := &recordingRegistrar{}
+	if err := f.api.registerShareLinkTools(reg, "owner", "Workflow/invoices"); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, name := range []string{"get_file_link", "get_report_link"} {
+		args := map[string]interface{}{}
+		if name == "get_file_link" {
+			args["path"] = "docs/process.md"
+		}
+		out, err := reg.tools[name].exec(context.Background(), args)
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		var result map[string]interface{}
+		if err := json.Unmarshal([]byte(out), &result); err != nil {
+			t.Fatal(err)
+		}
+		if result["shareable"] != false || result["scope"] != "local_machine" || !strings.Contains(result["warning"].(string), "not shareable") {
+			t.Fatalf("%s local metadata = %#v", name, result)
+		}
+	}
+}
+
+func TestAddShareabilityMetadataClassifiesDeploymentHosts(t *testing.T) {
+	for _, tc := range []struct {
+		publicURL string
+		shareable bool
+		scope     string
+	}{
+		{publicURL: "http://localhost:3000", shareable: false, scope: "local_machine"},
+		{publicURL: "http://app.localhost:3000", shareable: false, scope: "local_machine"},
+		{publicURL: "http://127.8.9.10:3000", shareable: false, scope: "local_machine"},
+		{publicURL: "http://[::1]:3000", shareable: false, scope: "local_machine"},
+		{publicURL: "https://confida.agentworkshq.com", shareable: true, scope: "deployment"},
+	} {
+		result := map[string]interface{}{}
+		addShareabilityMetadata(result, tc.publicURL)
+		if result["shareable"] != tc.shareable || result["scope"] != tc.scope {
+			t.Fatalf("%s metadata = %#v", tc.publicURL, result)
+		}
+		_, warned := result["warning"]
+		if warned == tc.shareable {
+			t.Fatalf("%s warning presence = %t, metadata = %#v", tc.publicURL, warned, result)
+		}
 	}
 }
 
@@ -229,6 +284,9 @@ func TestGetReportLinkToolScopesWorkDashboardToProjectOwner(t *testing.T) {
 		}
 		if strings.Contains(preview.RawQuery, "token") {
 			t.Fatal("Work report URL contains a credential")
+		}
+		if _, err := reg.tools["get_file_link"].exec(context.Background(), map[string]interface{}{"path": "db/reports/index.html"}); err == nil || !strings.Contains(err.Error(), "use get_report_link") {
+			t.Fatalf("Work report entry accepted by get_file_link: %v", err)
 		}
 	}
 }

@@ -10,12 +10,22 @@ description: Read and interpret files from attached folders or read-only AgentWo
 For the project's live Dashboard, call `get_report_link` with no arguments and
 use its returned `url`. Do not pass `db/reports/index.html` to `get_file_link`:
 that would open a restricted generic HTML preview instead of the full Dashboard
-runtime.
+runtime, and the file-link tool rejects that report entry path. The dedicated
+report URL renders the Dashboard full-page and uses the normal AgentWorks SSO;
+do not add a separate publish password or login to this internal URL. Publicly
+hosted static reports remain a separate publish flow with their own visibility
+controls.
 
 Call `get_file_link` with the path relative to the active Work project. The
 server verifies that the target exists, rejects private or escaping paths,
 detects file versus folder, and returns the correct authenticated
 `preview_url`. Never construct `/file` or `/folder` URLs manually.
+
+Always inspect `shareable`, `scope`, and `warning` in either link tool's result.
+If `shareable` is false, tell the user it is only a same-machine preview and
+include the warning; do not call it a shareable link. A URL based on `localhost`,
+`127.0.0.1`, or `::1` cannot be opened by another user or device. The deployment
+must have a reachable `PUBLIC_URL` before the link can be shared.
 
 Work projects are personal. The URL contains no credentials and grants no
 access; it can currently be opened only by the same signed-in Work account.

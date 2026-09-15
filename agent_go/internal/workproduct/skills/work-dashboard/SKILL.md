@@ -55,5 +55,10 @@ or another project view intended to organize or manage information visually.
   no arguments and present its returned `url` verbatim. It opens the full live
   Dashboard runtime, not the restricted generic HTML file preview. The link is
   private to the same signed-in Work account; it contains no credential and
-  does not grant access or publish the project publicly.
+  does not grant access or publish the project publicly. Inspect `shareable`,
+  `scope`, and `warning`; when `shareable` is false (including localhost and
+  loopback deployments), describe it only as a same-machine preview and relay
+  the warning instead of presenting it as shareable. It uses AgentWorks SSO and
+  must not receive a second publish password/login gate; only a separately
+  hosted public/static report uses publish visibility controls.
 - Tell the user the Dashboard is available from the Work **Dashboard** button.

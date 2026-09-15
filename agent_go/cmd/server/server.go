@@ -3440,6 +3440,13 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Invalid agent profile request: "+err.Error(), http.StatusBadRequest)
 		return
 	}
+	if level, ok := botRouteProfileAccessForRequest(GetUserFromContext(r.Context()), req); ok {
+		if level == WorkflowAccessNone {
+			http.Error(w, "You don't have access to this profile route", http.StatusForbidden)
+			return
+		}
+		currentUserIsReadOnly = level == WorkflowAccessRead
+	}
 	// Per-user workflow access: the list endpoint already hides workflows a
 	// user isn't allowed to see, but that's UX only -- a user who already
 	// knows a workflow's folder name could still open it directly. This is
@@ -3458,6 +3465,8 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			// account gets, but decided per workflow (workflow_access.go).
 			if level == WorkflowAccessRead {
 				currentUserIsReadOnly = true
+			} else if claims != nil && claims.Provider == "bot_route" {
+				currentUserIsReadOnly = false
 			}
 		}
 	}

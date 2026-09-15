@@ -510,6 +510,7 @@ type activeBotSession struct {
 	// profileRoute is the product profile the thread was routed to by an
 	// @token (nil: the pairing's default profile); later turns keep it.
 	profileRoute  *ProfileRoute
+	BotRouteGrant string
 	AgentMode     string
 	PresetQueryID string
 	WorkspacePath string
@@ -800,6 +801,7 @@ func (m *BotConversationManager) authorizeWorkflowRouteForMessage(ctx context.Co
 			active.UserID = botUserID
 			active.WorkspacePath = strings.TrimSpace(route.WorkspacePath)
 			active.WorkshopMode = WorkshopModeForBotGrant(route.BotGrant)
+			active.BotRouteGrant = NormalizeBotRouteGrant(route.BotGrant, route.WorkshopMode)
 			active.RouteKey = botRouteKey(route)
 			active.profileTurn = true
 			active.profileRoute = &ProfileRoute{
@@ -846,6 +848,7 @@ func (m *BotConversationManager) authorizeWorkflowRouteForMessage(ctx context.Co
 			active.PresetQueryID = strings.TrimSpace(route.WorkflowID)
 			active.WorkspacePath = strings.TrimSpace(route.WorkspacePath)
 			active.WorkshopMode = WorkshopModeForBotGrant(route.BotGrant)
+			active.BotRouteGrant = NormalizeBotRouteGrant(route.BotGrant, route.WorkshopMode)
 			active.RouteKey = botRouteKey(route)
 			active.mu.Unlock()
 		}
@@ -2200,6 +2203,7 @@ func (m *BotConversationManager) HandleMessageSync(ctx context.Context, msg BotI
 // native coding-agent runtime from the previous persisted session.
 func (m *BotConversationManager) startNewSessionDirect(msg BotIncomingMessage, threadID ThreadID, resumeSessionID ...string) {
 	workspaceUserID := m.resolveWorkspaceUserID(msg)
+	profilePresetRoute := msg.PresetWorkflow
 	if route := msg.PresetWorkflow; route != nil && strings.TrimSpace(route.ProfileID) != "" {
 		label := strings.TrimSpace(route.ProfileLabel)
 		if label == "" {
@@ -2242,6 +2246,7 @@ func (m *BotConversationManager) startNewSessionDirect(msg BotIncomingMessage, t
 		}
 		if handled {
 			queryReq, sessionID, profileTurn = req, profileSessionID, true
+			applyProfileBotRouteMetadata(queryReq, profilePresetRoute, msg.Platform)
 			log.Printf("[BOT_MANAGER] Thread %s runs in default profile conversation %s", threadID.Key(), sessionID)
 		}
 	}
@@ -3159,6 +3164,7 @@ func (m *BotConversationManager) turnRequestForActive(active *activeBotSession, 
 		active.mu.Lock()
 		isProfileTurn := active.profileTurn
 		profileRoute := active.profileRoute
+		routeGrant := active.BotRouteGrant
 		sessionID := active.SessionID
 		active.mu.Unlock()
 		if isProfileTurn {
@@ -3168,6 +3174,14 @@ func (m *BotConversationManager) turnRequestForActive(active *activeBotSession, 
 				active.mu.Lock()
 				botMeta := active.Metadata
 				active.mu.Unlock()
+				if profileRoute != nil {
+					applyProfileBotRouteMetadata(req, &ChannelRoute{
+						ProfileID:       profileRoute.ProfileID,
+						ConversationKey: profileRoute.ConversationKey,
+						WorkspacePath:   profileRoute.UploadFolder,
+						BotGrant:        routeGrant,
+					}, platform)
+				}
 				applyBotQueryRequestMetadata(req, botMeta)
 				return req
 			}
@@ -3186,10 +3200,34 @@ func applyBotRequestMetadata(active *activeBotSession, req map[string]interface{
 	active.WorkspacePath = stringValue(req["selected_folder"])
 	active.PhaseID = stringValue(req["phase_id"])
 	active.WorkshopMode = stringValue(req["workshop_mode"])
+	active.BotRouteGrant = stringValue(req["bot_route_grant"])
 	if active.WorkshopMode == "" {
 		if execOpts, ok := req["execution_options"].(map[string]interface{}); ok {
 			active.WorkshopMode = stringValue(execOpts["workshop_mode"])
 		}
+	}
+}
+
+func applyProfileBotRouteMetadata(req map[string]interface{}, route *ChannelRoute, platform string) {
+	if req == nil || route == nil {
+		return
+	}
+	if strings.TrimSpace(platform) != "" {
+		req["bot_platform"] = platform
+		req["triggered_by"] = "bot:" + platform
+	}
+	req["bot_route_grant"] = NormalizeBotRouteGrant(route.BotGrant, route.WorkshopMode)
+	if profileID := strings.TrimSpace(route.ProfileID); profileID != "" {
+		req["agent_profile_id"] = profileID
+	}
+	if conversationKey := strings.TrimSpace(route.ConversationKey); conversationKey != "" {
+		req["agent_profile_conversation_key"] = conversationKey
+	}
+	if workspacePath := strings.TrimSpace(route.WorkspacePath); workspacePath != "" {
+		req["selected_folder"] = workspacePath
+	}
+	if route.SendFullDetails || strings.EqualFold(platform, "slack") {
+		req["bot_send_full_details"] = true
 	}
 }
 
@@ -3256,16 +3294,26 @@ func botRouteFromActive(active *activeBotSession) *ChannelRoute {
 	workflowID := strings.TrimSpace(active.PresetQueryID)
 	workspacePath := strings.TrimSpace(active.WorkspacePath)
 	workshopMode := NormalizeBotWorkshopMode(active.WorkshopMode)
-	if workflowID == "" && workspacePath == "" {
+	botGrant := NormalizeBotRouteGrant(active.BotRouteGrant, workshopMode)
+	profileRoute := active.profileRoute
+	if workflowID == "" && workspacePath == "" && profileRoute == nil {
 		return nil
 	}
-	return &ChannelRoute{
+	route := &ChannelRoute{
 		WorkflowID:      workflowID,
 		WorkspacePath:   workspacePath,
 		WorkshopMode:    workshopMode,
-		BotGrant:        NormalizeBotRouteGrant("", workshopMode),
+		BotGrant:        botGrant,
 		SendFullDetails: active.sendFullDetails,
 	}
+	if profileRoute != nil {
+		route.ProfileID = strings.TrimSpace(profileRoute.ProfileID)
+		route.ConversationKey = strings.TrimSpace(profileRoute.ConversationKey)
+		if route.WorkspacePath == "" {
+			route.WorkspacePath = strings.TrimSpace(profileRoute.UploadFolder)
+		}
+	}
+	return route
 }
 
 // isMultiUserThread checks if a thread has multiple distinct human users.

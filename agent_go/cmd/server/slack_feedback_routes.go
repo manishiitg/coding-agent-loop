@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"path/filepath"
 	"regexp"
 	"strings"
 
@@ -86,10 +87,10 @@ func sameSlackRouteDestination(a, b ChannelRoute) bool {
 		strings.EqualFold(strings.TrimSpace(a.ConversationKey), strings.TrimSpace(b.ConversationKey))
 }
 
-func validateSlackRouteMutationPermissions(ctx context.Context, next, current map[string]ChannelRoute) error {
+func validateSlackRouteMutationPermissions(ctx context.Context, api *StreamingAPI, next, current map[string]ChannelRoute) error {
 	checked := map[string]bool{}
 	for channelID, route := range next {
-		if strings.TrimSpace(route.WorkflowID) == "" {
+		if !slackRouteHasDestination(route) {
 			continue
 		}
 		old, existed := current[channelID]
@@ -99,23 +100,34 @@ func validateSlackRouteMutationPermissions(ctx context.Context, next, current ma
 		if !needsOwner {
 			continue
 		}
-		if err := requireSlackRouteWorkflowOwner(ctx, route); err != nil {
+		if err := requireSlackRouteDestinationOwner(ctx, api, route); err != nil {
 			return err
 		}
 		checked[channelID] = true
 	}
 	for channelID, route := range current {
-		if checked[channelID] || strings.TrimSpace(route.WorkflowID) == "" {
+		if checked[channelID] || !slackRouteHasDestination(route) {
 			continue
 		}
 		if _, stillPresent := next[channelID]; stillPresent {
 			continue
 		}
-		if err := requireSlackRouteWorkflowOwner(ctx, route); err != nil {
+		if err := requireSlackRouteDestinationOwner(ctx, api, route); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+func slackRouteHasDestination(route ChannelRoute) bool {
+	return strings.TrimSpace(route.WorkflowID) != "" || strings.TrimSpace(route.ProfileID) != ""
+}
+
+func requireSlackRouteDestinationOwner(ctx context.Context, api *StreamingAPI, route ChannelRoute) error {
+	if strings.TrimSpace(route.WorkflowID) != "" {
+		return requireSlackRouteWorkflowOwner(ctx, route)
+	}
+	return requireSlackRouteProfileOwner(ctx, api, route)
 }
 
 func requireSlackRouteWorkflowOwner(ctx context.Context, route ChannelRoute) error {
@@ -131,6 +143,32 @@ func requireSlackRouteWorkflowOwner(ctx context.Context, route ChannelRoute) err
 	}
 	if workflowAccessForManifest(GetUserFromContext(ctx), manifest) != WorkflowAccessOwner {
 		return fmt.Errorf("only a workflow owner may manage Slack bot grants for %s", manifest.ID)
+	}
+	return nil
+}
+
+func requireSlackRouteProfileOwner(ctx context.Context, api *StreamingAPI, route ChannelRoute) error {
+	profileID := strings.TrimSpace(route.ProfileID)
+	if profileID == "" {
+		return fmt.Errorf("Slack route has no workflow or profile destination")
+	}
+	if api == nil || api.agentProfiles == nil {
+		return fmt.Errorf("agent profiles are unavailable; cannot manage Slack bot grant for %s", profileID)
+	}
+	userID := productWorkspaceUserID(ctx)
+	profile, err := api.agentProfiles.Resolve(profileID, 0, userID)
+	if err != nil {
+		return fmt.Errorf("profile route %s is unavailable; cannot manage Slack bot grant: %w", profileID, err)
+	}
+	if !userAllowedProduct(GetUserFromContext(ctx), profile.Product) {
+		return fmt.Errorf("only a product owner may manage Slack bot grants for %s", profileID)
+	}
+	binding, err := resolveProductConversationBinding(ctx, userID, profile, strings.TrimSpace(route.ConversationKey))
+	if err != nil {
+		return fmt.Errorf("profile route %s has no authorized conversation: %w", profileID, err)
+	}
+	if filepath.Clean(binding.WorkspacePath) != filepath.Clean(strings.TrimSpace(route.WorkspacePath)) {
+		return fmt.Errorf("Slack route profile %s does not match the selected product workspace", profileID)
 	}
 	return nil
 }
@@ -295,7 +333,7 @@ func updateSlackConfigHandler(api *StreamingAPI) http.HandlerFunc {
 			return
 		}
 		if req.ChannelRouting != nil {
-			if err := validateSlackRouteMutationPermissions(r.Context(), req.ChannelRouting, existingRouting); err != nil {
+			if err := validateSlackRouteMutationPermissions(r.Context(), api, req.ChannelRouting, existingRouting); err != nil {
 				http.Error(w, err.Error(), http.StatusForbidden)
 				return
 			}

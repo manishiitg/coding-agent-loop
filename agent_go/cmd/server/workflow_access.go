@@ -103,30 +103,20 @@ func workflowAccessForBotRouteClaims(claims *UserClaims, m *WorkflowManifest) (W
 	if claims == nil || claims.Provider != "bot_route" {
 		return "", false
 	}
-	switch strings.ToLower(strings.TrimSpace(claims.BotRouteGrant)) {
-	case "owner":
-		if m == nil {
-			return WorkflowAccessOwner, true
-		}
-		if !m.hasOwnershipRecord() {
-			return WorkflowAccessNone, true
-		}
-		if target := strings.TrimSpace(claims.BotRouteWorkflowID); target != "" && !strings.EqualFold(target, strings.TrimSpace(m.ID)) {
-			return WorkflowAccessNone, true
-		}
-		return WorkflowAccessOwner, true
-	default:
-		if m == nil {
-			return WorkflowAccessRead, true
-		}
-		if !m.hasOwnershipRecord() {
-			return WorkflowAccessNone, true
-		}
-		if target := strings.TrimSpace(claims.BotRouteWorkflowID); target != "" && !strings.EqualFold(target, strings.TrimSpace(m.ID)) {
-			return WorkflowAccessNone, true
-		}
+	if m == nil {
 		return WorkflowAccessRead, true
 	}
+	if !m.hasOwnershipRecord() {
+		return WorkflowAccessNone, true
+	}
+	target := strings.TrimSpace(claims.BotRouteWorkflowID)
+	if target == "" || !strings.EqualFold(target, strings.TrimSpace(m.ID)) {
+		return WorkflowAccessNone, true
+	}
+	if strings.EqualFold(strings.TrimSpace(claims.BotRouteGrant), "owner") {
+		return WorkflowAccessOwner, true
+	}
+	return WorkflowAccessRead, true
 }
 
 // workflowAccessForWorkspacePath reads the manifest at workspacePath and

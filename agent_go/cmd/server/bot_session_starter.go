@@ -9,6 +9,7 @@ import (
 	"log"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"strings"
 
 	"github.com/manishiitg/coding-agent-loop/agent_go/cmd/server/services"
@@ -48,6 +49,9 @@ func applyBotRouteClaims(claims *UserClaims, reqMap map[string]interface{}) {
 	claims.Provider = "bot_route"
 	claims.BotRouteGrant = grant
 	claims.BotRouteWorkflowID = strings.TrimSpace(stringFromRequestMap(reqMap, "preset_query_id"))
+	claims.BotRouteProfileID = strings.TrimSpace(stringFromRequestMap(reqMap, "agent_profile_id"))
+	claims.BotRouteConversationKey = strings.TrimSpace(stringFromRequestMap(reqMap, "agent_profile_conversation_key"))
+	claims.BotRouteWorkspacePath = strings.TrimSpace(stringFromRequestMap(reqMap, "selected_folder"))
 }
 
 func stringFromRequestMap(reqMap map[string]interface{}, key string) string {
@@ -58,12 +62,38 @@ func stringFromRequestMap(reqMap map[string]interface{}, key string) string {
 func botRouteUserClaims(userID string, route services.ChannelRoute) *UserClaims {
 	userID = strings.TrimSpace(userID)
 	return &UserClaims{
-		UserID:             userID,
-		Username:           userID,
-		Provider:           "bot_route",
-		BotRouteGrant:      services.NormalizeBotRouteGrant(route.BotGrant, route.WorkshopMode),
-		BotRouteWorkflowID: strings.TrimSpace(route.WorkflowID),
+		UserID:                  userID,
+		Username:                userID,
+		Provider:                "bot_route",
+		BotRouteGrant:           services.NormalizeBotRouteGrant(route.BotGrant, route.WorkshopMode),
+		BotRouteWorkflowID:      strings.TrimSpace(route.WorkflowID),
+		BotRouteProfileID:       strings.TrimSpace(route.ProfileID),
+		BotRouteConversationKey: strings.TrimSpace(route.ConversationKey),
+		BotRouteWorkspacePath:   strings.TrimSpace(route.WorkspacePath),
 	}
+}
+
+func botRouteProfileAccessForRequest(claims *UserClaims, req QueryRequest) (WorkflowAccessLevel, bool) {
+	if claims == nil || claims.Provider != "bot_route" || strings.TrimSpace(claims.BotRouteProfileID) == "" {
+		return "", false
+	}
+	if !strings.EqualFold(strings.TrimSpace(claims.BotRouteProfileID), strings.TrimSpace(req.AgentProfileID)) {
+		return WorkflowAccessNone, true
+	}
+	if !strings.EqualFold(strings.TrimSpace(claims.BotRouteConversationKey), strings.TrimSpace(req.AgentProfileConversationKey)) {
+		return WorkflowAccessNone, true
+	}
+	if strings.TrimSpace(claims.BotRouteWorkflowID) != "" {
+		return WorkflowAccessNone, true
+	}
+	if strings.TrimSpace(claims.BotRouteWorkspacePath) == "" ||
+		filepath.Clean(claims.BotRouteWorkspacePath) != filepath.Clean(strings.TrimSpace(req.SelectedFolder)) {
+		return WorkflowAccessNone, true
+	}
+	if strings.EqualFold(strings.TrimSpace(claims.BotRouteGrant), "owner") {
+		return WorkflowAccessOwner, true
+	}
+	return WorkflowAccessRead, true
 }
 
 // checkBotWorkflowAccess decides whether an external chat user may drive a

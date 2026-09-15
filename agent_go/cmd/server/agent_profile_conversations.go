@@ -59,8 +59,11 @@ func conversationTitleFrom(session *ChatHistorySession, fallback string) string 
 // and the registry each record them: with or without the per-user prefix.
 func normalizeConversationWorkspace(workspacePath string) string {
 	clean := strings.Trim(strings.TrimSpace(strings.ReplaceAll(workspacePath, "\\", "/")), "/")
-	if strings.HasPrefix(clean, "_users/") {
-		if rest := strings.SplitN(clean, "/", 3); len(rest) == 3 {
+	// Runtime history may store the user-relative path while the resolved
+	// project binding is absolute under the document root. Compare both from
+	// the stable _users/<id>/ boundary.
+	if index := strings.Index(clean, "_users/"); index >= 0 && (index == 0 || clean[index-1] == '/') {
+		if rest := strings.SplitN(clean[index:], "/", 3); len(rest) == 3 {
 			clean = rest[2]
 		}
 	}

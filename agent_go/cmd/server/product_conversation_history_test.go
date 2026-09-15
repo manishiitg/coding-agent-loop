@@ -98,4 +98,7 @@ func TestConversationTitleComesFromTheFirstMessage(t *testing.T) {
 	if got := normalizeConversationWorkspace("/_users/default/Chats/SparkQuill/"); got != "Chats/SparkQuill" {
 		t.Fatalf("normalized workspace = %q", got)
 	}
+	if got := normalizeConversationWorkspace("/data/video-studio/docs/_users/default/Chats/Work/projects/example"); got != "Chats/Work/projects/example" {
+		t.Fatalf("normalized absolute workspace = %q", got)
+	}
 }

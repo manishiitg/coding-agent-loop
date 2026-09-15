@@ -2802,14 +2802,12 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
         }
       }
 
-      const refs = uploadedPaths.map(formatFileReference).join(' ')
+      // fileContext is the attachment. Do not also insert a raw @path into the
+      // draft: that duplicates the file in the request and makes an upload by
+      // itself look like a standalone user message.
       const latestInputText = latestInputTextRef.current
-      const prefix = latestInputText.trim().length > 0 ? `${latestInputText} ` : ''
-      const newText = `${prefix}${refs} `
-      setLocalInputText(newText)
-      if (activeTabId) {
-        setTabConfig(activeTabId, { inputText: newText })
-      }
+      setLocalInputText(latestInputText)
+      if (activeTabId) setTabConfig(activeTabId, { inputText: latestInputText })
 
       const ws = useWorkspaceStore.getState()
       ws.fetchFiles(

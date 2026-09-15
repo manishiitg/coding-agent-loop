@@ -41,6 +41,9 @@ const agentProfileConversationTitleLimit = 72
 // line; a chat with no message yet is "New chat".
 func conversationTitleFrom(session *ChatHistorySession, fallback string) string {
 	if session != nil {
+		if title := strings.TrimSpace(session.Title); title != "" {
+			return title
+		}
 		first := strings.TrimSpace(strings.SplitN(strings.TrimSpace(session.Query), "\n", 2)[0])
 		if first != "" {
 			if runes := []rune(first); len(runes) > agentProfileConversationTitleLimit {
@@ -98,7 +101,7 @@ func summarizeProductConversation(record ProductConversationRecord, session *Cha
 	summary := AgentProfileConversationSummary{
 		SessionID:      record.SessionID,
 		ConversationID: record.ConversationID,
-		Title:          conversationTitleFrom(session, ""),
+		Title:          conversationTitleFrom(session, record.Title),
 		CreatedAt:      record.CreatedAt,
 		UpdatedAt:      record.UpdatedAt,
 		Current:        current,

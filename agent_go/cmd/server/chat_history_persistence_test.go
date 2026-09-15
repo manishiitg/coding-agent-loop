@@ -1769,6 +1769,31 @@ func TestParseLocalChatHistorySessionIncludesRuntime(t *testing.T) {
 	}
 }
 
+func TestParseLocalChatHistorySessionPreservesCustomTitle(t *testing.T) {
+	data := `{
+		"session_id":"named-chat",
+		"title":"GPT Live handoff",
+		"agent_mode":"multi_agent",
+		"conversation_history":[{"Role":"human","Parts":[{"Text":"check this file"}]}]
+	}`
+	session, ok := parseLocalChatHistorySession("default", "_users/default/chat_history", "", "fallback", data, time.Now())
+	if !ok {
+		t.Fatal("expected session")
+	}
+	if session.Title != "GPT Live handoff" {
+		t.Fatalf("title = %q", session.Title)
+	}
+}
+
+func TestNormalizeChatHistoryTitle(t *testing.T) {
+	if got, err := normalizeChatHistoryTitle("  GPT   Live\n handoff  "); err != nil || got != "GPT Live handoff" {
+		t.Fatalf("normalize = %q, %v", got, err)
+	}
+	if _, err := normalizeChatHistoryTitle("   "); err == nil {
+		t.Fatal("expected empty title to fail")
+	}
+}
+
 func TestParseLocalChatHistorySessionSkipsLowSignalTitle(t *testing.T) {
 	data := `{
   "session_id": "session-1",

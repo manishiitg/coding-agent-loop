@@ -712,6 +712,7 @@ export interface ChatState extends StoreActions {
   setTabSyntheticTurn: (tabId: string, isSyntheticTurn: boolean) => void
   setTabCanSteer: (tabId: string, canSteer: boolean) => void
   updateTabSessionId: (tabId: string, sessionId: string) => void
+  renameTab: (tabId: string, name: string) => void
   setTabHideToolCalls: (tabId: string, hideToolCalls: boolean) => void
   setTabViewMode: (tabId: string, viewMode: EventViewMode) => void
   getTabConfig: (tabId: string) => ChatTabConfig | undefined
@@ -2765,6 +2766,21 @@ export const useChatStore = create<ChatState>()(
           }
 
           return updates
+        })
+      },
+
+      renameTab: (tabId: string, name: string) => {
+        const normalized = name.replace(/\s+/g, ' ').trim()
+        if (!normalized) return
+        set(state => {
+          const tab = state.chatTabs[tabId]
+          if (!tab) return state
+          return {
+            chatTabs: {
+              ...state.chatTabs,
+              [tabId]: { ...tab, name: normalized },
+            },
+          }
         })
       },
       

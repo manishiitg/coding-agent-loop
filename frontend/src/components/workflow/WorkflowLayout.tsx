@@ -30,11 +30,11 @@ import {
   PreviousChatHistoryPanel,
   chatHistoryConversationPath,
   chatHistoryRuntimeLabel,
-  chatHistorySessionTitle,
   chatHistorySupportsNativeResume,
   chatHistoryUsesTerminalRestore,
   chatHistoryWorkshopModeLabel,
 } from '../PreviousChatHistoryPanel'
+import { chatHistorySessionTitle } from '../../utils/chatHistoryTitle'
 import { chatHistoryOpenDisposition } from '../../utils/chatHistoryOpenDisposition'
 import { chatHistoryWorkshopMode } from '../../utils/chatHistoryWorkshopMode'
 import {

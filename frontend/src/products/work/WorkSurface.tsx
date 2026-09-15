@@ -300,12 +300,39 @@ function WorkChatTabs({
   onChatOpen: () => void
 }) {
   const closeTab = useChatStore(state => state.closeTab)
+  const renameTab = useChatStore(state => state.renameTab)
+  const addToast = useChatStore(state => state.addToast)
   const close = useCallback((tabId: string) => {
     const nextId = activeTabId === tabId
       ? tabs.find(tab => tab.tabId !== tabId)?.tabId
       : undefined
     void closeTab(tabId, false).then(() => { if (nextId) activateTab(nextId) })
   }, [activeTabId, closeTab, tabs])
+
+  const rename = useCallback(async (tab: (typeof tabs)[number], requested: string): Promise<boolean> => {
+    if (!tab.sessionId) {
+      addToast('Send the first message before naming this chat.', 'info')
+      return false
+    }
+    const title = requested.replace(/\s+/g, ' ').trim()
+    if (!title) {
+      addToast('Enter a name for this chat.', 'info')
+      return false
+    }
+    try {
+      const response = await agentApi.renameChatHistorySession(
+        tab.sessionId,
+        title,
+        tab.metadata?.agentProfileWorkspace,
+      )
+      renameTab(tab.tabId, response.title)
+      addToast('Chat renamed', 'success')
+      return true
+    } catch {
+      addToast('Failed to rename chat', 'error')
+      return false
+    }
+  }, [addToast, renameTab, tabs])
 
   return (
     <div className="flex min-w-0 flex-1 items-center gap-1 overflow-hidden">
@@ -324,6 +351,7 @@ function WorkChatTabs({
             else onChatOpen()
           }}
           onCloseTab={close}
+          onRenameTab={rename}
         />
       })}
     </div>

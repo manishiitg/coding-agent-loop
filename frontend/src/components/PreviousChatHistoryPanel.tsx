@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { ArrowUpRight, Bot, CalendarClock, ChevronDown, ChevronRight, Code2, Eye, Loader2, MessageSquare, Paperclip, Trash2, UserRound, Webhook, type LucideIcon } from 'lucide-react'
+import { ArrowUpRight, Bot, CalendarClock, ChevronDown, ChevronRight, Code2, Eye, Loader2, MessageSquare, Paperclip, Pencil, Trash2, UserRound, Webhook, type LucideIcon } from 'lucide-react'
 import { agentApi } from '../services/api'
 import { schedulerApi } from '../api/scheduler'
 import {
@@ -16,6 +16,7 @@ import { isScheduledChatHistorySession } from '../utils/chatHistoryOpenDispositi
 import { chatHistoryWorkshopMode } from '../utils/chatHistoryWorkshopMode'
 import { chatHistoryRuntimeLabel, chatHistoryRuntimeShortLabel } from '../utils/chatHistoryRuntimeLabel'
 import { sanitizeProviderTranscriptContent } from '../utils/restoredConversationFilter'
+import { chatHistorySessionTitle } from '../utils/chatHistoryTitle'
 import { type ScheduleActivityItem } from '../utils/scheduleRunPresentation'
 import { ScheduleRunCard } from './ScheduleRunCard'
 import { ChatSessionIdCopyButton } from './ChatSessionIdCopyButton'
@@ -94,12 +95,6 @@ const firstRunHints: Array<{
     body: 'Use the Bot connector button to configure the external bot.',
   },
 ]
-
-export function chatHistorySessionTitle(session: ChatHistorySession, maxLength = 110): string {
-  const query = session.query?.replace(/\s+/g, ' ').trim()
-  if (query) return query.length > maxLength ? `${query.slice(0, maxLength)}...` : query
-  return `${(session.agent_mode || 'chat').replace(/_/g, ' ')} ${session.session_id.slice(0, 8)}`
-}
 
 export function chatHistoryConversationPath(session: ChatHistorySession): string {
   if (session.conversation_path) return session.conversation_path
@@ -711,6 +706,28 @@ export const PreviousChatHistoryPanel: React.FC<PreviousChatHistoryPanelProps> =
     }
   }, [addToast, workspacePath])
 
+  const handleRenameSession = useCallback(async (session: ChatHistorySession) => {
+    const requested = window.prompt('Name this chat', chatHistorySessionTitle(session, 120))
+    if (requested === null) return
+    const title = requested.replace(/\s+/g, ' ').trim()
+    if (!title) {
+      addToast('Enter a name for this chat.', 'info')
+      return
+    }
+    try {
+      const response = await agentApi.renameChatHistorySession(session.session_id, title, workspacePath)
+      setSessions(current => current.map(item => item.session_id === session.session_id
+        ? { ...item, title: response.title }
+        : item))
+      const store = useChatStore.getState()
+      const matchingTab = Object.values(store.chatTabs).find(tab => tab.sessionId === session.session_id)
+      if (matchingTab) store.renameTab(matchingTab.tabId, response.title)
+      addToast('Chat renamed', 'success')
+    } catch {
+      addToast('Failed to rename chat', 'error')
+    }
+  }, [addToast, workspacePath])
+
   const openScheduleActivity = useCallback((item: ScheduleActivityItem) => {
     const sessionID = item.run?.session_id
     const session: ChatHistorySession | undefined = sessionID ? sessionsByID.get(sessionID) || {
@@ -940,6 +957,17 @@ export const PreviousChatHistoryPanel: React.FC<PreviousChatHistoryPanelProps> =
                     </button>
 
                     <div className="flex shrink-0 items-center gap-1">
+                      {canResume && (
+                        <button
+                          type="button"
+                          onClick={() => { void handleRenameSession(session) }}
+                          className="inline-flex items-center rounded border border-border bg-background p-1 text-muted-foreground opacity-70 transition-colors hover:text-foreground group-hover:opacity-100"
+                          title="Rename chat"
+                          aria-label="Rename chat"
+                        >
+                          <Pencil className="h-3.5 w-3.5" />
+                        </button>
+                      )}
                       <ChatSessionIdCopyButton sessionId={session.session_id} compact />
                       {canDelete && (
                         <button

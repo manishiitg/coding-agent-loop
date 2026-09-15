@@ -1494,6 +1494,7 @@ export interface ChatHistoryPreviewMessage {
 
 export interface ChatHistorySession {
   session_id: string;
+  title?: string;
   agent_mode?: string;
   runtime?: ChatHistoryAgentRuntime;
   workshop_mode?: 'workshop' | 'run' | string;

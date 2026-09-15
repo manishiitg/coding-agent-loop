@@ -24,7 +24,62 @@ func ChatHistoryRoutes(router *mux.Router, api *StreamingAPI) {
 	r.HandleFunc("/sessions/cleanup", cleanupChatHistoryHandler(api)).Methods("DELETE")
 	r.HandleFunc("/restored-terminal", startRestoredTerminalHandler(api)).Methods("POST", "OPTIONS")
 	r.HandleFunc("/sessions/{session_id}", getChatHistoryConversationHandler(api)).Methods("GET")
+	r.HandleFunc("/sessions/{session_id}", renameChatHistorySessionHandler(api)).Methods("PATCH")
 	r.HandleFunc("/sessions/{session_id}", deleteChatHistorySessionHandler(api)).Methods("DELETE")
+}
+
+type renameChatHistorySessionRequest struct {
+	Title         string `json:"title"`
+	WorkspacePath string `json:"workspace_path,omitempty"`
+}
+
+func renameChatHistorySessionHandler(api *StreamingAPI) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		userID := GetUserIDFromContext(r.Context())
+		if userID == "" {
+			userID = "default"
+		}
+		var req renameChatHistorySessionRequest
+		decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 8*1024))
+		decoder.DisallowUnknownFields()
+		if err := decoder.Decode(&req); err != nil {
+			http.Error(w, "invalid request body", http.StatusBadRequest)
+			return
+		}
+		title, err := normalizeChatHistoryTitle(req.Title)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		workspacePath := strings.TrimSpace(req.WorkspacePath)
+		_, workflowScoped, allowed := chatHistoryWorkspaceAccess(r, workspacePath)
+		if !allowed {
+			http.Error(w, "workflow access denied", http.StatusForbidden)
+			return
+		}
+		if workflowScoped {
+			data, readErr := ReadChatHistoryConversation(userID, mux.Vars(r)["session_id"], workspacePath)
+			if readErr != nil {
+				http.Error(w, "Session not found", http.StatusNotFound)
+				return
+			}
+			ownerID, _ := chatHistoryConversationIdentity(data)
+			if strings.TrimSpace(ownerID) != strings.TrimSpace(userID) {
+				http.Error(w, "only the chat author can rename it", http.StatusForbidden)
+				return
+			}
+		}
+		if err := RenameChatHistorySession(userID, mux.Vars(r)["session_id"], workspacePath, title); err != nil {
+			if strings.Contains(strings.ToLower(err.Error()), "not found") {
+				http.Error(w, "Session not found", http.StatusNotFound)
+				return
+			}
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "title": title})
+	}
 }
 
 type startRestoredTerminalRequest struct {

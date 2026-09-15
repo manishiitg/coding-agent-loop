@@ -24,6 +24,7 @@ import (
 // ChatHistorySession is the metadata returned by the list endpoint.
 type ChatHistorySession struct {
 	SessionID        string                      `json:"session_id"`
+	Title            string                      `json:"title,omitempty"`
 	AgentMode        string                      `json:"agent_mode"`
 	Runtime          *ChatHistoryAgentRuntime    `json:"runtime,omitempty"`
 	WorkshopMode     string                      `json:"workshop_mode,omitempty"`
@@ -279,6 +280,16 @@ func (api *StreamingAPI) persistChatConversationToPathWithTerminalSession(sessio
 	if convPath == "" {
 		convPath = chatHistoryConversationPath(userID, sessionID, now)
 	}
+	// A user-defined title belongs to the durable conversation. Preserve it
+	// when a later turn rewrites the transcript from the in-memory history.
+	if existing, exists, readErr := readFileFromWorkspace(context.Background(), convPath); readErr == nil && exists {
+		var metadata struct {
+			Title string `json:"title"`
+		}
+		if json.Unmarshal([]byte(existing), &metadata) == nil && strings.TrimSpace(metadata.Title) != "" {
+			convData["title"] = strings.TrimSpace(metadata.Title)
+		}
+	}
 	// The in-memory event store only knows about turns since this process
 	// started. Writing it alone after a restart replaced the whole saved trace
 	// with the newest turn, so a reopened chat lost its tool calls and the
@@ -334,8 +345,12 @@ func updatePersistedChatHistoryIndex(userID, sessionID, agentMode string, histor
 	}
 
 	createdAt := now.Format(time.RFC3339)
-	if existing, ok := index.Entries[conversationPath]; ok && strings.TrimSpace(existing.Session.CreatedAt) != "" {
-		createdAt = existing.Session.CreatedAt
+	title := ""
+	if existing, ok := index.Entries[conversationPath]; ok {
+		if strings.TrimSpace(existing.Session.CreatedAt) != "" {
+			createdAt = existing.Session.CreatedAt
+		}
+		title = strings.TrimSpace(existing.Session.Title)
 	}
 	workshopMode := ""
 	if runtime != nil {
@@ -348,6 +363,7 @@ func updatePersistedChatHistoryIndex(userID, sessionID, agentMode string, histor
 	index.Entries[conversationPath] = chatHistoryIndexEntry{
 		Session: ChatHistorySession{
 			SessionID:        sessionID,
+			Title:            title,
 			AgentMode:        agentMode,
 			Runtime:          runtime,
 			WorkshopMode:     workshopMode,
@@ -1900,6 +1916,7 @@ func readLocalChatHistorySession(userID, workspaceRoot, workflowPath string, fil
 func parseLocalChatHistorySession(userID, workspaceRoot, workflowPath, fallbackSessionID, data string, fallbackUpdatedAt time.Time) (ChatHistorySession, bool) {
 	var raw struct {
 		SessionID string                    `json:"session_id"`
+		Title     string                    `json:"title,omitempty"`
 		UserID    string                    `json:"user_id,omitempty"`
 		Username  string                    `json:"username,omitempty"`
 		AgentMode string                    `json:"agent_mode"`
@@ -1954,6 +1971,7 @@ func parseLocalChatHistorySession(userID, workspaceRoot, workflowPath, fallbackS
 
 	return ChatHistorySession{
 		SessionID:           raw.SessionID,
+		Title:               strings.TrimSpace(raw.Title),
 		AgentMode:           raw.AgentMode,
 		Runtime:             raw.Runtime,
 		WorkshopMode:        raw.Mode,
@@ -2364,6 +2382,89 @@ func FindChatHistoryConversationPathForSession(userID, sessionID, workspacePath 
 		}
 	}
 	return "", false, nil
+}
+
+const maxChatHistoryTitleRunes = 120
+
+func normalizeChatHistoryTitle(title string) (string, error) {
+	title = strings.Join(strings.Fields(title), " ")
+	if title == "" {
+		return "", fmt.Errorf("title is required")
+	}
+	if len([]rune(title)) > maxChatHistoryTitleRunes {
+		return "", fmt.Errorf("title must be %d characters or fewer", maxChatHistoryTitleRunes)
+	}
+	return title, nil
+}
+
+// RenameChatHistorySession writes the title into both the transcript and its
+// listing index. The transcript remains authoritative if an older deployment
+// or an interrupted write leaves the index stale.
+func RenameChatHistorySession(userID, sessionID, workspacePath, title string) error {
+	if userID == "" {
+		userID = "default"
+	}
+	var err error
+	title, err = normalizeChatHistoryTitle(title)
+	if err != nil {
+		return err
+	}
+	conversationPath, found, err := FindChatHistoryConversationPathForSession(userID, sessionID, workspacePath)
+	if err != nil {
+		return err
+	}
+	if !found {
+		return fmt.Errorf("conversation not found")
+	}
+	raw, exists, err := readFileFromWorkspace(context.Background(), conversationPath)
+	if err != nil {
+		return err
+	}
+	if !exists {
+		return fmt.Errorf("conversation not found")
+	}
+	var record map[string]interface{}
+	if err := json.Unmarshal([]byte(raw), &record); err != nil {
+		return fmt.Errorf("decode conversation: %w", err)
+	}
+	record["title"] = title
+	encoded, err := json.MarshalIndent(record, "", "  ")
+	if err != nil {
+		return fmt.Errorf("encode conversation: %w", err)
+	}
+	if err := writeRawFileToWorkspace(context.Background(), conversationPath, string(encoded)); err != nil {
+		return err
+	}
+
+	indexPath := chatHistoryIndexWorkspacePath(userID, conversationPath)
+	if indexPath == "" {
+		return nil
+	}
+	mutex := chatHistoryIndexMutex(indexPath)
+	mutex.Lock()
+	defer mutex.Unlock()
+	index := newChatHistoryIndex()
+	indexRaw, indexExists, err := readFileFromWorkspace(context.Background(), indexPath)
+	if err != nil || !indexExists {
+		return err
+	}
+	if err := json.Unmarshal([]byte(indexRaw), &index); err != nil {
+		return fmt.Errorf("decode %s: %w", indexPath, err)
+	}
+	index.normalize()
+	entry, ok := index.Entries[conversationPath]
+	if !ok {
+		return nil
+	}
+	entry.Session.Title = title
+	entry.SourceSize = int64(len(encoded))
+	index.Entries[conversationPath] = entry
+	index.UpdatedAt = time.Now().Format(time.RFC3339)
+	updatedIndex, err := json.MarshalIndent(index, "", "  ")
+	if err != nil {
+		return fmt.Errorf("encode %s: %w", indexPath, err)
+	}
+	return writeRawFileToWorkspace(context.Background(), indexPath, string(updatedIndex))
 }
 
 // cleanChatHistoryForPersistence removes hidden prompt context that the frontend

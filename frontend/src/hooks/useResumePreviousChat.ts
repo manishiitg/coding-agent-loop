@@ -5,11 +5,11 @@ import { useChatStore } from '../stores/useChatStore'
 import {
   chatHistoryConversationPath,
   chatHistoryRuntimeLabel,
-  chatHistorySessionTitle,
   chatHistorySupportsNativeResume,
   chatHistoryUsesTerminalRestore,
   chatHistoryWorkshopModeLabel,
 } from '../components/PreviousChatHistoryPanel'
+import { chatHistorySessionTitle } from '../utils/chatHistoryTitle'
 import { startRestoredTransportTerminal } from '../utils/restoredTerminal'
 
 /**

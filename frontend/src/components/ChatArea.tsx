@@ -60,13 +60,13 @@ import { WORKFLOW_LOG_REFRESH_EVENT } from './workflow/workflowEvents'
 import { decisionMutationNeedsRefresh } from '../utils/decisionRefresh'
 import { resolveWorkSubmissionTab } from '../products/work/workTabs'
 import { PROJECT_SECRETS_REFRESH_EVENT, projectSecretsNeedRefresh } from '../utils/secretMutationRefresh'
+import { getDisplaySafeUserMessageContent } from '../utils/chatMessageContent'
 
 // Stable empty array to avoid infinite re-render loops in Zustand selectors
 // (a new [] on every selector call breaks referential equality checks)
 const EMPTY_EVENTS: PollingEvent[] = []
 const AUTO_NOTIFICATION_PREFIX = '[AUTO-NOTIFICATION]'
 const ENABLE_LEGACY_FRONTEND_AUTO_NOTIFICATIONS = false
-const RESTORED_CONVERSATION_CONTEXT_MARKER = '\n\nPrevious workflow-builder conversation file:'
 const STALE_STREAMING_RECOVERY_GRACE_MS = 10000
 // Grace window after a resume marker appears. The normal product surface is an
 // event transcript, so we wait only for durable conversation events/SSE rather
@@ -178,11 +178,6 @@ function getUserMessageContent(event: PollingEvent): string {
   const innerData = agentEvent?.data as Record<string, unknown> | undefined
   const content = innerData?.content ?? agentEvent?.content
   return typeof content === 'string' ? content : ''
-}
-
-function getDisplaySafeUserMessageContent(content: string): string {
-  const markerIndex = content.indexOf(RESTORED_CONVERSATION_CONTEXT_MARKER)
-  return (markerIndex >= 0 ? content.slice(0, markerIndex) : content).trim()
 }
 
 function createSubmissionErrorEvent(sessionId: string, error: unknown): PollingEvent {
@@ -2927,8 +2922,10 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
     const queryBaseWithContext = fileContextForPrompt.length > 0
       ? `${query.trim()}\n\n📁 Files in context: ${fileContextForPrompt.map((file: { path: string }) => file.path).join(', ')}`
       : query.trim()
-    const displayQueryWithContext = queryBaseWithContext
-    const queryWithContext = `${displayQueryWithContext}${restoredConversationContext}`
+    // The agent receives file paths as request context; the chat timeline shows
+    // only the text the user entered.
+    const displayQueryWithContext = query.trim()
+    const queryWithContext = `${queryBaseWithContext}${restoredConversationContext}`
 
     if (restoredConversationUsesNative) {
       chatStore.setTabViewMode(currentTab.tabId, 'formatted')

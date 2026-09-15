@@ -720,6 +720,10 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
 
 
   const inputText = localInputText
+  // Upload completion must merge its @file references into whatever the user
+  // has typed most recently, not the render snapshot from when the drop began.
+  const latestInputTextRef = useRef(inputText)
+  latestInputTextRef.current = inputText
   const inputOwnerTabIdRef = useRef(activeTabId)
 
   // Debounce ref for syncing to store
@@ -2346,6 +2350,10 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
   const routeSubmit = useCallback(async (query: string) => {
     const trimmed = query?.trim() || ''
     if (!trimmed) return
+    if (isUploadingFiles) {
+      addToast('Wait for the file upload to finish before sending.', 'info')
+      return
+    }
 
     // A retained CLI is explicitly designed to receive input while busy, so it
     // continues into the live-delivery branch below. Structured workflow-step
@@ -2440,7 +2448,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
       const reason = getSubmitBlockReason()
       if (reason) addToast(reason, 'info')
     }
-  }, [routeLiveInputToCLI, hasSubmitTarget, activeTabId, inputText, chatPastedAttachments, effectiveProviderForSteer, onSubmit, scheduleLiveMessageDeliveryClear, clearInputState, setTabConfig, getSubmitBlockReason, addToast, canSubmitImmediately, canSubmit, isStreaming, queueStreamingMessage])
+  }, [routeLiveInputToCLI, hasSubmitTarget, activeTabId, inputText, chatPastedAttachments, effectiveProviderForSteer, onSubmit, scheduleLiveMessageDeliveryClear, clearInputState, setTabConfig, getSubmitBlockReason, addToast, canSubmitImmediately, canSubmit, isStreaming, isUploadingFiles, queueStreamingMessage])
 
   // SparkQuill's voice auto-send: handleVoiceText already merged the
   // transcript into localInputText, but queryToSubmit (which also layers in
@@ -2794,8 +2802,9 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
         }
       }
 
-      const refs = uploadedPaths.map(path => `@${path}`).join(' ')
-      const prefix = inputText.trim().length > 0 ? `${inputText} ` : ''
+      const refs = uploadedPaths.map(formatFileReference).join(' ')
+      const latestInputText = latestInputTextRef.current
+      const prefix = latestInputText.trim().length > 0 ? `${latestInputText} ` : ''
       const newText = `${prefix}${refs} `
       setLocalInputText(newText)
       if (activeTabId) {
@@ -2827,7 +2836,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     console.info('[CHAT_UPLOAD] upload completed', { uploadedCount: uploadedPaths.length, failureCount: failures.length })
 
     setIsUploadingFiles(false)
-  }, [activeTabId, isUploadingFiles, uploadTargetFolder, chatFileContext, inputText, setTabConfig, addToast])
+  }, [activeTabId, isUploadingFiles, uploadTargetFolder, chatFileContext, setTabConfig, addToast])
 
   useEffect(() => {
     uploadFilesToChatRef.current = uploadFilesToChat
@@ -2984,7 +2993,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
   const inputDisabled = isSummarizing || isViewOnly || (!tabSessionId && !canBootstrapMultiAgentTab && !canBootstrapWorkflowPhaseTab)
   // Product follow-ups are queued while a structured turn is working, including
   // the short interval before the backend has attached the live session.
-  const submitButtonDisabled = !hasValidQuery || !hasSubmitTarget || isViewOnly || isCdpDisconnected
+  const submitButtonDisabled = !hasValidQuery || !hasSubmitTarget || isViewOnly || isCdpDisconnected || isUploadingFiles
   
   // Memoized placeholder
   const placeholder = useMemo(() => {
@@ -3899,6 +3908,8 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
                             <p>
                               {isViewOnly
                                 ? 'View only — cannot continue this conversation'
+                                : isUploadingFiles
+                                  ? 'Wait for the file upload to finish'
                                 : !inputText?.trim()
                                   ? 'Type a message to send'
                                   : isCdpDisconnected

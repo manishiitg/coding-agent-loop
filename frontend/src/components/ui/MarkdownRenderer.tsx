@@ -1058,19 +1058,19 @@ const MarkdownRendererImpl: React.FC<MarkdownRendererProps> = ({
             margin-top: 0.375rem;
           }
           .conversation-markdown :not(pre) > code {
-            padding: 0.125rem 0.35rem;
-            font-size: 0.78rem;
-            font-weight: 500;
-            line-height: 1.35;
-            color: rgb(71 85 105);
-            background-color: rgb(241 245 249);
-            border: 1px solid rgb(226 232 240);
+            padding: 0.06rem 0.22rem;
+            font-size: 0.82em;
+            font-weight: 450;
+            line-height: inherit;
+            color: rgb(55 91 124) !important;
+            background-color: rgb(15 23 42 / 0.055) !important;
+            border: 0 !important;
+            border-radius: 0.2rem !important;
           }
           .dark .conversation-markdown :not(pre) > code,
           .dark-plus .conversation-markdown :not(pre) > code {
-            color: rgb(203 213 225);
-            background-color: rgb(30 41 59 / 0.72);
-            border-color: rgb(71 85 105 / 0.65);
+            color: rgb(158 190 220) !important;
+            background-color: rgb(255 255 255 / 0.07) !important;
           }
           /* Override prose table styles for dark theme */
           .markdown-content.prose table tbody tr {

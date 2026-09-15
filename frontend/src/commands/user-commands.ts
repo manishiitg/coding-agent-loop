@@ -10,6 +10,7 @@ import type { ModeCategory } from '../stores/useModeStore'
 import { setUserCommands } from './registry'
 
 type CommandMode = Exclude<ModeCategory, null>
+let commandLoadGeneration = 0
 
 const iconComponents: Record<string, LucideIcon> = {
   zap: Zap,
@@ -58,12 +59,17 @@ function toCommandDefinition(uc: UserCommand): CommandDefinition {
   }
 }
 
-export async function loadAndRegisterUserCommands(): Promise<void> {
+export async function loadAndRegisterUserCommands(workspacePath?: string): Promise<void> {
+  const generation = ++commandLoadGeneration
+  // The registry is process-global. Clear the previous project's commands
+  // before loading the newly active scope so they can never flash in another
+  // project's menu while the request is in flight.
+  setUserCommands([])
   try {
-    const response = await commandsApi.listCommands()
+    const response = await commandsApi.listCommands(workspacePath)
     const commands = (response.commands || []).map(toCommandDefinition)
-    setUserCommands(commands)
+    if (generation === commandLoadGeneration) setUserCommands(commands)
   } catch {
-    setUserCommands([])
+    if (generation === commandLoadGeneration) setUserCommands([])
   }
 }

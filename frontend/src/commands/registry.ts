@@ -64,6 +64,14 @@ export function findProductCommand(name: string, mode?: ModeCategory, workshopMo
   return productCommands.find(cmd => matchesName(cmd, name) && matchesMode(cmd, mode, workshopMode, canWriteWorkflow))
 }
 
+export function getProductAndUserCommands(mode?: ModeCategory, workshopMode?: WorkshopMode, canWriteWorkflow = true): CommandDefinition[] {
+  return [...productCommands, ...userCommands].filter(cmd => !cmd.menuHidden && matchesMode(cmd, mode, workshopMode, canWriteWorkflow))
+}
+
+export function findProductOrUserCommand(name: string, mode?: ModeCategory, workshopMode?: WorkshopMode, canWriteWorkflow = true): CommandDefinition | undefined {
+  return [...productCommands, ...userCommands].find(cmd => matchesName(cmd, name) && matchesMode(cmd, mode, workshopMode, canWriteWorkflow))
+}
+
 export function getCommands(mode?: ModeCategory, workshopMode?: WorkshopMode, canWriteWorkflow = true): CommandDefinition[] {
   return [...productCommands, ...builtinCommands, ...userCommands].filter(cmd => !cmd.menuHidden && matchesMode(cmd, mode, workshopMode, canWriteWorkflow))
 }

@@ -3,6 +3,8 @@ package server
 import (
 	"encoding/json"
 	"net/http"
+	"path"
+	"strings"
 
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/commands"
 
@@ -27,7 +29,11 @@ func listCommandsHandler(workspaceAPIURL string) http.HandlerFunc {
 			return
 		}
 
-		cmdList, err := commands.DiscoverCommands(workspaceAPIURL)
+		commandsPath, ok := commandPathForRequest(w, r, false)
+		if !ok {
+			return
+		}
+		cmdList, err := commands.DiscoverCommandsAt(workspaceAPIURL, commandsPath)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
@@ -57,7 +63,11 @@ func getCommandHandler(workspaceAPIURL string) http.HandlerFunc {
 			return
 		}
 
-		cmd, err := commands.GetCommand(workspaceAPIURL, name)
+		commandsPath, ok := commandPathForRequest(w, r, false)
+		if !ok {
+			return
+		}
+		cmd, err := commands.GetCommandAt(workspaceAPIURL, commandsPath, name)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusNotFound)
 			return
@@ -91,7 +101,11 @@ func createCommandHandler(workspaceAPIURL string) http.HandlerFunc {
 			return
 		}
 
-		cmd, err := commands.CreateCommand(workspaceAPIURL, req.Name, req.Content)
+		commandsPath, ok := commandPathForRequest(w, r, true)
+		if !ok {
+			return
+		}
+		cmd, err := commands.CreateCommandAt(workspaceAPIURL, commandsPath, req.Name, req.Content)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
@@ -123,7 +137,11 @@ func updateCommandHandler(workspaceAPIURL string) http.HandlerFunc {
 			return
 		}
 
-		cmd, err := commands.UpdateCommand(workspaceAPIURL, name, req.Content)
+		commandsPath, ok := commandPathForRequest(w, r, true)
+		if !ok {
+			return
+		}
+		cmd, err := commands.UpdateCommandAt(workspaceAPIURL, commandsPath, name, req.Content)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
@@ -148,11 +166,56 @@ func deleteCommandHandler(workspaceAPIURL string) http.HandlerFunc {
 			return
 		}
 
-		if err := commands.DeleteCommand(workspaceAPIURL, name); err != nil {
+		commandsPath, ok := commandPathForRequest(w, r, true)
+		if !ok {
+			return
+		}
+		if err := commands.DeleteCommandAt(workspaceAPIURL, commandsPath, name); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
 
 		w.WriteHeader(http.StatusNoContent)
 	}
+}
+
+// commandPathForRequest binds custom commands to the active workspace. An
+// omitted scope means the signed-in user's personal AgentWorks command set.
+// Product paths are canonicalized into that user's private _users tree.
+func commandPathForRequest(w http.ResponseWriter, r *http.Request, write bool) (string, bool) {
+	requested := strings.Trim(strings.TrimSpace(r.URL.Query().Get("workspace_path")), "/")
+	userID := GetUserIDFromContext(r.Context())
+	if requested == "" {
+		return path.Join("_users", sanitizeUserIDForPath(userID), commands.CustomCommandsSubPath), true
+	}
+	clean := path.Clean(requested)
+	if clean == "." || clean == ".." || strings.HasPrefix(clean, "../") {
+		http.Error(w, "invalid workspace_path", http.StatusBadRequest)
+		return "", false
+	}
+	if clean == "Workflow" {
+		http.Error(w, "workspace_path must identify a workflow", http.StatusBadRequest)
+		return "", false
+	}
+	if strings.HasPrefix(clean, "Workflow/") {
+		if write {
+			if !requireWorkflowOwner(w, r, clean) {
+				return "", false
+			}
+		} else if !requireWorkflowVisible(w, r, clean) {
+			return "", false
+		}
+		return path.Join(clean, commands.CustomCommandsSubPath), true
+	}
+	if clean != "Chats" && !strings.HasPrefix(clean, "Chats/") && !strings.HasPrefix(clean, "_users/") {
+		http.Error(w, "workspace_path must identify the current project or workflow", http.StatusBadRequest)
+		return "", false
+	}
+	validated, err := cleanAgentProfileWorkspace(clean, userID)
+	if err != nil {
+		http.Error(w, "workspace_path is outside your workspace", http.StatusForbidden)
+		return "", false
+	}
+	canonical := agentProfileRuntimeWorkspace(userID, validated)
+	return path.Join(canonical, commands.CustomCommandsSubPath), true
 }

@@ -5732,6 +5732,10 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				logfWithContext(queryLogCtx, "[SECRET TOOLS] Registered multi-agent secret tools with live session injection (list_secrets, set_user_secret, delete_user_secret; global names read-only)")
 			}
 			if isAgentWorksChat {
+				if err := api.registerCustomCommandTools(llmAgent, currentUserID, ""); err != nil {
+					sendError(fmt.Sprintf("Failed to register custom command tools: %v", err), true)
+					return
+				}
 				// Generic AgentWorks chat can create workflows and inspect live
 				// workflow activity. Product-owned agents opt into their own tools.
 				if userAccessForClaims(GetUserFromContext(r.Context())).CanCreate {

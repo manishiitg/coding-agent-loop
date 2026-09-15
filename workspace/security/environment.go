@@ -1,6 +1,7 @@
 package security
 
 import (
+	"fmt"
 	"github.com/manishiitg/coding-agent-loop/workspace/browserconfig"
 	"github.com/manishiitg/coding-agent-loop/workspace/gogconfig"
 	"os"
@@ -28,7 +29,21 @@ func BuildSafeEnvironment() []string {
 		}
 		env = append(clean, browserconfig.ProfileEnv+"="+browserconfig.SharedProfile(), "AGENT_BROWSER_SOCKET_DIR=/tmp/.agent-browser", "TZ=UTC")
 	}
+	// A rootless Docker socket controls only containers owned by this service
+	// account. Never forward an arbitrary endpoint (especially the host Docker
+	// socket or tcp://), because access to the host daemon is equivalent to root.
+	if dockerHost := configuredRootlessDockerHost(); dockerHost != "" {
+		env = append(env, "DOCKER_HOST="+dockerHost)
+	}
 	return gogconfig.Environment(env, false)
+}
+
+func configuredRootlessDockerHost() string {
+	expected := fmt.Sprintf("unix:///run/user/%d/docker.sock", os.Getuid())
+	if strings.TrimSpace(os.Getenv("DOCKER_HOST")) == expected {
+		return expected
+	}
+	return ""
 }
 
 // buildDockerEnvironment returns a strict whitelist for Docker containers.

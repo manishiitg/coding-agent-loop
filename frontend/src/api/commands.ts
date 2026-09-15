@@ -25,28 +25,28 @@ api.interceptors.request.use((config) => {
 })
 
 export const commandsApi = {
-  listCommands: async (): Promise<ListCommandsResponse> => {
-    const response = await api.get('/api/commands')
+  listCommands: async (workspacePath?: string): Promise<ListCommandsResponse> => {
+    const response = await api.get('/api/commands', { params: workspacePath ? { workspace_path: workspacePath } : undefined })
     return response.data
   },
 
-  getCommand: async (name: string): Promise<UserCommand> => {
-    const response = await api.get(`/api/commands/${encodeURIComponent(name)}`)
+  getCommand: async (name: string, workspacePath?: string): Promise<UserCommand> => {
+    const response = await api.get(`/api/commands/${encodeURIComponent(name)}`, { params: workspacePath ? { workspace_path: workspacePath } : undefined })
     return response.data
   },
 
-  createCommand: async (request: CreateCommandRequest): Promise<UserCommand> => {
-    const response = await api.post('/api/commands', request)
+  createCommand: async (request: CreateCommandRequest, workspacePath?: string): Promise<UserCommand> => {
+    const response = await api.post('/api/commands', request, { params: workspacePath ? { workspace_path: workspacePath } : undefined })
     return response.data
   },
 
-  updateCommand: async (name: string, request: UpdateCommandRequest): Promise<UserCommand> => {
-    const response = await api.put(`/api/commands/${encodeURIComponent(name)}`, request)
+  updateCommand: async (name: string, request: UpdateCommandRequest, workspacePath?: string): Promise<UserCommand> => {
+    const response = await api.put(`/api/commands/${encodeURIComponent(name)}`, request, { params: workspacePath ? { workspace_path: workspacePath } : undefined })
     return response.data
   },
 
-  deleteCommand: async (name: string): Promise<void> => {
-    await api.delete(`/api/commands/${encodeURIComponent(name)}`)
+  deleteCommand: async (name: string, workspacePath?: string): Promise<void> => {
+    await api.delete(`/api/commands/${encodeURIComponent(name)}`, { params: workspacePath ? { workspace_path: workspacePath } : undefined })
   },
 }
 

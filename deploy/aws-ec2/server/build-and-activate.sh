@@ -31,6 +31,11 @@ grep -Fq 'Environment=AGENT_BROWSER_CDP_ENABLED=false' "$SCRIPT_DIR/rootless/vid
   echo "Video Studio server deployment must disable CDP in the workspace service" >&2
   exit 1
 }
+grep -Fq 'Environment=DOCKER_HOST=unix:///run/user/%U/docker.sock' "$SCRIPT_DIR/rootless/video-studio-workspace.service" || {
+  echo "Video Studio workspace must use the service user's rootless Docker socket" >&2
+  exit 1
+}
+bash "$REPO_ROOT/deploy/common/install-rootless-docker.sh" --check video-studio
 grep -Fq 'cdpEnabled: false' "$SCRIPT_DIR/server/runtime-config.js" || {
   echo "Video Studio runtime config must display CDP as disabled" >&2
   exit 1

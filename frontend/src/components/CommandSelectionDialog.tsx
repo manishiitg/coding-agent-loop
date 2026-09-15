@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useMemo, useSyncExternalStore, useId } from 'react'
-import { Terminal, Pencil, Trash2 } from 'lucide-react'
+import { Terminal, Pencil, Trash2, Plus } from 'lucide-react'
 import type { ModeCategory } from '../stores/useModeStore'
-import { findCommand, findProductCommand, getCommands, getProductCommands, type CommandDefinition, type WorkshopMode } from '../commands'
+import { findCommand, findProductOrUserCommand, getCommands, getProductAndUserCommands, type CommandDefinition, type WorkshopMode } from '../commands'
 import { loadAndRegisterUserCommands } from '../commands'
 
 import { subscribeCommands, getCommandRevision } from '../commands/registry'
@@ -18,6 +18,8 @@ interface CommandSelectionDialogProps extends ComposerPickerProps {
   workshopMode?: WorkshopMode
   canWriteWorkflow?: boolean
   agentProfileId?: string
+  workspacePath?: string
+  onCreateCommand?: () => void
   onEditCommand?: (command: CommandDefinition) => void
   onDeleteCommand?: (command: CommandDefinition) => void
 }
@@ -32,6 +34,8 @@ export const CommandSelectionDialog: React.FC<CommandSelectionDialogProps> = ({
   workshopMode,
   canWriteWorkflow = true,
   agentProfileId,
+  workspacePath,
+  onCreateCommand,
   onEditCommand,
   onDeleteCommand, inputRef, listId, onActiveOptionChange
 }) => {
@@ -42,18 +46,16 @@ export const CommandSelectionDialog: React.FC<CommandSelectionDialogProps> = ({
   const dialogRef = useRef<HTMLDivElement>(null)
   const listRef = useRef<HTMLDivElement>(null)
 
-  // Profile-backed products expose only commands shipped by their product.yaml.
-  // User/global commands belong to AgentWorks' generic composer, not a product.
   useEffect(() => {
-    if (isOpen && !agentProfileId) {
-      loadAndRegisterUserCommands().catch(() => {})
+    if (isOpen) {
+      loadAndRegisterUserCommands(workspacePath).catch(() => {})
     }
-  }, [agentProfileId, isOpen])
+  }, [isOpen, workspacePath])
 
   // Filter commands based on search query and current mode
   const filteredCommands = useMemo(() => {
     const allCommands = agentProfileId
-      ? getProductCommands(modeCategory, workshopMode, canWriteWorkflow)
+      ? getProductAndUserCommands(modeCategory, workshopMode, canWriteWorkflow)
       : getCommands(modeCategory, workshopMode, canWriteWorkflow)
 
     if (!searchQuery.trim()) {
@@ -106,7 +108,7 @@ export const CommandSelectionDialog: React.FC<CommandSelectionDialogProps> = ({
         // Exact retained shortcuts remain directly executable even though the
         // search results point to the consolidated command's focus picker.
         const shortcut = agentProfileId
-          ? findProductCommand(searchQuery.trim(), modeCategory, workshopMode, canWriteWorkflow)
+          ? findProductOrUserCommand(searchQuery.trim(), modeCategory, workshopMode, canWriteWorkflow)
           : findCommand(searchQuery.trim(), modeCategory, workshopMode, canWriteWorkflow)
         if (selectedIndex === 0 && shortcut?.menuHidden) {
           onSelectCommand(shortcut.command)
@@ -223,6 +225,18 @@ export const CommandSelectionDialog: React.FC<CommandSelectionDialogProps> = ({
           ))
         )}
       </div>
+
+      {onCreateCommand && (
+        <button
+          type="button"
+          onMouseDown={event => event.preventDefault()}
+          onClick={onCreateCommand}
+          className="flex items-center gap-2 border-t border-border px-3 py-2 text-sm text-muted-foreground hover:bg-secondary hover:text-foreground"
+        >
+          <Plus className="h-4 w-4" />
+          <span>Create custom command</span>
+        </button>
+      )}
 
       {/* Footer */}
       <div className="px-3 py-2 border-t border-border bg-secondary text-xs text-muted-foreground">

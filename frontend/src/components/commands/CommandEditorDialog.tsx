@@ -3,7 +3,7 @@ import { X, Zap, Eye, Code, FileText, MessageCircle, Search, Bookmark, Star, Ter
 import { Button } from '../ui/Button'
 import { Card } from '../ui/Card'
 import { commandsApi } from '../../api/commands'
-import { loadAndRegisterUserCommands } from '../../commands'
+import { findCommandAnyMode, loadAndRegisterUserCommands } from '../../commands'
 
 const ICON_OPTIONS = [
   { name: 'terminal', icon: <Terminal className="w-5 h-5" /> },
@@ -31,6 +31,7 @@ interface CommandEditorDialogProps {
     content: string
   } | null
   onSaved?: () => void
+  workspacePath?: string
 }
 
 function slugify(name: string): string {
@@ -42,7 +43,7 @@ function slugify(name: string): string {
 }
 
 function buildCommandMd(name: string, description: string, icon: string, modes: string[], promptTemplate: string): string {
-  let yaml = `---\nname: ${name}\ndescription: ${description}\nicon: ${icon}\n`
+  let yaml = `---\nname: ${name}\ndescription: ${JSON.stringify(description)}\nicon: ${JSON.stringify(icon)}\n`
   if (modes.length > 0) {
     yaml += `modes:\n${modes.map(m => `  - ${m}`).join('\n')}\n`
   } else {
@@ -56,7 +57,8 @@ export const CommandEditorDialog: React.FC<CommandEditorDialogProps> = ({
   isOpen,
   onClose,
   editingCommand,
-  onSaved
+  onSaved,
+  workspacePath,
 }) => {
   const [name, setName] = useState('')
   const [description, setDescription] = useState('')
@@ -97,21 +99,26 @@ export const CommandEditorDialog: React.FC<CommandEditorDialogProps> = ({
     if (!name.trim()) { setError('Name is required'); return }
     if (!description.trim()) { setError('Description is required'); return }
     if (!promptTemplate.trim()) { setError('Prompt template is required'); return }
+    const commandName = slugify(name)
+    if (!isEditing && findCommandAnyMode(commandName)) {
+      setError(`/${commandName} already exists in this command scope`)
+      return
+    }
 
     setSaving(true)
     setError(null)
 
     try {
-      const folderName = isEditing ? editingCommand!.folder_name : slugify(name)
+      const folderName = isEditing ? editingCommand!.folder_name : commandName
       const content = buildCommandMd(name.trim(), description.trim(), icon, modes, promptTemplate.trim())
 
       if (isEditing) {
-        await commandsApi.updateCommand(folderName, { content })
+        await commandsApi.updateCommand(folderName, { content }, workspacePath)
       } else {
-        await commandsApi.createCommand({ name: folderName, content })
+        await commandsApi.createCommand({ name: folderName, content }, workspacePath)
       }
 
-      await loadAndRegisterUserCommands()
+      await loadAndRegisterUserCommands(workspacePath)
       onSaved?.()
       onClose()
     } catch (cause: unknown) {
@@ -128,7 +135,7 @@ export const CommandEditorDialog: React.FC<CommandEditorDialogProps> = ({
     } finally {
       setSaving(false)
     }
-  }, [name, description, icon, modes, promptTemplate, isEditing, editingCommand, onClose, onSaved])
+  }, [name, description, icon, modes, promptTemplate, isEditing, editingCommand, onClose, onSaved, workspacePath])
 
   useEffect(() => {
     if (!isOpen) return

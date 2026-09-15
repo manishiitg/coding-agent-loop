@@ -1,12 +1,15 @@
 [Unit]
 Description=Video Studio workspace API (user service)
 ConditionPathIsMountPoint=/data/video-studio
+Wants=docker.service
+After=docker.service
 
 [Service]
 EnvironmentFile=%h/video-studio/.env
 Environment=HOME=%h
 Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
 Environment=AGENT_BROWSER_CDP_ENABLED=false
+Environment=DOCKER_HOST=unix:///run/user/%U/docker.sock
 WorkingDirectory=%h/video-studio/current
 ExecStart=%h/video-studio/current/bin/video-studio-workspace server --port 8080 --docs-dir /data/video-studio/docs
 StandardOutput=append:%h/video-studio/logs/workspace.log

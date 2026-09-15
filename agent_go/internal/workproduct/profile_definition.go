@@ -5,12 +5,15 @@ import (
 	"encoding/json"
 	"fmt"
 	"path"
+	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
 	"unicode/utf8"
 
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/agentprofiles"
+	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/commands"
 	orchestratorevents "github.com/manishiitg/coding-agent-loop/agent_go/pkg/orchestrator/events"
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/workspace"
 )
@@ -39,6 +42,100 @@ var productSkills = []agentprofiles.SkillFileBinding{
 	{Name: "work-schedules-and-bots", Description: "Manage Work's message-only schedules, authenticated webhook triggers, and Slack or WhatsApp project-chat bots.", Path: "skills/work-schedules-and-bots/SKILL.md"},
 	{Name: "work-dashboard", Description: "Create and maintain a general-purpose visual dashboard for a Work project.", Path: "skills/work-dashboard/SKILL.md"},
 	{Name: "background-work", Description: "Run a bounded task asynchronously and rely on Work's automatic completion notification instead of polling.", Path: "skills/background-work/SKILL.md"},
+}
+
+var customCommandSlugPattern = regexp.MustCompile(`[^a-z0-9_-]+`)
+
+func customCommandSlug(name string) string {
+	name = strings.ToLower(strings.TrimSpace(name))
+	name = customCommandSlugPattern.ReplaceAllString(name, "-")
+	return strings.Trim(name, "-")
+}
+
+func customCommandMarkdown(name, description, icon, prompt string, modes []string) string {
+	var out strings.Builder
+	out.WriteString("---\nname: ")
+	out.WriteString(customCommandSlug(name))
+	out.WriteString("\ndescription: ")
+	out.WriteString(strconv.Quote(strings.TrimSpace(description)))
+	out.WriteString("\nicon: ")
+	out.WriteString(strconv.Quote(strings.TrimSpace(icon)))
+	out.WriteString("\nmodes:")
+	for _, mode := range modes {
+		out.WriteString("\n  - ")
+		out.WriteString(mode)
+	}
+	out.WriteString("\n---\n\n")
+	out.WriteString(strings.TrimSpace(prompt))
+	out.WriteString("\n")
+	return out.String()
+}
+
+func workCustomCommandsFactory(workspaceAPIURL string) agentprofiles.ToolFactory {
+	return func(runtime agentprofiles.ToolRuntimeContext, _ json.RawMessage) (agentprofiles.ToolSpec, error) {
+		commandsPath := path.Join(runtime.WorkspacePath, commands.CustomCommandsSubPath)
+		return agentprofiles.ToolSpec{
+			Name: "manage_custom_commands", Category: "custom_commands",
+			Description: "List, create, update, or delete reusable slash commands for this Work project when the user asks. Commands appear immediately in this project's slash menu. Product commands are immutable and cannot be changed with this tool.",
+			Parameters: map[string]interface{}{
+				"type": "object", "additionalProperties": false,
+				"properties": map[string]interface{}{
+					"action":      map[string]interface{}{"type": "string", "enum": []string{"list", "create", "update", "delete"}},
+					"name":        map[string]interface{}{"type": "string", "description": "Slash command name, without the slash."},
+					"description": map[string]interface{}{"type": "string", "description": "Short text shown in the slash menu."},
+					"prompt":      map[string]interface{}{"type": "string", "description": "Prompt submitted by the command. Use {{context}} where text typed before the slash should be inserted."},
+					"icon":        map[string]interface{}{"type": "string", "enum": []string{"terminal", "zap", "eye", "code", "file-text", "message-circle", "search", "bookmark", "star"}},
+				},
+				"required": []string{"action"},
+			},
+			Execute: func(_ context.Context, args map[string]interface{}) (string, error) {
+				action, _ := args["action"].(string)
+				name, _ := args["name"].(string)
+				name = customCommandSlug(name)
+				if action == "list" {
+					items, err := commands.DiscoverCommandsAt(workspaceAPIURL, commandsPath)
+					if err != nil {
+						return "", err
+					}
+					data, _ := json.Marshal(map[string]interface{}{"commands": items, "total": len(items)})
+					return string(data), nil
+				}
+				if name == "" {
+					return "", fmt.Errorf("name is required")
+				}
+				switch action {
+				case "delete":
+					if err := commands.DeleteCommandAt(workspaceAPIURL, commandsPath, name); err != nil {
+						return "", err
+					}
+					return fmt.Sprintf("Deleted /%s. The slash menu will refresh the next time it opens.", name), nil
+				case "create", "update":
+					description, _ := args["description"].(string)
+					prompt, _ := args["prompt"].(string)
+					icon, _ := args["icon"].(string)
+					if icon == "" {
+						icon = "terminal"
+					}
+					if strings.TrimSpace(description) == "" || strings.TrimSpace(prompt) == "" {
+						return "", fmt.Errorf("description and prompt are required")
+					}
+					content := customCommandMarkdown(name, description, icon, prompt, []string{"multi-agent"})
+					var err error
+					if action == "create" {
+						_, err = commands.CreateCommandAt(workspaceAPIURL, commandsPath, name, content)
+					} else {
+						_, err = commands.UpdateCommandAt(workspaceAPIURL, commandsPath, name, content)
+					}
+					if err != nil {
+						return "", err
+					}
+					return fmt.Sprintf("Saved /%s. It is available the next time the slash menu opens.", name), nil
+				default:
+					return "", fmt.Errorf("action must be list, create, update, or delete")
+				}
+			},
+		}, nil
+	}
 }
 
 // RegisterProductSkills adds Work's platform-operation contracts. General
@@ -232,6 +329,9 @@ func workIdentityFactory(workspaceAPIURL string) agentprofiles.ToolFactory {
 // identity to both the provider prompt and its one product-owned tool.
 func RegisterAgentProfileRuntime(registry *agentprofiles.Registry, workspaceAPIURL string) error {
 	if err := registry.RegisterToolFactory("work.set-identity", workIdentityFactory(workspaceAPIURL)); err != nil {
+		return err
+	}
+	if err := registry.RegisterToolFactory("work.custom-commands", workCustomCommandsFactory(workspaceAPIURL)); err != nil {
 		return err
 	}
 	return registry.RegisterPromptVariables("work", func(ctx context.Context, runtime agentprofiles.RuntimeContext) (map[string]string, error) {

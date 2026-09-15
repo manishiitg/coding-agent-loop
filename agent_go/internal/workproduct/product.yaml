@@ -51,6 +51,7 @@ profile:
       interaction:
         kind: identity_updated
         render: product.refresh
+    - id: work.custom-commands
   # Work reuses the platform coding and background-agent surfaces (shell,
   # guarded file patching, browser, secrets, web research, run_in_background).
   # Its only product-specific wrappers are folder grants and message-only

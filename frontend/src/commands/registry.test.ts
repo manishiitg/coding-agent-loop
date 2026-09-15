@@ -418,4 +418,24 @@ describe('Product commands are scoped to their own surface', () => {
       setUserCommands([])
     }
   })
+
+  it('merges scoped custom commands into a product without adding platform builtins', async () => {
+    const { findProductOrUserCommand, getProductAndUserCommands, setProductCommands, setUserCommands } = await import('./registry')
+    setUserCommands([{
+      command: 'personal', description: 'Project command', icon: null,
+      modes: ['multi-agent'], source: 'user', execute: () => {},
+    } as unknown as import('./types').CommandDefinition])
+    setProductCommands([{
+      command: 'production', description: 'Product command', icon: null,
+      modes: ['multi-agent'], source: 'product', execute: () => {},
+    } as unknown as import('./types').CommandDefinition])
+    try {
+      expect(getProductAndUserCommands('multi-agent').map(command => command.command)).toEqual(['production', 'personal'])
+      expect(findProductOrUserCommand('personal', 'multi-agent')).toBeDefined()
+      expect(findProductOrUserCommand('pulse-review', 'multi-agent')).toBeUndefined()
+    } finally {
+      setProductCommands([])
+      setUserCommands([])
+    }
+  })
 })

@@ -151,8 +151,8 @@ func TestWorkManifestDeclaresProjectScopeAndCodingAllowlist(t *testing.T) {
 			t.Fatalf("expected tool_policy.enabled to include %q", name)
 		}
 	}
-	if len(manifest.Profile.Tools) != 1 || manifest.Profile.Tools[0].ID != "work.set-identity" {
-		t.Fatalf("work must expose its chat-configurable identity tool, got %+v", manifest.Profile.Tools)
+	if len(manifest.Profile.Tools) != 2 || manifest.Profile.Tools[0].ID != "work.set-identity" || manifest.Profile.Tools[1].ID != "work.custom-commands" {
+		t.Fatalf("work must expose its identity and custom-command tools, got %+v", manifest.Profile.Tools)
 	}
 	identityInteraction := manifest.Profile.Tools[0].Interaction
 	if identityInteraction == nil || identityInteraction.Kind != "identity_updated" || identityInteraction.Render != "product.refresh" {

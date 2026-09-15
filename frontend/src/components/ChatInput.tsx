@@ -15,7 +15,7 @@ import FileSelectionDialog from './FileSelectionDialog'
 import CommandSelectionDialog from './CommandSelectionDialog'
 import { CommandEditorDialog } from './commands/CommandEditorDialog'
 import { PulseReviewFocusDialog } from './commands/PulseReviewFocusDialog'
-import { findCommand, findProductCommand, findCommandAnyMode, getProductCommands, loadAndRegisterUserCommands, type CommandContext, type CommandDefinition } from '../commands'
+import { findCommand, findProductCommand, findProductOrUserCommand, findCommandAnyMode, loadAndRegisterUserCommands, type CommandContext, type CommandDefinition } from '../commands'
 import { getCommandRevision, subscribeCommands } from '../commands/registry'
 import { commandsApi } from '../api/commands'
 import WorkflowSelectionDialog from './WorkflowSelectionDialog'
@@ -408,33 +408,35 @@ const MainAgentRuntimeStatusIndicator = React.memo(function MainAgentRuntimeStat
   label,
   activityLabel,
   showRunningSpinner = true,
+  showLabel = true,
 }: {
   state: 'running' | 'waiting' | 'ready'
   label: string
   activityLabel: string
   showRunningSpinner?: boolean
+  showLabel?: boolean
 }) {
+  const indicator = (
+    <div
+      className={`flex h-7 items-center gap-1.5 px-1 font-mono text-[11px] text-muted-foreground ${showLabel ? 'max-w-[205px]' : ''}`}
+      role="status"
+      aria-label={`${label} — ${state}`}
+    >
+      {state === 'running' && showRunningSpinner ? (
+        <Loader2 className="h-3 w-3 shrink-0 animate-spin text-lime-300" aria-hidden="true" />
+      ) : state === 'waiting' ? (
+        <span className="h-2 w-2 shrink-0 rounded-full bg-amber-400" aria-hidden="true" />
+      ) : (
+        <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-lime-300" aria-hidden="true" />
+      )}
+      {showLabel && <span className="truncate">{label}</span>}
+    </div>
+  )
+  if (!showLabel) return indicator
   return (
     <Tooltip>
-      <TooltipTrigger asChild>
-        <div
-          className="flex h-7 max-w-[205px] items-center gap-1.5 px-1 font-mono text-[11px] text-muted-foreground"
-          role="status"
-          aria-label={`${label} — ${state}`}
-        >
-          {state === 'running' && showRunningSpinner ? (
-            <Loader2 className="h-3 w-3 shrink-0 animate-spin text-lime-300" aria-hidden="true" />
-          ) : state === 'waiting' ? (
-            <span className="h-2 w-2 shrink-0 rounded-full bg-amber-400" aria-hidden="true" />
-          ) : (
-            <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-lime-300" aria-hidden="true" />
-          )}
-          <span className="truncate">{label}</span>
-        </div>
-      </TooltipTrigger>
-      <TooltipContent side="top">
-        <p>{label} — {activityLabel}</p>
-      </TooltipContent>
+      <TooltipTrigger asChild>{indicator}</TooltipTrigger>
+      <TooltipContent side="top"><p>{label} — {activityLabel}</p></TooltipContent>
     </Tooltip>
   )
 })
@@ -569,7 +571,9 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
   // The revision makes the composer react when an owning surface loads or
   // clears its manifest commands.
   useSyncExternalStore(subscribeCommands, getCommandRevision)
-  const productCommandsAvailable = !isProductProfile || getProductCommands().length > 0
+  // A product with no shipped commands still needs the slash entry point so
+  // users can create and use project-scoped custom commands.
+  const productCommandsAvailable = true
   const chatHasTurns = useMemo(() => (activeTabEvents ?? []).some((e) => e.type === 'user_message'), [activeTabEvents])
   const profileSessionRuntime = useChatStore(state => activeTab?.sessionId
     ? state.activeSessionsCache.find(session => session.session_id === activeTab.sessionId)?.runtime
@@ -1103,6 +1107,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     return isWorkflowMode && presetId ? state.getWorkflowById(presetId)?.workspace_path : undefined
   }) || activeWorkflowWorkspacePath || workflowPhaseWorkspacePath || workspaceActiveFolder
   const canWriteCommandWorkflow = useCanWriteWorkflow(commandWorkflowPath?.replace(/\/+$/, ''))
+  const customCommandWorkspacePath = agentProfileWorkspace || (isWorkflowMode ? commandWorkflowPath : undefined) || undefined
   
   // Get queued messages from tab config
   const queuedMessages = useMemo(() => tabConfig?.queuedMessages || [], [tabConfig?.queuedMessages])
@@ -2590,9 +2595,9 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
 
     // Look up and execute the command from the registry
     const cmd = isProductProfile
-      ? findProductCommand(command, commandModeCategory, getEffectiveWorkflowModes().workshopMode, canWriteCommandWorkflow)
+      ? findProductOrUserCommand(command, commandModeCategory, getEffectiveWorkflowModes().workshopMode, canWriteCommandWorkflow)
       : findCommand(command, commandModeCategory, getEffectiveWorkflowModes().workshopMode, canWriteCommandWorkflow)
-    if (!cmd && !isProductProfile && findCommandAnyMode(command)) {
+    if (!cmd && findCommandAnyMode(command)) {
       addToast('This command is unavailable for your current mode or workflow access.', 'info')
       return
     }
@@ -2632,7 +2637,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
   const handleEditCommand = useCallback((cmd: CommandDefinition) => {
     setShowCommandDialog(false)
     // Fetch full command data from API to populate editor
-    commandsApi.getCommand(cmd.command).then(uc => {
+    commandsApi.getCommand(cmd.command, customCommandWorkspacePath).then(uc => {
       setEditingUserCommand({
         folder_name: uc.folder_name,
         frontmatter: uc.frontmatter,
@@ -2642,17 +2647,23 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     }).catch(() => {
       addToast('Failed to load command for editing', 'error')
     })
-  }, [addToast])
+  }, [addToast, customCommandWorkspacePath])
 
   const handleDeleteCommand = useCallback(async (cmd: CommandDefinition) => {
     try {
-      await commandsApi.deleteCommand(cmd.command)
-      await loadAndRegisterUserCommands()
+      await commandsApi.deleteCommand(cmd.command, customCommandWorkspacePath)
+      await loadAndRegisterUserCommands(customCommandWorkspacePath)
       addToast(`Command /${cmd.command} deleted`, 'success')
     } catch {
       addToast('Failed to delete command', 'error')
     }
-  }, [addToast])
+  }, [addToast, customCommandWorkspacePath])
+
+  const handleCreateCommand = useCallback(() => {
+    setShowCommandDialog(false)
+    setEditingUserCommand(null)
+    setShowCommandEditor(true)
+  }, [])
 
   const handleCommandEditorClose = useCallback(() => {
     setShowCommandEditor(false)
@@ -3087,9 +3098,8 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     )
   }
 
-  // Extracted so SparkQuill can place them on the opposite side of the
-  // composer from every other product (sparkQuillComposerLayout above) —
-  // one JSX definition each, rendered in whichever group applies.
+  // Shared controls are defined once and placed in the appropriate composer
+  // group. The mic always stays with the right-hand send actions.
   const micEl = voiceCapabilityEnabled && (
     <MicButton
       ref={micRef}
@@ -3456,6 +3466,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
                     label={mainAgentRuntimeStatus.label}
                     activityLabel={mainAgentRuntimeStatus.activityLabel}
                     showRunningSpinner={!showCompactRuntimeLoading}
+                    showLabel={!isProductProfile}
                   />
                 )}
                 {chatInputStatusLine && (
@@ -3498,7 +3509,10 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
                       </Button>
                     </TooltipTrigger>
                     <TooltipContent>
-                      <p>{terminalViewSelected ? 'Return to conversation' : 'Open live view'}</p>
+                      <p>
+                        {terminalViewSelected ? 'Return to conversation' : 'Open live view'}
+                        {isProductProfile && mainAgentRuntimeStatus?.label ? ` · ${mainAgentRuntimeStatus.label}` : ''}
+                      </p>
                     </TooltipContent>
                   </Tooltip>
                 )}
@@ -3511,7 +3525,6 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
                           {sparkleEl}
                         </>
                       )}
-                      {!sparkQuillComposerLayout && micEl}
                       {showCompactRuntimeLoading && isTurnInFlight && (
                         <Tooltip>
                           <TooltipTrigger asChild>
@@ -3884,7 +3897,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
                     <div data-tour="chat-send-controls" data-testid="tour-chat-send-controls" className="flex items-center gap-1">
                       {!sparkQuillComposerLayout && sparkleEl}
                       {!sparkQuillComposerLayout && attachmentEl}
-                      {sparkQuillComposerLayout && micEl}
+                      {micEl}
                       {/* Enter still sends/steers a follow-up while the primary
                           button stops the running session. */}
                       {showStopButton ? stopButton : (
@@ -3951,7 +3964,9 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
         workshopMode={commandModeCategory === 'workflow' ? getEffectiveWorkflowModes().workshopMode : undefined}
         canWriteWorkflow={canWriteCommandWorkflow}
         agentProfileId={activeTab?.metadata?.agentProfileId}
-        {...(isProductSurface || (isWorkflowMode && !canWriteCommandWorkflow) ? {} : {
+        workspacePath={customCommandWorkspacePath}
+        {...(isWorkflowMode && !canWriteCommandWorkflow ? {} : {
+          onCreateCommand: handleCreateCommand,
           onEditCommand: handleEditCommand,
           onDeleteCommand: handleDeleteCommand,
         })}
@@ -3967,6 +3982,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
         isOpen={showCommandEditor}
         onClose={handleCommandEditorClose}
         editingCommand={editingUserCommand}
+        workspacePath={customCommandWorkspacePath}
       />
 
       {/* File Selection Dialog */}

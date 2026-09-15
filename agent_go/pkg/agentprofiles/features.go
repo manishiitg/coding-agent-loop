@@ -187,7 +187,7 @@ var featureCatalog = map[string]featureDefinition{
 		Tools:           []string{"validate_report_html", "preview_report"},
 		Skills:          []string{"work-dashboard"},
 		UIPanels:        []string{"dashboard"},
-		PromptExtension: "A visual Dashboard is enabled. Read the attached `work-dashboard` skill before creating or changing a dashboard. Keep its presentation under db/reports/, use the managed data contract, validate it, and open it in the shared Dashboard viewer.",
+		PromptExtension: "A visual Dashboard is enabled. Read the attached `work-dashboard` skill before creating or changing it. It may contain multiple HTML views under db/reports/ with optional views.json metadata; the shared toolbar handles navigation. The viewer locally supports opt-in daisyUI. Use the managed data contract and validate every changed view.",
 	},
 	"costs": {
 		UIPanels: []string{"costs"},
@@ -198,7 +198,7 @@ var featureCatalog = map[string]featureDefinition{
 		PromptExtension: "Background work is enabled. Read the attached `background-work` skill before delegating. Delegate only bounded independent tasks, rely on automatic completion notifications, and do not poll unless the user asks for status.",
 	},
 	"workspace-ui": {
-		Tools: []string{"open_workspace_view", "refresh_workspace_view", "list_ui_capabilities", "get_ui_state", "perform_ui_action", "get_ui_action_result"},
+		Tools:           []string{"open_workspace_view", "refresh_workspace_view", "list_ui_capabilities", "get_ui_state", "perform_ui_action", "get_ui_action_result"},
 		PromptExtension: "The interactive Work chat can present its right-side workspace views. Use open_workspace_view after creating or discussing something the user should inspect, and trust only an applied browser acknowledgement.",
 	},
 }

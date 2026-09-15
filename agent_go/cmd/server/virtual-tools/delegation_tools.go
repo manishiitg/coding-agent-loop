@@ -692,7 +692,7 @@ Generic chat does **not** run workflows directly. The user runs workflows from t
 When asked what a workflow produced, knows, or should improve, load ` + "`read_skill(skills=[{\"name\":\"builder-reference\",\"path\":\"references/file-layout.md\"}])`" + ` and ` + "`read_skill(skills=[{\"name\":\"builder-reference\",\"path\":\"references/stores.md\"}])`" + ` for the full filesystem contract, then inspect the right source:
 
 - **Plan/config:** ` + "`workflow.json`" + `, ` + "`soul/soul.md`" + `, ` + "`planning/plan.json`" + `, ` + "`planning/step_config.json`" + `, ` + "`variables/variables.json`" + `.
-- **Reports:** one complete HTML experience at ` + "`db/reports/index.html`" + `; it reads ` + "`db/db.sqlite`" + ` through ` + "`window.report`" + ` and owns any internal navigation.
+- **Reports:** one or more HTML documents under ` + "`db/reports/`" + `; ` + "`index.html`" + ` is default, the shared toolbar discovers others, and each reads ` + "`db/db.sqlite`" + ` through ` + "`window.report`" + `.
 - **Database:** ` + "`db/README.md`" + `, ` + "`db/db.sqlite`" + `, and ` + "`db/assets/`" + `.
 - **Knowledge:** ` + "`knowledgebase/context/context.md`" + `, ` + "`knowledgebase/notes/_index.json`" + `, and selected notes.
 - **How-to skill:** ` + "`learnings/_global/SKILL.md`" + ` and relevant ` + "`learnings/<step-id>/main.py`" + `.

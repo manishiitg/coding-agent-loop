@@ -1,9 +1,10 @@
 Design the workflow's reporting UI from the ground up. Load
 `read_skill(skills=[{"name":"builder-reference","path":"references/reporting-policy.md"},{"name":"builder-reference","path":"references/html-output.md"}])`
-first and follow it. A workflow report is one complete HTML experience at
-`db/reports/index.html`; its own HTML chooses tabs, sections, sidebar, or a
-single scrolling layout. There is no `report_plan.json`, JSON layout, or
-platform-generated report navigation. Optional built-in metric widgets fit
+first and follow it. A workflow report consists of one or more complete HTML
+documents under `db/reports/`; `index.html` is the default and the shared top
+toolbar exposes additional documents. Use optional `views.json` only for view
+titles, ordering, and default selection—not as a widget/layout plan. Each
+document owns its internal sections. Optional built-in metric widgets fit
 inside the workflow-owned HTML.{{if .Focus}}
 
 Focus on: {{.Focus}}.{{end}}
@@ -147,13 +148,13 @@ the tablet view sparse.
    visibly, and only record tests when requested by the workflow/user. Ensure the
    recording is finalized before storing its durable path. This API serves
    existing media; it does not automatically record tests or attach their results.
-5. Call `validate_report_html` after editing; repair every error. It now
+5. Call `validate_report_html` for every document after editing; repair every error. It now
    also runs every literal `window.report.query` SQL against the live
    `db/db.sqlite`, checks that every referenced `db/` file exists, rejects
    external stylesheet/script URLs, and warns when dark mode keys only off
    the OS scheme. A query built from variables is reported as unchecked —
    prefer literal SQL so the validator can see it.
-6. Call `preview_report` after validation passes. It renders the report in a
+6. Call `preview_report` for every changed document after validation passes. It renders the report in a
    real headless browser through the same runtime the Report tab uses and
    reports whether it settled, its script/fetch errors, its tab labels, any
    `Loading…` text never replaced, and screenshots at tablet (primary), mobile,

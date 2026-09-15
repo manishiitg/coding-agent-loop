@@ -1,11 +1,30 @@
 // Shared links identify assets, never credentials or access grants.
-export function sharedLink(base: string, kind: 'file' | 'folder', path: string, uid?: string): string {
+export function sharedLink(base: string, kind: 'file' | 'folder' | 'report', path: string, uid?: string): string {
   const bytes = new TextEncoder().encode(path)
   let binary = ''
   for (const byte of bytes) binary += String.fromCharCode(byte)
   const params = new URLSearchParams({ path: btoa(binary) })
   if (uid) params.set('uid', uid)
   return `${base.replace(/\/$/, '')}/${kind}?${params.toString()}`
+}
+
+export function sharedReportLink(base: string, workspacePath: string, documentPath: string, uid?: string): string {
+  const url = new URL(sharedLink(base, 'report', workspacePath, uid))
+  url.searchParams.set('document', documentPath)
+  return url.toString()
+}
+
+export function isShareableAppOrigin(base: string): boolean {
+  try {
+    const url = new URL(base)
+    const hostname = url.hostname.toLowerCase()
+    if (url.protocol !== 'http:' && url.protocol !== 'https:') return false
+    if (hostname === 'localhost' || hostname.endsWith('.localhost') || hostname === '::1') return false
+    if (/^127(?:\.\d{1,3}){3}$/.test(hostname)) return false
+    return hostname.length > 0
+  } catch {
+    return false
+  }
 }
 export const SHARE_RETURN_KEY = 'agentworks:share-return'
 const SHARE_RETURN_OAUTH_PREFIX = `${SHARE_RETURN_KEY}:oauth:`

@@ -16,20 +16,20 @@ Markdown is the default for human-readable step output — it renders richly in 
 
 ### The in-app workflow report is different from a standalone artifact
 
-`db/reports/index.html` is rendered by the Report tab, not opened as a file.
+HTML documents under `db/reports/` are rendered by the Report tab, not opened as files.
 The tab injects `window.report` (live data), mirrors the APP theme onto the
 document as `class="dark"` + `data-theme="dark"`, exposes the app palette as
 `hsl(var(--background))`-style CSS variables, auto-sizes the frame to the
 content, and owns scrolling. So for the workflow report, the standalone rules
 below change in these specific ways:
 
-| Standalone artifact (a step's `.html` output, a published page) | In-app workflow report (`db/reports/index.html`) |
+| Standalone artifact (a step's `.html` output, a published page) | In-app workflow report (`db/reports/*.html`) |
 |---|---|
 | Dark mode via `@media (prefers-color-scheme: dark)` — follows the OS | Dark mode via `:root.dark` / `[data-theme="dark"]` (or `hsl(var(--token))`); re-style on the `report:theme` event. `prefers-color-scheme` alone ignores the in-app toggle. |
 | Data baked into the file; `Generated: <date>` meta line | Data read live through `window.report.query` inside `window.report.ready(fn)`; no generated-at stamp, the numbers are current by construction |
 | `body { max-width: 960px; margin: 0 auto }` | Full width — the pane is the layout boundary; no fixed body/`html` height, no nested scroll container |
 | Sticky `<nav>` of `#anchors` | Same, or real tabs; `#anchor` clicks are intercepted and scrolled by the host |
-| Self-contained: no external `<link>`/`<script>` | Same — and `validate_report_html` fails on any external stylesheet/script URL |
+| Self-contained: no external `<link>`/`<script>` | Same. An opted-in `<html data-report-ui="daisyui">` receives the locally bundled daisyUI component CSS from the host; never add a CDN or Tailwind browser script. |
 
 Everything else in this doc (summary-first layout, semantic colour, tables,
 inline charts, the quality checklist) applies to both. For the report
@@ -39,7 +39,7 @@ paths — load `reporting-policy.md`.
 ### Non-negotiable rules
 
 **Self-contained — no external URLs.**
-Every `<style>`, font, icon, and script must be inlined. External CDN links (`<link href="https://...">`, `<script src="https://...">`) break when the file is opened offline or shared. Use `<style>` blocks and `<script>` blocks only. If you need a charting library, write the chart with vanilla JS or inline SVG — a 30-line draw loop is more reliable than any CDN dependency.
+Every report-owned `<style>`, font, icon, and script must be inlined. External CDN links (`<link href="https://...">`, `<script src="https://...">`) break when the file is opened offline or shared. Use `<style>` blocks and `<script>` blocks only. The sole component-library exception is the platform's locally bundled daisyUI CSS, enabled with `data-report-ui="daisyui"`; use inline CSS for layout. If you need charts, use the platform-supported chart guidance or inline SVG, never a CDN dependency.
 
 **Dark-mode styles.**
 For a standalone artifact, always include (an in-app report keys the same

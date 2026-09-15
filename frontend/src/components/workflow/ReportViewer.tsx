@@ -1,5 +1,5 @@
-// HTML report viewer. A workflow owns one complete reporting experience at
-// db/reports/index.html. The HTML itself decides whether that experience uses
+// HTML report viewer. A workspace owns one or more reporting documents under
+// db/reports/. The shared toolbar selects the active document; each HTML file
 // tabs, sections, a sidebar, or a single scrolling page.
 
 import { memo, useCallback, useEffect, useMemo, useState } from 'react'
@@ -21,6 +21,7 @@ import { allowedReportPath, normalizeReportSource, renderReportMarkdown, reportM
 import { useReportChat } from './reportWidgets/useReportChat'
 
 import { WORKFLOW_REPORT_REFRESH_EVENT } from './reportRefreshEvent'
+import { useSelectedReportDocument } from './reportDocuments'
 
 function debugReportView(event: string, detail?: Record<string, unknown>) {
   if (!import.meta.env.DEV) return
@@ -166,6 +167,7 @@ function ReportViewComponent({ workspacePath, onClose, focusTier, documentPath, 
   const [previewPreference, setPreviewPreference] = useState<ReportPreviewDevice>(() => readReportPreviewPreference(workspacePath))
   const reportChat = useReportChat(workspacePath)
   const dataApi = useReportDataApi(workspacePath, sendChatMessage ?? reportChat.request)
+  const selectedDocumentPath = useSelectedReportDocument(workspacePath, documentPath)
 
   const refresh = useCallback(() => setRefreshNonce(value => value + 1), [])
   useEffect(() => {
@@ -183,14 +185,14 @@ function ReportViewComponent({ workspacePath, onClose, focusTier, documentPath, 
     let cancelled = false
     setLoading(true)
     setError(null)
-    void loadReportDocument(workspacePath, documentPath).then(next => {
+    void loadReportDocument(workspacePath, selectedDocumentPath).then(next => {
       if (cancelled) return
       setReport(next)
     }).catch(reason => {
       if (!cancelled) setError(reason instanceof Error ? reason.message : 'Failed to load report.')
     }).finally(() => { if (!cancelled) setLoading(false) })
     return () => { cancelled = true }
-  }, [documentPath, refreshNonce, workspacePath])
+  }, [refreshNonce, selectedDocumentPath, workspacePath])
 
   useEffect(() => {
     debugReportView('mounted', { workspacePath })

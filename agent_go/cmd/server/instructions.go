@@ -208,7 +208,7 @@ Each workflow lives in ` + "`" + absWorkflow + `/<name>/` + "`" + ` with:
 - ` + "`runs/iteration-{N}/{group-name}/logs/{step-id}/`" + ` — per-step logs (see Log Layout below). Generated nested routes may use composite folders; inspect the actual directory for those executions.
 
 **Reports & evaluation:**
-- ` + "`db/reports/index.html`" + ` — the complete workflow-owned reporting experience. It reads ` + "`db/db.sqlite`" + ` through ` + "`window.report`" + ` and owns any tabs, sidebar, sections, or scrolling layout; the platform adds no report navigation.
+- ` + "`db/reports/*.html`" + ` — workflow-owned live report documents. ` + "`index.html`" + ` is the default; the shared toolbar discovers other documents and optional ` + "`views.json`" + ` controls titles/order/default. Each document owns its internal layout and reads ` + "`db/db.sqlite`" + ` through ` + "`window.report`" + `.
 - ` + "`reports/{group-name}/{timestamp}.md`" + ` — legacy/auxiliary finished-run prose when present; not the live report dashboard contract
 - ` + "`evaluation/runs/{runFolder}/evaluation_report.json`" + ` — evaluation step outputs and evidence (eval pipeline only, separate from normal runs)
 - ` + "`evaluation/runs/iteration-0/`" + ` — ephemeral eval sandbox used during evaluation execution
@@ -819,7 +819,7 @@ func buildSingleWorkflowContext(client *skills.WorkspaceAPIClient, wsPath string
 - Per-step saved scripts: `+"`%s/<source-root>/{step_id}/main.py`"+` — source-root is code for code_layout_version=1, otherwise learnings; persistent script for `+"`scripted`"+` steps (source of truth, reused across runs)
 - Knowledgebase: `+"`%s/knowledgebase/`"+` — persistent files across runs
 - Runs: `+"`%s/runs/iteration-0/`"+` is the mutable Builder/manual-workflow slot; producing saved schedules use immutable `+"`iteration-{N}-sched/`"+` and webhooks use `+"`iteration-{N}-hook/`"+`. `+"`workflow.json::run_retention_count`"+` keeps that many completed run/eval folders independently for each family; default 10. Per-run layout: `+"`runs/iteration-{N}/{group}/execution/{step-id}/code/main.py`"+` for legacy working main.py copies only; version 1 executes canonical source directly.
-- Live report dashboard: `+"`%s/db/reports/index.html`"+` — one complete HTML experience that reads `+"`db/db.sqlite`"+` through `+"`window.report`"+`, owns its internal navigation, and uses report assets under `+"`%s/db/assets/`"+`
+- Live report dashboards: `+"`%s/db/reports/*.html`"+` — `+"`index.html`"+` is the default, the shared toolbar exposes additional documents, and each reads `+"`db/db.sqlite`"+` through `+"`window.report`"+` and uses assets under `+"`%s/db/assets/`"+`
 - Legacy finished-run prose: `+"`%s/reports/{group-name}/{timestamp}.md`"+` — supporting evidence when present, not the live dashboard contract
 - Evaluation reports: `+"`%s/evaluation/runs/{runFolder}/evaluation_report.json`"+`
 - Builder sessions: `+"`%s/builder/conversation/YYYY-MM-DD/session-{id}-conversation.json`"+` — workshop chat histories

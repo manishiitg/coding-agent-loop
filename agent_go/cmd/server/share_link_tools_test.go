@@ -96,6 +96,28 @@ func TestGetReportLinkToolCreatesAuthenticatedDashboardLink(t *testing.T) {
 	}
 }
 
+func TestGetReportLinkToolTargetsNamedReportDocument(t *testing.T) {
+	f := newExternalToolsFixture(t)
+	t.Setenv("PUBLIC_URL", "https://confida.example")
+	f.write(t, "Workflow/invoices/db/reports/tasks.html", "<html><title>Tasks</title></html>")
+	reg := &recordingRegistrar{}
+	if err := f.api.registerShareLinkTools(reg, "owner", "Workflow/invoices"); err != nil {
+		t.Fatal(err)
+	}
+	out, err := reg.tools["get_report_link"].exec(context.Background(), map[string]interface{}{"document_path": "db/reports/tasks.html"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var result map[string]interface{}
+	if err := json.Unmarshal([]byte(out), &result); err != nil {
+		t.Fatal(err)
+	}
+	preview, err := url.Parse(result["url"].(string))
+	if err != nil || preview.Query().Get("document") != "db/reports/tasks.html" || result["path"] != "db/reports/tasks.html" {
+		t.Fatalf("named report metadata = %#v url=%v err=%v", result, preview, err)
+	}
+}
+
 func TestGetReportLinkToolRejectsUnauthorizedOrMissingReport(t *testing.T) {
 	f := newExternalToolsFixture(t)
 	t.Setenv("PUBLIC_URL", "https://confida.example")

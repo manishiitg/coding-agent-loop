@@ -22,6 +22,7 @@ import { SecretSelectionSection } from '../../components/secrets/SecretSelection
 import { AskAIButton } from '../../components/workflow/AskAIButton'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '../../components/ui/tooltip'
 import { WorkspaceToolbarGroup } from '../../components/workspace/WorkspaceToolbarGroup'
+import { ReportDocumentSwitcher } from '../../components/workflow/ReportDocumentSwitcher'
 import { agentApi, workFolderApi } from '../../services/api'
 import type { PresetLLMConfig, WorkFolderGrant } from '../../services/api-types'
 import { useChatStore } from '../../stores/useChatStore'
@@ -92,7 +93,7 @@ function WorkToolbarButton({ active, icon: Icon, label, onClick }: { active: boo
   return <Tooltip><TooltipTrigger asChild>{button}</TooltipTrigger><TooltipContent side="bottom"><p>{label}</p></TooltipContent></Tooltip>
 }
 
-export function WorkWorkspaceToolbar({ view, onViewChange, enabledPanels }: { view: WorkWorkspaceView; onViewChange: (view: WorkWorkspaceView) => void; enabledPanels?: Set<string> }) {
+export function WorkWorkspaceToolbar({ workspacePath, view, onViewChange, enabledPanels }: { workspacePath: string; view: WorkWorkspaceView; onViewChange: (view: WorkWorkspaceView) => void; enabledPanels?: Set<string> }) {
   const visibleViews = enabledPanels ? VIEW_BUTTONS.filter(item => enabledPanels.has(item.id)) : VIEW_BUTTONS
   const visibleSetup = enabledPanels ? SETUP_BUTTONS.filter(item => enabledPanels.has(item.id)) : SETUP_BUTTONS
   const [openGroup, setOpenGroup] = useState<'views' | 'setup'>(() => SETUP_BUTTONS.some(item => item.id === view) ? 'setup' : 'views')
@@ -104,9 +105,10 @@ export function WorkWorkspaceToolbar({ view, onViewChange, enabledPanels }: { vi
   return (
     <div data-tour="work-tools" className="ml-auto flex shrink-0 items-center gap-1">
       <TooltipProvider delayDuration={150}>
+        {visibleViews.some(item => item.id === 'dashboard') && <ReportDocumentSwitcher workspacePath={workspacePath} active={view === 'dashboard'} onOpen={() => onViewChange('dashboard')} />}
         <div className="inline-flex h-8 items-center divide-x divide-border rounded-lg border border-border bg-muted/60 py-0.5 shadow-sm">
           <WorkspaceToolbarGroup label="Views" open={openGroup === 'views'} onToggle={() => setOpenGroup('views')} title="Views: dashboard, database, browser, costs, schedules and files">
-            <div className="inline-flex items-center gap-0.5">{visibleViews.map((item) => <WorkToolbarButton key={item.id} {...item} active={view === item.id} onClick={() => onViewChange(item.id)} />)}</div>
+            <div className="inline-flex items-center gap-0.5">{visibleViews.filter(item => item.id !== 'dashboard').map((item) => <WorkToolbarButton key={item.id} {...item} active={view === item.id} onClick={() => onViewChange(item.id)} />)}</div>
           </WorkspaceToolbarGroup>
           <WorkspaceToolbarGroup label="Setup" open={openGroup === 'setup'} onToggle={() => setOpenGroup('setup')} title="Setup: skills, secrets, MCP servers, models, bots and folders">
             <div className="inline-flex items-center gap-0.5">{visibleSetup.map((item) => <WorkToolbarButton key={item.id} {...item} active={view === item.id} onClick={() => onViewChange(item.id)} />)}</div>
@@ -391,7 +393,6 @@ export function WorkWorkspacePane({ workspacePath, projectId, projectTitle, tabI
         <Suspense fallback={<div className="grid h-full place-items-center text-sm text-muted-foreground">Loading…</div>}>
           {view === 'dashboard' && <ReportView
             workspacePath={workspacePath}
-            documentPath="db/reports/index.html"
             emptyDescription="Ask Work to create a visual dashboard for this project. It can organize tasks, notes, plans, status, research, or anything else you want to manage visually."
             sendChatMessage={async (message) => ({ status: 'queued', ...queueWorkMessage(tabId, `From this project's dashboard:\n\n${message}`) })}
           />}

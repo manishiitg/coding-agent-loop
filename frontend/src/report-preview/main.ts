@@ -2,7 +2,7 @@
 //
 // Served by the Go server at /report-preview/ (embedded), loaded by a headless
 // browser with ?workspace=<Workflow/x>&token=<short-lived preview token>. It
-// renders db/reports/index.html through the SAME host runtime the in-app Report
+// renders the requested db/reports/*.html document through the SAME host runtime the in-app Report
 // tab uses (reportHostRuntime.ts) -- bootstrap stub, window.report, theme,
 // error surface -- so what the tool observes is what the user sees. Data goes
 // through two read-only endpoints on the Go server that accept the preview
@@ -57,6 +57,10 @@ interface PreviewSnapshot {
 const params = new URLSearchParams(window.location.search)
 const workspace = (params.get('workspace') || '').replace(/^\/+|\/+$/g, '')
 const token = params.get('token') || ''
+const requestedDocument = params.get('document') || 'db/reports/index.html'
+const documentPath = /^db\/reports\/(?!.*(?:^|\/)\.\.(?:\/|$))[^\\]+\.html$/i.test(requestedDocument)
+  ? requestedDocument
+  : 'db/reports/index.html'
 const initialTheme: ReportHostTheme = params.get('theme') === 'light' ? 'light' : 'dark'
 const initialWidth = Math.max(320, Number(params.get('width')) || 1280)
 
@@ -218,9 +222,9 @@ async function start() {
     return
   }
 
-  const report = await fetchFile('db/reports/index.html')
+  const report = await fetchFile(documentPath)
   if (!report.ok) {
-    setStatus(report.status === 404 ? 'No db/reports/index.html in this workflow.' : `Could not load the report (HTTP ${report.status}).`)
+    setStatus(report.status === 404 ? `No ${documentPath} in this workspace.` : `Could not load the report (HTTP ${report.status}).`)
     setPreviewState(report.status === 404 ? 'missing' : 'failed')
     return
   }

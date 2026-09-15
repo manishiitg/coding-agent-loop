@@ -9,7 +9,6 @@ import {
   BookMarked,
   CalendarClock,
   Gauge,
-  LayoutDashboard,
 } from 'lucide-react'
 import { useWorkflowStore, type RunFolder } from '../../../stores/useWorkflowStore'
 import { getWorkspaceView, PRIMARY_WORKSPACE_TOOLBAR_VIEWS, WORKSPACE_VIEWS, type WorkspaceViewId } from '../workspaceViews'
@@ -31,6 +30,7 @@ import { usePendingDecisionCount } from '../hooks/usePendingDecisionCount'
 import { useCanWriteWorkflow } from '../../../hooks/useCanWriteWorkflow'
 import { WorkspaceToolbarGroup as ToolbarGroup } from '../../workspace/WorkspaceToolbarGroup'
 import { WorkspaceTopToolbar } from '../../workspace/WorkspaceTopToolbar'
+import { ReportDocumentSwitcher } from '../ReportDocumentSwitcher'
 
 // Execution phase ID - special phase that should be displayed separately
 const EXECUTION_PHASE_ID = 'execution'
@@ -438,22 +438,7 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
       <div data-tour="workflow-tools" data-testid="tour-workflow-tools" className="ml-auto flex shrink-0 items-center gap-1">
         <TooltipProvider delayDuration={150}>
           {/* Report, Pulse, and Playbooks are primary views, always visible outside the groups. */}
-          {workspacePath && (
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <button
-                  type="button"
-                  onClick={() => openWorkspaceView('report')}
-                  className={`flex h-8 w-8 items-center justify-center rounded-lg border border-border transition-colors ${activeWorkspaceView === 'report' ? 'bg-muted text-foreground shadow-sm' : 'bg-muted/60 text-muted-foreground hover:bg-muted hover:text-foreground'}`}
-                  aria-label="Dashboard"
-                  aria-pressed={activeWorkspaceView === 'report'}
-                >
-                  <LayoutDashboard className="h-3.5 w-3.5" />
-                </button>
-              </TooltipTrigger>
-              <TooltipContent side="bottom"><p>Dashboard</p></TooltipContent>
-            </Tooltip>
-          )}
+          {workspacePath && <ReportDocumentSwitcher workspacePath={workspacePath} active={activeWorkspaceView === 'report'} onOpen={() => openWorkspaceView('report')} />}
 
           {workspacePath && (
             <Tooltip>

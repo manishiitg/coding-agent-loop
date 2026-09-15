@@ -1141,8 +1141,8 @@ func validateReportJS(content string, blocks []reportScriptBlock) (errors, warni
 }
 
 // registerHTMLReportTools exposes the deliberately small report contract. A
-// workflow owns one complete HTML reporting experience at db/reports/index.html;
-// there is no platform navigation or JSON layout/registration file.
+// a workflow owns HTML reporting documents under db/reports/. index.html is
+// the default, while the shared frontend toolbar handles document navigation.
 func registerHTMLReportTools(
 	mcpAgent DefinitionToolRegistrar,
 	workspacePath string,
@@ -1150,7 +1150,7 @@ func registerHTMLReportTools(
 	readFile func(context.Context, string) (string, error),
 	hooks ReportHTMLValidationHooks,
 ) error {
-	schema := `{"type":"object","properties":{},"additionalProperties":false}`
+	schema := `{"type":"object","properties":{"document_path":{"type":"string","description":"Report HTML path under db/reports/. Defaults to db/reports/index.html."}},"additionalProperties":false}`
 	params, err := parseSchemaForToolParameters(schema)
 	if err != nil {
 		return fmt.Errorf("parse validate_report_html schema: %w", err)
@@ -1158,11 +1158,21 @@ func registerHTMLReportTools(
 
 	mcpAgent.RegisterCustomTool(
 		"validate_report_html",
-		"Validate the workflow's complete db/reports/index.html reporting experience: document shape, scripted element ids, inline-script placement and ordering, calls to undefined functions and unknown window.report methods, every literal window.report.query SQL against the live db/db.sqlite, every referenced db/ path, external asset URLs, and the in-app theme hooks. The HTML owns its tabs, sections, sidebar, or scrolling layout; the platform adds no report navigation and there is no report_plan.json.",
+		"Validate one HTML report document under db/reports/: document shape, scripted element ids, inline-script placement and ordering, calls to undefined functions and unknown window.report methods, literal SQL against db/db.sqlite, referenced db/ paths, external assets, and app-theme hooks. document_path defaults to db/reports/index.html.",
 		params,
 		func(ctx context.Context, args map[string]interface{}) (string, error) {
-			_ = args
-			const relativePath = "db/reports/index.html"
+			relativePath := "db/reports/index.html"
+			if raw, ok := args["document_path"].(string); ok && strings.TrimSpace(raw) != "" {
+				relativePath = strings.TrimSpace(raw)
+			}
+			if filepath.ToSlash(relativePath) != relativePath || !strings.HasPrefix(relativePath, "db/reports/") || !strings.HasSuffix(strings.ToLower(relativePath), ".html") {
+				return "", fmt.Errorf("document_path must be a canonical .html path under db/reports/")
+			}
+			for _, part := range strings.Split(relativePath, "/") {
+				if part == "" || part == "." || part == ".." {
+					return "", fmt.Errorf("document_path must be a canonical .html path under db/reports/")
+				}
+			}
 			content, err := readFile(ctx, filepath.ToSlash(filepath.Join(workspacePath, relativePath)))
 			if err != nil {
 				return "", fmt.Errorf("read %s: %w", relativePath, err)
@@ -1297,7 +1307,7 @@ func registerHTMLReportTools(
 					"path_check_enabled": hooks.FileExists != nil,
 				},
 				"next_step":     "Open the Report tab to verify layout and scrolling.",
-				"page_contract": "db/reports/index.html owns the complete reporting experience and its internal navigation.",
+				"page_contract": "Each db/reports/*.html document owns its internal layout; the shared toolbar selects documents.",
 			}
 			out, marshalErr := json.MarshalIndent(result, "", "  ")
 			if marshalErr != nil {

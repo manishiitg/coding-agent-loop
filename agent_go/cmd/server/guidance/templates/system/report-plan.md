@@ -1,10 +1,11 @@
-## WORKFLOW REPORT — db/reports/index.html
+## WORKFLOW REPORT — db/reports/*.html
 
-The workflow owns one complete live reporting experience at
-`db/reports/index.html`. There is no JSON report plan, widget registry, or
-platform-generated page navigation.
+The workflow owns one or more live report documents under `db/reports/`;
+`index.html` is the default. The shared toolbar discovers additional HTML files,
+with optional `views.json` metadata for titles, order, and default. It is not a
+widget/layout plan.
 
-- The HTML decides whether to use tabs, a sidebar, anchored sections,
+- Each HTML document decides whether to use tabs, a sidebar, anchored sections,
   expandable panels, or one scrolling briefing.
 - Design tablet-first for the default ~768px Report pane: one or two primary
   columns, 44px touch targets, wrapping/scroll-safe tabs, and tables that reflow
@@ -36,7 +37,7 @@ platform-generated page navigation.
   approval buttons are supported through `updateField`/`updateFields` followed
   by an optional `sendChatMessage` request; do not duplicate the platform's
   decision store or write its records through the business-field API.
-- After editing, call `validate_report_html()` and repair every error, then call
-  `preview_report()` and inspect tablet, mobile, and desktop screenshots.
+- After editing, validate and preview every changed document, then inspect its
+  tablet, mobile, and desktop screenshots.
 
 Load `references/reporting-policy.md` for the complete authoring contract.

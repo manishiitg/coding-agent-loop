@@ -48,6 +48,25 @@ func TestValidateHTMLReportRequiresTheSingleWorkflowDocument(t *testing.T) {
 	}
 }
 
+func TestValidateHTMLReportAcceptsAnotherReportDocument(t *testing.T) {
+	t.Parallel()
+	agent := newWorkshopDefinitionDraft()
+	const workspace = "Workflow/demo"
+	files := map[string]string{
+		"Workflow/demo/db/reports/tasks.html": "<!doctype html><html><head><title>Tasks</title></head><body>OK</body></html>",
+	}
+	if err := registerHTMLReportTools(agent, workspace, workshopToolTestLogger{}, reportToolReadFile(files), ReportHTMLValidationHooks{}); err != nil {
+		t.Fatal(err)
+	}
+	result, err := agent.tools["validate_report_html"].Execute(context.Background(), map[string]interface{}{"document_path": "db/reports/tasks.html"})
+	if err != nil || !strings.Contains(result, `"path": "db/reports/tasks.html"`) {
+		t.Fatalf("validate alternate document: %v %s", err, result)
+	}
+	if _, err := agent.tools["validate_report_html"].Execute(context.Background(), map[string]interface{}{"document_path": "db/reports/../secret.html"}); err == nil {
+		t.Fatal("expected traversal path to be rejected")
+	}
+}
+
 func TestValidateHTMLReportRejectsImmediateWritesToMissingElements(t *testing.T) {
 	t.Parallel()
 	result := validateReport(t, `<!doctype html><html><head><title>Combined report</title></head><body><div id="lat-asof"></div><script>document.getElementById('asof').textContent = 'ready'</script></body></html>`, ReportHTMLValidationHooks{})

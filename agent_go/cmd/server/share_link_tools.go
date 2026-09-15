@@ -47,8 +47,8 @@ func (api *StreamingAPI) registerShareLinkTools(reg definitionToolRegistrar, use
 		if wf.Private(clean) {
 			return "", fmt.Errorf("private workspace files are not shareable")
 		}
-		if clean == "db/reports/index.html" {
-			return "", fmt.Errorf("db/reports/index.html is a live dashboard; use get_report_link so it opens in the dedicated report runtime")
+		if strings.HasPrefix(clean, "db/reports/") && strings.HasSuffix(strings.ToLower(clean), ".html") {
+			return "", fmt.Errorf("%s is a live dashboard; use get_report_link so it opens in the dedicated report runtime", clean)
 		}
 
 		return createSecureShareLink(ctx, workspace, workspace, clean, "", "Recipient must sign in to AgentWorks and already have access to this workflow. The link contains no credential and grants no access.")
@@ -56,11 +56,13 @@ func (api *StreamingAPI) registerShareLinkTools(reg definitionToolRegistrar, use
 		return err
 	}
 
-	return reg.RegisterCustomTool("get_report_link", "Create an authenticated AgentWorks dashboard link for the active workflow's db/reports/index.html. The server validates current workflow access and confirms that the report exists. Present the returned url value verbatim; never manually build, rewrite, or Base64-encode a /report URL. Inspect shareable and warning in the result: when PUBLIC_URL is localhost or another loopback host, the URL is a same-machine preview only and must not be described as shareable. The dedicated report viewer preserves the dashboard's styling, tabs, live data API, file actions, and refresh behavior. The URL contains no credential and grants no access: every recipient must sign in and already have access to this workflow. This is secure internal sharing, not anonymous public publishing.", map[string]interface{}{
+	return reg.RegisterCustomTool("get_report_link", "Create an authenticated AgentWorks dashboard link for an HTML document under db/reports/. document_path defaults to db/reports/index.html. The server validates access and confirms that the document exists. Present the returned url verbatim. This is secure internal sharing, not anonymous publishing: the link contains no credential and grants no access, so recipients must already have workflow access.", map[string]interface{}{
 		"type":                 "object",
 		"additionalProperties": false,
-		"properties":           map[string]interface{}{},
-	}, func(ctx context.Context, _ map[string]interface{}) (string, error) {
+		"properties": map[string]interface{}{
+			"document_path": map[string]interface{}{"type": "string", "description": "Report HTML path under db/reports/. Defaults to db/reports/index.html."},
+		},
+	}, func(ctx context.Context, args map[string]interface{}) (string, error) {
 		ctx = context.WithValue(ctx, UserContextKey, &UserClaims{UserID: userID})
 		if userAccessForClaims(&UserClaims{UserID: userID}).Disabled {
 			return "", fmt.Errorf("access denied: disabled account")
@@ -68,7 +70,11 @@ func (api *StreamingAPI) registerShareLinkTools(reg definitionToolRegistrar, use
 		if _, err := authorizeWorkflowContextPaths(ctx, []string{workspace}); err != nil {
 			return "", fmt.Errorf("workflow is unavailable or access denied")
 		}
-		return createSecureReportLink(ctx, workspace, workspace, "", "Recipient must sign in to AgentWorks and already have access to this workflow. The link contains no credential and grants no access.")
+		reportPath, err := cleanReportLinkPath(args["document_path"])
+		if err != nil {
+			return "", err
+		}
+		return createSecureReportLink(ctx, workspace, workspace, reportPath, "", "Recipient must sign in to AgentWorks and already have access to this workflow. The link contains no credential and grants no access.")
 	}, "workflow_files")
 }
 
@@ -99,25 +105,42 @@ func (api *StreamingAPI) registerWorkShareLinkTool(reg definitionToolRegistrar, 
 		if wf.Private(clean) {
 			return "", fmt.Errorf("private workspace files are not shareable")
 		}
-		if clean == "db/reports/index.html" {
-			return "", fmt.Errorf("db/reports/index.html is a live dashboard; use get_report_link so it opens in the dedicated report runtime")
+		if strings.HasPrefix(clean, "db/reports/") && strings.HasSuffix(strings.ToLower(clean), ".html") {
+			return "", fmt.Errorf("%s is a live dashboard; use get_report_link so it opens in the dedicated report runtime", clean)
 		}
 		return createSecureShareLink(ctx, physicalRoot, canonicalWorkspace, clean, userID, "The link contains no credential and grants no access. It can currently be opened only by this same signed-in Work account.")
 	}, "work_files"); err != nil {
 		return err
 	}
 
-	return reg.RegisterCustomTool("get_report_link", "Create an authenticated AgentWorks dashboard link for the active Work project's db/reports/index.html. The server validates that the dashboard exists and emits the canonical project URL even when this is a resumed chat with an expanded _users path. Present the returned url value verbatim; never manually build, rewrite, or Base64-encode a /report URL. Inspect shareable and warning in the result: when PUBLIC_URL is localhost or another loopback host, the URL is a same-machine preview only and must not be described as shareable. The dedicated report viewer preserves the dashboard's styling, tabs, live project data, file actions, and refresh behavior. The URL contains no credential and grants no access. Work projects are personal: it can be opened only by the same signed-in Work account.", map[string]interface{}{
+	return reg.RegisterCustomTool("get_report_link", "Create an authenticated dashboard link for an HTML document under the Work project's db/reports/. document_path defaults to db/reports/index.html. The link contains no credential and grants no access; it remains private to the same signed-in Work account.", map[string]interface{}{
 		"type":                 "object",
 		"additionalProperties": false,
-		"properties":           map[string]interface{}{},
-	}, func(ctx context.Context, _ map[string]interface{}) (string, error) {
-		return createSecureReportLink(ctx, physicalRoot, canonicalWorkspace, userID, "The link contains no credential and grants no access. It can currently be opened only by this same signed-in Work account.")
+		"properties": map[string]interface{}{
+			"document_path": map[string]interface{}{"type": "string", "description": "Report HTML path under db/reports/. Defaults to db/reports/index.html."},
+		},
+	}, func(ctx context.Context, args map[string]interface{}) (string, error) {
+		reportPath, err := cleanReportLinkPath(args["document_path"])
+		if err != nil {
+			return "", err
+		}
+		return createSecureReportLink(ctx, physicalRoot, canonicalWorkspace, reportPath, userID, "The link contains no credential and grants no access. It can currently be opened only by this same signed-in Work account.")
 	}, "work_files")
 }
 
-func createSecureReportLink(ctx context.Context, metadataRoot, linkRoot, userID, authentication string) (string, error) {
-	const reportPath = "db/reports/index.html"
+func cleanReportLinkPath(value interface{}) (string, error) {
+	raw := strings.TrimSpace(fmt.Sprint(value))
+	if raw == "" || raw == "<nil>" {
+		return "db/reports/index.html", nil
+	}
+	clean, err := wf.CleanRelative(raw)
+	if err != nil || clean != raw || !strings.HasPrefix(clean, "db/reports/") || !strings.HasSuffix(strings.ToLower(clean), ".html") {
+		return "", fmt.Errorf("document_path must be a canonical .html path under db/reports/")
+	}
+	return clean, nil
+}
+
+func createSecureReportLink(ctx context.Context, metadataRoot, linkRoot, reportPath, userID, authentication string) (string, error) {
 	metadata, err := sharedAssetMetadata(ctx, metadataRoot, reportPath)
 	if err != nil {
 		return "", fmt.Errorf("project report is unavailable: %w", err)
@@ -130,6 +153,16 @@ func createSecureReportLink(ctx context.Context, metadataRoot, linkRoot, userID,
 		return "", fmt.Errorf("PUBLIC_URL is not configured on this server; cannot create a report link")
 	}
 	previewURL := sharedAssetPublicURLForUser(publicURL, "report", linkRoot, userID)
+	if reportPath != "db/reports/index.html" {
+		parsedPreview, err := url.Parse(previewURL)
+		if err != nil {
+			return "", fmt.Errorf("cannot create report URL: %w", err)
+		}
+		query := parsedPreview.Query()
+		query.Set("document", reportPath)
+		parsedPreview.RawQuery = query.Encode()
+		previewURL = parsedPreview.String()
+	}
 	result := map[string]interface{}{
 		"kind":           "report",
 		"path":           reportPath,

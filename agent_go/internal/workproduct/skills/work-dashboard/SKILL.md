@@ -10,20 +10,28 @@ or another project view intended to organize or manage information visually.
 
 ## Contract
 
-- The Dashboard entry document is `db/reports/index.html` in the current Work
-  project. Supporting files belong under `db/reports/` or `db/assets/`.
+- Dashboard documents are HTML files under `db/reports/`; `index.html` is the
+  backward-compatible default. Supporting assets belong under `db/assets/`.
+- For multiple top-toolbar views, create one HTML document per useful view.
+  The toolbar discovers them automatically. Optionally add `db/reports/views.json`
+  with `{"schema_version":1,"default":"overview","views":[{"id":"overview","title":"Overview","path":"db/reports/index.html","order":0}]}`
+  to control titles, order, and the default. Paths must remain under
+  `db/reports/` and end in `.html`.
 - This is a general project artifact, not an AgentWorks workflow report. Do not
   create a workflow, plan, phase, step, route, Pulse configuration, or managed
   workflow merely to provide a Dashboard. A project-owned managed database is
   optional and should be added only when the view needs durable structured data.
 - Inspect the existing `db/reports/` folder before changing it. Preserve useful
   content and the user's established organization and visual language.
-- Build one complete, responsive HTML experience. It may use tabs, boards,
-  lists, cards, timelines, calendars, notes, or other layouts appropriate to
-  the user's information.
-- Support both app themes using `:root.dark` or
-  `[data-theme="dark"]`. Avoid external dependencies unless the user requests
-  them or the project already uses them.
+- Build responsive documents. Use separate toolbar views for genuinely distinct
+  destinations and internal sections/tabs for closely related material.
+- Support both app themes using `:root.dark` or `[data-theme="dark"]`.
+- daisyUI is locally bundled in the report viewer. When it will help, first
+  inspect installed skills; install the official `saadeghi/daisyui` skill with
+  `install_skill` only if missing, then read it. Opt a document in with
+  `<html data-report-ui="daisyui">`. Use daisyUI component classes and inline
+  CSS for layout. Never add a CDN, external stylesheet, Tailwind browser build,
+  or project package dependency for a report.
 
 ## Project data and actions
 
@@ -46,13 +54,15 @@ or another project view intended to organize or manage information visually.
 
 ## Verification
 
-- Re-read changed files, run `validate_report_html`, and then use
-  `preview_report` when browser rendering is available.
+- Re-read changed files, run `validate_report_html` for every changed report
+  document, and then use `preview_report` for each when browser rendering is
+  available.
 - Verify responsive layout, light and dark themes, navigation, empty states,
   and any buttons or filters. Use the managed browser when it materially
   improves confidence.
-- When the user asks for a URL to this Dashboard, call `get_report_link` with
-  no arguments and present its returned `url` verbatim. It opens the full live
+- When the user asks for a URL to a Dashboard document, call `get_report_link`
+  with that document path (or omit it for the default) and present its returned
+  `url` verbatim. It opens the full live
   Dashboard runtime, not the restricted generic HTML file preview. The link is
   private to the same signed-in Work account; it contains no credential and
   does not grant access or publish the project publicly. Inspect `shareable`,

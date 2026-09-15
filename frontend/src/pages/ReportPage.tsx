@@ -32,6 +32,10 @@ export function ReportPage({ encodedPath, ownerUid, currentUserId, onBack }: Rep
   const workspacePath = decodeBase64Utf8(encodedPath);
   const isValidPath = workspacePath !== null && isSafeReportWorkspacePath(workspacePath);
   const isWrongPersonalAccount = Boolean(ownerUid && ownerUid !== currentUserId);
+  const requestedDocument = new URLSearchParams(window.location.search).get("document") || "db/reports/index.html";
+  const documentPath = /^db\/reports\/(?!.*(?:^|\/)\.\.(?:\/|$))[^\\]+\.html$/i.test(requestedDocument)
+    ? requestedDocument
+    : "db/reports/index.html";
 
   if (!isValidPath || isWrongPersonalAccount) {
     return (
@@ -52,7 +56,7 @@ export function ReportPage({ encodedPath, ownerUid, currentUserId, onBack }: Rep
 
   return (
     <div className="h-screen min-h-screen overflow-hidden bg-background text-foreground">
-      <ReportView workspacePath={workspacePath} onClose={onBack} />
+      <ReportView workspacePath={workspacePath} documentPath={documentPath} onClose={onBack} />
     </div>
   );
 }

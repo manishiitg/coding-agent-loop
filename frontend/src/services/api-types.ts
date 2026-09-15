@@ -909,7 +909,9 @@ export interface ChannelRoute {
   profile_id?: string
   conversation_key?: string
   profile_label?: string
-  // Override the manifest's workshop_mode for this channel. Empty = use manifest.
+  // Explicit route grant. "owner" maps to Builder/Workshop authority; "run" is read-only/runtime.
+  bot_grant?: 'owner' | 'run'
+  // Compatibility mode field derived from bot_grant.
   workshop_mode?: 'workshop' | 'run'
   // Opt in to detailed workflow runtime messages in the bot channel.
   send_full_details?: boolean
@@ -925,6 +927,7 @@ export interface WhatsAppRoute {
   profile_id?: string
   conversation_key?: string
   profile_label?: string
+  bot_grant?: string
   workshop_mode?: string
   send_full_details?: boolean
 }

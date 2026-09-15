@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -54,22 +55,84 @@ func normalizeSlackChannelRouting(routes map[string]ChannelRoute) (map[string]Ch
 	out := make(map[string]ChannelRoute, len(routes))
 	for rawChannelID, route := range routes {
 		channelID := strings.ToUpper(strings.TrimSpace(rawChannelID))
-		if channelID == "" || strings.TrimSpace(route.WorkflowID) == "" {
+		route.WorkflowID = strings.TrimSpace(route.WorkflowID)
+		route.WorkspacePath = strings.TrimSpace(route.WorkspacePath)
+		route.ProfileID = strings.TrimSpace(route.ProfileID)
+		route.ConversationKey = strings.TrimSpace(route.ConversationKey)
+		route.ProfileLabel = strings.TrimSpace(route.ProfileLabel)
+		hasWorkflowRoute := route.WorkflowID != "" && route.WorkspacePath != ""
+		hasProfileRoute := route.ProfileID != "" && route.ConversationKey != "" && route.WorkspacePath != ""
+		if channelID == "" || (!hasWorkflowRoute && !hasProfileRoute) {
 			continue
 		}
 		if !slackChannelIDPattern.MatchString(channelID) {
 			return nil, fmt.Errorf("Slack route key %q is not a channel ID; use the channel ID from Slack, for example C1234567890", rawChannelID)
 		}
-		if existing, ok := out[channelID]; ok && !strings.EqualFold(existing.WorkflowID, strings.TrimSpace(route.WorkflowID)) {
-			return nil, fmt.Errorf("Slack channel %s is already routed to workflow %s", channelID, existing.WorkflowID)
+		if existing, ok := out[channelID]; ok && !sameSlackRouteDestination(existing, route) {
+			return nil, fmt.Errorf("Slack channel %s is already routed", channelID)
 		}
-		route.WorkflowID = strings.TrimSpace(route.WorkflowID)
-		route.WorkspacePath = strings.TrimSpace(route.WorkspacePath)
-		route.WorkshopMode = services.NormalizeBotWorkshopMode(route.WorkshopMode)
+		route.BotGrant = services.NormalizeBotRouteGrant(route.BotGrant, route.WorkshopMode)
+		route.WorkshopMode = services.WorkshopModeForBotGrant(route.BotGrant)
 		route.SendFullDetails = true
 		out[channelID] = route
 	}
 	return out, nil
+}
+
+func sameSlackRouteDestination(a, b ChannelRoute) bool {
+	return strings.EqualFold(strings.TrimSpace(a.WorkflowID), strings.TrimSpace(b.WorkflowID)) &&
+		strings.EqualFold(strings.TrimSpace(a.WorkspacePath), strings.TrimSpace(b.WorkspacePath)) &&
+		strings.EqualFold(strings.TrimSpace(a.ProfileID), strings.TrimSpace(b.ProfileID)) &&
+		strings.EqualFold(strings.TrimSpace(a.ConversationKey), strings.TrimSpace(b.ConversationKey))
+}
+
+func validateSlackRouteMutationPermissions(ctx context.Context, next, current map[string]ChannelRoute) error {
+	checked := map[string]bool{}
+	for channelID, route := range next {
+		if strings.TrimSpace(route.WorkflowID) == "" {
+			continue
+		}
+		old, existed := current[channelID]
+		newGrant := services.NormalizeBotRouteGrant(route.BotGrant, route.WorkshopMode)
+		oldGrant := services.NormalizeBotRouteGrant(old.BotGrant, old.WorkshopMode)
+		needsOwner := !existed || !sameSlackRouteDestination(old, route) || newGrant == "owner" && oldGrant != "owner"
+		if !needsOwner {
+			continue
+		}
+		if err := requireSlackRouteWorkflowOwner(ctx, route); err != nil {
+			return err
+		}
+		checked[channelID] = true
+	}
+	for channelID, route := range current {
+		if checked[channelID] || strings.TrimSpace(route.WorkflowID) == "" {
+			continue
+		}
+		if _, stillPresent := next[channelID]; stillPresent {
+			continue
+		}
+		if err := requireSlackRouteWorkflowOwner(ctx, route); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func requireSlackRouteWorkflowOwner(ctx context.Context, route ChannelRoute) error {
+	manifest, exists, err := ReadWorkflowManifest(ctx, strings.TrimSpace(route.WorkspacePath))
+	if err != nil {
+		return err
+	}
+	if !exists || manifest == nil {
+		return fmt.Errorf("workflow route %s has no manifest; cannot manage Slack bot grant", strings.TrimSpace(route.WorkflowID))
+	}
+	if !strings.EqualFold(strings.TrimSpace(manifest.ID), strings.TrimSpace(route.WorkflowID)) {
+		return fmt.Errorf("Slack route workflow %s does not match manifest %s", strings.TrimSpace(route.WorkflowID), strings.TrimSpace(manifest.ID))
+	}
+	if workflowAccessForManifest(GetUserFromContext(ctx), manifest) != WorkflowAccessOwner {
+		return fmt.Errorf("only a workflow owner may manage Slack bot grants for %s", manifest.ID)
+	}
+	return nil
 }
 
 func migrateLegacySlackRouteToDefaultChannel(routes map[string]ChannelRoute, defaultChannelID string) (map[string]ChannelRoute, bool) {
@@ -83,7 +146,8 @@ func migrateLegacySlackRouteToDefaultChannel(routes map[string]ChannelRoute, def
 		}
 		route.WorkflowID = strings.TrimSpace(route.WorkflowID)
 		route.WorkspacePath = strings.TrimSpace(route.WorkspacePath)
-		route.WorkshopMode = services.NormalizeBotWorkshopMode(route.WorkshopMode)
+		route.BotGrant = services.NormalizeBotRouteGrant(route.BotGrant, route.WorkshopMode)
+		route.WorkshopMode = services.WorkshopModeForBotGrant(route.BotGrant)
 		route.SendFullDetails = true
 		return map[string]ChannelRoute{defaultChannelID: route}, true
 	}
@@ -216,11 +280,25 @@ func updateSlackConfigHandler(api *StreamingAPI) http.HandlerFunc {
 			return
 		}
 
+		var existingRouting map[string]ChannelRoute
+		if existingBotCfg, _ := api.chatStore.GetBotConnectorConfig(r.Context(), "slack"); existingBotCfg != nil {
+			if existingBotCfg.AllowedChannels != "" && existingBotCfg.AllowedChannels != "[]" && existingBotCfg.AllowedChannels != "{}" {
+				_ = json.Unmarshal([]byte(existingBotCfg.AllowedChannels), &existingRouting)
+				existingRouting, _ = normalizeSlackChannelRouting(existingRouting)
+			}
+		}
+
 		var normalizeErr error
 		req.ChannelRouting, normalizeErr = normalizeSlackChannelRouting(req.ChannelRouting)
 		if normalizeErr != nil {
 			http.Error(w, normalizeErr.Error(), http.StatusBadRequest)
 			return
+		}
+		if req.ChannelRouting != nil {
+			if err := validateSlackRouteMutationPermissions(r.Context(), req.ChannelRouting, existingRouting); err != nil {
+				http.Error(w, err.Error(), http.StatusForbidden)
+				return
+			}
 		}
 		channelRouting := req.ChannelRouting
 		allowedChannelsJSON := ""

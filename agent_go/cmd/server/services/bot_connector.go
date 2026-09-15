@@ -2,6 +2,7 @@ package services
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -120,6 +121,7 @@ type ChannelRoute struct {
 	// WorkshopMode overrides the bot workflow route mode. Valid: "workshop" | "run".
 	// UI/API aliases like "build" normalize to "workshop".
 	WorkshopMode    string `json:"workshop_mode,omitempty"`
+	BotGrant        string `json:"bot_grant,omitempty"`
 	SendFullDetails bool   `json:"send_full_details,omitempty"`
 }
 
@@ -137,6 +139,35 @@ func NormalizeBotWorkshopMode(mode string) string {
 	default:
 		return "workshop"
 	}
+}
+
+func NormalizeBotRouteGrant(grant, workshopMode string) string {
+	switch strings.ToLower(strings.TrimSpace(grant)) {
+	case "owner", "workshop", "build", "builder", "write", "admin":
+		return "owner"
+	case "run", "runner", "read", "reader", "view", "viewer":
+		return "run"
+	}
+	if NormalizeBotWorkshopMode(workshopMode) == "workshop" {
+		return "owner"
+	}
+	return "run"
+}
+
+func WorkshopModeForBotGrant(grant string) string {
+	if NormalizeBotRouteGrant(grant, "") == "owner" {
+		return "workshop"
+	}
+	return "run"
+}
+
+func BotPrincipalIDForRoute(platform string, route ChannelRoute) string {
+	sum := sha256.Sum256([]byte(strings.ToLower(strings.TrimSpace(platform)) + "|" +
+		strings.ToLower(strings.TrimSpace(route.WorkflowID)) + "|" +
+		strings.ToLower(strings.TrimSpace(route.WorkspacePath)) + "|" +
+		strings.ToLower(strings.TrimSpace(route.ProfileID)) + "|" +
+		strings.ToLower(strings.TrimSpace(route.ConversationKey))))
+	return fmt.Sprintf("bot-%s-%x", strings.ToLower(strings.TrimSpace(platform)), sum[:8])
 }
 
 // ThreadID identifies a conversation thread on a platform
@@ -725,6 +756,17 @@ func (m *BotConversationManager) workflowRouteForMessage(msg BotIncomingMessage,
 	if msg.PresetWorkflow != nil {
 		return msg.PresetWorkflow
 	}
+	if active != nil && strings.EqualFold(strings.TrimSpace(msg.Platform), "slack") {
+		if route := m.resolveChannelWorkflow(msg.Platform, msg.ChannelID); route != nil {
+			return route
+		}
+		active.mu.Lock()
+		wasRouted := strings.TrimSpace(active.RouteKey) != "" || strings.TrimSpace(active.PresetQueryID) != "" || active.profileRoute != nil
+		active.mu.Unlock()
+		if wasRouted {
+			return &ChannelRoute{BotGrant: "__revoked__"}
+		}
+	}
 	if active != nil {
 		return botRouteFromActive(active)
 	}
@@ -736,21 +778,54 @@ func (m *BotConversationManager) authorizeWorkflowRouteForMessage(ctx context.Co
 		return true
 	}
 	route := m.workflowRouteForMessage(*msg, active)
-	if route == nil || (strings.TrimSpace(route.WorkflowID) == "" && strings.TrimSpace(route.WorkspacePath) == "") {
+	if route != nil && route.BotGrant == "__revoked__" {
+		log.Printf("[BOT_MANAGER] Routed Slack session no longer has an active route for channel=%s", msg.ChannelID)
+		if msg.IsMention {
+			m.sendWorkflowAccessDenied(msg.Platform, threadID, "This Slack route is no longer configured. Ask a workflow owner to re-enable it.")
+		}
+		return false
+	}
+	if route == nil || (strings.TrimSpace(route.WorkflowID) == "" && strings.TrimSpace(route.ProfileID) == "") {
 		// Not workflow-routed: generic chat, governed by the allowed_emails filter.
+		return true
+	}
+	if strings.TrimSpace(route.WorkflowID) == "" && strings.TrimSpace(route.ProfileID) != "" {
+		botUserID := BotPrincipalIDForRoute(msg.Platform, *route)
+		msg.WorkspaceUserID = botUserID
+		if msg.PresetWorkflow == nil {
+			msg.PresetWorkflow = route
+		}
+		if active != nil {
+			active.mu.Lock()
+			active.UserID = botUserID
+			active.WorkspacePath = strings.TrimSpace(route.WorkspacePath)
+			active.WorkshopMode = WorkshopModeForBotGrant(route.BotGrant)
+			active.RouteKey = botRouteKey(route)
+			active.profileTurn = true
+			active.profileRoute = &ProfileRoute{
+				ProfileID:       strings.TrimSpace(route.ProfileID),
+				ConversationKey: strings.TrimSpace(route.ConversationKey),
+				UploadFolder:    strings.TrimSpace(route.WorkspacePath),
+				Label:           firstNonEmptyString(strings.TrimSpace(route.ProfileLabel), strings.TrimSpace(route.ProfileID)),
+			}
+			active.mu.Unlock()
+		}
 		return true
 	}
 	// A routed workflow without a wired access check is a misconfigured server,
 	// not an open door. Refuse rather than fall through ungated.
 	if m.workflowAccess == nil {
 		log.Printf("[BOT_MANAGER] No workflow access check installed — refusing routed workflow message on %s", msg.Platform)
+		if !strings.EqualFold(strings.TrimSpace(msg.Platform), "slack") {
+			return true
+		}
 		if msg.IsMention {
 			m.sendWorkflowAccessDenied(msg.Platform, threadID, "Workflow access checks are not configured on this server. Ask an administrator to enable them.")
 		}
 		return false
 	}
-	workspaceUserID := m.resolveWorkspaceUserID(*msg)
-	resolvedUserID, allowed, err := m.workflowAccess(ctx, workspaceUserID, msg.UserEmail, *route)
+	botUserID := BotPrincipalIDForRoute(msg.Platform, *route)
+	resolvedUserID, allowed, err := m.workflowAccess(ctx, botUserID, "", *route)
 	if strings.TrimSpace(resolvedUserID) != "" {
 		msg.WorkspaceUserID = strings.TrimSpace(resolvedUserID)
 	}
@@ -762,8 +837,17 @@ func (m *BotConversationManager) authorizeWorkflowRouteForMessage(ctx context.Co
 		return false
 	}
 	if allowed {
-		if msg.PresetWorkflow == nil && active == nil {
+		if msg.PresetWorkflow == nil {
 			msg.PresetWorkflow = route
+		}
+		if active != nil {
+			active.mu.Lock()
+			active.UserID = strings.TrimSpace(msg.WorkspaceUserID)
+			active.PresetQueryID = strings.TrimSpace(route.WorkflowID)
+			active.WorkspacePath = strings.TrimSpace(route.WorkspacePath)
+			active.WorkshopMode = WorkshopModeForBotGrant(route.BotGrant)
+			active.RouteKey = botRouteKey(route)
+			active.mu.Unlock()
 		}
 		return true
 	}
@@ -772,6 +856,15 @@ func (m *BotConversationManager) authorizeWorkflowRouteForMessage(ctx context.Co
 		m.sendWorkflowAccessDenied(msg.Platform, threadID, "You don't have access to this workflow. Ask a workflow owner to share it with you in AgentWorks.")
 	}
 	return false
+}
+
+func firstNonEmptyString(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return strings.TrimSpace(value)
+		}
+	}
+	return ""
 }
 
 func (m *BotConversationManager) sendWorkflowAccessDenied(platform string, threadID ThreadID, message string) {
@@ -812,17 +905,43 @@ func (m *BotConversationManager) HandleIncomingMessage(msg BotIncomingMessage) {
 		}
 	}
 
-	// Reject if we can't link the user to a workspace identity. Without an email
-	// or a pre-resolved WorkspaceUserID, we cannot isolate per-user chats, memory,
-	// or schedules — so refuse the message rather than merging into a shared folder.
-	if msg.UserEmail == "" && msg.WorkspaceUserID == "" {
+	connector := m.GetConnector(msg.Platform)
+	if connector == nil {
+	}
+
+	threadID := ThreadID{
+		Platform:  msg.Platform,
+		ChannelID: msg.ChannelID,
+		ThreadTS:  msg.ThreadTS,
+	}
+
+	// Determine thread key based on whether platform supports threads
+	supportsThreads := connector != nil && connector.SupportsThreads()
+	if !supportsThreads {
+		threadID.ThreadTS = msg.ChannelID
+	} else if threadID.ThreadTS == "" {
+		threadID.ThreadTS = fmt.Sprintf("%d", time.Now().UnixNano())
+	}
+
+	threadKey := threadID.Key()
+	log.Printf("[BOT_MANAGER] Incoming message from %s user=%s thread=%s: %s", msg.Platform, msg.UserID, threadKey, botTruncate(msg.Text, 100))
+
+	m.mu.RLock()
+	active, exists := m.sessions[threadKey]
+	m.mu.RUnlock()
+
+	routedMessage := false
+	if route := m.workflowRouteForMessage(msg, active); route != nil && (strings.TrimSpace(route.WorkflowID) != "" || strings.TrimSpace(route.ProfileID) != "" || active != nil && strings.EqualFold(strings.TrimSpace(msg.Platform), "slack") && strings.TrimSpace(active.RouteKey) != "") {
+		routedMessage = true
+	}
+
+	// Reject generic chat if we can't link the user to a workspace identity.
+	// Configured routes use the route-scoped bot principal instead; the Slack
+	// sender stays audit metadata and does not own execution.
+	if !routedMessage && msg.UserEmail == "" && msg.WorkspaceUserID == "" {
 		log.Printf("[BOT_MANAGER] Rejected message from %s — no email available to link account", msg.UserID)
 		if msg.IsMention {
 			if connector := m.GetConnector(msg.Platform); connector != nil {
-				threadID := ThreadID{Platform: msg.Platform, ChannelID: msg.ChannelID, ThreadTS: msg.ThreadTS}
-				if threadID.ThreadTS == "" {
-					threadID.ThreadTS = fmt.Sprintf("%d", time.Now().UnixNano())
-				}
 				connector.SendThreadMessage(context.Background(), threadID,
 					"Can't link your account — no email available from this platform. Please contact your administrator.")
 			}
@@ -830,9 +949,10 @@ func (m *BotConversationManager) HandleIncomingMessage(msg BotIncomingMessage) {
 		return
 	}
 
-	// Check allowed_emails filter — merge DB config with BOT_ALLOWED_EMAILS env var.
-	// Only send rejection message for @mentions (non-mentions are silently ignored above)
-	if msg.UserEmail != "" {
+	// Check allowed_emails for generic chat only. A configured route is invoked
+	// under its bot grant; channel membership and route configuration are the
+	// authorization boundary, while sender identity is audit metadata.
+	if !routedMessage && msg.UserEmail != "" {
 		var allowedEmails []string
 
 		// 1. Load from filesystem-backed bot connector config
@@ -883,31 +1003,6 @@ func (m *BotConversationManager) HandleIncomingMessage(msg BotIncomingMessage) {
 			}
 		}
 	}
-
-	connector := m.GetConnector(msg.Platform)
-	if connector == nil {
-	}
-
-	threadID := ThreadID{
-		Platform:  msg.Platform,
-		ChannelID: msg.ChannelID,
-		ThreadTS:  msg.ThreadTS,
-	}
-
-	// Determine thread key based on whether platform supports threads
-	supportsThreads := connector != nil && connector.SupportsThreads()
-	if !supportsThreads {
-		threadID.ThreadTS = msg.ChannelID
-	} else if threadID.ThreadTS == "" {
-		threadID.ThreadTS = fmt.Sprintf("%d", time.Now().UnixNano())
-	}
-
-	threadKey := threadID.Key()
-	log.Printf("[BOT_MANAGER] Incoming message from %s user=%s thread=%s: %s", msg.Platform, msg.UserID, threadKey, botTruncate(msg.Text, 100))
-
-	m.mu.RLock()
-	active, exists := m.sessions[threadKey]
-	m.mu.RUnlock()
 
 	if !m.authorizeWorkflowRouteForMessage(context.Background(), &msg, threadID, active) {
 		return
@@ -2848,6 +2943,9 @@ func (m *BotConversationManager) buildQueryRequest(query string, userID string, 
 	}
 	if route != nil {
 		req["preset_query_id"] = route.WorkflowID
+		grant := NormalizeBotRouteGrant(route.BotGrant, route.WorkshopMode)
+		req["bot_route_grant"] = grant
+		req["bot_route_principal_id"] = BotPrincipalIDForRoute(platform, *route)
 		if strings.TrimSpace(route.WorkspacePath) != "" {
 			req["selected_folder"] = strings.TrimSpace(route.WorkspacePath)
 		}
@@ -2859,7 +2957,7 @@ func (m *BotConversationManager) buildQueryRequest(query string, userID string, 
 		// traffic defaults to Run mode; do not inherit a manifest authoring
 		// default unless there is no bot platform involved. The server access
 		// check still pins read-only users to Run even if a route asks for Build.
-		workshopMode := NormalizeBotWorkshopMode(route.WorkshopMode)
+		workshopMode := WorkshopModeForBotGrant(grant)
 		if workshopMode == "" && platform != "" {
 			workshopMode = "run"
 		}
@@ -3000,6 +3098,7 @@ func (m *BotConversationManager) buildQueryRequestForActive(active *activeBotSes
 	phaseID := strings.TrimSpace(active.PhaseID)
 	workshopMode := strings.TrimSpace(active.WorkshopMode)
 	botMeta := active.Metadata
+	routeGrant := ""
 	if agentMode == "workflow_phase" && workspacePath != "" {
 		// Carry the session's own mode across turns. A blank mode must not
 		// escalate: buildQueryRequest starts bot traffic in Run, so defaulting
@@ -3013,6 +3112,12 @@ func (m *BotConversationManager) buildQueryRequestForActive(active *activeBotSes
 			} else {
 				workshopMode = "workshop"
 			}
+		}
+	}
+	if strings.EqualFold(strings.TrimSpace(platform), "slack") {
+		if route := m.resolveChannelWorkflow(platform, threadID.ChannelID); route != nil {
+			routeGrant = NormalizeBotRouteGrant(route.BotGrant, route.WorkshopMode)
+			workshopMode = WorkshopModeForBotGrant(routeGrant)
 		}
 	}
 	active.mu.Unlock()
@@ -3038,6 +3143,15 @@ func (m *BotConversationManager) buildQueryRequestForActive(active *activeBotSes
 		}
 		execOpts["workshop_mode"] = workshopMode
 		req["execution_options"] = execOpts
+	}
+	if routeGrant != "" {
+		req["bot_route_grant"] = routeGrant
+		req["bot_route_principal_id"] = BotPrincipalIDForRoute(platform, ChannelRoute{
+			WorkflowID:    presetQueryID,
+			WorkspacePath: workspacePath,
+			WorkshopMode:  workshopMode,
+			BotGrant:      routeGrant,
+		})
 	}
 	return req
 }
@@ -3111,6 +3225,7 @@ func botRouteKey(route *ChannelRoute) string {
 		strings.ToLower(strings.TrimSpace(route.WorkflowID)),
 		strings.ToLower(strings.TrimSpace(route.WorkspacePath)),
 		NormalizeBotWorkshopMode(route.WorkshopMode),
+		NormalizeBotRouteGrant(route.BotGrant, route.WorkshopMode),
 		strings.ToLower(strings.TrimSpace(route.ProfileID)),
 		strings.ToLower(strings.TrimSpace(route.ConversationKey)),
 	}
@@ -3155,6 +3270,7 @@ func botRouteFromActive(active *activeBotSession) *ChannelRoute {
 		WorkflowID:      workflowID,
 		WorkspacePath:   workspacePath,
 		WorkshopMode:    workshopMode,
+		BotGrant:        NormalizeBotRouteGrant("", workshopMode),
 		SendFullDetails: active.sendFullDetails,
 	}
 }

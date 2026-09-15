@@ -666,8 +666,13 @@ export function useWorkflowBots(workspacePath: string | null, target?: BotRouteT
 	    if (!current) return
 	    const nextRoute: BotRoute = { ...current }
 	    if ('workshop_mode' in patch) {
-	      if (patch.workshop_mode === 'workshop') nextRoute.workshop_mode = 'workshop'
-	      else nextRoute.workshop_mode = 'run'
+	      if (patch.workshop_mode === 'workshop') {
+	        nextRoute.workshop_mode = 'workshop'
+	        nextRoute.bot_grant = 'owner'
+	      } else {
+	        nextRoute.workshop_mode = 'run'
+	        nextRoute.bot_grant = 'run'
+	      }
 	    }
 	    if ('send_full_details' in patch) nextRoute.send_full_details = !!patch.send_full_details
 	    await saveSlackRouting({ ...(slackOriginal.channel_routing || {}), [route.key]: nextRoute })
@@ -717,7 +722,12 @@ export function useWorkflowBots(workspacePath: string | null, target?: BotRouteT
 	    const next = { ...(slackOriginal.channel_routing || {}) }
 	    const baseRoute = routeForTarget()
 	    for (const channel of channels) {
-	      next[channel] = { ...baseRoute, workshop_mode: target ? undefined : newSlackMode, send_full_details: true }
+	      next[channel] = {
+	        ...baseRoute,
+	        workshop_mode: target ? 'run' : newSlackMode,
+	        bot_grant: target || newSlackMode === 'run' ? 'run' : 'owner',
+	        send_full_details: true,
+	      }
 	    }
 	    await saveSlackRouting(next)
 	    setNewSlackChannel('')

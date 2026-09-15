@@ -15,6 +15,21 @@ import (
 	"github.com/manishiitg/mcpagent/events"
 )
 
+type botRouteGrantContextKey struct{}
+
+func internalBotRouteGrantContext(ctx context.Context, grant string) context.Context {
+	grant = strings.ToLower(strings.TrimSpace(grant))
+	if grant != "run" && grant != "owner" {
+		return ctx
+	}
+	return context.WithValue(ctx, botRouteGrantContextKey{}, grant)
+}
+
+func internalBotRouteGrant(ctx context.Context) string {
+	grant, _ := ctx.Value(botRouteGrantContextKey{}).(string)
+	return grant
+}
+
 // internalBotRequestContext gives bot-originated turns the same authenticated
 // identity as an HTTP turn from the paired account. The user directory remains
 // authoritative for permissions: we deliberately persist only the user ID on
@@ -42,19 +57,6 @@ func internalBotRequestContext(ctx context.Context, userID string) context.Conte
 func (api *StreamingAPI) checkBotWorkflowAccess(ctx context.Context, workspaceUserID, userEmail string, route services.ChannelRoute) (string, bool, error) {
 	fallbackID := strings.TrimSpace(workspaceUserID)
 
-	// 1. The chat identity must map to a real account. An unmatched email is a
-	// stranger, not an unrestricted user, so it never reaches the tier fallback.
-	record := directoryUserFor(workspaceUserID, "", userEmail)
-	if record == nil {
-		log.Printf("[BOT_ACCESS] Denied: no account matches chat user %q (email %q)", fallbackID, strings.TrimSpace(userEmail))
-		return fallbackID, false, nil
-	}
-	if record.Disabled {
-		log.Printf("[BOT_ACCESS] Denied: account %s is disabled", record.ID)
-		return record.ID, false, nil
-	}
-	claims := &UserClaims{UserID: record.ID, Username: record.Username, Email: record.Email}
-
 	var manifest *WorkflowManifest
 	var exists bool
 	var err error
@@ -62,36 +64,37 @@ func (api *StreamingAPI) checkBotWorkflowAccess(ctx context.Context, workspaceUs
 	if workspacePath != "" {
 		manifest, exists, err = ReadWorkflowManifest(ctx, workspacePath)
 		if err != nil {
-			return claims.UserID, false, err
+			return fallbackID, false, err
 		}
 	}
 	if !exists || manifest == nil {
 		manifest, exists, err = api.workflowManifestByBotRoute(ctx, route)
 		if err != nil {
-			return claims.UserID, false, err
+			return fallbackID, false, err
 		}
 		if !exists || manifest == nil {
 			log.Printf("[BOT_ACCESS] Denied: no manifest for route workflow=%q workspace=%q", strings.TrimSpace(route.WorkflowID), workspacePath)
-			return claims.UserID, false, nil
+			return fallbackID, false, nil
 		}
 	}
-	if !userAllowedWorkflowID(claims, manifest.ID) {
-		log.Printf("[BOT_ACCESS] Denied: workflow %s is outside the allowlist for %s", manifest.ID, claims.UserID)
-		return claims.UserID, false, nil
-	}
 
-	// 2. An unowned workflow grants the account tier on the web. Over a bot that
+	// 1. An unowned workflow grants the account tier on the web. Over a bot that
 	// would hand every channel member write access to any manifest the builder
 	// wrote without a created_by stamp, so require a real ownership record.
 	if !manifest.hasOwnershipRecord() {
 		log.Printf("[BOT_ACCESS] Denied: workflow %s has no owner recorded; claim or share it before routing a bot to it", manifest.ID)
-		return claims.UserID, false, nil
+		return fallbackID, false, nil
 	}
-	if workflowAccessForManifest(claims, manifest) == WorkflowAccessNone {
-		log.Printf("[BOT_ACCESS] Denied: %s is not an owner or reader of workflow %s", claims.UserID, manifest.ID)
-		return claims.UserID, false, nil
+
+	// 2. The configured route grant is the runtime principal. Slack sender
+	// identity is audit metadata only; callers do not need AgentWorks accounts or
+	// direct workflow permission to use an already-authorized route.
+	grant := services.NormalizeBotRouteGrant(route.BotGrant, route.WorkshopMode)
+	if grant != "run" && grant != "owner" {
+		log.Printf("[BOT_ACCESS] Denied: workflow %s route has invalid bot grant %q", manifest.ID, route.BotGrant)
+		return fallbackID, false, nil
 	}
-	return claims.UserID, true, nil
+	return fallbackID, true, nil
 }
 
 func (api *StreamingAPI) workflowManifestByBotRoute(ctx context.Context, route services.ChannelRoute) (*WorkflowManifest, bool, error) {
@@ -121,6 +124,11 @@ func (api *StreamingAPI) startSessionInternal(
 	userID string,
 	eventCallback func(event *events.AgentEvent),
 ) error {
+	if platform, _ := reqMap["bot_platform"].(string); strings.TrimSpace(platform) != "" {
+		if grant, _ := reqMap["bot_route_grant"].(string); strings.TrimSpace(grant) != "" {
+			ctx = internalBotRouteGrantContext(ctx, grant)
+		}
+	}
 	// Marshal the request map to JSON
 	body, err := json.Marshal(reqMap)
 	if err != nil {
@@ -197,6 +205,11 @@ func (api *StreamingAPI) sendFollowUpInternal(
 	httpReq, err := http.NewRequestWithContext(ctx, "POST", "/api/query", io.NopCloser(bytes.NewReader(body)))
 	if err != nil {
 		return fmt.Errorf("failed to create follow-up request: %w", err)
+	}
+	if platform, _ := reqMap["bot_platform"].(string); strings.TrimSpace(platform) != "" {
+		if grant, _ := reqMap["bot_route_grant"].(string); strings.TrimSpace(grant) != "" {
+			httpReq = httpReq.WithContext(internalBotRouteGrantContext(httpReq.Context(), grant))
+		}
 	}
 	httpReq = httpReq.WithContext(internalBotRequestContext(httpReq.Context(), userID))
 

@@ -316,6 +316,8 @@ type ActiveSessionInfo struct {
 	PhaseName                   string           `json:"phase_name,omitempty"`
 	WorkshopMode                string           `json:"workshop_mode,omitempty"`
 	BotPlatform                 string           `json:"bot_platform,omitempty"`
+	BotRouteGrant               string           `json:"bot_route_grant,omitempty"`
+	BotRoutePrincipalID         string           `json:"bot_route_principal_id,omitempty"`
 	TriggeredBy                 string           `json:"triggered_by,omitempty"`
 	LLMGuidance                 string           `json:"llm_guidance,omitempty"` // LLM guidance message for this session
 	ChatsFolder                 string           `json:"chats_folder,omitempty"` // Per-user Chats folder (default: _users/<userID>/Chats)
@@ -730,7 +732,9 @@ type QueryRequest struct {
 	// (e.g. "slack", "whatsapp"). Set by the bot manager when wiring a bot
 	// session; empty for chat-UI sessions. Drives channel-specific system
 	// prompt additions (formatting rules), so bot replies render correctly.
-	BotPlatform string `json:"bot_platform,omitempty"`
+	BotPlatform         string `json:"bot_platform,omitempty"`
+	BotRouteGrant       string `json:"bot_route_grant,omitempty"`
+	BotRoutePrincipalID string `json:"bot_route_principal_id,omitempty"`
 	// BotChannelID and BotThreadTS identify the originating connector
 	// conversation so human tools can notify the same Slack/WhatsApp thread.
 	BotChannelID string `json:"bot_channel_id,omitempty"`
@@ -3433,6 +3437,15 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 	// access below; never gates WorkshopMode (that axis stays prompt-only
 	// focus, per docs/design/agent_tool_surface_single_source.md).
 	currentUserIsReadOnly := workflowAccessForClaims(GetUserFromContext(r.Context())) == WorkflowAccessRead
+	internalRouteGrant := internalBotRouteGrant(r.Context())
+	if strings.TrimSpace(req.BotPlatform) != "" {
+		switch internalRouteGrant {
+		case "run":
+			currentUserIsReadOnly = true
+		case "owner":
+			currentUserIsReadOnly = false
+		}
+	}
 
 	api.applySavedMultiAgentChatConfig(r.Context(), &req, currentUserID)
 	resolvedProfile, err := api.resolveAgentProfileForQuery(r.Context(), &req, currentUserID, sessionID)
@@ -3450,7 +3463,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		if manifest, exists, manifestErr := ReadWorkflowManifest(r.Context(), req.SelectedFolder); manifestErr == nil && exists {
 			claims := GetUserFromContext(r.Context())
 			level := workflowAccessForManifest(claims, manifest)
-			if !userAllowedWorkflowID(claims, manifest.ID) || level == WorkflowAccessNone {
+			if internalRouteGrant == "" && (!userAllowedWorkflowID(claims, manifest.ID) || level == WorkflowAccessNone) {
 				http.Error(w, "You don't have access to this workflow", http.StatusForbidden)
 				return
 			}

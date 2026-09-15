@@ -232,6 +232,35 @@ describe('hydrateTabEvents restored chat fallback', () => {
     expect(at('traced reply')).toBeGreaterThan(Date.parse('2026-09-03T08:20:09Z'))
   })
 
+  it('interleaves an older saved trace before newer durable chat turns', () => {
+    const events = conversationToRestoredEvents({
+      session_id: 'chronological-restore',
+      conversation_history: [
+        { Role: 'human', Parts: [{ Text: 'traced prompt' }], resume_order: 0 },
+        { Role: 'ai', Parts: [{ Text: 'progress before tool' }], resume_order: 1 },
+        { Role: 'human', Parts: [{ Text: 'latest question' }], resume_order: 2 },
+        { Role: 'ai', Parts: [{ Text: 'latest answer' }], resume_order: 3 },
+      ],
+      history_source_message_count: 4,
+      ui_events: [
+        { id: 'u', type: 'user_message', timestamp: '2026-09-03T08:20:00Z', session_id: 'chronological-restore', data: { data: { content: 'traced prompt' } } },
+        { id: 't', type: 'tool_call_start', timestamp: '2026-09-03T08:20:05Z', session_id: 'chronological-restore', data: { data: { tool_name: 'read' } } },
+        { id: 'e', type: 'agent_end', timestamp: '2026-09-03T08:20:10Z', session_id: 'chronological-restore', data: { data: {} } },
+      ],
+    } as never)
+
+    const label = (event: (typeof events)[number]) => {
+      if (event.id === 't') return 'tool'
+      const data = (event.data as { data?: { content?: string; final_result?: string } }).data
+      return data?.content || data?.final_result || event.type
+    }
+    const ordered = events.map(label)
+    expect(ordered[0]).toBe('conversation_resumed')
+    expect(ordered.indexOf('progress before tool')).toBeLessThan(ordered.indexOf('tool'))
+    expect(ordered.indexOf('tool')).toBeLessThan(ordered.indexOf('latest question'))
+    expect(ordered.indexOf('latest question')).toBeLessThan(ordered.indexOf('latest answer'))
+  })
+
   it('uses the saved formatted trace when a read-only schedule explicitly requests it', async () => {
     mocks.getRecentSessionEvents.mockResolvedValue({
       events: [],

@@ -307,7 +307,25 @@ function mergePersistedUIEvents(
       return true
     })
 
+  // Both sources are already chronological on their own, but concatenating
+  // them put the older retained UI trace after the newest durable messages.
+  // Formatted chat renders array order, so refresh appeared to lose recent
+  // prompts and landed on stale progress. The synthetic conversation
+  // timestamps above exist specifically to place these two sources on one
+  // timeline; use them here while keeping the resume marker first.
   return [...conversationEvents, ...trace]
+    .map((event, index) => ({ event, index }))
+    .sort((left, right) => {
+      if (left.event.type === 'conversation_resumed') return -1
+      if (right.event.type === 'conversation_resumed') return 1
+      const leftTime = Date.parse(left.event.timestamp || '')
+      const rightTime = Date.parse(right.event.timestamp || '')
+      if (Number.isFinite(leftTime) && Number.isFinite(rightTime) && leftTime !== rightTime) {
+        return leftTime - rightTime
+      }
+      return left.index - right.index
+    })
+    .map(({ event }) => event)
 }
 
 function markPersistedRestoreTrace(event: PollingEvent, parentSessionId: string, eventIndex: number): PollingEvent {

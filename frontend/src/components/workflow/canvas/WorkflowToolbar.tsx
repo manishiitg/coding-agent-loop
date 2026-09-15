@@ -8,6 +8,7 @@ import {
   BellRing,
   BookMarked,
   CalendarClock,
+  ChevronDown,
   Gauge,
 } from 'lucide-react'
 import { useWorkflowStore, type RunFolder } from '../../../stores/useWorkflowStore'
@@ -28,14 +29,75 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '../../
 import { hasWorkflowOwnerAccess } from '../../../utils/workflowPermissions'
 import { usePendingDecisionCount } from '../hooks/usePendingDecisionCount'
 import { useCanWriteWorkflow } from '../../../hooks/useCanWriteWorkflow'
-import { WorkspaceToolbarGroup as ToolbarGroup } from '../../workspace/WorkspaceToolbarGroup'
 import { WorkspaceTopToolbar } from '../../workspace/WorkspaceTopToolbar'
 import { ReportDocumentSwitcher } from '../ReportDocumentSwitcher'
 
 // Execution phase ID - special phase that should be displayed separately
 const EXECUTION_PHASE_ID = 'execution'
 const WORKFLOW_SCHEDULE_TOOLBAR_LIMIT = 10_000
-const PRIMARY_TOOLBAR_VIEW_IDS = new Set<WorkspaceViewId>(['pulse', 'playbooks', 'flow', 'costs', 'files', 'browser', 'schedules'])
+const PRIMARY_TOOLBAR_VIEW_IDS = new Set<WorkspaceViewId>(['pulse', 'playbooks', 'flow', 'costs', 'files', 'browser', 'schedules', 'execution-logs'])
+const OPERATIONS_TOOLBAR_VIEW_IDS = new Set<WorkspaceViewId>(['learnings', 'knowledgebase', 'database', 'evaluation', 'backup', 'publish', 'notify'])
+const SETUP_TOOLBAR_LABELS: Partial<Record<WorkspaceViewId, string>> = {
+  skills: 'Skills',
+  secrets: 'Secrets',
+  mcp: 'MCP servers',
+  llm: 'LLM',
+  bots: 'Bots',
+  folders: 'Folders',
+}
+
+function ToolbarPopoverGroup({ label, title, open, onToggle, children }: {
+  label: string
+  title: string
+  open: boolean
+  onToggle: () => void
+  children: React.ReactNode
+}) {
+  const rootRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (!open) return
+    const closeOutside = (event: MouseEvent) => {
+      if (!rootRef.current?.contains(event.target as Node)) onToggle()
+    }
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') onToggle()
+    }
+    document.addEventListener('mousedown', closeOutside)
+    document.addEventListener('keydown', closeOnEscape)
+    return () => {
+      document.removeEventListener('mousedown', closeOutside)
+      document.removeEventListener('keydown', closeOnEscape)
+    }
+  }, [onToggle, open])
+
+  return (
+    <div ref={rootRef} className="relative inline-flex h-full items-center px-0.5">
+      <button type="button" onClick={onToggle} aria-haspopup="menu" aria-expanded={open} title={title} className={`inline-flex h-6 items-center gap-1 rounded px-2 text-[11px] font-medium transition-colors hover:bg-background/70 ${open ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}>
+        {label}<ChevronDown className={`h-3 w-3 transition-transform ${open ? 'rotate-180' : ''}`} aria-hidden="true" />
+      </button>
+      {open && <div role="menu" aria-label={label} className="absolute right-0 top-[calc(100%+6px)] z-50 grid w-72 grid-cols-2 gap-1 rounded-lg border border-border bg-popover p-1.5 text-popover-foreground shadow-xl">{children}</div>}
+    </div>
+  )
+}
+
+function ToolbarPopoverItem({ label, Icon, active, onClick, indicatorClass, ...attrs }: {
+  label: string
+  Icon: React.ComponentType<{ className?: string }>
+  active: boolean
+  onClick: () => void
+  indicatorClass?: string
+} & Record<`data-${string}`, string | undefined>) {
+  return (
+    <button type="button" role="menuitem" onClick={onClick} {...attrs} className={`flex min-w-0 items-center gap-2 rounded-md px-2.5 py-2 text-left text-xs transition-colors ${active ? 'bg-muted text-foreground' : 'text-muted-foreground hover:bg-muted hover:text-foreground'}`}>
+      <span className="relative shrink-0">
+        <Icon className="h-3.5 w-3.5" />
+        {indicatorClass && <span className={`absolute -right-1 -top-1 h-1.5 w-1.5 rounded-full border border-popover ${indicatorClass}`} />}
+      </span>
+      <span className="truncate">{label}</span>
+    </button>
+  )
+}
 
 // Product-tour / test hooks on specific toolbar buttons. Kept here rather
 // than in the view registry because they describe this toolbar's buttons,
@@ -134,21 +196,19 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
 
   // No explicit view means the pane is on whichever canvas view was last open.
   const activeWorkspaceView: WorkspaceViewId = workflowWorkspaceView ?? lastCanvasView
-  const [openToolbarGroup, setOpenToolbarGroup] = useState<'views' | 'setup'>(() =>
-    activeWorkspaceView === 'report' || PRIMARY_TOOLBAR_VIEW_IDS.has(activeWorkspaceView) ? 'views' : 'setup'
-  )
-
-  // Keep the selected view visible while preserving the compact, mutually
-  // exclusive primary/secondary controls. Report remains outside both groups.
-  useEffect(() => {
-    if (activeWorkspaceView === 'report') return
-    setOpenToolbarGroup(PRIMARY_TOOLBAR_VIEW_IDS.has(activeWorkspaceView) ? 'views' : 'setup')
-  }, [activeWorkspaceView])
+  const [openToolbarMenu, setOpenToolbarMenu] = useState<'ops' | 'setup' | null>(null)
+  const toggleToolbarMenu = useCallback((menu: 'ops' | 'setup') => {
+    setOpenToolbarMenu(current => current === menu ? null : menu)
+  }, [])
+  const openFromToolbarMenu = useCallback((view: WorkspaceViewId) => {
+    openWorkspaceView(view)
+    setOpenToolbarMenu(null)
+  }, [openWorkspaceView])
 
   // Button clusters come from the view registry, in registry order. Plan is
   // always present, including for a new workflow with no steps yet.
-  const workspaceViewDefinitions = PRIMARY_WORKSPACE_TOOLBAR_VIEWS.filter(view => view.id === 'flow' || view.id === 'costs' || view.id === 'files' || view.id === 'browser')
-  const secondaryWorkspaceViewDefinitions = PRIMARY_WORKSPACE_TOOLBAR_VIEWS.filter(view => !['report', 'flow', 'costs', 'files', 'browser'].includes(view.id))
+  const workspaceViewDefinitions = PRIMARY_WORKSPACE_TOOLBAR_VIEWS.filter(view => PRIMARY_TOOLBAR_VIEW_IDS.has(view.id) && view.id !== 'report')
+  const operationsWorkspaceViewDefinitions = PRIMARY_WORKSPACE_TOOLBAR_VIEWS.filter(view => OPERATIONS_TOOLBAR_VIEW_IDS.has(view.id))
   const capabilityViewDefinitions = useMemo(
     () => WORKSPACE_VIEWS.filter(view => view.toolbarGroup === 'capabilities' && view.id !== 'playbooks'),
     [],
@@ -440,18 +500,12 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
           {/* Report stays visible while the remaining tools use two compact groups. */}
           {workspacePath && <ReportDocumentSwitcher workspacePath={workspacePath} active={activeWorkspaceView === 'report'} onOpen={() => openWorkspaceView('report')} />}
 
-          {/* One continuous pill: frequent views | remaining tools. */}
+          {/* One continuous pill: frequent tools | compact menus. */}
           {(workspacePath || canWriteWorkflow) && (
           <div className="inline-flex h-8 items-center divide-x divide-border rounded-lg border border-border bg-muted/60 py-0.5 shadow-sm">
-          {/* Supporting workspace views and operations. */}
+          {/* Frequent tools stay visible; their icons and tooltips are enough. */}
           {workspacePath && (
-            <ToolbarGroup
-              label="Views"
-              open={openToolbarGroup === 'views'}
-              onToggle={() => setOpenToolbarGroup('views')}
-              title="Views: Pulse, playbooks, plan, costs, files, browser and schedules"
-            >
-              <div className="inline-flex items-center gap-0.5">
+              <div className="inline-flex items-center gap-0.5 px-0.5">
                 <Tooltip>
                   <TooltipTrigger asChild>
                     <button
@@ -517,102 +571,46 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
                   <TooltipContent side="bottom"><p>{scheduleTooltip} · Webhooks</p></TooltipContent>
                 </Tooltip>
               </div>
-            </ToolbarGroup>
           )}
+
+        {/* Operational views keep status and history separate from setup. */}
+        {workspacePath && (
+          <ToolbarPopoverGroup
+            label="Ops"
+            open={openToolbarMenu === 'ops'}
+            onToggle={() => toggleToolbarMenu('ops')}
+            title="Operations: learnings, knowledge, data, evaluation, backup, publish and notifications"
+          >
+            {operationsWorkspaceViewDefinitions.map(({ id: view, icon: Icon, label }) => {
+              return <ToolbarPopoverItem key={view} label={label} Icon={Icon} active={view === activeWorkspaceView} onClick={() => openFromToolbarMenu(view)} />
+            })}
+            <ToolbarPopoverItem label="Evaluation" Icon={Gauge} active={activeWorkspaceView === 'evaluation'} onClick={() => openFromToolbarMenu('evaluation')} />
+            <ToolbarPopoverItem label="Backup" Icon={Cloud} active={activeWorkspaceView === 'backup'} onClick={() => openFromToolbarMenu('backup')} indicatorClass={getBackupDotClass(backupState)} />
+            <ToolbarPopoverItem label="Publish" Icon={Globe} active={activeWorkspaceView === 'publish'} onClick={() => openFromToolbarMenu('publish')} indicatorClass={getPublishDotClass(publishState)} />
+            <ToolbarPopoverItem label="Notifications" Icon={BellRing} active={activeWorkspaceView === 'notify'} onClick={() => openFromToolbarMenu('notify')} indicatorClass={getNotificationDotClass(notificationState)} data-testid="workflow-notification-settings-button" />
+          </ToolbarPopoverGroup>
+        )}
 
         {/* Workflow capabilities remain discoverable for readers. Each panel
             owns its read-only state and disables mutations in place. */}
         {workspacePath && (
-          <ToolbarGroup
+          <ToolbarPopoverGroup
             label="Setup"
-            open={openToolbarGroup === 'setup'}
-            onToggle={() => setOpenToolbarGroup('setup')}
-            title="Setup and more: logs, learnings, data, evaluation, backup, publish, notifications, skills, secrets, MCP, LLM, bots, folders and access"
+            open={openToolbarMenu === 'setup'}
+            onToggle={() => toggleToolbarMenu('setup')}
+            title="Setup: skills, secrets, MCP servers, LLM, bots, folders and access"
           >
-          <div className="inline-flex items-center gap-0.5">
-            {secondaryWorkspaceViewDefinitions.map(({ id: view, icon: Icon, label }) => {
-              const active = view === activeWorkspaceView
-              const viewButton = (
-                <button type="button" onClick={() => openWorkspaceView(view)} className={`flex h-6 w-7 items-center justify-center rounded transition-colors ${active ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:bg-background/70 hover:text-foreground'}`} aria-label={label} aria-pressed={active}>
-                  <Icon className="h-3.5 w-3.5" />
-                </button>
-              )
-              if (active) return <React.Fragment key={view}>{viewButton}</React.Fragment>
-              return <Tooltip key={view}><TooltipTrigger asChild>{viewButton}</TooltipTrigger><TooltipContent side="bottom"><p>{label}</p></TooltipContent></Tooltip>
-            })}
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <button type="button" onClick={() => openWorkspaceView('evaluation')} className={`flex h-6 w-7 items-center justify-center rounded transition-colors ${activeWorkspaceView === 'evaluation' ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:bg-background/70 hover:text-foreground'}`} aria-label="Evaluation" aria-pressed={activeWorkspaceView === 'evaluation'}>
-                  <Gauge className="h-3.5 w-3.5" />
-                </button>
-              </TooltipTrigger>
-              <TooltipContent side="bottom"><p>Evaluation results</p></TooltipContent>
-            </Tooltip>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <button type="button" onClick={() => openWorkspaceView('backup')} className={`relative flex h-6 w-7 items-center justify-center rounded transition-colors ${activeWorkspaceView === 'backup' ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:bg-background/70 hover:text-foreground'}`} aria-label="Backup" aria-pressed={activeWorkspaceView === 'backup'}>
-                  <Cloud className="h-3.5 w-3.5" />
-                  <span className={`absolute right-1.5 top-1.5 h-1.5 w-1.5 rounded-full border border-background ${getBackupDotClass(backupState)}`} />
-                </button>
-              </TooltipTrigger>
-              <TooltipContent side="bottom"><p>Backup</p></TooltipContent>
-            </Tooltip>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <button type="button" onClick={() => openWorkspaceView('publish')} className={`relative flex h-6 w-7 items-center justify-center rounded transition-colors ${activeWorkspaceView === 'publish' ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:bg-background/70 hover:text-foreground'}`} aria-label="Publish" aria-pressed={activeWorkspaceView === 'publish'}>
-                  <Globe className="h-3.5 w-3.5" />
-                  <span className={`absolute right-1.5 top-1.5 h-1.5 w-1.5 rounded-full border border-background ${getPublishDotClass(publishState)}`} />
-                </button>
-              </TooltipTrigger>
-              <TooltipContent side="bottom"><p>Publish</p></TooltipContent>
-            </Tooltip>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <button type="button" data-testid="workflow-notification-settings-button" onClick={() => openWorkspaceView('notify')} className={`relative flex h-6 w-7 items-center justify-center rounded transition-colors ${activeWorkspaceView === 'notify' ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:bg-background/70 hover:text-foreground'}`} aria-label="Notify" aria-pressed={activeWorkspaceView === 'notify'}>
-                  <BellRing className="h-3.5 w-3.5" />
-                  <span className={`absolute right-1.5 top-1.5 h-1.5 w-1.5 rounded-full border border-background ${getNotificationDotClass(notificationState)}`} />
-                </button>
-              </TooltipTrigger>
-              <TooltipContent side="bottom"><p>Notify</p></TooltipContent>
-            </Tooltip>
-            <span className="mx-0.5 h-4 w-px bg-border" aria-hidden="true" />
             {capabilityViewDefinitions.map(({ id, icon: Icon, label }) => {
               const active = workflowWorkspaceView === id
-              return (
-                <Tooltip key={id}>
-                  <TooltipTrigger asChild>
-                    <button onClick={() => openWorkspaceView(id)} {...CAPABILITY_BUTTON_ATTRS[id]} className={`flex h-6 w-7 items-center justify-center rounded transition-colors ${active ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:bg-background/70 hover:text-foreground'}`} aria-label={label} aria-pressed={active}>
-                      <Icon className="w-3.5 h-3.5" />
-                    </button>
-                  </TooltipTrigger>
-                  <TooltipContent side="bottom"><p>{label}</p></TooltipContent>
-                </Tooltip>
-              )
+              return <ToolbarPopoverItem key={id} label={SETUP_TOOLBAR_LABELS[id] ?? label} Icon={Icon} active={active} onClick={() => openFromToolbarMenu(id)} {...CAPABILITY_BUTTON_ATTRS[id]} />
             })}
             {/* Access lives with the rest of setup: one button, one panel
                 with two tabs -- who may see or edit THIS workflow, and (for
                 admins) the deployment's accounts, roles and products. */}
             {isMultiUser && workspacePath && (
-              <>
-                <span className="mx-0.5 h-4 w-px bg-border" aria-hidden="true" />
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <button
-                      type="button"
-                      onClick={() => openWorkspaceView('access')}
-                      className={`flex h-6 w-7 items-center justify-center rounded transition-colors ${workflowWorkspaceView === 'access' ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:bg-background/70 hover:text-foreground'}`}
-                      aria-label="Access"
-                      aria-pressed={workflowWorkspaceView === 'access'}
-                    >
-                      <ShieldCheck className="w-3.5 h-3.5" />
-                    </button>
-                  </TooltipTrigger>
-                  <TooltipContent side="bottom"><p>Access: share this workflow{canManageAccess ? ', manage users' : ''}</p></TooltipContent>
-                </Tooltip>
-              </>
+              <ToolbarPopoverItem label={canManageAccess ? 'Access and users' : 'Access'} Icon={ShieldCheck} active={workflowWorkspaceView === 'access'} onClick={() => openFromToolbarMenu('access')} />
             )}
-          </div>
-          </ToolbarGroup>
+          </ToolbarPopoverGroup>
         )}
           </div>
           )}

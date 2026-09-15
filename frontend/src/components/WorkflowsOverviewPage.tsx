@@ -252,10 +252,11 @@ const RunFolderRow: React.FC<{
   detail: RunFolderDetail
   workspacePath: string
   allFolderNames: string[]
-  onOpenLogs: (workspacePath: string, runFolder: string, allFolders: string[]) => void
+  allFolderInfos: RunFolderInfo[]
+  onOpenLogs: (workspacePath: string, runFolder: string, allFolders: string[], folderInfos: RunFolderInfo[]) => void
   onOpenEval: (workspacePath: string, runFolder: string) => void
   onOpenCost: (workspacePath: string, runFolder: string, allFolders: string[]) => void
-}> = ({ detail, workspacePath, allFolderNames, onOpenLogs, onOpenCost }) => (
+}> = ({ detail, workspacePath, allFolderNames, allFolderInfos, onOpenLogs, onOpenCost }) => (
   <tr>
     {/* Run name + times */}
     <td className="pl-14 pr-5 py-2.5">
@@ -321,7 +322,7 @@ const RunFolderRow: React.FC<{
       <button
         onClick={(e) => {
           e.stopPropagation()
-          onOpenLogs(workspacePath, detail.folder.name, allFolderNames)
+          onOpenLogs(workspacePath, detail.folder.name, allFolderNames, allFolderInfos)
         }}
         className="flex items-center gap-1 px-2 py-1 text-xs rounded-md text-gray-600 dark:text-gray-400 hover:bg-gray-200/70 dark:hover:bg-gray-600/40 transition-colors ml-auto"
         title="View logs"
@@ -338,7 +339,7 @@ const WorkflowTable: React.FC<{
   rows: WorkflowOverviewRow[]
   loading: boolean
   onOpenWorkflow: (preset: CustomPreset | PredefinedPreset) => void
-  onOpenLogs: (workspacePath: string, runFolder: string, allFolders: string[]) => void
+  onOpenLogs: (workspacePath: string, runFolder: string, allFolders: string[], folderInfos: RunFolderInfo[]) => void
   onOpenEval: (workspacePath: string, runFolder: string) => void
   onOpenCost: (workspacePath: string, runFolder: string, allFolders: string[]) => void
 }> = ({ rows, loading, onOpenWorkflow, onOpenLogs, onOpenEval, onOpenCost }) => {
@@ -388,6 +389,7 @@ const WorkflowTable: React.FC<{
           const isExpanded = expandedIds.has(row.preset.id)
           const hasRuns = row.runFolders.length > 0
           const allFolderNames = row.runFolders.map(rf => rf.folder.name)
+          const allFolderInfos = row.runFolders.map(rf => rf.folder)
 
           // Aggregate cost
           let aggCost: number | null = null
@@ -480,6 +482,7 @@ const WorkflowTable: React.FC<{
                   detail={detail}
                   workspacePath={row.workspacePath!}
                   allFolderNames={allFolderNames}
+                  allFolderInfos={allFolderInfos}
                   onOpenLogs={onOpenLogs}
                   onOpenEval={onOpenEval}
                   onOpenCost={onOpenCost}
@@ -499,6 +502,7 @@ function usePopupState() {
   const [logsWorkspace, setLogsWorkspace] = useState<string | null>(null)
   const [logsRunFolder, setLogsRunFolder] = useState<string | null>(null)
   const [logsRunFolders, setLogsRunFolders] = useState<string[]>([])
+  const [logsRunFolderInfos, setLogsRunFolderInfos] = useState<RunFolderInfo[]>([])
 
   const [evalOpen, setEvalOpen] = useState(false)
   const [evalWorkspace, setEvalWorkspace] = useState<string | null>(null)
@@ -509,10 +513,11 @@ function usePopupState() {
   const [costRunFolder, setCostRunFolder] = useState<string | null>(null)
   const [costRunFolders, setCostRunFolders] = useState<string[]>([])
 
-  const handleOpenLogs = useCallback((workspacePath: string, runFolder: string, allFolders: string[]) => {
+  const handleOpenLogs = useCallback((workspacePath: string, runFolder: string, allFolders: string[], folderInfos: RunFolderInfo[]) => {
     setLogsWorkspace(workspacePath)
     setLogsRunFolder(runFolder)
     setLogsRunFolders(allFolders)
+    setLogsRunFolderInfos(folderInfos)
     setLogsOpen(true)
   }, [])
 
@@ -530,7 +535,7 @@ function usePopupState() {
   }, [])
 
   return {
-    logsOpen, setLogsOpen, logsWorkspace, logsRunFolder, logsRunFolders, handleOpenLogs,
+    logsOpen, setLogsOpen, logsWorkspace, logsRunFolder, logsRunFolders, logsRunFolderInfos, handleOpenLogs,
     evalOpen, setEvalOpen, evalWorkspace, evalRunFolder, handleOpenEval,
     costOpen, setCostOpen, costWorkspace, costRunFolder, costRunFolders, handleOpenCost,
   }
@@ -539,7 +544,7 @@ function usePopupState() {
 // Popup rendering shared between page and dialog
 const PopupGroup: React.FC<{ p: ReturnType<typeof usePopupState> }> = ({ p }) => (
   <>
-    <ExecutionLogsPopup isOpen={p.logsOpen} onClose={() => p.setLogsOpen(false)} workspacePath={p.logsWorkspace} runFolder={p.logsRunFolder} runFolders={p.logsRunFolders} />
+    <ExecutionLogsPopup isOpen={p.logsOpen} onClose={() => p.setLogsOpen(false)} workspacePath={p.logsWorkspace} runFolder={p.logsRunFolder} runFolders={p.logsRunFolders} runFolderInfos={p.logsRunFolderInfos} />
     <EvaluationPopup isOpen={p.evalOpen} onClose={() => p.setEvalOpen(false)} workspacePath={p.evalWorkspace} selectedRunFolder={p.evalRunFolder} runFolders={p.evalRunFolder ? [p.evalRunFolder] : []} />
     <CostsPopup isOpen={p.costOpen} onClose={() => p.setCostOpen(false)} workspacePath={p.costWorkspace} selectedRunFolder={p.costRunFolder} runFolders={p.costRunFolders} />
   </>

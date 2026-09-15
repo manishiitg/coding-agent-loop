@@ -156,6 +156,7 @@ function InspectorBody({ workspacePath, presetQueryId }: { workspacePath: string
             workspacePath={workspacePath}
             runFolder={selectedRunFolder}
             runFolders={runFolderNames}
+            runFolderInfos={workspace.state?.run_folders || []}
             onRefreshRunFolders={refreshWorkspaceState}
           />
         )

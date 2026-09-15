@@ -79,8 +79,11 @@ func chatHistorySessionWorkspace(session ChatHistorySession) string {
 
 // chatHistorySessionsByID indexes the user's chat history for titling and
 // for finding chats the registry never listed.
-func chatHistorySessionsByID(userID string) map[string]ChatHistorySession {
-	sessions, err := ListChatHistorySessions(userID, 2000, 0, "")
+func chatHistorySessionsByID(userID, workspacePath string) map[string]ChatHistorySession {
+	// Work transcripts live inside their project rather than the user's legacy
+	// global chat_history directory. Scope the lookup to the resolved product
+	// workspace so resume and ownership checks see the same rows as Workshop.
+	sessions, err := ListChatHistorySessions(userID, 2000, 0, normalizeConversationWorkspace(workspacePath))
 	if err != nil {
 		return map[string]ChatHistorySession{}
 	}
@@ -163,7 +166,7 @@ func (api *StreamingAPI) handleListAgentProfileConversations(w http.ResponseWrit
 		writeAgentProfileError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	sessions := chatHistorySessionsByID(userID)
+	sessions := chatHistorySessionsByID(userID, slot.binding.WorkspacePath)
 	lookup := func(sessionID string) *ChatHistorySession {
 		if session, ok := sessions[sessionID]; ok {
 			return &session
@@ -231,7 +234,7 @@ func (api *StreamingAPI) handleSwitchAgentProfileConversation(w http.ResponseWri
 	// A chat the registry never listed is accepted when chat_history shows it
 	// belongs to this slot's workspace.
 	verified := false
-	if session, found := chatHistorySessionsByID(userID)[strings.TrimSpace(input.SessionID)]; found {
+	if session, found := chatHistorySessionsByID(userID, slot.binding.WorkspacePath)[strings.TrimSpace(input.SessionID)]; found {
 		verified = chatHistorySessionWorkspace(session) == normalizeConversationWorkspace(slot.binding.WorkspacePath)
 	}
 	conversation, err := defaultProductConversationRegistryStore().switchTo(r.Context(), userID, slot.profile, slot.binding, input.SessionID, verified)
@@ -285,7 +288,7 @@ func (api *StreamingAPI) handleDeleteAgentProfileConversation(w http.ResponseWri
 		}
 	}
 	if !owned {
-		if session, found := chatHistorySessionsByID(userID)[sessionID]; found {
+		if session, found := chatHistorySessionsByID(userID, slot.binding.WorkspacePath)[sessionID]; found {
 			owned = chatHistorySessionWorkspace(session) == normalizeConversationWorkspace(slot.binding.WorkspacePath)
 		}
 	}

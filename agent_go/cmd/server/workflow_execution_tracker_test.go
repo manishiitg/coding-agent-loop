@@ -269,8 +269,14 @@ func TestNormalizeSlackChannelRoutingCanonicalizesBuildMode(t *testing.T) {
 	if routes["C123ABC"].WorkshopMode != "workshop" {
 		t.Fatalf("C123ABC workshop_mode = %q, want workshop", routes["C123ABC"].WorkshopMode)
 	}
+	if !routes["C123ABC"].SendFullDetails {
+		t.Fatal("C123ABC send_full_details = false, want true")
+	}
 	if routes["G456DEF"].WorkshopMode != "run" {
 		t.Fatalf("G456DEF workshop_mode = %q, want run", routes["G456DEF"].WorkshopMode)
+	}
+	if !routes["G456DEF"].SendFullDetails {
+		t.Fatal("G456DEF send_full_details = false, want true")
 	}
 }
 

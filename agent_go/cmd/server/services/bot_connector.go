@@ -1025,11 +1025,15 @@ func (m *BotConversationManager) handleExistingSession(active *activeBotSession,
 	if isSessionStatusCommand(msg.Text, requireControlPrefix) {
 		if connector := m.GetConnector(active.Platform); connector != nil {
 			filter := botResumeFilterFromActive(active)
-			connector.SendThreadMessage(context.Background(), active.ThreadID, m.formatBotStatusReply(oldUserID, status, awaiting, blockingEventType, sendFullDetails, filter))
+			connector.SendThreadMessage(context.Background(), active.ThreadID, m.formatBotStatusReply(active.Platform, oldUserID, status, awaiting, blockingEventType, sendFullDetails, filter))
 		}
 		return
 	}
 	if mode, ok := parseBotDetailModeCommand(msg.Text, requireControlPrefix); ok {
+		if strings.EqualFold(active.Platform, "slack") {
+			m.setActiveBotDetailMode(active, true, "Slack workflow channels always send full details.")
+			return
+		}
 		m.setActiveBotDetailMode(active, mode == "full")
 		return
 	}
@@ -1194,9 +1198,13 @@ func (m *BotConversationManager) handleBotControlWithoutSession(msg BotIncomingM
 	}
 	reply := "No active bot session in this thread."
 	if _, ok := parseBotDetailModeCommand(msg.Text, requireControlPrefix); ok {
-		reply = "No active bot session in this thread. Start a workflow run first, then use `@full` or `@concise` to change message detail for that run."
+		if strings.EqualFold(msg.Platform, "slack") {
+			reply = "Slack workflow channels always send full details. Start a workflow run first."
+		} else {
+			reply = "No active bot session in this thread. Start a workflow run first, then use `@full` or `@concise` to change message detail for that run."
+		}
 	} else if isSessionStatusCommand(msg.Text, requireControlPrefix) {
-		reply = m.formatBotStatusReply(m.resolveWorkspaceUserID(msg), "", false, "", false, botResumeFilterFromRoute(msg.PresetWorkflow))
+		reply = m.formatBotStatusReply(msg.Platform, m.resolveWorkspaceUserID(msg), "", false, "", false, botResumeFilterFromRoute(msg.PresetWorkflow))
 	}
 	connector.SendThreadMessage(context.Background(), threadID, reply)
 	return true
@@ -1250,9 +1258,9 @@ func (m *BotConversationManager) handleBotResumeCommand(msg BotIncomingMessage, 
 	// Connecting to a live session means the user wants to watch it, so default
 	// to full detail — otherwise concise mode suppresses every workflow-scoped
 	// event (step starts/ends, runtime progress) and the thread stays silent
-	// until the final answer. They can dial it back with `@concise`.
+	// until the final answer.
 	live := botResumeTargetIsLive(target)
-	if live {
+	if live || strings.EqualFold(msg.Platform, "slack") {
 		active.sendFullDetails = true
 	}
 
@@ -1307,7 +1315,7 @@ func formatBotResumeAck(target *BotResumeTarget) string {
 		sb.WriteString(fmt.Sprintf("\nCurrently: %s.", activity))
 	}
 	if botResumeTargetIsLive(target) {
-		sb.WriteString("\nYou'll get live progress here (full detail — send `@concise` for less). Send a message any time to chat with it.")
+		sb.WriteString("\nYou'll get live progress here. Send a message any time to chat with it.")
 	} else {
 		sb.WriteString("\nSend your next message here to continue this chat.")
 	}
@@ -1332,7 +1340,7 @@ func botResumeTargetIsLive(target *BotResumeTarget) bool {
 	}
 }
 
-func (m *BotConversationManager) setActiveBotDetailMode(active *activeBotSession, full bool) {
+func (m *BotConversationManager) setActiveBotDetailMode(active *activeBotSession, full bool, customReply ...string) {
 	active.mu.Lock()
 	active.sendFullDetails = full
 	filter := active.eventFilter
@@ -1349,6 +1357,9 @@ func (m *BotConversationManager) setActiveBotDetailMode(active *activeBotSession
 	if full {
 		mode = "full"
 		reply = "Full mode on. I'll include workflow runtime details for this session."
+	}
+	if len(customReply) > 0 && strings.TrimSpace(customReply[0]) != "" {
+		reply = strings.TrimSpace(customReply[0])
 	}
 	log.Printf("[BOT_MANAGER] Bot detail mode set to %s for session %s", mode, active.SessionID)
 	if connector := m.GetConnector(platform); connector != nil {
@@ -1689,12 +1700,15 @@ func firstNonEmpty(values ...string) string {
 	return ""
 }
 
-func (m *BotConversationManager) formatBotStatusReply(userID, status string, awaiting bool, blockingEventType string, sendFullDetails bool, filter BotResumeFilter) string {
+func (m *BotConversationManager) formatBotStatusReply(platform, userID, status string, awaiting bool, blockingEventType string, sendFullDetails bool, filter BotResumeFilter) string {
 	detail := "concise"
 	if sendFullDetails {
 		detail = "full"
 	}
 	suffix := fmt.Sprintf("\nDetail mode: %s. Use `@full` or `@concise` to switch.", detail)
+	if strings.EqualFold(platform, "slack") {
+		suffix = "\nDetail mode: full."
+	}
 	resumeList := m.formatResumeList(userID, filter)
 	if m.runningWorkflows != nil {
 		if workflows := m.runningWorkflows(userID); len(workflows) > 0 {
@@ -2794,7 +2808,7 @@ func (m *BotConversationManager) buildQueryRequest(query string, userID string, 
 		if strings.TrimSpace(route.WorkspacePath) != "" {
 			req["selected_folder"] = strings.TrimSpace(route.WorkspacePath)
 		}
-		if route.SendFullDetails {
+		if route.SendFullDetails || strings.EqualFold(platform, "slack") {
 			req["bot_send_full_details"] = true
 		}
 

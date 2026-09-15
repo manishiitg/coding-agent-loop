@@ -63,16 +63,6 @@ export function RouteChip({ bots, route }: { bots: RouteChipBots; route: Workflo
                 {route.kind === 'slack' && <option value="workshop">Build</option>}
               </select>
             </label>
-            <label className="flex items-center gap-1.5 text-muted-foreground" title="Send detailed automation step/runtime messages to this channel">
-              <input
-                type="checkbox"
-                checked={!!route.send_full_details}
-                disabled={readOnly || saving}
-                onChange={e => void updateRoute(route, { send_full_details: e.target.checked })}
-                className="h-3.5 w-3.5"
-              />
-              Send full details
-            </label>
           </div>
         </div>
       )}

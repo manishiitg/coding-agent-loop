@@ -320,6 +320,9 @@ func TestBotWorkflowRouteDefaultsToRunMode(t *testing.T) {
 	if !ok || execOpts["workshop_mode"] != "run" {
 		t.Fatalf("execution_options = %#v, want workshop_mode run", req["execution_options"])
 	}
+	if req["bot_send_full_details"] != true {
+		t.Fatalf("bot_send_full_details = %#v, want true", req["bot_send_full_details"])
+	}
 }
 
 func TestSlackBotWorkflowRouteBuildModeUsesWorkshop(t *testing.T) {
@@ -343,6 +346,9 @@ func TestSlackBotWorkflowRouteBuildModeUsesWorkshop(t *testing.T) {
 	if !ok || execOpts["workshop_mode"] != "workshop" {
 		t.Fatalf("execution_options = %#v, want workshop_mode workshop", req["execution_options"])
 	}
+	if req["bot_send_full_details"] != true {
+		t.Fatalf("bot_send_full_details = %#v, want true", req["bot_send_full_details"])
+	}
 }
 
 func TestStatusShowsNumberedResumableChats(t *testing.T) {
@@ -360,7 +366,7 @@ func TestStatusShowsNumberedResumableChats(t *testing.T) {
 		}, nil
 	})
 
-	reply := manager.formatBotStatusReply("user-1", "", false, "", false, BotResumeFilter{
+	reply := manager.formatBotStatusReply("whatsapp", "user-1", "", false, "", false, BotResumeFilter{
 		WorkspacePath: "Workflow/report",
 		PresetQueryID: "preset-report",
 	})

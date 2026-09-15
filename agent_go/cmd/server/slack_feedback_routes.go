@@ -66,6 +66,7 @@ func normalizeSlackChannelRouting(routes map[string]ChannelRoute) (map[string]Ch
 		route.WorkflowID = strings.TrimSpace(route.WorkflowID)
 		route.WorkspacePath = strings.TrimSpace(route.WorkspacePath)
 		route.WorkshopMode = services.NormalizeBotWorkshopMode(route.WorkshopMode)
+		route.SendFullDetails = true
 		out[channelID] = route
 	}
 	return out, nil
@@ -83,6 +84,7 @@ func migrateLegacySlackRouteToDefaultChannel(routes map[string]ChannelRoute, def
 		route.WorkflowID = strings.TrimSpace(route.WorkflowID)
 		route.WorkspacePath = strings.TrimSpace(route.WorkspacePath)
 		route.WorkshopMode = services.NormalizeBotWorkshopMode(route.WorkshopMode)
+		route.SendFullDetails = true
 		return map[string]ChannelRoute{defaultChannelID: route}, true
 	}
 	return nil, false

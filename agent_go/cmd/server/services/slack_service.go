@@ -1866,6 +1866,7 @@ func (s *SlackService) resolveSlackChannelWorkflow(channelID string) *ChannelRou
 			route.WorkflowID = strings.TrimSpace(route.WorkflowID)
 			route.WorkspacePath = strings.TrimSpace(route.WorkspacePath)
 			route.WorkshopMode = NormalizeBotWorkshopMode(route.WorkshopMode)
+			route.SendFullDetails = true
 			return &route
 		}
 	}
@@ -1882,6 +1883,7 @@ func (s *SlackService) resolveSlackChannelWorkflow(channelID string) *ChannelRou
 			route.WorkflowID = strings.TrimSpace(route.WorkflowID)
 			route.WorkspacePath = strings.TrimSpace(route.WorkspacePath)
 			route.WorkshopMode = NormalizeBotWorkshopMode(route.WorkshopMode)
+			route.SendFullDetails = true
 			log.Printf("[SLACK_FLOW] route: using legacy single Slack route key=%s for default channel=%s workflow=%s",
 				rawKey, channelID, route.WorkflowID)
 			return &route

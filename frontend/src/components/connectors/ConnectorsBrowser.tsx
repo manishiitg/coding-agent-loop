@@ -10,13 +10,14 @@ import ConnectionIcon from './ConnectionIcon'
 import { brandSlugFor } from './brandSlug'
 import { CATEGORY_ORDER, categoryFor, descriptionFor } from './catalog'
 import { useMCPStore } from '../../stores'
+import { useAuthStore } from '../../stores/useAuthStore'
 import { READ_ONLY_TITLE, useCanWriteWorkflow } from '../../hooks/useCanWriteWorkflow'
 import MCPConfigPopup from '../MCPConfigPopup'
 import { AskAIButton } from '../workflow/AskAIButton'
 
 /**
- * The card's status marker answers "is this mine?", which is what `connection`
- * reports. `status` answers a different question — whether the server is
+ * The card's status marker answers whether this platform connection exists.
+ * `status` answers a different question — whether the server is
  * currently reachable — so a connected-but-down server is surfaced as an
  * amber dot against the connected state rather than silently reading as not
  * connected. A dot beside the provider name keeps status visible without
@@ -83,8 +84,16 @@ export default function ConnectorsBrowser({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  // Chat setup and JSON imports are disabled for read-only users.
-  const readOnly = !useCanWriteWorkflow(workspacePath)
+  const canWriteWorkflow = useCanWriteWorkflow(workspacePath)
+  const canManagePlatformMCP = useAuthStore(state =>
+    state.user?.is_admin === true || (state.isMultiUserModeChecked && !state.isMultiUserMode),
+  )
+  const managementDisabledTitle = !canManagePlatformMCP
+    ? 'Only a platform administrator can change shared MCP connections'
+    : READ_ONLY_TITLE
+  // Everyone can reuse connected MCPs; only platform admins may change the
+  // deployment-wide connection registry.
+  const readOnly = !canWriteWorkflow || !canManagePlatformMCP
   const [query, setQuery] = useState('')
   const [filter, setFilter] = useState<Filter>(compact ? 'available' : 'all')
   // Local to this instance -- deliberately independent of the store's global
@@ -182,7 +191,7 @@ export default function ConnectorsBrowser({
             onClick={() => setShowJsonConfig(true)}
             disabled={readOnly}
             className="flex shrink-0 items-center gap-1.5 rounded-lg border border-gray-300 px-3 py-2 text-xs font-medium text-gray-500 transition-colors hover:border-gray-400 hover:text-gray-900 disabled:cursor-not-allowed disabled:opacity-50 dark:border-gray-700 dark:text-gray-400 dark:hover:border-gray-600 dark:hover:text-gray-100"
-            title={readOnly ? READ_ONLY_TITLE : 'Add a custom MCP server by pasting its JSON config'}
+            title={readOnly ? managementDisabledTitle : 'Add a custom shared MCP server by pasting its JSON config'}
           >
             <Code2 className="h-3.5 w-3.5" />
             <span>Add via JSON</span>
@@ -193,16 +202,20 @@ export default function ConnectorsBrowser({
         <div className="min-w-0 flex-1 basis-56">
           <p className="text-base font-semibold text-foreground">Need another connection?</p>
           <p className="mt-1 text-sm leading-6 text-muted-foreground">
-            Tell the {assistantLabel} which app you need. It can search for an official MCP server and help you connect it.
+            MCP connections are shared across AgentWorks, including Work, workflows, chats, and schedules. {canManagePlatformMCP
+              ? `Connecting an account makes it available to every user; ${assistantLabel} can help an administrator add one.`
+              : 'You can use connected services here; only a platform administrator can add, reconnect, or disconnect them.'}
           </p>
         </div>
         <AskAIButton
           workspacePath={readOnly ? null : workspacePath ?? null}
           onAsk={onAskAI}
-          label="Add MCP"
-          message={query.trim()
-            ? `Help me add an MCP server for ${JSON.stringify(query.trim())} to this ${workspaceLabel}. Search the catalog and official provider documentation on the web, and help me connect it. Ask for any missing details.`
-            : `Help me add an MCP server to this ${workspaceLabel}. Ask me which app or service I want to connect, then search the catalog and official provider documentation on the web and help me connect it.`}
+          label={canManagePlatformMCP ? 'Add platform MCP' : 'Why admin access?'}
+          message={canManagePlatformMCP
+            ? query.trim()
+              ? `Help me add an MCP server for ${JSON.stringify(query.trim())} to this ${workspaceLabel}. Search the catalog and official provider documentation on the web, and help me connect it. Before authorization, remind me that the account will be shared by every AgentWorks user and product.`
+              : `Help me add a shared platform MCP server to this ${workspaceLabel}. Ask which app or service I want, then search the catalog and official provider documentation and help me connect it. Before authorization, remind me that the account will be shared by every AgentWorks user and product.`
+            : `Explain how shared platform MCP connections work in AgentWorks, why only an administrator can add or replace one, and how I can reuse an already-connected service in this ${workspaceLabel}. Do not attempt to change MCP configuration.`}
           className="inline-flex shrink-0 items-center justify-center gap-2 rounded-lg bg-primary px-4 py-2.5 text-sm font-medium text-primary-foreground shadow-sm transition-colors hover:bg-primary/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
         />
       </div>
@@ -287,6 +300,11 @@ export default function ConnectorsBrowser({
                         title={statusIndicator(connection, status).title}
                         aria-label={statusIndicator(connection, status).title}
                       />
+                      {connection === 'connected' && (
+                        <span className="rounded-full bg-blue-500/10 px-1.5 py-0.5 text-[10px] font-medium text-blue-600 dark:text-blue-400">
+                          Shared platform connection
+                        </span>
+                      )}
                     </div>
                     <p className="mt-0.5 line-clamp-2 text-xs leading-relaxed text-gray-500 dark:text-gray-400">
                       {descriptionFor(serverName)}
@@ -301,7 +319,9 @@ export default function ConnectorsBrowser({
                       label={`Ask AI about ${serverName}`}
                       message={connection === 'connected'
                         ? `Help me with the existing ${JSON.stringify(serverName)} MCP connection in this ${workspaceLabel}. Check its current connection status and ${workspaceLabel} selection, then ask what I want to do with it.`
-                        : `Help me connect ${JSON.stringify(serverName)} to this ${workspaceLabel}. It is already listed in the MCP catalog, so check its existing configuration and connection status first and reuse it. Guide me through the required authorization or secure credential setup, verify that its tools are available, then add it to this ${workspaceLabel}. Ask for any missing details; do not ask me to paste secrets into chat.`}
+                        : canManagePlatformMCP
+                          ? `Help me connect ${JSON.stringify(serverName)} to this ${workspaceLabel}. It is already listed in the MCP catalog, so check its existing configuration and connection status first and reuse it. Before authorization, remind me that the account will be shared by every AgentWorks user and product. Guide me through the required authorization or secure credential setup, verify its tools, then add it to this ${workspaceLabel}. Do not ask me to paste secrets into chat.`
+                          : `Explain that ${JSON.stringify(serverName)} is not yet connected to this AgentWorks platform, that only an administrator can connect the shared external account, and how I can select it for this ${workspaceLabel} after an administrator connects it. Do not attempt to change MCP configuration.`}
                       className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-primary/10 hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
                     />
                   </div>

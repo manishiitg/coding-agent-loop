@@ -15,12 +15,16 @@ from selection for this project.
 - Use `install_mcp_server` for a catalog result or service URL so Work can probe
   its authentication requirements. Use `add_mcp_server` only for a custom
   server whose protocol and complete configuration are already known.
-- An installed server is account-level and is not automatically selected for
-  this project. Project selection remains in **Setup > MCP servers**. Never
-  claim the server's tools are available until it is connected and selected.
+- An installed server is a platform connection shared by AgentWorks, Work,
+  workflows, chats, schedules, and every user. Only a platform administrator
+  may add, authenticate, reconnect, edit, or remove one. Explain this before
+  starting credential or OAuth setup. A connection is not automatically
+  selected for this project; project selection remains in **Setup > MCP
+  servers**. Never claim its tools are available here until it is connected
+  and selected.
 - Use `get_mcp_server_logs` to diagnose a configured server and
   `trigger_mcp_discovery` when its tool metadata is stale. Removing a server is
-  account-wide, so identify the exact server and explain that scope first.
+  platform-wide, so identify the exact server and explain that scope first.
 
 ## Secrets
 

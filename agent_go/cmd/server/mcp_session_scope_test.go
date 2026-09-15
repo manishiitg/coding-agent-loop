@@ -13,6 +13,7 @@ import (
 	workshop "github.com/manishiitg/coding-agent-loop/agent_go/pkg/orchestrator/agents/workflow/step_based_workflow"
 	loggerv2 "github.com/manishiitg/mcpagent/logger/v2"
 	"github.com/manishiitg/mcpagent/mcpclient"
+	"github.com/manishiitg/mcpagent/oauth"
 )
 
 type scopeWorkshop struct{ config *workshop.WorkshopConfig }
@@ -48,7 +49,7 @@ func TestWorkshopMCPScopeReadsUpdatedSelectionOnEveryCall(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.Name != "Notion" || got.Config.OAuth.TokenFile != getUserTokenFilePath("alice", "Notion") {
+	if got.Name != "Notion" || got.Config.OAuth.TokenFile != getUserTokenFilePath(platformMCPTokenUserID, "Notion") || got.ConnectionSessionID != platformMCPConnectionSessionID {
 		t.Fatalf("wrong identity/config: %+v", got)
 	}
 	setSelection([]string{"Jam"})
@@ -71,8 +72,8 @@ func TestSelectedMCPScopeAliasesToolRestrictionsAndIdentity(t *testing.T) {
 		t.Fatalf("alias failed: %+v %v", a, err)
 	}
 	b, err := resolveSelectedMCPServer(cfg, []string{"test-provider"}, nil, "bob", "test-provider", "search")
-	if err != nil || a.ConnectionSessionID == b.ConnectionSessionID {
-		t.Fatal("accounts share a connection")
+	if err != nil || a.ConnectionSessionID != b.ConnectionSessionID {
+		t.Fatal("platform MCP connection was not shared across execution identities")
 	}
 	for _, test := range []struct {
 		server, tool    string
@@ -91,5 +92,30 @@ func TestSelectedMCPScopeAliasesToolRestrictionsAndIdentity(t *testing.T) {
 	}
 	if _, err := resolveSelectedMCPServer(cfg, []string{"test-provider"}, nil, "alice", "missing", "search"); err == nil || !strings.Contains(err.Error(), "not found") {
 		t.Fatal(err)
+	}
+}
+
+func TestSelectedMCPScopePreservesLegacySharedCredentialPath(t *testing.T) {
+	legacyPath := filepath.Join(t.TempDir(), "tokens", "saurabh", "Linear.json")
+	cfg := &mcpclient.MCPConfig{MCPServers: map[string]mcpclient.MCPServerConfig{
+		"Linear": {
+			URL:   "https://mcp.linear.app/mcp",
+			OAuth: &oauth.OAuthConfig{TokenFile: legacyPath},
+		},
+	}}
+
+	work, err := resolveSelectedMCPServer(cfg, []string{"Linear"}, nil, "saurabh", "Linear", "list_issues")
+	if err != nil {
+		t.Fatal(err)
+	}
+	agentWorks, err := resolveSelectedMCPServer(cfg, []string{"Linear"}, nil, "another-user", "Linear", "list_issues")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if work.Config.OAuth.TokenFile != legacyPath || agentWorks.Config.OAuth.TokenFile != legacyPath {
+		t.Fatalf("legacy platform credential was not reused: work=%q agentworks=%q", work.Config.OAuth.TokenFile, agentWorks.Config.OAuth.TokenFile)
+	}
+	if work.ConnectionSessionID != agentWorks.ConnectionSessionID {
+		t.Fatal("Work and AgentWorks did not share the MCP connection session")
 	}
 }

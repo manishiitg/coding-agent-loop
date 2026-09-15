@@ -31,6 +31,18 @@ var (
 	oauthFlowsMu sync.RWMutex
 )
 
+// MCP authentication is deployment-wide. The initiating user is retained in
+// audit logs, while every AgentWorks product resolves this shared credential.
+const platformMCPTokenUserID = "_platform"
+
+const platformMCPConnectionSessionID = "mcp-platform"
+
+func closePlatformMCPConnection(serverName string) {
+	registry := mcpclient.GetSessionRegistry()
+	connectionSessionID := registry.ResolveConnectionSessionID(platformMCPConnectionSessionID, serverName)
+	registry.CloseSessionServer(connectionSessionID, serverName)
+}
+
 func deriveOAuthRedirectURI(r *http.Request) string {
 	if publicURL := os.Getenv("PUBLIC_URL"); publicURL != "" {
 		return fmt.Sprintf("%s/api/oauth/callback", strings.TrimRight(publicURL, "/"))
@@ -297,11 +309,10 @@ func (e *oauthStartError) Error() string { return e.message }
 // background wait below resolves (empty when this was started from the
 // connector-directory UI instead of chat, which has no synthetic-turn target).
 func (api *StreamingAPI) beginOAuthFlow(userID, sessionID, serverName, redirectURI, clientID string, onInstalled func()) (*OAuthStartResponse, *OAuthDiscoveryResponse, error) {
-	api.logger.Info(fmt.Sprintf("🔐 OAuth start for server %s, user %s", serverName, userID))
+	api.logger.Info(fmt.Sprintf("🔐 Platform OAuth start for server %s, initiated_by %s", serverName, userID))
 
-	// Ensure user token directory exists
-	if _, err := ensureUserTokenDir(userID); err != nil {
-		api.logger.Error(fmt.Sprintf("Failed to create user token directory: %v", err), err)
+	if _, err := ensureUserTokenDir(platformMCPTokenUserID); err != nil {
+		api.logger.Error(fmt.Sprintf("Failed to create platform token directory: %v", err), err)
 		return nil, nil, &oauthStartError{http.StatusInternalServerError, "Failed to create token directory"}
 	}
 
@@ -319,8 +330,7 @@ func (api *StreamingAPI) beginOAuthFlow(userID, sessionID, serverName, redirectU
 
 	serverName = canonicalName
 
-	// Use per-user token file path
-	userTokenFile := getUserTokenFilePath(userID, serverName)
+	platformTokenFile := getUserTokenFilePath(platformMCPTokenUserID, serverName)
 
 	// Apply user-provided client_id if present (from the "needs_client_id" flow)
 	if clientID != "" {
@@ -339,8 +349,7 @@ func (api *StreamingAPI) beginOAuthFlow(userID, sessionID, serverName, redirectU
 		return nil, nil, &oauthStartError{http.StatusBadRequest, fmt.Sprintf("Server '%s' is not an OAuth server", serverName)}
 	}
 
-	// Always update TokenFile to user-specific path
-	serverConfig.OAuth.TokenFile = userTokenFile
+	serverConfig.OAuth.TokenFile = platformTokenFile
 
 	// Always use the current callback URL for a new flow. User configs can
 	// contain stale localhost ports from previous runs, which otherwise get
@@ -357,7 +366,7 @@ func (api *StreamingAPI) beginOAuthFlow(userID, sessionID, serverName, redirectU
 	// Client Registration or needs one registered by hand. Try DCR first, so
 	// only the genuinely manual servers reach the prompt below.
 	if serverConfig.OAuth.ClientID == "" && serverConfig.OAuth.RegistrationEndpoint != "" {
-		client, regErr := api.ensureRegisteredClient(userID, serverName, serverConfig.OAuth.RegistrationEndpoint, redirectURI)
+		client, regErr := api.ensureRegisteredClient(platformMCPTokenUserID, serverName, serverConfig.OAuth.RegistrationEndpoint, redirectURI)
 		if regErr != nil {
 			// Fall through to the prompt: a hand-registered client_id still works.
 			api.logger.Error(fmt.Sprintf("Dynamic client registration failed for %s: %v", serverName, regErr), regErr)
@@ -464,7 +473,7 @@ func (api *StreamingAPI) beginOAuthFlow(userID, sessionID, serverName, redirectU
 		tokenFile := flow.ServerConfig.OAuth.TokenFile
 		api.logger.Info(fmt.Sprintf("📁 Token file target: %s", tokenFile))
 
-		// Persist OAuth config to the user config file so MCP client uses it for future connections
+		// Persist the platform OAuth config so every AgentWorks product resolves it.
 		api.logger.Info(fmt.Sprintf("💾 Persisting OAuth config for %s", serverName))
 		if err := api.persistOAuthConfig(serverName, flow.ServerConfig); err != nil {
 			api.logger.Error(fmt.Sprintf("Failed to persist OAuth config for %s: %v", serverName, err), err)
@@ -475,9 +484,8 @@ func (api *StreamingAPI) beginOAuthFlow(userID, sessionID, serverName, redirectU
 			}
 		}
 
-		// Reauthorization must replace this account's retained connection so its
-		// OAuth manager uses the newly saved token/config on the next live call.
-		mcpclient.GetSessionRegistry().CloseSessionServer("mcp-user:"+userID, serverName)
+		// Reauthorization replaces the retained platform connection.
+		closePlatformMCPConnection(serverName)
 
 		// Invalidate cache for this server so tools are re-discovered with OAuth token
 		api.logger.Info(fmt.Sprintf("🔄 Invalidating cache for %s to refresh tools with OAuth", serverName))
@@ -556,7 +564,7 @@ func (api *StreamingAPI) handleOAuthStart(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	// Get user ID from context for per-user token storage
+	// The caller identity is audit provenance; the saved connection is shared.
 	userID := GetUserIDFromContext(r.Context())
 	// Derive redirect URI from PUBLIC_URL env var (for production) or incoming request (for local)
 	redirectURI := deriveOAuthRedirectURI(r)
@@ -589,10 +597,7 @@ func (api *StreamingAPI) handleOAuthStatus(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	// Get user ID from context for per-user token storage
-	userID := GetUserIDFromContext(r.Context())
-	userTokenFile := getUserTokenFilePath(userID, serverName)
-	api.logger.Info(fmt.Sprintf("🔍 OAuth status check for server %s, user %s, token file: %s", serverName, userID, userTokenFile))
+	api.logger.Info(fmt.Sprintf("🔍 Platform OAuth status check for server %s", serverName))
 
 	// Load server config
 	config, err := mcpclient.LoadMergedConfig(api.mcpConfigPath, api.logger)
@@ -621,8 +626,11 @@ func (api *StreamingAPI) handleOAuthStatus(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	// Always set token file to user-specific path for status check
-	serverConfig.OAuth.TokenFile = userTokenFile
+	// Existing overlay entries retain their saved path, promoting current
+	// connections without copying secrets. New connections use _platform.
+	if strings.TrimSpace(serverConfig.OAuth.TokenFile) == "" {
+		serverConfig.OAuth.TokenFile = getUserTokenFilePath(platformMCPTokenUserID, serverName)
+	}
 
 	// Token refresh uses the configured token_url; there is no discovery fallback.
 
@@ -646,12 +654,12 @@ func (api *StreamingAPI) handleOAuthStatus(w http.ResponseWriter, r *http.Reques
 		api.logger.Info(fmt.Sprintf("✅ OAuth token valid/refreshed for %s (token prefix: %s...)", serverName, accessToken[:min(20, len(accessToken))]))
 	}
 
-	valid, expiresIn, tokenPath := oauthMgr.GetTokenStatus()
+	valid, expiresIn, _ := oauthMgr.GetTokenStatus()
 
 	// If token refresh succeeded, the status should now be valid
 	if tokenRefreshed && !valid {
 		// Re-check status after refresh
-		valid, expiresIn, tokenPath = oauthMgr.GetTokenStatus()
+		valid, expiresIn, _ = oauthMgr.GetTokenStatus()
 	}
 
 	api.logger.Info(fmt.Sprintf("📊 OAuth status result for %s: valid=%v, expiresIn=%s", serverName, valid, expiresIn))
@@ -660,9 +668,9 @@ func (api *StreamingAPI) handleOAuthStatus(w http.ResponseWriter, r *http.Reques
 		ServerName: serverName,
 		Valid:      valid,
 		ExpiresIn:  expiresIn,
-		TokenPath:  tokenPath,
+		// Never disclose a deployment credential path to ordinary users.
+		TokenPath: "",
 	}
-
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(response)
 }
@@ -680,10 +688,8 @@ func (api *StreamingAPI) handleOAuthLogout(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	// Get user ID from context for per-user token storage
 	userID := GetUserIDFromContext(r.Context())
-	userTokenFile := getUserTokenFilePath(userID, req.ServerName)
-	api.logger.Info(fmt.Sprintf("🔐 OAuth logout for server %s, user %s, token file: %s", req.ServerName, userID, userTokenFile))
+	api.logger.Info(fmt.Sprintf("🔐 Platform OAuth logout for server %s, initiated_by %s", req.ServerName, userID))
 
 	// Load server config
 	config, err := mcpclient.LoadMergedConfig(api.mcpConfigPath, api.logger)
@@ -705,10 +711,11 @@ func (api *StreamingAPI) handleOAuthLogout(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	// Always set token file to user-specific path for logout
-	serverConfig.OAuth.TokenFile = userTokenFile
+	if strings.TrimSpace(serverConfig.OAuth.TokenFile) == "" {
+		serverConfig.OAuth.TokenFile = getUserTokenFilePath(platformMCPTokenUserID, req.ServerName)
+	}
 
-	// Logout (remove token) - only removes this user's token
+	// Logout removes the shared platform token.
 	oauthMgr := oauth.NewManager(serverConfig.OAuth, api.logger)
 	if err := oauthMgr.Logout(); err != nil {
 		api.logger.Error(fmt.Sprintf("Failed to logout from %s: %v", req.ServerName, err), err)
@@ -716,7 +723,7 @@ func (api *StreamingAPI) handleOAuthLogout(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	api.logger.Info(fmt.Sprintf("Successfully logged out user %s from %s", userID, req.ServerName))
+	api.logger.Info(fmt.Sprintf("Successfully disconnected platform MCP %s by user %s", req.ServerName, userID))
 
 	// Removing the token alone would leave the overlay entry behind, which under
 	// the connection rule (§3) still reads as connected. Drop both.
@@ -724,6 +731,7 @@ func (api *StreamingAPI) handleOAuthLogout(w http.ResponseWriter, r *http.Reques
 		api.logger.Warn(fmt.Sprintf("Failed to remove overlay entry for %s: %v", req.ServerName, err))
 	}
 
+	closePlatformMCPConnection(req.ServerName)
 	api.invalidateServerDiscovery(req.ServerName, "Disconnected — token removed, rediscovering tools...")
 
 	w.Header().Set("Content-Type", "application/json")
@@ -733,9 +741,8 @@ func (api *StreamingAPI) handleOAuthLogout(w http.ResponseWriter, r *http.Reques
 	})
 }
 
-// removeOverlayEntry deletes a server from the user config overlay. Overlay
-// membership defines connection ownership (§3), so this is what actually
-// disconnects a server.
+// removeOverlayEntry deletes a server from the platform config overlay.
+// Overlay membership defines connection state, so this is what disconnects it.
 func (api *StreamingAPI) removeOverlayEntry(serverName string) error {
 	userConfigPath := api.getUserConfigPath()
 	userConfig, err := mcpclient.LoadConfig(userConfigPath, api.logger)
@@ -849,8 +856,8 @@ func (api *StreamingAPI) handleConnectServer(w http.ResponseWriter, r *http.Requ
 	})
 }
 
-// handleDisconnectServer removes a server from the user config overlay, and its
-// OAuth token if it has one.
+// handleDisconnectServer removes a server from the platform overlay and its
+// shared OAuth token if it has one.
 func (api *StreamingAPI) handleDisconnectServer(w http.ResponseWriter, r *http.Request) {
 	if isMCPConfigLocked() {
 		http.Error(w, "MCP configuration is locked by administrator", http.StatusForbidden)
@@ -868,7 +875,7 @@ func (api *StreamingAPI) handleDisconnectServer(w http.ResponseWriter, r *http.R
 	}
 
 	userID := GetUserIDFromContext(r.Context())
-	api.logger.Info(fmt.Sprintf("🔌 Disconnect %s for user %s", req.ServerName, userID))
+	api.logger.Info(fmt.Sprintf("🔌 Platform disconnect %s initiated_by %s", req.ServerName, userID))
 
 	config, err := mcpclient.LoadMergedConfig(api.mcpConfigPath, api.logger)
 	if err != nil {
@@ -880,7 +887,9 @@ func (api *StreamingAPI) handleDisconnectServer(w http.ResponseWriter, r *http.R
 	// Remove the token first. A server absent from config has no token to remove,
 	// which is not an error — the overlay removal below still needs to run.
 	if serverConfig, err := config.GetServer(req.ServerName); err == nil && serverConfig.OAuth != nil {
-		serverConfig.OAuth.TokenFile = getUserTokenFilePath(userID, req.ServerName)
+		if strings.TrimSpace(serverConfig.OAuth.TokenFile) == "" {
+			serverConfig.OAuth.TokenFile = getUserTokenFilePath(platformMCPTokenUserID, req.ServerName)
+		}
 		oauthMgr := oauth.NewManager(serverConfig.OAuth, api.logger)
 		if err := oauthMgr.Logout(); err != nil {
 			api.logger.Warn(fmt.Sprintf("Failed to remove token for %s: %v", req.ServerName, err))
@@ -893,8 +902,8 @@ func (api *StreamingAPI) handleDisconnectServer(w http.ResponseWriter, r *http.R
 		return
 	}
 
-	// Drop the account-scoped chat connection as well as the saved token.
-	mcpclient.GetSessionRegistry().CloseSessionServer("mcp-user:"+userID, req.ServerName)
+	// Drop the shared live connection as well as the saved token.
+	closePlatformMCPConnection(req.ServerName)
 	api.invalidateServerDiscovery(req.ServerName, "Disconnected — rediscovering tools...")
 
 	w.Header().Set("Content-Type", "application/json")
@@ -977,7 +986,9 @@ func getUserTokenFilePath(userID, serverName string) string {
 	return filepath.Join(mcpagentTokensRoot(), userID, serverName+".json")
 }
 
-// mcpagentTokensRoot is where per-user MCP connector OAuth tokens live. It
+// mcpagentTokensRoot is where MCP connector OAuth tokens live. New AgentWorks
+// connections use the reserved _platform directory; legacy persisted paths are
+// retained during upgrade so credentials do not need to be copied.
 // honours XDG_CONFIG_HOME so a host whose ~/.config is not writable by the
 // service user (RTS: root-owned, the bootstrap wrote the systemd units there)
 // can point the agent at a writable directory -- the same knob cursor-agent

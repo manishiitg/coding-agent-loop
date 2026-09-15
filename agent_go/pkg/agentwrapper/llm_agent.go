@@ -380,7 +380,8 @@ type LLMAgentConfig struct {
 	// This enables connection reuse in stateful MCP servers.
 	SessionID string
 
-	// User ID for per-user OAuth token isolation
+	// Optional MCP credential namespace. AgentWorks leaves this empty because
+	// MCP credentials are resolved from its shared platform configuration.
 	UserID string
 
 	// RuntimeOverrides allows runtime modification of MCP server configuration per-agent.

@@ -47,14 +47,14 @@ func TestMCPToolIdentityUsesSessionOwnerAndRejectsMissingOrConflictingUsers(t *t
 	}
 }
 
-func TestMCPToolListUsesAccountDiscoveryCache(t *testing.T) {
+func TestMCPToolListUsesPlatformDiscoveryCache(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	name := "test-account-connector-" + t.Name()
-	cfg := mcpclient.MCPServerConfig{URL: "https://provider.example/mcp", OAuth: &oauth.OAuthConfig{TokenFile: "another-account.json"}}
+	cfg := mcpclient.MCPServerConfig{URL: "https://provider.example/mcp", OAuth: &oauth.OAuthConfig{}}
 	api := &StreamingAPI{logger: loggerv2.NewNoop()}
 	owned := cfg
 	oauthConfig := *cfg.OAuth
-	oauthConfig.TokenFile = getUserTokenFilePath("alice", name)
+	oauthConfig.TokenFile = getUserTokenFilePath(platformMCPTokenUserID, name)
 	owned.OAuth = &oauthConfig
 	if err := os.MkdirAll(filepath.Dir(oauthConfig.TokenFile), 0700); err != nil {
 		t.Fatal(err)
@@ -69,12 +69,12 @@ func TestMCPToolListUsesAccountDiscoveryCache(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = cache.Invalidate(mcpcache.GenerateUnifiedCacheKey(name, owned)) })
 	if status := api.mcpToolStatusForUser(name, "alice", cfg); status.Status != "ok" || len(status.FunctionNames) != 1 {
-		t.Fatalf("owner's successful discovery not shown: %+v", status)
+		t.Fatalf("platform discovery not shown: %+v", status)
 	}
-	if status := api.mcpToolStatusForUser(name, "bob", cfg); !status.RequiresOAuth || len(status.FunctionNames) != 0 {
-		t.Fatal("another account's authorization/tools leaked")
+	if status := api.mcpToolStatusForUser(name, "bob", cfg); status.Status != "ok" || len(status.FunctionNames) != 1 {
+		t.Fatal("platform authorization was not reusable by another product user")
 	}
-	if cfg.OAuth.TokenFile != "another-account.json" {
+	if cfg.OAuth.TokenFile != "" {
 		t.Fatal("status lookup mutated shared OAuth config")
 	}
 }
@@ -91,7 +91,7 @@ func TestMCPInstallToolRejectsAnonymousBridgeBeforeConfigMutation(t *testing.T) 
 	}
 }
 
-func TestMCPInstallBridgeStartsOAuthInOwnersTokenDirectory(t *testing.T) {
+func TestMCPInstallBridgeStartsOAuthInPlatformTokenDirectory(t *testing.T) {
 	for _, reconnect := range []bool{false, true} {
 		t.Run(fmt.Sprintf("reconnect=%v", reconnect), func(t *testing.T) {
 			t.Setenv("XDG_CONFIG_HOME", t.TempDir())
@@ -118,7 +118,7 @@ func TestMCPInstallBridgeStartsOAuthInOwnersTokenDirectory(t *testing.T) {
 				t.Fatal(err)
 			}
 			if reconnect {
-				ownerToken := getUserTokenFilePath("alice", name)
+				ownerToken := getUserTokenFilePath(platformMCPTokenUserID, name)
 				if err := os.MkdirAll(filepath.Dir(ownerToken), 0700); err != nil {
 					t.Fatal(err)
 				}
@@ -141,7 +141,7 @@ func TestMCPInstallBridgeStartsOAuthInOwnersTokenDirectory(t *testing.T) {
 				t.Fatal("flow was not registered")
 			}
 			defer func() { flow.ErrChan <- fmt.Errorf("test canceled before authorization") }()
-			if got := flow.ServerConfig.OAuth.TokenFile; got != getUserTokenFilePath("alice", name) {
+			if got := flow.ServerConfig.OAuth.TokenFile; got != getUserTokenFilePath(platformMCPTokenUserID, name) {
 				t.Fatalf("OAuth would save under wrong identity: %q", got)
 			}
 

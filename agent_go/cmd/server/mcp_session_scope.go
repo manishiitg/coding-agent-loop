@@ -85,11 +85,12 @@ func resolveSelectedMCPServer(catalog *mcpclient.MCPConfig, selected, selectedTo
 			return nil, fmt.Errorf("Tool %q is not selected for MCP server %q", tool, canonical)
 		}
 	}
-	// Clone OAuth metadata before setting the identity-specific token path.
-	if config.OAuth != nil {
+	// MCP credentials are shared platform connections. Existing installations
+	// retain their persisted token path; new connections use _platform.
+	if config.OAuth != nil && strings.TrimSpace(config.OAuth.TokenFile) == "" {
 		oauth := *config.OAuth
-		oauth.TokenFile = getUserTokenFilePath(userID, canonical)
+		oauth.TokenFile = getUserTokenFilePath(platformMCPTokenUserID, canonical)
 		config.OAuth = &oauth
 	}
-	return &executor.ResolvedMCPServer{Name: canonical, Config: config, ConnectionSessionID: "mcp-user:" + userID}, nil
+	return &executor.ResolvedMCPServer{Name: canonical, Config: config, ConnectionSessionID: platformMCPConnectionSessionID}, nil
 }

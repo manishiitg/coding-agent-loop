@@ -128,7 +128,7 @@ export class MCPConfigApi {
   }
 
   /**
-   * Connect a server — writes it into the user config overlay.
+   * Connect a server — writes it into the shared AgentWorks platform overlay.
    * OAuth servers return { status: 'oauth_required' } and must go through
    * the authorization flow instead.
    */
@@ -147,7 +147,7 @@ export class MCPConfigApi {
   }
 
   /**
-   * Disconnect a server — removes its overlay entry and any OAuth token.
+   * Disconnect a platform server — removes its overlay entry and OAuth token.
    */
   async disconnectServer(serverName: string): Promise<MCPConnectResponse> {
     const response = await fetch(`${this.baseUrl}/api/mcp/disconnect`, {

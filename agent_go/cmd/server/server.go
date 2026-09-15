@@ -2184,15 +2184,15 @@ func runServer(cmd *cobra.Command, args []string) {
 	}).Methods("POST", "OPTIONS")
 
 	// MCP Config API routes (from mcp_config_routes.go)
-	apiRouter.HandleFunc("/mcp-config", api.handleGetMCPConfig).Methods("GET")
-	apiRouter.HandleFunc("/mcp-config", api.handleSaveMCPConfig).Methods("POST")
-	apiRouter.HandleFunc("/mcp-config/discover", api.handleDiscoverServers).Methods("POST")
-	apiRouter.HandleFunc("/mcp-config/status", api.handleGetMCPConfigStatus).Methods("GET")
-	apiRouter.HandleFunc("/mcp-config/logs", api.handleGetServerLogs).Methods("GET")
+	apiRouter.HandleFunc("/mcp-config", requireAdmin(api.handleGetMCPConfig)).Methods("GET")
+	apiRouter.HandleFunc("/mcp-config", requireAdmin(api.handleSaveMCPConfig)).Methods("POST")
+	apiRouter.HandleFunc("/mcp-config/discover", requireAdmin(api.handleDiscoverServers)).Methods("POST")
+	apiRouter.HandleFunc("/mcp-config/status", requireAdmin(api.handleGetMCPConfigStatus)).Methods("GET")
+	apiRouter.HandleFunc("/mcp-config/logs", requireAdmin(api.handleGetServerLogs)).Methods("GET")
 
 	// Connector connection state (from oauth_routes.go)
-	apiRouter.HandleFunc("/mcp/connect", api.handleConnectServer).Methods("POST", "OPTIONS")
-	apiRouter.HandleFunc("/mcp/disconnect", api.handleDisconnectServer).Methods("POST", "OPTIONS")
+	apiRouter.HandleFunc("/mcp/connect", requireAdmin(api.handleConnectServer)).Methods("POST", "OPTIONS")
+	apiRouter.HandleFunc("/mcp/disconnect", requireAdmin(api.handleDisconnectServer)).Methods("POST", "OPTIONS")
 
 	// Secrets encryption API routes (from secrets_routes.go)
 	apiRouter.HandleFunc("/secrets/encrypt", api.handleEncryptSecret).Methods("POST", "OPTIONS")
@@ -2229,10 +2229,10 @@ func runServer(cmd *cobra.Command, args []string) {
 	apiRouter.HandleFunc("/delegation-tier-config", api.handleLoadDelegationTierConfig).Methods("GET", "OPTIONS")
 
 	// OAuth API routes (from oauth_routes.go)
-	apiRouter.HandleFunc("/oauth/start", api.handleOAuthStart).Methods("POST", "OPTIONS")
+	apiRouter.HandleFunc("/oauth/start", requireAdmin(api.handleOAuthStart)).Methods("POST", "OPTIONS")
 	apiRouter.HandleFunc("/oauth/callback", api.handleOAuthCallback).Methods("GET")
 	apiRouter.HandleFunc("/oauth/status", api.handleOAuthStatus).Methods("GET")
-	apiRouter.HandleFunc("/oauth/logout", api.handleOAuthLogout).Methods("POST", "OPTIONS")
+	apiRouter.HandleFunc("/oauth/logout", requireAdmin(api.handleOAuthLogout)).Methods("POST", "OPTIONS")
 
 	// Observer APIs removed - events are now stored by sessionID, no observers needed
 
@@ -5057,9 +5057,10 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			// MCP session ID for stateful connection reuse.
 			// Use the chat session ID so all agents in the same session share MCP connections
 			SessionID: sessionID,
-			// User ID for per-user OAuth token isolation
-			// This ensures MCP servers with OAuth use user-specific token files
-			UserID: currentUserID,
+			// MCP OAuth is platform-wide. Keep this empty so mcpagent preserves
+			// the token path from the shared merged configuration instead of
+			// rewriting it beneath the interactive/scheduled user's ID.
+			UserID: "",
 		}
 
 		// Legacy manifests may still place built-in tool categories in
@@ -10753,7 +10754,7 @@ func (api *StreamingAPI) registerMultiAgentMCPServerTools(registrar interface {
 		if disabled != nil && disabled(name) {
 			return nil
 		}
-		if name == "install_mcp_server" || name == "add_mcp_server" || name == "list_mcp_servers" || name == "trigger_mcp_discovery" {
+		if name == "install_mcp_server" || name == "add_mcp_server" || name == "edit_mcp_server" || name == "remove_mcp_server" || name == "list_mcp_servers" || name == "trigger_mcp_discovery" {
 			original := exec
 			exec = func(ctx context.Context, args map[string]interface{}) (string, error) {
 				userID, err := api.mcpToolUserID(ctx)
@@ -10761,6 +10762,9 @@ func (api *StreamingAPI) registerMultiAgentMCPServerTools(registrar interface {
 					return "", err
 				}
 				ctx = context.WithValue(ctx, UserContextKey, &UserClaims{UserID: userID})
+				if (name == "install_mcp_server" || name == "add_mcp_server" || name == "edit_mcp_server" || name == "remove_mcp_server") && !canManageGlobalSecrets(userID) {
+					return "Only a platform administrator can add, authenticate, edit, or remove shared MCP connections.", nil
+				}
 				return original(ctx, args)
 			}
 		}
@@ -10848,7 +10852,7 @@ func (api *StreamingAPI) registerMultiAgentMCPServerTools(registrar interface {
 
 	if err := registerTool(
 		"list_mcp_servers",
-		"List configured MCP servers: for each, whether it's a catalog server the user has actually installed/authorized (vs. just present in the catalog and not yet connected) or a user-defined custom server, and whether discovery has succeeded. Use search_mcp_catalog instead to find servers not yet configured at all.",
+		"List shared platform MCP servers: for each, whether an administrator has connected it for AgentWorks (versus merely present in the catalog), whether it is a custom platform server, and whether discovery succeeded. Connected credentials are reusable by Work, workflows, chats, and schedules. Use search_mcp_catalog for servers not yet configured.",
 		map[string]interface{}{
 			"type":       "object",
 			"properties": map[string]interface{}{},
@@ -10885,7 +10889,7 @@ func (api *StreamingAPI) registerMultiAgentMCPServerTools(registrar interface {
 			if isMCPConfigLocked() {
 				sb.WriteString("Configuration mode: locked (read-only)\n\n")
 			} else {
-				sb.WriteString(fmt.Sprintf("User config path: `%s`\n\n", userConfigPath))
+				sb.WriteString(fmt.Sprintf("Platform MCP overlay path: `%s`\n\n", userConfigPath))
 			}
 
 			for _, name := range names {
@@ -10893,10 +10897,9 @@ func (api *StreamingAPI) registerMultiAgentMCPServerTools(registrar interface {
 				_, isBase := api.mcpConfig.MCPServers[name]
 
 				// "source" names where the definition comes from; a base
-				// catalog server also needs a separate authorized/installed
-				// signal, since being in the catalog does not mean the user
-				// ever connected it (searchable != installed).
-				source := "user-defined"
+				// catalog server also needs a separate platform connection
+				// signal (searchable does not mean connected).
+				source := "custom platform server"
 				switch {
 				case isBase && server.OAuth == nil:
 					source = "catalog, no sign-in required"
@@ -10914,7 +10917,7 @@ func (api *StreamingAPI) registerMultiAgentMCPServerTools(registrar interface {
 					case "error":
 						statusLabel = "discovery failed"
 					case "not_connected":
-						statusLabel = "sign-in required for this account"
+						statusLabel = "platform administrator sign-in required"
 					case "not_loaded", "":
 						statusLabel = "not yet discovered"
 					default:
@@ -11049,7 +11052,7 @@ func (api *StreamingAPI) registerMultiAgentMCPServerTools(registrar interface {
 
 	if err := registerTool(
 		"install_mcp_server",
-		"Platform-level install of an MCP server, from OUR CATALOG (found via search_mcp_catalog or list_mcp_servers) OR fresh from a URL (a search_mcp_catalog public registry hit, or any URL the user gives you) — distinct from add_mcp_server, which is for a server with no auth at all. This is tier 1 of a two-tier model: installing makes the server available account-wide; it still needs update_workflow_config(add_servers=[name]) to actually be usable in a specific workflow. For a fresh URL, this live-probes it the same way a human would evaluate any third-party integration before installing it — spec-compliant discovery (RFC 9728/8414 via a real 401), not a guess — so tell the user what was found before proceeding on anything unvetted (public registry hits). Outcomes: (1) no sign-in required — installs immediately. (2) needs an API key — pass api_key once the user has given you one. (3) needs OAuth with Dynamic Client Registration discoverable — starts the flow and returns an auth_url; give that URL to the user as a clickable link, the connection completes automatically once they authorize, no further tool call needed. (4) needs OAuth but no DCR was discoverable — tell the user plainly (it may still support CIMD or need a manually registered OAuth app); if they give you a client_id, pass it and call again. To reauthorize an existing OAuth connection, set reconnect=true and reuse its existing name; do not create a duplicate connector. Cannot complete an OAuth consent screen itself — it only starts the flow and hands back the link.",
+		"Administrator-only platform install of an MCP server, shared by AgentWorks, Work, workflows, chats, and schedules. It still needs update_workflow_config(add_servers=[name]) to be selected by a workflow. Before OAuth or API-key setup, explicitly tell the administrator that every AgentWorks user will be able to use the connected external account. For a fresh URL, live-probe its auth requirements and verify the provider. To reauthorize an existing OAuth connection, set reconnect=true.",
 		map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
@@ -11132,12 +11135,14 @@ func (api *StreamingAPI) registerMultiAgentMCPServerTools(registrar interface {
 					if serverConfig.OAuth != nil && !reconnect {
 						owned := serverConfig
 						oauthConfig := *owned.OAuth
-						oauthConfig.TokenFile = getUserTokenFilePath(GetUserIDFromContext(ctx), name)
+						if strings.TrimSpace(oauthConfig.TokenFile) == "" {
+							oauthConfig.TokenFile = getUserTokenFilePath(platformMCPTokenUserID, name)
+						}
 						owned.OAuth = &oauthConfig
 						connected = hasOAuthTokenFile(owned)
 					}
 					if connected {
-						return fmt.Sprintf("%q is already installed for this account. Use update_workflow_config(add_servers=[%q]) to use it in this workflow. For OAuth reauthorization, call install_mcp_server with the same name and reconnect=true.", name, name), nil
+						return fmt.Sprintf("%q is already connected across AgentWorks. Use update_workflow_config(add_servers=[%q]) to select it for this workflow. For OAuth reauthorization, a platform administrator can call install_mcp_server with reconnect=true.", name, name), nil
 					}
 				}
 			}
@@ -11222,7 +11227,7 @@ func (api *StreamingAPI) registerMultiAgentMCPServerTools(registrar interface {
 
 	if err := registerTool(
 		"add_mcp_server",
-		"Add a new user-defined MCP server configuration, then trigger discovery. This does not modify admin/base servers.",
+		"Administrator-only: add a shared platform MCP server configuration, then trigger discovery. Every AgentWorks product and user can reuse it; workflows still select servers explicitly.",
 		map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
@@ -11319,7 +11324,7 @@ func (api *StreamingAPI) registerMultiAgentMCPServerTools(registrar interface {
 
 	if err := registerTool(
 		"edit_mcp_server",
-		"Edit an existing user-defined MCP server configuration, then trigger discovery. Base/admin servers cannot be edited from chat.",
+		"Administrator-only: edit an existing shared platform MCP server configuration, then trigger discovery. Base catalog servers cannot be edited from chat.",
 		map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
@@ -11415,7 +11420,7 @@ func (api *StreamingAPI) registerMultiAgentMCPServerTools(registrar interface {
 
 	if err := registerTool(
 		"remove_mcp_server",
-		"Remove a user-defined MCP server configuration. Base/admin servers cannot be removed from chat.",
+		"Administrator-only: remove a shared platform MCP server configuration. This affects Work, AgentWorks chats, workflows, and schedules. Base catalog servers cannot be removed from chat.",
 		map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
@@ -11538,19 +11543,20 @@ func (api *StreamingAPI) registerMultiAgentMCPServerTools(registrar interface {
 			if err != nil {
 				return "", err
 			}
-			userID := GetUserIDFromContext(ctx)
 			for name, server := range cfg.MCPServers {
 				if server.OAuth != nil {
 					oauthConfig := *server.OAuth
-					oauthConfig.TokenFile = getUserTokenFilePath(userID, name)
+					if strings.TrimSpace(oauthConfig.TokenFile) == "" {
+						oauthConfig.TokenFile = getUserTokenFilePath(platformMCPTokenUserID, name)
+					}
 					server.OAuth = &oauthConfig
 					if hasOAuthTokenFile(server) {
-						api.startServerDiscovery(userID, name)
+						api.startServerDiscovery(platformMCPTokenUserID, name)
 					}
 				}
 			}
 			go api.triggerMCPDiscovery()
-			return "Triggered MCP discovery, including this account's authorized OAuth connections, in the background.", nil
+			return "Triggered discovery for the shared AgentWorks MCP connections in the background.", nil
 		},
 	); err != nil {
 		return err

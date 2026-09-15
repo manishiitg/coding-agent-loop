@@ -58,8 +58,14 @@ export function useResumePreviousChat() {
         targetTab = existing
         conversationKey = existing.metadata?.agentProfileConversationKey
       } else {
-        const projectId = targetTab.metadata.agentProfileProjectId
-        conversationKey = projectId ? `${projectId}:${session.session_id}` : session.session_id
+        // The manifest's project id is the authorization key. The display
+        // folder/slug in agentProfileProjectId can differ (for example
+        // "new-project-2271585c" vs the manifest UUID), so derive the new
+        // tab's suffix from the already-resolved Builder conversation key.
+        const projectConversationKey = targetTab.metadata.agentProfileConversationKey?.split(':', 1)[0]
+        conversationKey = projectConversationKey
+          ? `${projectConversationKey}:${session.session_id}`
+          : session.session_id
         createResumedTab = true
       }
     }

@@ -406,19 +406,15 @@ const QueuedAutoNotificationGroup: React.FC<{
 const MainAgentRuntimeStatusIndicator = React.memo(function MainAgentRuntimeStatusIndicator({
   state,
   label,
-  activityLabel,
   showRunningSpinner = true,
-  showLabel = true,
 }: {
   state: 'running' | 'waiting' | 'ready'
   label: string
-  activityLabel: string
   showRunningSpinner?: boolean
-  showLabel?: boolean
 }) {
-  const indicator = (
+  return (
     <div
-      className={`flex h-7 items-center gap-1.5 px-1 font-mono text-[11px] text-muted-foreground ${showLabel ? 'max-w-[205px]' : ''}`}
+      className="flex h-7 items-center px-1 text-muted-foreground"
       role="status"
       aria-label={`${label} — ${state}`}
     >
@@ -429,15 +425,7 @@ const MainAgentRuntimeStatusIndicator = React.memo(function MainAgentRuntimeStat
       ) : (
         <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-lime-300" aria-hidden="true" />
       )}
-      {showLabel && <span className="truncate">{label}</span>}
     </div>
-  )
-  if (!showLabel) return indicator
-  return (
-    <Tooltip>
-      <TooltipTrigger asChild>{indicator}</TooltipTrigger>
-      <TooltipContent side="top"><p>{label} — {activityLabel}</p></TooltipContent>
-    </Tooltip>
   )
 })
 
@@ -3063,6 +3051,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     const isBotRun = activeTab?.metadata?.isBotRun
     const jobName = activeTab?.metadata?.scheduledJobName
     const botPlatform = activeTab?.metadata?.botPlatform
+    const terminalTitle = `${terminalViewSelected ? 'Return to conversation' : 'Open live view'}${mainAgentRuntimeStatus?.label ? ` · ${mainAgentRuntimeStatus.label}` : ''}`
     return (
       <div data-tour="chat-input-area" data-testid="tour-chat-input-area" className={`${inputPadX} ${isProductSurface ? 'py-1' : 'py-2'}`}>
         <div className="relative flex items-center justify-center gap-2 py-1 text-xs text-muted-foreground">
@@ -3087,7 +3076,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
                 )}
                 className="h-7 w-7 p-0"
                 aria-label={terminalViewSelected ? 'Return to conversation' : 'Open live view'}
-                title={terminalViewSelected ? 'Return to conversation' : 'Open live view'}
+                title={terminalTitle}
               >
                 <Terminal className="h-3.5 w-3.5" />
               </Button>
@@ -3464,9 +3453,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
                   <MainAgentRuntimeStatusIndicator
                     state={mainAgentRuntimeStatus.state}
                     label={mainAgentRuntimeStatus.label}
-                    activityLabel={mainAgentRuntimeStatus.activityLabel}
                     showRunningSpinner={!showCompactRuntimeLoading}
-                    showLabel={!isProductProfile}
                   />
                 )}
                 {chatInputStatusLine && (
@@ -3511,7 +3498,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
                     <TooltipContent>
                       <p>
                         {terminalViewSelected ? 'Return to conversation' : 'Open live view'}
-                        {isProductProfile && mainAgentRuntimeStatus?.label ? ` · ${mainAgentRuntimeStatus.label}` : ''}
+                        {mainAgentRuntimeStatus?.label ? ` · ${mainAgentRuntimeStatus.label}` : ''}
                       </p>
                     </TooltipContent>
                   </Tooltip>
@@ -3519,12 +3506,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
                 {/* Server and LLM Selection — hidden in workflow phase chat (servers come from preset) */}
                 {(
                   <div data-tour="chat-input-tools" data-testid="tour-chat-input-tools" className="flex items-center gap-2">
-                      {sparkQuillComposerLayout && (
-                        <>
-                          {attachmentEl}
-                          {sparkleEl}
-                        </>
-                      )}
+                      {sparkleEl}
                       {showCompactRuntimeLoading && isTurnInFlight && (
                         <Tooltip>
                           <TooltipTrigger asChild>
@@ -3895,8 +3877,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
                     </div>
                   ) : (
                     <div data-tour="chat-send-controls" data-testid="tour-chat-send-controls" className="flex items-center gap-1">
-                      {!sparkQuillComposerLayout && sparkleEl}
-                      {!sparkQuillComposerLayout && attachmentEl}
+                      {attachmentEl}
                       {micEl}
                       {/* Enter still sends/steers a follow-up while the primary
                           button stops the running session. */}

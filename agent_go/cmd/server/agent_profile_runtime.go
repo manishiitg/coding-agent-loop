@@ -108,6 +108,19 @@ func agentProfileRuntimeWorkspace(userID, workspacePath string) string {
 	return workspacePath
 }
 
+// isActiveWorkProjectWorkspace distinguishes an actual Work project from the
+// Work landing/root workspace. Project-scoped tools must be absent on the
+// landing chat: registering them there either fails immediately (share links,
+// schedules) or gives the model tools that cannot operate without product.json.
+func isActiveWorkProjectWorkspace(userID, workspacePath string) bool {
+	canonical := canonicalChatHistoryWorkspacePath(userID, workspacePath)
+	const prefix = "Chats/Work/projects/"
+	if !strings.HasPrefix(canonical, prefix) {
+		return false
+	}
+	return strings.Trim(strings.TrimPrefix(canonical, prefix), "/") != ""
+}
+
 // providerOptionRuntimeOptions returns a copy of the runtime options the
 // profile declares for the (provider, model) binding a turn resolved to —
 // nil when the binding is not one of the profile's provider_options or
@@ -512,32 +525,33 @@ func (api *StreamingAPI) registerAgentProfileTools(registrar definitionToolRegis
 			return fmt.Errorf("register profile tool %q: %w", tool.Name, err)
 		}
 	}
+	activeWorkProject := resolved.Definition.ID == "work" && isActiveWorkProjectWorkspace(userID, workspacePath)
 	if resolved.Definition.ID == "work" && agentprofiles.HasFeature(resolved.Definition, "attached-folders") {
 		if err := api.registerWorkFolderTools(registrar, userID, sessionID); err != nil {
 			return err
 		}
 	}
-	if resolved.Definition.ID == "work" && agentprofiles.HasFeature(resolved.Definition, "workflow-references") {
+	if activeWorkProject && agentprofiles.HasFeature(resolved.Definition, "workflow-references") {
 		if err := api.registerWorkWorkflowReferenceTools(registrar, userID, sessionID, workspacePath); err != nil {
 			return err
 		}
 	}
-	if resolved.Definition.ID == "work" && agentprofiles.HasFeature(resolved.Definition, "files") {
+	if activeWorkProject && agentprofiles.HasFeature(resolved.Definition, "files") {
 		if err := api.registerWorkShareLinkTool(registrar, userID, workspacePath); err != nil {
 			return err
 		}
 	}
-	if resolved.Definition.ID == "work" && agentprofiles.HasFeature(resolved.Definition, "schedules") {
+	if activeWorkProject && agentprofiles.HasFeature(resolved.Definition, "schedules") {
 		if err := api.registerWorkScheduleTools(registrar, userID, workspacePath); err != nil {
 			return err
 		}
 	}
-	if resolved.Definition.ID == "work" && agentprofiles.HasFeature(resolved.Definition, "bots") {
+	if activeWorkProject && agentprofiles.HasFeature(resolved.Definition, "bots") {
 		if err := api.registerGmailConnectionManagementTools(registrar, sessionID, workspacePath); err != nil {
 			return err
 		}
 	}
-	if resolved.Definition.ID == "work" && agentprofiles.HasFeature(resolved.Definition, "workspace-ui") && len(req) > 0 && registerWorkUIAllowed(req[0]) {
+	if activeWorkProject && agentprofiles.HasFeature(resolved.Definition, "workspace-ui") && len(req) > 0 && registerWorkUIAllowed(req[0]) {
 		for _, name := range []string{"open_workspace_view", "refresh_workspace_view", "list_ui_capabilities", "get_ui_state", "perform_ui_action", "get_ui_action_result"} {
 			gate.Declare(name)
 		}

@@ -25,6 +25,9 @@ func (api *StreamingAPI) registerWorkBackgroundTools(
 	if profile == nil || strings.TrimSpace(profile.Definition.ID) != "work" || !agentprofiles.HasFeature(profile.Definition, "background-work") {
 		return nil
 	}
+	if !isActiveWorkProjectWorkspace(userID, parentReq.SelectedFolder) {
+		return nil
+	}
 	if llmAgent == nil || llmAgent.GetUnderlyingAgent() == nil {
 		return fmt.Errorf("Work background tools require an active agent")
 	}

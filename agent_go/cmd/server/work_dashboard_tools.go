@@ -27,6 +27,9 @@ func (api *StreamingAPI) registerWorkDashboardTools(
 		(!agentprofiles.HasFeature(profile.Definition, "database") && !agentprofiles.HasFeature(profile.Definition, "dashboard")) {
 		return nil
 	}
+	if !isActiveWorkProjectWorkspace(userID, workspacePath) {
+		return nil
+	}
 	if llmAgent == nil || llmAgent.GetUnderlyingAgent() == nil {
 		return fmt.Errorf("Work Dashboard tools require an active agent")
 	}

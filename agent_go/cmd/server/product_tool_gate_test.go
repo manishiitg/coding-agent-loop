@@ -153,6 +153,32 @@ func TestRegisterAgentProfileToolsDeclaresResolvedPublicNameToGate(t *testing.T)
 	}
 }
 
+func TestRegisterAgentProfileToolsAllowsWorkLandingChatWithoutProjectTools(t *testing.T) {
+	registry := agentprofiles.NewRegistry()
+	if err := workproduct.RegisterAgentProfileRuntime(registry, "http://127.0.0.1:0"); err != nil {
+		t.Fatalf("register Work profile runtime: %v", err)
+	}
+	resolved := &resolvedAgentProfile{Definition: workproduct.BuiltinAgentProfile()}
+	gate := newProductToolGate(resolved)
+	registrar := &gateRecordingRegistrar{gate: gate}
+	api := &StreamingAPI{agentProfiles: registry}
+
+	if err := api.registerAgentProfileTools(registrar, gate, resolved, "user-1", "session-1", "Chats/Work/projects"); err != nil {
+		t.Fatalf("register landing-chat tools: %v", err)
+	}
+	for _, name := range registrar.admitted {
+		if name == "get_file_link" || name == "list_project_schedules" {
+			t.Fatalf("project-only tool %q was registered on Work landing chat: %v", name, registrar.admitted)
+		}
+	}
+	if !isActiveWorkProjectWorkspace("user-1", "_users/user-1/Chats/Work/projects/demo") {
+		t.Fatal("owned physical Work project path was not recognized")
+	}
+	if isActiveWorkProjectWorkspace("user-1", "Chats/Work/projects") {
+		t.Fatal("Work projects root was recognized as an active project")
+	}
+}
+
 // The gate is the one decision point, so it must not care which pool a tool
 // arrived from. Secret, workflow, and platform tools are all just names.
 func TestProductToolGateAppliesAcrossPools(t *testing.T) {

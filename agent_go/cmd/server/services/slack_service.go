@@ -212,19 +212,16 @@ func (s *SlackService) SendNotification(ctx context.Context, uniqueID string, me
 // buttons; replies remain normal bot-thread messages.
 func (s *SlackService) SendUserNotification(ctx context.Context, message string, contextMsg string, dest *NotificationDestination) (string, error) {
 	if !s.enabled || s.client == nil {
-		log.Printf("[SLACK_FLOW] outbound user_notification: skipped service not enabled enabled=%v clientReady=%v", s.enabled, s.client != nil)
 		return "", fmt.Errorf("slack service is not enabled")
 	}
 
 	channelID, threadTS := s.pickUserNotificationDestination(dest)
 	if channelID == "" {
-		log.Printf("[SLACK_FLOW] outbound user_notification: skipped no explicit destination user=%s", notificationDestUser(dest))
 		return "", nil
 	}
 
 	body := strings.TrimSpace(message)
 	if body == "" {
-		log.Printf("[SLACK_FLOW] outbound user_notification: skipped empty body channel=%s thread=%s", channelID, threadTS)
 		return "", nil
 	}
 	if contextMsg = strings.TrimSpace(contextMsg); contextMsg != "" {
@@ -246,10 +243,8 @@ func (s *SlackService) SendUserNotification(ctx context.Context, message string,
 	logBotOutboundMessage("slack", ThreadID{Platform: "slack", ChannelID: channelID, ThreadTS: threadTS}, "user_notification", body, 1, len(blocks))
 	_, timestamp, err := s.client.PostMessageContext(ctx, channelID, postOpts...)
 	if err != nil {
-		log.Printf("[SLACK_FLOW] outbound user_notification: post failed channel=%s thread=%s err=%v", channelID, threadTS, err)
 		return "", fmt.Errorf("failed to post Slack user notification: %w", err)
 	}
-	log.Printf("[SLACK_FLOW] outbound user_notification: posted channel=%s thread=%s ts=%s", channelID, threadTS, timestamp)
 	return timestamp, nil
 }
 
@@ -283,20 +278,16 @@ func GetSlackService() *SlackService {
 // config file. Called on server startup; Socket Mode is started automatically
 // when the config is valid and enabled.
 func InitSlackService() (*SlackService, error) {
-	log.Printf("[SLACK_FLOW] init: starting Slack service initialization")
 	service := &SlackService{
 		seenMessages: make(map[string]time.Time),
 	}
 
 	// Load config first
 	if err := service.loadConfig(context.Background()); err != nil {
-		log.Printf("[SLACK_FLOW] init: load config failed: %v", err)
 		SetSlackService(service)
 		return service, err
 	}
 	if service.config != nil {
-		log.Printf("[SLACK_FLOW] init: config loaded enabled=%v hasBotToken=%v hasAppToken=%v channel=%s",
-			service.config.Enabled, service.config.BotToken != "", service.config.AppToken != "", service.config.ChannelID)
 	}
 
 	// ReloadConfig will start Socket Mode if config is enabled and valid,
@@ -313,27 +304,22 @@ func InitSlackService() (*SlackService, error) {
 func (s *SlackService) loadConfig(ctx context.Context) error {
 	slackFSMu.Lock()
 	defer slackFSMu.Unlock()
-	log.Printf("[SLACK_FLOW] config: loading from %s", slackConfigFilePath())
 	cfg, err := loadSlackConfigFromDisk()
 	if err != nil {
 		return err
 	}
 	s.config = cfg
 	if cfg != nil {
-		log.Printf("[SLACK_FLOW] config: loaded enabled=%v hasBotToken=%v hasAppToken=%v channel=%s",
-			cfg.Enabled, cfg.BotToken != "", cfg.AppToken != "", cfg.ChannelID)
 	}
 	return nil
 }
 
 // ReloadConfig reloads configuration from disk and (re)starts Socket Mode.
 func (s *SlackService) ReloadConfig(ctx context.Context) error {
-	log.Printf("[SLACK_FLOW] reload: begin")
 	// Stop existing Socket Mode connection if running
 	s.StopSocketMode()
 
 	if err := s.loadConfig(ctx); err != nil {
-		log.Printf("[SLACK_FLOW] reload: load config failed: %v", err)
 		return err
 	}
 
@@ -363,8 +349,6 @@ func (s *SlackService) ReloadConfig(ctx context.Context) error {
 		}
 	}
 
-	log.Printf("[SLACK_FLOW] reload: complete enabled=%v clientReady=%v socketMode=%v channel=%s",
-		s.enabled, s.client != nil, s.useSocketMode, s.channelID)
 	return nil
 }
 
@@ -416,14 +400,12 @@ func (s *SlackService) SendFeedbackNotification(
 	dest *NotificationDestination,
 ) (string, error) {
 	if !s.enabled || s.client == nil {
-		log.Printf("[SLACK_FLOW] outbound feedback: skipped service not enabled enabled=%v clientReady=%v request=%s", s.enabled, s.client != nil, uniqueID)
 		return "", fmt.Errorf("slack service is not enabled")
 	}
 
 	channelID, threadTS := s.pickDestination(dest)
 	if channelID == "" {
 		// No hint, no preference, no default — skip silently.
-		log.Printf("[SLACK_FLOW] outbound feedback: skipped no destination request=%s user=%s", uniqueID, notificationDestUser(dest))
 		return "", nil
 	}
 
@@ -448,11 +430,8 @@ func (s *SlackService) SendFeedbackNotification(
 
 	postedChannelID, timestamp, err := s.client.PostMessage(channelID, postOpts...)
 	if err != nil {
-		log.Printf("[SLACK_FLOW] outbound feedback: post failed request=%s channel=%s thread=%s err=%v", uniqueID, channelID, threadTS, err)
 		return "", fmt.Errorf("failed to post Slack message: %w", err)
 	}
-	log.Printf("[SLACK_FLOW] outbound feedback: posted request=%s channel=%s postedChannel=%s thread=%s ts=%s blocks=%d",
-		uniqueID, channelID, postedChannelID, threadTS, timestamp, len(blocks))
 
 	// Store message mapping
 	if err := s.StoreMessageMapping(ctx, uniqueID, timestamp, postedChannelID); err != nil {
@@ -691,14 +670,12 @@ func (s *SlackService) StoreMessageMapping(
 ) error {
 	slackFSMu.Lock()
 	defer slackFSMu.Unlock()
-	log.Printf("[SLACK_FLOW] feedback_mapping: storing request=%s channel=%s ts=%s", uniqueID, channelID, messageTS)
 	records, err := getSlackFeedbackMessagesLocked()
 	if err != nil {
 		return fmt.Errorf("failed to load slack feedback messages: %w", err)
 	}
 	key := slackFeedbackMessageKey(messageTS, channelID)
 	if _, exists := records[key]; exists {
-		log.Printf("[SLACK_FLOW] feedback_mapping: already exists request=%s channel=%s ts=%s", uniqueID, channelID, messageTS)
 		return nil
 	}
 	records[key] = &slackFeedbackMessageRecord{
@@ -716,7 +693,6 @@ func (s *SlackService) GetUniqueIDFromThread(
 	threadTS string,
 	channelID string,
 ) (string, error) {
-	log.Printf("[SLACK_FLOW] feedback_mapping: lookup channel=%s thread=%s", channelID, threadTS)
 	// First, try to get from the in-memory mapping (thread_ts is the parent message timestamp).
 	slackFSMu.Lock()
 	records, err := getSlackFeedbackMessagesLocked()
@@ -728,10 +704,8 @@ func (s *SlackService) GetUniqueIDFromThread(
 	}
 	slackFSMu.Unlock()
 	if cached != "" {
-		log.Printf("[SLACK_FLOW] feedback_mapping: hit channel=%s thread=%s request=%s", channelID, threadTS, cached)
 		return cached, nil
 	}
-	log.Printf("[SLACK_FLOW] feedback_mapping: miss channel=%s thread=%s; checking Slack parent message", channelID, threadTS)
 
 	// If not found locally, try to get from Slack via the conversations.replies API
 	if s.client == nil {
@@ -747,12 +721,10 @@ func (s *SlackService) GetUniqueIDFromThread(
 	})
 
 	if err != nil {
-		log.Printf("[SLACK_FLOW] feedback_mapping: Slack replies lookup failed channel=%s thread=%s err=%v", channelID, threadTS, err)
 		return "", fmt.Errorf("failed to get Slack message: %w", err)
 	}
 
 	if len(replies) == 0 {
-		log.Printf("[SLACK_FLOW] feedback_mapping: Slack replies lookup returned no parent channel=%s thread=%s", channelID, threadTS)
 		return "", fmt.Errorf("message not found")
 	}
 
@@ -1004,12 +976,9 @@ func isMaskedToken(s string) bool {
 // currently-stored real token before writing to disk.
 func (s *SlackService) SaveConfig(ctx context.Context, config *SlackConfig) error {
 	if config == nil {
-		log.Printf("[SLACK_FLOW] config: save failed nil config")
 		return fmt.Errorf("slack config is required")
 	}
 	slackFSMu.Lock()
-	log.Printf("[SLACK_FLOW] config: save requested enabled=%v hasBotToken=%v hasAppToken=%v channel=%s maskedBot=%v maskedApp=%v",
-		config.Enabled, config.BotToken != "", config.AppToken != "", config.ChannelID, isMaskedToken(config.BotToken), isMaskedToken(config.AppToken))
 	if s.config != nil {
 		if isMaskedToken(config.BotToken) {
 			config.BotToken = s.config.BotToken
@@ -1024,7 +993,6 @@ func (s *SlackService) SaveConfig(ctx context.Context, config *SlackConfig) erro
 		return fmt.Errorf("failed to save Slack config: %w", err)
 	}
 	slackFSMu.Unlock()
-	log.Printf("[SLACK_FLOW] config: saved to %s", slackConfigFilePath())
 
 	if err := s.ReloadConfig(ctx); err != nil {
 		log.Printf("[SLACK] Failed to reload config after save: %v", err)
@@ -1040,21 +1008,16 @@ func (s *SlackService) StartSocketMode(ctx context.Context) error {
 
 	if s.socketClient != nil {
 		// Already running
-		log.Printf("[SLACK_FLOW] socket: start skipped already running")
 		return nil
 	}
 
 	if s.config == nil || s.config.AppToken == "" {
-		log.Printf("[SLACK_FLOW] socket: start failed missing app token configPresent=%v", s.config != nil)
 		return fmt.Errorf("app token is required for Socket Mode")
 	}
 
 	if s.config.BotToken == "" {
-		log.Printf("[SLACK_FLOW] socket: start failed missing bot token")
 		return fmt.Errorf("bot token is required for Socket Mode")
 	}
-	log.Printf("[SLACK_FLOW] socket: creating Socket Mode client channel=%s hasBotToken=%v hasAppToken=%v",
-		s.config.ChannelID, s.config.BotToken != "", s.config.AppToken != "")
 
 	// Create Slack client with app-level token
 	api := slack.New(
@@ -1084,7 +1047,6 @@ func (s *SlackService) StartSocketMode(ctx context.Context) error {
 	// Start event handler in goroutine
 	// Note: socketClient.Events channel is populated by Run()
 	go s.handleSocketModeEvents()
-	log.Printf("[SLACK_FLOW] socket: event handler started")
 	return nil
 }
 
@@ -1187,10 +1149,8 @@ func (s *SlackService) handleSocketModeEvents() {
 		log.Printf("[SLACK_SOCKET] ⚠️  handleSocketModeEvents: socketClient is nil")
 		return
 	}
-	log.Printf("[SLACK_FLOW] socket: event loop running")
 
 	for evt := range s.socketClient.Events {
-		log.Printf("[SLACK_FLOW] socket: event received type=%s hasRequest=%v", evt.Type, evt.Request != nil)
 		switch evt.Type {
 		case socketmode.EventTypeConnectionError:
 			log.Printf("[SLACK] Socket Mode connection error: %v", evt.Data)
@@ -1199,28 +1159,21 @@ func (s *SlackService) handleSocketModeEvents() {
 		case socketmode.EventTypeInteractive:
 			s.handleSocketModeInteractive(evt)
 		default:
-			log.Printf("[SLACK_FLOW] socket: ignored event type=%s", evt.Type)
 		}
 	}
-	log.Printf("[SLACK_FLOW] socket: event loop exited")
 }
 
 // handleSocketModeEvent handles Events API events from Socket Mode
 func (s *SlackService) handleSocketModeEvent(evt socketmode.Event) {
 	eventsAPIEvent, ok := evt.Data.(slackevents.EventsAPIEvent)
 	if !ok {
-		log.Printf("[SLACK_FLOW] events_api: ignored unexpected payload type=%T", evt.Data)
 		return
 	}
-	log.Printf("[SLACK_FLOW] events_api: received type=%s innerType=%s team=%s apiApp=%s",
-		eventsAPIEvent.Type, eventsAPIEvent.InnerEvent.Type, eventsAPIEvent.TeamID, eventsAPIEvent.APIAppID)
 
 	// Acknowledge the event
 	if evt.Request != nil {
 		s.socketClient.Ack(*evt.Request)
-		log.Printf("[SLACK_FLOW] events_api: acked envelope=%s", evt.Request.EnvelopeID)
 	} else {
-		log.Printf("[SLACK_FLOW] events_api: no request envelope to ack")
 	}
 
 	// Handle callback events (like message events)
@@ -1232,10 +1185,8 @@ func (s *SlackService) handleSocketModeEvent(evt socketmode.Event) {
 		case *slackevents.AppMentionEvent:
 			s.handleAppMentionEvent(ev)
 		default:
-			log.Printf("[SLACK_FLOW] events_api: ignored callback inner payload type=%T", innerEvent.Data)
 		}
 	} else {
-		log.Printf("[SLACK_FLOW] events_api: ignored non-callback type=%s", eventsAPIEvent.Type)
 	}
 }
 
@@ -1243,8 +1194,6 @@ func (s *SlackService) handleSocketModeEvent(evt socketmode.Event) {
 func (s *SlackService) handleSocketModeMessage(ev *slackevents.MessageEvent) {
 	// Only process thread replies (not bot messages)
 	if ev.BotID != "" || ev.ThreadTimeStamp == "" || ev.ThreadTimeStamp == ev.TimeStamp {
-		log.Printf("[SLACK_FLOW] message_event: ignored user=%s channel=%s ts=%s thread=%s botID=%s reason=not-thread-user-reply",
-			ev.User, ev.Channel, ev.TimeStamp, ev.ThreadTimeStamp, ev.BotID)
 		return
 	}
 
@@ -1253,37 +1202,25 @@ func (s *SlackService) handleSocketModeMessage(ev *slackevents.MessageEvent) {
 	// ts here and then return, the app_mention event (which arrives with the
 	// same ts) will hit the cache and be dropped, so the message goes nowhere.
 	if s.botUserID != "" && strings.Contains(ev.Text, fmt.Sprintf("<@%s>", s.botUserID)) {
-		log.Printf("[SLACK_FLOW] message_event: thread reply contains bot mention user=%s channel=%s ts=%s thread=%s chars=%d",
-			ev.User, ev.Channel, ev.TimeStamp, ev.ThreadTimeStamp, len(ev.Text))
 		s.handleSlackBotMessage(ev.User, ev.Channel, ev.ThreadTimeStamp, ev.TimeStamp, s.stripMention(ev.Text), ev.Message, true, true)
 		return
 	}
 
-	log.Printf("[SLACK_FLOW] message_event: thread reply user=%s channel=%s ts=%s thread=%s chars=%d",
-		ev.User, ev.Channel, ev.TimeStamp, ev.ThreadTimeStamp, len(ev.Text))
 	s.handleSlackBotMessage(ev.User, ev.Channel, ev.ThreadTimeStamp, ev.TimeStamp, ev.Text, ev.Message, true, false)
 }
 
 func (s *SlackService) handleSlackBotMessage(userID, channelID, threadTS, messageTS, text string, msg *slack.Msg, isThreadReply, isMention bool) {
 	if s.messageHandler == nil {
-		log.Printf("[SLACK_FLOW] bot_message: ignored no message handler user=%s channel=%s thread=%s ts=%s mention=%v",
-			userID, channelID, threadTS, messageTS, isMention)
 		return
 	}
 
 	if s.isDuplicateMessage(messageTS) {
-		log.Printf("[SLACK_FLOW] bot_message: ignored duplicate user=%s channel=%s thread=%s ts=%s mention=%v",
-			userID, channelID, threadTS, messageTS, isMention)
 		return
 	}
 
 	userEmail := s.resolveUserEmail(userID)
-	log.Printf("[SLACK_FLOW] bot_message: normalized user=%s hasEmail=%v channel=%s thread=%s ts=%s mention=%v threadReply=%v chars=%d files=%d",
-		userID, userEmail != "", channelID, threadTS, messageTS, isMention, isThreadReply, len(text), slackMessageFileCount(msg))
 	text, presetRoute, handled := s.routeSlackWorkflowMessage(context.Background(), userID, userEmail, channelID, threadTS, text, isThreadReply)
 	if handled {
-		log.Printf("[SLACK_FLOW] bot_message: handled by Slack workflow router user=%s email=%s channel=%s thread=%s ts=%s",
-			userID, userEmail, channelID, threadTS, messageTS)
 		return
 	}
 	text = s.appendSlackFileContext(context.Background(), text, msg, channelID, userEmail, presetRoute)
@@ -1296,15 +1233,8 @@ func (s *SlackService) handleSlackBotMessage(userID, channelID, threadTS, messag
 		if err := s.client.AddReaction("eyes", slack.ItemRef{Channel: channelID, Timestamp: messageTS}); err != nil {
 			log.Printf("[SLACK_BOT] Failed to add ack reaction: %v", err)
 		} else {
-			log.Printf("[SLACK_FLOW] bot_message: added ack reaction channel=%s ts=%s", channelID, messageTS)
 		}
 	}
-	workflowID := ""
-	if presetRoute != nil {
-		workflowID = presetRoute.WorkflowID
-	}
-	log.Printf("[SLACK_FLOW] bot_message: handing to bot manager channel=%s thread=%s ts=%s mention=%v workflow=%s chars=%d",
-		channelID, threadTS, messageTS, isMention, workflowID, len(text))
 	s.messageHandler(BotIncomingMessage{
 		Platform:       "slack",
 		UserID:         userID,
@@ -1321,7 +1251,6 @@ func (s *SlackService) handleSlackBotMessage(userID, channelID, threadTS, messag
 	})
 
 	if isMention {
-		log.Printf("[SLACK_FLOW] bot_message: mention routed to bot manager; skipping feedback lookup channel=%s thread=%s", channelID, threadTS)
 		return
 	}
 
@@ -1333,7 +1262,6 @@ func (s *SlackService) handleSlackBotMessage(userID, channelID, threadTS, messag
 	)
 	if err != nil {
 		// Not a feedback thread — this is normal for bot session threads
-		log.Printf("[SLACK_FLOW] bot_message: not a feedback thread channel=%s thread=%s err=%v", channelID, threadTS, err)
 		return
 	}
 
@@ -1348,18 +1276,13 @@ func (s *SlackService) handleSlackBotMessage(userID, channelID, threadTS, messag
 		log.Printf("[SLACK_SOCKET] Failed to submit feedback via notification manager: %v", err)
 		return
 	}
-	log.Printf("[SLACK_FLOW] bot_message: submitted feedback request=%s channel=%s thread=%s", uniqueID, channelID, threadTS)
 }
 
 func (s *SlackService) routeSlackWorkflowMessage(_ context.Context, userID, userEmail, channelID, threadTS, text string, isThreadReply bool) (string, *ChannelRoute, bool) {
 	route := s.resolveSlackChannelWorkflow(channelID)
 	if route == nil {
-		log.Printf("[SLACK_FLOW] route: no Slack channel workflow route user=%s email=%s channel=%s thread=%s reply=%v chars=%d",
-			userID, userEmail, channelID, threadTS, isThreadReply, len(text))
 		return text, nil, false
 	}
-	log.Printf("[SLACK_FLOW] route: Slack channel routed user=%s email=%s channel=%s thread=%s reply=%v workflow=%s workspace=%s chars=%d",
-		userID, userEmail, channelID, threadTS, isThreadReply, route.WorkflowID, route.WorkspacePath, len(text))
 	return text, route, false
 }
 
@@ -1375,25 +1298,19 @@ func (s *SlackService) handleSocketModeInteractive(evt socketmode.Event) {
 	// Get the interaction callback
 	callback, ok := evt.Data.(slack.InteractionCallback)
 	if !ok {
-		log.Printf("[SLACK_FLOW] interactive: ignored unexpected payload type=%T", evt.Data)
 		if evt.Request != nil {
 			s.socketClient.Ack(*evt.Request)
-			log.Printf("[SLACK_FLOW] interactive: acked unexpected payload envelope=%s", evt.Request.EnvelopeID)
 		}
 		return
 	}
-	log.Printf("[SLACK_FLOW] interactive: received type=%s user=%s channel=%s actions=%d",
-		callback.Type, callback.User.ID, callback.Channel.ID, len(callback.ActionCallback.BlockActions))
 
 	// Acknowledge the event immediately
 	if evt.Request != nil {
 		s.socketClient.Ack(*evt.Request)
-		log.Printf("[SLACK_FLOW] interactive: acked envelope=%s", evt.Request.EnvelopeID)
 	}
 
 	// Only handle button actions
 	if callback.Type != slack.InteractionTypeBlockActions {
-		log.Printf("[SLACK_FLOW] interactive: ignored non-block-action type=%s", callback.Type)
 		return
 	}
 
@@ -1418,11 +1335,8 @@ func (s *SlackService) handleSocketModeInteractive(evt socketmode.Event) {
 				if threadTS == "" {
 					threadTS = callback.Message.Timestamp
 				}
-				log.Printf("[SLACK_FLOW] interactive: handing bot action to manager action=%s value=%s user=%s channel=%s thread=%s",
-					actionID, value, callback.User.ID, callback.Channel.ID, threadTS)
 				s.interactionHandler("slack", callback.Channel.ID, threadTS, actionID, value, callback.User.ID)
 			} else {
-				log.Printf("[SLACK_FLOW] interactive: ignored bot action no handler action=%s user=%s channel=%s", actionID, callback.User.ID, callback.Channel.ID)
 			}
 			continue
 		}
@@ -1452,8 +1366,6 @@ func (s *SlackService) handleSocketModeInteractive(evt socketmode.Event) {
 			log.Printf("[SLACK_SOCKET] ⚠️  Could not extract uniqueID from action ID: %s", actionID)
 			continue
 		}
-		log.Printf("[SLACK_FLOW] interactive: feedback action parsed action=%s request=%s response=%q user=%s channel=%s",
-			actionID, uniqueID, response, callback.User.ID, callback.Channel.ID)
 
 		// Submit response via notification manager
 		notificationManager := GetNotificationManager()
@@ -1466,7 +1378,6 @@ func (s *SlackService) handleSocketModeInteractive(evt socketmode.Event) {
 			log.Printf("[SLACK_SOCKET] ❌ Failed to submit button response: %v", err)
 			continue
 		}
-		log.Printf("[SLACK_FLOW] interactive: submitted feedback request=%s user=%s channel=%s", uniqueID, callback.User.ID, callback.Channel.ID)
 
 		// Update the message to show the button was clicked (optional - can disable buttons)
 		// For now, we'll just log it - Slack will automatically disable the button after click
@@ -1755,8 +1666,6 @@ func (s *SlackService) handleAppMentionEvent(ev *slackevents.AppMentionEvent) {
 
 	// Dedup: skip if we've already seen this message timestamp
 	if s.isDuplicateMessage(ev.TimeStamp) {
-		log.Printf("[SLACK_FLOW] app_mention: ignored duplicate user=%s channel=%s ts=%s thread=%s",
-			ev.User, ev.Channel, ev.TimeStamp, ev.ThreadTimeStamp)
 		return
 	}
 
@@ -1772,30 +1681,20 @@ func (s *SlackService) handleAppMentionEvent(ev *slackevents.AppMentionEvent) {
 	}
 
 	log.Printf("[SLACK_BOT] AppMention from user=%s channel=%s thread=%s: %s", ev.User, ev.Channel, threadTS, botTruncate(text, 80))
-	log.Printf("[SLACK_FLOW] app_mention: normalized user=%s channel=%s ts=%s thread=%s threadReply=%v chars=%d",
-		ev.User, ev.Channel, ev.TimeStamp, threadTS, isThreadReply, len(text))
 
 	// Immediate ack: add reaction emoji so user sees the bot received the message
 	if s.client != nil {
 		if err := s.client.AddReaction("eyes", slack.ItemRef{Channel: ev.Channel, Timestamp: ev.TimeStamp}); err != nil {
 			log.Printf("[SLACK_BOT] Failed to add ack reaction: %v", err)
 		} else {
-			log.Printf("[SLACK_FLOW] app_mention: added ack reaction channel=%s ts=%s", ev.Channel, ev.TimeStamp)
 		}
 	}
 
 	userEmail := s.resolveUserEmail(ev.User)
 	text, presetRoute, handled := s.routeSlackWorkflowMessage(context.Background(), ev.User, userEmail, ev.Channel, threadTS, text, isThreadReply)
 	if handled {
-		log.Printf("[SLACK_FLOW] app_mention: handled by Slack workflow router user=%s email=%s channel=%s thread=%s ts=%s",
-			ev.User, userEmail, ev.Channel, threadTS, ev.TimeStamp)
 		return
 	}
-	workflowID := ""
-	if presetRoute != nil {
-		workflowID = presetRoute.WorkflowID
-	}
-	log.Printf("[SLACK_FLOW] app_mention: handing to bot manager channel=%s thread=%s ts=%s workflow=%s", ev.Channel, threadTS, ev.TimeStamp, workflowID)
 	s.messageHandler(BotIncomingMessage{
 		Platform:       "slack",
 		UserID:         ev.User,
@@ -1884,8 +1783,6 @@ func (s *SlackService) resolveSlackChannelWorkflow(channelID string) *ChannelRou
 			route.WorkspacePath = strings.TrimSpace(route.WorkspacePath)
 			route.WorkshopMode = NormalizeBotWorkshopMode(route.WorkshopMode)
 			route.SendFullDetails = true
-			log.Printf("[SLACK_FLOW] route: using legacy single Slack route key=%s for default channel=%s workflow=%s",
-				rawKey, channelID, route.WorkflowID)
 			return &route
 		}
 	}

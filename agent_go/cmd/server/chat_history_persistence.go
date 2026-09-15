@@ -271,7 +271,7 @@ func copyChatHistoryConversationIfNeeded(sourcePath, destinationPath string) err
 	return writeRawFileToWorkspace(context.Background(), destinationPath, content)
 }
 
-func (api *StreamingAPI) persistChatConversationToPathWithTerminalSession(sessionID, terminalSnapshotSessionID, agentMode, userID string, persistedHistory []llmtypes.MessageContent, runtime *ChatHistoryAgentRuntime, uiEvents []internalevents.Event, conversationPath string, botMeta *ChatHistoryBotMetadata) {
+func (api *StreamingAPI) persistChatConversationToPathWithTerminalSession(sessionID, terminalSnapshotSessionID, agentMode, userID string, persistedHistory []llmtypes.MessageContent, runtime *ChatHistoryAgentRuntime, uiEvents []internalevents.Event, conversationPath string, botMetaArg ...*ChatHistoryBotMetadata) {
 	if len(persistedHistory) == 0 {
 		return
 	}
@@ -281,6 +281,10 @@ func (api *StreamingAPI) persistChatConversationToPathWithTerminalSession(sessio
 	logCtx := newServerLogContext("", "", agentMode, userID, "", sessionID)
 
 	now := time.Now()
+	var botMeta *ChatHistoryBotMetadata
+	if len(botMetaArg) > 0 {
+		botMeta = botMetaArg[0]
+	}
 	convData := map[string]interface{}{
 		"session_id":           sessionID,
 		"user_id":              userID,

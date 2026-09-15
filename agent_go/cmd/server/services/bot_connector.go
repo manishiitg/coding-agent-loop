@@ -745,8 +745,6 @@ func (m *BotConversationManager) authorizeWorkflowRouteForMessage(ctx context.Co
 		msg.WorkspaceUserID = strings.TrimSpace(resolvedUserID)
 	}
 	if err != nil {
-		log.Printf("[BOT_MANAGER] Failed to verify workflow access platform=%s user=%s email=%s workflow=%s workspace=%s: %v",
-			msg.Platform, msg.UserID, msg.UserEmail, route.WorkflowID, route.WorkspacePath, err)
 		if msg.IsMention {
 			m.sendWorkflowAccessDenied(msg.Platform, threadID, "I can't verify your workflow access right now. Please try again in a moment.")
 		}
@@ -758,8 +756,6 @@ func (m *BotConversationManager) authorizeWorkflowRouteForMessage(ctx context.Co
 		}
 		return true
 	}
-	log.Printf("[BOT_MANAGER] Rejected workflow bot message platform=%s user=%s email=%s workspaceUser=%s workflow=%s workspace=%s — no workflow access",
-		msg.Platform, msg.UserID, msg.UserEmail, workspaceUserID, route.WorkflowID, route.WorkspacePath)
 	if msg.IsMention {
 		m.sendWorkflowAccessDenied(msg.Platform, threadID, "You don't have access to this workflow. Ask a workflow owner to share it with you in AgentWorks.")
 	}
@@ -774,15 +770,11 @@ func (m *BotConversationManager) sendWorkflowAccessDenied(platform string, threa
 	if threadID.ThreadTS == "" {
 		threadID.ThreadTS = fmt.Sprintf("%d", time.Now().UnixNano())
 	}
-	if _, err := connector.SendThreadMessage(context.Background(), threadID, message); err != nil {
-		log.Printf("[BOT_MANAGER] Failed to send workflow access denial: %v", err)
-	}
+	_, _ = connector.SendThreadMessage(context.Background(), threadID, message)
 }
 
 // HandleIncomingMessage processes a message from any platform (async path)
 func (m *BotConversationManager) HandleIncomingMessage(msg BotIncomingMessage) {
-	log.Printf("[BOT_FLOW] incoming: platform=%s user=%s hasEmail=%v workspaceUser=%s channel=%s thread=%s ts=%s mention=%v threadReply=%v chars=%d",
-		msg.Platform, msg.UserID, msg.UserEmail != "", msg.WorkspaceUserID, msg.ChannelID, msg.ThreadTS, msg.MessageTS, msg.IsMention, msg.IsThreadReply, len(msg.Text))
 	// Non-mention messages should only be processed if there's an active session
 	// in the thread or the platform router already attached an explicit workflow.
 	// Skip access checks and don't reply with "no access" for messages that didn't tag the bot.
@@ -800,13 +792,9 @@ func (m *BotConversationManager) HandleIncomingMessage(msg BotIncomingMessage) {
 		m.mu.Unlock()
 		if !hasSession {
 			// No session entry and not a mention — silently ignore
-			log.Printf("[BOT_FLOW] incoming: ignored non-mention without active session thread=%s", probeThreadID.Key())
 			return
 		}
-		log.Printf("[BOT_FLOW] incoming: non-mention matched active session thread=%s", probeThreadID.Key())
 	} else if !msg.IsMention {
-		log.Printf("[BOT_FLOW] incoming: non-mention carries preset workflow platform=%s user=%s workflow=%s; allowing restart/route",
-			msg.Platform, msg.UserID, msg.PresetWorkflow.WorkflowID)
 	}
 
 	// Reject if we can't link the user to a workspace identity. Without an email
@@ -814,8 +802,6 @@ func (m *BotConversationManager) HandleIncomingMessage(msg BotIncomingMessage) {
 	// or schedules — so refuse the message rather than merging into a shared folder.
 	if msg.UserEmail == "" && msg.WorkspaceUserID == "" {
 		log.Printf("[BOT_MANAGER] Rejected message from %s — no email available to link account", msg.UserID)
-		log.Printf("[BOT_FLOW] access: rejected missing workspace identity platform=%s user=%s channel=%s thread=%s mention=%v",
-			msg.Platform, msg.UserID, msg.ChannelID, msg.ThreadTS, msg.IsMention)
 		if msg.IsMention {
 			if connector := m.GetConnector(msg.Platform); connector != nil {
 				threadID := ThreadID{Platform: msg.Platform, ChannelID: msg.ChannelID, ThreadTS: msg.ThreadTS}
@@ -859,7 +845,6 @@ func (m *BotConversationManager) HandleIncomingMessage(msg BotIncomingMessage) {
 
 		// 3. If any allowed emails are configured, enforce the filter
 		if len(allowedEmails) > 0 {
-			log.Printf("[BOT_FLOW] access: enforcing allowed emails count=%d user=%s email=%s", len(allowedEmails), msg.UserID, msg.UserEmail)
 			allowed := false
 			for _, email := range allowedEmails {
 				if strings.EqualFold(email, msg.UserEmail) {
@@ -869,7 +854,6 @@ func (m *BotConversationManager) HandleIncomingMessage(msg BotIncomingMessage) {
 			}
 			if !allowed {
 				log.Printf("[BOT_MANAGER] Rejected message from %s (%s) — not in allowed_emails", msg.UserID, msg.UserEmail)
-				log.Printf("[BOT_FLOW] access: rejected email not allowed user=%s email=%s", msg.UserID, msg.UserEmail)
 				// Only reply with rejection for direct @mentions
 				if msg.IsMention {
 					if connector := m.GetConnector(msg.Platform); connector != nil {
@@ -882,13 +866,11 @@ func (m *BotConversationManager) HandleIncomingMessage(msg BotIncomingMessage) {
 				}
 				return
 			}
-			log.Printf("[BOT_FLOW] access: allowed user=%s email=%s", msg.UserID, msg.UserEmail)
 		}
 	}
 
 	connector := m.GetConnector(msg.Platform)
 	if connector == nil {
-		log.Printf("[BOT_FLOW] incoming: no connector registered platform=%s channel=%s thread=%s", msg.Platform, msg.ChannelID, msg.ThreadTS)
 	}
 
 	threadID := ThreadID{
@@ -907,7 +889,6 @@ func (m *BotConversationManager) HandleIncomingMessage(msg BotIncomingMessage) {
 
 	threadKey := threadID.Key()
 	log.Printf("[BOT_MANAGER] Incoming message from %s user=%s thread=%s: %s", msg.Platform, msg.UserID, threadKey, botTruncate(msg.Text, 100))
-	log.Printf("[BOT_FLOW] route: normalized thread=%s supportsThreads=%v", threadKey, supportsThreads)
 
 	m.mu.RLock()
 	active, exists := m.sessions[threadKey]
@@ -918,24 +899,16 @@ func (m *BotConversationManager) HandleIncomingMessage(msg BotIncomingMessage) {
 	}
 
 	if selector, ok := parseBotResumeCommand(msg.Text, !supportsThreads); ok {
-		log.Printf("[BOT_FLOW] route: resume command selector=%q thread=%s", selector, threadKey)
 		m.handleBotResumeCommand(msg, threadID, threadKey, selector, botResumeFilterFromRoute(msg.PresetWorkflow))
 		return
 	}
 
 	if exists {
-		active.mu.Lock()
-		sessionID := active.SessionID
-		status := active.Status
-		awaiting := active.awaitingUserInput
-		active.mu.Unlock()
-		log.Printf("[BOT_FLOW] route: existing session thread=%s session=%s status=%s awaiting=%v", threadKey, sessionID, status, awaiting)
 		m.handleExistingSession(active, msg, supportsThreads)
 		return
 	}
 
 	if m.handleBotControlWithoutSession(msg, threadID, supportsThreads) {
-		log.Printf("[BOT_FLOW] route: handled control without active session thread=%s", threadKey)
 		return
 	}
 
@@ -962,7 +935,6 @@ func (m *BotConversationManager) HandleIncomingMessage(msg BotIncomingMessage) {
 		}
 	}
 
-	log.Printf("[BOT_FLOW] route: starting new session thread=%s platform=%s channel=%s", threadKey, msg.Platform, msg.ChannelID)
 	go m.startNewSessionDirect(msg, threadID)
 }
 
@@ -1105,7 +1077,7 @@ func (m *BotConversationManager) handleExistingSession(active *activeBotSession,
 	if isSessionStatusCommand(msg.Text, requireControlPrefix) {
 		if connector := m.GetConnector(active.Platform); connector != nil {
 			filter := botResumeFilterFromActive(active)
-			connector.SendThreadMessage(context.Background(), active.ThreadID, m.formatBotStatusReply(active.Platform, oldUserID, status, awaiting, blockingEventType, sendFullDetails, filter))
+			connector.SendThreadMessage(context.Background(), active.ThreadID, m.formatBotStatusReply(oldUserID, status, awaiting, blockingEventType, sendFullDetails, filter))
 		}
 		return
 	}
@@ -1284,7 +1256,7 @@ func (m *BotConversationManager) handleBotControlWithoutSession(msg BotIncomingM
 			reply = "No active bot session in this thread. Start a workflow run first, then use `@full` or `@concise` to change message detail for that run."
 		}
 	} else if isSessionStatusCommand(msg.Text, requireControlPrefix) {
-		reply = m.formatBotStatusReply(msg.Platform, m.resolveWorkspaceUserID(msg), "", false, "", false, botResumeFilterFromRoute(msg.PresetWorkflow))
+		reply = m.formatBotStatusReply(m.resolveWorkspaceUserID(msg), "", false, "", false, botResumeFilterFromRoute(msg.PresetWorkflow))
 	}
 	connector.SendThreadMessage(context.Background(), threadID, reply)
 	return true
@@ -1450,15 +1422,12 @@ func (m *BotConversationManager) setActiveBotDetailMode(active *activeBotSession
 func (m *BotConversationManager) startFollowUpTurn(active *activeBotSession, msg BotIncomingMessage, sessionID, userID, source string) bool {
 	if m.followUpSession == nil || sessionID == "" {
 		log.Printf("[BOT_MANAGER] Cannot send follow-up: followUpSession=%v sessionID=%s", m.followUpSession != nil, sessionID)
-		log.Printf("[BOT_FLOW] follow_up: unavailable source=%s session=%s hasFollowUp=%v", source, sessionID, m.followUpSession != nil)
 		return false
 	}
 	if source == "" {
 		source = "follow-up"
 	}
 	log.Printf("[BOT_MANAGER] Sending %s to session %s: %s", source, sessionID, botTruncate(msg.Text, 80))
-	log.Printf("[BOT_FLOW] follow_up: starting source=%s platform=%s session=%s user=%s channel=%s thread=%s chars=%d",
-		source, msg.Platform, sessionID, userID, msg.ChannelID, active.ThreadID.ThreadTS, len(msg.Text))
 	active.mu.Lock()
 	builderDone := active.builderDone
 	active.mu.Unlock()
@@ -1480,12 +1449,10 @@ func (m *BotConversationManager) startFollowUpTurn(active *activeBotSession, msg
 		err := m.followUpSession(followCtx, m.turnRequestForActive(active, m.withBotRuntimeState(active, msg.Text), userID, platform, threadID), sessionID, userID)
 		if err != nil {
 			log.Printf("[BOT_MANAGER] Follow-up failed: %v", err)
-			log.Printf("[BOT_FLOW] follow_up: failed source=%s platform=%s session=%s err=%v", source, platform, sessionID, err)
 			if connector := m.GetConnector(platform); connector != nil {
 				connector.SendThreadMessage(context.Background(), threadID, fmt.Sprintf("Couldn't deliver your message: %v", err))
 			}
 		} else {
-			log.Printf("[BOT_FLOW] follow_up: delivered to runtime source=%s platform=%s session=%s", source, platform, sessionID)
 		}
 	}()
 	return true
@@ -1780,15 +1747,12 @@ func firstNonEmpty(values ...string) string {
 	return ""
 }
 
-func (m *BotConversationManager) formatBotStatusReply(platform, userID, status string, awaiting bool, blockingEventType string, sendFullDetails bool, filter BotResumeFilter) string {
+func (m *BotConversationManager) formatBotStatusReply(userID, status string, awaiting bool, blockingEventType string, sendFullDetails bool, filter BotResumeFilter) string {
 	detail := "concise"
 	if sendFullDetails {
 		detail = "full"
 	}
 	suffix := fmt.Sprintf("\nDetail mode: %s. Use `@full` or `@concise` to switch.", detail)
-	if strings.EqualFold(platform, "slack") {
-		suffix = "\nDetail mode: full."
-	}
 	resumeList := m.formatResumeList(userID, filter)
 	if m.runningWorkflows != nil {
 		if workflows := m.runningWorkflows(userID); len(workflows) > 0 {
@@ -2126,8 +2090,6 @@ func (m *BotConversationManager) HandleMessageSync(ctx context.Context, msg BotI
 // native coding-agent runtime from the previous persisted session.
 func (m *BotConversationManager) startNewSessionDirect(msg BotIncomingMessage, threadID ThreadID, resumeSessionID ...string) {
 	workspaceUserID := m.resolveWorkspaceUserID(msg)
-	log.Printf("[BOT_FLOW] session_start: requested platform=%s user=%s workspaceUser=%s channel=%s thread=%s resumeArgs=%d chars=%d",
-		msg.Platform, msg.UserID, workspaceUserID, threadID.ChannelID, threadID.ThreadTS, len(resumeSessionID), len(msg.Text))
 	if route := msg.PresetWorkflow; route != nil && strings.TrimSpace(route.ProfileID) != "" {
 		label := strings.TrimSpace(route.ProfileLabel)
 		if label == "" {
@@ -2163,7 +2125,6 @@ func (m *BotConversationManager) startNewSessionDirect(msg BotIncomingMessage, t
 		req, profileSessionID, handled, err := m.profileTurn(context.Background(), workspaceUserID, msg, threadID)
 		if err != nil {
 			log.Printf("[BOT_MANAGER] Profile turn failed for thread %s: %v", threadID.Key(), err)
-			log.Printf("[BOT_FLOW] session_start: profile turn failed thread=%s err=%v", threadID.Key(), err)
 			if connector := m.GetConnector(msg.Platform); connector != nil {
 				connector.SendThreadMessage(context.Background(), threadID, fmt.Sprintf("Couldn't start that chat: %v", err))
 			}
@@ -2172,7 +2133,6 @@ func (m *BotConversationManager) startNewSessionDirect(msg BotIncomingMessage, t
 		if handled {
 			queryReq, sessionID, profileTurn = req, profileSessionID, true
 			log.Printf("[BOT_MANAGER] Thread %s runs in default profile conversation %s", threadID.Key(), sessionID)
-			log.Printf("[BOT_FLOW] session_start: using profile conversation thread=%s session=%s", threadID.Key(), sessionID)
 		}
 	}
 	if queryReq == nil {
@@ -2207,8 +2167,6 @@ func (m *BotConversationManager) startNewSessionDirect(msg BotIncomingMessage, t
 	m.sessions[threadID.Key()] = active
 	m.mu.Unlock()
 	m.persistBotSessionBinding(active, startedAt)
-	log.Printf("[BOT_FLOW] session_start: active session registered thread=%s session=%s platform=%s user=%s fullDetails=%v profileTurn=%v routeKey=%s",
-		threadID.Key(), sessionID, msg.Platform, workspaceUserID, sendFullDetails, profileTurn, active.RouteKey)
 
 	// Long-running indicator: if the agent hasn't replied within ~10s, layer an
 	// hourglass reaction on top of the "eyes" ack so the user knows the bot is
@@ -2309,14 +2267,11 @@ func (m *BotConversationManager) runSession(active *activeBotSession, queryReq m
 	ctx := context.Background()
 	if active != nil {
 		active.mu.Lock()
-		log.Printf("[BOT_FLOW] run_session: begin platform=%s session=%s user=%s thread=%s fullDetails=%v",
-			active.Platform, active.SessionID, active.UserID, active.ThreadID.Key(), active.sendFullDetails)
 		active.mu.Unlock()
 	}
 
 	connector := m.GetConnector(active.Platform)
 	if connector == nil {
-		log.Printf("[BOT_FLOW] run_session: abort no connector platform=%s session=%s", active.Platform, active.SessionID)
 		return
 	}
 
@@ -2357,42 +2312,34 @@ func (m *BotConversationManager) runSession(active *activeBotSession, queryReq m
 
 	if m.eventSubscriber != nil {
 		log.Printf("[BOT_MANAGER] Starting event filter goroutine for session %s", sessionID)
-		log.Printf("[BOT_FLOW] run_session: event filter starting session=%s thread=%s", sessionID, active.ThreadID.Key())
 		go active.eventFilter.Start(sessionCtx, m.eventSubscriber, sessionID)
 	} else {
 		log.Printf("[BOT_MANAGER] WARNING: eventSubscriber is nil, event filter NOT started for session %s", sessionID)
-		log.Printf("[BOT_FLOW] run_session: event filter unavailable session=%s", sessionID)
 	}
 
 	if m.chatHistory != nil {
-		log.Printf("[BOT_FLOW] run_session: progressive text poller starting session=%s", sessionID)
 		go m.pollProgressiveText(sessionCtx, active)
 	}
 
 	// Start the actual session in background — don't block on it.
 	if m.startSession != nil {
 		go func() {
-			log.Printf("[BOT_FLOW] run_session: calling startSession session=%s user=%s", sessionID, userID)
 			err := m.startSession(sessionCtx, queryReq, sessionID, userID, func(event *events.AgentEvent) {})
 			if err != nil && sessionCtx.Err() == nil {
 				log.Printf("[BOT_MANAGER] Session error: %v", err)
-				log.Printf("[BOT_FLOW] run_session: startSession failed session=%s err=%v", sessionID, err)
 				connector.SendThreadMessage(ctx, active.ThreadID, fmt.Sprintf("Session failed: %v", err))
 				active.mu.Lock()
 				active.Status = chathistory.BotSessionStatusFailed
 				active.mu.Unlock()
 				cancel()
 			} else if err == nil {
-				log.Printf("[BOT_FLOW] run_session: startSession returned session=%s", sessionID)
 			}
 		}()
 	} else {
-		log.Printf("[BOT_FLOW] run_session: startSession function missing session=%s", sessionID)
 	}
 
 	// Block until event filter signals session is done (or context is canceled)
 	<-sessionCtx.Done()
-	log.Printf("[BOT_FLOW] run_session: context done session=%s err=%v", sessionID, sessionCtx.Err())
 
 	// Session completed or was canceled. The agent's final response has already
 	// been posted to the thread by the event filter, so no extra "Session
@@ -2429,7 +2376,6 @@ func (m *BotConversationManager) runSession(active *activeBotSession, queryReq m
 	completedAt := active.LastActivity
 	active.mu.Unlock()
 	m.persistBotSessionBinding(active, completedAt)
-	log.Printf("[BOT_FLOW] run_session: completed session=%s status=%s", sessionID, active.Status)
 }
 
 // progressiveTextPollInterval is a var, not a const, so a test can shorten
@@ -2919,17 +2865,12 @@ func (m *BotConversationManager) buildQueryRequest(query string, userID string, 
 				"workshop_mode": workshopMode,
 			}
 			log.Printf("[BOT_MANAGER] Routed via %s → workflow %s (workshop_mode=%s)", via, route.WorkflowID, workshopMode)
-			log.Printf("[BOT_FLOW] build_request: routed platform=%s channel=%s workflow=%s workspace=%s mode=%s fullDetails=%v",
-				platform, channelID, route.WorkflowID, route.WorkspacePath, workshopMode, route.SendFullDetails)
 		} else {
 			// No workshop mode — use the full step-based orchestrator (Execution mode)
 			req["agent_mode"] = "workflow"
 			log.Printf("[BOT_MANAGER] Routed via %s → workflow %s (execution mode)", via, route.WorkflowID)
-			log.Printf("[BOT_FLOW] build_request: routed platform=%s channel=%s workflow=%s workspace=%s mode=workflow fullDetails=%v",
-				platform, channelID, route.WorkflowID, route.WorkspacePath, route.SendFullDetails)
 		}
 	} else if channelID != "" {
-		log.Printf("[BOT_FLOW] build_request: no channel route platform=%s channel=%s; using generic chat/profile fallback", platform, channelID)
 	}
 
 	// Capabilities: prefer the user's saved multi-agent chat config

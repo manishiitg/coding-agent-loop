@@ -126,10 +126,8 @@ func ensureSlackService() (*services.SlackService, error) {
 // getSlackConfigHandler retrieves current Slack configuration
 func getSlackConfigHandler(api *StreamingAPI) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		log.Printf("[SLACK_FLOW] api config GET: begin")
 		slackService, err := ensureSlackService()
 		if err != nil {
-			log.Printf("[SLACK_FLOW] api config GET: ensure service failed: %v", err)
 			http.Error(w, fmt.Sprintf("failed to initialize Slack service: %v", err), http.StatusInternalServerError)
 			return
 		}
@@ -159,20 +157,15 @@ func getSlackConfigHandler(api *StreamingAPI) http.HandlerFunc {
 								ConfigJSON:      botCfg.ConfigJSON,
 								AllowedChannels: string(data),
 							}); saveErr != nil {
-								log.Printf("[SLACK_FLOW] api config GET: failed to persist migrated default channel route: %v", saveErr)
 							} else {
-								log.Printf("[SLACK_FLOW] api config GET: migrated legacy Slack route to default channel=%s", config.ChannelID)
 							}
 						}
 					} else {
-						log.Printf("[SLACK_FLOW] api config GET: ignoring invalid saved channel routing: %v", normalizeErr)
 						channelRouting = nil
 					}
 				}
 			}
 		}
-		log.Printf("[SLACK_FLOW] api config GET: returning enabled=%v botMode=%v defaultChannel=%s routeChannels=%d hasBotToken=%v hasAppToken=%v",
-			config.Enabled, botMode, config.ChannelID, len(channelRouting), config.BotToken != "", config.AppToken != "")
 
 		resp := SlackConfigResponse{
 			Enabled:        config.Enabled,
@@ -195,22 +188,17 @@ func updateSlackConfigHandler(api *StreamingAPI) http.HandlerFunc {
 			w.WriteHeader(http.StatusOK)
 			return
 		}
-		log.Printf("[SLACK_FLOW] api config POST: begin")
 
 		var req SlackConfigRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			log.Printf("[SLACK] Failed to decode request: %v", err)
-			log.Printf("[SLACK_FLOW] api config POST: decode failed: %v", err)
 			http.Error(w, fmt.Sprintf("Invalid request body: %v", err), http.StatusBadRequest)
 			return
 		}
-		log.Printf("[SLACK_FLOW] api config POST: decoded enabled=%v botMode=%v hasBotToken=%v hasAppToken=%v defaultChannel=%s routeChannels=%d",
-			req.Enabled, req.BotMode, req.BotToken != "", req.AppToken != "", req.ChannelID, len(req.ChannelRouting))
 
 		slackService, err := ensureSlackService()
 		if err != nil {
 			log.Printf("[SLACK] Failed to initialize service: %v", err)
-			log.Printf("[SLACK_FLOW] api config POST: ensure service failed: %v", err)
 			http.Error(w, fmt.Sprintf("failed to initialize Slack service: %v", err), http.StatusInternalServerError)
 			return
 		}
@@ -224,16 +212,13 @@ func updateSlackConfigHandler(api *StreamingAPI) http.HandlerFunc {
 
 		if err := slackService.SaveConfig(r.Context(), config); err != nil {
 			log.Printf("[SLACK] SaveConfig failed: %v", err)
-			log.Printf("[SLACK_FLOW] api config POST: SaveConfig failed: %v", err)
 			http.Error(w, fmt.Sprintf("failed to save config: %v", err), http.StatusInternalServerError)
 			return
 		}
-		log.Printf("[SLACK_FLOW] api config POST: Slack config saved")
 
 		var normalizeErr error
 		req.ChannelRouting, normalizeErr = normalizeSlackChannelRouting(req.ChannelRouting)
 		if normalizeErr != nil {
-			log.Printf("[SLACK_FLOW] api config POST: channel routing validation failed: %v", normalizeErr)
 			http.Error(w, normalizeErr.Error(), http.StatusBadRequest)
 			return
 		}
@@ -257,9 +242,7 @@ func updateSlackConfigHandler(api *StreamingAPI) http.HandlerFunc {
 						if data, err := json.Marshal(channelRouting); err == nil {
 							allowedChannelsJSON = string(data)
 						}
-						log.Printf("[SLACK_FLOW] api config POST: migrated legacy Slack route to default channel=%s", config.ChannelID)
 					} else {
-						log.Printf("[SLACK_FLOW] api config POST: clearing invalid saved channel routing: %v", existingNormalizeErr)
 						channelRouting = nil
 						allowedChannelsJSON = ""
 					}
@@ -277,10 +260,8 @@ func updateSlackConfigHandler(api *StreamingAPI) http.HandlerFunc {
 			AllowedChannels: allowedChannelsJSON,
 		}); err != nil {
 			log.Printf("[SLACK] Failed to save bot config: %v", err)
-			log.Printf("[SLACK_FLOW] api config POST: bot connector config save failed: %v", err)
 			// Non-fatal — Slack config itself was saved
 		} else {
-			log.Printf("[SLACK_FLOW] api config POST: bot connector config saved botMode=%v routeChannels=%d", req.BotMode, len(channelRouting))
 		}
 
 		// Dynamically register/unregister Slack bot connector
@@ -291,16 +272,12 @@ func updateSlackConfigHandler(api *StreamingAPI) http.HandlerFunc {
 					api.botManager.RegisterConnector(slackService)
 					slackService.StartListening(r.Context())
 					log.Printf("[SLACK] Bot mode enabled — registered with bot manager")
-					log.Printf("[SLACK_FLOW] api config POST: bot manager registered Slack connector")
 				} else {
-					log.Printf("[SLACK_FLOW] api config POST: Slack connector already registered")
 				}
 			} else {
-				log.Printf("[SLACK_FLOW] api config POST: bot manager registration skipped enabled=%v botMode=%v", req.Enabled, req.BotMode)
 			}
 			// Note: unregistering at runtime is complex (active sessions) — disable takes effect on restart
 		} else {
-			log.Printf("[SLACK_FLOW] api config POST: bot manager unavailable")
 		}
 
 		response := SlackConfigResponse{
@@ -323,11 +300,9 @@ func testSlackConnectionHandler(api *StreamingAPI) http.HandlerFunc {
 			w.WriteHeader(http.StatusOK)
 			return
 		}
-		log.Printf("[SLACK_FLOW] api test POST: begin contentLength=%d", r.ContentLength)
 
 		slackService, err := ensureSlackService()
 		if err != nil {
-			log.Printf("[SLACK_FLOW] api test POST: ensure service failed: %v", err)
 			response := SlackTestResponse{
 				Success: false,
 				Message: fmt.Sprintf("Failed to initialize Slack service: %v", err),
@@ -344,10 +319,7 @@ func testSlackConnectionHandler(api *StreamingAPI) http.HandlerFunc {
 			if err := json.NewDecoder(r.Body).Decode(&req); err == nil {
 				// Config provided - use it for testing without saving
 				testConfig = &req
-				log.Printf("[SLACK_FLOW] api test POST: using request config enabled=%v hasBotToken=%v hasAppToken=%v channel=%s",
-					req.Enabled, req.BotToken != "", req.AppToken != "", req.ChannelID)
 			} else {
-				log.Printf("[SLACK_FLOW] api test POST: request config decode ignored: %v", err)
 			}
 		}
 
@@ -368,7 +340,6 @@ func testSlackConnectionHandler(api *StreamingAPI) http.HandlerFunc {
 		}
 
 		if err != nil {
-			log.Printf("[SLACK_FLOW] api test POST: failed: %v", err)
 			response := SlackTestResponse{
 				Success: false,
 				Message: fmt.Sprintf("Connection test failed: %v", err),
@@ -383,7 +354,6 @@ func testSlackConnectionHandler(api *StreamingAPI) http.HandlerFunc {
 			Message: "Slack connection test successful! A test message has been sent to your Slack channel. Reply to it in a thread to test Socket Mode.",
 			TestID:  testUniqueID,
 		}
-		log.Printf("[SLACK_FLOW] api test POST: success testID=%s", testUniqueID)
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(response)
 	}
@@ -393,7 +363,6 @@ func testSlackConnectionHandler(api *StreamingAPI) http.HandlerFunc {
 func getTestConnectionReplyHandler(api *StreamingAPI) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		testUniqueID := r.URL.Query().Get("test_id")
-		log.Printf("[SLACK_FLOW] api test reply GET: begin testID=%s", testUniqueID)
 		if testUniqueID == "" {
 			http.Error(w, "test_id parameter is required", http.StatusBadRequest)
 			return
@@ -410,11 +379,9 @@ func getTestConnectionReplyHandler(api *StreamingAPI) http.HandlerFunc {
 		response, exists := feedbackStore.GetResponse(testUniqueID)
 		if !exists {
 			// Return 204 No Content if no reply yet
-			log.Printf("[SLACK_FLOW] api test reply GET: no reply yet testID=%s", testUniqueID)
 			w.WriteHeader(http.StatusNoContent)
 			return
 		}
-		log.Printf("[SLACK_FLOW] api test reply GET: reply found testID=%s", testUniqueID)
 
 		// Return the reply
 		responseData := map[string]interface{}{

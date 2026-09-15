@@ -116,6 +116,9 @@ func userAllowedProduct(claims *UserClaims, product string) bool {
 	if adminOnlyProduct(product) && !userAccessForClaims(claims).Admin {
 		return false
 	}
+	if productAvailableToAll(product) {
+		return true
+	}
 	products, restricted := userProductPolicy(claims.UserID, claims.Username, claims.Email)
 	if !restricted {
 		return true
@@ -126,6 +129,40 @@ func userAllowedProduct(claims *UserClaims, product string) bool {
 		}
 	}
 	return false
+}
+
+// productAvailableToAll provides a deployment-owned baseline product set.
+// It is useful for a product backed entirely by per-user storage: even a
+// read-only AgentWorks account can use that product without gaining permission
+// to create or edit shared workflows.
+func productAvailableToAll(product string) bool {
+	for _, candidate := range strings.Split(os.Getenv("AGENTWORKS_PRODUCTS_AVAILABLE_TO_ALL"), ",") {
+		if strings.EqualFold(strings.TrimSpace(candidate), strings.TrimSpace(product)) {
+			return true
+		}
+	}
+	return false
+}
+
+func appendProductsAvailableToAll(products []string) []string {
+	result := append([]string(nil), products...)
+	for _, candidate := range strings.Split(os.Getenv("AGENTWORKS_PRODUCTS_AVAILABLE_TO_ALL"), ",") {
+		candidate = strings.TrimSpace(candidate)
+		if candidate == "" {
+			continue
+		}
+		found := false
+		for _, product := range result {
+			if strings.EqualFold(strings.TrimSpace(product), candidate) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			result = append(result, candidate)
+		}
+	}
+	return result
 }
 
 // adminOnlyProduct provides a deployment-wide authorization boundary for
@@ -208,6 +245,9 @@ func productAccessResponseFields(claims *UserClaims) map[string]interface{} {
 	if claims != nil {
 		access := userAccessForClaims(claims)
 		products, restricted := userProductPolicy(claims.UserID, claims.Username, claims.Email)
+		if restricted {
+			products = appendProductsAvailableToAll(products)
+		}
 		if !access.Admin && strings.TrimSpace(os.Getenv("AGENTWORKS_ADMIN_ONLY_PRODUCT_SURFACES")) != "" {
 			if !restricted {
 				products = knownProductIDs()

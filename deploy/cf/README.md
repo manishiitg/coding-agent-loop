@@ -40,6 +40,9 @@ nonzero; do not report success or bypass it. Confida alone is in scope: the
 - [ ] Agent/workspace processes received the expected tools PATH and Confida
   browser namespaces, plus `DISPLAY_TIME_ZONE=America/New_York` for
   deployment-consistent UI timestamps.
+- [ ] Work is available to every approved user through
+  `AGENTWORKS_PRODUCTS_AVAILABLE_TO_ALL=work`; its project data remains under
+  each user's private `_users/<id>/Chats/Work/projects` root.
 - [ ] The running agent received
   `AGENTWORKS_PLAYBOOKS_DIR=/srv/confida/current/playbooks`, and its working
   directory can read the packaged Basic Browser Setup manifest.

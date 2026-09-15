@@ -140,17 +140,21 @@ runtime_path="$REMOTE_APP/tools/node/bin:$REMOTE_APP/tools/bin:$REMOTE_APP/home/
 env_file="$REMOTE_APP/.env"
 env_next="$(mktemp "$REMOTE_APP/.env.runtime.XXXXXX")"
 awk -v managed_path="$runtime_path" '
-	BEGIN { wrote_path = 0; wrote_browser_prefix = 0; wrote_staging_namespace = 0; wrote_display_timezone = 0 }
+	BEGIN { wrote_path = 0; wrote_browser_prefix = 0; wrote_staging_namespace = 0; wrote_display_timezone = 0; wrote_admin_only_products = 0; wrote_products_for_all = 0 }
 	/^PATH=/ { if (!wrote_path) { print "PATH=" managed_path; wrote_path = 1 }; next }
 	/^AGENTWORKS_BROWSER_SESSION_PREFIX=/ { if (!wrote_browser_prefix) { print "AGENTWORKS_BROWSER_SESSION_PREFIX=confida"; wrote_browser_prefix = 1 }; next }
 	/^AGENTWORKS_BROWSER_STAGING_NAMESPACE=/ { if (!wrote_staging_namespace) { print "AGENTWORKS_BROWSER_STAGING_NAMESPACE=confida"; wrote_staging_namespace = 1 }; next }
 	/^DISPLAY_TIME_ZONE=/ { if (!wrote_display_timezone) { print "DISPLAY_TIME_ZONE=America/New_York"; wrote_display_timezone = 1 }; next }
+	/^AGENTWORKS_ADMIN_ONLY_PRODUCT_SURFACES=/ { if (!wrote_admin_only_products) { print "AGENTWORKS_ADMIN_ONLY_PRODUCT_SURFACES="; wrote_admin_only_products = 1 }; next }
+	/^AGENTWORKS_PRODUCTS_AVAILABLE_TO_ALL=/ { if (!wrote_products_for_all) { print "AGENTWORKS_PRODUCTS_AVAILABLE_TO_ALL=work"; wrote_products_for_all = 1 }; next }
 	{ print }
 	END {
 		if (!wrote_path) print "PATH=" managed_path
 		if (!wrote_browser_prefix) print "AGENTWORKS_BROWSER_SESSION_PREFIX=confida"
 		if (!wrote_staging_namespace) print "AGENTWORKS_BROWSER_STAGING_NAMESPACE=confida"
 		if (!wrote_display_timezone) print "DISPLAY_TIME_ZONE=America/New_York"
+		if (!wrote_admin_only_products) print "AGENTWORKS_ADMIN_ONLY_PRODUCT_SURFACES="
+		if (!wrote_products_for_all) print "AGENTWORKS_PRODUCTS_AVAILABLE_TO_ALL=work"
 	}
 ' "$env_file" > "$env_next"
 chmod 0600 "$env_next"
@@ -163,12 +167,14 @@ printf '%s\n' '[Service]' 'Environment=AGENTWORKS_MCP_STATE_DIR=/srv/confida/sta
 printf '%s\n' '[Service]' 'Environment=AGENT_BROWSER_CDP_ENABLED=false' > "$HOME/.config/systemd/user/confida-agent.service.d/20-disable-cdp.conf"
 printf '%s\n' '[Service]' 'Environment=AGENTWORKS_BROWSER_SESSION_PREFIX=confida' 'Environment=AGENTWORKS_BROWSER_STAGING_NAMESPACE=confida' > "$HOME/.config/systemd/user/confida-agent.service.d/40-browser-isolation.conf"
 printf '%s\n' '[Service]' 'Environment=AGENTWORKS_PLAYBOOKS_DIR=/srv/confida/current/playbooks' > "$HOME/.config/systemd/user/confida-agent.service.d/50-playbook-catalog.conf"
-printf '%s\n' '[Service]' 'Environment=AGENTWORKS_ADMIN_ONLY_PRODUCT_SURFACES=work' > "$HOME/.config/systemd/user/confida-agent.service.d/60-admin-only-products.conf"
+printf '%s\n' '[Service]' 'Environment=AGENTWORKS_ADMIN_ONLY_PRODUCT_SURFACES=' 'Environment=AGENTWORKS_PRODUCTS_AVAILABLE_TO_ALL=work' > "$HOME/.config/systemd/user/confida-agent.service.d/60-product-access.conf"
+rm -f "$HOME/.config/systemd/user/confida-agent.service.d/60-admin-only-products.conf"
 mkdir -p "$HOME/.config/systemd/user/confida-workspace.service.d"
 printf '%s\n' '[Service]' "Environment=PATH=$runtime_path" > "$HOME/.config/systemd/user/confida-workspace.service.d/zz-runtime-tools.conf"
 printf '%s\n' '[Service]' 'Environment=AGENT_BROWSER_CDP_ENABLED=false' > "$HOME/.config/systemd/user/confida-workspace.service.d/20-disable-cdp.conf"
 printf '%s\n' '[Service]' 'Environment=AGENTWORKS_BROWSER_SESSION_PREFIX=confida' 'Environment=AGENTWORKS_BROWSER_STAGING_NAMESPACE=confida' > "$HOME/.config/systemd/user/confida-workspace.service.d/40-browser-isolation.conf"
-printf '%s\n' '[Service]' 'Environment=AGENTWORKS_ADMIN_ONLY_PRODUCT_SURFACES=work' > "$HOME/.config/systemd/user/confida-workspace.service.d/60-admin-only-products.conf"
+printf '%s\n' '[Service]' 'Environment=AGENTWORKS_ADMIN_ONLY_PRODUCT_SURFACES=' 'Environment=AGENTWORKS_PRODUCTS_AVAILABLE_TO_ALL=work' > "$HOME/.config/systemd/user/confida-workspace.service.d/60-product-access.conf"
+rm -f "$HOME/.config/systemd/user/confida-workspace.service.d/60-admin-only-products.conf"
 systemctl --user daemon-reload
 systemctl --user restart confida-workspace
 sleep 2
@@ -187,7 +193,8 @@ for unit in confida-agent confida-workspace; do
   tr '\0' '\n' < "/proc/$pid/environ" | grep -Fqx "PATH=$runtime_path"
   tr '\0' '\n' < "/proc/$pid/environ" | grep -Fqx 'AGENTWORKS_BROWSER_SESSION_PREFIX=confida'
   tr '\0' '\n' < "/proc/$pid/environ" | grep -Fqx 'AGENTWORKS_BROWSER_STAGING_NAMESPACE=confida'
-  tr '\0' '\n' < "/proc/$pid/environ" | grep -Fqx 'AGENTWORKS_ADMIN_ONLY_PRODUCT_SURFACES=work'
+  tr '\0' '\n' < "/proc/$pid/environ" | grep -Fqx 'AGENTWORKS_ADMIN_ONLY_PRODUCT_SURFACES='
+  tr '\0' '\n' < "/proc/$pid/environ" | grep -Fqx 'AGENTWORKS_PRODUCTS_AVAILABLE_TO_ALL=work'
   tr '\0' '\n' < "/proc/$pid/environ" | grep -Fqx 'DISPLAY_TIME_ZONE=America/New_York'
   if [[ "$unit" == confida-agent ]]; then
     tr '\0' '\n' < "/proc/$pid/environ" | grep -Fqx 'AGENTWORKS_PLAYBOOKS_DIR=/srv/confida/current/playbooks'

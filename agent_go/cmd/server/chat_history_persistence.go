@@ -3028,14 +3028,26 @@ func DeleteChatHistorySession(userID, sessionID, workspacePath string) (ChatHist
 	}
 
 	if workspacePath != "" {
-		return deleteWorkflowChatHistorySession(result, sessionID, workspacePath)
+		return deleteWorkspaceChatHistorySession(result, userID, sessionID, workspacePath)
 	}
 	return deleteUserChatHistorySession(result, userID, sessionID)
 }
 
-func deleteWorkflowChatHistorySession(result ChatHistoryCleanupResult, sessionID, workspacePath string) (ChatHistoryCleanupResult, error) {
-	workflowDir, ok := resolveLocalWorkflowDir(workspacePath)
+func ownedWorkProjectWorkspacePath(userID, workspacePath string) (string, bool) {
+	canonical := canonicalChatHistoryWorkspacePath(userID, workspacePath)
+	if !strings.HasPrefix(canonical, "Chats/Work/projects/") {
+		return workspacePath, false
+	}
+	return pathpkg.Join("_users", sanitizeUserIDForPath(userID), canonical), true
+}
+
+func deleteWorkspaceChatHistorySession(result ChatHistoryCleanupResult, userID, sessionID, workspacePath string) (ChatHistoryCleanupResult, error) {
+	storageWorkspacePath, workProject := ownedWorkProjectWorkspacePath(userID, workspacePath)
+	workflowDir, ok := resolveLocalWorkflowDir(storageWorkspacePath)
 	if !ok {
+		if workProject {
+			return deleteUserChatHistorySession(result, userID, sessionID)
+		}
 		return result, nil
 	}
 	fileName := fmt.Sprintf("session-%s-conversation.json", sessionID)
@@ -3070,11 +3082,17 @@ func deleteWorkflowChatHistorySession(result ChatHistoryCleanupResult, sessionID
 		}
 	}
 	if result.DeletedCount > 0 {
-		indexWorkspacePath := pathpkg.Join(workspacePath, "builder", "conversation", chatHistoryIndexFileName)
+		indexWorkspacePath := pathpkg.Join(storageWorkspacePath, "builder", "conversation", chatHistoryIndexFileName)
 		indexLocalPath := filepath.Join(workflowDir, "builder", "conversation", chatHistoryIndexFileName)
 		if err := removeLocalChatHistoryIndexEntries(indexWorkspacePath, indexLocalPath, sessionID, nil); err != nil {
 			return result, err
 		}
+	}
+	// Work originally stored product chats in the user's central chat history.
+	// Project opening copied those transcripts into the project for compatibility;
+	// delete both so the fallback cannot restore a chat the user removed.
+	if workProject {
+		return deleteUserChatHistorySession(result, userID, sessionID)
 	}
 	return result, nil
 }

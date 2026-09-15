@@ -1091,6 +1091,40 @@ func TestWorkProjectChatHistoryConversationPathUsesProjectBuilderFolder(t *testi
 	}
 }
 
+func TestDeleteWorkProjectChatRemovesProjectAndLegacyCopies(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("WORKSPACE_DOCS_PATH", root)
+
+	const (
+		userID        = "alice"
+		sessionID     = "product-chat-1"
+		workspacePath = "Chats/Work/projects/demo"
+	)
+	projectConversation := filepath.Join(root, "_users", userID, filepath.FromSlash(workspacePath), "builder", "conversation", "2026-09-14", chatHistoryConversationFileName(sessionID))
+	legacyConversation := filepath.Join(root, "_users", userID, "chat_history", "2026-09-14", chatHistoryConversationFileName(sessionID))
+	for _, conversation := range []string{projectConversation, legacyConversation} {
+		if err := os.MkdirAll(filepath.Dir(conversation), 0o755); err != nil {
+			t.Fatalf("mkdir conversation parent: %v", err)
+		}
+		if err := os.WriteFile(conversation, []byte(`{"session_id":"product-chat-1"}`), 0o600); err != nil {
+			t.Fatalf("write conversation: %v", err)
+		}
+	}
+
+	result, err := DeleteChatHistorySession(userID, sessionID, workspacePath)
+	if err != nil {
+		t.Fatalf("delete Work chat: %v", err)
+	}
+	if result.DeletedCount != 2 {
+		t.Fatalf("deleted count = %d, want project and legacy copies", result.DeletedCount)
+	}
+	for _, conversation := range []string{projectConversation, legacyConversation} {
+		if _, err := os.Stat(conversation); !os.IsNotExist(err) {
+			t.Fatalf("conversation still exists or stat failed: %s: %v", conversation, err)
+		}
+	}
+}
+
 func TestNormalizeRestoredChatHistoryConversationPathAllowsOnlyOwnedWorkProject(t *testing.T) {
 	owned := "_users/alice/Chats/Work/projects/demo/builder/conversation/2026-09-14/session-chat-1-conversation.json"
 	if got, ok := normalizeRestoredChatHistoryConversationPath("alice", owned); !ok || got != owned {

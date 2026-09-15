@@ -180,7 +180,43 @@ func (store productConversationRegistryStore) switchTo(ctx context.Context, user
 	entryKey := productConversationRegistryEntryKey(profile.ID, binding.ConversationKey)
 	current, ok := document.Entries[entryKey]
 	if !ok {
-		return ProductConversationRecord{}, fmt.Errorf("product conversation %q has not been opened yet", entryKey)
+		// Work can reopen a historical project chat into a new tab-specific key.
+		// The caller may only reach this branch after chat_history verified that
+		// the selected session belongs to this binding's workspace. Bind that
+		// trusted session directly instead of manufacturing an empty conversation
+		// that would hide the transcript and launch a new provider-native session.
+		if !verified {
+			return ProductConversationRecord{}, fmt.Errorf("product conversation %q has not been opened yet", entryKey)
+		}
+		now := store.now().UTC().Format(time.RFC3339Nano)
+		restored := ProductConversationRecord{
+			ConversationID:              "conversation-" + store.newID(),
+			ConversationKey:             binding.ConversationKey,
+			ProfileID:                   profile.ID,
+			ProfileVersion:              profile.Version,
+			SessionID:                   sessionID,
+			WorkspacePath:               binding.WorkspacePath,
+			ResourceID:                  binding.ResourceID,
+			Title:                       binding.Title,
+			Description:                 binding.Description,
+			ProjectLLMConfig:            binding.ProjectLLMConfig,
+			ProjectSelectedServers:      append([]string(nil), binding.ProjectSelectedServers...),
+			ProjectSelectedSkills:       append([]string(nil), binding.ProjectSelectedSkills...),
+			ProjectWorkflowContextPaths: append([]string(nil), binding.ProjectWorkflowContextPaths...),
+			CreatedAt:                   now,
+			UpdatedAt:                   now,
+		}
+		if strings.TrimSpace(binding.ManifestPath) != "" {
+			if err := store.writeManifestSessionID(ctx, binding.ManifestPath, restored.SessionID); err != nil {
+				return ProductConversationRecord{}, err
+			}
+		}
+		document.Version = productConversationRegistryVersion
+		document.Entries[entryKey] = restored
+		if err := store.writeDocument(ctx, path, document); err != nil {
+			return ProductConversationRecord{}, err
+		}
+		return restored, nil
 	}
 	if current.SessionID == sessionID {
 		return current, nil

@@ -1,5 +1,6 @@
 import { useCallback } from 'react'
 import type { ChatHistorySession } from '../services/api-types'
+import { agentApi } from '../services/api'
 import { useChatStore } from '../stores/useChatStore'
 import {
   chatHistoryConversationPath,
@@ -36,6 +37,10 @@ export function useResumePreviousChat() {
       return
     }
 
+    const profileId = targetTab.metadata.agentProfileId
+    let conversationKey = targetTab.metadata.agentProfileConversationKey
+    let createResumedTab = false
+
     // Work's permanent Workshop tab is a history/new-chat launch surface. A
     // resume must open the selected durable conversation in its own chat tab;
     // attaching it to Workshop makes old messages appear under the launcher,
@@ -51,19 +56,53 @@ export function useResumePreviousChat() {
       if (existing) {
         targetTabId = existing.tabId
         targetTab = existing
+        conversationKey = existing.metadata?.agentProfileConversationKey
       } else {
-        const builderConfig = targetTab.config
         const projectId = targetTab.metadata.agentProfileProjectId
-        const resumedTabId = await chatStore.createChatTab(chatHistorySessionTitle(session), {
-          ...targetTab.metadata,
-          agentProfileBuilder: false,
-          agentProfileConversationKey: projectId ? `${projectId}:${session.session_id}` : session.session_id,
-          agentProfileConversationId: undefined,
-        }, session.session_id)
-        if (builderConfig) chatStore.setTabConfig(resumedTabId, { ...builderConfig })
-        targetTabId = resumedTabId
-        targetTab = chatStore.chatTabs[resumedTabId]
+        conversationKey = projectId ? `${projectId}:${session.session_id}` : session.session_id
+        createResumedTab = true
       }
+    }
+
+    if (!conversationKey) {
+      useChatStore.getState().addToast('This chat has no product conversation binding.', 'error')
+      return
+    }
+
+    // Resume is a server-owned identity change. Bind the selected historical
+    // session to this tab's product conversation before the tab can submit a
+    // message. That lets the shared runner find the saved native Claude/Cursor
+    // session and use its real resume mechanism instead of starting empty.
+    let resumedConversation
+    try {
+      resumedConversation = await agentApi.switchAgentProfileConversation(profileId, {
+        conversation_key: conversationKey,
+        session_id: session.session_id,
+      })
+    } catch (error) {
+      console.error('[ResumePreviousChat] Failed to bind product conversation', error)
+      useChatStore.getState().addToast('Could not resume this chat. Its saved conversation was kept unchanged.', 'error')
+      return
+    }
+
+    if (createResumedTab) {
+      const builderConfig = targetTab.config
+      const resumedTabId = await chatStore.createChatTab(chatHistorySessionTitle(session), {
+        ...targetTab.metadata,
+        agentProfileBuilder: false,
+        agentProfileConversationKey: resumedConversation.conversation_key,
+        agentProfileConversationId: resumedConversation.conversation_id,
+      }, resumedConversation.session_id)
+      if (builderConfig) chatStore.setTabConfig(resumedTabId, { ...builderConfig })
+      targetTabId = resumedTabId
+      targetTab = useChatStore.getState().chatTabs[resumedTabId]
+    } else {
+      chatStore.setTabMetadata(targetTabId, {
+        agentProfileConversationKey: resumedConversation.conversation_key,
+        agentProfileConversationId: resumedConversation.conversation_id,
+      })
+      chatStore.updateTabSessionId(targetTabId, resumedConversation.session_id)
+      targetTab = useChatStore.getState().chatTabs[targetTabId]
     }
 
     // Clear the current conversation before resuming a different one (or the
@@ -75,7 +114,7 @@ export function useResumePreviousChat() {
     if (targetTab?.sessionId !== session.session_id && hasContent) {
       chatStore.resetTabChat(targetTabId)
     }
-    chatStore.updateTabSessionId(targetTabId, session.session_id)
+    chatStore.updateTabSessionId(targetTabId, resumedConversation.session_id)
 
     const path = chatHistoryConversationPath(session)
     const title = chatHistorySessionTitle(session)
@@ -106,7 +145,7 @@ export function useResumePreviousChat() {
     if (useTerminalRestore || useNativeResume) {
       latestStore.setTabViewMode(targetTabId, 'tree')
       startRestoredTransportTerminal(
-        session.session_id,
+        resumedConversation.session_id,
         path,
         session.session_id,
         session.workspace_path || session.runtime?.workspace_path,

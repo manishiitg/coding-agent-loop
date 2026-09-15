@@ -6589,6 +6589,13 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			restoredNativeCodingResume := false
 			restoredConversationPath := strings.TrimSpace(req.RestoredConversationPath)
 			restoredConversationSessionID := strings.TrimSpace(req.RestoredConversationSessionID)
+			restoredConversationWorkspace := strings.TrimSpace(workflowPhaseFolder)
+			if restoredConversationWorkspace == "" {
+				// Product-owned chats resolve SelectedFolder server-side. Work keeps
+				// its transcripts inside that project, so use the trusted project
+				// workspace when locating the native provider resume handle.
+				restoredConversationWorkspace = normalizeConversationWorkspace(req.SelectedFolder)
+			}
 			restoredConversationPathForFallback := restoredConversationPath
 			var restoredRuntime *ChatHistoryAgentRuntime
 			if runtime, ok, err := ReadChatHistoryRuntimeFromPath(currentUserID, restoredConversationPath); err != nil {
@@ -6598,14 +6605,14 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				restoredNativeCodingResume = api.seedCodingAgentRuntimeFromRestoredConversation(sessionID, finalProvider, newWorkshopMode, restoredRuntime, underlyingAgent)
 			}
 			if !restoredNativeCodingResume && restoredConversationPath == "" && restoredConversationSessionID != "" {
-				if runtime, ok, err := ReadChatHistoryRuntimeForSession(currentUserID, restoredConversationSessionID, workflowPhaseFolder); err != nil {
+				if runtime, ok, err := ReadChatHistoryRuntimeForSession(currentUserID, restoredConversationSessionID, restoredConversationWorkspace); err != nil {
 					logfWithContext(queryLogCtx, "[CHAT_HISTORY] Failed to read restored runtime for session %s: %v", restoredConversationSessionID, err)
 				} else if ok {
 					restoredRuntime = runtime
 					restoredNativeCodingResume = api.seedCodingAgentRuntimeFromRestoredConversation(sessionID, finalProvider, newWorkshopMode, restoredRuntime, underlyingAgent)
 				}
 				if restoredConversationPathForFallback == "" {
-					if path, ok, err := FindChatHistoryConversationPathForSession(currentUserID, restoredConversationSessionID, workflowPhaseFolder); err != nil {
+					if path, ok, err := FindChatHistoryConversationPathForSession(currentUserID, restoredConversationSessionID, restoredConversationWorkspace); err != nil {
 						logfWithContext(queryLogCtx, "[CHAT_HISTORY] Failed to find restored conversation path for session %s: %v", restoredConversationSessionID, err)
 					} else if ok {
 						restoredConversationPathForFallback = path
@@ -6917,7 +6924,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			sessionID,
 			req.RestoredConversationPath,
 			req.RestoredConversationSessionID,
-			workflowPhaseFolder,
+			firstNonEmptyTrimmed(workflowPhaseFolder, normalizeConversationWorkspace(req.SelectedFolder)),
 			finalProvider,
 			newWorkshopMode,
 		); err != nil {

@@ -406,11 +406,9 @@ const QueuedAutoNotificationGroup: React.FC<{
 const MainAgentRuntimeStatusIndicator = React.memo(function MainAgentRuntimeStatusIndicator({
   state,
   label,
-  showRunningSpinner = true,
 }: {
   state: 'running' | 'waiting' | 'ready'
   label: string
-  showRunningSpinner?: boolean
 }) {
   return (
     <div
@@ -418,7 +416,7 @@ const MainAgentRuntimeStatusIndicator = React.memo(function MainAgentRuntimeStat
       role="status"
       aria-label={`${label} — ${state}`}
     >
-      {state === 'running' && showRunningSpinner ? (
+      {state === 'running' ? (
         <Loader2 className="h-3 w-3 shrink-0 animate-spin text-lime-300" aria-hidden="true" />
       ) : state === 'waiting' ? (
         <span className="h-2 w-2 shrink-0 rounded-full bg-amber-400" aria-hidden="true" />
@@ -3451,9 +3449,8 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
                 ) : null}
                 {!hideRuntimeStatus && mainAgentRuntimeStatus && (
                   <MainAgentRuntimeStatusIndicator
-                    state={mainAgentRuntimeStatus.state}
+                    state={showCompactRuntimeLoading && isTurnInFlight ? 'running' : mainAgentRuntimeStatus.state}
                     label={mainAgentRuntimeStatus.label}
-                    showRunningSpinner={!showCompactRuntimeLoading}
                   />
                 )}
                 {chatInputStatusLine && (
@@ -3507,20 +3504,6 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
                 {(
                   <div data-tour="chat-input-tools" data-testid="tour-chat-input-tools" className="flex items-center gap-2">
                       {sparkleEl}
-                      {showCompactRuntimeLoading && isTurnInFlight && (
-                        <Tooltip>
-                          <TooltipTrigger asChild>
-                            <div
-                              className="flex h-7 w-7 items-center justify-center text-lime-300"
-                              role="status"
-                              aria-label="Agent is working"
-                            >
-                              <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
-                            </div>
-                          </TooltipTrigger>
-                          <TooltipContent><p>Agent is working</p></TooltipContent>
-                        </Tooltip>
-                      )}
                       {isProductSurface && newConversationEnabled && (
                         <NewChatControl
                           engines={engineGroups.map((g) => ({ id: g.option.id, label: g.option.label || g.option.id }))}

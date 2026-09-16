@@ -29,14 +29,14 @@ func TestResolveFeaturesProjectsOneBundleIntoExistingProfileFields(t *testing.T)
 			t.Fatalf("feature projection omitted tool %q: %v", tool, profile.ToolPolicy.Enabled)
 		}
 	}
-	if !containsString(profile.Skills, "work-dashboard") || !containsString(profile.Skills, "agent-browser") {
+	if !containsString(profile.Skills, "work-dashboard") || !containsString(profile.Skills, "ui-ux-pro-max") || !containsString(profile.Skills, "agent-browser") {
 		t.Fatalf("feature projection omitted skills: %v", profile.Skills)
 	}
 	if !profile.UIPanels.Files || profile.Runtime.Capabilities.Browser != CapabilityPreferred {
 		t.Fatalf("feature projection omitted legacy fields: panels=%+v caps=%+v", profile.UIPanels, profile.Runtime.Capabilities)
 	}
 	if got := strings.Join(FeaturePromptExtensions(profile), "\n"); !strings.Contains(got, "Feature: dashboard") || !strings.Contains(got, "Feature: browser") ||
-		!strings.Contains(got, "attached `work-dashboard` skill") || !strings.Contains(got, "attached `agent-browser` skill") {
+		!strings.Contains(got, "attached `work-dashboard` skill") || !strings.Contains(got, "attached `ui-ux-pro-max` skill") || !strings.Contains(got, "attached `agent-browser` skill") {
 		t.Fatalf("prompt extensions = %q", got)
 	}
 

@@ -185,9 +185,9 @@ var featureCatalog = map[string]featureDefinition{
 	"dashboard": {
 		Dependencies:    []string{"database", "files"},
 		Tools:           []string{"validate_report_html", "preview_report"},
-		Skills:          []string{"work-dashboard"},
+		Skills:          []string{"work-dashboard", "ui-ux-pro-max"},
 		UIPanels:        []string{"dashboard"},
-		PromptExtension: "A visual Dashboard is enabled. Read the attached `work-dashboard` skill before creating or changing it. It may contain multiple HTML views under db/reports/ with optional views.json metadata; the shared toolbar handles navigation. Reports may opt into the pinned daisyUI CDN stylesheet. Use the managed data contract and validate every changed view.",
+		PromptExtension: "A visual Dashboard is enabled. Read the attached `work-dashboard` skill before creating or changing it. Use the optional attached `ui-ux-pro-max` skill for design intelligence when it helps; it does not choose the framework or override the dashboard runtime contract. The dashboard may contain multiple HTML views under db/reports/ with optional views.json metadata; the shared toolbar handles navigation. Reports may opt into the pinned daisyUI CDN stylesheet. Use the managed data contract and validate every changed view.",
 	},
 	"costs": {
 		UIPanels: []string{"costs"},

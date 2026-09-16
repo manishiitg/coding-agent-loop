@@ -2,6 +2,10 @@ Design the workflow's reporting UI from the ground up. First load and apply
 `read_skill(skills=[{"name":"builder-reference","path":"references/reporting-policy.md"}])`,
 then load and apply
 `read_skill(skills=[{"name":"builder-reference","path":"references/html-output.md"}])`.
+Then load `read_skill(skills=[{"name":"ui-ux-pro-max"}])` and use its design
+intelligence where it helps the requested outcome. It advises visual and
+interaction decisions; it does not select a framework or override the report
+runtime contract.
 A workflow report consists of one or more complete HTML
 documents under `db/reports/`; `index.html` is the default and the shared top
 toolbar exposes additional documents. Use optional `views.json` only for view

@@ -112,5 +112,9 @@ multiline paste before submit`). Multiline or large retained input now waits for
 the Claude prompt/attachment to settle before Enter. A settlement failure is
 returned to the caller instead of being reported as successful delivery; short
 single-line steering keeps the immediate path. Focused and full Claude adapter
-tests pass. Production deployment and a non-destructive live multiline send
-remain to be verified.
+tests pass. Cursor and Pi already wait for a visible draft before submit, Muse
+waits for and expands its pasted-content attachment, and Codex verifies the
+rollout/prompt transition with resubmission; their relevant adapter suites pass.
+Production release `8623c20-20260916120839` deployed successfully and public
+health returned healthy. A non-destructive live multiline send remains to be
+verified.

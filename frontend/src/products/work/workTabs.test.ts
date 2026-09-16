@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { ChatTab } from '../../stores/useChatStore'
-import { applyWorkProjectRuntimeSelection, markWorkProjectRuntimeDirty, preferredWorkProjectTabId, resolveWorkSubmissionTab, setWorkProjectRuntimeSelection, visibleWorkProjectTabs, workTabDisplayName } from './workTabs'
+import { applyWorkProjectRuntimeSelection, markWorkProjectRuntimeDirty, preferredWorkProjectTabId, resolveWorkSubmissionTab, setWorkProjectRuntimeSelection, visibleWorkProjectTabs, workConversationResumeKey, workTabDisplayName } from './workTabs'
 import { useChatStore } from '../../stores/useChatStore'
 
 function tab(overrides: Partial<ChatTab> & Pick<ChatTab, 'tabId'>): ChatTab {
@@ -79,6 +79,30 @@ describe('resolveWorkSubmissionTab', () => {
       metadata: { mode: 'multi-agent', agentProfileId: 'work', agentProfileProjectId: 'project-2', agentProfileConversationKey: 'project-2:chat-1' },
     })
     expect(resolveWorkSubmissionTab(builder, otherProject)?.tabId).toBe('builder')
+  })
+})
+
+describe('workConversationResumeKey', () => {
+  it('upgrades a retained legacy project-key tab to its own durable slot', () => {
+    const legacy = tab({
+      tabId: 'legacy',
+      sessionId: 'saved-session',
+      metadata: { mode: 'multi-agent', agentProfileId: 'work', agentProfileProjectId: 'project-1', agentProfileConversationKey: 'project-1' },
+    })
+    expect(workConversationResumeKey(legacy, 'project-1')).toBe('project-1:saved-session')
+  })
+
+  it('preserves a tab-specific logical key across deployments', () => {
+    const retained = tab({
+      tabId: 'retained',
+      sessionId: 'replacement-session',
+      metadata: { mode: 'multi-agent', agentProfileId: 'work', agentProfileProjectId: 'project-1', agentProfileConversationKey: 'project-1:chat-identity' },
+    })
+    expect(workConversationResumeKey(retained, 'project-1')).toBe('project-1:chat-identity')
+  })
+
+  it('does not manufacture a binding for an unsent tab', () => {
+    expect(workConversationResumeKey(tab({ tabId: 'empty', sessionId: null }), 'project-1')).toBeNull()
   })
 })
 

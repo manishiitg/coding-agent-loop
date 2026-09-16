@@ -23,7 +23,7 @@ import { WorkspaceSplitCollapseControls, WorkspaceSplitDivider } from '../../com
 import { WorkspaceTopToolbar } from '../../components/workspace/WorkspaceTopToolbar'
 import { loadAgentProfileInteractionKinds, loadAgentProfileUIPanels } from '../../utils/agentProfileCapabilities'
 import { parseProductInteraction } from '../../../shared/session/interactions'
-import { belongsToWorkProject, markWorkProjectRuntimeDirty, preferredWorkProjectTabId, setWorkProjectRuntimeSelection, visibleWorkProjectTabs, workTabDisplayName, type ProductEngineSelectionDetail, type WorkRuntimeSelection } from './workTabs'
+import { belongsToWorkProject, markWorkProjectRuntimeDirty, preferredWorkProjectTabId, setWorkProjectRuntimeSelection, visibleWorkProjectTabs, workConversationResumeKey, workTabDisplayName, type ProductEngineSelectionDetail, type WorkRuntimeSelection } from './workTabs'
 import { updateProductProjectLLMConfig, updateProductProjectSelections } from '../../platform/chat/productProjects'
 import { CreateWorkProjectDialog } from './CreateWorkProjectDialog'
 import { useWorkspaceUIControl, type WorkspaceUIControlAdapter } from '../../platform/ui-control/useWorkspaceUIControl'
@@ -227,6 +227,25 @@ function useWorkChatTabs(
           chatStore.setTabMetadata(chat.tabId, { agentProfileMCPSelectionInitialized: true })
           const hasRuntimeBinding = Boolean(chat.metadata?.agentProfileEngine && chat.metadata.agentProfileModelID)
           if (!chat.sessionId) continue
+
+          // A browser tab can outlive many frontend and backend deployments.
+          // Reassert its durable session before the composer becomes ready;
+          // otherwise the server registry may resolve the key to a newer or
+          // empty conversation and the next message silently loses context.
+          // This also upgrades legacy tabs that shared the project's Builder
+          // key into one key per retained conversation.
+          const conversationKey = workConversationResumeKey(chat, session.id)
+          if (!conversationKey) continue
+          const resumed = await agentApi.switchAgentProfileConversation(WORK_PROFILE_ID, {
+            conversation_key: conversationKey,
+            session_id: chat.sessionId,
+          })
+          chatStore.setTabMetadata(chat.tabId, {
+            agentProfileConversationKey: resumed.conversation_key,
+            agentProfileConversationId: resumed.conversation_id,
+          })
+          chatStore.updateTabSessionId(chat.tabId, resumed.session_id)
+
           if ((chatStore.tabEvents[chat.sessionId]?.length ?? 0) === 0) {
             await hydrateTabEvents(chat.sessionId, {
               workspacePath: session.workspacePath,

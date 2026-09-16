@@ -6,6 +6,8 @@ import (
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/common"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -29,6 +31,46 @@ func TestSharedBrowserDoesNotLockOtherUsers(t *testing.T) {
 		t.Fatal(err)
 	}
 	release3()
+}
+
+func TestRemoveStaleChromeSingletonLockClearsChromeOwnLockFiles(t *testing.T) {
+	profileRoot := t.TempDir()
+	t.Setenv("AGENT_BROWSER_SHARED_PROFILE", profileRoot)
+	session := "user-0123456789abcdef--browser"
+	profile := ProfilePathForSession(session)
+	if profile == "" {
+		t.Fatal("expected a resolved profile path")
+	}
+	if err := os.MkdirAll(profile, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"SingletonLock", "SingletonSocket", "SingletonCookie"} {
+		if err := os.WriteFile(filepath.Join(profile, name), []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// A file agent-browser's own recovery must not touch.
+	keep := filepath.Join(profile, "Preferences")
+	if err := os.WriteFile(keep, []byte("{}"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	removeStaleChromeSingletonLock(session)
+
+	for _, name := range []string{"SingletonLock", "SingletonSocket", "SingletonCookie"} {
+		if _, err := os.Stat(filepath.Join(profile, name)); !os.IsNotExist(err) {
+			t.Errorf("expected %s to be removed, stat err=%v", name, err)
+		}
+	}
+	if _, err := os.Stat(keep); err != nil {
+		t.Errorf("expected unrelated profile file to survive: %v", err)
+	}
+}
+
+func TestRemoveStaleChromeSingletonLockNoopWithoutSharedProfile(t *testing.T) {
+	t.Setenv("AGENT_BROWSER_SHARED_PROFILE", "")
+	// Must not panic or attempt any filesystem access when there is no shared profile.
+	removeStaleChromeSingletonLock("user-0123456789abcdef--browser")
 }
 
 func TestSharedBrowserMapsWorkflowsToSameRuntime(t *testing.T) {

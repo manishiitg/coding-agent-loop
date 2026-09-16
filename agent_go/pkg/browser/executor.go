@@ -1005,17 +1005,23 @@ func (e *Executor) HandleAgentBrowser(ctx context.Context, args map[string]inter
 	}
 
 	// isDeadSession returns true for errors that mean the browser session no longer
-	// exists and we need to start fresh. Both error strings come from agent-browser itself:
+	// exists and we need to start fresh. Error strings come from agent-browser/Chrome:
 	//   "CDP response channel closed"   — Chrome crashed while connected
 	//   "No such file or directory"     — daemon socket was deleted (e.g. after a reset
 	//                                     that ran concurrently with this command)
+	//   "ProcessSingleton"              — Chrome refused to launch because a stale
+	//                                     SingletonLock/SingletonSocket/SingletonCookie
+	//                                     was left behind by a previous crash of THIS
+	//                                     session's own Chrome (the old process is
+	//                                     already gone, only its lock files remain)
 	isDeadSession := func(e error) bool {
 		if e == nil {
 			return false
 		}
 		msg := e.Error()
 		return strings.Contains(msg, "CDP response channel closed") ||
-			strings.Contains(msg, "No such file or directory")
+			strings.Contains(msg, "No such file or directory") ||
+			strings.Contains(msg, "ProcessSingleton")
 	}
 
 	// Auto-recover from dead sessions — Chrome crashed or the daemon socket was removed.
@@ -1033,6 +1039,7 @@ func (e *Executor) HandleAgentBrowser(ctx context.Context, args map[string]inter
 			log.Printf("[BROWSER] Dead session detected for %q (%v), killing stale runtime and retrying", session, err)
 			killSessionRuntime(session)
 			removeSessionFiles(session)
+			removeStaleChromeSingletonLock(session)
 			if isCdpMode {
 				clearCDPActiveTabForPort(cdpPort)
 				clearCDPExclusiveFeaturesForPort(cdpPort)
@@ -1931,5 +1938,33 @@ func removeSessionFiles(session string) {
 		if removed {
 			log.Printf("[BROWSER] Removed stale session files for %q in %s", session, dir)
 		}
+	}
+}
+
+// removeStaleChromeSingletonLock clears Chrome's own ProcessSingleton lock
+// files (SingletonLock/SingletonSocket/SingletonCookie) from a persistent
+// shared profile after this session's runtime has just been killed. Chrome
+// does not always clean these up on an unclean exit, and their mere presence
+// makes the NEXT launch attempt refuse to start at all -- "Failed to create
+// ProcessSingleton for your profile directory ... Aborting now to avoid
+// profile corruption" -- even though the old process is provably gone (we
+// just killed it above). removeSessionFiles only cleans agent-browser's own
+// daemon bookkeeping files (.pid/.sock/...), never Chrome's, so every single
+// auto-recovery retry after a crash was guaranteed to hit this immediately.
+// Confirmed live on SparkQuill: a crashed session's every recovery attempt
+// failed with exactly this error until the lock was removed by hand.
+func removeStaleChromeSingletonLock(session string) {
+	profile := ProfilePathForSession(session)
+	if profile == "" {
+		return
+	}
+	removed := false
+	for _, name := range []string{"SingletonLock", "SingletonSocket", "SingletonCookie"} {
+		if err := os.Remove(filepath.Join(profile, name)); err == nil {
+			removed = true
+		}
+	}
+	if removed {
+		log.Printf("[BROWSER] Removed stale Chrome singleton lock for %q in %s", session, profile)
 	}
 }

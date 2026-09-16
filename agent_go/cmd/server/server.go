@@ -1119,6 +1119,18 @@ func getBrowserMode(req QueryRequest) string {
 // into the standardized BrowserConfig used by BuildBrowserInstructions.
 func buildChatBrowserConfig(req QueryRequest) browserinstructions.BrowserConfig {
 	mode := getBrowserMode(req)
+	if mode == "auto" && !browser.CDPEnabled() {
+		// CDP can never resolve on this deployment (getCdpPorts already
+		// returns none, and validateRequestedCDPPorts already rejects an
+		// explicit cdp request) -- so "auto" mode's whole point, deciding
+		// between CDP and headless, has only one possible answer here.
+		// Skipping straight to headless drops the "call agent_browser status
+		// first, follow effective_mode" preamble and the phantom port-9222
+		// candidate that GetAutoBrowserInstructions/BuildBrowserRuntimeInstructions
+		// would otherwise always add, on every single turn, for a check that
+		// can never succeed.
+		mode = "headless"
+	}
 	ports := getCdpPorts(req)
 	if mode == "auto" {
 		ports = configuredCDPPortsForMode(mode, req.CdpPort, req.CdpPorts)

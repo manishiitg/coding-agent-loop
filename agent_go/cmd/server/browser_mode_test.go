@@ -68,6 +68,31 @@ func TestBuildChatBrowserConfigUsesBrowserModeCDPWithoutEnableBrowserAccess(t *t
 	}
 }
 
+// When this deployment's CDP is disabled, "auto" mode's only possible answer
+// is headless -- getCdpPorts already returns none and
+// validateRequestedCDPPorts already rejects an explicit cdp request. Resolving
+// straight to headless here drops the "call agent_browser status first" auto
+// preamble and the phantom port-9222 candidate that would otherwise be added
+// on every single turn, for a check that can never succeed. Confirmed live on
+// SparkQuill: every turn's prompt claimed an "authorized CDP endpoint" at
+// :9222 that was never reachable on this headless-only server.
+func TestBuildChatBrowserConfigResolvesAutoToHeadlessWhenCDPDisabled(t *testing.T) {
+	t.Setenv("AGENT_BROWSER_CDP_ENABLED", "false")
+	req := QueryRequest{BrowserMode: "auto"}
+
+	cfg := buildChatBrowserConfig(req)
+
+	if cfg.Mode != "headless" {
+		t.Fatalf("mode = %q, want headless", cfg.Mode)
+	}
+	if cfg.CdpPort != 0 || len(cfg.CdpPorts) != 0 {
+		t.Fatalf("expected no CDP candidates when CDP is disabled, got port=%d ports=%v", cfg.CdpPort, cfg.CdpPorts)
+	}
+	if !cfg.HasAgentBrowser {
+		t.Fatalf("expected agent_browser to remain enabled in headless mode")
+	}
+}
+
 func TestApplyMultiAgentCapabilitiesToRequestOverridesRequestCapabilities(t *testing.T) {
 	globalSecrets := []string{"GLOBAL_TOKEN"}
 	req := QueryRequest{

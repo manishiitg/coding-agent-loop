@@ -3326,7 +3326,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
       {/* Input Form */}
       {/* The transcript above ends with its own margin; keep the band's top
           padding small so the last message and the composer read as one column. */}
-      <div data-tour="chat-input-area" data-testid="tour-chat-input-area" className={`${inputPadX} ${isProductSurface ? 'py-2' : 'pt-1 pb-2'}`}>
+      <div data-tour="chat-input-area" data-testid="tour-chat-input-area" className={`${inputPadX} ${isProductSurface ? 'py-1.5' : 'pt-1 pb-2'}`}>
         <form onSubmit={handleSubmit} className={isProductSurface ? 'relative' : 'relative space-y-1'}>
           {/* The mic's banner (download progress, "Listening" with the live
               transcript) portals here, in normal flow directly above the
@@ -3336,7 +3336,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
             // Keep the customer composer visually steady while events stream.
             // The former ring-4 plus catch-all `transition` made a harmless
             // focus hand-off look like a pulsing purple border on redraws.
-            ? 'space-y-0.5 rounded-2xl border border-border bg-card px-1.5 py-1 shadow-sm transition-colors duration-150 focus-within:border-ring'
+            ? 'space-y-0.5 rounded-2xl border border-border bg-card px-1.5 py-0.5 shadow-sm transition-colors duration-150 focus-within:border-ring'
             : 'space-y-1 rounded-xl border border-slate-700/80 bg-[#101513] p-1.5 shadow-sm transition focus-within:border-slate-500'}>
             {showLiveDelivery && liveMessageDelivery && (
               <div className={`flex min-w-0 items-center gap-1.5 text-[11px] ${liveDeliveryClass}`}>

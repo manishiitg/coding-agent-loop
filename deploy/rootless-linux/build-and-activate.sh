@@ -226,7 +226,13 @@ echo "==> [$RELEASE_ID] Verifying"
 PRODUCT="$PRODUCT" EXPECTED_PUBLIC_URL="${EXPECTED_PUBLIC_URL:-}" python3 "$BUILD_DIR/deployment_checks.py" running
 curl -fsS -o /dev/null -w "agent  /api/health: %{http_code}\n" "http://127.0.0.1:$AGENT_PORT/api/health"
 curl -fsS "http://127.0.0.1:$WORKSPACE_PORT/health"; echo
-curl -fsS -o /dev/null "https://$DOMAIN/api/health"
+# Not `curl -f`: whether /api/health is reachable through the gateway without
+# auth depends on its gate model (GATEWAY_DISABLE_PASSWORD_GATE in .env) --
+# see the matching comment in deploy.sh. Only a connection failure or a 5xx
+# means the gateway itself is broken.
+public_code="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 10 "https://$DOMAIN/api/health")"
+echo "public /api/health: $public_code"
+[[ "$public_code" -lt 500 ]] || { echo "https://$DOMAIN/api/health returned $public_code" >&2; exit 1; }
 
 rm -f "$BUILD_DIR/.deploying"
 python3 "$BUILD_DIR/prune-releases.py" "$REMOTE_APP" --apply \

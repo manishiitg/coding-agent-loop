@@ -98,29 +98,41 @@ fi
 # dependencies, not something an end user is expected to install over SSH.
 # Keep the binaries in stable, service-owned paths outside releases so
 # credentials and CLI availability survive release pruning.
+#
+# Built as a plain variable, not a case statement nested inside $(...) inside
+# an outer double-quoted string: bash's paren-matching for a case pattern's
+# bare `)` breaks down in exactly that nesting, misreading the case body as
+# closing the command substitution early.
 if [[ "${#CLI_TOOLS[@]}" -gt 0 ]]; then
+  cli_install_cmd() {
+    case "$1" in
+      claude) printf "npm install -g --prefix '%s' @anthropic-ai/claude-code@latest >/dev/null" "$REMOTE_TOOLS" ;;
+      codex)  printf "npm install -g --prefix '%s' @openai/codex@latest >/dev/null" "$REMOTE_TOOLS" ;;
+      pi)     printf "npm install -g --prefix '%s' @earendil-works/pi-coding-agent@latest >/dev/null" "$REMOTE_TOOLS" ;;
+      cursor) printf "HOME='%s/home' curl --fail --silent --show-error --location --proto '=https' --proto-redir '=https' --tlsv1.2 https://cursor.com/install | HOME='%s/home' bash" "$REMOTE_APP" "$REMOTE_APP" ;;
+      muse)   printf "HOME='%s/home' MUSE_INSTALL_DIR='%s/home/.local/bin' MUSE_NO_MODIFY_PATH=1 bash -c \"curl --fail --silent --show-error --location --proto '=https' --proto-redir '=https' --tlsv1.2 https://dev.meta.ai/install.sh | bash\"" "$REMOTE_APP" "$REMOTE_APP" ;;
+      *) echo "Unknown CLI_TOOLS entry: $1" >&2; exit 1 ;;
+    esac
+  }
+  cli_bin_name() { [[ "$1" == cursor ]] && echo cursor-agent || echo "$1"; }
+
+  install_lines=""
+  check_lines=""
+  for cli in "${CLI_TOOLS[@]}"; do
+    install_lines+="$(cli_install_cmd "$cli")"$'\n'
+    check_lines+="command -v '$(cli_bin_name "$cli")' >/dev/null"$'\n'
+  done
+
   echo "==> [$PRODUCT] Installing server CLI dependencies (agent-browser, ${CLI_TOOLS[*]})"
   "${SSH[@]}" "set -euo pipefail
     install -d -m 0755 '$REMOTE_TOOLS' '$REMOTE_APP/home/.local/bin'
     export PATH='$REMOTE_RUNTIME_PATH'
     npm install -g --prefix '$REMOTE_TOOLS' --allow-scripts=agent-browser agent-browser@latest >/dev/null
-    $(for cli in "${CLI_TOOLS[@]}"; do
-        case "$cli" in
-          claude) echo "npm install -g --prefix '$REMOTE_TOOLS' @anthropic-ai/claude-code@latest >/dev/null" ;;
-          codex)  echo "npm install -g --prefix '$REMOTE_TOOLS' @openai/codex@latest >/dev/null" ;;
-          pi)     echo "npm install -g --prefix '$REMOTE_TOOLS' @earendil-works/pi-coding-agent@latest >/dev/null" ;;
-          cursor) echo "HOME='$REMOTE_APP/home' curl --fail --silent --show-error --location --proto '=https' --proto-redir '=https' --tlsv1.2 https://cursor.com/install | HOME='$REMOTE_APP/home' bash" ;;
-          muse)   echo "HOME='$REMOTE_APP/home' MUSE_INSTALL_DIR='$REMOTE_APP/home/.local/bin' MUSE_NO_MODIFY_PATH=1 bash -c 'curl --fail --silent --show-error --location --proto \"=https\" --proto-redir \"=https\" --tlsv1.2 https://dev.meta.ai/install.sh | bash'" ;;
-          *) echo "echo 'Unknown CLI_TOOLS entry: $cli' >&2; exit 1" ;;
-        esac
-      done)
+    $install_lines
     export PATH='$REMOTE_TOOLS/bin':\"\$PATH\"
     export PATH='$REMOTE_APP/home/.local/bin':\"\$PATH\"
     command -v agent-browser >/dev/null
-    $(for cli in "${CLI_TOOLS[@]}"; do
-        bin="$cli"; [[ "$cli" == cursor ]] && bin="cursor-agent"
-        echo "command -v '$bin' >/dev/null"
-      done)
+    $check_lines
     agent-browser --version"
 fi
 
@@ -164,7 +176,13 @@ echo "==> [$PRODUCT] Building on $PRODUCT@$HOST_IP: cloning/using $DEPLOY_BRANCH
 
 echo "==> [$PRODUCT] Verifying"
 "${SSH[@]}" "PRODUCT=$PRODUCT EXPECTED_PUBLIC_URL=${EXPECTED_PUBLIC_URL:-} python3 - running" < "$LOCAL_SCRIPT_DIR/deployment_checks.py"
-curl -fsS -o /dev/null "https://$DOMAIN/api/health"
-curl -fsSI "https://$DOMAIN/" | head -1
+# Not `curl -f`: whether /api/health is reachable without auth depends on the
+# gateway's own gate model (GATEWAY_DISABLE_PASSWORD_GATE in .env) -- a
+# per-user-JWT deployment like confida exempts it (200), a shared-password
+# deployment like sparkquill does not (401). Either is a live, correctly
+# routed gateway; only a connection failure or a 5xx means something is wrong.
+public_code="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 10 "https://$DOMAIN/api/health")"
+echo "public /api/health: $public_code"
+[[ "$public_code" -lt 500 ]] || { echo "https://$DOMAIN/api/health returned $public_code" >&2; exit 1; }
 
 echo "==> [$PRODUCT] Done."

@@ -245,6 +245,22 @@ function HtmlReportFrameComponent({
     }
   }, [dataApi, autoHeight, resize, refreshToken, title])
 
+  // The ResizeObserver above watches elements inside the iframe's own
+  // document. When an ancestor OUTSIDE the iframe (e.g. the workflow layout's
+  // chat-focused single-pane mode on a narrow window, WorkflowLayout.tsx)
+  // toggles display:none, Chromium suspends the iframe's own rendering
+  // pipeline, and that internal observer does not reliably resume delivering
+  // accurate notifications once it comes back — the outer scroll container
+  // is then stuck at whatever height was last measured before the frame was
+  // hidden, often 0. A window resize is dispatched on re-show for exactly
+  // this (see WorkflowLayout.tsx's un-hide effect); listen for it here and
+  // force a fresh measurement rather than hoping the observer catches up.
+  useEffect(() => {
+    if (!autoHeight) return
+    window.addEventListener('resize', resize)
+    return () => window.removeEventListener('resize', resize)
+  }, [autoHeight, resize])
+
   // Re-inject when the report data changes (sources refreshed).
   useEffect(() => {
     // The first injection belongs exclusively to iframe onLoad. Calling it

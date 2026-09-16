@@ -1005,6 +1005,14 @@ export interface WorkflowCanvasRef {
   refresh: (changedStepIDs?: string[], deletedStepIDs?: string[]) => Promise<PlanChanges | null>
   getStepCount: () => number
   focusStep: (stepId: string) => void  // Selects the step and opens its details
+  // Re-fits the viewport. React Flow sizes itself from its own wrapper's
+  // ResizeObserver; when that wrapper was display:none (WorkflowLayout's
+  // chat-focused single-pane mode on a narrow window) and becomes visible
+  // again, the observer does not reliably resume with an accurate reading,
+  // leaving the canvas rendered blank at its last (often zero) size. Call
+  // this after such a pane becomes visible again to force a real refit,
+  // matching the existing device-preview-resize effect below.
+  resyncViewport: () => void
 }
 
 // The React Flow plan canvas. WorkspaceViewHost owns the toolbar, the pane
@@ -1891,8 +1899,16 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
     focusStep: (stepId: string) => {
       pendingPlanStepFocusRef.current = stepId
       if (!toolbarOnly && showStepNode(stepId)) pendingPlanStepFocusRef.current = null
+    },
+    resyncViewport: () => {
+      // Same delay as the device-preview-resize effect above: give the
+      // display:none -> visible CSS transition a frame to actually land
+      // before asking React Flow to measure its wrapper.
+      setTimeout(() => {
+        try { void fitView({ padding: FLOW_FIT_PADDING, duration: 300, minZoom: FLOW_FIT_MIN_ZOOM, maxZoom: FLOW_FIT_MAX_ZOOM }) } catch { /* ignore */ }
+      }, 60)
     }
-  }), [loadPlanRefresh, refreshEvaluationPlan, plan, setChanges, showStepNode, toolbarOnly])
+  }), [loadPlanRefresh, refreshEvaluationPlan, plan, setChanges, showStepNode, toolbarOnly, fitView])
 
   // Store step ID to focus on when changes are detected (will focus after nodes update)
   React.useEffect(() => {
@@ -2607,19 +2623,6 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
               </div>
             </div>
           )}
-          <button type="button" onClick={() => {
-            setRouteTrace(null)
-            setSelectedTrigger(null)
-            focusTriggers()
-          }} className="absolute right-60 top-3 z-20 h-8 rounded-md border border-border bg-background/95 px-2 text-xs text-foreground shadow-sm hover:bg-muted" aria-label="Show triggers">Triggers</button>
-          {!!evaluationPlan?.steps.length && <button type="button" onClick={() => {
-            setRouteTrace(null)
-            setSelectedTrigger(null)
-            setSelectedFlowNode(null)
-            void fitView({ nodes: nodes.filter(node => node.data.isEvaluationStep || node.type === 'evaluation-group'),
-              padding: 0.12, duration: 300, minZoom: FLOW_FIT_MIN_ZOOM, maxZoom: FLOW_FIT_MAX_ZOOM })
-          }} className="absolute right-32 top-3 z-20 h-8 rounded-md border border-border bg-background/95 px-2 text-xs text-foreground shadow-sm hover:bg-muted"
-            aria-label="Show evaluation groups" title="Show evaluations grouped by route">Evaluation</button>}
           <div className="absolute right-3 top-3 z-20 flex items-center gap-1">
             {assistantControl}
             <button type="button" onClick={() => void fitView({ padding: FLOW_FIT_PADDING, duration: 300, minZoom: FLOW_FIT_MIN_ZOOM, maxZoom: FLOW_FIT_MAX_ZOOM })}

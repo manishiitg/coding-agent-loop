@@ -279,9 +279,15 @@ export function conversationToRestoredEvents(conversation: RestorableConversatio
 function restoredEventText(event: PollingEvent): string {
   const outer = event.data && typeof event.data === 'object' ? event.data as Record<string, unknown> : {}
   const nested = outer.data && typeof outer.data === 'object' ? outer.data as Record<string, unknown> : outer
-  for (const field of ['content', 'final_result', 'result']) {
-    const value = nested[field]
-    if (typeof value === 'string' && value.trim()) return value.trim()
+  // Live event producers use both {data:{content}} and the older flat
+  // {content} envelope. markPersistedRestoreTrace adds a nested metadata object
+  // to flat events, so inspecting only `nested` after that transformation made
+  // their original outer carrier text disappear and defeated deduplication.
+  for (const candidate of nested === outer ? [nested] : [nested, outer]) {
+    for (const field of ['content', 'final_result', 'result']) {
+      const value = candidate[field]
+      if (typeof value === 'string' && value.trim()) return value.trim()
+    }
   }
   return ''
 }

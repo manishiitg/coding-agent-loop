@@ -5,7 +5,7 @@
 | Coordination | Value |
 |---|---|
 | Assigned agent | Codex |
-| Ticket state | `implemented, deployed, and live-verified on Confida` |
+| Ticket state | `follow-up reconciliation refactor implemented and tested locally; not deployed` |
 | Last synchronized | `2026-09-16` |
 
 - **Priority:** P1 — real conversation data loss, user-visible and
@@ -225,6 +225,28 @@ Four independent gaps were identified. All four are now implemented:
    that initially reopen in Terminal view. Read-only schedule tabs retain the
    cheaper empty-only hydration rule.
 
+## Why this required several fixes
+
+The user-visible symptom — “the terminal has the answer but Chat lost it” —
+can be produced independently at four ownership boundaries:
+
+1. the retained coding-agent delivery path can accept a user message without
+   appending it to the server's durable chat;
+2. the provider's native transcript can contain the completed answer while
+   server recovery looks in the wrong working directory;
+3. the provider can represent visible progress as `thinking` rather than
+   `text`, causing retained progress reconstruction to omit it; and
+4. the server's durable chat can already be correct while the frontend treats
+   a non-empty, bounded `ui_events` tail as a complete transcript and never
+   reconciles the durable messages.
+
+These are separate data paths that converge on the same screen, so closing one
+does not prove the other three are closed. The invariant established by this
+ticket is: the provider transcript is recovery evidence, durable
+`conversation_history` is authoritative chat state, and `ui_events` is only a
+bounded execution/progress projection. A non-empty `ui_events` array must never
+suppress durable-history hydration.
+
 ## Deployment and live verification
 
 - Deployed application revision
@@ -250,6 +272,81 @@ Four independent gaps were identified. All four are now implemented:
   is registered without declaring transcript reading or without being included
   in native chat-history recovery.
 
+## 2026-09-16 13:40 IST recurrence report
+
+Conversation `e4f5abb1-57f3-4ba8-823e-87b3fe2e2a93` is a direct reproduction
+of gap #4 after the fixed release had reached the server. The operator
+confirmed the page had been refreshed, ruling out a pre-deployment frontend
+bundle still running in memory:
+
+- At 13:40:07 IST, the Formatted view stopped at intermediate progress
+  (“Defining Post-Execution Report”, “Defining Next Steps”, and “Testing the
+  Implementation”). At 13:40:21 IST, the Terminal view already displayed the
+  completed response.
+- The production conversation JSON had been updated at 13:38:31 IST and held
+  257 durable `conversation_history` messages, including the complete final
+  “I have created the dedicated scripted step...” answer. Its 43 `ui_events`
+  ended earlier. The answer therefore was not lost by the server; the formatted
+  projection was stale because it trusted the non-empty UI-event tail.
+- Revision `912b9347e473d078f3c82b72c1bf10a9fd1ebedc`, which implements the
+  unconditional interactive-chat reconciliation, was packaged as
+  `confida-912b9347-20260916083842`. Confida's release names and filesystem
+  timestamps use the host's UTC+02 timezone: 08:38 host time is 12:08 IST,
+  about 91 minutes before the screenshots — not 14:08 IST as initially
+  recorded. The current release, `confida-7def0915-20260916090324`, was active
+  by 12:36 IST and includes that revision.
+- The follow-up reconciliation has an ordering defect. `hydrateTabEvents`
+  restores durable conversation events first, filters duplicates from the
+  in-memory event response, and then calls `addTabEvents` with the remaining
+  volatile tail. `addTabEvents` is append-only and Formatted view preserves
+  array order. Therefore older, non-carrier progress events can be appended
+  *after* the newer durable final answer. The newest answer is no longer the
+  bottom item even though hydration fetched it successfully, producing the
+  same apparent “final message lost” symptom.
+- This incident has the exact dangerous shape: the 43 persisted UI events end
+  on the earlier 13:00 IST turn, the 257-message durable history ends with the
+  13:38 final answer, and the screenshot bottom shows intermediate progress
+  rather than that final answer. The existing regression test checks that
+  durable history is requested, but does not check final ordering after a
+  non-carrier live progress tail is merged.
+
+Classification: **confirmed post-deployment frontend regression; no backend
+message loss.** The first PLAT-178 frontend fix corrected the decision to fetch
+durable history, but did not enforce chronological/turn-relative ordering when
+combining that history with the live event tail. The follow-up must add an
+ordering regression test with a durable final answer plus older live progress,
+then merge the progress before its matching final carrier rather than blindly
+appending it.
+
+## Follow-up reconciliation refactor
+
+Implemented locally on 2026-09-16; not yet deployed:
+
+- `hydrateTabEventsFromConversation` is now the single ordering boundary for
+  persisted UI events, raw events already received through SSE, and the current
+  EventStore window. All three sources enter `conversationToRestoredEvents`
+  together, so its turn anchors and chronological projection apply once.
+- Removed both post-hydration append paths: normal page hydration and the
+  existing-tab restore path no longer call `addTabEvents` after constructing
+  durable history. Legacy sessions without durable history keep their existing
+  live-only fallback.
+- Repeated hydration filters its own synthesized events before rebuilding the
+  trace, preventing generated timestamps from feeding back into the next
+  projection.
+- Durable history still paints before a slow live-status request completes;
+  when the live response arrives, the same projection function reconciles it.
+- The shared carrier extractor now handles both nested `{data:{content}}` and
+  legacy flat `{content}` event envelopes after restore metadata is attached.
+  The broader product fallback suite exposed this pre-existing deduplication
+  hole as a duplicate user row during the refactor.
+- Added regressions for the production ordering shape (older live progress plus
+  a newer durable final answer) and flat-envelope carrier deduplication.
+
+Verification: 53 focused restore/conversation tests pass, TypeScript project
+compilation passes, focused ESLint passes, and `git diff --check` is clean.
+Live Confida verification remains pending because this follow-up has not been
+deployed.
+
 ## Out of scope
 
 - Not investigating why the tmux pane died in this specific incident — the
@@ -263,9 +360,10 @@ Four independent gaps were identified. All four are now implemented:
 
 ## Verification
 
-Build and unit tests only; live reverify pending (an actual resumed
-session exchanging live-input messages then losing its tmux pane, checked
-against a real restore).
+The original PLAT-178 repair completed build, unit, deployment-health, and live
+hard-reload verification. The follow-up reconciliation refactor above is only
+locally verified and still requires deployment plus a fresh retained-turn
+check before this recurrence can be closed.
 
 - `go build ./...` clean.
 - 2026-09-16 regressions pass:

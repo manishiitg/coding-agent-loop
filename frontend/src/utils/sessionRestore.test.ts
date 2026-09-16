@@ -100,7 +100,12 @@ describe('hydrateTabEvents restored chat fallback', () => {
   })
 
   it('keeps the in-memory live tail when durable history is older', async () => {
-    const liveTail = { id: 'latest-codex-answer', type: 'unified_completion' }
+    const liveTail = {
+      id: 'latest-codex-answer',
+      type: 'unified_completion',
+      timestamp: '2026-09-15T12:41:23Z',
+      data: { data: { final_result: 'Latest live answer', result: 'Latest live answer' } },
+    }
     mocks.getRecentSessionEvents.mockResolvedValue({
       events: [liveTail],
       session_status: 'completed',
@@ -114,9 +119,65 @@ describe('hydrateTabEvents restored chat fallback', () => {
 
     await hydrateTabEvents('active-codex-session', { workspacePath: '/workspace/workflow' })
 
-    expect(mocks.setTabEvents).toHaveBeenCalledWith('active-codex-session', expect.any(Array))
-    expect(mocks.addTabEvents).toHaveBeenCalledWith('active-codex-session', [liveTail])
+    expect(mocks.setTabEvents).toHaveBeenCalledWith(
+      'active-codex-session',
+      expect.arrayContaining([expect.objectContaining({ id: 'latest-codex-answer' })]),
+    )
+    expect(mocks.addTabEvents).not.toHaveBeenCalled()
     expect(mocks.setTabLastEventIndex).toHaveBeenLastCalledWith('active-codex-session', 7)
+  })
+
+  it('orders an older live progress tail before the newer durable final answer', async () => {
+    const currentPrompt = 'Create the dedicated Linear and GitHub reporting step.'
+    const finalAnswer = 'I created finalize-linear-qa and connected it directly to end.'
+    mocks.getRecentSessionEvents.mockResolvedValue({
+      events: [
+        {
+          id: 'current-user',
+          type: 'user_message',
+          timestamp: '2026-09-16T08:00:00Z',
+          data: { data: { content: currentPrompt } },
+        },
+        {
+          id: 'progress-before-final',
+          type: 'conversation_thinking',
+          timestamp: '2026-09-16T08:07:00Z',
+          data: { data: { content: 'Testing the implementation' } },
+        },
+      ],
+      session_status: 'completed',
+      last_processed_index: 84,
+      has_more: false,
+    })
+    mocks.getChatHistoryResumeConversation.mockResolvedValue({
+      session_id: 'post-deploy-ordering-regression',
+      conversation_history: [
+        { Role: 'human', Parts: [{ Text: 'Earlier question' }], resume_order: 0 },
+        { Role: 'ai', Parts: [{ Text: 'Earlier answer' }], resume_order: 1 },
+        { Role: 'human', Parts: [{ Text: currentPrompt }], resume_order: 2 },
+        { Role: 'ai', Parts: [{ Text: finalAnswer }], resume_order: 3 },
+      ],
+      history_source_message_count: 4,
+      ui_events: [
+        {
+          id: 'older-persisted-turn',
+          type: 'user_message',
+          timestamp: '2026-09-16T07:30:00Z',
+          data: { data: { content: 'Earlier question' } },
+        },
+      ],
+    })
+
+    await hydrateTabEvents('post-deploy-ordering-regression', { workspacePath: '/workspace/workflow' })
+
+    const [, events] = mocks.setTabEvents.mock.calls.at(-1) as [string, Array<{ id?: string; type: string; data?: unknown }>]
+    const progressIndex = events.findIndex(event => event.id === 'progress-before-final')
+    const finalIndex = events.findIndex(event => {
+      if (event.type !== 'unified_completion') return false
+      return JSON.stringify(event.data).includes(finalAnswer)
+    })
+    expect(progressIndex).toBeGreaterThan(-1)
+    expect(finalIndex).toBeGreaterThan(progressIndex)
   })
 
   it('does not erase a user message and completion that arrive while history hydration is in flight', async () => {
@@ -187,6 +248,25 @@ describe('hydrateTabEvents restored chat fallback', () => {
     expect(mocks.setTabEvents).toHaveBeenCalledWith('duplicate-response-session', expect.any(Array))
     expect(mocks.addTabEvents).not.toHaveBeenCalled()
     expect(mocks.setTabLastEventIndex).toHaveBeenLastCalledWith('duplicate-response-session', 8)
+  })
+
+  it('deduplicates a flat live user envelope against the durable user carrier', () => {
+    const prompt = 'Create the launch teaser.'
+    const events = conversationToRestoredEvents({
+      session_id: 'flat-live-user-envelope',
+      conversation_history: [
+        { Role: 'user', Parts: [{ Text: prompt }] },
+        { Role: 'assistant', Parts: [{ Text: 'The finished teaser is ready.' }] },
+      ],
+      ui_events: [{
+        id: 'live-user-only',
+        type: 'user_message',
+        timestamp: '2026-08-17T00:00:00Z',
+        data: { content: prompt } as never,
+      }],
+    })
+
+    expect(events.filter(event => event.type === 'user_message')).toHaveLength(1)
   })
 
   it('keeps every meaningful assistant update from one tool-heavy turn', () => {

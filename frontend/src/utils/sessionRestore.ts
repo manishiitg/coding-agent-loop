@@ -1,5 +1,5 @@
 import { useChatStore } from '../stores/useChatStore'
-import { conversationToRestoredEvents, filterDuplicateTranscriptEvents } from '../../shared/session/restore'
+import { conversationToRestoredEvents } from '../../shared/session/restore'
 import { useModeStore } from '../stores/useModeStore'
 import { agentApi } from '../services/api'
 import type { ChatHistoryConversation, PollingEvent } from '../services/api-types'
@@ -144,14 +144,13 @@ async function doRestoreSession(
       // products (and while a turn is running) so a refresh cannot leave a
       // user-only event buffer in the UI. If a legacy session has no durable
       // transcript, retain the live events already loaded above.
-      await tryHydrateTabEventsFromChatHistory(
+      const conversation = await tryFetchChatHistoryConversation(
         sessionId,
         options?.workspacePath || existingTab?.metadata?.agentProfileWorkspace,
       )
-      // Hydration replaces rendered rows, so the volatile tail must be added
-      // afterwards. Adding it first silently discarded current Codex tool
-      // calls and completions when the persisted conversation was older.
-      if (runtime.events.length > 0) {
+      if (conversation) {
+        hydrateTabEventsFromConversation(sessionId, conversation, runtime.events)
+      } else if (runtime.events.length > 0) {
         chatStore.addTabEvents(sessionId, runtime.events)
       }
       if (runtime.last_processed_index !== undefined) {
@@ -176,8 +175,9 @@ async function doRestoreSession(
     // durable transcript is independent of that volatile window and applies
     // equally to every product, so recover it before preserving an incomplete
     // local cache.
-    const restored = await tryHydrateTabEventsFromChatHistory(sessionId, workspacePath)
-    if (restored) {
+    const conversation = await tryFetchChatHistoryConversation(sessionId, workspacePath)
+    if (conversation) {
+      const restored = hydrateTabEventsFromConversation(sessionId, conversation)
       applySessionStatus(tabId, restored)
       console.log(`${TAG} [${src}] Recovered persisted transcript after runtime sync failure`)
       return tabId
@@ -259,33 +259,57 @@ function restoreToolArgumentsFromConversation(
 
 type HydratedHistoryRuntimeState = RuntimeSessionState & { restoredEvents: PollingEvent[] }
 
-async function hydrateTabEventsFromChatHistory(sessionId: string, workspacePath?: string, includeUiEvents = true): Promise<HydratedHistoryRuntimeState> {
+function isPreviouslyRestoredEvent(event: PollingEvent): boolean {
+  if (event.id?.startsWith('restored-')) return true
+  const outer = event.data && typeof event.data === 'object' ? event.data as Record<string, unknown> : {}
+  const nested = outer.data && typeof outer.data === 'object' ? outer.data as Record<string, unknown> : {}
+  const metadata = nested.metadata && typeof nested.metadata === 'object'
+    ? nested.metadata as Record<string, unknown>
+    : {}
+  return metadata.restored_persisted_trace === true
+}
+
+function combineTranscriptTraceEvents(...sources: Array<ReadonlyArray<PollingEvent> | undefined>): PollingEvent[] {
+  const combined: PollingEvent[] = []
+  const seenIDs = new Set<string>()
+  for (const source of sources) {
+    for (const event of source || []) {
+      // A repeated hydration sees the synthetic durable transcript in the
+      // store. Feeding that projection back in as raw trace would make its
+      // generated timestamps influence the next projection.
+      if (isPreviouslyRestoredEvent(event)) continue
+      if (event.id && seenIDs.has(event.id)) continue
+      if (event.id) seenIDs.add(event.id)
+      combined.push(event)
+    }
+  }
+  return combined
+}
+
+function hydrateTabEventsFromConversation(
+  sessionId: string,
+  conversation: ChatHistoryConversation,
+  liveEvents: ReadonlyArray<PollingEvent> = [],
+): HydratedHistoryRuntimeState {
   const chatStore = useChatStore.getState()
-  // getChatHistoryResumeConversation (not the unbounded preview variant) keeps
-  // this lightweight, and conversationToRestoredEvents does the real work of
-  // projecting persisted turns into replayable events. Tool-call arguments
-  // still need a pass of their own: provider stream events can persist with
-  // empty tool_params.arguments even though the structured conversation_history
-  // has them, so restoreToolArgumentsFromConversation patches those back in
-  // regardless of which path built the underlying events.
-  const conversation = includeUiEvents
-    ? await agentApi.getChatHistoryResumeConversation(sessionId, workspacePath, INITIAL_HISTORY_TURNS, 0, true)
-    : await agentApi.getChatHistoryResumeConversation(sessionId, workspacePath, INITIAL_HISTORY_TURNS)
-  const rawEvents = conversationToRestoredEvents(conversation)
+  // There is one transcript-ordering boundary. Persisted UI events, raw events
+  // already received by SSE, and the current EventStore window all enter the
+  // conversation converter together. It can then anchor progress inside the
+  // matching durable turn and keep the final assistant carrier after it.
+  // Appending a second event source after conversion is incorrect: that made
+  // older progress appear below a newer durable final answer after refresh.
+  const trace = combineTranscriptTraceEvents(
+    conversation.ui_events as PollingEvent[] | undefined,
+    chatStore.getTabEvents(sessionId),
+    liveEvents,
+  )
+  const projectedConversation: ChatHistoryConversation = trace.length > 0
+    ? { ...conversation, ui_events: trace }
+    : conversation
+  const rawEvents = conversationToRestoredEvents(projectedConversation)
   const events = restoreToolArgumentsFromConversation(rawEvents, conversation)
 
-  // Hydration is intentionally concurrent with the live event transport. A
-  // coding-CLI completion can arrive while the history request is in flight;
-  // replacing the tab with the response snapshot at that point erased the
-  // just-submitted user row, its tool activity, and the final answer, making
-  // Chat jump back to the preceding turn as soon as the agent finished.
-  // Re-read the store only after the durable response has been converted and
-  // merge anything that arrived during the request before the single replace.
-  const currentEvents = chatStore.getTabEvents(sessionId)
-  const currentTail = filterDuplicateTranscriptEvents(events, currentEvents)
-  const mergedEvents = currentTail.length > 0 ? [...events, ...currentTail] : events
-
-  chatStore.setTabEvents(sessionId, mergedEvents)
+  chatStore.setTabEvents(sessionId, events)
   // Restored conversation rows are synthesized from durable history, while
   // tabEventIndices is a cursor into the backend's volatile raw event store.
   // Those sequences are unrelated. Using history.length here can put the
@@ -304,8 +328,8 @@ async function hydrateTabEventsFromChatHistory(sessionId: string, workspacePath?
   )
   console.info(`${TAG} Hydrated persisted conversation`, {
     sessionId,
-    eventCount: mergedEvents.length,
-    source: includeUiEvents ? 'conversation_history + persisted_ui_events' : 'conversation_history',
+    eventCount: events.length,
+    source: trace.length > 0 ? 'conversation_history + reconciled_trace' : 'conversation_history',
   })
 
   return {
@@ -313,17 +337,19 @@ async function hydrateTabEventsFromChatHistory(sessionId: string, workspacePath?
     hasRunningBackgroundAgents: false,
     isSyntheticTurn: false,
     canSteer: false,
-    restoredEvents: mergedEvents,
+    restoredEvents: events,
   }
 }
 
-async function tryHydrateTabEventsFromChatHistory(
+async function tryFetchChatHistoryConversation(
   sessionId: string,
   workspacePath?: string,
   includeUiEvents = true,
-): Promise<HydratedHistoryRuntimeState | null> {
+): Promise<ChatHistoryConversation | null> {
   try {
-    return await hydrateTabEventsFromChatHistory(sessionId, workspacePath, includeUiEvents)
+    return includeUiEvents
+      ? await agentApi.getChatHistoryResumeConversation(sessionId, workspacePath, INITIAL_HISTORY_TURNS, 0, true)
+      : await agentApi.getChatHistoryResumeConversation(sessionId, workspacePath, INITIAL_HISTORY_TURNS)
   } catch (error) {
     if (isNotFoundError(error)) {
       return null
@@ -358,18 +384,30 @@ export async function hydrateTabEvents(
   // below), and the live-store fetch's only use of the history result is in
   // the NotFound catch branch. Firing them together instead of one-after-
   // another halves this function's network latency on every call.
-  const [eventsOutcome, restored] = await Promise.all([
-    agentApi.getRecentSessionEvents(sessionId).then(
+  const eventsPromise = agentApi.getRecentSessionEvents(sessionId).then(
       (value) => ({ ok: true as const, value }),
       (error: unknown) => ({ ok: false as const, error }),
-    ),
-    tryHydrateTabEventsFromChatHistory(sessionId, options.workspacePath, options.includeUiEvents),
-  ])
+    )
+  const conversationPromise = tryFetchChatHistoryConversation(
+    sessionId,
+    options.workspacePath,
+    options.includeUiEvents,
+  )
+  // Durable history is usually faster and must not wait behind a slow runtime
+  // status call. Paint it as soon as it arrives, then project once more through
+  // the same ordering boundary when the current live window is available.
+  // The base promise is awaited below, so this side effect deliberately swallows
+  // only its duplicate rejection path.
+  void conversationPromise.then(conversation => {
+    if (conversation) hydrateTabEventsFromConversation(sessionId, conversation)
+  }).catch(() => undefined)
+
+  const [eventsOutcome, conversation] = await Promise.all([eventsPromise, conversationPromise])
 
   if (!eventsOutcome.ok) {
     if (isNotFoundError(eventsOutcome.error)) {
       console.log(`${TAG} Polling session ${sessionId} not found; restoring from workspace chat history`)
-      if (restored) return restored
+      if (conversation) return hydrateTabEventsFromConversation(sessionId, conversation)
     }
     throw eventsOutcome.error
   }
@@ -379,20 +417,10 @@ export async function hydrateTabEvents(
   // prompts after a browser reload. Prefer the durable conversation for every
   // session, regardless of its owning product. Runtime status remains
   // authoritative so a currently running turn still renders as streaming.
-  if (restored) {
-    // Durable history can predate an active in-memory provider stream. Keep
-    // its richer, restart-safe transcript, then append the live tail rather
-    // than replacing it. This is especially important for retained Codex CLI
-    // sessions: a browser reload may restore history from before the most
-    // recent completed turn while the server still has those raw events.
-    if (response.events.length > 0) {
-      const liveTail = filterDuplicateTranscriptEvents(restored.restoredEvents || [], response.events)
-      if (liveTail.length > 0) {
-        chatStore.addTabEvents(sessionId, liveTail)
-      }
-      if (response.last_processed_index !== undefined) {
-        chatStore.setTabLastEventIndex(sessionId, response.last_processed_index)
-      }
+  if (conversation) {
+    const restored = hydrateTabEventsFromConversation(sessionId, conversation, response.events)
+    if (response.last_processed_index !== undefined) {
+      chatStore.setTabLastEventIndex(sessionId, response.last_processed_index)
     }
     return {
       status: response.session_status || restored.status,
@@ -418,8 +446,9 @@ export async function hydrateTabEvents(
     // tell us whether the durable transcript exists. The caller only enables
     // this fallback for an explicitly restored chat, so prefer its persisted
     // history whenever the volatile event buffer has no events.
-    const restored = await tryHydrateTabEventsFromChatHistory(sessionId, options.workspacePath, options.includeUiEvents)
-    if (restored) {
+    const fallbackConversation = await tryFetchChatHistoryConversation(sessionId, options.workspacePath, options.includeUiEvents)
+    if (fallbackConversation) {
+      const restored = hydrateTabEventsFromConversation(sessionId, fallbackConversation)
       return {
         status: response.session_status || restored.status,
         hasRunningBackgroundAgents: response.has_running_background_agents,

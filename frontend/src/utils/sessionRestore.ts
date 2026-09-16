@@ -259,14 +259,8 @@ function restoreToolArgumentsFromConversation(
 
 type HydratedHistoryRuntimeState = RuntimeSessionState & { restoredEvents: PollingEvent[] }
 
-function isPreviouslyRestoredEvent(event: PollingEvent): boolean {
-  if (event.id?.startsWith('restored-')) return true
-  const outer = event.data && typeof event.data === 'object' ? event.data as Record<string, unknown> : {}
-  const nested = outer.data && typeof outer.data === 'object' ? outer.data as Record<string, unknown> : {}
-  const metadata = nested.metadata && typeof nested.metadata === 'object'
-    ? nested.metadata as Record<string, unknown>
-    : {}
-  return metadata.restored_persisted_trace === true
+function isSyntheticRestoredEvent(event: PollingEvent): boolean {
+  return event.id?.startsWith('restored-') === true
 }
 
 function combineTranscriptTraceEvents(...sources: Array<ReadonlyArray<PollingEvent> | undefined>): PollingEvent[] {
@@ -274,10 +268,17 @@ function combineTranscriptTraceEvents(...sources: Array<ReadonlyArray<PollingEve
   const seenIDs = new Set<string>()
   for (const source of sources) {
     for (const event of source || []) {
-      // A repeated hydration sees the synthetic durable transcript in the
-      // store. Feeding that projection back in as raw trace would make its
-      // generated timestamps influence the next projection.
-      if (isPreviouslyRestoredEvent(event)) continue
+      // A repeated hydration sees synthetic durable conversation carriers in
+      // the store. Feeding those generated rows back as raw trace would make
+      // their generated timestamps influence the next projection.
+      //
+      // Keep events marked restored_persisted_trace, though: those are raw
+      // transport events with stable IDs and real timestamps. A completion can
+      // arrive through SSE before the provider transcript is durable. If a
+      // second, older hydration drops that marked trace event, the final reply
+      // flashes in Chat and then disappears until a later refresh. Stable IDs
+      // make retaining it idempotent across repeated hydration.
+      if (isSyntheticRestoredEvent(event)) continue
       if (event.id && seenIDs.has(event.id)) continue
       if (event.id) seenIDs.add(event.id)
       combined.push(event)

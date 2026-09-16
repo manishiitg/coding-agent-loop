@@ -223,6 +223,50 @@ describe('hydrateTabEvents restored chat fallback', () => {
     )
   })
 
+  it('keeps a live completion across a second stale-history hydration', async () => {
+    const finalAnswer = 'The Cursor review finished successfully.'
+    const liveCompletion = {
+      id: 'cursor-live-completion',
+      type: 'unified_completion',
+      timestamp: '2026-09-16T18:18:58Z',
+      data: { data: { final_result: finalAnswer } },
+    }
+    let storedEvents: Array<Record<string, unknown>> = []
+    mocks.getTabEvents.mockImplementation(() => storedEvents)
+    mocks.setTabEvents.mockImplementation((_sessionId, events) => {
+      storedEvents = events
+    })
+    mocks.getChatHistoryResumeConversation.mockResolvedValue({
+      session_id: 'cursor-stale-history',
+      conversation_history: [
+        { Role: 'human', Parts: [{ Text: 'Review the pull request.' }], resume_order: 0 },
+      ],
+      history_source_message_count: 1,
+    })
+    mocks.getRecentSessionEvents
+      .mockResolvedValueOnce({
+        events: [liveCompletion],
+        session_status: 'completed',
+        last_processed_index: 12,
+        has_more: false,
+      })
+      .mockResolvedValueOnce({
+        events: [],
+        session_status: 'completed',
+        last_processed_index: 12,
+        has_more: false,
+      })
+
+    await hydrateTabEvents('cursor-stale-history', { workspacePath: '/workspace/workflow' })
+    expect(storedEvents.some(event => event.id === liveCompletion.id)).toBe(true)
+
+    await hydrateTabEvents('cursor-stale-history', { workspacePath: '/workspace/workflow' })
+    expect(storedEvents).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: liveCompletion.id, type: 'unified_completion' }),
+    ]))
+    expect(JSON.stringify(storedEvents)).toContain(finalAnswer)
+  })
+
   it('does not replace a live retained turn with an eager stale-history paint', async () => {
     let resolveHistory!: (value: unknown) => void
     let resolveEvents!: (value: unknown) => void

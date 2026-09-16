@@ -246,6 +246,26 @@ earlier pass recovered progress. The existing occurrence-count deduplication
 makes those follow-up reads idempotent while ensuring the delayed final is
 published to Chat and the session reaches its ready state.
 
+## 2026-09-16 final-message flash regression
+
+A later Cursor completion exposed a frontend-only race: the final answer was
+visible from the live transcript chunk, disappeared when the stream settled,
+and returned only after durable history caught up or the page was refreshed.
+The Cursor terminal and durable provider transcript both contained the answer.
+
+The first completion hydration correctly merged the raw live completion into
+the formatted timeline and marked it as persisted trace. A second hydration
+that had started against older durable history treated every marked trace event
+as a generated restore row and discarded it. That rule was too broad: synthetic
+`restored-*` conversation carriers have generated timestamps, while marked
+transport events retain stable backend IDs and real timestamps.
+
+Repeated hydration now drops only synthetic restored carriers. Raw traced
+events remain in the merge and deduplicate by their stable IDs, so an older
+history response cannot remove a live final while provider persistence catches
+up. The regression test performs two hydrations against stale history, with the
+second live window empty, and verifies that the Cursor completion remains.
+
 ### Production verification
 
 - Commit `2f387fa37` (`Keep reconciling delayed CLI final replies`) was pushed
